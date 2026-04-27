@@ -893,6 +893,28 @@ def render_compare_analysis(compare_summary: dict[str, Any] | None) -> str:
     )
 
 
+def render_compare_metric_sections(compare_payloads: list[dict[str, Any]]) -> str:
+    if not compare_payloads:
+        return "<p class='empty'>Comparison metrics are not ready yet.</p>"
+
+    sections = []
+    for payload in compare_payloads:
+        title = str(payload.get("title", "Comparison"))
+        rows = payload.get("rows", [])
+        summary = payload.get("summary")
+        base_name = str(payload.get("base_name", "base"))
+        ft_name = str(payload.get("ft_name", "finetuned"))
+        sections.append(
+            "<section class='validation-card'>"
+            f"<h3>{html.escape(title)}</h3>"
+            f"{render_compare_analysis(summary)}"
+            f"{render_compare_metric_charts(rows, [base_name, ft_name])}"
+            f"{render_compare_metrics_table(rows, summary)}"
+            "</section>"
+        )
+    return f"<div class='validation-grid'>{''.join(sections)}</div>"
+
+
 def gather_compare_samples(
     benchmark_root: Path,
     portal_dir: Path,
@@ -998,19 +1020,40 @@ def gather_compare_samples(
     return model_names, sample_cards, model_summaries
 
 
-def load_compare_metrics_table(benchmark_root: Path) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+def load_compare_metrics_tables(benchmark_root: Path) -> list[dict[str, Any]]:
     runtime_root = benchmark_root / "runtime"
     compare_dirs = sorted(path for path in runtime_root.glob("comparison_*") if path.is_dir())
-    if not compare_dirs:
-        return [], None
-    compare_dir = compare_dirs[0]
-    csv_path = compare_dir / "comparison_metrics.csv"
-    summary_path = compare_dir / "comparison_summary.json"
-    rows = read_csv_rows(csv_path) if csv_path.is_file() else []
-    summary = read_json(summary_path) if summary_path.is_file() else None
-    if summary is not None:
-        summary["_compare_dir"] = str(compare_dir)
-    return rows, summary
+    payloads: list[dict[str, Any]] = []
+    for compare_dir in compare_dirs:
+        csv_path = compare_dir / "comparison_metrics.csv"
+        summary_path = compare_dir / "comparison_summary.json"
+        rows = read_csv_rows(csv_path) if csv_path.is_file() else []
+        summary = read_json(summary_path) if summary_path.is_file() else None
+        if summary is not None:
+            summary["_compare_dir"] = str(compare_dir)
+        base_name = None
+        ft_name = None
+        if isinstance(summary, dict):
+            base_name = summary.get("base", {}).get("model_name")
+            ft_name = summary.get("finetuned", {}).get("model_name")
+        if not base_name or not ft_name:
+            raw_name = compare_dir.name.removeprefix("comparison_")
+            if "_vs_" in raw_name:
+                base_name, ft_name = raw_name.split("_vs_", 1)
+            else:
+                base_name = base_name or "base"
+                ft_name = ft_name or "finetuned"
+        payloads.append(
+            {
+                "compare_dir": compare_dir,
+                "rows": rows,
+                "summary": summary,
+                "base_name": str(base_name),
+                "ft_name": str(ft_name),
+                "title": f"{base_name} vs {ft_name}",
+            }
+        )
+    return payloads
 
 
 def render_compare_overview_table(model_summaries: list[dict[str, Any]]) -> str:
@@ -1638,8 +1681,7 @@ def build_compare_html(
     model_names: list[str],
     samples: list[dict[str, Any]],
     model_summaries: list[dict[str, Any]],
-    compare_rows: list[dict[str, str]],
-    compare_summary: dict[str, Any] | None,
+    compare_payloads: list[dict[str, Any]],
 ) -> str:
     datasets = sorted({str(sample["dataset"]) for sample in samples})
     dataset_options = "".join(
@@ -1995,9 +2037,7 @@ def build_compare_html(
 
     <section class="section">
       <h2>Comparison Metrics</h2>
-      {render_compare_analysis(compare_summary)}
-      {render_compare_metric_charts(compare_rows, model_names)}
-      {render_compare_metrics_table(compare_rows, compare_summary)}
+      {render_compare_metric_sections(compare_payloads)}
     </section>
 
     <section class="section">
@@ -2051,13 +2091,12 @@ def main() -> None:
             portal_dir,
             model_names,
         )
-        compare_rows, compare_summary = load_compare_metrics_table(benchmark_root)
+        compare_payloads = load_compare_metrics_tables(benchmark_root)
         html_text = build_compare_html(
             model_names,
             samples,
             model_summaries,
-            compare_rows,
-            compare_summary,
+            compare_payloads,
         )
         index_path = portal_dir / "index.html"
         index_path.write_text(html_text, encoding="utf-8")
@@ -2065,7 +2104,7 @@ def main() -> None:
             "mode": "benchmark_compare",
             "model_names": model_names,
             "num_samples": len(samples),
-            "num_compare_rows": len(compare_rows),
+            "num_compare_sections": len(compare_payloads),
             "index_path": str(index_path),
         }
         (portal_dir / "build_summary.json").write_text(
