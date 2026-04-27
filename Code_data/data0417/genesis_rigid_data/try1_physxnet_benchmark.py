@@ -8108,6 +8108,7 @@ def simulate_in_genesis(
     environment_name_to_index = {name: idx for idx, name in enumerate(environment_names)}
     env_contact_series: List[np.ndarray] = []
     env_contact_impulse_series: List[np.ndarray] = []
+    previous_env_contact = np.zeros((sample_object_ids.shape[0], len(environment_names)), dtype=np.uint8)
     for frame_idx, frame_aabbs in enumerate(object_aabb_arr):
         frame_graph, frame_env_contacts = _contact_graph_with_environment(
             frame_aabbs,
@@ -8125,6 +8126,9 @@ def simulate_in_genesis(
                 float(frame_env_contact_impulse[obj_idx, env_idx]),
                 float(env_contact.get("impulse_peak", 0.0)),
             )
+            # Treat frame-0 support contact as background state rather than a collision.
+            if frame_idx <= 0 or previous_env_contact[obj_idx, env_idx] != 0:
+                continue
             environment_contact_events.append(
                 {
                     "event_id": len(environment_contact_events),
@@ -8141,6 +8145,7 @@ def simulate_in_genesis(
             )
         env_contact_series.append(frame_env_contact)
         env_contact_impulse_series.append(frame_env_contact_impulse)
+        previous_env_contact = frame_env_contact
     contact_graph_arr = np.stack(contact_graph_frames, axis=0).astype(np.uint8)
     contact_impulse_arr = np.zeros_like(contact_graph_arr, dtype=np.float32)
     env_contact_arr = np.stack(env_contact_series, axis=0).astype(np.uint8)

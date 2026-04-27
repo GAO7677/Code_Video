@@ -621,6 +621,7 @@ def generate_sample(
     env_contact_series = []
     env_contact_impulse_series = []
     environment_contact_events: List[Dict[str, Any]] = []
+    previous_env_contact = np.zeros((len(records), 1), dtype=np.uint8)
     for frame_idx, frame_aabbs in enumerate(aabb_frames):
         graph, env_contacts = try1._contact_graph_with_environment(frame_aabbs, object_ids=object_ids_arr.tolist(), ground_height=0.0)
         contact_graph_frames.append(graph)
@@ -629,6 +630,8 @@ def generate_sample(
         for env in env_contacts:
             obj_idx = int(env["object_idx"])
             env_contact[obj_idx, 0] = 1
+            if frame_idx <= 0 or previous_env_contact[obj_idx, 0] != 0:
+                continue
             environment_contact_events.append(
                 {
                     "event_id": len(environment_contact_events),
@@ -645,6 +648,7 @@ def generate_sample(
             )
         env_contact_series.append(env_contact)
         env_contact_impulse_series.append(env_impulse)
+        previous_env_contact = env_contact
     contact_graph_arr = np.stack(contact_graph_frames, axis=0).astype(np.uint8)
     contact_impulse_arr = np.zeros_like(contact_graph_arr, dtype=np.float32)
     env_contact_arr = np.stack(env_contact_series, axis=0).astype(np.uint8)
@@ -901,8 +905,8 @@ train/
 | `physics/contact_impulse.npy` | `[T,N,N] float32` | placeholder impulse values; currently zeros |
 | `physics/env_contact.npy` | `[T,N,1] uint8` | object-ground contact, ground special id = -1 |
 | `physics/frame_phase.npy` | `[T] int8` | phase labels inferred from contacts |
-| `physics/collision_events.json` | JSON list | object-object plus ground contact events |
-| `physics/event_windows.json` | JSON list | contact windows |
+| `physics/collision_events.json` | JSON list | object-object contact windows plus environment contact onsets after frame 0 |
+| `physics/event_windows.json` | JSON list | contact windows; frame-0 support contact is excluded from collision windows |
 | `physics/properties.json` | JSON | physical property export; runtime restitution is null if unavailable |
 
 ## `rigid_kinematics.npz`

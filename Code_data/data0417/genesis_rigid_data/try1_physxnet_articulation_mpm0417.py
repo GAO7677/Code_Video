@@ -2509,6 +2509,66 @@ def _summarize_contact_windows(contact_graph_frames: np.ndarray, object_ids: np.
     return frame_phase.astype(np.int8), event_windows, collision_events
 
 
+def summarize_environment_contact_windows(
+    environment_contact_events: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    grouped: Dict[Tuple[int, int, str], List[Dict[str, Any]]] = {}
+    for event in environment_contact_events:
+        participants = event.get("participants", [])
+        if len(participants) != 2:
+            continue
+        if int(participants[1]) >= 0:
+            continue
+        key = (
+            int(participants[0]),
+            int(participants[1]),
+            str(event.get("environment_name", "environment")),
+        )
+        grouped.setdefault(key, []).append(dict(event))
+
+    windows: List[Dict[str, Any]] = []
+    window_id = 0
+    for (_, _, env_name), records in grouped.items():
+        records = sorted(records, key=lambda item: int(item.get("frame_idx", item.get("start_frame", -1))))
+        if not records:
+            continue
+        start_idx = 0
+        while start_idx < len(records):
+            end_idx = start_idx
+            while (
+                end_idx + 1 < len(records)
+                and int(records[end_idx + 1].get("frame_idx", records[end_idx + 1].get("start_frame", -1)))
+                <= int(records[end_idx].get("frame_idx", records[end_idx].get("start_frame", -1))) + 1
+            ):
+                end_idx += 1
+            chunk = records[start_idx : end_idx + 1]
+            impulses = [float(item.get("impulse_peak", 0.0)) for item in chunk]
+            peak_rel = int(np.argmax(np.asarray(impulses, dtype=np.float32))) if impulses else 0
+            peak_record = chunk[peak_rel]
+            duration = int(
+                int(chunk[-1].get("frame_idx", chunk[-1].get("end_frame", -1)))
+                - int(chunk[0].get("frame_idx", chunk[0].get("start_frame", -1)))
+                + 1
+            )
+            windows.append(
+                {
+                    "window_id": int(window_id),
+                    "window_type": "contact_onset" if duration <= 1 else "sustained_contact",
+                    "participants": list(chunk[0]["participants"]),
+                    "participant_indices": list(chunk[0].get("object_indices", [])),
+                    "environment_name": env_name,
+                    "start_frame": int(chunk[0].get("frame_idx", chunk[0].get("start_frame", -1))),
+                    "peak_frame": int(peak_record.get("frame_idx", peak_record.get("peak_frame", -1))),
+                    "end_frame": int(chunk[-1].get("frame_idx", chunk[-1].get("end_frame", -1))),
+                    "impulse_peak": float(max(impulses) if impulses else 0.0),
+                    "contact_duration": int(duration),
+                }
+            )
+            window_id += 1
+            start_idx = end_idx + 1
+    return windows
+
+
 def _build_flow_fallback(
     com_uv: np.ndarray,
     visibility_mask: np.ndarray,
@@ -8856,6 +8916,9 @@ def simulate_in_genesis(
     object_aabb_arr = object_aabb_frames
     contact_graph_frames = []
     environment_contact_events: List[Dict[str, Any]] = []
+    environment_names = ["ground"]
+    environment_name_to_index = {name: idx for idx, name in enumerate(environment_names)}
+    previous_env_contact = np.zeros((sample_object_ids.shape[0], len(environment_names)), dtype=np.uint8)
     for frame_idx, frame_aabbs in enumerate(object_aabb_arr):
         frame_graph, frame_env_contacts = _contact_graph_with_environment(
             frame_aabbs,
@@ -8863,23 +8926,34 @@ def simulate_in_genesis(
             ground_height=0.0,
         )
         contact_graph_frames.append(frame_graph)
+        frame_env_contact = np.zeros((sample_object_ids.shape[0], len(environment_names)), dtype=np.uint8)
         for env_contact in frame_env_contacts:
+            obj_idx = int(env_contact["object_idx"])
+            env_name = str(env_contact.get("environment_name", "ground"))
+            env_idx = environment_name_to_index[env_name]
+            frame_env_contact[obj_idx, env_idx] = 1
+            # Treat frame-0 ground contact as support contact, not a collision event.
+            if frame_idx <= 0 or previous_env_contact[obj_idx, env_idx] != 0:
+                continue
             environment_contact_events.append(
                 {
                     "event_id": len(environment_contact_events),
                     "participants": [int(env_contact["object_id"]), int(env_contact["environment_id"])],
-                    "object_indices": [int(env_contact["object_idx"]), -1],
+                    "object_indices": [obj_idx, -1],
+                    "frame_idx": int(frame_idx),
                     "start_frame": int(frame_idx),
                     "peak_frame": int(frame_idx),
                     "end_frame": int(frame_idx),
                     "impulse_peak": float(env_contact.get("impulse_peak", 0.0)),
                     "contact_duration": 1,
-                    "environment_name": str(env_contact["environment_name"]),
+                    "environment_name": env_name,
                 }
             )
+        previous_env_contact = frame_env_contact
     contact_graph_arr = np.stack(contact_graph_frames, axis=0).astype(np.uint8)
     contact_impulse_arr = np.zeros_like(contact_graph_arr, dtype=np.float32)
     frame_phase_arr, event_windows, collision_events = _summarize_contact_windows(contact_graph_arr, sample_object_ids)
+    env_event_windows = summarize_environment_contact_windows(environment_contact_events)
     collision_events.extend(environment_contact_events)
     anchor_targets = compute_anchor_targets(
         seg_frames=seg_arr,
@@ -8977,7 +9051,7 @@ def simulate_in_genesis(
     with open(case_dir / "physics" / "collision_events.json", "w", encoding="utf-8") as f:
         json.dump(collision_events, f, ensure_ascii=False, indent=2)
     with open(case_dir / "physics" / "event_windows.json", "w", encoding="utf-8") as f:
-        json.dump(event_windows + environment_contact_events, f, ensure_ascii=False, indent=2)
+        json.dump(event_windows + env_event_windows, f, ensure_ascii=False, indent=2)
     properties_payload = {
         "object_ids": sample_object_ids.astype(np.int32).tolist(),
         "sampled_restitution": [None for _ in sample_object_ids],
