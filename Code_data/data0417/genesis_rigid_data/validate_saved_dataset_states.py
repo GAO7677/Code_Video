@@ -994,6 +994,33 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       max-height: 220px;
       overflow: auto;
     }}
+    .event-groups {{
+      display: grid;
+      gap: 12px;
+    }}
+    .event-group {{
+      display: grid;
+      gap: 8px;
+    }}
+    .event-group-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }}
+    .event-group-head strong {{
+      color: var(--ink);
+    }}
+    .event-empty {{
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      color: var(--muted);
+      background: rgba(255,255,255,0.42);
+      font-size: 0.86rem;
+    }}
     .event-item {{
       padding: 10px 12px;
       border-radius: 12px;
@@ -1111,7 +1138,7 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
         </p>
         <p class="sub">
           深度颜色使用主目标可见帧内的相对深度范围；速度箭头使用逐帧有限差分，单位是像素 / 帧。
-          碰撞摘要优先显示与主对象相关的非环境碰撞窗口。
+          页面会同时拆开展示主对象碰撞、其他物体碰撞以及环境接触，避免把全量事件误看成只有主对象。
         </p>
         <div class="stats">
           <div class="pill" id="countPill">加载中</div>
@@ -1278,7 +1305,7 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
                     <div>${{escapeHtml(item.object_summary)}}</div>
                   </div>
                   <div class="info-panel">
-                    <div class="panel-kicker">Collision Events</div>
+                    <div class="panel-kicker">Collision Breakdown</div>
                     <div class="event-list" data-collision-events="${{encodeURI(item.state_json)}}"></div>
                   </div>
                   <div class="info-panel">
@@ -1393,6 +1420,64 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       return `rgb(${{arr[0]}}, ${{arr[1]}}, ${{arr[2]}})`;
     }}
 
+    function collisionParticipants(event) {{
+      return Array.isArray(event && event.participant_indices)
+        ? event.participant_indices.map((value) => Number(value))
+        : [];
+    }}
+
+    function categorizeCollisionEvents(payload, events) {{
+      const primaryIndex = Number(payload && payload.primary_object_index);
+      const buckets = {{
+        primaryObjectEvents: [],
+        otherObjectEvents: [],
+        environmentEvents: [],
+      }};
+      (Array.isArray(events) ? events : []).forEach((event) => {{
+        const participants = collisionParticipants(event);
+        if (event && event.is_environment) {{
+          buckets.environmentEvents.push(event);
+        }} else if (participants.includes(primaryIndex)) {{
+          buckets.primaryObjectEvents.push(event);
+        }} else {{
+          buckets.otherObjectEvents.push(event);
+        }}
+      }});
+      return buckets;
+    }}
+
+    function renderEventItems(events) {{
+      if (!events.length) {{
+        return '<div class="event-empty">none</div>';
+      }}
+      return events.map((event) => {{
+        const env = event.environment_name ? ` env=${{event.environment_name}}` : '';
+        const ids = collisionParticipants(event).join(', ');
+        const kind = event.is_environment ? 'environment' : 'object-object';
+        const typeText = event.window_type || kind;
+        return `
+          <div class="event-item">
+            <div><strong>event_id=${{event.event_id}}</strong> <span>${{escapeHtml(typeText)}}</span></div>
+            <div>${{escapeHtml(event.label)}}</div>
+            <div>participant_indices=[${{escapeHtml(ids)}}]${{escapeHtml(env)}}</div>
+            <div>frames: s=${{event.start_frame}}, p=${{event.peak_frame}}, e=${{event.end_frame}}</div>
+          </div>
+        `;
+      }}).join("");
+    }}
+
+    function renderEventGroup(title, events) {{
+      return `
+        <section class="event-group">
+          <div class="event-group-head">
+            <strong>${{escapeHtml(title)}}</strong>
+            <span>${{events.length}} events</span>
+          </div>
+          <div class="event-list">${{renderEventItems(events)}}</div>
+        </section>
+      `;
+    }}
+
     function drawOverlayFrame(canvas, video, payload, fallbackFps) {{
       const ctx = canvas.getContext("2d");
       if (!ctx || !payload || !payload.objects || !payload.objects.length || !video.videoWidth || !video.videoHeight) {{
@@ -1405,6 +1490,7 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       const primaryFrame = primaryFrames.length ? primaryFrames[Math.max(0, Math.min(primaryFrames.length - 1, frameIdx))] : null;
       const frameCollisionMap = payload.frame_collision_records_all || {{}};
       const allFrameRecords = frameCollisionMap[String(frameIdx)] || [];
+      const groupedFrameRecords = categorizeCollisionEvents(payload, allFrameRecords);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
@@ -1476,13 +1562,19 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
         lines.push(`primary vis=${{primaryFrame.vis}} u=${{primaryFrame.u.toFixed(1)}} v=${{primaryFrame.v.toFixed(1)}} d=${{primaryFrame.d.toFixed(3)}} vel=(${{primaryFrame.du.toFixed(2)}}, ${{primaryFrame.dv.toFixed(2)}}, ${{primaryFrame.dd.toFixed(3)}})`);
       }}
       if (primaryFrame && primaryFrame.collision_tags && primaryFrame.collision_tags.length) {{
-        lines.push(`collision: ${{primaryFrame.collision_tags.join(" | ")}}`);
+        lines.push(`primary-collisions: ${{primaryFrame.collision_tags.join(" | ")}}`);
       }}
-      if (allFrameRecords.length) {{
-        const detail = allFrameRecords
+      if (groupedFrameRecords.otherObjectEvents.length) {{
+        const detail = groupedFrameRecords.otherObjectEvents
           .map((rec) => `id=${{rec.event_id}} ${{rec.phase}} ${{rec.label}}`)
           .join(" | ");
-        lines.push(`all-collisions: ${{detail}}`);
+        lines.push(`other-object-collisions: ${{detail}}`);
+      }}
+      if (groupedFrameRecords.environmentEvents.length) {{
+        const detail = groupedFrameRecords.environmentEvents
+          .map((rec) => `id=${{rec.event_id}} ${{rec.phase}} ${{rec.label}}`)
+          .join(" | ");
+        lines.push(`environment-contacts: ${{detail}}`);
       }}
 
       const bannerHeight = 16 + lines.length * 22;
@@ -1518,24 +1610,14 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
             return;
           }}
           const items = payload.all_collision_windows || [];
-          if (!items.length) {{
-            collisionPanel.innerHTML = '<div class="event-item">none</div>';
-            return;
-          }}
-          collisionPanel.innerHTML = items.map((event) => {{
-            const env = event.environment_name ? ` env=${{event.environment_name}}` : '';
-            const ids = (event.participant_indices || []).join(', ');
-            const kind = event.is_environment ? 'environment' : 'object-object';
-            const typeText = event.window_type || kind;
-            return `
-              <div class="event-item">
-                <div><strong>event_id=${{event.event_id}}</strong> <span>${{escapeHtml(typeText)}}</span></div>
-                <div>${{escapeHtml(event.label)}}</div>
-                <div>participant_indices=[${{escapeHtml(ids)}}]${{escapeHtml(env)}}</div>
-                <div>frames: s=${{event.start_frame}}, p=${{event.peak_frame}}, e=${{event.end_frame}}</div>
-              </div>
-            `;
-          }}).join("");
+          const grouped = categorizeCollisionEvents(payload, items);
+          collisionPanel.innerHTML = `
+            <div class="event-groups">
+              ${{renderEventGroup("Primary Object Collisions", grouped.primaryObjectEvents)}}
+              ${{renderEventGroup("Other Object Collisions", grouped.otherObjectEvents)}}
+              ${{renderEventGroup("Environment Contacts", grouped.environmentEvents)}}
+            </div>
+          `;
         }}
 
         function renderLegend() {{

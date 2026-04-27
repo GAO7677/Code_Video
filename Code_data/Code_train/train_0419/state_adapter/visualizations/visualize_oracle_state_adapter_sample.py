@@ -797,51 +797,17 @@ def compute_shape_flow(args: argparse.Namespace, index: int) -> dict:
         shared = inputs[0]
         adapter = module.pipe.animate_adapter
         oracle_state = shared["oracle_state"]
-        oracle_visibility = shared["oracle_visibility"]
-        object_id_tokens = shared["oracle_object_id_tokens"]
-        role_tokens = shared["oracle_role_tokens"]
-        source_tokens = shared["oracle_source_tokens"]
-        category_tokens = shared["oracle_category_tokens"]
-
         raw_oracle_state_shape = tuple(oracle_state.shape)
-        raw_visibility_shape = tuple(oracle_visibility.shape)
-        raw_object_token_shape = tuple(object_id_tokens.shape)
 
         if oracle_state.dim() == 3:
             oracle_state_b = oracle_state.unsqueeze(0)
         else:
             oracle_state_b = oracle_state
-        if oracle_visibility.dim() == 2:
-            oracle_visibility_b = oracle_visibility.unsqueeze(0)
-        else:
-            oracle_visibility_b = oracle_visibility
-        if object_id_tokens.dim() == 1:
-            object_id_tokens_b = object_id_tokens.unsqueeze(0)
-            role_tokens_b = role_tokens.unsqueeze(0)
-            source_tokens_b = source_tokens.unsqueeze(0)
-            category_tokens_b = category_tokens.unsqueeze(0)
-        else:
-            object_id_tokens_b = object_id_tokens
-            role_tokens_b = role_tokens
-            source_tokens_b = source_tokens
-            category_tokens_b = category_tokens
 
         batch, raw_frames, num_objects, state_dim = oracle_state_b.shape
-        static_cat = torch.cat(
-            [
-                adapter.object_embed(object_id_tokens_b),
-                adapter.role_embed(role_tokens_b),
-                adapter.source_embed(source_tokens_b),
-                adapter.category_embed(category_tokens_b),
-            ],
-            dim=-1,
-        )
-        static_proj = adapter.static_proj(static_cat)
-        static_expand = static_proj.unsqueeze(1).expand(batch, raw_frames, num_objects, adapter.hidden_dim)
         dynamic_tokens = adapter.state_mlp(oracle_state_b)
-        object_tokens = dynamic_tokens + static_expand
-        valid_mask = oracle_visibility_b > 0.5
-        frame_tokens_before_temporal = adapter.frame_pool(object_tokens, valid_mask=valid_mask)
+        valid_mask = oracle_state_b[..., -1] > 0.5
+        frame_tokens_before_temporal = adapter.frame_pool(dynamic_tokens, valid_mask=valid_mask)
         frame_tokens_after_temporal = adapter.temporal_encoder(frame_tokens_before_temporal)
 
         latents = shared["latents"]
@@ -856,11 +822,6 @@ def compute_shape_flow(args: argparse.Namespace, index: int) -> dict:
 
         future_plan_tokens = adapter.encode_future_plan(
             oracle_state=oracle_state,
-            oracle_visibility=oracle_visibility,
-            object_id_tokens=object_id_tokens,
-            role_tokens=role_tokens,
-            source_tokens=source_tokens,
-            category_tokens=category_tokens,
             target_frames=future_latent_frames,
         )
         modulation = adapter.modulation_heads[0](future_plan_tokens)
@@ -879,58 +840,22 @@ def compute_shape_flow(args: argparse.Namespace, index: int) -> dict:
                 "explanation": "从数据集读出的 future 9 维状态，按 [K, N, 9] 排列。这里 K=13, N=3。",
             },
             {
-                "stage": "dataset",
-                "tensor": "oracle_visibility",
-                "shape": format_shape(raw_visibility_shape),
-                "explanation": "future 帧可见性掩码，按 [K, N] 排列。",
-            },
-            {
-                "stage": "dataset",
-                "tensor": "object_id / role / source / category tokens",
-                "shape": format_shape(raw_object_token_shape),
-                "explanation": "每个物体一个离散 id，shape 是 [N]，进入 adapter 前会自动补 batch 维。",
-            },
-            {
                 "stage": "adapter input",
                 "tensor": "oracle_state (batched)",
                 "shape": format_shape(tuple(oracle_state_b.shape)),
                 "explanation": "进入 encode_future_plan 后补 batch 维，变成 [B, K, N, 9]。",
             },
             {
-                "stage": "static embed",
-                "tensor": "static_cat",
-                "shape": format_shape(tuple(static_cat.shape)),
-                "explanation": "四类静态 embedding 查表后拼接，得到每个物体一个静态向量 [B, N, 192]。",
-            },
-            {
-                "stage": "static proj",
-                "tensor": "static_proj",
-                "shape": format_shape(tuple(static_proj.shape)),
-                "explanation": "静态 embedding 经两层 MLP 映射到 hidden dim=1024，仍然是一物体一个 token。",
-            },
-            {
-                "stage": "static expand",
-                "tensor": "static_tokens",
-                "shape": format_shape(tuple(static_expand.shape)),
-                "explanation": "把每个物体的静态 token 复制到每个 future 帧，对齐成 [B, K, N, 1024]。",
-            },
-            {
                 "stage": "state mlp",
                 "tensor": "dynamic_tokens",
                 "shape": format_shape(tuple(dynamic_tokens.shape)),
-                "explanation": "9 维动态状态经过两层 MLP，得到每帧每物体一个动态 token。",
-            },
-            {
-                "stage": "object fusion",
-                "tensor": "object_tokens",
-                "shape": format_shape(tuple(object_tokens.shape)),
-                "explanation": "动态 token 与静态 token 相加，形成最终的 object-level condition token。",
+                "explanation": "9 维动态状态经过两层 MLP，得到每帧每物体一个动态 token，不再引入 object/source/category 等静态身份信息。",
             },
             {
                 "stage": "frame pool",
                 "tensor": "frame_tokens",
                 "shape": format_shape(tuple(frame_tokens_before_temporal.shape)),
-                "explanation": "同一帧内对 N 个物体 token 做 attention pooling，压成每帧一个 token [B, K, 1024]。",
+                "explanation": "同一帧内对 N 个物体的动态 token 做 attention pooling，压成每帧一个 token [B, K, 1024]。",
             },
             {
                 "stage": "temporal encoder",

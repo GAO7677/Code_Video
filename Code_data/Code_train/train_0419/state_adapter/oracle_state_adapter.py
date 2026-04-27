@@ -49,30 +49,12 @@ class OracleStateAdapter(torch.nn.Module):
         temporal_layers: int = 2,
         temporal_heads: int = 8,
         pool_heads: int = 4,
-        object_vocab_size: int = 65536,
-        text_vocab_size: int = 4096,
-        object_embed_dim: int = 64,
-        role_embed_dim: int = 32,
-        source_embed_dim: int = 32,
-        category_embed_dim: int = 64,
         condition_dropout: float = 0.1,
     ):
         super().__init__()
         self.hidden_dim = int(hidden_dim)
         self.dit_dim = int(dit_dim)
         self.condition_dropout = float(condition_dropout)
-
-        self.object_embed = torch.nn.Embedding(object_vocab_size, object_embed_dim)
-        self.role_embed = torch.nn.Embedding(text_vocab_size, role_embed_dim)
-        self.source_embed = torch.nn.Embedding(text_vocab_size, source_embed_dim)
-        self.category_embed = torch.nn.Embedding(text_vocab_size, category_embed_dim)
-
-        static_in_dim = object_embed_dim + role_embed_dim + source_embed_dim + category_embed_dim
-        self.static_proj = torch.nn.Sequential(
-            torch.nn.Linear(static_in_dim, hidden_dim),
-            torch.nn.SiLU(),
-            torch.nn.Linear(hidden_dim, hidden_dim),
-        )
         self.state_mlp = torch.nn.Sequential(
             torch.nn.Linear(state_dim, mlp_hidden_dim),
             torch.nn.SiLU(),
@@ -92,17 +74,18 @@ class OracleStateAdapter(torch.nn.Module):
             encoder_layer,
             num_layers=temporal_layers,
         )
-        self.modulation_heads = torch.nn.ModuleList(
-            [
-                torch.nn.Sequential(
-                    torch.nn.LayerNorm(hidden_dim),
-                    torch.nn.Linear(hidden_dim, hidden_dim),
-                    torch.nn.SiLU(),
-                    torch.nn.Linear(hidden_dim, dit_dim * 2),
-                )
-                for _ in range(num_layers)
-            ]
-        )
+        self.modulation_heads = torch.nn.ModuleList()
+        for _ in range(num_layers):
+            head = torch.nn.Sequential(
+                torch.nn.LayerNorm(hidden_dim),
+                torch.nn.Linear(hidden_dim, hidden_dim),
+                torch.nn.SiLU(),
+                torch.nn.Linear(hidden_dim, dit_dim * 2),
+            )
+            # Start from an exact no-op so Wan behavior is unchanged at step 0.
+            torch.nn.init.zeros_(head[-1].weight)
+            torch.nn.init.zeros_(head[-1].bias)
+            self.modulation_heads.append(head)
 
     def _maybe_dropout(self, token_seq: torch.Tensor) -> torch.Tensor:
         if self.training and self.condition_dropout > 0.0:
@@ -113,41 +96,24 @@ class OracleStateAdapter(torch.nn.Module):
     def encode_future_plan(
         self,
         oracle_state: torch.Tensor,
-        oracle_visibility: torch.Tensor,
-        object_id_tokens: torch.Tensor,
-        role_tokens: torch.Tensor,
-        source_tokens: torch.Tensor,
-        category_tokens: torch.Tensor,
         target_frames: int,
+        oracle_visibility: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if oracle_state.dim() == 3:
             oracle_state = oracle_state.unsqueeze(0)
-        if oracle_visibility.dim() == 2:
+        if oracle_visibility is not None and oracle_visibility.dim() == 2:
             oracle_visibility = oracle_visibility.unsqueeze(0)
-        if object_id_tokens.dim() == 1:
-            object_id_tokens = object_id_tokens.unsqueeze(0)
-            role_tokens = role_tokens.unsqueeze(0)
-            source_tokens = source_tokens.unsqueeze(0)
-            category_tokens = category_tokens.unsqueeze(0)
 
         batch, raw_frames, num_objects, _ = oracle_state.shape
         if target_frames <= 0:
             return oracle_state.new_zeros((batch, 0, self.hidden_dim))
 
-        static_tokens = torch.cat(
-            [
-                self.object_embed(object_id_tokens),
-                self.role_embed(role_tokens),
-                self.source_embed(source_tokens),
-                self.category_embed(category_tokens),
-            ],
-            dim=-1,
-        )
-        static_tokens = self.static_proj(static_tokens).unsqueeze(1).expand(batch, raw_frames, num_objects, self.hidden_dim)
         dynamic_tokens = self.state_mlp(oracle_state)
-        object_tokens = dynamic_tokens + static_tokens
-        valid_mask = oracle_visibility > 0.5
-        frame_tokens = self.frame_pool(object_tokens, valid_mask=valid_mask)
+        if oracle_visibility is None:
+            valid_mask = oracle_state[..., -1] > 0.5
+        else:
+            valid_mask = oracle_visibility > 0.5
+        frame_tokens = self.frame_pool(dynamic_tokens, valid_mask=valid_mask)
         frame_tokens = self.temporal_encoder(frame_tokens)
         frame_tokens = self._maybe_dropout(frame_tokens)
 

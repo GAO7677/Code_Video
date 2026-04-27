@@ -138,10 +138,6 @@ def model_fn_wan_video_with_state_context(
     num_clean_prefix_latents: Optional[int] = None,
     oracle_state: Optional[torch.Tensor] = None,
     oracle_visibility: Optional[torch.Tensor] = None,
-    oracle_object_id_tokens: Optional[torch.Tensor] = None,
-    oracle_role_tokens: Optional[torch.Tensor] = None,
-    oracle_source_tokens: Optional[torch.Tensor] = None,
-    oracle_category_tokens: Optional[torch.Tensor] = None,
     **kwargs,
 ):
     if sliding_window_size is not None and sliding_window_stride is not None:
@@ -167,10 +163,6 @@ def model_fn_wan_video_with_state_context(
             num_clean_prefix_latents=num_clean_prefix_latents,
             oracle_state=oracle_state,
             oracle_visibility=oracle_visibility,
-            oracle_object_id_tokens=oracle_object_id_tokens,
-            oracle_role_tokens=oracle_role_tokens,
-            oracle_source_tokens=oracle_source_tokens,
-            oracle_category_tokens=oracle_category_tokens,
         )
         return TemporalTiler_BCTHW().run(
             model_fn_wan_video_with_state_context,
@@ -269,11 +261,6 @@ def model_fn_wan_video_with_state_context(
     if animate_adapter is not None and oracle_state is not None and future_latent_frames > 0:
         state_plan_tokens = animate_adapter.encode_future_plan(
             oracle_state=oracle_state,
-            oracle_visibility=oracle_visibility,
-            object_id_tokens=oracle_object_id_tokens,
-            role_tokens=oracle_role_tokens,
-            source_tokens=oracle_source_tokens,
-            category_tokens=oracle_category_tokens,
             target_frames=future_latent_frames,
         )
 
@@ -375,12 +362,6 @@ class StateAwareWanTrainingModule(DiffusionTrainingModule):
         state_temporal_layers=2,
         state_temporal_heads=8,
         state_pool_heads=4,
-        object_vocab_size=65536,
-        text_vocab_size=4096,
-        object_embed_dim=64,
-        role_embed_dim=32,
-        source_embed_dim=32,
-        category_embed_dim=64,
         condition_dropout=0.1,
     ):
         super().__init__()
@@ -406,12 +387,6 @@ class StateAwareWanTrainingModule(DiffusionTrainingModule):
             temporal_layers=state_temporal_layers,
             temporal_heads=state_temporal_heads,
             pool_heads=state_pool_heads,
-            object_vocab_size=object_vocab_size,
-            text_vocab_size=text_vocab_size,
-            object_embed_dim=object_embed_dim,
-            role_embed_dim=role_embed_dim,
-            source_embed_dim=source_embed_dim,
-            category_embed_dim=category_embed_dim,
             condition_dropout=condition_dropout,
         )
         self.pipe.model_fn = model_fn_wan_video_with_state_context
@@ -452,11 +427,6 @@ class StateAwareWanTrainingModule(DiffusionTrainingModule):
             "max_timestep_boundary": self.max_timestep_boundary,
             "min_timestep_boundary": self.min_timestep_boundary,
             "oracle_state": data["oracle_state"],
-            "oracle_visibility": data["oracle_visibility"],
-            "oracle_object_id_tokens": data["oracle_object_id_tokens"],
-            "oracle_role_tokens": data["oracle_role_tokens"],
-            "oracle_source_tokens": data["oracle_source_tokens"],
-            "oracle_category_tokens": data["oracle_category_tokens"],
         }
         return inputs_shared, inputs_posi, inputs_nega
 
@@ -476,8 +446,6 @@ def build_dataset(args):
         width=args.width,
         dataset_repeat=args.dataset_repeat,
         max_pixels=args.max_pixels,
-        object_vocab_size=args.object_vocab_size,
-        text_vocab_size=args.text_vocab_size,
         use_normalized_state=not args.use_raw_state,
     )
 
@@ -501,12 +469,6 @@ def build_model(args, accelerator):
         state_temporal_layers=args.state_temporal_layers,
         state_temporal_heads=args.state_temporal_heads,
         state_pool_heads=args.state_pool_heads,
-        object_vocab_size=args.object_vocab_size,
-        text_vocab_size=args.text_vocab_size,
-        object_embed_dim=args.object_embed_dim,
-        role_embed_dim=args.role_embed_dim,
-        source_embed_dim=args.source_embed_dim,
-        category_embed_dim=args.category_embed_dim,
         condition_dropout=args.condition_dropout,
     )
 
@@ -544,12 +506,6 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--state_temporal_layers", type=int, default=2)
     parser.add_argument("--state_temporal_heads", type=int, default=8)
     parser.add_argument("--state_pool_heads", type=int, default=4)
-    parser.add_argument("--object_vocab_size", type=int, default=65536)
-    parser.add_argument("--text_vocab_size", type=int, default=4096)
-    parser.add_argument("--object_embed_dim", type=int, default=64)
-    parser.add_argument("--role_embed_dim", type=int, default=32)
-    parser.add_argument("--source_embed_dim", type=int, default=32)
-    parser.add_argument("--category_embed_dim", type=int, default=64)
     parser.add_argument("--condition_dropout", type=float, default=0.1)
     parser.add_argument("--use_raw_state", action="store_true")
     return parser

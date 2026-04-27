@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -20,11 +19,6 @@ from dataset import WAN_SPATIAL_DIVISIBILITY
 from diffsynth.core.data.operators import ImageCropAndResize
 
 
-def stable_hash_id(text: str, vocab_size: int) -> int:
-    digest = hashlib.md5(str(text).encode("utf-8")).hexdigest()
-    return int(digest[:8], 16) % int(vocab_size)
-
-
 def load_prompt(meta: Dict[str, object]) -> str:
     prompt = str(meta.get("prompt", "")).strip()
     if prompt:
@@ -40,14 +34,10 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
         width: int,
         dataset_repeat: int = 1,
         max_pixels: int = 1024 * 1024,
-        object_vocab_size: int = 65536,
-        text_vocab_size: int = 4096,
         use_normalized_state: bool = True,
     ):
         self.dataset_root = Path(dataset_root)
         self.dataset_repeat = int(dataset_repeat)
-        self.object_vocab_size = int(object_vocab_size)
-        self.text_vocab_size = int(text_vocab_size)
         self.use_normalized_state = bool(use_normalized_state)
         self.load_from_cache = False
         self.frame_processor = ImageCropAndResize(
@@ -85,40 +75,6 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
         payload = np.load(window_dir / "state_pair.npz")
         state_key = "y_state_norm" if self.use_normalized_state else "y_state_raw"
         future_state = torch.from_numpy(payload[state_key]).float()
-        future_visibility = torch.from_numpy(payload["y_visibility"]).float()
-
-        objects = meta.get("objects", [])
-        object_id_tokens = []
-        role_tokens = []
-        source_tokens = []
-        category_tokens = []
-        for obj in objects:
-            obj = dict(obj) if isinstance(obj, dict) else {}
-            object_id_tokens.append(
-                stable_hash_id(
-                    obj.get("source_object_id", obj.get("object_id", "unknown")),
-                    self.object_vocab_size,
-                )
-            )
-            role_tokens.append(
-                stable_hash_id(obj.get("role", "unknown"), self.text_vocab_size)
-            )
-            source_tokens.append(
-                stable_hash_id(
-                    obj.get("source_tag", obj.get("dataset_source", "unknown")),
-                    self.text_vocab_size,
-                )
-            )
-            category_tokens.append(
-                stable_hash_id(obj.get("category", obj.get("name", "unknown")), self.text_vocab_size)
-            )
-
-        num_objects = int(future_state.shape[1])
-        while len(object_id_tokens) < num_objects:
-            object_id_tokens.append(stable_hash_id(f"pad_object_{len(object_id_tokens)}", self.object_vocab_size))
-            role_tokens.append(stable_hash_id("unknown", self.text_vocab_size))
-            source_tokens.append(stable_hash_id("unknown", self.text_vocab_size))
-            category_tokens.append(stable_hash_id("unknown", self.text_vocab_size))
 
         context_paths = meta["x_frame_paths"]
         future_paths = meta["y_frame_paths"]
@@ -131,11 +87,6 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             "prompt": load_prompt(meta),
             "context_video": context_video,
             "oracle_state": future_state,
-            "oracle_visibility": future_visibility,
-            "oracle_object_id_tokens": torch.tensor(object_id_tokens[:num_objects], dtype=torch.long),
-            "oracle_role_tokens": torch.tensor(role_tokens[:num_objects], dtype=torch.long),
-            "oracle_source_tokens": torch.tensor(source_tokens[:num_objects], dtype=torch.long),
-            "oracle_category_tokens": torch.tensor(category_tokens[:num_objects], dtype=torch.long),
             "future_len": int(meta["future_len"]),
             "context_len": int(meta["context_len"]),
             "window_dir": str(window_dir),
