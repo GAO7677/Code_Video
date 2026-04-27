@@ -1,0 +1,155 @@
+{
+  "height": 384,
+  "width": 672,
+  "num_frames": 24,
+  "cases": [
+    {
+      "case_id": "openvid_case_1",
+      "dataset": "OpenVid",
+      "strategy": "prefix",
+      "sample_ref": "openvid_case_1",
+      "prompt": "The video captures the majestic beauty of a mountain range, showcasing its grandeur and the surrounding landscape. The first frame presents a wide shot of the mountain range, its peaks reaching towards the clear blue sky. The second frame zooms in, revealing the rugged terrain and the lush greenery that covers the mountains. The third frame offers a closer view, highlighting the intricate details of the mountain's surface and the vibrant colors of the vegetation. The video is a testament to the awe-inspiring power of nature, captured through the lens of a drone.",
+      "frame_count": 24,
+      "context_indices": [
+        0,
+        1
+      ],
+      "source_paths": {
+        "openvid_row_index": "45004"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_full.mp4",
+        "context_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_context.mp4",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_first.png"
+      }
+    },
+    {
+      "case_id": "openvid_case_2",
+      "dataset": "OpenVid",
+      "strategy": "first_frame",
+      "sample_ref": "openvid_case_2",
+      "prompt": "In the video, a young boy and girl are engaged in a conversation at a desk. The boy, wearing a green baseball cap, is standing while the girl, dressed in a pink shirt, is seated. They are both looking at a laptop that is open on the desk. The desk is also equipped with a lamp and a mouse. The room they are in has a playful atmosphere, with a rug featuring a colorful pattern on the floor and a clock on the wall. The scene suggests a casual, friendly interaction between the two characters.",
+      "frame_count": 24,
+      "context_indices": [
+        0
+      ],
+      "source_paths": {
+        "openvid_row_index": "30222"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_full.mp4",
+        "context_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_context.mp4",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_first.png"
+      }
+    },
+    {
+      "case_id": "movi_d_case_1",
+      "dataset": "MOVI-D",
+      "strategy": "sparse",
+      "sample_ref": "movi_d_case_1",
+      "prompt": "A synthetic Kubric scene on a venice sunrise background with 9 object(s), including Twinlab Premium Creatine Fuel Powder, Ortho Forward Facing, Office Depot HP 564XL Ink Cartridge Black CN684WN, LEGO Duplo Creative Animals 10573. 3 object(s) are dynamic.",
+      "frame_count": 24,
+      "context_indices": [
+        0,
+        3,
+        7,
+        10,
+        13,
+        16,
+        20,
+        23
+      ],
+      "source_paths": {
+        "split": "train",
+        "shard_path": "/data/gaoya/dataset/kubric_tfds_movi-d/train/movi_d-train.tfrecord-00147-of-01024",
+        "record_index": "7"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_full.mp4",
+        "context_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_context.mp4",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_first.png"
+      }
+    },
+    {
+      "case_id": "movi_d_case_2",
+      "dataset": "MOVI-D",
+      "strategy": "random",
+      "sample_ref": "movi_d_case_2",
+      "prompt": "A synthetic Kubric scene on a bergen background with 10 object(s), including Room Essentials Fabric Cube Lavender, Sootheze Cold Therapy Elephant, Creatine Monohydrate, Borage GLA240Gamma Tocopherol. 3 object(s) are dynamic.",
+      "frame_count": 24,
+      "context_indices": [
+        0,
+        1,
+        2,
+        6,
+        20,
+        21
+      ],
+      "source_paths": {
+        "split": "train",
+        "shard_path": "/data/gaoya/dataset/kubric_tfds_movi-d/train/movi_d-train.tfrecord-00217-of-01024",
+        "record_index": "5"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_full.mp4",
+        "context_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_context.mp4",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_first.png"
+      }
+    },
+    {
+      "case_id": "genesis_case_1",
+      "dataset": "GenesisRigid",
+      "strategy": "text_only",
+      "sample_ref": "genesis_case_1",
+      "prompt": "Scene 1002__case001_static_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_left. Objects: object_id=0, seg_id=1: a Kitchen Knife (Cutlery, source=PhysXNet, source_id=1002) with role=target; it starts from a left-offset static placement. Role summary: target=Kitchen Knife. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].",
+      "frame_count": 16,
+      "context_indices": [],
+      "source_paths": {
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1002__case001_static_left",
+        "video_path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1002__case001_static_left/videos/rgb.mp4",
+        "object_id": "1002"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_full.mp4",
+        "context_video": "",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_first.png"
+      }
+    },
+    {
+      "case_id": "genesis_case_2",
+      "dataset": "GenesisRigid",
+      "strategy": "prefix",
+      "sample_ref": "genesis_case_2",
+      "prompt": "Scene 10126__case005_entry_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_entry_motion, and the global motion category is entry_left. Objects: object_id=0, seg_id=1: a Space Helmet (Protective Gear, source=PhysXNet, source_id=10126) with role=initiator; it enters the scene from the left side with initial velocity. Role summary: initiator=Space Helmet. The RGB video has 13 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].",
+      "frame_count": 13,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "source_paths": {
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10126__case005_entry_left",
+        "video_path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10126__case005_entry_left/videos/rgb.mp4",
+        "object_id": "10126"
+      },
+      "media_paths": {
+        "full_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_full.mp4",
+        "context_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_context.mp4",
+        "gt_target_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_gt_target.mp4",
+        "frame_strip": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_strip.png",
+        "first_frame": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_first.png"
+      }
+    }
+  ]
+}

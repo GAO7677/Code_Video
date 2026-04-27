@@ -1,0 +1,54 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+
+# Logs and runtime outputs
+*.log
+wandb/
+**/wandb/
+
+# Archives and packaged downloads
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Model weights / checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Generated media
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wandb
+
+# Common generated outputs
+outputs/
+output/
+results/
+result/
+tmp/
+temp/
+
+# Repo-specific large generated/demo assets
+RealWonder-main/demo_web/demo_data/
+RealWonder-main/simulation/image23D/*.pt
+vipe-main/assets/examples/
+vjepa2-main/assets/

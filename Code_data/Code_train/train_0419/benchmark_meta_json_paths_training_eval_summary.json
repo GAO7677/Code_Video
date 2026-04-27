@@ -1,0 +1,21 @@
+{
+  "fixed24": {
+    "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt",
+    "num_samples": 24,
+    "counts": {
+      "OpenVid": 12,
+      "MOVI-D": 6,
+      "GenesisRigid": 6
+    }
+  },
+  "validation100": {
+    "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation100.txt",
+    "num_samples": 100,
+    "counts": {
+      "OpenVid": 50,
+      "MOVI-D": 25,
+      "GenesisRigid": 25
+    }
+  },
+  "openvid_eval_root": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest_train_eval"
+}

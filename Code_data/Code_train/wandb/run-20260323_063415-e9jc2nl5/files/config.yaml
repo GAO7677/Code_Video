@@ -1,0 +1,120 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            b72gb0a5il4enzhsdz4ytvavym7taz1s:
+                codePath: /home/gaoya/Code_Video/Code_data/Code_train/DiffSynth_wan22_5B_ti2v.ipynb
+                codePathLocal: DiffSynth_wan22_5B_ti2v.ipynb
+                cpu_count: 64
+                cpu_count_logical: 128
+                cudaVersion: "12.8"
+                disk:
+                    /:
+                        total: "470272819200"
+                        used: "282555064320"
+                email: 24110240160@m.fudan.edu.cn
+                executable: /data/gaoya/miniconda3/envs/wan/bin/python
+                gpu: NVIDIA GeForce RTX 4090
+                gpu_count: 8
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-74468333-11e0-dfa6-ef16-584a42fa5a02
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-994fb224-27dc-b1e0-759d-0226b0c0d775
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-05862376-967b-f129-f129-835daf8158cf
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-4a8abb69-6a43-4b79-5713-31979b8d6d75
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-99e4d61a-1169-14e0-d90c-364fdbe30065
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-7f6fbc40-3594-2c34-8557-422621355ff9
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "51527024640"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-558afaa4-0f43-84f7-d4f9-281fe35e4c64
+                host: dbcloud
+                memory:
+                    total: "540680151040"
+                os: Linux-5.15.0-161-generic-x86_64-with-glibc2.35
+                program: /home/gaoya/Code_Video/Code_data/Code_train/DiffSynth_wan22_5B_ti2v.ipynb
+                python: CPython 3.10.19
+                root: /home/gaoya/Code_Video/Code_data/Code_train
+                startedAt: "2026-03-23T06:34:15.624472Z"
+                writerId: b72gb0a5il4enzhsdz4ytvavym7taz1s
+        m: []
+        python_version: 3.10.19
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 71
+                - 98
+                - 105
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 53
+                - 71
+                - 98
+                - 105
+            "3":
+                - 2
+                - 13
+                - 61
+            "4": 3.10.19
+            "5": 0.25.1
+            "6": 4.51.3
+            "8":
+                - 1
+            "12": 0.25.1
+            "13": linux-x86_64
+dataset_repeat:
+    value: 100
+height:
+    value: 480
+learning_rate:
+    value: 0.0001
+lora_rank:
+    value: 32
+lora_target_modules:
+    value: q,k,v,o,ffn.0,ffn.2
+num_epochs:
+    value: 5
+num_frames:
+    value: 49
+output_path:
+    value: /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/0323/models/train/Wan2.2-TI2V-5B_lora
+width:
+    value: 832

@@ -1,0 +1,34 @@
+paths:
+  vbench_repo_root: /home/gaoya/Code_Video/Code_data/Code_benchmark/VBench-master
+  work_root: /data/gaoya/AAA_test_video/Benchmark/VBench
+  vbench_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench
+  vbench2_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench2
+
+runtime:
+  device: cuda
+  load_ckpt_from_local: true
+  read_frame: false
+  imaging_quality_preprocessing_mode: longer
+  use_symlink: true
+  cleanup_staging: false
+
+continuation:
+  max_video_frames: -1
+  generated_start_frame: 0
+  gt_start_frame: 0
+  enable_lpips: false
+  lpips_net: alex
+
+weights_paths:
+  clip_vit_b32: /home/gaoya/.cache/clip/ViT-B-32.pt
+  clip_vit_l14: /home/gaoya/.cache/clip/ViT-L-14.pt
+  dino_vitb16: /data/gaoya/ckpt/facebook-dino-vitb16/dino_vitbase16_pretrain.pth
+  amt_s: /data/gaoya/ckpt/lalala125-AMT/amt-s.pth
+  raft_things: /data/gaoya/ckpt/RAFT-Things/models/raft-things.pth
+  musiq_spaq: /data/gaoya/ckpt/pytorch-iqa/musiq_spaq_ckpt-358bb6af.pth
+  umt_human_action: /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/l16_ptk710_ftk710_ftk400_f16_res224.pth
+  grit_densecap: /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/grit_b_densecap_objectdet.pth
+  tag2text_swin: /data/gaoya/ckpt/xinyu1205-recognize-anything/tag2text_swin_14m.pth
+  viclip_pretrain: /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/ViClip-InternVid-10M-FLT.pth
+
+extra_env: {}

@@ -1,0 +1,52 @@
+seed: 2025
+device: "cuda:0"
+denormalize: true
+white_background: true
+
+video_data:
+  eval: false
+
+  data:
+    path: ../geometry/output
+    transformsfile: data_static.json
+    image_width: 256  # should be larger for anti-aliasing
+    image_height: 256 # should be larger for anti-aliasing
+    used_views: []
+    init_frame: 0
+    fov_multiplier: 1.
+  camera:
+    data_device: cpu
+
+sim:
+  gravity: null
+  num_grids: 32
+  dt: 0.000005
+  bound: 1    # This is the distance to the boundary
+  eps: 1e-6
+  skip_frame: 1
+  max_e_order: 9
+
+objects:
+  - name: null
+    path: null
+
+    particles:
+      shape:
+        ori_bounds: null
+        sim_bounds: null
+      vel:
+        lin_vel: null
+        ang_vel: null
+      clip_bound: 0.1
+      mesh_path: null
+      mesh_sample_mode: uniform
+      mesh_sample_resolution: 32
+
+    # transforms:
+    # TO_BE_DEFINED
+
+    material:
+
+      mat_info_dir: null
+
+      generated: true

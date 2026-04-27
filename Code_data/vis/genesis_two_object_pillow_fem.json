@@ -1,0 +1,117 @@
+{
+  "seed": 20260417,
+  "video_path": "/home/gaoya/Code_Video/Code_data/vis/genesis_two_object_pillow_fem.mp4",
+  "solver": "Genesis FEM",
+  "render_platform": "default",
+  "timeline": {
+    "settle_steps_before_recording": 260,
+    "record_steps_after_release": 1560,
+    "drop_begins_at_record_frame": 0,
+    "dt": 0.001,
+    "fps": 48
+  },
+  "pillow_material": {
+    "material_ctor": "gs.materials.FEM.Elastic",
+    "E": 24000.0,
+    "nu": 0.36,
+    "rho": 120.0,
+    "model": "default",
+    "friction_mu": 0.75,
+    "vis_mode": "visual",
+    "bottom_vertex_constraints": [
+      4,
+      4
+    ]
+  },
+  "pillows": [
+    {
+      "pos": [
+        -0.42,
+        0.0,
+        0.2
+      ],
+      "size_m": [
+        0.64,
+        0.64,
+        0.24
+      ],
+      "color_rgba": [
+        0.94,
+        0.77,
+        0.32,
+        1.0
+      ]
+    },
+    {
+      "pos": [
+        0.42,
+        0.0,
+        0.2
+      ],
+      "size_m": [
+        0.64,
+        0.64,
+        0.24
+      ],
+      "color_rgba": [
+        0.94,
+        0.77,
+        0.32,
+        1.0
+      ]
+    }
+  ],
+  "falling_objects": [
+    {
+      "initial_pos_m": [
+        -0.42,
+        0.0,
+        1.36
+      ],
+      "hold_pos_before_record_m": [
+        -0.42,
+        0.0,
+        2.21
+      ],
+      "color_rgba": [
+        0.885635059189747,
+        0.18934217663299363,
+        0.3303197618281305,
+        1.0
+      ],
+      "material": {
+        "name": "metal",
+        "rho": 4200.0,
+        "friction": 0.34
+      },
+      "shape": "sphere",
+      "radius_m": 0.1101298509899908
+    },
+    {
+      "initial_pos_m": [
+        0.42,
+        0.0,
+        1.44
+      ],
+      "hold_pos_before_record_m": [
+        0.42,
+        0.0,
+        2.29
+      ],
+      "color_rgba": [
+        0.7700535463893244,
+        0.4035031557934269,
+        0.920640278544415,
+        1.0
+      ],
+      "material": {
+        "name": "rubber",
+        "rho": 1250.0,
+        "friction": 0.88
+      },
+      "shape": "cylinder",
+      "radius_m": 0.09456346118131648,
+      "height_m": 0.209141880686005
+    }
+  ]
+}

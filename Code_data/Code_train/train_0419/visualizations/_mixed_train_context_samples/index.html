@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mixed Train Context Visualizer</title>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --panel: #fffaf1;
+      --line: #d7ccb6;
+      --text: #2c241a;
+      --muted: #736758;
+      --accent: #116149;
+      --accent-soft: #dff1e9;
+      --warm: #8d4b24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background:
+        radial-gradient(circle at top left, rgba(141, 75, 36, 0.08), transparent 28%),
+        linear-gradient(180deg, #f7f4ee, #efe7d9 58%, #ebe1d0);
+      color: var(--text);
+    }
+    header {
+      padding: 28px 34px 16px;
+      border-bottom: 1px solid rgba(44, 36, 26, 0.12);
+      background: rgba(255, 250, 241, 0.72);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      letter-spacing: 0.02em;
+    }
+    header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .summary {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .summary .tag {
+      background: var(--accent-soft);
+      border-color: rgba(17, 97, 73, 0.2);
+    }
+    main {
+      padding: 24px 24px 48px;
+      display: grid;
+      gap: 28px;
+    }
+    .dataset-section {
+      display: grid;
+      gap: 18px;
+    }
+    .dataset-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      padding: 0 8px;
+    }
+    .dataset-header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .dataset-header p {
+      margin: 0;
+      color: var(--warm);
+    }
+    .sample-card {
+      background: rgba(255, 250, 241, 0.94);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 22px;
+      box-shadow: 0 16px 34px rgba(99, 79, 55, 0.08);
+    }
+    .sample-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 16px;
+    }
+    .sample-head h2 {
+      margin: 4px 0 0;
+      font-size: 24px;
+    }
+    .eyebrow {
+      color: var(--warm);
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+    }
+    .strategy-badge {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #1e4e3b;
+      color: white;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .caption {
+      font-size: 17px;
+      line-height: 1.45;
+      color: #34291e;
+      margin: 14px 0 14px;
+    }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .tag {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 14px;
+    }
+    .media-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .media-card {
+      background: #fff;
+      border: 1px solid rgba(44, 36, 26, 0.11);
+      border-radius: 18px;
+      padding: 14px;
+      min-height: 100%;
+    }
+    .media-label {
+      font-size: 13px;
+      color: var(--warm);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .media-card video,
+    .media-card img {
+      width: 100%;
+      border-radius: 12px;
+      background: #d9d2c5;
+      display: block;
+    }
+    .empty-card {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #ece6da, #ded6c7);
+      color: var(--muted);
+      font-style: italic;
+    }
+    details {
+      margin-top: 16px;
+    }
+    summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .source-box {
+      margin-top: 12px;
+      display: grid;
+      gap: 8px;
+      background: #fff;
+      border: 1px solid rgba(44, 36, 26, 0.09);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .kv {
+      display: grid;
+      gap: 4px;
+    }
+    .kv span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+      color: #4b4034;
+    }
+    @media (max-width: 980px) {
+      .media-grid {
+        grid-template-columns: 1fr;
+      }
+      header {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mixed Train Context Visualizer</h1>
+    <p>OpenVid / MOVI-D / Genesis 各 2 个训练样本，可视化 5 种 context 策略各至少 1 个示例。</p>
+    <div class="summary">
+      <span class="tag"><strong>train size</strong>: 384x672</span>
+      <span class="tag"><strong>target frames</strong>: 24</span>
+      <span class="tag"><strong>strategies</strong>: prefix, first_frame, sparse, random, text_only</span>
+    </div>
+  </header>
+  <main>
+    
+<section class="dataset-section">
+  <div class="dataset-header">
+    <h1>OpenVid</h1>
+    <p>2 sampled training cases</p>
+  </div>
+  
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">OpenVid</div>
+      <h2>openvid_case_1</h2>
+    </div>
+    <div class="strategy-badge">prefix</div>
+  </div>
+  <p class="caption">The video captures the majestic beauty of a mountain range, showcasing its grandeur and the surrounding landscape. The first frame presents a wide shot of the mountain range, its peaks reaching towards the clear blue sky. The second frame zooms in, revealing the rugged terrain and the lush greenery that covers the mountains. The third frame offers a closer view, highlighting the intricate details of the mountain&#x27;s surface and the vibrant colors of the vegetation. The video is a testament to the awe-inspiring power of nature, captured through the lens of a drone.</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 24</span>
+    <span class="tag"><strong>context indices</strong>: 0, 1</span>
+    <span class="tag"><strong>context count</strong>: 2</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_context.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_1_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>openvid_row_index</span><code>45004</code></div>
+    </div>
+  </details>
+</section>
+
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">OpenVid</div>
+      <h2>openvid_case_2</h2>
+    </div>
+    <div class="strategy-badge">first_frame</div>
+  </div>
+  <p class="caption">In the video, a young boy and girl are engaged in a conversation at a desk. The boy, wearing a green baseball cap, is standing while the girl, dressed in a pink shirt, is seated. They are both looking at a laptop that is open on the desk. The desk is also equipped with a lamp and a mouse. The room they are in has a playful atmosphere, with a rug featuring a colorful pattern on the floor and a clock on the wall. The scene suggests a casual, friendly interaction between the two characters.</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 24</span>
+    <span class="tag"><strong>context indices</strong>: 0</span>
+    <span class="tag"><strong>context count</strong>: 1</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_context.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/openvid_case_2_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>openvid_row_index</span><code>30222</code></div>
+    </div>
+  </details>
+</section>
+
+</section>
+
+<section class="dataset-section">
+  <div class="dataset-header">
+    <h1>MOVI-D</h1>
+    <p>2 sampled training cases</p>
+  </div>
+  
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">MOVI-D</div>
+      <h2>movi_d_case_1</h2>
+    </div>
+    <div class="strategy-badge">sparse</div>
+  </div>
+  <p class="caption">A synthetic Kubric scene on a venice sunrise background with 9 object(s), including Twinlab Premium Creatine Fuel Powder, Ortho Forward Facing, Office Depot HP 564XL Ink Cartridge Black CN684WN, LEGO Duplo Creative Animals 10573. 3 object(s) are dynamic.</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 24</span>
+    <span class="tag"><strong>context indices</strong>: 0, 3, 7, 10, 13, 16, 20, 23</span>
+    <span class="tag"><strong>context count</strong>: 8</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_context.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_1_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>record_index</span><code>7</code></div>
+<div class='kv'><span>shard_path</span><code>/data/gaoya/dataset/kubric_tfds_movi-d/train/movi_d-train.tfrecord-00147-of-01024</code></div>
+<div class='kv'><span>split</span><code>train</code></div>
+    </div>
+  </details>
+</section>
+
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">MOVI-D</div>
+      <h2>movi_d_case_2</h2>
+    </div>
+    <div class="strategy-badge">random</div>
+  </div>
+  <p class="caption">A synthetic Kubric scene on a bergen background with 10 object(s), including Room Essentials Fabric Cube Lavender, Sootheze Cold Therapy Elephant, Creatine Monohydrate, Borage GLA240Gamma Tocopherol. 3 object(s) are dynamic.</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 24</span>
+    <span class="tag"><strong>context indices</strong>: 0, 1, 2, 6, 20, 21</span>
+    <span class="tag"><strong>context count</strong>: 6</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_context.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/movi_d_case_2_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>record_index</span><code>5</code></div>
+<div class='kv'><span>shard_path</span><code>/data/gaoya/dataset/kubric_tfds_movi-d/train/movi_d-train.tfrecord-00217-of-01024</code></div>
+<div class='kv'><span>split</span><code>train</code></div>
+    </div>
+  </details>
+</section>
+
+</section>
+
+<section class="dataset-section">
+  <div class="dataset-header">
+    <h1>GenesisRigid</h1>
+    <p>2 sampled training cases</p>
+  </div>
+  
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">GenesisRigid</div>
+      <h2>genesis_case_1</h2>
+    </div>
+    <div class="strategy-badge">text_only</div>
+  </div>
+  <p class="caption">Scene 1002__case001_static_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_left. Objects: object_id=0, seg_id=1: a Kitchen Knife (Cutlery, source=PhysXNet, source_id=1002) with role=target; it starts from a left-offset static placement. Role summary: target=Kitchen Knife. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 16</span>
+    <span class="tag"><strong>context indices</strong>: None</span>
+    <span class="tag"><strong>context count</strong>: 0</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <div class='empty-card'>text-only, no context frames</div>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_1_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>object_id</span><code>1002</code></div>
+<div class='kv'><span>sample_dir</span><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1002__case001_static_left</code></div>
+<div class='kv'><span>video_path</span><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1002__case001_static_left/videos/rgb.mp4</code></div>
+    </div>
+  </details>
+</section>
+
+<section class="sample-card">
+  <div class="sample-head">
+    <div>
+      <div class="eyebrow">GenesisRigid</div>
+      <h2>genesis_case_2</h2>
+    </div>
+    <div class="strategy-badge">prefix</div>
+  </div>
+  <p class="caption">Scene 10126__case005_entry_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_entry_motion, and the global motion category is entry_left. Objects: object_id=0, seg_id=1: a Space Helmet (Protective Gear, source=PhysXNet, source_id=10126) with role=initiator; it enters the scene from the left side with initial velocity. Role summary: initiator=Space Helmet. The RGB video has 13 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].</p>
+  <div class="stats">
+    <span class="tag"><strong>frames</strong>: 13</span>
+    <span class="tag"><strong>context indices</strong>: 0, 1, 2, 3</span>
+    <span class="tag"><strong>context count</strong>: 4</span>
+  </div>
+  
+<div class="media-grid">
+  <article class="media-card">
+    <div class="media-label">GT full clip</div>
+    <video controls preload="metadata" src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_full.mp4"></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Context-only clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_context.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">GT target clip</div>
+    <video controls preload='metadata' src='/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_gt_target.mp4'></video>
+  </article>
+  <article class="media-card">
+    <div class="media-label">Frame timeline</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_strip.png" alt="frame strip">
+  </article>
+  <article class="media-card">
+    <div class="media-label">First frame</div>
+    <img src="/media?path=/home/gaoya/Code_Video/Code_data/Code_train/train_0419/visualizations/_mixed_train_context_samples/assets/genesis_case_2_first.png" alt="first frame">
+  </article>
+</div>
+
+  <details>
+    <summary>Source Paths</summary>
+    <div class="source-box">
+      <div class='kv'><span>object_id</span><code>10126</code></div>
+<div class='kv'><span>sample_dir</span><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10126__case005_entry_left</code></div>
+<div class='kv'><span>video_path</span><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10126__case005_entry_left/videos/rgb.mp4</code></div>
+    </div>
+  </details>
+</section>
+
+</section>
+
+  </main>
+</body>
+</html>

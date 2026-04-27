@@ -1,0 +1,52 @@
+paths:
+  vbench_repo_root: /home/gaoya/Code_Video/Code_data/Code_benchmark/VBench-master
+  work_root: /data/gaoya/AAA_test_video/Benchmark/VBench
+  vbench_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench
+  vbench2_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench2
+
+runtime:
+  device: cuda
+  load_ckpt_from_local: true
+  read_frame: false
+  imaging_quality_preprocessing_mode: longer
+  use_symlink: true
+  cleanup_staging: false
+
+continuation:
+  max_video_frames: -1
+  generated_start_frame: 0
+  gt_start_frame: 0
+  enable_lpips: false
+  lpips_net: alex
+
+# Fill these once you have local checkpoints and want to avoid downloader logic.
+# Keys not used by the current run can be left empty.
+# Current version below is aligned to what exists on this machine as of inspection.
+# Still missing locally at the moment: dino_vitbase16_pretrain.pth, facebookresearch/dino repo,
+# musiq_spaq_ckpt-358bb6af.pth. If you keep runners' default dimensions, those missing assets
+# can still trigger downloads or failures for subject_consistency / imaging_quality.
+weights_paths:
+  clip_vit_b32:        /home/gaoya/.cache/clip/ViT-B-32.pt # openai/CLIP, model: ViT-B/32
+  clip_vit_l14:        /home/gaoya/.cache/clip/ViT-L-14.pt # openai/CLIP, model: ViT-L/14
+  dino_vitb16:         /data/gaoya/ckpt/facebook-dino-vitb16/dino_vitbase16_pretrain.pth # facebookresearch/dino, weight: dino_vitbase16_pretrain.pth
+  dino_repo_dir:       https://github.com/facebookresearch/dino # repo clone: 
+  amt_s:               /data/gaoya/ckpt/lalala125-AMT/amt-s.pth # lalala125/AMT, weight: amt-s.pth
+  raft_things:         /data/gaoya/ckpt/RAFT-Things/models/raft-things.pth # RAFT official Things checkpoint, downloaded via Dropbox models.zip
+  musiq_spaq:          /data/gaoya/ckpt/pytorch-iqa/musiq_spaq_ckpt-358bb6af.pth # chaofengc/IQA-PyTorch release, file: musiq_spaq_ckpt-358bb6af.pth
+  umt_human_action:    /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/l16_ptk710_ftk710_ftk400_f16_res224.pth # OpenGVLab/VBench_Used_Models, file: l16_ptk710_ftk710_ftk400_f16_res224.pth
+  grit_densecap:       /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/grit_b_densecap_objectdet.pth # OpenGVLab/VBench_Used_Models, file: grit_b_densecap_objectdet.pth
+  tag2text_swin:       /data/gaoya/ckpt/xinyu1205-recognize-anything/tag2text_swin_14m.pth # xinyu1205/recognize-anything, file: tag2text_swin_14m.pth
+  viclip_pretrain:     /data/gaoya/ckpt/OpenGVLab-VBench_Used_Models/ViClip-InternVid-10M-FLT.pth # OpenGVLab/VBench_Used_Models, file: ViClip-InternVid-10M-FLT.pth
+  clip_vit_b32_vbench2:# openai/CLIP, model: ViT-B/32, currently unused by my_bench default runners
+  clip_vit_l14_vbench2:# openai/CLIP, model: ViT-L/14, currently unused by my_bench default runners
+  dino_vitb16_vbench2: /data/gaoya/ckpt/facebook-dino-vitb16/dino_vitbase16_pretrain.pth # facebookresearch/dino, weight: 
+  dino_repo_dir_vbench2:# repo clone: https://github.com/facebookresearch/dino
+  amt_s_vbench2:       /data/gaoya/ckpt/lalala125-AMT/amt-s.pth # lalala125/AMT, weight: amt-s.pth
+  raft_things_vbench2: /data/gaoya/ckpt/RAFT-Things/models/raft-things.pth # RAFT official Things checkpoint, downloaded via Dropbox models.zip
+  musiq_spaq_vbench2:  /data/gaoya/ckpt/pytorch-iqa/musiq_spaq_ckpt-358bb6af.pth # chaofengc/IQA-PyTorch release, file: musiq_spaq_ckpt-358bb6af.pth
+
+dataset_paths:
+  continuation_holdout_manifest: # your held-out prompt/video/context manifest
+  i2v_benchmark_image_root:      # only needed if you later run official I2V benchmark mode, not custom_input
+
+extra_env: {}

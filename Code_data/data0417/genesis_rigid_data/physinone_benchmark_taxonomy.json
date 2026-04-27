@@ -1,0 +1,768 @@
+{
+  "taxonomy": {
+    "groups": [
+      {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion",
+        "solver_focus": "Rigid-body dynamics with gravity, inertia, translation, rotation, projectile motion, and slope motion.",
+        "types": [
+          "CartMove",
+          "VerticalFall",
+          "ObliqueProjectile",
+          "LinCarryInertia",
+          "RotBoardInertia",
+          "RotTurnableInertia",
+          "FrictionStop",
+          "RollDownSlope",
+          "RollUpSlope"
+        ]
+      },
+      {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin",
+        "solver_focus": "Rigid contact response, collision constraints, and geometry-induced spin.",
+        "types": [
+          "MovingHitsFixed",
+          "MovingHitsMoving",
+          "MovingHitsStationary",
+          "AccelConcaveSpin",
+          "AccelPanelSpin",
+          "AccelSurfaceSpin",
+          "UniformConcaveSpin",
+          "UniformPanelSpin",
+          "UniformSurfaceSpin"
+        ]
+      },
+      {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum",
+        "solver_focus": "Articulated rigid bodies, pivots, coupled pendulums, and mechanical constraints.",
+        "types": [
+          "SimplePendulum",
+          "DoublePendulum",
+          "ChainSuspend",
+          "SeesawCenterPivot",
+          "SeesawOffsetPivot",
+          "CrankPush",
+          "CatapultLaunch"
+        ]
+      },
+      {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support",
+        "solver_focus": "Elasticity, restitution, plastic dissipation, and support instability.",
+        "types": [
+          "ElasticCouple",
+          "ElasticFall",
+          "SpringCompress",
+          "SpringStretch",
+          "SpringboardRebound",
+          "PlasticineFall",
+          "StickSupportFail"
+        ]
+      },
+      {
+        "group_id": "E",
+        "group_slug": "fracture_collapse_failure",
+        "group_name": "Fracture Collapse Failure",
+        "solver_focus": "Fracture, collapse, structural failure, and fragment propagation.",
+        "types": [
+          "ImpactFracture",
+          "BlockWallCollapse",
+          "MirrorFragmentReflect"
+        ]
+      },
+      {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant",
+        "solver_focus": "Flowing liquid, free surfaces, transport, containers, and non-Newtonian behavior.",
+        "types": [
+          "DropInLiquid",
+          "FloatOnLiquid",
+          "JetLiquid",
+          "LiquidAcrossUneven",
+          "LiquidAlongContours",
+          "LiquidCarryMovingObj",
+          "LiquidHitFixedObj",
+          "LiquidMultiTransfers",
+          "LiquidRise",
+          "LiquidTension",
+          "LiquidThroughGrid",
+          "LiquidTransfer",
+          "MovingObjDriveLiquid",
+          "NewtonianFluidFall",
+          "NonNewtonianFluidFall",
+          "LiquidRefraction"
+        ]
+      },
+      {
+        "group_id": "G",
+        "group_slug": "granular_media",
+        "group_name": "Granular Media",
+        "solver_focus": "Discrete granular flow, accumulation, and pile formation.",
+        "types": [
+          "GranularFall"
+        ]
+      },
+      {
+        "group_id": "H",
+        "group_slug": "adhesive_viscous_contact",
+        "group_name": "Adhesive Viscous Contact",
+        "solver_focus": "Adhesive contact, sticking, attachment, and detachment behavior.",
+        "types": [
+          "StickyFromObjects",
+          "StickyToObjects"
+        ]
+      },
+      {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics",
+        "solver_focus": "External force fields with wind, buoyancy, and simplified aerodynamic effects.",
+        "types": [
+          "BalloonFloat",
+          "BalloonLift",
+          "BalloonTether",
+          "WindDeflectMotion",
+          "WindGravityBalance",
+          "WindPushOppDir",
+          "WindPushSameDir",
+          "WindPushStationary"
+        ]
+      },
+      {
+        "group_id": "J",
+        "group_slug": "magnetic_force_fields",
+        "group_name": "Magnetic Force Fields",
+        "solver_focus": "Non-contact attraction and repulsion under external force fields.",
+        "types": [
+          "MagnetAttract",
+          "MagnetRepel"
+        ]
+      },
+      {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion",
+        "solver_focus": "Ray-like reflection, redirection, and occlusion-based physical reasoning.",
+        "types": [
+          "MirrorReflect",
+          "DynMirrorRedirect",
+          "FixedArrayRedirect",
+          "FixedConcaveRedirect",
+          "FixedConvexRedirect",
+          "FixedPlanarRedirect",
+          "LaserBlock"
+        ]
+      }
+    ],
+    "type_to_group": {
+      "CartMove": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "VerticalFall": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "ObliqueProjectile": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "LinCarryInertia": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "RotBoardInertia": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "RotTurnableInertia": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "FrictionStop": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "RollDownSlope": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "RollUpSlope": {
+        "group_id": "A",
+        "group_slug": "rigid_basic_motion",
+        "group_name": "Rigid Basic Motion"
+      },
+      "MovingHitsFixed": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "MovingHitsMoving": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "MovingHitsStationary": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "AccelConcaveSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "AccelPanelSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "AccelSurfaceSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "UniformConcaveSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "UniformPanelSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "UniformSurfaceSpin": {
+        "group_id": "B",
+        "group_slug": "rigid_contact_collision_spin",
+        "group_name": "Rigid Contact Collision Spin"
+      },
+      "SimplePendulum": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "DoublePendulum": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "ChainSuspend": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "SeesawCenterPivot": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "SeesawOffsetPivot": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "CrankPush": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "CatapultLaunch": {
+        "group_id": "C",
+        "group_slug": "articulated_constraints_pendulum",
+        "group_name": "Articulated Constraints Pendulum"
+      },
+      "ElasticCouple": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "ElasticFall": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "SpringCompress": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "SpringStretch": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "SpringboardRebound": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "PlasticineFall": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "StickSupportFail": {
+        "group_id": "D",
+        "group_slug": "deformable_elastic_plastic_support",
+        "group_name": "Deformable Elastic Plastic Support"
+      },
+      "ImpactFracture": {
+        "group_id": "E",
+        "group_slug": "fracture_collapse_failure",
+        "group_name": "Fracture Collapse Failure"
+      },
+      "BlockWallCollapse": {
+        "group_id": "E",
+        "group_slug": "fracture_collapse_failure",
+        "group_name": "Fracture Collapse Failure"
+      },
+      "MirrorFragmentReflect": {
+        "group_id": "E",
+        "group_slug": "fracture_collapse_failure",
+        "group_name": "Fracture Collapse Failure"
+      },
+      "DropInLiquid": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "FloatOnLiquid": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "JetLiquid": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidAcrossUneven": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidAlongContours": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidCarryMovingObj": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidHitFixedObj": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidMultiTransfers": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidRise": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidTension": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidThroughGrid": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidTransfer": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "MovingObjDriveLiquid": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "NewtonianFluidFall": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "NonNewtonianFluidFall": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "LiquidRefraction": {
+        "group_id": "F",
+        "group_slug": "fluid_dominant",
+        "group_name": "Fluid Dominant"
+      },
+      "GranularFall": {
+        "group_id": "G",
+        "group_slug": "granular_media",
+        "group_name": "Granular Media"
+      },
+      "StickyFromObjects": {
+        "group_id": "H",
+        "group_slug": "adhesive_viscous_contact",
+        "group_name": "Adhesive Viscous Contact"
+      },
+      "StickyToObjects": {
+        "group_id": "H",
+        "group_slug": "adhesive_viscous_contact",
+        "group_name": "Adhesive Viscous Contact"
+      },
+      "BalloonFloat": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "BalloonLift": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "BalloonTether": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "WindDeflectMotion": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "WindGravityBalance": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "WindPushOppDir": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "WindPushSameDir": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "WindPushStationary": {
+        "group_id": "I",
+        "group_slug": "wind_buoyancy_aerodynamics",
+        "group_name": "Wind Buoyancy Aerodynamics"
+      },
+      "MagnetAttract": {
+        "group_id": "J",
+        "group_slug": "magnetic_force_fields",
+        "group_name": "Magnetic Force Fields"
+      },
+      "MagnetRepel": {
+        "group_id": "J",
+        "group_slug": "magnetic_force_fields",
+        "group_name": "Magnetic Force Fields"
+      },
+      "MirrorReflect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "DynMirrorRedirect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "FixedArrayRedirect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "FixedConcaveRedirect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "FixedConvexRedirect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "FixedPlanarRedirect": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      },
+      "LaserBlock": {
+        "group_id": "K",
+        "group_slug": "geometric_optics_reflection_occlusion",
+        "group_name": "Geometric Optics Reflection Occlusion"
+      }
+    }
+  },
+  "validation": {
+    "dataset_root": "/data/gaoya/dataset/vLAR-PhysInOne",
+    "total_zip_files": 200,
+    "split_counts": {
+      "DoublePhysics": 32,
+      "RootLevel": 1,
+      "SinglePhysics": 50,
+      "TriplePhysics": 117
+    },
+    "discovered_types": [
+      "AccelConcaveSpin",
+      "AccelPanelSpin",
+      "AccelSurfaceSpin",
+      "BalloonFloat",
+      "BalloonLift",
+      "BalloonTether",
+      "BlockWallCollapse",
+      "CartMove",
+      "CatapultLaunch",
+      "ChainSuspend",
+      "CrankPush",
+      "DoublePendulum",
+      "DropInLiquid",
+      "DynMirrorRedirect",
+      "ElasticCouple",
+      "ElasticFall",
+      "FixedArrayRedirect",
+      "FixedConcaveRedirect",
+      "FixedConvexRedirect",
+      "FixedPlanarRedirect",
+      "FloatOnLiquid",
+      "FrictionStop",
+      "GranularFall",
+      "ImpactFracture",
+      "JetLiquid",
+      "LaserBlock",
+      "LinCarryInertia",
+      "LiquidAcrossUneven",
+      "LiquidAlongContours",
+      "LiquidCarryMovingObj",
+      "LiquidHitFixedObj",
+      "LiquidMultiTransfers",
+      "LiquidRefraction",
+      "LiquidRise",
+      "LiquidTension",
+      "LiquidThroughGrid",
+      "LiquidTransfer",
+      "MagnetAttract",
+      "MagnetRepel",
+      "MirrorFragmentReflect",
+      "MirrorReflect",
+      "MovingHitsFixed",
+      "MovingHitsMoving",
+      "MovingHitsStationary",
+      "MovingObjDriveLiquid",
+      "NewtonianFluidFall",
+      "NonNewtonianFluidFall",
+      "ObliqueProjectile",
+      "PlasticineFall",
+      "RollDownSlope",
+      "RollUpSlope",
+      "RotBoardInertia",
+      "RotTurnableInertia",
+      "SeesawCenterPivot",
+      "SeesawOffsetPivot",
+      "SimplePendulum",
+      "SpringCompress",
+      "SpringStretch",
+      "SpringboardRebound",
+      "StickSupportFail",
+      "StickyFromObjects",
+      "StickyToObjects",
+      "UniformConcaveSpin",
+      "UniformPanelSpin",
+      "UniformSurfaceSpin",
+      "VerticalFall",
+      "WindDeflectMotion",
+      "WindGravityBalance",
+      "WindPushOppDir",
+      "WindPushSameDir",
+      "WindPushStationary"
+    ],
+    "num_discovered_types": 71,
+    "taxonomy_type_count": 71,
+    "uncovered_types": [],
+    "unused_taxonomy_types": [],
+    "split_type_counts": {
+      "DoublePhysics": {
+        "AccelPanelSpin": 2,
+        "BalloonFloat": 1,
+        "BalloonTether": 1,
+        "BlockWallCollapse": 1,
+        "CartMove": 1,
+        "CatapultLaunch": 1,
+        "CrankPush": 1,
+        "DoublePendulum": 1,
+        "ElasticCouple": 1,
+        "FrictionStop": 1,
+        "GranularFall": 1,
+        "ImpactFracture": 1,
+        "LinCarryInertia": 1,
+        "LiquidAcrossUneven": 1,
+        "LiquidAlongContours": 3,
+        "LiquidCarryMovingObj": 2,
+        "LiquidHitFixedObj": 2,
+        "LiquidRefraction": 2,
+        "LiquidRise": 2,
+        "LiquidThroughGrid": 2,
+        "LiquidTransfer": 1,
+        "MagnetAttract": 1,
+        "MagnetRepel": 1,
+        "MirrorFragmentReflect": 1,
+        "MovingHitsFixed": 2,
+        "MovingHitsMoving": 2,
+        "MovingHitsStationary": 2,
+        "MovingObjDriveLiquid": 2,
+        "NewtonianFluidFall": 1,
+        "NonNewtonianFluidFall": 1,
+        "ObliqueProjectile": 1,
+        "PlasticineFall": 1,
+        "RollDownSlope": 1,
+        "RollUpSlope": 1,
+        "RotTurnableInertia": 1,
+        "SeesawCenterPivot": 1,
+        "SeesawOffsetPivot": 1,
+        "SimplePendulum": 1,
+        "SpringCompress": 1,
+        "SpringStretch": 1,
+        "SpringboardRebound": 1,
+        "StickSupportFail": 1,
+        "StickyToObjects": 1,
+        "UniformConcaveSpin": 1,
+        "UniformPanelSpin": 1,
+        "UniformSurfaceSpin": 1,
+        "VerticalFall": 1,
+        "WindDeflectMotion": 1,
+        "WindGravityBalance": 1,
+        "WindPushOppDir": 1,
+        "WindPushSameDir": 1,
+        "WindPushStationary": 1
+      },
+      "RootLevel": {
+        "AccelConcaveSpin": 1,
+        "AccelSurfaceSpin": 1
+      },
+      "SinglePhysics": {
+        "AccelConcaveSpin": 1,
+        "AccelPanelSpin": 1,
+        "AccelSurfaceSpin": 1,
+        "BalloonFloat": 1,
+        "BalloonLift": 1,
+        "BalloonTether": 1,
+        "BlockWallCollapse": 1,
+        "CartMove": 1,
+        "CatapultLaunch": 1,
+        "ChainSuspend": 1,
+        "CrankPush": 1,
+        "DoublePendulum": 1,
+        "DropInLiquid": 1,
+        "ElasticCouple": 1,
+        "ElasticFall": 4,
+        "FixedConcaveRedirect": 1,
+        "FixedConvexRedirect": 1,
+        "FloatOnLiquid": 1,
+        "GranularFall": 4,
+        "LiquidHitFixedObj": 1,
+        "LiquidRefraction": 1,
+        "LiquidTension": 1,
+        "LiquidThroughGrid": 1,
+        "MagnetAttract": 1,
+        "MagnetRepel": 1,
+        "MovingHitsFixed": 1,
+        "MovingHitsMoving": 1,
+        "MovingHitsStationary": 1,
+        "MovingObjDriveLiquid": 1,
+        "NewtonianFluidFall": 4,
+        "NonNewtonianFluidFall": 4,
+        "PlasticineFall": 4,
+        "RollUpSlope": 1,
+        "StickyFromObjects": 1,
+        "StickyToObjects": 1
+      },
+      "TriplePhysics": {
+        "AccelConcaveSpin": 4,
+        "AccelPanelSpin": 1,
+        "AccelSurfaceSpin": 1,
+        "BalloonFloat": 13,
+        "BalloonLift": 16,
+        "BalloonTether": 14,
+        "BlockWallCollapse": 1,
+        "CartMove": 2,
+        "CatapultLaunch": 1,
+        "ChainSuspend": 4,
+        "CrankPush": 4,
+        "DoublePendulum": 2,
+        "DynMirrorRedirect": 1,
+        "ElasticCouple": 3,
+        "ElasticFall": 2,
+        "FixedArrayRedirect": 3,
+        "FixedConcaveRedirect": 1,
+        "FixedConvexRedirect": 1,
+        "FixedPlanarRedirect": 3,
+        "FloatOnLiquid": 1,
+        "FrictionStop": 16,
+        "GranularFall": 1,
+        "ImpactFracture": 16,
+        "JetLiquid": 1,
+        "LaserBlock": 1,
+        "LinCarryInertia": 2,
+        "LiquidCarryMovingObj": 2,
+        "LiquidMultiTransfers": 1,
+        "LiquidRise": 2,
+        "LiquidTension": 1,
+        "LiquidTransfer": 1,
+        "MagnetAttract": 2,
+        "MagnetRepel": 3,
+        "MirrorFragmentReflect": 12,
+        "MirrorReflect": 13,
+        "MovingHitsFixed": 12,
+        "MovingHitsMoving": 15,
+        "MovingHitsStationary": 19,
+        "NewtonianFluidFall": 1,
+        "NonNewtonianFluidFall": 1,
+        "ObliqueProjectile": 16,
+        "PlasticineFall": 1,
+        "RollDownSlope": 11,
+        "RollUpSlope": 17,
+        "RotBoardInertia": 4,
+        "SeesawCenterPivot": 3,
+        "SeesawOffsetPivot": 3,
+        "SimplePendulum": 1,
+        "SpringCompress": 4,
+        "SpringStretch": 1,
+        "SpringboardRebound": 1,
+        "StickSupportFail": 3,
+        "UniformConcaveSpin": 3,
+        "UniformPanelSpin": 5,
+        "UniformSurfaceSpin": 3,
+        "VerticalFall": 16,
+        "WindDeflectMotion": 16,
+        "WindPushOppDir": 14,
+        "WindPushSameDir": 14,
+        "WindPushStationary": 15
+      }
+    }
+  }
+}

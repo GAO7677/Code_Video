@@ -1,0 +1,1 @@
+[step7] merged_per_points: torch.Size([19225, 3])

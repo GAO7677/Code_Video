@@ -1,0 +1,58 @@
+{
+  "scene_index": 0,
+  "seed": 20260412,
+  "solver": "sph",
+  "fps": 24,
+  "frames": 49,
+  "resolution": [
+    512,
+    512
+  ],
+  "tracked_particle_count": 1024,
+  "particle_id_semantics": "Genesis particle buffer indices, sampled once and kept fixed across all frames.",
+  "particle_sample_strategy": "score_based_selection_from_active_particles_in_stable_roi",
+  "particle_size": 0.014,
+  "fluid_vis_mode": "recon",
+  "skip_render": false,
+  "viscosity": 0.005665121007171179,
+  "solver_effective_viscosity": 0.012,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.8100004196167
+  ],
+  "emitter_speed": 4.889027037151295,
+  "emitter_diameter": 0.10741341821317064,
+  "emitter_length": 0.0,
+  "emission_interval_steps": 1,
+  "estimated_particles_per_emit": 47,
+  "target_particle_budget": 1536,
+  "camera_azimuth_deg": 134.80276169495133,
+  "camera_elevation_deg": 33.13459063855565,
+  "camera_radius": 0.78,
+  "container_source_id": "wide_bowl",
+  "container_label": "Wide Bowl",
+  "container_kind": "procedural",
+  "container_mesh": "/home/gaoya/Code_Video/Code_data/_liquid_container_cache/procedural_wide_bowl_fb43cd11f5fa.obj",
+  "scene_bounds_lower": [
+    -1.6123489141464233,
+    -1.6123489141464233,
+    -0.11999999731779099
+  ],
+  "scene_bounds_upper": [
+    1.6123489141464233,
+    1.6123489141464233,
+    1.25
+  ],
+  "genesis_backend": "gpu",
+  "files": {
+    "rgb_frames_dir": "rgb",
+    "depth_frames_dir": "depth",
+    "depth_array": "depth/depth.npy",
+    "particles_pos": "particles/pos.npy",
+    "particles_vel": "particles/vel.npy",
+    "particles_ids": "particles/ids.npy",
+    "rgb_video": "video/rgb_preview.mp4",
+    "depth_video": "video/depth_preview.mp4"
+  }
+}

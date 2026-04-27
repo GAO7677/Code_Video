@@ -1,0 +1,1 @@
+[step5] occluded submesh verts/faces: torch.Size([4282, 3]), torch.Size([8169, 3])

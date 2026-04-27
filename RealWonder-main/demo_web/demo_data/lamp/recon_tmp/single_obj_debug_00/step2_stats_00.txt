@@ -1,0 +1,5 @@
+[step2] fx_pixels=443.4050067376326, fx_deg=60.0
+[step2] original verts/faces: (5004, 3), (10000, 3)
+[step2] simplified verts/faces: (4352, 3), (8700, 3)
+[step2] original bbox min/max: [-0.1856355  -0.07849034  1.43628358], [0.16424211 0.11671167 1.7824772 ]
+[step2] simplified bbox min/max: [-0.195 -0.085  1.435], [0.165 0.125 1.785]

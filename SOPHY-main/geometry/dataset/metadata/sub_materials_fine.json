@@ -1,0 +1,36 @@
+{
+    "plastic": [
+        "low-density polyethylene",
+        "high-density polyethylene",
+        "polyethylene terephthalate",
+        "polypropylene",
+        "rigid polyvinyl chloride",
+        "flexible polyvinyl chloride",
+        "polystyrene",
+        "polycarbonate",
+        "acrylonitrile butadiene styrene",
+        "polyamide",
+        "polyurethane",
+        "thermoplastic elastomers"
+    ],
+    "fabric": [
+        "cotton",
+        "wool",
+        "polyester",
+        "silk",
+        "denim",
+        "spandex",
+        "linen",
+        "rayon"
+    ],
+    "leather": [
+        "full-grain leather",
+        "top-grain leather",
+        "genuine leather",
+        "nubuck leather",
+        "suede",
+        "patent leather",
+        "bonded leather",
+        "faux leather"
+    ]
+}

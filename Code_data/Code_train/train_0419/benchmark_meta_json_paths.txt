@@ -1,0 +1,13 @@
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank0_1761115610.0727706_720x1280__00065__zy_NvBKW6O4_35_0to121/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank1_1761115609.8193228_720x1280__00030__zrmHVX2XVxg_15_0to406/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank1_1761115609.8193228_720x1280__00043__zu67t0zfYCg_10_0to139/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank1_1761115609.8193228_720x1280__00061__zxnGHhEWXbc_49_29to130/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank1_1761117748.1368692_720x1280__00007__zna3IdrCGdA_10_0to214/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank1_1761117748.1368692_720x1280__00064__zyKb8tjYecg_4_20to167/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00007__znbC9ifgJcw_13_73to307/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00036__zszORxzCEY0_13_70to179/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00061__zxoS3FbP-us_14_0to248/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761117748.1837962_720x1280__00050__zvVGvxmIuKI_82_49to174/meta.json
+/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank5_1761117748.3886638_720x1280__00059__zxKkXtC31cA_8_127to229/meta.json
+

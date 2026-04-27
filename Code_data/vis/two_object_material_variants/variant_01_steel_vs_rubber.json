@@ -1,0 +1,133 @@
+{
+  "variant_index": 1,
+  "variant_name": "steel_vs_rubber",
+  "video_path": "/home/gaoya/Code_Video/Code_data/vis/two_object_material_variants/variant_01_steel_vs_rubber.mp4",
+  "seed": 20260418,
+  "timeline": {
+    "settle_steps_before_recording": 260,
+    "record_steps_after_release": 1560,
+    "drop_begins_at_record_frame": 0,
+    "dt": 0.0012,
+    "fps": 48,
+    "save_every": 17
+  },
+  "scene": {
+    "substeps": 80,
+    "grid_density": 64,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.81
+    ]
+  },
+  "pillow_material": {
+    "material_ctor": "gs.materials.MPM.Elastic",
+    "E": 18000.0,
+    "nu": 0.28,
+    "rho": 95.0,
+    "vis_mode": "particle"
+  },
+  "pillows": [
+    {
+      "pos": [
+        -0.42,
+        0.0,
+        0.2
+      ],
+      "size_m": [
+        0.64,
+        0.64,
+        0.24
+      ],
+      "color_rgba": [
+        0.94,
+        0.77,
+        0.32,
+        1.0
+      ]
+    },
+    {
+      "pos": [
+        0.42,
+        0.0,
+        0.2
+      ],
+      "size_m": [
+        0.64,
+        0.64,
+        0.24
+      ],
+      "color_rgba": [
+        0.94,
+        0.77,
+        0.32,
+        1.0
+      ]
+    }
+  ],
+  "falling_objects": [
+    {
+      "id": "object1",
+      "initial_pos_m": [
+        -0.42,
+        0.0,
+        1.36
+      ],
+      "hold_pos_before_record_m": [
+        -0.42,
+        0.0,
+        2.21
+      ],
+      "initial_velocity_m_s": [
+        0.0,
+        0.0,
+        -0.72
+      ],
+      "color_rgba": [
+        0.885635059189747,
+        0.18934217663299363,
+        0.3303197618281305,
+        1.0
+      ],
+      "material": {
+        "name": "steel",
+        "rho": 7850.0,
+        "friction": 0.3
+      },
+      "shape": "sphere",
+      "radius_m": 0.1101298509899908
+    },
+    {
+      "id": "object2",
+      "initial_pos_m": [
+        0.42,
+        0.0,
+        1.44
+      ],
+      "hold_pos_before_record_m": [
+        0.42,
+        0.0,
+        2.29
+      ],
+      "initial_velocity_m_s": [
+        0.0,
+        0.0,
+        -0.72
+      ],
+      "color_rgba": [
+        0.7700535463893244,
+        0.4035031557934269,
+        0.920640278544415,
+        1.0
+      ],
+      "material": {
+        "name": "rubber",
+        "rho": 1150.0,
+        "friction": 0.92
+      },
+      "shape": "cylinder",
+      "radius_m": 0.09456346118131648,
+      "height_m": 0.209141880686005
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+[step4] occluded vertex ratio = 0.7584

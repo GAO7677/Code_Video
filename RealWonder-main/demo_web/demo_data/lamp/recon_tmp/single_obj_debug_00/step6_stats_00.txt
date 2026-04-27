@@ -1,0 +1,1 @@
+[step6] per_points: torch.Size([14925, 3]), per_colors: torch.Size([14925, 3])

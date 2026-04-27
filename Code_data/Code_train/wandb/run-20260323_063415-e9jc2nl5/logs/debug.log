@@ -1,0 +1,45 @@
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_setup.py:_flush():81] Current SDK version is 0.25.1
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_setup.py:_flush():81] Configure stats pid to 3360120
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:setup_run_log_directory():717] Logging user logs to /home/gaoya/Code_Video/Code_data/Code_train/wandb/run-20260323_063415-e9jc2nl5/logs/debug.log
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to /home/gaoya/Code_Video/Code_data/Code_train/wandb/run-20260323_063415-e9jc2nl5/logs/debug-internal.log
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:monkeypatch_ipython():636] configuring jupyter hooks <wandb.sdk.wandb_init._WandbInit object at 0x7f42a7d84be0>
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:init():844] calling init triggers
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2026-03-23 06:34:15,630 INFO    MainThread:3360120 [wandb_init.py:init():892] starting backend
+2026-03-23 06:34:15,891 INFO    MainThread:3360120 [wandb_init.py:init():895] sending inform_init request
+2026-03-23 06:34:15,895 INFO    MainThread:3360120 [wandb_init.py:init():903] backend started and connected
+2026-03-23 06:34:15,898 INFO    MainThread:3360120 [wandb_run.py:_label_probe_notebook():1333] probe notebook
+2026-03-23 06:34:15,899 INFO    MainThread:3360120 [wandb_init.py:init():973] updated telemetry
+2026-03-23 06:34:15,935 INFO    MainThread:3360120 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-03-23 06:34:17,536 INFO    MainThread:3360120 [wandb_init.py:init():1042] starting run threads in backend
+2026-03-23 06:34:17,738 INFO    MainThread:3360120 [wandb_run.py:_console_start():2524] atexit reg
+2026-03-23 06:34:17,738 INFO    MainThread:3360120 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-03-23 06:34:17,738 INFO    MainThread:3360120 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-03-23 06:34:17,738 INFO    MainThread:3360120 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-03-23 06:34:17,742 INFO    MainThread:3360120 [wandb_init.py:init():1082] run started, returning control to user process
+2026-03-23 06:34:17,742 INFO    MainThread:3360120 [wandb_run.py:_config_callback():1403] config_cb None None {'learning_rate': 0.0001, 'num_epochs': 5, 'height': 480, 'width': 832, 'num_frames': 49, 'lora_rank': 32, 'lora_target_modules': 'q,k,v,o,ffn.0,ffn.2', 'dataset_repeat': 100, 'output_path': '/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/0323/models/train/Wan2.2-TI2V-5B_lora'}
+2026-03-23 06:34:17,743 INFO    MainThread:3360120 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend
+2026-03-23 06:34:17,770 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] [no run ID] not saving jupyter notebook
+2026-03-23 06:34:17,771 INFO    MainThread:3360120 [wandb_init.py:_pre_run_cell_hook():595] [no run ID] pausing backend
+2026-03-23 06:34:17,772 INFO    MainThread:3360120 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend
+2026-03-23 06:34:17,804 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] [no run ID] not saving jupyter notebook
+2026-03-23 06:34:17,805 INFO    MainThread:3360120 [wandb_init.py:_pre_run_cell_hook():595] [no run ID] pausing backend
+2026-03-23 06:34:17,881 INFO    MainThread:3360120 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend
+2026-03-23 06:34:17,920 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] [no run ID] not saving jupyter notebook
+2026-03-23 06:34:17,920 INFO    MainThread:3360120 [wandb_init.py:_pre_run_cell_hook():595] [no run ID] pausing backend
+2026-03-23 06:35:58,636 INFO    MainThread:3360120 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend
+2026-03-23 06:35:58,641 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] [no run ID] not saving jupyter notebook
+2026-03-23 06:35:58,642 INFO    MainThread:3360120 [wandb_init.py:_pre_run_cell_hook():595] [no run ID] pausing backend
+2026-03-23 06:35:58,648 INFO    MainThread:3360120 [wandb_init.py:_post_run_cell_hook():606] [no run ID] resuming backend
+2026-03-23 06:37:10,202 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] [no run ID] not saving jupyter notebook
+2026-03-23 06:37:10,203 INFO    MainThread:3360120 [wandb_init.py:_pre_run_cell_hook():595] [no run ID] pausing backend
+2026-03-23 06:37:11,382 INFO    MainThread:3360120 [wandb_run.py:_finish():2291] finishing run 24110240160-fudan-university/wan-train/e9jc2nl5
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [jupyter.py:save_history():435] not saving jupyter history
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [jupyter.py:save_ipynb():362] not saving jupyter notebook
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [wandb_init.py:_jupyter_teardown():621] cleaning up jupyter logic
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [wandb_run.py:_atexit_cleanup():2490] got exitcode: 0
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [wandb_run.py:_restore():2472] restore
+2026-03-23 06:37:13,006 INFO    MainThread:3360120 [wandb_run.py:_restore():2478] restore done
+2026-03-23 06:37:16,126 INFO    MainThread:3360120 [wandb_run.py:_footer_sync_info():3868] logging synced files

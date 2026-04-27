@@ -1,0 +1,93 @@
+{
+  "seed": 20260417,
+  "video_path": "/home/gaoya/Code_Video/Code_data/vis/genesis_two_object_pillow_mpm_nopenetration.mp4",
+  "solver": "Genesis MPM",
+  "goal": "reduced_penetration",
+  "timeline": {
+    "settle_steps_before_recording": 320,
+    "record_steps_after_release": 1560,
+    "drop_begins_at_record_frame": 0,
+    "dt": 0.001,
+    "fps": 48
+  },
+  "scene": {
+    "substeps": 100,
+    "grid_density": 96
+  },
+  "pillow_material": {
+    "material_ctor": "gs.materials.MPM.Elastic",
+    "E": 45000.0,
+    "nu": 0.24,
+    "rho": 140.0,
+    "model": "corotation",
+    "vis_mode": "particle",
+    "size_m": [
+      0.68,
+      0.68,
+      0.26
+    ]
+  },
+  "falling_objects": [
+    {
+      "initial_pos_m": [
+        -0.42,
+        0.0,
+        1.28
+      ],
+      "hold_pos_before_record_m": [
+        -0.42,
+        0.0,
+        2.13
+      ],
+      "initial_velocity_m_s": [
+        0.0,
+        0.0,
+        -0.48
+      ],
+      "color_rgba": [
+        0.885635059189747,
+        0.18934217663299363,
+        0.3303197618281305,
+        1.0
+      ],
+      "material": {
+        "name": "metal_light",
+        "rho": 2600.0,
+        "friction": 0.4
+      },
+      "shape": "sphere",
+      "radius_m": 0.09294989356427914
+    },
+    {
+      "initial_pos_m": [
+        0.42,
+        0.0,
+        1.34
+      ],
+      "hold_pos_before_record_m": [
+        0.42,
+        0.0,
+        2.19
+      ],
+      "initial_velocity_m_s": [
+        0.0,
+        0.0,
+        -0.48
+      ],
+      "color_rgba": [
+        0.7700535463893244,
+        0.4035031557934269,
+        0.920640278544415,
+        1.0
+      ],
+      "material": {
+        "name": "rubber_light",
+        "rho": 900.0,
+        "friction": 0.85
+      },
+      "shape": "cylinder",
+      "radius_m": 0.0804695509844304,
+      "height_m": 0.17931350454880401
+    }
+  ]
+}

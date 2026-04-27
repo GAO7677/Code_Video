@@ -1,0 +1,3 @@
+{"sample_id":"sample_0001","prompt":"A woman turns around and smiles at the camera","video_path":"/abs/path/generated_future_only.mp4","context_frames_dir":"/abs/path/context_frames/sample_0001","gt_video_path":"/abs/path/gt_full_video.mp4","gt_start_frame":8}
+{"sample_id":"sample_0002","prompt":"A car drives forward while the camera pans left","video_path":"/abs/path/generated_future_only_2.mp4","context_frame_paths":["/abs/path/context_frames/sample_0002/0000.png","/abs/path/context_frames/sample_0002/0001.png","/abs/path/context_frames/sample_0002/0002.png","/abs/path/context_frames/sample_0002/0003.png"],"generated_start_frame":0}
+
