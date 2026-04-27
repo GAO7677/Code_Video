@@ -56,6 +56,9 @@ class ValidationRecord:
     fps: int
     overlay_video: str
     collision_strip: str
+    depth_video: str
+    flow_video: str
+    mask_overlay_video: str
     saved_full_video: str
     saved_future_video: str
     meta_json: str
@@ -84,6 +87,25 @@ def parse_args() -> argparse.Namespace:
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_json_if_exists(path: Path) -> dict[str, Any] | list[Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_npy_if_exists(path: Path) -> np.ndarray | None:
+    if not path.exists():
+        return None
+    return np.load(path)
+
+
+def load_npz_if_exists(path: Path) -> dict[str, np.ndarray] | None:
+    if not path.exists():
+        return None
+    npz = np.load(path)
+    return {key: npz[key] for key in npz.files}
 
 
 def load_video_frames(video_path: Path) -> list[np.ndarray]:
@@ -187,6 +209,42 @@ def summarize_objects(objects: list[dict[str, Any]]) -> str:
     for idx, obj in enumerate(objects):
         parts.append(object_display_label(obj, idx))
     return " | ".join(parts)
+
+
+def summarize_numeric_series(values: np.ndarray, valid_mask: np.ndarray | None = None) -> dict[str, float]:
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    if valid_mask is not None:
+        mask = np.asarray(valid_mask, dtype=bool).reshape(-1)
+        arr = arr[mask]
+    if arr.size == 0:
+        return {"min": 0.0, "max": 0.0, "mean": 0.0}
+    return {
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+        "mean": float(np.mean(arr)),
+    }
+
+
+def build_object_frame_summary(
+    object_state: dict[str, np.ndarray],
+    linear_speed_series: np.ndarray | None = None,
+    angular_speed_series: np.ndarray | None = None,
+) -> dict[str, Any]:
+    visible = np.asarray(object_state["vis"] > 0, dtype=bool)
+    pixel_speed = np.sqrt(np.square(object_state["du"]) + np.square(object_state["dv"])).astype(np.float32)
+    bbox_area = np.maximum(object_state["w"], 0.0) * np.maximum(object_state["h"], 0.0)
+    summary: dict[str, Any] = {
+        "visible_frames": int(np.sum(visible)),
+        "visible_ratio": float(np.mean(visible.astype(np.float32))) if visible.size else 0.0,
+        "depth_stats": summarize_numeric_series(object_state["d"], visible),
+        "pixel_speed_stats": summarize_numeric_series(pixel_speed, visible),
+        "bbox_area_stats": summarize_numeric_series(bbox_area, visible),
+    }
+    if linear_speed_series is not None:
+        summary["linear_speed_stats"] = summarize_numeric_series(linear_speed_series)
+    if angular_speed_series is not None:
+        summary["angular_speed_stats"] = summarize_numeric_series(angular_speed_series)
+    return summary
 
 
 def finite_difference(values: np.ndarray, visible: np.ndarray) -> np.ndarray:
@@ -500,6 +558,102 @@ def save_browser_video(path: Path, frames: list[np.ndarray], fps: int) -> None:
     save_video(path, frame_list, fps=int(fps))
 
 
+def build_depth_visualization_frames(depth_metric: np.ndarray) -> list[np.ndarray]:
+    frames: list[np.ndarray] = []
+    valid = np.asarray(depth_metric > 0, dtype=bool)
+    if np.any(valid):
+        lo = float(np.min(depth_metric[valid]))
+        hi = float(np.max(depth_metric[valid]))
+    else:
+        lo, hi = 0.0, 1.0
+    hi = max(hi, lo + 1e-6)
+    for frame_idx, frame in enumerate(depth_metric):
+        norm = np.clip((frame - lo) / (hi - lo), 0.0, 1.0)
+        gray = np.uint8(np.round(norm * 255.0))
+        bgr = cv2.applyColorMap(gray, cv2.COLORMAP_TURBO)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        vis = rgb.copy()
+        draw_banner(
+            vis,
+            [f"depth frame={frame_idx:02d} range=[{lo:.3f}, {hi:.3f}] m"],
+            bg_color=(18, 18, 18),
+            text_color=(245, 245, 245),
+        )
+        frames.append(vis)
+    return frames
+
+
+def colorize_flow_frame(flow_frame: np.ndarray, mag_scale: float) -> np.ndarray:
+    flow = np.asarray(flow_frame, dtype=np.float32)
+    fx = flow[..., 0]
+    fy = flow[..., 1]
+    mag, ang = cv2.cartToPolar(fx, fy, angleInDegrees=False)
+    hsv = np.zeros(flow.shape[:2] + (3,), dtype=np.uint8)
+    hsv[..., 0] = np.uint8(np.mod(ang * 90.0 / np.pi, 180.0))
+    hsv[..., 1] = 255
+    scale = max(float(mag_scale), 1e-6)
+    hsv[..., 2] = np.uint8(np.clip((mag / scale) * 255.0, 0.0, 255.0))
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+
+
+def build_flow_visualization_frames(flow: np.ndarray, target_num_frames: int) -> list[np.ndarray]:
+    if flow.size == 0:
+        return []
+    mag = np.linalg.norm(np.asarray(flow, dtype=np.float32), axis=-1)
+    mag_scale = float(np.percentile(mag, 95.0)) if mag.size else 1.0
+    mag_scale = max(mag_scale, 1.0)
+    frames: list[np.ndarray] = []
+    for frame_idx in range(flow.shape[0]):
+        vis = colorize_flow_frame(flow[frame_idx], mag_scale)
+        draw_banner(
+            vis,
+            [f"flow frame={frame_idx:02d}->{frame_idx + 1:02d} p95={mag_scale:.2f} px/frame"],
+            bg_color=(18, 18, 18),
+            text_color=(245, 245, 245),
+        )
+        frames.append(vis)
+    while len(frames) < target_num_frames and frames:
+        frames.append(frames[-1].copy())
+    return frames
+
+
+def build_mask_overlay_frames(
+    rgb_frames: list[np.ndarray],
+    seg: np.ndarray,
+    objects: list[dict[str, Any]],
+) -> list[np.ndarray]:
+    seg_to_color = {
+        int(obj.get("seg_id", idx + 1)): np.asarray(object_palette_rgb(idx), dtype=np.uint8)
+        for idx, obj in enumerate(objects)
+    }
+    frames: list[np.ndarray] = []
+    total = min(len(rgb_frames), int(seg.shape[0]))
+    for frame_idx in range(total):
+        rgb = np.asarray(rgb_frames[frame_idx], dtype=np.uint8)
+        seg_frame = np.asarray(seg[frame_idx], dtype=np.int32)
+        overlay = np.zeros_like(rgb)
+        alpha_mask = np.zeros(seg_frame.shape, dtype=np.float32)
+        for seg_id, color in seg_to_color.items():
+            mask = seg_frame == int(seg_id)
+            if not np.any(mask):
+                continue
+            overlay[mask] = color
+            alpha_mask[mask] = 1.0
+        blended = rgb.astype(np.float32)
+        if np.any(alpha_mask > 0):
+            alpha = alpha_mask[..., None] * 0.42
+            blended = (1.0 - alpha) * blended + alpha * overlay.astype(np.float32)
+        vis = np.uint8(np.clip(blended, 0.0, 255.0))
+        draw_banner(
+            vis,
+            [f"mask overlay frame={frame_idx:02d} objects={len(objects)}"],
+            bg_color=(18, 18, 18),
+            text_color=(245, 245, 245),
+        )
+        frames.append(vis)
+    return frames
+
+
 def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing: bool) -> ValidationRecord:
     heldout_meta = load_json(sample_dir / "meta.json")
     source_dir = Path(heldout_meta["source_paths"]["source_sample_dir"])
@@ -513,10 +667,20 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
     ensure_dir(sample_output_dir)
     overlay_path = sample_output_dir / "overlay.mp4"
     collision_strip_path = sample_output_dir / "collision_strip.jpg"
+    depth_video_path = sample_output_dir / "depth_vis.mp4"
+    flow_video_path = sample_output_dir / "flow_vis.mp4"
+    mask_overlay_video_path = sample_output_dir / "mask_overlay.mp4"
     state_json_path = sample_output_dir / "state.json"
 
     anchor_npz = np.load(source_dir / "physics" / "anchor_targets.npz")
     anchor = {key: anchor_npz[key] for key in anchor_npz.files}
+    rigid_kinematics = load_npz_if_exists(source_dir / "physics" / "rigid_kinematics.npz") or {}
+    energy_npz = load_npz_if_exists(source_dir / "physics" / "energy.npz") or {}
+    scene_input = load_json_if_exists(source_dir / "scene_input.json") or {}
+    depth_metric = load_npy_if_exists(source_dir / "physics" / "depth_metric.npy")
+    flow = load_npy_if_exists(source_dir / "physics" / "flow.npy")
+    seg = load_npy_if_exists(source_dir / "physics" / "seg.npy")
+    frame_phase_arr = load_npy_if_exists(source_dir / "physics" / "frame_phase.npy")
     collision_events = load_json(source_dir / "physics" / "collision_events.json")
     event_windows = load_json(source_dir / "physics" / "event_windows.json")
 
@@ -536,6 +700,17 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
     saved_future_video_path = sample_dir / "future_gt_video.mp4"
     frames = load_video_frames(saved_full_video_path)
     height, width = frames[0].shape[:2]
+    num_timeline_frames = int(min(len(frames), state["u"].shape[0]))
+
+    linear_speed_arr = None
+    angular_speed_arr = None
+    if rigid_kinematics:
+        linear_vel = np.asarray(rigid_kinematics.get("linear_vel", []), dtype=np.float32)
+        angular_vel = np.asarray(rigid_kinematics.get("angular_vel", []), dtype=np.float32)
+        if linear_vel.ndim == 3:
+            linear_speed_arr = np.linalg.norm(linear_vel, axis=2).astype(np.float32)
+        if angular_vel.ndim == 3:
+            angular_speed_arr = np.linalg.norm(angular_vel, axis=2).astype(np.float32)
 
     warnings: list[str] = []
     expected_frames = int(source_meta.get("frames", len(frames)))
@@ -579,6 +754,12 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
             object_depth_range = [float(np.min(object_depth)), float(np.max(object_depth))]
         else:
             object_depth_range = [0.0, 1.0]
+        object_linear_speed = None
+        object_angular_speed = None
+        if linear_speed_arr is not None and object_index < linear_speed_arr.shape[1]:
+            object_linear_speed = linear_speed_arr[:num_timeline_frames, object_index]
+        if angular_speed_arr is not None and object_index < angular_speed_arr.shape[1]:
+            object_angular_speed = angular_speed_arr[:num_timeline_frames, object_index]
         all_object_payloads.append(
             {
                 "object_index": int(object_index),
@@ -589,6 +770,15 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
                 "label": object_display_label(obj, object_index),
                 "color_rgb": object_palette_rgb(object_index),
                 "depth_range": object_depth_range,
+                "summary": build_object_frame_summary(
+                    object_state,
+                    linear_speed_series=object_linear_speed,
+                    angular_speed_series=object_angular_speed,
+                ),
+                "motion": {
+                    "linear_speed": [float(v) for v in object_linear_speed.tolist()] if object_linear_speed is not None else [],
+                    "angular_speed": [float(v) for v in object_angular_speed.tolist()] if object_angular_speed is not None else [],
+                },
                 "frames": [
                     {
                         "frame_idx": int(frame_idx),
@@ -616,6 +806,16 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
         ]
         save_browser_video(overlay_path, overlay_frames, fps=int(heldout_meta.get("fps", source_meta.get("fps", 12))))
         save_collision_strip(collision_strip_path, overlay_frames, collision_frames)
+    if depth_metric is not None and not (skip_existing and depth_video_path.exists()):
+        save_browser_video(depth_video_path, build_depth_visualization_frames(depth_metric[:num_timeline_frames]), fps=int(heldout_meta.get("fps", source_meta.get("fps", 12))))
+    if flow is not None and not (skip_existing and flow_video_path.exists()):
+        flow_frames = build_flow_visualization_frames(flow, num_timeline_frames)
+        if flow_frames:
+            save_browser_video(flow_video_path, flow_frames, fps=int(heldout_meta.get("fps", source_meta.get("fps", 12))))
+    if seg is not None and not (skip_existing and mask_overlay_video_path.exists()):
+        mask_frames = build_mask_overlay_frames(frames[:num_timeline_frames], seg[:num_timeline_frames], objects)
+        if mask_frames:
+            save_browser_video(mask_overlay_video_path, mask_frames, fps=int(heldout_meta.get("fps", source_meta.get("fps", 12))))
 
     state_payload = {
         "sample_id": heldout_meta["sample_id"],
@@ -625,6 +825,33 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
         "source_group": source_group,
         "fps": int(heldout_meta.get("fps", source_meta.get("fps", 12))),
         "depth_range": list(depth_range),
+        "scene_info": {
+            "case_name": str(scene_input.get("case_name", "")),
+            "scene_label": str(scene_input.get("scene_label", "")),
+            "scene_composition": str(source_meta.get("scene_composition", scene_input.get("scene_composition", ""))),
+            "interaction_pattern": str(source_meta.get("interaction_pattern", scene_input.get("interaction_pattern", ""))),
+            "object_count_bucket": str(source_meta.get("object_count_bucket", scene_input.get("object_count_bucket", ""))),
+            "simulator_type": str(source_meta.get("simulator_type", scene_input.get("simulator_type", ""))),
+            "simulator_mode": str(scene_input.get("simulator_mode", "")),
+            "motion_category": str(source_meta.get("motion_category", "")),
+            "seed": int(source_meta.get("seed", 0)),
+            "gravity": [float(v) for v in scene_input.get("gravity", source_meta.get("simulation", {}).get("gravity", [0.0, 0.0, -9.81]))],
+            "use_entry_motion": bool(scene_input.get("use_entry_motion", False)),
+            "object_fixed": bool(scene_input.get("object_fixed", False)),
+            "striker_speed_mps": float(scene_input.get("striker_speed_mps", 0.0) or 0.0),
+            "entry_linear_velocity": [float(v) for v in scene_input.get("entry_linear_velocity", [0.0, 0.0, 0.0])],
+            "entry_angular_velocity": [float(v) for v in scene_input.get("entry_angular_velocity", [0.0, 0.0, 0.0])],
+            "camera": make_json_safe(scene_input.get("camera", source_meta.get("camera", {}))),
+        },
+        "motion_energy": {
+            "linear_speed": make_json_safe(linear_speed_arr[:num_timeline_frames].tolist()) if linear_speed_arr is not None else [],
+            "angular_speed": make_json_safe(angular_speed_arr[:num_timeline_frames].tolist()) if angular_speed_arr is not None else [],
+            "kinetic_trans": make_json_safe(np.asarray(energy_npz.get("kinetic_trans", []), dtype=np.float32)[:num_timeline_frames].tolist()),
+            "kinetic_rot": make_json_safe(np.asarray(energy_npz.get("kinetic_rot", []), dtype=np.float32)[:num_timeline_frames].tolist()),
+            "potential_gravity": make_json_safe(np.asarray(energy_npz.get("potential_gravity", []), dtype=np.float32)[:num_timeline_frames].tolist()),
+            "mechanical_total": make_json_safe(np.asarray(energy_npz.get("mechanical_total", []), dtype=np.float32)[:num_timeline_frames].tolist()),
+            "frame_phase": [int(v) for v in np.asarray(frame_phase_arr[:num_timeline_frames], dtype=np.int32).tolist()] if frame_phase_arr is not None else [],
+        },
         "collision_windows": collision_windows,
         "all_collision_windows": all_collision_windows,
         "frame_collision_records_all": {
@@ -646,7 +873,7 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
                 "bbox_xyxy": [float(vv) for vv in state["bbox_xyxy"][frame_idx].tolist()],
                 "collision_tags": collision_tags.get(frame_idx, []),
             }
-            for frame_idx in range(int(min(len(frames), state["u"].shape[0])))
+            for frame_idx in range(num_timeline_frames)
         ],
         "objects": all_object_payloads,
         "object_summary": summarize_objects(objects),
@@ -675,6 +902,9 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
         fps=int(heldout_meta.get("fps", source_meta.get("fps", 12))),
         overlay_video=relative_to_root(overlay_path, sample_dir.parent),
         collision_strip=relative_to_root(collision_strip_path, sample_dir.parent),
+        depth_video=relative_to_root(depth_video_path, sample_dir.parent) if depth_video_path.exists() else "",
+        flow_video=relative_to_root(flow_video_path, sample_dir.parent) if flow_video_path.exists() else "",
+        mask_overlay_video=relative_to_root(mask_overlay_video_path, sample_dir.parent) if mask_overlay_video_path.exists() else "",
         saved_full_video=relative_to_root(saved_full_video_path, sample_dir.parent),
         saved_future_video=relative_to_root(saved_future_video_path, sample_dir.parent),
         meta_json=relative_to_root(sample_dir / "meta.json", sample_dir.parent),
@@ -909,12 +1139,20 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       gap: 12px;
       min-width: 0;
     }}
+    .media-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }}
     .media-panel,
     .info-panel {{
       border-radius: 18px;
       border: 1px solid var(--border);
       background: rgba(255,255,255,0.58);
       padding: 12px;
+    }}
+    .media-panel.featured {{
+      grid-column: 1 / -1;
     }}
     .panel-kicker {{
       margin: 0 0 8px;
@@ -1037,6 +1275,71 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       display: grid;
       gap: 8px;
     }}
+    .kv-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .kv-pill {{
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.68);
+      font-size: 0.84rem;
+      line-height: 1.45;
+      color: var(--muted);
+    }}
+    .kv-pill strong {{
+      display: block;
+      color: var(--ink);
+      margin-bottom: 3px;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }}
+    .table-compact {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }}
+    .table-compact th,
+    .table-compact td {{
+      text-align: left;
+      padding: 7px 8px;
+      border-bottom: 1px solid rgba(30, 25, 19, 0.08);
+      vertical-align: top;
+    }}
+    .table-compact th {{
+      color: var(--accent-strong);
+      font-weight: 700;
+      font-size: 0.76rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }}
+    .chart-grid {{
+      display: grid;
+      gap: 10px;
+    }}
+    .chart-block {{
+      display: grid;
+      gap: 6px;
+    }}
+    .chart-title {{
+      font-size: 0.84rem;
+      color: var(--ink);
+    }}
+    .chart-note {{
+      font-size: 0.76rem;
+      color: var(--muted);
+    }}
+    .chart-canvas {{
+      width: 100%;
+      height: 160px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.75);
+      display: block;
+    }}
     .meta-row {{
       display: grid;
       grid-template-columns: 136px minmax(0, 1fr);
@@ -1118,6 +1421,10 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
         gap: 4px;
       }}
       .links {{
+        grid-template-columns: 1fr;
+      }}
+      .media-grid,
+      .kv-grid {{
         grid-template-columns: 1fr;
       }}
       .shell {{
@@ -1266,25 +1573,43 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
               </div>
               <div class="card-body">
                 <div class="media-col">
-                  <div class="media-panel">
-                    <div class="panel-kicker">Interactive Overlay</div>
-                    <div
-                      class="player"
-                      data-player="overlay"
-                      data-state-json="${{encodeURI(item.state_json)}}"
-                      data-num-frames="${{item.num_frames}}"
-                      data-fps="${{item.fps}}"
-                    >
-                      <video controls preload="none" playsinline src="${{encodeURI(item.saved_full_video)}}"></video>
-                      <canvas class="overlay-canvas"></canvas>
+                  <div class="media-grid">
+                    <div class="media-panel featured">
+                      <div class="panel-kicker">Interactive Overlay</div>
+                      <div
+                        class="player"
+                        data-player="overlay"
+                        data-state-json="${{encodeURI(item.state_json)}}"
+                        data-num-frames="${{item.num_frames}}"
+                        data-fps="${{item.fps}}"
+                      >
+                        <video controls preload="none" playsinline src="${{encodeURI(item.saved_full_video)}}"></video>
+                        <canvas class="overlay-canvas"></canvas>
+                      </div>
                     </div>
-                  </div>
-                  <div class="media-panel">
-                    <div class="panel-kicker">Collision Frames</div>
-                    <img src="${{encodeURI(item.collision_strip)}}" alt="collision strip">
+                    <div class="media-panel">
+                      <div class="panel-kicker">Depth Video</div>
+                      <video controls preload="none" playsinline src="${{encodeURI(item.depth_video)}}"></video>
+                    </div>
+                    <div class="media-panel">
+                      <div class="panel-kicker">Flow Video</div>
+                      <video controls preload="none" playsinline src="${{encodeURI(item.flow_video)}}"></video>
+                    </div>
+                    <div class="media-panel featured">
+                      <div class="panel-kicker">Mask Overlay</div>
+                      <video controls preload="none" playsinline src="${{encodeURI(item.mask_overlay_video)}}"></video>
+                    </div>
+                    <div class="media-panel featured">
+                      <div class="panel-kicker">Collision Frames</div>
+                      <img src="${{encodeURI(item.collision_strip)}}" alt="collision strip">
+                    </div>
                   </div>
                 </div>
                 <div class="info-col">
+                  <div class="info-panel">
+                    <div class="panel-kicker">Scene Setup</div>
+                    <div class="kv-grid" data-scene-info="${{encodeURI(item.state_json)}}"></div>
+                  </div>
                   <div class="info-panel">
                     <div class="panel-kicker">Collision Summary</div>
                     <div class="summary-box ${{item.warnings.length ? "warn" : ""}}">${{escapeHtml(item.collision_summary)}}</div>
@@ -1305,6 +1630,14 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
                     <div>${{escapeHtml(item.object_summary)}}</div>
                   </div>
                   <div class="info-panel">
+                    <div class="panel-kicker">Motion & Energy Curves</div>
+                    <div class="chart-grid" data-motion-energy="${{encodeURI(item.state_json)}}"></div>
+                  </div>
+                  <div class="info-panel">
+                    <div class="panel-kicker">Object Metrics</div>
+                    <div data-object-metrics="${{encodeURI(item.state_json)}}"></div>
+                  </div>
+                  <div class="info-panel">
                     <div class="panel-kicker">Collision Breakdown</div>
                     <div class="event-list" data-collision-events="${{encodeURI(item.state_json)}}"></div>
                   </div>
@@ -1312,6 +1645,9 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
                     <div class="panel-kicker">Open Assets</div>
                     <div class="links">
                       <a href="${{encodeURI(item.overlay_video)}}" target="_blank" rel="noreferrer">预生成 overlay.mp4</a>
+                      <a href="${{encodeURI(item.depth_video)}}" target="_blank" rel="noreferrer">depth_vis.mp4</a>
+                      <a href="${{encodeURI(item.flow_video)}}" target="_blank" rel="noreferrer">flow_vis.mp4</a>
+                      <a href="${{encodeURI(item.mask_overlay_video)}}" target="_blank" rel="noreferrer">mask_overlay.mp4</a>
                       <a href="${{encodeURI(item.saved_full_video)}}" target="_blank" rel="noreferrer">原始 full_video</a>
                       <a href="${{encodeURI(item.saved_future_video)}}" target="_blank" rel="noreferrer">future_gt_video</a>
                       <a href="${{encodeURI(item.meta_json)}}" target="_blank" rel="noreferrer">meta.json</a>
@@ -1478,6 +1814,258 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
       `;
     }}
 
+    function fmtNumber(value, digits = 2) {{
+      const num = Number(value);
+      return Number.isFinite(num) ? num.toFixed(digits) : "n/a";
+    }}
+
+    function kvPill(label, value) {{
+      return `
+        <div class="kv-pill">
+          <strong>${{escapeHtml(label)}}</strong>
+          <span>${{escapeHtml(value)}}</span>
+        </div>
+      `;
+    }}
+
+    function renderSceneInfo(panel, payload) {{
+      if (!panel || !payload) {{
+        return;
+      }}
+      const info = payload.scene_info || {{}};
+      const camera = info.camera || {{}};
+      panel.innerHTML = [
+        kvPill("Case", info.case_name || "n/a"),
+        kvPill("Scene Label", info.scene_label || "n/a"),
+        kvPill("Composition", info.scene_composition || "n/a"),
+        kvPill("Interaction", info.interaction_pattern || "n/a"),
+        kvPill("Bucket", info.object_count_bucket || "n/a"),
+        kvPill("Motion", info.motion_category || "n/a"),
+        kvPill("Entry Motion", String(Boolean(info.use_entry_motion))),
+        kvPill("Object Fixed", String(Boolean(info.object_fixed))),
+        kvPill("Striker Speed", `${{fmtNumber(info.striker_speed_mps, 3)}} m/s`),
+        kvPill("Entry Linear", Array.isArray(info.entry_linear_velocity) ? info.entry_linear_velocity.map((v) => fmtNumber(v, 2)).join(", ") : "n/a"),
+        kvPill("Entry Angular", Array.isArray(info.entry_angular_velocity) ? info.entry_angular_velocity.map((v) => fmtNumber(v, 2)).join(", ") : "n/a"),
+        kvPill("Camera", camera && camera.pos ? `pos=${{camera.pos.map((v) => fmtNumber(v, 2)).join(", ")}} | fov=${{fmtNumber(camera.fov, 1)}}` : "n/a"),
+      ].join("");
+    }}
+
+    function renderObjectMetrics(panel, payload) {{
+      if (!panel || !payload) {{
+        return;
+      }}
+      const objects = payload.objects || [];
+      if (!objects.length) {{
+        panel.innerHTML = '<div class="event-empty">none</div>';
+        return;
+      }}
+      const rows = objects.map((obj) => {{
+        const summary = obj.summary || {{}};
+        const visibleFrames = Number(summary.visible_frames || 0);
+        const visibleRatio = Number(summary.visible_ratio || 0);
+        const depthStats = summary.depth_stats || {{}};
+        const pixelStats = summary.pixel_speed_stats || {{}};
+        const linearStats = summary.linear_speed_stats || {{}};
+        return `
+          <tr>
+            <td><span style="color:${{rgbFromArray(obj.color_rgb)}}; font-weight:700;">${{escapeHtml(obj.label || `obj${{obj.object_index}}`)}}</span></td>
+            <td>${{escapeHtml(String(obj.seg_id))}}</td>
+            <td>${{visibleFrames}} / ${{fmtNumber(visibleRatio * 100.0, 1)}}%</td>
+            <td>${{fmtNumber(depthStats.min, 3)}} .. ${{fmtNumber(depthStats.max, 3)}}</td>
+            <td>${{fmtNumber(pixelStats.max, 2)}}</td>
+            <td>${{Object.keys(linearStats).length ? fmtNumber(linearStats.max, 2) : 'n/a'}}</td>
+          </tr>
+        `;
+      }}).join("");
+      panel.innerHTML = `
+        <table class="table-compact">
+          <thead>
+            <tr>
+              <th>Object</th>
+              <th>Seg</th>
+              <th>Visible</th>
+              <th>Depth</th>
+              <th>Px Speed Max</th>
+              <th>Lin Speed Max</th>
+            </tr>
+          </thead>
+          <tbody>${{rows}}</tbody>
+        </table>
+      `;
+    }}
+
+    function createChartCanvas(height = 160) {{
+      const canvas = document.createElement("canvas");
+      canvas.className = "chart-canvas";
+      canvas.style.height = `${{height}}px`;
+      return canvas;
+    }}
+
+    function drawLineChart(canvas, seriesList, valueRange = null) {{
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(320, Math.round(canvas.clientWidth || 520));
+      const height = Math.max(120, Math.round(parseFloat(canvas.style.height || "160")));
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {{
+        return;
+      }}
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, width, height);
+
+      const pad = {{ left: 34, right: 12, top: 10, bottom: 22 }};
+      const plotW = Math.max(10, width - pad.left - pad.right);
+      const plotH = Math.max(10, height - pad.top - pad.bottom);
+
+      let yMin = Number.POSITIVE_INFINITY;
+      let yMax = Number.NEGATIVE_INFINITY;
+      let maxLen = 0;
+      seriesList.forEach((series) => {{
+        const values = Array.isArray(series.values) ? series.values : [];
+        maxLen = Math.max(maxLen, values.length);
+        values.forEach((raw) => {{
+          const value = Number(raw);
+          if (!Number.isFinite(value)) {{
+            return;
+          }}
+          yMin = Math.min(yMin, value);
+          yMax = Math.max(yMax, value);
+        }});
+      }});
+      if (valueRange && valueRange.length === 2) {{
+        yMin = Number(valueRange[0]);
+        yMax = Number(valueRange[1]);
+      }}
+      if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) {{
+        ctx.fillStyle = "#6c6255";
+        ctx.font = "13px Georgia, serif";
+        ctx.fillText("no data", pad.left, pad.top + 24);
+        return;
+      }}
+      if (Math.abs(yMax - yMin) < 1e-6) {{
+        yMin -= 1.0;
+        yMax += 1.0;
+      }}
+
+      ctx.strokeStyle = "rgba(30,25,19,0.12)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 4; i += 1) {{
+        const y = pad.top + (plotH * i) / 3;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(width - pad.right, y);
+        ctx.stroke();
+      }}
+
+      ctx.fillStyle = "#6c6255";
+      ctx.font = "11px Georgia, serif";
+      ctx.fillText(fmtNumber(yMax, 2), 4, pad.top + 4);
+      ctx.fillText(fmtNumber(yMin, 2), 4, pad.top + plotH + 4);
+      ctx.fillText("f0", pad.left, height - 6);
+      ctx.fillText(`f${{Math.max(0, maxLen - 1)}}`, width - pad.right - 26, height - 6);
+
+      const xFor = (idx, length) => pad.left + (plotW * idx) / Math.max(1, length - 1);
+      const yFor = (value) => pad.top + plotH * (1.0 - (value - yMin) / (yMax - yMin));
+
+      seriesList.forEach((series) => {{
+        const values = Array.isArray(series.values) ? series.values : [];
+        if (!values.length) {{
+          return;
+        }}
+        ctx.strokeStyle = series.color || "#ad4f1f";
+        ctx.lineWidth = series.width || 2;
+        ctx.beginPath();
+        let started = false;
+        values.forEach((raw, idx) => {{
+          const value = Number(raw);
+          if (!Number.isFinite(value)) {{
+            return;
+          }}
+          const x = xFor(idx, values.length);
+          const y = yFor(value);
+          if (!started) {{
+            ctx.moveTo(x, y);
+            started = true;
+          }} else {{
+            ctx.lineTo(x, y);
+          }}
+        }});
+        ctx.stroke();
+      }});
+    }}
+
+    function renderMotionEnergy(panel, payload) {{
+      if (!panel || !payload) {{
+        return;
+      }}
+      const motion = payload.motion_energy || {{}};
+      const objects = payload.objects || [];
+      panel.innerHTML = "";
+      const blocks = [];
+
+      const linearSeries = objects.map((obj, idx) => ({{
+        label: obj.label || `obj${{idx}}`,
+        color: rgbFromArray(obj.color_rgb),
+        values: (motion.linear_speed || []).map((frame) => Array.isArray(frame) ? frame[idx] : null),
+      }})).filter((item) => item.values.length);
+      blocks.push({{
+        title: "Linear Speed",
+        note: "m/s per object",
+        series: linearSeries,
+      }});
+
+      const angularSeries = objects.map((obj, idx) => ({{
+        label: obj.label || `obj${{idx}}`,
+        color: rgbFromArray(obj.color_rgb),
+        values: (motion.angular_speed || []).map((frame) => Array.isArray(frame) ? frame[idx] : null),
+      }})).filter((item) => item.values.length);
+      blocks.push({{
+        title: "Angular Speed",
+        note: "rad/s per object",
+        series: angularSeries,
+      }});
+
+      const energySeries = [
+        {{ label: "mechanical_total", color: "#ad4f1f", values: motion.mechanical_total || [] }},
+        {{ label: "kinetic_trans", color: "#2d6b43", values: motion.kinetic_trans || [] }},
+        {{ label: "kinetic_rot", color: "#356b95", values: motion.kinetic_rot || [] }},
+        {{ label: "potential_gravity", color: "#7f3613", values: motion.potential_gravity || [] }},
+      ].filter((item) => item.values.length);
+      blocks.push({{
+        title: "Scene Energy",
+        note: "J, aggregated over scene",
+        series: energySeries,
+      }});
+
+      const phaseValues = motion.frame_phase || [];
+      if (phaseValues.length) {{
+        blocks.push({{
+          title: "Frame Phase",
+          note: `raw phase ids: ${{[...new Set(phaseValues)].join(', ')}}`,
+          series: [{{ label: "frame_phase", color: "#6c6255", values: phaseValues, width: 1.6 }}],
+          range: [0, Math.max(...phaseValues, 1)],
+        }});
+      }}
+
+      blocks.forEach((block) => {{
+        const wrapper = document.createElement("div");
+        wrapper.className = "chart-block";
+        const title = document.createElement("div");
+        title.className = "chart-title";
+        title.textContent = block.title;
+        const note = document.createElement("div");
+        note.className = "chart-note";
+        note.textContent = block.note;
+        const canvas = createChartCanvas();
+        wrapper.appendChild(title);
+        wrapper.appendChild(note);
+        wrapper.appendChild(canvas);
+        panel.appendChild(wrapper);
+        drawLineChart(canvas, block.series, block.range || null);
+      }});
+    }}
+
     function drawOverlayFrame(canvas, video, payload, fallbackFps) {{
       const ctx = canvas.getContext("2d");
       if (!ctx || !payload || !payload.objects || !payload.objects.length || !video.videoWidth || !video.videoHeight) {{
@@ -1601,6 +2189,9 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
         const stateJsonUrl = root.dataset.stateJson;
         const cardBody = root.closest(".card-body");
         const collisionPanel = cardBody ? cardBody.querySelector(`[data-collision-events="${{CSS.escape(stateJsonUrl)}}"]`) : null;
+        const sceneInfoPanel = cardBody ? cardBody.querySelector(`[data-scene-info="${{CSS.escape(stateJsonUrl)}}"]`) : null;
+        const objectMetricsPanel = cardBody ? cardBody.querySelector(`[data-object-metrics="${{CSS.escape(stateJsonUrl)}}"]`) : null;
+        const motionEnergyPanel = cardBody ? cardBody.querySelector(`[data-motion-energy="${{CSS.escape(stateJsonUrl)}}"]`) : null;
         const fallbackFps = Number(root.dataset.fps || "12");
         let payload = null;
         let rafId = 0;
@@ -1672,6 +2263,9 @@ def build_index(records: list[ValidationRecord], dataset_root: Path, output_root
           .then((obj) => {{
             payload = obj;
             renderLegend();
+            renderSceneInfo(sceneInfoPanel, payload);
+            renderObjectMetrics(objectMetricsPanel, payload);
+            renderMotionEnergy(motionEnergyPanel, payload);
             renderCollisionEvents();
             drawOnce();
           }})
