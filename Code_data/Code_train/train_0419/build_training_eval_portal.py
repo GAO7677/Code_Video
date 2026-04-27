@@ -621,6 +621,278 @@ def safe_sample_key(dataset: Any, sample_id: Any) -> str:
     return f"{dataset}::{sample_id}"
 
 
+COMPARE_SCOPE_LABELS = {
+    "overall": "Overall",
+    "kubric_tfds_movi-d": "MOVI-D",
+    "mvp-lab-OpenVidHD-0.4M-720p-48fps": "OpenVid",
+    "physics-iq-benchmark": "Physics-IQ",
+    "vLAR-PhysInOne": "vLAR",
+    "version_1_genesis_rigid_data_all_cases": "Genesis",
+}
+
+
+def scope_display_name(scope: str) -> str:
+    return COMPARE_SCOPE_LABELS.get(scope, scope)
+
+
+def parse_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_categorical_line_chart_svg(
+    categories: list[str],
+    series_map: dict[str, list[float | None]],
+    metric_name: str,
+    category_labels: list[str] | None = None,
+) -> str:
+    non_empty_series = {}
+    for series_name, values in series_map.items():
+        if any(value is not None for value in values):
+            non_empty_series[series_name] = values
+    if not non_empty_series or not categories:
+        return ""
+
+    display_labels = category_labels or categories
+    width = max(420, 92 * len(categories))
+    height = 240
+    padding_left = 52
+    padding_right = 20
+    padding_top = 18
+    padding_bottom = 56
+    plot_width = width - padding_left - padding_right
+    plot_height = height - padding_top - padding_bottom
+
+    ys = [
+        float(value)
+        for values in non_empty_series.values()
+        for value in values
+        if value is not None
+    ]
+    if not ys:
+        return ""
+    min_y = min(ys)
+    max_y = max(ys)
+    if math.isclose(min_y, max_y):
+        delta = 1.0 if math.isclose(min_y, 0.0) else abs(min_y) * 0.1
+        min_y -= delta
+        max_y += delta
+
+    if len(categories) == 1:
+        x_positions = [padding_left + plot_width / 2]
+    else:
+        x_positions = [
+            padding_left + idx * plot_width / (len(categories) - 1)
+            for idx in range(len(categories))
+        ]
+
+    def y_to_svg(value: float) -> float:
+        ratio = (value - min_y) / (max_y - min_y)
+        return padding_top + (1.0 - ratio) * plot_height
+
+    palette = [
+        "#b9512d",
+        "#1f6f8b",
+        "#3f7d20",
+        "#8c4f9f",
+        "#c47f00",
+        "#cc5a71",
+    ]
+    paths = []
+    point_groups = []
+    legends = []
+    for idx, (series_name, values) in enumerate(non_empty_series.items()):
+        color = palette[idx % len(palette)]
+        point_pairs = [
+            (x_positions[pos], float(value))
+            for pos, value in enumerate(values)
+            if value is not None
+        ]
+        if not point_pairs:
+            continue
+        polyline_points = " ".join(
+            f"{x:.2f},{y_to_svg(y):.2f}" for x, y in point_pairs
+        )
+        circles = "".join(
+            f"<circle cx='{x:.2f}' cy='{y_to_svg(y):.2f}' r='3.4' fill='{color}'></circle>"
+            for x, y in point_pairs
+        )
+        paths.append(
+            f"<polyline class='series' style='stroke: {color};' points='{polyline_points}'></polyline>"
+        )
+        point_groups.append(f"<g class='points'>{circles}</g>")
+        legends.append(
+            "<span class='chart-legend-item'>"
+            f"<span class='chart-swatch' style='background:{color};'></span>"
+            f"{html.escape(series_name)}"
+            "</span>"
+        )
+
+    x_labels = "".join(
+        f"<text x='{x:.2f}' y='{height - 10}' text-anchor='middle'>{html.escape(label)}</text>"
+        for x, label in zip(x_positions, display_labels)
+    )
+    y_ticks = []
+    for tick_id in range(4):
+        value = min_y + (max_y - min_y) * tick_id / 3
+        y = y_to_svg(value)
+        y_ticks.append(
+            f"<line x1='{padding_left}' y1='{y:.2f}' x2='{width - padding_right}' y2='{y:.2f}'></line>"
+            f"<text x='{padding_left - 8}' y='{y + 4:.2f}' text-anchor='end'>{html.escape(format_metric_value(value))}</text>"
+        )
+
+    lower_better = metric_prefers_lower(metric_name)
+    direction_badge = "lower better" if lower_better else "higher better"
+    return f"""
+    <div class="chart-card chart-card-wide">
+      <div class="chart-card-head">
+        <h4>{html.escape(metric_name)}</h4>
+        <span class="chart-direction">{direction_badge}</span>
+      </div>
+      <svg viewBox="0 0 {width} {height}" class="metric-chart" role="img" aria-label="{html.escape(metric_name)} categorical comparison chart">
+        <rect x="0" y="0" width="{width}" height="{height}" rx="12" ry="12"></rect>
+        <g class="grid">{''.join(y_ticks)}</g>
+        <line class="axis" x1="{padding_left}" y1="{height - padding_bottom}" x2="{width - padding_right}" y2="{height - padding_bottom}"></line>
+        <line class="axis" x1="{padding_left}" y1="{padding_top}" x2="{padding_left}" y2="{height - padding_bottom}"></line>
+        {''.join(paths)}
+        {''.join(point_groups)}
+        <g class="xlabels">{x_labels}</g>
+      </svg>
+      <div class="chart-foot">
+        <span>x-axis: dataset scope</span>
+        <span>{len(categories)} scopes</span>
+      </div>
+      <div class="chart-legend">{''.join(legends)}</div>
+    </div>
+    """
+
+
+def render_compare_metric_charts(
+    rows: list[dict[str, str]],
+    model_names: list[str] | None = None,
+) -> str:
+    if not rows:
+        return "<p class='empty'>Comparison charts are not ready yet.</p>"
+
+    categories = [str(row.get("scope", "")) for row in rows]
+    category_labels = [scope_display_name(category) for category in categories]
+    chart_model_names = model_names or ["base-ti2v-5b", "step-008000"]
+    base_name = chart_model_names[0] if chart_model_names else "base"
+    ft_name = chart_model_names[1] if len(chart_model_names) > 1 else "finetuned"
+    metrics = [
+        ("future_psnr", "PSNR"),
+        ("future_ssim", "SSIM"),
+        ("future_lpips", "LPIPS"),
+        ("future_dino", "DINO"),
+    ]
+
+    cards = []
+    for metric_key, metric_title in metrics:
+        base_key = f"base_{metric_key}"
+        ft_key = f"ft_{metric_key}"
+        delta_key = f"delta_{metric_key}"
+        compare_chart = build_categorical_line_chart_svg(
+            categories,
+            {
+                base_name: [parse_optional_float(row.get(base_key)) for row in rows],
+                ft_name: [parse_optional_float(row.get(ft_key)) for row in rows],
+            },
+            metric_title,
+            category_labels=category_labels,
+        )
+        delta_chart = build_categorical_line_chart_svg(
+            categories,
+            {
+                "delta (ft - base)": [
+                    parse_optional_float(row.get(delta_key)) for row in rows
+                ],
+            },
+            f"{metric_title} Delta",
+            category_labels=category_labels,
+        )
+        if compare_chart:
+            cards.append(compare_chart)
+        if delta_chart:
+            cards.append(delta_chart)
+
+    if not cards:
+        return "<p class='empty'>Comparison charts are not ready yet.</p>"
+    return f"<div class='chart-grid chart-grid-wide'>{''.join(cards)}</div>"
+
+
+def render_compare_analysis(compare_summary: dict[str, Any] | None) -> str:
+    if not isinstance(compare_summary, dict):
+        return "<p class='empty'>Comparison summary is not ready yet.</p>"
+
+    rows = compare_summary.get("rows", [])
+    if not rows:
+        return "<p class='empty'>Comparison summary is not ready yet.</p>"
+
+    overall = next((row for row in rows if row.get("scope") == "overall"), rows[0])
+    dataset_rows = [row for row in rows if row.get("scope") != "overall"]
+    metric_specs = [
+        ("delta_future_psnr", "PSNR", False),
+        ("delta_future_ssim", "SSIM", False),
+        ("delta_future_lpips", "LPIPS", True),
+        ("delta_future_dino", "DINO", False),
+    ]
+
+    headline_parts = []
+    for key, label, lower_better in metric_specs:
+        value = parse_optional_float(overall.get(key))
+        if value is None:
+            continue
+        direction = "improved" if (value < 0 if lower_better else value > 0) else "dropped"
+        headline_parts.append(f"{label} {direction} {format_metric_value(value)}")
+    headline = "; ".join(headline_parts) if headline_parts else "No aggregate delta metrics found."
+
+    bullets = []
+    for key, label, lower_better in metric_specs:
+        scored_rows = []
+        for row in dataset_rows:
+            value = parse_optional_float(row.get(key))
+            if value is None:
+                continue
+            scored_rows.append((float(value), str(row.get("scope", "")), int(row.get("ft_num_success", 0) or 0)))
+        if not scored_rows:
+            continue
+        best_row = min(scored_rows, key=lambda item: item[0]) if lower_better else max(scored_rows, key=lambda item: item[0])
+        worst_row = max(scored_rows, key=lambda item: item[0]) if lower_better else min(scored_rows, key=lambda item: item[0])
+        bullets.append(
+            "<li>"
+            f"{html.escape(label)}: best on <strong>{html.escape(scope_display_name(best_row[1]))}</strong> "
+            f"({format_metric_value(best_row[0])}, n={best_row[2]}), "
+            f"weakest on <strong>{html.escape(scope_display_name(worst_row[1]))}</strong> "
+            f"({format_metric_value(worst_row[0])}, n={worst_row[2]})."
+            "</li>"
+        )
+
+    sample_notes = []
+    for row in dataset_rows:
+        scope = str(row.get("scope", ""))
+        count = int(row.get("ft_num_success", 0) or 0)
+        if count <= 4:
+            sample_notes.append(f"{scope_display_name(scope)} n={count}")
+    note_html = ""
+    if sample_notes:
+        note_html = (
+            "<p class='validation-headline'>Small-sample scopes should be treated cautiously: "
+            f"{html.escape(', '.join(sample_notes))}.</p>"
+        )
+
+    return (
+        f"<p class='validation-headline'>{html.escape(headline)}</p>"
+        f"{note_html}"
+        "<ul class='analysis-list'>"
+        f"{''.join(bullets)}"
+        "</ul>"
+    )
+
+
 def gather_compare_samples(
     benchmark_root: Path,
     portal_dir: Path,
@@ -1475,6 +1747,115 @@ def build_compare_html(
       background: white;
       margin-top: 14px;
     }}
+    .chart-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .chart-grid-wide {{
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    }}
+    .chart-card {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+    }}
+    .chart-card-wide {{
+      overflow-x: auto;
+    }}
+    .chart-card-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 8px;
+    }}
+    .chart-card h4 {{
+      font-size: 14px;
+      line-height: 1.25;
+      word-break: break-word;
+    }}
+    .chart-direction {{
+      font-size: 11px;
+      color: var(--muted);
+      background: #f6efe5;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }}
+    .metric-chart {{
+      width: 100%;
+      display: block;
+    }}
+    .metric-chart rect {{
+      fill: #fffaf2;
+      stroke: #eadfcd;
+    }}
+    .metric-chart .grid line {{
+      stroke: #eadfcd;
+      stroke-dasharray: 3 4;
+    }}
+    .metric-chart .grid text,
+    .metric-chart .xlabels text {{
+      fill: #7a7168;
+      font-size: 10px;
+    }}
+    .metric-chart .axis {{
+      stroke: #a59484;
+      stroke-width: 1.25;
+    }}
+    .metric-chart .series {{
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }}
+    .metric-chart .points circle {{
+      fill: var(--accent);
+      stroke: #fff;
+      stroke-width: 1.2;
+    }}
+    .chart-foot {{
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .chart-legend {{
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+    }}
+    .chart-legend-item {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      background: #f9f1e6;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+    }}
+    .chart-swatch {{
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex: none;
+    }}
+    .analysis-list {{
+      margin: 12px 0 0;
+      padding-left: 20px;
+      color: #473e35;
+      line-height: 1.5;
+    }}
     .filters {{
       display: flex;
       flex-wrap: wrap;
@@ -1614,6 +1995,8 @@ def build_compare_html(
 
     <section class="section">
       <h2>Comparison Metrics</h2>
+      {render_compare_analysis(compare_summary)}
+      {render_compare_metric_charts(compare_rows, model_names)}
       {render_compare_metrics_table(compare_rows, compare_summary)}
     </section>
 
