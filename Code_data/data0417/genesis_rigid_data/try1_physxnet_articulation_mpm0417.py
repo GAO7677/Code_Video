@@ -1486,7 +1486,9 @@ def build_preview_case_configs(
             lifted_offset = np.asarray(cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
             lifted_offset[2] += float(max(0.02, miss_z))
             cfg["placed_pos_offset"] = lifted_offset.tolist()
-            cfg["gravity_z_override"] = float(getattr(args, "counterfactual_no_collision_gravity_z", 0.0) or 0.0)
+            cfg["gravity_z_override"] = float(
+                getattr(args, "counterfactual_no_collision_gravity_z", -9.81) or -9.81
+            )
             cfg["warmup_steps_override"] = 0
             cfg["pre_record_delay_steps_override"] = 0
             cfg["initial_still_frames_override"] = 0
@@ -3721,24 +3723,29 @@ def prepare_physxnet_object(
     # 在 metadata 中记录生成时使用的 override，若与当前不一致则重新生成
     _cache_valid = False
     if _cached_urdf.exists() and _cached_meta.exists():
-        with open(_cached_meta, "r", encoding="utf-8") as _f:
-            _m = json.load(_f)
-        _cached_override = _m.get("solver_family_override", None)
-        _cached_policy = _m.get("classification_policy_version", None)
-        _cached_inertial_origin_policy = _m.get("inertial_origin_policy_version", None)
-        _cached_threshold = _m.get("all_parts_youngs_threshold_gpa", None)
-        _cached_double_sided = bool(_m.get("rigid_visual_double_sided_shell", True))
-        _cached_rigid_group_mode = _m.get("object_solver_policy", {}).get("rigid_only_group_info_mode", None)
-        _current_sim_mode = str(simulator_mode).strip().lower()
-        if (
-            _cached_override == solver_family_override
-            and _cached_policy == CLASSIFICATION_POLICY_VERSION
-            and _cached_inertial_origin_policy == INERTIAL_ORIGIN_POLICY_VERSION
-            and _cached_threshold == all_parts_youngs_threshold_gpa
-            and _cached_double_sided == bool(rigid_visual_double_sided_shell)
-            and (_current_sim_mode != "rigid" or _cached_rigid_group_mode == "collapsed_to_fixed_assembly")
-        ):
-            _cache_valid = True
+        try:
+            with open(_cached_meta, "r", encoding="utf-8") as _f:
+                _m = json.load(_f)
+        except Exception as exc:
+            print(f"[Cache] {object_id}: invalid cached metadata, rebuild asset cache ({exc})")
+            _m = None
+        if isinstance(_m, dict):
+            _cached_override = _m.get("solver_family_override", None)
+            _cached_policy = _m.get("classification_policy_version", None)
+            _cached_inertial_origin_policy = _m.get("inertial_origin_policy_version", None)
+            _cached_threshold = _m.get("all_parts_youngs_threshold_gpa", None)
+            _cached_double_sided = bool(_m.get("rigid_visual_double_sided_shell", True))
+            _cached_rigid_group_mode = _m.get("object_solver_policy", {}).get("rigid_only_group_info_mode", None)
+            _current_sim_mode = str(simulator_mode).strip().lower()
+            if (
+                _cached_override == solver_family_override
+                and _cached_policy == CLASSIFICATION_POLICY_VERSION
+                and _cached_inertial_origin_policy == INERTIAL_ORIGIN_POLICY_VERSION
+                and _cached_threshold == all_parts_youngs_threshold_gpa
+                and _cached_double_sided == bool(rigid_visual_double_sided_shell)
+                and (_current_sim_mode != "rigid" or _cached_rigid_group_mode == "collapsed_to_fixed_assembly")
+            ):
+                _cache_valid = True
     if _cache_valid:
         print(f"[Cache] {object_id}: URDF already exists, loading from cache.")
         return PreparedObject(
@@ -9630,7 +9637,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--case_seed", type=int, default=20260414, help="Base seed used to deterministically randomize preview cases")
     parser.add_argument("--enable_counterfactual_cases", action="store_true", help="Append two counterfactual negative cases per compatible base case: same-scene perturbed impact and no-collision continuation.")
     parser.add_argument("--counterfactual_only", action="store_true", help="Execute only counterfactual cases after they are derived from the requested parent cases; skip running base factual cases.")
-    parser.add_argument("--counterfactual_no_collision_gravity_z", type=float, default=0.0, help="Gravity used by the no-collision counterfactual when the main object should keep moving without ground/contact bounce.")
+    parser.add_argument(
+        "--counterfactual_no_collision_gravity_z",
+        type=float,
+        default=-9.81,
+        help="Gravity used by the no-collision counterfactual. Defaults to standard gravity so all cases share a unified gravity field.",
+    )
     parser.add_argument("--motion_resample_index", type=int, default=0, help="Internal retry index for case900/case901 randomized pose and velocity")
     parser.add_argument(
         "--motion_case_max_retries",

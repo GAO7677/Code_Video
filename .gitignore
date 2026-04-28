@@ -52,3 +52,9 @@ RealWonder-main/demo_web/demo_data/
 RealWonder-main/simulation/image23D/*.pt
 vipe-main/assets/examples/
 vjepa2-main/assets/
+
+# Large generated training artifacts that should not be auto-synced
+Code_data/Code_train/train_0419/vjepa_collision_prior/**/replaced_originals/
+Code_data/Code_train/train_0419/vjepa_collision_prior/**/staging/train/rigid/single_object_preview/
+Code_data/Code_train/train_0419/vjepa_collision_prior/tmp_regen_test/
+Code_data/Code_train/train_0419/vjepa_collision_prior/tmp_regen_test2/

@@ -1257,7 +1257,7 @@ def adjust_case_for_subset(subset: str, case_cfg: Dict[str, Any], sample_seed: i
         case["use_entry_motion"] = True
         case["entry_linear_velocity"] = [-0.85, 0.0, 0.0]
         case["entry_angular_velocity"] = [0.0, 0.0, 0.0]
-        case["gravity_z_override"] = 0.0
+        case["gravity_z_override"] = -9.81
         case["skip_ground_alignment"] = True
     elif subset == "smooth_multi_no_contact":
         custom_objects = []
@@ -1281,7 +1281,7 @@ def adjust_case_for_subset(subset: str, case_cfg: Dict[str, Any], sample_seed: i
         case["use_entry_motion"] = False
         case["entry_linear_velocity"] = [0.0, 0.0, 0.0]
         case["entry_angular_velocity"] = [0.0, 0.0, 0.0]
-        case["gravity_z_override"] = 0.0
+        case["gravity_z_override"] = -9.81
         case["skip_ground_alignment"] = True
     elif subset == "event_pair":
         case["custom_objects"] = [
@@ -1301,7 +1301,7 @@ def adjust_case_for_subset(subset: str, case_cfg: Dict[str, Any], sample_seed: i
         case["entry_linear_velocity"] = [0.0, 0.0, 0.0]
         case["entry_angular_velocity"] = [0.0, 0.0, 0.0]
         case["placed_pos_offset"] = [0.0, 0.0, 0.32]
-        case["gravity_z_override"] = 0.0
+        case["gravity_z_override"] = -9.81
         case["skip_ground_alignment"] = False
     elif subset == "event_multi":
         case["placed_pos_offset"] = [0.0, 0.0, 0.32]
@@ -1343,7 +1343,7 @@ def adjust_case_for_subset(subset: str, case_cfg: Dict[str, Any], sample_seed: i
         case["use_entry_motion"] = False
         case["entry_linear_velocity"] = [0.0, 0.0, 0.0]
         case["entry_angular_velocity"] = [0.0, 0.0, 0.0]
-        case["gravity_z_override"] = 0.0
+        case["gravity_z_override"] = -9.81
         case["skip_ground_alignment"] = False
     elif subset == "ood_physical":
         case["custom_objects"] = []
@@ -1351,7 +1351,7 @@ def adjust_case_for_subset(subset: str, case_cfg: Dict[str, Any], sample_seed: i
         case["use_entry_motion"] = True
         case["entry_linear_velocity"] = [-2.2, 0.0, 0.0]
         case["entry_angular_velocity"] = [0.0, 0.0, 0.0]
-        case["gravity_z_override"] = 0.0
+        case["gravity_z_override"] = -9.81
         case["skip_ground_alignment"] = False
     elif subset == "ood_composition":
         custom_objects = []

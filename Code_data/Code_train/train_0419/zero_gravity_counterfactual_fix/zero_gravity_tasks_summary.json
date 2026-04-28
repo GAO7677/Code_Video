@@ -1,0 +1,289 @@
+{
+  "output_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases",
+  "stats": {
+    "zero_gravity_cases": 160,
+    "unique_regen_tasks": 160
+  },
+  "tasks_preview": [
+    {
+      "object_id": "1000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 5,
+      "parent_case_name": "case005_entry_left",
+      "example_case_name": "case005_entry_left__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case005_entry_left__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case005_entry_left__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 6,
+      "parent_case_name": "case006_entry_right",
+      "example_case_name": "case006_entry_right__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case006_entry_right__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case006_entry_right__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 7,
+      "parent_case_name": "case007_entry_fast_center",
+      "example_case_name": "case007_entry_fast_center__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case007_entry_fast_center__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case007_entry_fast_center__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 901,
+      "parent_case_name": "case901_high_drop",
+      "example_case_name": "case901_high_drop__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case901_high_drop__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case901_high_drop__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 5,
+      "parent_case_name": "case005_entry_left",
+      "example_case_name": "case005_entry_left__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case005_entry_left__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case005_entry_left__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 6,
+      "parent_case_name": "case006_entry_right",
+      "example_case_name": "case006_entry_right__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case006_entry_right__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case006_entry_right__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10000",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 7,
+      "parent_case_name": "case007_entry_fast_center",
+      "example_case_name": "case007_entry_fast_center__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case007_entry_fast_center__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case007_entry_fast_center__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10003",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 5,
+      "parent_case_name": "case005_entry_left",
+      "example_case_name": "case005_entry_left__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case005_entry_left__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case005_entry_left__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10003",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 6,
+      "parent_case_name": "case006_entry_right",
+      "example_case_name": "case006_entry_right__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case006_entry_right__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case006_entry_right__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10003",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 7,
+      "parent_case_name": "case007_entry_fast_center",
+      "example_case_name": "case007_entry_fast_center__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case007_entry_fast_center__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case007_entry_fast_center__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10005",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 5,
+      "parent_case_name": "case005_entry_left",
+      "example_case_name": "case005_entry_left__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case005_entry_left__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case005_entry_left__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10005",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 6,
+      "parent_case_name": "case006_entry_right",
+      "example_case_name": "case006_entry_right__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case006_entry_right__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case006_entry_right__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10005",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 7,
+      "parent_case_name": "case007_entry_fast_center",
+      "example_case_name": "case007_entry_fast_center__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case007_entry_fast_center__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case007_entry_fast_center__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10005",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 901,
+      "parent_case_name": "case901_high_drop",
+      "example_case_name": "case901_high_drop__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case901_high_drop__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case901_high_drop__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10007",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 900,
+      "parent_case_name": "case900_random_parabola",
+      "example_case_name": "case900_random_parabola__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10007__case900_random_parabola__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10007__case900_random_parabola__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "10007",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 901,
+      "parent_case_name": "case901_high_drop",
+      "example_case_name": "case901_high_drop__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10007__case901_high_drop__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10007__case901_high_drop__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1001",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 5,
+      "parent_case_name": "case005_entry_left",
+      "example_case_name": "case005_entry_left__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case005_entry_left__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case005_entry_left__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1001",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 6,
+      "parent_case_name": "case006_entry_right",
+      "example_case_name": "case006_entry_right__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case006_entry_right__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case006_entry_right__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1001",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 7,
+      "parent_case_name": "case007_entry_fast_center",
+      "example_case_name": "case007_entry_fast_center__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case007_entry_fast_center__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case007_entry_fast_center__cf_no_collision_neg"
+      ]
+    },
+    {
+      "object_id": "1001",
+      "scene_composition": "single_object_preview",
+      "count_bucket": "count_01",
+      "target_count": 1,
+      "parent_case_index": 901,
+      "parent_case_name": "case901_high_drop",
+      "example_case_name": "case901_high_drop__cf_no_collision_neg",
+      "example_scene_input": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case901_high_drop__cf_no_collision_neg/scene_input.json",
+      "counterfactual_kind": "no_collision_negative",
+      "paths": [
+        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case901_high_drop__cf_no_collision_neg"
+      ]
+    }
+  ]
+}
