@@ -915,6 +915,78 @@ def render_compare_metric_sections(compare_payloads: list[dict[str, Any]]) -> st
     return f"<div class='validation-grid'>{''.join(sections)}</div>"
 
 
+def render_compare_unified_metric_charts(compare_payloads: list[dict[str, Any]]) -> str:
+    if not compare_payloads:
+        return "<p class='empty'>Unified comparison charts are not ready yet.</p>"
+
+    model_payloads: dict[str, dict[str, Any]] = {}
+    for payload in compare_payloads:
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            continue
+        for side in ("base", "finetuned"):
+            item = summary.get(side, {})
+            if not isinstance(item, dict):
+                continue
+            model_name = str(item.get("model_name") or "").strip()
+            if model_name and model_name not in model_payloads:
+                model_payloads[model_name] = item
+    if not model_payloads:
+        return "<p class='empty'>Unified comparison charts are not ready yet.</p>"
+
+    categories = [
+        "overall",
+        "kubric_tfds_movi-d",
+        "mvp-lab-OpenVidHD-0.4M-720p-48fps",
+        "physics-iq-benchmark",
+        "vLAR-PhysInOne",
+        "version_1_genesis_rigid_data_all_cases",
+    ]
+    category_labels = [scope_display_name(category) for category in categories]
+    metric_specs = [
+        ("future_psnr", "PSNR"),
+        ("future_ssim", "SSIM"),
+        ("future_lpips", "LPIPS"),
+        ("future_dino", "DINO"),
+    ]
+
+    cards = []
+    for metric_key, metric_title in metric_specs:
+        series_map: dict[str, list[float | None]] = {}
+        for model_name, payload in sorted(model_payloads.items()):
+            aggregate = payload.get("aggregate", {}) if isinstance(payload.get("aggregate"), dict) else {}
+            per_dataset = payload.get("per_dataset", {}) if isinstance(payload.get("per_dataset"), dict) else {}
+            values: list[float | None] = []
+            for category in categories:
+                if category == "overall":
+                    value = parse_optional_float(aggregate.get(metric_key))
+                else:
+                    dataset_payload = per_dataset.get(category, {})
+                    dataset_aggregate = (
+                        dataset_payload.get("aggregate", {})
+                        if isinstance(dataset_payload, dict)
+                        else {}
+                    )
+                    value = parse_optional_float(dataset_aggregate.get(metric_key))
+                values.append(value)
+            series_map[model_name] = values
+        chart_html = build_categorical_line_chart_svg(
+            categories,
+            series_map,
+            metric_title,
+            category_labels=category_labels,
+        )
+        if chart_html:
+            cards.append(chart_html)
+    if not cards:
+        return "<p class='empty'>Unified comparison charts are not ready yet.</p>"
+    return (
+        "<p class='validation-headline'>Each chart overlays all available models on the same "
+        "sample300 full49 protocol so the curves can be compared directly.</p>"
+        f"<div class='chart-grid chart-grid-wide'>{''.join(cards)}</div>"
+    )
+
+
 def gather_compare_samples(
     benchmark_root: Path,
     portal_dir: Path,
@@ -2033,6 +2105,11 @@ def build_compare_html(
     <section class="section">
       <h2>Generation Overview</h2>
       {render_compare_overview_table(model_summaries)}
+    </section>
+
+    <section class="section">
+      <h2>Unified Metric Charts</h2>
+      {render_compare_unified_metric_charts(compare_payloads)}
     </section>
 
     <section class="section">
