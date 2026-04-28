@@ -14,10 +14,19 @@ Main files:
   Dataset wrapper for oracle-state window samples.
 
 - `build_stage1_subsets.py`
-  Build Stage-1A/1B state prediction subsets from Genesis rigid data.
+  Build Stage-1A/1B state prediction subsets from Genesis rigid data, with shared window-scan logic for precontact and simple-dynamics filters.
 
 - `build_stage1_oracle_windows.py`
   Convert rigid synthetic data into Wan-friendly oracle-state training windows.
+
+- `motion_complexity.py`
+  Window-level motion-complexity scoring and bucket definitions for static/simple/moderate/complex splits.
+
+- `backfill_motion_complexity.py`
+  Offline backfill utility that writes motion-complexity and window-interaction metadata into existing `pair_meta.json` files.
+
+- `window_interactions.py`
+  Window-level object-count and future-collision bucket summaries derived from source `event_windows.json`.
 
 Subdirectories:
 

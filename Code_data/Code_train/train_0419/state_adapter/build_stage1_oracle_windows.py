@@ -22,6 +22,8 @@ from build_stage1_subsets import (
     rgb_frame_paths,
     window_has_visible_object_every_frame,
 )
+from motion_complexity import infer_motion_complexity
+from window_interactions import infer_window_interactions
 
 
 def parse_args() -> argparse.Namespace:
@@ -305,7 +307,12 @@ def main() -> None:
                     "objects": object_text_meta,
                     "x_frame_paths": rgb_frame_paths(sample_dir, x_idx),
                     "y_frame_paths": rgb_frame_paths(sample_dir, y_idx),
+                    "motion_complexity": infer_motion_complexity(
+                        state_norm=state_norm[f0:f1].astype(np.float32),
+                        visibility_mask=visibility_mask[f0:f1].astype(np.uint8),
+                    ),
                 }
+                meta_payload["window_interactions"] = infer_window_interactions(meta_payload)
                 window_name = (
                     f"window_s{start:04d}_ctx{int(args.context_len):02d}_fut{int(future_len):02d}"
                 )

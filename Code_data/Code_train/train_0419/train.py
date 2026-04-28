@@ -1605,9 +1605,24 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
         weight_decay=args.weight_decay,
     )
     scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer)
+    sampler = None
+    shuffle = True
+    sample_weights = getattr(dataset, "sample_weights", None)
+    if sample_weights is not None:
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True,
+        )
+        shuffle = False
+        accelerator.print(
+            "Using WeightedRandomSampler from dataset.sample_weights "
+            f"(num_samples={len(sample_weights)})."
+        )
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=sampler,
         collate_fn=lambda batch: batch[0],
         num_workers=args.dataset_num_workers,
     )

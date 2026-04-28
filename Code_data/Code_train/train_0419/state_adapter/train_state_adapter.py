@@ -440,14 +440,37 @@ class StateAwareWanTrainingModule(DiffusionTrainingModule):
 
 
 def build_dataset(args):
-    return OracleStateWindowDataset(
+    dataset = OracleStateWindowDataset(
         dataset_root=args.dataset_root,
         height=args.height,
         width=args.width,
         dataset_repeat=args.dataset_repeat,
         max_pixels=args.max_pixels,
         use_normalized_state=not args.use_raw_state,
+        motion_complexity_filter=args.motion_complexity_filter,
+        rebalance_motion_complexity=args.rebalance_motion_complexity,
+        motion_complexity_rebalance_strength=args.motion_complexity_rebalance_strength,
+        object_count_filter=args.object_count_filter,
+        future_collision_type_filter=args.future_collision_type_filter,
+        future_collision_bucket_filter=args.future_collision_bucket_filter,
     )
+    print(
+        "OracleStateWindowDataset summary:",
+        {
+            "num_windows": len(dataset.window_dirs),
+            "dataset_repeat": int(dataset.dataset_repeat),
+            "motion_complexity_filter": sorted(dataset.motion_complexity_filter),
+            "motion_complexity_summary": dataset.motion_complexity_summary,
+            "object_count_filter": sorted(dataset.object_count_filter),
+            "object_count_summary": dataset.object_count_summary,
+            "future_collision_type_filter": sorted(dataset.future_collision_type_filter),
+            "future_collision_type_summary": dataset.future_collision_type_summary,
+            "future_collision_bucket_filter": sorted(dataset.future_collision_bucket_filter),
+            "future_collision_bucket_summary_size": len(dataset.future_collision_bucket_summary),
+            "rebalance_motion_complexity": bool(dataset.rebalance_motion_complexity),
+        },
+    )
+    return dataset
 
 
 def build_model(args, accelerator):
@@ -508,6 +531,41 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--state_pool_heads", type=int, default=4)
     parser.add_argument("--condition_dropout", type=float, default=0.1)
     parser.add_argument("--use_raw_state", action="store_true")
+    parser.add_argument(
+        "--motion_complexity_filter",
+        type=str,
+        default="",
+        help="Optional comma-separated complexity labels to keep: static,simple,moderate,complex.",
+    )
+    parser.add_argument(
+        "--rebalance_motion_complexity",
+        action="store_true",
+        help="Use inverse-frequency sampling weights across motion-complexity buckets.",
+    )
+    parser.add_argument(
+        "--motion_complexity_rebalance_strength",
+        type=float,
+        default=1.0,
+        help="Exponent for inverse-frequency motion-complexity weights. 1.0 means exact inverse count.",
+    )
+    parser.add_argument(
+        "--object_count_filter",
+        type=str,
+        default="",
+        help="Optional comma-separated object counts to keep, e.g. 1,2,3.",
+    )
+    parser.add_argument(
+        "--future_collision_type_filter",
+        type=str,
+        default="",
+        help="Optional comma-separated future collision type buckets: none,env_only,obj_obj_only,mixed.",
+    )
+    parser.add_argument(
+        "--future_collision_bucket_filter",
+        type=str,
+        default="",
+        help="Optional comma-separated combined future buckets like obj1__c0__none or obj3__c2plus__mixed.",
+    )
     return parser
 
 

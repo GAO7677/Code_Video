@@ -2,6 +2,7 @@
 """该脚本用于从 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases 提取 Stage-1A/1B 状态预测子集；输入为样本目录及物理标注，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/preprocess_v1/stage1_subsets_v1 下的窗口数据和 summary.json。"""
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -18,6 +19,16 @@ STAGE1B_FUTURE_CANDIDATES = [8, 12, 16, 24, 41]
 STAGE1B_SAFETY_MARGIN = 2
 
 CONTACT_PHASE_IDS = {1, 2, 3}
+
+
+@dataclass(frozen=True)
+class WindowCandidate:
+    start_index: int
+    context_len: int
+    future_len: int
+    x_idx: np.ndarray
+    y_idx: np.ndarray
+    future_main_visibility_ratio: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -210,20 +221,6 @@ def future_has_object_object_contact(ann: Dict[str, object], future_start: int, 
     }
 
 
-def environment_contact_is_stable(env_contact: np.ndarray, future_start: int, future_end: int) -> bool:
-    # Require no state transitions at the future boundary or within the future window.
-    if future_start <= 0:
-        segment = env_contact[future_start:future_end]
-        if segment.shape[0] <= 1:
-            return True
-        return bool(np.all(segment[1:] == segment[:-1]))
-
-    extended = env_contact[future_start - 1 : future_end]
-    if extended.shape[0] <= 1:
-        return True
-    return bool(np.all(extended[1:] == extended[:-1]))
-
-
 def rgb_frame_paths(sample_dir: Path, frame_indices: Sequence[int]) -> List[str]:
     return [str(sample_dir / "rgb" / f"frame_{int(idx):03d}.png") for idx in frame_indices]
 
@@ -282,10 +279,108 @@ def future_main_object_visibility_ok(
     return bool(vis.sum() > 0 and ratio >= float(threshold)), ratio
 
 
+def iter_window_candidates(
+    *,
+    visibility_mask: np.ndarray,
+    context_len: int,
+    future_candidates: Sequence[int],
+    valid_end: int,
+    main_object_index: int,
+    future_main_visibility_threshold: float,
+) -> List[WindowCandidate]:
+    candidates: List[WindowCandidate] = []
+    if valid_end < context_len + min(int(x) for x in future_candidates):
+        return candidates
+
+    for future_len in future_candidates:
+        future_len = int(future_len)
+        max_start = int(valid_end) - int(context_len) - future_len
+        if max_start < 0:
+            continue
+        for start_index in range(0, max_start + 1, WINDOW_STRIDE):
+            c0 = int(start_index)
+            c1 = c0 + int(context_len)
+            f0 = c1
+            f1 = f0 + future_len
+            if not window_has_visible_object_every_frame(visibility_mask, c0, c1):
+                continue
+            future_visible_ok, future_main_visibility_ratio = future_main_object_visibility_ok(
+                visibility_mask=visibility_mask,
+                start=f0,
+                end=f1,
+                main_object_index=main_object_index,
+                threshold=future_main_visibility_threshold,
+            )
+            if not future_visible_ok:
+                continue
+            candidates.append(
+                WindowCandidate(
+                    start_index=c0,
+                    context_len=int(context_len),
+                    future_len=future_len,
+                    x_idx=np.arange(c0, c1, dtype=np.int32),
+                    y_idx=np.arange(f0, f1, dtype=np.int32),
+                    future_main_visibility_ratio=float(future_main_visibility_ratio),
+                )
+            )
+    return candidates
+
+
+def build_window_payload(
+    *,
+    state_raw: np.ndarray,
+    state_norm: np.ndarray,
+    object_ids: np.ndarray,
+    seg_ids: np.ndarray,
+    visibility_mask: np.ndarray,
+    dt: np.ndarray,
+    x_idx: np.ndarray,
+    y_idx: np.ndarray,
+) -> Dict[str, np.ndarray]:
+    return {
+        "object_ids": object_ids,
+        "seg_ids": seg_ids,
+        "visibility_mask": visibility_mask,
+        "state_raw": state_raw,
+        "state_norm": state_norm,
+        "x_state": state_norm[x_idx[0] : x_idx[-1] + 1],
+        "y_state": state_norm[y_idx[0] : y_idx[-1] + 1],
+        "x_visibility": visibility_mask[x_idx[0] : x_idx[-1] + 1],
+        "y_visibility": visibility_mask[y_idx[0] : y_idx[-1] + 1],
+        "x_frame_indices": x_idx,
+        "y_frame_indices": y_idx,
+        "dt": dt,
+    }
+
+
+def build_common_meta(
+    *,
+    metadata: Dict[str, object],
+    sample_dir: Path,
+    candidate: WindowCandidate,
+    main_object_index: int,
+    future_main_visibility_threshold: float,
+) -> Dict[str, object]:
+    return {
+        "source_scene_id": metadata["scene_id"],
+        "source_sample_dir": str(sample_dir),
+        "start_index": int(candidate.start_index),
+        "context_len": int(candidate.context_len),
+        "future_len": int(candidate.future_len),
+        "main_object_index": int(main_object_index),
+        "future_main_visibility_threshold": float(future_main_visibility_threshold),
+        "future_main_visibility_ratio": float(candidate.future_main_visibility_ratio),
+        "x_frame_paths": rgb_frame_paths(sample_dir, candidate.x_idx),
+        "y_frame_paths": rgb_frame_paths(sample_dir, candidate.y_idx),
+        "objects": metadata.get("objects", []),
+        "resolution": metadata.get("resolution"),
+        "camera_intrinsics": metadata.get("camera_intrinsics"),
+    }
+
+
 def export_window(
     subset_root: Path,
     rel_sample: Path,
-    sample_dir: Path,
     window_name: str,
     payload: Dict[str, np.ndarray],
     meta_payload: Dict[str, object],
@@ -316,64 +411,53 @@ def stage1a_windows(
     valid_end = T if first_contact is None else max(0, int(first_contact) - STAGE1A_SAFETY_MARGIN)
 
     results = []
-    if valid_end < STAGE1A_CONTEXT_LEN + min(STAGE1A_FUTURE_CANDIDATES):
-        return results
-
     rel_sample = sample_dir.relative_to(dataset_root)
     main_object_index = resolve_main_object_index(metadata, object_ids)
-    for future_len in STAGE1A_FUTURE_CANDIDATES:
-        max_start = valid_end - STAGE1A_CONTEXT_LEN - future_len
-        if max_start < 0:
-            continue
-        for s in range(0, max_start + 1, WINDOW_STRIDE):
-            c0, c1 = s, s + STAGE1A_CONTEXT_LEN
-            f0, f1 = c1, c1 + future_len
-            if not window_has_visible_object_every_frame(visibility_mask, c0, c1):
-                continue
-            future_visible_ok, future_main_visibility_ratio = future_main_object_visibility_ok(
-                visibility_mask=visibility_mask,
-                start=f0,
-                end=f1,
-                main_object_index=main_object_index,
-                threshold=future_main_visibility_threshold,
-            )
-            if not future_visible_ok:
-                continue
-            x_idx = np.arange(c0, c1, dtype=np.int32)
-            y_idx = np.arange(f0, f1, dtype=np.int32)
-            payload = {
-                "object_ids": object_ids,
-                "seg_ids": seg_ids,
-                "visibility_mask": visibility_mask,
-                "state_raw": state_raw,
-                "state_norm": state_norm,
-                "x_state": state_norm[c0:c1],
-                "y_state": state_norm[f0:f1],
-                "x_visibility": visibility_mask[c0:c1],
-                "y_visibility": visibility_mask[f0:f1],
-                "x_frame_indices": x_idx,
-                "y_frame_indices": y_idx,
-                "dt": dt,
-            }
-            meta_payload = {
-                "source_scene_id": metadata["scene_id"],
-                "source_sample_dir": str(sample_dir),
-                "start_index": int(s),
-                "context_len": STAGE1A_CONTEXT_LEN,
-                "future_len": future_len,
+    candidates = iter_window_candidates(
+        visibility_mask=visibility_mask,
+        context_len=STAGE1A_CONTEXT_LEN,
+        future_candidates=STAGE1A_FUTURE_CANDIDATES,
+        valid_end=valid_end,
+        main_object_index=main_object_index,
+        future_main_visibility_threshold=future_main_visibility_threshold,
+    )
+    for candidate in candidates:
+        payload = build_window_payload(
+            state_raw=state_raw,
+            state_norm=state_norm,
+            object_ids=object_ids,
+            seg_ids=seg_ids,
+            visibility_mask=visibility_mask,
+            dt=dt,
+            x_idx=candidate.x_idx,
+            y_idx=candidate.y_idx,
+        )
+        meta_payload = build_common_meta(
+            metadata=metadata,
+            sample_dir=sample_dir,
+            candidate=candidate,
+            main_object_index=main_object_index,
+            future_main_visibility_threshold=future_main_visibility_threshold,
+        )
+        meta_payload.update(
+            {
                 "first_contact_frame": None if first_contact is None else int(first_contact),
                 "valid_end": int(valid_end),
                 "is_precontact_strict": True,
-                "main_object_index": int(main_object_index),
-                "future_main_visibility_threshold": float(future_main_visibility_threshold),
-                "future_main_visibility_ratio": float(future_main_visibility_ratio),
-                "x_frame_paths": rgb_frame_paths(sample_dir, x_idx),
-                "y_frame_paths": rgb_frame_paths(sample_dir, y_idx),
-                "objects": metadata.get("objects", []),
+                "subset_rule": "future must end before the earliest detected contact frame minus safety margin",
             }
-            window_name = f"window_s{s:04d}_ctx{STAGE1A_CONTEXT_LEN:02d}_fut{future_len:02d}"
-            out_dir = export_window(subset_root, rel_sample, sample_dir, window_name, payload, meta_payload)
-            results.append({"out_dir": str(out_dir), "start_index": int(s), "future_len": int(future_len)})
+        )
+        window_name = (
+            f"window_s{candidate.start_index:04d}_ctx{candidate.context_len:02d}_fut{candidate.future_len:02d}"
+        )
+        out_dir = export_window(subset_root, rel_sample, window_name, payload, meta_payload)
+        results.append(
+            {
+                "out_dir": str(out_dir),
+                "start_index": int(candidate.start_index),
+                "future_len": int(candidate.future_len),
+            }
+        )
     return results
 
 
@@ -391,7 +475,7 @@ def stage1b_windows(
     ann: Dict[str, object],
     future_main_visibility_threshold: float,
 ) -> List[Dict[str, object]]:
-    T, N, _ = state_norm.shape
+    T = state_norm.shape[0]
     min_total_needed = STAGE1B_CONTEXT_LEN + min(STAGE1B_FUTURE_CANDIDATES)
     if T < min_total_needed:
         return []
@@ -399,65 +483,55 @@ def stage1b_windows(
     rel_sample = sample_dir.relative_to(dataset_root)
     main_object_index = resolve_main_object_index(metadata, object_ids)
     results = []
-    for future_len in STAGE1B_FUTURE_CANDIDATES:
-        total_needed = STAGE1B_CONTEXT_LEN + future_len
-        if T < total_needed:
+    candidates = iter_window_candidates(
+        visibility_mask=visibility_mask,
+        context_len=STAGE1B_CONTEXT_LEN,
+        future_candidates=STAGE1B_FUTURE_CANDIDATES,
+        valid_end=T,
+        main_object_index=main_object_index,
+        future_main_visibility_threshold=future_main_visibility_threshold,
+    )
+    for candidate in candidates:
+        obj_contact = future_has_object_object_contact(ann, int(candidate.y_idx[0]), int(candidate.y_idx[-1]) + 1)
+        if obj_contact["any_hit"]:
             continue
-        max_start = T - total_needed
-        for s in range(0, max_start + 1, WINDOW_STRIDE):
-            c0, c1 = s, s + STAGE1B_CONTEXT_LEN
-            f0, f1 = c1, c1 + future_len
-            if not window_has_visible_object_every_frame(visibility_mask, c0, c1):
-                continue
-            future_visible_ok, future_main_visibility_ratio = future_main_object_visibility_ok(
-                visibility_mask=visibility_mask,
-                start=f0,
-                end=f1,
-                main_object_index=main_object_index,
-                threshold=future_main_visibility_threshold,
-            )
-            if not future_visible_ok:
-                continue
-            obj_contact = future_has_object_object_contact(ann, f0, f1)
-            if obj_contact["any_hit"]:
-                continue
-
-            x_idx = np.arange(c0, c1, dtype=np.int32)
-            y_idx = np.arange(f0, f1, dtype=np.int32)
-            payload = {
-                "object_ids": object_ids,
-                "seg_ids": seg_ids,
-                "visibility_mask": visibility_mask,
-                "state_raw": state_raw,
-                "state_norm": state_norm,
-                "x_state": state_norm[c0:c1],
-                "y_state": state_norm[f0:f1],
-                "x_visibility": visibility_mask[c0:c1],
-                "y_visibility": visibility_mask[f0:f1],
-                "x_frame_indices": x_idx,
-                "y_frame_indices": y_idx,
-                "dt": dt,
-            }
-            meta_payload = {
-                "source_scene_id": metadata["scene_id"],
-                "source_sample_dir": str(sample_dir),
-                "start_index": int(s),
-                "context_len": STAGE1B_CONTEXT_LEN,
-                "future_len": int(future_len),
+        payload = build_window_payload(
+            state_raw=state_raw,
+            state_norm=state_norm,
+            object_ids=object_ids,
+            seg_ids=seg_ids,
+            visibility_mask=visibility_mask,
+            dt=dt,
+            x_idx=candidate.x_idx,
+            y_idx=candidate.y_idx,
+        )
+        meta_payload = build_common_meta(
+            metadata=metadata,
+            sample_dir=sample_dir,
+            candidate=candidate,
+            main_object_index=main_object_index,
+            future_main_visibility_threshold=future_main_visibility_threshold,
+        )
+        meta_payload.update(
+            {
                 "is_simple_dynamics": True,
                 "allows_environment_contact": True,
                 "forbid_object_object_contact": True,
-                "main_object_index": int(main_object_index),
-                "future_main_visibility_threshold": float(future_main_visibility_threshold),
-                "future_main_visibility_ratio": float(future_main_visibility_ratio),
-                "x_frame_paths": rgb_frame_paths(sample_dir, x_idx),
-                "y_frame_paths": rgb_frame_paths(sample_dir, y_idx),
                 "object_object_contact_filter": obj_contact,
-                "objects": metadata.get("objects", []),
+                "subset_rule": "future may contain environment contact but must not overlap any object-object contact",
             }
-            window_name = f"window_s{s:04d}_ctx{STAGE1B_CONTEXT_LEN:02d}_fut{future_len:02d}"
-            out_dir = export_window(subset_root, rel_sample, sample_dir, window_name, payload, meta_payload)
-            results.append({"out_dir": str(out_dir), "start_index": int(s), "future_len": int(future_len)})
+        )
+        window_name = (
+            f"window_s{candidate.start_index:04d}_ctx{candidate.context_len:02d}_fut{candidate.future_len:02d}"
+        )
+        out_dir = export_window(subset_root, rel_sample, window_name, payload, meta_payload)
+        results.append(
+            {
+                "out_dir": str(out_dir),
+                "start_index": int(candidate.start_index),
+                "future_len": int(candidate.future_len),
+            }
+        )
     return results
 
 
@@ -566,31 +640,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-'''
-
-
-source /home/gaoya/miniconda3/etc/profile.d/conda.sh
-conda activate wan
-
-  source /home/gaoya/miniconda3/etc/profile.d/conda.sh
-  conda activate wan
-
-rm -rf /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/preprocess_v1/stage1_subsets_v1
-
-
-
-python /home/gaoya/Code_Video/Code_data/Code_train/train_0419/state_adapter/build_stage1_subsets.py \
-    --dataset_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases \
-    --out_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/preprocess_v1/stage1_subsets_v1 \
-    --max_source_samples 0 \
-    --max_windows_per_subset 100 \
-    --future_main_visibility_threshold 0.5
-
-    
-python /home/gaoya/Code_Video/Code_data/Code_train/train_0419/state_adapter/visualizations/visualize_stage1_subsets.py \
-    --subset_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/preprocess_v1/stage1_subsets_v1 \
-    --num_windows 20 \
-    --serve \
-    --host 0.0.0.0 \
-    --port 8100
-'''

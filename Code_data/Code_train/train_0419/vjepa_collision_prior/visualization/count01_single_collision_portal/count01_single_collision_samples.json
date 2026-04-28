@@ -1,0 +1,3368 @@
+{
+  "stats": {
+    "num_samples": 61,
+    "num_object_ids": 56,
+    "num_motion_categories": 3,
+    "collision_frame_range": "6-12",
+    "motion_counts": {
+      "static_highdrop": 48,
+      "random_parabola": 6,
+      "high_drop": 7
+    },
+    "pattern_counts": {
+      "gravity_drop": 55,
+      "single_object_projectile_motion": 6
+    }
+  },
+  "samples": [
+    {
+      "scene_id": "10000__case003_static_highdrop",
+      "object_id": "10000",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10000__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10000__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10000__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10003__case003_static_highdrop",
+      "object_id": "10003",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10003__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10003__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10003__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10003__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10005__case003_static_highdrop",
+      "object_id": "10005",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10005__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10005__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10005__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10007__case900_random_parabola",
+      "object_id": "10007",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 12,
+        "peak_frame": 12,
+        "end_frame": 12,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10007__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/10007__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/10007__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/10007__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/10007__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10007__case900_random_parabola"
+    },
+    {
+      "scene_id": "1000__case003_static_highdrop",
+      "object_id": "1000",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1000__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1000__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1000__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1000__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10012__case901_high_drop",
+      "object_id": "10012",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 10,
+        "peak_frame": 10,
+        "end_frame": 10,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10012__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10012__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10012__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10012__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10012__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10012__case901_high_drop"
+    },
+    {
+      "scene_id": "10013__case003_static_highdrop",
+      "object_id": "10013",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10013__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10013__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10013__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10013__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10013__case900_random_parabola",
+      "object_id": "10013",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 11,
+        "peak_frame": 11,
+        "end_frame": 11,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10013__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/10013__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/10013__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/10013__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/10013__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10013__case900_random_parabola"
+    },
+    {
+      "scene_id": "10013__case901_high_drop",
+      "object_id": "10013",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 12,
+        "peak_frame": 12,
+        "end_frame": 12,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10013__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10013__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10013__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10013__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10013__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10013__case901_high_drop"
+    },
+    {
+      "scene_id": "10015__case003_static_highdrop",
+      "object_id": "10015",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10015__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10015__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10015__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10015__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1001__case003_static_highdrop",
+      "object_id": "1001",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1001__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1001__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1001__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1001__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10023__case003_static_highdrop",
+      "object_id": "10023",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10023__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10023__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10023__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10023__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10025__case003_static_highdrop",
+      "object_id": "10025",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 8,
+        "start_frame": 8,
+        "peak_frame": 8,
+        "end_frame": 8,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        10,
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10025__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10025__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10025__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10025__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10026__case003_static_highdrop",
+      "object_id": "10026",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10026__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10026__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10026__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10026__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1002__case900_random_parabola",
+      "object_id": "1002",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 12,
+        "peak_frame": 12,
+        "end_frame": 12,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/1002__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/1002__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/1002__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/1002__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/1002__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1002__case900_random_parabola"
+    },
+    {
+      "scene_id": "10034__case003_static_highdrop",
+      "object_id": "10034",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10034__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10034__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10034__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10034__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10037__case003_static_highdrop",
+      "object_id": "10037",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10037__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10037__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10037__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10037__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10037__case901_high_drop",
+      "object_id": "10037",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 12,
+        "peak_frame": 12,
+        "end_frame": 12,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10037__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10037__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10037__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10037__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10037__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10037__case901_high_drop"
+    },
+    {
+      "scene_id": "1003__case003_static_highdrop",
+      "object_id": "1003",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1003__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1003__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1003__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1003__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10042__case900_random_parabola",
+      "object_id": "10042",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 10,
+        "peak_frame": 10,
+        "end_frame": 10,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10042__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/10042__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/10042__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/10042__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/10042__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10042__case900_random_parabola"
+    },
+    {
+      "scene_id": "10046__case003_static_highdrop",
+      "object_id": "10046",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10046__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10046__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10046__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10046__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1004__case003_static_highdrop",
+      "object_id": "1004",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1004__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1004__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1004__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1004__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10053__case003_static_highdrop",
+      "object_id": "10053",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 6,
+        "start_frame": 6,
+        "peak_frame": 6,
+        "end_frame": 6,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10053__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10053__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10053__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10053__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10054__case003_static_highdrop",
+      "object_id": "10054",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10054__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10054__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10054__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10054__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1005__case003_static_highdrop",
+      "object_id": "1005",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1005__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1005__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1005__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1005__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10068__case901_high_drop",
+      "object_id": "10068",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 9,
+        "peak_frame": 9,
+        "end_frame": 9,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10068__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10068__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10068__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10068__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10068__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10068__case901_high_drop"
+    },
+    {
+      "scene_id": "1006__case003_static_highdrop",
+      "object_id": "1006",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1006__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1006__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1006__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1006__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10071__case003_static_highdrop",
+      "object_id": "10071",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10071__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10071__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10071__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10071__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10072__case901_high_drop",
+      "object_id": "10072",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 10,
+        "peak_frame": 10,
+        "end_frame": 10,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10072__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10072__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10072__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10072__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10072__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10072__case901_high_drop"
+    },
+    {
+      "scene_id": "10076__case003_static_highdrop",
+      "object_id": "10076",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10076__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10076__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10076__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10076__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1007__case003_static_highdrop",
+      "object_id": "1007",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 8,
+        "start_frame": 8,
+        "peak_frame": 8,
+        "end_frame": 8,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        10,
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/1007__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1007__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1007__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1007__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10081__case003_static_highdrop",
+      "object_id": "10081",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10081__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10081__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10081__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10081__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10086__case003_static_highdrop",
+      "object_id": "10086",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10086__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10086__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10086__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10086__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10091__case003_static_highdrop",
+      "object_id": "10091",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10091__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10091__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10091__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10091__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10094__case003_static_highdrop",
+      "object_id": "10094",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10094__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10094__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10094__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10094__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10096__case003_static_highdrop",
+      "object_id": "10096",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10096__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10096__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10096__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10096__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10098__case003_static_highdrop",
+      "object_id": "10098",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10098__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10098__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10098__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10098__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1009__case003_static_highdrop",
+      "object_id": "1009",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1009__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1009__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1009__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1009__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10102__case003_static_highdrop",
+      "object_id": "10102",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10102__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10102__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10102__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10102__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10104__case003_static_highdrop",
+      "object_id": "10104",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10104__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10104__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10104__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10104__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10105__case003_static_highdrop",
+      "object_id": "10105",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10105__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10105__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10105__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10105__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10108__case003_static_highdrop",
+      "object_id": "10108",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10108__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10108__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10108__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10108__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10114__case003_static_highdrop",
+      "object_id": "10114",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 8,
+        "start_frame": 8,
+        "peak_frame": 8,
+        "end_frame": 8,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        10,
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10114__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10114__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10114__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10114__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1011__case003_static_highdrop",
+      "object_id": "1011",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1011__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1011__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1011__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1011__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10123__case003_static_highdrop",
+      "object_id": "10123",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10123__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10123__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10123__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10123__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10125__case003_static_highdrop",
+      "object_id": "10125",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10125__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10125__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10125__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10125__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10126__case003_static_highdrop",
+      "object_id": "10126",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10126__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10126__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10126__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10126__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10128__case003_static_highdrop",
+      "object_id": "10128",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 8,
+        "start_frame": 8,
+        "peak_frame": 8,
+        "end_frame": 8,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        10,
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10128__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10128__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10128__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10128__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10128__case900_random_parabola",
+      "object_id": "10128",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 9,
+        "peak_frame": 9,
+        "end_frame": 9,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10128__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/10128__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/10128__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/10128__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/10128__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10128__case900_random_parabola"
+    },
+    {
+      "scene_id": "10129__case003_static_highdrop",
+      "object_id": "10129",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10129__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10129__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10129__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10129__case003_static_highdrop"
+    },
+    {
+      "scene_id": "1012__case003_static_highdrop",
+      "object_id": "1012",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1012__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1012__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1012__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1012__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10133__case003_static_highdrop",
+      "object_id": "10133",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10133__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10133__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10133__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10133__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10142__case003_static_highdrop",
+      "object_id": "10142",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10142__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10142__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10142__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10142__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10148__case900_random_parabola",
+      "object_id": "10148",
+      "object_name": null,
+      "interaction_pattern": "single_object_projectile_motion",
+      "motion_category": "random_parabola",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 10,
+        "peak_frame": 10,
+        "end_frame": 10,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10148__case900_random_parabola/rgb.mp4",
+        "contact_timeline": "assets/10148__case900_random_parabola/contact_timeline.png",
+        "summary_state": "assets/10148__case900_random_parabola/summary_state.png",
+        "metadata_json": "assets/10148__case900_random_parabola/metadata.json",
+        "collision_events_json": "assets/10148__case900_random_parabola/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10148__case900_random_parabola"
+    },
+    {
+      "scene_id": "1014__case003_static_highdrop",
+      "object_id": "1014",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/1014__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/1014__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/1014__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1014__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10156__case003_static_highdrop",
+      "object_id": "10156",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 8,
+        "start_frame": 8,
+        "peak_frame": 8,
+        "end_frame": 8,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        10,
+        11,
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10156__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10156__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10156__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10156__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10157__case003_static_highdrop",
+      "object_id": "10157",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10157__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10157__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10157__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10157__case003_static_highdrop"
+    },
+    {
+      "scene_id": "10157__case901_high_drop",
+      "object_id": "10157",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 10,
+        "peak_frame": 10,
+        "end_frame": 10,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        12
+      ],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/10157__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/10157__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/10157__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/10157__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/10157__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10157__case901_high_drop"
+    },
+    {
+      "scene_id": "10162__case003_static_highdrop",
+      "object_id": "10162",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/10162__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/10162__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/10162__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10162__case003_static_highdrop"
+    },
+    {
+      "scene_id": "2418__case901_high_drop",
+      "object_id": "2418",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "high_drop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "start_frame": 12,
+        "peak_frame": 12,
+        "end_frame": 12,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [],
+      "future_valid": false,
+      "assets": {
+        "rgb_video": "assets/2418__case901_high_drop/rgb.mp4",
+        "contact_timeline": "assets/2418__case901_high_drop/contact_timeline.png",
+        "summary_state": "assets/2418__case901_high_drop/summary_state.png",
+        "metadata_json": "assets/2418__case901_high_drop/metadata.json",
+        "collision_events_json": "assets/2418__case901_high_drop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/2418__case901_high_drop"
+    },
+    {
+      "scene_id": "5050__case003_static_highdrop",
+      "object_id": "5050",
+      "object_name": null,
+      "interaction_pattern": "gravity_drop",
+      "motion_category": "static_highdrop",
+      "frames": 13,
+      "num_objects": 1,
+      "collision_event_count": 1,
+      "collision_event": {
+        "event_id": 0,
+        "participants": [
+          0,
+          -1
+        ],
+        "object_indices": [
+          0,
+          -1
+        ],
+        "frame_idx": 7,
+        "start_frame": 7,
+        "peak_frame": 7,
+        "end_frame": 7,
+        "impulse_peak": 0.0,
+        "contact_duration": 1,
+        "environment_name": "ground"
+      },
+      "context_length": 8,
+      "context_indices": [
+        0,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "future_width": 4,
+      "horizon": 2,
+      "future_indices": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "future_valid": true,
+      "assets": {
+        "rgb_video": "assets/5050__case003_static_highdrop/rgb.mp4",
+        "contact_timeline": null,
+        "summary_state": null,
+        "metadata_json": "assets/5050__case003_static_highdrop/metadata.json",
+        "collision_events_json": "assets/5050__case003_static_highdrop/collision_events.json"
+      },
+      "source_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/5050__case003_static_highdrop"
+    }
+  ]
+}

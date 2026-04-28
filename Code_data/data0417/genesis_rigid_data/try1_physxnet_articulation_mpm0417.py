@@ -885,6 +885,10 @@ def build_preview_case_configs(
     bbox_size = np.maximum(bbox_max - bbox_min, 1e-6)
     bbox_volume_est_m3 = float(np.prod(bbox_size))
     is_physxnet_object = metadata_is_physxnet(metadata)
+    rigid_material_defaults = _default_entity_rigid_material(
+        metadata,
+        default_friction=float(getattr(args, "default_friction", 0.55) or 0.55),
+    )
 
     num_cases = max(1, int(getattr(args, "num_random_cases", 1) or 1))
     base_seed = int(getattr(args, "case_seed", 20260414))
@@ -936,6 +940,33 @@ def build_preview_case_configs(
             return f"{float(value):.{digits}f}"
         except Exception:
             return "nan"
+
+    counterfactual_case_id_map = {
+        "same_scene_negative": 11001,
+        "no_collision_negative": 11002,
+    }
+
+    def _rotate_xy(vec: Any, yaw_deg: float) -> np.ndarray:
+        arr = np.asarray(vec, dtype=np.float64).reshape(3)
+        theta = math.radians(float(yaw_deg))
+        rot = np.array(
+            [
+                [math.cos(theta), -math.sin(theta)],
+                [math.sin(theta),  math.cos(theta)],
+            ],
+            dtype=np.float64,
+        )
+        out = arr.copy()
+        out[:2] = rot @ out[:2]
+        return out
+
+    def _to_velocity6(vec: Any) -> np.ndarray:
+        arr = np.asarray(vec, dtype=np.float64).reshape(-1)
+        if arr.size == 3:
+            arr = np.concatenate([arr, np.zeros(3, dtype=np.float64)], axis=0)
+        if arr.size != 6:
+            raise ValueError(f"Expected velocity with 3 or 6 values, got shape={arr.shape}")
+        return arr.astype(np.float64)
 
     def _sample_object_yaw_deg(case_seed: int) -> float:
         yaw_min_raw = getattr(args, "physxnet_object_yaw_deg_min", -180.0)
@@ -1199,11 +1230,23 @@ def build_preview_case_configs(
         state = "动态入场" if moving else "初始静止可受力运动"
         if (not moving) and (not obj_fixed) and abs(float(np.asarray(cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)[2])) > 1e-8:
             state = "高处静止释放"
-        lines = [
+        lines = []
+        counterfactual_meta = dict(cfg.get("counterfactual", {}) or {})
+        if counterfactual_meta:
+            lines.append(
+                "反事实: "
+                f"kind={counterfactual_meta.get('kind', 'unknown')} | "
+                f"parent={counterfactual_meta.get('parent_case_name', 'unknown')} | "
+                f"mode={counterfactual_meta.get('mode', 'unknown')}"
+            )
+            summary = str(counterfactual_meta.get("summary", "") or "").strip()
+            if summary:
+                lines.append(f"反事实说明: {summary}")
+        lines.extend([
             f"主物体: id={object_id}",
             f"Case: {scene} | 状态={state}",
             f"主物体参数: offset={offset} m | euler_deg={object_euler_deg} | linvel={linvel} m/s | angvel={angvel} rad/s",
-        ]
+        ])
         for custom_obj in cfg.get("custom_objects", []) or []:
             lines.append(
                 "自定义物体: "
@@ -1269,6 +1312,9 @@ def build_preview_case_configs(
         )
         case_cfg = {
             "case_index": int(case_idx),
+            "case_id": int(case_idx),
+            "case_variant_index": int(case_idx),
+            "case_kind": "factual",
             "case_name": str(case_name),
             "scene_label": str(scene_label or case_name),
             "seed": int(seed),
@@ -1294,6 +1340,163 @@ def build_preview_case_configs(
         }
         case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
         return case_cfg
+
+    def _make_counterfactual_case_cfg(
+        *,
+        base_cfg: Dict[str, Any],
+        variant_slot: int,
+        suffix: str,
+        kind: str,
+        mode: str,
+        summary: str,
+    ) -> Dict[str, Any]:
+        cfg = copy.deepcopy(base_cfg)
+        base_case_index = int(base_cfg.get("case_index", -1))
+        cfg["case_index"] = int(20000 + max(base_case_index, 0) * 10 + int(variant_slot))
+        cfg["case_id"] = int(counterfactual_case_id_map.get(str(kind), 11999))
+        cfg["case_variant_index"] = int(cfg["case_index"])
+        cfg["case_kind"] = str(kind)
+        cfg["case_name"] = f"{str(base_cfg.get('case_name', 'case'))}__{suffix}"
+        cfg["seed"] = int(base_cfg.get("seed", seed_anchor + 23)) + 1103 * int(variant_slot)
+        cfg["counterfactual"] = {
+            "kind": str(kind),
+            "case_id": int(cfg["case_id"]),
+            "mode": str(mode),
+            "parent_case_index": base_case_index,
+            "parent_case_id": int(base_cfg.get("case_id", base_case_index)),
+            "parent_case_name": str(base_cfg.get("case_name", "case")),
+            "scene_label": str(base_cfg.get("scene_label", base_cfg.get("case_name", "case"))),
+            "summary": str(summary),
+        }
+        cfg["case_notes"] = _case_description_from_cfg(cfg)
+        return cfg
+
+    def _build_same_scene_negative_case(base_cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        has_default_striker = not bool(getattr(args, "disable_striker", False))
+        has_custom_objects = bool(base_cfg.get("custom_objects", []) or [])
+        uses_entry_motion = bool(base_cfg.get("use_entry_motion", False))
+        if not (has_default_striker or has_custom_objects or uses_entry_motion):
+            return None
+
+        rng = np.random.RandomState(int(base_cfg.get("seed", seed_anchor + 23)) + 61001)
+        speed_scale = float(rng.uniform(0.72, 1.32))
+        yaw_delta = float(rng.uniform(12.0, 24.0) * (-1.0 if rng.rand() < 0.5 else 1.0))
+        ang_scale = float(rng.uniform(0.55, 1.45))
+        base_restitution = float(np.clip(base_cfg.get("rigid_restitution_override", rigid_material_defaults["restitution"]), 0.0, 1.2))
+        if base_restitution < 0.35:
+            restitution_new = float(np.clip(base_restitution + rng.uniform(0.32, 0.58), 0.02, 1.05))
+        else:
+            restitution_new = float(np.clip(base_restitution * rng.uniform(0.18, 0.48), 0.02, 1.05))
+
+        cfg = _make_counterfactual_case_cfg(
+            base_cfg=base_cfg,
+            variant_slot=0,
+            suffix="cf_same_scene_neg",
+            kind="same_scene_negative",
+            mode="perturb_initial_velocity_and_restitution",
+            summary=(
+                "保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，"
+                "让 future clip 成为同场景反事实负样本。"
+            ),
+        )
+        cfg["rigid_restitution_override"] = restitution_new
+
+        if uses_entry_motion:
+            base_linear = np.asarray(base_cfg.get("entry_linear_velocity", [0.0, 0.0, 0.0]), dtype=np.float64)
+            base_angular = np.asarray(base_cfg.get("entry_angular_velocity", [0.0, 0.0, 0.0]), dtype=np.float64)
+            cfg["entry_linear_velocity"] = _rotate_xy(base_linear * speed_scale, yaw_delta).tolist()
+            cfg["entry_angular_velocity"] = (base_angular * ang_scale).tolist()
+
+        if has_default_striker:
+            base_speed = float(base_cfg.get("striker_speed_override") or float(getattr(args, "striker_speed", 2.8) or 2.8))
+            if bool(getattr(args, "striker_drop_top", False)):
+                striker_linear = np.array(
+                    [
+                        float(rng.uniform(-0.28, 0.28) * base_speed),
+                        float(rng.uniform(-0.28, 0.28) * base_speed),
+                        -base_speed * speed_scale,
+                    ],
+                    dtype=np.float64,
+                )
+            else:
+                striker_linear = _rotate_xy(np.array([-base_speed * speed_scale, 0.0, 0.0], dtype=np.float64), yaw_delta)
+            cfg["default_striker_velocity_override"] = np.concatenate(
+                [striker_linear, np.zeros(3, dtype=np.float64)],
+                axis=0,
+            ).tolist()
+
+        if has_custom_objects:
+            updated_custom_objects: List[Dict[str, Any]] = []
+            for custom_obj in cfg.get("custom_objects", []) or []:
+                custom_copy = copy.deepcopy(custom_obj)
+                linear = np.asarray(custom_copy.get("linear_velocity", [0.0, 0.0, 0.0]), dtype=np.float64)
+                angular = np.asarray(custom_copy.get("angular_velocity", [0.0, 0.0, 0.0]), dtype=np.float64)
+                if np.linalg.norm(linear) > 1e-8:
+                    custom_copy["linear_velocity"] = _rotate_xy(linear * speed_scale, yaw_delta).tolist()
+                    custom_copy["angular_velocity"] = (angular * ang_scale).tolist()
+                updated_custom_objects.append(custom_copy)
+            cfg["custom_objects"] = updated_custom_objects
+
+        cfg["case_notes"] = _case_description_from_cfg(cfg)
+        return cfg
+
+    def _build_no_collision_negative_case(base_cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        has_default_striker = not bool(getattr(args, "disable_striker", False))
+        has_custom_objects = bool(base_cfg.get("custom_objects", []) or [])
+        uses_entry_motion = bool(base_cfg.get("use_entry_motion", False))
+        if not (has_default_striker or has_custom_objects or uses_entry_motion):
+            return None
+
+        miss_y = float(max(0.30, 0.90 * max(float(bbox_size[0]), float(bbox_size[1]))))
+        miss_z = float(max(0.06, 0.24 * float(bbox_size[2])))
+        cfg = _make_counterfactual_case_cfg(
+            base_cfg=base_cfg,
+            variant_slot=1,
+            suffix="cf_no_collision_neg",
+            kind="no_collision_negative",
+            mode="miss_contact_keep_preimpact_trend",
+            summary=(
+                "保持同一视角和背景，让物体沿碰撞前趋势继续运动，"
+                "但通过错开接触路径避免发生接触或反弹。"
+            ),
+        )
+
+        if has_default_striker:
+            if bool(getattr(args, "striker_drop_top", False)):
+                cfg["default_striker_start_offset"] = [miss_y, miss_y, 0.0]
+            else:
+                cfg["default_striker_start_offset"] = [0.0, miss_y, miss_z]
+
+        if has_custom_objects:
+            updated_custom_objects = []
+            for custom_obj in cfg.get("custom_objects", []) or []:
+                custom_copy = copy.deepcopy(custom_obj)
+                linear = np.asarray(custom_copy.get("linear_velocity", [0.0, 0.0, 0.0]), dtype=np.float64)
+                if np.linalg.norm(linear[:2]) > 1e-8:
+                    perp = np.array([-linear[1], linear[0], 0.0], dtype=np.float64)
+                    perp /= max(np.linalg.norm(perp[:2]), 1e-8)
+                    spawn_offset = np.asarray(custom_copy.get("spawn_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
+                    spawn_offset = spawn_offset + perp * miss_y
+                    spawn_offset[2] += 0.35 * miss_z
+                    custom_copy["spawn_offset"] = spawn_offset.tolist()
+                updated_custom_objects.append(custom_copy)
+            cfg["custom_objects"] = updated_custom_objects
+
+        if uses_entry_motion:
+            lifted_offset = np.asarray(cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
+            lifted_offset[2] += float(max(0.02, miss_z))
+            cfg["placed_pos_offset"] = lifted_offset.tolist()
+            cfg["gravity_z_override"] = float(getattr(args, "counterfactual_no_collision_gravity_z", 0.0) or 0.0)
+            cfg["warmup_steps_override"] = 0
+            cfg["pre_record_delay_steps_override"] = 0
+            cfg["initial_still_frames_override"] = 0
+            if np.linalg.norm(
+                _to_velocity6(cfg.get("default_striker_velocity_override", [0.0, 0.0, 0.0]))[:3]
+            ) <= 1e-8:
+                cfg["entry_linear_velocity"] = np.asarray(base_cfg.get("entry_linear_velocity", [0.0, 0.0, 0.0]), dtype=np.float64).tolist()
+
+        cfg["case_notes"] = _case_description_from_cfg(cfg)
+        return cfg
 
     def _legacy_random_case(case_idx: int) -> Dict[str, Any]:
         rng = np.random.RandomState(seed_anchor + case_idx * 9973 + 23)
@@ -1635,6 +1838,17 @@ def build_preview_case_configs(
             case_configs.append(_legacy_random_case(case_idx))
     else:
         raise ValueError(f"Unsupported case_scene_mode: {case_scene_mode}")
+
+    if bool(getattr(args, "enable_counterfactual_cases", False)):
+        counterfactual_cases: List[Dict[str, Any]] = []
+        for base_cfg in list(case_configs):
+            same_scene_cfg = _build_same_scene_negative_case(base_cfg)
+            if same_scene_cfg is not None:
+                counterfactual_cases.append(same_scene_cfg)
+            no_collision_cfg = _build_no_collision_negative_case(base_cfg)
+            if no_collision_cfg is not None:
+                counterfactual_cases.append(no_collision_cfg)
+        case_configs.extend(counterfactual_cases)
 
     return case_configs
 
@@ -7442,6 +7656,16 @@ def simulate_in_genesis(
     case_cfg: Optional[Dict[str, Any]] = None,
 ) -> str:
     import genesis as gs
+
+    def _coerce_velocity6(value: Any, default: Optional[Sequence[float]] = None) -> np.ndarray:
+        base = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] if default is None else default
+        arr = np.asarray(base if value is None else value, dtype=np.float64).reshape(-1)
+        if arr.size == 3:
+            arr = np.concatenate([arr, np.zeros(3, dtype=np.float64)], axis=0)
+        if arr.size != 6:
+            raise ValueError(f"Expected velocity with 3 or 6 values, got shape={arr.shape}")
+        return arr.astype(np.float64)
+
     try:
         gs.init()
     except Exception as exc:
@@ -7465,8 +7689,11 @@ def simulate_in_genesis(
     placed_pos = np.array([0.0, 0.0, float(metadata["grounding_offset_z"]) + 0.002], dtype=np.float64)
     runtime_case_cfg = dict(case_cfg or {})
     case_name = str(runtime_case_cfg.get("case_name", "case000"))
+    case_id = int(runtime_case_cfg.get("case_id", runtime_case_cfg.get("case_index", 0)))
+    case_variant_index = int(runtime_case_cfg.get("case_variant_index", runtime_case_cfg.get("case_index", case_id)))
     scene_label = str(runtime_case_cfg.get("scene_label", case_name))
     case_seed_for_runtime = int(runtime_case_cfg.get("seed", 20260414))
+    counterfactual_meta = dict(runtime_case_cfg.get("counterfactual", {}) or {})
     placed_pos = placed_pos + np.asarray(runtime_case_cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
     object_euler_deg = np.asarray(runtime_case_cfg.get("object_euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
     runtime_object_fixed = bool(runtime_case_cfg.get("object_fixed", object_fixed))
@@ -7479,6 +7706,9 @@ def simulate_in_genesis(
         dtype=np.float64,
     )
     apply_object_entry_velocity = bool(runtime_case_cfg.get("use_entry_motion", False))
+    rigid_restitution_override = runtime_case_cfg.get("rigid_restitution_override", None)
+    if rigid_restitution_override is not None:
+        rigid_material_cfg["restitution"] = float(np.clip(float(rigid_restitution_override), 0.0, 1.2))
     preview_dir = Path(prepared.output_dir) / "scene_preview"
     ensure_dir(preview_dir)
     runtime_mesh_dir = preview_dir / "runtime_soft_meshes"
@@ -7490,6 +7720,12 @@ def simulate_in_genesis(
         f"fixed={runtime_object_fixed} moving={apply_object_entry_velocity} "
         f"gravity_z={gravity_z:.3f} offset={placed_pos.tolist()} euler_deg={object_euler_deg.tolist()}"
     )
+    if counterfactual_meta:
+        print(
+            f"🪞 counterfactual kind={counterfactual_meta.get('kind', 'unknown')} "
+            f"parent={counterfactual_meta.get('parent_case_name', 'unknown')} "
+            f"mode={counterfactual_meta.get('mode', 'unknown')}"
+        )
 
     part_specs = _collect_part_specs(obj_dir=obj_dir, metadata=metadata)
     part_pid_filter_raw = str(getattr(args, "part_pid_filter", "") or "").strip()
@@ -8198,6 +8434,14 @@ def simulate_in_genesis(
             f"🫧 liquid_drop spawn above liquid center pid={primary_liquid_target['pid']} "
             f"start={striker_start.tolist()} liquid_top_z={liquid_top_world_z:.4f}"
         )
+    striker_start = striker_start + np.asarray(
+        runtime_case_cfg.get("default_striker_start_offset", [0.0, 0.0, 0.0]),
+        dtype=np.float64,
+    ).reshape(3)
+    striker_velocity = _coerce_velocity6(
+        runtime_case_cfg.get("default_striker_velocity_override", None),
+        default=striker_velocity.tolist(),
+    )
     if not disable_striker:
         striker = scene.add_entity(
             morph=gs.morphs.Sphere(
@@ -8205,7 +8449,12 @@ def simulate_in_genesis(
                 pos=tuple(striker_start.tolist()),
                 euler=(0.0, 0.0, 0.0),
             ),
-            material=gs.materials.Rigid(rho=1800.0, friction=0.35),
+            material=_make_genesis_rigid_material(
+                gs,
+                rho=1800.0,
+                friction=0.35,
+                restitution=float(rigid_material_cfg["restitution"]),
+            ),
             surface=gs.surfaces.Default(color=(0.95, 0.75, 0.15, 1.0), vis_mode="visual"),
         )
         custom_runtime_objects.append(
@@ -8279,9 +8528,11 @@ def simulate_in_genesis(
                 clear_extent = custom_scale
             elif mesh_path and Path(mesh_path).exists() and runtime_solver == "rigid_approx":
                 custom_ent = scene.add_entity(
-                    material=gs.materials.Rigid(
+                    material=_make_genesis_rigid_material(
+                        gs,
                         rho=float(custom_cfg.get("density", 1000.0)),
                         friction=float(custom_cfg.get("friction", 0.55)),
+                        restitution=float(rigid_material_cfg["restitution"]),
                     ),
                     morph=gs.morphs.Mesh(
                         file=mesh_path,
@@ -8301,7 +8552,12 @@ def simulate_in_genesis(
                         pos=tuple(start_pos.tolist()),
                         euler=(0.0, 0.0, 0.0),
                     ),
-                    material=gs.materials.Rigid(rho=1800.0, friction=0.35),
+                    material=_make_genesis_rigid_material(
+                        gs,
+                        rho=1800.0,
+                        friction=0.35,
+                        restitution=float(rigid_material_cfg["restitution"]),
+                    ),
                     surface=gs.surfaces.Default(color=color, vis_mode="visual"),
                 )
                 clear_extent = radius
@@ -8991,6 +9247,8 @@ def simulate_in_genesis(
         "object_id": str(prepared.object_id),
         "sample_name": sample_name,
         "case_name": case_name,
+        "case_id": int(case_id),
+        "case_variant_index": int(case_variant_index),
         "scene_label": scene_label,
         "simulator_mode": str(getattr(args, "simulator_mode", "rigid")),
         "simulator_type": "rigid",
@@ -9004,6 +9262,8 @@ def simulate_in_genesis(
         "object_fixed": bool(runtime_object_fixed),
         "gravity": [0.0, 0.0, float(gravity_z)],
         "striker_speed_mps": float(runtime_striker_speed),
+        "counterfactual": counterfactual_meta if counterfactual_meta else None,
+        "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
     }
     (case_dir / "scene_input.json").write_text(json.dumps(scene_input, ensure_ascii=False, indent=2), encoding="utf-8")
     for frame_idx, rgb_frame in enumerate(rgb_frames):
@@ -9054,14 +9314,18 @@ def simulate_in_genesis(
         json.dump(event_windows + env_event_windows, f, ensure_ascii=False, indent=2)
     properties_payload = {
         "object_ids": sample_object_ids.astype(np.int32).tolist(),
-        "sampled_restitution": [None for _ in sample_object_ids],
-        "effective_restitution_used": [None for _ in sample_object_ids],
+        "sampled_restitution": [None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]) for _ in sample_object_ids],
+        "effective_restitution_used": [float(rigid_material_cfg["restitution"]) for _ in sample_object_ids],
+        "counterfactual": counterfactual_meta if counterfactual_meta else None,
     }
     with open(case_dir / "physics" / "properties.json", "w", encoding="utf-8") as f:
         json.dump(properties_payload, f, ensure_ascii=False, indent=2)
     metadata_payload = {
         "scene_id": sample_name,
         "object_id": str(prepared.object_id),
+        "case_id": int(case_id),
+        "case_variant_index": int(case_variant_index),
+        "case_name": case_name,
         "seed": int(case_seed_for_runtime),
         "split": "train",
         "family": "physxnet_single_object",
@@ -9073,6 +9337,8 @@ def simulate_in_genesis(
         "frames": int(com_pos_arr.shape[0]),
         "resolution": [int(EXPORT_CAMERA_RESOLUTION[0]), int(EXPORT_CAMERA_RESOLUTION[1])],
         "motion_category": str(scene_label),
+        "sample_role": "counterfactual_negative" if counterfactual_meta else "factual",
+        "counterfactual": counterfactual_meta if counterfactual_meta else None,
         "convention": {
             "length_unit": "meter",
             "mass_unit": "kg",
@@ -9315,6 +9581,8 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--case_index_filter", type=int, nargs="*", default=None, help="Optional subset of generated case indices to execute, e.g. --case_index_filter 0 2")
     parser.add_argument("--case_seed", type=int, default=20260414, help="Base seed used to deterministically randomize preview cases")
+    parser.add_argument("--enable_counterfactual_cases", action="store_true", help="Append two counterfactual negative cases per compatible base case: same-scene perturbed impact and no-collision continuation.")
+    parser.add_argument("--counterfactual_no_collision_gravity_z", type=float, default=0.0, help="Gravity used by the no-collision counterfactual when the main object should keep moving without ground/contact bounce.")
     parser.add_argument("--motion_resample_index", type=int, default=0, help="Internal retry index for case900/case901 randomized pose and velocity")
     parser.add_argument(
         "--motion_case_max_retries",
@@ -9478,12 +9746,19 @@ def _run_single_object(args: argparse.Namespace, object_id: str) -> Dict[str, An
                 )
                 case_index_filter = getattr(bundle_args, "case_index_filter", None)
                 if case_index_filter:
-                    case_index_filter = [int(idx) for idx in case_index_filter]
-                    bundle_cases = [case_cfg for case_cfg in bundle_cases if int(case_cfg.get("case_index", -1)) in case_index_filter]
+                    requested_case_indices = {int(idx) for idx in case_index_filter}
+                    bundle_cases = [
+                        case_cfg
+                        for case_cfg in bundle_cases
+                        if (
+                            int(case_cfg.get("case_index", -1)) in requested_case_indices
+                            or int(dict(case_cfg.get("counterfactual", {}) or {}).get("parent_case_index", -1)) in requested_case_indices
+                        )
+                    ]
                     if not bundle_cases:
                         print(
                             f"⏭️ preview bundle={bundle['bundle_name']} has no matched cases for "
-                            f"--case_index_filter={case_index_filter}"
+                            f"--case_index_filter={sorted(requested_case_indices)}"
                         )
                         continue
                 if not bundle_cases:
