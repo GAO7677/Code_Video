@@ -75,6 +75,8 @@ def main() -> None:
                 events=payload["events"],
                 linear_vel=payload["linear_vel"],
                 visibility_mask=payload["visibility_mask"],
+                com_pos=payload["com_pos"],
+                bbox_xyxy=payload["bbox_xyxy"],
             )
             merged = merge_metadata(payload["metadata"], derived_tags)
             old_text = meta_path.read_text(encoding="utf-8")

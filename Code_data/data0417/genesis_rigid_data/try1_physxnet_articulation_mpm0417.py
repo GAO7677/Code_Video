@@ -1297,6 +1297,7 @@ def build_preview_case_configs(
         object_euler_deg: Optional[np.ndarray] = None,
         custom_objects: Optional[List[Dict[str, Any]]] = None,
         striker_speed_override: Optional[float] = None,
+        disable_default_striker: bool = False,
     ) -> Dict[str, Any]:
         entry_linear_velocity = np.asarray(
             [0.0, 0.0, 0.0] if entry_linear_velocity is None else entry_linear_velocity,
@@ -1337,6 +1338,7 @@ def build_preview_case_configs(
             "liquid_settle_steps_override": liquid_settle_steps_override,
             "liquid_auto_settle_max_steps_override": liquid_auto_settle_max_steps_override,
             "striker_speed_override": None if striker_speed_override is None else float(striker_speed_override),
+            "disable_default_striker": bool(disable_default_striker),
         }
         case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
         return case_cfg
@@ -1372,7 +1374,7 @@ def build_preview_case_configs(
         return cfg
 
     def _build_same_scene_negative_case(base_cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        has_default_striker = not bool(getattr(args, "disable_striker", False))
+        has_default_striker = (not bool(getattr(args, "disable_striker", False))) and (not bool(base_cfg.get("disable_default_striker", False)))
         has_custom_objects = bool(base_cfg.get("custom_objects", []) or [])
         uses_entry_motion = bool(base_cfg.get("use_entry_motion", False))
         if not (has_default_striker or has_custom_objects or uses_entry_motion):
@@ -1441,7 +1443,7 @@ def build_preview_case_configs(
         return cfg
 
     def _build_no_collision_negative_case(base_cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        has_default_striker = not bool(getattr(args, "disable_striker", False))
+        has_default_striker = (not bool(getattr(args, "disable_striker", False))) and (not bool(base_cfg.get("disable_default_striker", False)))
         has_custom_objects = bool(base_cfg.get("custom_objects", []) or [])
         uses_entry_motion = bool(base_cfg.get("use_entry_motion", False))
         if not (has_default_striker or has_custom_objects or uses_entry_motion):
@@ -1557,6 +1559,242 @@ def build_preview_case_configs(
             liquid_auto_settle_max_steps_override=liquid_auto_settle_max_steps_override,
             custom_objects=_make_custom_objects_for_case(case_idx, seed_anchor + case_idx * 9973 + 23),
         )
+
+    def _estimate_custom_asset_volume_m3(asset: Dict[str, Any], scale: float) -> float:
+        mesh_path = str(asset.get("mesh_path", "") or "").strip()
+        if mesh_path:
+            bounds_info = _mesh_bounds_info(Path(mesh_path), scale=float(scale))
+            if bounds_info is not None:
+                size = np.asarray(bounds_info.get("bounds_size", [scale, scale, scale]), dtype=np.float64)
+                return float(np.prod(np.maximum(size, 1e-6)))
+        scale = float(max(1e-3, scale))
+        return float(scale ** 3)
+
+    def _sample_free_motion_pose(case_seed: int, slot_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        rng = np.random.RandomState(case_seed + 20011 + 193 * slot_idx)
+        euler_deg = np.array(
+            [
+                float(rng.uniform(-18.0, 18.0)),
+                float(rng.uniform(-14.0, 14.0)),
+                float(rng.uniform(-180.0, 180.0)),
+            ],
+            dtype=np.float64,
+        )
+        angular = np.array(
+            [
+                float(rng.uniform(-1.15, 1.15)),
+                float(rng.uniform(-1.15, 1.15)),
+                float(rng.uniform(-1.65, 1.65)),
+            ],
+            dtype=np.float64,
+        )
+        return euler_deg, angular
+
+    def _make_multi_object_free_motion_case(
+        *,
+        case_idx: int,
+        total_count: int,
+        motion_kind: str,
+    ) -> Optional[Dict[str, Any]]:
+        if total_count < 2:
+            return None
+        simulator_mode = str(getattr(args, "simulator_mode", "rigid")).strip().lower()
+        if simulator_mode != "rigid":
+            return None
+
+        case_seed = _case_seed(case_idx)
+        rng = np.random.RandomState(case_seed + 14021)
+        label_motion = "projectile" if str(motion_kind).strip().lower() == "projectile" else "drop"
+        scene_label = f"multi{int(total_count)}_{label_motion}_nocollision"
+        slot_indices = np.arange(int(total_count), dtype=np.float64)
+        slot_offsets = 2.0 * slot_indices - (float(total_count) - 1.0)
+        lane_gap = float(max(0.95, 2.25 * max(float(bbox_size[0]), float(bbox_size[1]), 0.28)))
+        x_gap = float(max(0.30, 0.70 * max(float(bbox_size[0]), 0.24)))
+        y_slots = slot_offsets * lane_gap
+        x_slots = slot_offsets * x_gap
+        main_slot = int(total_count // 2)
+        main_euler_deg, main_angular = _sample_free_motion_pose(case_seed, main_slot)
+        main_should_move = bool(moving_allowed)
+        main_offset_z = 0.0
+        main_linear = np.zeros(3, dtype=np.float64)
+        main_angular_final = np.zeros(3, dtype=np.float64)
+        if main_should_move:
+            if label_motion == "projectile":
+                main_offset_z = float(max(0.92, 0.85 + 0.75 * float(bbox_size[2])))
+                main_linear = np.array(
+                    [
+                        float(rng.uniform(0.20, 0.38)),
+                        0.0,
+                        float(rng.uniform(1.32, 1.92)),
+                    ],
+                    dtype=np.float64,
+                )
+            else:
+                main_offset_z = float(max(1.08, 1.05 + 1.05 * float(bbox_size[2])))
+                main_linear = np.array(
+                    [
+                        float(rng.uniform(-0.04, 0.04)),
+                        0.0,
+                        0.0,
+                    ],
+                    dtype=np.float64,
+                )
+            main_angular_final = main_angular
+        else:
+            main_euler_deg = np.array([0.0, 0.0, _sample_object_yaw_deg(case_seed)], dtype=np.float64)
+
+        moving_asset_bank = [asset for asset in custom_asset_bank if str(asset.get("source_kind", "")) == "physxnet"]
+        if not moving_asset_bank:
+            moving_asset_bank = list(custom_asset_bank)
+        if not moving_asset_bank:
+            moving_asset_bank = [
+                {
+                    "asset_id": "primitive__sphere__fallback",
+                    "source_kind": "primitive",
+                    "source_label": "primitive",
+                    "display_id": "primitive_fallback",
+                    "mesh_path": "",
+                    "scale_range": [0.12, 0.18],
+                    "material_ctor": "gs.materials.Rigid",
+                    "density": 950.0,
+                    "youngs": 1.0e9,
+                    "poisson": 0.24,
+                    "friction": 0.55,
+                    "color_rgba": [0.25, 0.72, 0.92, 1.0],
+                    "shape_name": "sphere",
+                    "material_name": "rigid_fallback",
+                }
+            ]
+
+        used_asset_ids: set[str] = set()
+        custom_objects: List[Dict[str, Any]] = []
+        custom_slot_ids = [idx for idx in range(total_count) if idx != main_slot]
+        for obj_order, slot_id in enumerate(custom_slot_ids):
+            asset_candidates = [asset for asset in moving_asset_bank if str(asset.get("asset_id", "")) not in used_asset_ids]
+            if not asset_candidates:
+                asset_candidates = moving_asset_bank
+            asset = copy.deepcopy(asset_candidates[int(rng.randint(0, len(asset_candidates)))])
+            used_asset_ids.add(str(asset.get("asset_id", f"asset_{obj_order:02d}")))
+            scale_min, scale_max = asset.get("scale_range", [0.14, 0.24])
+            scale_max = min(float(scale_max), 0.20 if total_count >= 3 else 0.22)
+            scale_min = min(float(scale_min), scale_max)
+            obj_scale = float(rng.uniform(scale_min, scale_max))
+            obj_volume_est = _estimate_custom_asset_volume_m3(asset, obj_scale)
+            asset_should_move = bool(volume_threshold_m3 <= 0.0 or obj_volume_est < volume_threshold_m3)
+            obj_euler_deg, obj_angular = _sample_free_motion_pose(case_seed, int(slot_id) + 7)
+            spawn_x = float(x_slots[int(slot_id)] + rng.uniform(-0.025, 0.025))
+            spawn_y = float(y_slots[int(slot_id)])
+            spawn_z = 0.0
+            linear = np.zeros(3, dtype=np.float64)
+            angular = np.zeros(3, dtype=np.float64)
+            role_hint = "bystander"
+            motion_type_hint = "static_rest"
+            motion_group_hint = "auxiliary_static"
+            if asset_should_move:
+                if label_motion == "projectile":
+                    spawn_z = float(rng.uniform(0.88, 1.28))
+                    linear = np.array(
+                        [
+                            float(rng.uniform(0.18, 0.34)),
+                            0.0,
+                            float(rng.uniform(1.22, 1.82)),
+                        ],
+                        dtype=np.float64,
+                    )
+                    motion_type_hint = "independent_projectile_motion"
+                    motion_group_hint = "projectile_motion"
+                else:
+                    spawn_z = float(rng.uniform(1.10, 1.72))
+                    linear = np.array(
+                        [
+                            float(rng.uniform(-0.03, 0.03)),
+                            0.0,
+                            0.0,
+                        ],
+                        dtype=np.float64,
+                    )
+                    motion_type_hint = "independent_gravity_drop"
+                    motion_group_hint = "gravity_drop"
+                angular = obj_angular
+                role_hint = "co_actor"
+
+            source_kind = str(asset.get("source_kind", "primitive"))
+            source_tag = "physxnet_aux" if source_kind == "physxnet" else "custom_object"
+            custom_objects.append(
+                {
+                    "custom_object_id": f"free_motion_{total_count:02d}_{label_motion}_{obj_order:02d}",
+                    "source_dataset": source_tag,
+                    "source_label": str(asset.get("source_label", source_kind)),
+                    "source_asset_id": str(asset.get("asset_id", f"asset_{obj_order:02d}")),
+                    "source_display_id": str(asset.get("display_id", asset.get("asset_id", f"asset_{obj_order:02d}"))),
+                    "mesh_path": str(asset.get("mesh_path", "")),
+                    "shape": str(asset.get("shape_name", "mesh")),
+                    "material_name": str(asset.get("material_name", "physxnet")),
+                    "spawn_direction": f"{label_motion}_lane_release",
+                    "spawn_offset": [spawn_x, spawn_y, spawn_z],
+                    "linear_velocity": linear.tolist(),
+                    "angular_velocity": angular.tolist(),
+                    "color_rgba": list(asset.get("color_rgba", [0.82, 0.58, 0.22, 1.0])),
+                    "scale": obj_scale,
+                    "euler_deg": obj_euler_deg.tolist(),
+                    "density": float(asset.get("density", 950.0)),
+                    "youngs": float(asset.get("youngs", 1.0e9)),
+                    "poisson": float(asset.get("poisson", 0.25)),
+                    "friction": float(asset.get("friction", 0.55)),
+                    "material_ctor": "gs.materials.Rigid",
+                    "runtime_solver": "rigid_approx",
+                    "runtime_material_ctor": "gs.materials.Rigid",
+                    "strict_dataset_params": bool(asset.get("strict_dataset_params", True)),
+                    "role_hint": role_hint,
+                    "motion_type_hint": motion_type_hint,
+                    "motion_group_hint": motion_group_hint,
+                    "expected_volume_est_m3": float(obj_volume_est),
+                    "no_pairwise_collision_expected": True,
+                }
+            )
+
+        case_cfg = _make_case_cfg(
+            case_idx=case_idx,
+            case_name=f"case{case_idx:03d}_{scene_label}",
+            scene_label=scene_label,
+            seed=case_seed,
+            placed_pos_offset=np.array(
+                [
+                    float(x_slots[main_slot]),
+                    float(y_slots[main_slot]),
+                    float(main_offset_z),
+                ],
+                dtype=np.float64,
+            ),
+            object_euler_deg=main_euler_deg,
+            use_entry_motion=bool(main_should_move),
+            object_fixed_override=False,
+            entry_linear_velocity=main_linear,
+            entry_angular_velocity=main_angular_final,
+            gravity_z_override=-9.81,
+            warmup_steps_override=0,
+            pre_record_delay_steps_override=0,
+            initial_still_frames_override=0,
+            liquid_settle_steps_override=0,
+            liquid_auto_settle_max_steps_override=0,
+            custom_objects=custom_objects,
+            disable_default_striker=True,
+        )
+        case_cfg["main_object_role_hint"] = "co_actor" if main_should_move else "bystander"
+        case_cfg["main_object_motion_type_hint"] = (
+            "independent_projectile_motion"
+            if main_should_move and label_motion == "projectile"
+            else ("independent_gravity_drop" if main_should_move else "static_rest")
+        )
+        case_cfg["main_object_motion_group_hint"] = (
+            "projectile_motion"
+            if main_should_move and label_motion == "projectile"
+            else ("gravity_drop" if main_should_move else "static_placement")
+        )
+        case_cfg["no_pairwise_collision_expected"] = True
+        case_cfg["gravity_required"] = True
+        case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
+        return case_cfg
 
     x_shift = float(max(0.18, 0.65 * bbox_size[0]))
     y_shift = float(max(0.18, 0.55 * bbox_size[1], 0.30 * base_y_offset))
@@ -1826,6 +2064,16 @@ def build_preview_case_configs(
         ),
     ]
     diverse_templates.extend(random_motion_templates)
+
+    multi_object_free_motion_templates = [
+        _make_multi_object_free_motion_case(case_idx=210, total_count=2, motion_kind="projectile"),
+        _make_multi_object_free_motion_case(case_idx=211, total_count=2, motion_kind="drop"),
+        _make_multi_object_free_motion_case(case_idx=220, total_count=3, motion_kind="projectile"),
+        _make_multi_object_free_motion_case(case_idx=221, total_count=3, motion_kind="drop"),
+        _make_multi_object_free_motion_case(case_idx=230, total_count=4, motion_kind="projectile"),
+        _make_multi_object_free_motion_case(case_idx=231, total_count=4, motion_kind="drop"),
+    ]
+    diverse_templates.extend([cfg for cfg in multi_object_free_motion_templates if cfg is not None])
 
     if case_scene_mode == "diverse":
         case_configs.extend(diverse_templates)
@@ -2533,10 +2781,13 @@ def _count_bucket_from_num_objects(num_objects: int) -> str:
     return f"count_{num_objects:02d}"
 
 
-def _scene_layout_from_sources(object_sources: Sequence[str]) -> Tuple[str, str]:
+def _scene_layout_from_sources(scene_label: str, object_sources: Sequence[str]) -> Tuple[str, str]:
     sources = [str(src) for src in object_sources]
     num_objects = len(sources)
     count_bucket = _count_bucket_from_num_objects(num_objects)
+    label = str(scene_label or "").strip().lower()
+    if label.startswith("multi") and ("projectile" in label or "drop" in label):
+        return "multi_object_free_motion", count_bucket
     has_aux_object = any(src in {"custom_object", "physxnet_aux"} for src in sources)
     if has_aux_object and num_objects >= 2:
         return "interaction_pair_plus_dynamic", count_bucket
@@ -2547,6 +2798,10 @@ def _motion_group_from_scene_label(scene_label: str) -> str:
     label = str(scene_label or "").strip().lower()
     if not label:
         return "unknown"
+    if label.startswith("multi") and "projectile" in label:
+        return "projectile_motion"
+    if label.startswith("multi") and "drop" in label:
+        return "gravity_drop"
     if label.startswith("static_"):
         if label == "static_highdrop":
             return "gravity_drop"
@@ -2570,6 +2825,10 @@ def _interaction_pattern_from_case(
 ) -> str:
     label = str(scene_label or "").strip().lower()
     sources = [str(src) for src in object_sources]
+    if label.startswith("multi") and "projectile" in label:
+        return "multi_object_independent_projectile_motion"
+    if label.startswith("multi") and "drop" in label:
+        return "multi_object_independent_gravity_drop"
     has_interaction_object = any(src in {"custom_object", "physxnet_aux"} for src in sources)
     if has_interaction_object:
         if label in {"static_center", "static_left", "static_right"}:
@@ -2598,9 +2857,18 @@ def _object_motion_fields(
     scene_composition: str,
     has_custom_object: bool,
     apply_object_entry_velocity: bool,
+    role_hint: Optional[str] = None,
+    motion_type_hint: Optional[str] = None,
+    motion_group_hint: Optional[str] = None,
 ) -> Dict[str, str]:
     source = str(source_tag)
     label = str(scene_label)
+    if role_hint or motion_type_hint or motion_group_hint:
+        return {
+            "role": str(role_hint or ("initiator" if bool(apply_object_entry_velocity) else "bystander")),
+            "object_motion_type": str(motion_type_hint or label or "other"),
+            "object_motion_group": str(motion_group_hint or _motion_group_from_scene_label(label)),
+        }
     if source == "custom_object":
         return {
             "role": "initiator",
@@ -7392,6 +7660,7 @@ def _collect_case_physics_state(
     part_specs: Sequence[Dict[str, Any]],
     custom_runtime_objects: Sequence[Dict[str, Any]],
     gravity_vec: Sequence[float],
+    runtime_case_cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     object_ids: List[str] = []
     object_names: List[str] = []
@@ -7399,6 +7668,9 @@ def _collect_case_physics_state(
     seg_ids: List[int] = []
     object_types: List[str] = []
     object_sources: List[str] = []
+    object_role_hints: List[Optional[str]] = []
+    object_motion_type_hints: List[Optional[str]] = []
+    object_motion_group_hints: List[Optional[str]] = []
     com_pos: List[np.ndarray] = []
     orientation_quat: List[np.ndarray] = []
     linear_vel: List[np.ndarray] = []
@@ -7423,6 +7695,10 @@ def _collect_case_physics_state(
         seg_ids.append(1)
         object_types.append("rigid_assembly")
         object_sources.append("physxnet_main")
+        case_cfg_local = dict(runtime_case_cfg or {})
+        object_role_hints.append(case_cfg_local.get("main_object_role_hint", None))
+        object_motion_type_hints.append(case_cfg_local.get("main_object_motion_type_hint", None))
+        object_motion_group_hints.append(case_cfg_local.get("main_object_motion_group_hint", None))
         com_pos.append(rigid_snap.com_pos)
         try:
             quat = np.asarray(_to_numpy(rigid_runtime_ent.get_quat()), dtype=np.float64).reshape(4)
@@ -7466,6 +7742,9 @@ def _collect_case_physics_state(
         seg_ids.append(int(next_object_id + 1))
         object_types.append(str(spec.get("assembly_role", "soft_entity")))
         object_sources.append("physxnet_soft")
+        object_role_hints.append(None)
+        object_motion_type_hints.append(None)
+        object_motion_group_hints.append(None)
         com_pos.append(snap.com_pos)
         orientation_quat.append(np.asarray([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
         linear_vel.append(snap.linear_vel)
@@ -7510,6 +7789,9 @@ def _collect_case_physics_state(
         seg_ids.append(int(next_object_id + 1))
         object_types.append(object_type)
         object_sources.append(str(custom_rec.get("source_tag", "custom_object")))
+        object_role_hints.append(None if custom_rec.get("role_hint", None) is None else str(custom_rec.get("role_hint")))
+        object_motion_type_hints.append(None if custom_rec.get("motion_type_hint", None) is None else str(custom_rec.get("motion_type_hint")))
+        object_motion_group_hints.append(None if custom_rec.get("motion_group_hint", None) is None else str(custom_rec.get("motion_group_hint")))
         com_pos.append(snap.com_pos)
         if hasattr(ent, "get_quat"):
             try:
@@ -7561,6 +7843,9 @@ def _collect_case_physics_state(
         "seg_ids": seg_ids,
         "object_types": object_types,
         "object_sources": object_sources,
+        "object_role_hints": object_role_hints,
+        "object_motion_type_hints": object_motion_type_hints,
+        "object_motion_group_hints": object_motion_group_hints,
         "com_pos": com_pos_arr,
         "orientation_quat": orientation_arr,
         "linear_vel": linear_vel_arr,
@@ -8396,6 +8681,7 @@ def simulate_in_genesis(
         disable_striker = disable_striker or (not bool(getattr(args, "enable_striker", False)))
     else:
         disable_striker = disable_striker or bool(getattr(args, "disable_striker", False))
+    disable_striker = disable_striker or bool(runtime_case_cfg.get("disable_default_striker", False))
     striker = None
     custom_runtime_objects: List[Dict[str, Any]] = []
     striker_radius_runtime = float(striker_radius)
@@ -8603,10 +8889,10 @@ def simulate_in_genesis(
     cam_distance = camera_distance_mult * max(2.2, 2.0 * float(np.max(bbox_size)) + 1.0)
     cam_height = camera_distance_mult * max(1.1, float(placed_pos[2] + bbox_min[2] + 0.85 * bbox_size[2] + 0.4))
     lookat = np.array([0.0, 0.0, float(placed_pos[2] + bbox_min[2] + 0.55 * bbox_size[2])], dtype=np.float64)
-    if str(scene_label).strip().lower() in {"random_parabola", "high_drop"}:
+    label_l = str(scene_label).strip().lower()
+    if label_l in {"random_parabola", "high_drop"}:
         # These single-object gravity cases start above the tray. Keep the camera
         # close but bias the target downward so the landing remains in frame.
-        label_l = str(scene_label).strip().lower()
         if label_l == "high_drop":
             camera_distance_mult = max(camera_distance_mult, 1.36)
             cam_distance = camera_distance_mult * max(2.16, 2.05 * float(np.max(bbox_size)) + 0.92)
@@ -8619,12 +8905,53 @@ def simulate_in_genesis(
             cam_height = camera_distance_mult * max(0.96, float(placed_pos[2] + bbox_min[2] + 0.32 * bbox_size[2] + 0.08))
             lookat = np.array([0.0, 0.0, float(max(0.18, placed_pos[2] - 0.55))], dtype=np.float64)
             cam_fov = 39
+    elif label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
+        start_points = [placed_pos.copy()]
+        start_points.extend(np.asarray(rec.get("start_pos", placed_pos), dtype=np.float64).reshape(3) for rec in custom_runtime_objects)
+        start_arr = np.asarray(start_points, dtype=np.float64).reshape(-1, 3)
+        num_multi_objs = int(start_arr.shape[0])
+        xy_center = np.mean(start_arr[:, :2], axis=0)
+        xy_span = np.ptp(start_arr[:, :2], axis=0)
+        z_top = float(np.max(start_arr[:, 2]))
+        lookat = np.array(
+            [
+                float(xy_center[0]),
+                float(xy_center[1]),
+                float(max(0.28, 0.26 * z_top if "drop" in label_l else 0.34 * z_top)),
+            ],
+            dtype=np.float64,
+        )
+        camera_distance_mult = max(
+            camera_distance_mult,
+            1.12 if num_multi_objs >= 4 else (1.04 if num_multi_objs >= 3 else 1.10),
+        )
+        span_ref = float(max(np.max(xy_span), np.max(bbox_size), 0.60))
+        cam_distance = camera_distance_mult * max(
+            1.62 if num_multi_objs >= 4 else (1.48 if num_multi_objs >= 3 else 1.58),
+            (1.28 if num_multi_objs >= 4 else (1.18 if num_multi_objs >= 3 else 1.24))
+            + (0.98 if num_multi_objs >= 4 else (0.92 if num_multi_objs >= 3 else 0.96)) * span_ref,
+        )
+        cam_height = camera_distance_mult * max(
+            0.88 if num_multi_objs >= 4 else (0.82 if num_multi_objs >= 3 else 0.88),
+            0.42 * z_top + 0.48,
+        )
+        cam_fov = 54 if num_multi_objs >= 4 else (52 if num_multi_objs >= 3 else 48)
     if debug_spread_soft_parts and spread_offsets_by_pid:
         soft_offsets = np.asarray(list(spread_offsets_by_pid.values()), dtype=np.float64)
         lookat[:2] = np.mean(soft_offsets[:, :2], axis=0) * 0.5
-    cam_pos = np.array([cam_distance, -cam_distance, cam_height], dtype=np.float64)
+    if label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
+        cam_pos = np.array(
+            [
+                float(lookat[0] + (0.60 if num_multi_objs >= 3 else 0.82) * cam_distance),
+                float(lookat[1] - (0.88 if num_multi_objs >= 3 else 0.58) * cam_distance),
+                float(cam_height),
+            ],
+            dtype=np.float64,
+        )
+    else:
+        cam_pos = np.array([cam_distance, -cam_distance, cam_height], dtype=np.float64)
     cam_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-    if str(scene_label).strip().lower() not in {"random_parabola", "high_drop"}:
+    if label_l not in {"random_parabola", "high_drop"} and not (label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)):
         cam_fov = 35
     if liquid_camera_mode and primary_liquid_target is not None:
         liquid_center_world = np.asarray(primary_liquid_target["center_world"], dtype=np.float64)
@@ -9036,10 +9363,14 @@ def simulate_in_genesis(
     sample_object_types: Optional[List[str]] = None
     sample_object_sources: Optional[List[str]] = None
     sample_object_names: Optional[List[str]] = None
+    sample_object_role_hints: Optional[List[Optional[str]]] = None
+    sample_object_motion_type_hints: Optional[List[Optional[str]]] = None
+    sample_object_motion_group_hints: Optional[List[Optional[str]]] = None
 
     def _record_physics_frame(rendered: Any) -> None:
         nonlocal physics_track_object_ids, physics_track_object_types, physics_track_object_sources, prev_physics_state
         nonlocal sample_object_ids, sample_seg_ids, sample_object_types, sample_object_sources, sample_object_names
+        nonlocal sample_object_role_hints, sample_object_motion_type_hints, sample_object_motion_group_hints
         if not isinstance(rendered, tuple) or len(rendered) < 3:
             raise RuntimeError("Unexpected camera render output.")
         record_idx = len(rgb_frames)
@@ -9058,6 +9389,7 @@ def simulate_in_genesis(
             part_specs=part_specs,
             custom_runtime_objects=custom_runtime_objects,
             gravity_vec=gravity_vec,
+            runtime_case_cfg=runtime_case_cfg,
         )
         if physics_track_object_ids is None:
             physics_track_object_ids = list(state["object_ids"])
@@ -9068,6 +9400,9 @@ def simulate_in_genesis(
             sample_object_types = list(state["object_types"])
             sample_object_sources = list(state["object_sources"])
             sample_object_names = list(state["object_names"])
+            sample_object_role_hints = list(state.get("object_role_hints", []))
+            sample_object_motion_type_hints = list(state.get("object_motion_type_hints", []))
+            sample_object_motion_group_hints = list(state.get("object_motion_group_hints", []))
         seg_mapping = build_segmentation_mapping(scene, state["segmentation_entities"], state["track_object_ids"])
         seg_frame = remap_segmentation(seg_raw, seg_mapping)
         physics_com_frames.append(np.asarray(state["com_pos"], dtype=np.float32))
@@ -9270,8 +9605,8 @@ def simulate_in_genesis(
         visibility_mask=anchor_targets["visibility_mask"],
         seg_frames=seg_arr,
     )
-    scene_composition, object_count_bucket = _scene_layout_from_sources(sample_object_sources)
-    has_custom_object = any(str(src) == "custom_object" for src in sample_object_sources)
+    scene_composition, object_count_bucket = _scene_layout_from_sources(scene_label, sample_object_sources)
+    has_custom_object = any(str(src) in {"custom_object", "physxnet_aux"} for src in sample_object_sources)
     interaction_pattern = _interaction_pattern_from_case(
         scene_label=scene_label,
         scene_composition=scene_composition,
@@ -9426,6 +9761,9 @@ def simulate_in_genesis(
                     scene_composition=scene_composition,
                     has_custom_object=has_custom_object,
                     apply_object_entry_velocity=bool(apply_object_entry_velocity),
+                    role_hint=None if sample_object_role_hints is None or idx >= len(sample_object_role_hints) else sample_object_role_hints[idx],
+                    motion_type_hint=None if sample_object_motion_type_hints is None or idx >= len(sample_object_motion_type_hints) else sample_object_motion_type_hints[idx],
+                    motion_group_hint=None if sample_object_motion_group_hints is None or idx >= len(sample_object_motion_group_hints) else sample_object_motion_group_hints[idx],
                 )
             )
             for idx in range(sample_object_ids.shape[0])
@@ -9698,7 +10036,7 @@ def _preview_case_bundles(args: argparse.Namespace) -> List[Dict[str, Any]]:
     if bool(getattr(args, "generate_all_count_motion_cases", False)):
         requested_case_filter = getattr(args, "case_index_filter", None)
         if requested_case_filter is None:
-            all_case_indices = [0, 1, 2, 3, 5, 6, 7, 100, 101, 102, 900, 901]
+            all_case_indices = [0, 1, 2, 3, 5, 6, 7, 100, 101, 102, 210, 211, 220, 221, 230, 231, 900, 901]
         else:
             all_case_indices = [int(idx) for idx in requested_case_filter]
         requested_count_filter = getattr(args, "rigid_count_filter", None)

@@ -1,44 +1,35 @@
 #!/usr/bin/env python3
-"""Build a compact GIF portal grouped by object count and collision complexity."""
+"""Build a compact GIF portal grouped by collision complexity."""
 
 from __future__ import annotations
 
 import argparse
 import html
 import json
-import math
-import os
 import shutil
-import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, List
 
-import numpy as np
-from PIL import Image, ImageDraw
-
-from sample_bucket_labels import (
-    COLLISION_PROFILE_LABELS,
-    COLLISION_PROFILE_ORDER,
-    COUNT_BUCKET_ORDER,
-    bucket_display_label,
-    collision_count_bucket,
-    collision_profile_bucket,
-    collision_type_bucket,
-    compute_derived_tags,
+from build_recent_sample_motion_bucket_portal import (
+    _fmt_mtime,
+    _group_counts,
+    copy_or_symlink,
+    ensure_dir,
+    iter_recent_samples,
+    make_rgb_gif,
 )
+from sample_bucket_labels import COLLISION_PROFILE_LABELS, COLLISION_PROFILE_ORDER
 
 
 DEFAULT_DATASET_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid"
 )
-DEFAULT_OUTPUT_DIR = Path("/home/gaoya/portal_hub_sim/recent_motion_bucket_preview")
+DEFAULT_OUTPUT_DIR = Path("/home/gaoya/portal_hub_sim/collision_complexity_bucket_preview")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build a compact GIF preview page grouped by object count and collision complexity."
-    )
+    parser = argparse.ArgumentParser(description="Build a compact GIF preview page grouped by collision complexity.")
     parser.add_argument("--dataset_root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--output_dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--modified_within_hours", type=float, default=0.0)
@@ -50,171 +41,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_or_symlink(src: Path, dst: Path) -> None:
-    if dst.exists() or dst.is_symlink():
-        dst.unlink()
-    try:
-        os.symlink(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
-
-
-def _bucket_display_label(count_bucket: str, collision_profile: str) -> str:
-    return bucket_display_label(count_bucket, collision_profile)
-
-
-def _safe_percentile(values: np.ndarray, q: float) -> float:
-    if values.size == 0:
-        return 0.0
-    return float(np.percentile(values.astype(np.float32), q))
-
-
-def iter_recent_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
-    now = time.time()
-    cutoff = now - float(args.modified_within_hours) * 3600.0 if float(args.modified_within_hours) > 0 else None
-    records: List[Dict[str, Any]] = []
-    for meta_path in sorted(args.dataset_root.glob("*/*/*/metadata.json")):
-        sample_dir = meta_path.parent
-        if cutoff is not None and float(meta_path.stat().st_mtime) < cutoff:
-            continue
-        if args.sample_filter and args.sample_filter not in str(sample_dir):
-            continue
-        kin_path = sample_dir / "physics" / "rigid_kinematics.npz"
-        anchor_path = sample_dir / "physics" / "anchor_targets.npz"
-        event_path = sample_dir / "physics" / "collision_events.json"
-        rgb_dir = sample_dir / "rgb"
-        video_path = sample_dir / "videos" / "rgb.mp4"
-        if not (kin_path.exists() and anchor_path.exists() and event_path.exists() and rgb_dir.is_dir() and video_path.exists()):
-            continue
-
-        try:
-            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-            scene_input = json.loads((sample_dir / "scene_input.json").read_text(encoding="utf-8")) if (sample_dir / "scene_input.json").exists() else {}
-            events = json.loads(event_path.read_text(encoding="utf-8"))
-            kin = np.load(kin_path)
-            anchor = np.load(anchor_path)
-        except Exception:
-            continue
-
-        linear_vel = np.asarray(kin["linear_vel"], dtype=np.float32)
-        visibility_mask = np.asarray(anchor["visibility_mask"]) > 0.5
-        obj_obj_events = [event for event in events if -1 not in list(event.get("participants", []))]
-        obj_env_events = [event for event in events if -1 in list(event.get("participants", []))]
-        derived_tags = compute_derived_tags(
-            metadata=metadata,
-            events=events,
-            linear_vel=linear_vel,
-            visibility_mask=visibility_mask,
-            com_pos=np.asarray(kin["com_pos"], dtype=np.float32),
-            bbox_xyxy=np.asarray(anchor["bbox_xyxy"], dtype=np.float32),
-        )
-        count_bucket = str(metadata.get("object_count_bucket", ""))
-        collision_profile = str(derived_tags["collision_profile_bucket"])
-        records.append(
-            {
-                "sample_dir": sample_dir,
-                "metadata": metadata,
-                "scene_input": scene_input,
-                "mtime": float(meta_path.stat().st_mtime),
-                "motion_label": str(derived_tags["motion_label"]),
-                "motion_score": float(derived_tags["motion_score"]),
-                "motion_metrics": dict(derived_tags["motion_metrics"]),
-                "num_objects": int(metadata.get("num_objects", linear_vel.shape[1])),
-                "count_bucket": count_bucket,
-                "scene_composition": str(metadata.get("scene_composition", "")),
-                "sample_role": str(metadata.get("sample_role", "factual")),
-                "motion_category": str(metadata.get("motion_category", "")),
-                "collision_type_bucket": str(derived_tags["collision_type_bucket"]),
-                "collision_profile_bucket": collision_profile,
-                "obj_obj_event_count": int(derived_tags["obj_obj_event_count"]),
-                "obj_env_event_count": int(derived_tags["obj_env_event_count"]),
-                "collision_count_bucket": str(derived_tags["collision_count_bucket"]),
-                "bucket_key": f"{count_bucket}__{collision_profile}",
-                "bucket_label": _bucket_display_label(count_bucket, collision_profile),
-                "video_path": video_path,
-                "rgb_dir": rgb_dir,
-            }
-        )
-    records.sort(key=lambda item: item["mtime"], reverse=True)
-    if int(args.max_recent_samples) > 0:
-        records = records[: int(args.max_recent_samples)]
-    return records
-
-
-def make_rgb_gif(rgb_dir: Path, dst: Path, max_side: int, duration_ms: int) -> bool:
-    frame_paths = sorted(rgb_dir.glob("*.png"))
-    if not frame_paths:
-        return False
-    frames: List[Image.Image] = []
-    for idx, frame_path in enumerate(frame_paths):
-        frame = Image.open(frame_path).convert("RGB")
-        scale = min(max_side / float(frame.width), max_side / float(frame.height), 1.0)
-        size = (max(1, int(round(frame.width * scale))), max(1, int(round(frame.height * scale))))
-        thumb = frame.resize(size, Image.Resampling.BILINEAR)
-        if idx == 0:
-            draw = ImageDraw.Draw(thumb)
-            draw.rounded_rectangle((8, 8, 128, 34), radius=8, fill=(0, 0, 0, 180))
-            draw.text((16, 14), "frame 0", fill=(255, 255, 255))
-        frames.append(thumb)
-    frames[0].save(
-        dst,
-        save_all=True,
-        append_images=frames[1:],
-        duration=int(duration_ms),
-        loop=0,
-    )
-    return True
-
-
-def _fmt_mtime(ts: float) -> str:
-    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
-
-
-def _group_counts(records: Iterable[Dict[str, Any]], field: str) -> Dict[str, int]:
-    counter = Counter(str(record.get(field, "")) for record in records)
-    return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
-
-
-def _ordered_bucket_specs(records: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    observed = {str(record["bucket_key"]) for record in records}
-    specs: List[Dict[str, str]] = []
-    for count_bucket in COUNT_BUCKET_ORDER:
-        for collision_profile in COLLISION_PROFILE_ORDER:
-            bucket_key = f"{count_bucket}__{collision_profile}"
-            if bucket_key not in observed:
-                continue
-            specs.append(
-                {
-                    "bucket_key": bucket_key,
-                    "count_bucket": count_bucket,
-                    "collision_profile_bucket": collision_profile,
-                    "bucket_label": _bucket_display_label(count_bucket, collision_profile),
-                }
-            )
-    return specs
-
-
 def _select_cards(records: List[Dict[str, Any]], samples_per_bucket: int) -> Dict[str, List[Dict[str, Any]]]:
     grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for record in records:
-        grouped[str(record["bucket_key"])].append(record)
+        grouped[str(record["collision_profile_bucket"])].append(record)
+
     selected: Dict[str, List[Dict[str, Any]]] = {}
-    for spec in _ordered_bucket_specs(records):
-        bucket_key = spec["bucket_key"]
-        items = grouped.get(bucket_key, [])
+    for collision_profile in COLLISION_PROFILE_ORDER:
+        items = grouped.get(collision_profile, [])
         items.sort(
             key=lambda item: (
-                -float(item["mtime"]),
                 -int(item["num_objects"]),
                 -int(item["obj_obj_event_count"]),
+                -int(item["obj_env_event_count"]),
                 -float(item["motion_score"]),
+                -float(item["mtime"]),
             )
         )
-        selected[bucket_key] = items[: int(samples_per_bucket)]
+        selected[collision_profile] = items[: int(samples_per_bucket)] if int(samples_per_bucket) > 0 else items
     return selected
 
 
@@ -223,15 +67,13 @@ def build_html(
     selected_cards: Dict[str, List[Dict[str, Any]]],
     output_dir: Path,
 ) -> str:
+    collision_counts = _group_counts(records, "collision_profile_bucket")
     count_bucket_counts = _group_counts(records, "count_bucket")
-    collision_type_counts = _group_counts(records, "collision_profile_bucket")
     role_counts = _group_counts(records, "sample_role")
-    bucket_counts = _group_counts(records, "bucket_key")
-    bucket_specs = _ordered_bucket_specs(records)
 
     summary_chips = "".join(
-        f'<span class="chip"><strong>{html.escape(spec["bucket_label"])}</strong> {bucket_counts.get(spec["bucket_key"], 0)}</span>'
-        for spec in bucket_specs
+        f'<span class="chip"><strong>{html.escape(COLLISION_PROFILE_LABELS.get(label, label))}</strong> {collision_counts.get(label, 0)}</span>'
+        for label in COLLISION_PROFILE_ORDER
     )
     filter_options_count = "".join(
         f'<option value="{html.escape(label)}">{html.escape(label)} ({count_bucket_counts[label]})</option>'
@@ -239,9 +81,8 @@ def build_html(
         if label
     )
     filter_options_collision = "".join(
-        f'<option value="{html.escape(label)}">{html.escape(COLLISION_PROFILE_LABELS.get(label, label))} ({collision_type_counts[label]})</option>'
+        f'<option value="{html.escape(label)}">{html.escape(COLLISION_PROFILE_LABELS.get(label, label))} ({collision_counts.get(label, 0)})</option>'
         for label in COLLISION_PROFILE_ORDER
-        if collision_type_counts.get(label, 0) > 0
     )
     filter_options_role = "".join(
         f'<option value="{html.escape(label)}">{html.escape(label)} ({role_counts[label]})</option>'
@@ -250,16 +91,14 @@ def build_html(
     )
 
     sections: List[str] = []
-    for spec in bucket_specs:
-        bucket_key = spec["bucket_key"]
-        cards = selected_cards.get(bucket_key, [])
-        cards_html = []
+    for collision_profile in COLLISION_PROFILE_ORDER:
+        cards = selected_cards.get(collision_profile, [])
+        cards_html: List[str] = []
         for idx, record in enumerate(cards):
-            rel_dir = f"{bucket_key}/sample_{idx:02d}"
+            rel_dir = f"{collision_profile}/sample_{idx:02d}"
             cards_html.append(
                 f"""
 <article class="card"
-  data-bucket="{html.escape(str(record['bucket_key']))}"
   data-count="{html.escape(str(record['count_bucket']))}"
   data-collision="{html.escape(str(record['collision_profile_bucket']))}"
   data-role="{html.escape(str(record['sample_role']))}">
@@ -273,7 +112,7 @@ def build_html(
     </div>
     <div class="mini-row">{html.escape(record['count_bucket'])} | {record['num_objects']} obj | motion {html.escape(record['motion_label'])}</div>
     <div class="badge-row">
-      <span class="badge motion">{html.escape(COLLISION_PROFILE_LABELS.get(str(record['collision_profile_bucket']), str(record['collision_profile_bucket'])))}</span>
+      <span class="badge collision">{html.escape(COLLISION_PROFILE_LABELS.get(str(record['collision_profile_bucket']), str(record['collision_profile_bucket'])))}</span>
       <span class="badge">{html.escape(record['collision_count_bucket'])}</span>
       <span class="badge">{html.escape(record['sample_role'])}</span>
     </div>
@@ -289,15 +128,16 @@ def build_html(
 </article>
 """
             )
+
         sections.append(
             f"""
 <section class="bucket">
   <div class="bucket-head">
-    <h2>{html.escape(spec['bucket_label'])}</h2>
-    <span class="bucket-count">dataset count {bucket_counts.get(bucket_key, 0)} | showing {len(cards)}</span>
+    <h2>{html.escape(COLLISION_PROFILE_LABELS.get(collision_profile, collision_profile))}</h2>
+    <span class="bucket-count">dataset count {collision_counts.get(collision_profile, 0)} | showing {len(cards)}</span>
   </div>
   <div class="grid">
-    {''.join(cards_html) if cards_html else '<p class="empty">No recent samples in this bucket.</p>'}
+    {''.join(cards_html) if cards_html else '<p class="empty">No samples in this collision bucket.</p>'}
   </div>
 </section>
 """
@@ -308,17 +148,17 @@ def build_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Object Count x Collision Bucket Preview</title>
+  <title>Collision Complexity Bucket Preview</title>
   <style>
     :root {{
-      --bg: #efe9de;
-      --panel: #fffaf4;
-      --ink: #1a1816;
-      --muted: #6a645c;
-      --line: #dacdbd;
-      --shadow: rgba(44, 31, 20, 0.09);
-      --accent: #8b3a21;
-      --accent2: #1d6f69;
+      --bg: #ece7df;
+      --panel: #fffaf3;
+      --ink: #191816;
+      --muted: #676056;
+      --line: #d8ccb8;
+      --shadow: rgba(39, 28, 15, 0.08);
+      --accent: #8f3a21;
+      --accent2: #1a6c67;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -326,19 +166,19 @@ def build_html(
       font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(139,58,33,0.10), transparent 26%),
-        radial-gradient(circle at top right, rgba(29,111,105,0.10), transparent 24%),
+        radial-gradient(circle at top left, rgba(143,58,33,0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(26,108,103,0.10), transparent 24%),
         var(--bg);
     }}
     .page {{
-      max-width: 1560px;
+      max-width: 1540px;
       margin: 0 auto;
       padding: 20px 16px 40px;
     }}
     .hero, .bucket {{
       border: 1px solid var(--line);
       border-radius: 18px;
-      background: linear-gradient(180deg, rgba(255,250,244,0.98), rgba(248,240,230,0.96));
+      background: linear-gradient(180deg, rgba(255,250,243,0.98), rgba(247,239,228,0.96));
       box-shadow: 0 16px 40px var(--shadow);
     }}
     .hero {{
@@ -467,9 +307,9 @@ def build_html(
       background: rgba(255,255,255,0.84);
       font-size: 11px;
     }}
-    .badge.motion {{
+    .badge.collision {{
       border-color: #e2b7a6;
-      color: #8b3a21;
+      color: #8f3a21;
     }}
     .link-row {{
       display: flex;
@@ -493,8 +333,8 @@ def build_html(
 <body>
   <div class="page">
     <section class="hero">
-      <h1>Object Count x Collision Bucket Preview</h1>
-      <p>主桶按 `物体数量分桶 × 碰撞复杂程度` 组合。每个主桶最多展示 24 个 RGB GIF，卡片里继续保留 motion / collision count / role 等辅助标签。</p>
+      <h1>Collision Complexity Bucket Preview</h1>
+      <p>主桶按碰撞复杂度分组：`no_collision / env_only / obj_obj_only_c1 / obj_obj_only_c2plus / mixed_c1 / mixed_c2plus`。页面覆盖全部碰撞桶类型，并保留 `count_bucket` 与 `sample_role` 过滤器。</p>
       <p>当前输出目录: <code>{html.escape(output_dir.name)}</code></p>
       <div class="chip-row">{summary_chips}</div>
       <div class="control-row">
@@ -506,7 +346,7 @@ def build_html(
           </select>
         </div>
         <div class="control">
-          <label for="collisionFilter">collision type</label>
+          <label for="collisionFilter">collision</label>
           <select id="collisionFilter">
             <option value="">all</option>
             {filter_options_collision}
@@ -552,9 +392,7 @@ def main() -> None:
     args = parse_args()
     records = iter_recent_samples(args)
     if not records:
-        raise RuntimeError(
-            f"No recent samples found under {args.dataset_root} within {args.modified_within_hours} hours."
-        )
+        raise RuntimeError(f"No samples found under {args.dataset_root}.")
 
     selected_cards = _select_cards(records, samples_per_bucket=int(args.samples_per_bucket))
 
@@ -568,18 +406,16 @@ def main() -> None:
         "max_recent_samples": int(args.max_recent_samples),
         "samples_per_bucket": int(args.samples_per_bucket),
         "sample_count": int(len(records)),
-        "count_bucket_counts": _group_counts(records, "count_bucket"),
         "collision_profile_counts": _group_counts(records, "collision_profile_bucket"),
-        "bucket_counts": _group_counts(records, "bucket_key"),
+        "count_bucket_counts": _group_counts(records, "count_bucket"),
         "sample_role_counts": _group_counts(records, "sample_role"),
         "selected_samples": {},
     }
 
-    for spec in _ordered_bucket_specs(records):
-        bucket_key = spec["bucket_key"]
-        bucket_dir = args.output_dir / bucket_key
+    for collision_profile in COLLISION_PROFILE_ORDER:
+        bucket_dir = args.output_dir / collision_profile
         ensure_dir(bucket_dir)
-        chosen = selected_cards.get(bucket_key, [])
+        chosen = selected_cards.get(collision_profile, [])
         selected_meta: List[Dict[str, Any]] = []
         for idx, record in enumerate(chosen):
             dst_dir = bucket_dir / f"sample_{idx:02d}"
@@ -597,16 +433,16 @@ def main() -> None:
             )
             sample_summary = {
                 "sample_dir": str(record["sample_dir"]),
-                "motion_label": str(record["motion_label"]),
-                "motion_score": float(record["motion_score"]),
-                "motion_metrics": dict(record["motion_metrics"]),
-                "num_objects": int(record["num_objects"]),
                 "count_bucket": str(record["count_bucket"]),
+                "num_objects": int(record["num_objects"]),
                 "scene_composition": str(record["scene_composition"]),
                 "sample_role": str(record["sample_role"]),
                 "motion_category": str(record["motion_category"]),
-                "collision_type_bucket": str(record["collision_type_bucket"]),
+                "motion_label": str(record["motion_label"]),
+                "motion_score": float(record["motion_score"]),
+                "motion_metrics": dict(record["motion_metrics"]),
                 "collision_profile_bucket": str(record["collision_profile_bucket"]),
+                "collision_type_bucket": str(record["collision_type_bucket"]),
                 "collision_count_bucket": str(record["collision_count_bucket"]),
                 "obj_obj_event_count": int(record["obj_obj_event_count"]),
                 "obj_env_event_count": int(record["obj_env_event_count"]),
@@ -617,7 +453,7 @@ def main() -> None:
                 encoding="utf-8",
             )
             selected_meta.append(sample_summary)
-        summary_payload["selected_samples"][bucket_key] = selected_meta
+        summary_payload["selected_samples"][collision_profile] = selected_meta
 
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary_payload, ensure_ascii=False, indent=2),
