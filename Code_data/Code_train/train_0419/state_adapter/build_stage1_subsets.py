@@ -235,6 +235,15 @@ def window_has_visible_object_every_frame(visibility_mask: np.ndarray, start: in
 
 
 def resolve_main_object_index(metadata: Dict[str, object], object_ids: np.ndarray) -> int:
+    explicit_main_index = metadata.get("main_object_index")
+    if explicit_main_index is not None:
+        try:
+            explicit_main_index = int(explicit_main_index)
+        except (TypeError, ValueError):
+            explicit_main_index = None
+        if explicit_main_index is not None and 0 <= explicit_main_index < int(object_ids.shape[0]):
+            return explicit_main_index
+
     object_id_to_index = {int(obj_id): idx for idx, obj_id in enumerate(object_ids.tolist())}
     objects = metadata.get("objects", [])
     source_main_id = str(metadata.get("object_id", "")).strip()

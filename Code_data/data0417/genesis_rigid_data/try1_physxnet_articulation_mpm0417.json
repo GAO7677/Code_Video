@@ -1,0 +1,181 @@
+{
+  "schema_version": "2026-04-28",
+  "source_script": "try1_physxnet_articulation_mpm0417.py",
+  "explicit_cases": {
+    "0": {
+      "scene_label": "static_center",
+      "motion_cn": "主物体静止摆放在画面中心",
+      "motion_en": "single object static placement at center",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "1": {
+      "scene_label": "static_left",
+      "motion_cn": "主物体静止摆放在偏左位置",
+      "motion_en": "single object static placement at left-biased position",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "2": {
+      "scene_label": "static_right",
+      "motion_cn": "主物体静止摆放在偏右位置",
+      "motion_en": "single object static placement at right-biased position",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "3": {
+      "scene_label": "static_highdrop",
+      "motion_cn": "主物体从较高位置静止释放，在重力作用下自由下坠",
+      "motion_en": "single object high drop under gravity",
+      "motion_group": "gravity_drop",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "5": {
+      "scene_label": "entry_left",
+      "motion_cn": "主物体从一侧带初速度入场，做平动并伴随轻微转动",
+      "motion_en": "single object entry motion from left with initial velocity",
+      "motion_group": "entry_motion",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "6": {
+      "scene_label": "entry_right",
+      "motion_cn": "主物体从另一侧带初速度入场，做平动并伴随轻微转动",
+      "motion_en": "single object entry motion from right with initial velocity",
+      "motion_group": "entry_motion",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "7": {
+      "scene_label": "entry_fast_center",
+      "motion_cn": "主物体从中路更高速入场，做更快的平动并伴随轻微转动",
+      "motion_en": "single object fast center entry motion",
+      "motion_group": "entry_motion",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "100": {
+      "scene_label": "static_center_v2",
+      "motion_cn": "主物体静止居中，保留同类场景但默认撞击者更快",
+      "motion_en": "static center variant with stronger default striker",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "101": {
+      "scene_label": "static_left_v2",
+      "motion_cn": "主物体静止偏左，保留同类场景但默认撞击者更快",
+      "motion_en": "static left variant with stronger default striker",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "102": {
+      "scene_label": "static_right_v2",
+      "motion_cn": "主物体静止偏右，保留同类场景但默认撞击者更快",
+      "motion_en": "static right variant with stronger default striker",
+      "motion_group": "static_placement",
+      "gravity": true,
+      "object_count": "variable_by_bundle"
+    },
+    "210": {
+      "scene_label": "multi2_projectile_nocollision",
+      "motion_cn": "2个物体独立抛物线运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "2-object independent projectile motion without pairwise collisions",
+      "motion_group": "projectile_motion",
+      "gravity": true,
+      "object_count": 2,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "211": {
+      "scene_label": "multi2_drop_nocollision",
+      "motion_cn": "2个物体独立下坠运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "2-object independent gravity drop without pairwise collisions",
+      "motion_group": "gravity_drop",
+      "gravity": true,
+      "object_count": 2,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "220": {
+      "scene_label": "multi3_projectile_nocollision",
+      "motion_cn": "3个物体独立抛物线运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "3-object independent projectile motion without pairwise collisions",
+      "motion_group": "projectile_motion",
+      "gravity": true,
+      "object_count": 3,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "221": {
+      "scene_label": "multi3_drop_nocollision",
+      "motion_cn": "3个物体独立下坠运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "3-object independent gravity drop without pairwise collisions",
+      "motion_group": "gravity_drop",
+      "gravity": true,
+      "object_count": 3,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "230": {
+      "scene_label": "multi4_projectile_nocollision",
+      "motion_cn": "4个物体独立抛物线运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "4-object independent projectile motion without pairwise collisions",
+      "motion_group": "projectile_motion",
+      "gravity": true,
+      "object_count": 4,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "231": {
+      "scene_label": "multi4_drop_nocollision",
+      "motion_cn": "4个物体独立下坠运动，不彼此碰撞，可与地面碰撞",
+      "motion_en": "4-object independent gravity drop without pairwise collisions",
+      "motion_group": "gravity_drop",
+      "gravity": true,
+      "object_count": 4,
+      "pairwise_collision_expected": false,
+      "ground_collision_allowed": true
+    },
+    "900": {
+      "scene_label": "random_parabola",
+      "motion_cn": "单物体随机姿态抛物线运动",
+      "motion_en": "single object random-orientation projectile motion",
+      "motion_group": "projectile_motion",
+      "gravity": true,
+      "object_count": "typically_1_or_bundle_dependent"
+    },
+    "901": {
+      "scene_label": "high_drop",
+      "motion_cn": "单物体随机姿态高空下坠",
+      "motion_en": "single object random-orientation high drop",
+      "motion_group": "gravity_drop",
+      "gravity": true,
+      "object_count": "typically_1_or_bundle_dependent"
+    }
+  },
+  "derived_counterfactual_rules": {
+    "same_scene_negative": {
+      "case_id": 11001,
+      "case_index_rule": "20000 + parent_case_index * 10 + 0",
+      "motion_cn": "同场景反事实负样本，保持背景和相机，只改变初速度、撞击方向或恢复系数",
+      "motion_en": "same-scene counterfactual negative with perturbed velocity and restitution"
+    },
+    "no_collision_negative": {
+      "case_id": 11002,
+      "case_index_rule": "20000 + parent_case_index * 10 + 1",
+      "motion_cn": "同场景反事实负样本，沿原趋势继续运动，但错开路径避免接触",
+      "motion_en": "same-scene counterfactual negative with no-contact continuation"
+    }
+  },
+  "legacy_random_note": {
+    "scene_label": "legacy_random",
+    "motion_cn": "seed驱动的随机静态摆放或随机入场运动，不建议当作稳定编号语义使用",
+    "motion_en": "seed-driven random static or entry-motion case; not a stable semantic id family"
+  }
+}

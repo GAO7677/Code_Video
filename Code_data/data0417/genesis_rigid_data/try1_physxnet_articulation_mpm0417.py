@@ -8923,27 +8923,27 @@ def simulate_in_genesis(
         )
         camera_distance_mult = max(
             camera_distance_mult,
-            1.12 if num_multi_objs >= 4 else (1.04 if num_multi_objs >= 3 else 1.10),
+            1.02 if num_multi_objs >= 4 else (0.96 if num_multi_objs >= 3 else 1.10),
         )
         span_ref = float(max(np.max(xy_span), np.max(bbox_size), 0.60))
         cam_distance = camera_distance_mult * max(
-            1.62 if num_multi_objs >= 4 else (1.48 if num_multi_objs >= 3 else 1.58),
-            (1.28 if num_multi_objs >= 4 else (1.18 if num_multi_objs >= 3 else 1.24))
-            + (0.98 if num_multi_objs >= 4 else (0.92 if num_multi_objs >= 3 else 0.96)) * span_ref,
+            1.46 if num_multi_objs >= 4 else (1.32 if num_multi_objs >= 3 else 1.58),
+            (1.14 if num_multi_objs >= 4 else (1.04 if num_multi_objs >= 3 else 1.24))
+            + (0.84 if num_multi_objs >= 4 else (0.78 if num_multi_objs >= 3 else 0.96)) * span_ref,
         )
         cam_height = camera_distance_mult * max(
-            0.88 if num_multi_objs >= 4 else (0.82 if num_multi_objs >= 3 else 0.88),
-            0.42 * z_top + 0.48,
+            0.82 if num_multi_objs >= 4 else (0.76 if num_multi_objs >= 3 else 0.88),
+            0.38 * z_top + 0.44,
         )
-        cam_fov = 54 if num_multi_objs >= 4 else (52 if num_multi_objs >= 3 else 48)
+        cam_fov = 48 if num_multi_objs >= 4 else (46 if num_multi_objs >= 3 else 48)
     if debug_spread_soft_parts and spread_offsets_by_pid:
         soft_offsets = np.asarray(list(spread_offsets_by_pid.values()), dtype=np.float64)
         lookat[:2] = np.mean(soft_offsets[:, :2], axis=0) * 0.5
     if label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
         cam_pos = np.array(
             [
-                float(lookat[0] + (0.60 if num_multi_objs >= 3 else 0.82) * cam_distance),
-                float(lookat[1] - (0.88 if num_multi_objs >= 3 else 0.58) * cam_distance),
+                float(lookat[0] + (0.18 if num_multi_objs >= 3 else 0.82) * cam_distance),
+                float(lookat[1] - (1.02 if num_multi_objs >= 3 else 0.58) * cam_distance),
                 float(cam_height),
             ],
             dtype=np.float64,

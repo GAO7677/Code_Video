@@ -1,0 +1,14 @@
+{
+  "datasets": [
+    {
+      "name": "genesis_stage1a",
+      "path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/preprocess_v1/oracle_wan_ctx8_fut5_9_13_alltrain",
+      "repeat": 2
+    },
+    {
+      "name": "movi_d_stage1a",
+      "path": "/data/gaoya/dataset/kubric_tfds_movi-d/preprocess_v1/oracle_wan_ctx8_fut5_9_13_alltrain",
+      "repeat": 1
+    }
+  ]
+}

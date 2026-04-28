@@ -98,6 +98,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include samples under invalid_by_qa directories.",
     )
+    parser.add_argument(
+        "--source_split",
+        type=str,
+        default="train",
+        help="Source split under dataset_root to scan, e.g. train or test.",
+    )
     return parser.parse_args()
 
 
@@ -189,7 +195,7 @@ def export_window(
 
 def main() -> None:
     args = parse_args()
-    dataset_train_root = args.dataset_root / "train"
+    dataset_train_root = args.dataset_root / str(args.source_split).strip()
     future_lengths = parse_int_list(args.future_lengths)
     count_buckets = [item.strip() for item in args.count_buckets.split(",") if item.strip()]
 

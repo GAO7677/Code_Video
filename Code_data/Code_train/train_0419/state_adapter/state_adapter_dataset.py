@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
@@ -54,6 +55,49 @@ def load_prompt(meta: Dict[str, object]) -> str:
     return "a rigid object motion scene"
 
 
+def _normalize_dataset_spec_item(item, default_repeat: int) -> Dict[str, object]:
+    if isinstance(item, str):
+        return {
+            "path": item,
+            "repeat": default_repeat,
+        }
+    if not isinstance(item, dict):
+        raise TypeError(
+            f"State-adapter dataset spec must be a string path or dict, got {type(item).__name__}."
+        )
+    spec = dict(item)
+    if "path" not in spec:
+        raise ValueError(f"State-adapter dataset spec is missing required key 'path': {spec}")
+    spec.setdefault("repeat", default_repeat)
+    return spec
+
+
+def parse_dataset_root_specs(dataset_root: str | Sequence[object], default_repeat: int) -> List[Dict[str, object]]:
+    if isinstance(dataset_root, (list, tuple)):
+        return [_normalize_dataset_spec_item(item, default_repeat) for item in dataset_root]
+
+    if isinstance(dataset_root, str):
+        stripped = dataset_root.strip()
+        if stripped.startswith("[") or stripped.startswith("{"):
+            data = json.loads(stripped)
+            if isinstance(data, dict) and "datasets" in data:
+                data = data["datasets"]
+            if not isinstance(data, list):
+                data = [data]
+            return [_normalize_dataset_spec_item(item, default_repeat) for item in data]
+
+        if stripped.endswith(".json") and os.path.isfile(stripped):
+            with open(stripped, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict) and "datasets" in data:
+                data = data["datasets"]
+            if not isinstance(data, list):
+                data = [data]
+            return [_normalize_dataset_spec_item(item, default_repeat) for item in data]
+
+    return [_normalize_dataset_spec_item(dataset_root, default_repeat)]
+
+
 class OracleStateWindowDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -70,7 +114,7 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
         future_collision_type_filter: str = "",
         future_collision_bucket_filter: str = "",
     ):
-        self.dataset_root = Path(dataset_root)
+        self.dataset_root = dataset_root
         self.dataset_repeat = int(dataset_repeat)
         self.use_normalized_state = bool(use_normalized_state)
         self.motion_complexity_filter = parse_motion_complexity_filter(motion_complexity_filter)
@@ -88,16 +132,19 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             width_division_factor=WAN_SPATIAL_DIVISIBILITY,
         )
 
-        all_window_dirs = sorted(path.parent for path in self.dataset_root.rglob("pair_meta.json"))
+        self.dataset_specs = parse_dataset_root_specs(dataset_root, default_repeat=1)
+        self.dataset_sources = self._discover_window_sources(self.dataset_specs)
+        all_window_dirs = [item["window_dir"] for item in self.dataset_sources]
         if not all_window_dirs:
             raise FileNotFoundError(f"No oracle window data found under {self.dataset_root}")
-        self.window_records = self._build_window_records(all_window_dirs)
+        self.window_records = self._build_window_records(self.dataset_sources)
         self.window_dirs = [record["window_dir"] for record in self.window_records]
         self.motion_complexity_labels = [str(record["motion_complexity"]["label"]) for record in self.window_records]
         self.motion_complexity_summary = summarize_motion_complexity(self.motion_complexity_labels)
         self.object_count_summary = self._summarize_field("object_count")
         self.future_collision_type_summary = self._summarize_field("future_collision_type_bucket")
         self.future_collision_bucket_summary = self._summarize_field("future_collision_bucket")
+        self.dataset_source_summary = self._summarize_field("dataset_source")
         self.sample_weights = self._build_sample_weights() if self.rebalance_motion_complexity else None
         if not self.window_dirs:
             raise FileNotFoundError(
@@ -123,9 +170,30 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             visibility = payload["y_visibility"] if "y_visibility" in payload else None
             return infer_motion_complexity(state_norm=state_norm, visibility_mask=visibility)
 
-    def _build_window_records(self, window_dirs: Sequence[Path]) -> List[Dict[str, Any]]:
+    def _discover_window_sources(self, dataset_specs: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+        discovered: List[Dict[str, object]] = []
+        for spec in dataset_specs:
+            root = Path(str(spec["path"]))
+            source_name = str(spec.get("name") or root.name or root)
+            source_repeat = max(1, int(spec.get("repeat", 1)))
+            window_dirs = sorted(path.parent for path in root.rglob("pair_meta.json"))
+            if not window_dirs:
+                raise FileNotFoundError(f"No oracle window data found under {root}")
+            for _ in range(source_repeat):
+                for window_dir in window_dirs:
+                    discovered.append(
+                        {
+                            "dataset_root": root,
+                            "dataset_source": source_name,
+                            "window_dir": window_dir,
+                        }
+                    )
+        return discovered
+
+    def _build_window_records(self, window_sources: Sequence[Dict[str, object]]) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
-        for window_dir in window_dirs:
+        for source_info in window_sources:
+            window_dir = Path(str(source_info["window_dir"]))
             meta = json.loads((window_dir / "pair_meta.json").read_text(encoding="utf-8"))
             motion_complexity = self._load_motion_complexity(window_dir, meta)
             window_interactions = self._load_window_interactions(meta)
@@ -143,6 +211,8 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
                 continue
             records.append(
                 {
+                    "dataset_source": str(source_info["dataset_source"]),
+                    "dataset_root": Path(str(source_info["dataset_root"])),
                     "window_dir": window_dir,
                     "motion_complexity": motion_complexity,
                     "window_interactions": window_interactions,
@@ -166,6 +236,8 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
                 key = str(record["window_interactions"].get("future_window", {}).get("collision_type_bucket", ""))
             elif field_name == "future_collision_bucket":
                 key = str(record["window_interactions"].get("future_bucket", ""))
+            elif field_name == "dataset_source":
+                key = str(record.get("dataset_source", ""))
             else:
                 key = str(record.get(field_name, ""))
             summary[key] = int(summary.get(key, 0)) + 1
@@ -231,4 +303,5 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             "future_object_environment_count": int(window_interactions.get("future_window", {}).get("object_environment_count", 0)),
             "future_object_object_count": int(window_interactions.get("future_window", {}).get("object_object_count", 0)),
             "window_interactions": dict(window_interactions),
+            "dataset_source": str(record.get("dataset_source", "")),
         }

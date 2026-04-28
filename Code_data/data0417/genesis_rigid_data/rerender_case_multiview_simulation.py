@@ -6,6 +6,7 @@ import copy
 import html
 import json
 import math
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,6 +49,7 @@ def _formal_case_info(case_dir: Path) -> Dict[str, Any]:
     scene_composition = str(case_dir.parent.parent.name)
     target_count = int(metadata.get("num_objects") or int(bucket_name.split("_")[-1]))
     source_camera = dict(scene_input.get("camera") or metadata.get("camera") or {})
+    counterfactual = dict(scene_input.get("counterfactual") or metadata.get("counterfactual") or {})
     return {
         "case_dir": case_dir,
         "scene_input": scene_input,
@@ -59,6 +61,7 @@ def _formal_case_info(case_dir: Path) -> Dict[str, Any]:
         "scene_composition": scene_composition,
         "target_count": target_count,
         "source_camera": source_camera,
+        "counterfactual": counterfactual,
     }
 
 
@@ -78,8 +81,9 @@ def _framing_distance_for_fov(camera_cfg: Dict[str, Any], target_fov_deg: float)
 def _make_view_specs(camera_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     lookat = [float(x) for x in camera_cfg.get("lookat", [0.0, 0.0, 0.3])]
     base_pos = [float(x) for x in camera_cfg.get("pos", [2.2, -2.2, 1.1])]
-    approx_ortho_fov = 10.0
-    ortho_distance = _framing_distance_for_fov(camera_cfg, approx_ortho_fov)
+    approx_ortho_fov = 12.0
+    # Keep the pseudo-orthographic camera within Genesis' current far plane.
+    ortho_distance = min(_framing_distance_for_fov(camera_cfg, approx_ortho_fov), 16.0)
     return [
         {
             "tag": "default_oblique",
@@ -151,37 +155,56 @@ def _find_case_cfg(args: argparse.Namespace, prepared: Any, case_name: str) -> D
     raise RuntimeError(f"Unable to reconstruct case config for {case_name}")
 
 
+def _infer_requested_case_indices(case_info: Dict[str, Any]) -> List[int]:
+    counterfactual = dict(case_info.get("counterfactual") or {})
+    for key in ("parent_case_index", "parent_case_id"):
+        value = counterfactual.get(key)
+        if isinstance(value, int):
+            return [int(value)]
+        if isinstance(value, str) and value.strip().isdigit():
+            return [int(value.strip())]
+    case_name = str(case_info.get("case_name") or "")
+    match = re.match(r"case(\d+)_", case_name)
+    if match:
+        return [int(match.group(1))]
+    return []
+
+
 def _build_runtime_args(case_info: Dict[str, Any], rerender_root: Path) -> argparse.Namespace:
     parser = build_argparser()
-    args = parser.parse_args(
-        [
-            "--physx_root",
-            "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet",
-            "--version",
-            "version_1",
-            "--object_id",
-            str(case_info["object_id"]),
-            "--output_root",
-            str(FORMAL_DATASET_ROOT),
-            "--run_genesis",
-            "--generate_all_count_motion_cases",
-            "--rigid_count_filter",
-            str(case_info["target_count"]),
-            "--prefer_existing_runtime_meshes",
-            "--dt",
-            "0.003",
-            "--substeps",
-            "40",
-            "--ball_posx",
-            "0.03",
-            "--steps",
-            "12",
-            "--fps",
-            "12",
-            "--simulator_mode",
-            "rigid",
-        ]
-    )
+    cli_args = [
+        "--physx_root",
+        "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet",
+        "--version",
+        "version_1",
+        "--object_id",
+        str(case_info["object_id"]),
+        "--output_root",
+        str(FORMAL_DATASET_ROOT),
+        "--run_genesis",
+        "--generate_all_count_motion_cases",
+        "--rigid_count_filter",
+        str(case_info["target_count"]),
+        "--prefer_existing_runtime_meshes",
+        "--dt",
+        "0.003",
+        "--substeps",
+        "40",
+        "--ball_posx",
+        "0.03",
+        "--steps",
+        "12",
+        "--fps",
+        "12",
+        "--simulator_mode",
+        "rigid",
+    ]
+    requested_case_indices = _infer_requested_case_indices(case_info)
+    if requested_case_indices:
+        cli_args.extend(["--case_index_filter", *[str(idx) for idx in requested_case_indices]])
+    if dict(case_info.get("counterfactual") or {}):
+        cli_args.append("--enable_counterfactual_cases")
+    args = parser.parse_args(cli_args)
     args.rerender_output_root = str(rerender_root)
     return args
 

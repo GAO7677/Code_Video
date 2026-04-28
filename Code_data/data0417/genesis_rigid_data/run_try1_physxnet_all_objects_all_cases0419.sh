@@ -20,7 +20,7 @@ LOG_DIR="${OUTPUT_ROOT}/_logs"
 FAILED_LIST="${LOG_DIR}/failed_object_ids.txt"
 CAPTION_FAILED_LIST="${LOG_DIR}/caption_failed_object_ids.txt"
 DONE_LIST="${LOG_DIR}/done_object_ids.txt"
-CASE_INDICES=(0 1 2 3 5 6 7 100 101 102 900 901)
+CASE_INDICES=(0 1 2 3 5 6 7 100 101 102 210 211 220 221 230 231 900 901)
 CASE_INDICES_COUNT_01=(0 1 2 3 5 6 7 900 901)
 GPU_IDS_CSV="${GPU_IDS:-0}"
 PROCS_PER_GPU="${PROCS_PER_GPU:-1}"
@@ -87,6 +87,12 @@ case_index_to_name() {
     100) echo "case000_static_center_v2" ;;
     101) echo "case001_static_left_v2" ;;
     102) echo "case002_static_right_v2" ;;
+    210) echo "case210_multi2_projectile_nocollision" ;;
+    211) echo "case211_multi2_drop_nocollision" ;;
+    220) echo "case220_multi3_projectile_nocollision" ;;
+    221) echo "case221_multi3_drop_nocollision" ;;
+    230) echo "case230_multi4_projectile_nocollision" ;;
+    231) echo "case231_multi4_drop_nocollision" ;;
     900) echo "case900_random_parabola" ;;
     901) echo "case901_high_drop" ;;
     *) return 1 ;;

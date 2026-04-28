@@ -221,7 +221,7 @@ def get_cache_dir():
         return cache_dir
     root_cache_dir = None
     if sys.platform == "linux":
-        root_cache_dir = os.environ.get("XDG_CACHE_HOME")
+        root_cache_dir = os.environ.get("XDG_CACHE_HOME", "/data/gaoya/tmp")
     if root_cache_dir is None:
         root_cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
     return os.path.join(root_cache_dir, "genesis")

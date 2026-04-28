@@ -459,6 +459,8 @@ def build_dataset(args):
         {
             "num_windows": len(dataset.window_dirs),
             "dataset_repeat": int(dataset.dataset_repeat),
+            "dataset_specs": dataset.dataset_specs,
+            "dataset_source_summary": dataset.dataset_source_summary,
             "motion_complexity_filter": sorted(dataset.motion_complexity_filter),
             "motion_complexity_summary": dataset.motion_complexity_summary,
             "object_count_filter": sorted(dataset.object_count_filter),
@@ -510,7 +512,15 @@ def parser() -> argparse.ArgumentParser:
             break
     parser.add_argument("--diffsynth_root", type=str, default=DIFFSYNTH_ROOT)
     parser.add_argument("--wan_root", type=str, default=DEFAULT_WAN_ROOT)
-    parser.add_argument("--dataset_root", type=str, required=True)
+    parser.add_argument(
+        "--dataset_root",
+        type=str,
+        required=True,
+        help=(
+            "Single oracle-window root, or a JSON file / JSON string with "
+            "{datasets:[{path:'...',repeat:2,name:'genesis'}, ...]} for mixed-source ratios."
+        ),
+    )
     parser.add_argument("--preset_tv2v_root", type=str, default=None)
     parser.add_argument("--initialize_model_on_cpu", default=False, action="store_true")
     parser.add_argument("--max_timestep_boundary", type=float, default=1.0)
