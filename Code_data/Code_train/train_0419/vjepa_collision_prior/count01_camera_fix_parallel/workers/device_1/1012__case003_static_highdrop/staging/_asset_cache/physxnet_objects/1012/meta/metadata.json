@@ -1,0 +1,336 @@
+{
+  "object_id": "1012",
+  "object_name": "Putty Knife",
+  "category": "HandTool",
+  "output_dir": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012",
+  "solver_family_override": null,
+  "simulator_mode": "rigid",
+  "all_parts_youngs_threshold_gpa": null,
+  "classification_policy_version": "v6_runtime_ctor_anchored_cloth_to_mpm",
+  "inertial_origin_policy_version": "v2_bbox_fallback_for_nonvolume_meshes",
+  "object_solver_policy": {
+    "mode": "force_rigid",
+    "reason": "all parts converted to rigid for rigid-only export path",
+    "rigid_only_group_info_mode": "collapsed_to_fixed_assembly"
+  },
+  "json_path_used": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/finaljson/1012.json",
+  "dimension_raw": "22*4*2",
+  "dimension_m": [
+    0.22,
+    0.02,
+    0.04
+  ],
+  "object_scale": 0.11212207851909159,
+  "liquid_container_scale_boost": 1.0,
+  "rigid_visual_double_sided_shell": true,
+  "raw_mesh_extents": [
+    0.123097,
+    0.482928,
+    1.9621469999999999
+  ],
+  "object_bbox_min": [
+    -0.006900945749732309,
+    -0.02707344556753393,
+    -0.11
+  ],
+  "object_bbox_max": [
+    0.006900945749732309,
+    0.02707344556753393,
+    0.11
+  ],
+  "grounding_offset_z": 0.11,
+  "base_part_labels": [
+    0,
+    1,
+    2
+  ],
+  "group_info": {
+    "0": [
+      0,
+      1,
+      2
+    ]
+  },
+  "rigid_group_carriers": [],
+  "rigid_part_links": [
+    {
+      "part_id": 0,
+      "link_name": "l_0",
+      "parent_link": "l_world",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid_visuals/part_000_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/parts/part_000.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 822,
+        "mesh_builder": "multibox",
+        "num_vertices": 1601,
+        "num_faces": 3212
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid/part_000_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 822,
+        "mesh_builder": "multibox",
+        "num_vertices": 1601,
+        "num_faces": 3212
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.3254765079415383,
+        0.48040938950293377,
+        0.9313083825282409,
+        1.0
+      ],
+      "mass_kg": 0.0034520591636132843,
+      "density_kgm3": 7900.0,
+      "youngs_pa": 190000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    },
+    {
+      "part_id": 1,
+      "link_name": "l_1",
+      "parent_link": "l_0",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid_visuals/part_001_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/parts/part_001.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 113,
+        "mesh_builder": "multibox",
+        "num_vertices": 269,
+        "num_faces": 548
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid/part_001_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 113,
+        "mesh_builder": "multibox",
+        "num_vertices": 269,
+        "num_faces": 548
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.15447383852355845,
+        0.35718192565348833,
+        0.26452977687805984,
+        1.0
+      ],
+      "mass_kg": 0.0005351822277153944,
+      "density_kgm3": 7850.0,
+      "youngs_pa": 200000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    },
+    {
+      "part_id": 2,
+      "link_name": "l_2",
+      "parent_link": "l_1",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid_visuals/part_002_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/parts/part_002.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 614,
+        "mesh_builder": "multibox",
+        "num_vertices": 1204,
+        "num_faces": 2420
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_1/1012__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1012/rigid/part_002_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 614,
+        "mesh_builder": "multibox",
+        "num_vertices": 1204,
+        "num_faces": 2420
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.2941726733150204,
+        0.8240970730336296,
+        0.8798838037519632,
+        1.0
+      ],
+      "mass_kg": 0.0007177039686245602,
+      "density_kgm3": 1200.0,
+      "youngs_pa": 2500000000.0,
+      "poisson": 0.38,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    }
+  ],
+  "soft_parts": [],
+  "floating_parts": [],
+  "parts_physical": {
+    "0": {
+      "part_id": 0,
+      "name": "Blade",
+      "material_name": "Stainless Steel",
+      "density_kgm3": 7900.0,
+      "youngs_pa": 190000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid",
+      "assembly_role": "rigid_skeleton",
+      "priority_rank": 2,
+      "basic_description": "It's a flat, wide blade of a putty knife made of stainless steel.",
+      "functional_description": "Used for spreading materials like plaster or scraping surfaces.",
+      "movement_description": "It is rigidly fixed to the bolster and does not move independently.",
+      "mesh_path": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/partseg/1012/objs/0.obj",
+      "json_exact_parameters": {
+        "density": "7.9 g/cm^3",
+        "youngs_modulus_gpa": 190.0,
+        "poissons_ratio": 0.3,
+        "friction": null,
+        "restitution": null,
+        "damping": null,
+        "predicted_solver_family": "rigid",
+        "predicted_material_ctor": "gs.materials.Rigid",
+        "assembly_role": "rigid_skeleton",
+        "simulator_mode_override": "rigid",
+        "original_solver_family": "rigid",
+        "original_material_ctor": "gs.materials.Rigid"
+      }
+    },
+    "1": {
+      "part_id": 1,
+      "name": "Bolster",
+      "material_name": "Steel",
+      "density_kgm3": 7850.0,
+      "youngs_pa": 200000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid",
+      "assembly_role": "rigid_skeleton",
+      "priority_rank": 3,
+      "basic_description": "A small connecting part between the blade and handle, made of steel.",
+      "functional_description": "Provides structural support and balance between the blade and handle.",
+      "movement_description": "Rigidly connects the blade and handle, no movement allowed.",
+      "mesh_path": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/partseg/1012/objs/1.obj",
+      "json_exact_parameters": {
+        "density": "7.85 g/cm^3",
+        "youngs_modulus_gpa": 200.0,
+        "poissons_ratio": 0.3,
+        "friction": null,
+        "restitution": null,
+        "damping": null,
+        "predicted_solver_family": "rigid",
+        "predicted_material_ctor": "gs.materials.Rigid",
+        "assembly_role": "rigid_skeleton",
+        "simulator_mode_override": "rigid",
+        "original_solver_family": "rigid",
+        "original_material_ctor": "gs.materials.Rigid"
+      }
+    },
+    "2": {
+      "part_id": 2,
+      "name": "Handle",
+      "material_name": "Plastic",
+      "density_kgm3": 1200.0,
+      "youngs_pa": 2500000000.0,
+      "poisson": 0.38,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid",
+      "assembly_role": "rigid_skeleton",
+      "priority_rank": 1,
+      "basic_description": "The handle of the putty knife, made of plastic for comfortable grip.",
+      "functional_description": "Allows the user to hold and control the tool during use.",
+      "movement_description": "Rigidly attached to the bolster, no movement allowed.",
+      "mesh_path": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/partseg/1012/objs/2.obj",
+      "json_exact_parameters": {
+        "density": "1.2 g/cm^3",
+        "youngs_modulus_gpa": 2.5,
+        "poissons_ratio": 0.38,
+        "friction": null,
+        "restitution": null,
+        "damping": null,
+        "predicted_solver_family": "rigid",
+        "predicted_material_ctor": "gs.materials.Rigid",
+        "assembly_role": "rigid_skeleton",
+        "simulator_mode_override": "rigid",
+        "original_solver_family": "rigid",
+        "original_material_ctor": "gs.materials.Rigid"
+      }
+    }
+  },
+  "notes": {
+    "coordinate_conversion": "source meshes and joint params are converted from Y-up to Z-up",
+    "rigid_export": "rigid parts are exported per original part, never averaged or merged into a single colored group",
+    "inertial_origin": "non-watertight / non-volume rigid meshes use the part AABB centroid as URDF inertial origin instead of trimesh center_mass",
+    "runtime_exactness": {
+      "density": "used per rigid part to compute per-link mass/inertia and applied again to Genesis links after URDF load",
+      "youngs_poisson": "used directly for soft-part Genesis materials; rigid bodies preserve them in metadata only because rigid contact models do not consume them directly",
+      "friction_restitution_damping": "friction and restitution are written per rigid collision; friction and damping are also applied at runtime to rigid links / joints when Genesis exposes the corresponding setters"
+    }
+  },
+  "runtime_application": {
+    "rigid_entity": {
+      "link_mass_updates": 3,
+      "link_friction_updates": 3,
+      "joint_damping_updates": 0,
+      "joint_frictionloss_updates": 0,
+      "missing_links": [],
+      "missing_joints": []
+    }
+  }
+}

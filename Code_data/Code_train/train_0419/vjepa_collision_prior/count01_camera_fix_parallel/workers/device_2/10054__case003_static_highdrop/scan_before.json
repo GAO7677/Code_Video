@@ -1,0 +1,103 @@
+{
+  "summary_full": {
+    "total": 899,
+    "passing_last_frame_margin": 836,
+    "failing_last_frame_margin": 63,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case003_static_highdrop": 48,
+      "case900_random_parabola__cf_no_collision_neg": 8,
+      "case901_high_drop__cf_no_collision_neg": 4,
+      "case900_random_parabola": 1,
+      "case005_entry_left": 1,
+      "case007_entry_fast_center": 1
+    },
+    "failing_by_motion_category": {
+      "static_highdrop": 48,
+      "random_parabola": 9,
+      "high_drop": 4,
+      "entry_left": 1,
+      "entry_fast_center": 1
+    }
+  },
+  "summary_scoped": {
+    "total": 1,
+    "passing_last_frame_margin": 0,
+    "failing_last_frame_margin": 1,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case003_static_highdrop": 1
+    },
+    "failing_by_motion_category": {
+      "static_highdrop": 1
+    }
+  },
+  "samples": [
+    {
+      "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10054__case003_static_highdrop",
+      "sample_name": "10054__case003_static_highdrop",
+      "object_id": "10054",
+      "case_name": "case003_static_highdrop",
+      "case_index": 3,
+      "parent_case_index": 3,
+      "motion_category": "static_highdrop",
+      "resolution": [
+        960,
+        720
+      ],
+      "camera": {
+        "pos": [
+          2.2,
+          -2.2,
+          1.5207465743736974
+        ],
+        "lookat": [
+          0.0,
+          0.0,
+          1.0435419010653337
+        ],
+        "fov": 35.0,
+        "res": [
+          960,
+          720
+        ]
+      },
+      "last_bbox": [
+        413.0,
+        604.0,
+        580.0,
+        719.0
+      ],
+      "last_visible": true,
+      "last_inside": true,
+      "last_safe_margin": false,
+      "border_margin_min": 0.0,
+      "qa_metrics": {
+        "visible_ratio": 1.0,
+        "safe_uv_ratio": 1.0,
+        "first_visible_frames": 8,
+        "last_visible_frames": 8,
+        "median_bbox_area_visible": 20207.0,
+        "max_speed_mps": 4.1496806144714355,
+        "max_xy_radius_m": 0.0970762764915285,
+        "max_abs_z_m": 0.9995436668395996,
+        "initial_com_pos": [
+          0.06202814355492592,
+          0.07453197240829468,
+          0.9995436668395996
+        ],
+        "final_com_pos": [
+          0.062072448432445526,
+          0.07463788986206055,
+          0.10212262719869614
+        ],
+        "margin_px": 24.0,
+        "valid": true,
+        "reasons": [],
+        "attempt_index": 0,
+        "case_index": 3,
+        "object_id": "10054"
+      }
+    }
+  ]
+}

@@ -1849,6 +1849,8 @@ def build_preview_case_configs(
             if no_collision_cfg is not None:
                 counterfactual_cases.append(no_collision_cfg)
         case_configs.extend(counterfactual_cases)
+    if bool(getattr(args, "counterfactual_only", False)):
+        case_configs = [cfg for cfg in case_configs if dict(cfg.get("counterfactual", {}) or {})]
 
     return case_configs
 
@@ -9582,6 +9584,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--case_index_filter", type=int, nargs="*", default=None, help="Optional subset of generated case indices to execute, e.g. --case_index_filter 0 2")
     parser.add_argument("--case_seed", type=int, default=20260414, help="Base seed used to deterministically randomize preview cases")
     parser.add_argument("--enable_counterfactual_cases", action="store_true", help="Append two counterfactual negative cases per compatible base case: same-scene perturbed impact and no-collision continuation.")
+    parser.add_argument("--counterfactual_only", action="store_true", help="Execute only counterfactual cases after they are derived from the requested parent cases; skip running base factual cases.")
     parser.add_argument("--counterfactual_no_collision_gravity_z", type=float, default=0.0, help="Gravity used by the no-collision counterfactual when the main object should keep moving without ground/contact bounce.")
     parser.add_argument("--motion_resample_index", type=int, default=0, help="Internal retry index for case900/case901 randomized pose and velocity")
     parser.add_argument(

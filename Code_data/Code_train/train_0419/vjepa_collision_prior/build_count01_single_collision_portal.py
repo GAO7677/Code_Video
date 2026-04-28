@@ -473,6 +473,7 @@ def render_html(samples: list[dict[str, Any]], stats: dict[str, Any]) -> str:
   </script>
 </body>
 </html>"""
+    template = template.replace("{{", "{").replace("}}", "}")
     return template.replace("__SAMPLES_JSON__", samples_json).replace("__STATS_JSON__", stats_json)
 
 

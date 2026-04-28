@@ -1,0 +1,59 @@
+{
+  "object_id": "10021",
+  "sample_name": "10021__case900_random_parabola__cf_same_scene_neg",
+  "case_name": "case900_random_parabola__cf_same_scene_neg",
+  "case_id": 11001,
+  "case_variant_index": 29000,
+  "scene_label": "random_parabola",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "single_object_projectile_motion",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      5.376,
+      -5.376,
+      2.856699372481552
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      1.37143710780097
+    ],
+    "fov": 39.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    0.23843111963211783,
+    -0.5451655972726919,
+    1.5673913875449648
+  ],
+  "entry_angular_velocity": [
+    -0.6897591579632261,
+    0.16209465210491703,
+    -0.7858264009029086
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.81
+  ],
+  "striker_speed_mps": 2.8,
+  "counterfactual": {
+    "kind": "same_scene_negative",
+    "case_id": 11001,
+    "mode": "perturb_initial_velocity_and_restitution",
+    "parent_case_index": 900,
+    "parent_case_id": 900,
+    "parent_case_name": "case900_random_parabola",
+    "scene_label": "random_parabola",
+    "summary": "保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。"
+  },
+  "rigid_restitution_override": 0.528564013887112
+}

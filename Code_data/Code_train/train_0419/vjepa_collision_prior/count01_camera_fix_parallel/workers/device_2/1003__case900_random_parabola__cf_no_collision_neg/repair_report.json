@@ -1,0 +1,279 @@
+{
+  "count01_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01",
+  "dataset_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases",
+  "margin_px": 12.0,
+  "applied": true,
+  "summary_before_full": {
+    "total": 899,
+    "passing_last_frame_margin": 836,
+    "failing_last_frame_margin": 63,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case003_static_highdrop": 48,
+      "case900_random_parabola__cf_no_collision_neg": 8,
+      "case901_high_drop__cf_no_collision_neg": 4,
+      "case900_random_parabola": 1,
+      "case005_entry_left": 1,
+      "case007_entry_fast_center": 1
+    },
+    "failing_by_motion_category": {
+      "static_highdrop": 48,
+      "random_parabola": 9,
+      "high_drop": 4,
+      "entry_left": 1,
+      "entry_fast_center": 1
+    }
+  },
+  "summary_before_scoped": {
+    "total": 1,
+    "passing_last_frame_margin": 0,
+    "failing_last_frame_margin": 1,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case900_random_parabola__cf_no_collision_neg": 1
+    },
+    "failing_by_motion_category": {
+      "random_parabola": 1
+    }
+  },
+  "repairs": [
+    {
+      "sample_name": "1003__case900_random_parabola__cf_no_collision_neg",
+      "case_name": "case900_random_parabola__cf_no_collision_neg",
+      "motion_category": "random_parabola",
+      "before": {
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1003__case900_random_parabola__cf_no_collision_neg",
+        "sample_name": "1003__case900_random_parabola__cf_no_collision_neg",
+        "object_id": "1003",
+        "case_name": "case900_random_parabola__cf_no_collision_neg",
+        "case_index": 11002,
+        "parent_case_index": 900,
+        "motion_category": "random_parabola",
+        "resolution": [
+          960,
+          720
+        ],
+        "camera": {
+          "pos": [
+            2.688,
+            -2.688,
+            1.5041937031140071
+          ],
+          "lookat": [
+            0.0,
+            0.0,
+            0.599151330557818
+          ],
+          "fov": 39.0,
+          "res": [
+            960,
+            720
+          ]
+        },
+        "last_bbox": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "last_visible": false,
+        "last_inside": false,
+        "last_safe_margin": false,
+        "border_margin_min": -Infinity,
+        "qa_metrics": {
+          "visible_ratio": 0.7692307692307693,
+          "safe_uv_ratio": 0.6153846153846154,
+          "first_visible_frames": 8,
+          "last_visible_frames": 5,
+          "median_bbox_area_visible": 1731.0,
+          "max_speed_mps": 1.4125077397052277,
+          "max_xy_radius_m": 0.5281256653648078,
+          "max_abs_z_m": 2.347858190536499,
+          "initial_com_pos": [
+            0.00042836094507947564,
+            0.0006857608095742762,
+            1.149121880531311
+          ],
+          "final_com_pos": [
+            -0.1638553887605667,
+            0.5020638704299927,
+            2.347858190536499
+          ],
+          "margin_px": 24.0,
+          "valid": true,
+          "reasons": [],
+          "attempt_index": 0,
+          "case_index": 29001,
+          "object_id": "1003"
+        }
+      },
+      "status": "repaired",
+      "assets": {
+        "before_video": "assets/1003__case900_random_parabola__cf_no_collision_neg/before.mp4",
+        "after_video": "assets/1003__case900_random_parabola__cf_no_collision_neg/after.mp4"
+      },
+      "last_attempt_eval": {
+        "sample_dir": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_2/1003__case900_random_parabola__cf_no_collision_neg/staging/train/rigid/single_object_preview/count_01/1003__case900_random_parabola__cf_no_collision_neg",
+        "sample_name": "1003__case900_random_parabola__cf_no_collision_neg",
+        "object_id": "1003",
+        "case_name": "case900_random_parabola__cf_no_collision_neg",
+        "case_index": 11002,
+        "parent_case_index": 900,
+        "motion_category": "random_parabola",
+        "resolution": [
+          960,
+          720
+        ],
+        "camera": {
+          "pos": [
+            3.3600000000000003,
+            -3.3600000000000003,
+            1.880242128892509
+          ],
+          "lookat": [
+            0.0,
+            0.0,
+            0.599151330557818
+          ],
+          "fov": 39.0,
+          "res": [
+            960,
+            720
+          ]
+        },
+        "last_bbox": [
+          529.0,
+          0.0,
+          534.0,
+          3.0
+        ],
+        "last_visible": true,
+        "last_inside": true,
+        "last_safe_margin": false,
+        "border_margin_min": 0.0,
+        "qa_metrics": {
+          "visible_ratio": 1.0,
+          "safe_uv_ratio": 0.8461538461538461,
+          "first_visible_frames": 8,
+          "last_visible_frames": 8,
+          "median_bbox_area_visible": 1003.0,
+          "max_speed_mps": 1.4125077397052277,
+          "max_xy_radius_m": 0.5281256653648078,
+          "max_abs_z_m": 2.347858190536499,
+          "initial_com_pos": [
+            0.00042836094507947564,
+            0.0006857608095742762,
+            1.149121880531311
+          ],
+          "final_com_pos": [
+            -0.1638553887605667,
+            0.5020638704299927,
+            2.347858190536499
+          ],
+          "margin_px": 24.0,
+          "valid": true,
+          "reasons": [],
+          "attempt_index": 0,
+          "case_index": 29001,
+          "object_id": "1003"
+        }
+      },
+      "last_log_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_2/1003__case900_random_parabola__cf_no_collision_neg/logs/1003__case900_random_parabola__cf_no_collision_neg__attempt00.log",
+      "after": {
+        "sample_dir": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_2/1003__case900_random_parabola__cf_no_collision_neg/staging/train/rigid/single_object_preview/count_01/1003__case900_random_parabola__cf_no_collision_neg",
+        "sample_name": "1003__case900_random_parabola__cf_no_collision_neg",
+        "object_id": "1003",
+        "case_name": "case900_random_parabola__cf_no_collision_neg",
+        "case_index": 11002,
+        "parent_case_index": 900,
+        "motion_category": "random_parabola",
+        "resolution": [
+          960,
+          720
+        ],
+        "camera": {
+          "pos": [
+            3.7800000000000002,
+            -3.7800000000000002,
+            2.1152723950040726
+          ],
+          "lookat": [
+            0.0,
+            0.0,
+            0.599151330557818
+          ],
+          "fov": 39.0,
+          "res": [
+            960,
+            720
+          ]
+        },
+        "last_bbox": [
+          517.0,
+          14.0,
+          531.0,
+          41.0
+        ],
+        "last_visible": true,
+        "last_inside": true,
+        "last_safe_margin": true,
+        "border_margin_min": 14.0,
+        "qa_metrics": {
+          "visible_ratio": 1.0,
+          "safe_uv_ratio": 1.0,
+          "first_visible_frames": 8,
+          "last_visible_frames": 8,
+          "median_bbox_area_visible": 774.0,
+          "max_speed_mps": 1.4125077397052277,
+          "max_xy_radius_m": 0.5281256653648078,
+          "max_abs_z_m": 2.347858190536499,
+          "initial_com_pos": [
+            0.00042836094507947564,
+            0.0006857608095742762,
+            1.149121880531311
+          ],
+          "final_com_pos": [
+            -0.1638553887605667,
+            0.5020638704299927,
+            2.347858190536499
+          ],
+          "margin_px": 24.0,
+          "valid": true,
+          "reasons": [],
+          "attempt_index": 0,
+          "case_index": 29001,
+          "object_id": "1003"
+        }
+      },
+      "camera_distance_mult": 1.8,
+      "log_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_2/1003__case900_random_parabola__cf_no_collision_neg/logs/1003__case900_random_parabola__cf_no_collision_neg__attempt01.log"
+    }
+  ],
+  "summary_after_full": {
+    "total": 899,
+    "passing_last_frame_margin": 863,
+    "failing_last_frame_margin": 36,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case003_static_highdrop": 28,
+      "case900_random_parabola__cf_no_collision_neg": 5,
+      "case900_random_parabola": 1,
+      "case005_entry_left": 1,
+      "case007_entry_fast_center": 1
+    },
+    "failing_by_motion_category": {
+      "static_highdrop": 28,
+      "random_parabola": 6,
+      "entry_left": 1,
+      "entry_fast_center": 1
+    }
+  },
+  "summary_after_scoped": {
+    "total": 1,
+    "passing_last_frame_margin": 1,
+    "failing_last_frame_margin": 0,
+    "margin_px": 12.0,
+    "failing_by_case_name": {},
+    "failing_by_motion_category": {}
+  }
+}

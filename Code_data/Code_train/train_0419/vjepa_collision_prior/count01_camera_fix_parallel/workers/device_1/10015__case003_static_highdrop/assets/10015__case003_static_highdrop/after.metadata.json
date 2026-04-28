@@ -1,0 +1,113 @@
+{
+  "scene_id": "10015__case003_static_highdrop",
+  "object_id": "10015",
+  "case_id": 3,
+  "case_variant_index": 3,
+  "case_name": "case003_static_highdrop",
+  "seed": 20460611,
+  "split": "train",
+  "family": "physxnet_single_object",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "gravity_drop",
+  "object_count_bucket": "count_01",
+  "num_objects": 1,
+  "frames": 13,
+  "resolution": [
+    960,
+    720
+  ],
+  "motion_category": "static_highdrop",
+  "sample_role": "factual",
+  "counterfactual": null,
+  "convention": {
+    "length_unit": "meter",
+    "mass_unit": "kg",
+    "time_unit": "second",
+    "coordinate_system": "right-handed",
+    "gravity_axis": "z_negative"
+  },
+  "simulation": {
+    "engine": "Genesis",
+    "engine_version": "0.4.0",
+    "dt": 0.003,
+    "substeps": 40,
+    "steps_per_frame": 28,
+    "gravity": [
+      0.0,
+      0.0,
+      -9.81
+    ]
+  },
+  "camera": {
+    "pos": [
+      3.5200000000000005,
+      -3.5200000000000005,
+      2.3432961524481555
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      1.0071859440047688
+    ],
+    "fov": 35.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "camera_intrinsics": {
+    "fx": 1141.7741288507566,
+    "fy": 1141.7741288507566,
+    "cx": 480.0,
+    "cy": 360.0,
+    "near": 0.1,
+    "far": 20.0
+  },
+  "objects": [
+    {
+      "object_id": 0,
+      "seg_id": 1,
+      "entity_type": "rigid_assembly",
+      "role": "target",
+      "object_motion_type": "static_highdrop",
+      "object_motion_group": "gravity_drop",
+      "motion_type": "static_highdrop",
+      "motion_group": "gravity_drop",
+      "source_tag": "physxnet_main",
+      "dataset_source": "PhysXNet",
+      "source_object_id": "10015"
+    }
+  ],
+  "environment_entities": [
+    {
+      "name": "ground",
+      "special_id": -1,
+      "entity_type": "container"
+    }
+  ],
+  "outputs": {
+    "metadata": "metadata.json",
+    "scene_input": "scene_input.json",
+    "rgb_video": "videos/rgb.mp4",
+    "depth_video": "videos/depth.mp4",
+    "depth_metric": "physics/depth_metric.npy",
+    "depth_normalized": "physics/depth_normalized.npy",
+    "segmentation": "physics/seg.npy",
+    "flow": "physics/flow.npy",
+    "anchor_targets": "physics/anchor_targets.npz",
+    "rigid_kinematics": "physics/rigid_kinematics.npz",
+    "energy": "physics/energy.npz",
+    "properties": "physics/properties.json",
+    "collision_events": "physics/collision_events.json",
+    "contact_graph": "physics/contact_graph.npy",
+    "contact_impulse": "physics/contact_impulse.npy",
+    "frame_phase": "physics/frame_phase.npy",
+    "event_windows": "physics/event_windows.json",
+    "depth_visualization_video": "visualizations/depth_vis.mp4"
+  },
+  "has_depth_metric": true,
+  "has_seg": true,
+  "has_contact_graph": true,
+  "status": "ok"
+}

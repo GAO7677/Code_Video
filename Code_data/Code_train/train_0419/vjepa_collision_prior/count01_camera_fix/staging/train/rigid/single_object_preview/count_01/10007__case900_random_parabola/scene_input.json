@@ -1,0 +1,50 @@
+{
+  "object_id": "10007",
+  "sample_name": "10007__case900_random_parabola",
+  "case_name": "case900_random_parabola",
+  "case_id": 900,
+  "case_variant_index": 900,
+  "scene_label": "random_parabola",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "single_object_projectile_motion",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      7.344,
+      -7.344,
+      3.078896091114424
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      1.6183100569465145
+    ],
+    "fov": 39.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    0.4319427367948986,
+    0.4729130043316285,
+    1.47836298781873
+  ],
+  "entry_angular_velocity": [
+    0.5797545340635251,
+    -0.49523740906940006,
+    0.8309567159911597
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.81
+  ],
+  "striker_speed_mps": 2.8,
+  "counterfactual": null,
+  "rigid_restitution_override": null
+}

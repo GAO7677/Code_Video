@@ -1,0 +1,47 @@
+[
+  {
+    "case_index": 7,
+    "case_id": 7,
+    "case_variant_index": 7,
+    "case_kind": "factual",
+    "case_name": "case007_entry_fast_center",
+    "scene_label": "entry_fast_center",
+    "seed": 20501846,
+    "object_id": "10094",
+    "is_physxnet_object": true,
+    "object_bbox_volume_est_m3": 0.14392016366302196,
+    "physxnet_volume_threshold_m3": 0.2,
+    "moving_allowed": true,
+    "use_entry_motion": true,
+    "object_fixed": false,
+    "placed_pos_offset": [
+      1.5719999999999996,
+      0.0,
+      0.0
+    ],
+    "object_euler_deg": [
+      0.0,
+      0.0,
+      70.24411712764498
+    ],
+    "entry_linear_velocity": [
+      -1.7421542304166389,
+      0.03566366594858081,
+      0.0
+    ],
+    "entry_angular_velocity": [
+      0.0,
+      0.0,
+      0.1606672400052218
+    ],
+    "custom_objects": [],
+    "gravity_z_override": null,
+    "warmup_steps_override": 0,
+    "pre_record_delay_steps_override": 0,
+    "initial_still_frames_override": 0,
+    "liquid_settle_steps_override": 0,
+    "liquid_auto_settle_max_steps_override": 0,
+    "striker_speed_override": 5.397859140997234,
+    "case_notes": "主物体: id=10094\nCase: entry_fast_center | 状态=动态入场\n主物体参数: offset=[1.572, 0.000, 0.000] m | euler_deg=[0.000, 0.000, 70.244] | linvel=[-1.742, 0.036, 0.000] m/s | angvel=[0.000, 0.000, 0.161] rad/s\n自定义物体: none"
+  }
+]

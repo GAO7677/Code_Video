@@ -1,0 +1,142 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="physxnet_10054_strict">
+  <link name="l_world">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.0100000000" />
+      <inertia ixx="0.0000001667" ixy="0.0" ixz="0.0" iyy="0.0000001667" iyz="0.0" izz="0.0000001667" />
+    </inertial>
+  </link><link name="l_0">
+    <inertial>
+      <origin xyz="-0.0012763022 0.1132926413 0.0128565601" rpy="0 0 0" />
+      <mass value="0.0347548379" />
+      <inertia ixx="0.0001022823" ixy="0.0" ixz="0.0" iyy="0.0003903686" iyz="0.0" izz="0.0003018926" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_000_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_0">
+        <color rgba="0.32548 0.48041 0.93131 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_000_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_world_l_0" type="fixed">
+    <parent link="l_world" />
+    <child link="l_0" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint><link name="l_1">
+    <inertial>
+      <origin xyz="-0.0000192820 0.1180033219 0.0103589298" rpy="0 0 0" />
+      <mass value="0.1224781481" />
+      <inertia ixx="0.0006404464" ixy="0.0" ixz="0.0" iyy="0.0018209305" iyz="0.0" izz="0.0013183648" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_001_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_1">
+        <color rgba="0.15447 0.35718 0.26453 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_001_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_0_l_1" type="fixed">
+    <parent link="l_0" />
+    <child link="l_1" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint><link name="l_2">
+    <inertial>
+      <origin xyz="0.0084855704 0.0053676350 -0.1058079555" rpy="0 0 0" />
+      <mass value="0.0029046418" />
+      <inertia ixx="0.0000059822" ixy="0.0" ixz="0.0" iyy="0.0000254993" iyz="0.0" izz="0.0000314767" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_002_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_2">
+        <color rgba="0.29417 0.82410 0.87988 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_002_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_1_l_2" type="fixed">
+    <parent link="l_1" />
+    <child link="l_2" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint><link name="l_3">
+    <inertial>
+      <origin xyz="-0.0038098982 -0.1105596616 -0.1043630386" rpy="0 0 0" />
+      <mass value="0.0001000000" />
+      <inertia ixx="0.0000000396" ixy="0.0" ixz="0.0" iyy="0.0000000826" iyz="0.0" izz="0.0000001222" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_003_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_3">
+        <color rgba="0.55944 0.19916 0.68114 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_003_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_2_l_3" type="fixed">
+    <parent link="l_2" />
+    <child link="l_3" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint><link name="l_4">
+    <inertial>
+      <origin xyz="0.0000000000 -0.0299922130 -0.1104911490" rpy="0 0 0" />
+      <mass value="0.0581845417" />
+      <inertia ixx="0.0003294742" ixy="0.0" ixz="0.0" iyy="0.0006001705" iyz="0.0" izz="0.0009172381" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_004_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_4">
+        <color rgba="0.31347 0.28085 0.26098 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_004_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_3_l_4" type="fixed">
+    <parent link="l_3" />
+    <child link="l_4" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint><link name="l_5">
+    <inertial>
+      <origin xyz="-0.0000000000 0.0901091512 -0.1171616161" rpy="0 0 0" />
+      <mass value="0.0241760474" />
+      <inertia ixx="0.0000023926" ixy="0.0" ixz="0.0" iyy="0.0002478645" iyz="0.0" izz="0.0002481209" />
+    </inertial><visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="../rigid_visuals/part_005_visual.obj" scale="1 1 1" />
+      </geometry><material name="mat_l_5">
+        <color rgba="0.31346 0.15755 0.21545 1.00000" />
+      </material>
+    </visual><collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="part_005_collision.obj" scale="1 1 1" />
+      </geometry>
+    </collision>
+  </link><joint name="joint_fixed_l_4_l_5" type="fixed">
+    <parent link="l_4" />
+    <child link="l_5" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+</robot>

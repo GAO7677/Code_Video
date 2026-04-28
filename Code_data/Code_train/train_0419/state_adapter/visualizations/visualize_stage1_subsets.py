@@ -122,6 +122,18 @@ def make_gif(frames: Sequence[Image.Image], dst: Path, max_side: int = 640, dura
     )
 
 
+def make_source_rgb_gif(source_sample_dir: Path, dst: Path, max_side: int = 560, duration_ms: int = 120) -> bool:
+    rgb_dir = source_sample_dir / "rgb"
+    if not rgb_dir.is_dir():
+        return False
+    frame_paths = sorted(rgb_dir.glob("*.png"))
+    if not frame_paths:
+        return False
+    frames = [Image.open(path).convert("RGB") for path in frame_paths]
+    make_gif(frames, dst, max_side=max_side, duration_ms=duration_ms)
+    return True
+
+
 def save_state_plots(
     y_state_raw: np.ndarray,
     y_state_norm: np.ndarray,
@@ -371,6 +383,7 @@ def build_sample_report(stage_name: str, item: dict, dst_dir: Path) -> dict:
 
     source_video_path = Path(meta["source_sample_dir"]) / "videos" / "rgb.mp4"
     has_source_video = source_video_path.exists()
+    has_source_rgb_gif = make_source_rgb_gif(Path(meta["source_sample_dir"]), dst_dir / "source_rgb_full.gif")
     if has_source_video:
         copy_or_symlink(source_video_path, dst_dir / "source_rgb.mp4")
 
@@ -394,6 +407,7 @@ def build_sample_report(stage_name: str, item: dict, dst_dir: Path) -> dict:
         "object_object_contact_filter": meta.get("object_object_contact_filter"),
         "window_interactions": meta.get("window_interactions"),
         "has_source_video": has_source_video,
+        "has_source_rgb_gif": has_source_rgb_gif,
         "state_plot_names": state_plot_names,
     }
 

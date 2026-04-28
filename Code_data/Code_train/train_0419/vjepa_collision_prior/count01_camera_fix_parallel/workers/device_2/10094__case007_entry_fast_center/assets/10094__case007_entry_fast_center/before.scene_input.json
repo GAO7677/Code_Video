@@ -1,0 +1,46 @@
+{
+  "object_id": "10094",
+  "sample_name": "10094__case007_entry_fast_center",
+  "case_name": "case007_entry_fast_center",
+  "scene_label": "entry_fast_center",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "single_object_entry_motion",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      3.3999999999999995,
+      -3.3999999999999995,
+      1.1
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      0.06175243338466537
+    ],
+    "fov": 35.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    -1.7421542304166389,
+    0.03566366594858081,
+    0.0
+  ],
+  "entry_angular_velocity": [
+    0.0,
+    0.0,
+    0.1606672400052218
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.81
+  ],
+  "striker_speed_mps": 5.397859140997234
+}

@@ -1,0 +1,21 @@
+{
+  "object_ids": [
+    0
+  ],
+  "sampled_restitution": [
+    null
+  ],
+  "effective_restitution_used": [
+    0.1
+  ],
+  "counterfactual": {
+    "kind": "no_collision_negative",
+    "case_id": 11002,
+    "mode": "miss_contact_keep_preimpact_trend",
+    "parent_case_index": 901,
+    "parent_case_id": 901,
+    "parent_case_name": "case901_high_drop",
+    "scene_label": "high_drop",
+    "summary": "保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。"
+  }
+}

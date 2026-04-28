@@ -1,0 +1,50 @@
+{
+  "object_id": "10094",
+  "sample_name": "10094__case005_entry_left",
+  "case_name": "case005_entry_left",
+  "case_id": 5,
+  "case_variant_index": 5,
+  "scene_label": "entry_left",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "single_object_entry_motion",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      4.59,
+      -4.59,
+      1.4850000000000003
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      0.06175243338466537
+    ],
+    "fov": 35.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    -0.83428896603797,
+    -0.004555196533846978,
+    0.0
+  ],
+  "entry_angular_velocity": [
+    0.0,
+    0.0,
+    0.7858375678576495
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.81
+  ],
+  "striker_speed_mps": 5.675883463697708,
+  "counterfactual": null,
+  "rigid_restitution_override": null
+}

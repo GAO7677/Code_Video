@@ -1,0 +1,113 @@
+[
+  {
+    "case_index": 29000,
+    "case_id": 11001,
+    "case_variant_index": 29000,
+    "case_kind": "same_scene_negative",
+    "case_name": "case900_random_parabola__cf_same_scene_neg",
+    "scene_label": "random_parabola",
+    "seed": 29406307,
+    "object_id": "10010",
+    "is_physxnet_object": true,
+    "object_bbox_volume_est_m3": 0.6867442066647436,
+    "physxnet_volume_threshold_m3": 0.2,
+    "moving_allowed": false,
+    "use_entry_motion": true,
+    "object_fixed": false,
+    "placed_pos_offset": [
+      0.0,
+      0.0,
+      1.1281212038239372
+    ],
+    "object_euler_deg": [
+      -10.726153008306376,
+      10.69210916598663,
+      -161.61371767297993
+    ],
+    "entry_linear_velocity": [
+      0.5562440122024229,
+      0.2011921587738446,
+      1.8195875242207111
+    ],
+    "entry_angular_velocity": [
+      -1.5010408474110406,
+      1.3908453956972384,
+      2.6364681501816016
+    ],
+    "custom_objects": [],
+    "gravity_z_override": -9.81,
+    "warmup_steps_override": 0,
+    "pre_record_delay_steps_override": 0,
+    "initial_still_frames_override": 0,
+    "liquid_settle_steps_override": 0,
+    "liquid_auto_settle_max_steps_override": 0,
+    "striker_speed_override": null,
+    "case_notes": "反事实: kind=same_scene_negative | parent=case900_random_parabola | mode=perturb_initial_velocity_and_restitution\n反事实说明: 保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。\n主物体: id=10010\nCase: random_parabola | 状态=动态入场\n主物体参数: offset=[0.000, 0.000, 1.128] m | euler_deg=[-10.726, 10.692, -161.614] | linvel=[0.556, 0.201, 1.820] m/s | angvel=[-1.501, 1.391, 2.636] rad/s\n自定义物体: none",
+    "counterfactual": {
+      "kind": "same_scene_negative",
+      "case_id": 11001,
+      "mode": "perturb_initial_velocity_and_restitution",
+      "parent_case_index": 900,
+      "parent_case_id": 900,
+      "parent_case_name": "case900_random_parabola",
+      "scene_label": "random_parabola",
+      "summary": "保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。"
+    },
+    "rigid_restitution_override": 0.6538521337953749
+  },
+  {
+    "case_index": 29001,
+    "case_id": 11002,
+    "case_variant_index": 29001,
+    "case_kind": "no_collision_negative",
+    "case_name": "case900_random_parabola__cf_no_collision_neg",
+    "scene_label": "random_parabola",
+    "seed": 29407410,
+    "object_id": "10010",
+    "is_physxnet_object": true,
+    "object_bbox_volume_est_m3": 0.6867442066647436,
+    "physxnet_volume_threshold_m3": 0.2,
+    "moving_allowed": false,
+    "use_entry_motion": true,
+    "object_fixed": false,
+    "placed_pos_offset": [
+      0.0,
+      0.0,
+      1.5121212038239373
+    ],
+    "object_euler_deg": [
+      -10.726153008306376,
+      10.69210916598663,
+      -161.61371767297993
+    ],
+    "entry_linear_velocity": [
+      0.630506317124133,
+      0.008285548564309658,
+      1.9397099811304004
+    ],
+    "entry_angular_velocity": [
+      -1.1433888007636208,
+      1.0594495491423441,
+      2.0082785632962454
+    ],
+    "custom_objects": [],
+    "gravity_z_override": 0.0,
+    "warmup_steps_override": 0,
+    "pre_record_delay_steps_override": 0,
+    "initial_still_frames_override": 0,
+    "liquid_settle_steps_override": 0,
+    "liquid_auto_settle_max_steps_override": 0,
+    "striker_speed_override": null,
+    "case_notes": "反事实: kind=no_collision_negative | parent=case900_random_parabola | mode=miss_contact_keep_preimpact_trend\n反事实说明: 保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。\n主物体: id=10010\nCase: random_parabola | 状态=动态入场\n主物体参数: offset=[0.000, 0.000, 1.512] m | euler_deg=[-10.726, 10.692, -161.614] | linvel=[0.631, 0.008, 1.940] m/s | angvel=[-1.143, 1.059, 2.008] rad/s\n自定义物体: none",
+    "counterfactual": {
+      "kind": "no_collision_negative",
+      "case_id": 11002,
+      "mode": "miss_contact_keep_preimpact_trend",
+      "parent_case_index": 900,
+      "parent_case_id": 900,
+      "parent_case_name": "case900_random_parabola",
+      "scene_label": "random_parabola",
+      "summary": "保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。"
+    }
+  }
+]

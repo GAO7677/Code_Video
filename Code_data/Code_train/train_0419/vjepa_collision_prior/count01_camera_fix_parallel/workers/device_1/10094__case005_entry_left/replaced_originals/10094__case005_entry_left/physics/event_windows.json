@@ -1,0 +1,223 @@
+[
+  {
+    "event_id": 0,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 0,
+    "peak_frame": 0,
+    "end_frame": 0,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 1,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 1,
+    "peak_frame": 1,
+    "end_frame": 1,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 2,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 2,
+    "peak_frame": 2,
+    "end_frame": 2,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 3,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 3,
+    "peak_frame": 3,
+    "end_frame": 3,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 4,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 4,
+    "peak_frame": 4,
+    "end_frame": 4,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 5,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 5,
+    "peak_frame": 5,
+    "end_frame": 5,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 6,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 6,
+    "peak_frame": 6,
+    "end_frame": 6,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 7,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 7,
+    "peak_frame": 7,
+    "end_frame": 7,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 8,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 8,
+    "peak_frame": 8,
+    "end_frame": 8,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 9,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 9,
+    "peak_frame": 9,
+    "end_frame": 9,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 10,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 10,
+    "peak_frame": 10,
+    "end_frame": 10,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 11,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 11,
+    "peak_frame": 11,
+    "end_frame": 11,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  },
+  {
+    "event_id": 12,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "start_frame": 12,
+    "peak_frame": 12,
+    "end_frame": 12,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  }
+]

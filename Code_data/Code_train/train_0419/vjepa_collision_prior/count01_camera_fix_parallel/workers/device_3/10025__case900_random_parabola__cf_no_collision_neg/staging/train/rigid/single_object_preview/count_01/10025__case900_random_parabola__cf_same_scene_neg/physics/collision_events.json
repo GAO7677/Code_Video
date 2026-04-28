@@ -1,0 +1,20 @@
+[
+  {
+    "event_id": 0,
+    "participants": [
+      0,
+      -1
+    ],
+    "object_indices": [
+      0,
+      -1
+    ],
+    "frame_idx": 10,
+    "start_frame": 10,
+    "peak_frame": 10,
+    "end_frame": 10,
+    "impulse_peak": 0.0,
+    "contact_duration": 1,
+    "environment_name": "ground"
+  }
+]

@@ -1,0 +1,92 @@
+{
+  "summary_full": {
+    "total": 899,
+    "passing_last_frame_margin": 895,
+    "failing_last_frame_margin": 4,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case900_random_parabola__cf_no_collision_neg": 3,
+      "case007_entry_fast_center": 1
+    },
+    "failing_by_motion_category": {
+      "random_parabola": 3,
+      "entry_fast_center": 1
+    }
+  },
+  "summary_scoped": {
+    "total": 1,
+    "passing_last_frame_margin": 1,
+    "failing_last_frame_margin": 0,
+    "margin_px": 12.0,
+    "failing_by_case_name": {},
+    "failing_by_motion_category": {}
+  },
+  "samples": [
+    {
+      "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10016__case900_random_parabola__cf_no_collision_neg",
+      "sample_name": "10016__case900_random_parabola__cf_no_collision_neg",
+      "object_id": "10016",
+      "case_name": "case900_random_parabola__cf_no_collision_neg",
+      "case_index": 11002,
+      "parent_case_index": 900,
+      "motion_category": "random_parabola",
+      "resolution": [
+        960,
+        720
+      ],
+      "camera": {
+        "pos": [
+          6.047999999999998,
+          -6.047999999999998,
+          3.142073398876981
+        ],
+        "lookat": [
+          0.0,
+          0.0,
+          1.3315963327094338
+        ],
+        "fov": 39.0,
+        "res": [
+          960,
+          720
+        ]
+      },
+      "last_bbox": [
+        416.0,
+        19.0,
+        508.0,
+        154.0
+      ],
+      "last_visible": true,
+      "last_inside": true,
+      "last_safe_margin": true,
+      "border_margin_min": 19.0,
+      "qa_metrics": {
+        "visible_ratio": 1.0,
+        "safe_uv_ratio": 1.0,
+        "first_visible_frames": 8,
+        "last_visible_frames": 8,
+        "median_bbox_area_visible": 20096.0,
+        "max_speed_mps": 2.0067934593522825,
+        "max_xy_radius_m": 0.7406383174116291,
+        "max_abs_z_m": 3.5854861736297607,
+        "initial_com_pos": [
+          -0.0028035035356879234,
+          -0.007148201111704111,
+          1.8796769380569458
+        ],
+        "final_com_pos": [
+          -0.6080299019813538,
+          0.42290040850639343,
+          3.5854861736297607
+        ],
+        "margin_px": 24.0,
+        "valid": true,
+        "reasons": [],
+        "attempt_index": 0,
+        "case_index": 29001,
+        "object_id": "10016"
+      }
+    }
+  ]
+}

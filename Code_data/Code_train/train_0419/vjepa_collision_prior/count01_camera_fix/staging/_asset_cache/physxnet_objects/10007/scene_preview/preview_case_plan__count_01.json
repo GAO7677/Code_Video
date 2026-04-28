@@ -1,0 +1,47 @@
+[
+  {
+    "case_index": 900,
+    "case_id": 900,
+    "case_variant_index": 900,
+    "case_kind": "factual",
+    "case_name": "case900_random_parabola",
+    "scene_label": "random_parabola",
+    "seed": 29406256,
+    "object_id": "10007",
+    "is_physxnet_object": true,
+    "object_bbox_volume_est_m3": 0.6999282943125738,
+    "physxnet_volume_threshold_m3": 0.2,
+    "moving_allowed": false,
+    "use_entry_motion": true,
+    "object_fixed": false,
+    "placed_pos_offset": [
+      0.0,
+      0.0,
+      1.2663100569465144
+    ],
+    "object_euler_deg": [
+      15.31839840172038,
+      -13.854272655595812,
+      150.4377184177627
+    ],
+    "entry_linear_velocity": [
+      0.4319427367948986,
+      0.4729130043316285,
+      1.47836298781873
+    ],
+    "entry_angular_velocity": [
+      0.5797545340635251,
+      -0.49523740906940006,
+      0.8309567159911597
+    ],
+    "custom_objects": [],
+    "gravity_z_override": -9.81,
+    "warmup_steps_override": 0,
+    "pre_record_delay_steps_override": 0,
+    "initial_still_frames_override": 0,
+    "liquid_settle_steps_override": 0,
+    "liquid_auto_settle_max_steps_override": 0,
+    "striker_speed_override": null,
+    "case_notes": "主物体: id=10007\nCase: random_parabola | 状态=动态入场\n主物体参数: offset=[0.000, 0.000, 1.266] m | euler_deg=[15.318, -13.854, 150.438] | linvel=[0.432, 0.473, 1.478] m/s | angvel=[0.580, -0.495, 0.831] rad/s\n自定义物体: none"
+  }
+]

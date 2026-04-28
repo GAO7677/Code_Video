@@ -1,0 +1,103 @@
+{
+  "summary_full": {
+    "total": 899,
+    "passing_last_frame_margin": 836,
+    "failing_last_frame_margin": 63,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case003_static_highdrop": 48,
+      "case900_random_parabola__cf_no_collision_neg": 8,
+      "case901_high_drop__cf_no_collision_neg": 4,
+      "case900_random_parabola": 1,
+      "case005_entry_left": 1,
+      "case007_entry_fast_center": 1
+    },
+    "failing_by_motion_category": {
+      "static_highdrop": 48,
+      "random_parabola": 9,
+      "high_drop": 4,
+      "entry_left": 1,
+      "entry_fast_center": 1
+    }
+  },
+  "summary_scoped": {
+    "total": 1,
+    "passing_last_frame_margin": 0,
+    "failing_last_frame_margin": 1,
+    "margin_px": 12.0,
+    "failing_by_case_name": {
+      "case900_random_parabola__cf_no_collision_neg": 1
+    },
+    "failing_by_motion_category": {
+      "random_parabola": 1
+    }
+  },
+  "samples": [
+    {
+      "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10022__case900_random_parabola__cf_no_collision_neg",
+      "sample_name": "10022__case900_random_parabola__cf_no_collision_neg",
+      "object_id": "10022",
+      "case_name": "case900_random_parabola__cf_no_collision_neg",
+      "case_index": 11002,
+      "parent_case_index": 900,
+      "motion_category": "random_parabola",
+      "resolution": [
+        960,
+        720
+      ],
+      "camera": {
+        "pos": [
+          5.088,
+          -5.088,
+          2.8649251399173687
+        ],
+        "lookat": [
+          0.0,
+          0.0,
+          1.8782227655604442
+        ],
+        "fov": 39.0,
+        "res": [
+          960,
+          720
+        ]
+      },
+      "last_bbox": [
+        295.0,
+        0.0,
+        496.0,
+        59.0
+      ],
+      "last_visible": true,
+      "last_inside": true,
+      "last_safe_margin": false,
+      "border_margin_min": 0.0,
+      "qa_metrics": {
+        "visible_ratio": 1.0,
+        "safe_uv_ratio": 0.9230769230769231,
+        "first_visible_frames": 8,
+        "last_visible_frames": 8,
+        "median_bbox_area_visible": 27993.0,
+        "max_speed_mps": 2.117152622634469,
+        "max_xy_radius_m": 0.5589762468487859,
+        "max_abs_z_m": 4.32493782043457,
+        "initial_com_pos": [
+          -0.011875818483531475,
+          -4.692988568422152e-06,
+          2.4408376216888428
+        ],
+        "final_com_pos": [
+          -0.47036561369895935,
+          -0.30201098322868347,
+          4.32493782043457
+        ],
+        "margin_px": 24.0,
+        "valid": true,
+        "reasons": [],
+        "attempt_index": 0,
+        "case_index": 29001,
+        "object_id": "10022"
+      }
+    }
+  ]
+}

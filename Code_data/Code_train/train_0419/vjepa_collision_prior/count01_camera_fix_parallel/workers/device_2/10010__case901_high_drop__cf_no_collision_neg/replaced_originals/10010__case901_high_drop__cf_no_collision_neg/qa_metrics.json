@@ -1,0 +1,26 @@
+{
+  "visible_ratio": 1.0,
+  "safe_uv_ratio": 1.0,
+  "first_visible_frames": 8,
+  "last_visible_frames": 8,
+  "median_bbox_area_visible": 31650.0,
+  "max_speed_mps": 0.14230862888883322,
+  "max_xy_radius_m": 0.1175957645906214,
+  "max_abs_z_m": 3.61928653717041,
+  "initial_com_pos": [
+    -0.016911622136831284,
+    -0.012362244538962841,
+    3.61928653717041
+  ],
+  "final_com_pos": [
+    0.11376018077135086,
+    -0.02978901006281376,
+    3.6159369945526123
+  ],
+  "margin_px": 24.0,
+  "valid": true,
+  "reasons": [],
+  "attempt_index": 0,
+  "case_index": 29011,
+  "object_id": "10010"
+}

@@ -1,0 +1,59 @@
+{
+  "object_id": "10016",
+  "sample_name": "10016__case901_high_drop__cf_no_collision_neg",
+  "case_name": "case901_high_drop__cf_no_collision_neg",
+  "case_id": 11002,
+  "case_variant_index": 29011,
+  "scene_label": "high_drop",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "gravity_drop",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      4.596799999999999,
+      -4.596799999999999,
+      2.0980852897869697
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      1.313880969613302
+    ],
+    "fov": 43.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    -0.0671284990062616,
+    -0.015457790650381532,
+    0.0
+  ],
+  "entry_angular_velocity": [
+    -0.23781564068206884,
+    -0.1181264340556833,
+    -0.8748043960455149
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "striker_speed_mps": 2.8,
+  "counterfactual": {
+    "kind": "no_collision_negative",
+    "case_id": 11002,
+    "mode": "miss_contact_keep_preimpact_trend",
+    "parent_case_index": 901,
+    "parent_case_id": 901,
+    "parent_case_name": "case901_high_drop",
+    "scene_label": "high_drop",
+    "summary": "保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。"
+  },
+  "rigid_restitution_override": null
+}

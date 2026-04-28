@@ -1,0 +1,20 @@
+[
+  {
+    "window_id": 0,
+    "window_type": "contact_onset",
+    "participants": [
+      0,
+      -1
+    ],
+    "participant_indices": [
+      0,
+      -1
+    ],
+    "environment_name": "ground",
+    "start_frame": 8,
+    "peak_frame": 8,
+    "end_frame": 8,
+    "impulse_peak": 0.0,
+    "contact_duration": 1
+  }
+]

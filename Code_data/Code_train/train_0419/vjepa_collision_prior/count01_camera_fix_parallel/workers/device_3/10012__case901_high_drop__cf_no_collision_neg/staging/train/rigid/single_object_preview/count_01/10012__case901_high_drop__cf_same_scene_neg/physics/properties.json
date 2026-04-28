@@ -1,0 +1,21 @@
+{
+  "object_ids": [
+    0
+  ],
+  "sampled_restitution": [
+    0.5881342372898694
+  ],
+  "effective_restitution_used": [
+    0.5881342372898694
+  ],
+  "counterfactual": {
+    "kind": "same_scene_negative",
+    "case_id": 11001,
+    "mode": "perturb_initial_velocity_and_restitution",
+    "parent_case_index": 901,
+    "parent_case_id": 901,
+    "parent_case_name": "case901_high_drop",
+    "scene_label": "high_drop",
+    "summary": "保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。"
+  }
+}

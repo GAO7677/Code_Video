@@ -1,0 +1,307 @@
+{
+  "object_id": "10017",
+  "object_name": "Refrigerator",
+  "category": "Appliance",
+  "dimension_m": [
+    0.6,
+    1.2,
+    0.6
+  ],
+  "object_scale": 0.7797539486415062,
+  "base_part_labels": [
+    0,
+    1,
+    2
+  ],
+  "rigid_group_carriers": [],
+  "rigid_part_links": [
+    {
+      "part_id": 0,
+      "link_name": "l_0",
+      "parent_link": "l_world",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid_visuals/part_000_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/parts/part_000.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.025,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 5854,
+        "mesh_builder": "multibox",
+        "num_vertices": 11870,
+        "num_faces": 23736
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid/part_000_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.025,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 5854,
+        "mesh_builder": "multibox",
+        "num_vertices": 11870,
+        "num_faces": 23736
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.3254765079415383,
+        0.48040938950293377,
+        0.9313083825282409,
+        1.0
+      ],
+      "mass_kg": 72.79657289834907,
+      "density_kgm3": 7800.0,
+      "youngs_pa": 200000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    },
+    {
+      "part_id": 1,
+      "link_name": "l_1",
+      "parent_link": "l_0",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid_visuals/part_001_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/parts/part_001.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.011205454118952768,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 8166,
+        "mesh_builder": "multibox",
+        "num_vertices": 16469,
+        "num_faces": 32988
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid/part_001_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.011205454118952768,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 8166,
+        "mesh_builder": "multibox",
+        "num_vertices": 16469,
+        "num_faces": 32988
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.15447383852355845,
+        0.35718192565348833,
+        0.26452977687805984,
+        1.0
+      ],
+      "mass_kg": 3.4853347295672994,
+      "density_kgm3": 2500.0,
+      "youngs_pa": 101000000000.0,
+      "poisson": 0.34,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    },
+    {
+      "part_id": 2,
+      "link_name": "l_2",
+      "parent_link": "l_1",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid_visuals/part_002_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/parts/part_002.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 168,
+        "mesh_builder": "multibox",
+        "num_vertices": 322,
+        "num_faces": 640
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid/part_002_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 168,
+        "mesh_builder": "multibox",
+        "num_vertices": 322,
+        "num_faces": 640
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.2941726733150204,
+        0.8240970730336296,
+        0.8798838037519632,
+        1.0
+      ],
+      "mass_kg": 0.0001,
+      "density_kgm3": 1200.0,
+      "youngs_pa": 2500000000.0,
+      "poisson": 0.38,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    }
+  ],
+  "soft_parts": [],
+  "floating_parts": [],
+  "output_dir": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017",
+  "urdf_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/_asset_cache/physxnet_objects/10017/rigid/10017.urdf",
+  "preview_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/train/rigid/single_object_preview/count_01/10017__case900_random_parabola__cf_same_scene_neg/metadata.json",
+  "grounding_offset_z": 0.6,
+  "object_bbox_min": [
+    -0.3483581955713874,
+    -0.4043979422293295,
+    -0.6
+  ],
+  "object_bbox_max": [
+    0.3483581955713874,
+    0.4043979422293295,
+    0.6
+  ],
+  "preview_videos": [
+    "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/train/rigid/single_object_preview/count_01/10017__case900_random_parabola__cf_same_scene_neg/metadata.json",
+    "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/10017__case900_random_parabola__cf_no_collision_neg/staging/train/rigid/single_object_preview/count_01/10017__case900_random_parabola__cf_no_collision_neg/metadata.json"
+  ],
+  "preview_cases": [
+    {
+      "case_index": 29000,
+      "case_id": 11001,
+      "case_variant_index": 29000,
+      "case_kind": "same_scene_negative",
+      "case_name": "case900_random_parabola__cf_same_scene_neg",
+      "scene_label": "random_parabola",
+      "seed": 29406426,
+      "object_id": "10017",
+      "is_physxnet_object": true,
+      "object_bbox_volume_est_m3": 0.6762016197493987,
+      "physxnet_volume_threshold_m3": 0.2,
+      "moving_allowed": false,
+      "use_entry_motion": true,
+      "object_fixed": false,
+      "placed_pos_offset": [
+        0.0,
+        0.0,
+        1.352268063294597
+      ],
+      "object_euler_deg": [
+        15.39564712243272,
+        -3.8174401862883656,
+        -124.49987050285571
+      ],
+      "entry_linear_velocity": [
+        0.7336583716146008,
+        -0.12495453971708499,
+        1.061092950404668
+      ],
+      "entry_angular_velocity": [
+        0.35120879543840133,
+        -0.7766700820416842,
+        -2.355469836525666
+      ],
+      "custom_objects": [],
+      "gravity_z_override": -9.81,
+      "warmup_steps_override": 0,
+      "pre_record_delay_steps_override": 0,
+      "initial_still_frames_override": 0,
+      "liquid_settle_steps_override": 0,
+      "liquid_auto_settle_max_steps_override": 0,
+      "striker_speed_override": null,
+      "case_notes": "反事实: kind=same_scene_negative | parent=case900_random_parabola | mode=perturb_initial_velocity_and_restitution\n反事实说明: 保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。\n主物体: id=10017\nCase: random_parabola | 状态=动态入场\n主物体参数: offset=[0.000, 0.000, 1.352] m | euler_deg=[15.396, -3.817, -124.500] | linvel=[0.734, -0.125, 1.061] m/s | angvel=[0.351, -0.777, -2.355] rad/s\n自定义物体: none",
+      "counterfactual": {
+        "kind": "same_scene_negative",
+        "case_id": 11001,
+        "mode": "perturb_initial_velocity_and_restitution",
+        "parent_case_index": 900,
+        "parent_case_id": 900,
+        "parent_case_name": "case900_random_parabola",
+        "scene_label": "random_parabola",
+        "summary": "保持同一物体/背景/相机，只改变初速度、撞击方向和恢复系数，让 future clip 成为同场景反事实负样本。"
+      },
+      "rigid_restitution_override": 0.5999601628084936
+    },
+    {
+      "case_index": 29001,
+      "case_id": 11002,
+      "case_variant_index": 29001,
+      "case_kind": "no_collision_negative",
+      "case_name": "case900_random_parabola__cf_no_collision_neg",
+      "scene_label": "random_parabola",
+      "seed": 29407529,
+      "object_id": "10017",
+      "is_physxnet_object": true,
+      "object_bbox_volume_est_m3": 0.6762016197493987,
+      "physxnet_volume_threshold_m3": 0.2,
+      "moving_allowed": false,
+      "use_entry_motion": true,
+      "object_fixed": false,
+      "placed_pos_offset": [
+        0.0,
+        0.0,
+        1.640268063294597
+      ],
+      "object_euler_deg": [
+        15.39564712243272,
+        -3.8174401862883656,
+        -124.49987050285571
+      ],
+      "entry_linear_velocity": [
+        0.8686829715797615,
+        -0.5213694572327874,
+        1.4444954566320438
+      ],
+      "entry_angular_velocity": [
+        0.33123556043475655,
+        -0.7325008748054167,
+        -2.2215143285771886
+      ],
+      "custom_objects": [],
+      "gravity_z_override": 0.0,
+      "warmup_steps_override": 0,
+      "pre_record_delay_steps_override": 0,
+      "initial_still_frames_override": 0,
+      "liquid_settle_steps_override": 0,
+      "liquid_auto_settle_max_steps_override": 0,
+      "striker_speed_override": null,
+      "case_notes": "反事实: kind=no_collision_negative | parent=case900_random_parabola | mode=miss_contact_keep_preimpact_trend\n反事实说明: 保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。\n主物体: id=10017\nCase: random_parabola | 状态=动态入场\n主物体参数: offset=[0.000, 0.000, 1.640] m | euler_deg=[15.396, -3.817, -124.500] | linvel=[0.869, -0.521, 1.444] m/s | angvel=[0.331, -0.733, -2.222] rad/s\n自定义物体: none",
+      "counterfactual": {
+        "kind": "no_collision_negative",
+        "case_id": 11002,
+        "mode": "miss_contact_keep_preimpact_trend",
+        "parent_case_index": 900,
+        "parent_case_id": 900,
+        "parent_case_name": "case900_random_parabola",
+        "scene_label": "random_parabola",
+        "summary": "保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。"
+      }
+    }
+  ],
+  "preview_skipped_reason": null,
+  "simulator_mode": "rigid"
+}

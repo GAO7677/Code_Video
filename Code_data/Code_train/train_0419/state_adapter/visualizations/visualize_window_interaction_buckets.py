@@ -116,8 +116,9 @@ def build_index_html(bucket_cards: Dict[str, List[dict]], bucket_counts: Dict[st
         cards_html = "".join(
             f"""
 <article class="sample-card">
-  <div class="sample-thumb">
-    <img src="{html.escape(card['rel_dir'])}/future_overlay_strip.png" alt="{html.escape(card['title'])}">
+  <div class="media-panel">
+    <div class="media-label">Full RGB GIF</div>
+    <img loading="lazy" src="{html.escape(card['rel_dir'])}/source_rgb_full.gif" alt="{html.escape(card['title'])} full rgb gif">
   </div>
   <div class="sample-body">
     <h3>{html.escape(card['title'])}</h3>
@@ -128,7 +129,9 @@ def build_index_html(bucket_cards: Dict[str, List[dict]], bucket_counts: Dict[st
       <span class="badge">{card['collision_episode_count']} future collisions</span>
       <span class="badge">{html.escape(card['collision_type_bucket'])}</span>
     </div>
-    <p><a class="button" href="{html.escape(card['rel_dir'])}/index.html">打开样本页</a></p>
+    <p class="meta-line"><strong>source</strong>: <code>{html.escape(card['source_tag'])}</code></p>
+    <p class="meta-line"><strong>window</strong>: start={card['start_index']}, context={card['context_len']}, future={card['future_len']}</p>
+    <p><a class="button" href="{html.escape(card['rel_dir'])}/index.html">详情页</a></p>
   </div>
 </article>
 """
@@ -185,26 +188,42 @@ def build_index_html(bucket_cards: Dict[str, List[dict]], bucket_counts: Dict[st
     .section {{ padding: 22px 24px; margin-bottom: 20px; }}
     .sample-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      grid-template-columns: 1fr;
       gap: 18px;
     }}
     .sample-card {{
       display: grid;
-      grid-template-columns: 1.1fr 1fr;
-      gap: 14px;
+      grid-template-columns: minmax(640px, 1.25fr) minmax(300px, 0.75fr);
+      gap: 18px;
       border: 1px solid var(--line);
       border-radius: 18px;
-      padding: 14px;
+      padding: 16px;
       background: rgba(255,255,255,0.46);
     }}
-    .sample-thumb img {{
+    .media-panel {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(255,255,255,0.58);
+    }}
+    .media-label {{
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .media-panel img {{
       width: 100%;
-      height: 100%;
-      object-fit: cover;
+      display: block;
       border-radius: 14px;
       background: #0d0f13;
     }}
     .sample-body p {{ line-height: 1.55; }}
+    .meta-line {{
+      margin: 8px 0;
+      word-break: break-word;
+    }}
     .badge-row {{
       display: flex;
       flex-wrap: wrap;
@@ -232,13 +251,18 @@ def build_index_html(bucket_cards: Dict[str, List[dict]], bucket_counts: Dict[st
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
     }}
+    @media (max-width: 1080px) {{
+      .sample-card {{
+        grid-template-columns: 1fr;
+      }}
+    }}
   </style>
 </head>
 <body>
   <div class="page">
     <section class="hero">
       <h1>Window Interaction Preview</h1>
-      <p>按 `object_count + future_collision_count_bucket + future_collision_type_bucket` 组合分桶。这里的碰撞统计只看 future 段，不把 context 里的接触混进来。</p>
+      <p>按 `object_count + future_collision_count_bucket + future_collision_type_bucket` 组合分桶。当前页直接汇总播放每个样本的完整 RGB GIF。</p>
       <p>当前 portal 相对目录: <code>{html.escape(portal_rel)}</code></p>
     </section>
     {''.join(sections)}
@@ -291,6 +315,10 @@ def main() -> None:
                     "object_count": int(record["object_count"]),
                     "collision_episode_count": int(record["collision_episode_count"]),
                     "collision_type_bucket": str(record["collision_type_bucket"]),
+                    "source_tag": str(report_meta["source_sample_dir"]),
+                    "start_index": int(report_meta["start_index"]),
+                    "context_len": int(report_meta["context_len"]),
+                    "future_len": int(report_meta["future_len"]),
                 }
             )
         bucket_cards[bucket_name] = cards

@@ -1,0 +1,59 @@
+{
+  "object_id": "10025",
+  "sample_name": "10025__case900_random_parabola__cf_no_collision_neg",
+  "case_name": "case900_random_parabola__cf_no_collision_neg",
+  "case_id": 11002,
+  "case_variant_index": 29001,
+  "scene_label": "random_parabola",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "single_object_projectile_motion",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      2.688,
+      -2.688,
+      2.01862126129542
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      0.9878975411374387
+    ],
+    "fov": 39.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    -0.44997883203700556,
+    -0.08232891597880282,
+    1.3017026665691673
+  ],
+  "entry_angular_velocity": [
+    0.14399400440293775,
+    0.2770926198445338,
+    2.3160298865368154
+  ],
+  "use_entry_motion": true,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "striker_speed_mps": 2.8,
+  "counterfactual": {
+    "kind": "no_collision_negative",
+    "case_id": 11002,
+    "mode": "miss_contact_keep_preimpact_trend",
+    "parent_case_index": 900,
+    "parent_case_id": 900,
+    "parent_case_name": "case900_random_parabola",
+    "scene_label": "random_parabola",
+    "summary": "保持同一视角和背景，让物体沿碰撞前趋势继续运动，但通过错开接触路径避免发生接触或反弹。"
+  },
+  "rigid_restitution_override": null
+}

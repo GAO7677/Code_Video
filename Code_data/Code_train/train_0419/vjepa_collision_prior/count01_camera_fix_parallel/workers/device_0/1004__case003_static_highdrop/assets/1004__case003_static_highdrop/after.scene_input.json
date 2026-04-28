@@ -1,0 +1,50 @@
+{
+  "object_id": "1004",
+  "sample_name": "1004__case003_static_highdrop",
+  "case_name": "case003_static_highdrop",
+  "case_id": 3,
+  "case_variant_index": 3,
+  "scene_label": "static_highdrop",
+  "simulator_mode": "rigid",
+  "simulator_type": "rigid",
+  "scene_composition": "single_object_preview",
+  "interaction_pattern": "gravity_drop",
+  "object_count_bucket": "count_01",
+  "camera": {
+    "pos": [
+      4.800000000000001,
+      -4.800000000000001,
+      3.4432000000000005
+    ],
+    "lookat": [
+      0.0,
+      0.0,
+      1.4520000000000002
+    ],
+    "fov": 35.0,
+    "res": [
+      960,
+      720
+    ]
+  },
+  "entry_linear_velocity": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "entry_angular_velocity": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "use_entry_motion": false,
+  "object_fixed": false,
+  "gravity": [
+    0.0,
+    0.0,
+    -9.81
+  ],
+  "striker_speed_mps": 6.076560921319836,
+  "counterfactual": null,
+  "rigid_restitution_override": null
+}

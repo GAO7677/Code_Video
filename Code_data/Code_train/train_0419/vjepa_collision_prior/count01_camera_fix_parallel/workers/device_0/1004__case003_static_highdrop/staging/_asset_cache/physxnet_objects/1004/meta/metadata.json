@@ -1,0 +1,249 @@
+{
+  "object_id": "1004",
+  "object_name": "Sword",
+  "category": "MeleeWeapon",
+  "output_dir": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004",
+  "solver_family_override": null,
+  "simulator_mode": "rigid",
+  "all_parts_youngs_threshold_gpa": null,
+  "classification_policy_version": "v6_runtime_ctor_anchored_cloth_to_mpm",
+  "inertial_origin_policy_version": "v2_bbox_fallback_for_nonvolume_meshes",
+  "object_solver_policy": {
+    "mode": "force_rigid",
+    "reason": "all parts converted to rigid for rigid-only export path",
+    "rigid_only_group_info_mode": "collapsed_to_fixed_assembly"
+  },
+  "json_path_used": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/finaljson/1004.json",
+  "dimension_raw": "100*10*5",
+  "dimension_m": [
+    1.0,
+    0.05,
+    0.1
+  ],
+  "object_scale": 0.5481909151608776,
+  "liquid_container_scale_boost": 1.0,
+  "rigid_visual_double_sided_shell": true,
+  "raw_mesh_extents": [
+    0.050879,
+    0.342435,
+    1.824182
+  ],
+  "object_bbox_min": [
+    -0.013945702786235144,
+    -0.09385987801655755,
+    -0.5
+  ],
+  "object_bbox_max": [
+    0.013945702786235147,
+    0.09385987801655755,
+    0.5
+  ],
+  "grounding_offset_z": 0.5,
+  "base_part_labels": [
+    0,
+    1
+  ],
+  "group_info": {
+    "0": [
+      0,
+      1
+    ]
+  },
+  "rigid_group_carriers": [],
+  "rigid_part_links": [
+    {
+      "part_id": 0,
+      "link_name": "l_0",
+      "parent_link": "l_world",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/rigid_visuals/part_000_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/parts/part_000.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 6669,
+        "mesh_builder": "multibox",
+        "num_vertices": 8419,
+        "num_faces": 16836
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/rigid/part_000_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 6669,
+        "mesh_builder": "multibox",
+        "num_vertices": 8419,
+        "num_faces": 16836
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.3254765079415383,
+        0.48040938950293377,
+        0.9313083825282409,
+        1.0
+      ],
+      "mass_kg": 0.02716429530417817,
+      "density_kgm3": 7850.0,
+      "youngs_pa": 200000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    },
+    {
+      "part_id": 1,
+      "link_name": "l_1",
+      "parent_link": "l_0",
+      "group_id": "0",
+      "mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/rigid_visuals/part_001_visual.obj",
+      "visual_mesh_source_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/parts/part_001.obj",
+      "visual_mesh_meta": {
+        "visual_proxy_kind": "collision_proxy_visual",
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 4136,
+        "mesh_builder": "multibox",
+        "num_vertices": 2884,
+        "num_faces": 5764
+      },
+      "collision_mesh_path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/vjepa_collision_prior/count01_camera_fix_parallel/workers/device_0/1004__case003_static_highdrop/staging/_asset_cache/physxnet_objects/1004/rigid/part_001_collision.obj",
+      "collision_voxel_fill": {
+        "requested_pitch": 0.025,
+        "pitch": 0.004,
+        "mesh_is_watertight": false,
+        "mesh_is_volume": false,
+        "proxy_kind": "voxel_filled_proxy",
+        "fill_mode": "interior_fill",
+        "num_voxels": 4136,
+        "mesh_builder": "multibox",
+        "num_vertices": 2884,
+        "num_faces": 5764
+      },
+      "mesh_frame": "object_frame",
+      "color_rgba": [
+        0.15447383852355845,
+        0.35718192565348833,
+        0.26452977687805984,
+        1.0
+      ],
+      "mass_kg": 0.017621939589390654,
+      "density_kgm3": 1200.0,
+      "youngs_pa": 2500000000.0,
+      "poisson": 0.38,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid"
+    }
+  ],
+  "soft_parts": [],
+  "floating_parts": [],
+  "parts_physical": {
+    "0": {
+      "part_id": 0,
+      "name": "Blade",
+      "material_name": "Steel",
+      "density_kgm3": 7850.0,
+      "youngs_pa": 200000000000.0,
+      "poisson": 0.3,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid",
+      "assembly_role": "rigid_skeleton",
+      "priority_rank": 11,
+      "basic_description": "This is the blade of a sword, made of steel, long and narrow with a pointed tip.",
+      "functional_description": "The blade is the primary cutting or thrusting component of the sword, used in combat or cutting tasks.",
+      "movement_description": "The blade is rigidly fixed to the handle and does not move independently.",
+      "mesh_path": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/partseg/1004/objs/0.obj",
+      "json_exact_parameters": {
+        "density": "7.85 g/cm^3",
+        "youngs_modulus_gpa": 200.0,
+        "poissons_ratio": 0.3,
+        "friction": null,
+        "restitution": null,
+        "damping": null,
+        "predicted_solver_family": "rigid",
+        "predicted_material_ctor": "gs.materials.Rigid",
+        "assembly_role": "rigid_skeleton",
+        "simulator_mode_override": "rigid",
+        "original_solver_family": "rigid",
+        "original_material_ctor": "gs.materials.Rigid"
+      }
+    },
+    "1": {
+      "part_id": 1,
+      "name": "Handle Side",
+      "material_name": "Plastic",
+      "density_kgm3": 1200.0,
+      "youngs_pa": 2500000000.0,
+      "poisson": 0.38,
+      "friction": null,
+      "restitution": null,
+      "damping": null,
+      "solver_family": "rigid",
+      "simulator_material": "rigid",
+      "material_ctor": "gs.materials.Rigid",
+      "assembly_role": "rigid_skeleton",
+      "priority_rank": 1,
+      "basic_description": "This is the handle side of the sword, made of plastic, designed for gripping.",
+      "functional_description": "The handle allows the user to securely hold and maneuver the sword.",
+      "movement_description": "The handle is rigidly attached to the blade and does not move independently.",
+      "mesh_path": "/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/partseg/1004/objs/1.obj",
+      "json_exact_parameters": {
+        "density": "1.2 g/cm^3",
+        "youngs_modulus_gpa": 2.5,
+        "poissons_ratio": 0.38,
+        "friction": null,
+        "restitution": null,
+        "damping": null,
+        "predicted_solver_family": "rigid",
+        "predicted_material_ctor": "gs.materials.Rigid",
+        "assembly_role": "rigid_skeleton",
+        "simulator_mode_override": "rigid",
+        "original_solver_family": "rigid",
+        "original_material_ctor": "gs.materials.Rigid"
+      }
+    }
+  },
+  "notes": {
+    "coordinate_conversion": "source meshes and joint params are converted from Y-up to Z-up",
+    "rigid_export": "rigid parts are exported per original part, never averaged or merged into a single colored group",
+    "inertial_origin": "non-watertight / non-volume rigid meshes use the part AABB centroid as URDF inertial origin instead of trimesh center_mass",
+    "runtime_exactness": {
+      "density": "used per rigid part to compute per-link mass/inertia and applied again to Genesis links after URDF load",
+      "youngs_poisson": "used directly for soft-part Genesis materials; rigid bodies preserve them in metadata only because rigid contact models do not consume them directly",
+      "friction_restitution_damping": "friction and restitution are written per rigid collision; friction and damping are also applied at runtime to rigid links / joints when Genesis exposes the corresponding setters"
+    }
+  },
+  "runtime_application": {
+    "rigid_entity": {
+      "link_mass_updates": 2,
+      "link_friction_updates": 2,
+      "joint_damping_updates": 0,
+      "joint_frictionloss_updates": 0,
+      "missing_links": [],
+      "missing_joints": []
+    }
+  }
+}

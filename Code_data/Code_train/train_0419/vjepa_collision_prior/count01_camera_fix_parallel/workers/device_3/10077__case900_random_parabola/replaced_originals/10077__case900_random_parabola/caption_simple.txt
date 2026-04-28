@@ -1,0 +1,1 @@
+the laptop is launched with a random velocity and follows a ballistic arc.
