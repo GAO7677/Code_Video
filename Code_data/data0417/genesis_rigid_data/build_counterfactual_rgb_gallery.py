@@ -213,7 +213,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       white-space:nowrap;
       flex:0 0 auto;
     }}
-    .card video {{
+    .card img {{
       width:100%;
       aspect-ratio:4/3;
       display:block;
@@ -299,8 +299,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="card-name">${{esc(item.case_label)}}</div>
             <div class="card-role">${{esc(roleLabel(item))}}</div>
           </div>
-          <video controls preload="none" playsinline src="${{encodeURI(item.rgb_video)}}"></video>
+          <img loading="lazy" src="${{encodeURI(item.gif_preview || item.rgb_video)}}" alt="${{esc(item.case_label)}} gif preview">
           <div class="card-links">
+            <a href="${{encodeURI(item.gif_preview || item.rgb_video)}}" target="_blank" rel="noreferrer">gif</a>
             <a href="${{encodeURI(item.rgb_video)}}" target="_blank" rel="noreferrer">video</a>
             <a href="${{encodeURI(item.metadata_path)}}" target="_blank" rel="noreferrer">meta</a>
           </div>
@@ -337,8 +338,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     bucketFilter.addEventListener('change', applyFilter);
     reloadBtn.addEventListener('click', () => window.location.reload());
     expandBtn.addEventListener('click', () => {{
-      for (const video of document.querySelectorAll('video')) {{
-        video.preload = 'metadata';
+      for (const image of document.querySelectorAll('img')) {{
+        image.loading = 'eager';
       }}
     }});
   </script>
@@ -364,6 +365,7 @@ class SampleItem:
     role_rank: int
     cf_kind: str
     rgb_video: str
+    gif_preview: str
     metadata_path: str
     search_text: str
 
@@ -451,6 +453,7 @@ def build_groups(dataset_root: Path) -> list[dict[str, Any]]:
                     role_rank=role_rank,
                     cf_kind=cf_kind,
                     rgb_video=f"{rel_dir}/videos/rgb.mp4",
+                    gif_preview=f"gifs/{rel_dir}/videos/rgb.gif",
                     metadata_path=f"{rel_dir}/metadata.json",
                     search_text=" ".join(
                         [

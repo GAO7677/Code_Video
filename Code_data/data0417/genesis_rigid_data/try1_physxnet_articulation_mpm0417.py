@@ -7711,7 +7711,11 @@ def simulate_in_genesis(
     rigid_restitution_override = runtime_case_cfg.get("rigid_restitution_override", None)
     if rigid_restitution_override is not None:
         rigid_material_cfg["restitution"] = float(np.clip(float(rigid_restitution_override), 0.0, 1.2))
-    preview_dir = Path(prepared.output_dir) / "scene_preview"
+    preview_output_root = getattr(args, "preview_output_root", None)
+    if preview_output_root:
+        preview_dir = Path(str(preview_output_root))
+    else:
+        preview_dir = Path(prepared.output_dir) / "scene_preview"
     ensure_dir(preview_dir)
     runtime_mesh_dir = preview_dir / "runtime_soft_meshes"
     anchored_overlap_scale_boost = float(getattr(args, "anchored_overlap_scale_boost", 1.0) or 1.0)
@@ -8612,6 +8616,7 @@ def simulate_in_genesis(
         soft_offsets = np.asarray(list(spread_offsets_by_pid.values()), dtype=np.float64)
         lookat[:2] = np.mean(soft_offsets[:, :2], axis=0) * 0.5
     cam_pos = np.array([cam_distance, -cam_distance, cam_height], dtype=np.float64)
+    cam_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     if str(scene_label).strip().lower() not in {"random_parabola", "high_drop"}:
         cam_fov = 35
     if liquid_camera_mode and primary_liquid_target is not None:
@@ -8638,10 +8643,35 @@ def simulate_in_genesis(
         print(
             f"🫙 liquid_container_camera pose={cam_pos.tolist()} lookat={lookat.tolist()} fov={cam_fov}"
         )
+    camera_override_applied = False
+    camera_tag_raw = str(getattr(args, "camera_tag", "") or "").strip()
+    camera_tag = re.sub(r"[^0-9A-Za-z._-]+", "_", camera_tag_raw).strip("._-")
+    camera_pos_override = getattr(args, "camera_pos_override", None)
+    camera_lookat_override = getattr(args, "camera_lookat_override", None)
+    camera_up_override = getattr(args, "camera_up_override", None)
+    camera_fov_override = getattr(args, "camera_fov_override", None)
+    if camera_pos_override is not None:
+        cam_pos = np.asarray(camera_pos_override, dtype=np.float64).reshape(3)
+        camera_override_applied = True
+    if camera_lookat_override is not None:
+        lookat = np.asarray(camera_lookat_override, dtype=np.float64).reshape(3)
+        camera_override_applied = True
+    if camera_up_override is not None:
+        cam_up = np.asarray(camera_up_override, dtype=np.float64).reshape(3)
+        camera_override_applied = True
+    if camera_fov_override is not None:
+        cam_fov = float(camera_fov_override)
+        camera_override_applied = True
+    if camera_override_applied:
+        print(
+            f"📷 camera_override tag={camera_tag or 'untagged'} "
+            f"pos={cam_pos.tolist()} lookat={lookat.tolist()} up={cam_up.tolist()} fov={float(cam_fov):.2f}"
+        )
     cam = scene.add_camera(
         res=EXPORT_CAMERA_RESOLUTION,
         pos=tuple(cam_pos.tolist()),
         lookat=tuple(lookat.tolist()),
+        up=tuple(cam_up.tolist()),
         fov=cam_fov,
         GUI=False,
     )
@@ -8958,8 +8988,12 @@ def simulate_in_genesis(
     camera_cfg = {
         "pos": cam_pos.astype(np.float64).tolist(),
         "lookat": lookat.astype(np.float64).tolist(),
+        "up": cam_up.astype(np.float64).tolist(),
         "fov": float(cam_fov),
         "res": [int(EXPORT_CAMERA_RESOLUTION[0]), int(EXPORT_CAMERA_RESOLUTION[1])],
+        "tag": camera_tag or None,
+        "override_applied": bool(camera_override_applied),
+        "model": "pinhole",
     }
     cam_intrinsics = camera_intrinsics_dict(
         cam,
@@ -9152,6 +9186,8 @@ def simulate_in_genesis(
         debug_suffix.append(f"mpmvis{mpm_vis_mode}")
     if abs(gravity_z + 9.81) > 1e-6:
         debug_suffix.append(f"gravz{gravity_z:.2f}".replace(".", "p").replace("-", "m"))
+    if camera_tag:
+        debug_suffix.append(f"cam{camera_tag}")
     if debug_suffix:
         video_tag = f"{video_tag}_{'_'.join(debug_suffix)}"
     if part_pid_filter_raw:
@@ -9236,6 +9272,8 @@ def simulate_in_genesis(
         apply_object_entry_velocity=bool(apply_object_entry_velocity),
     )
     sample_name = f"{prepared.object_id}__{case_name}"
+    if camera_tag:
+        sample_name = f"{sample_name}__cam_{camera_tag}"
     case_dir = output_root / "train" / "rigid" / scene_composition / object_count_bucket / sample_name
     if case_dir.exists() and (case_dir / "metadata.json").exists():
         print(f"SKIP {case_dir}")
@@ -9258,6 +9296,7 @@ def simulate_in_genesis(
         "interaction_pattern": interaction_pattern,
         "object_count_bucket": object_count_bucket,
         "camera": camera_cfg,
+        "camera_tag": camera_tag or None,
         "entry_linear_velocity": object_entry_linear_velocity.tolist(),
         "entry_angular_velocity": object_entry_angular_velocity.tolist(),
         "use_entry_motion": bool(apply_object_entry_velocity),
@@ -9357,6 +9396,7 @@ def simulate_in_genesis(
             "gravity": [0.0, 0.0, float(gravity_z)],
         },
         "camera": camera_cfg,
+        "camera_tag": camera_tag or None,
         "camera_intrinsics": cam_intrinsics,
         "objects": [
             (
@@ -9522,6 +9562,11 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--debug_soft_spread_gap", type=float, default=0.45, help="Spacing in meters between spread soft parts in debug mode")
     parser.add_argument("--debug_soft_spread_y_offset", type=float, default=0.85, help="Extra negative-y offset applied when spreading soft parts for debug inspection")
     parser.add_argument("--camera_distance_mult", type=float, default=1.0, help="Multiplier for preview camera distance and height")
+    parser.add_argument("--camera_pos_override", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="Optional explicit simulation camera position override")
+    parser.add_argument("--camera_lookat_override", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="Optional explicit simulation camera look-at override")
+    parser.add_argument("--camera_up_override", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="Optional explicit simulation camera up-vector override")
+    parser.add_argument("--camera_fov_override", type=float, default=None, help="Optional explicit simulation camera vertical FOV override in degrees")
+    parser.add_argument("--camera_tag", type=str, default="", help="Optional camera tag appended to preview/case outputs when using camera overrides")
     parser.add_argument("--debug_hide_rigid_visuals", action="store_true", help="Debug render: hide rigid skeleton visuals but keep collisions")
     parser.add_argument("--disable_rigid_visual_double_sided_shell", action="store_true", help="Disable reversed-face duplication for non-watertight rigid visual meshes")
     parser.add_argument("--debug_disable_free_soft", action="store_true", help="Debug render: skip free_soft parts such as pillows")

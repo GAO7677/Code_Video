@@ -28,6 +28,8 @@ def gather_entries(root: Path) -> list[dict[str, Any]]:
         sample_dir = report_path.parent
         before_video = sample_dir / "assets" / item["sample_name"] / "before.mp4"
         after_video = sample_dir / "assets" / item["sample_name"] / "after.mp4"
+        before_gif = root / "gif_assets" / item["sample_name"] / "before.gif"
+        after_gif = root / "gif_assets" / item["sample_name"] / "after.gif"
         entries.append(
             {
                 "sample_name": item["sample_name"],
@@ -44,6 +46,8 @@ def gather_entries(root: Path) -> list[dict[str, Any]]:
                 "after_camera": after.get("camera"),
                 "before_video": rel(root, before_video) if before_video.exists() else None,
                 "after_video": rel(root, after_video) if after_video.exists() else None,
+                "before_gif": rel(root, before_gif) if before_gif.exists() else None,
+                "after_gif": rel(root, after_gif) if after_gif.exists() else None,
                 "backup_dir": rel(root, sample_dir / "replaced_originals" / item["sample_name"]),
                 "report_path": rel(root, report_path),
             }
@@ -205,11 +209,14 @@ def render(entries: list[dict[str, Any]]) -> str:
       color: var(--muted);
       margin-bottom: 6px;
     }}
-    video {{
+    .media {{
       width: 100%;
+      aspect-ratio: 4 / 3;
       border-radius: 12px;
       border: 1px solid var(--line);
       background: #000;
+      object-fit: contain;
+      display: block;
     }}
     .kv {{
       margin: 4px 0;
@@ -304,11 +311,11 @@ def render(entries: list[dict[str, Any]]) -> str:
         <div class="video-grid">
           <div class="video-box">
             <div class="title">Before</div>
-            <video controls preload="metadata" src="${{item.before_video || ''}}"></video>
+            <img class="media" loading="lazy" src="${{item.before_gif || item.before_video || ''}}" alt="before gif">
           </div>
           <div class="video-box">
             <div class="title">After</div>
-            <video controls preload="metadata" src="${{item.after_video || ''}}"></video>
+            <img class="media" loading="lazy" src="${{item.after_gif || item.after_video || ''}}" alt="after gif">
           </div>
         </div>
         <p class="kv">Margin: before=${{fmt(item.before_margin)}} px | after=${{fmt(item.after_margin)}} px</p>

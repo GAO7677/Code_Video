@@ -81,6 +81,11 @@ def save_gif(frames: Sequence[Image.Image], dst: Path, max_side: int, duration_m
     )
 
 
+def save_mp4(frames: Sequence[Image.Image], dst: Path, max_side: int, fps: int = 7) -> None:
+    processed = [np.asarray(resize_for_gif(frame, max_side=max_side).convert("RGB"), dtype=np.uint8) for frame in frames]
+    imageio.mimsave(dst, processed, fps=fps)
+
+
 def quat_xyzw_to_matrix(quat_xyzw: Sequence[float]) -> np.ndarray:
     x, y, z, w = [float(v) for v in quat_xyzw]
     xx, yy, zz = x * x, y * y, z * z
@@ -432,20 +437,24 @@ def build_html(case_dir: Path, metadata: dict, contact_frames: Sequence[int]) ->
     </section>
     <section class="grid">
       <article class="panel">
-        <h2>Original RGB GIF</h2>
-        <img src="original_rgb.gif" alt="original rgb gif">
+        <h2>Original RGB Video</h2>
+        <video controls loop playsinline preload="metadata" src="original_rgb.mp4"></video>
+        <div class="meta">fallback gif: <code>original_rgb.gif</code></div>
       </article>
       <article class="panel">
-        <h2>XOY Orthographic GIF</h2>
-        <img src="topdown_xoy_ortho.gif" alt="topdown ortho gif">
+        <h2>XOY Orthographic Video</h2>
+        <video controls loop playsinline preload="metadata" src="topdown_xoy_ortho.mp4"></video>
+        <div class="meta">fallback gif: <code>topdown_xoy_ortho.gif</code></div>
       </article>
       <article class="panel">
-        <h2>YOZ Orthographic GIF</h2>
-        <img src="side_yoz_ortho.gif" alt="yoz ortho gif">
+        <h2>YOZ Orthographic Video</h2>
+        <video controls loop playsinline preload="metadata" src="side_yoz_ortho.mp4"></video>
+        <div class="meta">fallback gif: <code>side_yoz_ortho.gif</code></div>
       </article>
       <article class="panel" style="grid-column: 1 / -1;">
-        <h2>Three-View Comparison</h2>
-        <img src="compare_side_by_side.gif" alt="side by side compare gif">
+        <h2>Three-View Comparison Video</h2>
+        <video controls loop playsinline preload="metadata" src="compare_three_view.mp4"></video>
+        <div class="meta">fallback gif: <code>compare_side_by_side.gif</code></div>
       </article>
       <article class="panel" style="grid-column: 1 / -1;">
         <h2>Original MP4</h2>
@@ -477,6 +486,7 @@ def main() -> None:
 
     rgb_frames = [annotate_frame(frame, f"Original RGB | frame {idx}") for idx, frame in enumerate(load_rgb_frames(case_dir))]
     save_gif(rgb_frames, output_dir / "original_rgb.gif", max_side=int(args.gif_max_side), duration_ms=140)
+    save_mp4(rgb_frames, output_dir / "original_rgb.mp4", max_side=int(args.gif_max_side), fps=7)
 
     topdown_frames = render_orthographic_frames(
         case_dir=case_dir,
@@ -487,6 +497,7 @@ def main() -> None:
         frame_dir_name="topdown_frames",
         title="XOY Orthographic Top View",
     )
+    save_mp4(topdown_frames, output_dir / "topdown_xoy_ortho.mp4", max_side=int(args.gif_max_side), fps=7)
     side_frames = render_orthographic_frames(
         case_dir=case_dir,
         output_dir=output_dir,
@@ -496,11 +507,13 @@ def main() -> None:
         frame_dir_name="side_frames",
         title="YOZ Orthographic Side View",
     )
+    save_mp4(side_frames, output_dir / "side_yoz_ortho.mp4", max_side=int(args.gif_max_side), fps=7)
     compare_frames = build_side_by_side_frames(
         [rgb_frames, topdown_frames, side_frames],
         ["Original camera", "XOY top view", "YOZ side view"],
     )
     save_gif(compare_frames, output_dir / "compare_side_by_side.gif", max_side=int(args.gif_max_side * 2), duration_ms=140)
+    save_mp4(compare_frames, output_dir / "compare_three_view.mp4", max_side=int(args.gif_max_side * 2), fps=7)
     symlink_or_copy(case_dir / "videos" / "rgb.mp4", output_dir / "rgb.mp4")
 
     html = build_html(case_dir=case_dir, metadata=metadata, contact_frames=contact_frames)
