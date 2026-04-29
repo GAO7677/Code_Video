@@ -44,9 +44,22 @@ from build_stage1_subsets import (  # noqa: E402
 )
 from motion_complexity import infer_motion_complexity  # noqa: E402
 from prepare_movi_d_physics import (  # noqa: E402
+    build_contact_tensors,
+    build_prompt,
+    boxes_from_segmentations,
+    center_depth_from_masks,
+    choose_main_object_index,
+    compute_state_9d,
     convert_record,
+    decode_float_tensor,
+    decode_image_sequence,
+    decode_int_tensor,
+    decode_rgb_frames,
+    decode_text_feature,
     iter_serialized_records,
     parse_example,
+    ragged_to_frame_boxes,
+    uint16_to_metric,
 )
 from window_interactions import infer_window_interactions, load_interaction_episodes  # noqa: E402
 
@@ -59,6 +72,9 @@ MOVI_TRAIN_ORACLE_ROOT = Path(
 )
 GENESIS_MYTEST_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest"
+)
+GENESIS_TRAIN_RAW_ROOT = Path(
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train"
 )
 MOVI_MYTEST_ROOT = Path("/data/gaoya/dataset/kubric_tfds_movi-d/mytest")
 MOVI_TFRECORD_ROOT = Path("/data/gaoya/dataset/kubric_tfds_movi-d/test")
@@ -166,7 +182,10 @@ def strict_record_from_meta(meta: dict[str, Any], window_dir: Path) -> dict[str,
     if motion not in {"static", "simple"}:
         return None
     frame_paths = list(meta.get("x_frame_paths", [])) + list(meta.get("y_frame_paths", []))
-    if not frame_paths or any(not Path(str(path)).exists() for path in frame_paths):
+    if not meta.get("_in_memory_frames"):
+        if not frame_paths or any(not Path(str(path)).exists() for path in frame_paths):
+            return None
+    elif not frame_paths:
         return None
     start_index = int(meta.get("start_index", 0))
     context_len = int(meta.get("context_len", 0))
@@ -225,21 +244,33 @@ def choose_best_record(records: Iterable[dict[str, Any]]) -> dict[str, Any] | No
 def build_train_source_index() -> dict[str, dict[str, dict[str, Any]]]:
     index: dict[str, dict[str, dict[str, Any]]] = {"genesis": {}, "movi-d": {}}
     for dataset_name, root in (("genesis", GENESIS_ORACLE_ROOT), ("movi-d", MOVI_TRAIN_ORACLE_ROOT)):
-        candidates = []
-        for pair_meta_path in sorted(root.rglob("pair_meta.json")):
-            meta = load_json(pair_meta_path)
-            record = strict_record_from_meta(meta, pair_meta_path.parent)
-            if record is None:
-                continue
-            record["dataset"] = dataset_name if dataset_name == "genesis" else "movi_d"
-            candidates.append(record)
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for record in candidates:
-            grouped[str(record["source_sample_dir"])].append(record)
-        for source_sample_dir, items in grouped.items():
-            best = choose_best_record(items)
+        if root.exists():
+            candidates = []
+            for pair_meta_path in sorted(root.rglob("pair_meta.json")):
+                meta = load_json(pair_meta_path)
+                record = strict_record_from_meta(meta, pair_meta_path.parent)
+                if record is None:
+                    continue
+                record["dataset"] = dataset_name if dataset_name == "genesis" else "movi_d"
+                candidates.append(record)
+            grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for record in candidates:
+                grouped[str(record["source_sample_dir"])].append(record)
+            for source_sample_dir, items in grouped.items():
+                best = choose_best_record(items)
+                if best is not None:
+                    index[dataset_name][source_sample_dir] = best
+            continue
+
+        if dataset_name != "genesis" or not GENESIS_TRAIN_RAW_ROOT.exists():
+            continue
+
+        for metadata_path in sorted(GENESIS_TRAIN_RAW_ROOT.rglob("metadata.json")):
+            sample_dir = metadata_path.parent
+            candidates = build_strict_candidates_from_raw_sample(sample_dir)
+            best = choose_best_record(candidates)
             if best is not None:
-                index[dataset_name][source_sample_dir] = best
+                index[dataset_name][str(sample_dir)] = best
     return index
 
 
@@ -275,6 +306,7 @@ def save_local_rgb_frames(out_dir: Path, frames: list[np.ndarray]) -> list[str]:
     frame_paths: list[str] = []
     for idx, frame in enumerate(frames):
         frame_path = rgb_dir / f"frame_{idx:03d}.png"
+        ensure_dir(frame_path.parent)
         Image.fromarray(frame).save(frame_path)
         frame_paths.append(str(frame_path))
     return frame_paths
@@ -310,6 +342,31 @@ def trim_interaction_episodes(source_sample_dir: Path, frame_indices: list[int])
                 "object_indices": [int(x) for x in episode["object_indices"]],
                 "environment_name": str(episode["environment_name"]),
                 "window_type": str(episode["window_type"]),
+                "start_frame": int(index_map[int(overlapping[0])]),
+                "end_frame": int(index_map[int(overlapping[-1])]),
+            }
+        )
+    return local_events
+
+
+def trim_interaction_events(events: list[dict[str, Any]], frame_indices: list[int]) -> list[dict[str, Any]]:
+    if not frame_indices:
+        return []
+    index_map = {int(orig): idx for idx, orig in enumerate(frame_indices)}
+    local_events: list[dict[str, Any]] = []
+    for episode in events:
+        start_frame = int(episode.get("start_frame", 0))
+        end_frame = int(episode.get("end_frame", start_frame))
+        overlapping = [orig for orig in frame_indices if start_frame <= int(orig) <= end_frame]
+        if not overlapping:
+            continue
+        local_events.append(
+            {
+                "kind": str(episode.get("kind", "")),
+                "participants": [int(x) for x in episode.get("participants", [])],
+                "object_indices": [int(x) for x in episode.get("object_indices", []) if int(x) >= 0],
+                "environment_name": str(episode.get("environment_name", "")),
+                "window_type": str(episode.get("window_type", "")),
                 "start_frame": int(index_map[int(overlapping[0])]),
                 "end_frame": int(index_map[int(overlapping[-1])]),
             }
@@ -388,7 +445,11 @@ def export_window_package(
     context_orig = list(range(context_start, future_start))
     full_orig = context_orig + future_orig
 
-    full_frames = load_rgb_frames_by_indices(source_sample_dir, full_orig)
+    rgb_frames_full = record.get("_rgb_frames_full")
+    if rgb_frames_full is not None:
+        full_frames = [np.asarray(rgb_frames_full[int(idx)], dtype=np.uint8) for idx in full_orig]
+    else:
+        full_frames = load_rgb_frames_by_indices(source_sample_dir, full_orig)
     local_frame_paths = save_local_rgb_frames(out_dir, full_frames)
     context_video_path = out_dir / "context_video.mp4"
     future_video_path = out_dir / "future_gt_video.mp4"
@@ -440,7 +501,11 @@ def export_window_package(
     )
 
     write_local_physics_stub(out_dir, full_state_raw, object_ids, seg_ids)
-    local_events = trim_interaction_episodes(source_sample_dir, full_orig)
+    source_event_windows = record.get("_source_event_windows")
+    if source_event_windows is not None:
+        local_events = trim_interaction_events(list(source_event_windows), full_orig)
+    else:
+        local_events = trim_interaction_episodes(source_sample_dir, full_orig)
     write_json(out_dir / "physics" / "event_windows.json", local_events)
 
     local_pair_meta = {
@@ -618,6 +683,16 @@ def iter_movi_mytest_targets() -> dict[str, dict[int, dict[str, Any]]]:
     return by_shard
 
 
+def movi_target_source_sample_dir(meta: dict[str, Any]) -> str:
+    sample_dir = str((meta.get("paths") or {}).get("sample_dir", ""))
+    if sample_dir:
+        return sample_dir
+    source_meta_json = str((meta.get("source_paths") or {}).get("meta_json_path", ""))
+    if source_meta_json:
+        return str(Path(source_meta_json).parent)
+    return ""
+
+
 def build_strict_candidates_from_raw_sample(sample_dir: Path) -> list[dict[str, Any]]:
     metadata = load_json(sample_dir / "metadata.json")
     fps = float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0)
@@ -695,10 +770,268 @@ def build_strict_candidates_from_raw_sample(sample_dir: Path) -> list[dict[str, 
     return candidates
 
 
+def decode_movi_record_to_raw_payload(
+    *,
+    features,
+    split: str,
+    shard_path: Path,
+    record_index: int,
+    include_rgb: bool,
+) -> dict[str, Any]:
+    num_frames = int(features["metadata/num_frames"].int64_list.value[0])
+    height = int(features["metadata/height"].int64_list.value[0])
+    width = int(features["metadata/width"].int64_list.value[0])
+    num_instances = int(features["metadata/num_instances"].int64_list.value[0])
+    video_name = decode_text_feature(features["metadata/video_name"])[0]
+    background = decode_text_feature(features["background"])[0]
+    asset_ids = decode_text_feature(features["instances/asset_id"])
+    is_dynamic = np.asarray(features["instances/is_dynamic"].int64_list.value, dtype=np.uint8)
+    dynamic_count = int(is_dynamic.sum())
+    prompt = build_prompt(background, asset_ids, num_instances, dynamic_count)
+    sample_id = f"movi_d_{split}__video_{video_name}"
+
+    rgb_frames = decode_rgb_frames(features["video"].bytes_list.value) if include_rgb else None
+    seg_raw = decode_image_sequence(features["segmentations"].bytes_list.value)
+    depth_raw = decode_image_sequence(features["depth"].bytes_list.value).astype(np.uint16)
+    segmentations = seg_raw.reshape(num_frames, height, width).astype(np.uint8)
+    depth_range = np.asarray(features["metadata/depth_range"].float_list.value, dtype=np.float32)
+    depth_metric = uint16_to_metric(
+        depth_raw.reshape(num_frames, height, width),
+        depth_range,
+    )
+
+    com_uv_norm = decode_float_tensor(features["instances/image_positions"], (num_instances, num_frames, 2))
+    com_uv = np.transpose(com_uv_norm, (1, 0, 2)).astype(np.float32)
+    com_uv[..., 0] *= float(width)
+    com_uv[..., 1] *= float(height)
+
+    visibility_pixels = decode_int_tensor(
+        features["instances/visibility"],
+        (num_instances, num_frames),
+        dtype=np.int32,
+    ).transpose(1, 0)
+    visibility_ratio = np.clip(visibility_pixels.astype(np.float32) / float(width * height), 0.0, 1.0)
+    visibility_mask = (visibility_pixels > 0).astype(np.uint8)
+
+    bbox_frames_flat = np.asarray(
+        features["instances/bbox_frames/ragged_flat_values"].int64_list.value,
+        dtype=np.int32,
+    )
+    bbox_frames_row_lengths = np.asarray(
+        features["instances/bbox_frames/ragged_row_lengths_0"].int64_list.value,
+        dtype=np.int32,
+    )
+    bboxes_flat = np.asarray(
+        features["instances/bboxes/ragged_flat_values"].float_list.value,
+        dtype=np.float32,
+    ).reshape(-1, 4)
+    bboxes_row_lengths = np.asarray(
+        features["instances/bboxes/ragged_row_lengths_0"].int64_list.value,
+        dtype=np.int32,
+    )
+    bbox_xyxy_ragged = ragged_to_frame_boxes(
+        bbox_frames_flat=bbox_frames_flat,
+        bbox_frames_row_lengths=bbox_frames_row_lengths,
+        bboxes_flat=bboxes_flat,
+        bboxes_row_lengths=bboxes_row_lengths,
+        num_instances=num_instances,
+        num_frames=num_frames,
+        width=width,
+        height=height,
+    )
+    bbox_xyxy_seg, visibility_mask_seg = boxes_from_segmentations(segmentations, num_instances)
+    bbox_xyxy = bbox_xyxy_ragged.copy()
+    missing_boxes = (bbox_xyxy[..., 2] <= bbox_xyxy[..., 0]) | (bbox_xyxy[..., 3] <= bbox_xyxy[..., 1])
+    bbox_xyxy[missing_boxes] = bbox_xyxy_seg[missing_boxes]
+    visibility_mask = np.maximum(visibility_mask, visibility_mask_seg).astype(np.uint8)
+
+    center_depth = center_depth_from_masks(
+        depth_metric=depth_metric,
+        segmentations=segmentations,
+        visibility_pixels=visibility_pixels,
+        num_instances=num_instances,
+    )
+    state_9d = compute_state_9d(
+        com_uv=com_uv,
+        center_depth=center_depth,
+        bbox_xyxy=bbox_xyxy,
+        visibility_pixels=visibility_ratio,
+        fps=12.0,
+    )
+
+    collision_frames = np.asarray(features["events/collisions/frame"].int64_list.value, dtype=np.int32)
+    collision_instances = np.asarray(
+        features["events/collisions/instances"].int64_list.value,
+        dtype=np.int32,
+    ).reshape(-1, 2)
+    collision_forces = np.asarray(features["events/collisions/force"].float_list.value, dtype=np.float32)
+    _contact_graph, _contact_force, _frame_phase, _raw_events, event_windows = build_contact_tensors(
+        frames=collision_frames,
+        instances=collision_instances,
+        forces=collision_forces,
+        num_frames=num_frames,
+        num_instances=num_instances,
+    )
+
+    category_ids = np.asarray(features["instances/category"].int64_list.value, dtype=np.int32)
+    scale = np.asarray(features["instances/scale"].float_list.value, dtype=np.float32)
+    friction = np.asarray(features["instances/friction"].float_list.value, dtype=np.float32)
+    restitution = np.asarray(features["instances/restitution"].float_list.value, dtype=np.float32)
+    mass = np.asarray(features["instances/mass"].float_list.value, dtype=np.float32)
+    main_object_index = choose_main_object_index(is_dynamic, visibility_pixels)
+    objects = []
+    for obj_idx in range(num_instances):
+        role = "dynamic" if bool(is_dynamic[obj_idx]) else "static"
+        objects.append(
+            {
+                "object_id": int(obj_idx),
+                "seg_id": int(obj_idx + 1),
+                "role": "primary" if obj_idx == main_object_index else role,
+                "motion_type": role,
+                "dataset_source": "MOVI-D",
+                "source_object_id": str(asset_ids[obj_idx]),
+                "name": str(asset_ids[obj_idx]),
+                "category": str(category_ids[obj_idx]) if obj_idx < category_ids.shape[0] else "",
+                "is_dynamic": bool(is_dynamic[obj_idx]),
+                "scale": float(scale[obj_idx]),
+                "friction": float(friction[obj_idx]),
+                "restitution": float(restitution[obj_idx]),
+                "mass": float(mass[obj_idx]),
+            }
+        )
+
+    focal_length = float(features["camera/focal_length"].float_list.value[0])
+    sensor_width = float(features["camera/sensor_width"].float_list.value[0])
+    fx = focal_length / sensor_width * float(width) if sensor_width > 0 else float(width)
+    metadata = {
+        "scene_id": sample_id,
+        "prompt": prompt,
+        "dataset_source": "MOVI-D",
+        "resolution": [int(width), int(height)],
+        "camera_intrinsics": {
+            "fx": float(fx),
+            "fy": float(fx),
+            "cx": float(width) / 2.0,
+            "cy": float(height) / 2.0,
+            "near": float(depth_range[0]),
+            "far": float(depth_range[1]),
+        },
+        "objects": objects,
+        "main_object_index": int(main_object_index),
+        "source_paths": {
+            "tfrecord_path": str(shard_path),
+            "tfrecord_record_index": int(record_index),
+        },
+    }
+    return {
+        "sample_id": sample_id,
+        "metadata": metadata,
+        "rgb_frames": rgb_frames,
+        "state_raw": state_9d.astype(np.float32),
+        "visibility_mask": visibility_mask.astype(np.uint8),
+        "object_ids": np.arange(num_instances, dtype=np.int32),
+        "seg_ids": np.arange(1, num_instances + 1, dtype=np.int32),
+        "dt": np.asarray(1.0 / 12.0, dtype=np.float32),
+        "event_windows": event_windows,
+    }
+
+
+def build_strict_candidates_from_movi_payload(
+    payload: dict[str, Any],
+    *,
+    source_sample_dir: str,
+    window_dir: str,
+) -> list[dict[str, Any]]:
+    metadata = dict(payload["metadata"])
+    state_raw = np.asarray(payload["state_raw"]).astype(np.float32)
+    visibility_mask = np.asarray(payload["visibility_mask"]).astype(np.uint8)
+    object_ids = np.asarray(payload["object_ids"]).astype(np.int32)
+    seg_ids = np.asarray(payload["seg_ids"]).astype(np.int32)
+    T = int(state_raw.shape[0])
+    width, height = map(float, metadata["resolution"])
+    cam = metadata["camera_intrinsics"]
+    state_norm = normalize_state(
+        state_raw=state_raw,
+        width=width,
+        height=height,
+        depth_near=float(cam["near"]),
+        depth_far=float(cam["far"]),
+    )
+    main_object_index = int(metadata.get("main_object_index", 0))
+    candidates: list[dict[str, Any]] = []
+    for future_len in FUTURE_LENGTHS:
+        min_total = CONTEXT_LEN + int(future_len)
+        if T < min_total:
+            continue
+        max_start = T - min_total
+        for start in range(0, max_start + 1, WINDOW_STRIDE):
+            c0 = int(start)
+            c1 = c0 + CONTEXT_LEN
+            f0 = c1
+            f1 = f0 + int(future_len)
+            if not window_has_visible_object_every_frame(visibility_mask, c0, c1):
+                continue
+            future_visible_ok, future_vis_ratio = future_main_object_visibility_ok(
+                visibility_mask=visibility_mask,
+                start=f0,
+                end=f1,
+                main_object_index=main_object_index,
+                threshold=FUTURE_MAIN_VISIBILITY_THRESHOLD,
+            )
+            if not future_visible_ok:
+                continue
+            meta_payload = {
+                "prompt": str(metadata.get("prompt", "")).strip() or "a rigid object motion scene",
+                "source_scene_id": str(metadata.get("scene_id", payload["sample_id"])),
+                "source_sample_dir": str(source_sample_dir),
+                "context_len": CONTEXT_LEN,
+                "future_len": int(future_len),
+                "start_index": int(start),
+                "main_object_index": int(main_object_index),
+                "future_main_visibility_ratio": float(future_vis_ratio),
+                "resolution": metadata.get("resolution"),
+                "camera_intrinsics": metadata.get("camera_intrinsics"),
+                "objects": metadata.get("objects", []),
+                "x_frame_paths": [f"in_memory/frame_{idx:03d}.png" for idx in range(c0, c1)],
+                "y_frame_paths": [f"in_memory/frame_{idx:03d}.png" for idx in range(f0, f1)],
+                "_in_memory_frames": True,
+                "motion_complexity": infer_motion_complexity(
+                    state_norm=state_norm[f0:f1].astype(np.float32),
+                    visibility_mask=visibility_mask[f0:f1].astype(np.uint8),
+                ),
+            }
+            meta_payload["window_interactions"] = infer_window_interactions(meta_payload)
+            record = strict_record_from_meta(meta_payload, Path(window_dir))
+            if record is None:
+                continue
+            record["dataset"] = "movi_d"
+            record["pair_meta"] = meta_payload
+            record["window_dir"] = str(window_dir)
+            record["source_sample_dir"] = str(source_sample_dir)
+            record["_state_raw_full"] = state_raw
+            record["_state_norm_full"] = state_norm
+            record["_visibility_mask_full"] = visibility_mask
+            record["_object_ids"] = object_ids
+            record["_seg_ids"] = seg_ids
+            record["_dt"] = payload["dt"]
+            if payload.get("rgb_frames") is not None:
+                record["_rgb_frames_full"] = payload["rgb_frames"]
+            record["_source_event_windows"] = payload["event_windows"]
+            candidates.append(record)
+    return candidates
+
+
 def prepare_movi_test_packages(output_root: Path, skip_cache: bool) -> list[dict[str, Any]]:
-    ensure_dir(MOVI_TEST_CACHE_ROOT)
+    del skip_cache
     targets_by_shard = iter_movi_mytest_targets()
     best_candidates: dict[str, dict[str, Any]] = {}
+    selected_by_shard: dict[str, dict[int, str]] = defaultdict(dict)
+    meta_by_sample_id: dict[str, tuple[Path, dict[str, Any]]] = {}
+
+    for meta_path in sorted(MOVI_MYTEST_ROOT.glob("*/meta.json")):
+        meta = load_json(meta_path)
+        sample_id = str(meta.get("sample_id") or meta_path.parent.name)
+        meta_by_sample_id[sample_id] = (meta_path, meta)
 
     for shard_path_str, target_map in sorted(targets_by_shard.items()):
         shard_path = Path(shard_path_str)
@@ -710,46 +1043,59 @@ def prepare_movi_test_packages(output_root: Path, skip_cache: bool) -> list[dict
                 continue
             features = parse_example(payload)
             sample_id = str(target_meta.get("sample_id") or f"movi_d_test_{record_index:04d}")
-            result = convert_record(
+            source_sample_dir = movi_target_source_sample_dir(target_meta)
+            raw_payload = decode_movi_record_to_raw_payload(
                 features=features,
                 split="test",
                 shard_path=shard_path,
                 record_index=record_index,
-                out_root=MOVI_TEST_CACHE_ROOT,
-                skip_existing=bool(skip_cache),
-                save_dense_modalities=False,
+                include_rgb=False,
             )
-            raw_sample_dir = Path(str(result["sample_dir"]))
-            candidates = build_strict_candidates_from_raw_sample(raw_sample_dir)
+            candidates = build_strict_candidates_from_movi_payload(
+                raw_payload,
+                source_sample_dir=source_sample_dir,
+                window_dir=str(Path(source_sample_dir).parent if source_sample_dir else shard_path),
+            )
             best = choose_best_record(candidates)
             if best is None:
                 continue
             best_candidates[sample_id] = best
+            selected_by_shard[str(shard_path)][int(record_index)] = sample_id
 
     items: list[dict[str, Any]] = []
-    for meta_path in sorted(MOVI_MYTEST_ROOT.glob("*/meta.json")):
-        meta = load_json(meta_path)
-        sample_id = str(meta.get("sample_id") or meta_path.parent.name)
-        record = best_candidates.get(sample_id)
-        if record is None:
+    for shard_path_str, selected_records in sorted(selected_by_shard.items()):
+        shard_path = Path(shard_path_str)
+        if not selected_records:
             continue
-        items.append(
-            export_window_package(
-                record=record,
-                out_dir=output_root / "test" / "movi-d" / sample_id,
-                sample_id=sample_id,
-                split="test",
-                dataset_name="movi-d",
-                sample_label=sample_id,
-                source_meta_json_path=str(meta_path),
-                extra_source_paths={
-                    "mytest_meta_json_path": str(meta_path),
-                    "mytest_sample_dir": str(meta_path.parent),
-                    "tfrecord_path": str((meta.get("source_paths") or {}).get("tfrecord_path", "")),
-                    "tfrecord_record_index": int((meta.get("source_paths") or {}).get("tfrecord_record_index", -1)),
-                },
+        for record_index, payload in enumerate(iter_serialized_records(shard_path)):
+            sample_id = selected_records.get(record_index)
+            if sample_id is None:
+                continue
+            stored = best_candidates.get(sample_id)
+            meta_pair = meta_by_sample_id.get(sample_id)
+            if stored is None or meta_pair is None:
+                continue
+            meta_path, meta = meta_pair
+            features = parse_example(payload)
+            record = dict(stored)
+            record["_rgb_frames_full"] = decode_rgb_frames(features["video"].bytes_list.value)
+            items.append(
+                export_window_package(
+                    record=record,
+                    out_dir=output_root / "test" / "movi-d" / sample_id,
+                    sample_id=sample_id,
+                    split="test",
+                    dataset_name="movi-d",
+                    sample_label=sample_id,
+                    source_meta_json_path=str(meta_path),
+                    extra_source_paths={
+                        "mytest_meta_json_path": str(meta_path),
+                        "mytest_sample_dir": str(meta_path.parent),
+                        "tfrecord_path": str((meta.get("source_paths") or {}).get("tfrecord_path", "")),
+                        "tfrecord_record_index": int((meta.get("source_paths") or {}).get("tfrecord_record_index", -1)),
+                    },
+                )
             )
-        )
     return items
 
 
