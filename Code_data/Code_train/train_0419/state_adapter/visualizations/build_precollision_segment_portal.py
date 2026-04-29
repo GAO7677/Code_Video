@@ -27,7 +27,7 @@ MOVI_ROOT = Path(
     "/data/gaoya/dataset/kubric_tfds_movi-d/preprocess_v1/oracle_wan_ctx8_fut5_9_13_alltrain"
 )
 DEFAULT_OUTPUT_DIR = Path(
-    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/precollision_segments"
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter"
 )
 
 STATE_NAMES = ["u", "v", "d", "w", "h", "du", "dv", "dd", "vis"]
@@ -140,6 +140,28 @@ def choose_context_frame_count(context_len: int, future_visible_frames: int) -> 
         return min(context_len, 2)
     # Use as much context as possible while keeping context:future within [1:2, 1:1].
     return min(context_len, future_visible_frames)
+
+
+def dataset_slug(dataset_name: str) -> str:
+    if dataset_name == "movi_d":
+        return "movi-d"
+    return dataset_name
+
+
+def infer_split_and_rel_source(sample_dir: Path) -> tuple[str, Path]:
+    parts = sample_dir.parts
+    for idx, part in enumerate(parts):
+        if part in {"train", "test"}:
+            tail = Path(*parts[idx + 1 :]) if idx + 1 < len(parts) else Path(sample_dir.name)
+            return part, tail
+    return "train", Path(sample_dir.name)
+
+
+def sample_output_dir(output_dir: Path, sample: dict[str, Any]) -> tuple[Path, str, str]:
+    sample_dir = Path(str(sample["source_sample_dir"]))
+    split, rel_source = infer_split_and_rel_source(sample_dir)
+    rel_dir = Path(split) / dataset_slug(str(sample["dataset"])) / rel_source
+    return output_dir / rel_dir, split, rel_dir.as_posix()
 
 
 def save_main_state_plot(
@@ -296,7 +318,7 @@ def export_sample(sample: dict[str, Any], output_dir: Path, index: int) -> dict[
     meta = dict(sample["pair_meta"])
     window_dir = Path(str(sample["window_dir"]))
     sample_dir = Path(str(sample["source_sample_dir"]))
-    out_dir = output_dir / f"sample_{index:02d}"
+    out_dir, split, rel_dir = sample_output_dir(output_dir, sample)
     ensure_dir(out_dir)
 
     with np.load(window_dir / "state_pair.npz") as payload:
@@ -355,9 +377,13 @@ def export_sample(sample: dict[str, Any], output_dir: Path, index: int) -> dict[
 
     info = {
         "dataset": sample["dataset"],
+        "split": split,
+        "dataset_slug": dataset_slug(str(sample["dataset"])),
         "bucket_key": sample.get("bucket_key", ""),
         "bucket_label": sample.get("bucket_label", ""),
         "source_sample_dir": str(sample_dir),
+        "export_dir": str(out_dir),
+        "export_rel_dir": rel_dir,
         "window_dir": str(window_dir),
         "segment_kind": str(sample["segment_kind"]),
         "motion_complexity": str(sample["motion"]),
@@ -384,7 +410,7 @@ def export_sample(sample: dict[str, Any], output_dir: Path, index: int) -> dict[
     }
     (out_dir / "segment_info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    title = f"{sample['dataset']} #{index + 1}"
+    title = f"{dataset_slug(str(sample['dataset']))} / {sample_dir.name}"
     html_text = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -457,13 +483,15 @@ def export_sample(sample: dict[str, Any], output_dir: Path, index: int) -> dict[
 
     return {
         "title": title,
+        "split": split,
         "dataset": sample["dataset"],
+        "dataset_slug": dataset_slug(str(sample["dataset"])),
         "segment_kind": sample["segment_kind"],
         "bucket_key": sample.get("bucket_key", ""),
         "bucket_label": sample.get("bucket_label", ""),
         "motion": sample["motion"],
         "collision": sample["collision"],
-        "rel_dir": out_dir.name,
+        "rel_dir": rel_dir,
         "frames": len(frame_indices),
         "context_frames": len(context_frame_indices),
         "future_frames": len(future_frame_indices),
@@ -651,7 +679,7 @@ def build_index(cards: list[dict[str, Any]]) -> str:
   <div class="page">
     <section class="hero">
       <h1>Pre-Collision / Collision-Free Segment Preview</h1>
-      <p>这里按不同情况分 bucket 批量导出样本。每个 case 同时展示 <code>context.gif</code>、<code>future.gif</code>、<code>full.gif</code>，其中 context 与 future 尽量保持约 <code>1:2</code> 的紧凑比例。</p>
+      <p>导出目录已经组织成 <code>stage1adapter/train|test/(genesis|movi-d)/raw_like_path</code>。每个 case 同时展示 <code>context.gif</code>、<code>future.gif</code>、<code>full.gif</code>，其中 future 截到主物体第一次碰撞之前。</p>
     </section>
     <section class="section">
       {sections_html}
@@ -688,6 +716,9 @@ def main() -> None:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     ensure_dir(output_dir)
+    for split in ("train", "test"):
+        for dataset_name in ("genesis", "movi-d"):
+            ensure_dir(output_dir / split / dataset_name)
 
     candidates = collect_candidates("genesis", args.genesis_root.resolve()) + collect_candidates(
         "movi_d", args.movi_root.resolve()
