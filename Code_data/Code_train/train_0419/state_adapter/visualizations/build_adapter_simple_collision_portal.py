@@ -297,6 +297,9 @@ def load_records(dataset_name: str, dataset_root: Path) -> list[dict[str, Any]]:
             continue
         if motion_label not in {"static", "simple"}:
             continue
+        frame_paths = list(meta.get("x_frame_paths", [])) + list(meta.get("y_frame_paths", []))
+        if not frame_paths or any(not Path(str(path)).exists() for path in frame_paths):
+            continue
         source_sample_dir = str(meta.get("source_sample_dir", ""))
         records.append(
             {
