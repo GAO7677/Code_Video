@@ -175,6 +175,14 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Optional cap on the number of shards scanned per split.",
     )
+    parser.add_argument(
+        "--save_dense_modalities",
+        action="store_true",
+        help=(
+            "Also save large dense arrays like metric flow/depth/segmentation. "
+            "Default is lean mode that only keeps training-required files."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -549,6 +557,7 @@ def convert_record(
     record_index: int,
     out_root: Path,
     skip_existing: bool,
+    save_dense_modalities: bool,
 ) -> dict:
     num_frames = int(features["metadata/num_frames"].int64_list.value[0])
     height = int(features["metadata/height"].int64_list.value[0])
@@ -824,13 +833,14 @@ def convert_record(
     np.save(physics_dir / "contact_force.npy", contact_force.astype(np.float32))
     np.save(physics_dir / "contact_impulse.npy", contact_force.astype(np.float32))
     np.save(physics_dir / "frame_phase.npy", frame_phase.astype(np.int32))
-    np.save(physics_dir / "seg.npy", segmentations.astype(np.uint8))
-    np.save(physics_dir / "depth_metric.npy", depth_metric.astype(np.float32))
-    np.save(physics_dir / "depth_normalized.npy", depth_raw.reshape(num_frames, height, width).astype(np.uint16))
-    np.save(physics_dir / "forward_flow_metric.npy", forward_flow_metric.astype(np.float32))
-    np.save(physics_dir / "backward_flow_metric.npy", backward_flow_metric.astype(np.float32))
-    np.save(physics_dir / "forward_flow_normalized.npy", forward_flow_raw.astype(np.uint16))
-    np.save(physics_dir / "backward_flow_normalized.npy", backward_flow_raw.astype(np.uint16))
+    if save_dense_modalities:
+        np.save(physics_dir / "seg.npy", segmentations.astype(np.uint8))
+        np.save(physics_dir / "depth_metric.npy", depth_metric.astype(np.float32))
+        np.save(physics_dir / "depth_normalized.npy", depth_raw.reshape(num_frames, height, width).astype(np.uint16))
+        np.save(physics_dir / "forward_flow_metric.npy", forward_flow_metric.astype(np.float32))
+        np.save(physics_dir / "backward_flow_metric.npy", backward_flow_metric.astype(np.float32))
+        np.save(physics_dir / "forward_flow_normalized.npy", forward_flow_raw.astype(np.uint16))
+        np.save(physics_dir / "backward_flow_normalized.npy", backward_flow_raw.astype(np.uint16))
     (physics_dir / "collision_events.json").write_text(
         json.dumps(collision_events, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -920,6 +930,7 @@ def main() -> None:
                 record_index=record_index,
                 out_root=args.out_root,
                 skip_existing=bool(args.skip_existing),
+                save_dense_modalities=bool(args.save_dense_modalities),
             )
             processed.append(result)
             if not result.get("skipped_existing"):

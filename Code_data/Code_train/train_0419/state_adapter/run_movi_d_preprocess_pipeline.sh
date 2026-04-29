@@ -8,12 +8,13 @@ TRAIN_ROOT=/home/gaoya/Code_Video/Code_data/Code_train/train_0419
 STATE_ADAPTER_ROOT=${TRAIN_ROOT}/state_adapter
 
 RAW_DATASET_ROOT=/data/gaoya/dataset/kubric_tfds_movi-d
-PIPELINE_ROOT=/home/gaoya/movi_d_pipeline
+PIPELINE_ROOT=/data/gaoya/dataset/kubric_tfds_movi-d/mytrain
 PHYSICS_ROOT=${PIPELINE_ROOT}/movi_d_physics
 WINDOWS_TRAIN_ROOT=${PIPELINE_ROOT}/oracle_windows_train
 WINDOWS_TEST_ROOT=${PIPELINE_ROOT}/oracle_windows_test
 PORTAL_INPUT_ROOT=${PIPELINE_ROOT}/portal_input
 PORTAL_OUTPUT_ROOT=${PIPELINE_ROOT}/portal
+TEST_SAMPLE_CAP=64
 
 COUNT_BUCKETS=$(
   python3 - <<'PY'
@@ -27,7 +28,15 @@ echo "[1/4] convert MOVI-D TFRecords -> physics samples"
 python ${STATE_ADAPTER_ROOT}/prepare_movi_d_physics.py \
   --dataset_root ${RAW_DATASET_ROOT} \
   --out_root ${PHYSICS_ROOT} \
-  --splits train,test \
+  --splits train \
+  --skip_existing
+
+echo "[1b/4] convert a held-out MOVI-D test subset for visualization"
+python ${STATE_ADAPTER_ROOT}/prepare_movi_d_physics.py \
+  --dataset_root ${RAW_DATASET_ROOT} \
+  --out_root ${PHYSICS_ROOT} \
+  --splits test \
+  --max_samples_per_split ${TEST_SAMPLE_CAP} \
   --skip_existing
 
 echo "[2/4] build oracle windows for train split"
@@ -64,4 +73,4 @@ python ${STATE_ADAPTER_ROOT}/visualizations/visualize_stage1_subsets.py \
   --num_windows_per_subset 8
 
 echo "DONE pipeline_root=${PIPELINE_ROOT}"
-echo "PORTAL_URL=http://127.0.0.1:8150/movi_d_pipeline/portal/index.html"
+echo "PORTAL_URL=http://127.0.0.1:8150/portal/index.html"
