@@ -9600,11 +9600,11 @@ def simulate_in_genesis(
         camera_cfg=camera_cfg,
         cam_intrinsics=cam_intrinsics,
     )
-    flow_arr = _build_flow_fallback(
-        com_uv=anchor_targets["com_uv"],
-        visibility_mask=anchor_targets["visibility_mask"],
-        seg_frames=seg_arr,
-    )
+    # flow_arr = _build_flow_fallback(
+    #     com_uv=anchor_targets["com_uv"],
+    #     visibility_mask=anchor_targets["visibility_mask"],
+    #     seg_frames=seg_arr,
+    # )
     scene_composition, object_count_bucket = _scene_layout_from_sources(scene_label, sample_object_sources)
     has_custom_object = any(str(src) in {"custom_object", "physxnet_aux"} for src in sample_object_sources)
     interaction_pattern = _interaction_pattern_from_case(
@@ -9654,12 +9654,12 @@ def simulate_in_genesis(
     for frame_idx, depth_frame in enumerate(depth_norm_arr):
         imageio.imwrite(case_dir / "depth" / f"frame_{frame_idx:03d}.png", depth_to_uint8(depth_frame))
     np.save(case_dir / "physics" / "depth_metric.npy", depth_metric_arr)
-    np.save(case_dir / "physics" / "depth_normalized.npy", depth_norm_arr)
+    # np.save(case_dir / "physics" / "depth_normalized.npy", depth_norm_arr)
     np.save(case_dir / "physics" / "seg.npy", seg_arr)
     np.save(case_dir / "physics" / "contact_graph.npy", contact_graph_arr)
     np.save(case_dir / "physics" / "contact_impulse.npy", contact_impulse_arr)
     np.save(case_dir / "physics" / "frame_phase.npy", frame_phase_arr.astype(np.int8))
-    np.save(case_dir / "physics" / "flow.npy", flow_arr.astype(np.float32))
+    # np.save(case_dir / "physics" / "flow.npy", flow_arr.astype(np.float32))
     np.savez_compressed(case_dir / "physics" / "anchor_targets.npz", **anchor_targets)
     np.savez_compressed(
         case_dir / "physics" / "rigid_kinematics.npz",
@@ -9781,9 +9781,9 @@ def simulate_in_genesis(
             "rgb_video": "videos/rgb.mp4",
             "depth_video": "videos/depth.mp4",
             "depth_metric": "physics/depth_metric.npy",
-            "depth_normalized": "physics/depth_normalized.npy",
+            # "depth_normalized": "physics/depth_normalized.npy",
             "segmentation": "physics/seg.npy",
-            "flow": "physics/flow.npy",
+            # "flow": "physics/flow.npy",
             "anchor_targets": "physics/anchor_targets.npz",
             "rigid_kinematics": "physics/rigid_kinematics.npz",
             "energy": "physics/energy.npz",
