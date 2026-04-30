@@ -1,0 +1,495 @@
+[
+  {
+    "title": "raw / train / few_3_4_env_only",
+    "slug": "raw-train-few-3-4-env-only",
+    "search_text": "raw / train / few_3_4_env_only movi_d_train__video_4626 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_04/movi_d_train__video_4626 movi-d raw train few_3_4_env_only a synthetic kubric scene on a sculpture_exhibition background with 4 object(s), including olive kids birdie munch n lunch, canon pixma ink cartridge cyan 251, apples to apples kids edition, perricone md the cold plasma face eyes duo. 1 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_train__video_4626",
+        "sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_04/movi_d_train__video_4626",
+        "dataset": "movi-d",
+        "view": "raw",
+        "split": "train",
+        "complexity": "few_3_4_env_only",
+        "caption": "A synthetic Kubric scene on a sculpture_exhibition background with 4 object(s), including Olive Kids Birdie Munch n Lunch, Canon Pixma Ink Cartridge Cyan 251, Apples to Apples Kids Edition, Perricone MD The Cold Plasma Face Eyes Duo. 1 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "movi_d_train__video_4626 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_04/movi_d_train__video_4626 movi-d raw train few_3_4_env_only a synthetic kubric scene on a sculpture_exhibition background with 4 object(s), including olive kids birdie munch n lunch, canon pixma ink cartridge cyan 251, apples to apples kids edition, perricone md the cold plasma face eyes duo. 1 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "raw / train / few_3_4_mixed",
+    "slug": "raw-train-few-3-4-mixed",
+    "search_text": "raw / train / few_3_4_mixed 10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center genesis raw train few_3_4_mixed ",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "few_3_4_mixed",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center genesis raw train few_3_4_mixed "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / few_3_4_obj_obj_only",
+    "slug": "raw-train-few-3-4-obj-obj-only",
+    "search_text": "raw / train / few_3_4_obj_obj_only 10034__case002_static_right_v2 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10034__case002_static_right_v2 genesis raw train few_3_4_obj_obj_only ",
+    "samples": [
+      {
+        "sample_id": "10034__case002_static_right_v2",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10034__case002_static_right_v2",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "few_3_4_obj_obj_only",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10034__case002_static_right_v2 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_03_04/10034__case002_static_right_v2 genesis raw train few_3_4_obj_obj_only "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / many_5plus_env_only",
+    "slug": "raw-train-many-5plus-env-only",
+    "search_text": "raw / train / many_5plus_env_only movi_d_train__video_1102 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_05/movi_d_train__video_1102 movi-d raw train many_5plus_env_only a synthetic kubric scene on a autumn_meadow background with 5 object(s), including room essentials kitchen towels 16 x 26 2 count, mad gab refresh card game, threshold porcelain serving bowl coupe white, womens bluefish 2eye boat shoe in white tumbled yg44xieprhw. 2 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_train__video_1102",
+        "sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_05/movi_d_train__video_1102",
+        "dataset": "movi-d",
+        "view": "raw",
+        "split": "train",
+        "complexity": "many_5plus_env_only",
+        "caption": "A synthetic Kubric scene on a autumn_meadow background with 5 object(s), including Room Essentials Kitchen Towels 16 x 26 2 count, Mad Gab Refresh Card Game, Threshold Porcelain Serving Bowl Coupe White, Womens Bluefish 2Eye Boat Shoe in White Tumbled YG44xIePRHw. 2 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "movi_d_train__video_1102 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_05/movi_d_train__video_1102 movi-d raw train many_5plus_env_only a synthetic kubric scene on a autumn_meadow background with 5 object(s), including room essentials kitchen towels 16 x 26 2 count, mad gab refresh card game, threshold porcelain serving bowl coupe white, womens bluefish 2eye boat shoe in white tumbled yg44xieprhw. 2 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "raw / train / many_5plus_mixed",
+    "slug": "raw-train-many-5plus-mixed",
+    "search_text": "raw / train / many_5plus_mixed movi_d_train__video_1006 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_11/movi_d_train__video_1006 movi-d raw train many_5plus_mixed a synthetic kubric scene on a studio_small_05 background with 11 object(s), including thomas friends woodan railway henry, threshold bamboo ceramic soap dish, twinlab premium creatine fuel powder, perricone md face finishing moisturizer. 3 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_train__video_1006",
+        "sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_11/movi_d_train__video_1006",
+        "dataset": "movi-d",
+        "view": "raw",
+        "split": "train",
+        "complexity": "many_5plus_mixed",
+        "caption": "A synthetic Kubric scene on a studio_small_05 background with 11 object(s), including Thomas Friends Woodan Railway Henry, Threshold Bamboo Ceramic Soap Dish, Twinlab Premium Creatine Fuel Powder, Perricone MD Face Finishing Moisturizer. 3 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "movi_d_train__video_1006 /data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_11/movi_d_train__video_1006 movi-d raw train many_5plus_mixed a synthetic kubric scene on a studio_small_05 background with 11 object(s), including thomas friends woodan railway henry, threshold bamboo ceramic soap dish, twinlab premium creatine fuel powder, perricone md face finishing moisturizer. 3 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "raw / train / pair_2_env_only",
+    "slug": "raw-train-pair-2-env-only",
+    "search_text": "raw / train / pair_2_env_only 10000__case005_entry_left /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case005_entry_left genesis raw train pair_2_env_only ",
+    "samples": [
+      {
+        "sample_id": "10000__case005_entry_left",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case005_entry_left",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "pair_2_env_only",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10000__case005_entry_left /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case005_entry_left genesis raw train pair_2_env_only "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / pair_2_mixed",
+    "slug": "raw-train-pair-2-mixed",
+    "search_text": "raw / train / pair_2_mixed 10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center genesis raw train pair_2_mixed ",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "pair_2_mixed",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center genesis raw train pair_2_mixed "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / pair_2_obj_obj_only",
+    "slug": "raw-train-pair-2-obj-obj-only",
+    "search_text": "raw / train / pair_2_obj_obj_only 10027__case001_static_left__cf_no_collision_neg /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case001_static_left__cf_no_collision_neg genesis raw train pair_2_obj_obj_only ",
+    "samples": [
+      {
+        "sample_id": "10027__case001_static_left__cf_no_collision_neg",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case001_static_left__cf_no_collision_neg",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "pair_2_obj_obj_only",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10027__case001_static_left__cf_no_collision_neg /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case001_static_left__cf_no_collision_neg genesis raw train pair_2_obj_obj_only "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / pair_2_unknown",
+    "slug": "raw-train-pair-2-unknown",
+    "search_text": "raw / train / pair_2_unknown 10005__case210_multi2_projectile_nocollision /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/multi_object_free_motion/count_02/10005__case210_multi2_projectile_nocollision genesis raw train pair_2_unknown ",
+    "samples": [
+      {
+        "sample_id": "10005__case210_multi2_projectile_nocollision",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/multi_object_free_motion/count_02/10005__case210_multi2_projectile_nocollision",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "pair_2_unknown",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10005__case210_multi2_projectile_nocollision /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/multi_object_free_motion/count_02/10005__case210_multi2_projectile_nocollision genesis raw train pair_2_unknown "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / single_1_env_only",
+    "slug": "raw-train-single-1-env-only",
+    "search_text": "raw / train / single_1_env_only 10000__case003_static_highdrop /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case003_static_highdrop genesis raw train single_1_env_only ",
+    "samples": [
+      {
+        "sample_id": "10000__case003_static_highdrop",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case003_static_highdrop",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "single_1_env_only",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10000__case003_static_highdrop /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case003_static_highdrop genesis raw train single_1_env_only "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / single_1_none",
+    "slug": "raw-train-single-1-none",
+    "search_text": "raw / train / single_1_none 10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case000_static_center genesis raw train single_1_none ",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case000_static_center",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "single_1_none",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10000__case000_static_center genesis raw train single_1_none "
+      }
+    ]
+  },
+  {
+    "title": "raw / train / single_1_unknown",
+    "slug": "raw-train-single-1-unknown",
+    "search_text": "raw / train / single_1_unknown 10032__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10032__case000_static_center genesis raw train single_1_unknown ",
+    "samples": [
+      {
+        "sample_id": "10032__case000_static_center",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10032__case000_static_center",
+        "dataset": "genesis",
+        "view": "raw",
+        "split": "train",
+        "complexity": "single_1_unknown",
+        "caption": "",
+        "previews": [
+          {
+            "label": "raw RGB",
+            "gif_rel": "raw_full.gif"
+          }
+        ],
+        "search_text": "10032__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10032__case000_static_center genesis raw train single_1_unknown "
+      }
+    ]
+  },
+  {
+    "title": "window / train / few_3_4_none",
+    "slug": "window-train-few-3-4-none",
+    "search_text": "window / train / few_3_4_none 10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center__ratio11 genesis window train few_3_4_none interaction_pair_plus_dynamic with 3 object(s), motion=static_center.",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center__ratio11",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center__ratio11",
+        "dataset": "genesis",
+        "view": "window",
+        "split": "train",
+        "complexity": "few_3_4_none",
+        "caption": "interaction_pair_plus_dynamic with 3 object(s), motion=static_center.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_03_04/10000__case000_static_center__ratio11 genesis window train few_3_4_none interaction_pair_plus_dynamic with 3 object(s), motion=static_center."
+      }
+    ]
+  },
+  {
+    "title": "window / train / many_5plus_env_only",
+    "slug": "window-train-many-5plus-env-only",
+    "search_text": "window / train / many_5plus_env_only movi_d_train__video_1497 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497 movi-d window train many_5plus_env_only a synthetic kubric scene on a lush_dirt_path background with 16 object(s), including blackblack nintendo 3dsxl, avengers thor pllrpyniaeb, perricone md cold plasma, zigkick hoops. 1 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_train__video_1497",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497",
+        "dataset": "movi-d",
+        "view": "window",
+        "split": "train",
+        "complexity": "many_5plus_env_only",
+        "caption": "A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "movi_d_train__video_1497 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497 movi-d window train many_5plus_env_only a synthetic kubric scene on a lush_dirt_path background with 16 object(s), including blackblack nintendo 3dsxl, avengers thor pllrpyniaeb, perricone md cold plasma, zigkick hoops. 1 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "window / train / pair_2_none",
+    "slug": "window-train-pair-2-none",
+    "search_text": "window / train / pair_2_none 10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center__ratio11 genesis window train pair_2_none interaction_pair_plus_dynamic with 2 object(s), motion=static_center.",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center__ratio11",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center__ratio11",
+        "dataset": "genesis",
+        "view": "window",
+        "split": "train",
+        "complexity": "pair_2_none",
+        "caption": "interaction_pair_plus_dynamic with 2 object(s), motion=static_center.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10000__case000_static_center__ratio11 genesis window train pair_2_none interaction_pair_plus_dynamic with 2 object(s), motion=static_center."
+      }
+    ]
+  },
+  {
+    "title": "window / train / single_1_none",
+    "slug": "window-train-single-1-none",
+    "search_text": "window / train / single_1_none 10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/single_object_preview/count_01/10000__case000_static_center__ratio11 genesis window train single_1_none single_object_preview with 1 object(s), motion=static_center.",
+    "samples": [
+      {
+        "sample_id": "10000__case000_static_center__ratio11",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/single_object_preview/count_01/10000__case000_static_center__ratio11",
+        "dataset": "genesis",
+        "view": "window",
+        "split": "train",
+        "complexity": "single_1_none",
+        "caption": "single_object_preview with 1 object(s), motion=static_center.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "10000__case000_static_center__ratio11 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/single_object_preview/count_01/10000__case000_static_center__ratio11 genesis window train single_1_none single_object_preview with 1 object(s), motion=static_center."
+      }
+    ]
+  },
+  {
+    "title": "window / test / few_3_4_none",
+    "slug": "window-test-few-3-4-none",
+    "search_text": "window / test / few_3_4_none movi_d_test_0001__video_131 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0001__video_131 movi-d window test few_3_4_none a synthetic kubric scene on a machine_shop_02 background with 4 object(s), including now designs bowl akita black, moving mouse pw 6pcsset, kitchen set classic 40hwchfeg0h, sushi mat. 1 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_test_0001__video_131",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0001__video_131",
+        "dataset": "movi-d",
+        "view": "window",
+        "split": "test",
+        "complexity": "few_3_4_none",
+        "caption": "A synthetic Kubric scene on a machine_shop_02 background with 4 object(s), including Now Designs Bowl Akita Black, MOVING MOUSE PW 6PCSSET, KITCHEN SET CLASSIC 40HwCHfeG0H, Sushi Mat. 1 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "movi_d_test_0001__video_131 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0001__video_131 movi-d window test few_3_4_none a synthetic kubric scene on a machine_shop_02 background with 4 object(s), including now designs bowl akita black, moving mouse pw 6pcsset, kitchen set classic 40hwchfeg0h, sushi mat. 1 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "window / test / many_5plus_none",
+    "slug": "window-test-many-5plus-none",
+    "search_text": "window / test / many_5plus_none movi_d_test_0000__video_163 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0000__video_163 movi-d window test many_5plus_none a synthetic kubric scene on a quarry_02 background with 10 object(s), including retail leadership summit, lego fusion set town master, qabsorb coq10, ladybug bead. 2 object(s) are dynamic.",
+    "samples": [
+      {
+        "sample_id": "movi_d_test_0000__video_163",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0000__video_163",
+        "dataset": "movi-d",
+        "view": "window",
+        "split": "test",
+        "complexity": "many_5plus_none",
+        "caption": "A synthetic Kubric scene on a quarry_02 background with 10 object(s), including Retail Leadership Summit, LEGO Fusion Set Town Master, QAbsorb CoQ10, LADYBUG BEAD. 2 object(s) are dynamic.",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "movi_d_test_0000__video_163 /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0000__video_163 movi-d window test many_5plus_none a synthetic kubric scene on a quarry_02 background with 10 object(s), including retail leadership summit, lego fusion set town master, qabsorb coq10, ladybug bead. 2 object(s) are dynamic."
+      }
+    ]
+  },
+  {
+    "title": "window / test / single_1_none",
+    "slug": "window-test-single-1-none",
+    "search_text": "window / test / single_1_none genesis_heldout_0139__10005__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0139__10005__case000_static_center genesis window test single_1_none a rigid object motion scene",
+    "samples": [
+      {
+        "sample_id": "genesis_heldout_0139__10005__case000_static_center",
+        "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0139__10005__case000_static_center",
+        "dataset": "genesis",
+        "view": "window",
+        "split": "test",
+        "complexity": "single_1_none",
+        "caption": "a rigid object motion scene",
+        "previews": [
+          {
+            "label": "context",
+            "gif_rel": "context.gif"
+          },
+          {
+            "label": "future GT",
+            "gif_rel": "future.gif"
+          },
+          {
+            "label": "full",
+            "gif_rel": "full.gif"
+          }
+        ],
+        "search_text": "genesis_heldout_0139__10005__case000_static_center /data/gaoya/aaa_test_video/dataset_physv/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0139__10005__case000_static_center genesis window test single_1_none a rigid object motion scene"
+      }
+    ]
+  }
+]

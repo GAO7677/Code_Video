@@ -1,0 +1,147 @@
+{
+  "total_records": 11212,
+  "counts": {
+    "dataset": {
+      "genesis": 6599,
+      "movi-d": 4551,
+      "openvid": 62
+    },
+    "split_group": {
+      "benchmark_fixed24": 24,
+      "benchmark_validation100": 100,
+      "test": 1620,
+      "train": 9468
+    },
+    "view_group": {
+      "raw": 6841,
+      "window": 4371
+    },
+    "source_group": {
+      "genesis_raw": 3113,
+      "movi_raw_test_preview": 807,
+      "movi_raw_train": 2921,
+      "stage1adapter_benchmark_fixed24": 24,
+      "stage1adapter_benchmark_validation100": 100,
+      "stage1adapter_test": 813,
+      "stage1adapter_train": 3434
+    },
+    "object_count_group": {
+      "few_3_4": 1454,
+      "many_5plus": 4507,
+      "pair_2": 1872,
+      "single_1": 3310,
+      "unknown": 69
+    },
+    "collision_bucket": {
+      "env_only": 674,
+      "mixed": 4749,
+      "none": 4804,
+      "obj_obj_only": 15,
+      "unknown": 970
+    },
+    "complexity_bucket": {
+      "few_3_4__env_only": 4,
+      "few_3_4__mixed": 918,
+      "few_3_4__none": 510,
+      "few_3_4__obj_obj_only": 2,
+      "few_3_4__unknown": 20,
+      "many_5plus__env_only": 107,
+      "many_5plus__mixed": 2789,
+      "many_5plus__none": 782,
+      "many_5plus__unknown": 829,
+      "pair_2__env_only": 17,
+      "pair_2__mixed": 1042,
+      "pair_2__none": 760,
+      "pair_2__obj_obj_only": 13,
+      "pair_2__unknown": 40,
+      "single_1__env_only": 546,
+      "single_1__none": 2752,
+      "single_1__unknown": 12,
+      "unknown__unknown": 69
+    },
+    "has_physics_labels": {
+      "False": 931,
+      "True": 10281
+    },
+    "split_view_complexity": {
+      "benchmark_fixed24__window__few_3_4__unknown": 1,
+      "benchmark_fixed24__window__many_5plus__unknown": 6,
+      "benchmark_fixed24__window__pair_2__unknown": 2,
+      "benchmark_fixed24__window__single_1__unknown": 2,
+      "benchmark_fixed24__window__unknown__unknown": 13,
+      "benchmark_validation100__window__few_3_4__unknown": 12,
+      "benchmark_validation100__window__many_5plus__unknown": 25,
+      "benchmark_validation100__window__pair_2__unknown": 5,
+      "benchmark_validation100__window__single_1__unknown": 2,
+      "benchmark_validation100__window__unknown__unknown": 56,
+      "test__raw__few_3_4__unknown": 7,
+      "test__raw__many_5plus__unknown": 798,
+      "test__raw__single_1__unknown": 2,
+      "test__window__few_3_4__none": 5,
+      "test__window__many_5plus__none": 782,
+      "test__window__single_1__none": 26,
+      "train__raw__few_3_4__env_only": 4,
+      "train__raw__few_3_4__mixed": 918,
+      "train__raw__few_3_4__obj_obj_only": 2,
+      "train__raw__many_5plus__env_only": 104,
+      "train__raw__many_5plus__mixed": 2789,
+      "train__raw__pair_2__env_only": 17,
+      "train__raw__pair_2__mixed": 1042,
+      "train__raw__pair_2__obj_obj_only": 13,
+      "train__raw__pair_2__unknown": 33,
+      "train__raw__single_1__env_only": 546,
+      "train__raw__single_1__none": 560,
+      "train__raw__single_1__unknown": 6,
+      "train__window__few_3_4__none": 505,
+      "train__window__many_5plus__env_only": 3,
+      "train__window__pair_2__none": 760,
+      "train__window__single_1__none": 2166
+    }
+  },
+  "node_counts": {
+    "raw/test": {
+      "few_3_4_unknown": 7,
+      "many_5plus_unknown": 798,
+      "single_1_unknown": 2
+    },
+    "raw/train": {
+      "few_3_4_env_only": 4,
+      "few_3_4_mixed": 918,
+      "few_3_4_obj_obj_only": 2,
+      "many_5plus_env_only": 104,
+      "many_5plus_mixed": 2789,
+      "pair_2_env_only": 17,
+      "pair_2_mixed": 1042,
+      "pair_2_obj_obj_only": 13,
+      "pair_2_unknown": 33,
+      "single_1_env_only": 546,
+      "single_1_none": 560,
+      "single_1_unknown": 6
+    },
+    "window/benchmark/fixed24": {
+      "few_3_4_unknown": 1,
+      "many_5plus_unknown": 6,
+      "pair_2_unknown": 2,
+      "single_1_unknown": 2,
+      "unknown_unknown": 13
+    },
+    "window/benchmark/validation100": {
+      "few_3_4_unknown": 12,
+      "many_5plus_unknown": 25,
+      "pair_2_unknown": 5,
+      "single_1_unknown": 2,
+      "unknown_unknown": 56
+    },
+    "window/test": {
+      "few_3_4_none": 5,
+      "many_5plus_none": 782,
+      "single_1_none": 26
+    },
+    "window/train": {
+      "few_3_4_none": 505,
+      "many_5plus_env_only": 3,
+      "pair_2_none": 760,
+      "single_1_none": 2166
+    }
+  }
+}
