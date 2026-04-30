@@ -383,6 +383,19 @@ def resolve_input_path(
     context_path: str | None,
     conditioning_mode: str | None,
 ) -> str | list[str] | None:
+    roles = build_input_roles(
+        source_paths=source_paths,
+        context_path=context_path,
+        conditioning_mode=conditioning_mode,
+    )
+    if roles:
+        values = [item["path"] for item in roles if isinstance(item.get("path"), str) and item["path"]]
+        if not values:
+            return None
+        if len(values) == 1:
+            return values[0]
+        return values
+
     explicit_input = source_paths.get("input_path")
     if isinstance(explicit_input, str) and explicit_input:
         return explicit_input
@@ -413,6 +426,88 @@ def resolve_input_path(
     return None
 
 
+def build_input_roles(
+    *,
+    source_paths: dict[str, Any],
+    context_path: str | None,
+    conditioning_mode: str | None,
+) -> list[dict[str, Any]]:
+    roles: list[dict[str, Any]] = []
+    first_frame_path = source_paths.get("first_frame_path")
+    context_video_path = context_path or source_paths.get("context_video_path")
+
+    if conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
+        if isinstance(first_frame_path, str) and first_frame_path:
+            roles.append({"role": "input_image", "path": first_frame_path})
+        elif isinstance(context_video_path, str) and context_video_path:
+            roles.append(
+                {
+                    "role": "input_image",
+                    "path": context_video_path,
+                    "note": "first frame extracted from context video at runtime",
+                }
+            )
+        return roles
+
+    if conditioning_mode == "context_aware":
+        if isinstance(first_frame_path, str) and first_frame_path:
+            roles.append({"role": "input_image", "path": first_frame_path})
+        elif isinstance(context_video_path, str) and context_video_path:
+            roles.append(
+                {
+                    "role": "input_image",
+                    "path": context_video_path,
+                    "note": "first frame extracted from context video at runtime",
+                }
+            )
+        if isinstance(context_video_path, str) and context_video_path:
+            roles.append({"role": "context_video", "path": context_video_path})
+        return roles
+
+    explicit_input = source_paths.get("input_path")
+    if isinstance(explicit_input, str) and explicit_input:
+        roles.append({"role": "input", "path": explicit_input})
+    elif isinstance(explicit_input, list):
+        for idx, item in enumerate(explicit_input, start=1):
+            if isinstance(item, str) and item:
+                roles.append({"role": f"input_{idx}", "path": item})
+    return roles
+
+
+def build_model_input_summary(
+    *,
+    source_paths: dict[str, Any],
+    context_path: str | None,
+    conditioning_mode: str | None,
+    used_context_frames: int,
+) -> dict[str, Any]:
+    source_conditions = build_input_roles(
+        source_paths=source_paths,
+        context_path=context_path,
+        conditioning_mode=conditioning_mode,
+    )
+    pipeline_kwargs: list[str] = []
+    if conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
+        pipeline_kwargs.append("input_image")
+    elif conditioning_mode == "context_aware":
+        pipeline_kwargs.extend(["input_image", "context_video"])
+
+    payload: dict[str, Any] = {
+        "conditioning_mode": conditioning_mode,
+        "pipeline_kwargs": pipeline_kwargs,
+        "source_conditions": source_conditions,
+    }
+    if conditioning_mode == "context_aware":
+        payload["used_context_frames"] = used_context_frames
+        payload["notes"] = [
+            "input_image is the first context frame passed separately",
+            "context_video is the resized context frame sequence",
+        ]
+    elif conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
+        payload["notes"] = ["input_image is the first frame condition passed to the model"]
+    return payload
+
+
 def build_paths_payload(
     *,
     source_paths: dict[str, Any],
@@ -428,6 +523,11 @@ def build_paths_payload(
             payload[key] = value
     if "context_video_path" not in payload and context_path:
         payload["context_video_path"] = context_path
+    input_roles = build_input_roles(
+        source_paths=source_paths,
+        context_path=context_path,
+        conditioning_mode=conditioning_mode,
+    )
     input_path = resolve_input_path(
         source_paths=source_paths,
         context_path=context_path,
@@ -435,6 +535,8 @@ def build_paths_payload(
     )
     if input_path is not None:
         payload["input_path"] = input_path
+    if input_roles:
+        payload["input_roles"] = input_roles
     payload["output_video_path"] = str(output_path)
     payload["output_json_path"] = str(sidecar_path)
     return payload
@@ -714,6 +816,12 @@ def build_case_metadata(
             output_path=output_path,
             sidecar_path=sidecar_path,
             conditioning_mode=args.conditioning_mode,
+        ),
+        "model_inputs": build_model_input_summary(
+            source_paths=source_paths,
+            context_path=row["context_path"],
+            conditioning_mode=args.conditioning_mode,
+            used_context_frames=used_context_frames,
         ),
     }
     if error is not None:

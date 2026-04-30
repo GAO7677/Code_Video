@@ -3,3 +3,10 @@
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0278__video_750
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0334__video_826
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0406__video_3
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0001__video_131
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0105__video_170
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0142__video_391
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0278__video_750
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0282__video_433
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0334__video_826
+/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0406__video_3

@@ -6,10 +6,12 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import imageio.v2 as imageio
+import imageio_ffmpeg
 
 
 DEFAULT_SUMMARY_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/by_raw_window")
@@ -28,35 +30,54 @@ def find_meta_path(sample_dir: Path) -> Path | None:
     return None
 
 
-def build_gif_from_video(src_video: Path, dst_gif: Path) -> str:
+def transcode_video(src_video: Path, dst_video: Path) -> str:
     if not src_video.exists():
         return ""
-    dst_gif.parent.mkdir(parents=True, exist_ok=True)
-    if dst_gif.exists():
-        return str(dst_gif)
-    reader = imageio.get_reader(str(src_video))
-    frames = []
-    try:
-        for frame in reader:
-            frames.append(frame)
-    finally:
-        reader.close()
-    if not frames:
+    dst_video.parent.mkdir(parents=True, exist_ok=True)
+    if dst_video.exists():
+        return str(dst_video)
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-i",
+        str(src_video),
+        "-an",
+        "-vcodec",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(dst_video),
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0 or not dst_video.exists():
         return ""
-    imageio.mimsave(str(dst_gif), frames, format="GIF", fps=8)
-    return str(dst_gif)
+    return str(dst_video)
 
 
-def build_gif_from_frames(frame_dir: Path, dst_gif: Path) -> str:
+def build_video_from_frames(frame_dir: Path, dst_video: Path) -> str:
     frames = sorted(frame_dir.glob("frame_*.png"))
     if not frames:
         return ""
-    dst_gif.parent.mkdir(parents=True, exist_ok=True)
-    if dst_gif.exists():
-        return str(dst_gif)
-    images = [imageio.imread(frame) for frame in frames]
-    imageio.mimsave(str(dst_gif), images, format="GIF", fps=8)
-    return str(dst_gif)
+    dst_video.parent.mkdir(parents=True, exist_ok=True)
+    if dst_video.exists():
+        return str(dst_video)
+    writer = imageio.get_writer(
+        str(dst_video),
+        fps=8,
+        codec="libx264",
+        format="FFMPEG",
+        pixelformat="yuv420p",
+        macro_block_size=1,
+    )
+    try:
+        for frame in frames:
+            writer.append_data(imageio.imread(frame))
+    finally:
+        writer.close()
+    return str(dst_video) if dst_video.exists() else ""
 
 
 def pick_media(sample_dir: Path, meta: dict[str, Any], output_dir: Path, asset_prefix: str) -> list[dict[str, str]]:
@@ -71,8 +92,9 @@ def pick_media(sample_dir: Path, meta: dict[str, Any], output_dir: Path, asset_p
     ]
     for label, video_path in window_keys:
         if video_path and Path(video_path).exists():
-            gif_path = output_dir / "assets" / asset_prefix / f"{label.lower()}.gif"
-            cards.append({"label": label, "kind": "gif", "path": build_gif_from_video(Path(video_path), gif_path)})
+            mp4_path = output_dir / "assets" / asset_prefix / f"{label.lower()}.mp4"
+            built = transcode_video(Path(video_path), mp4_path)
+            cards.append({"label": label, "kind": "video", "path": built or str(Path(video_path))})
     if cards:
         return cards
 
@@ -84,12 +106,14 @@ def pick_media(sample_dir: Path, meta: dict[str, Any], output_dir: Path, asset_p
     elif (sample_dir / "rgb.mp4").exists():
         raw_video = sample_dir / "rgb.mp4"
     if raw_video is not None and raw_video.exists():
-        cards.append({"label": "Raw Video", "kind": "video", "path": str(raw_video)})
+        mp4_path = output_dir / "assets" / asset_prefix / "raw.mp4"
+        built = transcode_video(raw_video, mp4_path)
+        cards.append({"label": "Raw Video", "kind": "video", "path": built or str(raw_video)})
         return cards
 
-    gif = build_gif_from_frames(sample_dir / "rgb", output_dir / "assets" / asset_prefix / "raw.gif")
-    if gif:
-        cards.append({"label": "Raw GIF", "kind": "gif", "path": gif})
+    raw_from_frames = build_video_from_frames(sample_dir / "rgb", output_dir / "assets" / asset_prefix / "raw.mp4")
+    if raw_from_frames:
+        cards.append({"label": "Raw Video", "kind": "video", "path": raw_from_frames})
     return cards
 
 

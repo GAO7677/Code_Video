@@ -122,6 +122,49 @@ def build_case_payload(
     error: str | None = None,
 ) -> dict[str, Any]:
     sidecar_path = output_path.with_suffix(".json")
+    source_paths = case.get("source_paths", {})
+    paths_payload = bel.build_paths_payload(
+        source_paths=source_paths,
+        context_path=case["context_path"],
+        output_path=output_path,
+        sidecar_path=sidecar_path,
+        conditioning_mode=args.mode,
+    )
+    if args.mode == "ti2v_firstframe":
+        first_frame_path = source_paths.get("first_frame_path")
+        if isinstance(first_frame_path, str) and first_frame_path:
+            paths_payload["input_roles"] = [
+                {"role": "vace_video_known_frame", "path": first_frame_path},
+            ]
+        else:
+            paths_payload["input_roles"] = [
+                {
+                    "role": "vace_video_known_frame",
+                    "path": case["context_path"],
+                    "note": "first frame extracted from context video at runtime",
+                },
+            ]
+    elif args.mode == "v2v_clipref":
+        paths_payload["input_roles"] = [
+            {"role": "vace_video_known_frames", "path": case["context_path"]},
+        ]
+
+    source_conditions = []
+    if args.mode == "ti2v_firstframe":
+        first_frame_path = source_paths.get("first_frame_path")
+        if isinstance(first_frame_path, str) and first_frame_path:
+            source_conditions.append({"role": "vace_video_known_frame", "path": first_frame_path})
+        else:
+            source_conditions.append(
+                {
+                    "role": "vace_video_known_frame",
+                    "path": case["context_path"],
+                    "note": "first frame extracted from context video at runtime",
+                }
+            )
+    else:
+        source_conditions.append({"role": "vace_video_known_frames", "path": case["context_path"]})
+
     payload = {
         "model_name": args.model_name,
         "benchmark_step": None,
@@ -152,13 +195,25 @@ def build_case_payload(
             "shard_id": 0,
             "num_shards": 1,
         },
-        "paths": bel.build_paths_payload(
-            source_paths=case.get("source_paths", {}),
-            context_path=case["context_path"],
-            output_path=output_path,
-            sidecar_path=sidecar_path,
-            conditioning_mode=args.mode,
-        ),
+        "paths": paths_payload,
+        "model_inputs": {
+            "conditioning_mode": args.mode,
+            "pipeline_kwargs": ["vace_video", "vace_video_mask"],
+            "source_conditions": source_conditions,
+            "synthetic_conditions": [
+                {
+                    "role": "vace_video_placeholder_frames",
+                    "count": max(args.num_frames - used_context_frames, 0),
+                    "note": "gray placeholder frames appended after known source frames",
+                },
+                {
+                    "role": "vace_video_mask",
+                    "known_frames": used_context_frames,
+                    "future_frames": max(args.num_frames - used_context_frames, 0),
+                    "note": "black mask for known frames, white mask for future frames",
+                },
+            ],
+        },
     }
     if error is not None:
         payload["error"] = error
