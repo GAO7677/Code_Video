@@ -59,6 +59,11 @@ PATH_FIELD_ORDER = [
     "first_frame_path",
     "meta_json_path",
 ]
+INPUT_PATH_LIST_KEYS = [
+    "input_frame_paths",
+    "context_frame_paths",
+    "frame_paths",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -372,20 +377,64 @@ def parse_step_tag(model_name: str) -> int | None:
     return int(match.group(1))
 
 
+def resolve_input_path(
+    *,
+    source_paths: dict[str, Any],
+    context_path: str | None,
+    conditioning_mode: str | None,
+) -> str | list[str] | None:
+    explicit_input = source_paths.get("input_path")
+    if isinstance(explicit_input, str) and explicit_input:
+        return explicit_input
+    if isinstance(explicit_input, list):
+        values = [item for item in explicit_input if isinstance(item, str) and item]
+        if values:
+            return values
+
+    for key in INPUT_PATH_LIST_KEYS:
+        value = source_paths.get(key)
+        if not isinstance(value, list):
+            continue
+        values = [item for item in value if isinstance(item, str) and item]
+        if values:
+            return values
+
+    if conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
+        first_frame_path = source_paths.get("first_frame_path")
+        if isinstance(first_frame_path, str) and first_frame_path:
+            return first_frame_path
+
+    if context_path:
+        return context_path
+
+    context_video_path = source_paths.get("context_video_path")
+    if isinstance(context_video_path, str) and context_video_path:
+        return context_video_path
+    return None
+
+
 def build_paths_payload(
     *,
-    source_paths: dict[str, str],
+    source_paths: dict[str, Any],
     context_path: str | None,
     output_path: Path,
     sidecar_path: Path,
-) -> dict[str, str]:
-    payload: dict[str, str] = {}
+    conditioning_mode: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
     for key in PATH_FIELD_ORDER:
         value = source_paths.get(key)
         if isinstance(value, str) and value:
             payload[key] = value
     if "context_video_path" not in payload and context_path:
         payload["context_video_path"] = context_path
+    input_path = resolve_input_path(
+        source_paths=source_paths,
+        context_path=context_path,
+        conditioning_mode=conditioning_mode,
+    )
+    if input_path is not None:
+        payload["input_path"] = input_path
     payload["output_video_path"] = str(output_path)
     payload["output_json_path"] = str(sidecar_path)
     return payload
@@ -446,15 +495,28 @@ def load_meta_paths(meta_list_path: Path) -> list[Path]:
     return meta_paths
 
 
-def normalize_meta_paths(paths: dict[str, Any], meta_path: Path) -> dict[str, str]:
-    normalized: dict[str, str] = {}
+def normalize_meta_paths(paths: dict[str, Any], meta_path: Path) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
     for key, value in paths.items():
-        if not isinstance(value, str) or not value.strip():
+        if isinstance(value, str):
+            if not value.strip():
+                continue
+            path = Path(value)
+            if not path.is_absolute():
+                path = (meta_path.parent / path).resolve()
+            normalized[key] = str(path)
             continue
-        path = Path(value)
-        if not path.is_absolute():
-            path = (meta_path.parent / path).resolve()
-        normalized[key] = str(path)
+        if isinstance(value, list):
+            resolved_values: list[str] = []
+            for item in value:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                path = Path(item)
+                if not path.is_absolute():
+                    path = (meta_path.parent / path).resolve()
+                resolved_values.append(str(path))
+            if resolved_values:
+                normalized[key] = resolved_values
     normalized["meta_json_path"] = str(meta_path)
     return normalized
 
@@ -651,6 +713,7 @@ def build_case_metadata(
             context_path=row["context_path"],
             output_path=output_path,
             sidecar_path=sidecar_path,
+            conditioning_mode=args.conditioning_mode,
         ),
     }
     if error is not None:

@@ -31,10 +31,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--benchmark_root", type=Path, default=None)
     parser.add_argument(
+        "--compare_runtime_root",
+        type=Path,
+        default=None,
+        help="Optional root for compare summaries/metric tables. Defaults to benchmark_root/runtime.",
+    )
+    parser.add_argument(
+        "--compare_portal_subdir",
+        type=Path,
+        default=COMPARE_PORTAL_SUBDIR,
+        help="Where to write the compare portal relative to benchmark_root.",
+    )
+    parser.add_argument(
         "--compare_model_names",
         type=str,
         default="base-ti2v-5b,step-008000",
-        help="Comma-separated model names under benchmark_root/generated_videos/.",
+        help=(
+            "Comma-separated model specs. Each item can be either a model alias "
+            "or alias=relative/path/from/benchmark_root."
+        ),
     )
     return parser.parse_args()
 
@@ -57,6 +72,24 @@ def web_path(path: str | None) -> str | None:
         return None
     normalized = path.replace(os.sep, "/").lstrip("/")
     return f"/{normalized}"
+
+
+def parse_model_specs(raw_value: str) -> list[tuple[str, Path]]:
+    specs: list[tuple[str, Path]] = []
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        if "=" in token:
+            model_name, rel_path = token.split("=", 1)
+            model_name = model_name.strip()
+            rel_path = rel_path.strip()
+            if not model_name or not rel_path:
+                raise ValueError(f"Invalid model spec: {token}")
+            specs.append((model_name, Path(rel_path)))
+        else:
+            specs.append((token, Path("generated_videos") / token))
+    return specs
 
 
 def ensure_symlink(target: Path, link_path: Path) -> str | None:
@@ -587,12 +620,7 @@ def render_validation_step_trends(validation_steps: list[dict[str, Any]]) -> str
 
 def render_reference_column(title: str, path: str | None, is_image: bool = False) -> str:
     if not path:
-        return (
-            "<div class='video-slot reference-slot'>"
-            f"<div class='slot-title'>{html.escape(title)}</div>"
-            "<div class='missing'>Missing</div>"
-            "</div>"
-        )
+        return ""
     resolved_path = web_path(path)
     if is_image:
         media_html = f"<img src='{html.escape(resolved_path)}' loading='lazy' alt='{html.escape(title)}' />"
@@ -989,18 +1017,17 @@ def render_compare_unified_metric_charts(compare_payloads: list[dict[str, Any]])
 
 def gather_compare_samples(
     benchmark_root: Path,
+    runtime_root: Path,
     portal_dir: Path,
-    model_names: list[str],
+    model_specs: list[tuple[str, Path]],
 ) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]]]:
-    generated_root = benchmark_root / "generated_videos"
-    runtime_root = benchmark_root / "runtime"
     asset_root = portal_dir / "assets" / "samples"
 
     per_sample: dict[str, dict[str, Any]] = {}
     model_summaries: list[dict[str, Any]] = []
 
-    for model_name in model_names:
-        model_dir = generated_root / model_name
+    for model_name, rel_model_dir in model_specs:
+        model_dir = benchmark_root / rel_model_dir
         if not model_dir.is_dir():
             continue
 
@@ -1015,6 +1042,14 @@ def gather_compare_samples(
 
         for json_path in sorted(model_dir.glob("*.json")):
             payload = read_json(json_path)
+            local_video_path = model_dir / f"{json_path.stem}.mp4"
+            payload_video_path = None
+            raw_output_video_path = payload.get("paths", {}).get("output_video_path")
+            if raw_output_video_path:
+                candidate = Path(raw_output_video_path)
+                if candidate.exists() and candidate.is_relative_to(benchmark_root):
+                    payload_video_path = candidate
+
             sample_key = safe_sample_key(
                 payload.get("dataset", "unknown"),
                 payload.get("sample_id", json_path.stem),
@@ -1039,16 +1074,11 @@ def gather_compare_samples(
                 "status": payload.get("status"),
                 "output_video_path": relative_to_root(
                     benchmark_root,
-                    Path(payload["paths"]["output_video_path"]),
+                    local_video_path if local_video_path.is_file() else payload_video_path,
                 )
-                if payload.get("paths", {}).get("output_video_path")
+                if local_video_path.is_file() or payload_video_path is not None
                 else None,
-                "output_json_path": relative_to_root(
-                    benchmark_root,
-                    Path(payload["paths"]["output_json_path"]),
-                )
-                if payload.get("paths", {}).get("output_json_path")
-                else None,
+                "output_json_path": relative_to_root(benchmark_root, json_path),
             }
 
     sample_cards: list[dict[str, Any]] = []
@@ -1089,11 +1119,10 @@ def gather_compare_samples(
             }
         )
 
-    return model_names, sample_cards, model_summaries
+    return [model_name for model_name, _ in model_specs], sample_cards, model_summaries
 
 
-def load_compare_metrics_tables(benchmark_root: Path) -> list[dict[str, Any]]:
-    runtime_root = benchmark_root / "runtime"
+def load_compare_metrics_tables(runtime_root: Path) -> list[dict[str, Any]]:
     compare_dirs = sorted(path for path in runtime_root.glob("comparison_*") if path.is_dir())
     payloads: list[dict[str, Any]] = []
     for compare_dir in compare_dirs:
@@ -1205,21 +1234,21 @@ def render_compare_sample_cards(model_names: list[str], samples: list[dict[str, 
             render_reference_column("Full Video", assets.get("full_video_path")),
             render_reference_column("First Frame", assets.get("first_frame_path"), is_image=True),
         ]
+        refs = [item for item in refs if item]
 
         generated_columns = []
         for model_name in model_names:
             model_payload = sample.get("models", {}).get(model_name, {})
             video_path = model_payload.get("output_video_path")
             status = model_payload.get("status", "missing")
-            if video_path:
-                resolved_path = web_path(video_path)
-                video_html = (
-                    f"<video controls preload='none' muted playsinline>"
-                    f"<source src='{html.escape(resolved_path)}' type='video/mp4'>"
-                    "</video>"
-                )
-            else:
-                video_html = "<div class='missing'>Missing</div>"
+            if not video_path:
+                continue
+            resolved_path = web_path(video_path)
+            video_html = (
+                f"<video controls preload='none' muted playsinline>"
+                f"<source src='{html.escape(resolved_path)}' type='video/mp4'>"
+                "</video>"
+            )
             generated_columns.append(
                 "<div class='video-slot generated-slot'>"
                 f"<div class='slot-title'>{html.escape(model_name)}</div>"
@@ -1227,6 +1256,8 @@ def render_compare_sample_cards(model_names: list[str], samples: list[dict[str, 
                 f"{video_html}"
                 "</div>"
             )
+        if not generated_columns:
+            continue
 
         caption = html.escape(sample.get("caption", ""))
         scenario = sample.get("scenario")
@@ -1277,24 +1308,26 @@ def render_sample_cards(steps: list[str], samples: list[dict[str, Any]]) -> str:
             render_reference_column("Full Video", assets.get("full_video_path")),
             render_reference_column("First Frame", assets.get("first_frame_path"), is_image=True),
         ]
+        refs = [item for item in refs if item]
         generated_columns = []
         for step in steps:
             video_path = sample.get("benchmark_steps", {}).get(step)
-            if video_path:
-                resolved_path = web_path(video_path)
-                video_html = (
-                    f"<video controls preload='none' muted playsinline>"
-                    f"<source src='{html.escape(resolved_path)}' type='video/mp4'>"
-                    "</video>"
-                )
-            else:
-                video_html = "<div class='missing'>Missing</div>"
+            if not video_path:
+                continue
+            resolved_path = web_path(video_path)
+            video_html = (
+                f"<video controls preload='none' muted playsinline>"
+                f"<source src='{html.escape(resolved_path)}' type='video/mp4'>"
+                "</video>"
+            )
             generated_columns.append(
                 "<div class='video-slot generated-slot'>"
                 f"<div class='slot-title'>{html.escape(step)}</div>"
                 f"{video_html}"
                 "</div>"
             )
+        if not generated_columns:
+            continue
 
         caption = html.escape(sample.get("caption", ""))
         scenario = sample.get("scenario")
@@ -2159,16 +2192,22 @@ def main() -> None:
     args = parse_args()
     if args.benchmark_root is not None:
         benchmark_root = args.benchmark_root.resolve()
-        portal_dir = benchmark_root / COMPARE_PORTAL_SUBDIR
+        runtime_root = (
+            args.compare_runtime_root.resolve()
+            if args.compare_runtime_root is not None
+            else benchmark_root / "runtime"
+        )
+        portal_dir = benchmark_root / args.compare_portal_subdir
         portal_dir.mkdir(parents=True, exist_ok=True)
 
-        model_names = parse_model_names(args.compare_model_names)
+        model_specs = parse_model_specs(args.compare_model_names)
         model_names, samples, model_summaries = gather_compare_samples(
             benchmark_root,
+            runtime_root,
             portal_dir,
-            model_names,
+            model_specs,
         )
-        compare_payloads = load_compare_metrics_tables(benchmark_root)
+        compare_payloads = load_compare_metrics_tables(runtime_root)
         html_text = build_compare_html(
             model_names,
             samples,

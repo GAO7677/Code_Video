@@ -63,25 +63,6 @@ def build_pipeline(vace_root: Path, device: str) -> WanVideoPipeline:
     )
 
 
-def build_paths_payload(
-    *,
-    source_paths: dict[str, str],
-    context_path: str,
-    output_path: Path,
-    sidecar_path: Path,
-) -> dict[str, str]:
-    payload: dict[str, str] = {}
-    for key in bel.PATH_FIELD_ORDER:
-        value = source_paths.get(key)
-        if isinstance(value, str) and value:
-            payload[key] = value
-    if "context_video_path" not in payload:
-        payload["context_video_path"] = context_path
-    payload["output_video_path"] = str(output_path)
-    payload["output_json_path"] = str(sidecar_path)
-    return payload
-
-
 def load_first_frame(case: dict[str, Any], *, height: int, width: int) -> Image.Image:
     source_paths = case.get("source_paths", {})
     raw_first = source_paths.get("first_frame_path")
@@ -143,10 +124,13 @@ def build_case_payload(
     sidecar_path = output_path.with_suffix(".json")
     payload = {
         "model_name": args.model_name,
+        "benchmark_step": None,
         "dataset": case["dataset"],
         "sample_id": case["sample_id"],
+        "scenario": case.get("scenario"),
         "seed": args.seed,
         "caption": case["caption"],
+        "weights_path": str(args.vace_root),
         "status": status,
         "generation_params": {
             "height": args.height,
@@ -168,11 +152,12 @@ def build_case_payload(
             "shard_id": 0,
             "num_shards": 1,
         },
-        "paths": build_paths_payload(
+        "paths": bel.build_paths_payload(
             source_paths=case.get("source_paths", {}),
             context_path=case["context_path"],
             output_path=output_path,
             sidecar_path=sidecar_path,
+            conditioning_mode=args.mode,
         ),
     }
     if error is not None:

@@ -16,7 +16,14 @@ import run_validation_vbench as rv
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare stage0 benchmark model metrics.")
     parser.add_argument("--benchmark_root", type=Path, required=True)
-    parser.add_argument("--model_names", required=True, help="Comma-separated model names under generated_videos/.")
+    parser.add_argument(
+        "--model_names",
+        required=True,
+        help=(
+            "Comma-separated model specs. Each item can be either a model alias "
+            "or alias=relative/path/from/benchmark_root."
+        ),
+    )
     parser.add_argument("--reference_model", default="base-ti2v-5b")
     parser.add_argument("--height", type=int, default=384)
     parser.add_argument("--width", type=int, default=672)
@@ -52,22 +59,40 @@ def flatten_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def parse_model_specs(raw_value: str) -> list[tuple[str, Path]]:
+    specs: list[tuple[str, Path]] = []
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        if "=" in token:
+            model_name, rel_path = token.split("=", 1)
+            model_name = model_name.strip()
+            rel_path = rel_path.strip()
+            if not model_name or not rel_path:
+                raise ValueError(f"Invalid model spec: {token}")
+            specs.append((model_name, Path(rel_path)))
+        else:
+            specs.append((token, Path("generated_videos") / token))
+    return specs
+
+
 def main() -> None:
     args = parse_args()
     args.benchmark_root = args.benchmark_root.expanduser().resolve()
     args.output_root = args.output_root.expanduser().resolve()
-    generated_root = args.benchmark_root / "generated_videos"
     runtime_root = args.benchmark_root / "runtime"
-    model_names = [item.strip() for item in args.model_names.split(",") if item.strip()]
-    if not model_names:
+    model_specs = parse_model_specs(args.model_names)
+    model_names = [model_name for model_name, _ in model_specs]
+    if not model_specs:
         raise ValueError("model_names must not be empty")
 
     metric_suite = rv.ValidationMetricSuite()
     payloads: list[dict[str, Any]] = []
-    for model_name in model_names:
+    for model_name, rel_model_dir in model_specs:
         payload = rv.build_run_payload(
             model_name=model_name,
-            generated_dir=generated_root / model_name,
+            generated_dir=args.benchmark_root / rel_model_dir,
             runtime_root=runtime_root / model_name,
             height=args.height,
             width=args.width,
