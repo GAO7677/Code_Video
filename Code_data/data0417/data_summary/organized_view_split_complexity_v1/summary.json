@@ -105,14 +105,9 @@
       "single_1_unknown": 2
     },
     "raw/train": {
-      "few_3_4_env_only": 4,
-      "few_3_4_mixed": 918,
-      "few_3_4_obj_obj_only": 2,
-      "many_5plus_env_only": 104,
-      "many_5plus_mixed": 2789,
-      "pair_2_env_only": 17,
-      "pair_2_mixed": 1042,
-      "pair_2_obj_obj_only": 13,
+      "few_3_4_collision": 924,
+      "many_5plus_collision": 2893,
+      "pair_2_collision": 1072,
       "pair_2_unknown": 33,
       "single_1_env_only": 546,
       "single_1_none": 560,
@@ -139,7 +134,7 @@
     },
     "window/train": {
       "few_3_4_none": 505,
-      "many_5plus_env_only": 3,
+      "many_5plus_collision": 3,
       "pair_2_none": 760,
       "single_1_none": 2166
     }

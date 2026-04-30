@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
-"""Build a compact GIF portal for organized raw/window path lists."""
+"""Build a compact MP4 portal for organized raw/window path lists."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import socket
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-import imageio.v2 as imageio
-from PIL import Image, ImageOps
+try:
+    import imageio.v2 as imageio
+    import numpy as np
+    from PIL import Image
+except Exception:
+    imageio = None
+    np = None
+    Image = None
 
 
 DEFAULT_LIST_ROOT = Path(
     "/home/gaoya/Code_Video/Code_data/data0417/data_summary/organized_view_split_complexity_v1"
 )
 DEFAULT_OUTPUT_ROOT = Path(
-    "/home/gaoya/Code_Video/Code_data/data0417/data_summary/portals/view_split_complexity_preview_v1"
+    "/home/gaoya/Code_Video/Code_data/data0417/data_summary_visualizations/portals/view_split_complexity_preview_v1"
 )
 
 
@@ -28,7 +36,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>View / Split / Complexity Preview</title>
+  <title>Organized Category Preview</title>
   <style>
     :root {
       --bg:#f5efe6;
@@ -52,7 +60,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
     }
     main {
-      width:min(1800px, calc(100vw - 18px));
+      width:min(1880px, calc(100vw - 18px));
       margin:0 auto;
       padding:10px 0 32px;
     }
@@ -134,7 +142,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
     .sample-grid {
       display:grid;
-      grid-template-columns:repeat(auto-fit, minmax(360px, 1fr));
+      grid-template-columns:repeat(auto-fit, minmax(400px, 1fr));
       gap:10px;
       margin-top:12px;
     }
@@ -169,7 +177,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       padding:8px;
       background:rgba(248,243,236,.8);
     }
-    .preview img {
+    .preview img, .preview video {
       width:100%;
       display:block;
       border-radius:10px;
@@ -204,16 +212,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <main>
     <section class="hero">
-      <h1>Raw / Window Preview Portal</h1>
-      <div class="sub">按 view / split / complexity 抽样展示。raw 样本展示完整 RGB 片段；window 样本展示 context / future GT / full 三段 GIF。</div>
+      <h1>Organized Category Preview</h1>
+      <div class="sub">按 `organized_view_split_complexity_v1` 的叶子子类别展示。每个子类别最多抽样 10 个 case，展示文本和 `full video`；若存在 `ctx video` 也一并展示。</div>
       <div class="stats">
         <span class="pill">sections: __SECTION_COUNT__</span>
         <span class="pill">samples: __SAMPLE_COUNT__</span>
-        <span class="pill">size: __FRAME_WIDTH__x__FRAME_HEIGHT__</span>
-        <span class="pill">fps: __FPS__</span>
+        <span class="pill">layout: mp4-only</span>
       </div>
       <div class="toolbar">
-        <input id="searchBox" type="search" placeholder="搜索 raw / window / train / test / case">
+        <input id="searchBox" type="search" placeholder="搜索 raw / window / train / test / benchmark / case">
         <select id="sectionFilter">
           <option value="">全部 section</option>
           __SECTION_OPTIONS__
@@ -231,12 +238,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     const esc = (text) => String(text ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     root.innerHTML = records.map((section) => {
       const cards = section.samples.map((item) => {
-        const previews = item.previews.map((preview) => `
-          <div class="preview">
-            <img loading="lazy" src="${encodeURI(preview.gif_rel)}" alt="${esc(preview.label)}">
-            <div class="caption">${esc(preview.label)}</div>
-          </div>
-        `).join('');
+        const previews = item.previews.map((preview) => {
+          const media = `<video controls preload="metadata" src="${encodeURI(preview.media_rel)}"></video>`;
+          return `
+            <div class="preview">
+              ${media}
+              <div class="caption">${esc(preview.label)}</div>
+            </div>
+          `;
+        }).join('');
         const gridClass = item.previews.length === 1 ? 'preview-grid raw-only' : 'preview-grid';
         return `
           <article class="sample-card" data-section="${esc(section.slug)}" data-search="${esc(item.search_text)}">
@@ -261,9 +271,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="section-head">
             <div>
               <h2>${esc(section.title)}</h2>
-              <div class="meta">showing ${section.samples.length} sample(s)</div>
+              <div class="meta">showing ${section.samples.length} / ${section.total_count} sample(s)</div>
             </div>
-            <div class="badges"><span class="badge">${section.samples.length} samples</span></div>
+            <div class="badges"><span class="badge">${section.samples.length} / ${section.total_count}</span></div>
           </div>
           <div class="sample-grid">${cards}</div>
         </article>
@@ -297,7 +307,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list_root", type=Path, default=DEFAULT_LIST_ROOT)
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
-    parser.add_argument("--max_per_section", type=int, default=1)
+    parser.add_argument("--max_per_section", type=int, default=10)
     parser.add_argument("--fps", type=float, default=6.0)
     parser.add_argument("--width", type=int, default=192)
     parser.add_argument("--height", type=int, default=192)
@@ -392,118 +402,106 @@ def detect_dataset(sample_dir: Path) -> str:
     return "unknown"
 
 
-def video_frames_from_mp4(video_path: Path, frame_size: tuple[int, int], fps: float) -> list[Image.Image]:
-    frames: list[Image.Image] = []
-    reader = imageio.get_reader(str(video_path))
-    meta = reader.get_meta_data()
-    src_fps = float(meta.get("fps", 12.0) or 12.0)
-    stride = max(1, int(round(src_fps / max(fps, 0.1))))
-    try:
-        for idx, frame in enumerate(reader):
-            if idx % stride != 0:
-                continue
-            image = Image.fromarray(frame).convert("RGB")
-            thumb = ImageOps.contain(image, frame_size)
-            canvas = Image.new("RGB", frame_size, (245, 239, 230))
-            canvas.paste(thumb, ((frame_size[0] - thumb.width) // 2, (frame_size[1] - thumb.height) // 2))
-            frames.append(canvas)
-    finally:
-        reader.close()
-    return frames
-
-
-def video_frames_from_png_dir(rgb_dir: Path, frame_size: tuple[int, int]) -> list[Image.Image]:
-    frames: list[Image.Image] = []
-    for frame_path in sorted(rgb_dir.glob("frame_*.png")):
-        image = Image.open(frame_path).convert("RGB")
-        thumb = ImageOps.contain(image, frame_size)
-        canvas = Image.new("RGB", frame_size, (245, 239, 230))
-        canvas.paste(thumb, ((frame_size[0] - thumb.width) // 2, (frame_size[1] - thumb.height) // 2))
-        frames.append(canvas)
-    return frames
-
-
-def write_gif(gif_path: Path, frames: list[Image.Image], fps: float) -> bool:
-    if not frames:
+def ensure_local_video(link_path: Path, source_path: Path) -> bool:
+    if not source_path.exists():
         return False
-    ensure_dir(gif_path.parent)
-    duration_ms = max(1, int(round(1000.0 / max(float(fps), 0.1))))
-    first, *rest = frames
-    first.save(
-        gif_path,
-        save_all=True,
-        append_images=rest,
-        duration=duration_ms,
-        loop=0,
-        optimize=False,
-        disposal=2,
-    )
-    for frame in frames:
-        frame.close()
-    return True
+    ensure_dir(link_path.parent)
+    if link_path.exists() or link_path.is_symlink():
+        if link_path.is_symlink() and os.path.realpath(link_path) == str(source_path.resolve()):
+            return True
+        if link_path.exists():
+            link_path.unlink()
+    try:
+        os.symlink(source_path, link_path)
+        return True
+    except OSError:
+        shutil.copy2(source_path, link_path)
+        return True
 
 
-def build_raw_preview(sample_dir: Path, output_dir: Path, frame_size: tuple[int, int], fps: float, overwrite: bool) -> list[dict[str, str]]:
-    gif_path = output_dir / "raw_full.gif"
-    if gif_path.exists() and not overwrite:
-        return [{"label": "raw RGB", "gif_rel": gif_path.name}]
+def build_mp4_from_rgb_frames(video_path: Path, rgb_dir: Path, fps: float = 8.0) -> bool:
+    if imageio is None or Image is None or np is None or not rgb_dir.exists():
+        return False
+    frame_paths = sorted(rgb_dir.glob("frame_*.png"))
+    if not frame_paths:
+        return False
+    ensure_dir(video_path.parent)
+    writer = imageio.get_writer(str(video_path), fps=float(fps), codec="libx264", quality=7)
+    try:
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as img:
+                writer.append_data(np.asarray(img.convert("RGB")))
+    finally:
+        writer.close()
+    return video_path.exists()
 
-    mp4_path = sample_dir / "videos" / "rgb.mp4"
-    if mp4_path.exists():
-        frames = video_frames_from_mp4(mp4_path, frame_size=frame_size, fps=fps)
-    else:
-        frames = video_frames_from_png_dir(sample_dir / "rgb", frame_size=frame_size)
-    if write_gif(gif_path, frames, fps=fps):
-        return [{"label": "raw RGB", "gif_rel": gif_path.name}]
-    return []
+
+def build_raw_preview(sample_dir: Path, output_dir: Path) -> list[dict[str, str]]:
+    previews: list[dict[str, str]] = []
+    context_video_path = sample_dir / "context_video.mp4"
+    if ensure_local_video(output_dir / "context_video.mp4", context_video_path):
+        previews.append({"label": "ctx video", "kind": "video", "media_rel": "context_video.mp4"})
+    full_video_path = sample_dir / "full_video.mp4"
+    if ensure_local_video(output_dir / "full_video.mp4", full_video_path):
+        previews.append({"label": "full video", "kind": "video", "media_rel": "full_video.mp4"})
+        return previews
+    video_path = sample_dir / "videos" / "rgb.mp4"
+    local_video_path = output_dir / "raw_full.mp4"
+    if ensure_local_video(local_video_path, video_path):
+        previews.append({"label": "full video", "kind": "video", "media_rel": local_video_path.name})
+        return previews
+    rgb_dir = sample_dir / "rgb"
+    if build_mp4_from_rgb_frames(local_video_path, rgb_dir):
+        previews.append({"label": "full video", "kind": "video", "media_rel": local_video_path.name})
+    return previews
 
 
-def build_window_previews(sample_dir: Path, output_dir: Path, frame_size: tuple[int, int], fps: float, overwrite: bool) -> list[dict[str, str]]:
+def build_window_previews(sample_dir: Path, output_dir: Path) -> list[dict[str, str]]:
     previews: list[dict[str, str]] = []
     sources = [
-        ("context_video.mp4", "context.gif", "context"),
-        ("future_gt_video.mp4", "future.gif", "future GT"),
-        ("full_video.mp4", "full.gif", "full"),
+        ("context_video.mp4", "context_video.mp4", "ctx video"),
+        ("full_video.mp4", "full_video.mp4", "full video"),
     ]
-    for video_name, gif_name, label in sources:
-        gif_path = output_dir / gif_name
-        if gif_path.exists() and not overwrite:
-            previews.append({"label": label, "gif_rel": gif_path.name})
-            continue
-        video_path = sample_dir / video_name
-        if not video_path.exists():
-            continue
-        frames = video_frames_from_mp4(video_path, frame_size=frame_size, fps=fps)
-        if write_gif(gif_path, frames, fps=fps):
-            previews.append({"label": label, "gif_rel": gif_path.name})
+    for src_name, dst_name, label in sources:
+        src_path = sample_dir / src_name
+        dst_path = output_dir / dst_name
+        if ensure_local_video(dst_path, src_path):
+            previews.append({"label": label, "kind": "video", "media_rel": dst_path.name})
     return previews
 
 
 def collect_sections(list_root: Path, max_per_section: int) -> list[dict[str, Any]]:
     sections: list[dict[str, Any]] = []
-    for view in ("raw", "window"):
-        for split in ("train", "test"):
-            split_dir = list_root / view / split
-            if not split_dir.exists():
+    search_roots: list[tuple[str, str, Path]] = [
+        ("raw", "train", list_root / "raw" / "train"),
+        ("raw", "test", list_root / "raw" / "test"),
+        ("window", "train", list_root / "window" / "train"),
+        ("window", "test", list_root / "window" / "test"),
+        ("window", "benchmark/fixed24", list_root / "window" / "benchmark" / "fixed24"),
+        ("window", "benchmark/validation100", list_root / "window" / "benchmark" / "validation100"),
+    ]
+    for view, split, split_dir in search_roots:
+        if not split_dir.exists():
+            continue
+        for txt_path in sorted(split_dir.glob("*.txt")):
+            if txt_path.stem == "_all_samples":
                 continue
-            for txt_path in sorted(split_dir.glob("*.txt")):
-                if txt_path.stem == "_all_samples":
-                    continue
-                sample_dirs = [
-                    Path(line.strip())
-                    for line in txt_path.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ]
-                if not sample_dirs:
-                    continue
-                sections.append(
-                    {
-                        "view": view,
-                        "split": split,
-                        "complexity": txt_path.stem,
-                        "sample_dirs": sample_dirs[: max(1, int(max_per_section))],
-                    }
-                )
+            sample_dirs = [
+                Path(line.strip())
+                for line in txt_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if not sample_dirs:
+                continue
+            sections.append(
+                {
+                    "view": view,
+                    "split": split,
+                    "complexity": txt_path.stem,
+                    "sample_dirs": sample_dirs[: max(1, int(max_per_section))],
+                    "total_count": len(sample_dirs),
+                }
+            )
     return sections
 
 
@@ -527,21 +525,9 @@ def build_records(
             asset_dir = output_root / "assets" / slug / sample_slug
             ensure_dir(asset_dir)
             if section["view"] == "raw":
-                previews = build_raw_preview(
-                    sample_dir=sample_dir,
-                    output_dir=asset_dir,
-                    frame_size=frame_size,
-                    fps=fps,
-                    overwrite=overwrite,
-                )
+                previews = build_raw_preview(sample_dir=sample_dir, output_dir=asset_dir)
             else:
-                previews = build_window_previews(
-                    sample_dir=sample_dir,
-                    output_dir=asset_dir,
-                    frame_size=frame_size,
-                    fps=fps,
-                    overwrite=overwrite,
-                )
+                previews = build_window_previews(sample_dir=sample_dir, output_dir=asset_dir)
             if not previews:
                 continue
             samples.append(
@@ -553,7 +539,13 @@ def build_records(
                     "split": section["split"],
                     "complexity": section["complexity"],
                     "caption": load_caption(sample_dir),
-                    "previews": previews,
+                    "previews": [
+                        {
+                            **preview,
+                            "media_rel": str((asset_dir / preview["media_rel"]).relative_to(output_root).as_posix()),
+                        }
+                        for preview in previews
+                    ],
                     "search_text": " ".join(
                         [
                             sample_dir.name,
@@ -572,6 +564,7 @@ def build_records(
                 {
                     "title": title,
                     "slug": slug,
+                    "total_count": int(section.get("total_count", len(samples))),
                     "search_text": f"{title} {' '.join(sample['search_text'] for sample in samples)}",
                     "samples": samples,
                 }
@@ -586,9 +579,6 @@ def write_html(output_root: Path, records: list[dict[str, Any]], fps: float, fra
     html_text = (
         HTML_TEMPLATE.replace("__SECTION_COUNT__", str(len(records)))
         .replace("__SAMPLE_COUNT__", str(sum(len(section["samples"]) for section in records)))
-        .replace("__FRAME_WIDTH__", str(frame_size[0]))
-        .replace("__FRAME_HEIGHT__", str(frame_size[1]))
-        .replace("__FPS__", str(fps))
         .replace("__SECTION_OPTIONS__", section_options)
         .replace("__RECORDS_JSON__", json.dumps(records, ensure_ascii=False))
     )

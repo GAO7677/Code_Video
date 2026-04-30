@@ -67,6 +67,14 @@ def write_path_list(path_stem: Path, records: list[dict[str, Any]]) -> None:
     write_json(path_stem.with_suffix(".json"), paths)
 
 
+def normalize_complexity_bucket(value: str) -> str:
+    text = str(value or "unknown")
+    for prefix in ("pair_2", "few_3_4", "many_5plus"):
+        if text in {f"{prefix}__env_only", f"{prefix}__mixed", f"{prefix}__obj_obj_only"}:
+            return f"{prefix}__collision"
+    return text
+
+
 def split_parts(split_group: str) -> tuple[str, ...]:
     text = str(split_group)
     if text == "train":
@@ -87,7 +95,7 @@ def write_lists(records: list[dict[str, Any]], output_root: Path) -> dict[str, A
     for record in records:
         view = slugify(str(record.get("view_group", "unknown")))
         parts = split_parts(str(record.get("split_group", "unknown")))
-        complexity = slugify(str(record.get("complexity_bucket", "unknown")))
+        complexity = slugify(normalize_complexity_bucket(str(record.get("complexity_bucket", "unknown"))))
         grouped[(view, *parts, complexity)].append(record)
         node_counts["/".join((view, *parts))][complexity] += 1
 
