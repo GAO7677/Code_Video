@@ -205,8 +205,9 @@ def compute_future_gt_metrics(
         if not isinstance(paths, dict):
             continue
         output_video_path = paths.get("output_video_path") or paths.get("output_path")
-        gt_video_path = paths.get("future_gt_video_path")
-        if not output_video_path or not gt_video_path:
+        full_video_path = paths.get("full_video_path")
+        future_gt_video_path = paths.get("future_gt_video_path")
+        if not output_video_path or (not full_video_path and not future_gt_video_path):
             continue
 
         resize_mode = resolve_resize_mode(str(entry.get("dataset", "")))
@@ -217,8 +218,12 @@ def compute_future_gt_metrics(
             )
         )
         generated_frames = load_video_frames(str(output_video_path))
-        gt_frames = load_video_frames(str(gt_video_path))
         generated_eval = generated_frames[used_context_frames:]
+        if full_video_path:
+            gt_source_frames = load_video_frames(str(full_video_path))
+            gt_frames = gt_source_frames[used_context_frames:]
+        else:
+            gt_frames = load_video_frames(str(future_gt_video_path))
         pair_count = min(len(generated_eval), len(gt_frames))
         if pair_count <= 0:
             continue

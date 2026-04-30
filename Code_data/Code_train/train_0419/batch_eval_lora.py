@@ -80,6 +80,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--full_video_path", type=Path, default=None)
     parser.add_argument("--first_frame_path", type=Path, default=None)
     parser.add_argument("--context_resize_mode", choices=["auto", "crop", "pad"], default="auto")
+    parser.add_argument(
+        "--conditioning_mode",
+        choices=["context_aware", "input_image_only"],
+        default="context_aware",
+    )
 
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--height", type=int, default=720)
@@ -335,6 +340,26 @@ def load_context_frames(
     return frames
 
 
+def load_input_image(
+    *,
+    first_frame_path: Path | None,
+    context_path: Path,
+    height: int,
+    width: int,
+    resize_mode: str,
+) -> Image.Image:
+    frames = load_context_frames(
+        context_path=context_path,
+        context_frames=1,
+        height=height,
+        width=width,
+        resize_mode=resize_mode,
+    )
+    if not frames:
+        raise ValueError(f"failed to load first frame from context source: {context_path}")
+    return frames[0]
+
+
 def sanitize_filename(text: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", text).strip("._")
     return safe or "sample"
@@ -516,6 +541,7 @@ def collect_cases_from_args(args: argparse.Namespace) -> list[dict[str, Any]]:
 def generate_one_video(
     pipe: ContextAwareWanVideoPipeline,
     context_path: Path,
+    first_frame_path: Path | None,
     prompt: str,
     negative_prompt: str,
     seed: int,
@@ -528,10 +554,20 @@ def generate_one_video(
     context_frames: int,
     output_num_frames: int,
     context_resize_mode: str = "crop",
+    conditioning_mode: str = "context_aware",
 ):
     seed_everything(seed)
     context = None
-    if context_frames > 0:
+    input_image = None
+    if conditioning_mode == "input_image_only":
+        input_image = load_input_image(
+            first_frame_path=first_frame_path,
+            context_path=context_path,
+            height=height,
+            width=width,
+            resize_mode=context_resize_mode,
+        )
+    elif context_frames > 0:
         context = load_context_frames(
             context_path=context_path,
             context_frames=context_frames,
@@ -551,6 +587,8 @@ def generate_one_video(
             "num_inference_steps": num_inference_steps,
             "tiled": True,
         }
+        if input_image is not None:
+            generation_kwargs["input_image"] = input_image
         if context is not None:
             generation_kwargs["input_image"] = context[0]
             generation_kwargs["context_video"] = context
@@ -560,6 +598,8 @@ def generate_one_video(
         raise ValueError(
             f"Generated only {len(video)} frames for {context_path.name}, need at least {keep}."
         )
+    if conditioning_mode == "input_image_only":
+        return video[:keep], 1
     return video[:keep], 0 if context is None else len(context)
 
 
@@ -598,6 +638,7 @@ def build_case_metadata(
             "context_frames": args.context_frames,
             "used_context_frames": used_context_frames,
             "negative_prompt": args.negative_prompt,
+            "conditioning_mode": args.conditioning_mode,
             "task": "tv2v_meta_small_benchmark",
         },
         "runtime": {
@@ -675,7 +716,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                 index=index,
                 seed=args.seed,
                 output_path=output_path,
-                used_context_frames=args.context_frames,
+                used_context_frames=1 if args.conditioning_mode == "input_image_only" else args.context_frames,
                 status="skipped_existing",
             )
             write_json(sidecar_path, case_payload)
@@ -687,9 +728,14 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
             f"-> {row['output_name']} | seed={args.seed}"
         )
         try:
+            first_frame_path = None
+            raw_first_frame_path = row.get("source_paths", {}).get("first_frame_path")
+            if isinstance(raw_first_frame_path, str) and raw_first_frame_path:
+                first_frame_path = Path(raw_first_frame_path)
             video, used_context_frames = generate_one_video(
                 pipe=pipe,
                 context_path=context_path,
+                first_frame_path=first_frame_path,
                 prompt=row["caption"],
                 negative_prompt=args.negative_prompt,
                 seed=args.seed,
@@ -702,6 +748,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                 context_frames=args.context_frames,
                 output_num_frames=args.requested_output_frames,
                 context_resize_mode=row.get("context_resize_mode", "crop"),
+                conditioning_mode=args.conditioning_mode,
             )
             save_video(video, str(output_path), fps=args.fps, quality=args.quality)
             case_payload = build_case_metadata(
