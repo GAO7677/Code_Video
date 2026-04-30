@@ -65,6 +65,28 @@ BENCHMARK_V1_SUBSETS = [
     "ood_composition",
 ]
 INVALID_SAMPLE_MARKERS = {"invalid_case900_901", "invalid_by_qa", "_qa_invalid"}
+SAMPLE_META_FILENAMES = ("meta.json", "metadata.json")
+
+
+def find_sample_meta_path(sample_dir: Path) -> Optional[Path]:
+    for filename in SAMPLE_META_FILENAMES:
+        candidate = sample_dir / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def iter_sample_meta_paths(root: Path) -> Iterable[Path]:
+    if not root.exists():
+        return []
+    seen: set[Path] = set()
+    for filename in SAMPLE_META_FILENAMES:
+        for path in root.rglob(filename):
+            sample_dir = path.parent
+            if sample_dir in seen:
+                continue
+            seen.add(sample_dir)
+            yield path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -407,7 +429,7 @@ def sample_speed_config(args: argparse.Namespace, rng: random.Random) -> Dict[st
 def iter_sample_dirs(train_root: Path) -> Iterable[Path]:
     if not train_root.exists():
         return []
-    return sorted(path.parent for path in train_root.rglob("metadata.json"))
+    return sorted(path.parent for path in iter_sample_meta_paths(train_root))
 
 
 def is_invalid_sample_path(path: Path) -> bool:
@@ -418,7 +440,7 @@ def iter_qa_sample_dirs(root: Path, *, include_invalid: bool = False) -> Iterabl
     if not root.exists():
         return []
     seen: set[Path] = set()
-    for metadata_path in root.rglob("metadata.json"):
+    for metadata_path in iter_sample_meta_paths(root):
         sample_dir = metadata_path.parent
         if sample_dir in seen:
             continue
@@ -542,7 +564,10 @@ def merge_generated_samples(
     filtered: List[Dict[str, Any]] = []
     for src_sample in iter_sample_dirs(tmp_output_root / "train"):
         try:
-            meta = json.loads((src_sample / "metadata.json").read_text(encoding="utf-8"))
+            meta_path = find_sample_meta_path(src_sample)
+            if meta_path is None:
+                continue
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             continue
         if str(meta.get("object_id", "")) != str(object_id):
@@ -614,7 +639,10 @@ def filter_existing_samples_for_object(
     train_root = dataset_root / "train"
     for sample_dir in iter_sample_dirs(train_root):
         try:
-            metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            meta_path = find_sample_meta_path(sample_dir)
+            if meta_path is None:
+                continue
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             continue
         if str(metadata.get("object_id", "")) != str(object_id):
@@ -987,7 +1015,10 @@ def summarize_scene_counts(output_root: Path) -> Dict[str, int]:
     stats: Dict[str, int] = {}
     for sample_dir in iter_sample_dirs(output_root / "train"):
         try:
-            metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            meta_path = find_sample_meta_path(sample_dir)
+            if meta_path is None:
+                continue
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             continue
         key = f"{metadata.get('scene_composition', 'unknown')}__n{len(metadata.get('objects', []))}"
@@ -1455,7 +1486,9 @@ def validate_benchmark_v1_subset(subset: str, stats: Dict[str, Any], metadata: D
 
 
 def finalize_benchmark_v1_metadata(sample_dir: Path, split: str, subset: str) -> Dict[str, Any]:
-    metadata_path = sample_dir / "metadata.json"
+    metadata_path = find_sample_meta_path(sample_dir)
+    if metadata_path is None:
+        raise FileNotFoundError(f"Missing meta.json/metadata.json under {sample_dir}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     stats = compute_benchmark_v1_stats(sample_dir, metadata)
     try:
@@ -1749,7 +1782,7 @@ def cmd_benchmark_v1(args: argparse.Namespace) -> None:
                             "no_object_frames": int(stats["no_object_frames"]),
                             "no_object_ratio": float(stats["no_object_ratio"]),
                         }
-                        (sample_dir / "metadata.json").write_text(
+                        (sample_dir / "meta.json").write_text(
                             json.dumps(make_json_safe(metadata), ensure_ascii=False, indent=2),
                             encoding="utf-8",
                         )

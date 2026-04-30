@@ -383,12 +383,51 @@ def pick_meta_path(sample_dir: Path) -> Path | None:
     return None
 
 
+def _clean_text(text: Any) -> str:
+    return " ".join(str(text or "").strip().split())
+
+
+def _metadata_caption_fallback(meta: dict[str, Any]) -> str:
+    motion = _clean_text(meta.get("motion_category") or meta.get("motion_label") or "")
+    scene = _clean_text(meta.get("scene_composition") or meta.get("family") or "rigid scene")
+    num_objects = int(meta.get("num_objects", 0) or 0)
+    if motion and num_objects > 0:
+        return f"{scene} with {num_objects} object(s), motion={motion}."
+    if motion:
+        return f"{scene}, motion={motion}."
+    if num_objects > 0:
+        return f"{scene} with {num_objects} object(s)."
+    return scene
+
+
 def load_caption(sample_dir: Path) -> str:
+    caption_json_path = sample_dir / "caption.json"
+    if caption_json_path.exists():
+        try:
+            payload = load_json(caption_json_path)
+            for key in ("simple_caption", "caption"):
+                text = _clean_text(payload.get(key, ""))
+                if text:
+                    return text
+        except Exception:
+            pass
+
+    for name in ("caption_simple.txt", "caption.txt"):
+        path = sample_dir / name
+        if path.exists():
+            text = _clean_text(path.read_text(encoding="utf-8"))
+            if text:
+                return text
+
     meta_path = pick_meta_path(sample_dir)
     if not meta_path:
         return ""
     meta = load_json(meta_path)
-    return str(meta.get("caption") or meta.get("prompt") or "")
+    for key in ("caption", "prompt"):
+        text = _clean_text(meta.get(key, ""))
+        if text:
+            return text
+    return _metadata_caption_fallback(meta)
 
 
 def detect_dataset(sample_dir: Path) -> str:

@@ -28,7 +28,7 @@ needs_generate() {
         echo 0
         return
     fi
-    if [ ! -f "$sample_dir/metadata.json" ] || [ ! -f "$sample_dir/physics/rigid_kinematics.npz" ] || [ ! -f "$sample_dir/physics/anchor_targets.npz" ]; then
+    if { [ ! -f "$sample_dir/meta.json" ] && [ ! -f "$sample_dir/metadata.json" ]; } || [ ! -f "$sample_dir/physics/rigid_kinematics.npz" ] || [ ! -f "$sample_dir/physics/anchor_targets.npz" ]; then
         echo 0
         return
     fi

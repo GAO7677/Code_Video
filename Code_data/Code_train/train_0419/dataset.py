@@ -722,27 +722,32 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
     @classmethod
     def _gather_entries(cls, samples_root):
         entries = []
-        for metadata_path in Path(samples_root).rglob("metadata.json"):
-            sample_dir = metadata_path.parent
-            rgb_video_path = sample_dir / "videos" / "rgb.mp4"
-            if not rgb_video_path.exists():
-                continue
-            try:
-                metadata = cls._load_json(metadata_path)
-            except Exception:
-                continue
+        seen_sample_dirs = set()
+        for meta_name in ("meta.json", "metadata.json"):
+            for metadata_path in Path(samples_root).rglob(meta_name):
+                sample_dir = metadata_path.parent
+                if sample_dir in seen_sample_dirs:
+                    continue
+                seen_sample_dirs.add(sample_dir)
+                rgb_video_path = sample_dir / "videos" / "rgb.mp4"
+                if not rgb_video_path.exists():
+                    continue
+                try:
+                    metadata = cls._load_json(metadata_path)
+                except Exception:
+                    continue
 
-            entries.append(
-                {
-                    "sample_dir": str(sample_dir),
-                    "video_path": str(rgb_video_path),
-                    "object_id": str(metadata.get("object_id", "")),
-                    "frames": metadata.get("frames"),
-                    "resolution": metadata.get("resolution"),
-                    "scene_composition": metadata.get("scene_composition"),
-                    "prompt": cls._build_prompt_for_entry(sample_dir, metadata),
-                }
-            )
+                entries.append(
+                    {
+                        "sample_dir": str(sample_dir),
+                        "video_path": str(rgb_video_path),
+                        "object_id": str(metadata.get("object_id", "")),
+                        "frames": metadata.get("frames"),
+                        "resolution": metadata.get("resolution"),
+                        "scene_composition": metadata.get("scene_composition"),
+                        "prompt": cls._build_prompt_for_entry(sample_dir, metadata),
+                    }
+                )
         entries.sort(key=lambda item: item["sample_dir"])
         return entries
 

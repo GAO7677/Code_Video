@@ -28,7 +28,10 @@ DEFAULT_PORTAL_ROOT = Path("/home/gaoya/portal_hub_sim")
 
 
 def _load_case(case_dir: Path) -> Dict[str, Any]:
-    metadata = json.loads((case_dir / "metadata.json").read_text(encoding="utf-8"))
+    meta_path = case_dir / "meta.json"
+    if not meta_path.exists():
+        meta_path = case_dir / "metadata.json"
+    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     scene_input = json.loads((case_dir / "scene_input.json").read_text(encoding="utf-8"))
     events = json.loads((case_dir / "physics" / "collision_events.json").read_text(encoding="utf-8"))
     kin = np.load(case_dir / "physics" / "rigid_kinematics.npz")

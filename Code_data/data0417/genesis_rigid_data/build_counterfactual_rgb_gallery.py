@@ -409,9 +409,16 @@ def case_label_from_dir(sample_dir: Path, meta: dict[str, Any]) -> str:
 def build_groups(dataset_root: Path) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str], list[Path]] = defaultdict(list)
     cf_groups: set[tuple[str, str, str]] = set()
+    seen_sample_dirs: set[Path] = set()
 
-    for metadata_path in sorted(dataset_root.rglob("metadata.json")):
+    metadata_paths = []
+    for meta_name in ("meta.json", "metadata.json"):
+        metadata_paths.extend(sorted(dataset_root.rglob(meta_name)))
+    for metadata_path in metadata_paths:
         sample_dir = metadata_path.parent
+        if sample_dir in seen_sample_dirs:
+            continue
+        seen_sample_dirs.add(sample_dir)
         try:
             rel_parts = sample_dir.relative_to(dataset_root).parts
         except ValueError:
@@ -433,7 +440,9 @@ def build_groups(dataset_root: Path) -> list[dict[str, Any]]:
         same_scene_count = 0
         no_collision_count = 0
         for sample_dir in sorted(set(grouped[key]), key=lambda p: p.name):
-            metadata_path = sample_dir / "metadata.json"
+            metadata_path = sample_dir / "meta.json"
+            if not metadata_path.exists():
+                metadata_path = sample_dir / "metadata.json"
             rgb_path = sample_dir / "videos" / "rgb.mp4"
             if not metadata_path.exists() or not rgb_path.exists():
                 continue
@@ -454,7 +463,7 @@ def build_groups(dataset_root: Path) -> list[dict[str, Any]]:
                     cf_kind=cf_kind,
                     rgb_video=f"{rel_dir}/videos/rgb.mp4",
                     gif_preview=f"gifs/{rel_dir}/videos/rgb.gif",
-                    metadata_path=f"{rel_dir}/metadata.json",
+                    metadata_path=f"{rel_dir}/{metadata_path.name}",
                     search_text=" ".join(
                         [
                             object_id,

@@ -2503,7 +2503,7 @@ def _case_dir_from_metadata_path(metadata_path: Optional[str]) -> Optional[Path]
     if not metadata_path:
         return None
     metadata_file = Path(str(metadata_path))
-    if metadata_file.name == "metadata.json":
+    if metadata_file.name in {"meta.json", "metadata.json"}:
         return metadata_file.parent
     return metadata_file
 
@@ -2518,7 +2518,10 @@ def _qa_invalid_root_for_case(case_dir: Path) -> Path:
 
 def _load_single_object_motion_qa(case_dir: Path, margin_px: float = 24.0) -> Dict[str, Any]:
     try:
-        metadata = json.loads((case_dir / "metadata.json").read_text(encoding="utf-8"))
+        meta_path = case_dir / "meta.json"
+        if not meta_path.exists():
+            meta_path = case_dir / "metadata.json"
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
         kin = np.load(case_dir / "physics" / "rigid_kinematics.npz")
         anchor = np.load(case_dir / "physics" / "anchor_targets.npz")
         width, height = [int(v) for v in metadata.get("resolution", [EXPORT_CAMERA_RESOLUTION[0], EXPORT_CAMERA_RESOLUTION[1]])]
@@ -9617,13 +9620,16 @@ def simulate_in_genesis(
     if camera_tag:
         sample_name = f"{sample_name}__cam_{camera_tag}"
     case_dir = output_root / "train" / "rigid" / scene_composition / object_count_bucket / sample_name
-    if case_dir.exists() and (case_dir / "metadata.json").exists():
+    existing_meta_path = case_dir / "meta.json"
+    if not existing_meta_path.exists():
+        existing_meta_path = case_dir / "metadata.json"
+    if case_dir.exists() and existing_meta_path.exists():
         print(f"SKIP {case_dir}")
         try:
             scene.destroy()
         except Exception:
             pass
-        return str(case_dir / "metadata.json")
+        return str(existing_meta_path)
     prepare_case_output_dirs(case_dir)
     scene_input = {
         "object_id": str(prepared.object_id),
@@ -9776,7 +9782,7 @@ def simulate_in_genesis(
             }
         ],
         "outputs": {
-            "metadata": "metadata.json",
+            "metadata": "meta.json",
             "scene_input": "scene_input.json",
             "rgb_video": "videos/rgb.mp4",
             "depth_video": "videos/depth.mp4",
@@ -9810,7 +9816,7 @@ def simulate_in_genesis(
         else:
             obj_meta["dataset_source"] = "PhysXNet"
             obj_meta["source_object_id"] = str(prepared.object_id)
-    (case_dir / "metadata.json").write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (case_dir / "meta.json").write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     try:
         scene.destroy()
@@ -9818,7 +9824,7 @@ def simulate_in_genesis(
         pass
 
     print(f"GENERATED {case_dir / 'videos' / 'rgb.mp4'}")
-    return str(case_dir / "metadata.json")
+    return str(case_dir / "meta.json")
 # -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------

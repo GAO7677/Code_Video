@@ -19,10 +19,19 @@ import numpy as np
 
 
 CASE_NAMES = ("case900_random_parabola", "case901_high_drop")
+META_FILENAMES = ("meta.json", "metadata.json")
 
 
 def _load_json(path: Path) -> Dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _find_meta_path(sample_dir: Path) -> Path | None:
+    for filename in META_FILENAMES:
+        candidate = sample_dir / filename
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _safe_ratio(uv: np.ndarray, vis: np.ndarray, width: int, height: int, margin: float) -> float:
@@ -39,12 +48,16 @@ def _safe_ratio(uv: np.ndarray, vis: np.ndarray, width: int, height: int, margin
 
 
 def evaluate_sample(sample_dir: Path, *, margin: float = 24.0) -> Dict:
-    metadata_path = sample_dir / "metadata.json"
+    metadata_path = _find_meta_path(sample_dir)
     scene_path = sample_dir / "scene_input.json"
     kin_path = sample_dir / "physics" / "rigid_kinematics.npz"
     anchor_path = sample_dir / "physics" / "anchor_targets.npz"
-    required = [metadata_path, scene_path, kin_path, anchor_path]
+    required = [scene_path, kin_path, anchor_path]
+    if metadata_path is not None:
+        required = [metadata_path] + required
     missing = [str(p.relative_to(sample_dir)) for p in required if not p.exists()]
+    if metadata_path is None:
+        missing.insert(0, "meta.json|metadata.json")
     if missing:
         return {"sample_dir": str(sample_dir), "valid": False, "reasons": ["missing_files"], "missing": missing}
 

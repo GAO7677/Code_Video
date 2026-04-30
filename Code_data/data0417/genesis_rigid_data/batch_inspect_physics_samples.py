@@ -11,6 +11,16 @@ from pathlib import Path
 from typing import List
 from urllib.parse import urlsplit
 
+META_FILENAMES = ("meta.json", "metadata.json")
+
+
+def find_meta_path(sample_dir: Path) -> Path | None:
+    for filename in META_FILENAMES:
+        candidate = sample_dir / filename
+        if candidate.exists():
+            return candidate
+    return None
+
 
 @dataclass
 class SampleCard:
@@ -30,9 +40,9 @@ class SampleCard:
 
 
 def is_valid_sample_dir(sample_dir: Path) -> bool:
-    meta_path = sample_dir / "metadata.json"
+    meta_path = find_meta_path(sample_dir)
     physics_dir = sample_dir / "physics"
-    if not meta_path.exists() or not physics_dir.exists():
+    if meta_path is None or not physics_dir.exists():
         return False
     required_physics = [
         physics_dir / "rigid_kinematics.npz",
@@ -597,12 +607,13 @@ def main() -> None:
     sample_dirs = sorted(
         {
             path.parent
-            for path in dataset_root.rglob("metadata.json")
+            for meta_name in META_FILENAMES
+            for path in dataset_root.rglob(meta_name)
             if is_valid_sample_dir(path.parent)
         }
     )
     if not sample_dirs:
-        raise FileNotFoundError(f"No metadata.json files found under {dataset_root}")
+        raise FileNotFoundError(f"No meta.json/metadata.json files found under {dataset_root}")
 
     total = len(sample_dirs)
     cards: List[SampleCard] = []
@@ -636,7 +647,10 @@ def main() -> None:
         else:
             print(f"[{idx}/{total}] reuse {sample_dir}")
 
-        meta = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+        meta_path = find_meta_path(sample_dir)
+        if meta_path is None:
+            continue
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         outputs = meta.get("outputs", {})
         rel_dir = sample_dir.resolve().relative_to(dataset_root).as_posix()
         cards.append(

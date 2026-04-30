@@ -21,6 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_PHYSX_ROOT = Path("/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/finaljson")
+META_FILENAMES = ("meta.json", "metadata.json")
 
 MOTION_DESCRIPTIONS = {
     "random_parabola": "moves along a randomized ballistic arc with initial linear and angular velocity",
@@ -57,6 +58,14 @@ INVALID_SAMPLE_MARKERS = {"invalid_case900_901", "invalid_by_qa", "_qa_invalid"}
 
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def is_visual_sample_dir(sample_dir: Path) -> bool:
+    return (
+        (sample_dir / "videos" / "rgb.mp4").exists()
+        or (sample_dir / "rgb.mp4").exists()
+        or any((sample_dir / "rgb").glob("frame_*.png"))
+    )
 
 
 def clean_name(text: str) -> str:
@@ -177,11 +186,20 @@ def format_object_phrase(info: Dict[str, Any]) -> str:
 
 def format_simple_object_phrase(info: Dict[str, Any]) -> str:
     name = simple_object_label(info)
-    role = info["role"]
     motion = motion_sentence(info["motion_type"], info["motion_group"])
-    if role and role != "unknown":
-        return f"the {role} {name} {motion}"
     return f"the {name} {motion}"
+
+
+def format_name_list(names: List[str]) -> str:
+    cleaned = [str(name).strip() for name in names if str(name).strip()]
+    if not cleaned:
+        return "the objects"
+    with_articles = [f"the {name}" for name in cleaned]
+    if len(with_articles) == 1:
+        return with_articles[0]
+    if len(with_articles) == 2:
+        return f"{with_articles[0]} and {with_articles[1]}"
+    return ", ".join(with_articles[:-1]) + f", and {with_articles[-1]}"
 
 
 def placement_phrase(motion_category: str) -> str:
@@ -204,14 +222,14 @@ def placement_clause(target_name: str, motion_category: str, key: str) -> str:
         templates = [
             f" with the {target_name} set {place}",
             f"; the {target_name} starts {place}",
-            f" after the {target_name} is positioned {place}",
+            f" after it is positioned {place}",
             "",
         ]
         return stable_choice(templates, key)
     if label in {"static_highdrop", "high_drop"}:
         templates = [
-            f" after the {target_name} is released {place}",
-            f" as the {target_name} drops {place}",
+            f" after it is released {place}",
+            f" as it drops {place}",
             "",
         ]
         return stable_choice(templates, key)
@@ -255,6 +273,16 @@ def build_simple_caption(objects: List[Dict[str, Any]], motion_category: str, in
         return normalize_simple_caption(f"An object is shown in a {clean_name(motion_category)} scene.")
     if len(objects) == 1:
         return normalize_simple_caption(single_object_simple_caption(objects[0], motion_category))
+    names = [simple_object_label(obj) for obj in objects]
+    joined_names = format_name_list(names)
+    motion_groups = {str(obj.get("motion_group") or "") for obj in objects}
+    motion_types = {str(obj.get("motion_type") or "") for obj in objects}
+    if interaction_pattern == "multi_object_independent_projectile_motion" or motion_types == {"independent_projectile_motion"}:
+        return normalize_simple_caption(f"{joined_names} move along independent projectile trajectories.")
+    if interaction_pattern == "multi_object_independent_gravity_drop" or motion_types == {"independent_gravity_drop"}:
+        return normalize_simple_caption(f"{joined_names} fall independently under gravity.")
+    if motion_groups == {"static_placement"} or motion_groups == {"auxiliary_static"} or motion_groups == {"static_placement", "auxiliary_static"}:
+        return normalize_simple_caption(f"{joined_names} remain in the scene without interacting.")
     initiators = [obj for obj in objects if obj.get("role") == "initiator"]
     targets = [obj for obj in objects if obj.get("role") == "target"]
     others = [obj for obj in objects if obj not in initiators and obj not in targets]
@@ -286,7 +314,7 @@ def build_simple_caption(objects: List[Dict[str, Any]], motion_category: str, in
             ]
             core = stable_choice(templates, key + "::interact")
         if others:
-            other_names = ", ".join(simple_object_label(obj) for obj in others)
+            other_names = format_name_list([simple_object_label(obj) for obj in others])
             core += f", with {other_names} also present"
         return normalize_simple_caption(core + ".")
     phrases = [single_object_simple_caption(obj, str(obj.get("motion_type") or motion_category)).rstrip(".") for obj in objects]
@@ -346,15 +374,16 @@ def build_caption(metadata: Dict[str, Any], sample_dir: Path, physx_json_dir: Pa
 def find_metadata_files(roots: Iterable[Path], include_invalid: bool) -> List[Path]:
     files: List[Path] = []
     for root in roots:
-        if root.is_file() and root.name == "metadata.json":
+        if root.is_file() and root.name in META_FILENAMES:
             files.append(root)
             continue
-        for p in root.rglob("metadata.json"):
-            if not include_invalid and any(part in INVALID_SAMPLE_MARKERS for part in p.parts):
-                continue
-            sample_dir = p.parent
-            if (sample_dir / "videos" / "rgb.mp4").exists() or (sample_dir / "rgb.mp4").exists():
-                files.append(p)
+        for meta_name in META_FILENAMES:
+            for p in root.rglob(meta_name):
+                if not include_invalid and any(part in INVALID_SAMPLE_MARKERS for part in p.parts):
+                    continue
+                sample_dir = p.parent
+                if is_visual_sample_dir(sample_dir):
+                    files.append(p)
     return sorted(set(files))
 
 
@@ -368,6 +397,11 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, default=None, help="Optional jsonl manifest with one record per caption")
     parser.add_argument("--include_invalid", action="store_true", help="Also caption samples under invalid_case900_901, invalid_by_qa, or _qa_invalid")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing caption files")
+    parser.add_argument(
+        "--write_meta_fields",
+        action="store_true",
+        help="Also write caption/detail_caption fields back into meta.json or metadata.json.",
+    )
     args = parser.parse_args()
 
     metadata_files = find_metadata_files(args.roots, include_invalid=bool(args.include_invalid))
@@ -396,6 +430,10 @@ def main() -> None:
             caption_path.write_text(caption + "\n", encoding="utf-8")
             simple_caption_path.write_text(str(structured.get("simple_caption", caption)) + "\n", encoding="utf-8")
             json_path.write_text(json.dumps(structured, ensure_ascii=False, indent=2), encoding="utf-8")
+            if args.write_meta_fields:
+                metadata["caption"] = str(structured.get("simple_caption", caption))
+                metadata["detail_caption"] = caption
+                metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             records.append(structured)
             if manifest_f is not None:
                 manifest_f.write(json.dumps(structured, ensure_ascii=False) + "\n")
