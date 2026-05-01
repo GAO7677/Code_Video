@@ -294,22 +294,36 @@ def load_entries_for_compare(
     generated_dir: Path,
     runtime_root: Path | None,
 ) -> list[dict[str, Any]]:
-    if runtime_root is not None:
-        jsonl_path = runtime_root / "metadata" / model_name / f"{model_name}_per_case.jsonl"
-        if jsonl_path.is_file():
-            return load_jsonl(jsonl_path)
+    def output_exists(entry: dict[str, Any]) -> bool:
+        paths = entry.get("paths", {})
+        if not isinstance(paths, dict):
+            return False
+        output_video_path = paths.get("output_video_path") or paths.get("output_path")
+        return isinstance(output_video_path, str) and Path(output_video_path).is_file()
 
-    entries: list[dict[str, Any]] = []
+    sidecar_entries: list[dict[str, Any]] = []
     for sidecar_path in sorted(generated_dir.glob("*.json")):
         payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
-            entries.append(payload)
-    if not entries:
+            sidecar_entries.append(payload)
+    sidecar_entries.sort(key=entry_sort_index)
+
+    if runtime_root is not None:
+        jsonl_path = runtime_root / "metadata" / model_name / f"{model_name}_per_case.jsonl"
+        if jsonl_path.is_file():
+            runtime_entries = load_jsonl(jsonl_path)
+            if runtime_entries and all(output_exists(entry) for entry in runtime_entries):
+                return runtime_entries
+            if sidecar_entries:
+                return sidecar_entries
+            if runtime_entries:
+                return runtime_entries
+
+    if not sidecar_entries:
         raise FileNotFoundError(
             f"no entries found for model={model_name} under runtime_root={runtime_root} or generated_dir={generated_dir}"
         )
-    entries.sort(key=entry_sort_index)
-    return entries
+    return sidecar_entries
 
 
 def build_dataset_breakdown(

@@ -81,7 +81,9 @@ def main() -> None:
     args = parse_args()
     args.benchmark_root = args.benchmark_root.expanduser().resolve()
     args.output_root = args.output_root.expanduser().resolve()
-    runtime_root = args.benchmark_root / "runtime"
+    runtime_root = args.benchmark_root / "tools" / "runtime"
+    if not runtime_root.is_dir():
+        runtime_root = args.benchmark_root / "runtime"
     model_specs = parse_model_specs(args.model_names)
     model_names = [model_name for model_name, _ in model_specs]
     if not model_specs:
