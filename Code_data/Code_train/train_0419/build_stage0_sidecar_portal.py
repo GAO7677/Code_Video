@@ -151,6 +151,53 @@ def render_reference_slot(path: str | None) -> str:
     return render_media_slot(title="gt_full_video", body=media_html(path), extra_class="reference-slot")
 
 
+def input_asset_signature(items: list[dict[str, Any]]) -> str:
+    normalized: list[dict[str, str]] = []
+    for item in items:
+        normalized.append(
+            {
+                "role": str(item.get("role") or ""),
+                "kind": str(item.get("kind") or ""),
+                "path": str(item.get("path") or ""),
+                "text": str(item.get("text") or ""),
+            }
+        )
+    return json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+
+
+def build_input_group_signature(payload: dict[str, Any]) -> str:
+    paths = payload.get("paths", {})
+    generation_params = payload.get("generation_params", {})
+    model_inputs = payload.get("model_inputs", {})
+    if not isinstance(paths, dict):
+        paths = {}
+    if not isinstance(generation_params, dict):
+        generation_params = {}
+    if not isinstance(model_inputs, dict):
+        model_inputs = {}
+    signature_payload = {
+        "caption": str(model_inputs.get("input_text") or payload.get("caption") or ""),
+        "conditioning_mode": str(generation_params.get("conditioning_mode") or model_inputs.get("conditioning_mode") or ""),
+        "pipeline_kwargs": list(model_inputs.get("pipeline_kwargs") or []),
+        "height": int(generation_params.get("height") or 0),
+        "width": int(generation_params.get("width") or 0),
+        "fps": int(generation_params.get("fps") or 0),
+        "used_context_frames": int(
+            generation_params.get("used_context_frames")
+            or generation_params.get("context_frames")
+            or 0
+        ),
+        "context_video_path": str(paths.get("context_video_path") or ""),
+        "first_frame_path": str(paths.get("first_frame_path") or ""),
+        "actual_roles": [
+            str(item.get("role") or "")
+            for item in model_inputs.get("actual_visual_conditions", [])
+            if isinstance(item, dict)
+        ],
+    }
+    return json.dumps(signature_payload, ensure_ascii=False, sort_keys=True)
+
+
 def reset_assets_root(assets_root: Path) -> None:
     if assets_root.exists():
         shutil.rmtree(assets_root)
@@ -380,6 +427,34 @@ def materialize_actual_inputs(
         return [], repr(exc)
 
 
+def extract_existing_actual_input_assets(
+    *,
+    payload: dict[str, Any],
+    benchmark_root: Path,
+) -> list[dict[str, Any]]:
+    model_inputs = payload.get("model_inputs", {})
+    if not isinstance(model_inputs, dict):
+        return []
+    raw_items = model_inputs.get("actual_visual_conditions")
+    if not isinstance(raw_items, list):
+        return []
+    assets: list[dict[str, Any]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            return []
+        role = str(item.get("role") or "")
+        path = item.get("path")
+        if not role or not isinstance(path, str) or not path:
+            return []
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = benchmark_root / path
+        if not candidate.exists():
+            return []
+        assets.append({"role": role, "path": path, "kind": "media"})
+    return assets
+
+
 def update_payload_with_actual_assets(
     *,
     payload: dict[str, Any],
@@ -437,11 +512,17 @@ def collect_entries(
         asset_dir = assets_root / record_tag
         asset_dir.mkdir(parents=True, exist_ok=True)
 
-        actual_input_assets, build_error = materialize_actual_inputs(
+        actual_input_assets = extract_existing_actual_input_assets(
             payload=payload,
             benchmark_root=benchmark_root,
-            asset_dir=asset_dir,
         )
+        build_error = None
+        if not actual_input_assets:
+            actual_input_assets, build_error = materialize_actual_inputs(
+                payload=payload,
+                benchmark_root=benchmark_root,
+                asset_dir=asset_dir,
+            )
         if not actual_input_assets:
             actual_input_assets = build_fallback_input_assets(
                 payload=payload,
@@ -500,6 +581,7 @@ def collect_entries(
                 "full_video_asset": full_video_asset,
                 "json_relpath": relative_to_root(benchmark_root, json_path),
                 "build_error": build_error,
+                "input_group_signature": build_input_group_signature(payload),
             }
         )
     return entries
@@ -527,32 +609,74 @@ def group_entries_by_sample(entries: list[dict[str, Any]]) -> list[dict[str, Any
     )
     for group in grouped:
         group["models"] = sorted(group["models"], key=lambda item: str(item["model_name"]).lower())
+        input_groups: dict[str, dict[str, Any]] = {}
+        for entry in group["models"]:
+            signature = str(entry.get("input_group_signature") or input_asset_signature(entry.get("input_assets", [])))
+            input_group = input_groups.setdefault(
+                signature,
+                {
+                    "signature": signature,
+                    "input_assets": entry.get("input_assets", []),
+                    "full_video_asset": entry.get("full_video_asset"),
+                    "entries": [],
+                },
+            )
+            if not input_group.get("full_video_asset") and entry.get("full_video_asset"):
+                input_group["full_video_asset"] = entry.get("full_video_asset")
+            input_group["entries"].append(entry)
+        group["input_groups"] = sorted(
+            input_groups.values(),
+            key=lambda item: (
+                min(str(entry["model_name"]).lower() for entry in item["entries"]),
+                len(item["entries"]),
+            ),
+        )
+        for input_group in group["input_groups"]:
+            input_group["entries"] = sorted(
+                input_group["entries"],
+                key=lambda item: str(item["model_name"]).lower(),
+            )
     return grouped
 
 
-def render_model_panel(entry: dict[str, Any]) -> str:
+def render_output_card(entry: dict[str, Any]) -> str:
     model_name = html.escape(entry["model_name"])
     status = html.escape(entry["status"])
     json_relpath = html.escape(entry["json_relpath"])
-    input_html = render_input_group(entry.get("input_assets", []))
     output_html = render_output_slot(entry.get("output_asset"))
-    full_video_html = render_reference_slot(entry.get("full_video_asset"))
     error_html = ""
     if entry.get("build_error"):
         error_html = f"<p class='build-error'>{html.escape(str(entry['build_error']))}</p>"
     return (
-        "<section class='model-panel' "
+        "<section class='output-card' "
         f"data-model='{model_name.lower()}'>"
         "<div class='meta-row'>"
         f"<span class='badge model'>{model_name}</span>"
         f"<span class='badge status'>{status}</span>"
         "</div>"
-        f"<p class='json-path'>{json_relpath}</p>"
+        f"<p class='json-path compact'>{json_relpath}</p>"
         f"{error_html}"
-        "<div class='record-grid'>"
-        f"{input_html}"
         f"{output_html}"
-        f"{full_video_html}"
+        "</section>"
+    )
+
+
+def render_input_compare_group(group: dict[str, Any]) -> str:
+    entries = group.get("entries", [])
+    input_assets = group.get("input_assets", [])
+    input_html = render_input_group(input_assets)
+    gt_html = render_reference_slot(group.get("full_video_asset"))
+    outputs_html = "".join(render_output_card(entry) for entry in entries)
+    model_count = len(entries)
+    return (
+        "<section class='input-compare-group'>"
+        "<div class='meta-row compare-head'>"
+        f"<span class='badge compare'>{model_count} output(s) share this input</span>"
+        "</div>"
+        "<div class='compare-grid'>"
+        f"<div class='shared-column'>{input_html}</div>"
+        f"<div class='gt-column'>{gt_html}</div>"
+        f"<div class='outputs-grid'>{outputs_html}</div>"
         "</div>"
         "</section>"
     )
@@ -566,7 +690,7 @@ def render_cards(groups: list[dict[str, Any]]) -> str:
         caption = html.escape(group.get("caption", ""))
         models = group.get("models", [])
         model_names_lower = " ".join(str(item["model_name"]).lower() for item in models)
-        model_panels_html = "".join(render_model_panel(item) for item in models)
+        compare_groups_html = "".join(render_input_compare_group(item) for item in group.get("input_groups", []))
         chunks.append(
             "<article class='sample-card' "
             f"data-models='{html.escape(model_names_lower)}' "
@@ -578,9 +702,8 @@ def render_cards(groups: list[dict[str, Any]]) -> str:
             f"<span class='badge sample-count'>{len(models)} model(s)</span>"
             "</div>"
             f"<h3>{sample_id}</h3>"
-            f"<p class='caption'>{caption}</p>"
-            "<div class='model-stack'>"
-            f"{model_panels_html}"
+            "<div class='compare-stack'>"
+            f"{compare_groups_html}"
             "</div>"
             "</article>"
         )
@@ -664,35 +787,57 @@ def build_html(entries: list[dict[str, Any]]) -> str:
     }}
     .record-list {{
       display: grid;
-      gap: 18px;
+      gap: 12px;
     }}
     .sample-card {{
-      padding: 18px;
+      padding: 14px;
       background: rgba(255,253,248,0.95);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 10px 30px rgba(33, 24, 16, 0.05);
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(33, 24, 16, 0.05);
     }}
-    .model-stack {{
+    .compare-stack {{
       display: grid;
-      gap: 16px;
+      gap: 10px;
     }}
-    .model-panel {{
-      padding: 16px;
+    .input-compare-group {{
+      padding: 10px;
       background: #fffaf2;
       border: 1px solid var(--line);
-      border-radius: 16px;
+      border-radius: 14px;
+    }}
+    .compare-grid {{
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) minmax(220px, 260px) minmax(420px, 1fr);
+      gap: 10px;
+      align-items: start;
+    }}
+    .shared-column, .gt-column {{
+      display: grid;
+      gap: 8px;
+    }}
+    .outputs-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      align-items: start;
+    }}
+    .output-card {{
+      padding: 10px;
+      background: #fffdf8;
+      border: 1px solid var(--line);
+      border-radius: 12px;
     }}
     .meta-row {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      padding: 5px 10px;
+      padding: 4px 9px;
       border-radius: 999px;
       background: #efe7da;
       color: #4f4338;
@@ -708,16 +853,14 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       background: var(--ok-soft);
       color: var(--ok-ink);
     }}
-    .sample-card h3 {{
-      margin: 0 0 6px;
-      font-size: 18px;
-      line-height: 1.25;
+    .badge.compare {{
+      background: #ede4d5;
+      color: #5d4d3a;
     }}
-    .caption {{
-      margin: 0 0 6px;
-      color: var(--ink);
-      font-size: 15px;
-      line-height: 1.5;
+    .sample-card h3 {{
+      margin: 0 0 10px;
+      font-size: 16px;
+      line-height: 1.25;
     }}
     .json-path {{
       margin: 0 0 14px;
@@ -725,36 +868,34 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       font-size: 12px;
       word-break: break-all;
     }}
+    .json-path.compact {{
+      margin: 0 0 8px;
+      font-size: 11px;
+    }}
     .build-error {{
-      margin: 0 0 12px;
+      margin: 0 0 8px;
       color: #8b3f1f;
       font-size: 12px;
       word-break: break-word;
     }}
-    .record-grid {{
-      display: grid;
-      grid-template-columns: minmax(460px, 1.6fr) minmax(300px, 1fr) minmax(300px, 1fr);
-      gap: 14px;
-      align-items: start;
-    }}
     .media-grid {{
       display: grid;
-      gap: 12px;
+      gap: 8px;
     }}
     .media-grid.multi {{
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     }}
     .media-slot {{
       background: #fbf8f2;
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 12px;
       overflow: hidden;
-      min-height: 220px;
+      min-height: 180px;
     }}
     .slot-head {{
-      padding: 10px 12px;
+      padding: 8px 10px;
       border-bottom: 1px solid var(--line);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       color: #55493d;
       background: rgba(239, 231, 218, 0.65);
@@ -768,11 +909,12 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       color: var(--ok-ink);
     }}
     .text-slot-body {{
-      min-height: 220px;
-      padding: 14px 16px;
+      min-height: 180px;
+      padding: 10px 12px;
       background: #fffdf9;
       color: var(--ink);
-      line-height: 1.6;
+      font-size: 13px;
+      line-height: 1.5;
       white-space: pre-wrap;
       word-break: break-word;
     }}
@@ -780,14 +922,14 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       display: block;
       width: 100%;
       height: 100%;
-      min-height: 220px;
+      min-height: 180px;
       object-fit: contain;
       background: #0d0d0d;
     }}
     .missing {{
       display: grid;
       place-items: center;
-      min-height: 220px;
+      min-height: 180px;
       padding: 12px;
       color: var(--muted);
       background: repeating-linear-gradient(
@@ -799,7 +941,7 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       );
     }}
     @media (max-width: 1320px) {{
-      .record-grid {{
+      .compare-grid {{
         grid-template-columns: 1fr;
       }}
     }}
@@ -814,7 +956,7 @@ def build_html(entries: list[dict[str, Any]]) -> str:
   <div class="shell">
     <section class="hero">
       <h1>Stage0 Output Sidecar Portal</h1>
-      <p>Each model row is rendered from the sidecar json after backfilling actual prepared inputs. Visual conditions are labeled as <code>input_*</code>, text is shown as <code>input_text</code>, and the sidecar paths are updated to match what the portal displays.</p>
+      <p>Each sample is grouped by identical prepared inputs. Models that consume the same <code>input_*</code> and <code>input_text</code> now share one compact input block, so their outputs can be compared side by side.</p>
     </section>
     <section class="filters">
       <input id="searchBox" type="search" placeholder="Search sample id or caption">
@@ -841,14 +983,20 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       const model = modelFilter.value.toLowerCase();
       const dataset = datasetFilter.value.toLowerCase();
       for (const card of cards) {{
-        const modelPanels = Array.from(card.querySelectorAll('.model-panel'));
-        let visibleModelCount = 0;
-        for (const panel of modelPanels) {{
-          const panelMatchesModel = !model || panel.dataset.model === model;
-          panel.style.display = panelMatchesModel ? '' : 'none';
-          if (panelMatchesModel) visibleModelCount += 1;
+        const compareGroups = Array.from(card.querySelectorAll('.input-compare-group'));
+        let visibleGroupCount = 0;
+        for (const group of compareGroups) {{
+          const outputCards = Array.from(group.querySelectorAll('.output-card'));
+          let visibleOutputCount = 0;
+          for (const outputCard of outputCards) {{
+            const cardMatchesModel = !model || outputCard.dataset.model === model;
+            outputCard.style.display = cardMatchesModel ? '' : 'none';
+            if (cardMatchesModel) visibleOutputCount += 1;
+          }}
+          group.style.display = visibleOutputCount > 0 ? '' : 'none';
+          if (visibleOutputCount > 0) visibleGroupCount += 1;
         }}
-        const matchesModel = visibleModelCount > 0;
+        const matchesModel = visibleGroupCount > 0;
         const matchesDataset = !dataset || card.dataset.dataset === dataset;
         const haystack = `${{card.dataset.sampleId}} ${{card.dataset.caption}} ${{card.dataset.models}} ${{card.dataset.dataset}}`.toLowerCase();
         const matchesSearch = !search || haystack.includes(search);
@@ -872,7 +1020,7 @@ def main() -> None:
     portal_dir = (benchmark_root / args.portal_subdir).resolve()
     portal_dir.mkdir(parents=True, exist_ok=True)
     assets_root = portal_dir / "assets" / "records"
-    reset_assets_root(assets_root)
+    assets_root.mkdir(parents=True, exist_ok=True)
 
     entries = collect_entries(
         benchmark_root=benchmark_root,
