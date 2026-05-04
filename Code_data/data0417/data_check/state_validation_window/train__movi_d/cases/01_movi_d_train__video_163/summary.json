@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_train__video_163",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_09/movi_d_train__video_163",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_09/movi_d_train__video_163",
+  "dataset": "MOVI-D",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 8.199718475341797,
+      "median": 2.5548007488250732,
+      "p95": 24.627052783966064,
+      "min": 0.4827207624912262,
+      "max": 24.62771987915039
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.5976210236549377,
+      "median": 0.7734087109565735,
+      "p95": 0.9226663261651993,
+      "min": 0.0,
+      "max": 0.9227668642997742
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 1.0584261417388916,
+      "median": 0.0,
+      "p95": 0.9942474365234375,
+      "min": 0.0,
+      "max": 260.8447265625
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 0.05003917217254639,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a reinforced_concrete_02 background with 9 object(s), including Netgear N750 Wireless Dual Band Gigabit Router, Curver Storage Bin Black Small, Pony C Clamp 1440, My First Wiggle Crocodile. 1 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a reinforced_concrete_02 background with 9 object(s), including Netgear N750 Wireless Dual Band Gigabit Router, Curver Storage Bin Black Small, Pony C Clamp 1440, My First Wiggle Crocodile. 1 object(s) are dynamic."
+}

@@ -29,11 +29,19 @@ MODEL_SPECS = [
 ]
 
 DATASET_QUOTAS = {
-    "kubric_tfds_movi-d": 6,
-    "version_1_genesis_rigid_data_all_cases": 6,
-    "physics-iq-benchmark": 4,
-    "vLAR-PhysInOne": 3,
-    "mvp-lab-OpenVidHD-0.4M-720p-48fps": 3,
+    "kubric_tfds_movi-d": 2,
+    "version_1_genesis_rigid_data_all_cases": 2,
+    "physics-iq-benchmark": 2,
+    "vLAR-PhysInOne": 2,
+    "mvp-lab-OpenVidHD-0.4M-720p-48fps": 2,
+}
+
+DATASET_LABELS = {
+    "kubric_tfds_movi-d": "MOVI-D",
+    "version_1_genesis_rigid_data_all_cases": "GenesisRigid",
+    "physics-iq-benchmark": "Physics-IQ",
+    "vLAR-PhysInOne": "vLAR",
+    "mvp-lab-OpenVidHD-0.4M-720p-48fps": "OpenVidHD",
 }
 
 
@@ -397,161 +405,66 @@ def build_case_record(
     }
 
 
-def build_metrics_summary(benchmark_root: Path) -> dict[str, list[dict[str, str]]]:
-    def read_rows(path: Path) -> list[dict[str, str]]:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if len(lines) < 2:
-            return []
-        header = lines[0].split(",")
-        rows: list[dict[str, str]] = []
-        for line in lines[1:]:
-            values = line.split(",")
-            rows.append(dict(zip(header, values)))
-        return rows
-
-    wan_csv = benchmark_root / "result" / "model_metrics_wan_v2v_fair" / "metrics_by_model.csv"
-    vace_csv = benchmark_root / "result" / "model_metrics_vace_family_native" / "metrics_by_model.csv"
-    return {
-        "wan": read_rows(wan_csv) if wan_csv.exists() else [],
-        "vace": read_rows(vace_csv) if vace_csv.exists() else [],
-    }
-
-
-def load_curve_summary(benchmark_root: Path) -> dict[str, Any]:
-    curve_json = benchmark_root / "result" / "model_metrics_sample300_curves" / "sample300_curve_data.json"
-    curve_png = benchmark_root / "result" / "model_metrics_sample300_curves" / "sample300_cumulative_metrics.png"
-    payload: dict[str, Any] = {
-        "image_path": relpath_from_root(benchmark_root, curve_png) if curve_png.exists() else None,
-        "models": [],
-    }
-    if not curve_json.is_file():
-        return payload
-    curve_data = read_json(curve_json)
-    models = curve_data.get("models", {})
-    if not isinstance(models, dict):
-        return payload
-    for model_name, block in models.items():
-        if not isinstance(block, dict):
-            continue
-        aggregate = block.get("aggregate", {})
-        payload["models"].append(
-            {
-                "model_name": str(block.get("display_name") or model_name),
-                "future_psnr": aggregate.get("future_psnr"),
-                "future_ssim": aggregate.get("future_ssim"),
-                "future_lpips": aggregate.get("future_lpips"),
-                "future_dino": aggregate.get("future_dino"),
-                "num_samples": block.get("num_samples"),
-            }
-        )
-    return payload
-
-
-def render_metric_table(title: str, rows: list[dict[str, str]]) -> str:
-    if not rows:
-        return ""
-    head = (
-        "<tr><th>model</th><th>PSNR</th><th>SSIM</th><th>LPIPS</th><th>DINO</th></tr>"
-    )
-    body = []
-    for row in rows:
-        body.append(
-            "<tr>"
-            f"<td>{html.escape(row.get('model_name', ''))}</td>"
-            f"<td>{html.escape(row.get('overall_future_psnr', ''))}</td>"
-            f"<td>{html.escape(row.get('overall_future_ssim', ''))}</td>"
-            f"<td>{html.escape(row.get('overall_future_lpips', ''))}</td>"
-            f"<td>{html.escape(row.get('overall_future_dino', ''))}</td>"
-            "</tr>"
-        )
-    return (
-        "<section class='metric-card'>"
-        f"<h3>{html.escape(title)}</h3>"
-        "<table><thead>"
-        f"{head}"
-        "</thead><tbody>"
-        f"{''.join(body)}"
-        "</tbody></table></section>"
-    )
-
-
-def render_curve_panel(curve_summary: dict[str, Any]) -> str:
-    image_path = curve_summary.get("image_path")
-    models = curve_summary.get("models", [])
-    if not image_path:
-        return ""
-    rows = []
-    for item in models:
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(str(item.get('model_name', '')))}</td>"
-            f"<td>{html.escape(str(item.get('future_psnr', '')))}</td>"
-            f"<td>{html.escape(str(item.get('future_ssim', '')))}</td>"
-            f"<td>{html.escape(str(item.get('future_lpips', '')))}</td>"
-            f"<td>{html.escape(str(item.get('future_dino', '')))}</td>"
-            f"<td>{html.escape(str(item.get('num_samples', '')))}</td>"
-            "</tr>"
-        )
-    return (
-        "<section class='curve-panel'>"
-        "<div class='curve-copy'>"
-        "<h3>300-sample Metric Curves</h3>"
-        "<p>曲线基于 benchmark 固定顺序做 cumulative mean，直接看随着样本数增加，各模型整体指标如何收敛。下表是同一批 300 样本上的最终均值。</p>"
-        "<table><thead><tr><th>model</th><th>PSNR</th><th>SSIM</th><th>LPIPS</th><th>DINO</th><th>n</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
-        "</div>"
-        "<div class='curve-figure'>"
-        f"<img loading='lazy' src='/{html.escape(str(image_path).lstrip('/'))}' alt='sample300 cumulative metric curves'>"
-        "</div>"
-        "</section>"
-    )
-
-
 def build_html(
     cases: list[dict[str, Any]],
     metric_summary: dict[str, list[dict[str, str]]],
     curve_summary: dict[str, Any],
 ) -> str:
+    del metric_summary
+    del curve_summary
     dataset_options = "".join(
         f"<option value='{html.escape(dataset)}'>{html.escape(dataset)}</option>"
         for dataset in sorted({case['dataset'] for case in cases})
     )
-    cards = []
+    grouped_cards: list[str] = []
+    by_dataset: dict[str, list[dict[str, Any]]] = {}
     for case in cases:
-        model_cols = []
-        for model in case["models"]:
-            model_cols.append(
-                "<div class='model-col'>"
-                "<div class='tile-head'>"
-                f"<span class='model-name'>{html.escape(model['model_name'])}</span>"
-                f"<span class='status'>{html.escape(model['status'])}</span>"
+        by_dataset.setdefault(case["dataset"], []).append(case)
+
+    for dataset in sorted(by_dataset.keys(), key=lambda item: list(DATASET_QUOTAS.keys()).index(item) if item in DATASET_QUOTAS else 999):
+        cards = []
+        for case in by_dataset[dataset]:
+            model_cols = []
+            for model in case["models"]:
+                model_cols.append(
+                    "<div class='model-col'>"
+                    "<div class='tile-head'>"
+                    f"<span class='model-name'>{html.escape(model['model_name'])}</span>"
+                    f"<span class='status'>{html.escape(model['status'])}</span>"
+                    "</div>"
+                    "<div class='mini-head'>input_conditions</div>"
+                    f"<div class='metric-pills'>{render_metric_pills(future_metrics=model['future_metrics'], vbench_metrics=model['vbench_metrics'])}</div>"
+                    f"<div class='inputs-grid'>{render_input_assets(model['input_assets'])}</div>"
+                    "<div class='output-box'>"
+                    "<div class='mini-head'>output_video</div>"
+                    f"{render_media(model['output_asset'])}"
+                    "</div>"
+                    "</div>"
+                )
+            cards.append(
+                "<article class='sample-card' "
+                f"data-dataset='{html.escape(case['dataset'].lower())}' "
+                f"data-sample-id='{html.escape(case['sample_id'].lower())}' "
+                f"data-caption='{html.escape(case['caption'].lower())}'>"
+                "<div class='sample-top'>"
+                f"<span class='dataset-tag'>{html.escape(DATASET_LABELS.get(case['dataset'], case['dataset']))}</span>"
+                f"<h2>{html.escape(case['sample_id'])}</h2>"
+                f"<p class='caption'>{html.escape(case['caption'])}</p>"
                 "</div>"
-                f"<div class='metric-pills'>{render_metric_pills(future_metrics=model['future_metrics'], vbench_metrics=model['vbench_metrics'])}</div>"
-                f"<div class='inputs-grid'>{render_input_assets(model['input_assets'])}</div>"
-                "<div class='output-box'>"
-                "<div class='mini-head'>output</div>"
-                f"{render_media(model['output_asset'])}"
+                "<div class='sample-row'>"
+                "<div class='shared-col gt-col'>"
+                "<div class='tile-head'><span class='model-name'>gt_full_video</span></div>"
+                f"{render_media(case['full_video_asset'])}"
                 "</div>"
+                f"<div class='models-strip'>{''.join(model_cols)}</div>"
                 "</div>"
+                "</article>"
             )
-        cards.append(
-            "<article class='sample-card' "
-            f"data-dataset='{html.escape(case['dataset'].lower())}' "
-            f"data-sample-id='{html.escape(case['sample_id'].lower())}' "
-            f"data-caption='{html.escape(case['caption'].lower())}'>"
-            "<div class='sample-top'>"
-            f"<span class='dataset-tag'>{html.escape(case['dataset'])}</span>"
-            f"<h2>{html.escape(case['sample_id'])}</h2>"
-            f"<p class='caption'>{html.escape(case['caption'])}</p>"
-            "</div>"
-            "<div class='sample-row'>"
-            "<div class='shared-col gt-col'>"
-            "<div class='tile-head'><span class='model-name'>gt_full_video</span></div>"
-            f"{render_media(case['full_video_asset'])}"
-            "</div>"
-            f"<div class='models-strip'>{''.join(model_cols)}</div>"
-            "</div>"
-            "</article>"
+        grouped_cards.append(
+            "<section class='dataset-block'>"
+            f"<div class='dataset-block-head'><h2>{html.escape(DATASET_LABELS.get(dataset, dataset))}</h2><p>固定示例样本，用于比较不同模型在该测试数据集上的输入条件与输出结果。</p></div>"
+            f"{''.join(cards)}"
+            "</section>"
         )
 
     return f"""<!DOCTYPE html>
@@ -605,22 +518,6 @@ def build_html(
       font-size: 13px;
       line-height: 1.4;
     }}
-    .metric-wrap {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(320px, 1fr));
-      gap: 8px;
-      margin-bottom: 10px;
-    }}
-    .metric-card {{
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: rgba(255,253,248,0.95);
-    }}
-    .metric-card h3 {{
-      margin: 0 0 8px;
-      font-size: 14px;
-    }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -630,35 +527,6 @@ def build_html(
       padding: 4px 6px;
       border-bottom: 1px solid var(--line);
       text-align: left;
-    }}
-    .curve-panel {{
-      display: grid;
-      grid-template-columns: minmax(360px, 520px) 1fr;
-      gap: 10px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: rgba(255,253,248,0.95);
-      margin-bottom: 10px;
-    }}
-    .curve-panel h3 {{
-      margin: 0 0 6px;
-      font-size: 16px;
-    }}
-    .curve-panel p {{
-      margin: 0 0 8px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }}
-    .curve-figure img {{
-      width: 100%;
-      max-height: 680px;
-      min-height: 280px;
-      object-fit: contain;
-      background: #f8f4eb;
-      border: 1px solid var(--line);
-      border-radius: 10px;
     }}
     .filters {{
       display: grid;
@@ -679,6 +547,27 @@ def build_html(
     .case-list {{
       display: grid;
       gap: 8px;
+    }}
+    .dataset-block {{
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+    }}
+    .dataset-block-head {{
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255,253,248,0.95);
+    }}
+    .dataset-block-head h2 {{
+      margin: 0 0 4px;
+      font-size: 18px;
+    }}
+    .dataset-block-head p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
     }}
     .sample-card {{
       padding: 8px;
@@ -826,7 +715,7 @@ def build_html(
       font-size: 12px;
     }}
     @media (max-width: 1100px) {{
-      .metric-wrap, .filters, .sample-row, .curve-panel {{
+      .filters, .sample-row {{
         grid-template-columns: 1fr;
       }}
     }}
@@ -836,13 +725,8 @@ def build_html(
   <div class="shell">
     <section class="hero">
       <h1>Stage0 Compact Selected Portal</h1>
-      <p>精选多组 case 做紧凑横向对比。每个样本共用一份 GT full video，右侧横向条带展示 9 个模型各自的输入视觉条件、输入文本对应的输出视频。页面默认放更多 case，优先便于快速肉眼比较。</p>
+      <p>按测试数据集分组展示固定 case。每个样本共用一份 GT full video，右侧横向条带展示 9 个模型各自的输入条件和输出视频。输入条件部分展示实际输入给模型的视觉条件，样本标题下方展示对应输入文本。</p>
     </section>
-    <section class="metric-wrap">
-      {render_metric_table("Wan Fair Metrics", metric_summary.get("wan", []))}
-      {render_metric_table("VACE Family Metrics", metric_summary.get("vace", []))}
-    </section>
-    {render_curve_panel(curve_summary)}
     <section class="filters">
       <input id="searchBox" type="search" placeholder="Search sample id or caption">
       <select id="datasetFilter">
@@ -851,7 +735,7 @@ def build_html(
       </select>
     </section>
     <section id="caseList" class="case-list">
-      {''.join(cards)}
+      {''.join(grouped_cards)}
     </section>
   </div>
   <script>
@@ -897,11 +781,8 @@ def main() -> None:
         )
         for dataset, sample_id, caption in selected
     ]
-    metric_summary = build_metrics_summary(benchmark_root)
-    curve_summary = load_curve_summary(benchmark_root)
-
     html_path = portal_dir / "index.html"
-    write_text(html_path, build_html(cases, metric_summary, curve_summary))
+    write_text(html_path, build_html(cases, {}, {}))
     summary = {
         "num_cases": len(cases),
         "html_path": str(html_path),

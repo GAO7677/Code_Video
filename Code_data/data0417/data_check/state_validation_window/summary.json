@@ -1,0 +1,341 @@
+{
+  "datasets": [
+    {
+      "dataset_slug": "test__genesis",
+      "dataset_label": "test | genesis",
+      "num_samples": 4,
+      "aggregate": {
+        "num_samples": 4,
+        "anomaly_ratio": 1.0,
+        "visible_frame_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p95": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "center_projection_error_px": {
+          "mean": 7.4380011558532715,
+          "median": 5.547972202301025,
+          "p95": 13.626864385604856,
+          "min": 3.7419121265411377,
+          "max": 14.914148330688477
+        },
+        "projection_consistency_ref_px": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "bbox_iou": {
+          "mean": 0.8162581324577332,
+          "median": 0.8342660665512085,
+          "p95": 0.9201569646596909,
+          "min": 0.665574848651886,
+          "max": 0.9309254884719849
+        },
+        "depth_consistency_abs": {
+          "mean": 0.024164564907550812,
+          "median": 0.022190045565366745,
+          "p95": 0.04530357047915458,
+          "min": 0.004583525471389294,
+          "max": 0.04769463464617729
+        },
+        "depth_consistency_rel": {
+          "mean": 0.007096092216670513,
+          "median": 0.0063334121368825436,
+          "p95": 0.01373681263066828,
+          "min": 0.0013654050417244434,
+          "max": 0.01435214001685381
+        },
+        "state_abs_error": {
+          "mean": 0.8740856051445007,
+          "median": 0.10958579182624817,
+          "p95": 2.7095265507698048,
+          "min": 0.10889386385679245,
+          "max": 3.1682770252227783
+        },
+        "velocity_diff_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "vis_abs_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "velocity_smoothness": {
+          "mean": 0.0595264695584774,
+          "median": 4.113905015401542e-05,
+          "p95": 0.20230556875467293,
+          "min": 2.4367596779484302e-05,
+          "max": 0.23799923062324524
+        },
+        "anomaly_reason_histogram": {
+          "large_center_projection_error": 4,
+          "low_bbox_iou": 2
+        }
+      },
+      "conclusion": "test | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+    },
+    {
+      "dataset_slug": "test__movi_d",
+      "dataset_label": "test | movi_d",
+      "num_samples": 4,
+      "aggregate": {
+        "num_samples": 4,
+        "anomaly_ratio": 1.0,
+        "visible_frame_ratio": {
+          "mean": 0.9681697487831116,
+          "median": 0.979629635810852,
+          "p95": 0.9978571385145187,
+          "min": 0.9134199023246765,
+          "max": 1.0
+        },
+        "center_projection_error_px": {
+          "mean": 19.22486686706543,
+          "median": 16.733720779418945,
+          "p95": 29.540398216247553,
+          "min": 11.840365409851074,
+          "max": 31.591665267944336
+        },
+        "projection_consistency_ref_px": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "bbox_iou": {
+          "mean": 0.5104780197143555,
+          "median": 0.48251810669898987,
+          "p95": 0.6110579311847686,
+          "min": 0.44466432929039,
+          "max": 0.6322115659713745
+        },
+        "depth_consistency_abs": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "depth_consistency_rel": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "state_abs_error": {
+          "mean": 2.5571637252141954e-07,
+          "median": 2.5016430527102784e-07,
+          "p95": 3.0379638076283295e-07,
+          "min": 2.119276274470394e-07,
+          "max": 3.106092947291472e-07
+        },
+        "velocity_diff_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "vis_abs_error": {
+          "mean": 0.02250325120985508,
+          "median": 0.024009205400943756,
+          "p95": 0.03353225132450461,
+          "min": 0.00729668652638793,
+          "max": 0.03469790890812874
+        },
+        "velocity_smoothness": {
+          "mean": 0.11338454484939575,
+          "median": 0.10821244865655899,
+          "p95": 0.20479496717453002,
+          "min": 0.026751838624477386,
+          "max": 0.21036143600940704
+        },
+        "anomaly_reason_histogram": {
+          "large_center_projection_error": 4,
+          "low_bbox_iou": 4
+        }
+      },
+      "conclusion": "test | movi_d: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+    },
+    {
+      "dataset_slug": "train__genesis",
+      "dataset_label": "train | genesis",
+      "num_samples": 4,
+      "aggregate": {
+        "num_samples": 4,
+        "anomaly_ratio": 1.0,
+        "visible_frame_ratio": {
+          "mean": 0.8500000238418579,
+          "median": 0.8500000238418579,
+          "p95": 0.8500000238418579,
+          "min": 0.8500000238418579,
+          "max": 0.8500000238418579
+        },
+        "center_projection_error_px": {
+          "mean": 2.4313790798187256,
+          "median": 2.4313790798187256,
+          "p95": 2.647982120513916,
+          "min": 2.214776039123535,
+          "max": 2.647982120513916
+        },
+        "projection_consistency_ref_px": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "bbox_iou": {
+          "mean": 0.8976036906242371,
+          "median": 0.8976037502288818,
+          "p95": 0.9219329357147217,
+          "min": 0.8732745051383972,
+          "max": 0.9219329357147217
+        },
+        "depth_consistency_abs": {
+          "mean": 0.08506214618682861,
+          "median": 0.08506213873624802,
+          "p95": 0.08984845876693726,
+          "min": 0.08027581870555878,
+          "max": 0.08984845876693726
+        },
+        "depth_consistency_rel": {
+          "mean": 0.012222850695252419,
+          "median": 0.012222850695252419,
+          "p95": 0.013167827390134335,
+          "min": 0.011277874000370502,
+          "max": 0.013167827390134335
+        },
+        "state_abs_error": {
+          "mean": 0.09118595719337463,
+          "median": 0.09118595719337463,
+          "p95": 0.0916803777217865,
+          "min": 0.09069153666496277,
+          "max": 0.0916803777217865
+        },
+        "velocity_diff_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "vis_abs_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "velocity_smoothness": {
+          "mean": 1.8734153509140015,
+          "median": 1.873415231704712,
+          "p95": 1.8834275007247925,
+          "min": 1.863403081893921,
+          "max": 1.8834275007247925
+        },
+        "anomaly_reason_histogram": {
+          "large_center_projection_error": 4
+        }
+      },
+      "conclusion": "train | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+    },
+    {
+      "dataset_slug": "train__movi_d",
+      "dataset_label": "train | movi_d",
+      "num_samples": 3,
+      "aggregate": {
+        "num_samples": 3,
+        "anomaly_ratio": 1.0,
+        "visible_frame_ratio": {
+          "mean": 1.0,
+          "median": 1.0,
+          "p95": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "center_projection_error_px": {
+          "mean": 10.2158203125,
+          "median": 8.506087303161621,
+          "p95": 13.398096656799316,
+          "min": 8.199718475341797,
+          "max": 13.94165325164795
+        },
+        "projection_consistency_ref_px": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "bbox_iou": {
+          "mean": 0.649530827999115,
+          "median": 0.6367940306663513,
+          "p95": 0.7064390361309052,
+          "min": 0.5976210236549377,
+          "max": 0.7141773700714111
+        },
+        "depth_consistency_abs": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "depth_consistency_rel": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "state_abs_error": {
+          "mean": 0.8004274368286133,
+          "median": 1.0584261417388916,
+          "p95": 1.0854209661483765,
+          "min": 0.25443580746650696,
+          "max": 1.0884203910827637
+        },
+        "velocity_diff_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "vis_abs_error": {
+          "mean": 0.0,
+          "median": 0.0,
+          "p95": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "velocity_smoothness": {
+          "mean": 0.035301920026540756,
+          "median": 0.04099014773964882,
+          "p95": 0.04913426972925663,
+          "min": 0.014876436442136765,
+          "max": 0.05003917217254639
+        },
+        "anomaly_reason_histogram": {
+          "large_center_projection_error": 3,
+          "low_bbox_iou": 3
+        }
+      },
+      "conclusion": "train | movi_d: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+    }
+  ],
+  "portal_path": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/index.html",
+  "portal_url": "http://127.0.0.1:8048/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/index.html"
+}

@@ -1,0 +1,73 @@
+{
+  "sample_id": "10007__case000_static_center__cf_no_collision_neg__ratio12",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case000_static_center__cf_no_collision_neg__ratio12",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/interaction_pair_plus_dynamic/count_02/10007__case000_static_center__cf_no_collision_neg",
+  "dataset": "GenesisRigid",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 0.8500000238418579,
+    "center_projection_error_px": {
+      "mean": 2.647982120513916,
+      "median": 3.230436325073242,
+      "p95": 4.319470930099484,
+      "min": 0.5614423751831055,
+      "max": 8.61058521270752
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.8732745051383972,
+      "median": 0.9335464835166931,
+      "p95": 0.9357596516609192,
+      "min": 0.0,
+      "max": 0.9357941746711731
+    },
+    "depth_consistency_abs": {
+      "mean": 0.08984845876693726,
+      "median": 0.01751565933227539,
+      "p95": 0.2552366256713867,
+      "min": 0.017127037048339844,
+      "max": 0.2552366256713867
+    },
+    "depth_consistency_rel": {
+      "mean": 0.013167827390134335,
+      "median": 0.002745732432231307,
+      "p95": 0.03739017993211746,
+      "min": 0.002684919163584709,
+      "max": 0.03739017993211746
+    },
+    "state_abs_error": {
+      "mean": 0.09069153666496277,
+      "median": 0.0,
+      "p95": 0.9329558849334717,
+      "min": 0.0,
+      "max": 0.999881386756897
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 1.863403081893921,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error"
+    ]
+  },
+  "caption": "interaction_pair_plus_dynamic with 2 object(s), motion=static_center.",
+  "detail_caption": ""
+}

@@ -594,6 +594,7 @@ def draw_overlay_frames(sample: dict) -> List[Image.Image]:
     seg = sample["seg"]
     anchor = sample["anchor"]
     obs = sample["obs"]
+    state = sample["state_saved"]
     result: List[Image.Image] = []
     num_objects = int(np.asarray(anchor["seg_ids"]).shape[0])
 
@@ -611,15 +612,47 @@ def draw_overlay_frames(sample: dict) -> List[Image.Image]:
                     outline=color + (140,),
                     width=2,
                 )
+                seg_x1 = float(xs.min())
+                seg_y1 = float(ys.min())
+                seg_x2 = float(xs.max()) + 1.0
+                seg_y2 = float(ys.max()) + 1.0
+                draw.rectangle((seg_x1, seg_y1, seg_x2, seg_y2), outline=(255, 255, 255, 180), width=1)
             x1, y1, x2, y2 = [float(x) for x in anchor["bbox_xyxy"][frame_idx, obj_idx]]
             draw.rectangle((x1, y1, x2, y2), outline=color + (255,), width=3)
             u, v = [float(x) for x in anchor["com_uv"][frame_idx, obj_idx]]
             draw.ellipse((u - 4, v - 4, u + 4, v + 4), fill=color + (255,))
             u2, v2 = [float(x) for x in obs["centroid_uv"][frame_idx, obj_idx]]
             draw.ellipse((u2 - 3, v2 - 3, u2 + 3, v2 + 3), fill=(255, 255, 255, 230))
+            draw.line((u, v, u2, v2), fill=(255, 255, 255, 200), width=1)
+            label_y = max(6, int(y1) - 18)
+            draw.rounded_rectangle((int(x1), label_y, int(x1) + 58, label_y + 16), radius=4, fill=color + (220,))
+            draw.text((int(x1) + 5, label_y + 2), f"obj {obj_idx}", fill=(255, 255, 255, 255))
         draw.rounded_rectangle((8, 8, 160, 36), radius=6, fill=(0, 0, 0, 170))
         draw.text((14, 14), f"frame {frame_idx:02d}", fill=(255, 255, 255, 255))
-        result.append(Image.alpha_composite(image, overlay).convert("RGB"))
+        annotated = Image.alpha_composite(image, overlay).convert("RGB")
+
+        panel_h = 30 + 22 * num_objects
+        canvas = Image.new("RGB", (annotated.width, annotated.height + panel_h), color=(14, 18, 24))
+        canvas.paste(annotated, (0, 0))
+        panel = ImageDraw.Draw(canvas)
+        panel.text(
+            (12, annotated.height + 8),
+            "anchor bbox=color | seg bbox=white | anchor center=color dot | seg center=white dot",
+            fill=(225, 232, 240),
+        )
+        for obj_idx in range(num_objects):
+            color = hex_to_rgb(STATE_COLORS[obj_idx % len(STATE_COLORS)])
+            row_y = annotated.height + 30 + obj_idx * 22
+            panel.rounded_rectangle((10, row_y, 28, row_y + 14), radius=4, fill=color)
+            u, v, d, w, h, du, dv, dd, vis = [float(x) for x in state[frame_idx, obj_idx]]
+            text = (
+                f"obj{obj_idx} "
+                f"u={u:.1f} v={v:.1f} d={d:.3f} "
+                f"w={w:.1f} h={h:.1f} "
+                f"du={du:.3f} dv={dv:.3f} dd={dd:.4f} vis={vis:.2f}"
+            )
+            panel.text((36, row_y - 2), text, fill=(235, 241, 245))
+        result.append(canvas)
     return result
 
 

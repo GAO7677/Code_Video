@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_test_0000__video_163",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0000__video_163",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0000__video_163",
+  "dataset": "MOVI-D",
+  "rank_label": "best-ranked",
+  "metrics": {
+    "visible_frame_ratio": 0.9857142567634583,
+    "center_projection_error_px": {
+      "mean": 11.840365409851074,
+      "median": 3.1577489376068115,
+      "p95": 53.199272537231444,
+      "min": 0.582094669342041,
+      "max": 55.285789489746094
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.6322115659713745,
+      "median": 0.836977481842041,
+      "p95": 0.9742068767547607,
+      "min": 0.0,
+      "max": 0.9906967878341675
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 2.351387422550033e-07,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 1.52587890625e-05
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.021091552451252937,
+      "median": 0.007476806640625,
+      "p95": 0.09470367431640614,
+      "min": 0.000457763671875,
+      "max": 0.1604461669921875
+    },
+    "velocity_smoothness": 0.17325164377689362,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a quarry_02 background with 10 object(s), including Retail Leadership Summit, LEGO Fusion Set Town Master, QAbsorb CoQ10, LADYBUG BEAD. 2 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a quarry_02 background with 10 object(s), including Retail Leadership Summit, LEGO Fusion Set Town Master, QAbsorb CoQ10, LADYBUG BEAD. 2 object(s) are dynamic."
+}

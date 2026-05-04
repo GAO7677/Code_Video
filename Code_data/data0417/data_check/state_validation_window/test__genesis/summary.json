@@ -1,10 +1,10 @@
 {
   "dataset_slug": "test__genesis",
   "dataset_label": "test | genesis",
-  "num_samples": 24,
+  "num_samples": 4,
   "aggregate": {
-    "num_samples": 24,
-    "anomaly_ratio": 0.875,
+    "num_samples": 4,
+    "anomaly_ratio": 1.0,
     "visible_frame_ratio": {
       "mean": 1.0,
       "median": 1.0,
@@ -13,11 +13,11 @@
       "max": 1.0
     },
     "center_projection_error_px": {
-      "mean": 6.991337299346924,
-      "median": 4.052274703979492,
-      "p95": 19.13073821067809,
-      "min": 0.6172951459884644,
-      "max": 26.66408348083496
+      "mean": 7.4380011558532715,
+      "median": 5.547972202301025,
+      "p95": 13.626864385604856,
+      "min": 3.7419121265411377,
+      "max": 14.914148330688477
     },
     "projection_consistency_ref_px": {
       "mean": 0.0,
@@ -27,31 +27,31 @@
       "max": 0.0
     },
     "bbox_iou": {
-      "mean": 0.8354677557945251,
-      "median": 0.8653848171234131,
-      "p95": 0.9424098372459412,
-      "min": 0.6027439832687378,
-      "max": 0.9549998044967651
+      "mean": 0.8162581324577332,
+      "median": 0.8342660665512085,
+      "p95": 0.9201569646596909,
+      "min": 0.665574848651886,
+      "max": 0.9309254884719849
     },
     "depth_consistency_abs": {
-      "mean": 0.03917965665459633,
-      "median": 0.011667179875075817,
-      "p95": 0.16922028064727784,
-      "min": 0.00046787262544967234,
-      "max": 0.23614701628684998
+      "mean": 0.024164564907550812,
+      "median": 0.022190045565366745,
+      "p95": 0.04530357047915458,
+      "min": 0.004583525471389294,
+      "max": 0.04769463464617729
     },
     "depth_consistency_rel": {
-      "mean": 0.007224538829177618,
-      "median": 0.002916342578828335,
-      "p95": 0.025905307941138732,
-      "min": 0.0001364458876196295,
-      "max": 0.03708650916814804
+      "mean": 0.007096092216670513,
+      "median": 0.0063334121368825436,
+      "p95": 0.01373681263066828,
+      "min": 0.0013654050417244434,
+      "max": 0.01435214001685381
     },
     "state_abs_error": {
-      "mean": 0.6115794777870178,
-      "median": 0.1094522550702095,
-      "p95": 3.1366246938705444,
-      "min": 0.099721759557724,
+      "mean": 0.8740856051445007,
+      "median": 0.10958579182624817,
+      "p95": 2.7095265507698048,
+      "min": 0.10889386385679245,
       "max": 3.1682770252227783
     },
     "velocity_diff_error": {
@@ -69,15 +69,15 @@
       "max": 0.0
     },
     "velocity_smoothness": {
-      "mean": 0.053475141525268555,
-      "median": 4.537180211627856e-05,
-      "p95": 0.23662637695670127,
-      "min": 0.0,
+      "mean": 0.0595264695584774,
+      "median": 4.113905015401542e-05,
+      "p95": 0.20230556875467293,
+      "min": 2.4367596779484302e-05,
       "max": 0.23799923062324524
     },
     "anomaly_reason_histogram": {
-      "large_center_projection_error": 19,
-      "low_bbox_iou": 8
+      "large_center_projection_error": 4,
+      "low_bbox_iou": 2
     }
   },
   "conclusion": "test | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."

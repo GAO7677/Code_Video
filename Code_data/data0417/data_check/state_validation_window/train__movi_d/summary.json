@@ -1,0 +1,84 @@
+{
+  "dataset_slug": "train__movi_d",
+  "dataset_label": "train | movi_d",
+  "num_samples": 3,
+  "aggregate": {
+    "num_samples": 3,
+    "anomaly_ratio": 1.0,
+    "visible_frame_ratio": {
+      "mean": 1.0,
+      "median": 1.0,
+      "p95": 1.0,
+      "min": 1.0,
+      "max": 1.0
+    },
+    "center_projection_error_px": {
+      "mean": 10.2158203125,
+      "median": 8.506087303161621,
+      "p95": 13.398096656799316,
+      "min": 8.199718475341797,
+      "max": 13.94165325164795
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.649530827999115,
+      "median": 0.6367940306663513,
+      "p95": 0.7064390361309052,
+      "min": 0.5976210236549377,
+      "max": 0.7141773700714111
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 0.8004274368286133,
+      "median": 1.0584261417388916,
+      "p95": 1.0854209661483765,
+      "min": 0.25443580746650696,
+      "max": 1.0884203910827637
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": {
+      "mean": 0.035301920026540756,
+      "median": 0.04099014773964882,
+      "p95": 0.04913426972925663,
+      "min": 0.014876436442136765,
+      "max": 0.05003917217254639
+    },
+    "anomaly_reason_histogram": {
+      "large_center_projection_error": 3,
+      "low_bbox_iou": 3
+    }
+  },
+  "conclusion": "train | movi_d: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+}

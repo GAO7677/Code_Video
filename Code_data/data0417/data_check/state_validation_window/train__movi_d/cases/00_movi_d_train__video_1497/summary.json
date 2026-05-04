@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_train__video_1497",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_16/movi_d_train__video_1497",
+  "dataset": "MOVI-D",
+  "rank_label": "worst-ranked",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 13.94165325164795,
+      "median": 4.119309425354004,
+      "p95": 103.80821380615193,
+      "min": 0.24834196269512177,
+      "max": 114.79315948486328
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.6367940306663513,
+      "median": 0.8171588182449341,
+      "p95": 0.9644830316305161,
+      "min": 0.0,
+      "max": 0.9653790593147278
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 1.0884203910827637,
+      "median": 0.0,
+      "p95": 0.9927101135253906,
+      "min": 0.0,
+      "max": 295.5296630859375
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 0.04099014773964882,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic."
+}

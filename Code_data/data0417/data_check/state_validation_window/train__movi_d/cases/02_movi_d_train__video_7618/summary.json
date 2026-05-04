@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_train__video_7618",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_12/movi_d_train__video_7618",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_12/movi_d_train__video_7618",
+  "dataset": "MOVI-D",
+  "rank_label": "best-ranked",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 8.506087303161621,
+      "median": 5.295628070831299,
+      "p95": 43.79511470794678,
+      "min": 0.31758224964141846,
+      "max": 43.818946838378906
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.7141773700714111,
+      "median": 0.8313039541244507,
+      "p95": 0.9621384412050247,
+      "min": 0.0,
+      "max": 0.9621388912200928
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 0.25443580746650696,
+      "median": 0.0,
+      "p95": 0.9833580017089844,
+      "min": 0.0,
+      "max": 28.936798095703125
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 0.014876436442136765,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a versveldpas background with 12 object(s), including Racoon, BIA Porcelain Ramekin With Glazed Rim 35 45 oz cup, Perricone MD Photo Plasma, Nickelodeon The Spongebob Movie PopAPart Spongebob. 1 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a versveldpas background with 12 object(s), including Racoon, BIA Porcelain Ramekin With Glazed Rim 35 45 oz cup, Perricone MD Photo Plasma, Nickelodeon The Spongebob Movie PopAPart Spongebob. 1 object(s) are dynamic."
+}

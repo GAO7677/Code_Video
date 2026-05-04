@@ -1,0 +1,73 @@
+{
+  "sample_id": "genesis_heldout_0139__10005__case000_static_center",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0139__10005__case000_static_center",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case000_static_center",
+  "dataset": "GenesisRigid",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 4.763689041137695,
+      "median": 4.764520645141602,
+      "p95": 4.793287014961242,
+      "min": 4.723130226135254,
+      "max": 4.79336404800415
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.8591353297233582,
+      "median": 0.8602161407470703,
+      "p95": 0.8607322812080384,
+      "min": 0.8542998433113098,
+      "max": 0.8607898950576782
+    },
+    "depth_consistency_abs": {
+      "mean": 0.04769463464617729,
+      "median": 0.04771220684051514,
+      "p95": 0.047747814655303956,
+      "min": 0.047631263732910156,
+      "max": 0.04775071144104004
+    },
+    "depth_consistency_rel": {
+      "mean": 0.01435214001685381,
+      "median": 0.01435796543955803,
+      "p95": 0.0143680099863559,
+      "min": 0.014332744292914867,
+      "max": 0.01436894666403532
+    },
+    "state_abs_error": {
+      "mean": 0.10923101752996445,
+      "median": 0.0,
+      "p95": 0.9830679416656494,
+      "min": 0.0,
+      "max": 0.983068585395813
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 2.4367596779484302e-05,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error"
+    ]
+  },
+  "caption": "the laptop is placed near the center.",
+  "detail_caption": "Scene 10005__case000_static_center: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_center. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10005) with role=target; it starts near the center with no prescribed object velocity. Role summary: target=Laptop. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81]."
+}

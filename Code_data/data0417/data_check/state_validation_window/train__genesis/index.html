@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>train | genesis Window State Validation</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: radial-gradient(circle at top left, #e0f2fe 0%, #f8fafc 45%, #f4f1ea 100%);
+      color: #14213d;
+    }
+    .wrap { max-width: 1480px; margin: 0 auto; }
+    .hero, .metric-card, .case-card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(15,23,42,0.07);
+    }
+    .hero { padding: 24px; margin-bottom: 18px; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .metric-card { padding: 18px; }
+    .cases {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .case-card { padding: 18px; }
+    .case-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    a {
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    code {
+      background: rgba(17,24,39,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
+    ul { padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div><a href="../index.html">Back to all datasets</a></div>
+      <h1>train | genesis Window State Validation</h1>
+      <p>samples: 4 | anomaly ratio: 1.000000</p>
+      <p>train | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal.</p>
+      <p>Summary file: <code>/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/summary.json</code></p>
+    </section>
+    <section class="metric-grid">
+      <div class="metric-card"><strong>Center Projection Error</strong><br>2.431379</div>
+      <div class="metric-card"><strong>Projection Ref Consistency</strong><br>0.000000</div>
+      <div class="metric-card"><strong>BBox IoU</strong><br>0.897604</div>
+      <div class="metric-card"><strong>Depth Rel Error</strong><br>0.012223</div>
+      <div class="metric-card"><strong>Velocity Diff Error</strong><br>0.000000</div>
+      <div class="metric-card"><strong>Velocity Smoothness</strong><br>1.873415</div>
+    </section>
+    <section class="cases">
+      
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>10007__case000_static_center__cf_no_collision_neg__ratio11</h3>
+      <p>worst-ranked</p>
+    </div>
+    <a href="cases/00_10007__case000_static_center__cf_no_collision_neg__ratio11/index.html">Open</a>
+  </div>
+  <p>interaction_pair_plus_dynamic with 2 object(s), motion=static_center.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case000_static_center__cf_no_collision_neg__ratio11</code></p>
+  <ul>
+    <li>center err: 2.647982</li>
+    <li>bbox IoU: 0.873275</li>
+    <li>depth rel err: 0.013168</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>10007__case000_static_center__cf_no_collision_neg__ratio12</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/01_10007__case000_static_center__cf_no_collision_neg__ratio12/index.html">Open</a>
+  </div>
+  <p>interaction_pair_plus_dynamic with 2 object(s), motion=static_center.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case000_static_center__cf_no_collision_neg__ratio12</code></p>
+  <ul>
+    <li>center err: 2.647982</li>
+    <li>bbox IoU: 0.873275</li>
+    <li>depth rel err: 0.013168</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>10007__case001_static_left__cf_no_collision_neg__ratio11</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/02_10007__case001_static_left__cf_no_collision_neg__ratio11/index.html">Open</a>
+  </div>
+  <p>interaction_pair_plus_dynamic with 2 object(s), motion=static_left.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case001_static_left__cf_no_collision_neg__ratio11</code></p>
+  <ul>
+    <li>center err: 2.214776</li>
+    <li>bbox IoU: 0.921933</li>
+    <li>depth rel err: 0.011278</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>10007__case001_static_left__cf_no_collision_neg__ratio12</h3>
+      <p>best-ranked</p>
+    </div>
+    <a href="cases/03_10007__case001_static_left__cf_no_collision_neg__ratio12/index.html">Open</a>
+  </div>
+  <p>interaction_pair_plus_dynamic with 2 object(s), motion=static_left.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case001_static_left__cf_no_collision_neg__ratio12</code></p>
+  <ul>
+    <li>center err: 2.214776</li>
+    <li>bbox IoU: 0.921933</li>
+    <li>depth rel err: 0.011278</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+    </section>
+  </div>
+</body>
+</html>

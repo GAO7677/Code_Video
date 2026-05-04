@@ -267,6 +267,52 @@ resize 规则：
 - validation `summary` 的 flatten/logging bug 已修复
 - 当前主要剩余不稳定项是偶发的多卡 `NCCL allreduce timeout`，不是数据格式错误，也不是 validation 指标解析错误
 
+## 1.11 Stage0 benchmark 可视化
+
+相关目录约定：
+
+- 生成视频：`/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output`
+- 指标结果：`/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/result`
+- 可视化脚本与页面：`/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/tools/visualization`
+
+当前常用页面：
+
+- 指标折线图页：`result/model_metric_linecharts_latest/index.html`
+- case 对比页：`tools/visualization/compact_selected_portal/index.html`
+
+重建指标折线图页面：
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_train/train_0419/build_stage0_metric_linecharts.py
+```
+
+重建 case 对比页面：
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_train/train_0419/build_stage0_compact_selected_portal.py
+```
+
+本地启动静态可视化端口：
+
+```bash
+cd /data/gaoya/AAA_test_video/Benchmark/stage0_V2V
+python -m http.server 8040 --bind 127.0.0.1
+```
+
+打开页面：
+
+- `http://127.0.0.1:8040/result/model_metric_linecharts_latest/index.html`
+- `http://127.0.0.1:8040/tools/visualization/compact_selected_portal/index.html`
+
+当前指标页额外标注的信息：
+
+- `sample300_full` 的数据集样本组成
+- 不同模型实际输入条件差异
+- 任务类型：`TI2V / context-aware / V2V`
+- 生成分辨率：Wan 系列 `672x384`，VACE 系列 `720x544`
+
 
 # 2. 基于 stage1 训练好的 V2V 模型，利用自建数据集的物理状态真值训练 adapter
 

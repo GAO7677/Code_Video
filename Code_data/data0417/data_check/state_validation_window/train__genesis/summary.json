@@ -1,0 +1,83 @@
+{
+  "dataset_slug": "train__genesis",
+  "dataset_label": "train | genesis",
+  "num_samples": 4,
+  "aggregate": {
+    "num_samples": 4,
+    "anomaly_ratio": 1.0,
+    "visible_frame_ratio": {
+      "mean": 0.8500000238418579,
+      "median": 0.8500000238418579,
+      "p95": 0.8500000238418579,
+      "min": 0.8500000238418579,
+      "max": 0.8500000238418579
+    },
+    "center_projection_error_px": {
+      "mean": 2.4313790798187256,
+      "median": 2.4313790798187256,
+      "p95": 2.647982120513916,
+      "min": 2.214776039123535,
+      "max": 2.647982120513916
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.8976036906242371,
+      "median": 0.8976037502288818,
+      "p95": 0.9219329357147217,
+      "min": 0.8732745051383972,
+      "max": 0.9219329357147217
+    },
+    "depth_consistency_abs": {
+      "mean": 0.08506214618682861,
+      "median": 0.08506213873624802,
+      "p95": 0.08984845876693726,
+      "min": 0.08027581870555878,
+      "max": 0.08984845876693726
+    },
+    "depth_consistency_rel": {
+      "mean": 0.012222850695252419,
+      "median": 0.012222850695252419,
+      "p95": 0.013167827390134335,
+      "min": 0.011277874000370502,
+      "max": 0.013167827390134335
+    },
+    "state_abs_error": {
+      "mean": 0.09118595719337463,
+      "median": 0.09118595719337463,
+      "p95": 0.0916803777217865,
+      "min": 0.09069153666496277,
+      "max": 0.0916803777217865
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": {
+      "mean": 1.8734153509140015,
+      "median": 1.873415231704712,
+      "p95": 1.8834275007247925,
+      "min": 1.863403081893921,
+      "max": 1.8834275007247925
+    },
+    "anomaly_reason_histogram": {
+      "large_center_projection_error": 4
+    }
+  },
+  "conclusion": "train | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal."
+}

@@ -1,0 +1,74 @@
+{
+  "sample_id": "genesis_heldout_0142__10005__case003_static_highdrop",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0142__10005__case003_static_highdrop",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case003_static_highdrop",
+  "dataset": "GenesisRigid",
+  "rank_label": "worst-ranked",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 14.914148330688477,
+      "median": 15.435827255249023,
+      "p95": 15.561522436141967,
+      "min": 12.691011428833008,
+      "max": 15.658815383911133
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.665574848651886,
+      "median": 0.6652395725250244,
+      "p95": 0.6729596495628357,
+      "min": 0.6521170735359192,
+      "max": 0.6733686327934265
+    },
+    "depth_consistency_abs": {
+      "mean": 0.01262588519603014,
+      "median": 0.007058858871459961,
+      "p95": 0.0328942060470581,
+      "min": 0.004609584808349609,
+      "max": 0.03398275375366211
+    },
+    "depth_consistency_rel": {
+      "mean": 0.002416866598650813,
+      "median": 0.0013277737889438868,
+      "p95": 0.0063781189033761615,
+      "min": 0.0008671559044159949,
+      "max": 0.006613434758037329
+    },
+    "state_abs_error": {
+      "mean": 3.1682770252227783,
+      "median": 0.0,
+      "p95": 0.9962073355913162,
+      "min": 0.0,
+      "max": 272.9798583984375
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 0.23799923062324524,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "the laptop falls from an elevated starting point.",
+  "detail_caption": "Scene 10005__case003_static_highdrop: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is gravity_drop, and the global motion category is static_highdrop. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10005) with role=target; it is released from a higher initial position and falls under gravity. Role summary: target=Laptop. The RGB video has 13 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81]."
+}

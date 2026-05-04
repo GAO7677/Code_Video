@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_test_0003__video_778",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0003__video_778",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0003__video_778",
+  "dataset": "MOVI-D",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 0.9134199023246765,
+    "center_projection_error_px": {
+      "mean": 15.55088996887207,
+      "median": 9.920961380004883,
+      "p95": 43.903892517089844,
+      "min": 0.5478660464286804,
+      "max": 66.8787841796875
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.44466432929039,
+      "median": 0.509945273399353,
+      "p95": 0.911497175693512,
+      "min": 0.0,
+      "max": 0.9558042883872986
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 3.106092947291472e-07,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 1.52587890625e-05
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.03469790890812874,
+      "median": 0.006591796875,
+      "p95": 0.1944427490234375,
+      "min": 3.0517578125e-05,
+      "max": 0.1944427490234375
+    },
+    "velocity_smoothness": 0.21036143600940704,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a castle_zavelstein_cellar background with 11 object(s), including Down To Earth Ceramic Orchid Pot Asst Blue, Threshold Porcelain Teapot White, Womens Multi 13, SCHOOL BUS. 2 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a castle_zavelstein_cellar background with 11 object(s), including Down To Earth Ceramic Orchid Pot Asst Blue, Threshold Porcelain Teapot White, Womens Multi 13, SCHOOL BUS. 2 object(s) are dynamic."
+}

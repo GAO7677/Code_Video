@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GenesisRigid | genesis_heldout_0140__10005__case001_static_left</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: linear-gradient(180deg, #f6f3eb 0%, #efe9db 100%);
+      color: #1f2933;
+    }
+    .wrap { max-width: 1460px; margin: 0 auto; }
+    .hero, .card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(17,24,39,0.08);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 10px 28px rgba(15,23,42,0.07);
+    }
+    .hero { margin-bottom: 18px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    img, video {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(17,24,39,0.08);
+      background: #111827;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid rgba(17,24,39,0.08); padding: 8px 10px; text-align: left; }
+    code { background: rgba(17,24,39,0.06); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div><a href="../index.html">Back to dataset summary</a></div>
+      <h1>GenesisRigid | genesis_heldout_0140__10005__case001_static_left</h1>
+      <p>best-ranked sample</p>
+      <p>Window sample: <code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0140__10005__case001_static_left</code></p>
+      <p>Source sample: <code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10005__case001_static_left</code></p>
+      <p><strong>Caption:</strong> the laptop is placed on the left side.</p>
+      <p><strong>Detail Caption:</strong> Scene 10005__case001_static_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_left. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10005) with role=target; it starts from a left-offset static placement. Role summary: target=Laptop. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].</p>
+    </section>
+    <section class="grid">
+      <section class="card">
+        <h2>Trajectory Overlay Video</h2>
+        <video src="overlay.mp4" controls preload="metadata"></video>
+      </section>
+      <section class="card">
+        <h2>Trajectory Overlay GIF</h2>
+        <img src="overlay.gif" alt="overlay gif">
+      </section>
+      <section class="card">
+        <h2>Trajectory Strip</h2>
+        <img src="trajectory_strip.png" alt="trajectory strip">
+      </section>
+      <section class="card">
+        <h2>State Curves</h2>
+        <img src="curves.png" alt="state curves">
+      </section>
+      <section class="card">
+        <h2>Consistency Curves</h2>
+        <img src="comparisons.png" alt="compare curves">
+      </section>
+      <section class="card" style="grid-column: 1 / -1;">
+        <h2>Metrics</h2>
+        <table><thead><tr><th>metric</th><th>mean</th><th>median</th><th>p95</th></tr></thead><tbody><tr><td>center_projection_error_px</td><td>3.741912</td><td>3.742219</td><td>3.747432</td></tr><tr><td>projection_consistency_ref_px</td><td>0.000000</td><td>0.000000</td><td>0.000000</td></tr><tr><td>bbox_iou</td><td>0.930925</td><td>0.930947</td><td>0.931185</td></tr><tr><td>depth_consistency_abs</td><td>0.004584</td><td>0.004583</td><td>0.004622</td></tr><tr><td>depth_consistency_rel</td><td>0.001365</td><td>0.001365</td><td>0.001377</td></tr><tr><td>state_abs_error</td><td>0.109941</td><td>0.000000</td><td>0.989465</td></tr><tr><td>velocity_diff_error</td><td>0.000000</td><td>0.000000</td><td>0.000000</td></tr><tr><td>vis_abs_error</td><td>0.000000</td><td>0.000000</td><td>0.000000</td></tr><tr><td>velocity_smoothness</td><td>0.000041</td><td>n/a</td><td>n/a</td></tr><tr><td>anomaly</td><td>True</td><td colspan='2'>large_center_projection_error</td></tr></tbody></table>
+      </section>
+    </section>
+  </div>
+</body>
+</html>

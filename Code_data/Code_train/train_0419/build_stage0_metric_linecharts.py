@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html as html_lib
 import json
 from pathlib import Path
 from typing import Any
 
+import build_stage0_compact_selected_portal as compact_portal
 import matplotlib
 
 matplotlib.use("Agg")
@@ -30,12 +32,28 @@ MODEL_SPECS = [
 MODEL_OUTPUT_DIRS = {name: subdir for name, _, subdir in MODEL_SPECS}
 DISPLAY_NAMES = {name: label for name, label, _ in MODEL_SPECS}
 MODEL_ORDER = [name for name, _, _ in MODEL_SPECS]
-DATASET_COLORS = {
-    "kubric_tfds_movi-d": "#b5532d",
-    "version_1_genesis_rigid_data_all_cases": "#2a6f8f",
-    "physics-iq-benchmark": "#3b7c32",
-    "vLAR-PhysInOne": "#7b4fa3",
-    "mvp-lab-OpenVidHD-0.4M-720p-48fps": "#9a6230",
+
+SAMPLE300_PRIMARY_MODEL_SUBDIR = "wan2_2_5B_baseline_TI2V"
+SHOWCASE_CASES_PER_DATASET = 1
+
+MODEL_SETUP_ROWS = [
+    ("Wan baseline", "text + first frame + context video", "context-aware", "672x384"),
+    ("step-008000", "text + first frame + context video", "context-aware", "672x384"),
+    ("step-010000", "text + first frame + context video", "context-aware", "672x384"),
+    ("Wan pure TI2V", "text + first frame image", "TI2V", "672x384"),
+    ("VACE TI2V", "text + first frame image", "TI2V", "720x544"),
+    ("VACE ctx01", "text + VACE video + mask, context=1 frame", "V2V", "720x544"),
+    ("VACE ctx02", "text + VACE video + mask, context=2 frames", "V2V", "720x544"),
+    ("VACE ctx04", "text + VACE video + mask, context=4 frames", "V2V", "720x544"),
+    ("VACE ctx08", "text + VACE video + mask, context=8 frames", "V2V", "720x544"),
+]
+
+DATASET_LABELS = {
+    "kubric_tfds_movi-d": "MOVI-D",
+    "version_1_genesis_rigid_data_all_cases": "GenesisRigid",
+    "physics-iq-benchmark": "Physics-IQ",
+    "vLAR-PhysInOne": "vLAR",
+    "mvp-lab-OpenVidHD-0.4M-720p-48fps": "OpenVidHD",
 }
 
 FUTURE_METRICS = [
@@ -56,29 +74,6 @@ VBENCH_METRICS = [
     ("overall_consistency", "Overall Consistency", False),
     ("temporal_style", "Temporal Style", False),
 ]
-
-DATASET_ORDER = [
-    "kubric_tfds_movi-d",
-    "version_1_genesis_rigid_data_all_cases",
-    "physics-iq-benchmark",
-    "vLAR-PhysInOne",
-    "mvp-lab-OpenVidHD-0.4M-720p-48fps",
-]
-
-DATASET_LABELS = {
-    "kubric_tfds_movi-d": "MOVI-D",
-    "version_1_genesis_rigid_data_all_cases": "GenesisRigid",
-    "physics-iq-benchmark": "Physics-IQ",
-    "vLAR-PhysInOne": "vLAR",
-    "mvp-lab-OpenVidHD-0.4M-720p-48fps": "OpenVidHD",
-}
-
-TESTSET_SPECS = [
-    ("benchmark_meta_json_paths_full_sample300.txt", "sample300_full"),
-    ("benchmark_meta_json_paths_full_sample300_genesis56.txt", "sample300_genesis56"),
-    ("common_case_meta_json_paths.txt", "common_case"),
-]
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build stage0 aggregate metric line charts.")
@@ -120,49 +115,6 @@ def mean(values: list[float]) -> float | None:
     if not values:
         return None
     return sum(values) / len(values)
-
-
-def normalize_dataset_label(raw_path: str, payload: dict[str, Any]) -> str:
-    text = str(raw_path)
-    dataset = str(payload.get("dataset") or "").strip()
-    lowered = text.lower()
-    if "kubric_tfds_movi-d" in text or dataset == "MOVI-D":
-        return "kubric_tfds_movi-d"
-    if "version_1_genesis_rigid_data_all_cases" in text or dataset == "GenesisRigid" or "genesis" in lowered:
-        return "version_1_genesis_rigid_data_all_cases"
-    if "physics-iq-benchmark" in text:
-        return "physics-iq-benchmark"
-    if "vLAR-PhysInOne" in text:
-        return "vLAR-PhysInOne"
-    if "mvp-lab-OpenVidHD-0.4M-720p-48fps" in text:
-        return "mvp-lab-OpenVidHD-0.4M-720p-48fps"
-    return dataset or "(unknown)"
-
-
-def collect_testset_compositions(meta_root: Path) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for filename, testset_name in TESTSET_SPECS:
-        meta_path = meta_root / filename
-        if not meta_path.is_file():
-            continue
-        counts: dict[str, int] = {}
-        paths = [line.strip() for line in meta_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        for raw_path in paths:
-            try:
-                payload = load_json(Path(raw_path))
-            except Exception:
-                payload = {}
-            dataset = normalize_dataset_label(raw_path, payload)
-            counts[dataset] = counts.get(dataset, 0) + 1
-        items.append(
-            {
-                "testset_name": testset_name,
-                "meta_list_path": str(meta_path),
-                "num_cases": len(paths),
-                "composition": counts,
-            }
-        )
-    return items
 
 
 def load_future_summaries(result_root: Path) -> dict[str, dict[str, Any]]:
@@ -208,6 +160,240 @@ def load_sidecar_counts(output_root: Path) -> dict[str, dict[str, int]]:
             "vbench_sidecars": vbench,
         }
     return counts
+
+
+def collect_sample300_composition(output_root: Path) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    base_dir = output_root / SAMPLE300_PRIMARY_MODEL_SUBDIR
+    if not base_dir.is_dir():
+        return counts
+    for json_path in sorted(base_dir.glob("*.json")):
+        try:
+            payload = load_json(json_path)
+        except Exception:
+            continue
+        dataset_name = str(payload.get("dataset") or "unknown")
+        counts[dataset_name] = counts.get(dataset_name, 0) + 1
+    return counts
+
+
+def select_showcase_cases(output_root: Path) -> list[tuple[str, str]]:
+    base_entries = compact_portal.base_case_payload(output_root / SAMPLE300_PRIMARY_MODEL_SUBDIR)
+    by_dataset: dict[str, list[str]] = {}
+    for payload in base_entries:
+        dataset = str(payload.get("dataset") or "unknown")
+        sample_id = str(payload.get("sample_id") or "")
+        if sample_id:
+            by_dataset.setdefault(dataset, []).append(sample_id)
+    selected: list[tuple[str, str]] = []
+    for dataset in DATASET_LABELS:
+        bucket = sorted(set(by_dataset.get(dataset, [])))
+        for sample_id in bucket[:SHOWCASE_CASES_PER_DATASET]:
+            selected.append((dataset, sample_id))
+    return selected
+
+
+def render_case_media(path: str | None) -> str:
+    if not path:
+        return "<div class='missing'>Missing</div>"
+    web_path = "/" + path.lstrip("/")
+    lower = path.lower()
+    if lower.endswith((".png", ".jpg", ".jpeg", ".webp")):
+        return f"<img loading='lazy' src='{html_lib.escape(web_path)}' alt='media'>"
+    return (
+        "<video controls preload='none' muted playsinline>"
+        f"<source src='{html_lib.escape(web_path)}' type='video/mp4'>"
+        "</video>"
+    )
+
+
+def render_case_input_assets(assets: list[dict[str, str]]) -> str:
+    if not assets:
+        return "<div class='missing'>Missing</div>"
+    chunks = []
+    for asset in assets:
+        role = str(asset.get("role") or "input")
+        path = asset.get("path")
+        chunks.append(
+            "<div class='mini-media'>"
+            f"<div class='mini-head'>{html_lib.escape(role)}</div>"
+            f"{render_case_media(path if isinstance(path, str) else None)}"
+            "</div>"
+        )
+    return "".join(chunks)
+
+
+def build_showcase_cases(benchmark_root: Path) -> list[dict[str, Any]]:
+    output_root = benchmark_root / "output"
+    portal_dir = (benchmark_root / "tools/visualization/compact_selected_portal").resolve()
+    portal_dir.mkdir(parents=True, exist_ok=True)
+
+    cases: list[dict[str, Any]] = []
+    for dataset, sample_id in select_showcase_cases(output_root):
+        sample_key = compact_portal.bel.sanitize_filename(f"{dataset}__{sample_id}")
+        sample_asset_dir = portal_dir / "assets" / "samples" / sample_key
+        sample_asset_dir.mkdir(parents=True, exist_ok=True)
+
+        full_video_asset: str | None = None
+        shared_caption = ""
+        model_records: list[dict[str, Any]] = []
+        for model_name, _, model_subdir in MODEL_SPECS:
+            try:
+                _, payload = compact_portal.find_payload(output_root, model_subdir, dataset, sample_id)
+            except FileNotFoundError:
+                model_records.append(
+                    {
+                        "display_name": DISPLAY_NAMES.get(model_name, model_name),
+                        "status": "missing",
+                        "seed": None,
+                        "resolution": "-",
+                        "fps": None,
+                        "task": "",
+                        "context_frames": None,
+                        "input_assets": [],
+                        "output_asset": None,
+                    }
+                )
+                continue
+
+            model_asset_dir = sample_asset_dir / compact_portal.sanitize_token(model_name)
+            model_asset_dir.mkdir(parents=True, exist_ok=True)
+            input_assets = compact_portal.materialize_input_assets(
+                payload=payload,
+                benchmark_root=benchmark_root,
+                asset_dir=model_asset_dir,
+            )
+            paths = payload.get("paths", {})
+            if not isinstance(paths, dict):
+                paths = {}
+            if full_video_asset is None:
+                full_video_asset = compact_portal.link_reference_asset(
+                    benchmark_root=benchmark_root,
+                    asset_dir=sample_asset_dir,
+                    raw_path=paths.get("full_video_path") if isinstance(paths.get("full_video_path"), str) else None,
+                    link_name="gt_full_video.mp4",
+                )
+
+            model_inputs = payload.get("model_inputs", {})
+            if isinstance(model_inputs, dict) and not shared_caption:
+                shared_caption = str(model_inputs.get("input_text") or payload.get("caption") or "")
+            elif not shared_caption:
+                shared_caption = str(payload.get("caption") or "")
+
+            generation = payload.get("generation_params", {})
+            if not isinstance(generation, dict):
+                generation = {}
+            width = generation.get("width")
+            height = generation.get("height")
+            resolution = "-"
+            if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+                resolution = f"{width}x{height}"
+            output_asset = None
+            output_path = paths.get("output_video_path")
+            if isinstance(output_path, str) and output_path and Path(output_path).exists():
+                output_asset = compact_portal.relpath_from_root(benchmark_root, Path(output_path))
+
+            model_records.append(
+                {
+                    "display_name": DISPLAY_NAMES.get(model_name, model_name),
+                    "status": str(payload.get("status") or ""),
+                    "seed": payload.get("seed"),
+                    "resolution": resolution,
+                    "fps": generation.get("fps"),
+                    "task": str(generation.get("conditioning_mode") or generation.get("task") or ""),
+                    "context_frames": generation.get("used_context_frames") or generation.get("context_frames"),
+                    "input_assets": input_assets,
+                    "output_asset": output_asset,
+                }
+            )
+
+        cases.append(
+            {
+                "dataset": dataset,
+                "sample_id": sample_id,
+                "caption": shared_caption,
+                "full_video_asset": full_video_asset,
+                "models": model_records,
+            }
+        )
+    return cases
+
+
+def render_showcase_cases(cases: list[dict[str, Any]]) -> str:
+    if not cases:
+        return ""
+
+    dataset_cards: list[str] = []
+    order = {name: idx for idx, name in enumerate(DATASET_LABELS)}
+    by_dataset: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        by_dataset.setdefault(str(case.get("dataset") or "unknown"), []).append(case)
+
+    for dataset in sorted(by_dataset, key=lambda item: order.get(item, 999)):
+        sample_cards: list[str] = []
+        for case in by_dataset[dataset]:
+            model_cols: list[str] = []
+            for model in case.get("models", []):
+                seed = model.get("seed")
+                fps = model.get("fps")
+                context_frames = model.get("context_frames")
+                meta_parts = [
+                    f"seed={seed}" if isinstance(seed, int) else "seed=-",
+                    str(model.get("resolution") or "-"),
+                    f"{fps} fps" if isinstance(fps, int) else "fps=-",
+                ]
+                if isinstance(context_frames, int) and context_frames > 0:
+                    meta_parts.append(f"ctx={context_frames}")
+                task = str(model.get("task") or "")
+                model_cols.append(
+                    "<div class='model-col'>"
+                    "<div class='tile-head'>"
+                    f"<span class='model-name'>{html_lib.escape(str(model.get('display_name') or 'model'))}</span>"
+                    f"<span class='status'>{html_lib.escape(str(model.get('status') or ''))}</span>"
+                    "</div>"
+                    f"<p class='model-meta'>{html_lib.escape(' · '.join(meta_parts))}</p>"
+                    f"<p class='model-task'>{html_lib.escape(task)}</p>"
+                    "<div class='mini-head'>input_visual_conditions</div>"
+                    f"<div class='inputs-grid'>{render_case_input_assets(model.get('input_assets', []))}</div>"
+                    "<div class='output-box'>"
+                    "<div class='mini-head'>output_video</div>"
+                    f"{render_case_media(model.get('output_asset') if isinstance(model.get('output_asset'), str) else None)}"
+                    "</div>"
+                    "</div>"
+                )
+
+            sample_cards.append(
+                "<article class='sample-card'>"
+                "<div class='sample-top'>"
+                f"<span class='dataset-tag'>{html_lib.escape(DATASET_LABELS.get(dataset, dataset))}</span>"
+                f"<h3>{html_lib.escape(str(case.get('sample_id') or 'sample'))}</h3>"
+                f"<p class='caption'><strong>input_text:</strong> {html_lib.escape(str(case.get('caption') or ''))}</p>"
+                "</div>"
+                "<div class='case-overview'>"
+                "<div class='shared-col gt-col'>"
+                "<div class='tile-head'><span class='model-name'>GT Full Video</span></div>"
+                f"{render_case_media(case.get('full_video_asset') if isinstance(case.get('full_video_asset'), str) else None)}"
+                "</div>"
+                "</div>"
+                f"<div class='models-grid'>{''.join(model_cols)}</div>"
+                "</article>"
+            )
+
+        dataset_cards.append(
+            "<section class='dataset-block'>"
+            f"<div class='dataset-block-head'><h3>{html_lib.escape(DATASET_LABELS.get(dataset, dataset))}</h3>"
+            "<p>固定展示 1 个代表样本。样本顶部给出共享文本条件，GT 单独展示；下方用统一网格对比各模型输出和对应视觉输入。</p></div>"
+            f"{''.join(sample_cards)}"
+            "</section>"
+        )
+
+    return (
+        "<section class='card case-panel'>"
+        "<h2>Selected Cases</h2>"
+        "<p class='meta'>每个数据集展示 1 个代表样本。每个模型卡片都包含实际视觉输入、输出视频，以及 seed、分辨率、fps、context 帧数等基本信息。</p>"
+        f"{''.join(dataset_cards)}"
+        "</section>"
+    )
 
 
 def load_future_summaries_from_sidecars(output_root: Path) -> dict[str, dict[str, Any]]:
@@ -374,50 +560,6 @@ def plot_metric_series(
     plt.close(fig)
 
 
-def plot_future_dataset_panel(
-    *,
-    model_summary: dict[str, dict[str, Any]],
-    dataset_name: str,
-    output_path: Path,
-) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10), dpi=180)
-    axes = axes.reshape(-1)
-    fig.patch.set_facecolor("#f4f1e8")
-    x_labels = [DISPLAY_NAMES.get(name, name) for name in MODEL_ORDER]
-    x_positions = list(range(len(MODEL_ORDER)))
-    dataset_label = DATASET_LABELS.get(dataset_name, dataset_name)
-    color = DATASET_COLORS.get(dataset_name, "#b5532d")
-
-    for axis, (metric_key, metric_title, lower_better) in zip(axes, FUTURE_METRICS):
-        y_values = []
-        for model_name in MODEL_ORDER:
-            dataset_block = model_summary.get(model_name, {}).get("future_per_dataset", {}).get(dataset_name, {})
-            aggregate = dataset_block.get("aggregate", {}) if isinstance(dataset_block, dict) else {}
-            y_values.append(aggregate.get(metric_key))
-        axis.plot(x_positions, y_values, marker="o", linewidth=2.2, color=color)
-        for xpos, model_name, value in zip(x_positions, MODEL_ORDER, y_values):
-            dataset_block = model_summary.get(model_name, {}).get("future_per_dataset", {}).get(dataset_name, {})
-            count = dataset_block.get("num_per_sample_metrics") if isinstance(dataset_block, dict) else None
-            if value is None:
-                axis.text(xpos, 0.02, "missing", fontsize=8, ha="center", va="bottom", transform=axis.get_xaxis_transform())
-                continue
-            if isinstance(count, (int, float)):
-                axis.text(xpos, value, f"{value:.4f}\n(n={int(count)})", fontsize=8, ha="center", va="bottom")
-            else:
-                axis.text(xpos, value, f"{value:.4f}", fontsize=8, ha="center", va="bottom")
-        axis.set_xticks(x_positions)
-        axis.set_xticklabels(x_labels, rotation=20, ha="right")
-        axis.set_title(metric_title, fontsize=13)
-        axis.grid(True, alpha=0.25)
-        badge = "lower better" if lower_better else "higher better"
-        axis.text(0.98, 0.02, badge, transform=axis.transAxes, ha="right", va="bottom", fontsize=9, color="#6e675d")
-
-    fig.suptitle(f"{dataset_label} Future Metrics by Model", fontsize=18, y=0.995)
-    fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.96])
-    fig.savefig(output_path, facecolor=fig.get_facecolor())
-    plt.close(fig)
-
-
 def build_summary_rows(model_summary: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for model_name in MODEL_ORDER:
@@ -459,7 +601,10 @@ def write_index(
     output_root: Path,
     model_summary: dict[str, dict[str, Any]],
     testset_compositions: list[dict[str, Any]],
+    sample300_composition: dict[str, int],
+    showcase_cases: list[dict[str, Any]],
 ) -> None:
+    del testset_compositions
     summary_rows = build_summary_rows(model_summary)
     model_rows_html = []
     for row in summary_rows:
@@ -485,33 +630,52 @@ def write_index(
             "</tr>"
         )
 
-    composition_cards = []
-    for item in testset_compositions:
-        rows = []
-        for dataset_name, count in sorted(item.get("composition", {}).items()):
-            label = DATASET_LABELS.get(dataset_name, dataset_name)
-            rows.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
-        composition_cards.append(
-            "<section class='card'>"
-            f"<h2>{item['testset_name']}</h2>"
-            f"<p class='meta'>{item['num_cases']} cases<br>{item['meta_list_path']}</p>"
-            "<table><thead><tr><th>dataset</th><th>count</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table>"
-            "</section>"
-        )
-
-    dataset_chart_cards = []
-    for dataset_name in DATASET_ORDER:
-        filename = f"future_{dataset_name.replace('/', '_')}.png"
-        if not (output_root / filename).exists():
-            continue
-        dataset_chart_cards.append(
-            "<section class='card'>"
-            f"<h2>{DATASET_LABELS.get(dataset_name, dataset_name)}</h2>"
-            "<p class='meta'>该测试数据集上，各模型 future 指标的单独折线图。横轴是模型，纵轴是指标值。</p>"
-            f"<img src='{filename}' alt='{dataset_name} future metrics'>"
-            "</section>"
-        )
+    future_metric_notes = [
+        ("PSNR", "像素级重建误差，越高越好；对细小偏差敏感。"),
+        ("SSIM", "结构和局部纹理一致性，越高越好；比 PSNR 更贴近结构观感。"),
+        ("LPIPS", "感知相似度，越低越好；更关注人眼觉得像不像。"),
+        ("DINO", "高层语义和目标状态一致性，越高越好；更适合看物体结果是否对。"),
+    ]
+    vbench_metric_notes = [
+        ("Subject Consistency", "主体时序稳定性，越高越好；漂移和变形会降分。"),
+        ("Background Consistency", "背景连贯性，越高越好；背景乱跳会降分。"),
+        ("Motion Smoothness", "运动顺滑程度，越高越好；生硬断裂会降分。"),
+        ("Temporal Flickering", "时序闪烁控制，越高越好；亮度和纹理跳变会降分。"),
+        ("Dynamic Degree", "动态幅度大小；不是越高越好，过低太静，过高可能是假运动。"),
+        ("Imaging Quality", "单帧画质，越高越好；反映清晰度、噪声和成像质量。"),
+        ("Aesthetic Quality", "主观观感和美学质量，越高越好。"),
+        ("Overall Consistency", "整段视频整体一致性，越高越好；可作通用时序辅助参考。"),
+        ("Temporal Style", "时间维风格稳定性，越高越好；看颜色和质感是否前后一致。"),
+    ]
+    future_notes_html = "".join(
+        "<li>"
+        f"<strong>{name}</strong>: {desc}"
+        "</li>"
+        for name, desc in future_metric_notes
+    )
+    vbench_notes_html = "".join(
+        "<li>"
+        f"<strong>{name}</strong>: {desc}"
+        "</li>"
+        for name, desc in vbench_metric_notes
+    )
+    composition_rows = "".join(
+        "<tr>"
+        f"<td>{DATASET_LABELS.get(dataset_name, dataset_name)}</td>"
+        f"<td>{count}</td>"
+        "</tr>"
+        for dataset_name, count in sorted(sample300_composition.items(), key=lambda item: (-item[1], item[0]))
+    )
+    setup_rows = "".join(
+        "<tr>"
+        f"<td>{model_name}</td>"
+        f"<td>{inputs}</td>"
+        f"<td>{task}</td>"
+        f"<td>{resolution}</td>"
+        "</tr>"
+        for model_name, inputs, task, resolution in MODEL_SETUP_ROWS
+    )
+    showcase_cases_html = render_showcase_cases(showcase_cases)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -520,52 +684,130 @@ def write_index(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stage0 Metric Line Charts</title>
   <style>
+    :root {{
+      --bg: #f3efe6;
+      --panel: rgba(255, 251, 244, 0.94);
+      --panel-strong: #fffdf8;
+      --line: #d8cfbf;
+      --line-soft: #e7dece;
+      --ink: #1f1b16;
+      --muted: #6d655b;
+      --accent: #b5532d;
+      --accent-soft: #f3d7c9;
+      --teal: #2a6f8f;
+      --olive: #557a46;
+      --ok-bg: #dcebdc;
+      --ok-ink: #28563c;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
     body {{
       margin: 0;
       font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
-      background: #f4f1e8;
-      color: #1e1b16;
+      background:
+        radial-gradient(circle at top left, rgba(181,83,45,0.10), transparent 24%),
+        radial-gradient(circle at top right, rgba(42,111,143,0.08), transparent 20%),
+        linear-gradient(180deg, #faf7f1 0%, var(--bg) 100%);
+      color: var(--ink);
     }}
     .shell {{
-      width: min(1800px, calc(100vw - 24px));
+      width: min(1720px, calc(100vw - 28px));
       margin: 0 auto;
-      padding: 12px 0 24px;
+      padding: 18px 0 28px;
     }}
     .hero {{
-      padding: 12px 16px;
-      background: #fffdf8;
-      border: 1px solid #d8cfbf;
-      border-radius: 12px;
-      margin-bottom: 12px;
+      padding: 18px 20px;
+      background: linear-gradient(180deg, rgba(255,253,248,0.98), rgba(255,248,238,0.95));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 18px 40px rgba(73, 52, 33, 0.06);
     }}
-    .hero h1 {{ margin: 0 0 6px; font-size: 24px; }}
-    .hero p {{ margin: 0 0 4px; color: #6e675d; font-size: 13px; line-height: 1.45; }}
-    .grid {{
+    .hero h1 {{
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+    }}
+    .hero p {{
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 1320px;
+    }}
+    .top-layout {{
       display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 14px;
+    }}
+    .stack {{
+      display: grid;
+      gap: 14px;
+    }}
+    .stats-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
     }}
+    .charts-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+      margin-bottom: 14px;
+    }}
+    .grid {{
+      display: grid;
+      gap: 14px;
+    }}
     .card {{
-      padding: 10px 12px;
-      background: #fffdf8;
-      border: 1px solid #d8cfbf;
-      border-radius: 12px;
+      padding: 14px 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 14px 32px rgba(73, 52, 33, 0.05);
     }}
     .card h2 {{
       margin: 0 0 8px;
-      font-size: 16px;
+      font-size: 17px;
+      letter-spacing: -0.01em;
     }}
     .card p.meta {{
-      margin: 0 0 8px;
-      color: #6e675d;
+      margin: 0 0 10px;
+      color: var(--muted);
       font-size: 12px;
-      line-height: 1.45;
+      line-height: 1.5;
       word-break: break-word;
     }}
     .card img {{
       display: block;
       width: 100%;
-      border-radius: 8px;
+      border-radius: 12px;
       background: #f8f4eb;
+      border: 1px solid var(--line-soft);
+    }}
+    .chart-card img {{
+      min-height: 560px;
+      object-fit: contain;
+    }}
+    .chart-subnotes {{
+      margin: 0 0 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: #faf6ee;
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .chart-subnotes ul {{
+      margin: 0;
+      padding-left: 18px;
+    }}
+    .chart-subnotes li {{
+      margin: 0 0 6px;
     }}
     table {{
       width: 100%;
@@ -573,9 +815,209 @@ def write_index(
       font-size: 12px;
     }}
     th, td {{
-      padding: 5px 6px;
-      border-bottom: 1px solid #d8cfbf;
+      padding: 7px 8px;
+      border-bottom: 1px solid var(--line-soft);
       text-align: left;
+      vertical-align: top;
+    }}
+    th {{
+      color: #5a4e42;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }}
+    .table-tight td:first-child, .table-tight th:first-child {{
+      width: 26%;
+    }}
+    .summary-card {{
+      overflow-x: auto;
+    }}
+    .setup-card {{
+      display: grid;
+      gap: 14px;
+    }}
+    .setup-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr);
+      gap: 14px;
+    }}
+    .mini-note {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }}
+    .dataset-block {{
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }}
+    .dataset-block-head {{
+      padding: 12px 14px;
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fffaf2, #faf4ea);
+    }}
+    .dataset-block-head h3 {{
+      margin: 0 0 4px;
+      font-size: 16px;
+    }}
+    .dataset-block-head p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }}
+    .sample-card {{
+      padding: 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,251,244,0.98), rgba(255,248,238,0.95));
+    }}
+    .sample-top {{
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }}
+    .sample-top h3 {{
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.3;
+      word-break: break-word;
+    }}
+    .dataset-tag {{
+      justify-self: start;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #5c311f;
+      font-size: 11px;
+      font-weight: 600;
+    }}
+    .caption {{
+      margin: 0;
+      color: #473e36;
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .case-overview {{
+      display: grid;
+      grid-template-columns: minmax(0, 380px);
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .shared-col, .model-col {{
+      padding: 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: var(--panel-strong);
+    }}
+    .gt-col video {{
+      min-height: 210px;
+      max-height: 240px;
+    }}
+    .models-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .tile-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }}
+    .model-name {{
+      color: #5b2717;
+      word-break: break-word;
+    }}
+    .status {{
+      color: var(--ok-ink);
+      background: var(--ok-bg);
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 10px;
+      white-space: nowrap;
+    }}
+    .model-meta {{
+      margin: 8px 0 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }}
+    .model-task {{
+      margin: 0 0 8px;
+      color: #4c675a;
+      font-size: 11px;
+      line-height: 1.35;
+      font-weight: 600;
+    }}
+    .inputs-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+      margin-bottom: 10px;
+    }}
+    .mini-media, .output-box {{
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fbf8f2;
+    }}
+    .mini-head {{
+      padding: 6px 7px;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(239, 231, 218, 0.7);
+      color: #55493d;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.2;
+      word-break: break-word;
+    }}
+    video, img {{
+      display: block;
+      width: 100%;
+      min-height: 126px;
+      max-height: 170px;
+      object-fit: contain;
+      background: #0d0d0d;
+    }}
+    .output-box video {{
+      min-height: 180px;
+      max-height: 220px;
+    }}
+    .missing {{
+      display: grid;
+      place-items: center;
+      min-height: 120px;
+      color: var(--muted);
+      background: repeating-linear-gradient(
+        45deg,
+        rgba(216, 207, 191, 0.35),
+        rgba(216, 207, 191, 0.35) 10px,
+        rgba(255, 253, 248, 0.75) 10px,
+        rgba(255, 253, 248, 0.75) 20px
+      );
+      font-size: 12px;
+    }}
+    .case-panel {{
+      padding-top: 16px;
+    }}
+    @media (max-width: 1100px) {{
+      .top-layout,
+      .charts-grid,
+      .setup-grid,
+      .stats-grid,
+      .models-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .case-overview {{
+        grid-template-columns: 1fr;
+      }}
     }}
   </style>
 </head>
@@ -586,18 +1028,11 @@ def write_index(
       <p>future_metrics 折线图基于同名 sidecar / per-sample 汇总的 300 样本平均值；图中每个点的 n 表示该模型当前实际完成 future 指标的样本数。</p>
       <p>vbench_metrics 折线图基于 GPU3/GPU5 汇总出的模型级 `vbench_short_metrics`，使用当前已有完整 300 样本结果。</p>
       <p>当前 9 个模型的 `future_metrics` 和 `vbench_metrics` 都已完成 300/300 回填；future 指标直接从最新 sidecar 聚合，避免旧 summary 文件滞后。</p>
+      <p>指标简述：`PSNR/SSIM/DINO` 越高越好，分别偏像素重建、结构一致性、语义一致性；`LPIPS` 越低越好，更接近人眼感知差异；`VBench` 各项主要反映主体稳定、背景稳定、运动平滑、闪烁、画质和美学质量。</p>
     </section>
-    <section class="grid">
-      <section class="card">
-        <h2>Future Metrics</h2>
-        <img src="future_metrics.png" alt="future metrics">
-      </section>
-      <section class="card">
-        <h2>VBench Short Metrics</h2>
-        <img src="vbench_metrics.png" alt="vbench metrics">
-      </section>
-      {''.join(dataset_chart_cards)}
-      <section class="card">
+    <section class="top-layout">
+      <div class="stack">
+        <section class="card summary-card">
         <h2>Model Summary</h2>
         <table>
           <thead>
@@ -616,8 +1051,59 @@ def write_index(
           </thead>
           <tbody>{''.join(model_rows_html)}</tbody>
         </table>
+        </section>
+        <section class="card setup-card">
+          <h2>Benchmark Setup</h2>
+          <p class="meta">当前主结果对应 `sample300_full`。future 指标比较生成 future 段与 GT future；VBench 比较完整生成视频。不同模型输入条件和输出分辨率并不完全一致，下面单独列出。</p>
+          <div class="setup-grid">
+            <div>
+              <table class="table-tight">
+                <thead>
+                  <tr>
+                    <th>dataset</th>
+                    <th>count</th>
+                  </tr>
+                </thead>
+                <tbody>{composition_rows}</tbody>
+              </table>
+            </div>
+            <div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>model</th>
+                    <th>inputs</th>
+                    <th>task</th>
+                    <th>resolution</th>
+                  </tr>
+                </thead>
+                <tbody>{setup_rows}</tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+    <section class="charts-grid">
+      <section class="card chart-card">
+        <h2>Future Metrics</h2>
+        <p class="meta">比较 300 个样本上生成 future 段与 GT future 的对齐程度；`PSNR/SSIM/DINO` 越高越好，`LPIPS` 越低越好。</p>
+        <div class="chart-subnotes">
+          <ul>{future_notes_html}</ul>
+        </div>
+        <img src="future_metrics.png" alt="future metrics">
       </section>
-      {''.join(composition_cards)}
+      <section class="card chart-card">
+        <h2>VBench Short Metrics</h2>
+        <p class="meta">比较完整生成视频的通用质量与时序稳定性；大多数指标越高越好，`Dynamic Degree` 主要反映运动幅度，不是单调越高越好。</p>
+        <div class="chart-subnotes">
+          <ul>{vbench_notes_html}</ul>
+        </div>
+        <img src="vbench_metrics.png" alt="vbench metrics">
+      </section>
+    </section>
+    <section class="grid">
+      {showcase_cases_html}
     </section>
   </div>
 </body>
@@ -633,7 +1119,9 @@ def main() -> None:
     ensure_dir(output_root)
 
     model_summary = build_combined_summary(benchmark_root=benchmark_root)
-    testset_compositions = collect_testset_compositions(benchmark_root / "tools" / "meta")
+    testset_compositions: list[dict[str, Any]] = []
+    sample300_composition = collect_sample300_composition(benchmark_root / "output")
+    showcase_cases = build_showcase_cases(benchmark_root)
 
     plot_metric_series(
         model_summary=model_summary,
@@ -651,12 +1139,6 @@ def main() -> None:
         title_prefix="Stage0 Benchmark VBench Short Metrics on 300 Samples",
         output_path=output_root / "vbench_metrics.png",
     )
-    for dataset_name in DATASET_ORDER:
-        plot_future_dataset_panel(
-            model_summary=model_summary,
-            dataset_name=dataset_name,
-            output_path=output_root / f"future_{dataset_name.replace('/', '_')}.png",
-        )
 
     summary_rows = build_summary_rows(model_summary)
     write_json(output_root / "metrics_summary.json", model_summary)
@@ -666,7 +1148,13 @@ def main() -> None:
         fieldnames=list(summary_rows[0].keys()) if summary_rows else [],
     )
     write_json(output_root / "testset_compositions.json", testset_compositions)
-    write_index(output_root=output_root, model_summary=model_summary, testset_compositions=testset_compositions)
+    write_index(
+        output_root=output_root,
+        model_summary=model_summary,
+        testset_compositions=testset_compositions,
+        sample300_composition=sample300_composition,
+        showcase_cases=showcase_cases,
+    )
     print(output_root / "index.html")
 
 

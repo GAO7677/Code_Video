@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>State Validation Gallery</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, #e8eef5 42%, #f4efe5 100%);
+      color: #14213d;
+    }
+    .wrap { max-width: 1820px; margin: 0 auto; }
+    .hero {
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      padding: 20px 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 10px 30px rgba(15,23,42,0.07);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: rgba(255,255,255,0.94);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+    }
+    .meta-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .meta-top h2 {
+      font-size: 18px;
+      line-height: 1.25;
+      margin: 0 0 4px;
+    }
+    .dataset {
+      margin: 0;
+      color: #475569;
+      font-size: 13px;
+    }
+    .open-link {
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    video {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(15,23,42,0.08);
+      background: #111827;
+      margin-bottom: 10px;
+    }
+    .caption, .detail {
+      margin: 8px 0;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 10px 0 12px;
+    }
+    .metric-grid div {
+      background: rgba(15,23,42,0.04);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .metric-grid span {
+      display: block;
+      color: #64748b;
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+    .metric-grid strong {
+      font-size: 14px;
+    }
+    .path {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #475569;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>State Validation Gallery</h1>
+      <p>几个代表性 case 放在同一页面里，直接看视频上叠加的 state 标注。</p>
+      <p>总入口：<a href="../index.html">state_validation_window/index.html</a></p>
+    </section>
+    <section class="grid">
+      
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>genesis_heldout_0142__10005__case003_static_highdrop</h2>
+      <p class="dataset">GenesisRigid</p>
+    </div>
+    <a class="open-link" href="../test__genesis/cases/00_genesis_heldout_0142__10005__case003_static_highdrop/index.html">详情页</a>
+  </div>
+  <video src="assets/genesis_heldout_0142__10005__case003_static_highdrop.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> the laptop falls from an elevated starting point.</p>
+  <p class="detail"><strong>Detail:</strong> Scene 10005__case003_static_highdrop: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is gravity_drop, and the global motion category is static_highdrop. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10005) with role=target; it is released from a higher initial position and falls under gravity. Role summary: target=Laptop. The RGB video has 13 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>14.9141</strong></div>
+    <div><span>bbox IoU</span><strong>0.6656</strong></div>
+    <div><span>depth rel</span><strong>0.0024</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0142__10005__case003_static_highdrop</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>genesis_heldout_0141__10005__case002_static_right</h2>
+      <p class="dataset">GenesisRigid</p>
+    </div>
+    <a class="open-link" href="../test__genesis/cases/01_genesis_heldout_0141__10005__case002_static_right/index.html">详情页</a>
+  </div>
+  <video src="assets/genesis_heldout_0141__10005__case002_static_right.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> the laptop rests on the right side.</p>
+  <p class="detail"><strong>Detail:</strong> Scene 10005__case002_static_right: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_right. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10005) with role=target; it starts from a right-offset static placement. Role summary: target=Laptop. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81].</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>6.3323</strong></div>
+    <div><span>bbox IoU</span><strong>0.8094</strong></div>
+    <div><span>depth rel</span><strong>0.0102</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0141__10005__case002_static_right</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>movi_d_test_0001__video_131</h2>
+      <p class="dataset">MOVI-D</p>
+    </div>
+    <a class="open-link" href="../test__movi_d/cases/00_movi_d_test_0001__video_131/index.html">详情页</a>
+  </div>
+  <video src="assets/movi_d_test_0001__video_131.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> A synthetic Kubric scene on a machine_shop_02 background with 4 object(s), including Now Designs Bowl Akita Black, MOVING MOUSE PW 6PCSSET, KITCHEN SET CLASSIC 40HwCHfeG0H, Sushi Mat. 1 object(s) are dynamic.</p>
+  <p class="detail"><strong>Detail:</strong> A synthetic Kubric scene on a machine_shop_02 background with 4 object(s), including Now Designs Bowl Akita Black, MOVING MOUSE PW 6PCSSET, KITCHEN SET CLASSIC 40HwCHfeG0H, Sushi Mat. 1 object(s) are dynamic.</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>31.5917</strong></div>
+    <div><span>bbox IoU</span><strong>0.4738</strong></div>
+    <div><span>depth rel</span><strong>0.0000</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0001__video_131</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>movi_d_test_0002__video_166</h2>
+      <p class="dataset">MOVI-D</p>
+    </div>
+    <a class="open-link" href="../test__movi_d/cases/01_movi_d_test_0002__video_166/index.html">详情页</a>
+  </div>
+  <video src="assets/movi_d_test_0002__video_166.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> A synthetic Kubric scene on a mealie_road background with 9 object(s), including Mens Gold Cup ASV Capetown Penny Loafer in Black EjPnk3E8fCs, Mario Party 9 Wii Game, Grreat Choice Dog Double Dish Plastic Blue, Bradshaw International 11642 7 Qt MP Plastic Bowl. 1 object(s) are dynamic.</p>
+  <p class="detail"><strong>Detail:</strong> A synthetic Kubric scene on a mealie road background with 9 object(s), including Mens Gold Cup ASV Capetown Penny Loafer in Black EjPnk3E8fCs, Mario Party 9 Wii Game, Grreat Choice Dog Double Dish Plastic Blue, Bradshaw International 11642 7 Qt MP Plastic Bowl. 1 object(s) are dynamic.</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>17.9166</strong></div>
+    <div><span>bbox IoU</span><strong>0.4912</strong></div>
+    <div><span>depth rel</span><strong>0.0000</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0002__video_166</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>10007__case000_static_center__cf_no_collision_neg__ratio11</h2>
+      <p class="dataset">GenesisRigid</p>
+    </div>
+    <a class="open-link" href="../train__genesis/cases/00_10007__case000_static_center__cf_no_collision_neg__ratio11/index.html">详情页</a>
+  </div>
+  <video src="assets/10007__case000_static_center__cf_no_collision_neg__ratio11.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> interaction_pair_plus_dynamic with 2 object(s), motion=static_center.</p>
+  <p class="detail"><strong>Detail:</strong> n/a</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>2.6480</strong></div>
+    <div><span>bbox IoU</span><strong>0.8733</strong></div>
+    <div><span>depth rel</span><strong>0.0132</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case000_static_center__cf_no_collision_neg__ratio11</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>10007__case001_static_left__cf_no_collision_neg__ratio11</h2>
+      <p class="dataset">GenesisRigid</p>
+    </div>
+    <a class="open-link" href="../train__genesis/cases/02_10007__case001_static_left__cf_no_collision_neg__ratio11/index.html">详情页</a>
+  </div>
+  <video src="assets/10007__case001_static_left__cf_no_collision_neg__ratio11.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> interaction_pair_plus_dynamic with 2 object(s), motion=static_left.</p>
+  <p class="detail"><strong>Detail:</strong> n/a</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>2.2148</strong></div>
+    <div><span>bbox IoU</span><strong>0.9219</strong></div>
+    <div><span>depth rel</span><strong>0.0113</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case001_static_left__cf_no_collision_neg__ratio11</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>movi_d_train__video_1497</h2>
+      <p class="dataset">MOVI-D</p>
+    </div>
+    <a class="open-link" href="../train__movi_d/cases/00_movi_d_train__video_1497/index.html">详情页</a>
+  </div>
+  <video src="assets/movi_d_train__video_1497.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic.</p>
+  <p class="detail"><strong>Detail:</strong> A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic.</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>13.9417</strong></div>
+    <div><span>bbox IoU</span><strong>0.6368</strong></div>
+    <div><span>depth rel</span><strong>0.0000</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497</p>
+</article>
+
+<article class="card">
+  <div class="meta-top">
+    <div>
+      <h2>movi_d_train__video_163</h2>
+      <p class="dataset">MOVI-D</p>
+    </div>
+    <a class="open-link" href="../train__movi_d/cases/01_movi_d_train__video_163/index.html">详情页</a>
+  </div>
+  <video src="assets/movi_d_train__video_163.mp4" controls preload="metadata"></video>
+  <p class="caption"><strong>Caption:</strong> A synthetic Kubric scene on a reinforced_concrete_02 background with 9 object(s), including Netgear N750 Wireless Dual Band Gigabit Router, Curver Storage Bin Black Small, Pony C Clamp 1440, My First Wiggle Crocodile. 1 object(s) are dynamic.</p>
+  <p class="detail"><strong>Detail:</strong> A synthetic Kubric scene on a reinforced_concrete_02 background with 9 object(s), including Netgear N750 Wireless Dual Band Gigabit Router, Curver Storage Bin Black Small, Pony C Clamp 1440, My First Wiggle Crocodile. 1 object(s) are dynamic.</p>
+  <div class="metric-grid">
+    <div><span>center err</span><strong>8.1997</strong></div>
+    <div><span>bbox IoU</span><strong>0.5976</strong></div>
+    <div><span>depth rel</span><strong>0.0000</strong></div>
+    <div><span>vel diff</span><strong>0.0000</strong></div>
+  </div>
+  <p class="path">/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_09/movi_d_train__video_163</p>
+</article>
+
+    </section>
+  </div>
+</body>
+</html>

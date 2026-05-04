@@ -1,0 +1,74 @@
+{
+  "sample_id": "movi_d_test_0001__video_131",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/movi-d/movi_d_test_0001__video_131",
+  "source_sample_dir": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0001__video_131",
+  "dataset": "MOVI-D",
+  "rank_label": "worst-ranked",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 31.591665267944336,
+      "median": 11.173870086669922,
+      "p95": 89.45813598632813,
+      "min": 0.6131579279899597,
+      "max": 89.46097564697266
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.4738488793373108,
+      "median": 0.5140374898910522,
+      "p95": 0.9811574548482895,
+      "min": 0.0,
+      "max": 0.9812498688697815
+    },
+    "depth_consistency_abs": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "state_abs_error": {
+      "mean": 2.119276274470394e-07,
+      "median": 0.0,
+      "p95": 1.1920928955078125e-06,
+      "min": 0.0,
+      "max": 7.62939453125e-06
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.026926858350634575,
+      "median": 0.0231781005859375,
+      "p95": 0.06870117187499997,
+      "min": 0.0019683837890625,
+      "max": 0.1083526611328125
+    },
+    "velocity_smoothness": 0.043173253536224365,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error",
+      "low_bbox_iou"
+    ]
+  },
+  "caption": "A synthetic Kubric scene on a machine_shop_02 background with 4 object(s), including Now Designs Bowl Akita Black, MOVING MOUSE PW 6PCSSET, KITCHEN SET CLASSIC 40HwCHfeG0H, Sushi Mat. 1 object(s) are dynamic.",
+  "detail_caption": "A synthetic Kubric scene on a machine_shop_02 background with 4 object(s), including Now Designs Bowl Akita Black, MOVING MOUSE PW 6PCSSET, KITCHEN SET CLASSIC 40HwCHfeG0H, Sushi Mat. 1 object(s) are dynamic."
+}

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Window State Validation Portal</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 45%, #f5efe0 100%);
+      color: #14213d;
+    }
+    .wrap { max-width: 1280px; margin: 0 auto; }
+    .hero, .card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+    }
+    .hero { padding: 24px; margin-bottom: 18px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+    }
+    .card { padding: 20px; }
+    a {
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    code {
+      background: rgba(17,24,39,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Window 9D State Validation</h1>
+      <p>Validate state_9d supervision on stage1adapter window samples using RGB, seg, depth, anchor_targets and rigid/TFRecord reference trajectories.</p>
+      <p>Output root: <code>/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window</code></p>
+    </section>
+    <section class="grid">
+      
+<article class="card">
+  <h2>test | genesis</h2>
+  <p>samples: 4</p>
+  <p>center err: 7.438001</p>
+  <p>bbox IoU: 0.816258</p>
+  <p>depth rel err: 0.007096</p>
+  <p>velocity diff err: 0.000000</p>
+  <p>anomaly ratio: 1.000000</p>
+  <a href="test__genesis/index.html">Open dataset report</a>
+</article>
+
+<article class="card">
+  <h2>test | movi_d</h2>
+  <p>samples: 4</p>
+  <p>center err: 19.224867</p>
+  <p>bbox IoU: 0.510478</p>
+  <p>depth rel err: 0.000000</p>
+  <p>velocity diff err: 0.000000</p>
+  <p>anomaly ratio: 1.000000</p>
+  <a href="test__movi_d/index.html">Open dataset report</a>
+</article>
+
+<article class="card">
+  <h2>train | genesis</h2>
+  <p>samples: 4</p>
+  <p>center err: 2.431379</p>
+  <p>bbox IoU: 0.897604</p>
+  <p>depth rel err: 0.012223</p>
+  <p>velocity diff err: 0.000000</p>
+  <p>anomaly ratio: 1.000000</p>
+  <a href="train__genesis/index.html">Open dataset report</a>
+</article>
+
+<article class="card">
+  <h2>train | movi_d</h2>
+  <p>samples: 3</p>
+  <p>center err: 10.215820</p>
+  <p>bbox IoU: 0.649531</p>
+  <p>depth rel err: 0.000000</p>
+  <p>velocity diff err: 0.000000</p>
+  <p>anomaly ratio: 1.000000</p>
+  <a href="train__movi_d/index.html">Open dataset report</a>
+</article>
+
+    </section>
+  </div>
+</body>
+</html>

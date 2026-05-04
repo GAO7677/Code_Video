@@ -1,0 +1,58 @@
+[
+  {
+    "sample_id": "genesis_heldout_0142__10005__case003_static_highdrop",
+    "dataset": "GenesisRigid",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/00_genesis_heldout_0142__10005__case003_static_highdrop/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/00_genesis_heldout_0142__10005__case003_static_highdrop/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/00_genesis_heldout_0142__10005__case003_static_highdrop/index.html"
+  },
+  {
+    "sample_id": "genesis_heldout_0141__10005__case002_static_right",
+    "dataset": "GenesisRigid",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/01_genesis_heldout_0141__10005__case002_static_right/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/01_genesis_heldout_0141__10005__case002_static_right/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/cases/01_genesis_heldout_0141__10005__case002_static_right/index.html"
+  },
+  {
+    "sample_id": "movi_d_test_0001__video_131",
+    "dataset": "MOVI-D",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/00_movi_d_test_0001__video_131/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/00_movi_d_test_0001__video_131/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/00_movi_d_test_0001__video_131/index.html"
+  },
+  {
+    "sample_id": "movi_d_test_0002__video_166",
+    "dataset": "MOVI-D",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/01_movi_d_test_0002__video_166/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/01_movi_d_test_0002__video_166/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__movi_d/cases/01_movi_d_test_0002__video_166/index.html"
+  },
+  {
+    "sample_id": "10007__case000_static_center__cf_no_collision_neg__ratio11",
+    "dataset": "GenesisRigid",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/00_10007__case000_static_center__cf_no_collision_neg__ratio11/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/00_10007__case000_static_center__cf_no_collision_neg__ratio11/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/00_10007__case000_static_center__cf_no_collision_neg__ratio11/index.html"
+  },
+  {
+    "sample_id": "10007__case001_static_left__cf_no_collision_neg__ratio11",
+    "dataset": "GenesisRigid",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/02_10007__case001_static_left__cf_no_collision_neg__ratio11/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/02_10007__case001_static_left__cf_no_collision_neg__ratio11/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__genesis/cases/02_10007__case001_static_left__cf_no_collision_neg__ratio11/index.html"
+  },
+  {
+    "sample_id": "movi_d_train__video_1497",
+    "dataset": "MOVI-D",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/00_movi_d_train__video_1497/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/00_movi_d_train__video_1497/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/00_movi_d_train__video_1497/index.html"
+  },
+  {
+    "sample_id": "movi_d_train__video_163",
+    "dataset": "MOVI-D",
+    "summary_json": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/01_movi_d_train__video_163/summary.json",
+    "overlay_mp4": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/01_movi_d_train__video_163/overlay.mp4",
+    "case_page": "/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/cases/01_movi_d_train__video_163/index.html"
+  }
+]

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>train | movi_d Window State Validation</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: radial-gradient(circle at top left, #e0f2fe 0%, #f8fafc 45%, #f4f1ea 100%);
+      color: #14213d;
+    }
+    .wrap { max-width: 1480px; margin: 0 auto; }
+    .hero, .metric-card, .case-card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(15,23,42,0.07);
+    }
+    .hero { padding: 24px; margin-bottom: 18px; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .metric-card { padding: 18px; }
+    .cases {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .case-card { padding: 18px; }
+    .case-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    a {
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    code {
+      background: rgba(17,24,39,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
+    ul { padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div><a href="../index.html">Back to all datasets</a></div>
+      <h1>train | movi_d Window State Validation</h1>
+      <p>samples: 3 | anomaly ratio: 1.000000</p>
+      <p>train | movi_d: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal.</p>
+      <p>Summary file: <code>/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/train__movi_d/summary.json</code></p>
+    </section>
+    <section class="metric-grid">
+      <div class="metric-card"><strong>Center Projection Error</strong><br>10.215820</div>
+      <div class="metric-card"><strong>Projection Ref Consistency</strong><br>0.000000</div>
+      <div class="metric-card"><strong>BBox IoU</strong><br>0.649531</div>
+      <div class="metric-card"><strong>Depth Rel Error</strong><br>0.000000</div>
+      <div class="metric-card"><strong>Velocity Diff Error</strong><br>0.000000</div>
+      <div class="metric-card"><strong>Velocity Smoothness</strong><br>0.035302</div>
+    </section>
+    <section class="cases">
+      
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>movi_d_train__video_1497</h3>
+      <p>worst-ranked</p>
+    </div>
+    <a href="cases/00_movi_d_train__video_1497/index.html">Open</a>
+  </div>
+  <p>A synthetic Kubric scene on a lush_dirt_path background with 16 object(s), including BlackBlack Nintendo 3DSXL, Avengers Thor PLlrpYniaeB, Perricone MD Cold Plasma, ZigKick Hoops. 1 object(s) are dynamic.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_16/movi_d_train__video_1497</code></p>
+  <ul>
+    <li>center err: 13.941653</li>
+    <li>bbox IoU: 0.636794</li>
+    <li>depth rel err: 0.000000</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>movi_d_train__video_163</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/01_movi_d_train__video_163/index.html">Open</a>
+  </div>
+  <p>A synthetic Kubric scene on a reinforced_concrete_02 background with 9 object(s), including Netgear N750 Wireless Dual Band Gigabit Router, Curver Storage Bin Black Small, Pony C Clamp 1440, My First Wiggle Crocodile. 1 object(s) are dynamic.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_09/movi_d_train__video_163</code></p>
+  <ul>
+    <li>center err: 8.199718</li>
+    <li>bbox IoU: 0.597621</li>
+    <li>depth rel err: 0.000000</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>movi_d_train__video_7618</h3>
+      <p>best-ranked</p>
+    </div>
+    <a href="cases/02_movi_d_train__video_7618/index.html">Open</a>
+  </div>
+  <p>A synthetic Kubric scene on a versveldpas background with 12 object(s), including Racoon, BIA Porcelain Ramekin With Glazed Rim 35 45 oz cup, Perricone MD Photo Plasma, Nickelodeon The Spongebob Movie PopAPart Spongebob. 1 object(s) are dynamic.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/movi-d/rigid/movi_d/count_12/movi_d_train__video_7618</code></p>
+  <ul>
+    <li>center err: 8.506087</li>
+    <li>bbox IoU: 0.714177</li>
+    <li>depth rel err: 0.000000</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+    </section>
+  </div>
+</body>
+</html>
