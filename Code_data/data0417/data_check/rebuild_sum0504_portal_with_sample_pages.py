@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+
 ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 MANIFEST_PATH = ROOT / "manifest.json"
 
@@ -32,6 +38,246 @@ def pick_existing(sample_dir: Path, names: list[str]) -> list[Path]:
         if p.exists():
             result.append(p)
     return result
+
+
+def load_state_bundle(record: dict[str, Any]) -> dict[str, Any] | None:
+    meta = load_json(record["meta_path"]) if record.get("meta_path") is not None else {}
+
+    if record.get("state_pair_path") is not None:
+        payload = np.load(record["state_pair_path"], allow_pickle=True)
+        state_raw = np.asarray(payload["state_raw"], dtype=np.float32)
+        object_ids = np.asarray(payload["object_ids"], dtype=np.int32)
+        seg_ids = np.asarray(payload["seg_ids"], dtype=np.int32)
+        return {
+            "state_raw": state_raw,
+            "object_ids": object_ids,
+            "seg_ids": seg_ids,
+            "meta": meta,
+        }
+
+    if record.get("state_9d_path") is not None:
+        state_raw = np.asarray(np.load(record["state_9d_path"]), dtype=np.float32)
+        object_ids = np.asarray([], dtype=np.int32)
+        seg_ids = np.asarray([], dtype=np.int32)
+        if record.get("anchor_targets_path") is not None:
+            payload = np.load(record["anchor_targets_path"], allow_pickle=True)
+            object_ids = np.asarray(payload["object_ids"], dtype=np.int32)
+            seg_ids = np.asarray(payload["seg_ids"], dtype=np.int32)
+        return {
+            "state_raw": state_raw,
+            "object_ids": object_ids,
+            "seg_ids": seg_ids,
+            "meta": meta,
+        }
+
+    if record.get("anchor_targets_path") is None:
+        return None
+
+    payload = np.load(record["anchor_targets_path"], allow_pickle=True)
+    object_ids = np.asarray(payload["object_ids"], dtype=np.int32)
+    seg_ids = np.asarray(payload["seg_ids"], dtype=np.int32)
+    com_uv = np.asarray(payload["com_uv"], dtype=np.float32)
+    center_depth = np.asarray(payload["center_depth"], dtype=np.float32)
+    bbox_xyxy = np.asarray(payload["bbox_xyxy"], dtype=np.float32)
+    visibility_mask = np.asarray(payload["visibility_mask"], dtype=np.uint8)
+    x1 = bbox_xyxy[..., 0]
+    y1 = bbox_xyxy[..., 1]
+    x2 = bbox_xyxy[..., 2]
+    y2 = bbox_xyxy[..., 3]
+    width = np.maximum(0.0, x2 - x1).astype(np.float32)
+    height = np.maximum(0.0, y2 - y1).astype(np.float32)
+    u = com_uv[..., 0]
+    v = com_uv[..., 1]
+    d = center_depth.astype(np.float32)
+    fps = float(meta.get("fps", meta.get("video_fps", 12.0)) or 12.0)
+    dt = max(1.0 / max(fps, 1e-6), 1e-6)
+    du = np.zeros_like(u, dtype=np.float32)
+    dv = np.zeros_like(v, dtype=np.float32)
+    dd = np.zeros_like(d, dtype=np.float32)
+    if u.shape[0] > 1:
+        du[1:] = (u[1:] - u[:-1]) / dt
+        dv[1:] = (v[1:] - v[:-1]) / dt
+        dd[1:] = (d[1:] - d[:-1]) / dt
+    vis = visibility_mask.astype(np.float32)
+    state_raw = np.stack([u, v, d, width, height, du, dv, dd, vis], axis=-1).astype(np.float32)
+    return {
+        "state_raw": state_raw,
+        "object_ids": object_ids,
+        "seg_ids": seg_ids,
+        "meta": meta,
+    }
+
+
+def load_event_list(record: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("collision_events_path", "event_windows_path"):
+        path = record.get(key)
+        if path is not None and Path(path).exists():
+            payload = load_json(Path(path))
+            if isinstance(payload, list):
+                return payload
+    return []
+
+
+def object_labels(bundle: dict[str, Any]) -> list[str]:
+    meta = bundle.get("meta") or {}
+    objects = meta.get("objects") if isinstance(meta.get("objects"), list) else []
+    by_object_id = {
+        int(obj.get("object_id")): obj
+        for obj in objects
+        if isinstance(obj, dict) and obj.get("object_id") is not None
+    }
+    labels: list[str] = []
+    object_ids = np.asarray(bundle.get("object_ids", []), dtype=np.int32)
+    seg_ids = np.asarray(bundle.get("seg_ids", []), dtype=np.int32)
+    count = int(bundle["state_raw"].shape[1])
+    for idx in range(count):
+        object_id = int(object_ids[idx]) if idx < object_ids.shape[0] else idx
+        seg_id = int(seg_ids[idx]) if idx < seg_ids.shape[0] else (idx + 1)
+        obj = by_object_id.get(object_id, {})
+        name = str(obj.get("name") or obj.get("source_object_id") or f"obj{object_id}")
+        labels.append(f"{name} (obj={object_id}, seg={seg_id})")
+    return labels
+
+
+def render_trajectory_overview(record: dict[str, Any], page_dir: Path) -> Path | None:
+    bundle = load_state_bundle(record)
+    if bundle is None:
+        return None
+    state = np.asarray(bundle["state_raw"], dtype=np.float32)
+    labels = object_labels(bundle)
+    meta = bundle.get("meta") or {}
+    width = float((meta.get("resolution") or [0, 0])[0] or max(1.0, float(np.nanmax(state[..., 0]) + 20.0)))
+    height = float((meta.get("resolution") or [0, 0])[1] or max(1.0, float(np.nanmax(state[..., 1]) + 20.0)))
+    out_path = page_dir / "trajectory_overview.png"
+
+    fig, ax = plt.subplots(figsize=(7.4, 5.6), dpi=150)
+    ax.set_title("Trajectory Overview")
+    frame0 = record["sample_dir"] / "rgb" / "frame_000.png"
+    if frame0.exists():
+        with Image.open(frame0) as img:
+            bg = np.asarray(img.convert("RGB"))
+        ax.imshow(bg, extent=(0, width, height, 0), alpha=0.42)
+    cmap = plt.get_cmap("tab10")
+    for obj_idx in range(state.shape[1]):
+        vis = state[:, obj_idx, 8] > 0.5
+        if not np.any(vis):
+            continue
+        u = state[:, obj_idx, 0]
+        v = state[:, obj_idx, 1]
+        color = cmap(obj_idx % 10)
+        ax.plot(u[vis], v[vis], color=color, linewidth=2.0, label=labels[obj_idx])
+        ax.scatter(u[vis][0], v[vis][0], color=color, s=32, marker="o")
+        ax.scatter(u[vis][-1], v[vis][-1], color=color, s=42, marker="X")
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.set_xlabel("u / px")
+    ax.set_ylabel("v / px")
+    ax.grid(alpha=0.18)
+    ax.legend(loc="upper right", fontsize=7, framealpha=0.92)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_state_curves(record: dict[str, Any], page_dir: Path) -> Path | None:
+    bundle = load_state_bundle(record)
+    if bundle is None:
+        return None
+    state = np.asarray(bundle["state_raw"], dtype=np.float32)
+    labels = object_labels(bundle)
+    events = load_event_list(record)
+    out_path = page_dir / "state_curves.png"
+    t = np.arange(state.shape[0], dtype=np.int32)
+    speed = np.linalg.norm(state[..., 5:7], axis=-1)
+    depth = state[..., 2]
+    vis = state[..., 8]
+
+    fig, axes = plt.subplots(4, 1, figsize=(8.4, 8.4), dpi=150, sharex=True)
+    cmap = plt.get_cmap("tab10")
+    panels = [
+        (axes[0], speed, "Speed |du,dv|", "px/s"),
+        (axes[1], depth, "Center Depth", "depth"),
+        (axes[2], vis, "Visibility", "vis"),
+    ]
+    for ax, values, title, ylabel in panels:
+        for obj_idx in range(values.shape[1]):
+            ax.plot(t, values[:, obj_idx], color=cmap(obj_idx % 10), linewidth=1.8, label=labels[obj_idx])
+        ax.set_title(title, loc="left", fontsize=10)
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.22)
+    axes[0].legend(loc="upper right", fontsize=7, framealpha=0.92)
+
+    event_ax = axes[3]
+    event_ax.set_title("Collision / Contact Timeline", loc="left", fontsize=10)
+    if events:
+        for row, event in enumerate(events):
+            start = int(event.get("start_frame", event.get("frame_idx", 0)))
+            end = int(event.get("end_frame", start))
+            label = str(event.get("kind") or event.get("window_type") or "event")
+            if event.get("environment_name"):
+                label += f" ({event.get('environment_name')})"
+            event_ax.hlines(row, start, end + 0.001, color="#8a542d", linewidth=6)
+            event_ax.text(end + 0.12, row, label, va="center", fontsize=7)
+        event_ax.set_ylim(-1, max(1, len(events)))
+        event_ax.set_yticks([])
+    else:
+        event_ax.text(0.02, 0.5, "No collision/contact events recorded in this clip.", transform=event_ax.transAxes, fontsize=9)
+        event_ax.set_yticks([])
+    event_ax.grid(alpha=0.18)
+    event_ax.set_xlabel("frame index")
+
+    for ax in axes[:3]:
+        for event in events:
+            start = int(event.get("start_frame", event.get("frame_idx", 0)))
+            ax.axvline(start, color="#8a542d", alpha=0.24, linewidth=1.0, linestyle="--")
+
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
+    blocks: list[str] = []
+    depth_video = record["sample_dir"] / "videos" / "depth.mp4"
+    if not depth_video.exists():
+        depth_video = record["sample_dir"] / "visualizations" / "depth_vis.mp4"
+    if depth_video.exists():
+        src = relpath(depth_video, page_dir)
+        blocks.append(
+            f"""
+<section class="media-card">
+  <h3>Depth Video</h3>
+  <video src="{html.escape(src)}" controls preload="metadata"></video>
+</section>
+"""
+        )
+
+    trajectory_path = render_trajectory_overview(record, page_dir)
+    if trajectory_path is not None and trajectory_path.exists():
+        src = relpath(trajectory_path, page_dir)
+        blocks.append(
+            f"""
+<section class="media-card">
+  <h3>Trajectory Overview</h3>
+  <img src="{html.escape(src)}" alt="trajectory overview">
+</section>
+"""
+        )
+
+    curves_path = render_state_curves(record, page_dir)
+    if curves_path is not None and curves_path.exists():
+        src = relpath(curves_path, page_dir)
+        blocks.append(
+            f"""
+<section class="media-card wide">
+  <h3>State Curves And Collision Timeline</h3>
+  <img src="{html.escape(src)}" alt="state curves">
+</section>
+"""
+        )
+    return "".join(blocks)
 
 
 def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
@@ -202,6 +448,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
     page_dir = ROOT / "samples" / record["group_slug"] / record["sample_name"]
     page_dir.mkdir(parents=True, exist_ok=True)
     media_blocks = media_html(record["media"], page_dir)
+    physics_blocks = render_physics_summary_html(record, page_dir)
     table_html = file_list_html(record, page_dir)
     first_frame_block = ""
     if record["first_frame_path"] is not None:
@@ -297,6 +544,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
     </section>
     <section class="grid">
       {media_blocks}
+      {physics_blocks}
       {first_frame_block}
       <section class="card wide">
         <h2>Recorded Files</h2>

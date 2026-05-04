@@ -21,17 +21,10 @@
 
 ## 可视化与重建指令
 
-重建 `sum0504` 路径清单：
+重建 `sum0504` 总览与样本详情页：
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504.py
-```
-
-
-重建 `sum0504` 总览可视化页面：
-
-```bash
-/home/gaoya/miniconda3/envs/flux/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/build_sum0504_portal.py
+/home/gaoya/miniconda3/envs/flux/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
 ```
 
 页面输出位置：
@@ -52,8 +45,7 @@ python3 -m http.server 8048
 完整可视化流程：
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504.py
-/home/gaoya/miniconda3/envs/flux/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/build_sum0504_portal.py
+/home/gaoya/miniconda3/envs/flux/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
 cd /
 python3 -m http.server 8048
 ```
