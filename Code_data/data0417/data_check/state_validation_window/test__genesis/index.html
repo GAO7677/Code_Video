@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>test | genesis Window State Validation</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "IBM Plex Sans", "Noto Sans", sans-serif;
+      background: radial-gradient(circle at top left, #e0f2fe 0%, #f8fafc 45%, #f4f1ea 100%);
+      color: #14213d;
+    }
+    .wrap { max-width: 1480px; margin: 0 auto; }
+    .hero, .metric-card, .case-card {
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(15,23,42,0.07);
+    }
+    .hero { padding: 24px; margin-bottom: 18px; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .metric-card { padding: 18px; }
+    .cases {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .case-card { padding: 18px; }
+    .case-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    a {
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    code {
+      background: rgba(17,24,39,0.06);
+      padding: 2px 6px;
+      border-radius: 6px;
+      word-break: break-all;
+    }
+    ul { padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div><a href="../index.html">Back to all datasets</a></div>
+      <h1>test | genesis Window State Validation</h1>
+      <p>samples: 24 | anomaly ratio: 0.875000</p>
+      <p>test | genesis: supervision is broadly usable, but flagged outliers remain. Inspect low-IoU, high-depth-error or velocity-mismatch samples in the portal.</p>
+      <p>Summary file: <code>/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window/test__genesis/summary.json</code></p>
+    </section>
+    <section class="metric-grid">
+      <div class="metric-card"><strong>Center Projection Error</strong><br>6.991337</div>
+      <div class="metric-card"><strong>Projection Ref Consistency</strong><br>0.000000</div>
+      <div class="metric-card"><strong>BBox IoU</strong><br>0.835468</div>
+      <div class="metric-card"><strong>Depth Rel Error</strong><br>0.007225</div>
+      <div class="metric-card"><strong>Velocity Diff Error</strong><br>0.000000</div>
+      <div class="metric-card"><strong>Velocity Smoothness</strong><br>0.053475</div>
+    </section>
+    <section class="cases">
+      
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0163__10046__case003_static_highdrop</h3>
+      <p>worst-ranked</p>
+    </div>
+    <a href="cases/00_genesis_heldout_0163__10046__case003_static_highdrop/index.html">Open</a>
+  </div>
+  <p>the laptop falls from an elevated starting point.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0163__10046__case003_static_highdrop</code></p>
+  <ul>
+    <li>center err: 15.081378</li>
+    <li>bbox IoU: 0.602744</li>
+    <li>depth rel err: 0.002222</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0154__10039__case000_static_center</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/01_genesis_heldout_0154__10039__case000_static_center/index.html">Open</a>
+  </div>
+  <p>the bunk bed rests near the center.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0154__10039__case000_static_center</code></p>
+  <ul>
+    <li>center err: 26.664083</li>
+    <li>bbox IoU: 0.864126</li>
+    <li>depth rel err: 0.026767</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0142__10005__case003_static_highdrop</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/02_genesis_heldout_0142__10005__case003_static_highdrop/index.html">Open</a>
+  </div>
+  <p>the laptop falls from an elevated starting point.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0142__10005__case003_static_highdrop</code></p>
+  <ul>
+    <li>center err: 14.914148</li>
+    <li>bbox IoU: 0.665575</li>
+    <li>depth rel err: 0.002417</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0157__10039__case003_static_highdrop</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/03_genesis_heldout_0157__10039__case003_static_highdrop/index.html">Open</a>
+  </div>
+  <p>the bunk bed falls from an elevated starting point.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0157__10039__case003_static_highdrop</code></p>
+  <ul>
+    <li>center err: 19.845331</li>
+    <li>bbox IoU: 0.861298</li>
+    <li>depth rel err: 0.037087</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0161__10046__case001_static_left</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/04_genesis_heldout_0161__10046__case001_static_left/index.html">Open</a>
+  </div>
+  <p>the laptop is placed on the left side.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0161__10046__case001_static_left</code></p>
+  <ul>
+    <li>center err: 5.506884</li>
+    <li>bbox IoU: 0.870064</li>
+    <li>depth rel err: 0.000847</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0180__1009__case002_static_right</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/05_genesis_heldout_0180__1009__case002_static_right/index.html">Open</a>
+  </div>
+  <p>the kitchen knife is placed on the right side.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0180__1009__case002_static_right</code></p>
+  <ul>
+    <li>center err: 1.297672</li>
+    <li>bbox IoU: 0.931138</li>
+    <li>depth rel err: 0.003224</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: False (none)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0197__10162__case001_static_left</h3>
+      <p>representative</p>
+    </div>
+    <a href="cases/06_genesis_heldout_0197__10162__case001_static_left/index.html">Open</a>
+  </div>
+  <p>the laptop is placed on the left side.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0197__10162__case001_static_left</code></p>
+  <ul>
+    <li>center err: 8.638620</li>
+    <li>bbox IoU: 0.630124</li>
+    <li>depth rel err: 0.000136</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+<article class="case-card">
+  <div class="case-top">
+    <div>
+      <h3>genesis_heldout_0198__10162__case002_static_right</h3>
+      <p>best-ranked</p>
+    </div>
+    <a href="cases/07_genesis_heldout_0198__10162__case002_static_right/index.html">Open</a>
+  </div>
+  <p>the laptop rests on the right side.</p>
+  <p><code>/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0198__10162__case002_static_right</code></p>
+  <ul>
+    <li>center err: 13.118446</li>
+    <li>bbox IoU: 0.737650</li>
+    <li>depth rel err: 0.001323</li>
+    <li>velocity diff err: 0.000000</li>
+    <li>anomaly: True (large_center_projection_error, low_bbox_iou)</li>
+  </ul>
+</article>
+
+    </section>
+  </div>
+</body>
+</html>

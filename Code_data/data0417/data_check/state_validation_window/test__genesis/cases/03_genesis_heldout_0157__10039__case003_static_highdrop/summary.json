@@ -1,0 +1,73 @@
+{
+  "sample_id": "genesis_heldout_0157__10039__case003_static_highdrop",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0157__10039__case003_static_highdrop",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10039__case003_static_highdrop",
+  "dataset": "GenesisRigid",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 19.8453311920166,
+      "median": 19.844398498535156,
+      "p95": 19.85025119781494,
+      "min": 19.841156005859375,
+      "max": 19.85039710998535
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.8612982630729675,
+      "median": 0.8612973093986511,
+      "p95": 0.8613335192203522,
+      "min": 0.8612660765647888,
+      "max": 0.8613375425338745
+    },
+    "depth_consistency_abs": {
+      "mean": 0.23614701628684998,
+      "median": 0.23606634140014648,
+      "p95": 0.23645923137664795,
+      "min": 0.23591041564941406,
+      "max": 0.2364826202392578
+    },
+    "depth_consistency_rel": {
+      "mean": 0.03708650916814804,
+      "median": 0.03707437217235565,
+      "p95": 0.037133735977113246,
+      "min": 0.037050895392894745,
+      "max": 0.03713731840252876
+    },
+    "state_abs_error": {
+      "mean": 0.1009124368429184,
+      "median": 0.0,
+      "p95": 0.9081793278455734,
+      "min": 0.0,
+      "max": 0.9081929922103882
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 6.824514275649562e-05,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error"
+    ]
+  },
+  "caption": "the bunk bed falls from an elevated starting point.",
+  "detail_caption": "Scene 10039__case003_static_highdrop: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is gravity_drop, and the global motion category is static_highdrop. Objects: object_id=0, seg_id=1: a Bunk Bed (Furniture, source=PhysXNet, source_id=10039) with role=target; it is released from a higher initial position and falls under gravity. Role summary: target=Bunk Bed. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81]."
+}

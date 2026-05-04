@@ -313,6 +313,31 @@ def render_input_assets(assets: list[dict[str, str]]) -> str:
     return "".join(chunks) if chunks else "<div class='missing'>Missing</div>"
 
 
+def format_metric_value(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{value:.4f}"
+    return "-"
+
+
+def render_metric_pills(*, future_metrics: dict[str, Any], vbench_metrics: dict[str, Any]) -> str:
+    pills = [
+        ("f_psnr", format_metric_value(future_metrics.get("future_psnr"))),
+        ("f_ssim", format_metric_value(future_metrics.get("future_ssim"))),
+        ("f_lpips", format_metric_value(future_metrics.get("future_lpips"))),
+        ("f_dino", format_metric_value(future_metrics.get("future_dino"))),
+        ("vb_subj", format_metric_value(vbench_metrics.get("subject_consistency"))),
+        ("vb_motion", format_metric_value(vbench_metrics.get("motion_smoothness"))),
+        ("vb_img", format_metric_value(vbench_metrics.get("imaging_quality"))),
+    ]
+    return "".join(
+        "<div class='metric-pill'>"
+        f"<span class='metric-key'>{html.escape(key)}</span>"
+        f"<span class='metric-val'>{html.escape(value)}</span>"
+        "</div>"
+        for key, value in pills
+    )
+
+
 def build_case_record(
     *,
     benchmark_root: Path,
@@ -358,6 +383,8 @@ def build_case_record(
                 "seed": payload.get("seed"),
                 "input_assets": input_assets,
                 "output_asset": output_asset,
+                "future_metrics": payload.get("future_metrics", {}) if isinstance(payload.get("future_metrics"), dict) else {},
+                "vbench_metrics": payload.get("vbench_metrics", {}) if isinstance(payload.get("vbench_metrics"), dict) else {},
             }
         )
 
@@ -499,6 +526,7 @@ def build_html(
                 f"<span class='model-name'>{html.escape(model['model_name'])}</span>"
                 f"<span class='status'>{html.escape(model['status'])}</span>"
                 "</div>"
+                f"<div class='metric-pills'>{render_metric_pills(future_metrics=model['future_metrics'], vbench_metrics=model['vbench_metrics'])}</div>"
                 f"<div class='inputs-grid'>{render_input_assets(model['input_assets'])}</div>"
                 "<div class='output-box'>"
                 "<div class='mini-head'>output</div>"
@@ -729,6 +757,31 @@ def build_html(
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 6px;
       margin-bottom: 6px;
+    }}
+    .metric-pills {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+      margin-bottom: 6px;
+    }}
+    .metric-pill {{
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 3px 5px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 253, 248, 0.9);
+      font-size: 10px;
+      line-height: 1.2;
+    }}
+    .metric-key {{
+      color: #6e675d;
+      font-weight: 700;
+    }}
+    .metric-val {{
+      color: #1e1b16;
+      font-variant-numeric: tabular-nums;
     }}
     .mini-media, .output-box {{
       border: 1px solid var(--line);

@@ -219,10 +219,16 @@ def compute_future_gt_metrics(
         )
         generated_frames = load_video_frames(str(output_video_path))
         generated_eval = generated_frames[used_context_frames:]
+        gt_frames: list[np.ndarray] = []
         if full_video_path:
             gt_source_frames = load_video_frames(str(full_video_path))
-            gt_frames = gt_source_frames[used_context_frames:]
-        else:
+            if len(gt_source_frames) > used_context_frames:
+                gt_frames = gt_source_frames[used_context_frames:]
+
+        # Some datasets, notably Genesis, store a short full video whose frame count
+        # can match the context length exactly. In that case the future segment is
+        # empty after slicing, so we fall back to the explicit future GT clip.
+        if not gt_frames and future_gt_video_path:
             gt_frames = load_video_frames(str(future_gt_video_path))
         pair_count = min(len(generated_eval), len(gt_frames))
         if pair_count <= 0:

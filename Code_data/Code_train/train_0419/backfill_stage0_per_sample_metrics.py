@@ -105,6 +105,30 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Optional model_name filter. Can be passed multiple times.",
     )
+    parser.add_argument(
+        "--dataset",
+        action="append",
+        default=[],
+        help="Optional dataset filter. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--shard_index",
+        type=int,
+        default=0,
+        help="Optional shard index for per-sample partitioning.",
+    )
+    parser.add_argument(
+        "--num_shards",
+        type=int,
+        default=1,
+        help="Optional total shard count for per-sample partitioning.",
+    )
+    parser.add_argument(
+        "--summary_suffix",
+        type=str,
+        default="",
+        help="Optional suffix for summary/csv outputs when running sharded jobs.",
+    )
     return parser.parse_args()
 
 
@@ -138,12 +162,39 @@ def build_metric_map(per_sample: list[dict[str, Any]]) -> dict[tuple[str, str], 
     return metric_map
 
 
+def keep_entry(
+    entry: dict[str, Any],
+    *,
+    selected_datasets: set[str],
+    shard_index: int,
+    num_shards: int,
+) -> bool:
+    if selected_datasets:
+        dataset = str(entry.get("dataset") or "")
+        if dataset not in selected_datasets:
+            return False
+    if num_shards <= 1:
+        return True
+    sample_id = str(entry.get("sample_id") or "")
+    dataset = str(entry.get("dataset") or "")
+    token = f"{dataset}::{sample_id}"
+    return (sum(ord(ch) for ch in token) % num_shards) == shard_index
+
+
 def main() -> None:
     args = parse_args()
     benchmark_root = args.benchmark_root.expanduser().resolve()
     result_root = args.result_root.expanduser().resolve()
     result_root.mkdir(parents=True, exist_ok=True)
     selected_models = {str(name) for name in args.model_name}
+    selected_datasets = {str(name) for name in args.dataset}
+    shard_index = int(args.shard_index)
+    num_shards = int(args.num_shards)
+    summary_suffix = str(args.summary_suffix).strip()
+    if num_shards <= 0:
+        raise ValueError("num_shards must be >= 1")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError("shard_index must satisfy 0 <= shard_index < num_shards")
 
     metric_suite = rv.ValidationMetricSuite()
 
@@ -171,6 +222,16 @@ def main() -> None:
         )
 
         entries = rv.load_entries_for_compare(model_name, generated_dir, runtime_root)
+        entries = [
+            entry
+            for entry in entries
+            if keep_entry(
+                entry,
+                selected_datasets=selected_datasets,
+                shard_index=shard_index,
+                num_shards=num_shards,
+            )
+        ]
         print(
             json.dumps(
                 {
@@ -208,6 +269,13 @@ def main() -> None:
         for sidecar_path in sorted(generated_dir.glob("*.json")):
             payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
             key = (str(payload.get("dataset") or ""), str(payload.get("sample_id") or ""))
+            if not keep_entry(
+                payload,
+                selected_datasets=selected_datasets,
+                shard_index=shard_index,
+                num_shards=num_shards,
+            ):
+                continue
             metric_item = metric_map.get(key)
             if metric_item is None:
                 missing += 1
@@ -237,19 +305,23 @@ def main() -> None:
                 }
             )
 
-        write_csv(result_root / f"{model_name}.csv", csv_rows)
+        stem_suffix = f"__{summary_suffix}" if summary_suffix else ""
+        write_csv(result_root / f"{model_name}{stem_suffix}.csv", csv_rows)
         summary_payload = {
             "model_name": model_name,
             "generated_dir": str(generated_dir),
             "runtime_root": str(runtime_root),
             "evaluation_height": height,
             "evaluation_width": width,
+            "selected_datasets": sorted(selected_datasets),
+            "shard_index": shard_index,
+            "num_shards": num_shards,
             "num_per_sample_metrics": len(per_sample),
             "num_sidecars_updated": updated,
             "num_sidecars_missing_metrics": missing,
             "aggregate": {metric_key: round4(metric_payload.get("aggregate", {}).get(metric_key)) for metric_key in METRIC_KEYS},
         }
-        write_json(result_root / f"{model_name}_summary.json", summary_payload)
+        write_json(result_root / f"{model_name}{stem_suffix}_summary.json", summary_payload)
         print(json.dumps(summary_payload, ensure_ascii=False), flush=True)
 
 

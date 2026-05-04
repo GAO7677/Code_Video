@@ -1,0 +1,71 @@
+{
+  "sample_id": "genesis_heldout_0180__1009__case002_static_right",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0180__1009__case002_static_right",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/1009__case002_static_right",
+  "dataset": "GenesisRigid",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 1.2976716756820679,
+      "median": 1.3759260177612305,
+      "p95": 1.551746279001236,
+      "min": 0.9911273717880249,
+      "max": 1.5632129907608032
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.9311375617980957,
+      "median": 0.9283763766288757,
+      "p95": 0.9528819501399993,
+      "min": 0.8866739273071289,
+      "max": 0.9605821967124939
+    },
+    "depth_consistency_abs": {
+      "mean": 0.010233258828520775,
+      "median": 0.010985612869262695,
+      "p95": 0.012526988983154295,
+      "min": 0.002515077590942383,
+      "max": 0.013486146926879883
+    },
+    "depth_consistency_rel": {
+      "mean": 0.003224144224077463,
+      "median": 0.003420637222006917,
+      "p95": 0.00404959077714011,
+      "min": 0.0007860503392294049,
+      "max": 0.004357790108770132
+    },
+    "state_abs_error": {
+      "mean": 0.11101514101028442,
+      "median": 0.0,
+      "p95": 0.9993865489959717,
+      "min": 0.0,
+      "max": 0.9993865489959717
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 0.11202556639909744,
+    "anomaly": false,
+    "anomaly_reasons": []
+  },
+  "caption": "the kitchen knife is placed on the right side.",
+  "detail_caption": "Scene 1009__case002_static_right: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_right. Objects: object_id=0, seg_id=1: a Kitchen Knife (Cutlery, source=PhysXNet, source_id=1009) with role=target; it starts from a right-offset static placement. Role summary: target=Kitchen Knife. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81]."
+}

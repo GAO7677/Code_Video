@@ -1,0 +1,73 @@
+{
+  "sample_id": "genesis_heldout_0161__10046__case001_static_left",
+  "sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/test/genesis/genesis_heldout_0161__10046__case001_static_left",
+  "source_sample_dir": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/10046__case001_static_left",
+  "dataset": "GenesisRigid",
+  "rank_label": "representative",
+  "metrics": {
+    "visible_frame_ratio": 1.0,
+    "center_projection_error_px": {
+      "mean": 5.5068840980529785,
+      "median": 5.506930351257324,
+      "p95": 5.509425663948059,
+      "min": 5.503044605255127,
+      "max": 5.509479522705078
+    },
+    "projection_consistency_ref_px": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "bbox_iou": {
+      "mean": 0.8700636029243469,
+      "median": 0.8700470924377441,
+      "p95": 0.8703083366155624,
+      "min": 0.8698116540908813,
+      "max": 0.8703091144561768
+    },
+    "depth_consistency_abs": {
+      "mean": 0.002863597823306918,
+      "median": 0.0028635263442993164,
+      "p95": 0.0028694987297058104,
+      "min": 0.0028574466705322266,
+      "max": 0.0028696060180664062
+    },
+    "depth_consistency_rel": {
+      "mean": 0.0008467623847536743,
+      "median": 0.0008467421866953373,
+      "p95": 0.000848490238422528,
+      "min": 0.0008449575398117304,
+      "max": 0.0008485213038511574
+    },
+    "state_abs_error": {
+      "mean": 0.1097295731306076,
+      "median": 0.0,
+      "p95": 0.9875658869743347,
+      "min": 0.0,
+      "max": 0.9875694513320923
+    },
+    "velocity_diff_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "vis_abs_error": {
+      "mean": 0.0,
+      "median": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "velocity_smoothness": 3.4676391805987805e-05,
+    "anomaly": true,
+    "anomaly_reasons": [
+      "large_center_projection_error"
+    ]
+  },
+  "caption": "the laptop is placed on the left side.",
+  "detail_caption": "Scene 10046__case001_static_left: a single rigid object scene with 1 rigid object(s). The scene composition is single_object_preview, the interaction pattern is single_object_static_preview, and the global motion category is static_left. Objects: object_id=0, seg_id=1: a Laptop (Electronics, source=PhysXNet, source_id=10046) with role=target; it starts from a left-offset static placement. Role summary: target=Laptop. The RGB video has 16 frames at resolution [960, 720]; gravity is [0.0, 0.0, -9.81]."
+}
