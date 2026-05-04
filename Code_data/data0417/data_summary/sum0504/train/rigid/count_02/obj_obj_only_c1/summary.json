@@ -1,0 +1,35 @@
+{
+  "split": "train",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_02",
+  "collision_bucket": "obj_obj_only_c1",
+  "num_samples": 18,
+  "example_sample_ids": [
+    "10027__case001_static_left__cf_no_collision_neg__ratio11",
+    "10027__case001_static_left__cf_no_collision_neg__ratio12",
+    "10033__case002_static_right__ratio11",
+    "10044__case001_static_left_v2__ratio11",
+    "10044__case002_static_right_v2__ratio11",
+    "10050__case001_static_left__ratio11",
+    "10091__case000_static_center_v2__ratio11",
+    "10094__case000_static_center__ratio11",
+    "10104__case001_static_left_v2__ratio11",
+    "10027__case001_static_left__cf_no_collision_neg"
+  ],
+  "top_cases": {
+    "case001_static_left": 5,
+    "case001_static_left_v2": 4,
+    "case002_static_right": 2,
+    "case002_static_right_v2": 2,
+    "case000_static_center_v2": 2,
+    "case000_static_center": 2,
+    "case006_entry_right": 1
+  },
+  "dataset_sources": {
+    "GenesisRigid": 18
+  },
+  "view_types": {
+    "raw": 9,
+    "window": 9
+  }
+}

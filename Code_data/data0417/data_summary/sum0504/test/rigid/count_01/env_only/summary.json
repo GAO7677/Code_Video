@@ -1,0 +1,28 @@
+{
+  "split": "test",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_01",
+  "collision_bucket": "env_only",
+  "num_samples": 7,
+  "example_sample_ids": [
+    "genesis_heldout_0142__10005__case003_static_highdrop",
+    "genesis_heldout_0163__10046__case003_static_highdrop",
+    "genesis_heldout_0178__1009__case000_static_center",
+    "genesis_heldout_0179__1009__case001_static_left",
+    "genesis_heldout_0180__1009__case002_static_right",
+    "genesis_heldout_0190__10112__case003_static_highdrop",
+    "genesis_heldout_0199__10162__case003_static_highdrop"
+  ],
+  "top_cases": {
+    "case003_static_highdrop": 4,
+    "case000_static_center": 1,
+    "case001_static_left": 1,
+    "case002_static_right": 1
+  },
+  "dataset_sources": {
+    "GenesisRigid": 7
+  },
+  "view_types": {
+    "window": 7
+  }
+}

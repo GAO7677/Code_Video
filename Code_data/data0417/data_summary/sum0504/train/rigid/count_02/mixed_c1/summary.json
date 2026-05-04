@@ -1,0 +1,40 @@
+{
+  "split": "train",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_02",
+  "collision_bucket": "mixed_c1",
+  "num_samples": 1419,
+  "example_sample_ids": [
+    "10000__case000_static_center_v2__ratio11",
+    "10000__case001_static_left__ratio11",
+    "10000__case001_static_left_v2__ratio11",
+    "10000__case006_entry_right__ratio11",
+    "10003__case000_static_center__ratio11",
+    "10003__case000_static_center_v2__ratio11",
+    "10003__case001_static_left__ratio11",
+    "10005__case000_static_center__cf_no_collision_neg__ratio11",
+    "10005__case000_static_center__cf_same_scene_neg__ratio11",
+    "10005__case000_static_center__ratio11"
+  ],
+  "top_cases": {
+    "case000_static_center": 236,
+    "case001_static_left": 207,
+    "case002_static_right": 190,
+    "case000_static_center_v2": 136,
+    "case003_static_highdrop": 135,
+    "case002_static_right_v2": 132,
+    "case001_static_left_v2": 121,
+    "case901_high_drop": 56,
+    "case005_entry_left": 55,
+    "case007_entry_fast_center": 54,
+    "case006_entry_right": 49,
+    "case900_random_parabola": 48
+  },
+  "dataset_sources": {
+    "GenesisRigid": 1419
+  },
+  "view_types": {
+    "raw": 837,
+    "window": 582
+  }
+}

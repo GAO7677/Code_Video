@@ -1,0 +1,12 @@
+{
+  "split": "val",
+  "num_samples": 31,
+  "leaf_counts": {
+    "rigid/count_01/env_only": 3,
+    "rigid/count_01/no_collision": 4,
+    "rigid/count_02/mixed_c1": 9,
+    "rigid/count_02/mixed_c2plus": 2,
+    "rigid/count_03_04/mixed_c1": 1,
+    "rigid/count_03_04/mixed_c2plus": 12
+  }
+}

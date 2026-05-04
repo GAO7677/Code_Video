@@ -14,12 +14,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from build_stage1_subsets import (
-    find_samples,
-    load_raw_state,
-    normalize_state,
-    resolve_main_object_index,
-)
+from build_stage1_subsets import load_raw_state, normalize_state, resolve_main_object_index
 from motion_complexity import infer_motion_complexity
 from window_interactions import load_interaction_episodes
 
@@ -47,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratios", type=str, default="ratio11,ratio12")
     parser.add_argument("--min_context_frames", type=int, default=2)
     parser.add_argument("--min_future_frames", type=int, default=2)
+    parser.add_argument("--max_window_frames", type=int, default=12)
     parser.add_argument("--max_source_samples", type=int, default=0)
     parser.add_argument("--include_invalid_by_qa", action="store_true")
     parser.add_argument("--rebuild_genesis_train", action="store_true")
@@ -60,6 +56,20 @@ def ensure_dir(path: Path) -> None:
 def write_json(path: Path, payload: Any) -> None:
     ensure_dir(path.parent)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def find_source_meta_path(sample_dir: Path) -> Path:
+    for name in ("metadata.json", "meta.json"):
+        candidate = sample_dir / name
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Missing metadata.json/meta.json under {sample_dir}")
+
+
+def load_source_metadata(sample_dir: Path) -> tuple[dict[str, Any], Path]:
+    meta_path = find_source_meta_path(sample_dir)
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    return payload, meta_path
 
 
 def infer_prompt(sample_dir: Path, metadata: dict[str, Any]) -> str:
@@ -189,6 +199,26 @@ def parse_csv(value: str) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
+def collect_source_samples(source_root: Path, sample_filter: str, count_buckets: Sequence[str]) -> list[Path]:
+    wanted_buckets = {bucket.strip() for bucket in count_buckets if bucket.strip()}
+    seen: set[Path] = set()
+    samples: list[Path] = []
+    for name in ("metadata.json", "meta.json"):
+        for meta_path in source_root.rglob(name):
+            sample_dir = meta_path.parent
+            if sample_dir in seen:
+                continue
+            if not (sample_dir / "physics" / "anchor_targets.npz").exists():
+                continue
+            if wanted_buckets and not any(bucket in sample_dir.parts for bucket in wanted_buckets):
+                continue
+            if sample_filter and sample_filter not in str(sample_dir):
+                continue
+            seen.add(sample_dir)
+            samples.append(sample_dir)
+    return sorted(samples)
+
+
 def is_support_episode(episode: dict[str, Any]) -> bool:
     return (
         str(episode.get("kind", "")) == "object_environment"
@@ -234,6 +264,47 @@ def choose_split_lengths(
     return context_len, future_len
 
 
+def choose_window_frame_indices(
+    *,
+    total_frames: int,
+    source_collision_frame: int | None,
+    ratio_key: str,
+    min_context_frames: int,
+    min_future_frames: int,
+    max_window_frames: int,
+) -> tuple[list[int], list[int], list[int]] | None:
+    end_exclusive = int(source_collision_frame) if source_collision_frame is not None else int(total_frames)
+    min_total = int(min_context_frames) + int(min_future_frames)
+    if end_exclusive < min_total:
+        return None
+
+    full_len = end_exclusive
+    if int(max_window_frames) > 0:
+        full_len = min(full_len, int(max_window_frames))
+    if full_len < min_total:
+        return None
+
+    split_lens = choose_split_lengths(
+        full_len=full_len,
+        ratio_key=ratio_key,
+        min_context_frames=min_context_frames,
+        min_future_frames=min_future_frames,
+    )
+    if split_lens is None:
+        return None
+
+    context_len, future_len = split_lens
+    start_index = end_exclusive - full_len
+    orig_full_indices = list(range(start_index, end_exclusive))
+    if len(orig_full_indices) != full_len:
+        return None
+    orig_context_indices = orig_full_indices[:context_len]
+    orig_future_indices = orig_full_indices[context_len : context_len + future_len]
+    if len(orig_context_indices) < int(min_context_frames) or len(orig_future_indices) < int(min_future_frames):
+        return None
+    return orig_context_indices, orig_future_indices, orig_full_indices
+
+
 def build_no_collision_interactions(object_count: int, start_index: int, context_len: int, future_len: int) -> dict[str, Any]:
     future_start = int(start_index) + int(context_len)
     future_end = future_start + int(future_len)
@@ -262,6 +333,7 @@ def export_package(
     *,
     sample_dir: Path,
     out_dir: Path,
+    output_root: Path,
     sample_id: str,
     sample_label: str,
     split_name: str,
@@ -340,20 +412,21 @@ def export_package(
         state_norm=y_state_norm.astype(np.float32),
         visibility_mask=y_visibility.astype(np.uint8),
     )
+    start_index = int(orig_full_indices[0]) if orig_full_indices else 0
     window_interactions = build_no_collision_interactions(
         object_count=len(object_text_meta) if object_text_meta else int(metadata.get("num_objects", 0) or 0),
-        start_index=0,
+        start_index=start_index,
         context_len=len(orig_context_indices),
         future_len=len(orig_future_indices),
     )
-    segment_kind = "precollision_full" if source_collision_frame is not None else "full_no_collision_clip"
+    segment_kind = "precollision_segment" if source_collision_frame is not None else "full_no_collision_clip"
     pair_meta = {
         "prompt": prompt,
         "source_scene_id": str(metadata.get("scene_id", sample_dir.name)),
         "source_sample_dir": str(sample_dir),
         "context_len": int(len(orig_context_indices)),
         "future_len": int(len(orig_future_indices)),
-        "start_index": 0,
+        "start_index": start_index,
         "main_object_index": int(main_object_index),
         "future_main_visibility_ratio": future_main_visibility_ratio,
         "resolution": metadata.get("resolution"),
@@ -367,6 +440,8 @@ def export_package(
             "ratio_key": ratio_key,
             "source_collision_frame": None if source_collision_frame is None else int(source_collision_frame),
             "source_segment_kind": segment_kind,
+            "source_window_start_index": start_index,
+            "source_window_end_exclusive": int(orig_full_indices[-1]) + 1 if orig_full_indices else start_index,
             "orig_context_frame_indices": orig_context_indices,
             "orig_future_frame_indices": orig_future_indices,
             "orig_full_frame_indices": orig_full_indices,
@@ -429,7 +504,7 @@ def export_package(
         "split": split_name,
         "ratio_key": ratio_key,
         "sample_dir": str(out_dir),
-        "rel_dir": str(out_dir.relative_to(STAGE1ADAPTER_ROOT)),
+        "rel_dir": str(out_dir.relative_to(output_root)),
         "source_sample_dir": str(sample_dir),
         "frames": int(len(orig_full_indices)),
         "context_frames": int(len(orig_context_indices)),
@@ -484,7 +559,7 @@ def main() -> None:
     if unknown_ratios:
         raise ValueError(f"Unknown ratios: {unknown_ratios}")
 
-    samples = find_samples(source_root, args.sample_filter, count_buckets)
+    samples = collect_source_samples(source_root, args.sample_filter, count_buckets)
     if not args.include_invalid_by_qa:
         samples = [sample for sample in samples if "invalid_by_qa" not in sample.parts]
     if int(args.max_source_samples) > 0:
@@ -497,7 +572,7 @@ def main() -> None:
     ratio_counter: Counter[str] = Counter()
 
     for sample_dir in samples:
-        metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+        metadata, source_meta_path = load_source_metadata(sample_dir)
         fps = float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0)
         raw = load_raw_state(sample_dir, fps)
         state_raw_full = raw["state_raw"].astype(np.float32)
@@ -518,11 +593,6 @@ def main() -> None:
         if source_collision_frame == 0:
             skipped.append({"sample_dir": str(sample_dir), "reason": "collision_at_frame_0"})
             continue
-        full_end = int(source_collision_frame) if source_collision_frame is not None else int(state_raw_full.shape[0])
-        full_orig_indices = list(range(full_end))
-        if not full_orig_indices:
-            skipped.append({"sample_dir": str(sample_dir), "reason": "empty_precollision_full"})
-            continue
 
         prompt = infer_prompt(sample_dir, metadata)
         object_text_meta = extract_object_text_meta(sample_dir, metadata)
@@ -531,17 +601,17 @@ def main() -> None:
         base_parent = train_genesis_root / rel_source.parent
 
         for ratio_key in ratio_keys:
-            split_lens = choose_split_lengths(
-                full_len=len(full_orig_indices),
+            chosen = choose_window_frame_indices(
+                total_frames=int(state_raw_full.shape[0]),
+                source_collision_frame=source_collision_frame,
                 ratio_key=ratio_key,
                 min_context_frames=int(args.min_context_frames),
                 min_future_frames=int(args.min_future_frames),
+                max_window_frames=int(args.max_window_frames),
             )
-            if split_lens is None:
+            if chosen is None:
                 continue
-            context_len, future_len = split_lens
-            orig_context_indices = full_orig_indices[:context_len]
-            orig_future_indices = full_orig_indices[context_len:]
+            orig_context_indices, orig_future_indices, full_orig_indices = chosen
             state_raw_local = state_raw_full[full_orig_indices].astype(np.float32)
             state_norm_local = state_norm_full[full_orig_indices].astype(np.float32)
             visibility_local = visibility_full[full_orig_indices].astype(np.uint8)
@@ -550,6 +620,7 @@ def main() -> None:
             record = export_package(
                 sample_dir=sample_dir,
                 out_dir=out_dir,
+                output_root=args.output_root,
                 sample_id=sample_id,
                 sample_label=f"{rel_source.as_posix()}::{ratio_key}",
                 split_name="train",
@@ -568,14 +639,21 @@ def main() -> None:
                 main_object_index=main_object_index,
                 source_collision_frame=source_collision_frame,
                 ratio_key=ratio_key,
-                source_meta_json_path=str(sample_dir / "metadata.json"),
+                source_meta_json_path=str(source_meta_path),
             )
             selected.append(record)
             ratio_counter[ratio_key] += 1
             exported_any = True
 
         if not exported_any:
-            skipped.append({"sample_dir": str(sample_dir), "reason": "full_too_short_for_requested_ratios", "full_frames": len(full_orig_indices)})
+            skipped.append(
+                {
+                    "sample_dir": str(sample_dir),
+                    "reason": "window_too_short_for_requested_ratios",
+                    "source_collision_frame": None if source_collision_frame is None else int(source_collision_frame),
+                    "total_frames": int(state_raw_full.shape[0]),
+                }
+            )
 
     summary = {
         "dataset_root": str(args.dataset_root),

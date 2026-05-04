@@ -1,0 +1,8 @@
+{
+  "split": "test",
+  "num_samples": 24,
+  "leaf_counts": {
+    "rigid/count_01/env_only": 7,
+    "rigid/count_01/no_collision": 17
+  }
+}

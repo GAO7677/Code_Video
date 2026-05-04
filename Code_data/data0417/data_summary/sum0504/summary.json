@@ -1,0 +1,40 @@
+{
+  "schema": "<split>/<simulator_type>/<object_count_bucket>/<collision_bucket>/samples.txt",
+  "notes": [
+    "Only path index files are created; raw data folders are not moved.",
+    "Samples are included only if they can be stably mapped to count_01/count_02/count_03_04 and to one of the six collision buckets.",
+    "Window samples may inherit collision statistics from source raw metadata when available."
+  ],
+  "included_samples": 6510,
+  "excluded_samples": 4702,
+  "included_by_leaf": {
+    "test/rigid/count_01/env_only": 7,
+    "test/rigid/count_01/no_collision": 17,
+    "train/rigid/count_01/env_only": 1586,
+    "train/rigid/count_01/no_collision": 1674,
+    "train/rigid/count_02/env_only": 46,
+    "train/rigid/count_02/mixed_c1": 1419,
+    "train/rigid/count_02/mixed_c2plus": 277,
+    "train/rigid/count_02/obj_obj_only_c1": 18,
+    "train/rigid/count_02/obj_obj_only_c2plus": 6,
+    "train/rigid/count_03_04/env_only": 4,
+    "train/rigid/count_03_04/mixed_c1": 208,
+    "train/rigid/count_03_04/mixed_c2plus": 1213,
+    "train/rigid/count_03_04/obj_obj_only_c1": 3,
+    "train/rigid/count_03_04/obj_obj_only_c2plus": 1,
+    "val/rigid/count_01/env_only": 3,
+    "val/rigid/count_01/no_collision": 4,
+    "val/rigid/count_02/mixed_c1": 9,
+    "val/rigid/count_02/mixed_c2plus": 2,
+    "val/rigid/count_03_04/mixed_c1": 1,
+    "val/rigid/count_03_04/mixed_c2plus": 12
+  },
+  "excluded_breakdown": {
+    "test/count_bucket_excluded/MOVI-D": 1580,
+    "test/missing_collision_bucket/MOVI-D": 16,
+    "train/count_bucket_excluded/MOVI-D": 2896,
+    "train/missing_collision_bucket/GenesisRigid": 117,
+    "val/count_bucket_excluded/MOVI-D": 31,
+    "val/count_bucket_excluded/OpenVid": 62
+  }
+}

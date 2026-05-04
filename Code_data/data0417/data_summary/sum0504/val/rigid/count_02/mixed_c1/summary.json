@@ -1,0 +1,33 @@
+{
+  "split": "val",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_02",
+  "collision_bucket": "mixed_c1",
+  "num_samples": 9,
+  "example_sample_ids": [
+    "genesis_heldout_0037__10046__case900_random_parabola",
+    "genesis_heldout_0040__10096__case000_static_center_v2",
+    "genesis_heldout_0056__1009__case005_entry_left",
+    "genesis_heldout_0014__10021__case001_static_left_v2",
+    "genesis_heldout_0027__10039__case900_random_parabola",
+    "genesis_heldout_0032__10046__case002_static_right",
+    "genesis_heldout_0050__1009__case000_static_center_v2",
+    "genesis_heldout_0058__1009__case007_entry_fast_center",
+    "genesis_heldout_0061__10112__case000_static_center"
+  ],
+  "top_cases": {
+    "case900_random_parabola": 2,
+    "case000_static_center_v2": 2,
+    "case005_entry_left": 1,
+    "case001_static_left_v2": 1,
+    "case002_static_right": 1,
+    "case007_entry_fast_center": 1,
+    "case000_static_center": 1
+  },
+  "dataset_sources": {
+    "GenesisRigid": 9
+  },
+  "view_types": {
+    "window": 9
+  }
+}
