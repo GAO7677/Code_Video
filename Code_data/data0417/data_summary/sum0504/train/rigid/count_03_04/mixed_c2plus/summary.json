@@ -3,39 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "mixed_c2plus",
-  "num_samples": 1213,
-  "example_sample_ids": [
-    "10000__case000_static_center__ratio11",
-    "10000__case000_static_center_v2__ratio11",
-    "10000__case001_static_left__ratio11",
-    "10000__case001_static_left_v2__ratio11",
-    "10000__case002_static_right__ratio11",
-    "10000__case005_entry_left__ratio11",
-    "10003__case000_static_center__ratio11",
-    "10003__case001_static_left__ratio11",
-    "10005__case000_static_center__ratio11",
-    "10005__case000_static_center_v2__ratio11"
-  ],
-  "top_cases": {
-    "case001_static_left": 165,
-    "case000_static_center": 152,
-    "case002_static_right": 151,
-    "case001_static_left_v2": 106,
-    "case000_static_center_v2": 99,
-    "case002_static_right_v2": 98,
-    "case003_static_highdrop": 98,
-    "case900_random_parabola": 87,
-    "case901_high_drop": 84,
-    "case007_entry_fast_center": 58,
-    "case005_entry_left": 57,
-    "case006_entry_right": 54
-  },
-  "dataset_sources": {
-    "GenesisRigid": 1209,
-    "MOVI-D": 4
-  },
-  "view_types": {
-    "raw": 802,
-    "window": 411
-  }
+  "num_samples": 1200
 }

@@ -124,6 +124,16 @@ def parse_case_name(sample_name: str) -> str:
     return ""
 
 
+def infer_view_type(sample_dir: Path, meta: dict[str, Any]) -> str:
+    value = str(meta.get("view_type") or "").strip()
+    if value:
+        return value
+    sample_text = str(sample_dir)
+    if "/stage1adapter/" in sample_text:
+        return "window"
+    return "raw"
+
+
 def build_record(sample_dir: Path, output_dir: Path, asset_prefix: str) -> dict[str, Any]:
     meta_path = find_meta_path(sample_dir)
     meta = load_json(meta_path) if meta_path is not None else {}
@@ -135,7 +145,7 @@ def build_record(sample_dir: Path, output_dir: Path, asset_prefix: str) -> dict[
         "caption": str(meta.get("caption") or meta.get("prompt") or ""),
         "detail_caption": str(meta.get("detail_caption") or meta.get("description") or ""),
         "dataset": str(meta.get("dataset") or meta.get("dataset_name") or meta.get("dataset_source") or ""),
-        "view_type": str(meta.get("view_type") or ""),
+        "view_type": infer_view_type(sample_dir, meta),
         "media": media,
     }
 

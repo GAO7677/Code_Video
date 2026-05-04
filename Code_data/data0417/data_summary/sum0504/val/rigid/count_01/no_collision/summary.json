@@ -3,21 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_01",
   "collision_bucket": "no_collision",
-  "num_samples": 4,
-  "example_sample_ids": [
-    "genesis_heldout_0187__10112__case000_static_center",
-    "genesis_heldout_0188__10112__case001_static_left",
-    "genesis_heldout_0148__10021__case000_static_center",
-    "genesis_heldout_0196__10162__case000_static_center"
-  ],
-  "top_cases": {
-    "case000_static_center": 3,
-    "case001_static_left": 1
-  },
-  "dataset_sources": {
-    "GenesisRigid": 4
-  },
-  "view_types": {
-    "window": 4
-  }
+  "num_samples": 4
 }

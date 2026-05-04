@@ -2,6 +2,6 @@
   "split": "train",
   "simulator_type": "rigid",
   "object_count_bucket": "count_02",
-  "collision_bucket": "mixed_c1",
-  "num_samples": 1423
+  "collision_bucket": "no_collision",
+  "num_samples": 32
 }

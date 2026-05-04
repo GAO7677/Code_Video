@@ -3,17 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "mixed_c1",
-  "num_samples": 1,
-  "example_sample_ids": [
-    "genesis_heldout_0092__10021__case002_static_right"
-  ],
-  "top_cases": {
-    "case002_static_right": 1
-  },
-  "dataset_sources": {
-    "GenesisRigid": 1
-  },
-  "view_types": {
-    "window": 1
-  }
+  "num_samples": 1
 }

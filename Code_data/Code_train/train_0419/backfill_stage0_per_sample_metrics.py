@@ -99,6 +99,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/result/per_sample_future_metrics"),
     )
+    parser.add_argument(
+        "--model_name",
+        action="append",
+        default=[],
+        help="Optional model_name filter. Can be passed multiple times.",
+    )
     return parser.parse_args()
 
 
@@ -137,17 +143,45 @@ def main() -> None:
     benchmark_root = args.benchmark_root.expanduser().resolve()
     result_root = args.result_root.expanduser().resolve()
     result_root.mkdir(parents=True, exist_ok=True)
+    selected_models = {str(name) for name in args.model_name}
 
     metric_suite = rv.ValidationMetricSuite()
 
     for spec in MODEL_SPECS:
         model_name = str(spec["model_name"])
+        if selected_models and model_name not in selected_models:
+            continue
         generated_dir = benchmark_root / str(spec["generated_dir"])
         runtime_root = benchmark_root / str(spec["runtime_dir"])
         height = int(spec["height"])
         width = int(spec["width"])
+        print(
+            json.dumps(
+                {
+                    "event": "start_model",
+                    "model_name": model_name,
+                    "generated_dir": str(generated_dir),
+                    "runtime_root": str(runtime_root),
+                    "evaluation_height": height,
+                    "evaluation_width": width,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
         entries = rv.load_entries_for_compare(model_name, generated_dir, runtime_root)
+        print(
+            json.dumps(
+                {
+                    "event": "loaded_entries",
+                    "model_name": model_name,
+                    "num_entries": len(entries),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         metric_payload = rv.compute_future_gt_metrics(
             entries,
             height=height,
@@ -156,6 +190,17 @@ def main() -> None:
         )
         per_sample = metric_payload.get("per_sample", [])
         metric_map = build_metric_map(per_sample)
+        print(
+            json.dumps(
+                {
+                    "event": "computed_metrics",
+                    "model_name": model_name,
+                    "num_per_sample_metrics": len(per_sample),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
         csv_rows: list[dict[str, Any]] = []
         updated = 0
@@ -205,7 +250,7 @@ def main() -> None:
             "aggregate": {metric_key: round4(metric_payload.get("aggregate", {}).get(metric_key)) for metric_key in METRIC_KEYS},
         }
         write_json(result_root / f"{model_name}_summary.json", summary_payload)
-        print(json.dumps(summary_payload, ensure_ascii=False))
+        print(json.dumps(summary_payload, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

@@ -1,17 +1,18 @@
 {
   "split": "train",
-  "num_samples": 6455,
+  "num_samples": 6484,
   "leaf_counts": {
     "rigid/count_01/env_only": 1586,
-    "rigid/count_01/no_collision": 1674,
+    "rigid/count_01/no_collision": 1689,
     "rigid/count_02/env_only": 46,
-    "rigid/count_02/mixed_c1": 1419,
+    "rigid/count_02/mixed_c1": 1423,
     "rigid/count_02/mixed_c2plus": 277,
+    "rigid/count_02/no_collision": 32,
     "rigid/count_02/obj_obj_only_c1": 18,
     "rigid/count_02/obj_obj_only_c2plus": 6,
     "rigid/count_03_04/env_only": 4,
-    "rigid/count_03_04/mixed_c1": 208,
-    "rigid/count_03_04/mixed_c2plus": 1213,
+    "rigid/count_03_04/mixed_c1": 199,
+    "rigid/count_03_04/mixed_c2plus": 1200,
     "rigid/count_03_04/obj_obj_only_c1": 3,
     "rigid/count_03_04/obj_obj_only_c2plus": 1
   }

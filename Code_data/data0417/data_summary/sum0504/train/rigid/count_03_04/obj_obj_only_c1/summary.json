@@ -3,20 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "obj_obj_only_c1",
-  "num_samples": 3,
-  "example_sample_ids": [
-    "10034__case002_static_right_v2__ratio11",
-    "10034__case002_static_right_v2__ratio12",
-    "10034__case002_static_right_v2"
-  ],
-  "top_cases": {
-    "case002_static_right_v2": 3
-  },
-  "dataset_sources": {
-    "GenesisRigid": 3
-  },
-  "view_types": {
-    "raw": 1,
-    "window": 2
-  }
+  "num_samples": 3
 }

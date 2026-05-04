@@ -305,6 +305,16 @@ def choose_window_frame_indices(
     return orig_context_indices, orig_future_indices, orig_full_indices
 
 
+def context_covers_all_objects(visibility_full: np.ndarray, orig_context_indices: Sequence[int]) -> bool:
+    if not orig_context_indices:
+        return False
+    context_visibility = np.asarray(visibility_full[orig_context_indices], dtype=np.uint8)
+    if context_visibility.ndim != 2 or context_visibility.shape[1] <= 0:
+        return False
+    seen_mask = context_visibility.max(axis=0) > 0
+    return bool(np.all(seen_mask))
+
+
 def build_no_collision_interactions(object_count: int, start_index: int, context_len: int, future_len: int) -> dict[str, Any]:
     future_start = int(start_index) + int(context_len)
     future_end = future_start + int(future_len)
@@ -455,6 +465,7 @@ def export_package(
         "description": prompt,
         "dataset": "GenesisRigid",
         "split": split_name,
+        "view_type": "window",
         "fps": float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0),
         "context_frames": int(len(orig_context_indices)),
         "future_frames": int(len(orig_future_indices)),
@@ -612,6 +623,16 @@ def main() -> None:
             if chosen is None:
                 continue
             orig_context_indices, orig_future_indices, full_orig_indices = chosen
+            if not context_covers_all_objects(visibility_full, orig_context_indices):
+                skipped.append(
+                    {
+                        "sample_dir": str(sample_dir),
+                        "reason": "context_missing_some_objects",
+                        "ratio_key": ratio_key,
+                        "orig_context_frame_indices": orig_context_indices,
+                    }
+                )
+                continue
             state_raw_local = state_raw_full[full_orig_indices].astype(np.float32)
             state_norm_local = state_norm_full[full_orig_indices].astype(np.float32)
             visibility_local = visibility_full[full_orig_indices].astype(np.uint8)

@@ -3,17 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "obj_obj_only_c2plus",
-  "num_samples": 1,
-  "example_sample_ids": [
-    "10050__case007_entry_fast_center"
-  ],
-  "top_cases": {
-    "case007_entry_fast_center": 1
-  },
-  "dataset_sources": {
-    "GenesisRigid": 1
-  },
-  "view_types": {
-    "raw": 1
-  }
+  "num_samples": 1
 }

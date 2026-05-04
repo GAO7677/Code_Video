@@ -3,18 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "env_only",
-  "num_samples": 4,
-  "example_sample_ids": [
-    "movi_d_train__video_4626",
-    "movi_d_train__video_8486",
-    "movi_d_train__video_9032",
-    "movi_d_train__video_9869"
-  ],
-  "top_cases": {},
-  "dataset_sources": {
-    "MOVI-D": 4
-  },
-  "view_types": {
-    "raw": 4
-  }
+  "num_samples": 4
 }
