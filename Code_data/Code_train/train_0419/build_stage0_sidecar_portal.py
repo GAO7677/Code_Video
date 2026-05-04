@@ -749,99 +749,105 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       color: var(--ink);
     }}
     .shell {{
-      width: min(1800px, calc(100vw - 32px));
+      width: min(1960px, calc(100vw - 20px));
       margin: 0 auto;
-      padding: 28px 0 48px;
+      padding: 14px 0 24px;
     }}
     .hero {{
-      margin-bottom: 24px;
-      padding: 24px 28px;
+      margin-bottom: 12px;
+      padding: 14px 18px;
       background: rgba(255,253,248,0.90);
       border: 1px solid var(--line);
-      border-radius: 20px;
-      box-shadow: 0 14px 40px rgba(33, 24, 16, 0.06);
+      border-radius: 14px;
+      box-shadow: 0 10px 26px rgba(33, 24, 16, 0.05);
     }}
     h1 {{
-      margin: 0 0 10px;
-      font-size: 34px;
+      margin: 0 0 6px;
+      font-size: 24px;
       line-height: 1.05;
+    }}
+    .hero code {{
+      font-size: 12px;
     }}
     .hero p {{
       margin: 0;
       color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
     }}
     .filters {{
       display: grid;
       grid-template-columns: 2fr 1fr 1fr;
-      gap: 12px;
-      margin: 20px 0 24px;
+      gap: 8px;
+      margin: 10px 0 12px;
     }}
     input, select {{
       width: 100%;
-      padding: 12px 14px;
+      padding: 9px 11px;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--panel);
       color: var(--ink);
       font: inherit;
+      font-size: 13px;
     }}
     .record-list {{
       display: grid;
-      gap: 12px;
+      gap: 8px;
     }}
     .sample-card {{
-      padding: 14px;
+      padding: 10px;
       background: rgba(255,253,248,0.95);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      box-shadow: 0 8px 24px rgba(33, 24, 16, 0.05);
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(33, 24, 16, 0.04);
     }}
     .compare-stack {{
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }}
     .input-compare-group {{
-      padding: 10px;
+      padding: 8px;
       background: #fffaf2;
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 10px;
     }}
     .compare-grid {{
       display: grid;
-      grid-template-columns: minmax(280px, 340px) minmax(220px, 260px) minmax(420px, 1fr);
-      gap: 10px;
+      grid-template-columns: minmax(240px, 300px) minmax(180px, 220px) minmax(720px, 1fr);
+      gap: 8px;
       align-items: start;
     }}
     .shared-column, .gt-column {{
       display: grid;
-      gap: 8px;
+      gap: 6px;
     }}
     .outputs-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+      gap: 8px;
       align-items: start;
     }}
     .output-card {{
-      padding: 10px;
+      padding: 8px;
       background: #fffdf8;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
     }}
     .meta-row {{
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 8px;
+      gap: 6px;
+      margin-bottom: 6px;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      padding: 4px 9px;
+      padding: 3px 8px;
       border-radius: 999px;
       background: #efe7da;
       color: #4f4338;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: 0.02em;
     }}
@@ -858,9 +864,9 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       color: #5d4d3a;
     }}
     .sample-card h3 {{
-      margin: 0 0 10px;
-      font-size: 16px;
-      line-height: 1.25;
+      margin: 0 0 6px;
+      font-size: 14px;
+      line-height: 1.2;
     }}
     .json-path {{
       margin: 0 0 14px;
@@ -869,8 +875,8 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       word-break: break-all;
     }}
     .json-path.compact {{
-      margin: 0 0 8px;
-      font-size: 11px;
+      margin: 0 0 6px;
+      font-size: 10px;
     }}
     .build-error {{
       margin: 0 0 8px;
@@ -880,22 +886,22 @@ def build_html(entries: list[dict[str, Any]]) -> str:
     }}
     .media-grid {{
       display: grid;
-      gap: 8px;
+      gap: 6px;
     }}
     .media-grid.multi {{
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     }}
     .media-slot {{
       background: #fbf8f2;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
       overflow: hidden;
-      min-height: 180px;
+      min-height: 132px;
     }}
     .slot-head {{
-      padding: 8px 10px;
+      padding: 6px 8px;
       border-bottom: 1px solid var(--line);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       color: #55493d;
       background: rgba(239, 231, 218, 0.65);
@@ -909,12 +915,12 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       color: var(--ok-ink);
     }}
     .text-slot-body {{
-      min-height: 180px;
-      padding: 10px 12px;
+      min-height: 132px;
+      padding: 8px 10px;
       background: #fffdf9;
       color: var(--ink);
-      font-size: 13px;
-      line-height: 1.5;
+      font-size: 12px;
+      line-height: 1.35;
       white-space: pre-wrap;
       word-break: break-word;
     }}
@@ -922,14 +928,14 @@ def build_html(entries: list[dict[str, Any]]) -> str:
       display: block;
       width: 100%;
       height: 100%;
-      min-height: 180px;
+      min-height: 132px;
       object-fit: contain;
       background: #0d0d0d;
     }}
     .missing {{
       display: grid;
       place-items: center;
-      min-height: 180px;
+      min-height: 132px;
       padding: 12px;
       color: var(--muted);
       background: repeating-linear-gradient(
