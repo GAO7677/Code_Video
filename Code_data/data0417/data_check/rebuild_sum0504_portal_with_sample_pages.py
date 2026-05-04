@@ -43,6 +43,7 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
     segment_state_path = sample_dir / "segment_state.npz"
     state_pair_path = sample_dir / "state_pair.npz"
     physics_dir = sample_dir / "physics"
+    view_type = str(item.get("view_type", ""))
 
     data_files = pick_existing(
         sample_dir,
@@ -59,7 +60,27 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
         ],
     )
     data_files.extend(
-        [p for p in pick_existing(physics_dir, ["anchor_targets.npz", "state_9d.npy"]) if p not in data_files]
+        [
+            p
+            for p in pick_existing(
+                physics_dir,
+                [
+                    "anchor_targets.npz",
+                    "state_9d.npy",
+                    "rigid_kinematics.npz",
+                    "seg.npy",
+                    "depth_metric.npy",
+                    "collision_events.json",
+                    "event_windows.json",
+                    "contact_graph.npy",
+                    "contact_impulse.npy",
+                    "frame_phase.npy",
+                    "energy.npz",
+                    "properties.json",
+                ],
+            )
+            if p not in data_files
+        ]
     )
 
     return {
@@ -71,7 +92,7 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
         "caption": str(item.get("caption", "")),
         "detail_caption": str(item.get("detail_caption", "")),
         "dataset": str(item.get("dataset", "")),
-        "view_type": str(item.get("view_type", "")),
+        "view_type": view_type,
         "media": list(item.get("media", [])),
         "meta_path": meta_path if meta_path.exists() else None,
         "pair_meta_path": pair_meta_path if pair_meta_path.exists() else None,
@@ -79,6 +100,16 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
         "state_pair_path": state_pair_path if state_pair_path.exists() else None,
         "anchor_targets_path": (physics_dir / "anchor_targets.npz") if (physics_dir / "anchor_targets.npz").exists() else None,
         "state_9d_path": (physics_dir / "state_9d.npy") if (physics_dir / "state_9d.npy").exists() else None,
+        "rigid_kinematics_path": (physics_dir / "rigid_kinematics.npz") if (physics_dir / "rigid_kinematics.npz").exists() else None,
+        "seg_path": (physics_dir / "seg.npy") if (physics_dir / "seg.npy").exists() else None,
+        "depth_metric_path": (physics_dir / "depth_metric.npy") if (physics_dir / "depth_metric.npy").exists() else None,
+        "collision_events_path": (physics_dir / "collision_events.json") if (physics_dir / "collision_events.json").exists() else None,
+        "event_windows_path": (physics_dir / "event_windows.json") if (physics_dir / "event_windows.json").exists() else None,
+        "contact_graph_path": (physics_dir / "contact_graph.npy") if (physics_dir / "contact_graph.npy").exists() else None,
+        "contact_impulse_path": (physics_dir / "contact_impulse.npy") if (physics_dir / "contact_impulse.npy").exists() else None,
+        "frame_phase_path": (physics_dir / "frame_phase.npy") if (physics_dir / "frame_phase.npy").exists() else None,
+        "energy_path": (physics_dir / "energy.npz") if (physics_dir / "energy.npz").exists() else None,
+        "properties_path": (physics_dir / "properties.json") if (physics_dir / "properties.json").exists() else None,
         "first_frame_path": (sample_dir / "first_frame.png") if (sample_dir / "first_frame.png").exists() else None,
         "data_files": data_files,
     }
@@ -114,17 +145,48 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
 
 def file_list_html(record: dict[str, Any], page_dir: Path) -> str:
     rows = []
-    for label, path in [
+    view_type = str(record.get("view_type", ""))
+    path_rows = [
         ("meta", record["meta_path"]),
-        ("pair_meta", record["pair_meta_path"]),
-        ("segment_state", record["segment_state_path"]),
-        ("state_pair", record["state_pair_path"]),
         ("anchor_targets", record["anchor_targets_path"]),
         ("state_9d", record["state_9d_path"]),
-        ("first_frame", record["first_frame_path"]),
-    ]:
+        ("rigid_kinematics", record["rigid_kinematics_path"]),
+        ("seg", record["seg_path"]),
+        ("depth_metric", record["depth_metric_path"]),
+        ("collision_events", record["collision_events_path"]),
+        ("event_windows", record["event_windows_path"]),
+        ("contact_graph", record["contact_graph_path"]),
+        ("contact_impulse", record["contact_impulse_path"]),
+        ("frame_phase", record["frame_phase_path"]),
+        ("energy", record["energy_path"]),
+        ("properties", record["properties_path"]),
+    ]
+    if view_type == "window":
+        path_rows.extend(
+            [
+                ("pair_meta", record["pair_meta_path"]),
+                ("segment_state", record["segment_state_path"]),
+                ("state_pair", record["state_pair_path"]),
+                ("first_frame", record["first_frame_path"]),
+            ]
+        )
+    else:
+        path_rows.extend(
+            [
+                ("pair_meta", "n/a for raw"),
+                ("segment_state", "n/a for raw"),
+                ("state_pair", "n/a for raw"),
+                ("first_frame", record["first_frame_path"] if record["first_frame_path"] is not None else "n/a for raw"),
+            ]
+        )
+
+    for label, path in path_rows:
+        if isinstance(path, str):
+            rows.append(f"<tr><td>{html.escape(label)}</td><td>{html.escape(path)}</td></tr>")
+            continue
         if path is None:
-            rows.append(f"<tr><td>{html.escape(label)}</td><td>missing</td></tr>")
+            status = "not generated yet" if label == "state_9d" else "missing"
+            rows.append(f"<tr><td>{html.escape(label)}</td><td>{status}</td></tr>")
         else:
             rows.append(
                 f"<tr><td>{html.escape(label)}</td><td><code>{html.escape(str(path))}</code></td></tr>"

@@ -15,10 +15,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-import imageio.v2 as imageio
 import numpy as np
 from PIL import Image
 from google.protobuf import message_factory as _message_factory
+import cv2
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRAIN0419_ROOT = SCRIPT_DIR.parent
@@ -106,6 +106,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--rebuild", action="store_true", help="Delete existing train/test/benchmark outputs first.")
+    parser.add_argument(
+        "--only_genesis_test",
+        action="store_true",
+        help="Only rebuild stage1adapter/test/genesis without touching train, movi test, or benchmark.",
+    )
     parser.add_argument(
         "--skip_movi_test_cache",
         action="store_true",
@@ -265,12 +270,19 @@ def build_train_source_index() -> dict[str, dict[str, dict[str, Any]]]:
         if dataset_name != "genesis" or not GENESIS_TRAIN_RAW_ROOT.exists():
             continue
 
-        for metadata_path in sorted(GENESIS_TRAIN_RAW_ROOT.rglob("metadata.json")):
-            sample_dir = metadata_path.parent
-            candidates = build_strict_candidates_from_raw_sample(sample_dir)
-            best = choose_best_record(candidates)
-            if best is not None:
-                index[dataset_name][str(sample_dir)] = best
+        seen_genesis_samples: set[Path] = set()
+        for meta_name in ("metadata.json", "meta.json"):
+            for metadata_path in sorted(GENESIS_TRAIN_RAW_ROOT.rglob(meta_name)):
+                sample_dir = metadata_path.parent
+                if sample_dir in seen_genesis_samples:
+                    continue
+                seen_genesis_samples.add(sample_dir)
+                if not (sample_dir / "physics" / "anchor_targets.npz").exists():
+                    continue
+                candidates = build_strict_candidates_from_raw_sample(sample_dir)
+                best = choose_best_record(candidates)
+                if best is not None:
+                    index[dataset_name][str(sample_dir)] = best
     return index
 
 
@@ -278,17 +290,20 @@ def build_video(frames: list[np.ndarray], dst: Path, fps: float = 12.0) -> None:
     if not frames:
         return
     ensure_dir(dst.parent)
-    with imageio.get_writer(
+    height, width = frames[0].shape[:2]
+    writer = cv2.VideoWriter(
         str(dst),
-        format="FFMPEG",
-        mode="I",
-        fps=float(fps),
-        codec="libx264",
-        quality=8,
-        ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
-    ) as writer:
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        float(fps),
+        (int(width), int(height)),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Failed to open video writer for {dst}")
+    try:
         for frame in frames:
-            writer.append_data(np.asarray(frame, dtype=np.uint8))
+            writer.write(cv2.cvtColor(np.asarray(frame, dtype=np.uint8), cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
 
 
 def load_rgb_frames_by_indices(sample_dir: Path, frame_indices: list[int]) -> list[np.ndarray]:
@@ -310,6 +325,50 @@ def save_local_rgb_frames(out_dir: Path, frames: list[np.ndarray]) -> list[str]:
         Image.fromarray(frame).save(frame_path)
         frame_paths.append(str(frame_path))
     return frame_paths
+
+
+def copy_frame_sequence_by_indices(src_dir: Path, dst_dir: Path, frame_indices: Iterable[int]) -> list[str]:
+    if not src_dir.exists():
+        return []
+    ensure_dir(dst_dir)
+    copied: list[str] = []
+    for local_idx, orig_idx in enumerate(frame_indices):
+        src = src_dir / f"frame_{int(orig_idx):03d}.png"
+        if not src.exists():
+            continue
+        dst = dst_dir / f"frame_{local_idx:03d}.png"
+        shutil.copy2(src, dst)
+        copied.append(str(dst))
+    return copied
+
+
+def load_depth_preview_frames_by_indices(sample_dir: Path, frame_indices: Iterable[int]) -> list[np.ndarray]:
+    frames: list[np.ndarray] = []
+    depth_dir = sample_dir / "depth"
+    for frame_idx in frame_indices:
+        frame_path = depth_dir / f"frame_{int(frame_idx):03d}.png"
+        if not frame_path.exists():
+            continue
+        with Image.open(frame_path) as image:
+            arr = np.asarray(image)
+        if arr.ndim == 2:
+            depth = arr.astype(np.float32)
+            positive = depth[depth > 0]
+            if positive.size > 0:
+                lo = float(np.percentile(positive, 2.0))
+                hi = float(np.percentile(positive, 98.0))
+            else:
+                lo = float(depth.min()) if depth.size else 0.0
+                hi = float(depth.max()) if depth.size else lo
+            if hi <= lo:
+                vis = np.zeros_like(depth, dtype=np.uint8)
+            else:
+                vis = ((np.clip(depth, lo, hi) - lo) / (hi - lo) * 255.0).astype(np.uint8)
+            rgb = np.stack([vis, vis, vis], axis=-1)
+        else:
+            rgb = np.asarray(Image.fromarray(arr).convert("RGB"), dtype=np.uint8)
+        frames.append(rgb)
+    return frames
 
 
 def bbox_xyxy_from_state(state_raw: np.ndarray) -> np.ndarray:
@@ -374,6 +433,72 @@ def trim_interaction_events(events: list[dict[str, Any]], frame_indices: list[in
     return local_events
 
 
+def trim_range_records(records: Iterable[dict[str, Any]], frame_indices: list[int]) -> list[dict[str, Any]]:
+    if not frame_indices:
+        return []
+    index_map = {int(orig): idx for idx, orig in enumerate(frame_indices)}
+    local_records: list[dict[str, Any]] = []
+    for record in records:
+        start_frame = int(record.get("start_frame", record.get("frame_idx", -1)))
+        end_frame = int(record.get("end_frame", start_frame))
+        overlapping = [orig for orig in frame_indices if start_frame <= int(orig) <= end_frame]
+        explicit_hits = []
+        for key in ("frame_idx", "peak_frame"):
+            if key in record:
+                value = int(record.get(key, -1))
+                if value in index_map:
+                    explicit_hits.append(value)
+        relevant = sorted(set(overlapping + explicit_hits))
+        if not relevant:
+            continue
+        local = dict(record)
+        local_start = index_map[int(relevant[0])]
+        local_end = index_map[int(relevant[-1])]
+        if "start_frame" in local:
+            local["start_frame"] = int(local_start)
+        if "end_frame" in local:
+            local["end_frame"] = int(local_end)
+        if "frame_idx" in local:
+            orig_frame = int(record.get("frame_idx", relevant[0]))
+            local["frame_idx"] = int(index_map.get(orig_frame, local_start))
+        if "peak_frame" in local:
+            orig_peak = int(record.get("peak_frame", record.get("frame_idx", relevant[0])))
+            if orig_peak in index_map:
+                local["peak_frame"] = int(index_map[orig_peak])
+            elif orig_peak < relevant[0]:
+                local["peak_frame"] = int(local_start)
+            else:
+                local["peak_frame"] = int(local_end)
+        local_records.append(local)
+    return local_records
+
+
+def save_trimmed_npy(src_path: Path, dst_path: Path, total_frames: int, frame_indices: list[int]) -> bool:
+    if not src_path.exists():
+        return False
+    data = np.load(src_path)
+    trimmed = data[frame_indices] if data.ndim > 0 and int(data.shape[0]) == int(total_frames) else data
+    ensure_dir(dst_path.parent)
+    np.save(dst_path, trimmed)
+    return True
+
+
+def save_trimmed_npz(src_path: Path, dst_path: Path, total_frames: int, frame_indices: list[int]) -> bool:
+    if not src_path.exists():
+        return False
+    payload = np.load(src_path)
+    trimmed: dict[str, np.ndarray] = {}
+    for key in payload.files:
+        value = np.asarray(payload[key])
+        if value.ndim > 0 and int(value.shape[0]) == int(total_frames):
+            trimmed[key] = value[frame_indices]
+        else:
+            trimmed[key] = value
+    ensure_dir(dst_path.parent)
+    np.savez_compressed(dst_path, **trimmed)
+    return True
+
+
 def write_local_physics_stub(out_dir: Path, full_state_raw: np.ndarray, object_ids: np.ndarray, seg_ids: np.ndarray) -> None:
     physics_dir = out_dir / "physics"
     ensure_dir(physics_dir)
@@ -387,6 +512,76 @@ def write_local_physics_stub(out_dir: Path, full_state_raw: np.ndarray, object_i
         visibility_mask=visibility_mask.astype(np.uint8),
         center_depth=full_state_raw[..., 2].astype(np.float32),
     )
+    np.save(physics_dir / "state_9d.npy", full_state_raw.astype(np.float32))
+
+
+def copy_raw_like_window_assets(
+    *,
+    source_sample_dir: Path,
+    out_dir: Path,
+    full_orig: list[int],
+    total_frames: int,
+    fps: float,
+    full_video_path: Path,
+) -> dict[str, bool]:
+    copied: dict[str, bool] = {}
+    videos_dir = out_dir / "videos"
+    ensure_dir(videos_dir)
+    shutil.copy2(full_video_path, videos_dir / "rgb.mp4")
+    copied["rgb_video"] = True
+
+    depth_paths = copy_frame_sequence_by_indices(source_sample_dir / "depth", out_dir / "depth", full_orig)
+    copied["depth_frames"] = bool(depth_paths)
+    if depth_paths:
+        depth_frames = load_depth_preview_frames_by_indices(source_sample_dir, full_orig)
+        if depth_frames:
+            build_video(depth_frames, videos_dir / "depth.mp4", fps=fps)
+            copied["depth_video"] = True
+            ensure_dir(out_dir / "visualizations")
+            shutil.copy2(videos_dir / "depth.mp4", out_dir / "visualizations" / "depth_vis.mp4")
+            copied["depth_visualization_video"] = True
+        else:
+            copied["depth_video"] = False
+            copied["depth_visualization_video"] = False
+    else:
+        copied["depth_video"] = False
+        copied["depth_visualization_video"] = False
+
+    physics_src = source_sample_dir / "physics"
+    physics_dst = out_dir / "physics"
+    ensure_dir(physics_dst)
+    copied["depth_metric"] = save_trimmed_npy(
+        physics_src / "depth_metric.npy", physics_dst / "depth_metric.npy", total_frames, full_orig
+    )
+    copied["segmentation"] = save_trimmed_npy(
+        physics_src / "seg.npy", physics_dst / "seg.npy", total_frames, full_orig
+    )
+    copied["contact_graph"] = save_trimmed_npy(
+        physics_src / "contact_graph.npy", physics_dst / "contact_graph.npy", total_frames, full_orig
+    )
+    copied["contact_impulse"] = save_trimmed_npy(
+        physics_src / "contact_impulse.npy", physics_dst / "contact_impulse.npy", total_frames, full_orig
+    )
+    copied["frame_phase"] = save_trimmed_npy(
+        physics_src / "frame_phase.npy", physics_dst / "frame_phase.npy", total_frames, full_orig
+    )
+    copied["rigid_kinematics"] = save_trimmed_npz(
+        physics_src / "rigid_kinematics.npz", physics_dst / "rigid_kinematics.npz", total_frames, full_orig
+    )
+    copied["energy"] = save_trimmed_npz(
+        physics_src / "energy.npz", physics_dst / "energy.npz", total_frames, full_orig
+    )
+    if (physics_src / "properties.json").exists():
+        shutil.copy2(physics_src / "properties.json", physics_dst / "properties.json")
+        copied["properties"] = True
+    else:
+        copied["properties"] = False
+    if (source_sample_dir / "scene_input.json").exists():
+        shutil.copy2(source_sample_dir / "scene_input.json", out_dir / "scene_input.json")
+        copied["scene_input"] = True
+    else:
+        copied["scene_input"] = False
+    return copied
 
 
 def train_rel_source_path(dataset_name: str, sample_dir: Path) -> Path:
@@ -415,6 +610,10 @@ def export_window_package(
     window_dir = Path(str(record["window_dir"]))
     source_sample_dir = Path(str(record["source_sample_dir"]))
     pair_meta = dict(record["pair_meta"])
+    source_meta_payload: dict[str, Any] = {}
+    source_meta_candidate = Path(str(source_meta_json_path))
+    if source_meta_candidate.exists():
+        source_meta_payload = load_json(source_meta_candidate)
 
     state_pair_path = window_dir / "state_pair.npz"
     if state_pair_path.exists():
@@ -444,6 +643,10 @@ def export_window_package(
     context_start = future_start - context_count
     context_orig = list(range(context_start, future_start))
     full_orig = context_orig + future_orig
+    fps_value = float(source_meta_payload.get("fps", source_meta_payload.get("video_fps", 12.0)) or 12.0)
+    source_total_frames = int(
+        source_meta_payload.get("frames", source_meta_payload.get("num_frames", len(full_orig))) or len(full_orig)
+    )
 
     rgb_frames_full = record.get("_rgb_frames_full")
     if rgb_frames_full is not None:
@@ -454,9 +657,9 @@ def export_window_package(
     context_video_path = out_dir / "context_video.mp4"
     future_video_path = out_dir / "future_gt_video.mp4"
     full_video_path = out_dir / "full_video.mp4"
-    build_video(full_frames[: len(context_orig)], context_video_path)
-    build_video(full_frames[len(context_orig) :], future_video_path)
-    build_video(full_frames, full_video_path)
+    build_video(full_frames[: len(context_orig)], context_video_path, fps=fps_value)
+    build_video(full_frames[len(context_orig) :], future_video_path, fps=fps_value)
+    build_video(full_frames, full_video_path, fps=fps_value)
     if full_frames:
         Image.fromarray(full_frames[0]).save(out_dir / "first_frame.png")
 
@@ -501,12 +704,24 @@ def export_window_package(
     )
 
     write_local_physics_stub(out_dir, full_state_raw, object_ids, seg_ids)
+    copied_assets = copy_raw_like_window_assets(
+        source_sample_dir=source_sample_dir,
+        out_dir=out_dir,
+        full_orig=full_orig,
+        total_frames=source_total_frames,
+        fps=fps_value,
+        full_video_path=full_video_path,
+    )
     source_event_windows = record.get("_source_event_windows")
     if source_event_windows is not None:
         local_events = trim_interaction_events(list(source_event_windows), full_orig)
     else:
         local_events = trim_interaction_episodes(source_sample_dir, full_orig)
     write_json(out_dir / "physics" / "event_windows.json", local_events)
+    raw_collision_path = source_sample_dir / "physics" / "collision_events.json"
+    if raw_collision_path.exists():
+        raw_collision_payload = json.loads(raw_collision_path.read_text(encoding="utf-8"))
+        write_json(out_dir / "physics" / "collision_events.json", trim_range_records(raw_collision_payload, full_orig))
 
     local_pair_meta = {
         "prompt": str(pair_meta.get("prompt", "")).strip() or "a rigid object motion scene",
@@ -546,45 +761,90 @@ def export_window_package(
     local_pair_meta["window_interactions"] = infer_window_interactions(local_pair_meta)
     write_json(out_dir / "pair_meta.json", local_pair_meta)
 
-    meta_json = {
-        "sample_id": sample_id,
-        "caption": local_pair_meta["prompt"],
-        "description": local_pair_meta["prompt"],
-        "dataset": "MOVI-D" if dataset_name == "movi-d" else "GenesisRigid",
-        "split": split,
-        "fps": 12,
-        "context_frames": int(len(context_orig)),
-        "future_frames": int(len(future_orig)),
-        "raw_frames": int(len(full_orig)),
-        "sample_label": sample_label,
-        "paths": {
-            "sample_dir": str(out_dir),
-            "future_gt_video_path": str(future_video_path),
-            "full_video_path": str(full_video_path),
-            "context_video_path": str(context_video_path),
-            "first_frame_path": str(out_dir / "first_frame.png"),
-            "meta_json_path": str(out_dir / "meta.json"),
-        },
-        "source_paths": {
-            "meta_json_path": str(out_dir / "meta.json"),
-            "pair_meta_json_path": str(out_dir / "pair_meta.json"),
-            "state_pair_npz_path": str(out_dir / "state_pair.npz"),
-            "source_sample_dir": str(source_sample_dir),
-            "source_window_dir": str(window_dir),
-            "source_meta_json_path": str(source_meta_json_path),
-        },
-        "adapter_window": {
-            "dataset": dataset_name,
-            "collision_bucket": str(record["collision"]),
-            "motion_complexity": str(record["motion"]),
-            "segment_kind": str(record["segment_kind"]),
-            "orig_context_frame_indices": context_orig,
-            "orig_future_frame_indices": future_orig,
-            "orig_full_frame_indices": full_orig,
-        },
+    meta_json = dict(source_meta_payload)
+    meta_json["scene_id"] = sample_id
+    meta_json["sample_id"] = sample_id
+    meta_json["caption"] = local_pair_meta["prompt"]
+    meta_json["description"] = local_pair_meta["prompt"]
+    meta_json["dataset"] = "MOVI-D" if dataset_name == "movi-d" else "GenesisRigid"
+    meta_json["split"] = split
+    meta_json["fps"] = fps_value
+    meta_json["view_type"] = "window"
+    meta_json["frames"] = int(len(full_orig))
+    meta_json["context_frames"] = int(len(context_orig))
+    meta_json["future_frames"] = int(len(future_orig))
+    meta_json["raw_frames"] = int(len(full_orig))
+    meta_json["sample_label"] = sample_label
+    meta_json["sample_dir"] = str(out_dir)
+    meta_json["source_sample_dir"] = str(source_sample_dir)
+    meta_json["source_scene_id"] = str(local_pair_meta.get("source_scene_id", source_sample_dir.name))
+    meta_json["window_range"] = {
+        "start_index": int(context_start),
+        "end_exclusive": int(segment_end),
+        "orig_context_frame_indices": context_orig,
+        "orig_future_frame_indices": future_orig,
+        "orig_full_frame_indices": full_orig,
+        "local_context_frame_indices": list(range(len(context_orig))),
+        "local_future_frame_indices": list(range(len(context_orig), len(full_orig))),
+        "local_full_frame_indices": list(range(len(full_orig))),
+        "segment_kind": str(record["segment_kind"]),
+    }
+    meta_json["paths"] = {
+        "sample_dir": str(out_dir),
+        "rgb_video": str(out_dir / "videos" / "rgb.mp4"),
+        "depth_video": str(out_dir / "videos" / "depth.mp4"),
+        "future_gt_video_path": str(future_video_path),
+        "full_video_path": str(full_video_path),
+        "context_video_path": str(context_video_path),
+        "first_frame_path": str(out_dir / "first_frame.png"),
+        "meta_json_path": str(out_dir / "meta.json"),
+    }
+    meta_json["source_paths"] = {
+        "meta_json_path": str(out_dir / "meta.json"),
+        "pair_meta_json_path": str(out_dir / "pair_meta.json"),
+        "segment_state_npz_path": str(out_dir / "segment_state.npz"),
+        "state_pair_npz_path": str(out_dir / "state_pair.npz"),
+        "source_sample_dir": str(source_sample_dir),
+        "source_window_dir": str(window_dir),
+        "source_meta_json_path": str(source_meta_json_path),
+    }
+    meta_json["adapter_window"] = {
+        "dataset": dataset_name,
+        "collision_bucket": str(record["collision"]),
+        "motion_complexity": str(record["motion"]),
+        "segment_kind": str(record["segment_kind"]),
+        "orig_context_frame_indices": context_orig,
+        "orig_future_frame_indices": future_orig,
+        "orig_full_frame_indices": full_orig,
     }
     if extra_source_paths:
         meta_json["source_paths"].update(extra_source_paths)
+    outputs = dict(meta_json.get("outputs") or {})
+    outputs.update(
+        {
+            "metadata": "meta.json",
+            "rgb_video": "videos/rgb.mp4",
+            "depth_video": "videos/depth.mp4" if copied_assets.get("depth_video") else "",
+            "depth_metric": "physics/depth_metric.npy" if copied_assets.get("depth_metric") else "",
+            "depth_normalized": "",
+            "segmentation": "physics/seg.npy" if copied_assets.get("segmentation") else "",
+            "flow": "",
+            "anchor_targets": "physics/anchor_targets.npz",
+            "rigid_kinematics": "physics/rigid_kinematics.npz" if copied_assets.get("rigid_kinematics") else "",
+            "energy": "physics/energy.npz" if copied_assets.get("energy") else "",
+            "properties": "physics/properties.json" if copied_assets.get("properties") else "",
+            "collision_events": "physics/collision_events.json" if (out_dir / "physics" / "collision_events.json").exists() else "",
+            "contact_graph": "physics/contact_graph.npy" if copied_assets.get("contact_graph") else "",
+            "contact_impulse": "physics/contact_impulse.npy" if copied_assets.get("contact_impulse") else "",
+            "frame_phase": "physics/frame_phase.npy" if copied_assets.get("frame_phase") else "",
+            "event_windows": "physics/event_windows.json",
+            "depth_visualization_video": "visualizations/depth_vis.mp4" if copied_assets.get("depth_visualization_video") else "",
+        }
+    )
+    meta_json["outputs"] = outputs
+    meta_json["has_depth_metric"] = bool(copied_assets.get("depth_metric"))
+    meta_json["has_seg"] = bool(copied_assets.get("segmentation"))
+    meta_json["has_contact_graph"] = bool(copied_assets.get("contact_graph"))
     write_json(out_dir / "meta.json", meta_json)
     write_json(
         out_dir / "segment_info.json",
@@ -694,7 +954,10 @@ def movi_target_source_sample_dir(meta: dict[str, Any]) -> str:
 
 
 def build_strict_candidates_from_raw_sample(sample_dir: Path) -> list[dict[str, Any]]:
-    metadata = load_json(sample_dir / "metadata.json")
+    meta_path = sample_dir / "metadata.json"
+    if not meta_path.exists():
+        meta_path = sample_dir / "meta.json"
+    metadata = load_json(meta_path)
     fps = float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0)
     raw = load_raw_state(sample_dir, fps)
     state_raw = raw["state_raw"]
@@ -1355,6 +1618,20 @@ def summarize(items: list[dict[str, Any]]) -> dict[str, int]:
 def main() -> None:
     args = parse_args()
     output_root = args.output_root.resolve()
+    if args.only_genesis_test and args.rebuild:
+        target = output_root / "test" / "genesis"
+        if target.exists():
+            shutil.rmtree(target)
+        ensure_dir(output_root)
+        ensure_dir(output_root / "test")
+        train_index = build_train_source_index()
+        genesis_test_items = prepare_genesis_test_packages(output_root, train_index)
+        write_json(output_root / "manifests" / "test_genesis_items.json", genesis_test_items)
+        print(f"output_root={output_root}")
+        print(f"mode=only_genesis_test")
+        print(f"test_genesis_items={len(genesis_test_items)}")
+        return
+
     if args.rebuild:
         for name in ("train", "test", "benchmark", "manifests", "index.html", "portal_manifest.json"):
             path = output_root / name if not str(name).endswith(".html") and not str(name).endswith(".json") else output_root / name
