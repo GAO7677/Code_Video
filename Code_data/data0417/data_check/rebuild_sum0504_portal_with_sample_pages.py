@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from PIL import Image
 
 ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 MANIFEST_PATH = ROOT / "manifest.json"
+STATE_VALIDATION_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window")
 
 
 def load_json(path: Path) -> Any:
@@ -25,6 +28,22 @@ def load_json(path: Path) -> Any:
 
 def relpath(path: Path, start: Path) -> str:
     return os.path.relpath(path, start)
+
+
+def asset_src(path: Path, page_dir: Path) -> str:
+    try:
+        path.relative_to(ROOT)
+        return relpath(path, page_dir)
+    except ValueError:
+        asset_dir = page_dir / "_assets"
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.md5(str(path).encode("utf-8")).hexdigest()[:12]
+        target = asset_dir / f"{digest}_{path.name}"
+        if target.is_symlink():
+            target.unlink()
+        if (not target.exists()) or target.stat().st_size != path.stat().st_size:
+            shutil.copy2(path, target)
+        return relpath(target, page_dir)
 
 
 def fmt_bool(v: bool) -> str:
@@ -38,6 +57,48 @@ def pick_existing(sample_dir: Path, names: list[str]) -> list[Path]:
         if p.exists():
             result.append(p)
     return result
+
+
+def load_json_maybe(path: Path | None) -> Any:
+    if path is None or not path.exists():
+        return None
+    return load_json(path)
+
+
+def resolve_source_sample_dir(record: dict[str, Any]) -> Path | None:
+    meta = load_json_maybe(record.get("meta_path")) or {}
+    pair_meta = load_json_maybe(record.get("pair_meta_path")) or {}
+    candidates = [
+        meta.get("source_sample_dir"),
+        (meta.get("source_paths") or {}).get("source_sample_dir"),
+        pair_meta.get("source_sample_dir"),
+        (pair_meta.get("source_paths") or {}).get("source_sample_dir"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            path = Path(candidate)
+            if path.exists():
+                return path
+    return None
+
+
+def find_state_validation_case_dir(record: dict[str, Any]) -> Path | None:
+    sample_name = str(record.get("sample_name", "")).strip()
+    if not sample_name:
+        return None
+    for case_dir in STATE_VALIDATION_ROOT.glob("*/*/*"):
+        if case_dir.is_dir() and case_dir.name.endswith(sample_name):
+            return case_dir
+    return None
+
+
+def find_visualization_dir(sample_dir: Path | None) -> Path | None:
+    if sample_dir is None:
+        return None
+    vis_dir = sample_dir / "visualizations"
+    if vis_dir.exists():
+        return vis_dir
+    return None
 
 
 def load_state_bundle(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -116,6 +177,18 @@ def load_event_list(record: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(payload, list):
                 return payload
     return []
+
+
+def phase_name(value: int) -> str:
+    mapping = {
+        0: "unknown",
+        1: "pre_motion",
+        2: "simple_motion",
+        3: "pre_contact",
+        4: "contact",
+        5: "post_contact",
+    }
+    return mapping.get(int(value), f"phase_{int(value)}")
 
 
 def object_labels(bundle: dict[str, Any]) -> list[str]:
@@ -238,13 +311,291 @@ def render_state_curves(record: dict[str, Any], page_dir: Path) -> Path | None:
     return out_path
 
 
+def render_segmentation_depth_overview(record: dict[str, Any], page_dir: Path) -> Path | None:
+    seg_path = record.get("seg_path")
+    depth_path = record.get("depth_metric_path")
+    rgb_dir = record["sample_dir"] / "rgb"
+    if seg_path is None or depth_path is None or not rgb_dir.exists():
+        return None
+    frame_paths = sorted(rgb_dir.glob("frame_*.png"))
+    if not frame_paths:
+        return None
+    seg = np.asarray(np.load(seg_path), dtype=np.int32)
+    depth = np.asarray(np.load(depth_path), dtype=np.float32)
+    total = min(len(frame_paths), seg.shape[0], depth.shape[0])
+    if total <= 0:
+        return None
+    steps = min(4, total)
+    indices = np.linspace(0, total - 1, num=steps, dtype=np.int32)
+    out_path = page_dir / "seg_depth_overview.png"
+
+    fig, axes = plt.subplots(2, steps, figsize=(4.2 * steps, 7.2), dpi=150)
+    if steps == 1:
+        axes = np.asarray(axes).reshape(2, 1)
+    cmap = plt.get_cmap("tab20")
+    for col, frame_idx in enumerate(indices.tolist()):
+        with Image.open(frame_paths[frame_idx]) as img:
+            rgb = np.asarray(img.convert("RGB"))
+        seg_frame = seg[frame_idx]
+        depth_frame = depth[frame_idx]
+        overlay = rgb.astype(np.float32) * 0.72
+        unique_ids = [int(x) for x in np.unique(seg_frame) if int(x) > 0]
+        for seg_id in unique_ids:
+            color = np.asarray(cmap(seg_id % 20)[:3], dtype=np.float32) * 255.0
+            mask = seg_frame == seg_id
+            overlay[mask] = overlay[mask] * 0.35 + color * 0.65
+        axes[0, col].imshow(np.clip(overlay / 255.0, 0.0, 1.0))
+        axes[0, col].set_title(f"RGB + Seg f={frame_idx}", fontsize=10)
+        axes[0, col].axis("off")
+
+        im = axes[1, col].imshow(depth_frame, cmap="viridis")
+        axes[1, col].set_title(f"Depth f={frame_idx}", fontsize=10)
+        axes[1, col].axis("off")
+        fig.colorbar(im, ax=axes[1, col], fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_contact_heatmaps(record: dict[str, Any], page_dir: Path) -> Path | None:
+    graph_path = record.get("contact_graph_path")
+    impulse_path = record.get("contact_impulse_path")
+    graph = np.asarray(np.load(graph_path), dtype=np.float32) if graph_path is not None else None
+    impulse = np.asarray(np.load(impulse_path), dtype=np.float32) if impulse_path is not None else None
+    if graph is None and impulse is None:
+        return None
+    out_path = page_dir / "contact_heatmaps.png"
+
+    panels: list[tuple[str, np.ndarray]] = []
+    if graph is not None:
+        graph_2d = graph.reshape(graph.shape[0], -1)
+        panels.append(("Contact Graph", graph_2d))
+    if impulse is not None:
+        impulse_2d = impulse.reshape(impulse.shape[0], -1)
+        panels.append(("Contact Impulse", impulse_2d))
+    if not panels:
+        return None
+    if all(float(np.nanmax(arr)) <= 0.0 for _, arr in panels):
+        return None
+
+    fig, axes = plt.subplots(len(panels), 1, figsize=(8.6, 2.8 * len(panels)), dpi=150, squeeze=False)
+    for ax, (title, arr) in zip(axes[:, 0], panels):
+        im = ax.imshow(arr.T, aspect="auto", interpolation="nearest", cmap="magma")
+        ax.set_title(title, loc="left", fontsize=10)
+        ax.set_xlabel("frame index")
+        ax.set_ylabel("pair idx")
+        fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_energy_plot(record: dict[str, Any], page_dir: Path) -> Path | None:
+    energy_path = record.get("energy_path")
+    series: list[tuple[str, np.ndarray]] = []
+    if energy_path is not None and Path(energy_path).exists():
+        payload = np.load(energy_path, allow_pickle=True)
+        key_order = ["kinetic_trans", "kinetic_rot", "potential_gravity", "mechanical_total"]
+        for key in key_order:
+            if key in payload:
+                values = np.asarray(payload[key], dtype=np.float32)
+                if values.ndim == 1 and values.size > 0:
+                    series.append((key, values))
+    if not series:
+        bundle = load_state_bundle(record)
+        if bundle is None:
+            return None
+        state = np.asarray(bundle["state_raw"], dtype=np.float32)
+        speed = np.linalg.norm(state[..., 5:7], axis=-1).sum(axis=1)
+        depth = np.nanmean(state[..., 2], axis=1)
+        series = [("speed_sum", speed), ("mean_depth", depth)]
+
+    out_path = page_dir / "energy_curves.png"
+    fig, ax = plt.subplots(figsize=(8.6, 3.8), dpi=150)
+    t = np.arange(series[0][1].shape[0], dtype=np.int32)
+    for idx, (label, values) in enumerate(series):
+        ax.plot(t, values, linewidth=2.0, label=label)
+    ax.set_title("Energy / Motion Curves", loc="left", fontsize=10)
+    ax.set_xlabel("frame index")
+    ax.set_ylabel("value")
+    ax.grid(alpha=0.2)
+    if series:
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.92)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def render_object_table_html(record: dict[str, Any]) -> str:
+    meta = load_json_maybe(record.get("meta_path")) or {}
+    objects = meta.get("objects")
+    if not isinstance(objects, list) or not objects:
+        return ""
+    rows: list[str] = []
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(obj.get('object_id', 'n/a')))}</td>"
+            f"<td>{html.escape(str(obj.get('seg_id', 'n/a')))}</td>"
+            f"<td>{html.escape(str(obj.get('name') or obj.get('source_object_id') or 'n/a'))}</td>"
+            f"<td>{html.escape(str(obj.get('role', 'n/a')))}</td>"
+            f"<td>{html.escape(str(obj.get('motion_type', obj.get('motion_group', 'n/a'))))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        "<section class=\"card wide\">"
+        "<h2>Objects</h2>"
+        "<table><thead><tr><th>object_id</th><th>seg_id</th><th>name</th><th>role</th><th>motion</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def render_event_table_html(record: dict[str, Any]) -> str:
+    events = load_event_list(record)
+    if not events:
+        return ""
+    rows: list[str] = []
+    for idx, event in enumerate(events):
+        rows.append(
+            "<tr>"
+            f"<td>{idx}</td>"
+            f"<td>{html.escape(str(event.get('kind') or event.get('window_type') or 'event'))}</td>"
+            f"<td>{html.escape(str(event.get('start_frame', event.get('frame_idx', 'n/a'))))}</td>"
+            f"<td>{html.escape(str(event.get('end_frame', event.get('frame_idx', 'n/a'))))}</td>"
+            f"<td>{html.escape(str(event.get('environment_name') or event.get('pair_name') or ''))}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"card wide\">"
+        "<h2>Recorded Events</h2>"
+        "<table><thead><tr><th>#</th><th>type</th><th>start</th><th>end</th><th>detail</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def render_frame_phase_html(record: dict[str, Any]) -> str:
+    frame_phase_path = record.get("frame_phase_path")
+    if frame_phase_path is None or not Path(frame_phase_path).exists():
+        return ""
+    phase = np.asarray(np.load(frame_phase_path), dtype=np.int32).reshape(-1)
+    if phase.size == 0:
+        return ""
+    unique, counts = np.unique(phase, return_counts=True)
+    if unique.size <= 1:
+        return ""
+    rows = []
+    for value, count in zip(unique.tolist(), counts.tolist()):
+        rows.append(
+            "<tr>"
+            f"<td>{int(value)}</td>"
+            f"<td>{html.escape(phase_name(int(value)))}</td>"
+            f"<td>{int(count)}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"card\">"
+        "<h2>Frame Phases</h2>"
+        "<table><thead><tr><th>phase id</th><th>phase</th><th>frames</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def render_validation_metrics_html(validation_summary_path: Path | None) -> str:
+    payload = load_json_maybe(validation_summary_path)
+    if not isinstance(payload, dict):
+        return ""
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        return ""
+    rows = []
+    curated_keys = [
+        "center_projection_error_px",
+        "bbox_iou",
+        "depth_consistency_abs",
+        "velocity_smoothness",
+        "anomaly",
+        "anomaly_reasons",
+    ]
+    for key in curated_keys:
+        if key not in metrics:
+            continue
+        value = metrics[key]
+        if isinstance(value, dict):
+            short = ", ".join(
+                f"{sub_k}={value[sub_k]:.4f}" for sub_k in ("mean", "median", "p95") if isinstance(value.get(sub_k), (int, float))
+            )
+        elif isinstance(value, list):
+            short = ", ".join(str(x) for x in value[:6])
+        else:
+            short = str(value)
+        rows.append(f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(short)}</td></tr>")
+    if not rows:
+        return ""
+    return (
+        "<section class=\"card wide\">"
+        "<h2>State Validation Metrics</h2>"
+        "<table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def render_reused_diagnostics_html(record: dict[str, Any], page_dir: Path) -> str:
+    blocks: list[str] = []
+    validation_dir = find_state_validation_case_dir(record)
+    if validation_dir is not None:
+        mapping = [
+            ("Validation Overlay", "overlay.gif", "image"),
+            ("Validation Comparisons", "comparisons.png", "image"),
+        ]
+        for title, name, kind in mapping:
+            path = validation_dir / name
+            if not path.exists():
+                continue
+            src = asset_src(path, page_dir)
+            if kind == "video":
+                blocks.append(
+                    f"""
+<section class="media-card">
+  <h3>{html.escape(title)}</h3>
+  <video src="{html.escape(src)}" controls preload="metadata"></video>
+</section>
+"""
+                )
+            else:
+                blocks.append(
+                    f"""
+<section class="media-card">
+  <h3>{html.escape(title)}</h3>
+  <img src="{html.escape(src)}" alt="{html.escape(title)}">
+</section>
+"""
+                )
+
+        summary_path = validation_dir / "summary.json"
+        metrics_html = render_validation_metrics_html(summary_path)
+        if metrics_html:
+            blocks.append(metrics_html)
+    return "".join(blocks)
+
+
 def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
     blocks: list[str] = []
     depth_video = record["sample_dir"] / "videos" / "depth.mp4"
     if not depth_video.exists():
         depth_video = record["sample_dir"] / "visualizations" / "depth_vis.mp4"
     if depth_video.exists():
-        src = relpath(depth_video, page_dir)
+        src = asset_src(depth_video, page_dir)
         blocks.append(
             f"""
 <section class="media-card">
@@ -256,7 +607,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
 
     trajectory_path = render_trajectory_overview(record, page_dir)
     if trajectory_path is not None and trajectory_path.exists():
-        src = relpath(trajectory_path, page_dir)
+        src = asset_src(trajectory_path, page_dir)
         blocks.append(
             f"""
 <section class="media-card">
@@ -268,12 +619,36 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
 
     curves_path = render_state_curves(record, page_dir)
     if curves_path is not None and curves_path.exists():
-        src = relpath(curves_path, page_dir)
+        src = asset_src(curves_path, page_dir)
         blocks.append(
             f"""
 <section class="media-card wide">
   <h3>State Curves And Collision Timeline</h3>
   <img src="{html.escape(src)}" alt="state curves">
+</section>
+"""
+        )
+
+    seg_depth_path = render_segmentation_depth_overview(record, page_dir)
+    if seg_depth_path is not None and seg_depth_path.exists():
+        src = asset_src(seg_depth_path, page_dir)
+        blocks.append(
+            f"""
+<section class="media-card wide">
+  <h3>Segmentation And Depth Overview</h3>
+  <img src="{html.escape(src)}" alt="segmentation and depth overview">
+</section>
+"""
+        )
+
+    contact_heatmap_path = render_contact_heatmaps(record, page_dir)
+    if contact_heatmap_path is not None and contact_heatmap_path.exists():
+        src = asset_src(contact_heatmap_path, page_dir)
+        blocks.append(
+            f"""
+<section class="media-card wide">
+  <h3>Contact Heatmaps</h3>
+  <img src="{html.escape(src)}" alt="contact heatmaps">
 </section>
 """
         )
@@ -367,7 +742,7 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
         path = Path(str(m["path"]))
         label = str(m.get("label", "media"))
         kind = str(m.get("kind", "video"))
-        src = relpath(path, page_dir)
+        src = asset_src(path, page_dir)
         if kind == "video":
             blocks.append(
                 f"""
@@ -449,10 +824,14 @@ def build_sample_page(record: dict[str, Any]) -> str:
     page_dir.mkdir(parents=True, exist_ok=True)
     media_blocks = media_html(record["media"], page_dir)
     physics_blocks = render_physics_summary_html(record, page_dir)
+    diagnostics_blocks = render_reused_diagnostics_html(record, page_dir)
     table_html = file_list_html(record, page_dir)
+    object_table_html = render_object_table_html(record)
+    event_table_html = render_event_table_html(record)
+    frame_phase_html = render_frame_phase_html(record)
     first_frame_block = ""
     if record["first_frame_path"] is not None:
-        src = relpath(record["first_frame_path"], page_dir)
+        src = asset_src(record["first_frame_path"], page_dir)
         first_frame_block = f"""
 <section class="media-card">
   <h3>First Frame</h3>
@@ -526,8 +905,16 @@ def build_sample_page(record: dict[str, Any]) -> str:
       word-break: break-all;
     }}
     .wide {{ grid-column: 1 / -1; }}
+    iframe {{
+      width: 100%;
+      min-height: 540px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }}
     @media (max-width: 980px) {{
       .grid {{ grid-template-columns: 1fr; }}
+      iframe {{ min-height: 420px; }}
     }}
   </style>
 </head>
@@ -545,7 +932,11 @@ def build_sample_page(record: dict[str, Any]) -> str:
     <section class="grid">
       {media_blocks}
       {physics_blocks}
+      {diagnostics_blocks}
       {first_frame_block}
+      {frame_phase_html}
+      {object_table_html}
+      {event_table_html}
       <section class="card wide">
         <h2>Recorded Files</h2>
         {table_html}
