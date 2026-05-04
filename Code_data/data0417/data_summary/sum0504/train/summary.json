@@ -1,19 +1,19 @@
 {
   "split": "train",
-  "num_samples": 6484,
+  "num_samples": 4848,
   "leaf_counts": {
-    "rigid/count_01/env_only": 1586,
-    "rigid/count_01/no_collision": 1689,
-    "rigid/count_02/env_only": 46,
-    "rigid/count_02/mixed_c1": 1423,
-    "rigid/count_02/mixed_c2plus": 277,
+    "rigid/count_01/env_only": 1104,
+    "rigid/count_01/no_collision": 1687,
+    "rigid/count_02/env_only": 25,
+    "rigid/count_02/mixed_c1": 851,
+    "rigid/count_02/mixed_c2plus": 209,
     "rigid/count_02/no_collision": 32,
-    "rigid/count_02/obj_obj_only_c1": 18,
-    "rigid/count_02/obj_obj_only_c2plus": 6,
+    "rigid/count_02/obj_obj_only_c1": 11,
+    "rigid/count_02/obj_obj_only_c2plus": 4,
     "rigid/count_03_04/env_only": 4,
-    "rigid/count_03_04/mixed_c1": 199,
-    "rigid/count_03_04/mixed_c2plus": 1200,
-    "rigid/count_03_04/obj_obj_only_c1": 3,
+    "rigid/count_03_04/mixed_c1": 110,
+    "rigid/count_03_04/mixed_c2plus": 809,
+    "rigid/count_03_04/obj_obj_only_c1": 1,
     "rigid/count_03_04/obj_obj_only_c2plus": 1
   }
 }

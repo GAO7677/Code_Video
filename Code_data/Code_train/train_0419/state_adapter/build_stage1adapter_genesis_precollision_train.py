@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratios", type=str, default="ratio11,ratio12")
     parser.add_argument("--min_context_frames", type=int, default=2)
     parser.add_argument("--min_future_frames", type=int, default=2)
+    parser.add_argument("--min_window_frames", type=int, default=10)
     parser.add_argument("--max_window_frames", type=int, default=12)
     parser.add_argument("--max_source_samples", type=int, default=0)
     parser.add_argument("--include_invalid_by_qa", action="store_true")
@@ -271,6 +272,7 @@ def choose_window_frame_indices(
     ratio_key: str,
     min_context_frames: int,
     min_future_frames: int,
+    min_window_frames: int,
     max_window_frames: int,
 ) -> tuple[list[int], list[int], list[int]] | None:
     end_exclusive = int(source_collision_frame) if source_collision_frame is not None else int(total_frames)
@@ -281,7 +283,8 @@ def choose_window_frame_indices(
     full_len = end_exclusive
     if int(max_window_frames) > 0:
         full_len = min(full_len, int(max_window_frames))
-    if full_len < min_total:
+    min_required = max(min_total, int(min_window_frames))
+    if full_len < min_required:
         return None
 
     split_lens = choose_split_lengths(
@@ -618,6 +621,7 @@ def main() -> None:
                 ratio_key=ratio_key,
                 min_context_frames=int(args.min_context_frames),
                 min_future_frames=int(args.min_future_frames),
+                min_window_frames=int(args.min_window_frames),
                 max_window_frames=int(args.max_window_frames),
             )
             if chosen is None:
