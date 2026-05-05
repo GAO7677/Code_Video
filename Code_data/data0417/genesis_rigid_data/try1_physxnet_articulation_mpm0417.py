@@ -893,12 +893,13 @@ def build_preview_case_configs(
     num_cases = max(1, int(getattr(args, "num_random_cases", 1) or 1))
     base_seed = int(getattr(args, "case_seed", 20260414))
     case_scene_mode = str(getattr(args, "case_scene_mode", "auto") or "auto").strip().lower()
+    simple_case_resample_index = int(getattr(args, "simple_case_resample_index", 0) or 0)
     numeric_object_id = "".join(ch for ch in str(prepared.object_id) if ch.isdigit())
     object_seed = int(numeric_object_id) if numeric_object_id else stable_int_from_text(prepared.object_id)
     seed_anchor = base_seed + object_seed * 17
 
     def _case_seed(case_idx: int) -> int:
-        return seed_anchor + case_idx * 9973 + 23
+        return seed_anchor + case_idx * 9973 + 23 + simple_case_resample_index * 104729
 
     volume_threshold_m3 = float(getattr(args, "physxnet_volume_threshold_m3", 0.20) or 0.20)
     entry_prob = float(np.clip(getattr(args, "physxnet_entry_velocity_prob", 0.35), 0.0, 1.0))
@@ -1855,56 +1856,56 @@ def build_preview_case_configs(
         return euler_deg, linear, angular
 
     static_striker_speed_override = float(
-        max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(seed_anchor + 23))
+        max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(0)))
     )
     diverse_templates: List[Dict[str, Any]] = [
         _make_case_cfg(
             case_idx=0,
             case_name="case000_static_center",
             scene_label="static_center",
-            seed=seed_anchor + 23,
+            seed=_case_seed(0),
             placed_pos_offset=np.array([0.0, 0.0, 0.0], dtype=np.float64),
-            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 23)], dtype=np.float64),
+            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(_case_seed(0))], dtype=np.float64),
             use_entry_motion=False,
             object_fixed_override=False,
-            custom_objects=_make_custom_objects_for_case(0, seed_anchor + 23),
+            custom_objects=_make_custom_objects_for_case(0, _case_seed(0)),
             striker_speed_override=static_striker_speed_override,
         ),
         _make_case_cfg(
             case_idx=1,
             case_name="case001_static_left",
             scene_label="static_left",
-            seed=seed_anchor + 9973 + 23,
+            seed=_case_seed(1),
             placed_pos_offset=np.array([-0.55 * wide_x_shift, 1.15 * y_shift, 0.0], dtype=np.float64),
-            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 9973 + 23)], dtype=np.float64),
+            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(_case_seed(1))], dtype=np.float64),
             use_entry_motion=False,
             object_fixed_override=False,
-            custom_objects=_make_custom_objects_for_case(1, seed_anchor + 9973 + 23),
+            custom_objects=_make_custom_objects_for_case(1, _case_seed(1)),
             striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(seed_anchor + 9973 + 23))
+                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(1)))
             ),
         ),
         _make_case_cfg(
             case_idx=2,
             case_name="case002_static_right",
             scene_label="static_right",
-            seed=seed_anchor + 2 * 9973 + 23,
+            seed=_case_seed(2),
             placed_pos_offset=np.array([0.45 * wide_x_shift, -1.10 * y_shift, 0.0], dtype=np.float64),
-            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 2 * 9973 + 23)], dtype=np.float64),
+            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(_case_seed(2))], dtype=np.float64),
             use_entry_motion=False,
             object_fixed_override=False,
-            custom_objects=_make_custom_objects_for_case(2, seed_anchor + 2 * 9973 + 23),
+            custom_objects=_make_custom_objects_for_case(2, _case_seed(2)),
             striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(seed_anchor + 2 * 9973 + 23))
+                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(2)))
             ),
         ),
         _make_case_cfg(
             case_idx=3,
             case_name="case003_static_highdrop",
             scene_label="static_highdrop",
-            seed=seed_anchor + 3 * 9973 + 23,
+            seed=_case_seed(3),
             placed_pos_offset=np.array([highdrop_x_shift, 0.0, high_drop_z], dtype=np.float64),
-            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 3 * 9973 + 23)], dtype=np.float64),
+            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(_case_seed(3))], dtype=np.float64),
             use_entry_motion=False,
             object_fixed_override=False,
             warmup_steps_override=0 if allow_highdrop else None,
@@ -1912,9 +1913,9 @@ def build_preview_case_configs(
             initial_still_frames_override=0 if allow_highdrop else None,
             liquid_settle_steps_override=0 if allow_highdrop else None,
             liquid_auto_settle_max_steps_override=0 if allow_highdrop else None,
-            custom_objects=_make_custom_objects_for_case(3, seed_anchor + 3 * 9973 + 23),
+            custom_objects=_make_custom_objects_for_case(3, _case_seed(3)),
             striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(seed_anchor + 3 * 9973 + 23))
+                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(3)))
             ),
         ),
     ]
@@ -2028,7 +2029,7 @@ def build_preview_case_configs(
             case_idx=900,
             case_name="case900_random_parabola",
             scene_label="random_parabola",
-            seed=seed_anchor + 900 * 9973 + 23,
+            seed=_case_seed(900),
             placed_pos_offset=np.array([0.0, 0.0, float(np.random.RandomState(seed_anchor + 900 * 9973 + int(getattr(args, "motion_resample_index", 0)) * 104729 + 9090).uniform(0.85, 1.45))], dtype=np.float64),
             object_euler_deg=random_parabola_euler,
             use_entry_motion=True,
@@ -2041,13 +2042,13 @@ def build_preview_case_configs(
             initial_still_frames_override=0,
             liquid_settle_steps_override=0,
             liquid_auto_settle_max_steps_override=0,
-            custom_objects=_make_custom_objects_for_case(900, seed_anchor + 900 * 9973 + 23),
+            custom_objects=_make_custom_objects_for_case(900, _case_seed(900)),
         ),
         _make_case_cfg(
             case_idx=901,
             case_name="case901_high_drop",
             scene_label="high_drop",
-            seed=seed_anchor + 901 * 9973 + 23,
+            seed=_case_seed(901),
             placed_pos_offset=np.array([0.0, 0.0, high_drop_height_abs], dtype=np.float64),
             object_euler_deg=high_drop_euler,
             use_entry_motion=True,
@@ -2060,7 +2061,7 @@ def build_preview_case_configs(
             initial_still_frames_override=0,
             liquid_settle_steps_override=0,
             liquid_auto_settle_max_steps_override=0,
-            custom_objects=_make_custom_objects_for_case(901, seed_anchor + 901 * 9973 + 23),
+            custom_objects=_make_custom_objects_for_case(901, _case_seed(901)),
         ),
     ]
     diverse_templates.extend(random_motion_templates)
@@ -9617,6 +9618,8 @@ def simulate_in_genesis(
         apply_object_entry_velocity=bool(apply_object_entry_velocity),
     )
     sample_name = f"{prepared.object_id}__{case_name}"
+    if simple_case_resample_index > 0:
+        sample_name = f"{sample_name}__rs{simple_case_resample_index:02d}"
     if camera_tag:
         sample_name = f"{sample_name}__cam_{camera_tag}"
     case_dir = output_root / "train" / "rigid" / scene_composition / object_count_bucket / sample_name
@@ -9987,6 +9990,7 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Gravity used by the no-collision counterfactual. Defaults to standard gravity so all cases share a unified gravity field.",
     )
     parser.add_argument("--motion_resample_index", type=int, default=0, help="Internal retry index for case900/case901 randomized pose and velocity")
+    parser.add_argument("--simple_case_resample_index", type=int, default=0, help="Extra resample index for simple template cases. When >0, seeds and output sample names are varied so repeated generation of case000/001/002/003/901 produces new variants instead of skipping.")
     parser.add_argument(
         "--motion_case_max_retries",
         type=int,

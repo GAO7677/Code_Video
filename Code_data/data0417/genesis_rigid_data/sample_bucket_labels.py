@@ -25,6 +25,15 @@ COLLISION_PROFILE_LABELS = {
     "mixed_c2plus": "Mixed x2+",
 }
 DERIVED_TAG_VERSION = "v1"
+META_FILENAMES = ("meta.json", "metadata.json")
+
+
+def find_sample_meta_path(sample_dir: Path) -> Path:
+    for filename in META_FILENAMES:
+        candidate = sample_dir / filename
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"missing meta.json/metadata.json under {sample_dir}")
 
 
 def collision_type_bucket(events: Sequence[Dict[str, Any]]) -> str:
@@ -183,7 +192,7 @@ def compute_derived_tags(
 
 
 def load_sample_arrays(sample_dir: Path) -> Dict[str, Any]:
-    metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads(find_sample_meta_path(sample_dir).read_text(encoding="utf-8"))
     physics_dir = sample_dir / "physics"
     event_path = physics_dir / "event_windows.json"
     if not event_path.exists():

@@ -22,6 +22,14 @@
 
 ## 可视化与重建指令
 
+重建 `sum0504` 路径索引：
+
+```bash
+source /home/gaoya/miniconda3/etc/profile.d/conda.sh
+conda activate wan
+python /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/rebuild_sum0504_index.py
+```
+
 重建 `sum0504` 总览与样本详情页：
 
 ```bash
@@ -43,6 +51,5 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 cd /
 python3 -m http.server 8048
 ```
-
 
 

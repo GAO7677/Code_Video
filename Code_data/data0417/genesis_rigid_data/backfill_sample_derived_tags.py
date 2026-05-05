@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from sample_bucket_labels import compute_derived_tags, load_sample_arrays
+from sample_bucket_labels import compute_derived_tags, find_sample_meta_path, load_sample_arrays
 
 
 DEFAULT_DATASET_ROOT = Path(
@@ -15,7 +15,7 @@ DEFAULT_DATASET_ROOT = Path(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill derived bucket tags into sample metadata.json files.")
+    parser = argparse.ArgumentParser(description="Backfill derived bucket tags into sample meta.json/metadata.json files.")
     parser.add_argument("--dataset_root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--sample_filter", type=str, default="")
     parser.add_argument("--limit", type=int, default=0)
@@ -25,18 +25,23 @@ def parse_args() -> argparse.Namespace:
 
 def iter_sample_dirs(dataset_root: Path, sample_filter: str) -> List[Path]:
     sample_dirs: List[Path] = []
-    for meta_path in sorted(dataset_root.glob("*/*/*/metadata.json")):
-        sample_dir = meta_path.parent
-        if sample_filter and sample_filter not in str(sample_dir):
-            continue
-        physics_dir = sample_dir / "physics"
-        if not ((physics_dir / "event_windows.json").exists() or (physics_dir / "collision_events.json").exists()):
-            continue
-        if not (sample_dir / "physics" / "rigid_kinematics.npz").exists():
-            continue
-        if not (sample_dir / "physics" / "anchor_targets.npz").exists():
-            continue
-        sample_dirs.append(sample_dir)
+    seen: set[Path] = set()
+    for meta_name in ("meta.json", "metadata.json"):
+        for meta_path in sorted(dataset_root.glob(f"*/*/*/{meta_name}")):
+            sample_dir = meta_path.parent
+            if sample_dir in seen:
+                continue
+            if sample_filter and sample_filter not in str(sample_dir):
+                continue
+            physics_dir = sample_dir / "physics"
+            if not ((physics_dir / "event_windows.json").exists() or (physics_dir / "collision_events.json").exists()):
+                continue
+            if not (sample_dir / "physics" / "rigid_kinematics.npz").exists():
+                continue
+            if not (sample_dir / "physics" / "anchor_targets.npz").exists():
+                continue
+            sample_dirs.append(sample_dir)
+            seen.add(sample_dir)
     return sample_dirs
 
 
@@ -68,8 +73,8 @@ def main() -> None:
     failed = 0
 
     for sample_dir in sample_dirs:
-        meta_path = sample_dir / "metadata.json"
         try:
+            meta_path = find_sample_meta_path(sample_dir)
             payload = load_sample_arrays(sample_dir)
             derived_tags = compute_derived_tags(
                 metadata=payload["metadata"],
