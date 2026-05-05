@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shutil
+import argparse
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,18 @@ from PIL import Image
 ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 MANIFEST_PATH = ROOT / "manifest.json"
 STATE_VALIDATION_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window")
+SUM0504_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Rebuild sum0504 portal with per-sample detail pages.")
+    parser.add_argument(
+        "--sample_substring",
+        type=str,
+        default="",
+        help="Only include samples whose absolute sample_dir contains this substring, while keeping the original split/count/collision grouping.",
+    )
+    return parser.parse_args()
 
 
 def load_json(path: Path) -> Any:
@@ -1200,6 +1213,77 @@ def build_group_cards(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cards
 
 
+def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
+    media: list[dict[str, Any]] = []
+    candidates = [
+        ("Current Sample Video", sample_dir / "full_video.mp4", "video"),
+        ("Context Video", sample_dir / "context_video.mp4", "video"),
+        ("Future GT Video", sample_dir / "future_gt_video.mp4", "video"),
+        ("RGB Video", sample_dir / "videos" / "rgb.mp4", "video"),
+        ("Depth Video", sample_dir / "videos" / "depth.mp4", "video"),
+        ("Depth Visualization Video", sample_dir / "visualizations" / "depth_vis.mp4", "video"),
+        ("First Frame", sample_dir / "first_frame.png", "image"),
+    ]
+    for label, path, kind in candidates:
+        if path.exists():
+            media.append({"label": label, "path": str(path), "kind": kind})
+    return media
+
+
+def load_groups_from_sum0504(sample_substring: str = "") -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    substring = str(sample_substring or "")
+    for samples_path in sorted(SUM0504_ROOT.rglob("samples.txt")):
+        rel = samples_path.relative_to(SUM0504_ROOT)
+        if len(rel.parts) != 5:
+            continue
+        split, simulator_type, count_bucket, collision_bucket, _ = rel.parts
+        lines = [line.strip() for line in samples_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        items: list[dict[str, Any]] = []
+        for line in lines:
+            if substring and substring not in line:
+                continue
+            sample_dir = Path(line)
+            if substring == "__rs01" and not str(sample_dir.name).endswith("__rs01"):
+                continue
+            if not sample_dir.exists():
+                continue
+            meta_path = sample_dir / "meta.json"
+            if not meta_path.exists():
+                meta_path = sample_dir / "metadata.json"
+            meta = load_json_maybe(meta_path) or {}
+            view_type = "window" if (sample_dir / "pair_meta.json").exists() or (sample_dir / "segment_state.npz").exists() else "raw"
+            items.append(
+                {
+                    "sample_dir": str(sample_dir),
+                    "sample_name": str(meta.get("scene_id") or sample_dir.name),
+                    "case_name": str(meta.get("case_name") or ""),
+                    "caption": str(meta.get("caption") or ""),
+                    "detail_caption": str(meta.get("detail_caption") or ""),
+                    "dataset": str(meta.get("dataset") or "GenesisRigid"),
+                    "view_type": view_type,
+                    "media": infer_media_for_sample(sample_dir),
+                }
+            )
+        if not items:
+            continue
+        slug = f"{split}__{simulator_type}__{count_bucket}__{collision_bucket}"
+        title = f"{split} / {simulator_type} / {count_bucket} / {collision_bucket}"
+        groups.append(
+            {
+                "slug": slug,
+                "title": title,
+                "split": split,
+                "simulator_type": simulator_type,
+                "count_bucket": count_bucket,
+                "collision_bucket": collision_bucket,
+                "items": items,
+                "total": len(items),
+            }
+        )
+    return groups
+
+
 def build_nav_tree(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     tree: dict[str, Any] = {}
     for group in groups:
@@ -1668,7 +1752,8 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 
 
 def main() -> None:
-    groups = load_json(MANIFEST_PATH)
+    args = parse_args()
+    groups = load_groups_from_sum0504(sample_substring=args.sample_substring)
     groups = build_group_cards(groups)
     (ROOT / "index.html").write_text(build_index(groups), encoding="utf-8")
     (ROOT / "manifest.json").write_text(json.dumps(groups, ensure_ascii=False, indent=2), encoding="utf-8")
