@@ -15,6 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import cv2
 from PIL import Image
 
 ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
@@ -44,6 +45,46 @@ def asset_src(path: Path, page_dir: Path) -> str:
         if (not target.exists()) or target.stat().st_size != path.stat().st_size:
             shutil.copy2(path, target)
         return relpath(target, page_dir)
+
+
+def make_gif_from_video(video_path: Path, gif_path: Path, max_frames: int = 24) -> Path | None:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    frames: list[Image.Image] = []
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step = max(1, frame_count // max_frames) if frame_count > max_frames and max_frames > 0 else 1
+    frame_idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if frame_idx % step == 0:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(Image.fromarray(rgb))
+        frame_idx += 1
+    cap.release()
+    if not frames:
+        return None
+    frames[0].save(
+        gif_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=90,
+        loop=0,
+        optimize=False,
+    )
+    return gif_path
+
+
+def video_preview_src(video_path: Path, page_dir: Path) -> tuple[str, str]:
+    video_src = asset_src(video_path, page_dir)
+    gif_path = page_dir / "_assets" / f"{hashlib.md5(str(video_path).encode('utf-8')).hexdigest()[:12]}_{video_path.stem}.gif"
+    if (not gif_path.exists()) and video_path.exists():
+        make_gif_from_video(video_path, gif_path)
+    if gif_path.exists():
+        return "image", relpath(gif_path, page_dir)
+    return "video", video_src
 
 
 def fmt_bool(v: bool) -> str:
@@ -595,15 +636,25 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
     if not depth_video.exists():
         depth_video = record["sample_dir"] / "visualizations" / "depth_vis.mp4"
     if depth_video.exists():
-        src = asset_src(depth_video, page_dir)
-        blocks.append(
-            f"""
+        kind, src = video_preview_src(depth_video, page_dir)
+        if kind == "image":
+            blocks.append(
+                f"""
+<section class="media-card">
+  <h3>Depth Video</h3>
+  <img src="{html.escape(src)}" alt="depth video gif preview">
+</section>
+"""
+            )
+        else:
+            blocks.append(
+                f"""
 <section class="media-card">
   <h3>Depth Video</h3>
   <video src="{html.escape(src)}" controls preload="metadata"></video>
 </section>
 """
-        )
+            )
 
     trajectory_path = render_trajectory_overview(record, page_dir)
     if trajectory_path is not None and trajectory_path.exists():

@@ -24,6 +24,7 @@
 重建 `sum0504` 总览与样本详情页：
 
 ```bash
+kport 8048
 python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
 ```
 
@@ -42,10 +43,4 @@ cd /
 python3 -m http.server 8048
 ```
 
-完整可视化流程：
 
-```bash
-/home/gaoya/miniconda3/envs/flux/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
-cd /
-python3 -m http.server 8048
-```

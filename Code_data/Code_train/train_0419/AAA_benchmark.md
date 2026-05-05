@@ -10,6 +10,7 @@
 重建主可视化页面：
 
 ```bash
+kport 8040
 python /home/gaoya/Code_Video/Code_data/Code_train/train_0419/build_stage0_metric_linecharts.py
 ```
 
@@ -18,7 +19,7 @@ python /home/gaoya/Code_Video/Code_data/Code_train/train_0419/build_stage0_metri
 
 ```bash
 # 停用端口
-kport 8040
+
 cd /data/gaoya/AAA_test_video/Benchmark/stage0_V2V
 python -m http.server 8040 --bind 127.0.0.1
 
