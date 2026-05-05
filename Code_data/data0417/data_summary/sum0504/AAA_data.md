@@ -18,6 +18,7 @@
 - 每个叶子目录只保留 `samples.txt` 和 `summary.json`。
 - 根目录和 split 目录下提供汇总 `summary.json`。
 - 无法稳定映射到这套规则的样本不会被纳入，会记录在根目录 `summary.json` 的 `excluded_breakdown` 中。
+- Genesis 自建样本的样本级元数据文件统一使用 `meta.json`；本目录下的 `samples.txt` 只记录样本文件夹路径，不直接记录 `meta.json / metadata.json` 文件名。
 
 ## 可视化与重建指令
 
@@ -42,5 +43,6 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 cd /
 python3 -m http.server 8048
 ```
+
 
 

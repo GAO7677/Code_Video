@@ -1,9 +1,9 @@
 {
   "split": "test",
-  "num_samples": 31,
+  "num_samples": 24,
   "leaf_counts": {
     "rigid/count_01/env_only": 6,
-    "rigid/count_01/no_collision": 20,
-    "rigid/count_03_04/no_collision": 5
+    "rigid/count_01/no_collision": 18,
+    "rigid/count_03_04/no_collision": 0
   }
 }

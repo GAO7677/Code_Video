@@ -1089,16 +1089,3 @@
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/5050__case007_entry_fast_center
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/5050__case900_random_parabola
 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid/single_object_preview/count_01/5050__case901_high_drop
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_1355
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_4070
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_444
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_4963
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_5509
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_701
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_7235
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_7632
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_7783
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_8107
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_8246
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_9837
-/data/gaoya/dataset/kubric_tfds_movi-d/mytrain/movi_d_physics/train/rigid/movi_d/count_01/movi_d_train__video_9953

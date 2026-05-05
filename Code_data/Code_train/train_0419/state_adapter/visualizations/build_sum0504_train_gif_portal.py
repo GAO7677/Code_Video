@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--dataset_filter", type=str, default="genesis", choices=["all", "genesis", "movi-d"])
+    parser.add_argument("--collision_filter", type=str, default="all", choices=["all", "no_collision", "env_only"])
     parser.add_argument("--max_per_leaf", type=int, default=60)
     parser.add_argument("--gif_max_frames", type=int, default=16)
     parser.add_argument("--gif_width", type=int, default=256)
@@ -149,6 +150,24 @@ def filter_records_by_dataset(records: list[dict[str, Any]], dataset_filter: str
     if dataset_filter in {"", "all"}:
         return records
     return [record for record in records if str(record.get("dataset", "")).lower() == dataset_filter]
+
+
+def filter_records_by_collision(records: list[dict[str, Any]], collision_filter: str) -> list[dict[str, Any]]:
+    collision_filter = str(collision_filter).strip().lower()
+    if collision_filter in {"", "all"}:
+        return records
+    return [record for record in records if str(record.get("collision", "")).lower() == collision_filter]
+
+
+def limit_records_per_leaf(records: list[dict[str, Any]], max_per_leaf: int) -> list[dict[str, Any]]:
+    per_leaf_limit = max(1, int(max_per_leaf))
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        grouped[str(record["leaf_key"])].append(record)
+    selected: list[dict[str, Any]] = []
+    for leaf_key in sorted(grouped):
+        selected.extend(grouped[leaf_key][:per_leaf_limit])
+    return selected
 
 
 def sample_video_path(sample_dir: Path) -> Path | None:
@@ -617,8 +636,11 @@ def main() -> None:
 
     records = collect_leaf_samples(args.summary_root, max_per_leaf=int(args.max_per_leaf))
     records = filter_records_by_dataset(records, dataset_filter=str(args.dataset_filter))
+    records = filter_records_by_collision(records, collision_filter=str(args.collision_filter))
     if str(args.dataset_filter) == "all":
         records = balance_records_by_dataset(records, max_per_leaf=int(args.max_per_leaf))
+    else:
+        records = limit_records_per_leaf(records, max_per_leaf=int(args.max_per_leaf))
     cards = export_assets(
         records,
         args.output_root,
@@ -634,6 +656,7 @@ def main() -> None:
             "summary_root": str(args.summary_root),
             "output_root": str(args.output_root),
             "dataset_filter": str(args.dataset_filter),
+            "collision_filter": str(args.collision_filter),
             "num_records": len(records),
             "num_cards": len(cards),
             "kept_collisions": sorted(KEEP_COLLISIONS),

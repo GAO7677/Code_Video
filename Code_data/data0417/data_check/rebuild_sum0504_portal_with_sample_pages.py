@@ -77,6 +77,27 @@ def make_gif_from_video(video_path: Path, gif_path: Path, max_frames: int = 24) 
     return gif_path
 
 
+def save_gif_from_frame_paths(frame_paths: list[Path], gif_path: Path, duration_ms: int = 120) -> Path | None:
+    frames: list[Image.Image] = []
+    for frame_path in frame_paths:
+        if not frame_path.exists():
+            continue
+        with Image.open(frame_path) as image:
+            frames.append(image.convert("RGB").copy())
+    if not frames:
+        return None
+    gif_path.parent.mkdir(parents=True, exist_ok=True)
+    frames[0].save(
+        gif_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=int(duration_ms),
+        loop=0,
+        optimize=False,
+    )
+    return gif_path
+
+
 def video_preview_src(video_path: Path, page_dir: Path) -> tuple[str, str]:
     video_src = asset_src(video_path, page_dir)
     gif_path = page_dir / "_assets" / f"{hashlib.md5(str(video_path).encode('utf-8')).hexdigest()[:12]}_{video_path.stem}.gif"
@@ -253,6 +274,88 @@ def object_labels(bundle: dict[str, Any]) -> list[str]:
     return labels
 
 
+def object_name_map(record: dict[str, Any]) -> dict[int, str]:
+    meta = load_json_maybe(record.get("meta_path")) or {}
+    objects = meta.get("objects") if isinstance(meta.get("objects"), list) else []
+    mapping: dict[int, str] = {}
+    for obj in objects:
+        if not isinstance(obj, dict) or obj.get("object_id") is None:
+            continue
+        obj_id = int(obj["object_id"])
+        name = str(obj.get("name") or obj.get("source_object_id") or f"obj{obj_id}")
+        role = str(obj.get("role", "")).strip()
+        mapping[obj_id] = f"{role}:{name}" if role else name
+    return mapping
+
+
+def event_display_label(event: dict[str, Any], record: dict[str, Any]) -> str:
+    obj_names = object_name_map(record)
+    participants = event.get("object_indices", event.get("participant_indices", event.get("participants", [])))
+    labels: list[str] = []
+    for raw in participants:
+        idx = int(raw)
+        if idx < 0:
+            labels.append(str(event.get("environment_name") or "environment"))
+        else:
+            labels.append(obj_names.get(idx, f"obj{idx}"))
+    if labels:
+        return " <-> ".join(labels)
+    detail = str(event.get("environment_name") or event.get("pair_name") or "").strip()
+    return detail or "event"
+
+
+def event_kind_zh(kind: str) -> str:
+    mapping = {
+        "event": "碰撞事件",
+        "contact_onset": "接触开始",
+        "sustained_contact": "持续接触",
+        "object_object_contact": "物体-物体接触",
+        "environment_contact": "物体-环境接触",
+        "object_environment": "物体-环境碰撞",
+        "object_object": "物体-物体碰撞",
+    }
+    return mapping.get(kind, kind)
+
+
+def explain_card(title: str) -> str:
+    text = str(title).strip()
+    mapping = {
+        "Objects": "含义：这张卡片列出当前样本里有哪些物体，以及每个物体的实例编号、分割编号、角色和设定运动类型。",
+        "Recorded Events": "含义：这张卡片用表格列出当前片段里记录到的碰撞/接触事件，方便快速查看事件开始帧、结束帧和事件类型。",
+        "Collision Event GIFs": "含义：这张卡片把每个碰撞事件截成短 GIF，帮助你直观看到碰撞前、碰撞中和碰撞后的画面变化。",
+        "Frame Phases": "含义：这张卡片统计当前视频各个阶段标签各占多少帧，用来判断片段主要处于运动前、接触前、接触中还是接触后。",
+        "State Validation Metrics": "含义：这张卡片展示状态真值可靠性验证指标，用来判断记录的框、深度和速度等监督信号是否可信。",
+        "Validation Overlay": "含义：这张卡片把记录的状态标注叠加到视频上，用来检查标注位置和物体真实位置是否对齐。",
+        "Validation Comparisons": "含义：这张卡片汇总状态验证中的对比图，帮助快速检查误差、轨迹和多种诊断结果。",
+        "Depth Video": "含义：这张卡片展示深度视频，可用来观察物体与相机之间的远近变化是否合理。",
+        "Trajectory Overview": "含义：这张卡片把各个物体的中心轨迹画在图上，用来查看整体运动路径、相对位置和是否发生接近或交叉。",
+        "State Curves And Collision Timeline": "含义：这张卡片展示速度、深度、可见性随时间的变化，并在时间轴上标出碰撞/接触事件。",
+        "Segmentation And Depth Overview": "含义：这张卡片抽取若干关键帧，同时显示分割和深度，用来检查分割掩码与深度记录是否正常。",
+        "Contact Heatmaps": "含义：这张卡片把接触图和接触冲量整理成热力图，用来观察哪些物体对在什么时间发生接触。",
+        "First Frame": "含义：这张卡片展示片段的第一帧，用来快速确认初始画面、相机视角和物体是否完整进入画面。",
+        "Recorded Files": "含义：这张卡片列出当前样本实际存在的记录文件路径，方便核对这个样本到底保存了哪些数据。",
+        "Context Video": "含义：这张卡片展示上下文视频，也就是模型输入看到的前半段片段。",
+        "Future GT Video": "含义：这张卡片展示未来真值视频，也就是上下文之后真实发生的后半段片段。",
+        "Full Video": "含义：这张卡片展示完整片段，便于把上下文、未来和事件放在一起整体查看。",
+        "Current Sample Video": "含义：这张卡片展示当前样本对应的视频内容，用来直接查看这条样本的主体运动。",
+        "Raw Video": "含义：这张卡片展示原始完整视频，用来查看样本在未截取前的整体运动过程。",
+    }
+    if text in mapping:
+        return mapping[text]
+    lowered = text.lower()
+    if "context" in lowered:
+        return "含义：这张卡片展示上下文片段，也就是模型条件输入部分。"
+    if "future" in lowered:
+        return "含义：这张卡片展示未来真值片段，也就是模型需要预测的后续部分。"
+    if "full" in lowered:
+        return "含义：这张卡片展示完整视频片段，便于整体理解这条样本发生了什么。"
+    if "video" in lowered:
+        return "含义：这张卡片展示当前样本的一段视频，用来直接观察画面中的运动过程。"
+    if "depth" in lowered:
+        return "含义：这张卡片展示与深度相关的可视化，用来判断远近变化和几何记录是否合理。"
+    return "含义：这张卡片展示当前样本的一类记录结果，用来从不同角度检查视频、状态和物理事件。"
+
+
 def render_trajectory_overview(record: dict[str, Any], page_dir: Path) -> Path | None:
     bundle = load_state_bundle(record)
     if bundle is None:
@@ -260,8 +363,8 @@ def render_trajectory_overview(record: dict[str, Any], page_dir: Path) -> Path |
     state = np.asarray(bundle["state_raw"], dtype=np.float32)
     labels = object_labels(bundle)
     meta = bundle.get("meta") or {}
-    width = float((meta.get("resolution") or [0, 0])[0] or max(1.0, float(np.nanmax(state[..., 0]) + 20.0)))
-    height = float((meta.get("resolution") or [0, 0])[1] or max(1.0, float(np.nanmax(state[..., 1]) + 20.0)))
+    width = float((meta.get("resolution") or [0, 0])[0] or 0.0)
+    height = float((meta.get("resolution") or [0, 0])[1] or 0.0)
     out_path = page_dir / "trajectory_overview.png"
 
     fig, ax = plt.subplots(figsize=(7.4, 5.6), dpi=150)
@@ -270,7 +373,13 @@ def render_trajectory_overview(record: dict[str, Any], page_dir: Path) -> Path |
     if frame0.exists():
         with Image.open(frame0) as img:
             bg = np.asarray(img.convert("RGB"))
+            if width <= 0.0 or height <= 0.0:
+                width, height = float(img.width), float(img.height)
         ax.imshow(bg, extent=(0, width, height, 0), alpha=0.42)
+    if width <= 0.0:
+        width = max(1.0, float(np.nanmax(state[..., 0]) + 20.0))
+    if height <= 0.0:
+        height = max(1.0, float(np.nanmax(state[..., 1]) + 20.0))
     cmap = plt.get_cmap("tab10")
     for obj_idx in range(state.shape[1]):
         vis = state[:, obj_idx, 8] > 0.5
@@ -493,6 +602,7 @@ def render_object_table_html(record: dict[str, Any]) -> str:
     return (
         "<section class=\"card wide\">"
         "<h2>Objects</h2>"
+        f"<p class=\"card-note\">{html.escape(explain_card('Objects'))}</p>"
         "<table><thead><tr><th>object_id</th><th>seg_id</th><th>name</th><th>role</th><th>motion</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
@@ -517,9 +627,56 @@ def render_event_table_html(record: dict[str, Any]) -> str:
     return (
         "<section class=\"card wide\">"
         "<h2>Recorded Events</h2>"
+        f"<p class=\"card-note\">{html.escape(explain_card('Recorded Events'))}</p>"
         "<table><thead><tr><th>#</th><th>type</th><th>start</th><th>end</th><th>detail</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
+    )
+
+
+def render_event_gifs_html(record: dict[str, Any], page_dir: Path) -> str:
+    events = load_event_list(record)
+    rgb_dir = record["sample_dir"] / "rgb"
+    frame_paths = sorted(rgb_dir.glob("frame_*.png"))
+    if not events or not frame_paths:
+        return ""
+
+    last_idx = len(frame_paths) - 1
+    cards: list[str] = []
+    for idx, event in enumerate(events):
+        start = int(event.get("start_frame", event.get("frame_idx", 0)))
+        end = int(event.get("end_frame", event.get("frame_idx", start)))
+        start = max(0, min(start, last_idx))
+        end = max(start, min(end, last_idx))
+        clip_start = max(0, start - 2)
+        clip_end = min(last_idx, end + 2)
+        clip_indices = list(range(clip_start, clip_end + 1))
+        gif_path = page_dir / "_assets" / "event_gifs" / f"event_{idx:02d}_{clip_start:03d}_{clip_end:03d}.gif"
+        gif = save_gif_from_frame_paths([frame_paths[i] for i in clip_indices], gif_path, duration_ms=140)
+        if gif is None:
+            continue
+        kind = str(event.get("kind") or event.get("window_type") or "event")
+        kind_zh = event_kind_zh(kind)
+        detail = event_display_label(event, record)
+        cards.append(
+            f"""
+<section class="media-card">
+  <h3>Event {idx}: {html.escape(kind_zh)}</h3>
+  <p class="event-note">{html.escape(detail)} | frames {start}-{end} | gif {clip_start}-{clip_end}</p>
+  <p class="event-note">含义：这张卡片展示一次记录到的碰撞事件。GIF 从事件发生前 2 帧开始，到事件结束后 2 帧结束，用来直观看到碰撞前、碰撞中和碰撞后的变化；其中 <strong>{html.escape(detail)}</strong> 表示参与碰撞的物体或物体与环境。</p>
+  <img src="{html.escape(relpath(gif, page_dir))}" alt="event gif {idx}">
+</section>
+"""
+        )
+    if not cards:
+        return ""
+    return (
+        "<section class=\"card wide\">"
+        "<h2>Collision Event GIFs</h2>"
+        f"<p class=\"card-note\">{html.escape(explain_card('Collision Event GIFs'))}</p>"
+        "<div class=\"event-gif-grid\">"
+        + "".join(cards)
+        + "</div></section>"
     )
 
 
@@ -545,6 +702,7 @@ def render_frame_phase_html(record: dict[str, Any]) -> str:
     return (
         "<section class=\"card\">"
         "<h2>Frame Phases</h2>"
+        f"<p class=\"card-note\">{html.escape(explain_card('Frame Phases'))}</p>"
         "<table><thead><tr><th>phase id</th><th>phase</th><th>frames</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
@@ -585,6 +743,7 @@ def render_validation_metrics_html(validation_summary_path: Path | None) -> str:
     return (
         "<section class=\"card wide\">"
         "<h2>State Validation Metrics</h2>"
+        f"<p class=\"card-note\">{html.escape(explain_card('State Validation Metrics'))}</p>"
         "<table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
@@ -609,6 +768,7 @@ def render_reused_diagnostics_html(record: dict[str, Any], page_dir: Path) -> st
                     f"""
 <section class="media-card">
   <h3>{html.escape(title)}</h3>
+  <p class="card-note">{html.escape(explain_card(title))}</p>
   <video src="{html.escape(src)}" controls preload="metadata"></video>
 </section>
 """
@@ -618,6 +778,7 @@ def render_reused_diagnostics_html(record: dict[str, Any], page_dir: Path) -> st
                     f"""
 <section class="media-card">
   <h3>{html.escape(title)}</h3>
+  <p class="card-note">{html.escape(explain_card(title))}</p>
   <img src="{html.escape(src)}" alt="{html.escape(title)}">
 </section>
 """
@@ -642,6 +803,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
                 f"""
 <section class="media-card">
   <h3>Depth Video</h3>
+  <p class="card-note">{html.escape(explain_card('Depth Video'))}</p>
   <img src="{html.escape(src)}" alt="depth video gif preview">
 </section>
 """
@@ -651,6 +813,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
                 f"""
 <section class="media-card">
   <h3>Depth Video</h3>
+  <p class="card-note">{html.escape(explain_card('Depth Video'))}</p>
   <video src="{html.escape(src)}" controls preload="metadata"></video>
 </section>
 """
@@ -663,6 +826,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
             f"""
 <section class="media-card">
   <h3>Trajectory Overview</h3>
+  <p class="card-note">{html.escape(explain_card('Trajectory Overview'))}</p>
   <img src="{html.escape(src)}" alt="trajectory overview">
 </section>
 """
@@ -675,6 +839,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
             f"""
 <section class="media-card wide">
   <h3>State Curves And Collision Timeline</h3>
+  <p class="card-note">{html.escape(explain_card('State Curves And Collision Timeline'))}</p>
   <img src="{html.escape(src)}" alt="state curves">
 </section>
 """
@@ -687,6 +852,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
             f"""
 <section class="media-card wide">
   <h3>Segmentation And Depth Overview</h3>
+  <p class="card-note">{html.escape(explain_card('Segmentation And Depth Overview'))}</p>
   <img src="{html.escape(src)}" alt="segmentation and depth overview">
 </section>
 """
@@ -699,6 +865,7 @@ def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
             f"""
 <section class="media-card wide">
   <h3>Contact Heatmaps</h3>
+  <p class="card-note">{html.escape(explain_card('Contact Heatmaps'))}</p>
   <img src="{html.escape(src)}" alt="contact heatmaps">
 </section>
 """
@@ -797,6 +964,7 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
                 f"""
 <section class="media-card">
   <h3>{html.escape(label)}</h3>
+  <p class="card-note">{html.escape(explain_card(label))}</p>
   <video src="{html.escape(src)}" controls preload="metadata"></video>
 </section>
 """
@@ -806,6 +974,7 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
                 f"""
 <section class="media-card">
   <h3>{html.escape(label)}</h3>
+  <p class="card-note">{html.escape(explain_card(label))}</p>
   <img src="{html.escape(src)}" alt="{html.escape(label)}">
 </section>
 """
@@ -876,6 +1045,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
     table_html = file_list_html(record, page_dir)
     object_table_html = render_object_table_html(record)
     event_table_html = render_event_table_html(record)
+    event_gif_html = render_event_gifs_html(record, page_dir)
     frame_phase_html = render_frame_phase_html(record)
     first_frame_block = ""
     if record["first_frame_path"] is not None:
@@ -883,6 +1053,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
         first_frame_block = f"""
 <section class="media-card">
   <h3>First Frame</h3>
+  <p class="card-note">{html.escape(explain_card('First Frame'))}</p>
   <img src="{html.escape(src)}" alt="first frame">
 </section>
 """
@@ -931,6 +1102,23 @@ def build_sample_page(record: dict[str, Any]) -> str:
       padding: 12px;
     }}
     .media-card h3 {{ margin: 0 0 8px; font-size: 15px; }}
+    .card-note {{
+      margin: 0 0 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+    }}
+    .event-gif-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .event-note {{
+      margin: 0 0 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--muted);
+    }}
     video, img {{
       width: 100%;
       border-radius: 10px;
@@ -962,6 +1150,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
     }}
     @media (max-width: 980px) {{
       .grid {{ grid-template-columns: 1fr; }}
+      .event-gif-grid {{ grid-template-columns: 1fr; }}
       iframe {{ min-height: 420px; }}
     }}
   </style>
@@ -979,6 +1168,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
     </section>
     <section class="grid">
       {media_blocks}
+      {event_gif_html}
       {physics_blocks}
       {diagnostics_blocks}
       {first_frame_block}
@@ -987,6 +1177,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
       {event_table_html}
       <section class="card wide">
         <h2>Recorded Files</h2>
+        <p class="card-note">{html.escape(explain_card('Recorded Files'))}</p>
         {table_html}
       </section>
     </section>
