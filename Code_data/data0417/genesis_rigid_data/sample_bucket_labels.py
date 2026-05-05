@@ -184,7 +184,11 @@ def compute_derived_tags(
 
 def load_sample_arrays(sample_dir: Path) -> Dict[str, Any]:
     metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
-    events = json.loads((sample_dir / "physics" / "collision_events.json").read_text(encoding="utf-8"))
+    physics_dir = sample_dir / "physics"
+    event_path = physics_dir / "event_windows.json"
+    if not event_path.exists():
+        event_path = physics_dir / "collision_events.json"
+    events = json.loads(event_path.read_text(encoding="utf-8"))
     kin = np.load(sample_dir / "physics" / "rigid_kinematics.npz")
     anchor = np.load(sample_dir / "physics" / "anchor_targets.npz")
     return {

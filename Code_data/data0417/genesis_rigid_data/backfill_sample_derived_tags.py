@@ -29,7 +29,8 @@ def iter_sample_dirs(dataset_root: Path, sample_filter: str) -> List[Path]:
         sample_dir = meta_path.parent
         if sample_filter and sample_filter not in str(sample_dir):
             continue
-        if not (sample_dir / "physics" / "collision_events.json").exists():
+        physics_dir = sample_dir / "physics"
+        if not ((physics_dir / "event_windows.json").exists() or (physics_dir / "collision_events.json").exists()):
             continue
         if not (sample_dir / "physics" / "rigid_kinematics.npz").exists():
             continue

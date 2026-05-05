@@ -211,7 +211,7 @@ def load_state_bundle(record: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def load_event_list(record: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("collision_events_path", "event_windows_path"):
+    for key in ("event_windows_path",):
         path = record.get(key)
         if path is not None and Path(path).exists():
             payload = load_json(Path(path))
@@ -742,7 +742,6 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
                     "rigid_kinematics.npz",
                     "seg.npy",
                     "depth_metric.npy",
-                    "collision_events.json",
                     "event_windows.json",
                     "contact_graph.npy",
                     "contact_impulse.npy",
@@ -775,7 +774,6 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
         "rigid_kinematics_path": (physics_dir / "rigid_kinematics.npz") if (physics_dir / "rigid_kinematics.npz").exists() else None,
         "seg_path": (physics_dir / "seg.npy") if (physics_dir / "seg.npy").exists() else None,
         "depth_metric_path": (physics_dir / "depth_metric.npy") if (physics_dir / "depth_metric.npy").exists() else None,
-        "collision_events_path": (physics_dir / "collision_events.json") if (physics_dir / "collision_events.json").exists() else None,
         "event_windows_path": (physics_dir / "event_windows.json") if (physics_dir / "event_windows.json").exists() else None,
         "contact_graph_path": (physics_dir / "contact_graph.npy") if (physics_dir / "contact_graph.npy").exists() else None,
         "contact_impulse_path": (physics_dir / "contact_impulse.npy") if (physics_dir / "contact_impulse.npy").exists() else None,
@@ -825,7 +823,6 @@ def file_list_html(record: dict[str, Any], page_dir: Path) -> str:
         ("rigid_kinematics", record["rigid_kinematics_path"]),
         ("seg", record["seg_path"]),
         ("depth_metric", record["depth_metric_path"]),
-        ("collision_events", record["collision_events_path"]),
         ("event_windows", record["event_windows_path"]),
         ("contact_graph", record["contact_graph_path"]),
         ("contact_impulse", record["contact_impulse_path"]),

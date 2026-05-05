@@ -8344,7 +8344,6 @@ def simulate_in_genesis(
             "rigid_kinematics": "physics/rigid_kinematics.npz",
             "energy": "physics/energy.npz",
             "properties": "physics/properties.json",
-            "collision_events": "physics/collision_events.json",
             "contact_graph": "physics/contact_graph.npy",
             "contact_impulse": "physics/contact_impulse.npy",
             "env_contact": "physics/env_contact.npy",

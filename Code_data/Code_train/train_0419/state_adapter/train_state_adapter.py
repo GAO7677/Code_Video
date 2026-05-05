@@ -517,7 +517,8 @@ def parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help=(
-            "Single oracle-window root, or a JSON file / JSON string with "
+            "Single oracle-window root; or a sum0504-style summary root whose train/*/*/{no_collision,env_only}/samples.txt "
+            "lists packaged window directories; or a JSON file / JSON string with "
             "{datasets:[{path:'...',repeat:2,name:'genesis'}, ...]} for mixed-source ratios."
         ),
     )

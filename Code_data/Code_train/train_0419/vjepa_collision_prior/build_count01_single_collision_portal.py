@@ -68,7 +68,7 @@ def build_sample_entry(
     horizon: int,
 ) -> dict[str, Any] | None:
     metadata = read_json(scene_dir / "metadata.json")
-    events = read_json(scene_dir / "physics" / "collision_events.json")
+    events = read_json(scene_dir / "physics" / "event_windows.json")
     if len(events) != 1:
         return None
 
@@ -85,7 +85,7 @@ def build_sample_entry(
         "contact_timeline": (scene_dir / "visualizations" / "contact_timeline.png", "contact_timeline.png"),
         "summary_state": (scene_dir / "visualizations" / "summary_state.png", "summary_state.png"),
         "metadata_json": (scene_dir / "metadata.json", "metadata.json"),
-        "collision_events_json": (scene_dir / "physics" / "collision_events.json", "collision_events.json"),
+        "event_windows_json": (scene_dir / "physics" / "event_windows.json", "event_windows.json"),
     }
     for key, (src, dst_name) in asset_map.items():
         linked_path = ensure_symlink(src, asset_dir / dst_name)
@@ -422,7 +422,7 @@ def render_html(samples: list[dict[str, Any]], stats: dict[str, Any]) -> str:
         .replace(/>/g, '&gt;');
       const links = [
         sample.assets.metadata_json ? `<a href="${{sample.assets.metadata_json}}" target="_blank">metadata.json</a>` : '',
-        sample.assets.collision_events_json ? `<a href="${{sample.assets.collision_events_json}}" target="_blank">collision_events.json</a>` : '',
+        sample.assets.event_windows_json ? `<a href="${{sample.assets.event_windows_json}}" target="_blank">event_windows.json</a>` : '',
       ].filter(Boolean).join('');
       return `
         <article class="card">

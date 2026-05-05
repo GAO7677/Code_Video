@@ -718,10 +718,6 @@ def export_window_package(
     else:
         local_events = trim_interaction_episodes(source_sample_dir, full_orig)
     write_json(out_dir / "physics" / "event_windows.json", local_events)
-    raw_collision_path = source_sample_dir / "physics" / "collision_events.json"
-    if raw_collision_path.exists():
-        raw_collision_payload = json.loads(raw_collision_path.read_text(encoding="utf-8"))
-        write_json(out_dir / "physics" / "collision_events.json", trim_range_records(raw_collision_payload, full_orig))
 
     local_pair_meta = {
         "prompt": str(pair_meta.get("prompt", "")).strip() or "a rigid object motion scene",
@@ -833,7 +829,6 @@ def export_window_package(
             "rigid_kinematics": "physics/rigid_kinematics.npz" if copied_assets.get("rigid_kinematics") else "",
             "energy": "physics/energy.npz" if copied_assets.get("energy") else "",
             "properties": "physics/properties.json" if copied_assets.get("properties") else "",
-            "collision_events": "physics/collision_events.json" if (out_dir / "physics" / "collision_events.json").exists() else "",
             "contact_graph": "physics/contact_graph.npy" if copied_assets.get("contact_graph") else "",
             "contact_impulse": "physics/contact_impulse.npy" if copied_assets.get("contact_impulse") else "",
             "frame_phase": "physics/frame_phase.npy" if copied_assets.get("frame_phase") else "",

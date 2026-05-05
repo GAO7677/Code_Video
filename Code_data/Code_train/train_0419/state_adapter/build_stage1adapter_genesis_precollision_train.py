@@ -679,10 +679,6 @@ def export_package(
 
     local_events = trim_range_records(load_interaction_episodes(sample_dir), orig_full_indices)
     write_json(out_dir / "physics" / "event_windows.json", local_events)
-    raw_collision_path = sample_dir / "physics" / "collision_events.json"
-    if raw_collision_path.exists():
-        raw_collision_payload = json.loads(raw_collision_path.read_text(encoding="utf-8"))
-        write_json(out_dir / "physics" / "collision_events.json", trim_range_records(raw_collision_payload, orig_full_indices))
 
     future_main_visibility_ratio = 0.0
     if y_visibility.size > 0 and 0 <= int(main_object_index) < int(y_visibility.shape[1]):
@@ -804,7 +800,6 @@ def export_package(
             "rigid_kinematics": "physics/rigid_kinematics.npz" if copied_assets.get("rigid_kinematics") else "",
             "energy": "physics/energy.npz" if copied_assets.get("energy") else "",
             "properties": "physics/properties.json" if copied_assets.get("properties") else "",
-            "collision_events": "physics/collision_events.json" if (out_dir / "physics" / "collision_events.json").exists() else "",
             "contact_graph": "physics/contact_graph.npy" if copied_assets.get("contact_graph") else "",
             "contact_impulse": "physics/contact_impulse.npy" if copied_assets.get("contact_impulse") else "",
             "frame_phase": "physics/frame_phase.npy" if copied_assets.get("frame_phase") else "",

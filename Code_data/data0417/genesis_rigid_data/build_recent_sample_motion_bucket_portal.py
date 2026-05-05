@@ -85,7 +85,7 @@ def iter_recent_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
             continue
         kin_path = sample_dir / "physics" / "rigid_kinematics.npz"
         anchor_path = sample_dir / "physics" / "anchor_targets.npz"
-        event_path = sample_dir / "physics" / "collision_events.json"
+        event_path = sample_dir / "physics" / "event_windows.json"
         rgb_dir = sample_dir / "rgb"
         video_path = sample_dir / "videos" / "rgb.mp4"
         if not (kin_path.exists() and anchor_path.exists() and event_path.exists() and rgb_dir.is_dir() and video_path.exists()):

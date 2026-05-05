@@ -92,7 +92,10 @@ def discover_source_catalog(dataset_root: str | Path) -> dict[str, SampleMeta]:
 
 @lru_cache(maxsize=4096)
 def load_collision_events(source_dir: str, include_environment: bool = False) -> list[dict[str, Any]]:
-    events_path = Path(source_dir) / "physics" / "collision_events.json"
+    physics_dir = Path(source_dir) / "physics"
+    events_path = physics_dir / "event_windows.json"
+    if not events_path.exists():
+        events_path = physics_dir / "collision_events.json"
     if not events_path.exists():
         return []
     rows = read_json(events_path)

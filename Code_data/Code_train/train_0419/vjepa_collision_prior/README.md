@@ -37,7 +37,7 @@ the model is a viable collision-window dynamic prior.
 
 ## Default assumptions
 
-- Primary event: first `object-object` collision in `collision_events.json`.
+- Primary event: first `object-object` collision in `event_windows.json`.
 - Collision time `t_c`: the event `start_frame`.
 - Context clip: `frames[t_c-L : t_c]`.
 - Future clip for horizon `h`: `frames[t_c+h : t_c+h+W]`.

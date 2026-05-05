@@ -1,6 +1,10 @@
 # State Adapter
 
-This directory contains the oracle-state adapter side project for Wan2.2 TI2V.
+  - 输入 context RGB + prompt + future 9D oracle state
+  - 冻结 Wan 主干，只训练一个轻量 OracleStateAdapter
+  - adapter 把 future 9D state 编成按帧的 future-plan token
+  - 在每个 Wan DiT block 后，用 zero-init 的 gamma/beta 去调制 future frame 的 latent spatial tokens
+  - 训练目标仍然是原视频扩散/flow-matching loss
 
 Main files:
 

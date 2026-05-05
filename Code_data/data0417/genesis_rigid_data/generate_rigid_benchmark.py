@@ -1447,22 +1447,16 @@ def compute_benchmark_v1_stats(sample_dir: Path, metadata: Dict[str, Any]) -> Di
     contact_graph = np.load(physics_dir / "contact_graph.npy")
     env_contact = np.load(physics_dir / "env_contact.npy")
     event_windows = json.loads((physics_dir / "event_windows.json").read_text(encoding="utf-8"))
-    collision_events = json.loads((physics_dir / "collision_events.json").read_text(encoding="utf-8"))
     num_event_windows_future = sum(
         1
         for item in event_windows
         if overlaps_future(int(item.get("start_frame", -1)), int(item.get("end_frame", -1)))
     )
-    num_collision_events_future = sum(
-        1
-        for item in collision_events
-        if int(item.get("frame_idx", item.get("start_frame", -1))) >= BENCHMARK_V1_FUTURE_START
-    )
     return {
         "num_objects": int(metadata.get("num_objects", len(metadata.get("objects", [])))),
-        "has_future_event": bool(num_event_windows_future > 0 or num_collision_events_future > 0),
+        "has_future_event": bool(num_event_windows_future > 0),
         "num_event_windows_future": int(num_event_windows_future),
-        "num_collision_events_future": int(num_collision_events_future),
+        "num_collision_events_future": int(num_event_windows_future),
         "future_contact_sum": int(np.asarray(contact_graph[BENCHMARK_V1_FUTURE_START:], dtype=np.int64).sum()),
         "future_env_contact_sum": int(np.asarray(env_contact[BENCHMARK_V1_FUTURE_START:], dtype=np.int64).sum()),
     }

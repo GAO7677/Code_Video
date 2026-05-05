@@ -48,6 +48,16 @@ def parse_str_filter(value: str | Sequence[str] | None) -> set[str]:
     return {item for item in items if item}
 
 
+def parse_optional_str_list(value: str | Sequence[str] | None) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    else:
+        items = [str(item).strip() for item in value]
+    return [item for item in items if item]
+
+
 def load_prompt(meta: Dict[str, object]) -> str:
     prompt = str(meta.get("prompt", "")).strip()
     if prompt:
@@ -96,6 +106,17 @@ def parse_dataset_root_specs(dataset_root: str | Sequence[object], default_repea
             return [_normalize_dataset_spec_item(item, default_repeat) for item in data]
 
     return [_normalize_dataset_spec_item(dataset_root, default_repeat)]
+
+
+def is_summary_samples_root(root: Path) -> bool:
+    return root.is_dir() and (root / "summary.json").is_file() and (root / "train").is_dir()
+
+
+def infer_summary_sample_dataset(path: Path) -> str:
+    text = str(path).lower()
+    if "movi" in text:
+        return "movi-d"
+    return "genesis"
 
 
 class OracleStateWindowDataset(torch.utils.data.Dataset):
@@ -176,7 +197,10 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             root = Path(str(spec["path"]))
             source_name = str(spec.get("name") or root.name or root)
             source_repeat = max(1, int(spec.get("repeat", 1)))
-            window_dirs = sorted(path.parent for path in root.rglob("pair_meta.json"))
+            if is_summary_samples_root(root):
+                window_dirs = self._discover_window_dirs_from_summary_root(root, spec)
+            else:
+                window_dirs = sorted(path.parent for path in root.rglob("pair_meta.json"))
             if not window_dirs:
                 raise FileNotFoundError(f"No oracle window data found under {root}")
             for _ in range(source_repeat):
@@ -189,6 +213,53 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
                         }
                     )
         return discovered
+
+    def _discover_window_dirs_from_summary_root(self, root: Path, spec: Dict[str, object]) -> List[Path]:
+        split_name = str(spec.get("summary_split", "train")).strip() or "train"
+        split_root = root / split_name
+        if not split_root.is_dir():
+            raise FileNotFoundError(f"Summary split directory does not exist: {split_root}")
+
+        simulator_types = set(parse_optional_str_list(spec.get("simulator_types")))
+        collision_buckets = set(parse_optional_str_list(spec.get("collision_buckets")))
+        object_count_buckets = set(parse_optional_str_list(spec.get("object_count_buckets")))
+        allowed_datasets = set(parse_optional_str_list(spec.get("summary_datasets")))
+        if not allowed_datasets:
+            allowed_datasets = {"genesis"}
+        if not collision_buckets:
+            collision_buckets = {"no_collision", "env_only"}
+
+        window_dirs: List[Path] = []
+        seen: set[Path] = set()
+        for samples_path in sorted(split_root.rglob("samples.txt")):
+            collision_bucket = samples_path.parent.name
+            object_count_bucket = samples_path.parent.parent.name if samples_path.parent.parent else ""
+            simulator_type = samples_path.parent.parent.parent.name if samples_path.parent.parent.parent else ""
+            if collision_buckets and collision_bucket not in collision_buckets:
+                continue
+            if object_count_buckets and object_count_bucket not in object_count_buckets:
+                continue
+            if simulator_types and simulator_type not in simulator_types:
+                continue
+
+            for raw_line in samples_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                window_dir = Path(line)
+                if not window_dir.is_absolute():
+                    window_dir = (samples_path.parent / window_dir).resolve()
+                sample_dataset = infer_summary_sample_dataset(window_dir)
+                if allowed_datasets and sample_dataset not in allowed_datasets:
+                    continue
+                pair_meta_path = window_dir / "pair_meta.json"
+                if not pair_meta_path.is_file():
+                    continue
+                if window_dir in seen:
+                    continue
+                seen.add(window_dir)
+                window_dirs.append(window_dir)
+        return window_dirs
 
     def _build_window_records(self, window_sources: Sequence[Dict[str, object]]) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []

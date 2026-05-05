@@ -95,6 +95,16 @@ def load_json_if_exists(path: Path) -> dict[str, Any] | list[Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_collision_event_payload(physics_dir: Path) -> list[dict[str, Any]]:
+    event_path = physics_dir / "event_windows.json"
+    if not event_path.exists():
+        event_path = physics_dir / "collision_events.json"
+    if not event_path.exists():
+        return []
+    payload = json.loads(event_path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, list) else []
+
+
 def load_npy_if_exists(path: Path) -> np.ndarray | None:
     if not path.exists():
         return None
@@ -681,8 +691,9 @@ def run_validation_for_sample(sample_dir: Path, output_root: Path, skip_existing
     flow = load_npy_if_exists(source_dir / "physics" / "flow.npy")
     seg = load_npy_if_exists(source_dir / "physics" / "seg.npy")
     frame_phase_arr = load_npy_if_exists(source_dir / "physics" / "frame_phase.npy")
-    collision_events = load_json(source_dir / "physics" / "collision_events.json")
-    event_windows = load_json(source_dir / "physics" / "event_windows.json")
+    physics_dir = source_dir / "physics"
+    event_windows = load_collision_event_payload(physics_dir)
+    collision_events = event_windows
 
     state = compute_track_state(anchor, primary_index)
     primary_obj = source_meta.get("objects", [])[primary_index]
