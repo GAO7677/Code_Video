@@ -7992,6 +7992,7 @@ def simulate_in_genesis(
     scene_label = str(runtime_case_cfg.get("scene_label", case_name))
     case_seed_for_runtime = int(runtime_case_cfg.get("seed", 20260414))
     counterfactual_meta = dict(runtime_case_cfg.get("counterfactual", {}) or {})
+    simple_case_resample_index = int(getattr(args, "simple_case_resample_index", 0) or 0)
     placed_pos = placed_pos + np.asarray(runtime_case_cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
     object_euler_deg = np.asarray(runtime_case_cfg.get("object_euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
     runtime_object_fixed = bool(runtime_case_cfg.get("object_fixed", object_fixed))
