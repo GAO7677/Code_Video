@@ -1,0 +1,45 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/kubric_tfds_movi-d__movi_d_test_0316__video_462.json",
+  "dataset": "kubric_tfds_movi-d",
+  "sample_id": "movi_d_test_0316__video_462",
+  "mode": "movi_d_gt",
+  "target": {
+    "object_label": "seg_2",
+    "seg_id": 2,
+    "selection_mode": "largest_visible_gt_instance_last_context",
+    "confidence": 1.0
+  },
+  "summary": {
+    "max_future_mask_area_ratio": 50.170732,
+    "max_future_area_depth2_ratio": 50.966516,
+    "target_visible_ratio": 0.979592,
+    "mean_bg_scale": 0.999996,
+    "root_cause": "object_scale_drift"
+  },
+  "analysis": [
+    "Target `seg_2` was selected with `largest_visible_gt_instance_last_context` under mode `movi_d_gt`.",
+    "Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.",
+    "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+    "Foreground area grows strongly (`max_area_ratio=50.171`) while background scale stays near 1 (`mean_bg_scale=0.999996`), so the current heuristic flags object-only scale drift.",
+    "The projected-size invariant also drifts heavily (`max_area_depth2_ratio=50.967`), which argues against a pure perspective explanation."
+  ],
+  "num_frames": 49,
+  "context_frames": 1,
+  "gt_reference": {
+    "available": true,
+    "num_frames_compared": 24,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 0.9999958683767834
+  },
+  "artifacts": {
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/kubric_tfds_movi-d__movi_d_test_0316__video_462.mp4",
+    "future_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/future_gt_video.mp4",
+    "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4"
+  }
+}

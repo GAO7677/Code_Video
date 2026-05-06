@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geometry Diagnostics Debug Portal</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --card: #fffdf9;
+      --ink: #1e1a17;
+      --muted: #6e645a;
+      --line: #d8ccbf;
+      --accent: #b64826;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(182,72,38,0.10), transparent 28%),
+        linear-gradient(180deg, #f8f3eb 0%, var(--bg) 100%);
+    }
+    main {
+      width: min(1200px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 38px;
+      line-height: 1.05;
+    }
+    .lead {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-size: 16px;
+    }
+    .case-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 20px;
+      box-shadow: 0 12px 30px rgba(32, 24, 17, 0.06);
+    }
+    .head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .head h2 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .sample {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .badge {
+      background: var(--accent);
+      color: white;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .meta-grid div {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fffaf3;
+    }
+    .meta-grid span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .meta-grid strong {
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .panel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: white;
+    }
+    .panel-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    img {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+    }
+    video {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+      background: #120f0d;
+    }
+    .analysis {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fffaf3;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+    }
+    .analysis-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .analysis ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .analysis li {
+      margin: 6px 0;
+      line-height: 1.45;
+    }
+    details {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #f6f1ea;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Geometry Diagnostics</h1>
+    <div class="lead">Debug portal for the current local run. Generated curves currently use a target-window foreground proxy, while GT reference curves and GT overlays use synthetic segmentation/depth where available.</div>
+    
+    <section class="case-card">
+      <div class="head">
+        <div>
+          <h2>kubric_tfds_movi-d</h2>
+          <div class="sample">movi_d_test_0316__video_462</div>
+        </div>
+        <div class="badge">stable_or_small_change</div>
+      </div>
+      <div class="meta-grid">
+        <div><span>Mode</span><strong>movi_d_gt</strong></div>
+        <div><span>Target</span><strong>seg_1</strong></div>
+        <div><span>Selection</span><strong>largest_visible_gt_instance_last_context</strong></div>
+        <div><span>Target Visible</span><strong>0.979592</strong></div>
+        <div><span>Max Area Ratio</span><strong>1.0</strong></div>
+        <div><span>Max Invariant Ratio</span><strong>1.971664</strong></div>
+        <div><span>Mean BG Scale</span><strong>0.999999</strong></div>
+        <div><span>GT Frames</span><strong>24</strong></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_1` was selected with `largest_visible_gt_instance_last_context` under mode `movi_d_gt`.</li><li>Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>The current metrics do not show a strong isolated geometry failure under the simple heuristic.</li></ul></div>
+      <div class="panel-grid">
+        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='kubric_tfds_movi-d__movi_d_test_0316__video_462/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png' alt='GT Reference Curves'></div>
+      </div>
+      <details>
+        <summary>Diagnostics JSON</summary>
+        <pre>{
+  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0316__video_462.json&quot;,
+  &quot;dataset&quot;: &quot;kubric_tfds_movi-d&quot;,
+  &quot;sample_id&quot;: &quot;movi_d_test_0316__video_462&quot;,
+  &quot;mode&quot;: &quot;movi_d_gt&quot;,
+  &quot;target&quot;: {
+    &quot;object_label&quot;: &quot;seg_1&quot;,
+    &quot;seg_id&quot;: 1,
+    &quot;selection_mode&quot;: &quot;largest_visible_gt_instance_last_context&quot;,
+    &quot;confidence&quot;: 1.0
+  },
+  &quot;summary&quot;: {
+    &quot;max_future_mask_area_ratio&quot;: 1.0,
+    &quot;max_future_area_depth2_ratio&quot;: 1.971664,
+    &quot;target_visible_ratio&quot;: 0.979592,
+    &quot;mean_bg_scale&quot;: 0.999999,
+    &quot;root_cause&quot;: &quot;stable_or_small_change&quot;
+  },
+  &quot;analysis&quot;: [
+    &quot;Target `seg_1` was selected with `largest_visible_gt_instance_last_context` under mode `movi_d_gt`.&quot;,
+    &quot;Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.&quot;,
+    &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
+    &quot;The current metrics do not show a strong isolated geometry failure under the simple heuristic.&quot;
+  ],
+  &quot;num_frames&quot;: 49,
+  &quot;context_frames&quot;: 8,
+  &quot;gt_reference&quot;: {
+    &quot;available&quot;: true,
+    &quot;num_frames_compared&quot;: 24,
+    &quot;target_visible_ratio&quot;: 1.0,
+    &quot;mean_bg_scale&quot;: 1.0000069632918005
+  },
+  &quot;artifacts&quot;: {
+    &quot;context_video&quot;: &quot;/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/context_video.mp4&quot;,
+    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0316__video_462.mp4&quot;,
+    &quot;full_gt_video&quot;: &quot;/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/full_video.mp4&quot;,
+    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.csv&quot;,
+    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png&quot;,
+    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.csv&quot;,
+    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png&quot;,
+    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/comparison_curves.png&quot;,
+    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/context_diagnostic.mp4&quot;,
+    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4&quot;,
+    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4&quot;
+  }
+}</pre>
+      </details>
+    </section>
+    
+    <section class="case-card">
+      <div class="head">
+        <div>
+          <h2>version_1_genesis_rigid_data_all_cases</h2>
+          <div class="sample">genesis_heldout_0162__10046__case002_static_right</div>
+        </div>
+        <div class="badge">stable_or_small_change</div>
+      </div>
+      <div class="meta-grid">
+        <div><span>Mode</span><strong>genesis_gt</strong></div>
+        <div><span>Target</span><strong>seg_1</strong></div>
+        <div><span>Selection</span><strong>genesis_role_target</strong></div>
+        <div><span>Target Visible</span><strong>0.959184</strong></div>
+        <div><span>Max Area Ratio</span><strong>1.008929</strong></div>
+        <div><span>Max Invariant Ratio</span><strong>1.018664</strong></div>
+        <div><span>Mean BG Scale</span><strong>1.000001</strong></div>
+        <div><span>GT Frames</span><strong>16</strong></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_1` was selected with `genesis_role_target` under mode `genesis_gt`.</li><li>Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>The current metrics do not show a strong isolated geometry failure under the simple heuristic.</li></ul></div>
+      <div class="panel-grid">
+        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.png' alt='GT Reference Curves'></div>
+      </div>
+      <details>
+        <summary>Diagnostics JSON</summary>
+        <pre>{
+  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right.json&quot;,
+  &quot;dataset&quot;: &quot;version_1_genesis_rigid_data_all_cases&quot;,
+  &quot;sample_id&quot;: &quot;genesis_heldout_0162__10046__case002_static_right&quot;,
+  &quot;mode&quot;: &quot;genesis_gt&quot;,
+  &quot;target&quot;: {
+    &quot;object_label&quot;: &quot;seg_1&quot;,
+    &quot;seg_id&quot;: 1,
+    &quot;selection_mode&quot;: &quot;genesis_role_target&quot;,
+    &quot;confidence&quot;: 1.0
+  },
+  &quot;summary&quot;: {
+    &quot;max_future_mask_area_ratio&quot;: 1.008929,
+    &quot;max_future_area_depth2_ratio&quot;: 1.018664,
+    &quot;target_visible_ratio&quot;: 0.959184,
+    &quot;mean_bg_scale&quot;: 1.000001,
+    &quot;root_cause&quot;: &quot;stable_or_small_change&quot;
+  },
+  &quot;analysis&quot;: [
+    &quot;Target `seg_1` was selected with `genesis_role_target` under mode `genesis_gt`.&quot;,
+    &quot;Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.&quot;,
+    &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
+    &quot;The current metrics do not show a strong isolated geometry failure under the simple heuristic.&quot;
+  ],
+  &quot;num_frames&quot;: 49,
+  &quot;context_frames&quot;: 8,
+  &quot;gt_reference&quot;: {
+    &quot;available&quot;: true,
+    &quot;num_frames_compared&quot;: 16,
+    &quot;target_visible_ratio&quot;: 1.0,
+    &quot;mean_bg_scale&quot;: 0.9999986296042225
+  },
+  &quot;artifacts&quot;: {
+    &quot;context_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/context_video.mp4&quot;,
+    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right.mp4&quot;,
+    &quot;full_gt_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/full_video.mp4&quot;,
+    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.csv&quot;,
+    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.png&quot;,
+    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.csv&quot;,
+    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.png&quot;,
+    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/comparison_curves.png&quot;,
+    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/context_diagnostic.mp4&quot;,
+    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_diagnostic.mp4&quot;,
+    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_diagnostic.mp4&quot;
+  }
+}</pre>
+      </details>
+    </section>
+    
+  </main>
+</body>
+</html>

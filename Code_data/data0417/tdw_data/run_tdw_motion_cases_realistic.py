@@ -46,6 +46,8 @@ def run_case(case_name: str,
                                    look_at={"x": 0.0, "y": 0.6, "z": 0.0},
                                    field_of_view=72)
         capture = ImageCapture(path=case_dir, avatar_ids=["a"], pass_masks=["_img"])
+        # Don't save the first unstable frames while the scene/HDRI exposure settles.
+        capture.set(frequency="never", avatar_ids=["a"], pass_masks=["_img"], save=False)
         lighting = InteriorSceneLighting(hdri_skybox=SKYBOX_NAME,
                                          aperture=8.0,
                                          focus_distance=4.0,
@@ -62,9 +64,11 @@ def run_case(case_name: str,
                                 Controller.get_add_hdri_skybox(skybox_name=SKYBOX_NAME)])
 
         # Let the scene and lighting initialize before adding the moving object.
-        for _ in range(6):
+        for _ in range(10):
             controller.communicate([])
 
+        capture.frame = 0
+        capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
         commands = controller.get_add_physics_object(model_name=model_name,
                                                      object_id=object_id,
                                                      position=position)

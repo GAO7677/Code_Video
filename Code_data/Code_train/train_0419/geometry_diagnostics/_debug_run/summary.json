@@ -1,0 +1,95 @@
+{
+  "num_cases": 2,
+  "cases": [
+    {
+      "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/kubric_tfds_movi-d__movi_d_test_0316__video_462.json",
+      "dataset": "kubric_tfds_movi-d",
+      "sample_id": "movi_d_test_0316__video_462",
+      "mode": "movi_d_gt",
+      "target": {
+        "object_label": "seg_2",
+        "seg_id": 2,
+        "selection_mode": "largest_visible_gt_instance_last_context",
+        "confidence": 1.0
+      },
+      "summary": {
+        "max_future_mask_area_ratio": 50.170732,
+        "max_future_area_depth2_ratio": 50.966516,
+        "target_visible_ratio": 0.979592,
+        "mean_bg_scale": 0.999996,
+        "root_cause": "object_scale_drift"
+      },
+      "analysis": [
+        "Target `seg_2` was selected with `largest_visible_gt_instance_last_context` under mode `movi_d_gt`.",
+        "Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.",
+        "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+        "Foreground area grows strongly (`max_area_ratio=50.171`) while background scale stays near 1 (`mean_bg_scale=0.999996`), so the current heuristic flags object-only scale drift.",
+        "The projected-size invariant also drifts heavily (`max_area_depth2_ratio=50.967`), which argues against a pure perspective explanation."
+      ],
+      "num_frames": 49,
+      "context_frames": 1,
+      "gt_reference": {
+        "available": true,
+        "num_frames_compared": 24,
+        "target_visible_ratio": 1.0,
+        "mean_bg_scale": 0.9999958683767834
+      },
+      "artifacts": {
+        "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/kubric_tfds_movi-d__movi_d_test_0316__video_462.mp4",
+        "future_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/future_gt_video.mp4",
+        "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/full_video.mp4",
+        "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.csv",
+        "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png",
+        "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.csv",
+        "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png",
+        "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4",
+        "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4"
+      }
+    },
+    {
+      "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right.json",
+      "dataset": "version_1_genesis_rigid_data_all_cases",
+      "sample_id": "genesis_heldout_0162__10046__case002_static_right",
+      "mode": "genesis_gt",
+      "target": {
+        "object_label": "seg_1",
+        "seg_id": 1,
+        "selection_mode": "genesis_role_target",
+        "confidence": 1.0
+      },
+      "summary": {
+        "max_future_mask_area_ratio": 34.393939,
+        "max_future_area_depth2_ratio": 65.112325,
+        "target_visible_ratio": 0.979592,
+        "mean_bg_scale": 1.000092,
+        "root_cause": "object_scale_drift"
+      },
+      "analysis": [
+        "Target `seg_1` was selected with `genesis_role_target` under mode `genesis_gt`.",
+        "Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.",
+        "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+        "Foreground area grows strongly (`max_area_ratio=34.394`) while background scale stays near 1 (`mean_bg_scale=1.000092`), so the current heuristic flags object-only scale drift.",
+        "The projected-size invariant also drifts heavily (`max_area_depth2_ratio=65.112`), which argues against a pure perspective explanation."
+      ],
+      "num_frames": 49,
+      "context_frames": 1,
+      "gt_reference": {
+        "available": true,
+        "num_frames_compared": 16,
+        "target_visible_ratio": 1.0,
+        "mean_bg_scale": 1.0000032157523628
+      },
+      "artifacts": {
+        "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/Wan2_2_5B_pure_TI2V/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right.mp4",
+        "future_gt_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/future_gt_video.mp4",
+        "full_gt_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/full_video.mp4",
+        "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.csv",
+        "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.png",
+        "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.csv",
+        "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.png",
+        "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_diagnostic.mp4",
+        "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_diagnostic.mp4"
+      }
+    }
+  ]
+}
