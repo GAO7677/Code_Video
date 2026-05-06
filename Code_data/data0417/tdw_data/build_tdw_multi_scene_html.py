@@ -35,6 +35,21 @@ DATASETS = [
         "mode": "flat_videos",
         "scene_label": "tdw_real_scene_gravity_demos",
     },
+    {
+        "title": "Stable Cloth Demos",
+        "subtitle": "针对 cloth 刺穿现象的稳定版批次：提高 Obi solver substeps，改用更规整的静止障碍物，并收敛初始姿态。",
+        "directory": "tdw_real_scene_gravity_stable_cloth",
+        "badge": "Stable Cloth",
+        "mode": "flat_videos",
+        "scene_label": "tdw_real_scene_gravity_stable_cloth",
+    },
+    {
+        "title": "Cloth A/B Compare",
+        "subtitle": "相同场景、相同障碍物、相同 cloth 初始姿态，只改变稳定化参数。每个 case 的未稳定版和稳定版并排放在同一行。",
+        "directory": "tdw_cloth_ab_compare",
+        "badge": "A/B Compare",
+        "mode": "compare_pairs",
+    },
 ]
 
 
@@ -53,6 +68,18 @@ def list_flat_videos(dataset_dir: Path):
     if not dataset_dir.exists():
         return []
     return sorted(dataset_dir.glob("*.mp4"))
+
+
+def list_compare_pairs(dataset_dir: Path):
+    if not dataset_dir.exists():
+        return []
+    pairs = []
+    for case_dir in sorted(p for p in dataset_dir.iterdir() if p.is_dir()):
+        unstable = case_dir.joinpath("unstable.mp4")
+        stable = case_dir.joinpath("stable.mp4")
+        if unstable.exists() or stable.exists():
+            pairs.append((case_dir.name, unstable if unstable.exists() else None, stable if stable.exists() else None))
+    return pairs
 
 
 cards = []
@@ -82,7 +109,7 @@ for dataset in DATASETS:
 </article>'''
                 )
             cards.append("</div></div>")
-    else:
+    elif dataset["mode"] == "flat_videos":
         videos = list_flat_videos(dataset_dir)
         if not videos:
             cards.append('<p class="empty">当前还没有生成视频。</p></section>')
@@ -105,6 +132,41 @@ for dataset in DATASETS:
 </article>'''
             )
         cards.append("</div>")
+    else:
+        pairs = list_compare_pairs(dataset_dir)
+        if not pairs:
+            cards.append('<p class="empty">当前还没有生成视频。</p></section>')
+            continue
+        for case_name, unstable, stable in pairs:
+            cards.append(f'<div class="subsection"><h3>{case_name}</h3><div class="compare-grid">')
+            for label, video in [("Unstable", unstable), ("Stable", stable)]:
+                if video is None:
+                    cards.append(
+                        f'''<article class="card">
+  <div class="missing-video">Missing {label}</div>
+  <div class="meta">
+    <span class="pill">{dataset["badge"]}</span>
+    <span class="pill scene-pill">{label}</span>
+    <h4>{case_name}</h4>
+    <code>missing</code>
+  </div>
+</article>'''
+                    )
+                    continue
+                rel = str(video.relative_to(ROOT))
+                abs_path = str(video)
+                cards.append(
+                    f'''<article class="card">
+  <video controls preload="metadata" src="{rel}"></video>
+  <div class="meta">
+    <span class="pill">{dataset["badge"]}</span>
+    <span class="pill scene-pill">{label}</span>
+    <h4>{case_name}</h4>
+    <code>{abs_path}</code>
+  </div>
+</article>'''
+                )
+            cards.append("</div></div>")
     cards.append("</section>")
 
 content = f"""<!DOCTYPE html>
@@ -150,8 +212,18 @@ content = f"""<!DOCTYPE html>
     p {{ margin: 0; color: var(--muted); line-height: 1.6; }}
     .empty {{ margin-top: 14px; }}
     .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }}
+    .compare-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }}
     .card {{ border: 1px solid var(--border); border-radius: 18px; overflow: hidden; background: rgba(255,255,255,0.76); }}
     video {{ width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; }}
+    .missing-video {{
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      display: grid;
+      place-items: center;
+      background: rgba(70, 107, 93, 0.08);
+      color: var(--accent-2);
+      font-size: 18px;
+    }}
     .meta {{ padding: 14px 16px 18px; }}
     .pill {{
       display: inline-block;
@@ -170,6 +242,9 @@ content = f"""<!DOCTYPE html>
       color: var(--accent-2);
     }}
     code {{ color: var(--accent); font-size: 13px; word-break: break-all; }}
+    @media (max-width: 900px) {{
+      .compare-grid {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>

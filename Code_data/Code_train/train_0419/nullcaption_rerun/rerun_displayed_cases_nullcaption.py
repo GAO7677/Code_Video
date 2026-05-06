@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vace_root", type=Path, default=DEFAULT_VACE_ROOT)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--only-sample", action="append", default=[])
+    parser.add_argument("--prep-tag", default="nullcaption_rerun")
+    parser.add_argument("--runtime-tag", default="")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
@@ -135,7 +137,8 @@ def build_batch_eval_command(
     meta_list_path: Path,
 ) -> list[str]:
     output_root = args.target_benchmark_root / MODEL_RELATIVE_DIR
-    runtime_root = args.target_benchmark_root / RUNTIME_RELATIVE_DIR
+    runtime_dir_name = MODEL_NAME if not args.runtime_tag else f"{MODEL_NAME}__{args.runtime_tag}"
+    runtime_root = args.target_benchmark_root / "tools" / "runtime" / runtime_dir_name
     return [
         str(args.python_bin),
         str(TRAIN0419_ROOT / "batch_eval_vace.py"),
@@ -180,7 +183,7 @@ def main() -> None:
     args.python_bin = args.python_bin.expanduser().resolve()
     args.vace_root = args.vace_root.expanduser().resolve()
 
-    prep_root = args.target_benchmark_root / "tools" / "nullcaption_rerun"
+    prep_root = args.target_benchmark_root / "tools" / args.prep_tag
     selected = collect_selected_cases(args.display_root)
     meta_paths, _, manifest = build_case_bundle(
         selected=selected,
@@ -195,13 +198,15 @@ def main() -> None:
     manifest["meta_list_path"] = str(meta_list_path)
     write_json(prep_root / "selection_manifest.json", manifest)
 
+    runtime_dir_name = MODEL_NAME if not args.runtime_tag else f"{MODEL_NAME}__{args.runtime_tag}"
+    runtime_root = args.target_benchmark_root / "tools" / "runtime" / runtime_dir_name
     command = build_batch_eval_command(args=args, meta_list_path=meta_list_path)
     write_text(prep_root / "last_command.sh", " ".join(command) + "\n")
 
     print(f"prepared_cases={len(meta_paths)}")
     print(f"meta_list_path={meta_list_path}")
     print(f"output_root={args.target_benchmark_root / MODEL_RELATIVE_DIR}")
-    print(f"runtime_root={args.target_benchmark_root / RUNTIME_RELATIVE_DIR}")
+    print(f"runtime_root={runtime_root}")
     if args.dry_run:
         print("dry_run=1")
         return
