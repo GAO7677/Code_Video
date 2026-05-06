@@ -1,0 +1,206 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right.json",
+  "dataset": "version_1_genesis_rigid_data_all_cases",
+  "sample_id": "genesis_heldout_0171__10096__case002_static_right",
+  "mode": "genesis_gt",
+  "target": {
+    "object_label": "seg_1_target",
+    "seg_id": 1,
+    "selection_mode": "highest_motion_gt_object_in_context",
+    "confidence": 1.0
+  },
+  "generated_tracking": {
+    "source": "sam2_context_multi_frame_mask_init",
+    "num_tracked_frames": 49,
+    "tracked_seg_ids": [
+      1
+    ]
+  },
+  "generated_born_tracks": [
+    {
+      "track_id": 1,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.543768,
+      "confidence": 0.71073,
+      "displayed": false,
+      "num_frames": 17,
+      "start_frame": 10,
+      "end_frame": 26,
+      "max_area": 1040
+    },
+    {
+      "track_id": 2,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.467589,
+      "confidence": 0.840277,
+      "displayed": true,
+      "num_frames": 37,
+      "start_frame": 12,
+      "end_frame": 48,
+      "max_area": 12009
+    },
+    {
+      "track_id": 5,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 1,
+      "matched_object_label": "seg_1_target",
+      "appearance_similarity": 0.687684,
+      "confidence": 0.906305,
+      "displayed": true,
+      "num_frames": 27,
+      "start_frame": 22,
+      "end_frame": 48,
+      "max_area": 18200
+    },
+    {
+      "track_id": 6,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.450817,
+      "confidence": 0.636345,
+      "displayed": true,
+      "num_frames": 27,
+      "start_frame": 22,
+      "end_frame": 48,
+      "max_area": 424
+    },
+    {
+      "track_id": 9,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.54999,
+      "confidence": 0.365147,
+      "displayed": false,
+      "num_frames": 3,
+      "start_frame": 24,
+      "end_frame": 26,
+      "max_area": 314
+    },
+    {
+      "track_id": 10,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.360023,
+      "confidence": 0.382357,
+      "displayed": false,
+      "num_frames": 3,
+      "start_frame": 24,
+      "end_frame": 26,
+      "max_area": 1056
+    },
+    {
+      "track_id": 12,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.391919,
+      "confidence": 0.650076,
+      "displayed": true,
+      "num_frames": 23,
+      "start_frame": 26,
+      "end_frame": 48,
+      "max_area": 823
+    },
+    {
+      "track_id": 14,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.53931,
+      "confidence": 0.664393,
+      "displayed": false,
+      "num_frames": 18,
+      "start_frame": 30,
+      "end_frame": 48,
+      "max_area": 580
+    }
+  ],
+  "summary": {
+    "max_future_mask_area_ratio": 1.138244,
+    "max_future_area_depth2_ratio": 1.183171,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 1.000039,
+    "root_cause": "stable_or_small_change"
+  },
+  "analysis": [
+    "Target `seg_1_target` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.",
+    "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
+    "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
+    "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+    "Generated-only discovery found 8 extra track(s): new=7, duplicate=1, scale_drift_candidate=0.",
+    "Only 4 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
+    "The current metrics do not show a strong isolated geometry failure under the simple heuristic."
+  ],
+  "num_frames": 49,
+  "context_frames": 8,
+  "gt_reference": {
+    "available": true,
+    "num_frames_compared": 16,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 1.000014902351578
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0171__10096__case002_static_right/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right.mp4",
+    "full_gt_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0171__10096__case002_static_right/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_diagnostic.mp4",
+    "context_single_track_videos": [
+      {
+        "seg_id": 1,
+        "object_label": "seg_1_target",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_track_seg_1.mp4"
+      }
+    ],
+    "generated_single_track_videos": [
+      {
+        "seg_id": 1,
+        "object_label": "seg_1_target",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_track_seg_1.mp4"
+      }
+    ],
+    "generated_born_single_track_videos": [
+      {
+        "track_id": 2,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_2.mp4"
+      },
+      {
+        "track_id": 5,
+        "classification": "duplicate_of_known_object",
+        "matched_seg_id": 1,
+        "matched_object_label": "seg_1_target",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_5.mp4"
+      },
+      {
+        "track_id": 6,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_6.mp4"
+      },
+      {
+        "track_id": 12,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_12.mp4"
+      }
+    ]
+  }
+}

@@ -56,6 +56,38 @@ def video_html(path: Path, base: Path, label: str) -> str:
     )
 
 
+def render_video_group(items: list[dict[str, Any]], base: Path, title: str) -> str:
+    if not items:
+        return ""
+    panels: list[str] = []
+    for item in items:
+        raw = item.get("path")
+        if not raw:
+            continue
+        path = Path(raw)
+        if not path.exists():
+            continue
+        if not str(path).startswith(str(base)):
+            continue
+        label_parts = []
+        if item.get("object_label"):
+            label_parts.append(str(item["object_label"]))
+        if item.get("classification"):
+            label_parts.append(str(item["classification"]))
+        if item.get("track_id") is not None:
+            label_parts.append(f"track_{item['track_id']}")
+        if not label_parts and item.get("seg_id") is not None:
+            label_parts.append(f"seg_{item['seg_id']}")
+        label = " | ".join(label_parts) or title
+        panels.append(video_html(path, base, label))
+    if not panels:
+        return ""
+    return (
+        f"<div class='analysis'><div class='analysis-title'>{html.escape(title)}</div></div>"
+        f"<div class='panel-grid'>{''.join(panels)}</div>"
+    )
+
+
 def render_analysis(lines: list[str]) -> str:
     if not lines:
         return ""
@@ -102,6 +134,14 @@ def render_case(case_dir: Path, run_root: Path) -> str:
     if gt_curves_png.exists():
         panels.append(image_html(gt_curves_png, run_root, "GT Reference Curves"))
 
+    grouped_videos_html = "".join(
+        [
+            render_video_group(list(artifacts.get("context_single_track_videos") or []), run_root, "Context Single Tracks"),
+            render_video_group(list(artifacts.get("generated_single_track_videos") or []), run_root, "Generated Known Tracks"),
+            render_video_group(list(artifacts.get("generated_born_single_track_videos") or []), run_root, "Generated Born Tracks"),
+        ]
+    )
+
     return f"""
     <section class="case-card">
       <div class="head">
@@ -125,6 +165,7 @@ def render_case(case_dir: Path, run_root: Path) -> str:
       <div class="panel-grid">
         {''.join(panels)}
       </div>
+      {grouped_videos_html}
       <details>
         <summary>Diagnostics JSON</summary>
         <pre>{html.escape(json.dumps(diagnostics, ensure_ascii=False, indent=2))}</pre>

@@ -38,6 +38,25 @@ GENERATED_BORN_MIN_AREA = 250
 GENERATED_BORN_MIN_DURATION = 2
 GENERATED_BORN_IOU_MATCH = 0.3
 GENERATED_BORN_APPEARANCE_MATCH = 0.55
+GENERATED_BORN_MIN_CONFIDENCE_NEW = 0.62
+GENERATED_BORN_MIN_CONFIDENCE_MATCHED = 0.55
+GENERATED_BORN_REFINE_MAX_SEEDS = 3
+GENERATED_BORN_REFINE_MIN_SEED_COVERAGE = 0.6
+GENERATED_BORN_MERGE_GAP = 3
+GENERATED_BORN_MERGE_IOU = 0.12
+GENERATED_BORN_MERGE_CENTER_DIST = 90.0
+GENERATED_BORN_MERGE_CENTER_DIST_WITH_APPEARANCE = 180.0
+GENERATED_BORN_TRACK_APPEARANCE_MERGE = 0.68
+GENERATED_BORN_OVERLAP_MERGE_BBOX_IOU = 0.28
+GENERATED_BORN_OVERLAP_MERGE_MASK_COVERAGE = 0.62
+GENERATED_BORN_SUPPRESS_DOMINATED_COVERAGE = 0.72
+GENERATED_BORN_SUPPRESS_DOMINATED_CENTER_DIST = 70.0
+GENERATED_BORN_FLOOR_BOTTOM_FRAC = 0.82
+GENERATED_BORN_FLOOR_MAX_HEIGHT_FRAC = 0.18
+GENERATED_BORN_FLOOR_MIN_WIDTH_FRAC = 0.45
+GENERATED_BORN_FLOOR_MIN_DURATION = 10
+GENERATED_BORN_STATIC_SMALL_MAX_AREA_FRAC = 0.005
+GENERATED_BORN_STATIC_SMALL_MAX_MOTION = 40.0
 _SAM2_VIDEO_PREDICTOR = None
 
 
@@ -75,6 +94,9 @@ class GeneratedBornTrack:
     matched_object_label: str | None
     appearance_similarity: float
     color: tuple[int, int, int]
+    confidence: float
+    displayed: bool
+    prototype_hist: np.ndarray | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -277,6 +299,41 @@ def mask_iou(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
     return float(inter) / float(union)
 
 
+def mask_coverage(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
+    a = np.asarray(mask_a, dtype=bool)
+    b = np.asarray(mask_b, dtype=bool)
+    denom = min(np.count_nonzero(a), np.count_nonzero(b))
+    if denom <= 0:
+        return 0.0
+    inter = np.count_nonzero(a & b)
+    return float(inter) / float(denom)
+
+
+def bbox_iou(
+    bbox_a: tuple[int, int, int, int] | None,
+    bbox_b: tuple[int, int, int, int] | None,
+) -> float:
+    if bbox_a is None or bbox_b is None:
+        return 0.0
+    ax1, ay1, ax2, ay2 = bbox_a
+    bx1, by1, bx2, by2 = bbox_b
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    inter = inter_w * inter_h
+    if inter <= 0:
+        return 0.0
+    area_a = bbox_area(bbox_a)
+    area_b = bbox_area(bbox_b)
+    union = area_a + area_b - inter
+    if union <= 0:
+        return 0.0
+    return float(inter) / float(union)
+
+
 def compute_track_motion_score(
     coords_xy: np.ndarray,
     visible_mask: np.ndarray,
@@ -353,6 +410,290 @@ def histogram_intersection(vec_a: np.ndarray | None, vec_b: np.ndarray | None) -
     if a.shape != b.shape:
         return 0.0
     return float(np.minimum(a, b).sum())
+
+
+def compute_generated_born_confidence(
+    *,
+    areas_by_frame: dict[int, int],
+    appearance_similarity: float,
+    classification: str,
+) -> float:
+    if not areas_by_frame:
+        return 0.0
+    frame_ids = sorted(int(v) for v in areas_by_frame)
+    duration = len(frame_ids)
+    max_area = max(int(v) for v in areas_by_frame.values())
+    duration_score = min(float(duration) / 8.0, 1.0)
+    area_score = min(float(max_area) / 2500.0, 1.0)
+    appearance_score = max(min(float(appearance_similarity), 1.0), 0.0)
+    base = 0.45 * duration_score + 0.25 * area_score + 0.30 * appearance_score
+    if classification == "scale_drift_candidate":
+        base += 0.1
+    return max(0.0, min(base, 1.0))
+
+
+def bbox_center(bbox: tuple[int, int, int, int] | None) -> tuple[float, float] | None:
+    if bbox is None:
+        return None
+    x1, y1, x2, y2 = bbox
+    return ((float(x1) + float(x2)) * 0.5, (float(y1) + float(y2)) * 0.5)
+
+
+def compute_track_pair_overlap_stats(
+    track_a: GeneratedBornTrack,
+    track_b: GeneratedBornTrack,
+) -> dict[str, float]:
+    shared_frames = sorted(set(track_a.masks_by_frame) & set(track_b.masks_by_frame))
+    if not shared_frames:
+        return {
+            "shared_frames": 0.0,
+            "mean_mask_iou": 0.0,
+            "mean_mask_coverage": 0.0,
+            "mean_bbox_iou": 0.0,
+            "mean_center_dist": float("inf"),
+        }
+    mask_ious: list[float] = []
+    mask_coverages: list[float] = []
+    bbox_ious: list[float] = []
+    center_dists: list[float] = []
+    for frame_idx in shared_frames:
+        mask_a = track_a.masks_by_frame.get(frame_idx)
+        mask_b = track_b.masks_by_frame.get(frame_idx)
+        bbox_a = track_a.bboxes_by_frame.get(frame_idx)
+        bbox_b = track_b.bboxes_by_frame.get(frame_idx)
+        if mask_a is not None and mask_b is not None:
+            mask_ious.append(mask_iou(mask_a, mask_b))
+            mask_coverages.append(mask_coverage(mask_a, mask_b))
+        bbox_ious.append(bbox_iou(bbox_a, bbox_b))
+        center_a = bbox_center(bbox_a)
+        center_b = bbox_center(bbox_b)
+        if center_a is not None and center_b is not None:
+            center_dists.append(math.dist(center_a, center_b))
+    return {
+        "shared_frames": float(len(shared_frames)),
+        "mean_mask_iou": float(np.mean(mask_ious)) if mask_ious else 0.0,
+        "mean_mask_coverage": float(np.mean(mask_coverages)) if mask_coverages else 0.0,
+        "mean_bbox_iou": float(np.mean(bbox_ious)) if bbox_ious else 0.0,
+        "mean_center_dist": float(np.mean(center_dists)) if center_dists else float("inf"),
+    }
+
+
+def compute_generated_born_track_motion(track: GeneratedBornTrack) -> float:
+    frame_ids = sorted(track.bboxes_by_frame)
+    centers: list[tuple[float, float]] = []
+    for frame_idx in frame_ids:
+        center = bbox_center(track.bboxes_by_frame.get(frame_idx))
+        if center is not None:
+            centers.append(center)
+    if len(centers) < 2:
+        return 0.0
+    motion = 0.0
+    for prev, curr in zip(centers[:-1], centers[1:]):
+        motion += math.dist(prev, curr)
+    return float(motion)
+
+
+def estimate_track_prototype_histogram(
+    *,
+    frames: list[np.ndarray],
+    masks_by_frame: dict[int, np.ndarray],
+    areas_by_frame: dict[int, int],
+) -> np.ndarray | None:
+    if not masks_by_frame:
+        return None
+    best_frame_idx = max(
+        masks_by_frame,
+        key=lambda frame_idx: int(areas_by_frame.get(int(frame_idx), 0)),
+    )
+    return estimate_mask_color_histogram(
+        frames[int(best_frame_idx)],
+        np.asarray(masks_by_frame[int(best_frame_idx)], dtype=bool),
+    )
+
+
+def should_merge_generated_born_tracks(track_a: GeneratedBornTrack, track_b: GeneratedBornTrack) -> bool:
+    overlap_stats = compute_track_pair_overlap_stats(track_a, track_b)
+    same_class = track_a.classification == track_b.classification
+    same_match = track_a.matched_seg_id == track_b.matched_seg_id
+    track_similarity = histogram_intersection(track_a.prototype_hist, track_b.prototype_hist)
+    if overlap_stats["shared_frames"] >= 2.0:
+        if overlap_stats["mean_center_dist"] > GENERATED_BORN_MERGE_CENTER_DIST_WITH_APPEARANCE:
+            return False
+        if overlap_stats["mean_bbox_iou"] >= GENERATED_BORN_OVERLAP_MERGE_BBOX_IOU:
+            return True
+        if same_class and same_match and overlap_stats["mean_mask_coverage"] >= GENERATED_BORN_OVERLAP_MERGE_MASK_COVERAGE:
+            return True
+        if same_class and track_similarity >= GENERATED_BORN_TRACK_APPEARANCE_MERGE:
+            return True
+        return False
+    end_a = max(track_a.masks_by_frame)
+    start_b = min(track_b.masks_by_frame)
+    if start_b <= end_a or start_b - end_a > GENERATED_BORN_MERGE_GAP:
+        return False
+    bbox_a = track_a.bboxes_by_frame.get(end_a)
+    bbox_b = track_b.bboxes_by_frame.get(start_b)
+    center_a = bbox_center(bbox_a)
+    center_b = bbox_center(bbox_b)
+    if center_a is None or center_b is None:
+        return False
+    center_dist = math.dist(center_a, center_b)
+    iou = mask_iou(track_a.masks_by_frame[end_a], track_b.masks_by_frame[start_b])
+    if center_dist <= GENERATED_BORN_MERGE_CENTER_DIST and (iou >= GENERATED_BORN_MERGE_IOU or (same_class and same_match)):
+        return True
+    return bool(
+        center_dist <= GENERATED_BORN_MERGE_CENTER_DIST_WITH_APPEARANCE
+        and same_class
+        and track_similarity >= GENERATED_BORN_TRACK_APPEARANCE_MERGE
+    )
+
+
+def merge_generated_born_track_pair(track_a: GeneratedBornTrack, track_b: GeneratedBornTrack) -> GeneratedBornTrack:
+    masks_by_frame = dict(track_a.masks_by_frame)
+    masks_by_frame.update(track_b.masks_by_frame)
+    bboxes_by_frame = dict(track_a.bboxes_by_frame)
+    bboxes_by_frame.update(track_b.bboxes_by_frame)
+    areas_by_frame = dict(track_a.areas_by_frame)
+    areas_by_frame.update(track_b.areas_by_frame)
+    confidence = max(float(track_a.confidence), float(track_b.confidence))
+    displayed = bool(track_a.displayed or track_b.displayed)
+    appearance_similarity = max(float(track_a.appearance_similarity), float(track_b.appearance_similarity))
+    chosen = track_a if float(track_a.confidence) >= float(track_b.confidence) else track_b
+    return GeneratedBornTrack(
+        track_id=min(int(track_a.track_id), int(track_b.track_id)),
+        masks_by_frame=masks_by_frame,
+        bboxes_by_frame=bboxes_by_frame,
+        areas_by_frame=areas_by_frame,
+        classification=chosen.classification,
+        matched_seg_id=chosen.matched_seg_id,
+        matched_object_label=chosen.matched_object_label,
+        appearance_similarity=appearance_similarity,
+        color=chosen.color,
+        confidence=confidence,
+        displayed=displayed,
+        prototype_hist=chosen.prototype_hist,
+    )
+
+
+def merge_generated_born_tracks(tracks: list[GeneratedBornTrack]) -> list[GeneratedBornTrack]:
+    if not tracks:
+        return []
+    ordered = sorted(tracks, key=lambda track: min(track.masks_by_frame))
+    merged: list[GeneratedBornTrack] = []
+    for track in ordered:
+        if not merged:
+            merged.append(track)
+            continue
+        merged_any = False
+        for idx, prev in enumerate(merged):
+            if not should_merge_generated_born_tracks(prev, track):
+                continue
+            merged[idx] = merge_generated_born_track_pair(prev, track)
+            merged_any = True
+            break
+        if not merged_any:
+            merged.append(track)
+    return merged
+
+
+def is_floor_like_generated_born_track(track: GeneratedBornTrack, frame_shape: tuple[int, int]) -> bool:
+    if not track.masks_by_frame:
+        return False
+    height, width = frame_shape
+    frame_ids = sorted(track.masks_by_frame)
+    if len(frame_ids) < GENERATED_BORN_FLOOR_MIN_DURATION:
+        return False
+    bottom_hits = 0
+    low_height_hits = 0
+    wide_hits = 0
+    for frame_idx in frame_ids:
+        bbox = track.bboxes_by_frame.get(frame_idx)
+        if bbox is None:
+            continue
+        x1, y1, x2, y2 = bbox
+        if float(y2) / float(max(height, 1)) >= GENERATED_BORN_FLOOR_BOTTOM_FRAC:
+            bottom_hits += 1
+        if float(y2 - y1) / float(max(height, 1)) <= GENERATED_BORN_FLOOR_MAX_HEIGHT_FRAC:
+            low_height_hits += 1
+        if float(x2 - x1) / float(max(width, 1)) >= GENERATED_BORN_FLOOR_MIN_WIDTH_FRAC:
+            wide_hits += 1
+    required_hits = int(len(frame_ids) * 0.8)
+    return bool(
+        bottom_hits >= required_hits
+        and low_height_hits >= required_hits
+        and wide_hits >= required_hits
+    )
+
+
+def is_static_small_generated_born_track(track: GeneratedBornTrack, frame_shape: tuple[int, int]) -> bool:
+    if not track.masks_by_frame:
+        return False
+    height, width = frame_shape
+    frame_area = float(max(height * width, 1))
+    max_area = float(max(track.areas_by_frame.values(), default=0))
+    if max_area / frame_area > GENERATED_BORN_STATIC_SMALL_MAX_AREA_FRAC:
+        return False
+    return compute_generated_born_track_motion(track) <= GENERATED_BORN_STATIC_SMALL_MAX_MOTION
+
+
+def suppress_dominated_generated_born_tracks(
+    tracks: list[GeneratedBornTrack],
+) -> list[GeneratedBornTrack]:
+    if not tracks:
+        return []
+    ranked = sorted(
+        tracks,
+        key=lambda track: (
+            bool(track.displayed),
+            float(track.confidence),
+            len(track.masks_by_frame),
+            max(track.areas_by_frame.values(), default=0),
+        ),
+        reverse=True,
+    )
+    suppressed_ids: set[int] = set()
+    for i, dominant in enumerate(ranked):
+        if not dominant.displayed or dominant.track_id in suppressed_ids:
+            continue
+        for weaker in ranked[i + 1 :]:
+            if not weaker.displayed or weaker.track_id in suppressed_ids:
+                continue
+            if dominant.classification != weaker.classification:
+                continue
+            if dominant.matched_seg_id != weaker.matched_seg_id:
+                continue
+            overlap_stats = compute_track_pair_overlap_stats(dominant, weaker)
+            if overlap_stats["shared_frames"] < 2.0:
+                continue
+            if overlap_stats["mean_center_dist"] > GENERATED_BORN_SUPPRESS_DOMINATED_CENTER_DIST:
+                continue
+            if overlap_stats["mean_mask_coverage"] < GENERATED_BORN_SUPPRESS_DOMINATED_COVERAGE:
+                continue
+            suppressed_ids.add(int(weaker.track_id))
+    final_tracks: list[GeneratedBornTrack] = []
+    for track in tracks:
+        final_tracks.append(
+            GeneratedBornTrack(
+                track_id=track.track_id,
+                masks_by_frame=track.masks_by_frame,
+                bboxes_by_frame=track.bboxes_by_frame,
+                areas_by_frame=track.areas_by_frame,
+                classification=track.classification,
+                matched_seg_id=track.matched_seg_id,
+                matched_object_label=track.matched_object_label,
+                appearance_similarity=track.appearance_similarity,
+                color=track.color,
+                confidence=track.confidence,
+                displayed=bool(track.displayed and int(track.track_id) not in suppressed_ids),
+                prototype_hist=track.prototype_hist,
+            )
+        )
+    return final_tracks
+
+
+def should_display_generated_born_track(classification: str, confidence: float) -> bool:
+    if classification == "new_object":
+        return float(confidence) >= GENERATED_BORN_MIN_CONFIDENCE_NEW
+    return float(confidence) >= GENERATED_BORN_MIN_CONFIDENCE_MATCHED
 
 
 def color_for_seg_id(seg_id: int) -> tuple[int, int, int]:
@@ -531,6 +872,79 @@ def run_generated_multi_object_track_with_sam2(
     )
 
 
+def refine_generated_born_track_with_sam2(
+    *,
+    frames: list[np.ndarray],
+    track: GeneratedBornTrack,
+) -> GeneratedBornTrack:
+    if not track.displayed or not track.masks_by_frame:
+        return track
+    frame_ids = sorted(int(v) for v in track.masks_by_frame)
+    seed_frame_ids = sorted(
+        frame_ids,
+        key=lambda frame_idx: int(track.areas_by_frame.get(int(frame_idx), 0)),
+        reverse=True,
+    )[:GENERATED_BORN_REFINE_MAX_SEEDS]
+    predictor = load_sam2_video_predictor()
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        inference_state = predictor.init_state_v2(frames=frames)
+        predictor.reset_state(inference_state)
+        for frame_idx in seed_frame_ids:
+            predictor.add_new_mask(
+                inference_state=inference_state,
+                frame_idx=int(frame_idx),
+                obj_id=1,
+                mask=np.asarray(track.masks_by_frame[int(frame_idx)], dtype=np.uint8),
+            )
+        refined_masks_by_frame: dict[int, np.ndarray] = {}
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+            for i, out_obj_id in enumerate(out_obj_ids):
+                if int(out_obj_id) != 1:
+                    continue
+                if int(out_frame_idx) < frame_ids[0] or int(out_frame_idx) > frame_ids[-1]:
+                    continue
+                refined_masks_by_frame[int(out_frame_idx)] = (
+                    (out_mask_logits[i] > 0.0).detach().float().cpu().numpy().squeeze(0) > 0
+                )
+    if not refined_masks_by_frame:
+        return track
+    seed_coverages: list[float] = []
+    for frame_idx in seed_frame_ids:
+        refined_mask = refined_masks_by_frame.get(int(frame_idx))
+        original_mask = np.asarray(track.masks_by_frame[int(frame_idx)], dtype=bool)
+        if refined_mask is None:
+            continue
+        original_area = int(np.count_nonzero(original_mask))
+        if original_area <= 0:
+            continue
+        overlap = np.count_nonzero(np.asarray(refined_mask, dtype=bool) & original_mask)
+        seed_coverages.append(float(overlap) / float(original_area))
+    if not seed_coverages or float(np.mean(seed_coverages)) < GENERATED_BORN_REFINE_MIN_SEED_COVERAGE:
+        return track
+    merged_masks_by_frame: dict[int, np.ndarray] = {}
+    merged_bboxes_by_frame: dict[int, tuple[int, int, int, int] | None] = {}
+    merged_areas_by_frame: dict[int, int] = {}
+    for frame_idx in frame_ids:
+        mask = np.asarray(refined_masks_by_frame.get(int(frame_idx), track.masks_by_frame[int(frame_idx)]), dtype=bool)
+        merged_masks_by_frame[int(frame_idx)] = mask
+        merged_bboxes_by_frame[int(frame_idx)] = compute_bbox_from_mask(mask)
+        merged_areas_by_frame[int(frame_idx)] = int(np.count_nonzero(mask))
+    return GeneratedBornTrack(
+        track_id=track.track_id,
+        masks_by_frame=merged_masks_by_frame,
+        bboxes_by_frame=merged_bboxes_by_frame,
+        areas_by_frame=merged_areas_by_frame,
+        classification=track.classification,
+        matched_seg_id=track.matched_seg_id,
+        matched_object_label=track.matched_object_label,
+        appearance_similarity=track.appearance_similarity,
+        color=track.color,
+        confidence=track.confidence,
+        displayed=track.displayed,
+        prototype_hist=track.prototype_hist,
+    )
+
+
 def detect_generated_born_candidates(
     *,
     frame: np.ndarray,
@@ -661,6 +1075,12 @@ def track_generated_born_objects(
             output_frames=output_frames,
             context_reference_hist_by_seg_id=context_reference_hist_by_seg_id,
         )
+        confidence = compute_generated_born_confidence(
+            areas_by_frame=track["areas_by_frame"],
+            appearance_similarity=appearance_similarity,
+            classification=classification,
+        )
+        displayed = should_display_generated_born_track(classification, confidence)
         color = (255, 0, 255) if classification == "new_object" else (255, 255, 0)
         results.append(
             GeneratedBornTrack(
@@ -673,9 +1093,52 @@ def track_generated_born_objects(
                 matched_object_label=matched_label,
                 appearance_similarity=float(appearance_similarity),
                 color=color,
+                confidence=float(confidence),
+                displayed=bool(displayed),
+                prototype_hist=estimate_track_prototype_histogram(
+                    frames=output_frames,
+                    masks_by_frame=dict(track["masks_by_frame"]),
+                    areas_by_frame=dict(track["areas_by_frame"]),
+                ),
             )
         )
-    return results
+    refined_results: list[GeneratedBornTrack] = []
+    for track in results:
+        if track.displayed:
+            refined_results.append(
+                refine_generated_born_track_with_sam2(
+                    frames=output_frames,
+                    track=track,
+                )
+            )
+        else:
+            refined_results.append(track)
+    merged_results = merge_generated_born_tracks(refined_results)
+    final_results: list[GeneratedBornTrack] = []
+    frame_shape = output_frames[0].shape[:2]
+    for track in merged_results:
+        displayed = bool(track.displayed)
+        if displayed and is_floor_like_generated_born_track(track, frame_shape):
+            displayed = False
+        if displayed and is_static_small_generated_born_track(track, frame_shape):
+            displayed = False
+        final_results.append(
+            GeneratedBornTrack(
+                track_id=track.track_id,
+                masks_by_frame=track.masks_by_frame,
+                bboxes_by_frame=track.bboxes_by_frame,
+                areas_by_frame=track.areas_by_frame,
+                classification=track.classification,
+                matched_seg_id=track.matched_seg_id,
+                matched_object_label=track.matched_object_label,
+                appearance_similarity=track.appearance_similarity,
+                color=track.color,
+                confidence=track.confidence,
+                displayed=displayed,
+                prototype_hist=track.prototype_hist,
+            )
+        )
+    return suppress_dominated_generated_born_tracks(final_results)
 
 
 def build_case_analysis_text(
@@ -706,8 +1169,12 @@ def build_case_analysis_text(
         new_count = sum(1 for track in born_tracks if track.classification == "new_object")
         duplicate_count = sum(1 for track in born_tracks if track.classification == "duplicate_of_known_object")
         drift_count = sum(1 for track in born_tracks if track.classification == "scale_drift_candidate")
+        displayed_count = sum(1 for track in born_tracks if track.displayed)
         lines.append(
             f"Generated-only discovery found {len(born_tracks)} extra track(s): new={new_count}, duplicate={duplicate_count}, scale_drift_candidate={drift_count}."
+        )
+        lines.append(
+            f"Only {displayed_count} high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only."
         )
     root_cause = str(summary.get("root_cause") or "")
     max_area = float(summary.get("max_future_mask_area_ratio") or 0.0)
@@ -1160,6 +1627,8 @@ def draw_generated_born_tracks(
 ) -> np.ndarray:
     vis = np.asarray(frame, dtype=np.uint8).copy()
     for track in born_tracks:
+        if not track.displayed:
+            continue
         mask = track.masks_by_frame.get(int(frame_idx))
         if mask is None:
             continue
@@ -1167,6 +1636,33 @@ def draw_generated_born_tracks(
         vis = overlay_mask(vis, np.asarray(mask, dtype=bool), color=track.color, alpha=0.18)
         vis = draw_rect(vis, bbox, color=track.color, thickness=2)
     return vis
+
+
+def write_single_track_video(
+    *,
+    frames: list[np.ndarray],
+    masks_by_frame: dict[int, np.ndarray],
+    case_dir: Path,
+    output_name: str,
+    fps: int,
+    color: tuple[int, int, int],
+    anchor_bbox: tuple[int, int, int, int] | None = None,
+) -> Path:
+    annotated: list[np.ndarray] = []
+    for frame_idx, frame in enumerate(frames):
+        vis = np.asarray(frame, dtype=np.uint8).copy()
+        mask = masks_by_frame.get(int(frame_idx))
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            bbox = compute_bbox_from_mask(mask)
+            vis = overlay_mask(vis, mask, color=color, alpha=0.24)
+            vis = draw_rect(vis, bbox, color=color, thickness=2)
+        if anchor_bbox is not None:
+            vis = draw_anchor_window(vis, anchor_bbox)
+        annotated.append(vis)
+    out_path = case_dir / output_name
+    save_video_frames(out_path, annotated, fps=fps)
+    return out_path
 
 
 def build_generic_proxy_curves(
@@ -1474,6 +1970,9 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
     generated_track_result: GeneratedTrackResult | None = None
     overlay_objects: list[OverlayObjectSpec] = []
     generated_born_tracks: list[GeneratedBornTrack] = []
+    context_single_track_videos: list[dict[str, Any]] = []
+    generated_single_track_videos: list[dict[str, Any]] = []
+    generated_born_single_track_videos: list[dict[str, Any]] = []
 
     if mode == "movi_d_gt":
         gt = load_movid_gt(sidecar)
@@ -1708,6 +2207,72 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
             anchor_bbox=context_anchor_bbox,
             overlay_objects=overlay_objects,
         )
+        for obj in overlay_objects:
+            masks_by_frame: dict[int, np.ndarray] = {}
+            frame_count = min(len(context_video_frames), len(context_overlay_frames))
+            for frame_idx in range(frame_count):
+                mask = np.asarray(context_overlay_frames[frame_idx]) == int(obj.seg_id)
+                if np.count_nonzero(mask) > 0:
+                    masks_by_frame[frame_idx] = mask
+            if not masks_by_frame:
+                continue
+            out_path = write_single_track_video(
+                frames=context_video_frames[:frame_count],
+                masks_by_frame=masks_by_frame,
+                case_dir=case_dir,
+                output_name=f"context_track_seg_{int(obj.seg_id)}.mp4",
+                fps=fps,
+                color=obj.color,
+                anchor_bbox=context_anchor_bbox if int(obj.seg_id) == int(target.seg_id) else None,
+            )
+            context_single_track_videos.append(
+                {
+                    "seg_id": int(obj.seg_id),
+                    "object_label": obj.object_label,
+                    "path": str(out_path),
+                }
+            )
+    if generated_track_result is not None:
+        for obj in overlay_objects:
+            masks_by_frame = generated_track_result.masks_by_seg_id.get(int(obj.seg_id), {})
+            if not masks_by_frame:
+                continue
+            out_path = write_single_track_video(
+                frames=output_frames,
+                masks_by_frame=masks_by_frame,
+                case_dir=case_dir,
+                output_name=f"generated_track_seg_{int(obj.seg_id)}.mp4",
+                fps=fps,
+                color=obj.color,
+                anchor_bbox=generated_anchor_bbox if int(obj.seg_id) == int(target.seg_id) else None,
+            )
+            generated_single_track_videos.append(
+                {
+                    "seg_id": int(obj.seg_id),
+                    "object_label": obj.object_label,
+                    "path": str(out_path),
+                }
+            )
+    for track in generated_born_tracks:
+        if not track.displayed:
+            continue
+        out_path = write_single_track_video(
+            frames=output_frames,
+            masks_by_frame=track.masks_by_frame,
+            case_dir=case_dir,
+            output_name=f"generated_born_track_{int(track.track_id)}.mp4",
+            fps=fps,
+            color=track.color,
+        )
+        generated_born_single_track_videos.append(
+            {
+                "track_id": int(track.track_id),
+                "classification": track.classification,
+                "matched_seg_id": track.matched_seg_id,
+                "matched_object_label": track.matched_object_label,
+                "path": str(out_path),
+            }
+        )
     analysis_lines = build_case_analysis_text(
         sidecar=sidecar,
         summary=summary,
@@ -1744,6 +2309,8 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
                 "matched_seg_id": track.matched_seg_id,
                 "matched_object_label": track.matched_object_label,
                 "appearance_similarity": round(float(track.appearance_similarity), 6),
+                "confidence": round(float(track.confidence), 6),
+                "displayed": bool(track.displayed),
                 "num_frames": len(track.masks_by_frame),
                 "start_frame": min(track.masks_by_frame) if track.masks_by_frame else None,
                 "end_frame": max(track.masks_by_frame) if track.masks_by_frame else None,
@@ -1773,6 +2340,9 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
             "context_diagnostic_video": str(context_diagnostic_video) if context_diagnostic_video else None,
             "generated_diagnostic_video": str(generated_diagnostic_video),
             "gt_diagnostic_video": str(gt_diagnostic_video) if gt_diagnostic_video else None,
+            "context_single_track_videos": context_single_track_videos,
+            "generated_single_track_videos": generated_single_track_videos,
+            "generated_born_single_track_videos": generated_born_single_track_videos,
         },
     }
     write_csv(case_dir / "curves.csv", curves)

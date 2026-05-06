@@ -169,501 +169,8 @@
     <section class="case-card">
       <div class="head">
         <div>
-          <h2>kubric_tfds_movi-d</h2>
-          <div class="sample">movi_d_test_0738__video_973</div>
-        </div>
-        <div class="badge">tracking_or_visibility_failure</div>
-      </div>
-      <div class="meta-grid">
-        <div><span>Mode</span><strong>movi_d_gt</strong></div>
-        <div><span>Target</span><strong>seg_11</strong></div>
-        <div><span>Selection</span><strong>highest_motion_gt_instance_in_context</strong></div>
-        <div><span>Target Visible</span><strong>0.387755</strong></div>
-        <div><span>Max Area Ratio</span><strong>46.168317</strong></div>
-        <div><span>Max Invariant Ratio</span><strong>206.364939</strong></div>
-        <div><span>Mean BG Scale</span><strong>0.999917</strong></div>
-        <div><span>GT Frames</span><strong>24</strong></div>
-      </div>
-      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_11` was selected with `highest_motion_gt_instance_in_context` under mode `movi_d_gt`.</li><li>Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.</li><li>Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>Generated-only discovery found 37 extra track(s): new=21, duplicate=12, scale_drift_candidate=4.</li><li>The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.</li></ul></div>
-      <div class="panel-grid">
-        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_curves.png' alt='GT Reference Curves'></div>
-      </div>
-      <details>
-        <summary>Diagnostics JSON</summary>
-        <pre>{
-  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0738__video_973.json&quot;,
-  &quot;dataset&quot;: &quot;kubric_tfds_movi-d&quot;,
-  &quot;sample_id&quot;: &quot;movi_d_test_0738__video_973&quot;,
-  &quot;mode&quot;: &quot;movi_d_gt&quot;,
-  &quot;target&quot;: {
-    &quot;object_label&quot;: &quot;seg_11&quot;,
-    &quot;seg_id&quot;: 11,
-    &quot;selection_mode&quot;: &quot;highest_motion_gt_instance_in_context&quot;,
-    &quot;confidence&quot;: 1.0
-  },
-  &quot;generated_tracking&quot;: {
-    &quot;source&quot;: &quot;sam2_context_multi_frame_mask_init&quot;,
-    &quot;num_tracked_frames&quot;: 49,
-    &quot;tracked_seg_ids&quot;: [
-      4,
-      8,
-      11
-    ]
-  },
-  &quot;generated_born_tracks&quot;: [
-    {
-      &quot;track_id&quot;: 1,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.54304,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 8,
-      &quot;end_frame&quot;: 9,
-      &quot;max_area&quot;: 862
-    },
-    {
-      &quot;track_id&quot;: 3,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.577763,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 8,
-      &quot;end_frame&quot;: 9,
-      &quot;max_area&quot;: 372
-    },
-    {
-      &quot;track_id&quot;: 8,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 4,
-      &quot;matched_object_label&quot;: &quot;seg_4&quot;,
-      &quot;appearance_similarity&quot;: 0.637849,
-      &quot;num_frames&quot;: 5,
-      &quot;start_frame&quot;: 9,
-      &quot;end_frame&quot;: 13,
-      &quot;max_area&quot;: 344
-    },
-    {
-      &quot;track_id&quot;: 17,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 4,
-      &quot;matched_object_label&quot;: &quot;seg_4&quot;,
-      &quot;appearance_similarity&quot;: 0.789737,
-      &quot;num_frames&quot;: 4,
-      &quot;start_frame&quot;: 10,
-      &quot;end_frame&quot;: 13,
-      &quot;max_area&quot;: 921
-    },
-    {
-      &quot;track_id&quot;: 10,
-      &quot;classification&quot;: &quot;scale_drift_candidate&quot;,
-      &quot;matched_seg_id&quot;: 8,
-      &quot;matched_object_label&quot;: &quot;seg_8&quot;,
-      &quot;appearance_similarity&quot;: 0.734525,
-      &quot;num_frames&quot;: 6,
-      &quot;start_frame&quot;: 9,
-      &quot;end_frame&quot;: 14,
-      &quot;max_area&quot;: 1269
-    },
-    {
-      &quot;track_id&quot;: 22,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.382668,
-      &quot;num_frames&quot;: 3,
-      &quot;start_frame&quot;: 12,
-      &quot;end_frame&quot;: 14,
-      &quot;max_area&quot;: 256
-    },
-    {
-      &quot;track_id&quot;: 7,
-      &quot;classification&quot;: &quot;scale_drift_candidate&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.673694,
-      &quot;num_frames&quot;: 9,
-      &quot;start_frame&quot;: 9,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 931
-    },
-    {
-      &quot;track_id&quot;: 18,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.690458,
-      &quot;num_frames&quot;: 8,
-      &quot;start_frame&quot;: 10,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 1398
-    },
-    {
-      &quot;track_id&quot;: 19,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 8,
-      &quot;matched_object_label&quot;: &quot;seg_8&quot;,
-      &quot;appearance_similarity&quot;: 0.708248,
-      &quot;num_frames&quot;: 8,
-      &quot;start_frame&quot;: 10,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 6863
-    },
-    {
-      &quot;track_id&quot;: 21,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 8,
-      &quot;matched_object_label&quot;: &quot;seg_8&quot;,
-      &quot;appearance_similarity&quot;: 0.662009,
-      &quot;num_frames&quot;: 8,
-      &quot;start_frame&quot;: 10,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 351
-    },
-    {
-      &quot;track_id&quot;: 26,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 4,
-      &quot;matched_object_label&quot;: &quot;seg_4&quot;,
-      &quot;appearance_similarity&quot;: 0.707557,
-      &quot;num_frames&quot;: 4,
-      &quot;start_frame&quot;: 14,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 3743
-    },
-    {
-      &quot;track_id&quot;: 27,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.53092,
-      &quot;num_frames&quot;: 4,
-      &quot;start_frame&quot;: 14,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 903
-    },
-    {
-      &quot;track_id&quot;: 32,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.563114,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 16,
-      &quot;end_frame&quot;: 17,
-      &quot;max_area&quot;: 343
-    },
-    {
-      &quot;track_id&quot;: 45,
-      &quot;classification&quot;: &quot;scale_drift_candidate&quot;,
-      &quot;matched_seg_id&quot;: 4,
-      &quot;matched_object_label&quot;: &quot;seg_4&quot;,
-      &quot;appearance_similarity&quot;: 0.753852,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 20,
-      &quot;end_frame&quot;: 21,
-      &quot;max_area&quot;: 1018
-    },
-    {
-      &quot;track_id&quot;: 52,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.221531,
-      &quot;num_frames&quot;: 10,
-      &quot;start_frame&quot;: 21,
-      &quot;end_frame&quot;: 30,
-      &quot;max_area&quot;: 1028
-    },
-    {
-      &quot;track_id&quot;: 55,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.161399,
-      &quot;num_frames&quot;: 10,
-      &quot;start_frame&quot;: 21,
-      &quot;end_frame&quot;: 30,
-      &quot;max_area&quot;: 1814
-    },
-    {
-      &quot;track_id&quot;: 56,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 4,
-      &quot;matched_object_label&quot;: &quot;seg_4&quot;,
-      &quot;appearance_similarity&quot;: 0.6377,
-      &quot;num_frames&quot;: 9,
-      &quot;start_frame&quot;: 22,
-      &quot;end_frame&quot;: 30,
-      &quot;max_area&quot;: 726
-    },
-    {
-      &quot;track_id&quot;: 59,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.604916,
-      &quot;num_frames&quot;: 6,
-      &quot;start_frame&quot;: 25,
-      &quot;end_frame&quot;: 30,
-      &quot;max_area&quot;: 566
-    },
-    {
-      &quot;track_id&quot;: 61,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.160848,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 29,
-      &quot;end_frame&quot;: 30,
-      &quot;max_area&quot;: 627
-    },
-    {
-      &quot;track_id&quot;: 57,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.211769,
-      &quot;num_frames&quot;: 11,
-      &quot;start_frame&quot;: 22,
-      &quot;end_frame&quot;: 32,
-      &quot;max_area&quot;: 775
-    },
-    {
-      &quot;track_id&quot;: 58,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.18485,
-      &quot;num_frames&quot;: 11,
-      &quot;start_frame&quot;: 22,
-      &quot;end_frame&quot;: 32,
-      &quot;max_area&quot;: 1124
-    },
-    {
-      &quot;track_id&quot;: 63,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.25753,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 31,
-      &quot;end_frame&quot;: 32,
-      &quot;max_area&quot;: 895
-    },
-    {
-      &quot;track_id&quot;: 64,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.161137,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 31,
-      &quot;end_frame&quot;: 32,
-      &quot;max_area&quot;: 1210
-    },
-    {
-      &quot;track_id&quot;: 69,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.188168,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 33,
-      &quot;end_frame&quot;: 34,
-      &quot;max_area&quot;: 912
-    },
-    {
-      &quot;track_id&quot;: 70,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.161438,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 33,
-      &quot;end_frame&quot;: 34,
-      &quot;max_area&quot;: 1130
-    },
-    {
-      &quot;track_id&quot;: 66,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.259387,
-      &quot;num_frames&quot;: 3,
-      &quot;start_frame&quot;: 33,
-      &quot;end_frame&quot;: 35,
-      &quot;max_area&quot;: 727
-    },
-    {
-      &quot;track_id&quot;: 2,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.419231,
-      &quot;num_frames&quot;: 41,
-      &quot;start_frame&quot;: 8,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 7461
-    },
-    {
-      &quot;track_id&quot;: 6,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.481778,
-      &quot;num_frames&quot;: 41,
-      &quot;start_frame&quot;: 8,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 7999
-    },
-    {
-      &quot;track_id&quot;: 37,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.485727,
-      &quot;num_frames&quot;: 31,
-      &quot;start_frame&quot;: 18,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 13372
-    },
-    {
-      &quot;track_id&quot;: 46,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.614087,
-      &quot;num_frames&quot;: 29,
-      &quot;start_frame&quot;: 20,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 641
-    },
-    {
-      &quot;track_id&quot;: 47,
-      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.645711,
-      &quot;num_frames&quot;: 29,
-      &quot;start_frame&quot;: 20,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 3416
-    },
-    {
-      &quot;track_id&quot;: 49,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.368741,
-      &quot;num_frames&quot;: 29,
-      &quot;start_frame&quot;: 20,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 500
-    },
-    {
-      &quot;track_id&quot;: 74,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.217149,
-      &quot;num_frames&quot;: 14,
-      &quot;start_frame&quot;: 35,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 583
-    },
-    {
-      &quot;track_id&quot;: 75,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.180993,
-      &quot;num_frames&quot;: 14,
-      &quot;start_frame&quot;: 35,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 1241
-    },
-    {
-      &quot;track_id&quot;: 78,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.291122,
-      &quot;num_frames&quot;: 13,
-      &quot;start_frame&quot;: 36,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 834
-    },
-    {
-      &quot;track_id&quot;: 79,
-      &quot;classification&quot;: &quot;new_object&quot;,
-      &quot;matched_seg_id&quot;: null,
-      &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.162362,
-      &quot;num_frames&quot;: 13,
-      &quot;start_frame&quot;: 36,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 1477
-    },
-    {
-      &quot;track_id&quot;: 80,
-      &quot;classification&quot;: &quot;scale_drift_candidate&quot;,
-      &quot;matched_seg_id&quot;: 11,
-      &quot;matched_object_label&quot;: &quot;seg_11&quot;,
-      &quot;appearance_similarity&quot;: 0.579058,
-      &quot;num_frames&quot;: 8,
-      &quot;start_frame&quot;: 41,
-      &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 817
-    }
-  ],
-  &quot;summary&quot;: {
-    &quot;max_future_mask_area_ratio&quot;: 46.168317,
-    &quot;max_future_area_depth2_ratio&quot;: 206.364939,
-    &quot;target_visible_ratio&quot;: 0.387755,
-    &quot;mean_bg_scale&quot;: 0.999917,
-    &quot;root_cause&quot;: &quot;tracking_or_visibility_failure&quot;
-  },
-  &quot;analysis&quot;: [
-    &quot;Target `seg_11` was selected with `highest_motion_gt_instance_in_context` under mode `movi_d_gt`.&quot;,
-    &quot;Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.&quot;,
-    &quot;Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.&quot;,
-    &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
-    &quot;Generated-only discovery found 37 extra track(s): new=21, duplicate=12, scale_drift_candidate=4.&quot;,
-    &quot;The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.&quot;
-  ],
-  &quot;num_frames&quot;: 49,
-  &quot;context_frames&quot;: 8,
-  &quot;gt_reference&quot;: {
-    &quot;available&quot;: true,
-    &quot;num_frames_compared&quot;: 24,
-    &quot;target_visible_ratio&quot;: 1.0,
-    &quot;mean_bg_scale&quot;: 0.9998452274087299
-  },
-  &quot;artifacts&quot;: {
-    &quot;context_video&quot;: &quot;/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0738__video_973/context_video.mp4&quot;,
-    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0738__video_973.mp4&quot;,
-    &quot;full_gt_video&quot;: &quot;/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0738__video_973/full_video.mp4&quot;,
-    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/curves.csv&quot;,
-    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/curves.png&quot;,
-    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_curves.csv&quot;,
-    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_curves.png&quot;,
-    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/comparison_curves.png&quot;,
-    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/context_diagnostic.mp4&quot;,
-    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/generated_diagnostic.mp4&quot;,
-    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_diagnostic.mp4&quot;
-  }
-}</pre>
-      </details>
-    </section>
-    
-    <section class="case-card">
-      <div class="head">
-        <div>
           <h2>version_1_genesis_rigid_data_all_cases</h2>
-          <div class="sample">genesis_heldout_0113__10046__case007_entry_fast_center</div>
+          <div class="sample">genesis_heldout_0001__10005__case000_static_center_v2</div>
         </div>
         <div class="badge">tracking_or_visibility_failure</div>
       </div>
@@ -671,22 +178,23 @@
         <div><span>Mode</span><strong>genesis_gt</strong></div>
         <div><span>Target</span><strong>seg_2_initiator</strong></div>
         <div><span>Selection</span><strong>highest_motion_gt_object_in_context</strong></div>
-        <div><span>Target Visible</span><strong>0.489796</strong></div>
-        <div><span>Max Area Ratio</span><strong>0.415045</strong></div>
-        <div><span>Max Invariant Ratio</span><strong>0.256773</strong></div>
-        <div><span>Mean BG Scale</span><strong>0.999869</strong></div>
-        <div><span>GT Frames</span><strong>13</strong></div>
+        <div><span>Target Visible</span><strong>0.22449</strong></div>
+        <div><span>Max Area Ratio</span><strong>1.429963</strong></div>
+        <div><span>Max Invariant Ratio</span><strong>0.79064</strong></div>
+        <div><span>Mean BG Scale</span><strong>0.99999</strong></div>
+        <div><span>GT Frames</span><strong>16</strong></div>
       </div>
-      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_2_initiator` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.</li><li>Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.</li><li>Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>Generated-only discovery found 4 extra track(s): new=3, duplicate=0, scale_drift_candidate=1.</li><li>The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.</li></ul></div>
+      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_2_initiator` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.</li><li>Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.</li><li>Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>Generated-only discovery found 7 extra track(s): new=7, duplicate=0, scale_drift_candidate=0.</li><li>Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.</li><li>The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.</li></ul></div>
       <div class="panel-grid">
-        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/gt_curves.png' alt='GT Reference Curves'></div>
+        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/gt_curves.png' alt='GT Reference Curves'></div>
       </div>
+      <div class='analysis'><div class='analysis-title'>Context Single Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_2_initiator</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_track_seg_2.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Known Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_2_initiator</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_track_seg_2.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Born Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>new_object | track_8</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_8.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>new_object | track_16</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_16.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>new_object | track_17</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_17.mp4' type='video/mp4'></video></div></div>
       <details>
         <summary>Diagnostics JSON</summary>
         <pre>{
-  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center.json&quot;,
+  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2.json&quot;,
   &quot;dataset&quot;: &quot;version_1_genesis_rigid_data_all_cases&quot;,
-  &quot;sample_id&quot;: &quot;genesis_heldout_0113__10046__case007_entry_fast_center&quot;,
+  &quot;sample_id&quot;: &quot;genesis_heldout_0001__10005__case000_static_center_v2&quot;,
   &quot;mode&quot;: &quot;genesis_gt&quot;,
   &quot;target&quot;: {
     &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
@@ -708,51 +216,98 @@
       &quot;classification&quot;: &quot;new_object&quot;,
       &quot;matched_seg_id&quot;: null,
       &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.264013,
-      &quot;num_frames&quot;: 5,
+      &quot;appearance_similarity&quot;: 0.350721,
+      &quot;confidence&quot;: 0.680716,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 41,
       &quot;start_frame&quot;: 8,
-      &quot;end_frame&quot;: 12,
-      &quot;max_area&quot;: 1146
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 1252
     },
     {
-      &quot;track_id&quot;: 4,
+      &quot;track_id&quot;: 3,
       &quot;classification&quot;: &quot;new_object&quot;,
       &quot;matched_seg_id&quot;: null,
       &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.266444,
-      &quot;num_frames&quot;: 2,
-      &quot;start_frame&quot;: 27,
-      &quot;end_frame&quot;: 28,
-      &quot;max_area&quot;: 382
+      &quot;appearance_similarity&quot;: 0.488071,
+      &quot;confidence&quot;: 0.655221,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 40,
+      &quot;start_frame&quot;: 9,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 587
+    },
+    {
+      &quot;track_id&quot;: 6,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.351646,
+      &quot;confidence&quot;: 0.594294,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 39,
+      &quot;start_frame&quot;: 10,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 388
     },
     {
       &quot;track_id&quot;: 7,
       &quot;classification&quot;: &quot;new_object&quot;,
       &quot;matched_seg_id&quot;: null,
       &quot;matched_object_label&quot;: null,
-      &quot;appearance_similarity&quot;: 0.330952,
-      &quot;num_frames&quot;: 3,
-      &quot;start_frame&quot;: 43,
-      &quot;end_frame&quot;: 45,
-      &quot;max_area&quot;: 469
+      &quot;appearance_similarity&quot;: 0.394505,
+      &quot;confidence&quot;: 0.599051,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 39,
+      &quot;start_frame&quot;: 10,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 307
     },
     {
-      &quot;track_id&quot;: 2,
-      &quot;classification&quot;: &quot;scale_drift_candidate&quot;,
-      &quot;matched_seg_id&quot;: 2,
-      &quot;matched_object_label&quot;: &quot;seg_2_initiator&quot;,
-      &quot;appearance_similarity&quot;: 0.658639,
-      &quot;num_frames&quot;: 36,
+      &quot;track_id&quot;: 8,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.538388,
+      &quot;confidence&quot;: 0.861516,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 25,
       &quot;start_frame&quot;: 13,
+      &quot;end_frame&quot;: 37,
+      &quot;max_area&quot;: 25745
+    },
+    {
+      &quot;track_id&quot;: 16,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.501116,
+      &quot;confidence&quot;: 0.681585,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 5,
+      &quot;start_frame&quot;: 37,
+      &quot;end_frame&quot;: 41,
+      &quot;max_area&quot;: 8739
+    },
+    {
+      &quot;track_id&quot;: 17,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.486458,
+      &quot;confidence&quot;: 0.845124,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 8,
+      &quot;start_frame&quot;: 41,
       &quot;end_frame&quot;: 48,
-      &quot;max_area&quot;: 31299
+      &quot;max_area&quot;: 8381
     }
   ],
   &quot;summary&quot;: {
-    &quot;max_future_mask_area_ratio&quot;: 0.415045,
-    &quot;max_future_area_depth2_ratio&quot;: 0.256773,
-    &quot;target_visible_ratio&quot;: 0.489796,
-    &quot;mean_bg_scale&quot;: 0.999869,
+    &quot;max_future_mask_area_ratio&quot;: 1.429963,
+    &quot;max_future_area_depth2_ratio&quot;: 0.79064,
+    &quot;target_visible_ratio&quot;: 0.22449,
+    &quot;mean_bg_scale&quot;: 0.99999,
     &quot;root_cause&quot;: &quot;tracking_or_visibility_failure&quot;
   },
   &quot;analysis&quot;: [
@@ -760,7 +315,220 @@
     &quot;Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.&quot;,
     &quot;Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.&quot;,
     &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
-    &quot;Generated-only discovery found 4 extra track(s): new=3, duplicate=0, scale_drift_candidate=1.&quot;,
+    &quot;Generated-only discovery found 7 extra track(s): new=7, duplicate=0, scale_drift_candidate=0.&quot;,
+    &quot;Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.&quot;,
+    &quot;The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.&quot;
+  ],
+  &quot;num_frames&quot;: 49,
+  &quot;context_frames&quot;: 8,
+  &quot;gt_reference&quot;: {
+    &quot;available&quot;: true,
+    &quot;num_frames_compared&quot;: 16,
+    &quot;target_visible_ratio&quot;: 0.5625,
+    &quot;mean_bg_scale&quot;: 1.0000150166239363
+  },
+  &quot;artifacts&quot;: {
+    &quot;context_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0001__10005__case000_static_center_v2/context_video.mp4&quot;,
+    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2.mp4&quot;,
+    &quot;full_gt_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0001__10005__case000_static_center_v2/full_video.mp4&quot;,
+    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/curves.csv&quot;,
+    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/curves.png&quot;,
+    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/gt_curves.csv&quot;,
+    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/gt_curves.png&quot;,
+    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/comparison_curves.png&quot;,
+    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_diagnostic.mp4&quot;,
+    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_diagnostic.mp4&quot;,
+    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/gt_diagnostic.mp4&quot;,
+    &quot;context_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 2,
+        &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_track_seg_2.mp4&quot;
+      },
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/context_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 2,
+        &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_track_seg_2.mp4&quot;
+      },
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_born_single_track_videos&quot;: [
+      {
+        &quot;track_id&quot;: 8,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_8.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 16,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_16.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 17,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_17.mp4&quot;
+      }
+    ]
+  }
+}</pre>
+      </details>
+    </section>
+    
+    <section class="case-card">
+      <div class="head">
+        <div>
+          <h2>version_1_genesis_rigid_data_all_cases</h2>
+          <div class="sample">genesis_heldout_0044__10096__case005_entry_left</div>
+        </div>
+        <div class="badge">tracking_or_visibility_failure</div>
+      </div>
+      <div class="meta-grid">
+        <div><span>Mode</span><strong>genesis_gt</strong></div>
+        <div><span>Target</span><strong>seg_2_initiator</strong></div>
+        <div><span>Selection</span><strong>highest_motion_gt_object_in_context</strong></div>
+        <div><span>Target Visible</span><strong>0.387755</strong></div>
+        <div><span>Max Area Ratio</span><strong>0.436264</strong></div>
+        <div><span>Max Invariant Ratio</span><strong>0.377119</strong></div>
+        <div><span>Mean BG Scale</span><strong>0.999976</strong></div>
+        <div><span>GT Frames</span><strong>13</strong></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_2_initiator` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.</li><li>Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.</li><li>Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>Generated-only discovery found 6 extra track(s): new=4, duplicate=2, scale_drift_candidate=0.</li><li>Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.</li><li>The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.</li></ul></div>
+      <div class="panel-grid">
+        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/gt_curves.png' alt='GT Reference Curves'></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Context Single Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_2_initiator</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_track_seg_2.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Known Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_2_initiator</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_track_seg_2.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Born Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>duplicate_of_known_object | track_1</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_1.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>duplicate_of_known_object | track_5</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_5.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>new_object | track_6</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_6.mp4' type='video/mp4'></video></div></div>
+      <details>
+        <summary>Diagnostics JSON</summary>
+        <pre>{
+  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left.json&quot;,
+  &quot;dataset&quot;: &quot;version_1_genesis_rigid_data_all_cases&quot;,
+  &quot;sample_id&quot;: &quot;genesis_heldout_0044__10096__case005_entry_left&quot;,
+  &quot;mode&quot;: &quot;genesis_gt&quot;,
+  &quot;target&quot;: {
+    &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
+    &quot;seg_id&quot;: 2,
+    &quot;selection_mode&quot;: &quot;highest_motion_gt_object_in_context&quot;,
+    &quot;confidence&quot;: 1.0
+  },
+  &quot;generated_tracking&quot;: {
+    &quot;source&quot;: &quot;sam2_context_multi_frame_mask_init&quot;,
+    &quot;num_tracked_frames&quot;: 49,
+    &quot;tracked_seg_ids&quot;: [
+      1,
+      2
+    ]
+  },
+  &quot;generated_born_tracks&quot;: [
+    {
+      &quot;track_id&quot;: 1,
+      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+      &quot;matched_seg_id&quot;: 1,
+      &quot;matched_object_label&quot;: &quot;seg_1_target&quot;,
+      &quot;appearance_similarity&quot;: 0.663556,
+      &quot;confidence&quot;: 0.602834,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 5,
+      &quot;start_frame&quot;: 9,
+      &quot;end_frame&quot;: 13,
+      &quot;max_area&quot;: 1385
+    },
+    {
+      &quot;track_id&quot;: 4,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.371069,
+      &quot;confidence&quot;: 0.586321,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 4,
+      &quot;start_frame&quot;: 10,
+      &quot;end_frame&quot;: 13,
+      &quot;max_area&quot;: 5492
+    },
+    {
+      &quot;track_id&quot;: 5,
+      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+      &quot;matched_seg_id&quot;: 2,
+      &quot;matched_object_label&quot;: &quot;seg_2_initiator&quot;,
+      &quot;appearance_similarity&quot;: 0.57719,
+      &quot;confidence&quot;: 0.873157,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 35,
+      &quot;start_frame&quot;: 14,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 34084
+    },
+    {
+      &quot;track_id&quot;: 6,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.355723,
+      &quot;confidence&quot;: 0.795538,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 31,
+      &quot;start_frame&quot;: 16,
+      &quot;end_frame&quot;: 46,
+      &quot;max_area&quot;: 4302
+    },
+    {
+      &quot;track_id&quot;: 13,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.274333,
+      &quot;confidence&quot;: 0.2776,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 2,
+      &quot;start_frame&quot;: 25,
+      &quot;end_frame&quot;: 26,
+      &quot;max_area&quot;: 828
+    },
+    {
+      &quot;track_id&quot;: 31,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.263584,
+      &quot;confidence&quot;: 0.497825,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 3,
+      &quot;start_frame&quot;: 37,
+      &quot;end_frame&quot;: 39,
+      &quot;max_area&quot;: 6212
+    }
+  ],
+  &quot;summary&quot;: {
+    &quot;max_future_mask_area_ratio&quot;: 0.436264,
+    &quot;max_future_area_depth2_ratio&quot;: 0.377119,
+    &quot;target_visible_ratio&quot;: 0.387755,
+    &quot;mean_bg_scale&quot;: 0.999976,
+    &quot;root_cause&quot;: &quot;tracking_or_visibility_failure&quot;
+  },
+  &quot;analysis&quot;: [
+    &quot;Target `seg_2_initiator` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.&quot;,
+    &quot;Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.&quot;,
+    &quot;Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.&quot;,
+    &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
+    &quot;Generated-only discovery found 6 extra track(s): new=4, duplicate=2, scale_drift_candidate=0.&quot;,
+    &quot;Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.&quot;,
     &quot;The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis.&quot;
   ],
   &quot;num_frames&quot;: 49,
@@ -769,20 +537,301 @@
     &quot;available&quot;: true,
     &quot;num_frames_compared&quot;: 13,
     &quot;target_visible_ratio&quot;: 1.0,
-    &quot;mean_bg_scale&quot;: 0.9999853677362333
+    &quot;mean_bg_scale&quot;: 1.0000243074890574
   },
   &quot;artifacts&quot;: {
-    &quot;context_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0113__10046__case007_entry_fast_center/context_video.mp4&quot;,
-    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center.mp4&quot;,
-    &quot;full_gt_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0113__10046__case007_entry_fast_center/full_video.mp4&quot;,
-    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/curves.csv&quot;,
-    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/curves.png&quot;,
-    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/gt_curves.csv&quot;,
-    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/gt_curves.png&quot;,
-    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/comparison_curves.png&quot;,
-    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/context_diagnostic.mp4&quot;,
-    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/generated_diagnostic.mp4&quot;,
-    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0113__10046__case007_entry_fast_center/gt_diagnostic.mp4&quot;
+    &quot;context_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0044__10096__case005_entry_left/context_video.mp4&quot;,
+    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left.mp4&quot;,
+    &quot;full_gt_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0044__10096__case005_entry_left/full_video.mp4&quot;,
+    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/curves.csv&quot;,
+    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/curves.png&quot;,
+    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/gt_curves.csv&quot;,
+    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/gt_curves.png&quot;,
+    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/comparison_curves.png&quot;,
+    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_diagnostic.mp4&quot;,
+    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_diagnostic.mp4&quot;,
+    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/gt_diagnostic.mp4&quot;,
+    &quot;context_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 2,
+        &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_track_seg_2.mp4&quot;
+      },
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/context_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 2,
+        &quot;object_label&quot;: &quot;seg_2_initiator&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_track_seg_2.mp4&quot;
+      },
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_born_single_track_videos&quot;: [
+      {
+        &quot;track_id&quot;: 1,
+        &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+        &quot;matched_seg_id&quot;: 1,
+        &quot;matched_object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_1.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 5,
+        &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+        &quot;matched_seg_id&quot;: 2,
+        &quot;matched_object_label&quot;: &quot;seg_2_initiator&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_5.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 6,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_6.mp4&quot;
+      }
+    ]
+  }
+}</pre>
+      </details>
+    </section>
+    
+    <section class="case-card">
+      <div class="head">
+        <div>
+          <h2>version_1_genesis_rigid_data_all_cases</h2>
+          <div class="sample">genesis_heldout_0171__10096__case002_static_right</div>
+        </div>
+        <div class="badge">stable_or_small_change</div>
+      </div>
+      <div class="meta-grid">
+        <div><span>Mode</span><strong>genesis_gt</strong></div>
+        <div><span>Target</span><strong>seg_1_target</strong></div>
+        <div><span>Selection</span><strong>highest_motion_gt_object_in_context</strong></div>
+        <div><span>Target Visible</span><strong>1.0</strong></div>
+        <div><span>Max Area Ratio</span><strong>1.138244</strong></div>
+        <div><span>Max Invariant Ratio</span><strong>1.183171</strong></div>
+        <div><span>Mean BG Scale</span><strong>1.000039</strong></div>
+        <div><span>GT Frames</span><strong>16</strong></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Analysis</div><ul><li>Target `seg_1_target` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.</li><li>Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.</li><li>Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.</li><li>GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.</li><li>Generated-only discovery found 8 extra track(s): new=7, duplicate=1, scale_drift_candidate=0.</li><li>Only 4 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.</li><li>The current metrics do not show a strong isolated geometry failure under the simple heuristic.</li></ul></div>
+      <div class="panel-grid">
+        <div class='panel'><div class='panel-title'>Context Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Full GT Video</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/full_gt_video.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Context Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>Generated Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT Diagnostic Overlay</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_diagnostic.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>GT vs Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/comparison_curves.png' alt='GT vs Generated Curves'></div><div class='panel'><div class='panel-title'>Generated Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/curves.png' alt='Generated Curves'></div><div class='panel'><div class='panel-title'>GT Reference Curves</div><img src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_curves.png' alt='GT Reference Curves'></div>
+      </div>
+      <div class='analysis'><div class='analysis-title'>Context Single Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Known Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>seg_1_target</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_track_seg_1.mp4' type='video/mp4'></video></div></div><div class='analysis'><div class='analysis-title'>Generated Born Tracks</div></div><div class='panel-grid'><div class='panel'><div class='panel-title'>new_object | track_2</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_2.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>duplicate_of_known_object | track_5</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_5.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>new_object | track_6</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_6.mp4' type='video/mp4'></video></div><div class='panel'><div class='panel-title'>new_object | track_12</div><video controls preload='metadata' muted playsinline><source src='vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_12.mp4' type='video/mp4'></video></div></div>
+      <details>
+        <summary>Diagnostics JSON</summary>
+        <pre>{
+  &quot;sidecar_path&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right.json&quot;,
+  &quot;dataset&quot;: &quot;version_1_genesis_rigid_data_all_cases&quot;,
+  &quot;sample_id&quot;: &quot;genesis_heldout_0171__10096__case002_static_right&quot;,
+  &quot;mode&quot;: &quot;genesis_gt&quot;,
+  &quot;target&quot;: {
+    &quot;object_label&quot;: &quot;seg_1_target&quot;,
+    &quot;seg_id&quot;: 1,
+    &quot;selection_mode&quot;: &quot;highest_motion_gt_object_in_context&quot;,
+    &quot;confidence&quot;: 1.0
+  },
+  &quot;generated_tracking&quot;: {
+    &quot;source&quot;: &quot;sam2_context_multi_frame_mask_init&quot;,
+    &quot;num_tracked_frames&quot;: 49,
+    &quot;tracked_seg_ids&quot;: [
+      1
+    ]
+  },
+  &quot;generated_born_tracks&quot;: [
+    {
+      &quot;track_id&quot;: 1,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.543768,
+      &quot;confidence&quot;: 0.71073,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 17,
+      &quot;start_frame&quot;: 10,
+      &quot;end_frame&quot;: 26,
+      &quot;max_area&quot;: 1040
+    },
+    {
+      &quot;track_id&quot;: 2,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.467589,
+      &quot;confidence&quot;: 0.840277,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 37,
+      &quot;start_frame&quot;: 12,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 12009
+    },
+    {
+      &quot;track_id&quot;: 5,
+      &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+      &quot;matched_seg_id&quot;: 1,
+      &quot;matched_object_label&quot;: &quot;seg_1_target&quot;,
+      &quot;appearance_similarity&quot;: 0.687684,
+      &quot;confidence&quot;: 0.906305,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 27,
+      &quot;start_frame&quot;: 22,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 18200
+    },
+    {
+      &quot;track_id&quot;: 6,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.450817,
+      &quot;confidence&quot;: 0.636345,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 27,
+      &quot;start_frame&quot;: 22,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 424
+    },
+    {
+      &quot;track_id&quot;: 9,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.54999,
+      &quot;confidence&quot;: 0.365147,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 3,
+      &quot;start_frame&quot;: 24,
+      &quot;end_frame&quot;: 26,
+      &quot;max_area&quot;: 314
+    },
+    {
+      &quot;track_id&quot;: 10,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.360023,
+      &quot;confidence&quot;: 0.382357,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 3,
+      &quot;start_frame&quot;: 24,
+      &quot;end_frame&quot;: 26,
+      &quot;max_area&quot;: 1056
+    },
+    {
+      &quot;track_id&quot;: 12,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.391919,
+      &quot;confidence&quot;: 0.650076,
+      &quot;displayed&quot;: true,
+      &quot;num_frames&quot;: 23,
+      &quot;start_frame&quot;: 26,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 823
+    },
+    {
+      &quot;track_id&quot;: 14,
+      &quot;classification&quot;: &quot;new_object&quot;,
+      &quot;matched_seg_id&quot;: null,
+      &quot;matched_object_label&quot;: null,
+      &quot;appearance_similarity&quot;: 0.53931,
+      &quot;confidence&quot;: 0.664393,
+      &quot;displayed&quot;: false,
+      &quot;num_frames&quot;: 18,
+      &quot;start_frame&quot;: 30,
+      &quot;end_frame&quot;: 48,
+      &quot;max_area&quot;: 580
+    }
+  ],
+  &quot;summary&quot;: {
+    &quot;max_future_mask_area_ratio&quot;: 1.138244,
+    &quot;max_future_area_depth2_ratio&quot;: 1.183171,
+    &quot;target_visible_ratio&quot;: 1.0,
+    &quot;mean_bg_scale&quot;: 1.000039,
+    &quot;root_cause&quot;: &quot;stable_or_small_change&quot;
+  },
+  &quot;analysis&quot;: [
+    &quot;Target `seg_1_target` was selected with `highest_motion_gt_object_in_context` under mode `genesis_gt`.&quot;,
+    &quot;Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.&quot;,
+    &quot;Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.&quot;,
+    &quot;GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.&quot;,
+    &quot;Generated-only discovery found 8 extra track(s): new=7, duplicate=1, scale_drift_candidate=0.&quot;,
+    &quot;Only 4 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.&quot;,
+    &quot;The current metrics do not show a strong isolated geometry failure under the simple heuristic.&quot;
+  ],
+  &quot;num_frames&quot;: 49,
+  &quot;context_frames&quot;: 8,
+  &quot;gt_reference&quot;: {
+    &quot;available&quot;: true,
+    &quot;num_frames_compared&quot;: 16,
+    &quot;target_visible_ratio&quot;: 1.0,
+    &quot;mean_bg_scale&quot;: 1.000014902351578
+  },
+  &quot;artifacts&quot;: {
+    &quot;context_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0171__10096__case002_static_right/context_video.mp4&quot;,
+    &quot;generated_video&quot;: &quot;/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right.mp4&quot;,
+    &quot;full_gt_video&quot;: &quot;/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0171__10096__case002_static_right/full_video.mp4&quot;,
+    &quot;curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/curves.csv&quot;,
+    &quot;curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/curves.png&quot;,
+    &quot;gt_curves_csv&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_curves.csv&quot;,
+    &quot;gt_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_curves.png&quot;,
+    &quot;comparison_curves_png&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/comparison_curves.png&quot;,
+    &quot;context_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_diagnostic.mp4&quot;,
+    &quot;generated_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_diagnostic.mp4&quot;,
+    &quot;gt_diagnostic_video&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/gt_diagnostic.mp4&quot;,
+    &quot;context_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/context_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_single_track_videos&quot;: [
+      {
+        &quot;seg_id&quot;: 1,
+        &quot;object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_track_seg_1.mp4&quot;
+      }
+    ],
+    &quot;generated_born_single_track_videos&quot;: [
+      {
+        &quot;track_id&quot;: 2,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_2.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 5,
+        &quot;classification&quot;: &quot;duplicate_of_known_object&quot;,
+        &quot;matched_seg_id&quot;: 1,
+        &quot;matched_object_label&quot;: &quot;seg_1_target&quot;,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_5.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 6,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_6.mp4&quot;
+      },
+      {
+        &quot;track_id&quot;: 12,
+        &quot;classification&quot;: &quot;new_object&quot;,
+        &quot;matched_seg_id&quot;: null,
+        &quot;matched_object_label&quot;: null,
+        &quot;path&quot;: &quot;/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_12.mp4&quot;
+      }
+    ]
   }
 }</pre>
       </details>

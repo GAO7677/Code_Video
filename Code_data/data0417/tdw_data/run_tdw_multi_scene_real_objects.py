@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Dict, List
 import math
 import os
-import socket
 import subprocess
 import time
 
@@ -18,6 +17,7 @@ OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_multi_s
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
 PORT = 1072
+BUILD_BOOT_WAIT = 12
 SCENE_FILTER = {s.strip() for s in os.environ.get("TDW_SCENE_FILTER", "").split(",") if s.strip()}
 
 SCENES: List[Dict[str, object]] = [
@@ -118,25 +118,6 @@ def launch_build(scene_output_root: Path) -> subprocess.Popen:
                             stdout=log_fp,
                             stderr=subprocess.STDOUT,
                             env=env)
-
-
-def wait_for_port(host: str, port: int, timeout: float = 30.0) -> None:
-    start = time.time()
-    while time.time() - start < timeout:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        try:
-            sock.connect((host, port))
-            sock.close()
-            return
-        except OSError:
-            time.sleep(0.5)
-        finally:
-            try:
-                sock.close()
-            except Exception:
-                pass
-    raise TimeoutError(f"Timed out waiting for {host}:{port}")
 
 
 def _distance(a: Dict[str, float], b: Dict[str, float]) -> float:
@@ -247,7 +228,7 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
     skybox_name = str(scene["skybox"])
     scene_output_root = OUTPUT_ROOT.joinpath(scene_name)
     build_proc = launch_build(scene_output_root=scene_output_root)
-    wait_for_port("127.0.0.1", PORT, timeout=30.0)
+    time.sleep(BUILD_BOOT_WAIT)
     controller = Controller(launch_build=False, port=PORT)
     try:
         case_dir = scene_output_root.joinpath(str(case["case_name"]))
