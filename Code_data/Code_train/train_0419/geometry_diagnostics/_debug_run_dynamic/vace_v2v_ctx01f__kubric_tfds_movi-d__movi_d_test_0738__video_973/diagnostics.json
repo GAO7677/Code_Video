@@ -1,0 +1,46 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_01f/kubric_tfds_movi-d__movi_d_test_0738__video_973.json",
+  "dataset": "kubric_tfds_movi-d",
+  "sample_id": "movi_d_test_0738__video_973",
+  "mode": "movi_d_gt",
+  "target": {
+    "object_label": "seg_4",
+    "seg_id": 4,
+    "selection_mode": "highest_motion_gt_instance_in_context",
+    "confidence": 1.0
+  },
+  "summary": {
+    "max_future_mask_area_ratio": 1.0,
+    "max_future_area_depth2_ratio": 1.533551,
+    "target_visible_ratio": 0.979592,
+    "mean_bg_scale": 0.999219,
+    "root_cause": "stable_or_small_change"
+  },
+  "analysis": [
+    "Target `seg_4` was selected with `highest_motion_gt_instance_in_context` under mode `movi_d_gt`.",
+    "Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements.",
+    "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+    "The current metrics do not show a strong isolated geometry failure under the simple heuristic."
+  ],
+  "num_frames": 49,
+  "context_frames": 1,
+  "gt_reference": {
+    "available": true,
+    "num_frames_compared": 24,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 0.9954979110040121
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0738__video_973/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_01f/kubric_tfds_movi-d__movi_d_test_0738__video_973.mp4",
+    "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0738__video_973/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_dynamic/vace_v2v_ctx01f__kubric_tfds_movi-d__movi_d_test_0738__video_973/gt_diagnostic.mp4"
+  }
+}

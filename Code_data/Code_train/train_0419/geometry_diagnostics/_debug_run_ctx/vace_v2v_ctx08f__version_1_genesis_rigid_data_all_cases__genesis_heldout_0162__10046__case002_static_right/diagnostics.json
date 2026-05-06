@@ -34,13 +34,13 @@
     "context_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/context_video.mp4",
     "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right.mp4",
     "full_gt_video": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/mytest/genesis_heldout_0162__10046__case002_static_right/full_video.mp4",
-    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.csv",
-    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.png",
-    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.csv",
-    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.png",
-    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/comparison_curves.png",
-    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/context_diagnostic.mp4",
-    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_diagnostic.mp4",
-    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_diagnostic.mp4"
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0162__10046__case002_static_right/gt_diagnostic.mp4"
   }
 }

@@ -16,6 +16,7 @@ from typing import Any
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from PIL import Image
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -29,6 +30,9 @@ import prepare_mixed_benchmark_mytest as pm  # noqa: E402
 BACKGROUND_SEGMENT_ID = 0
 GENESIS_BACKGROUND_SEGMENT_ID = 0
 GENESIS_GROUND_SPECIAL_ID = -1
+SAM2_CHECKPOINT = Path("/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt")
+SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
+_SAM2_VIDEO_PREDICTOR = None
 
 
 @dataclass
@@ -37,6 +41,13 @@ class TargetSpec:
     seg_id: int
     selection_mode: str
     confidence: float
+
+
+@dataclass
+class GeneratedTrackResult:
+    masks_by_frame: dict[int, np.ndarray]
+    bboxes_by_frame: dict[int, tuple[int, int, int, int] | None]
+    source: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -136,6 +147,24 @@ def save_video_frames(path: Path, frames: list[np.ndarray], fps: int) -> None:
             writer.append_data(np.asarray(frame, dtype=np.uint8))
 
 
+def load_sam2_video_predictor():
+    global _SAM2_VIDEO_PREDICTOR
+    if _SAM2_VIDEO_PREDICTOR is not None:
+        return _SAM2_VIDEO_PREDICTOR
+    sys.path.insert(0, "/home/gaoya/Code_Video/Wan2.2-main/wan_/modules/animate/preprocess")
+    from sam_utils import build_sam2_video_predictor  # noqa: WPS433
+
+    predictor = build_sam2_video_predictor(
+        SAM2_CONFIG,
+        ckpt_path=str(SAM2_CHECKPOINT),
+        device="cuda",
+        mode="eval",
+    )
+    predictor.fill_hole_area = 0
+    _SAM2_VIDEO_PREDICTOR = predictor
+    return predictor
+
+
 def resize_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
     image = Image.fromarray(mask.astype(np.uint8) * 255)
     resized = image.resize((width, height), Image.Resampling.NEAREST)
@@ -211,6 +240,22 @@ def mask_median_depth(depth_map: np.ndarray, mask: np.ndarray) -> float | None:
     return float(np.median(values))
 
 
+def compute_track_motion_score(
+    coords_xy: np.ndarray,
+    visible_mask: np.ndarray,
+) -> float:
+    coords_xy = np.asarray(coords_xy, dtype=np.float32)
+    visible_mask = np.asarray(visible_mask, dtype=bool)
+    valid_coords = coords_xy[visible_mask]
+    if valid_coords.shape[0] < 2:
+        return 0.0
+    deltas = valid_coords[1:] - valid_coords[:-1]
+    step_norms = np.linalg.norm(deltas, axis=1)
+    if step_norms.size == 0:
+        return 0.0
+    return float(np.sum(step_norms))
+
+
 def grayscale(frame: np.ndarray) -> np.ndarray:
     frame_f = np.asarray(frame, dtype=np.float32)
     return (0.299 * frame_f[..., 0] + 0.587 * frame_f[..., 1] + 0.114 * frame_f[..., 2]).astype(np.float32)
@@ -247,6 +292,61 @@ def draw_anchor_window(frame: np.ndarray, anchor_bbox: tuple[int, int, int, int]
     return draw_rect(frame, anchor_bbox, color=(255, 210, 0), thickness=2)
 
 
+def collect_visible_context_masks(
+    *,
+    seg_frames: list[np.ndarray] | np.ndarray,
+    target_seg_id: int,
+    context_frame_count: int,
+    out_width: int,
+    out_height: int,
+) -> list[tuple[int, np.ndarray]]:
+    visible: list[tuple[int, np.ndarray]] = []
+    count = min(int(context_frame_count), len(seg_frames))
+    for frame_idx in range(count):
+        raw_seg = np.asarray(seg_frames[frame_idx])
+        mask = resize_mask(raw_seg == int(target_seg_id), width=out_width, height=out_height)
+        if np.count_nonzero(mask) == 0:
+            continue
+        visible.append((frame_idx, mask))
+    return visible
+
+
+def run_generated_target_track_with_sam2(
+    *,
+    frames: list[np.ndarray],
+    context_masks: list[tuple[int, np.ndarray]],
+) -> GeneratedTrackResult | None:
+    if not context_masks:
+        return None
+    predictor = load_sam2_video_predictor()
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        inference_state = predictor.init_state_v2(frames=frames)
+        predictor.reset_state(inference_state)
+        for frame_idx, mask in context_masks:
+            predictor.add_new_mask(
+                inference_state=inference_state,
+                frame_idx=int(frame_idx),
+                obj_id=1,
+                mask=np.asarray(mask, dtype=np.uint8),
+            )
+        masks_by_frame: dict[int, np.ndarray] = {}
+        bboxes_by_frame: dict[int, tuple[int, int, int, int] | None] = {}
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+            for i, out_obj_id in enumerate(out_obj_ids):
+                if int(out_obj_id) != 1:
+                    continue
+                mask = (out_mask_logits[i] > 0.0).detach().float().cpu().numpy().squeeze(0) > 0
+                masks_by_frame[int(out_frame_idx)] = mask
+                bboxes_by_frame[int(out_frame_idx)] = compute_bbox_from_mask(mask)
+    if not masks_by_frame:
+        return None
+    return GeneratedTrackResult(
+        masks_by_frame=masks_by_frame,
+        bboxes_by_frame=bboxes_by_frame,
+        source="sam2_context_multi_frame_mask_init",
+    )
+
+
 def build_case_analysis_text(
     *,
     sidecar: dict[str, Any],
@@ -260,7 +360,7 @@ def build_case_analysis_text(
         f"Target `{target.object_label}` was selected with `{target.selection_mode}` under mode `{mode}`."
     )
     lines.append(
-        "Generated-video curves are computed from a target-window foreground proxy, so they are useful for trend inspection but not yet strict instance-accurate measurements."
+        "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy."
     )
     if gt_available:
         lines.append(
@@ -378,11 +478,16 @@ def load_movid_gt(sidecar: dict[str, Any]) -> dict[str, Any]:
     num_frames = int(features["metadata/num_frames"].int64_list.value[0])
     num_instances = int(features["metadata/num_instances"].int64_list.value[0])
     visibility = visibility.reshape(num_instances, num_frames).T
+    image_positions = np.asarray(features["instances/image_positions"].float_list.value, dtype=np.float32)
+    image_positions = image_positions.reshape(num_instances, num_frames, 2).transpose(1, 0, 2)
+    is_dynamic = np.asarray(features["instances/is_dynamic"].int64_list.value, dtype=np.int32)
     return {
         "meta": meta,
         "seg_frames": seg_frames,
         "depth_frames": depth_frames,
         "visibility": visibility,
+        "image_positions": image_positions,
+        "is_dynamic": is_dynamic,
         "num_frames": num_frames,
         "num_instances": num_instances,
     }
@@ -390,11 +495,22 @@ def load_movid_gt(sidecar: dict[str, Any]) -> dict[str, Any]:
 
 def select_movid_target(gt: dict[str, Any], context_index: int) -> TargetSpec:
     seg = gt["seg_frames"][context_index]
+    context_len = max(int(context_index) + 1, 1)
     best_seg_id = None
+    best_motion = -1.0
     best_area = -1
     for seg_id in sorted(int(v) for v in np.unique(seg) if int(v) != BACKGROUND_SEGMENT_ID):
+        instance_idx = seg_id - 1
+        if instance_idx < 0 or instance_idx >= int(gt["num_instances"]):
+            continue
+        visible = gt["visibility"][:context_len, instance_idx] > 0
+        coords = gt["image_positions"][:context_len, instance_idx]
+        motion = compute_track_motion_score(coords, visible)
         area = int(np.count_nonzero(seg == seg_id))
-        if area > best_area:
+        dynamic_bonus = 1.0 if int(gt["is_dynamic"][instance_idx]) > 0 else 0.0
+        score = motion + dynamic_bonus * 1e-3
+        if score > best_motion or (math.isclose(score, best_motion) and area > best_area):
+            best_motion = score
             best_area = area
             best_seg_id = seg_id
     if best_seg_id is None:
@@ -402,7 +518,7 @@ def select_movid_target(gt: dict[str, Any], context_index: int) -> TargetSpec:
     return TargetSpec(
         object_label=f"seg_{best_seg_id}",
         seg_id=int(best_seg_id),
-        selection_mode="largest_visible_gt_instance_last_context",
+        selection_mode="highest_motion_gt_instance_in_context",
         confidence=1.0,
     )
 
@@ -423,27 +539,52 @@ def load_genesis_gt(sidecar: dict[str, Any]) -> dict[str, Any]:
     source_meta = read_json(source_meta_path)
     seg = np.load(source_sample_dir / "physics" / "seg.npy")
     depth = np.load(source_sample_dir / "physics" / "depth_metric.npy")
+    kinematics = np.load(source_sample_dir / "physics" / "rigid_kinematics.npz")
     return {
         "meta": meta,
         "source_meta": source_meta,
         "seg_frames": seg,
         "depth_frames": depth,
+        "kinematics": kinematics,
     }
 
 
 def select_genesis_target(gt: dict[str, Any], context_index: int) -> TargetSpec:
     source_meta = gt["source_meta"]
-    target_seg_id = None
-    for obj in source_meta.get("objects", []):
-        if str(obj.get("role") or "") == "target":
-            target_seg_id = int(obj["seg_id"])
-            break
     seg = np.asarray(gt["seg_frames"][context_index])
-    if target_seg_id is not None and np.count_nonzero(seg == target_seg_id) > 0:
+    kin = gt["kinematics"]
+    seg_ids = np.asarray(kin["seg_ids"], dtype=np.int32)
+    com_uv = np.asarray(kin["com_uv"], dtype=np.float32)
+    visibility = np.asarray(kin["visibility_mask"], dtype=np.uint8)
+    context_len = max(int(context_index) + 1, 1)
+    best_seg_id = None
+    best_motion = -1.0
+    best_area = -1
+    for obj_idx, seg_id in enumerate(seg_ids.tolist()):
+        seg_id = int(seg_id)
+        if seg_id <= 0:
+            continue
+        visible = visibility[:context_len, obj_idx] > 0
+        coords = com_uv[:context_len, obj_idx]
+        motion = compute_track_motion_score(coords, visible)
+        area = int(np.count_nonzero(seg == seg_id))
+        if area <= 0:
+            continue
+        if motion > best_motion or (math.isclose(motion, best_motion) and area > best_area):
+            best_motion = motion
+            best_area = area
+            best_seg_id = seg_id
+    if best_seg_id is not None and best_area > 0:
+        role = None
+        for obj in source_meta.get("objects", []):
+            if int(obj.get("seg_id", -1)) == int(best_seg_id):
+                role = str(obj.get("role") or "")
+                break
+        label = f"seg_{best_seg_id}" if not role else f"seg_{best_seg_id}_{role}"
         return TargetSpec(
-            object_label=f"seg_{target_seg_id}",
-            seg_id=target_seg_id,
-            selection_mode="genesis_role_target",
+            object_label=label,
+            seg_id=int(best_seg_id),
+            selection_mode="highest_motion_gt_object_in_context",
             confidence=1.0,
         )
     best_seg_id = None
@@ -458,7 +599,7 @@ def select_genesis_target(gt: dict[str, Any], context_index: int) -> TargetSpec:
     return TargetSpec(
         object_label=f"seg_{best_seg_id}",
         seg_id=int(best_seg_id),
-        selection_mode="largest_visible_gt_segment_last_context",
+        selection_mode="largest_visible_gt_segment_fallback",
         confidence=0.8,
     )
 
@@ -562,6 +703,57 @@ def build_generated_proxy_curves(
 
     for t, frame in enumerate(output_frames):
         mask = detect_generated_proxy_mask(frame=frame, reference_frame=reference, anchor_bbox=anchor_bbox)
+        mask_area = int(np.count_nonzero(mask))
+        bbox = compute_bbox_from_mask(mask)
+        bbox_area_value = bbox_area(bbox)
+        fill_ratio = mask_fill_ratio(mask_area, bbox_area_value)
+        gray = grayscale(frame)
+        proxy_depth = None
+        if mask_area > 0:
+            proxy_depth = float(255.0 - np.median(gray[mask]) + 1.0)
+            visible += 1
+        invariant = None if proxy_depth is None else float(mask_area) * proxy_depth * proxy_depth
+        if t > 0:
+            bg_scale = estimate_background_scale(output_frames[t - 1], frame, mask)
+        else:
+            bg_scale = None
+        if bg_scale is not None:
+            bg_scales.append(float(bg_scale))
+        curves.append(
+            {
+                "t": t,
+                "is_context": int(t < context_frames),
+                "is_future": int(t >= context_frames),
+                "mask_area": mask_area,
+                "bbox_area": bbox_area_value,
+                "fill_ratio": round(fill_ratio, 6),
+                "depth_median": None if proxy_depth is None else round(proxy_depth, 6),
+                "area_depth2": None if invariant is None else round(invariant, 6),
+                "bg_scale": None if bg_scale is None else round(float(bg_scale), 6),
+            }
+        )
+    summary = {
+        "target_visible_ratio": float(visible) / float(max(len(output_frames), 1)),
+        "mean_bg_scale": None if not bg_scales else float(np.mean(bg_scales)),
+    }
+    return curves, summary
+
+
+def build_generated_curves_from_tracked_masks(
+    *,
+    output_frames: list[np.ndarray],
+    context_frames: int,
+    tracked_masks: dict[int, np.ndarray],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    curves: list[dict[str, Any]] = []
+    bg_scales: list[float] = []
+    visible = 0
+    for t, frame in enumerate(output_frames):
+        mask = tracked_masks.get(t)
+        if mask is None:
+            mask = np.zeros(frame.shape[:2], dtype=bool)
+        else:
+            mask = np.asarray(mask, dtype=bool)
         mask_area = int(np.count_nonzero(mask))
         bbox = compute_bbox_from_mask(mask)
         bbox_area_value = bbox_area(bbox)
@@ -773,11 +965,15 @@ def write_annotated_generated_video(
     case_dir: Path,
     anchor_bbox: tuple[int, int, int, int] | None,
     fps: int,
+    tracked_masks: dict[int, np.ndarray] | None = None,
 ) -> Path:
     annotated: list[np.ndarray] = []
     reference = frames[0]
-    for frame in frames:
-        mask = detect_generated_proxy_mask(frame=frame, reference_frame=reference, anchor_bbox=anchor_bbox)
+    for frame_idx, frame in enumerate(frames):
+        if tracked_masks is not None and frame_idx in tracked_masks:
+            mask = np.asarray(tracked_masks[frame_idx], dtype=bool)
+        else:
+            mask = detect_generated_proxy_mask(frame=frame, reference_frame=reference, anchor_bbox=anchor_bbox)
         bbox = compute_bbox_from_mask(mask)
         vis = overlay_mask(frame, mask, color=(228, 87, 46), alpha=0.28)
         vis = draw_rect(vis, bbox, color=(228, 87, 46), thickness=2)
@@ -834,7 +1030,9 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
     sidecar = read_json(sidecar_path)
     paths = sidecar.get("paths", {})
     output_video_path = Path(paths["output_video_path"])
-    sample_key = sanitize_token(f"{sidecar.get('dataset')}__{sidecar.get('sample_id')}")
+    sample_key = sanitize_token(
+        f"{sidecar.get('model_name')}__{sidecar.get('dataset')}__{sidecar.get('sample_id')}"
+    )
     case_dir = output_root / sample_key
     diagnostics_path = case_dir / "diagnostics.json"
     if diagnostics_path.exists() and not overwrite:
@@ -852,6 +1050,7 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
     context_video_path = Path(paths["context_video_path"]) if paths.get("context_video_path") else None
     context_video_frames = load_video_frames(context_video_path) if context_video_path and context_video_path.exists() else []
     context_diagnostic_video = None
+    generated_track_result: GeneratedTrackResult | None = None
 
     if mode == "movi_d_gt":
         gt = load_movid_gt(sidecar)
@@ -877,11 +1076,29 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
                 dst_height=int(output_frames[0].shape[0]),
             )
             anchor_bbox = clamp_bbox(anchor_bbox, output_frames[0].shape[1], output_frames[0].shape[0])
-        curves, helper = build_generated_proxy_curves(
-            output_frames=output_frames,
-            context_frames=context_frames,
-            anchor_bbox=anchor_bbox,
+        context_masks = collect_visible_context_masks(
+            seg_frames=gt["seg_frames"],
+            target_seg_id=target.seg_id,
+            context_frame_count=context_frames,
+            out_width=output_frames[0].shape[1],
+            out_height=output_frames[0].shape[0],
         )
+        generated_track_result = run_generated_target_track_with_sam2(
+            frames=output_frames,
+            context_masks=context_masks,
+        )
+        if generated_track_result is not None:
+            curves, helper = build_generated_curves_from_tracked_masks(
+                output_frames=output_frames,
+                context_frames=context_frames,
+                tracked_masks=generated_track_result.masks_by_frame,
+            )
+        else:
+            curves, helper = build_generated_proxy_curves(
+                output_frames=output_frames,
+                context_frames=context_frames,
+                anchor_bbox=anchor_bbox,
+            )
         context_overlay_frames = gt["seg_frames"][: min(len(context_video_frames), len(gt["seg_frames"]))]
     elif mode == "genesis_gt":
         gt = load_genesis_gt(sidecar)
@@ -907,11 +1124,29 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
                 dst_height=int(output_frames[0].shape[0]),
             )
             anchor_bbox = clamp_bbox(anchor_bbox, output_frames[0].shape[1], output_frames[0].shape[0])
-        curves, helper = build_generated_proxy_curves(
-            output_frames=output_frames,
-            context_frames=context_frames,
-            anchor_bbox=anchor_bbox,
+        context_masks = collect_visible_context_masks(
+            seg_frames=gt["seg_frames"],
+            target_seg_id=target.seg_id,
+            context_frame_count=context_frames,
+            out_width=output_frames[0].shape[1],
+            out_height=output_frames[0].shape[0],
         )
+        generated_track_result = run_generated_target_track_with_sam2(
+            frames=output_frames,
+            context_masks=context_masks,
+        )
+        if generated_track_result is not None:
+            curves, helper = build_generated_curves_from_tracked_masks(
+                output_frames=output_frames,
+                context_frames=context_frames,
+                tracked_masks=generated_track_result.masks_by_frame,
+            )
+        else:
+            curves, helper = build_generated_proxy_curves(
+                output_frames=output_frames,
+                context_frames=context_frames,
+                anchor_bbox=anchor_bbox,
+            )
         context_overlay_frames = list(gt["seg_frames"][: min(len(context_video_frames), len(gt["seg_frames"]))])
     else:
         curves, helper, target = build_generic_proxy_curves(
@@ -931,6 +1166,7 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
         case_dir=case_dir,
         anchor_bbox=anchor_bbox,
         fps=fps,
+        tracked_masks=None if generated_track_result is None else generated_track_result.masks_by_frame,
     )
     gt_diagnostic_video = None
     if gt_curves and gt_video_frames:
@@ -976,6 +1212,12 @@ def analyze_case(sidecar_path: Path, output_root: Path, overwrite: bool) -> dict
             "seg_id": target.seg_id,
             "selection_mode": target.selection_mode,
             "confidence": round(target.confidence, 6),
+        },
+        "generated_tracking": None
+        if generated_track_result is None
+        else {
+            "source": generated_track_result.source,
+            "num_tracked_frames": len(generated_track_result.masks_by_frame),
         },
         "summary": summary,
         "analysis": analysis_lines,

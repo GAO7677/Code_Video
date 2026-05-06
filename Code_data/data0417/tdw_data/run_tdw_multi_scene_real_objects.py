@@ -13,92 +13,94 @@ from tdw.output_data import OutputData, Raycast
 from tdw.scene_data.scene_bounds import SceneBounds
 
 
-OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_multi_scene_cases")
+OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_multi_scene_real_objects")
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
-PORT = 1071
+PORT = 1072
 SCENE_FILTER = {s.strip() for s in os.environ.get("TDW_SCENE_FILTER", "").split(",") if s.strip()}
 
 SCENES: List[Dict[str, object]] = [
     {
-        "name": "building_site",
-        "skybox": "bergen_4k",
-        "camera_position": {"x": -4.8, "y": 2.4, "z": 4.8},
-        "look_at": {"x": 0.0, "y": 0.6, "z": 0.0},
-        "field_of_view": 72,
-    },
-    {
-        "name": "box_room_2018",
-        "skybox": "lookout_4k",
-        "camera_position": {"x": -4.4, "y": 2.2, "z": 4.4},
-        "look_at": {"x": 0.0, "y": 0.6, "z": 0.0},
-        "field_of_view": 70,
-    },
-    {
-        "name": "tdw_room",
-        "skybox": "industrial_sunset_4k",
-        "camera_position": {"x": -4.2, "y": 2.0, "z": 4.2},
-        "look_at": {"x": 0.0, "y": 0.55, "z": 0.0},
-        "field_of_view": 68,
-    },
-    {
-        "name": "suburb_scene_2023",
-        "skybox": "sunset_fairway_4k",
-        "camera_position": {"x": -5.6, "y": 2.6, "z": 5.6},
-        "look_at": {"x": 0.0, "y": 0.7, "z": 0.0},
-        "field_of_view": 72,
-    },
-    {
-        "name": "suburb_scene_2018",
-        "skybox": "noon_grass_4k",
-        "camera_position": {"x": -5.2, "y": 2.5, "z": 5.2},
-        "look_at": {"x": 0.0, "y": 0.7, "z": 0.0},
-        "field_of_view": 72,
-    },
-    {
         "name": "mm_craftroom_1a",
         "skybox": "kiara_1_dawn_4k",
         "camera_position": {"x": -4.0, "y": 2.1, "z": 4.0},
-        "look_at": {"x": 0.0, "y": 0.6, "z": 0.0},
+        "look_at": {"x": 0.0, "y": 0.7, "z": 0.0},
         "field_of_view": 70,
+        "object_cases": [
+            {
+                "case_name": "realobj_camera_box_center_tumble",
+                "model_name": "camera_box",
+                "position": {"x": 0.0, "y": 0.95, "z": 0.0},
+                "velocity": {"x": 0.38, "y": 0.15, "z": 0.12},
+                "angular_velocity": {"x": 0.3, "y": 0.75, "z": 0.2},
+                "frames": 96,
+            },
+            {
+                "case_name": "realobj_wicker_basket_high_drop",
+                "model_name": "basket_18inx18inx12iin_wicker",
+                "position": {"x": 0.0, "y": 1.85, "z": 0.0},
+                "velocity": {"x": 0.05, "y": 0.0, "z": 0.0},
+                "angular_velocity": {"x": 0.2, "y": 0.35, "z": 0.15},
+                "frames": 124,
+            },
+            {
+                "case_name": "realobj_backpack_arc_left",
+                "model_name": "hiker_backpack",
+                "position": {"x": -0.55, "y": 1.15, "z": -0.2},
+                "velocity": {"x": 0.72, "y": 0.72, "z": 0.44},
+                "angular_velocity": {"x": 0.45, "y": 0.3, "z": 0.65},
+                "frames": 124,
+            },
+            {
+                "case_name": "realobj_duffle_entry_right",
+                "model_name": "duffle_bag_sm",
+                "position": {"x": 1.15, "y": 0.9, "z": 0.15},
+                "velocity": {"x": -1.05, "y": 0.08, "z": -0.08},
+                "angular_velocity": {"x": 0.12, "y": 0.2, "z": 0.45},
+                "frames": 124,
+            },
+        ],
     },
     {
         "name": "mm_kitchen_2b",
         "skybox": "kiara_1_dawn_4k",
         "camera_position": {"x": -4.0, "y": 2.1, "z": 4.0},
-        "look_at": {"x": 0.0, "y": 0.6, "z": 0.0},
+        "look_at": {"x": 0.0, "y": 0.72, "z": 0.0},
         "field_of_view": 70,
-    },
-]
-
-CASES: List[Dict[str, object]] = [
-    {
-        "case_name": "case000_static_center",
-        "position": {"x": 0.0, "y": 0.02, "z": 0.0},
-        "velocity": {"x": 0.45, "y": 0.0, "z": 0.18},
-        "angular_velocity": {"x": 0.0, "y": 0.55, "z": 0.15},
-        "frames": 90,
-    },
-    {
-        "case_name": "case003_high_drop",
-        "position": {"x": 0.0, "y": 1.7, "z": 0.0},
-        "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
-        "angular_velocity": {"x": 0.3, "y": 0.4, "z": 0.2},
-        "frames": 120,
-    },
-    {
-        "case_name": "case900_random_parabola",
-        "position": {"x": -0.15, "y": 0.95, "z": -0.1},
-        "velocity": {"x": 0.8, "y": 0.9, "z": 0.55},
-        "angular_velocity": {"x": 0.8, "y": 0.5, "z": 1.2},
-        "frames": 120,
-    },
-    {
-        "case_name": "case005_entry_left",
-        "position": {"x": 1.25, "y": 0.45, "z": 0.0},
-        "velocity": {"x": -1.35, "y": 0.0, "z": 0.0},
-        "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.6},
-        "frames": 120,
+        "object_cases": [
+            {
+                "case_name": "realobj_jug_center_tumble",
+                "model_name": "jug04",
+                "position": {"x": 0.0, "y": 0.95, "z": 0.0},
+                "velocity": {"x": 0.3, "y": 0.12, "z": 0.14},
+                "angular_velocity": {"x": 0.22, "y": 0.72, "z": 0.18},
+                "frames": 96,
+            },
+            {
+                "case_name": "realobj_serving_bowl_high_drop",
+                "model_name": "serving_bowl",
+                "position": {"x": 0.0, "y": 1.65, "z": 0.0},
+                "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "angular_velocity": {"x": 0.25, "y": 0.2, "z": 0.15},
+                "frames": 124,
+            },
+            {
+                "case_name": "realobj_pepsi_can_arc_left",
+                "model_name": "102_pepsi_can_12_fl_oz_vray",
+                "position": {"x": -0.45, "y": 1.05, "z": -0.15},
+                "velocity": {"x": 0.78, "y": 0.85, "z": 0.45},
+                "angular_velocity": {"x": 1.0, "y": 0.45, "z": 1.1},
+                "frames": 124,
+            },
+            {
+                "case_name": "realobj_toaster_entry_right",
+                "model_name": "toaster_002",
+                "position": {"x": 1.05, "y": 0.78, "z": 0.0},
+                "velocity": {"x": -1.08, "y": 0.0, "z": 0.0},
+                "angular_velocity": {"x": 0.05, "y": 0.18, "z": 0.42},
+                "frames": 124,
+            },
+        ],
     },
 ]
 
@@ -256,7 +258,8 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
             controller.communicate([])
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
-        commands = controller.get_add_physics_object(model_name="iron_box",
+        commands = controller.get_add_physics_object(model_name=str(case["model_name"]),
+                                                     library="models_core.json",
                                                      object_id=object_id,
                                                      position=case["position"])
         commands.extend([{"$type": "set_velocity",
@@ -276,9 +279,9 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
             build_proc.kill()
 
 
-def convert_scene_videos(scene_name: str) -> None:
-    scene_root = OUTPUT_ROOT.joinpath(scene_name)
-    for case in CASES:
+def convert_scene_videos(scene: Dict[str, object]) -> None:
+    scene_root = OUTPUT_ROOT.joinpath(str(scene["name"]))
+    for case in scene["object_cases"]:
         case_name = str(case["case_name"])
         frames_dir = scene_root.joinpath(case_name, "a")
         output_video = scene_root.joinpath(f"{case_name}.mp4")
@@ -300,16 +303,16 @@ def main() -> None:
             print(f"Skipping unselected scene {scene_name}")
             continue
         scene_root = OUTPUT_ROOT.joinpath(scene_name)
-        completed = all(scene_root.joinpath(f"{case['case_name']}.mp4").exists() for case in CASES)
+        completed = all(scene_root.joinpath(f"{case['case_name']}.mp4").exists() for case in scene["object_cases"])
         if completed:
             print(f"Skipping completed scene {scene_name}")
             continue
-        for case in CASES:
-            print(f"Running {scene['name']} / {case['case_name']}")
+        for case in scene["object_cases"]:
+            print(f"Running {scene_name} / {case['case_name']} / {case['model_name']}", flush=True)
             run_case(scene=scene, case=case)
-            print(f"Completed {scene['name']} / {case['case_name']}")
-        convert_scene_videos(scene_name=scene_name)
-        print(f"Converted videos for {scene_name}")
+            print(f"Completed {scene_name} / {case['case_name']}", flush=True)
+        convert_scene_videos(scene=scene)
+        print(f"Converted videos for {scene_name}", flush=True)
 
 
 if __name__ == "__main__":

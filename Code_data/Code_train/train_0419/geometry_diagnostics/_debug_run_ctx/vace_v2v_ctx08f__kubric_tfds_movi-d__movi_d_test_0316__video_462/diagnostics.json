@@ -34,13 +34,13 @@
     "context_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/context_video.mp4",
     "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0316__video_462.mp4",
     "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0316__video_462/full_video.mp4",
-    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.csv",
-    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png",
-    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.csv",
-    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png",
-    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/comparison_curves.png",
-    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/context_diagnostic.mp4",
-    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4",
-    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4"
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_ctx/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0316__video_462/gt_diagnostic.mp4"
   }
 }
