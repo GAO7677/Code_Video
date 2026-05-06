@@ -14,8 +14,8 @@ OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_motion_
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
 PORT = 1071
-SCENE_NAME = "floorplan_1a"
-SKYBOX_NAME = "kiara_1_dawn_4k"
+SCENE_NAME = "building_site"
+SKYBOX_NAME = "bergen_4k"
 
 
 def launch_build() -> subprocess.Popen:
@@ -42,14 +42,14 @@ def run_case(case_name: str,
     try:
         case_dir = OUTPUT_ROOT.joinpath(case_name)
         camera = ThirdPersonCamera(avatar_id="a",
-                                   position={"x": -0.2, "y": 2.6, "z": 3.9},
-                                   look_at={"x": 0.0, "y": 0.75, "z": 0.15},
+                                   position={"x": -4.8, "y": 2.4, "z": 4.8},
+                                   look_at={"x": 0.0, "y": 0.6, "z": 0.0},
                                    field_of_view=72)
         capture = ImageCapture(path=case_dir, avatar_ids=["a"], pass_masks=["_img"])
         lighting = InteriorSceneLighting(hdri_skybox=SKYBOX_NAME,
-                                         aperture=6.0,
-                                         focus_distance=3.0,
-                                         ambient_occlusion_intensity=0.2,
+                                         aperture=8.0,
+                                         focus_distance=4.0,
+                                         ambient_occlusion_intensity=0.175,
                                          ambient_occlusion_thickness_modifier=3.5,
                                          shadow_strength=1.0)
         controller.add_ons.extend([lighting, camera, capture])
@@ -59,10 +59,9 @@ def run_case(case_name: str,
                                  "width": 1280,
                                  "height": 720},
                                 Controller.get_add_scene(scene_name=SCENE_NAME),
-                                {"$type": "set_floorplan_roof",
-                                 "show": False}])
+                                Controller.get_add_hdri_skybox(skybox_name=SKYBOX_NAME)])
 
-        # Let the interior scene and lighting initialize before adding the moving object.
+        # Let the scene and lighting initialize before adding the moving object.
         for _ in range(6):
             controller.communicate([])
 
@@ -92,8 +91,8 @@ def main() -> None:
         {
             "case_name": "case000_static_center",
             "position": {"x": 0.0, "y": 0.02, "z": 0.0},
-            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "velocity": {"x": 0.45, "y": 0.0, "z": 0.18},
+            "angular_velocity": {"x": 0.0, "y": 0.55, "z": 0.15},
             "frames": 90,
         },
         {
