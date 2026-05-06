@@ -10,12 +10,30 @@ DATASETS = [
         "subtitle": "原始多场景动力学 case，保留旧结果，不做覆盖。",
         "directory": "tdw_multi_scene_cases",
         "badge": "Original",
+        "mode": "scene_dirs",
     },
     {
         "title": "Real Object Multi Scene Cases",
         "subtitle": "新增的真实物体仿真批次，使用日常物体模型，单独输出，不影响旧 case。",
         "directory": "tdw_multi_scene_real_objects",
         "badge": "Real Object",
+        "mode": "scene_dirs",
+    },
+    {
+        "title": "Soft Body / Cloth Demo",
+        "subtitle": "TDW 的 Obi 软体布料 demo。这里展示真正的 cloth 求解，而不是软外观刚体。",
+        "directory": "tdw_obi_cloth_demo",
+        "badge": "Soft Body",
+        "mode": "flat_videos",
+        "scene_label": "tdw_obi_cloth_demo",
+    },
+    {
+        "title": "Real Scene Gravity Demos",
+        "subtitle": "真实室内背景下的重力仿真示例，包含刚体下落和 Obi 布料下落，输出到独立目录并汇总展示。",
+        "directory": "tdw_real_scene_gravity_demos",
+        "badge": "Real Scene",
+        "mode": "flat_videos",
+        "scene_label": "tdw_real_scene_gravity_demos",
     },
 ]
 
@@ -31,16 +49,46 @@ def list_scene_videos(dataset_dir: Path):
     return scenes
 
 
+def list_flat_videos(dataset_dir: Path):
+    if not dataset_dir.exists():
+        return []
+    return sorted(dataset_dir.glob("*.mp4"))
+
+
 cards = []
 for dataset in DATASETS:
     dataset_dir = ROOT / dataset["directory"]
-    scenes = list_scene_videos(dataset_dir)
     cards.append(f'<section class="section"><h2>{dataset["title"]}</h2><p>{dataset["subtitle"]}</p>')
-    if not scenes:
-        cards.append('<p class="empty">当前还没有生成视频。</p></section>')
-        continue
-    for scene_name, videos in scenes:
-        cards.append(f'<div class="subsection"><h3>{scene_name}</h3><div class="grid">')
+    if dataset["mode"] == "scene_dirs":
+        scenes = list_scene_videos(dataset_dir)
+        if not scenes:
+            cards.append('<p class="empty">当前还没有生成视频。</p></section>')
+            continue
+        for scene_name, videos in scenes:
+            cards.append(f'<div class="subsection"><h3>{scene_name}</h3><div class="grid">')
+            for video in videos:
+                rel = str(video.relative_to(ROOT))
+                abs_path = str(video)
+                case_name = video.stem
+                cards.append(
+                    f'''<article class="card">
+  <video controls preload="metadata" src="{rel}"></video>
+  <div class="meta">
+    <span class="pill">{dataset["badge"]}</span>
+    <span class="pill scene-pill">{scene_name}</span>
+    <h4>{case_name}</h4>
+    <code>{abs_path}</code>
+  </div>
+</article>'''
+                )
+            cards.append("</div></div>")
+    else:
+        videos = list_flat_videos(dataset_dir)
+        if not videos:
+            cards.append('<p class="empty">当前还没有生成视频。</p></section>')
+            continue
+        scene_label = dataset.get("scene_label", dataset["directory"])
+        cards.append('<div class="grid">')
         for video in videos:
             rel = str(video.relative_to(ROOT))
             abs_path = str(video)
@@ -50,13 +98,13 @@ for dataset in DATASETS:
   <video controls preload="metadata" src="{rel}"></video>
   <div class="meta">
     <span class="pill">{dataset["badge"]}</span>
-    <span class="pill scene-pill">{scene_name}</span>
+    <span class="pill scene-pill">{scene_label}</span>
     <h4>{case_name}</h4>
     <code>{abs_path}</code>
   </div>
 </article>'''
             )
-        cards.append("</div></div>")
+        cards.append("</div>")
     cards.append("</section>")
 
 content = f"""<!DOCTYPE html>

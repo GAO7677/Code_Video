@@ -516,14 +516,21 @@ def should_merge_generated_born_tracks(track_a: GeneratedBornTrack, track_b: Gen
     same_class = track_a.classification == track_b.classification
     same_match = track_a.matched_seg_id == track_b.matched_seg_id
     track_similarity = histogram_intersection(track_a.prototype_hist, track_b.prototype_hist)
-    if overlap_stats["shared_frames"] >= 2.0:
+    if overlap_stats["shared_frames"] >= 1.0:
         if overlap_stats["mean_center_dist"] > GENERATED_BORN_MERGE_CENTER_DIST_WITH_APPEARANCE:
             return False
         if overlap_stats["mean_bbox_iou"] >= GENERATED_BORN_OVERLAP_MERGE_BBOX_IOU:
             return True
         if same_class and same_match and overlap_stats["mean_mask_coverage"] >= GENERATED_BORN_OVERLAP_MERGE_MASK_COVERAGE:
             return True
-        if same_class and track_similarity >= GENERATED_BORN_TRACK_APPEARANCE_MERGE:
+        if (
+            same_class
+            and track_similarity >= GENERATED_BORN_TRACK_APPEARANCE_MERGE
+            and (
+                overlap_stats["mean_mask_coverage"] >= GENERATED_BORN_OVERLAP_MERGE_MASK_COVERAGE * 0.5
+                or overlap_stats["mean_bbox_iou"] >= GENERATED_BORN_OVERLAP_MERGE_BBOX_IOU * 0.5
+            )
+        ):
             return True
         return False
     end_a = max(track_a.masks_by_frame)

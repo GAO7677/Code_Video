@@ -78,36 +78,10 @@
       "appearance_similarity": 0.538388,
       "confidence": 0.861516,
       "displayed": true,
-      "num_frames": 25,
+      "num_frames": 36,
       "start_frame": 13,
-      "end_frame": 37,
-      "max_area": 25745
-    },
-    {
-      "track_id": 16,
-      "classification": "new_object",
-      "matched_seg_id": null,
-      "matched_object_label": null,
-      "appearance_similarity": 0.501116,
-      "confidence": 0.681585,
-      "displayed": true,
-      "num_frames": 5,
-      "start_frame": 37,
-      "end_frame": 41,
-      "max_area": 8739
-    },
-    {
-      "track_id": 17,
-      "classification": "new_object",
-      "matched_seg_id": null,
-      "matched_object_label": null,
-      "appearance_similarity": 0.486458,
-      "confidence": 0.845124,
-      "displayed": true,
-      "num_frames": 8,
-      "start_frame": 41,
       "end_frame": 48,
-      "max_area": 8381
+      "max_area": 25745
     }
   ],
   "summary": {
@@ -122,8 +96,8 @@
     "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
     "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
     "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
-    "Generated-only discovery found 7 extra track(s): new=7, duplicate=0, scale_drift_candidate=0.",
-    "Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
+    "Generated-only discovery found 5 extra track(s): new=5, duplicate=0, scale_drift_candidate=0.",
+    "Only 1 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
     "The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis."
   ],
   "num_frames": 49,
@@ -177,20 +151,6 @@
         "matched_seg_id": null,
         "matched_object_label": null,
         "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_8.mp4"
-      },
-      {
-        "track_id": 16,
-        "classification": "new_object",
-        "matched_seg_id": null,
-        "matched_object_label": null,
-        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_16.mp4"
-      },
-      {
-        "track_id": 17,
-        "classification": "new_object",
-        "matched_seg_id": null,
-        "matched_object_label": null,
-        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0001__10005__case000_static_center_v2/generated_born_track_17.mp4"
       }
     ]
   }

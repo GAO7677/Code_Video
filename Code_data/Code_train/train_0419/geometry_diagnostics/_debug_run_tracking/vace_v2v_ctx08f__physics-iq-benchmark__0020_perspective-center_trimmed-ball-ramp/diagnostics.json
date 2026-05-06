@@ -1,0 +1,52 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/physics-iq-benchmark__0020_perspective-center_trimmed-ball-ramp.json",
+  "dataset": "physics-iq-benchmark",
+  "sample_id": "0020_perspective-center_trimmed-ball-ramp",
+  "mode": "generic_approx",
+  "target": {
+    "object_label": "foreground_proxy",
+    "seg_id": -1,
+    "selection_mode": "frame_difference_proxy",
+    "confidence": 0.2
+  },
+  "generated_tracking": null,
+  "generated_born_tracks": [],
+  "summary": {
+    "max_future_mask_area_ratio": 49.832061,
+    "max_future_area_depth2_ratio": 72.297302,
+    "target_visible_ratio": 0.959184,
+    "mean_bg_scale": 1.000005,
+    "root_cause": "object_scale_drift"
+  },
+  "analysis": [
+    "Target `foreground_proxy` was selected with `frame_difference_proxy` under mode `generic_approx`.",
+    "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
+    "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
+    "Foreground area grows strongly (`max_area_ratio=49.832`) while background scale stays near 1 (`mean_bg_scale=1.000005`), so the current heuristic flags object-only scale drift.",
+    "The projected-size invariant also drifts heavily (`max_area_depth2_ratio=72.297`), which argues against a pure perspective explanation."
+  ],
+  "num_frames": 49,
+  "context_frames": 8,
+  "gt_reference": {
+    "available": false,
+    "num_frames_compared": 0,
+    "target_visible_ratio": null,
+    "mean_bg_scale": null
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/dataset/physics-iq-benchmark/mytest/0020_perspective-center_trimmed-ball-ramp/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/physics-iq-benchmark__0020_perspective-center_trimmed-ball-ramp.mp4",
+    "full_gt_video": "/data/gaoya/dataset/physics-iq-benchmark/full-videos/take-1/30FPS/0020_full-videos_30FPS_perspective-center_take-1_trimmed-ball-ramp.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__physics-iq-benchmark__0020_perspective-center_trimmed-ball-ramp/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__physics-iq-benchmark__0020_perspective-center_trimmed-ball-ramp/curves.png",
+    "gt_curves_csv": null,
+    "gt_curves_png": null,
+    "comparison_curves_png": null,
+    "context_diagnostic_video": null,
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__physics-iq-benchmark__0020_perspective-center_trimmed-ball-ramp/generated_diagnostic.mp4",
+    "gt_diagnostic_video": null,
+    "context_single_track_videos": [],
+    "generated_single_track_videos": [],
+    "generated_born_single_track_videos": []
+  }
+}

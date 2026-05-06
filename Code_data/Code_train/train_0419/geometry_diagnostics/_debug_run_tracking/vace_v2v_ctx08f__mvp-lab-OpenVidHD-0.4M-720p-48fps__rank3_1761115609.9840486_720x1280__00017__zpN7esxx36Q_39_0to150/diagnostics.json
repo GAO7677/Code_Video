@@ -1,0 +1,51 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/mvp-lab-OpenVidHD-0.4M-720p-48fps__rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150.json",
+  "dataset": "mvp-lab-OpenVidHD-0.4M-720p-48fps",
+  "sample_id": "rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150",
+  "mode": "generic_approx",
+  "target": {
+    "object_label": "foreground_proxy",
+    "seg_id": -1,
+    "selection_mode": "frame_difference_proxy",
+    "confidence": 0.2
+  },
+  "generated_tracking": null,
+  "generated_born_tracks": [],
+  "summary": {
+    "max_future_mask_area_ratio": 1.0,
+    "max_future_area_depth2_ratio": 0.895756,
+    "target_visible_ratio": 0.979592,
+    "mean_bg_scale": 1.000066,
+    "root_cause": "stable_or_small_change"
+  },
+  "analysis": [
+    "Target `foreground_proxy` was selected with `frame_difference_proxy` under mode `generic_approx`.",
+    "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
+    "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
+    "The current metrics do not show a strong isolated geometry failure under the simple heuristic."
+  ],
+  "num_frames": 49,
+  "context_frames": 8,
+  "gt_reference": {
+    "available": false,
+    "num_frames_compared": 0,
+    "target_visible_ratio": null,
+    "mean_bg_scale": null
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/mvp-lab-OpenVidHD-0.4M-720p-48fps__rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150.mp4",
+    "full_gt_video": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/mytest/rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__mvp-lab-OpenVidHD-0.4M-720p-48fps__rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__mvp-lab-OpenVidHD-0.4M-720p-48fps__rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/curves.png",
+    "gt_curves_csv": null,
+    "gt_curves_png": null,
+    "comparison_curves_png": null,
+    "context_diagnostic_video": null,
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__mvp-lab-OpenVidHD-0.4M-720p-48fps__rank3_1761115609.9840486_720x1280__00017__zpN7esxx36Q_39_0to150/generated_diagnostic.mp4",
+    "gt_diagnostic_video": null,
+    "context_single_track_videos": [],
+    "generated_single_track_videos": [],
+    "generated_born_single_track_videos": []
+  }
+}

@@ -63,11 +63,24 @@
       "matched_object_label": null,
       "appearance_similarity": 0.450817,
       "confidence": 0.636345,
-      "displayed": true,
+      "displayed": false,
       "num_frames": 27,
       "start_frame": 22,
       "end_frame": 48,
-      "max_area": 424
+      "max_area": 672
+    },
+    {
+      "track_id": 8,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.446875,
+      "confidence": 0.618162,
+      "displayed": false,
+      "num_frames": 26,
+      "start_frame": 23,
+      "end_frame": 48,
+      "max_area": 341
     },
     {
       "track_id": 9,
@@ -100,13 +113,13 @@
       "classification": "new_object",
       "matched_seg_id": null,
       "matched_object_label": null,
-      "appearance_similarity": 0.391919,
-      "confidence": 0.650076,
-      "displayed": true,
-      "num_frames": 23,
+      "appearance_similarity": 0.329812,
+      "confidence": 0.465444,
+      "displayed": false,
+      "num_frames": 6,
       "start_frame": 26,
-      "end_frame": 48,
-      "max_area": 823
+      "end_frame": 31,
+      "max_area": 290
     },
     {
       "track_id": 14,
@@ -120,6 +133,19 @@
       "start_frame": 30,
       "end_frame": 48,
       "max_area": 580
+    },
+    {
+      "track_id": 15,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.391919,
+      "confidence": 0.650076,
+      "displayed": false,
+      "num_frames": 19,
+      "start_frame": 30,
+      "end_frame": 48,
+      "max_area": 823
     }
   ],
   "summary": {
@@ -134,8 +160,8 @@
     "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
     "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
     "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
-    "Generated-only discovery found 8 extra track(s): new=7, duplicate=1, scale_drift_candidate=0.",
-    "Only 4 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
+    "Generated-only discovery found 10 extra track(s): new=9, duplicate=1, scale_drift_candidate=0.",
+    "Only 2 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
     "The current metrics do not show a strong isolated geometry failure under the simple heuristic."
   ],
   "num_frames": 49,
@@ -186,20 +212,6 @@
         "matched_seg_id": 1,
         "matched_object_label": "seg_1_target",
         "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_5.mp4"
-      },
-      {
-        "track_id": 6,
-        "classification": "new_object",
-        "matched_seg_id": null,
-        "matched_object_label": null,
-        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_6.mp4"
-      },
-      {
-        "track_id": 12,
-        "classification": "new_object",
-        "matched_seg_id": null,
-        "matched_object_label": null,
-        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0171__10096__case002_static_right/generated_born_track_12.mp4"
       }
     ]
   }

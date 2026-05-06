@@ -23,13 +23,26 @@
       "classification": "duplicate_of_known_object",
       "matched_seg_id": 1,
       "matched_object_label": "seg_1_target",
-      "appearance_similarity": 0.663556,
+      "appearance_similarity": 0.559612,
       "confidence": 0.602834,
-      "displayed": true,
+      "displayed": false,
       "num_frames": 5,
       "start_frame": 9,
       "end_frame": 13,
-      "max_area": 1385
+      "max_area": 1529
+    },
+    {
+      "track_id": 3,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 1,
+      "matched_object_label": "seg_1_target",
+      "appearance_similarity": 0.663556,
+      "confidence": 0.552167,
+      "displayed": false,
+      "num_frames": 4,
+      "start_frame": 10,
+      "end_frame": 13,
+      "max_area": 1285
     },
     {
       "track_id": 4,
@@ -65,10 +78,36 @@
       "appearance_similarity": 0.355723,
       "confidence": 0.795538,
       "displayed": true,
-      "num_frames": 31,
+      "num_frames": 16,
       "start_frame": 16,
-      "end_frame": 46,
+      "end_frame": 31,
       "max_area": 4302
+    },
+    {
+      "track_id": 9,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.316649,
+      "confidence": 0.308745,
+      "displayed": false,
+      "num_frames": 3,
+      "start_frame": 18,
+      "end_frame": 20,
+      "max_area": 450
+    },
+    {
+      "track_id": 12,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.273394,
+      "confidence": 0.322068,
+      "displayed": false,
+      "num_frames": 3,
+      "start_frame": 24,
+      "end_frame": 26,
+      "max_area": 713
     },
     {
       "track_id": 13,
@@ -82,6 +121,32 @@
       "start_frame": 25,
       "end_frame": 26,
       "max_area": 828
+    },
+    {
+      "track_id": 14,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.316102,
+      "confidence": 0.682331,
+      "displayed": true,
+      "num_frames": 20,
+      "start_frame": 25,
+      "end_frame": 46,
+      "max_area": 2944
+    },
+    {
+      "track_id": 29,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.324804,
+      "confidence": 0.325619,
+      "displayed": false,
+      "num_frames": 5,
+      "start_frame": 36,
+      "end_frame": 40,
+      "max_area": 947
     },
     {
       "track_id": 31,
@@ -109,7 +174,7 @@
     "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
     "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
     "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
-    "Generated-only discovery found 6 extra track(s): new=4, duplicate=2, scale_drift_candidate=0.",
+    "Generated-only discovery found 11 extra track(s): new=8, duplicate=3, scale_drift_candidate=0.",
     "Only 3 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
     "The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis."
   ],
@@ -159,13 +224,6 @@
     ],
     "generated_born_single_track_videos": [
       {
-        "track_id": 1,
-        "classification": "duplicate_of_known_object",
-        "matched_seg_id": 1,
-        "matched_object_label": "seg_1_target",
-        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_1.mp4"
-      },
-      {
         "track_id": 5,
         "classification": "duplicate_of_known_object",
         "matched_seg_id": 2,
@@ -178,6 +236,13 @@
         "matched_seg_id": null,
         "matched_object_label": null,
         "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_6.mp4"
+      },
+      {
+        "track_id": 14,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__version_1_genesis_rigid_data_all_cases__genesis_heldout_0044__10096__case005_entry_left/generated_born_track_14.mp4"
       }
     ]
   }

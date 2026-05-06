@@ -1,0 +1,248 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0805__video_819.json",
+  "dataset": "kubric_tfds_movi-d",
+  "sample_id": "movi_d_test_0805__video_819",
+  "mode": "movi_d_gt",
+  "target": {
+    "object_label": "seg_4",
+    "seg_id": 4,
+    "selection_mode": "highest_motion_gt_instance_in_context",
+    "confidence": 1.0
+  },
+  "generated_tracking": {
+    "source": "sam2_context_multi_frame_mask_init",
+    "num_tracked_frames": 49,
+    "tracked_seg_ids": [
+      4
+    ]
+  },
+  "generated_born_tracks": [
+    {
+      "track_id": 1,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.296684,
+      "confidence": 0.636032,
+      "displayed": true,
+      "num_frames": 40,
+      "start_frame": 8,
+      "end_frame": 48,
+      "max_area": 1445
+    },
+    {
+      "track_id": 2,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.41453,
+      "confidence": 0.824359,
+      "displayed": true,
+      "num_frames": 40,
+      "start_frame": 8,
+      "end_frame": 48,
+      "max_area": 6016
+    },
+    {
+      "track_id": 6,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.439361,
+      "confidence": 0.831808,
+      "displayed": true,
+      "num_frames": 39,
+      "start_frame": 8,
+      "end_frame": 48,
+      "max_area": 4630
+    },
+    {
+      "track_id": 7,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.374844,
+      "confidence": 0.812453,
+      "displayed": true,
+      "num_frames": 40,
+      "start_frame": 9,
+      "end_frame": 48,
+      "max_area": 11429
+    },
+    {
+      "track_id": 10,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.549525,
+      "confidence": 0.726558,
+      "displayed": true,
+      "num_frames": 36,
+      "start_frame": 11,
+      "end_frame": 48,
+      "max_area": 2472
+    },
+    {
+      "track_id": 11,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.514783,
+      "confidence": 0.854435,
+      "displayed": true,
+      "num_frames": 36,
+      "start_frame": 13,
+      "end_frame": 48,
+      "max_area": 5427
+    },
+    {
+      "track_id": 24,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.185692,
+      "confidence": 0.755707,
+      "displayed": true,
+      "num_frames": 28,
+      "start_frame": 21,
+      "end_frame": 48,
+      "max_area": 3557
+    },
+    {
+      "track_id": 26,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.085509,
+      "confidence": 0.671053,
+      "displayed": true,
+      "num_frames": 28,
+      "start_frame": 21,
+      "end_frame": 48,
+      "max_area": 3086
+    },
+    {
+      "track_id": 27,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.34733,
+      "confidence": 0.592599,
+      "displayed": false,
+      "num_frames": 27,
+      "start_frame": 22,
+      "end_frame": 48,
+      "max_area": 384
+    }
+  ],
+  "summary": {
+    "max_future_mask_area_ratio": 3.537632,
+    "max_future_area_depth2_ratio": 2.745841,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 0.999957,
+    "root_cause": "object_scale_drift"
+  },
+  "analysis": [
+    "Target `seg_4` was selected with `highest_motion_gt_instance_in_context` under mode `movi_d_gt`.",
+    "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
+    "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
+    "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+    "Generated-only discovery found 9 extra track(s): new=9, duplicate=0, scale_drift_candidate=0.",
+    "Only 8 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
+    "Foreground area grows strongly (`max_area_ratio=3.538`) while background scale stays near 1 (`mean_bg_scale=0.999957`), so the current heuristic flags object-only scale drift.",
+    "The projected-size invariant also drifts heavily (`max_area_depth2_ratio=2.746`), which argues against a pure perspective explanation."
+  ],
+  "num_frames": 49,
+  "context_frames": 8,
+  "gt_reference": {
+    "available": true,
+    "num_frames_compared": 24,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 0.9999045850393208
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0805__video_819/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0805__video_819.mp4",
+    "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0805__video_819/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/gt_diagnostic.mp4",
+    "context_single_track_videos": [
+      {
+        "seg_id": 4,
+        "object_label": "seg_4",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/context_track_seg_4.mp4"
+      }
+    ],
+    "generated_single_track_videos": [
+      {
+        "seg_id": 4,
+        "object_label": "seg_4",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_track_seg_4.mp4"
+      }
+    ],
+    "generated_born_single_track_videos": [
+      {
+        "track_id": 1,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_1.mp4"
+      },
+      {
+        "track_id": 2,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_2.mp4"
+      },
+      {
+        "track_id": 6,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_6.mp4"
+      },
+      {
+        "track_id": 7,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_7.mp4"
+      },
+      {
+        "track_id": 10,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_10.mp4"
+      },
+      {
+        "track_id": 11,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_11.mp4"
+      },
+      {
+        "track_id": 24,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_24.mp4"
+      },
+      {
+        "track_id": 26,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0805__video_819/generated_born_track_26.mp4"
+      }
+    ]
+  }
+}

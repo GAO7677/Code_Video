@@ -1,0 +1,442 @@
+{
+  "sidecar_path": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0005__video_668.json",
+  "dataset": "kubric_tfds_movi-d",
+  "sample_id": "movi_d_test_0005__video_668",
+  "mode": "movi_d_gt",
+  "target": {
+    "object_label": "seg_7",
+    "seg_id": 7,
+    "selection_mode": "highest_motion_gt_instance_in_context",
+    "confidence": 1.0
+  },
+  "generated_tracking": {
+    "source": "sam2_context_multi_frame_mask_init",
+    "num_tracked_frames": 49,
+    "tracked_seg_ids": [
+      7
+    ]
+  },
+  "generated_born_tracks": [
+    {
+      "track_id": 1,
+      "classification": "scale_drift_candidate",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.601447,
+      "confidence": 0.980434,
+      "displayed": true,
+      "num_frames": 40,
+      "start_frame": 8,
+      "end_frame": 48,
+      "max_area": 9911
+    },
+    {
+      "track_id": 2,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.652462,
+      "confidence": 0.895739,
+      "displayed": true,
+      "num_frames": 11,
+      "start_frame": 8,
+      "end_frame": 18,
+      "max_area": 12893
+    },
+    {
+      "track_id": 3,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.29076,
+      "confidence": 0.585428,
+      "displayed": false,
+      "num_frames": 10,
+      "start_frame": 9,
+      "end_frame": 18,
+      "max_area": 482
+    },
+    {
+      "track_id": 4,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.37947,
+      "confidence": 0.594341,
+      "displayed": false,
+      "num_frames": 8,
+      "start_frame": 11,
+      "end_frame": 18,
+      "max_area": 305
+    },
+    {
+      "track_id": 5,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.397303,
+      "confidence": 0.259591,
+      "displayed": false,
+      "num_frames": 2,
+      "start_frame": 17,
+      "end_frame": 18,
+      "max_area": 279
+    },
+    {
+      "track_id": 21,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.366206,
+      "confidence": 0.422862,
+      "displayed": false,
+      "num_frames": 4,
+      "start_frame": 21,
+      "end_frame": 24,
+      "max_area": 2005
+    },
+    {
+      "track_id": 25,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.181845,
+      "confidence": 0.577453,
+      "displayed": false,
+      "num_frames": 16,
+      "start_frame": 21,
+      "end_frame": 36,
+      "max_area": 729
+    },
+    {
+      "track_id": 29,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.592902,
+      "confidence": 0.80177,
+      "displayed": true,
+      "num_frames": 14,
+      "start_frame": 22,
+      "end_frame": 35,
+      "max_area": 1827
+    },
+    {
+      "track_id": 39,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.418758,
+      "confidence": 0.655827,
+      "displayed": false,
+      "num_frames": 14,
+      "start_frame": 22,
+      "end_frame": 35,
+      "max_area": 795
+    },
+    {
+      "track_id": 34,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.391495,
+      "confidence": 0.629348,
+      "displayed": false,
+      "num_frames": 15,
+      "start_frame": 22,
+      "end_frame": 36,
+      "max_area": 611
+    },
+    {
+      "track_id": 38,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.369476,
+      "confidence": 0.682291,
+      "displayed": true,
+      "num_frames": 16,
+      "start_frame": 22,
+      "end_frame": 37,
+      "max_area": 1991
+    },
+    {
+      "track_id": 36,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.547214,
+      "confidence": 0.864164,
+      "displayed": true,
+      "num_frames": 27,
+      "start_frame": 22,
+      "end_frame": 48,
+      "max_area": 18024
+    },
+    {
+      "track_id": 37,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.335567,
+      "confidence": 0.80067,
+      "displayed": true,
+      "num_frames": 27,
+      "start_frame": 22,
+      "end_frame": 48,
+      "max_area": 3891
+    },
+    {
+      "track_id": 40,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.504474,
+      "confidence": 0.697642,
+      "displayed": true,
+      "num_frames": 13,
+      "start_frame": 23,
+      "end_frame": 35,
+      "max_area": 952
+    },
+    {
+      "track_id": 42,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.257145,
+      "confidence": 0.570244,
+      "displayed": false,
+      "num_frames": 13,
+      "start_frame": 23,
+      "end_frame": 35,
+      "max_area": 431
+    },
+    {
+      "track_id": 44,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.112057,
+      "confidence": 0.517517,
+      "displayed": false,
+      "num_frames": 11,
+      "start_frame": 25,
+      "end_frame": 35,
+      "max_area": 339
+    },
+    {
+      "track_id": 46,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.318532,
+      "confidence": 0.52071,
+      "displayed": false,
+      "num_frames": 7,
+      "start_frame": 28,
+      "end_frame": 35,
+      "max_area": 1686
+    },
+    {
+      "track_id": 48,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.459351,
+      "confidence": 0.465155,
+      "displayed": false,
+      "num_frames": 5,
+      "start_frame": 31,
+      "end_frame": 35,
+      "max_area": 461
+    },
+    {
+      "track_id": 62,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.693146,
+      "confidence": 0.722244,
+      "displayed": false,
+      "num_frames": 10,
+      "start_frame": 38,
+      "end_frame": 47,
+      "max_area": 639
+    },
+    {
+      "track_id": 63,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.563676,
+      "confidence": 0.729403,
+      "displayed": false,
+      "num_frames": 10,
+      "start_frame": 38,
+      "end_frame": 47,
+      "max_area": 1241
+    },
+    {
+      "track_id": 61,
+      "classification": "duplicate_of_known_object",
+      "matched_seg_id": 7,
+      "matched_object_label": "seg_7",
+      "appearance_similarity": 0.675285,
+      "confidence": 0.902585,
+      "displayed": true,
+      "num_frames": 11,
+      "start_frame": 38,
+      "end_frame": 48,
+      "max_area": 3850
+    },
+    {
+      "track_id": 67,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.093255,
+      "confidence": 0.455927,
+      "displayed": false,
+      "num_frames": 7,
+      "start_frame": 41,
+      "end_frame": 47,
+      "max_area": 342
+    },
+    {
+      "track_id": 68,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.446493,
+      "confidence": 0.458298,
+      "displayed": false,
+      "num_frames": 5,
+      "start_frame": 43,
+      "end_frame": 47,
+      "max_area": 431
+    },
+    {
+      "track_id": 69,
+      "classification": "new_object",
+      "matched_seg_id": null,
+      "matched_object_label": null,
+      "appearance_similarity": 0.329444,
+      "confidence": 0.300783,
+      "displayed": false,
+      "num_frames": 3,
+      "start_frame": 45,
+      "end_frame": 47,
+      "max_area": 332
+    }
+  ],
+  "summary": {
+    "max_future_mask_area_ratio": 0.0,
+    "max_future_area_depth2_ratio": 0.0,
+    "target_visible_ratio": 0.163265,
+    "mean_bg_scale": 0.999961,
+    "root_cause": "tracking_or_visibility_failure"
+  },
+  "analysis": [
+    "Target `seg_7` was selected with `highest_motion_gt_instance_in_context` under mode `movi_d_gt`.",
+    "Generated-video analysis prefers context-initialized object tracking. When that fails or is unavailable, it falls back to a target-window foreground proxy.",
+    "Overlay videos render motion-selected context objects with stable per-object colors so the same object keeps the same color across context, generated, and GT videos. Low-motion objects are filtered automatically.",
+    "GT reference curves use synthetic segmentation/depth and provide a stronger baseline for whether the generated size change looks physically plausible.",
+    "Generated-only discovery found 24 extra track(s): new=18, duplicate=5, scale_drift_candidate=1.",
+    "Only 8 high-confidence generated-only track(s) are shown in overlay and single-track panels; lower-confidence flicker-like tracks remain in diagnostics JSON only.",
+    "The target proxy is not stable enough over time, so this case is better treated as a tracking/visibility failure than a clean geometry diagnosis."
+  ],
+  "num_frames": 49,
+  "context_frames": 8,
+  "gt_reference": {
+    "available": true,
+    "num_frames_compared": 24,
+    "target_visible_ratio": 1.0,
+    "mean_bg_scale": 1.0000020278437096
+  },
+  "artifacts": {
+    "context_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0005__video_668/context_video.mp4",
+    "generated_video": "/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/output/VACE_1_3B_V2V/context_08f/kubric_tfds_movi-d__movi_d_test_0005__video_668.mp4",
+    "full_gt_video": "/data/gaoya/dataset/kubric_tfds_movi-d/mytest/movi_d_test_0005__video_668/full_video.mp4",
+    "curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/curves.csv",
+    "curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/curves.png",
+    "gt_curves_csv": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/gt_curves.csv",
+    "gt_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/gt_curves.png",
+    "comparison_curves_png": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/comparison_curves.png",
+    "context_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/context_diagnostic.mp4",
+    "generated_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_diagnostic.mp4",
+    "gt_diagnostic_video": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/gt_diagnostic.mp4",
+    "context_single_track_videos": [
+      {
+        "seg_id": 7,
+        "object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/context_track_seg_7.mp4"
+      }
+    ],
+    "generated_single_track_videos": [
+      {
+        "seg_id": 7,
+        "object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_track_seg_7.mp4"
+      }
+    ],
+    "generated_born_single_track_videos": [
+      {
+        "track_id": 1,
+        "classification": "scale_drift_candidate",
+        "matched_seg_id": 7,
+        "matched_object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_1.mp4"
+      },
+      {
+        "track_id": 2,
+        "classification": "duplicate_of_known_object",
+        "matched_seg_id": 7,
+        "matched_object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_2.mp4"
+      },
+      {
+        "track_id": 29,
+        "classification": "duplicate_of_known_object",
+        "matched_seg_id": 7,
+        "matched_object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_29.mp4"
+      },
+      {
+        "track_id": 38,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_38.mp4"
+      },
+      {
+        "track_id": 36,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_36.mp4"
+      },
+      {
+        "track_id": 37,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_37.mp4"
+      },
+      {
+        "track_id": 40,
+        "classification": "new_object",
+        "matched_seg_id": null,
+        "matched_object_label": null,
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_40.mp4"
+      },
+      {
+        "track_id": 61,
+        "classification": "duplicate_of_known_object",
+        "matched_seg_id": 7,
+        "matched_object_label": "seg_7",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419/geometry_diagnostics/_debug_run_tracking/vace_v2v_ctx08f__kubric_tfds_movi-d__movi_d_test_0005__video_668/generated_born_track_61.mp4"
+      }
+    ]
+  }
+}
