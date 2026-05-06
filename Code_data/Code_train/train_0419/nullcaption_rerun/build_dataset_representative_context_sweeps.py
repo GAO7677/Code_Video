@@ -188,15 +188,19 @@ def resolve_generated_video(
             assets_dir=assets_dir,
             link_name=f"generated_context_{context_frames:02d}f.mp4",
         )
-    sidecar_path = (
+    generated_dir = (
         benchmark_root
         / "tools"
         / "dataset_representative_context_sweeps"
         / "generated"
         / f"batch_context_{context_frames:02d}f"
-        / f"{dataset}__{sample_id}.json"
     )
-    if not sidecar_path.exists():
+    sidecar_candidates = [
+        generated_dir / f"{dataset}__{sample_id}.json",
+        generated_dir / f"meta__{sample_id}.json",
+    ]
+    sidecar_path = next((path for path in sidecar_candidates if path.exists()), None)
+    if sidecar_path is None:
         return None
     sidecar = read_json(sidecar_path)
     raw_output = sidecar.get("paths", {}).get("output_video_path")

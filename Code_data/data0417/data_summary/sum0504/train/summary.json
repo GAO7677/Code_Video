@@ -1,9 +1,9 @@
 {
   "split": "train",
-  "num_samples": 5088,
+  "num_samples": 4970,
   "leaf_counts": {
-    "rigid/count_01/no_collision": 1722,
-    "rigid/count_01/env_only": 1202,
+    "rigid/count_01/no_collision": 1692,
+    "rigid/count_01/env_only": 1114,
     "rigid/count_01/obj_obj_only_c1": 0,
     "rigid/count_01/obj_obj_only_c2plus": 0,
     "rigid/count_01/mixed_c1": 0,

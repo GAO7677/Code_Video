@@ -66,6 +66,29 @@ DATASETS = [
         "mode": "flat_videos",
         "scene_label": "tdw_water_param_sweep",
     },
+    {
+        "title": "Continuous Water Streams",
+        "subtitle": "针对连续大水流单独调的一组参数，优先保证可见性、体积感和连贯水柱，而不是颗粒飞溅。",
+        "directory": "tdw_water_continuous_streams",
+        "badge": "Water Stream",
+        "mode": "flat_videos",
+        "scene_label": "tdw_water_continuous_streams",
+    },
+    {
+        "title": "Non-Fluid Soft Bodies",
+        "subtitle": "不包含液体的软体批次，集中展示布料和充气软体的真实场景仿真。",
+        "directory": "tdw_nonfluid_soft_bodies",
+        "badge": "Soft Body",
+        "mode": "flat_videos",
+        "scene_label": "tdw_nonfluid_soft_bodies",
+    },
+    {
+        "title": "Non-Fluid Soft Bodies Multi Scene",
+        "subtitle": "同一组布料和充气软体 case 切换到不同真实场景背景下运行，用于比较背景、空间和光照变化对软体观感的影响。",
+        "directory": "tdw_nonfluid_soft_bodies_multi_scene",
+        "badge": "Soft Multi Scene",
+        "mode": "scene_dirs",
+    },
 ]
 
 
