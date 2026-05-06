@@ -9475,7 +9475,10 @@ def simulate_in_genesis(
             except Exception:
                 pass
             rendered = cam.render(rgb=True, depth=True, segmentation=True, normal=False)
-            if t % save_every == 0:
+            # Frame 0 is already recorded above. Export subsequent frames only
+            # after a full `save_every` physics-step interval has elapsed so the
+            # video frame timing matches the physical simulation time.
+            if (t + 1) % save_every == 0:
                 _record_physics_frame(rendered)
                 frames.append(np.asarray(rgb_frames[-1]))
             continue
@@ -9494,7 +9497,7 @@ def simulate_in_genesis(
                 custom_objects_released = True
         scene.step()
         rendered = cam.render(rgb=True, depth=True, segmentation=True, normal=False)
-        if t % save_every == 0:
+        if (t + 1) % save_every == 0:
             _record_physics_frame(rendered)
             frames.append(np.asarray(rgb_frames[-1]))
 
@@ -9745,6 +9748,8 @@ def simulate_in_genesis(
             "dt": float(dt),
             "substeps": int(runtime_substeps),
             "steps_per_frame": int(save_every),
+            "frame_dt": float(dt) * float(save_every),
+            "video_fps": float(fps),
             "gravity": [0.0, 0.0, float(gravity_z)],
         },
         "camera": camera_cfg,

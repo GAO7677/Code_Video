@@ -44,11 +44,27 @@ DATASETS = [
         "scene_label": "tdw_real_scene_gravity_stable_cloth",
     },
     {
-        "title": "Cloth A/B Compare",
-        "subtitle": "相同场景、相同障碍物、相同 cloth 初始姿态，只改变稳定化参数。每个 case 的未稳定版和稳定版并排放在同一行。",
+        "title": "Stable Cloth Compare Cases",
+        "subtitle": "保留修正后的稳定版 cloth 对比 case，仅展示最终采用的稳定结果。",
         "directory": "tdw_cloth_ab_compare",
-        "badge": "A/B Compare",
-        "mode": "compare_pairs",
+        "badge": "Stable Compare",
+        "mode": "stable_compare",
+    },
+    {
+        "title": "Real Scene Soft Materials",
+        "subtitle": "真实室内场景下的非刚体材料示例，包含软体体积、液体和颗粒材料。",
+        "directory": "tdw_real_scene_soft_materials",
+        "badge": "Soft Material",
+        "mode": "flat_videos",
+        "scene_label": "tdw_real_scene_soft_materials",
+    },
+    {
+        "title": "Water Parameter Sweep",
+        "subtitle": "同一场景同一机位下的多组水体参数对比，用于观察液体从偏稠、偏平滑到偏飞溅的观感差异。",
+        "directory": "tdw_water_param_sweep",
+        "badge": "Water Sweep",
+        "mode": "flat_videos",
+        "scene_label": "tdw_water_param_sweep",
     },
 ]
 
@@ -70,16 +86,15 @@ def list_flat_videos(dataset_dir: Path):
     return sorted(dataset_dir.glob("*.mp4"))
 
 
-def list_compare_pairs(dataset_dir: Path):
+def list_stable_compare_videos(dataset_dir: Path):
     if not dataset_dir.exists():
         return []
-    pairs = []
+    videos = []
     for case_dir in sorted(p for p in dataset_dir.iterdir() if p.is_dir()):
-        unstable = case_dir.joinpath("unstable.mp4")
         stable = case_dir.joinpath("stable.mp4")
-        if unstable.exists() or stable.exists():
-            pairs.append((case_dir.name, unstable if unstable.exists() else None, stable if stable.exists() else None))
-    return pairs
+        if stable.exists():
+            videos.append((case_dir.name, stable))
+    return videos
 
 
 cards = []
@@ -133,40 +148,26 @@ for dataset in DATASETS:
             )
         cards.append("</div>")
     else:
-        pairs = list_compare_pairs(dataset_dir)
-        if not pairs:
+        videos = list_stable_compare_videos(dataset_dir)
+        if not videos:
             cards.append('<p class="empty">当前还没有生成视频。</p></section>')
             continue
-        for case_name, unstable, stable in pairs:
-            cards.append(f'<div class="subsection"><h3>{case_name}</h3><div class="compare-grid">')
-            for label, video in [("Unstable", unstable), ("Stable", stable)]:
-                if video is None:
-                    cards.append(
-                        f'''<article class="card">
-  <div class="missing-video">Missing {label}</div>
-  <div class="meta">
-    <span class="pill">{dataset["badge"]}</span>
-    <span class="pill scene-pill">{label}</span>
-    <h4>{case_name}</h4>
-    <code>missing</code>
-  </div>
-</article>'''
-                    )
-                    continue
-                rel = str(video.relative_to(ROOT))
-                abs_path = str(video)
-                cards.append(
-                    f'''<article class="card">
+        cards.append('<div class="grid">')
+        for case_name, video in videos:
+            rel = str(video.relative_to(ROOT))
+            abs_path = str(video)
+            cards.append(
+                f'''<article class="card">
   <video controls preload="metadata" src="{rel}"></video>
   <div class="meta">
     <span class="pill">{dataset["badge"]}</span>
-    <span class="pill scene-pill">{label}</span>
+    <span class="pill scene-pill">Stable</span>
     <h4>{case_name}</h4>
     <code>{abs_path}</code>
   </div>
 </article>'''
-                )
-            cards.append("</div></div>")
+            )
+        cards.append("</div>")
     cards.append("</section>")
 
 content = f"""<!DOCTYPE html>

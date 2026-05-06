@@ -144,11 +144,16 @@ def build_html(payload: dict[str, Any]) -> str:
     rows = []
     for item in payload["variants"]:
         rows.append(
+            "<section class='variant-card'>"
+            "<div class='variant-head'>"
+            f"<h2>{html.escape(item['label'])}</h2>"
+            f"{text_html(item['summary'])}"
+            "</div>"
             "<div class='variant-row'>"
-            f"{render_slot(item['label'], text_html(item['summary']), 'meta-slot')}"
             f"{render_slot('actual_context_video', media_html(item['context_clip']), 'context-slot')}"
             f"{render_slot('generated_output', media_html(item['generated_video']), 'output-slot')}"
             "</div>"
+            "</section>"
         )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -211,14 +216,33 @@ def build_html(payload: dict[str, Any]) -> str:
       display: grid;
       gap: 10px;
     }}
-    .variant-row {{
-      display: grid;
-      grid-template-columns: minmax(220px, 280px) minmax(320px, 1fr) minmax(320px, 1fr);
-      gap: 8px;
+    .variant-card {{
       padding: 10px;
       background: rgba(255,253,248,0.96);
       border: 1px solid var(--line);
       border-radius: 12px;
+    }}
+    .variant-head {{
+      display: grid;
+      grid-template-columns: minmax(180px, 240px) 1fr;
+      gap: 8px;
+      align-items: start;
+      margin-bottom: 8px;
+    }}
+    .variant-head h2 {{
+      margin: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(214, 234, 217, 0.82);
+      color: var(--ok-ink);
+      font-size: 15px;
+      line-height: 1.2;
+    }}
+    .variant-row {{
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+      gap: 8px;
     }}
     .slot {{
       background: #fbf8f2;
@@ -242,10 +266,6 @@ def build_html(payload: dict[str, Any]) -> str:
     .output-slot .slot-head {{
       background: rgba(243, 215, 201, 0.78);
       color: #6e2a13;
-    }}
-    .meta-slot .slot-head {{
-      background: rgba(214, 234, 217, 0.82);
-      color: var(--ok-ink);
     }}
     video {{
       display: block;
@@ -276,7 +296,7 @@ def build_html(payload: dict[str, Any]) -> str:
       );
     }}
     @media (max-width: 1100px) {{
-      .shared-grid, .variant-row {{
+      .shared-grid, .variant-head, .variant-row {{
         grid-template-columns: 1fr;
       }}
     }}
@@ -361,14 +381,19 @@ def main() -> None:
                 / f"{dataset}__{sample_id}.mp4"
             )
         else:
-            generated_path = (
+            generated_sidecar_path = (
                 benchmark_root
                 / "tools"
                 / "context_sweep_case0005"
-                / "generated"
                 / f"context_{context_frames:02d}f"
-                / f"{dataset}__{sample_id}.mp4"
+                / "meta__0005_perspective-center_trimmed-ball-behind-rotating-paper.json"
             )
+            generated_path = None
+            if generated_sidecar_path.exists():
+                generated_sidecar = read_json(generated_sidecar_path)
+                raw_output_path = generated_sidecar.get("paths", {}).get("output_video_path")
+                if isinstance(raw_output_path, str):
+                    generated_path = Path(raw_output_path)
 
         variants.append(
             {
@@ -381,12 +406,17 @@ def main() -> None:
                     f"generated_output_frames: 49"
                 ),
                 "context_clip": relative_to_root(benchmark_root, context_clip_path),
-                "generated_video": expose_asset(
+                "generated_video": relative_to_root(
+                    benchmark_root,
+                    assets_dir / f"generated_context_{context_frames:02d}f.mp4",
+                )
+                if expose_asset(
                     target=generated_path,
                     benchmark_root=benchmark_root,
                     assets_dir=assets_dir,
                     link_name=f"generated_context_{context_frames:02d}f.mp4",
-                ),
+                )
+                else None,
             }
         )
 

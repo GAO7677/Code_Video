@@ -33,44 +33,39 @@ COMPARE_CASES: List[Dict[str, object]] = [
         "case_name": "compare_center_bridge",
         "cloth_material": "cotton",
         "sheet_type": SheetType.cloth_hd,
-        "position": {"x": 0.0, "y": 2.08, "z": 0.02},
-        "rotation": {"x": 10.0, "y": 12.0, "z": -8.0},
-        "frames": 220,
+        "position": {"x": -0.12, "y": 1.38, "z": -0.04},
+        "rotation": {"x": 24.0, "y": 26.0, "z": -18.0},
+        "frames": 180,
+        "impulse_force": {"x": 0.22, "y": -0.08, "z": 0.18},
+        "impulse_torque": {"x": 0.0, "y": 0.42, "z": 0.28},
         "static_objects": [
-            {"model_name": "camera_box", "position": {"x": -0.26, "y": 0.16, "z": 0.0}, "rotation": {"x": 0.0, "y": 10.0, "z": 0.0}},
-            {"model_name": "camera_box", "position": {"x": 0.26, "y": 0.16, "z": 0.0}, "rotation": {"x": 0.0, "y": -10.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": -0.1, "y": 0.16, "z": -0.02}, "rotation": {"x": 0.0, "y": 12.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": 0.34, "y": 0.16, "z": 0.18}, "rotation": {"x": 0.0, "y": -16.0, "z": 0.0}},
         ],
     },
     {
         "case_name": "compare_front_slide",
         "cloth_material": "cotton",
         "sheet_type": SheetType.cloth_hd,
-        "position": {"x": 0.06, "y": 2.18, "z": -0.32},
-        "rotation": {"x": 14.0, "y": 6.0, "z": 16.0},
-        "frames": 240,
+        "position": {"x": 0.2, "y": 1.42, "z": -0.24},
+        "rotation": {"x": 28.0, "y": -10.0, "z": 26.0},
+        "frames": 180,
+        "impulse_force": {"x": -0.16, "y": -0.06, "z": 0.24},
+        "impulse_torque": {"x": 0.12, "y": -0.36, "z": 0.32},
         "static_objects": [
-            {"model_name": "camera_box", "position": {"x": -0.2, "y": 0.16, "z": 0.02}, "rotation": {"x": 0.0, "y": 8.0, "z": 0.0}},
-            {"model_name": "camera_box", "position": {"x": 0.24, "y": 0.16, "z": 0.08}, "rotation": {"x": 0.0, "y": -8.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": -0.14, "y": 0.16, "z": 0.06}, "rotation": {"x": 0.0, "y": 8.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": 0.3, "y": 0.16, "z": -0.08}, "rotation": {"x": 0.0, "y": -14.0, "z": 0.0}},
         ],
     },
 ]
 
-MODES: List[Dict[str, object]] = [
-    {
-        "name": "unstable",
-        "substeps": 1,
-        "physics_iterations": 8,
-        "capture_warmup": 10,
-        "floor_material": CollisionMaterial(dynamic_friction=0.3, static_friction=0.3, stickiness=0.0, stick_distance=0.0),
-    },
-    {
-        "name": "stable",
-        "substeps": 8,
-        "physics_iterations": 16,
-        "capture_warmup": 12,
-        "floor_material": CollisionMaterial(dynamic_friction=0.55, static_friction=0.6, stickiness=0.0, stick_distance=0.0),
-    },
-]
+STABLE_MODE: Dict[str, object] = {
+    "name": "stable",
+    "substeps": 8,
+    "physics_iterations": 16,
+    "capture_warmup": 0,
+    "floor_material": CollisionMaterial(dynamic_friction=0.55, static_friction=0.6, stickiness=0.0, stick_distance=0.0),
+}
 
 
 def sanitize_proxy_env() -> None:
@@ -101,14 +96,14 @@ def convert_video(frames_dir: Path, output_video: Path) -> None:
                    check=True)
 
 
-def run_variant(case: Dict[str, object], mode: Dict[str, object]) -> None:
+def run_stable_variant(case: Dict[str, object]) -> None:
     sanitize_proxy_env()
     build_proc = launch_build()
     time.sleep(BUILD_BOOT_WAIT)
     c = Controller(launch_build=False, port=PORT)
     try:
-        case_root = OUTPUT_ROOT.joinpath(str(case["case_name"]), str(mode["name"]))
-        obi = Obi(output_data=True, floor_material=mode["floor_material"])
+        case_root = OUTPUT_ROOT.joinpath(str(case["case_name"]), str(STABLE_MODE["name"]))
+        obi = Obi(output_data=True, floor_material=STABLE_MODE["floor_material"])
         camera = ThirdPersonCamera(avatar_id="a",
                                    position=SCENE["camera_position"],
                                    look_at=SCENE["look_at"],
@@ -126,7 +121,7 @@ def run_variant(case: Dict[str, object], mode: Dict[str, object]) -> None:
                      "width": 1280,
                      "height": 720},
                     {"$type": "set_physics_solver_iterations",
-                     "iterations": int(mode["physics_iterations"])},
+                     "iterations": int(STABLE_MODE["physics_iterations"])},
                     Controller.get_add_scene(scene_name=str(SCENE["name"])),
                     Controller.get_add_hdri_skybox(skybox_name=str(SCENE["skybox"]))]
         for static_object in case["static_objects"]:
@@ -139,17 +134,21 @@ def run_variant(case: Dict[str, object], mode: Dict[str, object]) -> None:
                                                      kinematic=True,
                                                      gravity=False))
         cloth_id = c.get_unique_id()
-        obi.set_solver(solver_id=0, substeps=int(mode["substeps"]), scale_factor=1)
+        obi.set_solver(solver_id=0, substeps=int(STABLE_MODE["substeps"]), scale_factor=1)
         obi.create_cloth_sheet(cloth_material=str(case["cloth_material"]),
                                object_id=cloth_id,
                                sheet_type=case["sheet_type"],
                                position=case["position"],
                                rotation=case["rotation"])
         c.communicate(commands)
-        for _ in range(int(mode["capture_warmup"])):
+        for _ in range(int(STABLE_MODE["capture_warmup"])):
             c.communicate([])
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
+        obi.apply_force_to_cloth(object_id=cloth_id,
+                                 force=case["impulse_force"],
+                                 torque=case["impulse_torque"])
+        c.communicate([])
         for _ in range(int(case["frames"])):
             c.communicate([])
         c.communicate({"$type": "terminate"})
@@ -159,8 +158,8 @@ def run_variant(case: Dict[str, object], mode: Dict[str, object]) -> None:
         except Exception:
             build_proc.kill()
 
-    convert_video(OUTPUT_ROOT.joinpath(str(case["case_name"]), str(mode["name"]), "a"),
-                  OUTPUT_ROOT.joinpath(str(case["case_name"]), f"{mode['name']}.mp4"))
+    convert_video(OUTPUT_ROOT.joinpath(str(case["case_name"]), str(STABLE_MODE["name"]), "a"),
+                  OUTPUT_ROOT.joinpath(str(case["case_name"]), f"{STABLE_MODE['name']}.mp4"))
 
 
 def main() -> None:
@@ -169,14 +168,13 @@ def main() -> None:
     for case in COMPARE_CASES:
         case_dir = OUTPUT_ROOT.joinpath(str(case["case_name"]))
         case_dir.mkdir(parents=True, exist_ok=True)
-        for mode in MODES:
-            output_video = case_dir.joinpath(f"{mode['name']}.mp4")
-            if output_video.exists():
-                print(f"Skipping completed {case['case_name']} / {mode['name']}", flush=True)
-                continue
-            print(f"Running {case['case_name']} / {mode['name']}", flush=True)
-            run_variant(case=case, mode=mode)
-            print(f"Completed {case['case_name']} / {mode['name']}", flush=True)
+        output_video = case_dir.joinpath(f"{STABLE_MODE['name']}.mp4")
+        if output_video.exists():
+            print(f"Skipping completed {case['case_name']} / {STABLE_MODE['name']}", flush=True)
+            continue
+        print(f"Running {case['case_name']} / {STABLE_MODE['name']}", flush=True)
+        run_stable_variant(case=case)
+        print(f"Completed {case['case_name']} / {STABLE_MODE['name']}", flush=True)
 
 
 if __name__ == "__main__":
