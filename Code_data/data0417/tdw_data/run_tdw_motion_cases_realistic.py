@@ -42,9 +42,9 @@ def run_case(case_name: str,
     try:
         case_dir = OUTPUT_ROOT.joinpath(case_name)
         camera = ThirdPersonCamera(avatar_id="a",
-                                   position={"x": -2.2, "y": 1.55, "z": 2.7},
-                                   look_at={"x": 0.0, "y": 0.42, "z": 0.15},
-                                   field_of_view=68)
+                                   position={"x": -0.2, "y": 2.6, "z": 3.9},
+                                   look_at={"x": 0.0, "y": 0.75, "z": 0.15},
+                                   field_of_view=72)
         capture = ImageCapture(path=case_dir, avatar_ids=["a"], pass_masks=["_img"])
         lighting = InteriorSceneLighting(hdri_skybox=SKYBOX_NAME,
                                          aperture=6.0,
@@ -91,29 +91,29 @@ def main() -> None:
     cases: List[Dict] = [
         {
             "case_name": "case000_static_center",
-            "position": {"x": 0.1, "y": 0.02, "z": 0.15},
+            "position": {"x": 0.0, "y": 0.02, "z": 0.0},
             "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
             "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
             "frames": 90,
         },
         {
             "case_name": "case003_high_drop",
-            "position": {"x": 0.05, "y": 1.9, "z": 0.1},
+            "position": {"x": 0.0, "y": 1.7, "z": 0.0},
             "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
             "angular_velocity": {"x": 0.3, "y": 0.4, "z": 0.2},
             "frames": 120,
         },
         {
             "case_name": "case900_random_parabola",
-            "position": {"x": -0.2, "y": 0.9, "z": -0.2},
-            "velocity": {"x": 1.2, "y": 0.8, "z": 0.9},
+            "position": {"x": -0.15, "y": 0.95, "z": -0.1},
+            "velocity": {"x": 0.8, "y": 0.9, "z": 0.55},
             "angular_velocity": {"x": 0.8, "y": 0.5, "z": 1.2},
             "frames": 120,
         },
         {
             "case_name": "case005_entry_left",
-            "position": {"x": 1.7, "y": 0.45, "z": 0.2},
-            "velocity": {"x": -2.0, "y": 0.0, "z": 0.0},
+            "position": {"x": 1.25, "y": 0.45, "z": 0.0},
+            "velocity": {"x": -1.35, "y": 0.0, "z": 0.0},
             "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.6},
             "frames": 120,
         },
