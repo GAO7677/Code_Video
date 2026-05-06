@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List
 import math
 import os
+import socket
 import subprocess
 import time
 
@@ -119,6 +120,25 @@ def launch_build(scene_output_root: Path) -> subprocess.Popen:
                             env=env)
 
 
+def wait_for_port(host: str, port: int, timeout: float = 30.0) -> None:
+    start = time.time()
+    while time.time() - start < timeout:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        try:
+            sock.connect((host, port))
+            sock.close()
+            return
+        except OSError:
+            time.sleep(0.5)
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+    raise TimeoutError(f"Timed out waiting for {host}:{port}")
+
+
 def _distance(a: Dict[str, float], b: Dict[str, float]) -> float:
     return math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 + (a["z"] - b["z"]) ** 2)
 
@@ -227,7 +247,7 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
     skybox_name = str(scene["skybox"])
     scene_output_root = OUTPUT_ROOT.joinpath(scene_name)
     build_proc = launch_build(scene_output_root=scene_output_root)
-    time.sleep(6)
+    wait_for_port("127.0.0.1", PORT, timeout=30.0)
     controller = Controller(launch_build=False, port=PORT)
     try:
         case_dir = scene_output_root.joinpath(str(case["case_name"]))
