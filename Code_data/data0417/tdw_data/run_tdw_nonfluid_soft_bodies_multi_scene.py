@@ -64,30 +64,27 @@ CASES: List[Dict[str, object]] = [
     {
         "name": "soft_cloth_canvas_drape",
         "type": "cloth_sheet",
-        "cloth_material": "silk",
-        "sheet_type": SheetType.cloth,
-        "substeps": 8,
-        "position": {"x": 0.0, "y": 2.2, "z": 0.0},
-        "rotation": {"x": 10.0, "y": 0.0, "z": 8.0},
-        "frames": 180,
+        "cloth_material": "cotton",
+        "sheet_type": SheetType.cloth_hd,
+        "substeps": 18,
+        "position": {"x": 0.0, "y": 2.35, "z": 0.0},
+        "rotation": {"x": 22.0, "y": 12.0, "z": -12.0},
+        "frames": 220,
         "pre_capture_frames": 0,
         "camera_position_overrides": {
-            "mm_craftroom_1a": {"x": -2.8, "y": 1.7, "z": -0.3}
+            "mm_craftroom_1a": {"x": -3.6, "y": 2.05, "z": -0.6}
         },
         "look_at_overrides": {
-            "mm_craftroom_1a": {"x": 0.0, "y": 0.95, "z": 0.0}
+            "mm_craftroom_1a": {"x": 0.0, "y": 1.15, "z": 0.0}
         },
         "field_of_view_overrides": {
-            "mm_craftroom_1a": 72
+            "mm_craftroom_1a": 68
         },
-        "initial_force": {"x": 0.42, "y": -0.1, "z": 0.18},
-        "initial_torque": {"x": 0.16, "y": 0.62, "z": 0.28},
         "static_objects": [
-            {"model_name": "sphere",
-             "library": "models_flex.json",
-             "position": {"x": 0.0, "y": 0.55, "z": 0.0},
-             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-             "scale_factor": {"x": 0.7, "y": 0.7, "z": 0.7}},
+            {"model_name": "camera_box",
+             "position": {"x": 0.0, "y": 0.16, "z": 0.0},
+             "rotation": {"x": 0.0, "y": 8.0, "z": 0.0},
+             "scale_factor": {"x": 1.7, "y": 0.8, "z": 1.7}},
         ],
     },
     {
@@ -351,11 +348,15 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
         obi.set_solver(solver_id=0, substeps=int(case["substeps"]), scale_factor=1)
         if case["type"] == "cloth_sheet":
             cloth_id = c.get_unique_id()
+            tether_positions = None
+            if "tether_group" in case:
+                tether_positions = {case["tether_group"]: TetherType(object_id=cloth_id, is_static=True)}
             obi.create_cloth_sheet(cloth_material=str(case["cloth_material"]),
                                    object_id=cloth_id,
                                    sheet_type=case["sheet_type"],
                                    position=case["position"],
-                                   rotation=case["rotation"])
+                                   rotation=case["rotation"],
+                                   tether_positions=tether_positions)
         elif case["type"] == "cloth_sheet_wind":
             cloth_id = c.get_unique_id()
             wind = case["wind"]
@@ -399,7 +400,9 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
                                      force=case.get("initial_force"),
                                      torque=case.get("initial_torque"))
         print(f"[phase] simulate scene={scene_name} case={case['name']} frames={case['frames']}", flush=True)
-        for _ in range(int(case["frames"])):
+        for frame in range(int(case["frames"])):
+            if case["type"] == "cloth_sheet" and frame == int(case.get("untether_after_frame", -1)):
+                obi.untether_cloth_sheet(object_id=cloth_id, tether_position=case["tether_group"])
             c.communicate([])
         print(f"[phase] terminate scene={scene_name} case={case['name']}", flush=True)
         c.communicate({"$type": "terminate"})

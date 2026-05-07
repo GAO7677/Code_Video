@@ -11,10 +11,12 @@ from typing import Any
 
 
 BENCH_ROOT = Path("/data/gaoya/AAA_test_video/Benchmark/stage0_V2V_nullcaption")
+CAPTION_BENCH_ROOT = Path("/data/gaoya/AAA_test_video/Benchmark/stage0_V2V")
 LIVE_ROOT = BENCH_ROOT / "tools" / "fullctx_runs" / "physicsiq_fullvideo"
 PORTAL_DIR = BENCH_ROOT / "tools" / "visualization" / "physicsiq_fullctx_fullvideo_portal"
 ASSETS_DIR = PORTAL_DIR / "assets"
-OUTPUT_DIR = BENCH_ROOT / "output" / "VACE_1_3B_V2V" / "context_fullctx_fullvideo"
+CAPTION_OUTPUT_DIR = CAPTION_BENCH_ROOT / "output" / "VACE_1_3B_V2V" / "context_fullctx_fullvideo"
+NULL_OUTPUT_DIR = BENCH_ROOT / "output" / "VACE_1_3B_V2V" / "context_fullctx_fullvideo"
 CAPTION_DIR = LIVE_ROOT / "generated" / "caption_fullctx_fullvideo"
 NULL_DIR = LIVE_ROOT / "generated" / "nullcaption_fullctx_fullvideo"
 META_DIR = LIVE_ROOT / "meta"
@@ -143,6 +145,17 @@ def load_cases() -> list[dict[str, Any]]:
             f"nullcaption_generated: {'ready' if null_video is not None and null_video.exists() else 'pending'}",
         ]
 
+        caption_output_copy = (
+            CAPTION_OUTPUT_DIR / f"{caption_video.stem}__caption_fullctx_fullvideo.mp4"
+            if caption_video is not None
+            else None
+        )
+        null_output_copy = (
+            NULL_OUTPUT_DIR / f"{null_video.stem}__nullcaption_fullctx_fullvideo.mp4"
+            if null_video is not None
+            else None
+        )
+
         records.append(
             {
                 "case_name": case_name,
@@ -152,15 +165,15 @@ def load_cases() -> list[dict[str, Any]]:
                 "scenario": str(caption_meta.get("scenario") or ""),
                 "context_video": expose_asset(Path(paths["context_video_path"]), case_assets, "context_video.mp4"),
                 "gt_full_video": expose_asset(Path(paths["full_video_path"]), case_assets, "gt_full_video.mp4"),
-                "caption_generated": expose_asset(caption_video, case_assets, "generated_with_caption.mp4"),
-                "null_generated": expose_asset(null_video, case_assets, "generated_nullcaption.mp4"),
+                "caption_generated": expose_asset(caption_output_copy, case_assets, "generated_with_caption.mp4"),
+                "null_generated": expose_asset(null_output_copy, case_assets, "generated_nullcaption.mp4"),
                 "caption_json_rel": (
-                    relative_to_root(BENCH_ROOT, OUTPUT_DIR / f"{caption_video.stem}__caption_fullctx_fullvideo.json")
+                    relative_to_root(CAPTION_BENCH_ROOT, CAPTION_OUTPUT_DIR / f"{caption_video.stem}__caption_fullctx_fullvideo.json")
                     if caption_video is not None
                     else None
                 ),
                 "null_json_rel": (
-                    relative_to_root(BENCH_ROOT, OUTPUT_DIR / f"{null_video.stem}__nullcaption_fullctx_fullvideo.json")
+                    relative_to_root(BENCH_ROOT, NULL_OUTPUT_DIR / f"{null_video.stem}__nullcaption_fullctx_fullvideo.json")
                     if null_video is not None
                     else None
                 ),

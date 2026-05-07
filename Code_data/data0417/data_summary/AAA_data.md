@@ -32,34 +32,42 @@ conda run -p /data/gaoya/miniconda3/envs/vjepa2 python /home/gaoya/Code_Video/Co
 2. 快速重建首页
 
 ```bash
-
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --index_only
+source /home/gaoya/miniconda3/etc/profile.d/conda.sh
+conda run -p /data/gaoya/miniconda3/envs/vjepa2 python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --index_only
 ```
 
 3. 完整重建详情页
 
 ```bash
-
 python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
 ```
 
-4. 启动本地服务
+4. 只可视化 `no_collision`
 
 ```bash
-kport 8048
-cd /
-python3 -m http.server 8048 --bind 127.0.0.1
-/home/gaoya/portal_hub_sim/sum0504_portal/index.html
+
+python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --output_root /home/gaoya/portal_hub_sim/sum0504_nocollision_portal --collision_bucket no_collision --index_only
 ```
 
-访问地址：
+`no_collision` 页面地址：
 
-`http://127.0.0.1:8048/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+`http://127.0.0.1:8049/home/gaoya/portal_hub_sim/sum0504_nocollision_portal/index.html`
+
+5. 启动本地服务
+
+```bash
+cd /
+setsid python3 -m http.server 8049 --bind 127.0.0.1 >/tmp/sum0504_http_8049.log 2>&1 < /dev/null &
+```
+
+完整页面地址：
+
+`http://127.0.0.1:8049/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
 
 检查端口：
 
 ```bash
-ss -ltnp | grep 8048
+ss -ltnp | grep 8049
 ```
 
 说明：

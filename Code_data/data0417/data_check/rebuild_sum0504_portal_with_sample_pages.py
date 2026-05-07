@@ -19,11 +19,12 @@ import numpy as np
 import cv2
 from PIL import Image
 
-ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
-MANIFEST_PATH = ROOT / "manifest.json"
+DEFAULT_ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 STATE_VALIDATION_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window")
 SUM0504_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
 MAX_ITEMS_PER_GROUP = 10
+ROOT = DEFAULT_ROOT
+MANIFEST_PATH = ROOT / "manifest.json"
 INDEX_ASSET_ROOT = ROOT / "index_assets"
 
 
@@ -39,6 +40,18 @@ def parse_args() -> argparse.Namespace:
         "--index_only",
         action="store_true",
         help="Only rebuild portal index and manifest from sum0504, without regenerating per-sample detail pages.",
+    )
+    parser.add_argument(
+        "--output_root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="Portal output directory.",
+    )
+    parser.add_argument(
+        "--collision_bucket",
+        type=str,
+        default="",
+        help="Only include a specific collision bucket such as no_collision.",
     )
     return parser.parse_args()
 
@@ -1283,14 +1296,17 @@ def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
     return media
 
 
-def load_groups_from_sum0504(sample_substring: str = "") -> list[dict[str, Any]]:
+def load_groups_from_sum0504(sample_substring: str = "", collision_bucket_filter: str = "") -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     substring = str(sample_substring or "")
+    collision_bucket_filter = str(collision_bucket_filter or "")
     for samples_path in sorted(SUM0504_ROOT.rglob("samples.txt")):
         rel = samples_path.relative_to(SUM0504_ROOT)
         if len(rel.parts) != 5:
             continue
         split, simulator_type, count_bucket, collision_bucket, _ = rel.parts
+        if collision_bucket_filter and collision_bucket != collision_bucket_filter:
+            continue
         lines = [line.strip() for line in samples_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         items: list[dict[str, Any]] = []
         for line in lines:
@@ -1811,7 +1827,15 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 
 def main() -> None:
     args = parse_args()
-    groups = load_groups_from_sum0504(sample_substring=args.sample_substring)
+    global ROOT, MANIFEST_PATH, INDEX_ASSET_ROOT
+    ROOT = args.output_root.resolve()
+    MANIFEST_PATH = ROOT / "manifest.json"
+    INDEX_ASSET_ROOT = ROOT / "index_assets"
+    ROOT.mkdir(parents=True, exist_ok=True)
+    groups = load_groups_from_sum0504(
+        sample_substring=args.sample_substring,
+        collision_bucket_filter=args.collision_bucket,
+    )
     if args.index_only:
         groups = attach_placeholder_detail_pages(groups)
     else:
