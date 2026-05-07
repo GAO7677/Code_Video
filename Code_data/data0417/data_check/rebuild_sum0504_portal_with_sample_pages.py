@@ -23,6 +23,8 @@ ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 MANIFEST_PATH = ROOT / "manifest.json"
 STATE_VALIDATION_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window")
 SUM0504_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
+MAX_ITEMS_PER_GROUP = 10
+INDEX_ASSET_ROOT = ROOT / "index_assets"
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,6 +34,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="",
         help="Only include samples whose absolute sample_dir contains this substring, while keeping the original split/count/collision grouping.",
+    )
+    parser.add_argument(
+        "--index_only",
+        action="store_true",
+        help="Only rebuild portal index and manifest from sum0504, without regenerating per-sample detail pages.",
     )
     return parser.parse_args()
 
@@ -58,6 +65,26 @@ def asset_src(path: Path, page_dir: Path) -> str:
         if (not target.exists()) or target.stat().st_size != path.stat().st_size:
             shutil.copy2(path, target)
         return relpath(target, page_dir)
+
+
+def index_asset_src(path: Path) -> str:
+    INDEX_ASSET_ROOT.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.md5(str(path).encode("utf-8")).hexdigest()[:12]
+    target = INDEX_ASSET_ROOT / f"{digest}_{path.name}"
+    if target.is_symlink():
+        target.unlink()
+    if not target.exists():
+        try:
+            target.symlink_to(path)
+        except Exception:
+            shutil.copy2(path, target)
+    elif target.is_file() and target.stat().st_size != path.stat().st_size:
+        target.unlink()
+        try:
+            target.symlink_to(path)
+        except Exception:
+            shutil.copy2(path, target)
+    return relpath(target, ROOT)
 
 
 def make_gif_from_video(video_path: Path, gif_path: Path, max_frames: int = 24) -> Path | None:
@@ -1213,6 +1240,25 @@ def build_group_cards(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cards
 
 
+def existing_detail_page_relpath(group: dict[str, Any], item: dict[str, Any]) -> str:
+    sample_name = str(item.get("sample_name") or "")
+    if not sample_name:
+        sample_name = Path(str(item.get("sample_dir", ""))).name
+    page_path = ROOT / "samples" / str(group["slug"]) / sample_name / "index.html"
+    if page_path.exists():
+        return relpath(page_path, ROOT)
+    return "#"
+
+
+def attach_placeholder_detail_pages(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cards = []
+    for group in groups:
+        for item in group["items"]:
+            item["detail_page"] = existing_detail_page_relpath(group, item)
+        cards.append(group)
+    return cards
+
+
 def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
     media: list[dict[str, Any]] = []
     candidates = [
@@ -1226,7 +1272,14 @@ def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
     ]
     for label, path, kind in candidates:
         if path.exists():
-            media.append({"label": label, "path": str(path), "kind": kind})
+            media.append(
+                {
+                    "label": label,
+                    "path": str(path),
+                    "portal_src": index_asset_src(path),
+                    "kind": kind,
+                }
+            )
     return media
 
 
@@ -1265,6 +1318,8 @@ def load_groups_from_sum0504(sample_substring: str = "") -> list[dict[str, Any]]
                     "media": infer_media_for_sample(sample_dir),
                 }
             )
+            if len(items) >= MAX_ITEMS_PER_GROUP:
+                break
         if not items:
             continue
         slug = f"{split}__{simulator_type}__{count_bucket}__{collision_bucket}"
@@ -1544,7 +1599,7 @@ def build_index(groups: list[dict[str, Any]]) -> str:
     }}
     .media-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: 1fr;
       gap: 8px;
       margin-top: 8px;
     }}
@@ -1613,13 +1668,16 @@ def build_index(groups: list[dict[str, Any]]) -> str:
     function mediaHtml(item) {{
       const media = Array.isArray(item.media) ? item.media : [];
       if (!media.length) return '<p class="empty">No exported media.</p>';
-      return '<div class="media-grid">' + media.map((m) => {{
-        const src = m.path.replace('/home/gaoya/portal_hub_sim/sum0504_portal/', '');
-        if (m.kind === 'video') {{
-          return `<div class="media-block"><div class="media-label">${{m.label}}</div><video src="${{src}}" controls preload="metadata"></video></div>`;
-        }}
-        return `<div class="media-block"><div class="media-label">${{m.label}}</div><img src="${{src}}" alt="${{m.label}}"></div>`;
-      }}).join('') + '</div>';
+      const preferredLabels = ['Current Sample Video', 'RGB Video', 'Context Video', 'Future GT Video'];
+      let selected = media.find((m) => preferredLabels.includes(m.label) && m.kind === 'video');
+      if (!selected) {{
+        selected = media.find((m) => m.kind === 'video') || media[0];
+      }}
+      const src = selected.portal_src || selected.path.replace('/home/gaoya/portal_hub_sim/sum0504_portal/', '');
+      if (selected.kind === 'video') {{
+        return `<div class="media-grid"><div class="media-block"><div class="media-label">${{selected.label}}</div><video src="${{src}}" controls preload="metadata"></video></div></div>`;
+      }}
+      return `<div class="media-grid"><div class="media-block"><div class="media-label">${{selected.label}}</div><img src="${{src}}" alt="${{selected.label}}"></div></div>`;
     }}
 
     function filterTree(nodes, allowedSlugs) {{
@@ -1707,7 +1765,7 @@ def build_index(groups: list[dict[str, Any]]) -> str:
                 <p class="path">${{item.sample_dir}}</p>
                 ${{mediaHtml(item)}}
                 <div class="actions">
-                  <a class="detail-link" href="${{item.detail_page}}">Open Sample Page</a>
+                  <a class="detail-link" href="${{item.detail_page}}">查看详情页</a>
                 </div>
               </article>
             `).join('')}}
@@ -1754,7 +1812,10 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 def main() -> None:
     args = parse_args()
     groups = load_groups_from_sum0504(sample_substring=args.sample_substring)
-    groups = build_group_cards(groups)
+    if args.index_only:
+        groups = attach_placeholder_detail_pages(groups)
+    else:
+        groups = build_group_cards(groups)
     (ROOT / "index.html").write_text(build_index(groups), encoding="utf-8")
     (ROOT / "manifest.json").write_text(json.dumps(groups, ensure_ascii=False, indent=2), encoding="utf-8")
     print(ROOT / "index.html")

@@ -180,7 +180,7 @@ def run_demo(demo: Dict[str, object]) -> None:
     sanitize_proxy_env()
     build_proc = launch_build()
     time.sleep(BUILD_BOOT_WAIT)
-    c = Controller(launch_build=False, port=PORT)
+    c = Controller(launch_build=False, check_version=False, port=PORT)
     try:
         demo_root = OUTPUT_ROOT.joinpath(str(demo["name"]))
         obi = Obi(output_data=True,

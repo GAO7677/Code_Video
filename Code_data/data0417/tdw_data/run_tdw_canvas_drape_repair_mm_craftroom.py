@@ -10,34 +10,35 @@ from tdw.add_ons.third_person_camera import ThirdPersonCamera
 from tdw.controller import Controller
 from tdw.obi_data.cloth.sheet_type import SheetType
 from tdw.obi_data.collision_materials.collision_material import CollisionMaterial
+from manual_tdw_controller import ManualBuildController
 
 
-OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_canvas_drape_minimal_debug")
+OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_nonfluid_soft_bodies_multi_scene/mm_craftroom_1a")
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
-PORT = int(os.environ.get("TDW_PORT", "1095"))
-BUILD_BOOT_WAIT = int(os.environ.get("TDW_BUILD_BOOT_WAIT", "18"))
+PORT = 1101
+BUILD_BOOT_WAIT = 12
 PROXY_ENV_KEYS = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]
 
 SCENE = {
     "name": "mm_craftroom_1a",
     "skybox": "kiara_1_dawn_4k",
-    "camera_position": {"x": -0.6156362579862034, "y": 1.85, "z": -1.6914467174146353},
-    "look_at": {"x": 0.0, "y": 0.95, "z": 0.0},
-    "field_of_view": 78,
+    "camera_position": {"x": -3.4, "y": 2.15, "z": -0.35},
+    "look_at": {"x": 0.0, "y": 0.82, "z": 0.02},
+    "field_of_view": 72,
 }
 
 CASE = {
-    "name": "canvas_drape_stable_minimal",
+    "name": "soft_cloth_canvas_drape",
     "cloth_material": "canvas",
     "sheet_type": SheetType.cloth_hd,
     "substeps": 8,
-    "position": {"x": 0.0, "y": 2.05, "z": 0.04},
-    "rotation": {"x": 8.0, "y": 10.0, "z": -6.0},
-    "frames": 220,
+    "position": {"x": 0.0, "y": 2.45, "z": 0.02},
+    "rotation": {"x": 18.0, "y": 8.0, "z": -12.0},
+    "frames": 240,
     "static_objects": [
-        {"model_name": "camera_box", "position": {"x": -0.28, "y": 0.16, "z": 0.02}, "rotation": {"x": 0.0, "y": 10.0, "z": 0.0}},
-        {"model_name": "camera_box", "position": {"x": 0.28, "y": 0.16, "z": -0.02}, "rotation": {"x": 0.0, "y": -8.0, "z": 0.0}},
+        {"model_name": "camera_box", "position": {"x": -0.34, "y": 0.16, "z": 0.06}, "rotation": {"x": 0.0, "y": 12.0, "z": 0.0}},
+        {"model_name": "camera_box", "position": {"x": 0.34, "y": 0.16, "z": -0.06}, "rotation": {"x": 0.0, "y": -10.0, "z": 0.0}},
     ],
 }
 
@@ -72,10 +73,11 @@ def convert_video(frames_dir: Path, output_video: Path) -> None:
 
 def main() -> None:
     sanitize_proxy_env()
-    build_proc = launch_build()
+    build_holder = {}
+    print(f"[phase] bind_and_launch port={PORT}", flush=True)
+    c = ManualBuildController(port=PORT, build_callback=lambda: build_holder.setdefault("proc", launch_build()))
     time.sleep(BUILD_BOOT_WAIT)
     print(f"[phase] connect_controller port={PORT}", flush=True)
-    c = Controller(launch_build=False, check_version=False, port=PORT)
     try:
         case_root = OUTPUT_ROOT.joinpath(CASE["name"])
         floor_material = CollisionMaterial(dynamic_friction=0.55,
@@ -83,29 +85,31 @@ def main() -> None:
                                            stickiness=0.0,
                                            stick_distance=0.0)
         obi = Obi(output_data=True, floor_material=floor_material)
-        camera = ThirdPersonCamera(avatar_id="a",
-                                   position=SCENE["camera_position"],
-                                   look_at=SCENE["look_at"],
-                                   field_of_view=int(SCENE["field_of_view"]))
-        capture = ImageCapture(path=case_root, avatar_ids=["a"], pass_masks=["_img"])
-        capture.set(frequency="never", avatar_ids=["a"], pass_masks=["_img"], save=False)
         lighting = InteriorSceneLighting(hdri_skybox=str(SCENE["skybox"]),
                                          aperture=8.0,
                                          focus_distance=4.0,
                                          ambient_occlusion_intensity=0.175,
                                          ambient_occlusion_thickness_modifier=3.5,
                                          shadow_strength=1.0)
-        c.add_ons.extend([lighting, camera, capture, obi])
-        commands = [{"$type": "set_screen_size",
-                     "width": 1280,
-                     "height": 720},
-                    {"$type": "set_physics_solver_iterations",
-                     "iterations": 16},
-                    Controller.get_add_scene(scene_name=str(SCENE["name"])),
-                    Controller.get_add_hdri_skybox(skybox_name=str(SCENE["skybox"]))]
+        c.add_ons.extend([lighting, obi])
+        init_commands = [{"$type": "set_screen_size",
+                          "width": 1280,
+                          "height": 720},
+                         {"$type": "set_physics_solver_iterations",
+                          "iterations": 16},
+                         Controller.get_add_scene(scene_name=str(SCENE["name"])),
+                         Controller.get_add_hdri_skybox(skybox_name=str(SCENE["skybox"]))]
         print("[phase] init_scene", flush=True)
-        c.communicate(commands)
-        print("[phase] add_static_objects", flush=True)
+        c.communicate(init_commands)
+        camera = ThirdPersonCamera(avatar_id="a",
+                                   position=SCENE["camera_position"],
+                                   look_at=SCENE["look_at"],
+                                   field_of_view=int(SCENE["field_of_view"]))
+        capture = ImageCapture(path=case_root, avatar_ids=["a"], pass_masks=["_img"])
+        capture.frame = 0
+        capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
+        c.add_ons.extend([camera, capture])
+
         static_commands = []
         for static_object in CASE["static_objects"]:
             static_id = c.get_unique_id()
@@ -116,7 +120,10 @@ def main() -> None:
                                                             rotation=static_object["rotation"],
                                                             kinematic=True,
                                                             gravity=False))
-        c.communicate(static_commands)
+        if static_commands:
+            print("[phase] add_static_objects", flush=True)
+            c.communicate(static_commands)
+
         print("[phase] create_cloth", flush=True)
         cloth_id = c.get_unique_id()
         obi.set_solver(solver_id=0, substeps=int(CASE["substeps"]), scale_factor=1)
@@ -125,22 +132,18 @@ def main() -> None:
                                sheet_type=CASE["sheet_type"],
                                position=CASE["position"],
                                rotation=CASE["rotation"])
-        print("[phase] warmup", flush=True)
+
+        print("[phase] init_and_simulate", flush=True)
         c.communicate([])
-        for _ in range(12):
-            c.communicate([])
-        capture.frame = 0
-        capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
-        print(f"[phase] simulate frames={CASE['frames']}", flush=True)
         for _ in range(int(CASE["frames"])):
             c.communicate([])
         print("[phase] terminate", flush=True)
         c.communicate({"$type": "terminate"})
     finally:
         try:
-            build_proc.wait(timeout=10)
+            build_holder["proc"].wait(timeout=10)
         except Exception:
-            build_proc.kill()
+            build_holder["proc"].kill()
 
     print("[phase] convert", flush=True)
     convert_video(OUTPUT_ROOT.joinpath(CASE["name"], "a"),

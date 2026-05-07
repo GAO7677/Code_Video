@@ -22,30 +22,47 @@
 
 ## 可视化与重建指令
 
-重建 `sum0504` 路径索引：
+1. 重建 `sum0504` 路径索引
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/rebuild_sum0504_index.py
+source /home/gaoya/miniconda3/etc/profile.d/conda.sh
+conda run -p /data/gaoya/miniconda3/envs/vjepa2 python /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/rebuild_sum0504_index.py
 ```
 
-重建 `sum0504` 总览与样本详情页：
+2. 快速重建首页
 
 ```bash
-kport 8048
+
+python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --index_only
+```
+
+3. 完整重建详情页
+
+```bash
+
 python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
 ```
 
-页面输出位置：
+4. 启动本地服务
 
-`/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+```bash
+kport 8048
+cd /
+python3 -m http.server 8048 --bind 127.0.0.1
+/home/gaoya/portal_hub_sim/sum0504_portal/index.html
+```
 
-本地访问地址：
+访问地址：
 
 `http://127.0.0.1:8048/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
 
-如果本地静态文件服务未启动，可执行：
+检查端口：
 
 ```bash
-cd /
-python3 -m http.server 8048
+ss -ltnp | grep 8048
 ```
+
+说明：
+- 只查看现成页面时，只需启动本地服务。
+- 改了索引或页面后，先重建，再启动服务。
+- 当前首页每个最小类别最多加载 `10` 条，首页只展示主视频。

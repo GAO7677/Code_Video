@@ -100,7 +100,7 @@ def run_stable_variant(case: Dict[str, object]) -> None:
     sanitize_proxy_env()
     build_proc = launch_build()
     time.sleep(BUILD_BOOT_WAIT)
-    c = Controller(launch_build=False, port=PORT)
+    c = Controller(launch_build=False, check_version=False, port=PORT)
     try:
         case_root = OUTPUT_ROOT.joinpath(str(case["case_name"]), str(STABLE_MODE["name"]))
         obi = Obi(output_data=True, floor_material=STABLE_MODE["floor_material"])

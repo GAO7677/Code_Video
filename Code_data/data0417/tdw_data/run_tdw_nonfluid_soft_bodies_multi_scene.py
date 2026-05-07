@@ -64,15 +64,30 @@ CASES: List[Dict[str, object]] = [
     {
         "name": "soft_cloth_canvas_drape",
         "type": "cloth_sheet",
-        "cloth_material": "canvas",
-        "sheet_type": SheetType.cloth_hd,
+        "cloth_material": "silk",
+        "sheet_type": SheetType.cloth,
         "substeps": 8,
-        "position": {"x": 0.0, "y": 2.05, "z": 0.04},
-        "rotation": {"x": 8.0, "y": 10.0, "z": -6.0},
-        "frames": 220,
+        "position": {"x": 0.0, "y": 2.2, "z": 0.0},
+        "rotation": {"x": 10.0, "y": 0.0, "z": 8.0},
+        "frames": 180,
+        "pre_capture_frames": 0,
+        "camera_position_overrides": {
+            "mm_craftroom_1a": {"x": -2.8, "y": 1.7, "z": -0.3}
+        },
+        "look_at_overrides": {
+            "mm_craftroom_1a": {"x": 0.0, "y": 0.95, "z": 0.0}
+        },
+        "field_of_view_overrides": {
+            "mm_craftroom_1a": 72
+        },
+        "initial_force": {"x": 0.42, "y": -0.1, "z": 0.18},
+        "initial_torque": {"x": 0.16, "y": 0.62, "z": 0.28},
         "static_objects": [
-            {"model_name": "camera_box", "position": {"x": -0.28, "y": 0.16, "z": 0.02}, "rotation": {"x": 0.0, "y": 10.0, "z": 0.0}},
-            {"model_name": "camera_box", "position": {"x": 0.28, "y": 0.16, "z": -0.02}, "rotation": {"x": 0.0, "y": -8.0, "z": 0.0}},
+            {"model_name": "sphere",
+             "library": "models_flex.json",
+             "position": {"x": 0.0, "y": 0.55, "z": 0.0},
+             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+             "scale_factor": {"x": 0.7, "y": 0.7, "z": 0.7}},
         ],
     },
     {
@@ -273,7 +288,7 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
     build_proc = launch_build(scene_output_root=scene_output_root)
     time.sleep(BUILD_BOOT_WAIT)
     print(f"[phase] connect_controller scene={scene_name} case={case['name']}", flush=True)
-    c = Controller(launch_build=False, port=PORT)
+    c = Controller(launch_build=False, check_version=False, port=PORT)
     try:
         case_root = scene_output_root.joinpath(str(case["name"]))
         floor_material = CollisionMaterial(dynamic_friction=0.55,
@@ -300,10 +315,19 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
         scene_resp = c.communicate(init_commands)
         print(f"[phase] init_scene_done scene={scene_name} case={case['name']}", flush=True)
         resolve_camera(scene=scene, controller=c, scene_resp=scene_resp)
+        camera_position = dict(scene["_resolved_camera_position"])
+        look_at = dict(scene["look_at"])
+        field_of_view = int(scene["_resolved_field_of_view"])
+        if scene_name in case.get("camera_position_overrides", {}):
+            camera_position = dict(case["camera_position_overrides"][scene_name])
+        if scene_name in case.get("look_at_overrides", {}):
+            look_at = dict(case["look_at_overrides"][scene_name])
+        if scene_name in case.get("field_of_view_overrides", {}):
+            field_of_view = int(case["field_of_view_overrides"][scene_name])
         camera = ThirdPersonCamera(avatar_id="a",
-                                   position=scene["_resolved_camera_position"],
-                                   look_at=scene["look_at"],
-                                   field_of_view=int(scene["_resolved_field_of_view"]))
+                                   position=camera_position,
+                                   look_at=look_at,
+                                   field_of_view=field_of_view)
         capture = ImageCapture(path=case_root, avatar_ids=["a"], pass_masks=["_img"])
         capture.set(frequency="never", avatar_ids=["a"], pass_masks=["_img"], save=False)
         c.add_ons.extend([camera, capture])
@@ -313,9 +337,10 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
             static_id = c.get_unique_id()
             static_commands.extend(c.get_add_physics_object(model_name=str(static_object["model_name"]),
                                                             object_id=static_id,
-                                                            library="models_core.json",
+                                                            library=str(static_object.get("library", "models_core.json")),
                                                             position=static_object["position"],
                                                             rotation=static_object["rotation"],
+                                                            scale_factor=static_object.get("scale_factor"),
                                                             kinematic=True,
                                                             gravity=False))
         if static_commands:
@@ -362,12 +387,17 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
         else:
             raise ValueError(f"Unsupported case type: {case['type']}")
 
-        print(f"[phase] warmup scene={scene_name} case={case['name']}", flush=True)
-        c.communicate([])
-        for _ in range(12):
-            c.communicate([])
+        pre_capture_frames = int(case.get("pre_capture_frames", 12))
+        if pre_capture_frames > 0:
+            print(f"[phase] warmup scene={scene_name} case={case['name']} frames={pre_capture_frames}", flush=True)
+            for _ in range(pre_capture_frames):
+                c.communicate([])
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
+        if case["type"] == "cloth_sheet" and ("initial_force" in case or "initial_torque" in case):
+            obi.apply_force_to_cloth(object_id=cloth_id,
+                                     force=case.get("initial_force"),
+                                     torque=case.get("initial_torque"))
         print(f"[phase] simulate scene={scene_name} case={case['name']} frames={case['frames']}", flush=True)
         for _ in range(int(case["frames"])):
             c.communicate([])
