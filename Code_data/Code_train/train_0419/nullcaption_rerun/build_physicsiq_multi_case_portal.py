@@ -14,9 +14,6 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-import batch_eval_lora as bel
-
-
 BENCHMARK_ROOT = Path("/data/gaoya/AAA_test_video/Benchmark/stage0_V2V_nullcaption")
 WORK_ROOT = BENCHMARK_ROOT / "tools" / "multi_case_runs" / "physicsiq_more_cases_ctx_sweep"
 PORTAL_DIR = BENCHMARK_ROOT / "tools" / "visualization" / "physicsiq_more_cases_ctx_sweep"
@@ -102,27 +99,6 @@ def render_slot(title: str, body: str, extra_class: str = "") -> str:
     )
 
 
-def save_context_clip(
-    *,
-    context_path: Path,
-    context_frames: int,
-    height: int,
-    width: int,
-    resize_mode: str,
-    fps: int,
-    output_path: Path,
-) -> Path:
-    frames = bel.load_context_frames(
-        context_path=context_path,
-        context_frames=context_frames,
-        height=height,
-        width=width,
-        resize_mode=resize_mode,
-    )
-    bel.save_video(frames, str(output_path), fps=fps, quality=5)
-    return output_path
-
-
 def build_case_block(case_name: str) -> str:
     meta_path = Path(f"/data/gaoya/dataset/physics-iq-benchmark/mytest/{case_name}/meta.json")
     meta = read_json(meta_path)
@@ -131,36 +107,13 @@ def build_case_block(case_name: str) -> str:
     full_video_path = Path(paths["full_video_path"])
     caption = str(meta.get("caption") or "")
     fps = int(float(meta.get("fps") or 30))
-    context_range = meta.get("context_frame_range") or [0, 0]
-    source_context_frames = int(context_range[1]) - int(context_range[0]) + 1 if len(context_range) == 2 else 0
-    resize_mode = bel.resolve_context_resize_mode("physics-iq-benchmark")
     case_assets = ASSETS_DIR / case_name
     case_assets.mkdir(parents=True, exist_ok=True)
 
-    full_context_clip = case_assets / "source_context_full_clip.mp4"
-    save_context_clip(
-        context_path=context_path,
-        context_frames=source_context_frames or max(CONTEXTS),
-        height=544,
-        width=720,
-        resize_mode=resize_mode,
-        fps=fps,
-        output_path=full_context_clip,
-    )
+    context_video_asset = expose_asset(context_path, case_assets, "context_video.mp4")
 
     rows: list[str] = []
     for ctx in CONTEXTS:
-        context_clip = case_assets / f"actual_context_{ctx:02d}f.mp4"
-        save_context_clip(
-            context_path=context_path,
-            context_frames=ctx,
-            height=544,
-            width=720,
-            resize_mode=resize_mode,
-            fps=fps,
-            output_path=context_clip,
-        )
-
         pair_slots = []
         for variant in VARIANTS:
             gen_dir = WORK_ROOT / "generated" / case_name / f"{variant}_context_{ctx:02d}f"
@@ -189,7 +142,7 @@ def build_case_block(case_name: str) -> str:
             f"{text_html(summary)}"
             "</div>"
             "<div class='variant-row variant-row-3'>"
-            f"{render_slot('actual_context_video', media_html(relative_to_root(BENCHMARK_ROOT, context_clip)), 'context-slot')}"
+            f"{render_slot('context_video_from_meta', media_html(context_video_asset), 'context-slot')}"
             f"{''.join(pair_slots)}"
             "</div>"
             "</section>"
@@ -199,7 +152,7 @@ def build_case_block(case_name: str) -> str:
         "<article class='case-card'>"
         f"<div class='case-head'><span class='badge'>physics-iq-benchmark</span><h2>{html.escape(case_name)}</h2></div>"
         "<div class='shared-grid'>"
-        f"{render_slot('source_context_full_clip', media_html(relative_to_root(BENCHMARK_ROOT, full_context_clip)), 'context-slot')}"
+        f"{render_slot('context_video_from_meta', media_html(context_video_asset), 'context-slot')}"
         f"{render_slot('gt_full_video', media_html(expose_asset(full_video_path, case_assets, 'gt_full_video.mp4')), 'context-slot')}"
         f"{render_slot('caption', text_html(caption), 'meta-slot')}"
         "</div>"
@@ -367,7 +320,7 @@ def build_html(case_blocks: str) -> str:
   <div class="shell">
     <section class="hero">
       <h1>Physics-IQ Multi-Case Context Sweeps</h1>
-      <p>Each case shows GT/context and the corresponding generated outputs for caption and null-caption under context lengths 8/16/32/38.</p>
+      <p>Each case directly shows the benchmark-provided context video from meta.json, plus the corresponding generated outputs for caption and null-caption under context lengths 8/16/32/38.</p>
     </section>
     <section class="case-list">
       {case_blocks}

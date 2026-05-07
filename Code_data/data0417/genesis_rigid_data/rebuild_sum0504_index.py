@@ -53,6 +53,10 @@ def write_lines(path: Path, lines: Iterable[str], dry_run: bool) -> None:
     path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
+def load_json(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def scan_leaf_sample_dirs(root: Path) -> List[Path]:
     if not root.exists():
         return []
@@ -89,10 +93,213 @@ def choose_split_roots() -> Dict[str, List[Path]]:
     }
 
 
+def resolve_source_sample_dir(metadata: Dict[str, Any]) -> Path | None:
+    candidates = [
+        metadata.get("source_sample_dir"),
+        metadata.get("source_window_dir"),
+        (metadata.get("source_paths") or {}).get("source_sample_dir"),
+        (metadata.get("source_paths") or {}).get("source_window_dir"),
+        (metadata.get("source_paths") or {}).get("heldout_sample_dir"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(str(candidate))
+        if path.exists():
+            return path
+    source_meta_candidates = [
+        (metadata.get("source_paths") or {}).get("source_metadata_json_path"),
+        (metadata.get("source_paths") or {}).get("source_meta_json_path"),
+        (metadata.get("source_paths") or {}).get("meta_json_path"),
+    ]
+    for candidate in source_meta_candidates:
+        if not candidate:
+            continue
+        path = Path(str(candidate))
+        if path.exists():
+            return path.parent
+    return None
+
+
+def infer_count_bucket_from_num_objects(num_objects: Any) -> str:
+    try:
+        value = int(num_objects)
+    except Exception:
+        return ""
+    if value <= 1:
+        return "count_01"
+    if value == 2:
+        return "count_02"
+    if value <= 4:
+        return "count_03_04"
+    return "count_03_04"
+
+
+def infer_count_bucket_from_path(path: Path | None) -> str:
+    if path is None:
+        return ""
+    for part in path.parts:
+        if part in COUNT_BUCKET_ORDER:
+            return part
+    return ""
+
+
+def infer_case_name_from_sample_name(sample_name: str) -> str:
+    parts = sample_name.split("__")
+    if len(parts) >= 3:
+        return parts[-1]
+    if len(parts) >= 2:
+        return parts[1]
+    return ""
+
+
+def enrich_metadata(sample_dir: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(metadata)
+    source_sample_dir = resolve_source_sample_dir(enriched)
+
+    if not enriched.get("object_count_bucket"):
+        source_bucket = infer_count_bucket_from_path(source_sample_dir)
+        if source_bucket:
+            enriched["object_count_bucket"] = source_bucket
+
+    if not enriched.get("object_count_bucket"):
+        local_bucket = infer_count_bucket_from_path(sample_dir)
+        if local_bucket:
+            enriched["object_count_bucket"] = local_bucket
+
+    if not enriched.get("object_count_bucket"):
+        inferred = infer_count_bucket_from_num_objects(enriched.get("num_objects"))
+        if inferred:
+            enriched["object_count_bucket"] = inferred
+
+    if source_sample_dir is not None:
+        source_meta_path: Path | None = None
+        for name in ("meta.json", "metadata.json"):
+            candidate = source_sample_dir / name
+            if candidate.exists():
+                source_meta_path = candidate
+                break
+        if source_meta_path is not None:
+            try:
+                source_meta = load_json(source_meta_path)
+            except Exception:
+                source_meta = {}
+            for key in (
+                "object_count_bucket",
+                "case_name",
+                "scene_composition",
+                "interaction_pattern",
+                "num_objects",
+                "detail_caption",
+                "caption",
+            ):
+                if not enriched.get(key) and source_meta.get(key):
+                    enriched[key] = source_meta.get(key)
+
+    if not enriched.get("case_name"):
+        inferred_case_name = infer_case_name_from_sample_name(sample_dir.name)
+        if inferred_case_name:
+            enriched["case_name"] = inferred_case_name
+
+    return enriched
+
+
+def extract_window_frame_indices(metadata: Dict[str, Any]) -> List[int]:
+    window_range = metadata.get("window_range")
+    if not isinstance(window_range, dict):
+        return []
+    frame_indices = window_range.get("orig_full_frame_indices")
+    if isinstance(frame_indices, list) and frame_indices:
+        try:
+            return [int(value) for value in frame_indices]
+        except Exception:
+            return []
+    start_index = window_range.get("start_index")
+    end_exclusive = window_range.get("end_exclusive")
+    if start_index is None or end_exclusive is None:
+        return []
+    try:
+        start = int(start_index)
+        end = int(end_exclusive)
+    except Exception:
+        return []
+    if end <= start:
+        return []
+    return list(range(start, end))
+
+
+def normalize_payload_frames(payload: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    target = metadata.get("frames")
+    try:
+        target_frames = int(target) if target is not None else 0
+    except Exception:
+        target_frames = 0
+
+    if target_frames <= 0:
+        target_frames = min(
+            int(payload["linear_vel"].shape[0]),
+            int(payload["com_pos"].shape[0]),
+            int(payload["bbox_xyxy"].shape[0]),
+            int(payload["visibility_mask"].shape[0]),
+        )
+
+    frame_indices = extract_window_frame_indices(metadata)
+
+    def _align(array: Any) -> Any:
+        if int(array.shape[0]) == target_frames:
+            return array
+        if (
+            int(array.shape[0]) > target_frames
+            and frame_indices
+            and len(frame_indices) == target_frames
+            and max(frame_indices) < int(array.shape[0])
+        ):
+            return array[frame_indices]
+        return array[:target_frames]
+
+    payload["linear_vel"] = _align(payload["linear_vel"])
+    payload["com_pos"] = _align(payload["com_pos"])
+    payload["bbox_xyxy"] = _align(payload["bbox_xyxy"])
+    payload["visibility_mask"] = _align(payload["visibility_mask"])
+    payload["metadata"] = metadata
+    return payload
+
+
+def slice_payload_to_window(payload: Dict[str, Any], frame_indices: List[int], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    if not frame_indices:
+        return normalize_payload_frames(payload, metadata)
+
+    linear_vel = payload["linear_vel"]
+    num_frames = int(linear_vel.shape[0])
+    clamped = [idx for idx in frame_indices if 0 <= idx < num_frames]
+    if not clamped:
+        return normalize_payload_frames(payload, metadata)
+
+    payload["metadata"] = metadata
+    payload["events"] = []
+    payload["linear_vel"] = payload["linear_vel"][clamped]
+    payload["com_pos"] = payload["com_pos"][clamped]
+    payload["bbox_xyxy"] = payload["bbox_xyxy"][clamped]
+    payload["visibility_mask"] = payload["visibility_mask"][clamped]
+    return normalize_payload_frames(payload, metadata)
+
+
+def load_payload_for_classification(sample_dir: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        payload = load_sample_arrays(sample_dir)
+        return normalize_payload_frames(payload, metadata)
+    except Exception:
+        source_sample_dir = resolve_source_sample_dir(metadata)
+        if source_sample_dir is None:
+            raise
+        payload = load_sample_arrays(source_sample_dir)
+        return slice_payload_to_window(payload, extract_window_frame_indices(metadata), metadata)
+
+
 def classify_sample(sample_dir: Path) -> Tuple[str | None, Dict[str, Any] | None, str | None]:
     try:
         meta_path = find_sample_meta_path(sample_dir)
-        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        metadata = enrich_metadata(sample_dir, load_json(meta_path))
     except Exception as exc:
         return None, None, f"meta_error:{type(exc).__name__}"
 
@@ -101,7 +308,7 @@ def classify_sample(sample_dir: Path) -> Tuple[str | None, Dict[str, Any] | None
         return None, metadata, f"bad_count_bucket:{count_bucket or 'missing'}"
 
     try:
-        payload = load_sample_arrays(sample_dir)
+        payload = load_payload_for_classification(sample_dir, metadata)
         derived_tags = compute_derived_tags(
             metadata=payload["metadata"],
             events=payload["events"],

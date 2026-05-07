@@ -23,9 +23,10 @@ from tdw.scene_data.scene_bounds import SceneBounds
 OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_nonfluid_soft_bodies_multi_scene")
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
-PORT = 1087
-BUILD_BOOT_WAIT = 12
+PORT = int(os.environ.get("TDW_PORT", "1087"))
+BUILD_BOOT_WAIT = int(os.environ.get("TDW_BUILD_BOOT_WAIT", "12"))
 SCENE_FILTER = {s.strip() for s in os.environ.get("TDW_SCENE_FILTER", "").split(",") if s.strip()}
+CASE_FILTER = {s.strip() for s in os.environ.get("TDW_CASE_FILTER", "").split(",") if s.strip()}
 PROXY_ENV_KEYS = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]
 
 SCENES: List[Dict[str, object]] = [
@@ -65,13 +66,13 @@ CASES: List[Dict[str, object]] = [
         "type": "cloth_sheet",
         "cloth_material": "canvas",
         "sheet_type": SheetType.cloth_hd,
-        "substeps": 6,
-        "position": {"x": 0.02, "y": 2.08, "z": -0.02},
-        "rotation": {"x": 10.0, "y": 6.0, "z": -8.0},
-        "frames": 200,
+        "substeps": 8,
+        "position": {"x": 0.0, "y": 2.05, "z": 0.04},
+        "rotation": {"x": 8.0, "y": 10.0, "z": -6.0},
+        "frames": 220,
         "static_objects": [
-            {"model_name": "camera_box", "position": {"x": -0.22, "y": 0.16, "z": 0.0}, "rotation": {"x": 0.0, "y": 10.0, "z": 0.0}},
-            {"model_name": "camera_box", "position": {"x": 0.2, "y": 0.16, "z": -0.02}, "rotation": {"x": 0.0, "y": -12.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": -0.28, "y": 0.16, "z": 0.02}, "rotation": {"x": 0.0, "y": 10.0, "z": 0.0}},
+            {"model_name": "camera_box", "position": {"x": 0.28, "y": 0.16, "z": -0.02}, "rotation": {"x": 0.0, "y": -8.0, "z": 0.0}},
         ],
     },
     {
@@ -268,8 +269,10 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
     scene_name = str(scene["name"])
     skybox_name = str(scene["skybox"])
     scene_output_root = OUTPUT_ROOT.joinpath(scene_name)
+    print(f"[phase] launch_build scene={scene_name} case={case['name']} port={PORT}", flush=True)
     build_proc = launch_build(scene_output_root=scene_output_root)
     time.sleep(BUILD_BOOT_WAIT)
+    print(f"[phase] connect_controller scene={scene_name} case={case['name']}", flush=True)
     c = Controller(launch_build=False, port=PORT)
     try:
         case_root = scene_output_root.joinpath(str(case["name"]))
@@ -293,7 +296,9 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
                          Controller.get_add_scene(scene_name=scene_name),
                          Controller.get_add_hdri_skybox(skybox_name=skybox_name),
                          {"$type": "send_scene_regions"}]
+        print(f"[phase] init_scene scene={scene_name} case={case['name']}", flush=True)
         scene_resp = c.communicate(init_commands)
+        print(f"[phase] init_scene_done scene={scene_name} case={case['name']}", flush=True)
         resolve_camera(scene=scene, controller=c, scene_resp=scene_resp)
         camera = ThirdPersonCamera(avatar_id="a",
                                    position=scene["_resolved_camera_position"],
@@ -314,6 +319,8 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
                                                             kinematic=True,
                                                             gravity=False))
         if static_commands:
+            print(f"[phase] add_static_objects scene={scene_name} case={case['name']} count={len(case.get('static_objects', []))}",
+                  flush=True)
             c.communicate(static_commands)
 
         obi.set_solver(solver_id=0, substeps=int(case["substeps"]), scale_factor=1)
@@ -355,13 +362,16 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
         else:
             raise ValueError(f"Unsupported case type: {case['type']}")
 
+        print(f"[phase] warmup scene={scene_name} case={case['name']}", flush=True)
         c.communicate([])
         for _ in range(12):
             c.communicate([])
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
+        print(f"[phase] simulate scene={scene_name} case={case['name']} frames={case['frames']}", flush=True)
         for _ in range(int(case["frames"])):
             c.communicate([])
+        print(f"[phase] terminate scene={scene_name} case={case['name']}", flush=True)
         c.communicate({"$type": "terminate"})
     finally:
         try:
@@ -369,8 +379,10 @@ def run_case(scene: Dict[str, object], case: Dict[str, object]) -> None:
         except Exception:
             build_proc.kill()
 
+    print(f"[phase] convert scene={scene_name} case={case['name']}", flush=True)
     convert_video(scene_output_root.joinpath(str(case["name"]), "a"),
                   scene_output_root.joinpath(f"{case['name']}.mp4"))
+    print(f"[phase] convert_done scene={scene_name} case={case['name']}", flush=True)
 
 
 def main() -> None:
@@ -382,11 +394,15 @@ def main() -> None:
             print(f"Skipping unselected scene {scene_name}", flush=True)
             continue
         scene_root = OUTPUT_ROOT.joinpath(scene_name)
-        completed = all(scene_root.joinpath(f"{case['name']}.mp4").exists() for case in CASES)
+        selected_cases = [case for case in CASES if not CASE_FILTER or str(case["name"]) in CASE_FILTER]
+        completed = all(scene_root.joinpath(f"{case['name']}.mp4").exists() for case in selected_cases)
         if completed:
             print(f"Skipping completed scene {scene_name}", flush=True)
             continue
         for case in CASES:
+            if CASE_FILTER and str(case["name"]) not in CASE_FILTER:
+                print(f"Skipping unselected case {scene_name} / {case['name']}", flush=True)
+                continue
             output_video = scene_root.joinpath(f"{case['name']}.mp4")
             if output_video.exists():
                 print(f"Skipping completed case {scene_name} / {case['name']}", flush=True)

@@ -21,7 +21,7 @@ CASES=(
 )
 CONTEXTS=(8 16 32 38)
 VARIANTS=(caption nullcaption)
-GPUS=(1 2)
+GPUS=(0 1 2 3)
 
 mkdir -p "${META_ROOT}" "${GEN_ROOT}" "${RUNTIME_ROOT}" "${LOG_ROOT}" "${JOB_ROOT}"
 
@@ -72,9 +72,11 @@ for case_name in "${CASES[@]}"; do
       log_path=${LOG_ROOT}/${case_name}__${variant}_context_$(printf '%02d' "${ctx}")f.log
       model_name=physicsiq_${case_name}_${variant}_ctx$(printf '%02d' "${ctx}")f
       mkdir -p "${output_dir}" "${runtime_dir}"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "${case_name}" "${variant}" "${ctx}" "${meta_list}" "${output_dir}" "${runtime_dir}" "${log_path}" \
-        >> "${JOB_FILE}"
+      if ! find "${output_dir}" -maxdepth 1 -name '*.mp4' -print -quit | grep -q .; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "${case_name}" "${variant}" "${ctx}" "${meta_list}" "${output_dir}" "${runtime_dir}" "${log_path}" \
+          >> "${JOB_FILE}"
+      fi
     done
   done
 done
@@ -90,6 +92,8 @@ split_jobs() {
 
 split_jobs "${GPUS[0]}" 0 ${#GPUS[@]}
 split_jobs "${GPUS[1]}" 1 ${#GPUS[@]}
+split_jobs "${GPUS[2]}" 2 ${#GPUS[@]}
+split_jobs "${GPUS[3]}" 3 ${#GPUS[@]}
 
 run_jobs_for_gpu() {
   local gpu=$1
@@ -127,7 +131,17 @@ PID0=$!
 ) &
 PID1=$!
 
-wait "${PID0}" "${PID1}"
+(
+  run_jobs_for_gpu "${GPUS[2]}"
+) &
+PID2=$!
+
+(
+  run_jobs_for_gpu "${GPUS[3]}"
+) &
+PID3=$!
+
+wait "${PID0}" "${PID1}" "${PID2}" "${PID3}"
 
 cat > "${WORK_ROOT}/README.txt" <<EOF
 data_root=${DATA_ROOT}

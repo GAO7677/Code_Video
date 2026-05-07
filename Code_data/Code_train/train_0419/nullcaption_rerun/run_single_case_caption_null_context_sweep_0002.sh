@@ -75,29 +75,21 @@ run_job() {
 
 (
   run_job 0 caption 8 "${META_ROOT}/caption.txt"
+  run_job 0 caption 32 "${META_ROOT}/caption.txt"
   run_job 0 nullcaption 8 "${META_ROOT}/nullcaption.txt"
+  run_job 0 nullcaption 32 "${META_ROOT}/nullcaption.txt"
 ) &
 PID0=$!
 
 (
-  run_job 1 caption 16 "${META_ROOT}/caption.txt"
-  run_job 1 nullcaption 16 "${META_ROOT}/nullcaption.txt"
+  run_job 3 caption 16 "${META_ROOT}/caption.txt"
+  run_job 3 caption 38 "${META_ROOT}/caption.txt"
+  run_job 3 nullcaption 16 "${META_ROOT}/nullcaption.txt"
+  run_job 3 nullcaption 38 "${META_ROOT}/nullcaption.txt"
 ) &
 PID1=$!
 
-(
-  run_job 2 caption 32 "${META_ROOT}/caption.txt"
-  run_job 2 nullcaption 32 "${META_ROOT}/nullcaption.txt"
-) &
-PID2=$!
-
-(
-  run_job 3 caption 38 "${META_ROOT}/caption.txt"
-  run_job 3 nullcaption 38 "${META_ROOT}/nullcaption.txt"
-) &
-PID3=$!
-
-wait "${PID0}" "${PID1}" "${PID2}" "${PID3}"
+wait "${PID0}" "${PID1}"
 
 cat > "${WORK_ROOT}/README.txt" <<EOF
 case_meta=${CASE_META}
