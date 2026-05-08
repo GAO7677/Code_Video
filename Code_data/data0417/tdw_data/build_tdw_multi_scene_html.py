@@ -20,6 +20,14 @@ DATASETS = [
         "mode": "scene_dirs",
     },
     {
+        "title": "Cloth Drop Real Scene From Baseline",
+        "subtitle": "从已验证可下坠的 baseline cloth 配置迁移到真实场景后的两组 case：球直接落地摆放，以及球放在更接近现实的矮台面上。",
+        "directory": "tdw_cloth_drop_real_scene_from_baseline",
+        "badge": "Cloth Real Scene",
+        "mode": "flat_videos",
+        "scene_label": "tdw_cloth_drop_real_scene_from_baseline",
+    },
+    {
         "title": "Soft Body / Cloth Demo",
         "subtitle": "TDW 的 Obi 软体布料 demo。这里展示真正的 cloth 求解，而不是软外观刚体。",
         "directory": "tdw_obi_cloth_demo",

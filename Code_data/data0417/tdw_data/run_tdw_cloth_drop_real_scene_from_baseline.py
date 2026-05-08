@@ -8,7 +8,6 @@ from tdw.add_ons.interior_scene_lighting import InteriorSceneLighting
 from tdw.add_ons.obi import Obi
 from tdw.add_ons.third_person_camera import ThirdPersonCamera
 from tdw.controller import Controller
-from tdw.tdw_utils import TDWUtils
 
 from manual_tdw_controller import ManualBuildController
 
@@ -27,6 +26,23 @@ SCENE = {
     "look_at": {"x": 0.0, "y": 1.0, "z": 0.0},
     "field_of_view": 72,
 }
+
+CASES = [
+    {
+        "name": "sphere_on_ground_real_scene",
+        "sphere_position": {"x": 0.0, "y": 0.35, "z": 0.0},
+        "pedestal": None,
+    },
+    {
+        "name": "sphere_on_pedestal_real_scene",
+        "sphere_position": {"x": 0.0, "y": 0.9, "z": 0.0},
+        "pedestal": {
+            "position": {"x": 0.0, "y": 0.18, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 1.9, "y": 0.7, "z": 1.9},
+        },
+    },
+]
 
 
 def sanitize_proxy_env() -> None:
@@ -57,13 +73,13 @@ def convert_video(frames_dir: Path, output_video: Path) -> None:
                    check=True)
 
 
-def main() -> None:
+def run_case(case: dict) -> None:
     sanitize_proxy_env()
     build_holder = {}
     c = ManualBuildController(port=PORT, build_callback=lambda: build_holder.setdefault("proc", launch_build()))
     time.sleep(BUILD_BOOT_WAIT)
     try:
-        case_root = OUTPUT_ROOT.joinpath("cloth_drop_box_real_scene")
+        case_root = OUTPUT_ROOT.joinpath(case["name"])
         camera = ThirdPersonCamera(avatar_id="a",
                                    position=SCENE["camera_position"],
                                    look_at=SCENE["look_at"],
@@ -80,7 +96,6 @@ def main() -> None:
         c.add_ons.extend([lighting, camera, capture, obi])
 
         cloth_id = c.get_unique_id()
-        pedestal_id = c.get_unique_id()
         sphere_id = c.get_unique_id()
         obi.create_cloth_sheet(cloth_material="cotton",
                                object_id=cloth_id,
@@ -89,18 +104,22 @@ def main() -> None:
         commands = [{"$type": "set_screen_size", "width": 1280, "height": 720},
                     Controller.get_add_scene(scene_name=SCENE["name"]),
                     Controller.get_add_hdri_skybox(skybox_name=SCENE["skybox"])]
-        commands.extend(Controller.get_add_physics_object(model_name="camera_box",
-                                                          object_id=pedestal_id,
-                                                          library="models_core.json",
-                                                          position={"x": 0.0, "y": 0.11, "z": 0.0},
-                                                          rotation={"x": 0.0, "y": 0.0, "z": 0.0},
-                                                          scale_factor={"x": 1.6, "y": 0.45, "z": 1.6},
-                                                          kinematic=True,
-                                                          gravity=False))
+
+        if case["pedestal"] is not None:
+            pedestal_id = c.get_unique_id()
+            commands.extend(Controller.get_add_physics_object(model_name="camera_box",
+                                                              object_id=pedestal_id,
+                                                              library="models_core.json",
+                                                              position=case["pedestal"]["position"],
+                                                              rotation=case["pedestal"]["rotation"],
+                                                              scale_factor=case["pedestal"]["scale_factor"],
+                                                              kinematic=True,
+                                                              gravity=False))
+
         commands.extend(Controller.get_add_physics_object(model_name="sphere",
                                                           object_id=sphere_id,
                                                           library="models_flex.json",
-                                                          position={"x": 0.0, "y": 0.68, "z": 0.0},
+                                                          position=case["sphere_position"],
                                                           kinematic=True,
                                                           gravity=False,
                                                           scale_factor={"x": 0.7, "y": 0.7, "z": 0.7}))
@@ -116,9 +135,17 @@ def main() -> None:
         except Exception:
             build_holder["proc"].kill()
 
-    convert_video(OUTPUT_ROOT.joinpath("cloth_drop_box_real_scene", "a"),
-                  OUTPUT_ROOT.joinpath("cloth_drop_box_real_scene.mp4"))
-    print(OUTPUT_ROOT.joinpath("cloth_drop_box_real_scene.mp4"))
+    convert_video(OUTPUT_ROOT.joinpath(case["name"], "a"),
+                  OUTPUT_ROOT.joinpath(f"{case['name']}.mp4"))
+
+
+def main() -> None:
+    sanitize_proxy_env()
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    for case in CASES:
+        print(f"Running {case['name']}", flush=True)
+        run_case(case)
+        print(f"Completed {case['name']}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1684,10 +1684,11 @@ def build_index(groups: list[dict[str, Any]]) -> str:
     function mediaHtml(item) {{
       const media = Array.isArray(item.media) ? item.media : [];
       if (!media.length) return '<p class="empty">No exported media.</p>';
-      const preferredLabels = ['Current Sample Video', 'RGB Video', 'Context Video', 'Future GT Video'];
-      let selected = media.find((m) => preferredLabels.includes(m.label) && m.kind === 'video');
+      let selected = media.find((m) => m.label === 'RGB Video' && m.kind === 'video');
       if (!selected) {{
-        selected = media.find((m) => m.kind === 'video') || media[0];
+        selected = media.find((m) => m.label === 'Current Sample Video' && m.kind === 'video')
+          || media.find((m) => m.kind === 'video')
+          || media[0];
       }}
       const src = selected.portal_src || selected.path.replace('/home/gaoya/portal_hub_sim/sum0504_portal/', '');
       if (selected.kind === 'video') {{
