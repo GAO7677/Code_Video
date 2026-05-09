@@ -206,6 +206,7 @@ def render_cards(records: list[dict[str, Any]]) -> str:
             "<div class='generated-grid'>"
             f"{render_slot('generated_with_caption', media_html(record['caption_generated']), 'video-slot caption-slot')}"
             f"{render_slot('generated_nullcaption', media_html(record['null_generated']), 'video-slot null-slot')}"
+            f"{render_slot('caption_input_used', text_html(record['caption'], '(empty caption)'), 'meta-slot')}"
             f"{render_slot('run_status', text_html(record['status_text']), 'meta-slot')}"
             "</div>"
             "<div class='path-grid'>"
@@ -326,7 +327,7 @@ def build_html(records: list[dict[str, Any]]) -> str:
     }}
     .generated-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
       gap: 8px;
       margin-bottom: 8px;
     }}
