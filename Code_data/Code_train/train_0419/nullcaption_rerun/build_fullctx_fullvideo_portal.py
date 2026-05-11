@@ -95,19 +95,6 @@ def render_slot(title: str, body: str, extra_class: str = "") -> str:
     )
 
 
-def video_with_optional_caption_html(video_path: str | None, caption: str) -> str:
-    body = media_html(video_path)
-    if not caption:
-        return body
-    return (
-        f"{body}"
-        "<div class='caption-inline'>"
-        "<div class='caption-inline-head'>caption</div>"
-        f"<div class='caption-inline-body'>{html.escape(caption)}</div>"
-        "</div>"
-    )
-
-
 def load_cases() -> list[dict[str, Any]]:
     manifest = read_json(META_DIR / "manifest.json")
     cases = manifest.get("cases", [])
@@ -202,6 +189,11 @@ def render_cards(records: list[dict[str, Any]]) -> str:
     cards: list[str] = []
     for record in records:
         dataset = "physics-iq-benchmark"
+        caption_card = (
+            render_slot("caption_input_used", text_html(record["caption"]), "meta-slot")
+            if record["caption"]
+            else ""
+        )
         cards.append(
             "<article class='case-card' "
             f"data-case='{html.escape(record['case_name'].lower())}' "
@@ -215,8 +207,9 @@ def render_cards(records: list[dict[str, Any]]) -> str:
             f"{render_slot('gt_full_video', media_html(record['gt_full_video']), 'video-slot gt-slot')}"
             "</div>"
             "<div class='generated-grid'>"
-            f"{render_slot('generated_with_caption', video_with_optional_caption_html(record['caption_generated'], record['caption']), 'video-slot caption-slot')}"
-            f"{render_slot('generated_nullcaption', video_with_optional_caption_html(record['null_generated'], record['null_caption']), 'video-slot null-slot')}"
+            f"{render_slot('generated_with_caption', media_html(record['caption_generated']), 'video-slot caption-slot')}"
+            f"{render_slot('generated_nullcaption', media_html(record['null_generated']), 'video-slot null-slot')}"
+            f"{caption_card}"
             f"{render_slot('run_status', text_html(record['status_text']), 'meta-slot')}"
             "</div>"
             "<div class='path-grid'>"
@@ -337,7 +330,7 @@ def build_html(records: list[dict[str, Any]]) -> str:
     }}
     .generated-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
       gap: 8px;
       margin-bottom: 8px;
     }}
@@ -389,28 +382,6 @@ def build_html(records: list[dict[str, Any]]) -> str:
     .text-body.empty {{
       color: var(--muted);
       font-style: italic;
-    }}
-    .caption-inline {{
-      border-top: 1px solid var(--line);
-      background: #fffaf2;
-    }}
-    .caption-inline-head {{
-      padding: 6px 8px;
-      border-bottom: 1px solid var(--line);
-      font-size: 11px;
-      font-weight: 700;
-      color: #6e2a13;
-      background: rgba(243, 215, 201, 0.48);
-    }}
-    .caption-inline-body {{
-      padding: 8px 10px;
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--ink);
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 160px;
-      overflow: auto;
     }}
     .missing {{
       display: grid;
