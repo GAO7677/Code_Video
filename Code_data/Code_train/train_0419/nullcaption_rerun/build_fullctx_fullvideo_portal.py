@@ -95,13 +95,15 @@ def render_slot(title: str, body: str, extra_class: str = "") -> str:
     )
 
 
-def caption_under_video_html(video_path: str | None, caption: str) -> str:
-    label = caption if caption else "(empty caption)"
+def video_with_optional_caption_html(video_path: str | None, caption: str) -> str:
+    body = media_html(video_path)
+    if not caption:
+        return body
     return (
-        f"{media_html(video_path)}"
+        f"{body}"
         "<div class='caption-inline'>"
-        "<div class='caption-inline-head'>caption_input_used</div>"
-        f"<div class='caption-inline-body'>{html.escape(label)}</div>"
+        "<div class='caption-inline-head'>caption</div>"
+        f"<div class='caption-inline-body'>{html.escape(caption)}</div>"
         "</div>"
     )
 
@@ -211,12 +213,10 @@ def render_cards(records: list[dict[str, Any]]) -> str:
             "<div class='shared-grid'>"
             f"{render_slot('context_video_from_meta', media_html(record['context_video']), 'video-slot')}"
             f"{render_slot('gt_full_video', media_html(record['gt_full_video']), 'video-slot gt-slot')}"
-            f"{render_slot('caption_text', text_html(record['caption']), 'meta-slot')}"
-            f"{render_slot('null_caption_text', text_html(record['null_caption'], '(empty caption)'), 'meta-slot')}"
             "</div>"
             "<div class='generated-grid'>"
-            f"{render_slot('generated_with_caption', caption_under_video_html(record['caption_generated'], record['caption']), 'video-slot caption-slot')}"
-            f"{render_slot('generated_nullcaption', media_html(record['null_generated']), 'video-slot null-slot')}"
+            f"{render_slot('generated_with_caption', video_with_optional_caption_html(record['caption_generated'], record['caption']), 'video-slot caption-slot')}"
+            f"{render_slot('generated_nullcaption', video_with_optional_caption_html(record['null_generated'], record['null_caption']), 'video-slot null-slot')}"
             f"{render_slot('run_status', text_html(record['status_text']), 'meta-slot')}"
             "</div>"
             "<div class='path-grid'>"
@@ -331,7 +331,7 @@ def build_html(records: list[dict[str, Any]]) -> str:
     }}
     .shared-grid {{
       display: grid;
-      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
       gap: 8px;
       margin-bottom: 8px;
     }}
