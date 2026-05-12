@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：重建 sum0504 路径索引与分类统计。
 from __future__ import annotations
 
 import argparse

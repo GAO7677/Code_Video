@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：定义并导出 benchmark taxonomy 与统计结果。
 """Benchmark-oriented taxonomy for the PhysInOne dataset.
 
 该脚本用于把 PhysInOne 原始物理标签整理成 benchmark 分类；输入为数据集根目录及标签映射规则，输出为终端摘要和可选 taxonomy/validation JSON 文件。

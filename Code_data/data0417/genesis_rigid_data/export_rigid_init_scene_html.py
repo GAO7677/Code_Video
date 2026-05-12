@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：导出刚体初始场景为 HTML 3D 可视化。
 """Export an initialized rigid scene as GLB plus a local interactive HTML viewer.
 
 The output focuses on the first frame of one rigid sample:

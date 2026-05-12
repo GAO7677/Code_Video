@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：审计 benchmark 样本的惯性原点与网格质心设置是否一致。
 """Audit benchmark PhysXNet rigid assets for suspicious inertial origins.
 
 该脚本用于审计 benchmark 中 PhysXNet 刚体资产的惯性原点是否异常；输入为 benchmark 根目录及其 URDF/碰撞网格，输出为终端告警和可写出的审计报告 json。

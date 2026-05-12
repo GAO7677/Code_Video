@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：按主物体与 case 汇总 RGB 样本画廊。
 """Build a local HTML gallery grouped by main object id and case RGB GIFs."""
 
 from __future__ import annotations

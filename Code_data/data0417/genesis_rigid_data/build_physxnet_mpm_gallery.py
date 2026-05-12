@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成 PhysX/MPM 样本画廊索引。
 """Build a local HTML gallery for PhysXNet MPM sample visualizations."""
 
 from __future__ import annotations

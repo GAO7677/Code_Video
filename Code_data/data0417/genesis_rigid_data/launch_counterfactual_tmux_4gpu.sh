@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：用 tmux 在 4 张 GPU 上启动 counterfactual 生成任务。
 set -euo pipefail
 
 SESSION_NAME="${SESSION_NAME:-physx_cf_all_4gpu}"

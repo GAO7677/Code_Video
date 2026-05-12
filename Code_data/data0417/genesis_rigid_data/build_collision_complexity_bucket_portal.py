@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成按碰撞复杂度分类的 portal 页面。
 """Build a compact GIF portal grouped by collision complexity."""
 
 from __future__ import annotations

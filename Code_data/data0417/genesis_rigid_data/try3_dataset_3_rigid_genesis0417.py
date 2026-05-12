@@ -1,3 +1,4 @@
+# 用途：保留的早期 rigid 生成实验脚本。
 import json
 import csv
 import math

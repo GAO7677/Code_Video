@@ -1,0 +1,36 @@
+{
+  "split": "train",
+  "simulator_type": "rigid",
+  "dataset": "stage1adapter_simple_window_genesis",
+  "collision_buckets": [
+    "no_collision",
+    "env_only"
+  ],
+  "num_samples": 1142,
+  "leaf_groups": [
+    {
+      "split": "train",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_01",
+      "collision_bucket": "no_collision",
+      "num_samples": 612,
+      "relative_dir": "train/rigid/count_01/no_collision"
+    },
+    {
+      "split": "train",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_01",
+      "collision_bucket": "env_only",
+      "num_samples": 498,
+      "relative_dir": "train/rigid/count_01/env_only"
+    },
+    {
+      "split": "train",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "env_only",
+      "num_samples": 32,
+      "relative_dir": "train/rigid/count_02/env_only"
+    }
+  ]
+}

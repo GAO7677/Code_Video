@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：提取样本主碰撞事件并生成摘要。
 """Build a compact main-collision summary and visualization for Genesis rigid samples."""
 
 from __future__ import annotations

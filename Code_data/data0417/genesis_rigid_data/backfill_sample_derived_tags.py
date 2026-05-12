@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：回填样本的派生标签与碰撞复杂度标签。
 from __future__ import annotations
 
 import argparse

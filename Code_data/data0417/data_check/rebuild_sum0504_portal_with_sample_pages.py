@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild sum0504 portal with per-sample detail pages."""
+"""Rebuild a dataset portal with per-sample detail pages."""
 
 from __future__ import annotations
 
@@ -21,15 +21,18 @@ from PIL import Image
 
 DEFAULT_ROOT = Path("/home/gaoya/portal_hub_sim/sum0504_portal")
 STATE_VALIDATION_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_check/state_validation_window")
-SUM0504_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
+DEFAULT_SUMMARY_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
 MAX_ITEMS_PER_GROUP = 10
 ROOT = DEFAULT_ROOT
+SUMMARY_ROOT = DEFAULT_SUMMARY_ROOT
+PORTAL_TITLE = "sum0504 Portal"
+PREFER_GIF = False
 MANIFEST_PATH = ROOT / "manifest.json"
 INDEX_ASSET_ROOT = ROOT / "index_assets"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rebuild sum0504 portal with per-sample detail pages.")
+    parser = argparse.ArgumentParser(description="Rebuild a dataset portal with per-sample detail pages.")
     parser.add_argument(
         "--sample_substring",
         type=str,
@@ -46,6 +49,23 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_ROOT,
         help="Portal output directory.",
+    )
+    parser.add_argument(
+        "--summary_root",
+        type=Path,
+        default=DEFAULT_SUMMARY_ROOT,
+        help="Summary root that contains split/simulator/count/collision/samples.txt leaves.",
+    )
+    parser.add_argument(
+        "--portal_title",
+        type=str,
+        default="sum0504 Portal",
+        help="Title shown on the portal homepage and detail pages.",
+    )
+    parser.add_argument(
+        "--prefer_gif",
+        action="store_true",
+        help="Render video media as GIF previews whenever possible.",
     )
     parser.add_argument(
         "--collision_bucket",
@@ -100,10 +120,21 @@ def index_asset_src(path: Path) -> str:
     return relpath(target, ROOT)
 
 
+def index_asset_preview_src(path: Path) -> tuple[str, str]:
+    if PREFER_GIF and path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"}:
+        gif_path = INDEX_ASSET_ROOT / f"{hashlib.md5(str(path).encode('utf-8')).hexdigest()[:12]}_{path.stem}.gif"
+        if (not gif_path.exists()) and path.exists():
+            make_gif_from_video(path, gif_path)
+        if gif_path.exists():
+            return "image", relpath(gif_path, ROOT)
+    return ("video" if path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"} else "image", index_asset_src(path))
+
+
 def make_gif_from_video(video_path: Path, gif_path: Path, max_frames: int = 24) -> Path | None:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return None
+    gif_path.parent.mkdir(parents=True, exist_ok=True)
     frames: list[Image.Image] = []
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     step = max(1, frame_count // max_frames) if frame_count > max_frames and max_frames > 0 else 1
@@ -1011,8 +1042,14 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
         path = Path(str(m["path"]))
         label = str(m.get("label", "media"))
         kind = str(m.get("kind", "video"))
+        is_video_path = path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"}
+        src_kind = "video" if is_video_path else kind
         src = asset_src(path, page_dir)
-        if kind == "video":
+        if is_video_path and PREFER_GIF:
+            preview_kind, preview_src = index_asset_preview_src(path)
+            src_kind = preview_kind
+            src = relpath(ROOT / preview_src, page_dir)
+        if src_kind == "video":
             blocks.append(
                 f"""
 <section class="media-card">
@@ -1211,7 +1248,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
 <body>
   <div class="wrap">
     <section class="hero">
-      <p><a href="../../../index.html">Back to sum0504 portal</a></p>
+      <p><a href="../../../index.html">Back to {html.escape(PORTAL_TITLE)}</a></p>
       <h1>{html.escape(record['sample_name'])}</h1>
       <p>{html.escape(record['group_title'])}</p>
       <p><strong>Dataset:</strong> {html.escape(record['dataset'])} | <strong>View:</strong> {html.escape(record['view_type'])}</p>
@@ -1285,23 +1322,24 @@ def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
     ]
     for label, path, kind in candidates:
         if path.exists():
+            media_kind, media_src = index_asset_preview_src(path)
             media.append(
                 {
                     "label": label,
                     "path": str(path),
-                    "portal_src": index_asset_src(path),
-                    "kind": kind,
+                    "portal_src": media_src,
+                    "kind": media_kind if kind == "video" else kind,
                 }
             )
     return media
 
 
-def load_groups_from_sum0504(sample_substring: str = "", collision_bucket_filter: str = "") -> list[dict[str, Any]]:
+def load_groups_from_summary(sample_substring: str = "", collision_bucket_filter: str = "") -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     substring = str(sample_substring or "")
     collision_bucket_filter = str(collision_bucket_filter or "")
-    for samples_path in sorted(SUM0504_ROOT.rglob("samples.txt")):
-        rel = samples_path.relative_to(SUM0504_ROOT)
+    for samples_path in sorted(SUMMARY_ROOT.rglob("samples.txt")):
+        rel = samples_path.relative_to(SUMMARY_ROOT)
         if len(rel.parts) != 5:
             continue
         split, simulator_type, count_bucket, collision_bucket, _ = rel.parts
@@ -1434,7 +1472,7 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>sum0504 Portal</title>
+  <title>{html.escape(PORTAL_TITLE)}</title>
   <style>
     :root {{
       --bg: #f3efe8;
@@ -1662,8 +1700,8 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 </head>
 <body>
   <header>
-    <h1>sum0504 Portal</h1>
-    <p class="sub">主页面保留当前入口，每个样本新增详情页，按样本实际记录的数据形式展示。</p>
+    <h1>{html.escape(PORTAL_TITLE)}</h1>
+    <p class="sub">主页面保留 RGB 入口，每个样本新增详情页，按样本实际记录的数据形式展示。</p>
   </header>
   <div class="layout">
     <aside>
@@ -1684,13 +1722,14 @@ def build_index(groups: list[dict[str, Any]]) -> str:
     function mediaHtml(item) {{
       const media = Array.isArray(item.media) ? item.media : [];
       if (!media.length) return '<p class="empty">No exported media.</p>';
-      let selected = media.find((m) => m.label === 'RGB Video' && m.kind === 'video');
+      let selected = media.find((m) => m.label === 'RGB Video');
       if (!selected) {{
-        selected = media.find((m) => m.label === 'Current Sample Video' && m.kind === 'video')
+        selected = media.find((m) => m.label === 'Current Sample Video')
+          || media.find((m) => m.kind === 'image')
           || media.find((m) => m.kind === 'video')
           || media[0];
       }}
-      const src = selected.portal_src || selected.path.replace('/home/gaoya/portal_hub_sim/sum0504_portal/', '');
+      const src = selected.portal_src || selected.path;
       if (selected.kind === 'video') {{
         return `<div class="media-grid"><div class="media-block"><div class="media-label">${{selected.label}}</div><video src="${{src}}" controls preload="metadata"></video></div></div>`;
       }}
@@ -1828,12 +1867,15 @@ def build_index(groups: list[dict[str, Any]]) -> str:
 
 def main() -> None:
     args = parse_args()
-    global ROOT, MANIFEST_PATH, INDEX_ASSET_ROOT
+    global ROOT, SUMMARY_ROOT, PORTAL_TITLE, PREFER_GIF, MANIFEST_PATH, INDEX_ASSET_ROOT
     ROOT = args.output_root.resolve()
+    SUMMARY_ROOT = args.summary_root.resolve()
+    PORTAL_TITLE = str(args.portal_title)
+    PREFER_GIF = bool(args.prefer_gif)
     MANIFEST_PATH = ROOT / "manifest.json"
     INDEX_ASSET_ROOT = ROOT / "index_assets"
     ROOT.mkdir(parents=True, exist_ok=True)
-    groups = load_groups_from_sum0504(
+    groups = load_groups_from_summary(
         sample_substring=args.sample_substring,
         collision_bucket_filter=args.collision_bucket,
     )

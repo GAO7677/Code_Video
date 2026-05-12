@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成简化版碰撞事件 GIF portal。
 """Build a compact collision-event portal for a few Genesis samples."""
 
 from __future__ import annotations

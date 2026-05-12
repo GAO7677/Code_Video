@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：重生成多物体 case。
 # 批量重生成 version_1_genesis_rigid_data_all_cases 中现有的多物体 case。
 # 默认等待单物体 count_01 重生成任务结束后再启动，避免争用 GPU。
 set -euo pipefail

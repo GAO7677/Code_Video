@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：筛选单物体简单运动样本。
 """Validate and optionally quarantine single-object motion preview cases.
 
 该脚本用于筛选单物体 case900/case901 运动样本中的异常样本；输入为样本根目录及可选 quarantine/report 参数，输出为 qa_metrics.json、JSON 报告以及可选隔离后的无效样本目录。

@@ -1,0 +1,7 @@
+{
+  "split": "train",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_02",
+  "collision_bucket": "env_only",
+  "num_samples": 32
+}

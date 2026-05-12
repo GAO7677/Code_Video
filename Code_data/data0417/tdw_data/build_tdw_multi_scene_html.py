@@ -28,6 +28,14 @@ DATASETS = [
         "scene_label": "tdw_cloth_drop_real_scene_from_baseline",
     },
     {
+        "title": "Axis Export Compare",
+        "subtitle": "同一段 TDW 仿真分别按 y-up 原生导出和 z-up 离线转换导出后的对比。重点说明：渲染视频本身不变，变化发生在坐标、重力轴和后续 3D 真值解释上。",
+        "directory": "tdw_axis_export_compare",
+        "badge": "Axis Compare",
+        "mode": "flat_videos",
+        "scene_label": "tdw_axis_export_compare",
+    },
+    {
         "title": "Soft Body / Cloth Demo",
         "subtitle": "TDW 的 Obi 软体布料 demo。这里展示真正的 cloth 求解，而不是软外观刚体。",
         "directory": "tdw_obi_cloth_demo",

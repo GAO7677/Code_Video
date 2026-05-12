@@ -1,3 +1,4 @@
+# 用途：计算样本的数量桶、碰撞桶与派生标签。
 from __future__ import annotations
 
 import json

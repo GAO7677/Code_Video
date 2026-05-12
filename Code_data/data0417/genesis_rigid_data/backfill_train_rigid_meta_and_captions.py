@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：回填 train/rigid 数据的 meta.json 与 caption 字段。
 """Backfill Genesis train/rigid meta.json and captions.
 
 该脚本用于修复 Genesis 自建数据 train/rigid 下缺失的 meta.json，并为所有可识别样本补全

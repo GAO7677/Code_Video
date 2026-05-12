@@ -1,3 +1,4 @@
+# 用途：监听多物体预览目录并自动重建页面。
 """Wait for multi-object regeneration outputs, then auto-build a small validation preview page."""
 
 from __future__ import annotations

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成按 case 组织的 3D 场景可视化。
 """Build an interactive 3D mesh scene and a trajectory overview for one PhysXNet MPM sample."""
 
 from __future__ import annotations

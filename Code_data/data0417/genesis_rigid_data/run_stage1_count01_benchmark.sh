@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：生成 stage1 count_01 held-out benchmark。
 # 该脚本用于生成 stage1 count_01 heldout benchmark 并构建子集；输入为 PhysXNet 数据和 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases 训练根目录，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data_benchmark/stage1_count01_benchmark 下的 heldout 样本、ID 列表和 subset summary。
 set -u
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：统一生成与修复 rigid benchmark 和 held-out 集。
 """Unified rigid benchmark entry point.
 
 该脚本用于统一生成 Genesis 刚体 benchmark 数据；输入为 PhysXNet 资产、已有训练集根目录或 heldout 配置，输出为 output_root 下的 benchmark 样本、manifest、caption 和预处理子集。

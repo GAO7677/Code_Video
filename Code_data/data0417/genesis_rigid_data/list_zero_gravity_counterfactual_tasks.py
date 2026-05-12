@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：列出零重力 counterfactual 样本修复任务。
 """Collect zero-gravity rigid counterfactual cases that need regeneration."""
 
 from __future__ import annotations

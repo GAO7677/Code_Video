@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：重生成 count_01 静止类与高落差相关 case。
 # 批量重生成 version_1_genesis_rigid_data_all_cases 中 count_01 的静止 case000/001/002/003。
 set -euo pipefail
 

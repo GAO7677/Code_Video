@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：用 try1 后端全量生成 rigid case。
 # 该脚本用于遍历 PhysXNet 全部 object_id 生成 rigid-only 全 case 数据；输入为 /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/finaljson 和生成/打 caption 脚本，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases 下的样本、caption 与日志。
 set -euo pipefail
 

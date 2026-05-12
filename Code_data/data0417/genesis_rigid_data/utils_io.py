@@ -1,3 +1,4 @@
+# 用途：通用 JSON、图像、视频与可视化 IO 工具函数。
 """该模块用于提供 Genesis 数据导出的通用 I/O 工具；输入为图像、数组、路径等中间结果，输出为保存到磁盘的视频、可视化文件和标准化路径。"""
 import json
 from pathlib import Path

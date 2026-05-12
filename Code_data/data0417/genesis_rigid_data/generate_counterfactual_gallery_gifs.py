@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：批量生成 counterfactual 画廊所需 GIF。
 from __future__ import annotations
 
 import argparse

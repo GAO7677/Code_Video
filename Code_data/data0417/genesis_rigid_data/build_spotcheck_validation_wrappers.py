@@ -1,3 +1,4 @@
+# 用途：为状态验证 spot-check 生成包装目录与索引。
 """Build heldout-style wrapper folders so validate_saved_dataset_states.py can browse train-format spot-check samples."""
 
 from __future__ import annotations

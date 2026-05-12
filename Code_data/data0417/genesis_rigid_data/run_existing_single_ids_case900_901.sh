@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：为现有样本 id 回补 case900 与 case901。
 # 该脚本用于为已有单物体 object_id 补生成或修复 case900/case901 样本；输入为 /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases 中已有 id、PhysXNet 资产和过滤脚本，输出为同目录下更新后的样本及 logs_case900_901_existing_ids 日志。
 set -u
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：用 tmux 在 4 张 GPU 上启动零重力 counterfactual 修复任务。
 set -euo pipefail
 
 SESSION_NAME="${SESSION_NAME:-physx_cf_fix_gravity_4gpu}"

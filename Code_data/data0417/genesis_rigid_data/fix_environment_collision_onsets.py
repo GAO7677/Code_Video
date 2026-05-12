@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：修正环境碰撞起始帧记录。
 """Fix environment collision records so frame-0 support contact is not treated as collision onset."""
 
 from __future__ import annotations

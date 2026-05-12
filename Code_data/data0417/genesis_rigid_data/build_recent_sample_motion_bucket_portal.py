@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成按运动桶与碰撞桶浏览样本的 portal。
 """Build a compact GIF portal grouped by object count and collision complexity."""
 
 from __future__ import annotations

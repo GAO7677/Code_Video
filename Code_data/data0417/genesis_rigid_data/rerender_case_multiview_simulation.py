@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：对指定样本重渲染多视角视频与页面。
 from __future__ import annotations
 
 import argparse

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：分片启动全部物体的 counterfactual 生成任务。
 set -euo pipefail
 
 WAN_PY="${WAN_PY:-/data/gaoya/miniconda3/envs/wan/bin/python}"

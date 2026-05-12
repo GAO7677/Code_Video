@@ -1,3 +1,4 @@
+# 用途：检查单个 physics 样本并导出静态图。
 """该脚本用于检查单个 Genesis 刚体样本并生成静态摘要图；输入为 sample_dir 下的 metadata、rgb 帧和 physics 数据，输出为 sample_dir/visualizations 下的 summary_frames.png、summary_state.png 和 contact_timeline.png。"""
 import argparse
 import json

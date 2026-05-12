@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：分片修复零重力 counterfactual 样本。
 set -euo pipefail
 
 WAN_PY="${WAN_PY:-/data/gaoya/miniconda3/envs/wan/bin/python}"

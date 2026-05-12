@@ -1,3 +1,4 @@
+# 用途：验证导出的 state/seg/depth 并生成检查页面。
 """Build a local browser to validate saved Genesis rigid benchmark samples against GT states.
 
 The script reads saved benchmark samples (for example the flat ``mytest`` folder),

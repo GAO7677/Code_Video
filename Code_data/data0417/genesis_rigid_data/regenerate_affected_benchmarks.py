@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：按审计结果重生成受影响的 benchmark 样本。
 """Regenerate affected benchmark samples using the existing Genesis pipelines.
 
 该脚本用于按审计结果重建受影响的 benchmark 样本；输入为 benchmark 根目录、审计报告和现有生成脚本，输出为重生成的样本目录、过滤结果、stage1 子集及日志。

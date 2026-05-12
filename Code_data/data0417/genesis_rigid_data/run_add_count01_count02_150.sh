@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：补生成 count_01 与 count_02 benchmark 样本。
 # 该脚本用于补生成 count_01 和 count_02 的 benchmark 样本；输入为 generate_rigid_benchmark.py、PhysXNet 默认配置和随机种子，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data_benchmark 下的新样本及 run_add_count01_count02_150.log。
 set -euo pipefail
 

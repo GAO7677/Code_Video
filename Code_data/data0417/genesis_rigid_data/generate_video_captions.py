@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：为样本生成 simple caption 与 detail caption。
 """Generate text captions for generated Genesis/PhysXNet videos.
 
 该脚本用于为 Genesis/PhysXNet 视频样本生成文本描述；输入为一个或多个样本根目录、metadata.json 和 PhysXNet JSON 资产信息，输出为各 sample_dir 下的 caption.txt、caption_simple.txt、caption.json 及可选 manifest。

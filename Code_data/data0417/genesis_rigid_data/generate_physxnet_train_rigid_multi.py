@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成当前 train/rigid 多物体训练集。
 """Generate rigid-only multi-object training samples from PhysXNet assets.
 
 该脚本用于从 /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet 生成多物体 rigid 训练样本；输入为 PhysXNet 资产、对象采样配置和输出参数，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data/physxnet_train_rigid_multi 下的样本目录、metadata 和缓存资产。

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：按 case 生成俯视对比图与轨迹可视化。
 """Build a local portal that compares the original RGB render with orthographic diagnostic views."""
 
 from __future__ import annotations

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：主 rigid/mpm 数据生成与导出后端。
 # -*- coding: utf-8 -*-
 """
 该脚本用于把 PhysXNet 对象转换并生成 Genesis 可用的刚体/MPM 数据样本；输入为 /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet 的对象 JSON/网格与生成参数，输出为 output_root 下的样本目录、缓存资产、视频和物理标注。

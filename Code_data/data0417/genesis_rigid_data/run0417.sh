@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 用途：运行当前 rigid 训练生成 smoke test 并检查输出。
 # 该脚本用于跑当前可用的 Genesis rigid smoke test：生成少量 train 样本，并自动可视化第一个样本。
 set -euo pipefail
 

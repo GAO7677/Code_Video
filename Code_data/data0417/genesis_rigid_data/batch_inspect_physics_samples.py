@@ -1,3 +1,4 @@
+# 用途：批量检查 physics 样本并生成本地浏览页面。
 """该脚本用于批量生成物理样本的检查图并可选启动网页浏览；输入为 dataset_root 下的 Genesis 样本目录，输出为每个 sample_dir/visualizations 下的 PNG 可视化和数据集级 HTML 索引。"""
 import argparse
 import html

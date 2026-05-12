@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：生成 counterfactual 样本的 RGB 浏览页。
 """Build a compact local HTML gallery for samples that already have counterfactual videos."""
 
 from __future__ import annotations

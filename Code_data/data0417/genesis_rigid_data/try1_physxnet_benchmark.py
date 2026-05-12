@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：benchmark 导出与 case 采样后端。
 # -*- coding: utf-8 -*-
 """
 该脚本用于从 PhysXNet 对象生成 Genesis benchmark/演示样本；输入为 PhysXNet 对象 JSON/网格、场景配置和 output_root，输出为样本目录、缓存资产、视频、metadata 与物理标注。

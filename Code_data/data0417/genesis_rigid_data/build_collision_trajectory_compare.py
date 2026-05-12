@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：对比碰撞样本的轨迹与时序信号。
 from __future__ import annotations
 
 import argparse

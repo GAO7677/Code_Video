@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 用途：重建 Genesis stage1adapter 的 test/val split。
 from __future__ import annotations
 
 import json

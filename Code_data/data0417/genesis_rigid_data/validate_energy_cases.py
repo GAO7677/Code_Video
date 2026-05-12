@@ -1,3 +1,4 @@
+# 用途：校验样本能量曲线与物理一致性。
 """该脚本用于构建并验证一组能量守恒/耗散物理案例；输入为内置 case 配置和可选 case_id/out_dir 参数，输出为 /data/gaoya/AAA_test_video/Dataset_physV/0417data/try3_rigid0417_energy_validation 下的验证视频、逐案例结果和 summary.json。"""
 import argparse
 import json
