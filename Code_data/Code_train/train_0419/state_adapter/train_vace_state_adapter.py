@@ -35,15 +35,14 @@ if DIFFSYNTH_ROOT and DIFFSYNTH_ROOT not in sys.path:
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import torch
+from PIL import Image
 
 from context_wan import (
-    ContextAwareWanVideoPipeline,
     flow_match_context_sft_loss,
-    model_fn_wan_video_with_context,
-    resolve_num_clean_prefix_latents,
+    resolve_context_latent_indices_from_frames,
 )
 from diffsynth.diffusion import DiffusionTrainingModule, ModelLogger, add_general_config, add_video_size_config
-from diffsynth.pipelines.wan_video import ModelConfig
+from diffsynth.pipelines.wan_video import ModelConfig, WanVideoPipeline, model_fn_wan_video
 from state_adapter_dataset import OracleStateWindowDataset
 from train import (
     build_accelerator,
@@ -127,24 +126,30 @@ def model_fn_wan_video_with_state_vace(
     wantodance_fps: float = 30.0,
     music_feature=None,
     skip_9th_layer: bool = False,
-    clean_prefix_latents: Optional[torch.Tensor] = None,
-    num_clean_prefix_latents: Optional[int] = None,
     oracle_state: Optional[torch.Tensor] = None,
     oracle_visibility: Optional[torch.Tensor] = None,
+    context_frame_count: Optional[int] = None,
+    num_frames: Optional[int] = None,
     height: Optional[int] = None,
     width: Optional[int] = None,
     **kwargs,
 ):
     generated_vace_context = None
     if state_vace_adapter is not None and oracle_state is not None:
-        clean_prefix_len = resolve_num_clean_prefix_latents(
-            clean_prefix_latents=clean_prefix_latents,
-            num_clean_prefix_latents=num_clean_prefix_latents,
-        )
+        context_frame_count = int(context_frame_count or 0)
+        if context_frame_count > 0:
+            context_latent_indices = resolve_context_latent_indices_from_frames(
+                raw_frame_indices=list(range(context_frame_count)),
+                raw_num_frames=int(num_frames or 0),
+                latent_length=int(latents.shape[2]),
+            )
+            context_latent_len = len(context_latent_indices)
+        else:
+            context_latent_len = 0
         generated_vace_context = state_vace_adapter.build_vace_context(
             oracle_state=oracle_state,
             total_latent_frames=int(latents.shape[2]),
-            clean_prefix_len=int(clean_prefix_len),
+            clean_prefix_len=int(context_latent_len),
             latent_height=int(latents.shape[3]),
             latent_width=int(latents.shape[4]),
             frame_height=int(height or 1),
@@ -156,7 +161,7 @@ def model_fn_wan_video_with_state_vace(
         elif vace_context.shape == generated_vace_context.shape:
             vace_context = vace_context + generated_vace_context
 
-    return model_fn_wan_video_with_context(
+    return model_fn_wan_video(
         dit=dit,
         motion_controller=motion_controller,
         vace=vace,
@@ -194,10 +199,33 @@ def model_fn_wan_video_with_state_vace(
         wantodance_fps=wantodance_fps,
         music_feature=music_feature,
         skip_9th_layer=skip_9th_layer,
-        clean_prefix_latents=clean_prefix_latents,
-        num_clean_prefix_latents=num_clean_prefix_latents,
         **kwargs,
     )
+
+
+def build_vace_condition_video(
+    full_video: list[Image.Image],
+    context_video: list[Image.Image],
+) -> tuple[list[Image.Image], list[Image.Image]]:
+    if not full_video:
+        raise ValueError("full_video cannot be empty.")
+    if not context_video:
+        raise ValueError("context_video cannot be empty for VACE state-adapter training.")
+    width, height = full_video[0].size
+    placeholder = Image.new("RGB", (width, height), (128, 128, 128))
+    mask_black = Image.new("RGB", (width, height), (0, 0, 0))
+    mask_white = Image.new("RGB", (width, height), (255, 255, 255))
+    known_count = len(context_video)
+    total_count = len(full_video)
+    if known_count >= total_count:
+        raise ValueError(
+            f"context_video must be shorter than full video for VACE conditioning, got {known_count} >= {total_count}."
+        )
+    vace_video = list(context_video) + [placeholder.copy() for _ in range(total_count - known_count)]
+    vace_video_mask = [mask_black.copy() for _ in range(known_count)] + [
+        mask_white.copy() for _ in range(total_count - known_count)
+    ]
+    return vace_video, vace_video_mask
 
 
 class StateAwareVaceTrainingModule(DiffusionTrainingModule):
@@ -225,7 +253,7 @@ class StateAwareVaceTrainingModule(DiffusionTrainingModule):
 
         model_configs = self.parse_model_configs(model_paths, None, device=device)
         tokenizer_config = ModelConfig(tokenizer_path or find_tokenizer_path(DEFAULT_VACE_ROOT))
-        self.pipe = ContextAwareWanVideoPipeline.from_pretrained(
+        self.pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
             device=device,
             model_configs=model_configs,
@@ -268,13 +296,18 @@ class StateAwareVaceTrainingModule(DiffusionTrainingModule):
     def get_pipeline_inputs(self, data):
         inputs_posi = {"prompt": data["prompt"]}
         inputs_nega = {}
+        vace_video, vace_video_mask = build_vace_condition_video(
+            full_video=data["video"],
+            context_video=data["context_video"],
+        )
         inputs_shared = {
             "input_video": data["video"],
-            "context_video": data["context_video"],
-            "input_image": data["video"][0],
+            "vace_video": vace_video,
+            "vace_video_mask": vace_video_mask,
             "height": data["video"][0].size[1],
             "width": data["video"][0].size[0],
             "num_frames": len(data["video"]),
+            "context_frame_count": len(data["context_video"]),
             "cfg_scale": 1,
             "tiled": False,
             "rand_device": self.pipe.device,

@@ -129,11 +129,11 @@ class VaceStateAdapter(torch.nn.Module):
             dim=3,
         )
         maps = object_maps.sum(dim=2)
-        if maps.shape[3] != self.spatial_feature_dim:
+        if maps.shape[2] != self.spatial_feature_dim:
             raise RuntimeError(
                 f"Expected {self.spatial_feature_dim} spatial channels, got {maps.shape[3]}."
             )
-        return maps.permute(0, 3, 1, 2, 4).contiguous()
+        return maps.permute(0, 2, 1, 3, 4).contiguous()
 
     def build_vace_context(
         self,

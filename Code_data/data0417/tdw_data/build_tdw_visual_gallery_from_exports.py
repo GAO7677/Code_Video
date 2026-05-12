@@ -3,17 +3,57 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+
+import cv2
+from PIL import Image
 
 
 EXPORT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_genesis_format_exports")
 OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_visual_gallery")
 TITLE = "TDW Visual Gallery"
+ASSET_ROOT = OUTPUT_ROOT / "assets"
 
 
 def rel(path: Path, root: Path) -> str:
     return str(path.relative_to(root))
+
+
+def ensure_gif(video_path: Path, max_frames: int = 24) -> Path | None:
+    if not video_path.exists():
+        return None
+    ASSET_ROOT.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.md5(str(video_path).encode("utf-8")).hexdigest()[:12]
+    gif_path = ASSET_ROOT / f"{digest}_{video_path.stem}.gif"
+    if gif_path.exists() and gif_path.stat().st_mtime >= video_path.stat().st_mtime:
+        return gif_path
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    frames: list[Image.Image] = []
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step = max(1, frame_count // max_frames) if frame_count > max_frames and max_frames > 0 else 1
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if idx % step == 0:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(Image.fromarray(rgb))
+        idx += 1
+    cap.release()
+    if not frames:
+        return None
+    frames[0].save(gif_path,
+                   save_all=True,
+                   append_images=frames[1:],
+                   duration=100,
+                   loop=0,
+                   optimize=False)
+    return gif_path
 
 
 def build_items() -> list[dict]:
@@ -26,6 +66,8 @@ def build_items() -> list[dict]:
         depth_video = sample_dir / "visualizations" / "depth_vis.mp4"
         if not rgb_frame.exists() or not rgb_video.exists():
             continue
+        rgb_gif = ensure_gif(rgb_video)
+        depth_gif = ensure_gif(depth_video) if depth_video.exists() else None
         items.append(
             {
                 "sample_name": meta.get("scene_id", sample_dir.name),
@@ -36,8 +78,8 @@ def build_items() -> list[dict]:
                 "frames": meta.get("frames", 0),
                 "objects": [obj.get("source_object_id", obj.get("name", "")) for obj in meta.get("objects", [])],
                 "rgb_frame": rel(rgb_frame, OUTPUT_ROOT.parent),
-                "rgb_video": rel(rgb_video, OUTPUT_ROOT.parent),
-                "depth_video": rel(depth_video, OUTPUT_ROOT.parent) if depth_video.exists() else None,
+                "rgb_gif": rel(rgb_gif, OUTPUT_ROOT.parent) if rgb_gif else None,
+                "depth_gif": rel(depth_gif, OUTPUT_ROOT.parent) if depth_gif else None,
                 "sample_dir": str(sample_dir),
             }
         )
@@ -47,7 +89,8 @@ def build_items() -> list[dict]:
 def build_html(items: list[dict]) -> str:
     cards = []
     for item in items:
-        depth_block = f'<video controls preload="metadata" src="../{item["depth_video"]}"></video>' if item["depth_video"] else ""
+        rgb_block = f'<img class="gif" src="../{item["rgb_gif"]}" alt="{item["sample_name"]} rgb gif">' if item["rgb_gif"] else ""
+        depth_block = f'<img class="gif" src="../{item["depth_gif"]}" alt="{item["sample_name"]} depth gif">' if item["depth_gif"] else ""
         cards.append(
             f"""<article class="card">
   <img src="../{item['rgb_frame']}" alt="{item['sample_name']} first frame">
@@ -57,7 +100,7 @@ def build_html(items: list[dict]) -> str:
     <h3>{item['case_name']}</h3>
     <p>objects={item['num_objects']} | frames={item['frames']}</p>
     <p>model refs: {", ".join(item["objects"])}</p>
-    <video controls preload="metadata" src="../{item['rgb_video']}"></video>
+    {rgb_block}
     {depth_block}
     <code>{item['sample_dir']}</code>
   </div>
@@ -115,7 +158,7 @@ def build_html(items: list[dict]) -> str:
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }}
-    video {{ width: 100%; display: block; margin-top: 10px; background: #000; aspect-ratio: 16/9; }}
+    .gif {{ width: 100%; display: block; margin-top: 10px; background: #ddd; aspect-ratio: 16/9; object-fit: cover; }}
     code {{
       display: block;
       margin-top: 12px;
@@ -130,7 +173,7 @@ def build_html(items: list[dict]) -> str:
   <div class="wrap">
     <section class="hero">
       <h1>{TITLE}</h1>
-      <p>基于现有 TDW 导出结果生成的图像/视频可视化页面。这里展示的是已经稳定生成出来的样本首帧和 RGB 视频，所以可以直接映射到本地端口浏览，不依赖重新渲染 TDW 资源缩略图。</p>
+      <p>基于现有 TDW 导出结果生成的 GIF 可视化页面。这里统一展示首帧、RGB GIF 和深度 GIF，尽量避免浏览器对 mp4 编码兼容性的影响。</p>
     </section>
     <section class="grid">
       {''.join(cards)}
