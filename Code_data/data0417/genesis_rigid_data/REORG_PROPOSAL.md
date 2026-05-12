@@ -47,15 +47,8 @@ genesis_rigid_data/
     visualize_sample.py
     validate_saved_dataset_states.py
     validate_energy_cases.py
-    build_spotcheck_validation_wrappers.py
-    watch_multiobject_preview_autobuild.py
   portals/
-    build_*portal.py
-    build_*gallery.py
-    build_*compare.py
-    build_main_collision_summary.py
     export_rigid_init_scene_html.py
-    build_physxnet_*scene3d.py
   runs/
     *.sh
   legacy/
@@ -100,14 +93,25 @@ genesis_rigid_data/
 - `try3_dataset_3_rigid_genesis0417.py`
   - 这是早期 Genesis rigid 数据集的重要生成入口，不应直接删除。
   - 目前它更像“历史主生成器”，建议移动到 `legacy/` 或 `generators/legacy/`，并在 README 中明确它对应旧版数据流。
-- `build_physxnet_mpm_gallery.py`
-  - 体量较小，像一次性画廊脚本，当前没有被其他脚本引用。
-- `watch_multiobject_preview_autobuild.py`
-  - 更像本地开发辅助工具，是否保留取决于你是否还在用自动预览。
-- `build_spotcheck_validation_wrappers.py`
-  - 当前是很轻的包装脚本，若 spot-check 流程已经稳定，也可以考虑并入 `validate_saved_dataset_states.py`。
-- `generate_counterfactual_gallery_gifs.py`
-  - 可能可以并入 `build_counterfactual_rgb_gallery.py`，减少重复入口。
+- 以下 4 个低优先级一次性工具已确认删除：
+  - `build_physxnet_mpm_gallery.py`
+  - `watch_multiobject_preview_autobuild.py`
+  - `build_spotcheck_validation_wrappers.py`
+  - `generate_counterfactual_gallery_gifs.py`
+- 以下 `build_*portal.py / build_*gallery.py / build_*compare.py` 已确认删除：
+  - `build_case_topdown_compare.py`
+  - `build_collision_complexity_bucket_portal.py`
+  - `build_collision_trajectory_compare.py`
+  - `build_counterfactual_rgb_gallery.py`
+  - `build_object_case_rgb_gallery.py`
+  - `build_recent_sample_motion_bucket_portal.py`
+  - `build_simple_collision_event_portal.py`
+- 以下一次性 scene3d / collision summary 工具已确认删除：
+  - `build_main_collision_summary.py`
+  - `build_physxnet_case_scene3d.py`
+  - `build_physxnet_object_scene3d.py`
+- `export_rigid_init_scene_html.py` 暂保留：
+  - 仍被 `batch_inspect_physics_samples.py` 直接调用，不能直接删除。
 
 ## 我建议的执行顺序
 
@@ -122,7 +126,7 @@ genesis_rigid_data/
 - 把 `.sh` 移到 `runs/`
 - 把共享模块移到 `core/`
 - 把生成入口移到 `generators/`
-- 把 portal / gallery / compare 脚本移到 `portals/`
+- 保留仍有价值的 portal / scene 可视化脚本，其余已删
 - 把修复与回填脚本移到 `repair/`
 - 把旧主入口 / 旧实验脚本移到 `legacy/`
 - 同步修正 import、README 和运行命令

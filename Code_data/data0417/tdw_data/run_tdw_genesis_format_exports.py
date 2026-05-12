@@ -28,6 +28,7 @@ HTML_PATH = Path("/data/gaoya/AAA_test_video/Dataset_physV/0505TDW/tdw_genesis_f
 BUILD_PATH = Path("/data/gaoya/ckpt/TDW_v1.13.0/TDW/TDW.x86_64")
 DISPLAY = ":1"
 PORT = int(os.environ.get("TDW_PORT", "1181"))
+BUILD_ADDRESS = "127.0.0.1"
 BUILD_BOOT_WAIT = int(os.environ.get("TDW_BUILD_BOOT_WAIT", "18"))
 EXPORT_RESOLUTION = (960, 720)
 FPS = 24
@@ -220,7 +221,7 @@ def launch_build(log_path: Path) -> subprocess.Popen:
     env["DISPLAY"] = DISPLAY
     for key in PROXY_ENV_KEYS:
         env.pop(key, None)
-    return subprocess.Popen([str(BUILD_PATH), f"-port={PORT}", "-address=localhost", "-force-glcore42"],
+    return subprocess.Popen([str(BUILD_PATH), f"-port={PORT}", f"-address={BUILD_ADDRESS}", "-force-glcore42"],
                             stdout=log_fp,
                             stderr=subprocess.STDOUT,
                             env=env)
@@ -788,11 +789,14 @@ def record_case(case: Dict[str, Any]) -> Path:
         return existing_meta
 
     build_log = OUTPUT_ROOT / "logs" / f"{sample_name}.build.log"
+    print(f"[{sample_name}] launch build on {DISPLAY} port={PORT} address={BUILD_ADDRESS}", flush=True)
     build_holder: Dict[str, subprocess.Popen] = {"proc": launch_build(build_log)}
     time.sleep(BUILD_BOOT_WAIT)
+    print(f"[{sample_name}] connect controller", flush=True)
     c = Controller(launch_build=False, check_version=False, port=PORT)
     try:
         prepare_case_output_dirs(case_dir)
+        print(f"[{sample_name}] output dir ready {case_dir}", flush=True)
         scene_camera = ThirdPersonCamera(avatar_id="a",
                                          position=scene_cfg["camera_position"],
                                          look_at=scene_cfg["look_at"],
@@ -824,7 +828,9 @@ def record_case(case: Dict[str, Any]) -> Path:
 
         setup_commands, track_specs = setup_case(case, c, obi)
         commands.extend(setup_commands)
+        print(f"[{sample_name}] initial communicate scene={scene_cfg['name']} kind={case['kind']}", flush=True)
         c.communicate(commands)
+        print(f"[{sample_name}] warmup frames={int(case.get('warmup', 0))}", flush=True)
         for _ in range(int(case.get("warmup", 0))):
             c.communicate([])
 
@@ -846,7 +852,9 @@ def record_case(case: Dict[str, Any]) -> Path:
         aabb_frames: List[List[Optional[np.ndarray]]] = []
         env_contact_frames: List[np.ndarray] = []
 
-        for _ in range(int(case["frames"])):
+        total_frames_to_capture = int(case["frames"])
+        print(f"[{sample_name}] capture frames={total_frames_to_capture}", flush=True)
+        for frame_idx in range(total_frames_to_capture):
             c.communicate([])
             images = capture.images.get("a", None)
             if images is None:
@@ -882,6 +890,8 @@ def record_case(case: Dict[str, Any]) -> Path:
             aabbs = [state["aabb"] if np.asarray(state["aabb"]).size > 0 else None for state in objects_state]
             aabb_frames.append(aabbs)
             env_contact_frames.append(np.asarray([1 if (aabb is not None and float(aabb[0][2]) <= 0.02) else 0 for aabb in aabbs], dtype=np.uint8))
+            if (frame_idx + 1) % 30 == 0 or frame_idx + 1 == total_frames_to_capture:
+                print(f"[{sample_name}] captured {frame_idx + 1}/{total_frames_to_capture}", flush=True)
 
         object_ids = np.asarray([int(s["object_id"]) for s in objects_state], dtype=np.int32)
         seg_ids = np.asarray([int(s["seg_id"]) for s in objects_state], dtype=np.int32)
@@ -928,6 +938,7 @@ def record_case(case: Dict[str, Any]) -> Path:
             "counterfactual": None,
             "rigid_restitution_override": None,
         }
+        print(f"[{sample_name}] write outputs", flush=True)
         (case_dir / "scene_input.json").write_text(json.dumps(scene_input, ensure_ascii=False, indent=2), encoding="utf-8")
 
         for frame_idx, rgb in enumerate(rgb_frames):
