@@ -137,21 +137,25 @@ def model_fn_wan_video_with_state_vace(
     generated_vace_context = None
     if state_vace_adapter is not None and oracle_state is not None:
         context_frame_count = int(context_frame_count or 0)
+        if vace_context is not None:
+            state_total_latent_frames = int(vace_context.shape[2])
+        else:
+            state_total_latent_frames = int(latents.shape[2])
         if context_frame_count > 0:
             context_latent_indices = resolve_context_latent_indices_from_frames(
                 raw_frame_indices=list(range(context_frame_count)),
                 raw_num_frames=int(num_frames or 0),
-                latent_length=int(latents.shape[2]),
+                latent_length=state_total_latent_frames,
             )
             context_latent_len = len(context_latent_indices)
         else:
             context_latent_len = 0
         generated_vace_context = state_vace_adapter.build_vace_context(
             oracle_state=oracle_state,
-            total_latent_frames=int(latents.shape[2]),
+            total_latent_frames=state_total_latent_frames,
             clean_prefix_len=int(context_latent_len),
-            latent_height=int(latents.shape[3]),
-            latent_width=int(latents.shape[4]),
+            latent_height=int((vace_context.shape[3] if vace_context is not None else latents.shape[3])),
+            latent_width=int((vace_context.shape[4] if vace_context is not None else latents.shape[4])),
             frame_height=int(height or 1),
             frame_width=int(width or 1),
             oracle_visibility=oracle_visibility,
@@ -245,6 +249,11 @@ class StateAwareVaceTrainingModule(DiffusionTrainingModule):
         state_is_normalized=True,
         adapter_hidden_dim=128,
         condition_dropout=0.1,
+        use_temporal_encoding=True,
+        temporal_embed_dim=32,
+        depth_log_scale=4.0,
+        velocity_clip=0.5,
+        depth_velocity_clip=0.1,
     ):
         super().__init__()
         if not use_gradient_checkpointing:
@@ -270,6 +279,11 @@ class StateAwareVaceTrainingModule(DiffusionTrainingModule):
             vace_in_dim=int(self.pipe.vace.vace_in_dim),
             condition_dropout=condition_dropout,
             state_is_normalized=state_is_normalized,
+            use_temporal_encoding=use_temporal_encoding,
+            temporal_embed_dim=temporal_embed_dim,
+            depth_log_scale=depth_log_scale,
+            velocity_clip=velocity_clip,
+            depth_velocity_clip=depth_velocity_clip,
         )
         self.pipe.model_fn = model_fn_wan_video_with_state_vace
         self.pipe.in_iteration_models = tuple(self.pipe.in_iteration_models) + ("state_vace_adapter",)
@@ -383,6 +397,11 @@ def build_model(args, accelerator):
         state_is_normalized=not args.use_raw_state,
         adapter_hidden_dim=args.adapter_hidden_dim,
         condition_dropout=args.condition_dropout,
+        use_temporal_encoding=not args.disable_state_temporal_encoding,
+        temporal_embed_dim=args.temporal_embed_dim,
+        depth_log_scale=args.depth_log_scale,
+        velocity_clip=args.velocity_clip,
+        depth_velocity_clip=args.depth_velocity_clip,
     )
 
 
@@ -425,6 +444,11 @@ def parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter_hidden_dim", type=int, default=128)
     parser.add_argument("--condition_dropout", type=float, default=0.1)
     parser.add_argument("--use_raw_state", action="store_true")
+    parser.add_argument("--disable_state_temporal_encoding", action="store_true")
+    parser.add_argument("--temporal_embed_dim", type=int, default=32)
+    parser.add_argument("--depth_log_scale", type=float, default=4.0)
+    parser.add_argument("--velocity_clip", type=float, default=0.5)
+    parser.add_argument("--depth_velocity_clip", type=float, default=0.1)
     parser.add_argument(
         "--motion_complexity_filter",
         type=str,

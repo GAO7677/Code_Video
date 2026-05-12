@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -15,6 +17,11 @@ class VaceStateAdapter(torch.nn.Module):
         vace_in_dim: int = 96,
         condition_dropout: float = 0.1,
         state_is_normalized: bool = True,
+        use_temporal_encoding: bool = True,
+        temporal_embed_dim: int = 32,
+        depth_log_scale: float = 4.0,
+        velocity_clip: float = 0.5,
+        depth_velocity_clip: float = 0.1,
     ):
         super().__init__()
         self.state_dim = int(state_dim)
@@ -23,6 +30,11 @@ class VaceStateAdapter(torch.nn.Module):
         self.vace_in_dim = int(vace_in_dim)
         self.condition_dropout = float(condition_dropout)
         self.state_is_normalized = bool(state_is_normalized)
+        self.use_temporal_encoding = bool(use_temporal_encoding)
+        self.temporal_embed_dim = int(temporal_embed_dim)
+        self.depth_log_scale = float(depth_log_scale)
+        self.velocity_clip = float(velocity_clip)
+        self.depth_velocity_clip = float(depth_velocity_clip)
 
         self.spatial_encoder = torch.nn.Sequential(
             torch.nn.Conv3d(self.spatial_feature_dim, self.hidden_dim, kernel_size=3, padding=1),
@@ -30,6 +42,11 @@ class VaceStateAdapter(torch.nn.Module):
             torch.nn.Conv3d(self.hidden_dim, self.hidden_dim, kernel_size=3, padding=1),
             torch.nn.SiLU(),
             torch.nn.Conv3d(self.hidden_dim, self.vace_in_dim, kernel_size=3, padding=1),
+        )
+        self.temporal_projection = torch.nn.Sequential(
+            torch.nn.Linear(self.temporal_embed_dim, self.hidden_dim),
+            torch.nn.SiLU(),
+            torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
         )
         torch.nn.init.zeros_(self.spatial_encoder[-1].weight)
         torch.nn.init.zeros_(self.spatial_encoder[-1].bias)
@@ -56,6 +73,42 @@ class VaceStateAdapter(torch.nn.Module):
                 return torch.zeros_like(maps)
         return maps
 
+    def _normalize_depth(self, depth: torch.Tensor) -> torch.Tensor:
+        depth = depth.clamp(min=0.0)
+        if self.depth_log_scale <= 0.0:
+            return depth
+        scale = depth.new_tensor(self.depth_log_scale)
+        return torch.log1p(depth * scale) / math.log1p(float(self.depth_log_scale))
+
+    def _normalize_signed(self, value: torch.Tensor, clip: float) -> torch.Tensor:
+        if clip <= 0.0:
+            return value
+        clip_value = value.new_tensor(float(clip))
+        return value.clamp(min=-clip_value, max=clip_value) / clip_value
+
+    def _build_temporal_features(
+        self,
+        num_frames: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if num_frames <= 0:
+            return torch.zeros((0, self.spatial_feature_dim), device=device, dtype=dtype)
+        if not self.use_temporal_encoding:
+            return torch.zeros((num_frames, self.spatial_feature_dim), device=device, dtype=dtype)
+
+        position = torch.linspace(0.0, 1.0, num_frames, device=device, dtype=dtype)
+        half_dim = max(self.temporal_embed_dim // 2, 1)
+        freq_ids = torch.arange(half_dim, device=device, dtype=dtype)
+        denom = torch.pow(position.new_tensor(10000.0), freq_ids / max(half_dim - 1, 1))
+        angles = position.unsqueeze(1) / denom.unsqueeze(0)
+        emb = torch.cat([torch.sin(angles), torch.cos(angles)], dim=1)
+        if emb.shape[1] < self.temporal_embed_dim:
+            emb = F.pad(emb, (0, self.temporal_embed_dim - emb.shape[1]))
+        elif emb.shape[1] > self.temporal_embed_dim:
+            emb = emb[:, : self.temporal_embed_dim]
+        return self.temporal_projection(emb)
+
     def _build_spatial_state_maps(
         self,
         oracle_state: torch.Tensor,
@@ -79,10 +132,10 @@ class VaceStateAdapter(torch.nn.Module):
             frame_width=frame_width,
             frame_height=frame_height,
         )
-        d = oracle_state[..., 2]
-        du = oracle_state[..., 5]
-        dv = oracle_state[..., 6]
-        dd = oracle_state[..., 7]
+        d = self._normalize_depth(oracle_state[..., 2])
+        du = self._normalize_signed(oracle_state[..., 5], self.velocity_clip)
+        dv = self._normalize_signed(oracle_state[..., 6], self.velocity_clip)
+        dd = self._normalize_signed(oracle_state[..., 7], self.depth_velocity_clip)
         vis = oracle_state[..., 8] if oracle_visibility is None else oracle_visibility
         vis = vis.clamp(0.0, 1.0)
 
@@ -133,7 +186,14 @@ class VaceStateAdapter(torch.nn.Module):
             raise RuntimeError(
                 f"Expected {self.spatial_feature_dim} spatial channels, got {maps.shape[3]}."
             )
-        return maps.permute(0, 2, 1, 3, 4).contiguous()
+        maps = maps.permute(0, 2, 1, 3, 4).contiguous()
+        temporal = self._build_temporal_features(
+            num_frames=maps.shape[2],
+            device=device,
+            dtype=dtype,
+        )
+        temporal = temporal.transpose(0, 1).view(1, self.spatial_feature_dim, maps.shape[2], 1, 1)
+        return maps + temporal
 
     def build_vace_context(
         self,
