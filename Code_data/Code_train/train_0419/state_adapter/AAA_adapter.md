@@ -5,6 +5,8 @@
   - adapter 把 future 9D state 编成按帧的 future-plan token
   - 在每个 Wan DiT block 后，用 zero-init 的 gamma/beta 去调制 future frame 的 latent spatial tokens
   - 训练目标仍然是原视频扩散/flow-matching loss
+  - 当前训练数据直接读取 summary root：
+    `/home/gaoya/Code_Video/Code_data/data0417/data_summary/stage1adapter_simple_window`
 
 Main files:
 
@@ -15,13 +17,7 @@ Main files:
   Adapter module definition.
 
 - `state_adapter_dataset.py`
-  Dataset wrapper for oracle-state window samples.
-
-- `build_stage1_subsets.py`
-  Build Stage-1A/1B state prediction subsets from Genesis rigid data, with shared window-scan logic for precontact and simple-dynamics filters.
-
-- `build_stage1_oracle_windows.py`
-  Convert rigid synthetic data into Wan-friendly oracle-state training windows.
+  Dataset wrapper for oracle-state window samples. It can read the organized summary root directly and defaults to the simple-motion buckets (`no_collision`, `env_only`) under the `train` split.
 
 - `motion_complexity.py`
   Window-level motion-complexity scoring and bucket definitions for static/simple/moderate/complex splits.
@@ -36,3 +32,8 @@ Subdirectories:
 
 - `visualizations/`
   Visualization utilities specific to the state-adapter workflow.
+
+Launcher:
+
+- `../run_train_state_adapter_oracle_alltrain.sh`
+  Directly launches adapter training on `stage1adapter_simple_window` without any extra raw-to-window preprocessing step.

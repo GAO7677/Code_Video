@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a local HTML preview for Stage-1A / Stage-1B subset windows."""
+"""Build a local HTML preview for organized oracle-state window subsets."""
 
 from __future__ import annotations
 
@@ -821,7 +821,7 @@ def build_index_html(portal_rel: str, stage_cards: Dict[str, List[dict]]) -> str
   <div class="page">
     <section class="hero">
       <h1>Stage1A / Stage1B Subset Preview</h1>
-      <p>这个页面把 `build_stage1_subsets.py` 产出的两个子集逻辑重新整理成可核对的样本浏览页。每条样本页都包含 context/future RGB、future overlay、每个物体的 9 维状态曲线，以及窗口级筛选元数据。</p>
+      <p>这个页面把当前整理好的 oracle-state window 子集做成可核对的样本浏览页。每条样本页都包含 context/future RGB、future overlay、每个物体的 9 维状态曲线，以及窗口级筛选元数据。</p>
       <p>当前 portal 相对目录: <code>{html.escape(portal_rel)}</code></p>
     </section>
     {''.join(sections)}

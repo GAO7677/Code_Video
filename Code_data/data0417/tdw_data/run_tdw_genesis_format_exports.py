@@ -136,35 +136,6 @@ CASES: List[Dict[str, Any]] = [
         },
     },
     {
-        "kind": "granular",
-        "case_name": "granular_gravel_pour",
-        "scene_key": "mm_craftroom_1a",
-        "primary_name": "gravel",
-        "scene_label": "granular",
-        "frames": 220,
-        "warmup": 8,
-        "substeps": 3,
-        "fluid": {
-            "name": "gravel",
-            "shape": DiskEmitter(radius=0.12),
-            "position": {"x": 0.18, "y": 1.85, "z": -0.48},
-            "rotation": {"x": 78.0, "y": -20.0, "z": 0.0},
-            "speed": 2.3,
-            "lifespan": 10,
-        },
-        "support": {
-            "model_name": "fluid_receptacle1x1",
-            "library": "models_special.json",
-            "position": {"x": -0.05, "y": 0.0, "z": 0.08},
-            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "scale_factor": {"x": 1.2, "y": 1.2, "z": 1.2},
-            "mass": 60.0,
-            "dynamic_friction": 0.9,
-            "static_friction": 0.95,
-            "bounciness": 0.01,
-        },
-    },
-    {
         "kind": "liquid",
         "case_name": "liquid_water_pour",
         "scene_key": "mm_craftroom_1a",
@@ -401,6 +372,25 @@ def depth_to_uint8(depth_normalized: np.ndarray) -> np.ndarray:
 def depth_to_vis(depth_metric: np.ndarray, near: float, far: float) -> np.ndarray:
     vis = depth_to_uint8(depth_norm(depth_metric, near=near, far=far))
     return np.repeat(vis[..., None], 3, axis=2)
+
+
+def compute_depth_display_range(depth_metric_frames: Sequence[np.ndarray], default_near: float, default_far: float) -> Tuple[float, float]:
+    vals = []
+    for frame in depth_metric_frames:
+        arr = np.asarray(frame, dtype=np.float32)
+        valid = np.isfinite(arr) & (arr > 0)
+        if np.any(valid):
+            vals.append(arr[valid].reshape(-1))
+    if not vals:
+        return float(default_near), float(default_far)
+    merged = np.concatenate(vals, axis=0)
+    near = float(np.percentile(merged, 2.0))
+    far = float(np.percentile(merged, 98.0))
+    if not np.isfinite(near) or not np.isfinite(far) or far <= near + 1e-4:
+        return float(default_near), float(default_far)
+    near = max(float(default_near), near)
+    far = min(float(default_far), far)
+    return near, max(far, near + 0.25)
 
 
 def camera_axes_from_cfg(camera_cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -810,6 +800,8 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
 def record_case(case: Dict[str, Any]) -> Path:
     sanitize_proxy_env()
     scene_cfg = SCENES[case["scene_key"]]
+    if "camera_override" in case:
+        scene_cfg = {**scene_cfg, **case["camera_override"]}
     scene_composition = str(scene_cfg["name"])
     object_count_bucket = f"count_{1 if case['kind'] == 'rigid' else 2}"
     sample_name = f"{case['primary_name']}__{case['case_name']}"
@@ -974,8 +966,11 @@ def record_case(case: Dict[str, Any]) -> Path:
 
         for frame_idx, rgb in enumerate(rgb_frames):
             imageio.imwrite(case_dir / "rgb" / f"frame_{frame_idx:03d}.png", rgb)
+        display_depth_near, display_depth_far = compute_depth_display_range(depth_metric_frames=depth_metric_arr,
+                                                                            default_near=cam_intrinsics["near"],
+                                                                            default_far=cam_intrinsics["far"])
         for frame_idx, depth_metric in enumerate(depth_metric_arr):
-            imageio.imwrite(case_dir / "depth" / f"frame_{frame_idx:03d}.png", depth_to_uint8(depth_norm(depth_metric, near=cam_intrinsics["near"], far=cam_intrinsics["far"])))
+            imageio.imwrite(case_dir / "depth" / f"frame_{frame_idx:03d}.png", depth_to_uint8(depth_norm(depth_metric, near=display_depth_near, far=display_depth_far)))
 
         np.save(case_dir / "physics" / "depth_metric.npy", depth_metric_arr)
         np.save(case_dir / "physics" / "seg.npy", seg_arr)
@@ -1002,8 +997,8 @@ def record_case(case: Dict[str, Any]) -> Path:
                             potential_gravity=np.asarray(potential_frames, dtype=np.float32),
                             mechanical_total=np.asarray(total_frames, dtype=np.float32))
         imageio.mimwrite(case_dir / "videos" / "rgb.mp4", rgb_frames, fps=FPS, quality=8)
-        imageio.mimwrite(case_dir / "videos" / "depth.mp4", [depth_to_uint8(depth_norm(d, near=cam_intrinsics["near"], far=cam_intrinsics["far"])) for d in depth_metric_arr], fps=FPS, quality=8)
-        imageio.mimwrite(case_dir / "visualizations" / "depth_vis.mp4", [depth_to_vis(d, near=cam_intrinsics["near"], far=cam_intrinsics["far"]) for d in depth_metric_arr], fps=FPS, quality=8)
+        imageio.mimwrite(case_dir / "videos" / "depth.mp4", [depth_to_uint8(depth_norm(d, near=display_depth_near, far=display_depth_far)) for d in depth_metric_arr], fps=FPS, quality=8)
+        imageio.mimwrite(case_dir / "visualizations" / "depth_vis.mp4", [depth_to_vis(d, near=display_depth_near, far=display_depth_far) for d in depth_metric_arr], fps=FPS, quality=8)
         (case_dir / "physics" / "collision_events.json").write_text(json.dumps(collision_events, ensure_ascii=False, indent=2), encoding="utf-8")
         (case_dir / "physics" / "event_windows.json").write_text(json.dumps(event_windows + env_windows, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -1213,7 +1208,9 @@ def build_html() -> None:
 def main() -> None:
     sanitize_proxy_env()
     ensure_dir(OUTPUT_ROOT)
-    for case in CASES:
+    case_filter = {name.strip() for name in os.environ.get("TDW_CASE_FILTER", "").split(",") if name.strip()}
+    cases = [case for case in CASES if not case_filter or case["case_name"] in case_filter]
+    for case in cases:
         print(f"Running {case['case_name']}", flush=True)
         record_case(case)
         print(f"Completed {case['case_name']}", flush=True)

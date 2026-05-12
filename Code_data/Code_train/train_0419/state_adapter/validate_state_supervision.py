@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate 9D state supervision against dense observations for Genesis and MOVI-D."""
+"""Validate 9D state supervision against dense observations for Genesis data."""
 
 from __future__ import annotations
 
@@ -25,15 +25,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from prepare_movi_d_physics import (
-    compute_state_9d,
-    decode_float_tensor,
-    decode_image_sequence,
-    decode_rgb_frames,
-    iter_serialized_records,
-    parse_example,
-    uint16_to_metric,
-)
+decode_float_tensor = None
+decode_image_sequence = None
+decode_rgb_frames = None
+iter_serialized_records = None
+parse_example = None
+uint16_to_metric = None
+HAS_MOVI_HELPERS = False
 
 
 STATE_NAMES = ["u", "v", "d", "w", "h", "du", "dv", "dd", "vis"]
@@ -49,6 +47,38 @@ STATE_COLORS = [
 ]
 
 
+def compute_state_9d(
+    com_uv: np.ndarray,
+    center_depth: np.ndarray,
+    bbox_xyxy: np.ndarray,
+    visibility_pixels: np.ndarray,
+    fps: float,
+) -> np.ndarray:
+    com_uv = np.asarray(com_uv, dtype=np.float32)
+    center_depth = np.asarray(center_depth, dtype=np.float32)
+    bbox_xyxy = np.asarray(bbox_xyxy, dtype=np.float32)
+    visibility_pixels = np.asarray(visibility_pixels, dtype=np.float32)
+    if com_uv.ndim != 3 or com_uv.shape[-1] != 2:
+        raise ValueError(f"Expected com_uv with shape [T, N, 2], got {com_uv.shape}")
+
+    width = np.maximum(bbox_xyxy[..., 2] - bbox_xyxy[..., 0], 0.0)
+    height = np.maximum(bbox_xyxy[..., 3] - bbox_xyxy[..., 1], 0.0)
+
+    state = np.zeros((com_uv.shape[0], com_uv.shape[1], 9), dtype=np.float32)
+    state[..., 0] = com_uv[..., 0]
+    state[..., 1] = com_uv[..., 1]
+    state[..., 2] = center_depth
+    state[..., 3] = width
+    state[..., 4] = height
+    state[..., 8] = np.clip(visibility_pixels, 0.0, 1.0)
+
+    dt = 1.0 / max(float(fps), 1e-6)
+    state[1:, :, 5] = (state[1:, :, 0] - state[:-1, :, 0]) / dt
+    state[1:, :, 6] = (state[1:, :, 1] - state[:-1, :, 1]) / dt
+    state[1:, :, 7] = (state[1:, :, 2] - state[:-1, :, 2]) / dt
+    return state
+
+
 def fmt_num(value: float | None, digits: int = 6) -> str:
     if value is None:
         return "n/a"
@@ -57,7 +87,7 @@ def fmt_num(value: float | None, digits: int = 6) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate state supervision for Genesis and MOVI-D samples.",
+        description="Validate state supervision for Genesis samples. MOVI-D stays disabled unless helpers are restored.",
     )
     parser.add_argument(
         "--movi_root",
@@ -236,6 +266,8 @@ def load_genesis_dense(sample_dir: Path, include_rgb: bool) -> dict:
 
 
 def collect_movi_feature_map(sample_dirs: Sequence[Path]) -> Dict[str, object]:
+    if not HAS_MOVI_HELPERS:
+        raise RuntimeError("MOVI-D helpers are unavailable. Genesis validation still works.")
     lookup: Dict[Tuple[str, int], str] = {}
     per_shard: Dict[str, set[int]] = {}
     for sample_dir in sample_dirs:
@@ -262,6 +294,8 @@ def collect_movi_feature_map(sample_dirs: Sequence[Path]) -> Dict[str, object]:
 
 
 def load_movi_dense(sample_dir: Path, feature_map: Dict[str, object], include_rgb: bool) -> dict:
+    if not HAS_MOVI_HELPERS:
+        raise RuntimeError("MOVI-D helpers are unavailable. Genesis validation still works.")
     meta = load_json(sample_dir / "metadata.json")
     anchor = load_anchor_targets(sample_dir)
     features = feature_map[str(sample_dir)]
@@ -1034,10 +1068,15 @@ def main() -> None:
     ensure_dir(args.output_root)
     rng_seed = int(args.seed)
 
-    dataset_specs = [
-        ("genesis", "Genesis", args.genesis_root),
-        ("movi_d", "MOVI-D", args.movi_root),
-    ]
+    dataset_specs = [("genesis", "Genesis", args.genesis_root)]
+    if HAS_MOVI_HELPERS and args.movi_root.exists():
+        dataset_specs.append(("movi_d", "MOVI-D", args.movi_root))
+    elif args.movi_root.exists():
+        print(
+            "Warning: MOVI-D root exists but MOVI decoder helpers were removed; "
+            "running Genesis-only validation.",
+            file=sys.stderr,
+        )
     dataset_entries: List[dict] = []
 
     selected_by_dataset: Dict[str, List[Path]] = {}
@@ -1048,7 +1087,9 @@ def main() -> None:
             rng_seed + (13 if dataset_slug == "genesis" else 29),
         )
 
-    movi_feature_map = collect_movi_feature_map(selected_by_dataset["movi_d"])
+    movi_feature_map: Dict[str, object] = {}
+    if "movi_d" in selected_by_dataset:
+        movi_feature_map = collect_movi_feature_map(selected_by_dataset["movi_d"])
 
     for dataset_slug, dataset_label, root in dataset_specs:
         selected = selected_by_dataset[dataset_slug]
