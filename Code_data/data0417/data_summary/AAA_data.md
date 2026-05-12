@@ -1,76 +1,151 @@
-# sum0504
+# data_summary 可视化指令
 
-目录结构：`<split>/<simulator_type>/<object_count_bucket>/<collision_bucket>/samples.txt`
+## 数据目录与数量
 
-当前仅整理可稳定映射到以下规则的样本：
-- split: `train / val / test`
-- simulator_type: `rigid`
-- object_count_bucket: `count_01 / count_02 / count_03_04`
-- collision_bucket: `no_collision / env_only / obj_obj_only_c1 / obj_obj_only_c2plus / mixed_c1 / mixed_c2plus`
-  - no_collision：没有碰撞
-  - env_only：只有物体和环境碰撞
-  - obj_obj_only_c1：只有物体和物体碰撞，且碰撞 1 次
-  - obj_obj_only_c2plus：只有物体和物体碰撞，且碰撞 2 次及以上
-  - mixed_c1：既有物体-环境碰撞，也有物体-物体碰撞，总碰撞次数为 1
-  - mixed_c2plus：既有物体-环境碰撞，也有物体-物体碰撞，总碰撞次数为 2 次及以上
+### 1. `sum0504`
+
+路径：
+
+`/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504`
+
+数量：
+
+- total: 2468
+- train: 1974
+- test: 247
+- val: 247
+
+分层统计：
+
+```text
+train: 1974
+  count_01
+    no_collision: 348
+    env_only: 776
+  count_02
+    env_only: 28
+    obj_obj_only_c1: 1
+    obj_obj_only_c2plus: 1
+    mixed_c1: 324
+    mixed_c2plus: 141
+  count_03_04
+    obj_obj_only_c2plus: 1
+    mixed_c1: 22
+    mixed_c2plus: 332
+
+test: 247
+  count_01
+    no_collision: 43
+    env_only: 97
+  count_02
+    env_only: 4
+    obj_obj_only_c2plus: 1
+    mixed_c1: 40
+    mixed_c2plus: 18
+  count_03_04
+    mixed_c1: 3
+    mixed_c2plus: 41
+
+val: 247
+  count_01
+    no_collision: 43
+    env_only: 97
+  count_02
+    env_only: 4
+    obj_obj_only_c2plus: 1
+    mixed_c1: 40
+    mixed_c2plus: 18
+  count_03_04
+    mixed_c1: 3
+    mixed_c2plus: 41
+```
+
 说明：
-- 不移动真实样本文件夹，仅记录绝对路径。
-- 每个叶子目录只保留 `samples.txt` 和 `summary.json`。
-- 根目录和 split 目录下提供汇总 `summary.json`。
-- 无法稳定映射到这套规则的样本不会被纳入，会记录在根目录 `summary.json` 的 `excluded_breakdown` 中。
-- Genesis 自建样本的样本级元数据文件统一使用 `meta.json`；本目录下的 `samples.txt` 只记录样本文件夹路径，不直接记录 `meta.json / metadata.json` 文件名。
 
-## 可视化与重建指令
+- `test/val` 直接从 Genesis raw  
+  `/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid`
+  做 heldout。
 
-1. 重建 `sum0504` 路径索引
+### 2. `stage1adapter_simple_window`
 
-```bash
-source /home/gaoya/miniconda3/etc/profile.d/conda.sh
-conda run -p /data/gaoya/miniconda3/envs/vjepa2 python /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/rebuild_sum0504_index.py
+路径：
+
+`/home/gaoya/Code_Video/Code_data/data0417/data_summary/stage1adapter_simple_window`
+
+数量：
+
+- total: 1142
+- train: 942
+- test: 106
+- val: 94
+
+分层统计：
+
+```text
+train: 942
+  count_01
+    no_collision: 504
+    env_only: 410
+  count_02
+    env_only: 28
+
+test: 106
+  count_01
+    no_collision: 62
+    env_only: 40
+  count_02
+    env_only: 4
+
+val: 94
+  count_01
+    no_collision: 46
+    env_only: 48
 ```
 
-2. 快速重建首页
+说明：
+
+- 只保留 `no_collision + env_only` 的 Genesis window 样本。
+- split 继承自对应 raw source sample 在 `sum0504` 中的 heldout 结果。
+
+## 可视化重建
+
+### 1. 重建 `sum0504` 页面
 
 ```bash
-source /home/gaoya/miniconda3/etc/profile.d/conda.sh
-conda run -p /data/gaoya/miniconda3/envs/vjepa2 python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --index_only
+python \
+  /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
+  --output_root /home/gaoya/portal_hub_sim/sum0504_portal \
+  --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504 \
+  --portal_title "sum0504 Portal" \
+  --prefer_gif
 ```
 
-3. 完整重建详情页
+### 2. 重建 `stage1adapter_simple_window` 页面
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py
+python \
+  /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
+  --output_root /home/gaoya/portal_hub_sim/stage1adapter_simple_window_portal \
+  --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary/stage1adapter_simple_window \
+  --portal_title "stage1adapter_simple_window Portal" \
+  --prefer_gif
 ```
 
-4. 只可视化 `no_collision`
-
-```bash
-
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py --output_root /home/gaoya/portal_hub_sim/sum0504_nocollision_portal --collision_bucket no_collision --index_only
-```
-
-`no_collision` 页面地址：
-
-`http://127.0.0.1:8049/home/gaoya/portal_hub_sim/sum0504_nocollision_portal/index.html`
-
-5. 启动本地服务
+### 3. 启动本地静态服务
 
 ```bash
 cd /
-setsid python3 -m http.server 8049 --bind 127.0.0.1 >/tmp/sum0504_http_8049.log 2>&1 < /dev/null &
+python3 -m http.server 8049 --bind localhost
 ```
 
-完整页面地址：
+## 页面地址
 
-`http://127.0.0.1:8049/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
-
-检查端口：
-
-```bash
-ss -ltnp | grep 8049
-```
+- `sum0504`:
+  `http://localhost:8049/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+- `stage1adapter_simple_window`:
+  `http://localhost:8049/home/gaoya/portal_hub_sim/stage1adapter_simple_window_portal/index.html`
 
 说明：
-- 只查看现成页面时，只需启动本地服务。
-- 改了索引或页面后，先重建，再启动服务。
-- 当前首页每个最小类别最多加载 `10` 条，首页只展示主视频。
+
+- 首页每个最小类别最多展示 `10` 条。
+- 当前首页和详情页都优先展示 `gif`。

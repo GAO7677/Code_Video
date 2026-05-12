@@ -165,7 +165,7 @@ def build_manifest(metadata_root: Path, portal_title: str) -> dict[str, Any]:
     scenes = [simplify_scene_record(name, record) for name, record in sorted(scenes_raw.items())]
 
     hdri_raw = load_json(metadata_root / "hdri_skyboxes.json")["records"]
-    hdri_skyboxes = sorted(
+    hdri_skyboxes = [
         {
             "name": name,
             "sun_elevation": float(record.get("sun_elevation", 0.0)),
@@ -174,7 +174,8 @@ def build_manifest(metadata_root: Path, portal_title: str) -> dict[str, Any]:
             "location": str(record.get("location", "unknown")),
         }
         for name, record in hdri_raw.items()
-    )
+    ]
+    hdri_skyboxes.sort(key=lambda item: item["name"])
 
     models: list[dict[str, Any]] = []
     library_stats: list[dict[str, Any]] = []

@@ -98,9 +98,13 @@ CASES: List[Dict[str, Any]] = [
         "support": {
             "model_name": "sphere",
             "library": "models_flex.json",
-            "position": {"x": 0.0, "y": 0.35, "z": 0.0},
+            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 0.7, "y": 0.7, "z": 0.7},
+            "mass": 40.0,
+            "dynamic_friction": 0.85,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
         },
     },
     {
@@ -122,9 +126,13 @@ CASES: List[Dict[str, Any]] = [
         "support": {
             "model_name": "camera_box",
             "library": "models_core.json",
-            "position": {"x": 0.22, "y": 0.16, "z": 0.12},
+            "position": {"x": 0.22, "y": 0.0, "z": 0.12},
             "rotation": {"x": 0.0, "y": -10.0, "z": 0.0},
             "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 18.0,
+            "dynamic_friction": 0.85,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
         },
     },
     {
@@ -150,6 +158,10 @@ CASES: List[Dict[str, Any]] = [
             "position": {"x": -0.05, "y": 0.0, "z": 0.08},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 1.2, "y": 1.2, "z": 1.2},
+            "mass": 60.0,
+            "dynamic_friction": 0.9,
+            "static_friction": 0.95,
+            "bounciness": 0.01,
         },
     },
     {
@@ -190,6 +202,10 @@ CASES: List[Dict[str, Any]] = [
             "position": {"x": 0.12, "y": 0.0, "z": -0.06},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 1.55, "y": 1.55, "z": 1.55},
+            "mass": 75.0,
+            "dynamic_friction": 0.9,
+            "static_friction": 0.95,
+            "bounciness": 0.01,
         },
     },
 ]
@@ -691,8 +707,13 @@ def get_support_commands(c: Controller, support: Dict[str, Any], object_id: int)
                                     position=support["position"],
                                     rotation=support["rotation"],
                                     scale_factor=support["scale_factor"],
-                                    kinematic=True,
-                                    gravity=False)
+                                    kinematic=False,
+                                    gravity=True,
+                                    default_physics_values=False,
+                                    mass=float(support.get("mass", 10.0)),
+                                    dynamic_friction=float(support.get("dynamic_friction", 0.8)),
+                                    static_friction=float(support.get("static_friction", 0.85)),
+                                    bounciness=float(support.get("bounciness", 0.02)))
 
 
 def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]]]:
@@ -734,12 +755,17 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
                                                  library=str(case["support"]["library"]),
                                                  position=case["support"]["position"],
                                                  rotation=case["support"]["rotation"],
-                                                 kinematic=True,
-                                                 gravity=False,
-                                                 scale_factor=case["support"]["scale_factor"]))
+                                                 scale_factor=case["support"]["scale_factor"],
+                                                 kinematic=False,
+                                                 gravity=True,
+                                                 default_physics_values=False,
+                                                 mass=float(case["support"].get("mass", 40.0)),
+                                                 dynamic_friction=float(case["support"].get("dynamic_friction", 0.85)),
+                                                 static_friction=float(case["support"].get("static_friction", 0.9)),
+                                                 bounciness=float(case["support"].get("bounciness", 0.02))))
         track_specs.extend([
             {"object_id": cloth_id, "name": "cloth", "seg_id": 1, "track_type": "obi", "entity_type": "cloth", "role": "dynamic", "motion_type": "cloth", "motion_group": "cloth", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
-            {"object_id": support_id, "name": "sphere_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "static_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
+            {"object_id": support_id, "name": "sphere_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "dynamic", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
     elif case["kind"] == "soft_volume":
         assert obi is not None
@@ -756,7 +782,7 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
         commands.extend(get_support_commands(c, case["support"], support_id))
         track_specs.extend([
             {"object_id": volume_id, "name": "soft_volume", "seg_id": 1, "track_type": "obi", "entity_type": "soft_volume", "role": "dynamic", "motion_type": "soft_volume", "motion_group": "soft_volume", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
-            {"object_id": support_id, "name": "box_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "static_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
+            {"object_id": support_id, "name": "box_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "dynamic", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
     elif case["kind"] in {"granular", "liquid"}:
         assert obi is not None
@@ -774,7 +800,7 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
         commands.extend(get_support_commands(c, case["support"], support_id))
         track_specs.extend([
             {"object_id": fluid_id, "name": case["primary_name"], "seg_id": 1, "track_type": "obi", "entity_type": case["kind"], "role": "dynamic", "motion_type": case["kind"], "motion_group": case["kind"], "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
-            {"object_id": support_id, "name": "receptacle", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "static_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
+            {"object_id": support_id, "name": "receptacle", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "dynamic", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
     else:
         raise ValueError(f"Unsupported kind: {case['kind']}")
