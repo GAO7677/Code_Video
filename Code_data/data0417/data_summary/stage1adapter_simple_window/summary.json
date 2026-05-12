@@ -1,12 +1,14 @@
 {
   "dataset": "stage1adapter_simple_window_genesis",
   "source_summary_root": "/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504",
-  "note": "Only Genesis window samples in no_collision/env_only are included.",
-  "num_samples": 1188,
+  "raw_assignments_path": "/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504/raw_split_assignments.json",
+  "source_window_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid",
+  "note": "Only Genesis no_collision/env_only window samples are included; split follows the held-out raw source sample.",
+  "num_samples": 1142,
   "splits": {
-    "train": 1142,
-    "test": 8,
-    "val": 38
+    "train": 942,
+    "test": 106,
+    "val": 94
   },
   "leaf_groups": [
     {
@@ -14,7 +16,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "no_collision",
-      "num_samples": 612,
+      "num_samples": 504,
       "relative_dir": "train/rigid/count_01/no_collision"
     },
     {
@@ -22,7 +24,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "env_only",
-      "num_samples": 498,
+      "num_samples": 410,
       "relative_dir": "train/rigid/count_01/env_only"
     },
     {
@@ -30,7 +32,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_02",
       "collision_bucket": "env_only",
-      "num_samples": 32,
+      "num_samples": 28,
       "relative_dir": "train/rigid/count_02/env_only"
     },
     {
@@ -38,7 +40,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "no_collision",
-      "num_samples": 1,
+      "num_samples": 62,
       "relative_dir": "test/rigid/count_01/no_collision"
     },
     {
@@ -46,7 +48,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "env_only",
-      "num_samples": 5,
+      "num_samples": 40,
       "relative_dir": "test/rigid/count_01/env_only"
     },
     {
@@ -54,7 +56,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_02",
       "collision_bucket": "env_only",
-      "num_samples": 2,
+      "num_samples": 4,
       "relative_dir": "test/rigid/count_02/env_only"
     },
     {
@@ -62,7 +64,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "no_collision",
-      "num_samples": 9,
+      "num_samples": 46,
       "relative_dir": "val/rigid/count_01/no_collision"
     },
     {
@@ -70,16 +72,8 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "env_only",
-      "num_samples": 21,
+      "num_samples": 48,
       "relative_dir": "val/rigid/count_01/env_only"
-    },
-    {
-      "split": "val",
-      "simulator_type": "rigid",
-      "object_count_bucket": "count_02",
-      "collision_bucket": "env_only",
-      "num_samples": 8,
-      "relative_dir": "val/rigid/count_02/env_only"
     }
   ]
 }

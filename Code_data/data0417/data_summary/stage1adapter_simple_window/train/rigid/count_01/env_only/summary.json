@@ -3,5 +3,5 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_01",
   "collision_bucket": "env_only",
-  "num_samples": 498
+  "num_samples": 410
 }

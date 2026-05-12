@@ -218,8 +218,8 @@ def infer_media_for_sample(sample_dir: Path) -> list[dict[str, Any]]:
     media: list[dict[str, Any]] = []
     candidates = [
         ("RGB Video", sample_dir / "videos" / "rgb.mp4", "video"),
-        ("Depth Video", sample_dir / "videos" / "depth.mp4", "video"),
         ("Depth Visualization Video", sample_dir / "visualizations" / "depth_vis.mp4", "video"),
+        ("Depth Video", sample_dir / "videos" / "depth.mp4", "video"),
         ("First Frame", sample_dir / "rgb" / "frame_000.png", "image"),
     ]
     for label, path, kind in candidates:
@@ -752,9 +752,9 @@ def media_html(media: list[dict[str, Any]], page_dir: Path) -> str:
 
 def render_physics_summary_html(record: dict[str, Any], page_dir: Path) -> str:
     blocks: list[str] = []
-    depth_video = record["sample_dir"] / "videos" / "depth.mp4"
+    depth_video = record["sample_dir"] / "visualizations" / "depth_vis.mp4"
     if not depth_video.exists():
-        depth_video = record["sample_dir"] / "visualizations" / "depth_vis.mp4"
+        depth_video = record["sample_dir"] / "videos" / "depth.mp4"
     if depth_video.exists():
         kind, src = video_preview_src(depth_video, page_dir)
         tag = f'<img src="{html.escape(src)}" alt="depth video gif preview">' if kind == "image" else f'<video src="{html.escape(src)}" controls preload="metadata"></video>'

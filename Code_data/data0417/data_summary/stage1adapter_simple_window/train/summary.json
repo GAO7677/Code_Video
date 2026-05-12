@@ -6,14 +6,14 @@
     "no_collision",
     "env_only"
   ],
-  "num_samples": 1142,
+  "num_samples": 942,
   "leaf_groups": [
     {
       "split": "train",
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "no_collision",
-      "num_samples": 612,
+      "num_samples": 504,
       "relative_dir": "train/rigid/count_01/no_collision"
     },
     {
@@ -21,7 +21,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_01",
       "collision_bucket": "env_only",
-      "num_samples": 498,
+      "num_samples": 410,
       "relative_dir": "train/rigid/count_01/env_only"
     },
     {
@@ -29,7 +29,7 @@
       "simulator_type": "rigid",
       "object_count_bucket": "count_02",
       "collision_bucket": "env_only",
-      "num_samples": 32,
+      "num_samples": 28,
       "relative_dir": "train/rigid/count_02/env_only"
     }
   ]

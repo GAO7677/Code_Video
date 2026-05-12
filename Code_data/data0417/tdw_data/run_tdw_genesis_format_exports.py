@@ -228,8 +228,7 @@ def launch_build(log_path: Path) -> subprocess.Popen:
 
 
 def yup_to_zup_vec(v: Sequence[float]) -> np.ndarray:
-    arr = np.asarray(v, dtype=np.float64).reshape(3)
-    return YUP_TO_ZUP_ROT @ arr
+    return np.asarray(v, dtype=np.float64).reshape(3)
 
 
 def normalize(v: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -282,9 +281,9 @@ def matrix_to_quat_xyzw(m: np.ndarray) -> np.ndarray:
 
 
 def convert_quat_yup_to_zup(q_xyzw: Sequence[float]) -> np.ndarray:
-    rot_y = quat_xyzw_to_matrix(q_xyzw)
-    rot_z = YUP_TO_ZUP_ROT @ rot_y @ YUP_TO_ZUP_ROT.T
-    return matrix_to_quat_xyzw(rot_z)
+    q = np.asarray(q_xyzw, dtype=np.float64).reshape(4)
+    q /= max(float(np.linalg.norm(q)), 1e-8)
+    return q
 
 
 def pca_orientation(points_zup: np.ndarray) -> np.ndarray:
@@ -297,11 +296,13 @@ def pca_orientation(points_zup: np.ndarray) -> np.ndarray:
     order = np.argsort(eigvals)[::-1]
     axes = eigvecs[:, order]
     x_axis = normalize(axes[:, 0])
-    z_axis = normalize(axes[:, 2])
+    y_axis = normalize(axes[:, 2])
+    z_axis = normalize(np.cross(x_axis, y_axis))
+    if np.linalg.norm(z_axis) < 1e-6:
+        return np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
     y_axis = normalize(np.cross(z_axis, x_axis))
     if np.linalg.norm(y_axis) < 1e-6:
         return np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
-    z_axis = normalize(np.cross(x_axis, y_axis))
     rot = np.stack([x_axis, y_axis, z_axis], axis=1)
     if np.linalg.det(rot) < 0.0:
         rot[:, 2] *= -1.0
@@ -312,7 +313,7 @@ def get_camera_cfg_zup(scene_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "pos": yup_to_zup_vec([scene_cfg["camera_position"]["x"], scene_cfg["camera_position"]["y"], scene_cfg["camera_position"]["z"]]).tolist(),
         "lookat": yup_to_zup_vec([scene_cfg["look_at"]["x"], scene_cfg["look_at"]["y"], scene_cfg["look_at"]["z"]]).tolist(),
-        "up": [0.0, 0.0, 1.0],
+        "up": [0.0, 1.0, 0.0],
         "fov": float(scene_cfg["field_of_view"]),
         "res": [int(EXPORT_RESOLUTION[0]), int(EXPORT_RESOLUTION[1])],
     }
@@ -347,10 +348,14 @@ def rgb_to_uint8(arr: np.ndarray) -> np.ndarray:
 def metric_depth_from_images(images, pass_mask: str = "_depth") -> np.ndarray:
     for i in range(images.get_num_passes()):
         if images.get_pass_mask(i) == pass_mask:
-            return TDWUtils.get_depth_values(images.get_image(i),
-                                             depth_pass=pass_mask,
-                                             width=images.get_width(),
-                                             height=images.get_height()).astype(np.float32)
+            depth = TDWUtils.get_depth_values(images.get_image(i),
+                                              depth_pass=pass_mask,
+                                              width=images.get_width(),
+                                              height=images.get_height()).astype(np.float32)
+            # TDWUtils.get_depth_values() flips rows internally, but on this build the resulting
+            # metric depth ends up vertically inverted relative to the RGB frame. Flip it back so
+            # saved depth products align with RGB/segmentation coordinates.
+            return np.flipud(depth).copy()
     raise RuntimeError(f"Missing pass {pass_mask}")
 
 
@@ -385,7 +390,7 @@ def depth_to_vis(depth_metric: np.ndarray, near: float, far: float) -> np.ndarra
 def camera_axes_from_cfg(camera_cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     cam_pos = np.asarray(camera_cfg["pos"], dtype=np.float64)
     lookat = np.asarray(camera_cfg["lookat"], dtype=np.float64)
-    up_hint = np.asarray(camera_cfg.get("up", [0.0, 0.0, 1.0]), dtype=np.float64)
+    up_hint = np.asarray(camera_cfg.get("up", [0.0, 1.0, 0.0]), dtype=np.float64)
     forward = normalize(lookat - cam_pos)
     right = normalize(np.cross(forward, up_hint))
     up = normalize(np.cross(right, forward))
@@ -584,8 +589,8 @@ def rasterize_segmentation(objects_state: List[Dict[str, Any]], camera_cfg: Dict
 
 def estimate_aabb_zup_from_rigid_bound(bound) -> np.ndarray:
     pts = np.asarray([bound.front, bound.back, bound.left, bound.right, bound.top, bound.bottom, bound.center], dtype=np.float64)
-    pts_z = np.asarray([yup_to_zup_vec(p) for p in pts], dtype=np.float64)
-    return np.stack([pts_z.min(axis=0), pts_z.max(axis=0)], axis=0).astype(np.float32)
+    pts_y = np.asarray([yup_to_zup_vec(p) for p in pts], dtype=np.float64)
+    return np.stack([pts_y.min(axis=0), pts_y.max(axis=0)], axis=0).astype(np.float32)
 
 
 def build_track_states(case: Dict[str, Any], track_specs: List[Dict[str, Any]], om: ObjectManager, obi: Optional[Obi]) -> List[Dict[str, Any]]:
@@ -880,7 +885,7 @@ def record_case(case: Dict[str, Any]) -> Path:
             masses = np.asarray([float(state["mass"]) for state in objects_state], dtype=np.float32)
             kinetic_trans = float(np.sum(0.5 * masses * np.sum(np.square(linear_vel), axis=1)))
             kinetic_rot = float(np.sum(0.5 * masses * np.sum(np.square(angular_vel), axis=1) * 0.05))
-            potential = float(np.sum(masses * 9.81 * np.maximum(com_pos[:, 2], 0.0)))
+            potential = float(np.sum(masses * 9.81 * np.maximum(com_pos[:, 1], 0.0)))
             total = kinetic_trans + kinetic_rot + potential
             kinetic_frames.append(kinetic_trans + kinetic_rot)
             kinetic_trans_frames.append(kinetic_trans)
@@ -889,7 +894,7 @@ def record_case(case: Dict[str, Any]) -> Path:
             total_frames.append(total)
             aabbs = [state["aabb"] if np.asarray(state["aabb"]).size > 0 else None for state in objects_state]
             aabb_frames.append(aabbs)
-            env_contact_frames.append(np.asarray([1 if (aabb is not None and float(aabb[0][2]) <= 0.02) else 0 for aabb in aabbs], dtype=np.uint8))
+            env_contact_frames.append(np.asarray([1 if (aabb is not None and float(aabb[0][1]) <= 0.02) else 0 for aabb in aabbs], dtype=np.uint8))
             if (frame_idx + 1) % 30 == 0 or frame_idx + 1 == total_frames_to_capture:
                 print(f"[{sample_name}] captured {frame_idx + 1}/{total_frames_to_capture}", flush=True)
 
@@ -933,7 +938,7 @@ def record_case(case: Dict[str, Any]) -> Path:
             "entry_angular_velocity": angular_vel_arr[0, 0].tolist(),
             "use_entry_motion": True,
             "object_fixed": False,
-            "gravity": GRAVITY_ZUP.tolist(),
+            "gravity": GRAVITY_YUP.tolist(),
             "striker_speed_mps": 0.0,
             "counterfactual": None,
             "rigid_restitution_override": None,
@@ -1008,7 +1013,7 @@ def record_case(case: Dict[str, Any]) -> Path:
                 "mass_unit": "kg",
                 "time_unit": "second",
                 "coordinate_system": "right-handed",
-                "gravity_axis": "z_negative",
+                "gravity_axis": "y_negative",
             },
             "simulation": {
                 "engine": "TDW",
@@ -1018,7 +1023,7 @@ def record_case(case: Dict[str, Any]) -> Path:
                 "steps_per_frame": 1,
                 "frame_dt": 1.0 / 60.0,
                 "video_fps": float(FPS),
-                "gravity": GRAVITY_ZUP.tolist(),
+                "gravity": GRAVITY_YUP.tolist(),
             },
             "camera": camera_cfg,
             "camera_tag": None,
