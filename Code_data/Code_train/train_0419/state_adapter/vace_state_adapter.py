@@ -53,6 +53,7 @@ class VaceStateAdapter(torch.nn.Module):
         )
         self.context_phase_embedding = torch.nn.Parameter(torch.zeros(self.slot_feature_dim))
         self.future_phase_embedding = torch.nn.Parameter(torch.zeros(self.slot_feature_dim))
+        self.generated_context_scale = torch.nn.Parameter(torch.zeros(()))
         self.object_attention = torch.nn.Sequential(
             torch.nn.Linear(self.vace_in_dim, self.hidden_dim),
             torch.nn.SiLU(),

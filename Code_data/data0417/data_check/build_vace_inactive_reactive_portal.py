@@ -22,9 +22,6 @@ DATASET_SAMPLES = [
     Path(
         "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/multi_object_free_motion/count_02/10007__case210_multi2_projectile_nocollision__ratio12"
     ),
-    Path(
-        "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10007__case003_static_highdrop__cf_no_collision_neg__ratio12"
-    ),
 ]
 
 

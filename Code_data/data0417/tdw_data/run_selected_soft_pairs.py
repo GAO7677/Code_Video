@@ -8,10 +8,6 @@ import run_tdw_genesis_format_exports as m
 
 
 WANTED = {
-    "cloth_drop_wicker_then_toaster_hit_suburb",
-    "cloth_drop_cardboard_then_box_hit_site",
-    "rigid_pair_bowl_hits_shoebox_suburb",
-    "rigid_pair_camera_box_hits_toaster_site",
     "soft_volume_pair_rubber_cube_hits_canvas_sphere_site",
     "soft_volume_pair_plastic_cube_hits_cotton_sphere_suburb",
 }

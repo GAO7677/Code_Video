@@ -168,6 +168,10 @@ def model_fn_wan_video_with_state_vace(
             oracle_pose=oracle_pose,
             context_pose=context_pose,
         )
+        generated_vace_context = generated_vace_context * state_vace_adapter.generated_context_scale.to(
+            device=generated_vace_context.device,
+            dtype=generated_vace_context.dtype,
+        )
         if vace_context is None:
             vace_context = generated_vace_context
         elif vace_context.shape == generated_vace_context.shape:
