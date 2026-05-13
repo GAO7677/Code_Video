@@ -12,6 +12,7 @@ class VaceStateAdapter(torch.nn.Module):
     def __init__(
         self,
         state_dim: int = 9,
+        pose_dim: int = 9,
         spatial_feature_dim: int = 8,
         hidden_dim: int = 128,
         vace_in_dim: int = 96,
@@ -25,6 +26,7 @@ class VaceStateAdapter(torch.nn.Module):
     ):
         super().__init__()
         self.state_dim = int(state_dim)
+        self.pose_dim = int(pose_dim)
         self.spatial_feature_dim = int(spatial_feature_dim)
         self.hidden_dim = int(hidden_dim)
         self.vace_in_dim = int(vace_in_dim)
@@ -45,6 +47,11 @@ class VaceStateAdapter(torch.nn.Module):
         )
         self.temporal_projection = torch.nn.Sequential(
             torch.nn.Linear(self.temporal_embed_dim, self.hidden_dim),
+            torch.nn.SiLU(),
+            torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
+        )
+        self.pose_projection = torch.nn.Sequential(
+            torch.nn.Linear(self.pose_dim, self.hidden_dim),
             torch.nn.SiLU(),
             torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
         )
@@ -208,13 +215,60 @@ class VaceStateAdapter(torch.nn.Module):
         temporal = temporal.transpose(0, 1).view(1, self.spatial_feature_dim, maps.shape[2], 1, 1)
         return maps + temporal
 
+    def _build_pose_features(
+        self,
+        oracle_pose: torch.Tensor | None,
+        oracle_visibility: torch.Tensor | None,
+        phase_ids: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        if oracle_pose is None:
+            return None
+        if oracle_pose.dim() == 3:
+            oracle_pose = oracle_pose.unsqueeze(0)
+        if oracle_visibility is not None and oracle_visibility.dim() == 2:
+            oracle_visibility = oracle_visibility.unsqueeze(0)
+
+        device = oracle_pose.device
+        dtype = oracle_pose.dtype
+        pose = oracle_pose
+        if pose.shape[-1] != self.pose_dim:
+            raise RuntimeError(f"Expected pose dim {self.pose_dim}, got {pose.shape[-1]}.")
+
+        if oracle_visibility is None:
+            weights = torch.ones(pose.shape[:-1], device=device, dtype=dtype)
+        else:
+            weights = oracle_visibility.to(device=device, dtype=dtype).clamp(0.0, 1.0)
+        weights_sum = weights.sum(dim=2, keepdim=True).clamp(min=1e-6)
+        pooled_pose = (pose * weights.unsqueeze(-1)).sum(dim=2) / weights_sum
+        pose_feats = self.pose_projection(pooled_pose)
+
+        if phase_ids is not None:
+            if phase_ids.dim() == 1:
+                phase_ids = phase_ids.unsqueeze(0)
+            phase_ids = phase_ids.to(device=device, dtype=torch.long)
+            phase_bank = torch.stack(
+                [self.context_phase_embedding, self.future_phase_embedding],
+                dim=0,
+            ).to(device=device, dtype=dtype)
+            pose_feats = pose_feats + phase_bank[phase_ids]
+
+        temporal = self._build_temporal_features(
+            num_frames=pose_feats.shape[1],
+            device=device,
+            dtype=dtype,
+        ).unsqueeze(0)
+        pose_feats = pose_feats + temporal
+        return pose_feats.permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1).contiguous()
+
     def _prepare_state_sequences(
         self,
         context_state: torch.Tensor | None,
         future_state: torch.Tensor | None,
         context_visibility: torch.Tensor | None,
         future_visibility: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+        context_pose: torch.Tensor | None = None,
+        future_pose: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor, torch.Tensor | None]:
         if future_state is None:
             raise ValueError("future_state must not be None when preparing state sequences.")
 
@@ -222,17 +276,24 @@ class VaceStateAdapter(torch.nn.Module):
             future_state = future_state.unsqueeze(0)
         if context_state is not None and context_state.dim() == 3:
             context_state = context_state.unsqueeze(0)
+        if future_pose is not None and future_pose.dim() == 3:
+            future_pose = future_pose.unsqueeze(0)
+        if context_pose is not None and context_pose.dim() == 3:
+            context_pose = context_pose.unsqueeze(0)
         if future_visibility is not None and future_visibility.dim() == 2:
             future_visibility = future_visibility.unsqueeze(0)
         if context_visibility is not None and context_visibility.dim() == 2:
             context_visibility = context_visibility.unsqueeze(0)
 
         state_chunks = []
+        pose_chunks = []
         visibility_chunks = []
         phase_chunks = []
 
         if context_state is not None and context_state.shape[1] > 0:
             state_chunks.append(context_state)
+            if context_pose is not None:
+                pose_chunks.append(context_pose)
             phase_chunks.append(torch.zeros(context_state.shape[:2], device=context_state.device, dtype=torch.long))
             if context_visibility is not None:
                 visibility_chunks.append(context_visibility)
@@ -241,6 +302,8 @@ class VaceStateAdapter(torch.nn.Module):
 
         if future_state.shape[1] > 0:
             state_chunks.append(future_state)
+            if future_pose is not None:
+                pose_chunks.append(future_pose)
             phase_chunks.append(torch.ones(future_state.shape[:2], device=future_state.device, dtype=torch.long))
             if future_visibility is not None:
                 visibility_chunks.append(future_visibility)
@@ -250,9 +313,12 @@ class VaceStateAdapter(torch.nn.Module):
         full_state = torch.cat(state_chunks, dim=1)
         phase_ids = torch.cat(phase_chunks, dim=1)
         full_visibility = None
+        full_pose = None
         if len(visibility_chunks) == len(state_chunks) and visibility_chunks:
             full_visibility = torch.cat(visibility_chunks, dim=1)
-        return full_state, full_visibility, phase_ids
+        if len(pose_chunks) == len(state_chunks) and pose_chunks:
+            full_pose = torch.cat(pose_chunks, dim=1)
+        return full_state, full_visibility, phase_ids, full_pose
 
     def build_vace_context(
         self,
@@ -266,6 +332,8 @@ class VaceStateAdapter(torch.nn.Module):
         oracle_visibility: torch.Tensor | None = None,
         context_state: torch.Tensor | None = None,
         context_visibility: torch.Tensor | None = None,
+        oracle_pose: torch.Tensor | None = None,
+        context_pose: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if oracle_state.dim() == 3:
             oracle_state = oracle_state.unsqueeze(0)
@@ -273,11 +341,13 @@ class VaceStateAdapter(torch.nn.Module):
             raise ValueError(f"total_latent_frames must be positive, got {total_latent_frames}.")
 
         if context_state is not None:
-            full_state, full_visibility, phase_ids = self._prepare_state_sequences(
+            full_state, full_visibility, phase_ids, full_pose = self._prepare_state_sequences(
                 context_state=context_state,
                 future_state=oracle_state,
                 context_visibility=context_visibility,
                 future_visibility=oracle_visibility,
+                context_pose=context_pose,
+                future_pose=oracle_pose,
             )
             maps = self._build_spatial_state_maps(
                 oracle_state=full_state,
@@ -288,6 +358,13 @@ class VaceStateAdapter(torch.nn.Module):
                 oracle_visibility=full_visibility,
                 phase_ids=phase_ids,
             )
+            pose_feats = self._build_pose_features(
+                oracle_pose=full_pose,
+                oracle_visibility=full_visibility,
+                phase_ids=phase_ids,
+            )
+            if pose_feats is not None:
+                maps = maps + pose_feats
             if maps.shape[2] != int(total_latent_frames):
                 maps = F.interpolate(
                     maps,
@@ -313,6 +390,13 @@ class VaceStateAdapter(torch.nn.Module):
             frame_width=frame_width,
             oracle_visibility=oracle_visibility,
         )
+        pose_feats = self._build_pose_features(
+            oracle_pose=oracle_pose,
+            oracle_visibility=oracle_visibility,
+            phase_ids=None,
+        )
+        if pose_feats is not None:
+            maps = maps + pose_feats
         if maps.shape[2] != future_frames:
             maps = F.interpolate(
                 maps,

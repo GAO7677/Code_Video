@@ -28,6 +28,89 @@ from motion_complexity import (
 from window_interactions import infer_window_interactions
 
 
+def quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
+    quat = np.asarray(quat, dtype=np.float32)
+    norm = np.linalg.norm(quat, axis=-1, keepdims=True)
+    quat = quat / np.clip(norm, 1e-8, None)
+    w, x, y, z = np.moveaxis(quat, -1, 0)
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    rot = np.stack(
+        [
+            1.0 - 2.0 * (yy + zz),
+            2.0 * (xy - wz),
+            2.0 * (xz + wy),
+            2.0 * (xy + wz),
+            1.0 - 2.0 * (xx + zz),
+            2.0 * (yz - wx),
+            2.0 * (xz - wy),
+            2.0 * (yz + wx),
+            1.0 - 2.0 * (xx + yy),
+        ],
+        axis=-1,
+    )
+    return rot.reshape(quat.shape[:-1] + (3, 3)).astype(np.float32)
+
+
+def rotmat_to_6d(rot: np.ndarray) -> np.ndarray:
+    rot = np.asarray(rot, dtype=np.float32)
+    first_two_cols = rot[..., :, :2]
+    return first_two_cols.reshape(rot.shape[:-2] + (6,)).astype(np.float32)
+
+
+def build_relative_pose_features(
+    orientation_quat: np.ndarray,
+    angular_vel: np.ndarray,
+    context_len: int,
+) -> np.ndarray:
+    orientation_quat = np.asarray(orientation_quat, dtype=np.float32)
+    angular_vel = np.asarray(angular_vel, dtype=np.float32)
+    if orientation_quat.ndim != 3 or orientation_quat.shape[-1] != 4:
+        raise ValueError(f"Expected orientation_quat with shape [T,N,4], got {orientation_quat.shape}")
+    if angular_vel.shape[:2] != orientation_quat.shape[:2] or angular_vel.shape[-1] != 3:
+        raise ValueError(
+            f"Expected angular_vel with shape matching orientation_quat [:2] and last dim 3, "
+            f"got {angular_vel.shape} vs {orientation_quat.shape}"
+        )
+    total_frames = orientation_quat.shape[0]
+    if total_frames == 0:
+        return np.zeros((0,) + orientation_quat.shape[1:2] + (9,), dtype=np.float32)
+    ref_index = max(min(int(context_len) - 1, total_frames - 1), 0)
+    rot = quat_wxyz_to_rotmat(orientation_quat)
+    ref_rot_t = np.swapaxes(rot[ref_index], -1, -2)
+    rel_rot = np.einsum("nij,tnjk->tnik", ref_rot_t, rot)
+    rel_rot6d = rotmat_to_6d(rel_rot)
+    rel_ang = np.einsum("nij,tnj->tni", ref_rot_t, angular_vel)
+    return np.concatenate([rel_rot6d, rel_ang.astype(np.float32)], axis=-1).astype(np.float32)
+
+
+def load_window_pose_features(
+    window_dir: Path,
+    num_frames: int,
+    num_objects: int,
+    context_len: int,
+) -> torch.Tensor:
+    pose = np.zeros((num_frames, num_objects, 9), dtype=np.float32)
+    kinematics_path = window_dir / "physics" / "rigid_kinematics.npz"
+    if not kinematics_path.is_file():
+        return torch.from_numpy(pose).float()
+
+    with np.load(kinematics_path) as payload:
+        if "orientation_quat" not in payload or "angular_vel" not in payload:
+            return torch.from_numpy(pose).float()
+        pose_src = build_relative_pose_features(
+            orientation_quat=np.asarray(payload["orientation_quat"]).astype(np.float32),
+            angular_vel=np.asarray(payload["angular_vel"]).astype(np.float32),
+            context_len=context_len,
+        )
+
+    frame_count = min(int(num_frames), int(pose_src.shape[0]))
+    object_count = min(int(num_objects), int(pose_src.shape[1]))
+    pose[:frame_count, :object_count] = pose_src[:frame_count, :object_count]
+    return torch.from_numpy(pose).float()
+
+
 def parse_int_filter(value: str | Sequence[int] | None) -> set[int]:
     if value is None:
         return set()
@@ -339,6 +422,8 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
         meta = record["meta"]
         motion_complexity = record["motion_complexity"]
         window_interactions = record["window_interactions"]
+        context_len = int(meta["context_len"])
+        future_len = int(meta["future_len"])
         state = torch.load  # silence lint in environments without np typing
         del state
         with torch.no_grad():
@@ -353,6 +438,15 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             future_visibility = torch.from_numpy(np.asarray(payload["y_visibility"]).copy()).float() if "y_visibility" in payload else None
             context_visibility = torch.from_numpy(np.asarray(payload["x_visibility"]).copy()).float() if "x_visibility" in payload else None
 
+        full_pose = load_window_pose_features(
+            window_dir=window_dir,
+            num_frames=context_len + future_len,
+            num_objects=int(future_state.shape[1]),
+            context_len=context_len,
+        )
+        context_pose = full_pose[:context_len]
+        future_pose = full_pose[context_len : context_len + future_len]
+
         context_paths = meta["x_frame_paths"]
         future_paths = meta["y_frame_paths"]
         context_video = self._load_frames(context_paths)
@@ -365,10 +459,12 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             "context_video": context_video,
             "context_state": context_state,
             "oracle_state": future_state,
+            "context_pose": context_pose,
+            "oracle_pose": future_pose,
             "context_visibility": context_visibility,
             "oracle_visibility": future_visibility,
-            "future_len": int(meta["future_len"]),
-            "context_len": int(meta["context_len"]),
+            "future_len": future_len,
+            "context_len": context_len,
             "window_dir": str(window_dir),
             "motion_complexity": str(motion_complexity["label"]),
             "motion_complexity_bucket_id": int(motion_complexity["bucket_id"]),

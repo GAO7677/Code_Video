@@ -54,20 +54,20 @@ CASES: List[Dict[str, object]] = [
         },
         "striker": {
             "model_name": "102_pepsi_can_12_fl_oz_vray",
-            "position": {"x": -1.08, "y": 0.98, "z": -0.12},
+            "position": {"x": -1.2, "y": 1.0, "z": -0.14},
             "rotation": {"x": 0.0, "y": 0.0, "z": 84.0},
-            "velocity": {"x": 1.7, "y": 0.04, "z": 0.12},
-            "angular_velocity": {"x": 1.1, "y": 0.08, "z": 0.5},
+            "velocity": {"x": 1.35, "y": 0.03, "z": 0.08},
+            "angular_velocity": {"x": 0.8, "y": 0.05, "z": 0.34},
             "mass": 0.45,
             "dynamic_friction": 0.4,
             "static_friction": 0.45,
             "bounciness": 0.08,
         },
-        "settle_frames": 40,
-        "capture_frames": 170,
+        "settle_frames": 48,
+        "capture_frames": 220,
     },
     {
-        "name": "rigid_toaster_hits_draped_cloth",
+        "name": "rigid_box_hits_draped_cloth",
         "supports": [
             {
                 "model_name": "camera_box",
@@ -89,18 +89,18 @@ CASES: List[Dict[str, object]] = [
             "rotation": {"x": 18.0, "y": 0.0, "z": 8.0},
         },
         "striker": {
-            "model_name": "toaster_002",
-            "position": {"x": 1.18, "y": 0.92, "z": 0.18},
-            "rotation": {"x": 0.0, "y": -24.0, "z": 0.0},
-            "velocity": {"x": -1.34, "y": 0.04, "z": -0.12},
-            "angular_velocity": {"x": 0.18, "y": 0.16, "z": 0.22},
-            "mass": 3.1,
-            "dynamic_friction": 0.52,
-            "static_friction": 0.58,
+            "model_name": "camera_box",
+            "position": {"x": 1.12, "y": 0.84, "z": 0.14},
+            "rotation": {"x": 0.0, "y": -18.0, "z": 0.0},
+            "velocity": {"x": -1.0, "y": 0.03, "z": -0.1},
+            "angular_velocity": {"x": 0.08, "y": 0.12, "z": 0.1},
+            "mass": 1.2,
+            "dynamic_friction": 0.6,
+            "static_friction": 0.68,
             "bounciness": 0.04,
         },
-        "settle_frames": 42,
-        "capture_frames": 180,
+        "settle_frames": 50,
+        "capture_frames": 230,
     },
 ]
 
@@ -238,7 +238,7 @@ def run_case(case: Dict[str, object]) -> None:
                     Controller.get_add_scene(scene_name=str(SCENE["name"])),
                     Controller.get_add_hdri_skybox(skybox_name=str(SCENE["skybox"]))]
 
-        obi.set_solver(substeps=6)
+        obi.set_solver(substeps=8)
         for support in case["supports"]:
             support_id = c.get_unique_id()
             commands.extend(add_static_support(c, support, support_id))
@@ -251,26 +251,24 @@ def run_case(case: Dict[str, object]) -> None:
                                rotation=cloth["rotation"])
 
         print(f"[{case['name']}] initial communicate", flush=True)
-        c.communicate(commands)
-        print(f"[{case['name']}] settle frames={case['settle_frames']}", flush=True)
-        for _ in range(int(case["settle_frames"])):
-            c.communicate([])
-
-        striker_id = c.get_unique_id()
-        striker = case["striker"]
-        striker_cmds = add_rigid(c, striker, striker_id)
-        striker_cmds.extend([
-            {"$type": "set_velocity", "id": striker_id, "velocity": striker["velocity"]},
-            {"$type": "set_angular_velocity", "id": striker_id, "angular_velocity": striker["angular_velocity"]},
-        ])
-        print(f"[{case['name']}] inject striker", flush=True)
-        c.communicate(striker_cmds)
-
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
         total_capture_frames = int(case["capture_frames"])
         print(f"[{case['name']}] capture frames={total_capture_frames}", flush=True)
+        c.communicate(commands)
+        settle_frames = int(case["settle_frames"])
         for frame_idx in range(total_capture_frames):
+            if frame_idx == settle_frames:
+                striker_id = c.get_unique_id()
+                striker = case["striker"]
+                striker_cmds = add_rigid(c, striker, striker_id)
+                striker_cmds.extend([
+                    {"$type": "set_velocity", "id": striker_id, "velocity": striker["velocity"]},
+                    {"$type": "set_angular_velocity", "id": striker_id, "angular_velocity": striker["angular_velocity"]},
+                ])
+                print(f"[{case['name']}] inject striker at frame={frame_idx}", flush=True)
+                c.communicate(striker_cmds)
+                continue
             c.communicate([])
             if (frame_idx + 1) % 30 == 0 or frame_idx + 1 == total_capture_frames:
                 print(f"[{case['name']}] captured {frame_idx + 1}/{total_capture_frames}", flush=True)

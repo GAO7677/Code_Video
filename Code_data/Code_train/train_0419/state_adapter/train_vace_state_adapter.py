@@ -130,6 +130,8 @@ def model_fn_wan_video_with_state_vace(
     oracle_visibility: Optional[torch.Tensor] = None,
     context_state: Optional[torch.Tensor] = None,
     context_visibility: Optional[torch.Tensor] = None,
+    oracle_pose: Optional[torch.Tensor] = None,
+    context_pose: Optional[torch.Tensor] = None,
     context_frame_count: Optional[int] = None,
     num_frames: Optional[int] = None,
     height: Optional[int] = None,
@@ -163,6 +165,8 @@ def model_fn_wan_video_with_state_vace(
             oracle_visibility=oracle_visibility,
             context_state=context_state,
             context_visibility=context_visibility,
+            oracle_pose=oracle_pose,
+            context_pose=context_pose,
         )
         if vace_context is None:
             vace_context = generated_vace_context
@@ -337,6 +341,8 @@ class StateAwareVaceTrainingModule(DiffusionTrainingModule):
             "min_timestep_boundary": self.min_timestep_boundary,
             "context_state": data["context_state"],
             "oracle_state": data["oracle_state"],
+            "context_pose": data["context_pose"],
+            "oracle_pose": data["oracle_pose"],
             "context_visibility": data["context_visibility"],
             "oracle_visibility": data["oracle_visibility"],
         }
