@@ -631,6 +631,204 @@ CASES: List[Dict[str, Any]] = [
         },
     },
     {
+        "kind": "cloth_impact",
+        "case_name": "cloth_drop_box_then_can_hit_craftroom",
+        "scene_key": "mm_craftroom_1a",
+        "primary_name": "cloth",
+        "scene_label": "cloth_impact",
+        "frames": 180,
+        "warmup": 0,
+        "inject_frame": 72,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -1.12, "y": 2.02, "z": -2.56},
+            "look_at": {"x": 0.02, "y": 0.86, "z": 0.0},
+            "field_of_view": 68,
+        },
+        "cloth": {
+            "material": "cotton",
+            "position": {"x": 0.02, "y": 2.05, "z": 0.02},
+            "rotation": {"x": 18.0, "y": 0.0, "z": 12.0},
+        },
+        "support": {
+            "model_name": "camera_box",
+            "library": "models_core.json",
+            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 16.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 24.0,
+            "dynamic_friction": 0.9,
+            "static_friction": 0.95,
+            "bounciness": 0.01,
+        },
+        "incoming_object": {
+            "model_name": "102_pepsi_can_12_fl_oz_vray",
+            "position": {"x": -1.7, "y": 0.98, "z": -0.34},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 84.0},
+            "velocity": {"x": 1.55, "y": 0.06, "z": 0.26},
+            "angular_velocity": {"x": 0.95, "y": 0.08, "z": 0.42},
+            "mass": 0.45,
+            "dynamic_friction": 0.4,
+            "static_friction": 0.45,
+            "bounciness": 0.08,
+        },
+    },
+    {
+        "kind": "cloth_impact",
+        "case_name": "cloth_drop_wicker_then_toaster_hit_suburb",
+        "scene_key": "suburb_scene_2023",
+        "primary_name": "cloth",
+        "scene_label": "cloth_impact",
+        "frames": 184,
+        "warmup": 0,
+        "inject_frame": 78,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -2.42, "y": 1.62, "z": 0.98},
+            "look_at": {"x": 0.04, "y": 0.78, "z": 0.02},
+            "field_of_view": 68,
+        },
+        "cloth": {
+            "material": "cotton",
+            "position": {"x": 0.0, "y": 2.16, "z": 0.0},
+            "rotation": {"x": 12.0, "y": 0.0, "z": 8.0},
+        },
+        "support": {
+            "model_name": "basket_18inx18inx12iin_wicker",
+            "library": "models_core.json",
+            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 14.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 20.0,
+            "dynamic_friction": 0.88,
+            "static_friction": 0.92,
+            "bounciness": 0.02,
+        },
+        "incoming_object": {
+            "model_name": "toaster_002",
+            "position": {"x": 1.38, "y": 0.86, "z": 0.18},
+            "rotation": {"x": 0.0, "y": -24.0, "z": 0.0},
+            "velocity": {"x": -1.28, "y": 0.04, "z": -0.1},
+            "angular_velocity": {"x": 0.14, "y": 0.12, "z": 0.22},
+            "mass": 3.1,
+            "dynamic_friction": 0.52,
+            "static_friction": 0.58,
+            "bounciness": 0.04,
+        },
+    },
+    {
+        "kind": "cloth_impact",
+        "case_name": "cloth_drop_cardboard_then_box_hit_site",
+        "scene_key": "building_site",
+        "primary_name": "cloth",
+        "scene_label": "cloth_impact",
+        "frames": 184,
+        "warmup": 0,
+        "inject_frame": 76,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -4.1, "y": 2.25, "z": 4.25},
+            "look_at": {"x": 0.02, "y": 0.74, "z": 0.02},
+            "field_of_view": 66,
+        },
+        "cloth": {
+            "material": "cotton",
+            "position": {"x": 0.02, "y": 2.02, "z": 0.04},
+            "rotation": {"x": 10.0, "y": 0.0, "z": -8.0},
+        },
+        "support": {
+            "model_name": "box_18inx18inx12in_cardboard",
+            "library": "models_core.json",
+            "position": {"x": 0.0, "y": 0.0, "z": 0.02},
+            "rotation": {"x": 0.0, "y": 24.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 14.0,
+            "dynamic_friction": 0.86,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
+        },
+        "incoming_object": {
+            "model_name": "camera_box",
+            "position": {"x": 1.58, "y": 0.74, "z": 0.12},
+            "rotation": {"x": 0.0, "y": -18.0, "z": 0.0},
+            "velocity": {"x": -1.18, "y": 0.03, "z": -0.06},
+            "angular_velocity": {"x": 0.06, "y": 0.12, "z": 0.08},
+            "mass": 1.2,
+            "dynamic_friction": 0.6,
+            "static_friction": 0.68,
+            "bounciness": 0.04,
+        },
+    },
+    {
+        "kind": "rigid_pair",
+        "case_name": "rigid_pair_bowl_hits_shoebox_suburb",
+        "scene_key": "suburb_scene_2023",
+        "primary_name": "serving_bowl",
+        "scene_label": "rigid_pair",
+        "frames": 136,
+        "warmup": 8,
+        "object_count_bucket": "count_2",
+        "camera_override": {
+            "camera_position": {"x": -2.58, "y": 1.56, "z": 0.92},
+            "look_at": {"x": 0.08, "y": 0.7, "z": 0.0},
+            "field_of_view": 68,
+        },
+        "target_object": {
+            "model_name": "shoebox_fused",
+            "position": {"x": 0.0, "y": 0.18, "z": 0.0},
+            "rotation": {"x": 0.0, "y": -10.0, "z": 0.0},
+            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "mass": 6.0,
+            "dynamic_friction": 0.78,
+            "static_friction": 0.84,
+            "bounciness": 0.02,
+        },
+        "incoming_object": {
+            "model_name": "serving_bowl",
+            "position": {"x": -1.18, "y": 0.66, "z": -0.08},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "velocity": {"x": 1.46, "y": 0.08, "z": 0.12},
+            "angular_velocity": {"x": 0.18, "y": 0.26, "z": 0.12},
+            "mass": 1.1,
+            "dynamic_friction": 0.46,
+            "static_friction": 0.5,
+            "bounciness": 0.04,
+        },
+    },
+    {
+        "kind": "rigid_pair",
+        "case_name": "rigid_pair_camera_box_hits_toaster_site",
+        "scene_key": "building_site",
+        "primary_name": "camera_box",
+        "scene_label": "rigid_pair",
+        "frames": 134,
+        "warmup": 8,
+        "object_count_bucket": "count_2",
+        "target_object": {
+            "model_name": "toaster_002",
+            "position": {"x": 0.14, "y": 0.28, "z": 0.04},
+            "rotation": {"x": 0.0, "y": 16.0, "z": 0.0},
+            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "mass": 3.1,
+            "dynamic_friction": 0.52,
+            "static_friction": 0.58,
+            "bounciness": 0.04,
+        },
+        "incoming_object": {
+            "model_name": "camera_box",
+            "position": {"x": -1.3, "y": 0.64, "z": -0.08},
+            "rotation": {"x": 0.0, "y": 12.0, "z": 0.0},
+            "velocity": {"x": 1.34, "y": 0.04, "z": 0.1},
+            "angular_velocity": {"x": 0.08, "y": 0.14, "z": 0.08},
+            "mass": 1.2,
+            "dynamic_friction": 0.6,
+            "static_friction": 0.68,
+            "bounciness": 0.04,
+        },
+    },
+    {
         "kind": "soft_volume",
         "case_name": "soft_volume_canvas_drop",
         "scene_key": "mm_craftroom_1a",
@@ -1214,6 +1412,32 @@ def build_track_states(case: Dict[str, Any], track_specs: List[Dict[str, Any]], 
     for spec in track_specs:
         if spec["track_type"] == "rigid":
             object_id = int(spec["object_id"])
+            active_from_frame = int(spec.get("active_from_frame", 0))
+            current_frame = int(spec.get("_current_frame", 0))
+            if current_frame < active_from_frame:
+                states.append({
+                    "object_id": object_id,
+                    "name": spec["name"],
+                    "seg_id": int(spec["seg_id"]),
+                    "track_type": "rigid",
+                    "entity_type": spec["entity_type"],
+                    "role": spec["role"],
+                    "motion_type": spec["motion_type"],
+                    "motion_group": spec["motion_group"],
+                    "source_tag": spec["source_tag"],
+                    "dataset_source": "TDW",
+                    "source_object_id": spec["name"],
+                    "com_pos": np.zeros((3,), dtype=np.float32),
+                    "orientation_quat": np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                    "linear_vel": np.zeros((3,), dtype=np.float32),
+                    "angular_vel": np.zeros((3,), dtype=np.float32),
+                    "aabb": np.zeros((0, 3), dtype=np.float32),
+                    "seg_points": np.zeros((0, 3), dtype=np.float32),
+                    "center_depth": float("inf"),
+                    "mass": float(spec.get("mass", 1.0)),
+                    "restitution": spec.get("restitution", None),
+                })
+                continue
             if object_id not in om.bounds or object_id not in om.transforms:
                 raise RuntimeError(f"Missing rigid state for object {object_id}")
             bound = om.bounds[object_id]
@@ -1248,7 +1472,7 @@ def build_track_states(case: Dict[str, Any], track_specs: List[Dict[str, Any]], 
                 "aabb": aabb.astype(np.float32),
                 "seg_points": get_bbox_corners(aabb),
                 "center_depth": 0.0,
-                "mass": float(mass),
+                "mass": float(spec.get("mass", mass)),
                 "restitution": restitution,
             })
         else:
@@ -1336,10 +1560,11 @@ def get_rigid_object_commands(c: Controller, spec: Dict[str, Any], object_id: in
     return c.get_add_physics_object(**kwargs)
 
 
-def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict]]:
+def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict], List[Dict[str, Any]]]:
     commands: List[dict] = []
     track_specs: List[Dict[str, Any]] = []
     post_warmup_commands: List[dict] = []
+    capture_frame_events: List[Dict[str, Any]] = []
     next_seg_id = 1
     if case["kind"] == "rigid":
         object_id = c.get_unique_id()
@@ -1422,6 +1647,58 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
             {"object_id": cloth_id, "name": "cloth", "seg_id": 1, "track_type": "obi", "entity_type": "cloth", "role": "dynamic", "motion_type": "cloth", "motion_group": "cloth", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
             {"object_id": support_id, "name": "sphere_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "dynamic", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
+    elif case["kind"] == "cloth_impact":
+        assert obi is not None
+        cloth_id = c.get_unique_id()
+        support_id = c.get_unique_id()
+        striker_id = c.get_unique_id()
+        obi.set_solver(substeps=4)
+        obi.create_cloth_sheet(cloth_material=str(case["cloth"]["material"]),
+                               object_id=cloth_id,
+                               position=case["cloth"]["position"],
+                               rotation=case["cloth"]["rotation"])
+        commands.extend(c.get_add_physics_object(model_name=str(case["support"]["model_name"]),
+                                                 object_id=support_id,
+                                                 library=str(case["support"]["library"]),
+                                                 position=case["support"]["position"],
+                                                 rotation=case["support"]["rotation"],
+                                                 scale_factor=case["support"]["scale_factor"],
+                                                 kinematic=False,
+                                                 gravity=True,
+                                                 default_physics_values=False,
+                                                 mass=float(case["support"].get("mass", 40.0)),
+                                                 dynamic_friction=float(case["support"].get("dynamic_friction", 0.85)),
+                                                 static_friction=float(case["support"].get("static_friction", 0.9)),
+                                                 bounciness=float(case["support"].get("bounciness", 0.02))))
+        incoming = case["incoming_object"]
+        commands.extend(c.get_add_physics_object(model_name=str(incoming["model_name"]),
+                                                 object_id=striker_id,
+                                                 library=str(incoming.get("library", "models_core.json")),
+                                                 position=incoming["position"],
+                                                 rotation=incoming["rotation"],
+                                                 kinematic=True,
+                                                 gravity=False,
+                                                 default_physics_values=False,
+                                                 mass=float(incoming.get("mass", 1.0)),
+                                                 dynamic_friction=float(incoming.get("dynamic_friction", 0.6)),
+                                                 static_friction=float(incoming.get("static_friction", 0.7)),
+                                                 bounciness=float(incoming.get("bounciness", 0.02))))
+        capture_frame_events.append({
+            "frame": int(case["inject_frame"]),
+            "commands": [
+                {"$type": "set_kinematic_state",
+                 "id": striker_id,
+                 "is_kinematic": False,
+                 "use_gravity": True},
+                {"$type": "set_velocity", "id": striker_id, "velocity": incoming["velocity"]},
+                {"$type": "set_angular_velocity", "id": striker_id, "angular_velocity": incoming["angular_velocity"]},
+            ]
+        })
+        track_specs.extend([
+            {"object_id": cloth_id, "name": "cloth", "seg_id": 1, "track_type": "obi", "entity_type": "cloth", "role": "target_soft", "motion_type": "cloth_target", "motion_group": "cloth_impact", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
+            {"object_id": support_id, "name": "cloth_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"], "mass": float(case["support"].get("mass", 40.0))},
+            {"object_id": striker_id, "name": str(incoming["model_name"]), "seg_id": 3, "track_type": "rigid", "entity_type": "rigid_body", "role": "striker", "motion_type": "rigid_striker", "motion_group": "cloth_impact", "source_tag": "tdw_builtin", "kind": case["kind"], "mass": float(incoming.get("mass", 1.0))},
+        ])
     elif case["kind"] == "soft_volume":
         assert obi is not None
         volume_id = c.get_unique_id()
@@ -1484,7 +1761,7 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
         ])
     else:
         raise ValueError(f"Unsupported kind: {case['kind']}")
-    return commands, track_specs, post_warmup_commands
+    return commands, track_specs, post_warmup_commands, capture_frame_events
 
 
 def record_case(case: Dict[str, Any]) -> Path:
@@ -1539,7 +1816,7 @@ def record_case(case: Dict[str, Any]) -> Path:
                     Controller.get_add_scene(scene_name=scene_cfg["name"]),
                     Controller.get_add_hdri_skybox(skybox_name=scene_cfg["skybox"])]
 
-        setup_commands, track_specs, post_warmup_commands = setup_case(case, c, obi)
+        setup_commands, track_specs, post_warmup_commands, capture_frame_events = setup_case(case, c, obi)
         commands.extend(setup_commands)
         print(f"[{sample_name}] initial communicate scene={scene_cfg['name']} kind={case['kind']}", flush=True)
         c.communicate(commands)
@@ -1569,15 +1846,21 @@ def record_case(case: Dict[str, Any]) -> Path:
         env_contact_frames: List[np.ndarray] = []
 
         total_frames_to_capture = int(case["frames"])
+        events_by_frame = {int(event["frame"]): event for event in capture_frame_events}
         print(f"[{sample_name}] capture frames={total_frames_to_capture}", flush=True)
         for frame_idx in range(total_frames_to_capture):
-            c.communicate([])
+            frame_commands = []
+            if frame_idx in events_by_frame:
+                frame_commands = list(events_by_frame[frame_idx]["commands"])
+                print(f"[{sample_name}] inject capture-frame objects at frame={frame_idx}", flush=True)
+            c.communicate(frame_commands)
             images = capture.images.get("a", None)
             if images is None:
                 raise RuntimeError("ImageCapture did not receive images for avatar a")
             rgb = rgb_from_images(images)
             depth_metric = metric_depth_from_images(images, pass_mask="_depth")
-            objects_state = build_track_states(case=case, track_specs=track_specs, om=om, obi=obi)
+            runtime_track_specs = [{**spec, "_current_frame": frame_idx} for spec in track_specs]
+            objects_state = build_track_states(case=case, track_specs=runtime_track_specs, om=om, obi=obi)
             for state in objects_state:
                 uv, z_cam = project_points_to_image(np.asarray([state["com_pos"]], dtype=np.float64), camera_cfg=camera_cfg, cam_intrinsics=cam_intrinsics)
                 state["center_depth"] = float(z_cam[0]) if np.isfinite(z_cam[0]) else float("inf")
