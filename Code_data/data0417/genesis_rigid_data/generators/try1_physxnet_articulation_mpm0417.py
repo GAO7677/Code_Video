@@ -905,8 +905,8 @@ def build_preview_case_configs(
 
     volume_threshold_m3 = float(getattr(args, "physxnet_volume_threshold_m3", 0.20) or 0.20)
     entry_prob = float(np.clip(getattr(args, "physxnet_entry_velocity_prob", 0.35), 0.0, 1.0))
-    speed_min = max(0.0, float(getattr(args, "physxnet_entry_speed_min", 0.75) or 0.75))
-    speed_max = max(speed_min, float(getattr(args, "physxnet_entry_speed_max", 1.60) or 1.60))
+    speed_min = max(0.0, float(getattr(args, "physxnet_entry_speed_min", 0.60) or 0.60))
+    speed_max = max(speed_min, float(getattr(args, "physxnet_entry_speed_max", 0.90) or 0.90))
 
     moving_allowed = bool(
         is_physxnet_object
@@ -996,7 +996,7 @@ def build_preview_case_configs(
         elif mode == "entry_right":
             linear = np.array([-speed, -lateral, 0.0], dtype=np.float64)
         elif mode == "entry_fast_center":
-            fast_scale = float(rng.uniform(1.15, 1.55))
+            fast_scale = float(rng.uniform(1.08, 1.30))
             linear = np.array([-speed * fast_scale, float(rng.uniform(-0.06, 0.06)), 0.0], dtype=np.float64)
             yaw_speed *= float(rng.uniform(0.8, 1.25))
         else:
@@ -1698,9 +1698,9 @@ def build_preview_case_configs(
                     spawn_z = float(rng.uniform(0.88, 1.28))
                     linear = np.array(
                         [
-                            float(rng.uniform(0.18, 0.34)),
+                            float(rng.uniform(0.14, 0.26)),
                             0.0,
-                            float(rng.uniform(1.22, 1.82)),
+                            float(rng.uniform(0.95, 1.42)),
                         ],
                         dtype=np.float64,
                     )
@@ -1821,12 +1821,12 @@ def build_preview_case_configs(
         )
         if mode == "parabola":
             theta = float(rng.uniform(-math.pi, math.pi))
-            horizontal_speed = float(rng.uniform(0.45, 1.10))
+            horizontal_speed = float(rng.uniform(0.35, 0.78))
             linear = np.array(
                 [
                     horizontal_speed * math.cos(theta),
                     horizontal_speed * math.sin(theta),
-                    float(rng.uniform(1.20, 2.10)),
+                    float(rng.uniform(0.95, 1.55)),
                 ],
                 dtype=np.float64,
             )
@@ -8893,8 +8893,9 @@ def simulate_in_genesis(
             f"for pid={primary_liquid_target['pid']} part={primary_liquid_target['part_name']}"
         )
 
-    cam_distance = camera_distance_mult * max(2.2, 2.0 * float(np.max(bbox_size)) + 1.0)
-    cam_height = camera_distance_mult * max(1.1, float(placed_pos[2] + bbox_min[2] + 0.85 * bbox_size[2] + 0.4))
+    # Keep rigid previews tighter so medium/small objects occupy more of the frame.
+    cam_distance = camera_distance_mult * max(1.84, 1.72 * float(np.max(bbox_size)) + 0.82)
+    cam_height = camera_distance_mult * max(0.96, float(placed_pos[2] + bbox_min[2] + 0.68 * bbox_size[2] + 0.28))
     lookat = np.array([0.0, 0.0, float(placed_pos[2] + bbox_min[2] + 0.55 * bbox_size[2])], dtype=np.float64)
     label_l = str(scene_label).strip().lower()
     if label_l in {"random_parabola", "high_drop"}:
@@ -8902,16 +8903,16 @@ def simulate_in_genesis(
         # close but bias the target downward so the landing remains in frame.
         if label_l == "high_drop":
             camera_distance_mult = max(camera_distance_mult, 1.36)
-            cam_distance = camera_distance_mult * max(2.16, 2.05 * float(np.max(bbox_size)) + 0.92)
-            cam_height = camera_distance_mult * max(0.92, float(0.52 * placed_pos[2] + bbox_min[2] + 0.18 * bbox_size[2] + 0.30))
+            cam_distance = camera_distance_mult * max(1.98, 1.84 * float(np.max(bbox_size)) + 0.84)
+            cam_height = camera_distance_mult * max(0.86, float(0.46 * placed_pos[2] + bbox_min[2] + 0.16 * bbox_size[2] + 0.24))
             lookat = np.array([0.0, 0.0, float(max(0.42, 0.42 * placed_pos[2]))], dtype=np.float64)
-            cam_fov = 43
+            cam_fov = 40
         else:
             camera_distance_mult = max(camera_distance_mult, 1.28)
-            cam_distance = camera_distance_mult * max(2.10, 2.05 * float(np.max(bbox_size)) + 0.90)
-            cam_height = camera_distance_mult * max(0.96, float(placed_pos[2] + bbox_min[2] + 0.32 * bbox_size[2] + 0.08))
+            cam_distance = camera_distance_mult * max(1.92, 1.82 * float(np.max(bbox_size)) + 0.82)
+            cam_height = camera_distance_mult * max(0.88, float(placed_pos[2] + bbox_min[2] + 0.24 * bbox_size[2] + 0.02))
             lookat = np.array([0.0, 0.0, float(max(0.18, placed_pos[2] - 0.55))], dtype=np.float64)
-            cam_fov = 39
+            cam_fov = 36
     elif label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
         start_points = [placed_pos.copy()]
         start_points.extend(np.asarray(rec.get("start_pos", placed_pos), dtype=np.float64).reshape(3) for rec in custom_runtime_objects)
@@ -8949,17 +8950,17 @@ def simulate_in_genesis(
     if label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
         cam_pos = np.array(
             [
-                float(lookat[0] + (0.18 if num_multi_objs >= 3 else 0.82) * cam_distance),
-                float(lookat[1] - (1.02 if num_multi_objs >= 3 else 0.58) * cam_distance),
-                float(cam_height),
+                float(lookat[0] + (0.10 if num_multi_objs >= 3 else 0.66) * cam_distance),
+                float(lookat[1] - (0.90 if num_multi_objs >= 3 else 0.50) * cam_distance),
+                float(0.94 * cam_height),
             ],
             dtype=np.float64,
         )
     else:
-        cam_pos = np.array([cam_distance, -cam_distance, cam_height], dtype=np.float64)
+        cam_pos = np.array([0.74 * cam_distance, -0.88 * cam_distance, 0.86 * cam_height], dtype=np.float64)
     cam_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     if label_l not in {"random_parabola", "high_drop"} and not (label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)):
-        cam_fov = 35
+        cam_fov = 33
     if liquid_camera_mode and primary_liquid_target is not None:
         liquid_center_world = np.asarray(primary_liquid_target["center_world"], dtype=np.float64)
         liquid_top_world_z = float(primary_liquid_target["top_world_z"])
@@ -10007,8 +10008,8 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--physxnet_volume_threshold_m3", type=float, default=0.20, help="PhysXNet assembled-object AABB volume threshold in m^3. Objects above this stay static on the ground across all cases")
     parser.add_argument("--physxnet_entry_velocity_prob", type=float, default=0.35, help="For PhysXNet objects smaller than the volume threshold, probability that a case enters with initial velocity")
-    parser.add_argument("--physxnet_entry_speed_min", type=float, default=0.75, help="Minimum initial entry speed in m/s for moving PhysXNet cases")
-    parser.add_argument("--physxnet_entry_speed_max", type=float, default=1.60, help="Maximum initial entry speed in m/s for moving PhysXNet cases")
+    parser.add_argument("--physxnet_entry_speed_min", type=float, default=0.60, help="Minimum initial entry speed in m/s for moving PhysXNet cases")
+    parser.add_argument("--physxnet_entry_speed_max", type=float, default=0.90, help="Maximum initial entry speed in m/s for moving PhysXNet cases")
     parser.add_argument("--physxnet_object_yaw_deg_min", type=float, default=-180.0, help="Minimum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
     parser.add_argument("--physxnet_object_yaw_deg_max", type=float, default=180.0, help="Maximum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
     
