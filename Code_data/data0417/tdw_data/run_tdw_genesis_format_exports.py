@@ -582,6 +582,182 @@ CASES: List[Dict[str, Any]] = [
         },
     },
     {
+        "kind": "soft_volume_pair",
+        "case_name": "soft_volume_pair_rubber_sphere_hits_canvas_sphere_site_fast",
+        "scene_key": "building_site",
+        "primary_name": "soft_volume_pair",
+        "scene_label": "soft_volume_pair",
+        "frames": 176,
+        "warmup": 14,
+        "incoming_inject_frame": 12,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -4.02, "y": 2.18, "z": 4.18},
+            "look_at": {"x": 0.02, "y": 0.74, "z": 0.0},
+            "field_of_view": 66,
+        },
+        "support": {
+            "model_name": "camera_box",
+            "library": "models_core.json",
+            "position": {"x": 0.18, "y": 0.0, "z": 0.02},
+            "rotation": {"x": 0.0, "y": 16.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 18.0,
+            "dynamic_friction": 0.85,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
+        },
+        "target_volume": {
+            "cloth_material": "canvas",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": 0.02, "y": 1.26, "z": 0.04},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.42, "y": 0.42, "z": 0.42},
+            "pressure": 2.4,
+        },
+        "incoming_volume": {
+            "cloth_material": "rubber",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": -4.0, "y": 1.08, "z": -3.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.28, "y": 0.28, "z": 0.28},
+            "pressure": 3.0,
+            "force": {"x": 26.0, "y": 0.0, "z": 16.0},
+        },
+    },
+    {
+        "kind": "soft_volume_pair",
+        "case_name": "soft_volume_pair_plastic_sphere_hits_cotton_sphere_suburb_left",
+        "scene_key": "suburb_scene_2023",
+        "primary_name": "soft_volume_pair",
+        "scene_label": "soft_volume_pair",
+        "frames": 176,
+        "warmup": 14,
+        "incoming_inject_frame": 10,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -2.32, "y": 1.56, "z": 1.0},
+            "look_at": {"x": 0.02, "y": 0.82, "z": 0.0},
+            "field_of_view": 68,
+        },
+        "support": {
+            "model_name": "shoebox_fused",
+            "library": "models_core.json",
+            "position": {"x": 0.12, "y": 0.0, "z": -0.04},
+            "rotation": {"x": 0.0, "y": -10.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 12.0,
+            "dynamic_friction": 0.88,
+            "static_friction": 0.92,
+            "bounciness": 0.02,
+        },
+        "target_volume": {
+            "cloth_material": "cotton",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": 0.0, "y": 1.28, "z": 0.02},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.4, "y": 0.4, "z": 0.4},
+            "pressure": 2.2,
+        },
+        "incoming_volume": {
+            "cloth_material": "plastic",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": -2.4, "y": 1.08, "z": -1.6},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.26, "y": 0.26, "z": 0.26},
+            "pressure": 2.8,
+            "force": {"x": 18.0, "y": 0.0, "z": 7.5},
+        },
+    },
+    {
+        "kind": "soft_volume_pair",
+        "case_name": "soft_volume_pair_silk_sphere_hits_wool_sphere_craftroom_diag",
+        "scene_key": "mm_craftroom_1a",
+        "primary_name": "soft_volume_pair",
+        "scene_label": "soft_volume_pair",
+        "frames": 172,
+        "warmup": 14,
+        "incoming_inject_frame": 14,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -1.04, "y": 1.96, "z": -2.34},
+            "look_at": {"x": 0.04, "y": 0.82, "z": 0.0},
+            "field_of_view": 70,
+        },
+        "support": {
+            "model_name": "camera_box",
+            "library": "models_core.json",
+            "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 14.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 22.0,
+            "dynamic_friction": 0.88,
+            "static_friction": 0.92,
+            "bounciness": 0.02,
+        },
+        "target_volume": {
+            "cloth_material": "wool",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": 0.0, "y": 1.24, "z": 0.02},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.36, "y": 0.36, "z": 0.36},
+            "pressure": 2.0,
+        },
+        "incoming_volume": {
+            "cloth_material": "silk",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": -4.0, "y": 1.08, "z": 1.5},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.24, "y": 0.24, "z": 0.24},
+            "pressure": 1.8,
+            "force": {"x": 19.0, "y": 0.0, "z": -7.5},
+        },
+    },
+    {
+        "kind": "soft_volume_pair",
+        "case_name": "soft_volume_pair_burlap_sphere_hits_rubber_sphere_craftroom_slow",
+        "scene_key": "mm_craftroom_1a",
+        "primary_name": "soft_volume_pair",
+        "scene_label": "soft_volume_pair",
+        "frames": 178,
+        "warmup": 16,
+        "incoming_inject_frame": 16,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -1.08, "y": 1.94, "z": -2.42},
+            "look_at": {"x": 0.02, "y": 0.8, "z": 0.0},
+            "field_of_view": 69,
+        },
+        "support": {
+            "model_name": "camera_box",
+            "library": "models_core.json",
+            "position": {"x": 0.04, "y": 0.0, "z": 0.02},
+            "rotation": {"x": 0.0, "y": -12.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 22.0,
+            "dynamic_friction": 0.88,
+            "static_friction": 0.92,
+            "bounciness": 0.02,
+        },
+        "target_volume": {
+            "cloth_material": "rubber",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": 0.02, "y": 1.24, "z": 0.04},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.36, "y": 0.36, "z": 0.36},
+            "pressure": 3.0,
+        },
+        "incoming_volume": {
+            "cloth_material": "burlap",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": -3.5, "y": 1.08, "z": 0.75},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.24, "y": 0.24, "z": 0.24},
+            "pressure": 1.7,
+            "force": {"x": 14.0, "y": 0.0, "z": -4.2},
+        },
+    },
+    {
         "kind": "cloth",
         "case_name": "cloth_drop_ground",
         "scene_key": "suburb_scene_2023",
@@ -1564,8 +1740,32 @@ def build_track_states(case: Dict[str, Any], track_specs: List[Dict[str, Any]], 
         else:
             assert obi is not None
             object_id = int(spec["object_id"])
-            if object_id not in obi.actors:
-                raise RuntimeError(f"Missing Obi actor state for object {object_id}")
+            active_from_frame = int(spec.get("active_from_frame", 0))
+            current_frame = int(spec.get("_current_frame", 0))
+            if current_frame < active_from_frame or object_id not in obi.actors:
+                states.append({
+                    "object_id": object_id,
+                    "name": spec["name"],
+                    "seg_id": int(spec["seg_id"]),
+                    "track_type": "obi",
+                    "entity_type": spec["entity_type"],
+                    "role": spec["role"],
+                    "motion_type": spec["motion_type"],
+                    "motion_group": spec["motion_group"],
+                    "source_tag": spec["source_tag"],
+                    "dataset_source": "TDW",
+                    "source_object_id": spec["name"],
+                    "com_pos": np.zeros((3,), dtype=np.float32),
+                    "orientation_quat": np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                    "linear_vel": np.zeros((3,), dtype=np.float32),
+                    "angular_vel": np.zeros((3,), dtype=np.float32),
+                    "aabb": np.zeros((0, 3), dtype=np.float32),
+                    "seg_points": np.zeros((0, 3), dtype=np.float32),
+                    "center_depth": float("inf"),
+                    "mass": float(spec.get("mass", 1.0)),
+                    "restitution": None,
+                })
+                continue
             actor = obi.actors[object_id]
             positions = np.asarray(actor.positions, dtype=np.float64)
             velocities = np.asarray(actor.velocities, dtype=np.float64)
@@ -1644,6 +1844,19 @@ def get_rigid_object_commands(c: Controller, spec: Dict[str, Any], object_id: in
         kwargs["static_friction"] = float(spec.get("static_friction", 0.7))
         kwargs["bounciness"] = float(spec.get("bounciness", 0.02))
     return c.get_add_physics_object(**kwargs)
+
+
+def get_obi_volume_creation_commands(object_id: int, spec: Dict[str, Any]) -> List[dict]:
+    cloth_material = Obi._get_cloth_commands(object_id=object_id,
+                                             command_name="create_obi_cloth_volume",
+                                             cloth_material=str(spec["cloth_material"]),
+                                             position=spec["position"],
+                                             rotation=spec["rotation"],
+                                             solver_id=0)
+    cloth_material[-1]["scale_factor"] = spec["scale_factor"]
+    cloth_material[-1]["pressure"] = float(spec["pressure"])
+    cloth_material[-1]["volume_type"] = spec["volume_type"].name
+    return cloth_material
 
 
 def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict], List[Dict[str, Any]]]:
@@ -1842,21 +2055,20 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
                                 rotation=target["rotation"],
                                 scale_factor=target["scale_factor"],
                                 pressure=float(target["pressure"]))
-        obi.create_cloth_volume(cloth_material=str(incoming["cloth_material"]),
-                                object_id=incoming_id,
-                                volume_type=incoming["volume_type"],
-                                position=incoming["position"],
-                                rotation=incoming["rotation"],
-                                scale_factor=incoming["scale_factor"],
-                                pressure=float(incoming["pressure"]))
         commands.extend(get_support_commands(c, case["support"], support_id))
-        post_warmup_commands.append({"$type": "apply_force_to_obi_cloth",
-                                     "id": incoming_id,
-                                     "force": incoming["force"],
-                                     "force_mode": "impulse"})
+        inject_frame = int(case.get("incoming_inject_frame", 8))
+        capture_frame_events.append({
+            "frame": inject_frame,
+            "commands": get_obi_volume_creation_commands(object_id=incoming_id, spec=incoming) + [
+                {"$type": "apply_force_to_obi_cloth",
+                 "id": incoming_id,
+                 "force": incoming["force"],
+                 "force_mode": "impulse"}
+            ]
+        })
         track_specs.extend([
             {"object_id": target_id, "name": "soft_volume_target", "seg_id": 1, "track_type": "obi", "entity_type": "soft_volume", "role": "target_soft", "motion_type": "soft_volume_target", "motion_group": "soft_pair", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
-            {"object_id": incoming_id, "name": "soft_volume_incoming", "seg_id": 2, "track_type": "obi", "entity_type": "soft_volume", "role": "incoming_soft", "motion_type": "soft_volume_incoming", "motion_group": "soft_pair", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
+            {"object_id": incoming_id, "name": "soft_volume_incoming", "seg_id": 2, "track_type": "obi", "entity_type": "soft_volume", "role": "incoming_soft", "motion_type": "soft_volume_incoming", "motion_group": "soft_pair", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0, "active_from_frame": inject_frame},
             {"object_id": support_id, "name": "soft_pair_support", "seg_id": 3, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
     elif case["kind"] in {"granular", "liquid"}:

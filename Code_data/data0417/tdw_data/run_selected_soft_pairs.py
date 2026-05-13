@@ -8,8 +8,10 @@ import run_tdw_genesis_format_exports as m
 
 
 WANTED = {
-    "soft_volume_pair_rubber_cube_hits_canvas_sphere_site",
-    "soft_volume_pair_plastic_cube_hits_cotton_sphere_suburb",
+    "soft_volume_pair_rubber_sphere_hits_canvas_sphere_site_fast",
+    "soft_volume_pair_plastic_sphere_hits_cotton_sphere_suburb_left",
+    "soft_volume_pair_silk_sphere_hits_wool_sphere_craftroom_diag",
+    "soft_volume_pair_burlap_sphere_hits_rubber_sphere_craftroom_slow",
 }
 
 
