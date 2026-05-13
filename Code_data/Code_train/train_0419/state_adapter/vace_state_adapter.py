@@ -28,6 +28,7 @@ class VaceStateAdapter(torch.nn.Module):
         self.state_dim = int(state_dim)
         self.pose_dim = int(pose_dim)
         self.spatial_feature_dim = int(spatial_feature_dim)
+        self.slot_feature_dim = int(self.spatial_feature_dim + self.pose_dim)
         self.hidden_dim = int(hidden_dim)
         self.vace_in_dim = int(vace_in_dim)
         self.condition_dropout = float(condition_dropout)
@@ -38,27 +39,27 @@ class VaceStateAdapter(torch.nn.Module):
         self.velocity_clip = float(velocity_clip)
         self.depth_velocity_clip = float(depth_velocity_clip)
 
-        self.spatial_encoder = torch.nn.Sequential(
-            torch.nn.Conv3d(self.spatial_feature_dim, self.hidden_dim, kernel_size=3, padding=1),
+        self.slot_encoder = torch.nn.Sequential(
+            torch.nn.Conv3d(self.slot_feature_dim, self.hidden_dim, kernel_size=3, padding=1),
             torch.nn.SiLU(),
             torch.nn.Conv3d(self.hidden_dim, self.hidden_dim, kernel_size=3, padding=1),
             torch.nn.SiLU(),
             torch.nn.Conv3d(self.hidden_dim, self.vace_in_dim, kernel_size=3, padding=1),
         )
-        self.temporal_projection = torch.nn.Sequential(
+        self.slot_condition_projection = torch.nn.Sequential(
             torch.nn.Linear(self.temporal_embed_dim, self.hidden_dim),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
+            torch.nn.Linear(self.hidden_dim, self.slot_feature_dim),
         )
-        self.pose_projection = torch.nn.Sequential(
-            torch.nn.Linear(self.pose_dim, self.hidden_dim),
+        self.context_phase_embedding = torch.nn.Parameter(torch.zeros(self.slot_feature_dim))
+        self.future_phase_embedding = torch.nn.Parameter(torch.zeros(self.slot_feature_dim))
+        self.object_attention = torch.nn.Sequential(
+            torch.nn.Linear(self.vace_in_dim, self.hidden_dim),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
+            torch.nn.Linear(self.hidden_dim, 1),
         )
-        self.context_phase_embedding = torch.nn.Parameter(torch.zeros(self.spatial_feature_dim))
-        self.future_phase_embedding = torch.nn.Parameter(torch.zeros(self.spatial_feature_dim))
-        torch.nn.init.zeros_(self.spatial_encoder[-1].weight)
-        torch.nn.init.zeros_(self.spatial_encoder[-1].bias)
+        torch.nn.init.zeros_(self.slot_encoder[-1].weight)
+        torch.nn.init.zeros_(self.slot_encoder[-1].bias)
 
     def _normalize_geometry(
         self,
@@ -116,11 +117,12 @@ class VaceStateAdapter(torch.nn.Module):
             emb = F.pad(emb, (0, self.temporal_embed_dim - emb.shape[1]))
         elif emb.shape[1] > self.temporal_embed_dim:
             emb = emb[:, : self.temporal_embed_dim]
-        return self.temporal_projection(emb)
+        return self.slot_condition_projection(emb)
 
-    def _build_spatial_state_maps(
+    def _build_object_slot_maps(
         self,
         oracle_state: torch.Tensor,
+        oracle_pose: torch.Tensor | None,
         latent_height: int,
         latent_width: int,
         frame_height: int,
@@ -148,6 +150,16 @@ class VaceStateAdapter(torch.nn.Module):
         dd = self._normalize_signed(oracle_state[..., 7], self.depth_velocity_clip)
         vis = oracle_state[..., 8] if oracle_visibility is None else oracle_visibility
         vis = vis.clamp(0.0, 1.0)
+        if oracle_pose is None:
+            oracle_pose = torch.zeros(
+                (*oracle_state.shape[:3], self.pose_dim),
+                device=device,
+                dtype=dtype,
+            )
+        elif oracle_pose.dim() == 3:
+            oracle_pose = oracle_pose.unsqueeze(0)
+        rot6d = oracle_pose[..., :6]
+        angvel3 = self._normalize_signed(oracle_pose[..., 6:], self.velocity_clip)
 
         grid_x = torch.linspace(0.0, 1.0, latent_width, device=device, dtype=dtype).view(1, 1, 1, 1, latent_width)
         grid_y = torch.linspace(0.0, 1.0, latent_height, device=device, dtype=dtype).view(1, 1, 1, latent_height, 1)
@@ -161,6 +173,8 @@ class VaceStateAdapter(torch.nn.Module):
         dv = dv.unsqueeze(-1).unsqueeze(-1)
         dd = dd.unsqueeze(-1).unsqueeze(-1)
         vis = vis.unsqueeze(-1).unsqueeze(-1)
+        rot6d = rot6d.unsqueeze(-1).unsqueeze(-1)
+        angvel3 = angvel3.unsqueeze(-1).unsqueeze(-1)
 
         x1 = (u - 0.5 * w).clamp(0.0, 1.0)
         x2 = (u + 0.5 * w).clamp(0.0, 1.0)
@@ -178,7 +192,7 @@ class VaceStateAdapter(torch.nn.Module):
             )
         ) * vis
 
-        object_maps = torch.stack(
+        state_maps = torch.stack(
             [
                 box,
                 gauss,
@@ -191,12 +205,19 @@ class VaceStateAdapter(torch.nn.Module):
             ],
             dim=3,
         )
-        maps = object_maps.sum(dim=2)
-        if maps.shape[2] != self.spatial_feature_dim:
+        pose_maps = torch.cat(
+            [
+                gauss.unsqueeze(3) * rot6d,
+                gauss.unsqueeze(3) * angvel3,
+            ],
+            dim=3,
+        )
+        slot_maps = torch.cat([state_maps, pose_maps], dim=3)
+        if slot_maps.shape[3] != self.slot_feature_dim:
             raise RuntimeError(
-                f"Expected {self.spatial_feature_dim} spatial channels, got {maps.shape[3]}."
+                f"Expected {self.slot_feature_dim} slot channels, got {slot_maps.shape[3]}."
             )
-        maps = maps.permute(0, 2, 1, 3, 4).contiguous()
+        slot_maps = slot_maps.permute(0, 2, 3, 1, 4, 5).contiguous()
         if phase_ids is not None:
             if phase_ids.dim() == 1:
                 phase_ids = phase_ids.unsqueeze(0)
@@ -205,60 +226,57 @@ class VaceStateAdapter(torch.nn.Module):
                 [self.context_phase_embedding, self.future_phase_embedding],
                 dim=0,
             ).to(device=device, dtype=dtype)
-            phase_feats = phase_bank[phase_ids].permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1)
-            maps = maps + phase_feats
+            phase_feats = phase_bank[phase_ids].permute(0, 2, 1).unsqueeze(1).unsqueeze(-1).unsqueeze(-1)
+            slot_maps = slot_maps + phase_feats
         temporal = self._build_temporal_features(
-            num_frames=maps.shape[2],
+            num_frames=slot_maps.shape[3],
             device=device,
             dtype=dtype,
         )
-        temporal = temporal.transpose(0, 1).view(1, self.spatial_feature_dim, maps.shape[2], 1, 1)
-        return maps + temporal
+        temporal = temporal.transpose(0, 1).view(1, 1, self.slot_feature_dim, slot_maps.shape[3], 1, 1)
+        return slot_maps + temporal
 
-    def _build_pose_features(
+    def _encode_and_fuse_object_slots(
         self,
-        oracle_pose: torch.Tensor | None,
+        slot_maps: torch.Tensor,
         oracle_visibility: torch.Tensor | None,
-        phase_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        batch, num_objects, _, frames, latent_height, latent_width = slot_maps.shape
+        encoded = self.slot_encoder(
+            slot_maps.reshape(batch * num_objects, self.slot_feature_dim, frames, latent_height, latent_width)
+        )
+        encoded = encoded.view(batch, num_objects, self.vace_in_dim, frames, latent_height, latent_width)
+
+        summary = encoded.mean(dim=(-1, -2)).permute(0, 1, 3, 2).contiguous()
+        logits = self.object_attention(summary).squeeze(-1)
+        if oracle_visibility is not None:
+            if oracle_visibility.dim() == 2:
+                oracle_visibility = oracle_visibility.unsqueeze(0)
+            visibility = oracle_visibility.permute(0, 2, 1).to(device=encoded.device, dtype=encoded.dtype).clamp(0.0, 1.0)
+            logits = logits.masked_fill(visibility <= 0.0, -1e4)
+        attn = torch.softmax(logits, dim=1)
+        fused = (encoded * attn.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)).sum(dim=1)
+        return fused
+
+    def _resize_visibility(
+        self,
+        oracle_visibility: torch.Tensor | None,
+        target_frames: int,
     ) -> torch.Tensor | None:
-        if oracle_pose is None:
-            return None
-        if oracle_pose.dim() == 3:
-            oracle_pose = oracle_pose.unsqueeze(0)
-        if oracle_visibility is not None and oracle_visibility.dim() == 2:
-            oracle_visibility = oracle_visibility.unsqueeze(0)
-
-        device = oracle_pose.device
-        dtype = oracle_pose.dtype
-        pose = oracle_pose
-        if pose.shape[-1] != self.pose_dim:
-            raise RuntimeError(f"Expected pose dim {self.pose_dim}, got {pose.shape[-1]}.")
-
         if oracle_visibility is None:
-            weights = torch.ones(pose.shape[:-1], device=device, dtype=dtype)
-        else:
-            weights = oracle_visibility.to(device=device, dtype=dtype).clamp(0.0, 1.0)
-        weights_sum = weights.sum(dim=2, keepdim=True).clamp(min=1e-6)
-        pooled_pose = (pose * weights.unsqueeze(-1)).sum(dim=2) / weights_sum
-        pose_feats = self.pose_projection(pooled_pose)
-
-        if phase_ids is not None:
-            if phase_ids.dim() == 1:
-                phase_ids = phase_ids.unsqueeze(0)
-            phase_ids = phase_ids.to(device=device, dtype=torch.long)
-            phase_bank = torch.stack(
-                [self.context_phase_embedding, self.future_phase_embedding],
-                dim=0,
-            ).to(device=device, dtype=dtype)
-            pose_feats = pose_feats + phase_bank[phase_ids]
-
-        temporal = self._build_temporal_features(
-            num_frames=pose_feats.shape[1],
-            device=device,
-            dtype=dtype,
-        ).unsqueeze(0)
-        pose_feats = pose_feats + temporal
-        return pose_feats.permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1).contiguous()
+            return None
+        if oracle_visibility.dim() == 2:
+            oracle_visibility = oracle_visibility.unsqueeze(0)
+        if oracle_visibility.shape[1] == int(target_frames):
+            return oracle_visibility
+        visibility = oracle_visibility.permute(0, 2, 1).float()
+        visibility = F.interpolate(
+            visibility,
+            size=int(target_frames),
+            mode="linear",
+            align_corners=False,
+        )
+        return visibility.permute(0, 2, 1).contiguous()
 
     def _prepare_state_sequences(
         self,
@@ -349,8 +367,9 @@ class VaceStateAdapter(torch.nn.Module):
                 context_pose=context_pose,
                 future_pose=oracle_pose,
             )
-            maps = self._build_spatial_state_maps(
+            slot_maps = self._build_object_slot_maps(
                 oracle_state=full_state,
+                oracle_pose=full_pose,
                 latent_height=latent_height,
                 latent_width=latent_width,
                 frame_height=frame_height,
@@ -358,22 +377,33 @@ class VaceStateAdapter(torch.nn.Module):
                 oracle_visibility=full_visibility,
                 phase_ids=phase_ids,
             )
-            pose_feats = self._build_pose_features(
-                oracle_pose=full_pose,
-                oracle_visibility=full_visibility,
-                phase_ids=phase_ids,
-            )
-            if pose_feats is not None:
-                maps = maps + pose_feats
-            if maps.shape[2] != int(total_latent_frames):
-                maps = F.interpolate(
-                    maps,
+            if slot_maps.shape[3] != int(total_latent_frames):
+                slot_maps = F.interpolate(
+                    slot_maps.reshape(
+                        slot_maps.shape[0] * slot_maps.shape[1],
+                        slot_maps.shape[2],
+                        slot_maps.shape[3],
+                        slot_maps.shape[4],
+                        slot_maps.shape[5],
+                    ),
                     size=(int(total_latent_frames), latent_height, latent_width),
                     mode="trilinear",
                     align_corners=False,
                 )
-            maps = self._maybe_dropout(maps)
-            return self.spatial_encoder(maps)
+                slot_maps = slot_maps.view(
+                    full_state.shape[0],
+                    full_state.shape[2],
+                    self.slot_feature_dim,
+                    int(total_latent_frames),
+                    latent_height,
+                    latent_width,
+                )
+            fused_visibility = self._resize_visibility(full_visibility, int(total_latent_frames))
+            slot_maps = self._maybe_dropout(slot_maps)
+            return self._encode_and_fuse_object_slots(
+                slot_maps=slot_maps,
+                oracle_visibility=fused_visibility,
+            )
 
         future_frames = max(int(total_latent_frames) - int(clean_prefix_len), 0)
         if future_frames <= 0:
@@ -382,30 +412,42 @@ class VaceStateAdapter(torch.nn.Module):
                 (batch, self.vace_in_dim, total_latent_frames, latent_height, latent_width)
             )
 
-        maps = self._build_spatial_state_maps(
+        slot_maps = self._build_object_slot_maps(
             oracle_state=oracle_state,
+            oracle_pose=oracle_pose,
             latent_height=latent_height,
             latent_width=latent_width,
             frame_height=frame_height,
             frame_width=frame_width,
             oracle_visibility=oracle_visibility,
         )
-        pose_feats = self._build_pose_features(
-            oracle_pose=oracle_pose,
-            oracle_visibility=oracle_visibility,
-            phase_ids=None,
-        )
-        if pose_feats is not None:
-            maps = maps + pose_feats
-        if maps.shape[2] != future_frames:
-            maps = F.interpolate(
-                maps,
+        if slot_maps.shape[3] != future_frames:
+            slot_maps = F.interpolate(
+                slot_maps.reshape(
+                    slot_maps.shape[0] * slot_maps.shape[1],
+                    slot_maps.shape[2],
+                    slot_maps.shape[3],
+                    slot_maps.shape[4],
+                    slot_maps.shape[5],
+                ),
                 size=(future_frames, latent_height, latent_width),
                 mode="trilinear",
                 align_corners=False,
             )
-        maps = self._maybe_dropout(maps)
-        future_context = self.spatial_encoder(maps)
+            slot_maps = slot_maps.view(
+                oracle_state.shape[0],
+                oracle_state.shape[2],
+                self.slot_feature_dim,
+                future_frames,
+                latent_height,
+                latent_width,
+            )
+        fused_visibility = self._resize_visibility(oracle_visibility, future_frames)
+        slot_maps = self._maybe_dropout(slot_maps)
+        future_context = self._encode_and_fuse_object_slots(
+            slot_maps=slot_maps,
+            oracle_visibility=fused_visibility,
+        )
 
         if clean_prefix_len > 0:
             prefix = future_context.new_zeros(

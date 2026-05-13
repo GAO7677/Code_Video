@@ -24,9 +24,9 @@ PROXY_ENV_KEYS = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS
 SCENE = {
     "name": "mm_craftroom_1a",
     "skybox": "kiara_1_dawn_4k",
-    "camera_position": {"x": -0.82, "y": 1.94, "z": -2.16},
-    "look_at": {"x": 0.02, "y": 0.9, "z": 0.0},
-    "field_of_view": 72,
+    "camera_position": {"x": -1.34, "y": 2.28, "z": -2.92},
+    "look_at": {"x": 0.02, "y": 1.02, "z": 0.0},
+    "field_of_view": 68,
 }
 
 CASES: List[Dict[str, object]] = [
@@ -35,22 +35,16 @@ CASES: List[Dict[str, object]] = [
         "supports": [
             {
                 "model_name": "camera_box",
-                "position": {"x": -0.28, "y": 0.0, "z": 0.02},
-                "rotation": {"x": 0.0, "y": 10.0, "z": 0.0},
-                "mass": 18.0,
-            },
-            {
-                "model_name": "camera_box",
-                "position": {"x": 0.28, "y": 0.0, "z": -0.02},
-                "rotation": {"x": 0.0, "y": -8.0, "z": 0.0},
-                "mass": 18.0,
+                "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "rotation": {"x": 0.0, "y": 12.0, "z": 0.0},
+                "mass": 24.0,
             },
         ],
         "cloth": {
             "cloth_material": "cotton",
             "sheet_type": SheetType.cloth_hd,
-            "position": {"x": 0.0, "y": 2.2, "z": 0.0},
-            "rotation": {"x": 16.0, "y": 0.0, "z": 0.0},
+            "position": {"x": 0.0, "y": 1.94, "z": 0.0},
+            "rotation": {"x": 10.0, "y": 0.0, "z": 0.0},
         },
         "striker": {
             "model_name": "102_pepsi_can_12_fl_oz_vray",
@@ -71,22 +65,16 @@ CASES: List[Dict[str, object]] = [
         "supports": [
             {
                 "model_name": "camera_box",
-                "position": {"x": -0.3, "y": 0.0, "z": -0.02},
-                "rotation": {"x": 0.0, "y": 12.0, "z": 0.0},
-                "mass": 18.0,
-            },
-            {
-                "model_name": "camera_box",
-                "position": {"x": 0.3, "y": 0.0, "z": 0.04},
+                "position": {"x": 0.04, "y": 0.0, "z": 0.02},
                 "rotation": {"x": 0.0, "y": -10.0, "z": 0.0},
-                "mass": 18.0,
+                "mass": 24.0,
             },
         ],
         "cloth": {
             "cloth_material": "canvas",
             "sheet_type": SheetType.cloth_hd,
-            "position": {"x": 0.02, "y": 2.18, "z": 0.02},
-            "rotation": {"x": 18.0, "y": 0.0, "z": 8.0},
+            "position": {"x": 0.02, "y": 1.92, "z": 0.02},
+            "rotation": {"x": 12.0, "y": 0.0, "z": 4.0},
         },
         "striker": {
             "model_name": "camera_box",
@@ -151,8 +139,13 @@ def add_static_support(c: Controller, spec: Dict[str, object], object_id: int) -
                                     library="models_core.json",
                                     position=spec["position"],
                                     rotation=spec["rotation"],
-                                    kinematic=True,
-                                    gravity=False)
+                                    default_physics_values=False,
+                                    mass=float(spec.get("mass", 24.0)),
+                                    dynamic_friction=float(spec.get("dynamic_friction", 0.88)),
+                                    static_friction=float(spec.get("static_friction", 0.92)),
+                                    bounciness=float(spec.get("bounciness", 0.01)),
+                                    kinematic=False,
+                                    gravity=True)
 
 
 def build_html() -> None:
@@ -242,6 +235,12 @@ def run_case(case: Dict[str, object]) -> None:
         for support in case["supports"]:
             support_id = c.get_unique_id()
             commands.extend(add_static_support(c, support, support_id))
+
+        print(f"[{case['name']}] initial communicate", flush=True)
+        c.communicate(commands)
+        # Let Obi create colliders for the floor/supports before adding cloth.
+        c.communicate([])
+
         cloth_id = c.get_unique_id()
         cloth = case["cloth"]
         obi.create_cloth_sheet(cloth_material=str(cloth["cloth_material"]),
@@ -249,13 +248,13 @@ def run_case(case: Dict[str, object]) -> None:
                                sheet_type=cloth["sheet_type"],
                                position=cloth["position"],
                                rotation=cloth["rotation"])
+        print(f"[{case['name']}] create cloth", flush=True)
+        c.communicate([])
 
-        print(f"[{case['name']}] initial communicate", flush=True)
         capture.frame = 0
         capture.set(frequency="always", avatar_ids=["a"], pass_masks=["_img"], save=True)
         total_capture_frames = int(case["capture_frames"])
         print(f"[{case['name']}] capture frames={total_capture_frames}", flush=True)
-        c.communicate(commands)
         settle_frames = int(case["settle_frames"])
         for frame_idx in range(total_capture_frames):
             if frame_idx == settle_frames:
