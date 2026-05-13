@@ -48,6 +48,8 @@ class VaceStateAdapter(torch.nn.Module):
             torch.nn.SiLU(),
             torch.nn.Linear(self.hidden_dim, self.spatial_feature_dim),
         )
+        self.context_phase_embedding = torch.nn.Parameter(torch.zeros(self.spatial_feature_dim))
+        self.future_phase_embedding = torch.nn.Parameter(torch.zeros(self.spatial_feature_dim))
         torch.nn.init.zeros_(self.spatial_encoder[-1].weight)
         torch.nn.init.zeros_(self.spatial_encoder[-1].bias)
 
@@ -117,6 +119,7 @@ class VaceStateAdapter(torch.nn.Module):
         frame_height: int,
         frame_width: int,
         oracle_visibility: torch.Tensor | None = None,
+        phase_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if oracle_state.dim() == 3:
             oracle_state = oracle_state.unsqueeze(0)
@@ -187,6 +190,16 @@ class VaceStateAdapter(torch.nn.Module):
                 f"Expected {self.spatial_feature_dim} spatial channels, got {maps.shape[3]}."
             )
         maps = maps.permute(0, 2, 1, 3, 4).contiguous()
+        if phase_ids is not None:
+            if phase_ids.dim() == 1:
+                phase_ids = phase_ids.unsqueeze(0)
+            phase_ids = phase_ids.to(device=device, dtype=torch.long)
+            phase_bank = torch.stack(
+                [self.context_phase_embedding, self.future_phase_embedding],
+                dim=0,
+            ).to(device=device, dtype=dtype)
+            phase_feats = phase_bank[phase_ids].permute(0, 2, 1).unsqueeze(-1).unsqueeze(-1)
+            maps = maps + phase_feats
         temporal = self._build_temporal_features(
             num_frames=maps.shape[2],
             device=device,
@@ -194,6 +207,52 @@ class VaceStateAdapter(torch.nn.Module):
         )
         temporal = temporal.transpose(0, 1).view(1, self.spatial_feature_dim, maps.shape[2], 1, 1)
         return maps + temporal
+
+    def _prepare_state_sequences(
+        self,
+        context_state: torch.Tensor | None,
+        future_state: torch.Tensor | None,
+        context_visibility: torch.Tensor | None,
+        future_visibility: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+        if future_state is None:
+            raise ValueError("future_state must not be None when preparing state sequences.")
+
+        if future_state.dim() == 3:
+            future_state = future_state.unsqueeze(0)
+        if context_state is not None and context_state.dim() == 3:
+            context_state = context_state.unsqueeze(0)
+        if future_visibility is not None and future_visibility.dim() == 2:
+            future_visibility = future_visibility.unsqueeze(0)
+        if context_visibility is not None and context_visibility.dim() == 2:
+            context_visibility = context_visibility.unsqueeze(0)
+
+        state_chunks = []
+        visibility_chunks = []
+        phase_chunks = []
+
+        if context_state is not None and context_state.shape[1] > 0:
+            state_chunks.append(context_state)
+            phase_chunks.append(torch.zeros(context_state.shape[:2], device=context_state.device, dtype=torch.long))
+            if context_visibility is not None:
+                visibility_chunks.append(context_visibility)
+            elif future_visibility is not None:
+                visibility_chunks.append(context_state[..., 8].clamp(0.0, 1.0))
+
+        if future_state.shape[1] > 0:
+            state_chunks.append(future_state)
+            phase_chunks.append(torch.ones(future_state.shape[:2], device=future_state.device, dtype=torch.long))
+            if future_visibility is not None:
+                visibility_chunks.append(future_visibility)
+            elif context_visibility is not None:
+                visibility_chunks.append(future_state[..., 8].clamp(0.0, 1.0))
+
+        full_state = torch.cat(state_chunks, dim=1)
+        phase_ids = torch.cat(phase_chunks, dim=1)
+        full_visibility = None
+        if len(visibility_chunks) == len(state_chunks) and visibility_chunks:
+            full_visibility = torch.cat(visibility_chunks, dim=1)
+        return full_state, full_visibility, phase_ids
 
     def build_vace_context(
         self,
@@ -205,11 +264,39 @@ class VaceStateAdapter(torch.nn.Module):
         frame_height: int,
         frame_width: int,
         oracle_visibility: torch.Tensor | None = None,
+        context_state: torch.Tensor | None = None,
+        context_visibility: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if oracle_state.dim() == 3:
             oracle_state = oracle_state.unsqueeze(0)
         if total_latent_frames <= 0:
             raise ValueError(f"total_latent_frames must be positive, got {total_latent_frames}.")
+
+        if context_state is not None:
+            full_state, full_visibility, phase_ids = self._prepare_state_sequences(
+                context_state=context_state,
+                future_state=oracle_state,
+                context_visibility=context_visibility,
+                future_visibility=oracle_visibility,
+            )
+            maps = self._build_spatial_state_maps(
+                oracle_state=full_state,
+                latent_height=latent_height,
+                latent_width=latent_width,
+                frame_height=frame_height,
+                frame_width=frame_width,
+                oracle_visibility=full_visibility,
+                phase_ids=phase_ids,
+            )
+            if maps.shape[2] != int(total_latent_frames):
+                maps = F.interpolate(
+                    maps,
+                    size=(int(total_latent_frames), latent_height, latent_width),
+                    mode="trilinear",
+                    align_corners=False,
+                )
+            maps = self._maybe_dropout(maps)
+            return self.spatial_encoder(maps)
 
         future_frames = max(int(total_latent_frames) - int(clean_prefix_len), 0)
         if future_frames <= 0:

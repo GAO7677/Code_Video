@@ -305,6 +305,197 @@ CASES: List[Dict[str, Any]] = [
         },
     },
     {
+        "kind": "rigid_pair",
+        "case_name": "rigid_pair_can_hits_cardboard_box",
+        "scene_key": "building_site",
+        "primary_name": "102_pepsi_can_12_fl_oz_vray",
+        "scene_label": "rigid_pair",
+        "frames": 132,
+        "warmup": 8,
+        "object_count_bucket": "count_2",
+        "target_object": {
+            "model_name": "box_18inx18inx12in_cardboard",
+            "position": {"x": 0.18, "y": 0.48, "z": 0.02},
+            "rotation": {"x": 0.0, "y": 14.0, "z": 0.0},
+            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "mass": 11.0,
+            "dynamic_friction": 0.72,
+            "static_friction": 0.78,
+            "bounciness": 0.02,
+        },
+        "incoming_object": {
+            "model_name": "102_pepsi_can_12_fl_oz_vray",
+            "position": {"x": -1.38, "y": 0.78, "z": -0.08},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 84.0},
+            "velocity": {"x": 1.72, "y": 0.12, "z": 0.16},
+            "angular_velocity": {"x": 1.15, "y": 0.1, "z": 0.56},
+            "mass": 0.45,
+            "dynamic_friction": 0.4,
+            "static_friction": 0.45,
+            "bounciness": 0.08,
+        },
+    },
+    {
+        "kind": "rigid_pair",
+        "case_name": "rigid_pair_toaster_hits_wicker_basket",
+        "scene_key": "suburb_scene_2023",
+        "primary_name": "toaster_002",
+        "scene_label": "rigid_pair",
+        "frames": 136,
+        "warmup": 8,
+        "object_count_bucket": "count_2",
+        "camera_override": {
+            "camera_position": {"x": -2.62, "y": 1.58, "z": 0.86},
+            "look_at": {"x": 0.08, "y": 0.74, "z": 0.0},
+            "field_of_view": 69,
+        },
+        "target_object": {
+            "model_name": "basket_18inx18inx12iin_wicker",
+            "position": {"x": 0.0, "y": 0.22, "z": 0.0},
+            "rotation": {"x": 0.0, "y": -12.0, "z": 0.0},
+            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "mass": 7.5,
+            "dynamic_friction": 0.82,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
+        },
+        "incoming_object": {
+            "model_name": "toaster_002",
+            "position": {"x": 1.24, "y": 0.82, "z": 0.2},
+            "rotation": {"x": 0.0, "y": -28.0, "z": 0.0},
+            "velocity": {"x": -1.42, "y": 0.14, "z": -0.08},
+            "angular_velocity": {"x": 0.18, "y": 0.16, "z": 0.28},
+            "mass": 3.1,
+            "dynamic_friction": 0.52,
+            "static_friction": 0.58,
+            "bounciness": 0.04,
+        },
+    },
+    {
+        "kind": "rigid_pair",
+        "case_name": "rigid_pair_backpack_hits_camera_box",
+        "scene_key": "mm_craftroom_1a",
+        "primary_name": "hiker_backpack",
+        "scene_label": "rigid_pair",
+        "frames": 132,
+        "warmup": 8,
+        "object_count_bucket": "count_2",
+        "camera_override": {
+            "camera_position": {"x": -0.94, "y": 1.9, "z": -2.16},
+            "look_at": {"x": 0.08, "y": 0.66, "z": 0.02},
+            "field_of_view": 73,
+        },
+        "target_object": {
+            "model_name": "camera_box",
+            "position": {"x": 0.16, "y": 0.16, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 10.0, "z": 0.0},
+            "velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular_velocity": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "mass": 8.0,
+            "dynamic_friction": 0.7,
+            "static_friction": 0.78,
+            "bounciness": 0.03,
+        },
+        "incoming_object": {
+            "model_name": "hiker_backpack",
+            "position": {"x": -1.02, "y": 0.96, "z": -0.62},
+            "rotation": {"x": 0.0, "y": 22.0, "z": 0.0},
+            "velocity": {"x": 1.02, "y": 0.4, "z": 0.9},
+            "angular_velocity": {"x": 0.38, "y": 0.34, "z": 0.68},
+            "mass": 1.8,
+            "dynamic_friction": 0.6,
+            "static_friction": 0.66,
+            "bounciness": 0.03,
+        },
+    },
+    {
+        "kind": "soft_volume_impact",
+        "case_name": "soft_volume_impact_can_hits_canvas_ball",
+        "scene_key": "building_site",
+        "primary_name": "soft_volume",
+        "scene_label": "soft_volume_impact",
+        "frames": 148,
+        "warmup": 10,
+        "object_count_bucket": "count_3",
+        "support": {
+            "model_name": "camera_box",
+            "library": "models_core.json",
+            "position": {"x": 0.18, "y": 0.0, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 20.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 18.0,
+            "dynamic_friction": 0.85,
+            "static_friction": 0.9,
+            "bounciness": 0.02,
+        },
+        "volume": {
+            "cloth_material": "canvas",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": -0.08, "y": 1.34, "z": 0.06},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.4, "y": 0.4, "z": 0.4},
+            "pressure": 2.8,
+        },
+        "incoming_object": {
+            "model_name": "102_pepsi_can_12_fl_oz_vray",
+            "position": {"x": -1.18, "y": 0.92, "z": -0.08},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 84.0},
+            "velocity": {"x": 1.6, "y": 0.08, "z": 0.14},
+            "angular_velocity": {"x": 1.1, "y": 0.08, "z": 0.48},
+            "mass": 0.45,
+            "dynamic_friction": 0.4,
+            "static_friction": 0.45,
+            "bounciness": 0.08,
+        },
+    },
+    {
+        "kind": "soft_volume_impact",
+        "case_name": "soft_volume_impact_toaster_hits_canvas_ball",
+        "scene_key": "suburb_scene_2023",
+        "primary_name": "soft_volume",
+        "scene_label": "soft_volume_impact",
+        "frames": 152,
+        "warmup": 10,
+        "object_count_bucket": "count_3",
+        "camera_override": {
+            "camera_position": {"x": -2.55, "y": 1.58, "z": 0.82},
+            "look_at": {"x": 0.1, "y": 0.8, "z": 0.02},
+            "field_of_view": 68,
+        },
+        "support": {
+            "model_name": "shoebox_fused",
+            "library": "models_core.json",
+            "position": {"x": 0.12, "y": 0.0, "z": -0.04},
+            "rotation": {"x": 0.0, "y": -12.0, "z": 0.0},
+            "scale_factor": {"x": 1.0, "y": 1.0, "z": 1.0},
+            "mass": 12.0,
+            "dynamic_friction": 0.88,
+            "static_friction": 0.92,
+            "bounciness": 0.02,
+        },
+        "volume": {
+            "cloth_material": "canvas",
+            "volume_type": ClothVolumeType.sphere,
+            "position": {"x": 0.0, "y": 1.32, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scale_factor": {"x": 0.44, "y": 0.44, "z": 0.44},
+            "pressure": 2.4,
+        },
+        "incoming_object": {
+            "model_name": "toaster_002",
+            "position": {"x": 1.28, "y": 0.88, "z": 0.22},
+            "rotation": {"x": 0.0, "y": -24.0, "z": 0.0},
+            "velocity": {"x": -1.34, "y": 0.06, "z": -0.12},
+            "angular_velocity": {"x": 0.16, "y": 0.14, "z": 0.22},
+            "mass": 3.1,
+            "dynamic_friction": 0.52,
+            "static_friction": 0.58,
+            "bounciness": 0.04,
+        },
+    },
+    {
         "kind": "cloth",
         "case_name": "cloth_drop_ground",
         "scene_key": "suburb_scene_2023",
@@ -1125,17 +1316,35 @@ def get_support_commands(c: Controller, support: Dict[str, Any], object_id: int)
                                     bounciness=float(support.get("bounciness", 0.02)))
 
 
-def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]]]:
+def get_rigid_object_commands(c: Controller, spec: Dict[str, Any], object_id: int) -> List[dict]:
+    kwargs: Dict[str, Any] = {
+        "model_name": str(spec["model_name"]),
+        "object_id": object_id,
+        "position": spec["position"],
+        "rotation": spec["rotation"],
+    }
+    if "library" in spec:
+        kwargs["library"] = str(spec["library"])
+    if "scale_factor" in spec:
+        kwargs["scale_factor"] = spec["scale_factor"]
+    if any(key in spec for key in ("mass", "dynamic_friction", "static_friction", "bounciness")):
+        kwargs["default_physics_values"] = False
+        kwargs["mass"] = float(spec.get("mass", 1.0))
+        kwargs["dynamic_friction"] = float(spec.get("dynamic_friction", 0.6))
+        kwargs["static_friction"] = float(spec.get("static_friction", 0.7))
+        kwargs["bounciness"] = float(spec.get("bounciness", 0.02))
+    return c.get_add_physics_object(**kwargs)
+
+
+def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict]]:
     commands: List[dict] = []
     track_specs: List[Dict[str, Any]] = []
+    post_warmup_commands: List[dict] = []
     next_seg_id = 1
     if case["kind"] == "rigid":
         object_id = c.get_unique_id()
         obj = case["object"]
-        commands.extend(c.get_add_physics_object(model_name=str(obj["model_name"]),
-                                                 object_id=object_id,
-                                                 position=obj["position"],
-                                                 rotation=obj["rotation"]))
+        commands.extend(get_rigid_object_commands(c, obj, object_id))
         commands.extend([{"$type": "set_velocity", "id": object_id, "velocity": obj["velocity"]},
                          {"$type": "set_angular_velocity", "id": object_id, "angular_velocity": obj["angular_velocity"]}])
         track_specs.append({
@@ -1150,6 +1359,43 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
             "source_tag": "tdw_builtin",
             "kind": case["kind"],
         })
+    elif case["kind"] == "rigid_pair":
+        target_id = c.get_unique_id()
+        striker_id = c.get_unique_id()
+        target = case["target_object"]
+        striker = case["incoming_object"]
+        commands.extend(get_rigid_object_commands(c, target, target_id))
+        commands.extend(get_rigid_object_commands(c, striker, striker_id))
+        commands.extend([{"$type": "set_velocity", "id": target_id, "velocity": target.get("velocity", {"x": 0.0, "y": 0.0, "z": 0.0})},
+                         {"$type": "set_angular_velocity", "id": target_id, "angular_velocity": target.get("angular_velocity", {"x": 0.0, "y": 0.0, "z": 0.0})},
+                         {"$type": "set_velocity", "id": striker_id, "velocity": striker["velocity"]},
+                         {"$type": "set_angular_velocity", "id": striker_id, "angular_velocity": striker["angular_velocity"]}])
+        track_specs.extend([
+            {
+                "object_id": target_id,
+                "name": str(target["model_name"]),
+                "seg_id": next_seg_id,
+                "track_type": "rigid",
+                "entity_type": "rigid_body",
+                "role": "target",
+                "motion_type": "rigid_target",
+                "motion_group": "rigid_pair",
+                "source_tag": "tdw_builtin",
+                "kind": case["kind"],
+            },
+            {
+                "object_id": striker_id,
+                "name": str(striker["model_name"]),
+                "seg_id": next_seg_id + 1,
+                "track_type": "rigid",
+                "entity_type": "rigid_body",
+                "role": "striker",
+                "motion_type": "rigid_striker",
+                "motion_group": "rigid_pair",
+                "source_tag": "tdw_builtin",
+                "kind": case["kind"],
+            },
+        ])
     elif case["kind"] == "cloth":
         assert obi is not None
         cloth_id = c.get_unique_id()
@@ -1193,6 +1439,31 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
             {"object_id": volume_id, "name": "soft_volume", "seg_id": 1, "track_type": "obi", "entity_type": "soft_volume", "role": "dynamic", "motion_type": "soft_volume", "motion_group": "soft_volume", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
             {"object_id": support_id, "name": "box_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "dynamic", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
         ])
+    elif case["kind"] == "soft_volume_impact":
+        assert obi is not None
+        volume_id = c.get_unique_id()
+        support_id = c.get_unique_id()
+        striker_id = c.get_unique_id()
+        obi.set_solver(substeps=4)
+        obi.create_cloth_volume(cloth_material=str(case["volume"]["cloth_material"]),
+                                object_id=volume_id,
+                                volume_type=case["volume"]["volume_type"],
+                                position=case["volume"]["position"],
+                                rotation=case["volume"]["rotation"],
+                                scale_factor=case["volume"]["scale_factor"],
+                                pressure=float(case["volume"]["pressure"]))
+        commands.extend(get_support_commands(c, case["support"], support_id))
+        incoming = case["incoming_object"]
+        post_warmup_commands.extend(get_rigid_object_commands(c, incoming, striker_id))
+        post_warmup_commands.extend([
+            {"$type": "set_velocity", "id": striker_id, "velocity": incoming["velocity"]},
+            {"$type": "set_angular_velocity", "id": striker_id, "angular_velocity": incoming["angular_velocity"]},
+        ])
+        track_specs.extend([
+            {"object_id": volume_id, "name": "soft_volume", "seg_id": 1, "track_type": "obi", "entity_type": "soft_volume", "role": "target_soft", "motion_type": "soft_volume_target", "motion_group": "soft_impact", "source_tag": "tdw_obi", "kind": case["kind"], "mass": 1.0},
+            {"object_id": support_id, "name": "soft_support", "seg_id": 2, "track_type": "rigid", "entity_type": "support", "role": "support", "motion_type": "dynamic_support", "motion_group": "support", "source_tag": "tdw_builtin", "kind": case["kind"]},
+            {"object_id": striker_id, "name": str(incoming["model_name"]), "seg_id": 3, "track_type": "rigid", "entity_type": "rigid_body", "role": "striker", "motion_type": "rigid_striker", "motion_group": "soft_impact", "source_tag": "tdw_builtin", "kind": case["kind"]},
+        ])
     elif case["kind"] in {"granular", "liquid"}:
         assert obi is not None
         fluid_id = c.get_unique_id()
@@ -1213,7 +1484,7 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
         ])
     else:
         raise ValueError(f"Unsupported kind: {case['kind']}")
-    return commands, track_specs
+    return commands, track_specs, post_warmup_commands
 
 
 def record_case(case: Dict[str, Any]) -> Path:
@@ -1222,7 +1493,7 @@ def record_case(case: Dict[str, Any]) -> Path:
     if "camera_override" in case:
         scene_cfg = {**scene_cfg, **case["camera_override"]}
     scene_composition = str(scene_cfg["name"])
-    object_count_bucket = f"count_{1 if case['kind'] == 'rigid' else 2}"
+    object_count_bucket = str(case.get("object_count_bucket", f"count_{1 if case['kind'] == 'rigid' else 2}"))
     sample_name = f"{case['primary_name']}__{case['case_name']}"
     case_dir = OUTPUT_ROOT / "train" / "rigid" / scene_composition / object_count_bucket / sample_name
     existing_meta = case_dir / "meta.json"
@@ -1268,13 +1539,16 @@ def record_case(case: Dict[str, Any]) -> Path:
                     Controller.get_add_scene(scene_name=scene_cfg["name"]),
                     Controller.get_add_hdri_skybox(skybox_name=scene_cfg["skybox"])]
 
-        setup_commands, track_specs = setup_case(case, c, obi)
+        setup_commands, track_specs, post_warmup_commands = setup_case(case, c, obi)
         commands.extend(setup_commands)
         print(f"[{sample_name}] initial communicate scene={scene_cfg['name']} kind={case['kind']}", flush=True)
         c.communicate(commands)
         print(f"[{sample_name}] warmup frames={int(case.get('warmup', 0))}", flush=True)
         for _ in range(int(case.get("warmup", 0))):
             c.communicate([])
+        if post_warmup_commands:
+            print(f"[{sample_name}] inject post-warmup objects={len(post_warmup_commands)}", flush=True)
+            c.communicate(post_warmup_commands)
 
         camera_cfg = get_camera_cfg_zup(scene_cfg)
         cam_intrinsics = camera_intrinsics_dict(camera_cfg)

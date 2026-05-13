@@ -348,6 +348,10 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
         with np.load(window_dir / "state_pair.npz") as payload:
             state_key = "y_state_norm" if self.use_normalized_state else "y_state_raw"
             future_state = torch.from_numpy(np.asarray(payload[state_key]).copy()).float()
+            context_state_key = "x_state_norm" if self.use_normalized_state else "x_state_raw"
+            context_state = torch.from_numpy(np.asarray(payload[context_state_key]).copy()).float()
+            future_visibility = torch.from_numpy(np.asarray(payload["y_visibility"]).copy()).float() if "y_visibility" in payload else None
+            context_visibility = torch.from_numpy(np.asarray(payload["x_visibility"]).copy()).float() if "x_visibility" in payload else None
 
         context_paths = meta["x_frame_paths"]
         future_paths = meta["y_frame_paths"]
@@ -359,7 +363,10 @@ class OracleStateWindowDataset(torch.utils.data.Dataset):
             "video": video,
             "prompt": load_prompt(meta),
             "context_video": context_video,
+            "context_state": context_state,
             "oracle_state": future_state,
+            "context_visibility": context_visibility,
+            "oracle_visibility": future_visibility,
             "future_len": int(meta["future_len"]),
             "context_len": int(meta["context_len"]),
             "window_dir": str(window_dir),
