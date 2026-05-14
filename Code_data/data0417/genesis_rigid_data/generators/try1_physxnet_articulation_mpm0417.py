@@ -8434,11 +8434,19 @@ def simulate_in_genesis(
     max_auto_scale_up_mult = max(1.0, float(getattr(args, "max_auto_scale_up_mult", 2.5) or 2.5))
     label_l = str(scene_label).strip().lower()
     multi_object_scene_scaling = _is_multi_free_motion_scene(scene_label) and (1 + len(custom_object_cfgs) >= 3)
+    scene_target_rendered_bbox_area_px = 5000.0 if multi_object_scene_scaling else min_projected_bbox_area_px
+    scene_projected_area_safety = 0.55 if multi_object_scene_scaling else 1.0
+    multi_scene_target_fill = 0.80 if multi_object_scene_scaling else 0.78
     scene_min_projected_bbox_area_target_px = float(
-        max(min_projected_bbox_area_px, 3600.0 if multi_object_scene_scaling else min_projected_bbox_area_px)
+        max(
+            min_projected_bbox_area_px,
+            scene_target_rendered_bbox_area_px / max(scene_projected_area_safety, 1e-6),
+        )
     )
-    scene_scale_cap_mult = float(max(max_auto_scale_up_mult, 4.6 if multi_object_scene_scaling else max_auto_scale_up_mult))
+    scene_scale_cap_mult = float(max(max_auto_scale_up_mult, 7.7 if multi_object_scene_scaling else max_auto_scale_up_mult))
     auto_visibility_scale_info["scene_scale_cap_mult"] = float(scene_scale_cap_mult)
+    auto_visibility_scale_info["scene_projected_area_safety"] = float(scene_projected_area_safety)
+    auto_visibility_scale_info["scene_target_rendered_bbox_area_px"] = float(scene_target_rendered_bbox_area_px)
     auto_visibility_scale_info["scene_min_projected_bbox_area_target_px"] = float(scene_min_projected_bbox_area_target_px)
     if (
         min_projected_bbox_area_px > 1.0
@@ -8478,7 +8486,7 @@ def simulate_in_genesis(
                     image_res=tuple(EXPORT_CAMERA_RESOLUTION),
                     camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
                     vertical_fov_deg=40.0,
-                    target_fill=0.78,
+                    target_fill=multi_scene_target_fill,
                 )
                 camera_cfg_est["lookat"] = np.asarray(camera_cfg_est["lookat"], dtype=np.float64).reshape(3)
                 camera_cfg_est["lookat"][2] = float(
@@ -9747,7 +9755,7 @@ def simulate_in_genesis(
             image_res=tuple(EXPORT_CAMERA_RESOLUTION),
             camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
             vertical_fov_deg=40.0,
-            target_fill=0.78,
+            target_fill=0.80,
         )
         cam_pos = np.asarray(fitted_cfg["pos"], dtype=np.float64).reshape(3)
         lookat = np.asarray(fitted_cfg["lookat"], dtype=np.float64).reshape(3)
