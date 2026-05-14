@@ -16,6 +16,8 @@ GPU_19925_ENV="${GPU_19925_ENV:-3}"
 GPU_19925_MULTI="${GPU_19925_MULTI:-4}"
 GPU_10037="${GPU_10037:-5}"
 GPU_5050="${GPU_5050:-6}"
+VIDEO_SLOWMO_PROB="${VIDEO_SLOWMO_PROB:-0.35}"
+VIDEO_SLOWMO_FACTORS=(${VIDEO_SLOWMO_FACTORS:-1.15 1.30})
 
 mkdir -p "${FINAL_ROOT}" "${SHARD_ROOT}" "${LOG_ROOT}"
 : > "${LOG_ROOT}/done_tasks.txt"
@@ -71,6 +73,8 @@ run_one() {
       --substeps 40 \
       --steps 49 \
       --fps 12 \
+      --video_slowmo_prob "${VIDEO_SLOWMO_PROB}" \
+      --video_slowmo_factors "${VIDEO_SLOWMO_FACTORS[@]}" \
       --simulator_mode rigid \
       >> "${worker_log}" 2>&1; then
     if sample_dir_exists "${output_root}" "${object_id}" "${case_name}" "${rs}"; then

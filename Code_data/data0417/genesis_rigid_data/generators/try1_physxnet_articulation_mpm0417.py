@@ -367,6 +367,57 @@ def stable_int_from_text(text: Any) -> int:
     return int(acc)
 
 
+def resolve_video_playback_cfg(
+    args: argparse.Namespace,
+    *,
+    case_seed: int,
+    case_name: str,
+    object_id: str,
+    simple_case_resample_index: int,
+    base_fps: float,
+) -> Dict[str, Any]:
+    prob = float(np.clip(float(getattr(args, "video_slowmo_prob", 0.0) or 0.0), 0.0, 1.0))
+    raw_factors = list(getattr(args, "video_slowmo_factors", [1.15, 1.30]) or [1.15, 1.30])
+    parsed_factors: List[float] = []
+    for value in raw_factors:
+        try:
+            factor = float(value)
+        except Exception:
+            continue
+        if not math.isfinite(factor):
+            continue
+        parsed_factors.append(float(max(1.0, factor)))
+    parsed_factors = sorted({round(v, 4) for v in parsed_factors})
+    if not parsed_factors:
+        parsed_factors = [1.0]
+    eligible_slowmo_factors = [float(v) for v in parsed_factors if v > 1.0 + 1e-6]
+
+    rng_seed = (
+        int(case_seed)
+        + stable_int_from_text(case_name)
+        + stable_int_from_text(object_id)
+        + int(simple_case_resample_index) * 104729
+        + 77021
+    )
+    rng = random.Random(int(rng_seed))
+    slowdown_factor = 1.0
+    applied = False
+    if prob > 1e-8 and eligible_slowmo_factors and rng.random() < prob:
+        slowdown_factor = float(rng.choice(eligible_slowmo_factors))
+        applied = slowdown_factor > 1.0 + 1e-6
+
+    effective_fps = float(max(1.0, float(base_fps) / max(slowdown_factor, 1e-6)))
+    return {
+        "enabled": bool(applied),
+        "slowdown_factor": float(slowdown_factor),
+        "base_video_fps": float(base_fps),
+        "effective_video_fps": float(effective_fps),
+        "probability": float(prob),
+        "candidate_factors": [float(v) for v in parsed_factors],
+        "mode": "fps_downscale_playback",
+    }
+
+
 def parse_density_to_kgm3(value: Any, default: Optional[float] = None) -> Optional[float]:
     if value is None:
         return default
@@ -8493,6 +8544,15 @@ def simulate_in_genesis(
     case_seed_for_runtime = int(runtime_case_cfg.get("seed", 20260414))
     counterfactual_meta = dict(runtime_case_cfg.get("counterfactual", {}) or {})
     simple_case_resample_index = int(getattr(args, "simple_case_resample_index", 0) or 0)
+    video_playback_cfg = resolve_video_playback_cfg(
+        args,
+        case_seed=case_seed_for_runtime,
+        case_name=case_name,
+        object_id=str(prepared.object_id),
+        simple_case_resample_index=simple_case_resample_index,
+        base_fps=float(fps),
+    )
+    render_video_fps = float(video_playback_cfg["effective_video_fps"])
     placed_pos = placed_pos + np.asarray(runtime_case_cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
     object_euler_deg = np.asarray(runtime_case_cfg.get("object_euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
     runtime_object_fixed = bool(runtime_case_cfg.get("object_fixed", object_fixed))
@@ -10505,7 +10565,7 @@ def simulate_in_genesis(
         video_tag = f"{video_tag}_norigid"
     video_path = preview_dir / f"{video_tag}.mp4"
     if frames:
-        imageio.mimwrite(video_path, frames, fps=fps, quality=8)
+        imageio.mimwrite(video_path, frames, fps=render_video_fps, quality=8)
     if sample_object_ids is None or sample_seg_ids is None or sample_object_types is None or sample_object_sources is None:
         raise RuntimeError("No tracked objects were recorded for export.")
 
@@ -10622,6 +10682,7 @@ def simulate_in_genesis(
         "striker_speed_mps": float(runtime_striker_speed),
         "counterfactual": counterfactual_meta if counterfactual_meta else None,
         "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
+        "video_playback": video_playback_cfg,
         "environment_entities": (
             [{"name": "ground", "special_id": int(ENVIRONMENT_SPECIAL_IDS["ground"]), "entity_type": "container"}]
             + [dict(wall_info, entity_type="wall") for wall_info in preview_wall_infos]
@@ -10665,11 +10726,11 @@ def simulate_in_genesis(
     save_vis_video(
         case_dir / "visualizations" / "depth_vis.mp4",
         [depth_to_vis(frame, near=float(cam_intrinsics["near"]), far=float(cam_intrinsics["far"])) for frame in depth_metric_arr],
-        fps=fps,
+        fps=render_video_fps,
     )
     rgb_video_frames = [np.asarray(frame) for frame in rgb_frames]
-    imageio.mimwrite(case_dir / "videos" / "rgb.mp4", rgb_video_frames, fps=fps, quality=8)
-    imageio.mimwrite(case_dir / "videos" / "depth.mp4", [depth_to_uint8(frame) for frame in depth_norm_arr], fps=fps, quality=8)
+    imageio.mimwrite(case_dir / "videos" / "rgb.mp4", rgb_video_frames, fps=render_video_fps, quality=8)
+    imageio.mimwrite(case_dir / "videos" / "depth.mp4", [depth_to_uint8(frame) for frame in depth_norm_arr], fps=render_video_fps, quality=8)
     with open(case_dir / "physics" / "collision_events.json", "w", encoding="utf-8") as f:
         json.dump(collision_events, f, ensure_ascii=False, indent=2)
     with open(case_dir / "physics" / "event_windows.json", "w", encoding="utf-8") as f:
@@ -10715,9 +10776,12 @@ def simulate_in_genesis(
             "substeps": int(runtime_substeps),
             "steps_per_frame": int(save_every),
             "frame_dt": float(dt) * float(save_every),
-            "video_fps": float(fps),
+            "video_fps": float(render_video_fps),
+            "base_video_fps": float(fps),
+            "playback_slowdown_factor": float(video_playback_cfg["slowdown_factor"]),
             "gravity": [0.0, 0.0, float(gravity_z)],
         },
+        "video_playback": video_playback_cfg,
         "camera": camera_cfg,
         "camera_tag": camera_tag or None,
         "camera_intrinsics": cam_intrinsics,
@@ -10980,6 +11044,19 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--physxnet_entry_speed_max", type=float, default=0.90, help="Maximum initial entry speed in m/s for moving PhysXNet cases")
     parser.add_argument("--physxnet_object_yaw_deg_min", type=float, default=-180.0, help="Minimum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
     parser.add_argument("--physxnet_object_yaw_deg_max", type=float, default=180.0, help="Maximum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
+    parser.add_argument(
+        "--video_slowmo_prob",
+        type=float,
+        default=0.0,
+        help="Probability of exporting a mildly slowed playback video by reducing output fps while keeping simulation frames unchanged.",
+    )
+    parser.add_argument(
+        "--video_slowmo_factors",
+        type=float,
+        nargs="*",
+        default=[1.15, 1.30],
+        help="Candidate slowdown factors used when --video_slowmo_prob triggers. Values should stay close to 1 for mild slow motion.",
+    )
     
     
     
