@@ -590,6 +590,7 @@ CASES: List[Dict[str, Any]] = [
         "scene_label": "soft_volume_pair",
         "frames": 176,
         "warmup": 14,
+        "obi_substeps": 12,
         "incoming_inject_frame": 12,
         "object_count_bucket": "count_3",
         "camera_override": {
@@ -610,20 +611,44 @@ CASES: List[Dict[str, Any]] = [
         },
         "target_volume": {
             "cloth_material": "canvas",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.42,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
             "position": {"x": 0.02, "y": 1.26, "z": 0.04},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 0.42, "y": 0.42, "z": 0.42},
-            "pressure": 2.4,
+            "pressure": 3.8,
         },
         "incoming_volume": {
             "cloth_material": "rubber",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.62,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
-            "position": {"x": -4.0, "y": 1.08, "z": -3.0},
+            "position": {"x": -4.0, "y": 1.08, "z": 1.45},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "scale_factor": {"x": 0.28, "y": 0.28, "z": 0.28},
-            "pressure": 3.0,
-            "force": {"x": 26.0, "y": 0.0, "z": 16.0},
+            "scale_factor": {"x": 0.26, "y": 0.26, "z": 0.26},
+            "pressure": 4.2,
+            "force": {"x": 14.5, "y": 0.0, "z": -3.6},
         },
     },
     {
@@ -634,6 +659,7 @@ CASES: List[Dict[str, Any]] = [
         "scene_label": "soft_volume_pair",
         "frames": 176,
         "warmup": 14,
+        "obi_substeps": 12,
         "incoming_inject_frame": 10,
         "object_count_bucket": "count_3",
         "camera_override": {
@@ -654,20 +680,44 @@ CASES: List[Dict[str, Any]] = [
         },
         "target_volume": {
             "cloth_material": "cotton",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.36,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
             "position": {"x": 0.0, "y": 1.28, "z": 0.02},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 0.4, "y": 0.4, "z": 0.4},
-            "pressure": 2.2,
+            "pressure": 3.6,
         },
         "incoming_volume": {
             "cloth_material": "plastic",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.4,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
-            "position": {"x": -2.4, "y": 1.08, "z": -1.6},
+            "position": {"x": -2.5, "y": 1.08, "z": 0.92},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "scale_factor": {"x": 0.26, "y": 0.26, "z": 0.26},
-            "pressure": 2.8,
-            "force": {"x": 18.0, "y": 0.0, "z": 7.5},
+            "scale_factor": {"x": 0.23, "y": 0.23, "z": 0.23},
+            "pressure": 4.0,
+            "force": {"x": 11.2, "y": 0.0, "z": -2.8},
         },
     },
     {
@@ -678,6 +728,7 @@ CASES: List[Dict[str, Any]] = [
         "scene_label": "soft_volume_pair",
         "frames": 172,
         "warmup": 14,
+        "obi_substeps": 12,
         "incoming_inject_frame": 14,
         "object_count_bucket": "count_3",
         "camera_override": {
@@ -698,20 +749,44 @@ CASES: List[Dict[str, Any]] = [
         },
         "target_volume": {
             "cloth_material": "wool",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.48,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
             "position": {"x": 0.0, "y": 1.24, "z": 0.02},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 0.36, "y": 0.36, "z": 0.36},
-            "pressure": 2.0,
+            "pressure": 3.7,
         },
         "incoming_volume": {
             "cloth_material": "silk",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.3,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
-            "position": {"x": -4.0, "y": 1.08, "z": 1.5},
+            "position": {"x": -3.7, "y": 1.08, "z": 1.15},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "scale_factor": {"x": 0.24, "y": 0.24, "z": 0.24},
-            "pressure": 1.8,
-            "force": {"x": 19.0, "y": 0.0, "z": -7.5},
+            "scale_factor": {"x": 0.22, "y": 0.22, "z": 0.22},
+            "pressure": 3.8,
+            "force": {"x": 10.8, "y": 0.0, "z": -3.2},
         },
     },
     {
@@ -722,6 +797,7 @@ CASES: List[Dict[str, Any]] = [
         "scene_label": "soft_volume_pair",
         "frames": 178,
         "warmup": 16,
+        "obi_substeps": 12,
         "incoming_inject_frame": 16,
         "object_count_bucket": "count_3",
         "camera_override": {
@@ -742,20 +818,44 @@ CASES: List[Dict[str, Any]] = [
         },
         "target_volume": {
             "cloth_material": "rubber",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.7,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
             "position": {"x": 0.02, "y": 1.24, "z": 0.04},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
             "scale_factor": {"x": 0.36, "y": 0.36, "z": 0.36},
-            "pressure": 3.0,
+            "pressure": 4.1,
         },
         "incoming_volume": {
             "cloth_material": "burlap",
+            "cloth_material_overrides": {
+                "drag": 0.0,
+                "lift": 0.0,
+                "max_bending": 0.0,
+                "mass_per_square_meter": 0.42,
+            },
+            "collision_material": {
+                "dynamic_friction": 0.02,
+                "static_friction": 0.02,
+                "stickiness": 0.0,
+                "stick_distance": 0.0,
+            },
             "volume_type": ClothVolumeType.sphere,
-            "position": {"x": -3.5, "y": 1.08, "z": 0.75},
+            "position": {"x": -3.2, "y": 1.08, "z": 0.96},
             "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "scale_factor": {"x": 0.24, "y": 0.24, "z": 0.24},
-            "pressure": 1.7,
-            "force": {"x": 14.0, "y": 0.0, "z": -4.2},
+            "scale_factor": {"x": 0.2, "y": 0.2, "z": 0.2},
+            "pressure": 3.9,
+            "force": {"x": 9.4, "y": 0.0, "z": -2.6},
         },
     },
     {
@@ -1883,15 +1983,6 @@ def resolve_cloth_material(spec: Dict[str, Any]) -> Any:
     return ClothMaterial(**kwargs)
 
 
-def get_obi_collision_material_commands(object_id: int, spec: Dict[str, Any]) -> List[dict]:
-    collision = spec.get("collision_material")
-    if collision is None:
-        return []
-    cmd = {"$type": "set_obi_collision_material", "id": object_id}
-    cmd.update(CollisionMaterial(**collision).to_dict())
-    return [cmd]
-
-
 def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict], List[Dict[str, Any]]]:
     commands: List[dict] = []
     track_specs: List[Dict[str, Any]] = []
@@ -2088,14 +2179,11 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
                                 rotation=target["rotation"],
                                 scale_factor=target["scale_factor"],
                                 pressure=float(target["pressure"]))
-        commands.extend(get_obi_collision_material_commands(object_id=target_id, spec=target))
         commands.extend(get_support_commands(c, case["support"], support_id))
         inject_frame = int(case.get("incoming_inject_frame", 8))
         capture_frame_events.append({
             "frame": inject_frame,
-            "commands": get_obi_volume_creation_commands(object_id=incoming_id, spec=incoming)
-            + get_obi_collision_material_commands(object_id=incoming_id, spec=incoming)
-            + [
+            "commands": get_obi_volume_creation_commands(object_id=incoming_id, spec=incoming) + [
                 {"$type": "apply_force_to_obi_cloth",
                  "id": incoming_id,
                  "force": incoming["force"],

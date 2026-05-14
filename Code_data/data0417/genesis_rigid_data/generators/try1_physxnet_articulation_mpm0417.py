@@ -1610,10 +1610,23 @@ def build_preview_case_configs(
         label_motion = "projectile" if str(motion_kind).strip().lower() == "projectile" else "drop"
         scene_label = f"multi{int(total_count)}_{label_motion}_nocollision"
         slot_indices = np.arange(int(total_count), dtype=np.float64)
-        slot_offsets = 2.0 * slot_indices - (float(total_count) - 1.0)
-        lane_gap = float(max(0.95, 2.25 * max(float(bbox_size[0]), float(bbox_size[1]), 0.28)))
-        x_gap = float(max(0.30, 0.70 * max(float(bbox_size[0]), 0.24)))
-        y_slots = slot_offsets * lane_gap
+        if int(total_count) == 3:
+            # Keep the three-object no-collision bundle tighter and push all
+            # motion into a shallow strip that can sit between the camera and a
+            # visible back wall.
+            slot_offsets = slot_indices - 0.5 * (float(total_count) - 1.0)
+            lane_gap = float(max(0.58, 1.32 * max(float(bbox_size[0]), float(bbox_size[1]), 0.28)))
+            x_gap = float(max(0.18, 0.42 * max(float(bbox_size[0]), 0.24)))
+        else:
+            slot_offsets = 2.0 * slot_indices - (float(total_count) - 1.0)
+            lane_gap = float(max(0.95, 2.25 * max(float(bbox_size[0]), float(bbox_size[1]), 0.28)))
+            x_gap = float(max(0.30, 0.70 * max(float(bbox_size[0]), 0.24)))
+        if int(total_count) == 3:
+            strip_front = float(max(0.08, 0.22 * max(float(bbox_size[1]), 0.20)))
+            strip_depth = float(max(0.18, 0.56 * max(float(bbox_size[1]), 0.24)))
+            y_slots = np.linspace(strip_front, strip_front + strip_depth, int(total_count), dtype=np.float64)
+        else:
+            y_slots = slot_offsets * lane_gap
         x_slots = slot_offsets * x_gap
         main_slot = int(total_count // 2)
         main_euler_deg, main_angular = _sample_free_motion_pose(case_seed, main_slot)
@@ -1686,7 +1699,10 @@ def build_preview_case_configs(
             asset_should_move = bool(volume_threshold_m3 <= 0.0 or obj_volume_est < volume_threshold_m3)
             obj_euler_deg, obj_angular = _sample_free_motion_pose(case_seed, int(slot_id) + 7)
             spawn_x = float(x_slots[int(slot_id)] + rng.uniform(-0.025, 0.025))
-            spawn_y = float(y_slots[int(slot_id)])
+            if int(total_count) == 3:
+                spawn_y = float(y_slots[int(slot_id)] + rng.uniform(-0.015, 0.015))
+            else:
+                spawn_y = float(y_slots[int(slot_id)])
             spawn_z = 0.0
             linear = np.zeros(3, dtype=np.float64)
             angular = np.zeros(3, dtype=np.float64)
@@ -1764,7 +1780,7 @@ def build_preview_case_configs(
             placed_pos_offset=np.array(
                 [
                     float(x_slots[main_slot]),
-                    float(y_slots[main_slot]),
+                    float(y_slots[main_slot] + (rng.uniform(-0.015, 0.015) if int(total_count) == 3 else 0.0)),
                     float(main_offset_z),
                 ],
                 dtype=np.float64,
@@ -2489,6 +2505,9 @@ class PreparedObject:
 EXPORT_CAMERA_RESOLUTION = (960, 720)
 ENVIRONMENT_SPECIAL_IDS = {
     "ground": -1,
+    "back_wall": -2,
+    "left_wall": -3,
+    "right_wall": -4,
 }
 
 
@@ -2723,6 +2742,75 @@ def _projected_bbox_area_from_local_bounds(
     return float(bbox_w * bbox_h)
 
 
+def _world_bbox_corners_from_local_bounds(
+    bounds_min: Any,
+    bounds_max: Any,
+    *,
+    pos_world: Any,
+    euler_deg: Any,
+) -> np.ndarray:
+    local_corners = _bbox_corners_from_bounds(bounds_min, bounds_max)
+    pos_world = np.asarray(pos_world, dtype=np.float64).reshape(3)
+    return np.stack(
+        [
+            _rotate_vec_by_euler_deg(local_corner, euler_deg) + pos_world
+            for local_corner in local_corners
+        ],
+        axis=0,
+    ).astype(np.float64)
+
+
+def _fit_camera_cfg_to_world_points(
+    points_world: Any,
+    *,
+    image_res: Tuple[int, int],
+    camera_offset_dir: Any,
+    vertical_fov_deg: float = 40.0,
+    target_fill: float = 0.64,
+) -> Dict[str, Any]:
+    points_world = np.asarray(points_world, dtype=np.float64).reshape(-1, 3)
+    if points_world.shape[0] == 0:
+        raise ValueError("points_world must contain at least one point")
+    width, height = int(image_res[0]), int(image_res[1])
+    aspect = float(width) / float(max(height, 1))
+    offset_dir = _normalize_vec(np.asarray(camera_offset_dir, dtype=np.float64).reshape(3))
+    if float(np.linalg.norm(offset_dir)) <= 1e-8:
+        offset_dir = np.asarray([0.25, -1.0, 0.18], dtype=np.float64)
+        offset_dir = _normalize_vec(offset_dir)
+    forward = _normalize_vec(-offset_dir)
+    up_guess = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    if abs(float(np.dot(forward, up_guess))) > 0.98:
+        up_guess = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    right = _normalize_vec(np.cross(forward, up_guess))
+    up = _normalize_vec(np.cross(right, forward))
+
+    points_min = np.min(points_world, axis=0)
+    points_max = np.max(points_world, axis=0)
+    lookat = 0.5 * (points_min + points_max)
+    rel = points_world - lookat[None, :]
+    x = np.sum(rel * right[None, :], axis=1)
+    y = np.sum(rel * up[None, :], axis=1)
+    z = np.sum(rel * forward[None, :], axis=1)
+
+    target_fill = float(np.clip(target_fill, 0.25, 0.90))
+    vfov_rad = math.radians(float(vertical_fov_deg))
+    hfov_rad = 2.0 * math.atan(math.tan(vfov_rad / 2.0) * aspect)
+    tan_half_v = math.tan(vfov_rad / 2.0) * target_fill
+    tan_half_h = math.tan(hfov_rad / 2.0) * target_fill
+    required_depth_v = np.max(np.abs(y) / max(tan_half_v, 1e-6) - z)
+    required_depth_h = np.max(np.abs(x) / max(tan_half_h, 1e-6) - z)
+    required_depth = float(max(required_depth_v, required_depth_h, 0.25))
+    cam_pos = lookat - forward * required_depth
+    return {
+        "pos": cam_pos.astype(np.float64).tolist(),
+        "lookat": lookat.astype(np.float64).tolist(),
+        "up": up.astype(np.float64).tolist(),
+        "fov": float(vertical_fov_deg),
+        "res": [width, height],
+        "model": "pinhole",
+    }
+
+
 def _scale_bounds_record_inplace(record: Dict[str, Any], scale: float) -> None:
     scale = float(scale)
     if abs(scale - 1.0) <= 1e-8:
@@ -2789,31 +2877,36 @@ def _estimate_preview_camera_cfg_for_visibility(
         lookat = np.array(
             [
                 float(xy_center[0]),
-                float(xy_center[1]),
+                float(xy_center[1] + (0.06 if num_multi_objs == 3 else 0.0)),
                 float(max(0.28, 0.26 * z_top if "drop" in label_l else 0.34 * z_top)),
             ],
             dtype=np.float64,
         )
         camera_distance_mult = max(
             camera_distance_mult,
-            1.02 if num_multi_objs >= 4 else (0.96 if num_multi_objs >= 3 else 1.10),
+            1.02 if num_multi_objs >= 4 else (0.94 if num_multi_objs >= 3 else 1.10),
         )
         span_ref = float(max(np.max(xy_span), np.max(bbox_size), 0.60))
-        cam_distance = camera_distance_mult * max(
-            1.46 if num_multi_objs >= 4 else (1.32 if num_multi_objs >= 3 else 1.58),
-            (1.14 if num_multi_objs >= 4 else (1.04 if num_multi_objs >= 3 else 1.24))
-            + (0.84 if num_multi_objs >= 4 else (0.78 if num_multi_objs >= 3 else 0.96)) * span_ref,
-        )
-        cam_height = camera_distance_mult * max(
-            0.82 if num_multi_objs >= 4 else (0.76 if num_multi_objs >= 3 else 0.88),
-            0.38 * z_top + 0.44,
-        )
-        cam_fov = 48 if num_multi_objs >= 4 else (46 if num_multi_objs >= 3 else 48)
+        if num_multi_objs == 3:
+            cam_distance = camera_distance_mult * max(1.18, 0.92 + 0.64 * span_ref)
+            cam_height = camera_distance_mult * max(0.70, 0.30 * z_top + 0.34)
+            cam_fov = 40
+        else:
+            cam_distance = camera_distance_mult * max(
+                1.46 if num_multi_objs >= 4 else 1.58,
+                (1.14 if num_multi_objs >= 4 else 1.24)
+                + (0.84 if num_multi_objs >= 4 else 0.96) * span_ref,
+            )
+            cam_height = camera_distance_mult * max(
+                0.82 if num_multi_objs >= 4 else 0.88,
+                0.38 * z_top + 0.44,
+            )
+            cam_fov = 48
         cam_pos = np.array(
             [
-                float(lookat[0] + (0.08 if num_multi_objs >= 3 else 0.62) * cam_distance),
-                float(lookat[1] - (0.88 if num_multi_objs >= 3 else 0.48) * cam_distance),
-                float(1.08 * cam_height),
+                float(lookat[0] + (0.26 if num_multi_objs == 3 else (0.08 if num_multi_objs >= 3 else 0.62)) * cam_distance),
+                float(lookat[1] - (1.22 if num_multi_objs == 3 else (0.88 if num_multi_objs >= 3 else 0.48)) * cam_distance),
+                float((0.90 if num_multi_objs == 3 else 1.08) * cam_height),
             ],
             dtype=np.float64,
         )
@@ -9241,6 +9334,98 @@ def simulate_in_genesis(
                 }
             )
 
+    preview_wall_infos: List[Dict[str, Any]] = []
+    multi3_framing_points_world: Optional[np.ndarray] = None
+    label_l = str(scene_label).strip().lower()
+    if label_l.startswith("multi3_") and ("projectile" in label_l or "drop" in label_l):
+        framing_points: List[np.ndarray] = []
+        main_world_corners = _world_bbox_corners_from_local_bounds(
+            bbox_min * runtime_main_object_scale,
+            bbox_max * runtime_main_object_scale,
+            pos_world=placed_pos,
+            euler_deg=object_euler_deg,
+        )
+        framing_points.append(main_world_corners)
+        custom_runtime_records = [
+            rec for rec in custom_runtime_objects
+            if str(rec.get("custom_object_id", "")) != "custom_ball_default"
+        ]
+        for custom_cfg, custom_rec in zip(custom_object_cfgs, custom_runtime_records):
+            mesh_path = str(custom_cfg.get("mesh_path", "") or "")
+            custom_scale = float(max(1e-3, custom_cfg.get("scale", 0.15)))
+            custom_euler = np.asarray(custom_cfg.get("euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
+            start_pos = np.asarray(custom_rec.get("start_pos", placed_pos), dtype=np.float64).reshape(3)
+            local_bounds_min = None
+            local_bounds_max = None
+            if mesh_path and Path(mesh_path).exists():
+                bounds_info = _mesh_bounds_info(Path(mesh_path), scale=custom_scale)
+                if bounds_info is not None:
+                    local_bounds_min = np.asarray(bounds_info["bounds_min"], dtype=np.float64)
+                    local_bounds_max = np.asarray(bounds_info["bounds_max"], dtype=np.float64)
+            if local_bounds_min is None or local_bounds_max is None:
+                radius = float(max(0.01, custom_cfg.get("radius", striker_radius)))
+                local_bounds_min = np.asarray([-radius, -radius, -radius], dtype=np.float64)
+                local_bounds_max = np.asarray([radius, radius, radius], dtype=np.float64)
+            framing_points.append(
+                _world_bbox_corners_from_local_bounds(
+                    local_bounds_min,
+                    local_bounds_max,
+                    pos_world=start_pos,
+                    euler_deg=custom_euler,
+                )
+            )
+        multi3_framing_points_world = np.concatenate(framing_points, axis=0).astype(np.float64)
+        x_min = float(np.min(multi3_framing_points_world[:, 0]))
+        x_max = float(np.max(multi3_framing_points_world[:, 0]))
+        y_min = float(np.min(multi3_framing_points_world[:, 1]))
+        y_max = float(np.max(multi3_framing_points_world[:, 1]))
+        z_top = float(np.max(multi3_framing_points_world[:, 2]))
+        wall_margin_x = float(max(0.22, 0.48 * max(float(np.max(bbox_size)), 0.24)))
+        wall_gap_y = float(max(0.18, 0.52 * max(float(bbox_size[1]), 0.24)))
+        side_front_pad = float(max(0.12, 0.30 * max(float(bbox_size[1]), 0.24)))
+        wall_thickness = 0.04
+        wall_top = float(max(1.05, z_top + 0.54))
+        wall_style = dict(
+            material=gs.materials.Rigid(rho=1200.0, friction=0.90),
+            surface=gs.surfaces.Default(color=(0.84, 0.86, 0.90, 1.0), vis_mode="visual"),
+        )
+        wall_specs = [
+            (
+                "back_wall",
+                np.array([x_min - wall_margin_x, y_max + wall_gap_y, 0.0], dtype=np.float64),
+                np.array([x_max + wall_margin_x, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+            ),
+            (
+                "left_wall",
+                np.array([x_min - wall_margin_x - wall_thickness, y_min - side_front_pad, 0.0], dtype=np.float64),
+                np.array([x_min - wall_margin_x, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+            ),
+            (
+                "right_wall",
+                np.array([x_max + wall_margin_x, y_min - side_front_pad, 0.0], dtype=np.float64),
+                np.array([x_max + wall_margin_x + wall_thickness, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+            ),
+        ]
+        for wall_name, wall_lower, wall_upper in wall_specs:
+            scene.add_entity(
+                morph=gs.morphs.Box(
+                    lower=tuple(wall_lower.tolist()),
+                    upper=tuple(wall_upper.tolist()),
+                    visualization=True,
+                    collision=True,
+                    fixed=True,
+                ),
+                **wall_style,
+            )
+            preview_wall_infos.append(
+                {
+                    "name": wall_name,
+                    "special_id": int(ENVIRONMENT_SPECIAL_IDS[wall_name]),
+                    "lower": wall_lower.astype(np.float64).tolist(),
+                    "upper": wall_upper.astype(np.float64).tolist(),
+                }
+            )
+
     camera_distance_mult = float(getattr(args, "camera_distance_mult", 1.0) or 1.0)
     liquid_camera_mode = False
     if primary_liquid_target is not None and camera_distance_mult >= 0.999:
@@ -9255,7 +9440,6 @@ def simulate_in_genesis(
     cam_distance = camera_distance_mult * max(1.78, 1.66 * float(np.max(bbox_size)) + 0.78)
     cam_height = camera_distance_mult * max(0.94, float(placed_pos[2] + bbox_min[2] + 0.65 * bbox_size[2] + 0.24))
     lookat = np.array([0.0, 0.0, float(placed_pos[2] + bbox_min[2] + 0.55 * bbox_size[2])], dtype=np.float64)
-    label_l = str(scene_label).strip().lower()
     if label_l in {"random_parabola", "high_drop"}:
         # These single-object gravity cases start above the tray. Keep the camera
         # close but bias the target downward so the landing remains in frame.
@@ -9282,41 +9466,58 @@ def simulate_in_genesis(
         lookat = np.array(
             [
                 float(xy_center[0]),
-                float(xy_center[1]),
+                float(xy_center[1] + (0.06 if num_multi_objs == 3 else 0.0)),
                 float(max(0.28, 0.26 * z_top if "drop" in label_l else 0.34 * z_top)),
             ],
             dtype=np.float64,
         )
         camera_distance_mult = max(
             camera_distance_mult,
-            1.02 if num_multi_objs >= 4 else (0.96 if num_multi_objs >= 3 else 1.10),
+            1.02 if num_multi_objs >= 4 else (0.94 if num_multi_objs >= 3 else 1.10),
         )
         span_ref = float(max(np.max(xy_span), np.max(bbox_size), 0.60))
-        cam_distance = camera_distance_mult * max(
-            1.46 if num_multi_objs >= 4 else (1.32 if num_multi_objs >= 3 else 1.58),
-            (1.14 if num_multi_objs >= 4 else (1.04 if num_multi_objs >= 3 else 1.24))
-            + (0.84 if num_multi_objs >= 4 else (0.78 if num_multi_objs >= 3 else 0.96)) * span_ref,
-        )
-        cam_height = camera_distance_mult * max(
-            0.82 if num_multi_objs >= 4 else (0.76 if num_multi_objs >= 3 else 0.88),
-            0.38 * z_top + 0.44,
-        )
-        cam_fov = 48 if num_multi_objs >= 4 else (46 if num_multi_objs >= 3 else 48)
+        if num_multi_objs == 3:
+            cam_distance = camera_distance_mult * max(1.18, 0.92 + 0.64 * span_ref)
+            cam_height = camera_distance_mult * max(0.70, 0.30 * z_top + 0.34)
+            cam_fov = 40
+        else:
+            cam_distance = camera_distance_mult * max(
+                1.46 if num_multi_objs >= 4 else 1.58,
+                (1.14 if num_multi_objs >= 4 else 1.24)
+                + (0.84 if num_multi_objs >= 4 else 0.96) * span_ref,
+            )
+            cam_height = camera_distance_mult * max(
+                0.82 if num_multi_objs >= 4 else 0.88,
+                0.38 * z_top + 0.44,
+            )
+            cam_fov = 48
     if debug_spread_soft_parts and spread_offsets_by_pid:
         soft_offsets = np.asarray(list(spread_offsets_by_pid.values()), dtype=np.float64)
         lookat[:2] = np.mean(soft_offsets[:, :2], axis=0) * 0.5
     if label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l):
         cam_pos = np.array(
             [
-                float(lookat[0] + (0.08 if num_multi_objs >= 3 else 0.62) * cam_distance),
-                float(lookat[1] - (0.88 if num_multi_objs >= 3 else 0.48) * cam_distance),
-                float(1.08 * cam_height),
+                float(lookat[0] + (0.26 if num_multi_objs == 3 else (0.08 if num_multi_objs >= 3 else 0.62)) * cam_distance),
+                float(lookat[1] - (1.22 if num_multi_objs == 3 else (0.88 if num_multi_objs >= 3 else 0.48)) * cam_distance),
+                float((0.90 if num_multi_objs == 3 else 1.08) * cam_height),
             ],
             dtype=np.float64,
         )
     else:
         cam_pos = np.array([0.66 * cam_distance, -0.82 * cam_distance, 1.08 * cam_height], dtype=np.float64)
     cam_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    if multi3_framing_points_world is not None:
+        fitted_cfg = _fit_camera_cfg_to_world_points(
+            multi3_framing_points_world,
+            image_res=tuple(EXPORT_CAMERA_RESOLUTION),
+            camera_offset_dir=np.asarray([0.22, -1.0, 0.18], dtype=np.float64),
+            vertical_fov_deg=40.0,
+            target_fill=0.78,
+        )
+        cam_pos = np.asarray(fitted_cfg["pos"], dtype=np.float64).reshape(3)
+        lookat = np.asarray(fitted_cfg["lookat"], dtype=np.float64).reshape(3)
+        cam_up = np.asarray(fitted_cfg["up"], dtype=np.float64).reshape(3)
+        cam_fov = float(fitted_cfg["fov"])
     if label_l not in {"random_parabola", "high_drop"} and not (label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)):
         cam_fov = 32
     if liquid_camera_mode and primary_liquid_target is not None:
@@ -10024,6 +10225,10 @@ def simulate_in_genesis(
         "striker_speed_mps": float(runtime_striker_speed),
         "counterfactual": counterfactual_meta if counterfactual_meta else None,
         "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
+        "environment_entities": (
+            [{"name": "ground", "special_id": int(ENVIRONMENT_SPECIAL_IDS["ground"]), "entity_type": "container"}]
+            + [dict(wall_info, entity_type="wall") for wall_info in preview_wall_infos]
+        ),
     }
     (case_dir / "scene_input.json").write_text(json.dumps(scene_input, ensure_ascii=False, indent=2), encoding="utf-8")
     for frame_idx, rgb_frame in enumerate(rgb_frames):
@@ -10156,7 +10361,7 @@ def simulate_in_genesis(
                 "special_id": int(ENVIRONMENT_SPECIAL_IDS["ground"]),
                 "entity_type": "container",
             }
-        ],
+        ] + [dict(wall_info, entity_type="wall") for wall_info in preview_wall_infos],
         "outputs": {
             "metadata": "meta.json",
             "scene_input": "scene_input.json",
