@@ -16,6 +16,7 @@ from tdw.add_ons.interior_scene_lighting import InteriorSceneLighting
 from tdw.add_ons.object_manager import ObjectManager
 from tdw.add_ons.obi import Obi
 from tdw.controller import Controller
+from tdw.obi_data.cloth.cloth_material import ClothMaterial, CLOTH_MATERIALS
 from tdw.obi_data.cloth.volume_type import ClothVolumeType
 from tdw.obi_data.collision_materials.collision_material import CollisionMaterial
 from tdw.obi_data.fluids.disk_emitter import DiskEmitter
@@ -1849,7 +1850,7 @@ def get_rigid_object_commands(c: Controller, spec: Dict[str, Any], object_id: in
 def get_obi_volume_creation_commands(object_id: int, spec: Dict[str, Any]) -> List[dict]:
     cloth_material = Obi._get_cloth_commands(object_id=object_id,
                                              command_name="create_obi_cloth_volume",
-                                             cloth_material=str(spec["cloth_material"]),
+                                             cloth_material=resolve_cloth_material(spec),
                                              position=spec["position"],
                                              rotation=spec["rotation"],
                                              solver_id=0)
@@ -1857,6 +1858,38 @@ def get_obi_volume_creation_commands(object_id: int, spec: Dict[str, Any]) -> Li
     cloth_material[-1]["pressure"] = float(spec["pressure"])
     cloth_material[-1]["volume_type"] = spec["volume_type"].name
     return cloth_material
+
+
+def resolve_cloth_material(spec: Dict[str, Any]) -> Any:
+    material_name = str(spec["cloth_material"])
+    overrides = dict(spec.get("cloth_material_overrides", {}))
+    if not overrides:
+        return material_name
+    base = CLOTH_MATERIALS[material_name]
+    kwargs = {
+        "visual_material": base.visual_material,
+        "texture_scale": dict(base.texture_scale),
+        "visual_smoothness": float(base.visual_smoothness),
+        "stretching_scale": float(base.stretching_scale),
+        "stretch_compliance": float(base.stretch_compliance),
+        "max_compression": float(base.max_compression),
+        "max_bending": float(base.max_bending),
+        "bend_compliance": float(base.bend_compliance),
+        "drag": float(base.drag),
+        "lift": float(base.lift),
+        "mass_per_square_meter": float(base.mass_per_square_meter),
+    }
+    kwargs.update(overrides)
+    return ClothMaterial(**kwargs)
+
+
+def get_obi_collision_material_commands(object_id: int, spec: Dict[str, Any]) -> List[dict]:
+    collision = spec.get("collision_material")
+    if collision is None:
+        return []
+    cmd = {"$type": "set_obi_collision_material", "id": object_id}
+    cmd.update(CollisionMaterial(**collision).to_dict())
+    return [cmd]
 
 
 def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple[List[dict], List[Dict[str, Any]], List[dict], List[Dict[str, Any]]]:
@@ -2045,21 +2078,24 @@ def setup_case(case: Dict[str, Any], c: Controller, obi: Optional[Obi]) -> Tuple
         target_id = c.get_unique_id()
         incoming_id = c.get_unique_id()
         support_id = c.get_unique_id()
-        obi.set_solver(substeps=4)
+        obi.set_solver(substeps=int(case.get("obi_substeps", 4)))
         target = case["target_volume"]
         incoming = case["incoming_volume"]
-        obi.create_cloth_volume(cloth_material=str(target["cloth_material"]),
+        obi.create_cloth_volume(cloth_material=resolve_cloth_material(target),
                                 object_id=target_id,
                                 volume_type=target["volume_type"],
                                 position=target["position"],
                                 rotation=target["rotation"],
                                 scale_factor=target["scale_factor"],
                                 pressure=float(target["pressure"]))
+        commands.extend(get_obi_collision_material_commands(object_id=target_id, spec=target))
         commands.extend(get_support_commands(c, case["support"], support_id))
         inject_frame = int(case.get("incoming_inject_frame", 8))
         capture_frame_events.append({
             "frame": inject_frame,
-            "commands": get_obi_volume_creation_commands(object_id=incoming_id, spec=incoming) + [
+            "commands": get_obi_volume_creation_commands(object_id=incoming_id, spec=incoming)
+            + get_obi_collision_material_commands(object_id=incoming_id, spec=incoming)
+            + [
                 {"$type": "apply_force_to_obi_cloth",
                  "id": incoming_id,
                  "force": incoming["force"],
