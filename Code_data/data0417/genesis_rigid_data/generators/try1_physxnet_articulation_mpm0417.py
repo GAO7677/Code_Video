@@ -2811,6 +2811,135 @@ def _fit_camera_cfg_to_world_points(
     }
 
 
+def _is_multi_free_motion_scene(scene_label: str) -> bool:
+    label_l = str(scene_label).strip().lower()
+    return label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)
+
+
+def _build_multi_free_motion_layout(
+    *,
+    scene_label: str,
+    main_local_bounds_min: Any,
+    main_local_bounds_max: Any,
+    bbox_size_ref: Any,
+    placed_pos: Any,
+    object_euler_deg: Any,
+    custom_object_cfgs: Sequence[Dict[str, Any]],
+    striker_radius: float,
+) -> Optional[Dict[str, Any]]:
+    if not _is_multi_free_motion_scene(scene_label):
+        return None
+
+    main_local_bounds_min = np.asarray(main_local_bounds_min, dtype=np.float64).reshape(3)
+    main_local_bounds_max = np.asarray(main_local_bounds_max, dtype=np.float64).reshape(3)
+    bbox_size_ref = np.asarray(bbox_size_ref, dtype=np.float64).reshape(3)
+    placed_pos = np.asarray(placed_pos, dtype=np.float64).reshape(3)
+    object_euler_deg = np.asarray(object_euler_deg, dtype=np.float64).reshape(3)
+
+    object_infos: List[Dict[str, Any]] = []
+    framing_parts: List[np.ndarray] = []
+
+    main_world_corners = _world_bbox_corners_from_local_bounds(
+        main_local_bounds_min,
+        main_local_bounds_max,
+        pos_world=placed_pos,
+        euler_deg=object_euler_deg,
+    )
+    object_infos.append(
+        {
+            "name": "main_object",
+            "local_bounds_min": main_local_bounds_min.astype(np.float64),
+            "local_bounds_max": main_local_bounds_max.astype(np.float64),
+            "pos_world": placed_pos.astype(np.float64),
+            "euler_deg": object_euler_deg.astype(np.float64),
+        }
+    )
+    framing_parts.append(main_world_corners)
+
+    for custom_idx, custom_cfg in enumerate(list(custom_object_cfgs or [])):
+        mesh_path = str(custom_cfg.get("mesh_path", "") or "")
+        custom_scale = float(max(1e-3, custom_cfg.get("scale", 0.15)))
+        custom_euler = np.asarray(custom_cfg.get("euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
+        start_pos = placed_pos + np.asarray(custom_cfg.get("spawn_offset", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
+        local_bounds_min = None
+        local_bounds_max = None
+        if mesh_path and Path(mesh_path).exists():
+            bounds_info = _mesh_bounds_info(Path(mesh_path), scale=custom_scale)
+            if bounds_info is not None:
+                local_bounds_min = np.asarray(bounds_info["bounds_min"], dtype=np.float64)
+                local_bounds_max = np.asarray(bounds_info["bounds_max"], dtype=np.float64)
+        if local_bounds_min is None or local_bounds_max is None:
+            radius = float(max(0.01, custom_cfg.get("radius", striker_radius)))
+            local_bounds_min = np.asarray([-radius, -radius, -radius], dtype=np.float64)
+            local_bounds_max = np.asarray([radius, radius, radius], dtype=np.float64)
+        world_corners = _world_bbox_corners_from_local_bounds(
+            local_bounds_min,
+            local_bounds_max,
+            pos_world=start_pos,
+            euler_deg=custom_euler,
+        )
+        object_infos.append(
+            {
+                "name": str(custom_cfg.get("custom_object_id", f"custom_{custom_idx:02d}")),
+                "local_bounds_min": local_bounds_min.astype(np.float64),
+                "local_bounds_max": local_bounds_max.astype(np.float64),
+                "pos_world": start_pos.astype(np.float64),
+                "euler_deg": custom_euler.astype(np.float64),
+            }
+        )
+        framing_parts.append(world_corners)
+
+    object_points_world = np.concatenate(framing_parts, axis=0).astype(np.float64)
+    x_min = float(np.min(object_points_world[:, 0]))
+    x_max = float(np.max(object_points_world[:, 0]))
+    y_min = float(np.min(object_points_world[:, 1]))
+    y_max = float(np.max(object_points_world[:, 1]))
+    z_top = float(np.max(object_points_world[:, 2]))
+
+    wall_margin_x = float(max(1.05, 2.05 * max(float(np.max(bbox_size_ref)), 0.28)))
+    wall_gap_y = float(max(0.85, 2.20 * max(float(bbox_size_ref[1]), 0.28)))
+    side_front_pad = float(max(0.85, 2.25 * max(float(bbox_size_ref[1]), 0.28)))
+    wall_top = float(max(1.45, z_top + 0.90))
+    wall_back_y = float(y_max + wall_gap_y)
+    wall_front_y = float(y_min - side_front_pad)
+
+    total_count = int(len(object_infos))
+    if total_count >= 3:
+        floor_band_y0 = float(wall_front_y + 0.10 * (wall_back_y - wall_front_y))
+        floor_band_y1 = float(y_min + 0.18 * (y_max - y_min))
+        floor_band_x_pad = float(max(0.18, 0.22 * (x_max - x_min + 1e-6)))
+        floor_points = np.asarray(
+            [
+                [x_min - floor_band_x_pad, floor_band_y0, 0.0],
+                [x_max + floor_band_x_pad, floor_band_y0, 0.0],
+                [x_min - floor_band_x_pad, floor_band_y1, 0.0],
+                [x_max + floor_band_x_pad, floor_band_y1, 0.0],
+                [0.5 * (x_min + x_max), floor_band_y0, 0.0],
+                [0.5 * (x_min + x_max), floor_band_y1, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        framing_points_world = np.concatenate([object_points_world, floor_points], axis=0).astype(np.float64)
+    else:
+        framing_points_world = object_points_world
+
+    return {
+        "object_infos": object_infos,
+        "object_points_world": object_points_world,
+        "framing_points_world": framing_points_world,
+        "x_min": x_min,
+        "x_max": x_max,
+        "y_min": y_min,
+        "y_max": y_max,
+        "z_top": z_top,
+        "wall_margin_x": wall_margin_x,
+        "wall_back_y": wall_back_y,
+        "wall_front_y": wall_front_y,
+        "wall_top": wall_top,
+        "object_count": total_count,
+    }
+
+
 def _scale_bounds_record_inplace(record: Dict[str, Any], scale: float) -> None:
     scale = float(scale)
     if abs(scale - 1.0) <= 1e-8:
@@ -8283,6 +8412,8 @@ def simulate_in_genesis(
         "max_auto_scale_up_mult": float(getattr(args, "max_auto_scale_up_mult", 1.0) or 1.0),
         "main_object_scale": 1.0,
         "default_striker_radius_mult": 1.0,
+        "scene_scale_cap_mult": 1.0,
+        "scene_min_projected_bbox_area_px": None,
         "custom_objects": [],
     }
     custom_object_cfgs = copy.deepcopy(list(runtime_case_cfg.get("custom_objects", []) or []))
@@ -8301,6 +8432,14 @@ def simulate_in_genesis(
     )
     min_projected_bbox_area_px = float(getattr(args, "min_projected_bbox_area_px", 2500.0) or 0.0)
     max_auto_scale_up_mult = max(1.0, float(getattr(args, "max_auto_scale_up_mult", 2.5) or 2.5))
+    label_l = str(scene_label).strip().lower()
+    multi_object_scene_scaling = _is_multi_free_motion_scene(scene_label) and (1 + len(custom_object_cfgs) >= 3)
+    scene_min_projected_bbox_area_target_px = float(
+        max(min_projected_bbox_area_px, 3600.0 if multi_object_scene_scaling else min_projected_bbox_area_px)
+    )
+    scene_scale_cap_mult = float(max(max_auto_scale_up_mult, 4.6 if multi_object_scene_scaling else max_auto_scale_up_mult))
+    auto_visibility_scale_info["scene_scale_cap_mult"] = float(scene_scale_cap_mult)
+    auto_visibility_scale_info["scene_min_projected_bbox_area_target_px"] = float(scene_min_projected_bbox_area_target_px)
     if (
         min_projected_bbox_area_px > 1.0
         and not prepared_has_liquid
@@ -8323,14 +8462,38 @@ def simulate_in_genesis(
                 placed_pos_est + np.asarray(cfg.get("spawn_offset", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
                 for cfg in custom_object_cfgs
             ]
-            camera_cfg_est = _estimate_preview_camera_cfg_for_visibility(
+            multi_layout_est = _build_multi_free_motion_layout(
                 scene_label=scene_label,
+                main_local_bounds_min=scaled_bbox_min,
+                main_local_bounds_max=scaled_bbox_max,
+                bbox_size_ref=np.maximum(scaled_bbox_max - scaled_bbox_min, 1e-6),
                 placed_pos=placed_pos_est,
-                bbox_min=scaled_bbox_min,
-                bbox_max=scaled_bbox_max,
-                camera_distance_mult=float(getattr(args, "camera_distance_mult", 1.0) or 1.0),
-                custom_start_positions=custom_start_positions_est,
+                object_euler_deg=object_euler_deg,
+                custom_object_cfgs=custom_object_cfgs,
+                striker_radius=striker_radius,
             )
+            if multi_layout_est is not None and int(multi_layout_est.get("object_count", 0)) >= 3:
+                camera_cfg_est = _fit_camera_cfg_to_world_points(
+                    multi_layout_est["framing_points_world"],
+                    image_res=tuple(EXPORT_CAMERA_RESOLUTION),
+                    camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
+                    vertical_fov_deg=40.0,
+                    target_fill=0.78,
+                )
+                camera_cfg_est["lookat"] = np.asarray(camera_cfg_est["lookat"], dtype=np.float64).reshape(3)
+                camera_cfg_est["lookat"][2] = float(
+                    max(0.12, float(camera_cfg_est["lookat"][2]) - 0.06 * max(float(multi_layout_est["z_top"]), 0.6))
+                )
+                camera_cfg_est["lookat"] = camera_cfg_est["lookat"].astype(np.float64).tolist()
+            else:
+                camera_cfg_est = _estimate_preview_camera_cfg_for_visibility(
+                    scene_label=scene_label,
+                    placed_pos=placed_pos_est,
+                    bbox_min=scaled_bbox_min,
+                    bbox_max=scaled_bbox_max,
+                    camera_distance_mult=float(getattr(args, "camera_distance_mult", 1.0) or 1.0),
+                    custom_start_positions=custom_start_positions_est,
+                )
             cam_intrinsics_est = camera_intrinsics_dict(
                 camera=None,
                 fallback_res=tuple(EXPORT_CAMERA_RESOLUTION),
@@ -8338,19 +8501,77 @@ def simulate_in_genesis(
             )
             updates_applied = False
 
-            main_area_px = _projected_bbox_area_from_local_bounds(
-                scaled_bbox_min,
-                scaled_bbox_max,
-                pos_world=placed_pos_est,
-                euler_deg=object_euler_deg,
-                camera_cfg=camera_cfg_est,
-                cam_intrinsics=cam_intrinsics_est,
-                image_res=tuple(EXPORT_CAMERA_RESOLUTION),
-            )
+            if multi_layout_est is not None:
+                main_info = multi_layout_est["object_infos"][0]
+                main_area_px = _projected_bbox_area_from_local_bounds(
+                    main_info["local_bounds_min"],
+                    main_info["local_bounds_max"],
+                    pos_world=main_info["pos_world"],
+                    euler_deg=main_info["euler_deg"],
+                    camera_cfg=camera_cfg_est,
+                    cam_intrinsics=cam_intrinsics_est,
+                    image_res=tuple(EXPORT_CAMERA_RESOLUTION),
+                )
+            else:
+                main_area_px = _projected_bbox_area_from_local_bounds(
+                    scaled_bbox_min,
+                    scaled_bbox_max,
+                    pos_world=placed_pos_est,
+                    euler_deg=object_euler_deg,
+                    camera_cfg=camera_cfg_est,
+                    cam_intrinsics=cam_intrinsics_est,
+                    image_res=tuple(EXPORT_CAMERA_RESOLUTION),
+                )
+            if multi_object_scene_scaling and multi_layout_est is not None:
+                object_area_values = [float(main_area_px)]
+                for obj_info in multi_layout_est["object_infos"][1:]:
+                    area_px = _projected_bbox_area_from_local_bounds(
+                        obj_info["local_bounds_min"],
+                        obj_info["local_bounds_max"],
+                        pos_world=obj_info["pos_world"],
+                        euler_deg=obj_info["euler_deg"],
+                        camera_cfg=camera_cfg_est,
+                        cam_intrinsics=cam_intrinsics_est,
+                        image_res=tuple(EXPORT_CAMERA_RESOLUTION),
+                    )
+                    object_area_values.append(float(area_px))
+                scene_min_area_px = float(min(object_area_values))
+                auto_visibility_scale_info["scene_min_projected_bbox_area_px"] = float(scene_min_area_px)
+                scene_required_mult = 1.0 if scene_min_area_px >= scene_min_projected_bbox_area_target_px else math.sqrt(
+                    scene_min_projected_bbox_area_target_px / max(scene_min_area_px, 1.0)
+                )
+                scene_allowed_mult = max(1.0, scene_scale_cap_mult / max(runtime_main_object_scale, 1e-8))
+                for custom_idx, custom_cfg in enumerate(custom_object_cfgs):
+                    base_size = float(custom_object_base_sizes[custom_idx]) if custom_idx < len(custom_object_base_sizes) else 1.0
+                    mesh_path = str(custom_cfg.get("mesh_path", "") or "")
+                    if mesh_path and Path(mesh_path).exists():
+                        current_scale = float(max(1e-6, custom_cfg.get("scale", 1.0)))
+                        scene_allowed_mult = min(
+                            scene_allowed_mult,
+                            max(1.0, (scene_scale_cap_mult * max(base_size, 1e-8)) / current_scale),
+                        )
+                    else:
+                        radius = float(max(0.01, custom_cfg.get("radius", striker_radius)))
+                        scene_allowed_mult = min(
+                            scene_allowed_mult,
+                            max(1.0, (scene_scale_cap_mult * max(base_size, 1e-8)) / radius),
+                        )
+                scene_applied_mult = min(scene_required_mult, scene_allowed_mult)
+                if scene_applied_mult > 1.03:
+                    runtime_main_object_scale *= scene_applied_mult
+                    for custom_cfg in custom_object_cfgs:
+                        mesh_path = str(custom_cfg.get("mesh_path", "") or "")
+                        if mesh_path and Path(mesh_path).exists():
+                            custom_cfg["scale"] = float(max(1e-6, float(custom_cfg.get("scale", 1.0)) * scene_applied_mult))
+                        else:
+                            custom_cfg["radius"] = float(max(0.01, float(custom_cfg.get("radius", striker_radius)) * scene_applied_mult))
+                    auto_visibility_scale_info["scene_uniform_scale_applied_mult"] = float(scene_applied_mult)
+                    updates_applied = True
+                    continue
             main_required_mult = 1.0 if main_area_px >= min_projected_bbox_area_px else math.sqrt(
                 min_projected_bbox_area_px / max(main_area_px, 1.0)
             )
-            main_allowed_mult = max(1.0, max_auto_scale_up_mult / max(runtime_main_object_scale, 1e-8))
+            main_allowed_mult = max(1.0, scene_scale_cap_mult / max(runtime_main_object_scale, 1e-8))
             main_applied_mult = min(main_required_mult, main_allowed_mult)
             if main_applied_mult > 1.03:
                 runtime_main_object_scale *= main_applied_mult
@@ -8380,7 +8601,7 @@ def simulate_in_genesis(
                 striker_required_mult = 1.0 if striker_area_px >= min_projected_bbox_area_px else math.sqrt(
                     min_projected_bbox_area_px / max(striker_area_px, 1.0)
                 )
-                striker_allowed_mult = max(1.0, max_auto_scale_up_mult / max(runtime_striker_radius_mult, 1e-8))
+                striker_allowed_mult = max(1.0, scene_scale_cap_mult / max(runtime_striker_radius_mult, 1e-8))
                 striker_applied_mult = min(striker_required_mult, striker_allowed_mult)
                 if striker_applied_mult > 1.03:
                     runtime_striker_radius_mult *= striker_applied_mult
@@ -8415,7 +8636,7 @@ def simulate_in_genesis(
                         min_projected_bbox_area_px / max(area_px, 1.0)
                     )
                     current_scale = float(max(1e-6, custom_cfg.get("scale", 1.0)))
-                    allowed_mult = max(1.0, (max_auto_scale_up_mult * max(base_size, 1e-8)) / current_scale)
+                    allowed_mult = max(1.0, (scene_scale_cap_mult * max(base_size, 1e-8)) / current_scale)
                     applied_mult = min(required_mult, allowed_mult)
                     if applied_mult > 1.03:
                         custom_cfg["scale"] = float(current_scale * applied_mult)
@@ -8441,7 +8662,7 @@ def simulate_in_genesis(
                     required_mult = 1.0 if area_px >= min_projected_bbox_area_px else math.sqrt(
                         min_projected_bbox_area_px / max(area_px, 1.0)
                     )
-                    allowed_mult = max(1.0, (max_auto_scale_up_mult * max(base_size, 1e-8)) / radius)
+                    allowed_mult = max(1.0, (scene_scale_cap_mult * max(base_size, 1e-8)) / radius)
                     applied_mult = min(required_mult, allowed_mult)
                     if applied_mult > 1.03:
                         custom_cfg["radius"] = float(radius * applied_mult)
@@ -9339,57 +9560,26 @@ def simulate_in_genesis(
     label_l = str(scene_label).strip().lower()
     if label_l.startswith("multi3_") and ("projectile" in label_l or "drop" in label_l):
         wall_rng = np.random.RandomState(case_seed_for_runtime + 40403)
-        framing_points: List[np.ndarray] = []
-        main_world_corners = _world_bbox_corners_from_local_bounds(
-            bbox_min * runtime_main_object_scale,
-            bbox_max * runtime_main_object_scale,
-            pos_world=placed_pos,
-            euler_deg=object_euler_deg,
+        multi_layout = _build_multi_free_motion_layout(
+            scene_label=scene_label,
+            main_local_bounds_min=bbox_min,
+            main_local_bounds_max=bbox_max,
+            bbox_size_ref=bbox_size,
+            placed_pos=placed_pos,
+            object_euler_deg=object_euler_deg,
+            custom_object_cfgs=custom_object_cfgs,
+            striker_radius=striker_radius,
         )
-        framing_points.append(main_world_corners)
-        custom_runtime_records = [
-            rec for rec in custom_runtime_objects
-            if str(rec.get("custom_object_id", "")) != "custom_ball_default"
-        ]
-        for custom_cfg, custom_rec in zip(custom_object_cfgs, custom_runtime_records):
-            mesh_path = str(custom_cfg.get("mesh_path", "") or "")
-            custom_scale = float(max(1e-3, custom_cfg.get("scale", 0.15)))
-            custom_euler = np.asarray(custom_cfg.get("euler_deg", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(3)
-            start_pos = np.asarray(custom_rec.get("start_pos", placed_pos), dtype=np.float64).reshape(3)
-            local_bounds_min = None
-            local_bounds_max = None
-            if mesh_path and Path(mesh_path).exists():
-                bounds_info = _mesh_bounds_info(Path(mesh_path), scale=custom_scale)
-                if bounds_info is not None:
-                    local_bounds_min = np.asarray(bounds_info["bounds_min"], dtype=np.float64)
-                    local_bounds_max = np.asarray(bounds_info["bounds_max"], dtype=np.float64)
-            if local_bounds_min is None or local_bounds_max is None:
-                radius = float(max(0.01, custom_cfg.get("radius", striker_radius)))
-                local_bounds_min = np.asarray([-radius, -radius, -radius], dtype=np.float64)
-                local_bounds_max = np.asarray([radius, radius, radius], dtype=np.float64)
-            framing_points.append(
-                _world_bbox_corners_from_local_bounds(
-                    local_bounds_min,
-                    local_bounds_max,
-                    pos_world=start_pos,
-                    euler_deg=custom_euler,
-                )
-            )
-        multi3_framing_points_world = np.concatenate(framing_points, axis=0).astype(np.float64)
-        x_min = float(np.min(multi3_framing_points_world[:, 0]))
-        x_max = float(np.max(multi3_framing_points_world[:, 0]))
-        y_min = float(np.min(multi3_framing_points_world[:, 1]))
-        y_max = float(np.max(multi3_framing_points_world[:, 1]))
-        z_top = float(np.max(multi3_framing_points_world[:, 2]))
-        # Keep the enclosing walls noticeably farther than the moving objects
-        # so the enclosure reads as a loose stage instead of a tight box.
-        wall_margin_x = float(max(1.05, 2.05 * max(float(np.max(bbox_size)), 0.28)))
-        wall_gap_y = float(max(0.85, 2.20 * max(float(bbox_size[1]), 0.28)))
-        side_front_pad = float(max(0.85, 2.25 * max(float(bbox_size[1]), 0.28)))
+        if multi_layout is None:
+            raise RuntimeError("Expected multi_layout for multi3 free-motion scene")
+        multi3_framing_points_world = np.asarray(multi_layout["framing_points_world"], dtype=np.float64)
+        x_min = float(multi_layout["x_min"])
+        x_max = float(multi_layout["x_max"])
+        wall_margin_x = float(multi_layout["wall_margin_x"])
+        wall_back_y = float(multi_layout["wall_back_y"])
+        wall_front_y = float(multi_layout["wall_front_y"])
+        wall_top = float(multi_layout["wall_top"])
         wall_thickness = 0.05
-        wall_top = float(max(1.45, z_top + 0.90))
-        wall_back_y = y_max + wall_gap_y
-        wall_front_y = y_min - side_front_pad
         wall_color_bank = [
             (0.96, 0.84, 0.84, 1.0),  # blush
             (0.84, 0.92, 0.98, 1.0),  # sky
@@ -9561,6 +9751,7 @@ def simulate_in_genesis(
         )
         cam_pos = np.asarray(fitted_cfg["pos"], dtype=np.float64).reshape(3)
         lookat = np.asarray(fitted_cfg["lookat"], dtype=np.float64).reshape(3)
+        lookat[2] = float(max(0.12, lookat[2] - 0.06 * max(z_top, 0.6)))
         cam_up = np.asarray(fitted_cfg["up"], dtype=np.float64).reshape(3)
         cam_fov = float(fitted_cfg["fov"])
     if label_l not in {"random_parabola", "high_drop"} and not (label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)):
