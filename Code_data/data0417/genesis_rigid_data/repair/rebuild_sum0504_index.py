@@ -25,7 +25,7 @@ from core.sample_bucket_labels import (
 
 
 DEFAULT_OUTPUT_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
-RAW_TRAIN_ROOT = Path(
+DEFAULT_RAW_TRAIN_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid"
 )
 RAW_SPLIT_ASSIGNMENTS_FILENAME = "raw_split_assignments.json"
@@ -34,6 +34,7 @@ RAW_SPLIT_ASSIGNMENTS_FILENAME = "raw_split_assignments.json"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Rebuild sum0504 path-only indices from Genesis raw/window samples.")
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--raw_train_root", type=Path, default=DEFAULT_RAW_TRAIN_ROOT)
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
@@ -338,6 +339,7 @@ def split_leaf_sample_dirs(sample_dirs: List[Path]) -> Dict[str, List[Path]]:
 def main() -> None:
     args = parse_args()
     output_root = args.output_root.resolve()
+    raw_train_root = args.raw_train_root.resolve()
 
     grouped: Dict[Tuple[str, str, str, str], List[str]] = defaultdict(list)
     split_counts: Dict[str, Counter[str]] = defaultdict(Counter)
@@ -349,7 +351,7 @@ def main() -> None:
 
     classified_by_leaf: Dict[Tuple[str, str], List[Path]] = defaultdict(list)
     metadata_by_sample: Dict[str, Dict[str, Any]] = {}
-    for sample_dir in scan_leaf_sample_dirs(RAW_TRAIN_ROOT):
+    for sample_dir in scan_leaf_sample_dirs(raw_train_root):
         collision_bucket, metadata, error_key = classify_sample(sample_dir)
         if collision_bucket is None:
             dataset_name = "GenesisRigid"
@@ -412,7 +414,7 @@ def main() -> None:
             "split": split,
             "num_samples": int(sum(leaf_counts.values())),
             "leaf_counts": leaf_counts,
-            "source": str(RAW_TRAIN_ROOT),
+            "source": str(raw_train_root),
             "split_policy": "heldout_from_train_rigid_raw",
         }
         json_dump(output_root / split / "summary.json", split_summary, args.dry_run)
@@ -429,14 +431,14 @@ def main() -> None:
         "excluded_samples": int(excluded_samples),
         "included_by_leaf": included_by_leaf,
         "excluded_breakdown": dict(sorted(excluded_breakdown.items())),
-        "raw_train_root": str(RAW_TRAIN_ROOT),
+        "raw_train_root": str(raw_train_root),
         "raw_split_assignments_file": RAW_SPLIT_ASSIGNMENTS_FILENAME,
     }
     json_dump(output_root / "summary.json", root_summary, args.dry_run)
     json_dump(
         output_root / RAW_SPLIT_ASSIGNMENTS_FILENAME,
         {
-            "source_root": str(RAW_TRAIN_ROOT),
+            "source_root": str(raw_train_root),
             "policy": "per_leaf_raw_sample_holdout",
             "assignments": raw_assignments,
         },

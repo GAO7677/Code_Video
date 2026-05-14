@@ -1,0 +1,12 @@
+{
+  "source_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_genericv22_batch100/train/rigid",
+  "policy": "per_leaf_raw_sample_holdout",
+  "assignments": {
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_genericv22_batch100/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case005_entry_left__rs01": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case005_entry_left"
+    }
+  }
+}
