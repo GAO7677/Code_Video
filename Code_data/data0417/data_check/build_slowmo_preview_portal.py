@@ -40,7 +40,9 @@ def scan_samples(sample_root: Path) -> list[dict[str, Any]]:
             continue
         video_rel = meta.get("outputs", {}).get("rgb_video", "videos/rgb.mp4")
         video_path = meta_path.parent / video_rel
-        if not video_path.exists():
+        gif_path = meta_path.parent / "visualizations" / "rgb_preview.gif"
+        media_path = gif_path if gif_path.exists() else video_path
+        if not media_path.exists():
             continue
         playback = meta.get("video_playback", {}) or {}
         sim = meta.get("simulation", {}) or {}
@@ -52,7 +54,8 @@ def scan_samples(sample_root: Path) -> list[dict[str, Any]]:
                 "composition": meta.get("scene_composition", "unknown"),
                 "motion_category": meta.get("motion_category", "unknown"),
                 "num_objects": meta.get("num_objects", "unknown"),
-                "video_path": str(video_path),
+                "media_path": str(media_path),
+                "media_type": "gif" if gif_path.exists() else "video",
                 "meta_path": str(meta_path),
                 "slowdown_factor": float(playback.get("slowdown_factor", sim.get("playback_slowdown_factor", 1.0))),
                 "base_fps": float(playback.get("base_video_fps", sim.get("base_video_fps", sim.get("video_fps", 0.0)))),
@@ -65,10 +68,14 @@ def scan_samples(sample_root: Path) -> list[dict[str, Any]]:
 def render_html(title: str, samples: list[dict[str, Any]]) -> str:
     cards = []
     for sample in samples:
+        if sample["media_type"] == "gif":
+            media_html = f'<img class="video" src="{sample["media_path"]}" loading="lazy" />'
+        else:
+            media_html = f'<video class="video" src="{sample["media_path"]}" controls muted loop preload="metadata"></video>'
         cards.append(
             f"""
             <article class="card">
-              <video class="video" src="{sample['video_path']}" controls muted loop preload="metadata"></video>
+              {media_html}
               <div class="body">
                 <div class="scene">{sample['scene_id']}</div>
                 <div class="meta"><span>{sample['case_name']}</span><span>{sample['count_bucket']}</span><span>{sample['num_objects']} objects</span></div>

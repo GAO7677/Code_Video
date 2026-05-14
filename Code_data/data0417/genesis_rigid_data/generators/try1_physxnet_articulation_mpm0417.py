@@ -418,6 +418,51 @@ def resolve_video_playback_cfg(
     }
 
 
+def resolve_frame_sampling_cfg(
+    args: argparse.Namespace,
+    *,
+    runtime_case_cfg: Dict[str, Any],
+    requested_fps: float,
+    dt: float,
+    steps: int,
+) -> Dict[str, Any]:
+    requested_fps = float(max(1.0, requested_fps))
+    dt = float(max(1e-6, dt))
+    base_steps = int(max(1, steps))
+    sampling_fps_mult = float(
+        max(
+            1.0,
+            float(
+                _case_cfg_or_default(
+                    runtime_case_cfg,
+                    "sampling_fps_mult_override",
+                    getattr(args, "sampling_fps_mult", 1.0),
+                )
+                or 1.0
+            ),
+        )
+    )
+    target_sampling_fps = float(min(requested_fps * sampling_fps_mult, 1.0 / dt))
+    save_every = max(1, int(round((1.0 / dt) / target_sampling_fps)))
+    actual_sampling_fps = float(1.0 / (dt * float(save_every)))
+    physical_duration_sec = float(base_steps / requested_fps)
+    total_sim_steps = max(1, int(round(physical_duration_sec / dt)))
+    exported_intervals = max(1, int(total_sim_steps // save_every))
+    total_sim_steps = max(save_every, exported_intervals * save_every)
+    exported_frame_count = int(exported_intervals + 1)
+    return {
+        "requested_fps": float(requested_fps),
+        "sampling_fps_mult": float(sampling_fps_mult),
+        "target_sampling_fps": float(target_sampling_fps),
+        "actual_sampling_fps": float(actual_sampling_fps),
+        "save_every": int(save_every),
+        "frame_dt": float(dt * float(save_every)),
+        "physical_duration_sec": float(total_sim_steps * dt),
+        "total_sim_steps": int(total_sim_steps),
+        "exported_frame_count": int(exported_frame_count),
+    }
+
+
 def parse_density_to_kgm3(value: Any, default: Optional[float] = None) -> Optional[float]:
     if value is None:
         return default
@@ -8544,13 +8589,20 @@ def simulate_in_genesis(
     case_seed_for_runtime = int(runtime_case_cfg.get("seed", 20260414))
     counterfactual_meta = dict(runtime_case_cfg.get("counterfactual", {}) or {})
     simple_case_resample_index = int(getattr(args, "simple_case_resample_index", 0) or 0)
+    frame_sampling_cfg = resolve_frame_sampling_cfg(
+        args,
+        runtime_case_cfg=runtime_case_cfg,
+        requested_fps=float(fps),
+        dt=float(dt),
+        steps=int(steps),
+    )
     video_playback_cfg = resolve_video_playback_cfg(
         args,
         case_seed=case_seed_for_runtime,
         case_name=case_name,
         object_id=str(prepared.object_id),
         simple_case_resample_index=simple_case_resample_index,
-        base_fps=float(fps),
+        base_fps=float(frame_sampling_cfg["actual_sampling_fps"]),
     )
     render_video_fps = float(video_playback_cfg["effective_video_fps"])
     placed_pos = placed_pos + np.asarray(runtime_case_cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
@@ -10206,10 +10258,10 @@ def simulate_in_genesis(
                 pass
 
     frames: List[np.ndarray] = []
-    save_every = max(1, int(round((1.0 / dt) / fps)))
-    # `steps` is treated as the number of exported frames; internally we advance
-    # the simulator `save_every` substeps between two saved frames.
-    total_sim_steps = max(int(steps), 1) * save_every
+    save_every = int(frame_sampling_cfg["save_every"])
+    # Keep the physical duration tied to the requested fps, then save more
+    # densely when sampling_fps_mult > 1 so fast rotations look smoother.
+    total_sim_steps = int(frame_sampling_cfg["total_sim_steps"])
     warmup_steps = int(_case_cfg_or_default(runtime_case_cfg, "warmup_steps_override", getattr(args, "warmup_steps", 8)))
     liquid_settle_steps = int(
         _case_cfg_or_default(
@@ -10682,6 +10734,7 @@ def simulate_in_genesis(
         "striker_speed_mps": float(runtime_striker_speed),
         "counterfactual": counterfactual_meta if counterfactual_meta else None,
         "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
+        "frame_sampling": frame_sampling_cfg,
         "video_playback": video_playback_cfg,
         "environment_entities": (
             [{"name": "ground", "special_id": int(ENVIRONMENT_SPECIAL_IDS["ground"]), "entity_type": "container"}]
@@ -10775,12 +10828,17 @@ def simulate_in_genesis(
             "dt": float(dt),
             "substeps": int(runtime_substeps),
             "steps_per_frame": int(save_every),
-            "frame_dt": float(dt) * float(save_every),
+            "frame_dt": float(frame_sampling_cfg["frame_dt"]),
             "video_fps": float(render_video_fps),
-            "base_video_fps": float(fps),
+            "base_video_fps": float(frame_sampling_cfg["actual_sampling_fps"]),
+            "requested_video_fps": float(frame_sampling_cfg["requested_fps"]),
+            "sampling_fps_mult": float(frame_sampling_cfg["sampling_fps_mult"]),
+            "target_sampling_fps": float(frame_sampling_cfg["target_sampling_fps"]),
+            "physical_duration_sec": float(frame_sampling_cfg["physical_duration_sec"]),
             "playback_slowdown_factor": float(video_playback_cfg["slowdown_factor"]),
             "gravity": [0.0, 0.0, float(gravity_z)],
         },
+        "frame_sampling": frame_sampling_cfg,
         "video_playback": video_playback_cfg,
         "camera": camera_cfg,
         "camera_tag": camera_tag or None,
@@ -10900,6 +10958,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--dt", type=float, default=0.005, help="Simulation dt")
     parser.add_argument("--substeps", type=int, default=10, help="Simulation substeps")
     parser.add_argument("--fps", type=int, default=24, help="Preview video fps")
+    parser.add_argument(
+        "--sampling_fps_mult",
+        type=float,
+        default=1.0,
+        help="Multiplier applied only to exported frame sampling density while keeping physical simulation duration unchanged.",
+    )
     parser.set_defaults(liquid_free_surface=True)
     parser.add_argument("--disable_liquid_free_surface", dest="liquid_free_surface", action="store_false", help="Use the older more constrained liquid setup with extra seals/guards and denser cavity filling")
     parser.add_argument("--liquid_sampler", type=str, default=None, help="Override Genesis SPH liquid sampler, e.g. pbs or regular")
