@@ -2904,9 +2904,9 @@ def _estimate_preview_camera_cfg_for_visibility(
             cam_fov = 48
         cam_pos = np.array(
             [
-                float(lookat[0] + (0.26 if num_multi_objs == 3 else (0.08 if num_multi_objs >= 3 else 0.62)) * cam_distance),
-                float(lookat[1] - (1.22 if num_multi_objs == 3 else (0.88 if num_multi_objs >= 3 else 0.48)) * cam_distance),
-                float((0.90 if num_multi_objs == 3 else 1.08) * cam_height),
+                float(lookat[0]),
+                float(lookat[1] - (1.18 if num_multi_objs == 3 else (0.92 if num_multi_objs >= 3 else 0.48)) * cam_distance),
+                float(lookat[2] + (0.24 if num_multi_objs == 3 else 0.20) * cam_height),
             ],
             dtype=np.float64,
         )
@@ -9338,6 +9338,7 @@ def simulate_in_genesis(
     multi3_framing_points_world: Optional[np.ndarray] = None
     label_l = str(scene_label).strip().lower()
     if label_l.startswith("multi3_") and ("projectile" in label_l or "drop" in label_l):
+        wall_rng = np.random.RandomState(case_seed_for_runtime + 40403)
         framing_points: List[np.ndarray] = []
         main_world_corners = _world_bbox_corners_from_local_bounds(
             bbox_min * runtime_main_object_scale,
@@ -9380,33 +9381,43 @@ def simulate_in_genesis(
         y_min = float(np.min(multi3_framing_points_world[:, 1]))
         y_max = float(np.max(multi3_framing_points_world[:, 1]))
         z_top = float(np.max(multi3_framing_points_world[:, 2]))
-        wall_margin_x = float(max(0.22, 0.48 * max(float(np.max(bbox_size)), 0.24)))
-        wall_gap_y = float(max(0.18, 0.52 * max(float(bbox_size[1]), 0.24)))
-        side_front_pad = float(max(0.12, 0.30 * max(float(bbox_size[1]), 0.24)))
-        wall_thickness = 0.04
-        wall_top = float(max(1.05, z_top + 0.54))
-        wall_style = dict(
-            material=gs.materials.Rigid(rho=1200.0, friction=0.90),
-            surface=gs.surfaces.Default(color=(0.84, 0.86, 0.90, 1.0), vis_mode="visual"),
-        )
+        # Keep the enclosing walls noticeably farther than the moving objects
+        # so the enclosure reads as a loose stage instead of a tight box.
+        wall_margin_x = float(max(1.05, 2.05 * max(float(np.max(bbox_size)), 0.28)))
+        wall_gap_y = float(max(0.85, 2.20 * max(float(bbox_size[1]), 0.28)))
+        side_front_pad = float(max(0.85, 2.25 * max(float(bbox_size[1]), 0.28)))
+        wall_thickness = 0.05
+        wall_top = float(max(1.45, z_top + 0.90))
+        wall_back_y = y_max + wall_gap_y
+        wall_front_y = y_min - side_front_pad
+        wall_color_bank = [
+            (0.96, 0.84, 0.84, 1.0),  # blush
+            (0.84, 0.92, 0.98, 1.0),  # sky
+            (0.98, 0.92, 0.78, 1.0),  # sand
+            (0.86, 0.95, 0.86, 1.0),  # mint
+            (0.92, 0.87, 0.98, 1.0),  # lavender
+            (0.98, 0.88, 0.80, 1.0),  # peach
+        ]
+        wall_colors = [wall_color_bank[int(idx)] for idx in wall_rng.choice(len(wall_color_bank), size=3, replace=False).tolist()]
         wall_specs = [
             (
                 "back_wall",
-                np.array([x_min - wall_margin_x, y_max + wall_gap_y, 0.0], dtype=np.float64),
-                np.array([x_max + wall_margin_x, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+                np.array([x_min - wall_margin_x, wall_back_y, 0.0], dtype=np.float64),
+                np.array([x_max + wall_margin_x, wall_back_y + wall_thickness, wall_top], dtype=np.float64),
             ),
             (
                 "left_wall",
-                np.array([x_min - wall_margin_x - wall_thickness, y_min - side_front_pad, 0.0], dtype=np.float64),
-                np.array([x_min - wall_margin_x, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+                np.array([x_min - wall_margin_x - wall_thickness, wall_front_y, 0.0], dtype=np.float64),
+                np.array([x_min - wall_margin_x, wall_back_y + wall_thickness, wall_top], dtype=np.float64),
             ),
             (
                 "right_wall",
-                np.array([x_max + wall_margin_x, y_min - side_front_pad, 0.0], dtype=np.float64),
-                np.array([x_max + wall_margin_x + wall_thickness, y_max + wall_gap_y + wall_thickness, wall_top], dtype=np.float64),
+                np.array([x_max + wall_margin_x, wall_front_y, 0.0], dtype=np.float64),
+                np.array([x_max + wall_margin_x + wall_thickness, wall_back_y + wall_thickness, wall_top], dtype=np.float64),
             ),
         ]
-        for wall_name, wall_lower, wall_upper in wall_specs:
+        for wall_idx, (wall_name, wall_lower, wall_upper) in enumerate(wall_specs):
+            wall_color = wall_colors[wall_idx]
             scene.add_entity(
                 morph=gs.morphs.Box(
                     lower=tuple(wall_lower.tolist()),
@@ -9415,7 +9426,8 @@ def simulate_in_genesis(
                     collision=True,
                     fixed=True,
                 ),
-                **wall_style,
+                material=gs.materials.Rigid(rho=1200.0, friction=0.90),
+                surface=gs.surfaces.Default(color=wall_color, vis_mode="visual"),
             )
             preview_wall_infos.append(
                 {
@@ -9423,7 +9435,40 @@ def simulate_in_genesis(
                     "special_id": int(ENVIRONMENT_SPECIAL_IDS[wall_name]),
                     "lower": wall_lower.astype(np.float64).tolist(),
                     "upper": wall_upper.astype(np.float64).tolist(),
+                    "color_rgba": list(wall_color),
                 }
+            )
+        light_pos = np.array(
+            [
+                float(0.5 * (x_min + x_max)),
+                float(0.5 * (wall_front_y + wall_back_y)),
+                float(max(1.10, wall_top - 0.24)),
+            ],
+            dtype=np.float64,
+        )
+        light_dir = np.array([0.0, 0.12, -1.0], dtype=np.float64)
+        if isinstance(scene.renderer_options, gs.renderers.BatchRenderer):
+            scene.add_light(
+                pos=tuple(light_pos.tolist()),
+                dir=tuple(_normalize_vec(light_dir).tolist()),
+                color=(1.0, 0.98, 0.94),
+                intensity=16.0,
+                directional=False,
+                castshadow=True,
+                cutoff=75.0,
+                attenuation=0.02,
+            )
+        elif isinstance(scene.renderer_options, gs.renderers.RayTracer):
+            scene.add_mesh_light(
+                morph=gs.morphs.Sphere(
+                    radius=0.07,
+                    pos=tuple(light_pos.tolist()),
+                    euler=(0.0, 0.0, 0.0),
+                ),
+                color=(1.0, 0.98, 0.94, 1.0),
+                intensity=20.0,
+                double_sided=True,
+                cutoff=180.0,
             )
 
     camera_distance_mult = float(getattr(args, "camera_distance_mult", 1.0) or 1.0)
@@ -9510,7 +9555,7 @@ def simulate_in_genesis(
         fitted_cfg = _fit_camera_cfg_to_world_points(
             multi3_framing_points_world,
             image_res=tuple(EXPORT_CAMERA_RESOLUTION),
-            camera_offset_dir=np.asarray([0.22, -1.0, 0.18], dtype=np.float64),
+            camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
             vertical_fov_deg=40.0,
             target_fill=0.78,
         )
