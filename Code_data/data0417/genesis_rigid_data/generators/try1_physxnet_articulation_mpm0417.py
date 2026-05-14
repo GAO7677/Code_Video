@@ -2811,6 +2811,58 @@ def _fit_camera_cfg_to_world_points(
     }
 
 
+def _multi_scene_intrinsic_profile(
+    object_extent_max_values: Sequence[float],
+    object_volume_values: Sequence[float],
+) -> Dict[str, float]:
+    extent_vals = np.asarray(list(object_extent_max_values or [0.0]), dtype=np.float64).reshape(-1)
+    volume_vals = np.asarray(list(object_volume_values or [0.0]), dtype=np.float64).reshape(-1)
+    extent_vals = np.maximum(extent_vals, 1e-6)
+    volume_vals = np.maximum(volume_vals, 1e-8)
+    min_extent = float(np.min(extent_vals))
+    median_extent = float(np.median(extent_vals))
+    max_extent = float(np.max(extent_vals))
+    median_volume = float(np.median(volume_vals))
+    support_anchor_scene = bool(max_extent >= 0.90 and max_extent >= 2.0 * max(median_extent, 1e-6))
+
+    if support_anchor_scene:
+        return {
+            "profile_name": "support_anchor_scene",
+            "target_fill": 0.76,
+            "target_rendered_bbox_area_px": 3600.0,
+            "projected_area_safety": 0.78,
+            "scale_cap_mult": 1.8,
+            "vertical_fov_deg": 38.0,
+        }
+
+    if min_extent < 0.16 or median_volume < 0.0025:
+        return {
+            "profile_name": "small_objects",
+            "target_fill": 0.82,
+            "target_rendered_bbox_area_px": 4600.0,
+            "projected_area_safety": 0.74,
+            "scale_cap_mult": 4.0,
+            "vertical_fov_deg": 36.0,
+        }
+    if min_extent < 0.28 or median_extent < 0.36 or max_extent < 0.65:
+        return {
+            "profile_name": "medium_objects",
+            "target_fill": 0.77,
+            "target_rendered_bbox_area_px": 3400.0,
+            "projected_area_safety": 0.78,
+            "scale_cap_mult": 2.2,
+            "vertical_fov_deg": 38.0,
+        }
+    return {
+        "profile_name": "large_objects",
+        "target_fill": 0.72,
+        "target_rendered_bbox_area_px": 2600.0,
+        "projected_area_safety": 0.82,
+        "scale_cap_mult": 1.5,
+        "vertical_fov_deg": 39.0,
+    }
+
+
 def _is_multi_free_motion_scene(scene_label: str) -> bool:
     label_l = str(scene_label).strip().lower()
     return label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)
@@ -2837,7 +2889,9 @@ def _build_multi_free_motion_layout(
     object_euler_deg = np.asarray(object_euler_deg, dtype=np.float64).reshape(3)
 
     object_infos: List[Dict[str, Any]] = []
-    framing_parts: List[np.ndarray] = []
+    custom_world_corners_list: List[np.ndarray] = []
+    object_extent_max_values: List[float] = []
+    object_volume_values: List[float] = []
 
     main_world_corners = _world_bbox_corners_from_local_bounds(
         main_local_bounds_min,
@@ -2854,7 +2908,9 @@ def _build_multi_free_motion_layout(
             "euler_deg": object_euler_deg.astype(np.float64),
         }
     )
-    framing_parts.append(main_world_corners)
+    main_bounds_size = np.maximum(main_local_bounds_max - main_local_bounds_min, 1e-6)
+    object_extent_max_values.append(float(np.max(main_bounds_size)))
+    object_volume_values.append(float(np.prod(main_bounds_size)))
 
     for custom_idx, custom_cfg in enumerate(list(custom_object_cfgs or [])):
         mesh_path = str(custom_cfg.get("mesh_path", "") or "")
@@ -2887,9 +2943,61 @@ def _build_multi_free_motion_layout(
                 "euler_deg": custom_euler.astype(np.float64),
             }
         )
-        framing_parts.append(world_corners)
+        custom_world_corners_list.append(world_corners)
+        bounds_size = np.maximum(local_bounds_max - local_bounds_min, 1e-6)
+        object_extent_max_values.append(float(np.max(bounds_size)))
+        object_volume_values.append(float(np.prod(bounds_size)))
 
-    object_points_world = np.concatenate(framing_parts, axis=0).astype(np.float64)
+    framing_parts: List[np.ndarray] = []
+    total_count = int(len(object_infos))
+    main_world_min = np.min(main_world_corners, axis=0)
+    main_world_max = np.max(main_world_corners, axis=0)
+    custom_extent_vals = np.asarray(object_extent_max_values[1:], dtype=np.float64) if len(object_extent_max_values) > 1 else np.zeros((0,), dtype=np.float64)
+    dominant_anchor = False
+    framing_mode = "full_object_union"
+    if total_count >= 3 and custom_world_corners_list:
+        custom_points_world = np.concatenate(custom_world_corners_list, axis=0).astype(np.float64)
+        custom_world_min = np.min(custom_points_world, axis=0)
+        custom_world_max = np.max(custom_points_world, axis=0)
+        main_span_max = float(np.max(main_world_max - main_world_min))
+        custom_extent_ref = float(np.median(custom_extent_vals)) if custom_extent_vals.size > 0 else main_span_max
+        dominant_anchor = bool(main_span_max >= max(0.72, 1.55 * max(custom_extent_ref, 1e-6)))
+        if dominant_anchor:
+            active_span = np.maximum(custom_world_max - custom_world_min, 1e-6)
+            pad_ref = max(0.12, 0.55 * max(custom_extent_ref, 1e-6))
+            pad_x = max(0.12, 0.16 * float(active_span[0]), 0.60 * pad_ref)
+            pad_y_front = max(0.18, 0.18 * float(active_span[1]), 0.85 * pad_ref)
+            pad_y_back = max(0.16, 0.12 * float(active_span[1]), 0.55 * pad_ref)
+            focus_min = main_world_min.copy()
+            focus_max = main_world_max.copy()
+            focus_min[0] = max(main_world_min[0], float(custom_world_min[0] - pad_x))
+            focus_max[0] = min(main_world_max[0], float(custom_world_max[0] + pad_x))
+            focus_min[1] = max(main_world_min[1], float(custom_world_min[1] - pad_y_front))
+            focus_max[1] = min(main_world_max[1], float(custom_world_max[1] + pad_y_back))
+            min_focus_x = max(0.44, 0.50 * max(custom_extent_ref, 1e-6))
+            min_focus_y = max(0.52, 0.62 * max(custom_extent_ref, 1e-6))
+            focus_center_x = 0.5 * float(focus_min[0] + focus_max[0])
+            focus_center_y = 0.5 * float(focus_min[1] + focus_max[1])
+            if float(focus_max[0] - focus_min[0]) < min_focus_x:
+                half_x = 0.5 * min_focus_x
+                focus_min[0] = max(main_world_min[0], focus_center_x - half_x)
+                focus_max[0] = min(main_world_max[0], focus_center_x + half_x)
+            if float(focus_max[1] - focus_min[1]) < min_focus_y:
+                half_y = 0.5 * min_focus_y
+                focus_min[1] = max(main_world_min[1], focus_center_y - half_y)
+                focus_max[1] = min(main_world_max[1], focus_center_y + half_y)
+            focus_min[2] = main_world_min[2]
+            focus_max[2] = main_world_max[2]
+            framing_parts.append(_bbox_corners_from_bounds(focus_min, focus_max))
+            framing_mode = "dominant_anchor_focus_strip"
+        else:
+            framing_parts.append(main_world_corners)
+    else:
+        framing_parts.append(main_world_corners)
+    framing_parts.extend(custom_world_corners_list)
+
+    object_points_world = np.concatenate([main_world_corners] + custom_world_corners_list, axis=0).astype(np.float64)
+    framing_object_points_world = np.concatenate(framing_parts, axis=0).astype(np.float64)
     x_min = float(np.min(object_points_world[:, 0]))
     x_max = float(np.max(object_points_world[:, 0]))
     y_min = float(np.min(object_points_world[:, 1]))
@@ -2903,25 +3011,28 @@ def _build_multi_free_motion_layout(
     wall_back_y = float(y_max + wall_gap_y)
     wall_front_y = float(y_min - side_front_pad)
 
-    total_count = int(len(object_infos))
     if total_count >= 3:
-        floor_band_y0 = float(wall_front_y + 0.10 * (wall_back_y - wall_front_y))
-        floor_band_y1 = float(y_min + 0.18 * (y_max - y_min))
-        floor_band_x_pad = float(max(0.18, 0.22 * (x_max - x_min + 1e-6)))
+        framing_x_min = float(np.min(framing_object_points_world[:, 0]))
+        framing_x_max = float(np.max(framing_object_points_world[:, 0]))
+        framing_y_min = float(np.min(framing_object_points_world[:, 1]))
+        framing_y_max = float(np.max(framing_object_points_world[:, 1]))
+        floor_band_y0 = float(max(wall_front_y, framing_y_min - 0.18 * (framing_y_max - framing_y_min + 1e-6)))
+        floor_band_y1 = float(min(y_min + 0.18 * (y_max - y_min), framing_y_min + 0.12 * (framing_y_max - framing_y_min + 1e-6)))
+        floor_band_x_pad = float(max(0.18, 0.18 * (framing_x_max - framing_x_min + 1e-6)))
         floor_points = np.asarray(
             [
-                [x_min - floor_band_x_pad, floor_band_y0, 0.0],
-                [x_max + floor_band_x_pad, floor_band_y0, 0.0],
-                [x_min - floor_band_x_pad, floor_band_y1, 0.0],
-                [x_max + floor_band_x_pad, floor_band_y1, 0.0],
-                [0.5 * (x_min + x_max), floor_band_y0, 0.0],
-                [0.5 * (x_min + x_max), floor_band_y1, 0.0],
+                [framing_x_min - floor_band_x_pad, floor_band_y0, 0.0],
+                [framing_x_max + floor_band_x_pad, floor_band_y0, 0.0],
+                [framing_x_min - floor_band_x_pad, floor_band_y1, 0.0],
+                [framing_x_max + floor_band_x_pad, floor_band_y1, 0.0],
+                [0.5 * (framing_x_min + framing_x_max), floor_band_y0, 0.0],
+                [0.5 * (framing_x_min + framing_x_max), floor_band_y1, 0.0],
             ],
             dtype=np.float64,
         )
-        framing_points_world = np.concatenate([object_points_world, floor_points], axis=0).astype(np.float64)
+        framing_points_world = np.concatenate([framing_object_points_world, floor_points], axis=0).astype(np.float64)
     else:
-        framing_points_world = object_points_world
+        framing_points_world = framing_object_points_world
 
     return {
         "object_infos": object_infos,
@@ -2937,6 +3048,9 @@ def _build_multi_free_motion_layout(
         "wall_front_y": wall_front_y,
         "wall_top": wall_top,
         "object_count": total_count,
+        "framing_mode": framing_mode,
+        "object_extent_max_values": [float(v) for v in object_extent_max_values],
+        "object_volume_values": [float(v) for v in object_volume_values],
     }
 
 
@@ -8414,6 +8528,8 @@ def simulate_in_genesis(
         "default_striker_radius_mult": 1.0,
         "scene_scale_cap_mult": 1.0,
         "scene_min_projected_bbox_area_px": None,
+        "scene_profile": None,
+        "scene_camera_target_fill": None,
         "custom_objects": [],
     }
     custom_object_cfgs = copy.deepcopy(list(runtime_case_cfg.get("custom_objects", []) or []))
@@ -8434,20 +8550,25 @@ def simulate_in_genesis(
     max_auto_scale_up_mult = max(1.0, float(getattr(args, "max_auto_scale_up_mult", 2.5) or 2.5))
     label_l = str(scene_label).strip().lower()
     multi_object_scene_scaling = _is_multi_free_motion_scene(scene_label) and (1 + len(custom_object_cfgs) >= 3)
-    scene_target_rendered_bbox_area_px = 5000.0 if multi_object_scene_scaling else min_projected_bbox_area_px
-    scene_projected_area_safety = 0.55 if multi_object_scene_scaling else 1.0
-    multi_scene_target_fill = 0.80 if multi_object_scene_scaling else 0.78
-    scene_min_projected_bbox_area_target_px = float(
-        max(
-            min_projected_bbox_area_px,
-            scene_target_rendered_bbox_area_px / max(scene_projected_area_safety, 1e-6),
+    scene_target_rendered_bbox_area_px = float(min_projected_bbox_area_px)
+    scene_projected_area_safety = 1.0
+    multi_scene_target_fill = 0.76 if multi_object_scene_scaling else 0.78
+    multi_scene_vertical_fov_deg = 39.0 if multi_object_scene_scaling else 40.0
+    scene_min_projected_bbox_area_target_px = float(min_projected_bbox_area_px)
+    scene_scale_cap_mult = float(max_auto_scale_up_mult)
+    if multi_object_scene_scaling:
+        scene_target_rendered_bbox_area_px = 3200.0
+        scene_projected_area_safety = 0.76
+        scene_min_projected_bbox_area_target_px = float(
+            max(min_projected_bbox_area_px, scene_target_rendered_bbox_area_px / scene_projected_area_safety)
         )
-    )
-    scene_scale_cap_mult = float(max(max_auto_scale_up_mult, 7.7 if multi_object_scene_scaling else max_auto_scale_up_mult))
+        scene_scale_cap_mult = float(max(max_auto_scale_up_mult, 1.9))
     auto_visibility_scale_info["scene_scale_cap_mult"] = float(scene_scale_cap_mult)
     auto_visibility_scale_info["scene_projected_area_safety"] = float(scene_projected_area_safety)
     auto_visibility_scale_info["scene_target_rendered_bbox_area_px"] = float(scene_target_rendered_bbox_area_px)
     auto_visibility_scale_info["scene_min_projected_bbox_area_target_px"] = float(scene_min_projected_bbox_area_target_px)
+    auto_visibility_scale_info["scene_camera_target_fill"] = float(multi_scene_target_fill)
+    auto_visibility_scale_info["scene_vertical_fov_deg"] = float(multi_scene_vertical_fov_deg)
     if (
         min_projected_bbox_area_px > 1.0
         and not prepared_has_liquid
@@ -8484,13 +8605,13 @@ def simulate_in_genesis(
                 camera_cfg_est = _fit_camera_cfg_to_world_points(
                     multi_layout_est["framing_points_world"],
                     image_res=tuple(EXPORT_CAMERA_RESOLUTION),
-                    camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
-                    vertical_fov_deg=40.0,
+                    camera_offset_dir=np.asarray([0.0, -1.0, 0.24], dtype=np.float64),
+                    vertical_fov_deg=float(multi_scene_vertical_fov_deg),
                     target_fill=multi_scene_target_fill,
                 )
                 camera_cfg_est["lookat"] = np.asarray(camera_cfg_est["lookat"], dtype=np.float64).reshape(3)
                 camera_cfg_est["lookat"][2] = float(
-                    max(0.12, float(camera_cfg_est["lookat"][2]) - 0.06 * max(float(multi_layout_est["z_top"]), 0.6))
+                    max(0.10, float(camera_cfg_est["lookat"][2]) - 0.05 * max(float(multi_layout_est["z_top"]), 0.6))
                 )
                 camera_cfg_est["lookat"] = camera_cfg_est["lookat"].astype(np.float64).tolist()
             else:
@@ -8531,6 +8652,12 @@ def simulate_in_genesis(
                     image_res=tuple(EXPORT_CAMERA_RESOLUTION),
                 )
             if multi_object_scene_scaling and multi_layout_est is not None:
+                object_extent_max_values = list(multi_layout_est.get("object_extent_max_values", []) or [])
+                object_volume_values = list(multi_layout_est.get("object_volume_values", []) or [])
+                auto_visibility_scale_info["scene_bbox_size_max_m"] = float(max(object_extent_max_values)) if object_extent_max_values else None
+                auto_visibility_scale_info["scene_bbox_size_min_m"] = float(min(object_extent_max_values)) if object_extent_max_values else None
+                auto_visibility_scale_info["scene_bbox_volume_est_m3"] = float(max(object_volume_values)) if object_volume_values else None
+                auto_visibility_scale_info["scene_framing_mode"] = str(multi_layout_est.get("framing_mode", "unknown"))
                 object_area_values = [float(main_area_px)]
                 for obj_info in multi_layout_est["object_infos"][1:]:
                     area_px = _projected_bbox_area_from_local_bounds(
@@ -8544,6 +8671,30 @@ def simulate_in_genesis(
                     )
                     object_area_values.append(float(area_px))
                 scene_min_area_px = float(min(object_area_values))
+                if auto_visibility_scale_info.get("scene_profile") is None:
+                    scene_profile_cfg = _multi_scene_intrinsic_profile(
+                        object_extent_max_values=object_extent_max_values,
+                        object_volume_values=object_volume_values,
+                    )
+                    scene_profile = str(scene_profile_cfg["profile_name"])
+                    scene_target_rendered_bbox_area_px = float(scene_profile_cfg["target_rendered_bbox_area_px"])
+                    scene_projected_area_safety = float(scene_profile_cfg["projected_area_safety"])
+                    scene_scale_cap_mult = float(max(max_auto_scale_up_mult, float(scene_profile_cfg["scale_cap_mult"])))
+                    multi_scene_target_fill = float(scene_profile_cfg["target_fill"])
+                    multi_scene_vertical_fov_deg = float(scene_profile_cfg["vertical_fov_deg"])
+                    scene_min_projected_bbox_area_target_px = float(
+                        max(
+                            min_projected_bbox_area_px,
+                            scene_target_rendered_bbox_area_px / max(scene_projected_area_safety, 1e-6),
+                        )
+                    )
+                    auto_visibility_scale_info["scene_profile"] = str(scene_profile)
+                    auto_visibility_scale_info["scene_scale_cap_mult"] = float(scene_scale_cap_mult)
+                    auto_visibility_scale_info["scene_projected_area_safety"] = float(scene_projected_area_safety)
+                    auto_visibility_scale_info["scene_target_rendered_bbox_area_px"] = float(scene_target_rendered_bbox_area_px)
+                    auto_visibility_scale_info["scene_min_projected_bbox_area_target_px"] = float(scene_min_projected_bbox_area_target_px)
+                    auto_visibility_scale_info["scene_camera_target_fill"] = float(multi_scene_target_fill)
+                    auto_visibility_scale_info["scene_vertical_fov_deg"] = float(multi_scene_vertical_fov_deg)
                 auto_visibility_scale_info["scene_min_projected_bbox_area_px"] = float(scene_min_area_px)
                 scene_required_mult = 1.0 if scene_min_area_px >= scene_min_projected_bbox_area_target_px else math.sqrt(
                     scene_min_projected_bbox_area_target_px / max(scene_min_area_px, 1.0)
@@ -9750,16 +9901,18 @@ def simulate_in_genesis(
         cam_pos = np.array([0.66 * cam_distance, -0.82 * cam_distance, 1.08 * cam_height], dtype=np.float64)
     cam_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     if multi3_framing_points_world is not None:
+        scene_camera_target_fill = float(auto_visibility_scale_info.get("scene_camera_target_fill", 0.78) or 0.78)
+        scene_vertical_fov_deg = float(auto_visibility_scale_info.get("scene_vertical_fov_deg", 39.0) or 39.0)
         fitted_cfg = _fit_camera_cfg_to_world_points(
             multi3_framing_points_world,
             image_res=tuple(EXPORT_CAMERA_RESOLUTION),
-            camera_offset_dir=np.asarray([0.0, -1.0, 0.16], dtype=np.float64),
-            vertical_fov_deg=40.0,
-            target_fill=0.80,
+            camera_offset_dir=np.asarray([0.0, -1.0, 0.24], dtype=np.float64),
+            vertical_fov_deg=scene_vertical_fov_deg,
+            target_fill=scene_camera_target_fill,
         )
         cam_pos = np.asarray(fitted_cfg["pos"], dtype=np.float64).reshape(3)
         lookat = np.asarray(fitted_cfg["lookat"], dtype=np.float64).reshape(3)
-        lookat[2] = float(max(0.12, lookat[2] - 0.06 * max(z_top, 0.6)))
+        lookat[2] = float(max(0.10, lookat[2] - 0.05 * max(z_top, 0.6)))
         cam_up = np.asarray(fitted_cfg["up"], dtype=np.float64).reshape(3)
         cam_fov = float(fitted_cfg["fov"])
     if label_l not in {"random_parabola", "high_drop"} and not (label_l.startswith("multi") and ("projectile" in label_l or "drop" in label_l)):
