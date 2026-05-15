@@ -1,0 +1,12 @@
+{
+  "source_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/trim_test_striker_case005_0515/train/rigid",
+  "policy": "per_leaf_raw_sample_holdout",
+  "assignments": {
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/trim_test_striker_case005_0515/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case005_entry_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c1",
+      "case_name": "case005_entry_left"
+    }
+  }
+}

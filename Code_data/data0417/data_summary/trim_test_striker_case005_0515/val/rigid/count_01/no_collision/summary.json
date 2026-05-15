@@ -1,0 +1,7 @@
+{
+  "split": "val",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_01",
+  "collision_bucket": "no_collision",
+  "num_samples": 0
+}
