@@ -1,0 +1,38 @@
+{
+  "dataset": "version0515zoom_stage1adapter_simple_window",
+  "num_samples": 38,
+  "window_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter_simple_window/train/genesis",
+  "raw_assignments_path": "/home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid/raw_split_assignments.json",
+  "splits": {
+    "train": 31,
+    "test": 4,
+    "val": 3
+  },
+  "leaf_groups": [
+    {
+      "split": "train",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "no_collision",
+      "num_samples": 31,
+      "relative_dir": "train/rigid/count_02/no_collision"
+    },
+    {
+      "split": "test",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "no_collision",
+      "num_samples": 4,
+      "relative_dir": "test/rigid/count_02/no_collision"
+    },
+    {
+      "split": "val",
+      "simulator_type": "rigid",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "no_collision",
+      "num_samples": 3,
+      "relative_dir": "val/rigid/count_02/no_collision"
+    }
+  ],
+  "skipped": []
+}

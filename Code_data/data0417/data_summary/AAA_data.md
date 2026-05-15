@@ -107,46 +107,40 @@ val: 5
 - split 来自 Genesis raw `train/rigid` 的 heldout。
 - 当前只保留非空分类目录。
 
-### 3. `stage1adapter_simple_window`
+### 3. `version0515zoom_genesis_rigid_stage1adapter_simple_window`
 
 路径：
 
-`/home/gaoya/Code_Video/Code_data/data0417/data_summary/stage1adapter_simple_window`
+`/home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid_stage1adapter_simple_window`
 
 数量：
 
-- total: 1142
-- train: 942
-- test: 106
-- val: 94
+- total: 38
+- train: 31
+- test: 4
+- val: 3
 
 分层统计：
 
 ```text
-train: 942
-  count_01
-    no_collision: 504
-    env_only: 410
+train: 31
   count_02
-    env_only: 28
+    no_collision: 31
 
-test: 106
-  count_01
-    no_collision: 62
-    env_only: 40
+test: 4
   count_02
-    env_only: 4
+    no_collision: 4
 
-val: 94
-  count_01
-    no_collision: 46
-    env_only: 48
+val: 3
+  count_02
+    no_collision: 3
 ```
 
 说明：
 
-- 只保留 `no_collision + env_only` 的 Genesis window 样本。
-- split 继承自对应 raw source sample 在 `sum0504` 中的 heldout 结果。
+- 这里记录的是 `version0515zoom_genesis_rigid/stage1adapter_simple_window/train/genesis` 的 window 样本。
+- split 继承自对应 raw sample 在 `version0515zoom_genesis_rigid/raw_split_assignments.json` 中的 heldout。
+- 当前这批 window 都被切成了 `no_collision`。
 
 ## 可视化重建
 
@@ -172,32 +166,32 @@ python \
   --prefer_gif
 ```
 
-### 3. 重建 `stage1adapter_simple_window` 页面
+### 3. 重建 `version0515zoom_genesis_rigid_stage1adapter_simple_window` 页面
 
 ```bash
 python \
   /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
-  --output_root /home/gaoya/portal_hub_sim/stage1adapter_simple_window_portal \
-  --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary/stage1adapter_simple_window \
-  --portal_title "stage1adapter_simple_window Portal" \
+  --output_root /home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_portal \
+  --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid_stage1adapter_simple_window \
+  --portal_title "version0515zoom_genesis_rigid Stage1Adapter Portal" \
   --prefer_gif
 ```
 
-### 3. 启动本地静态服务
+### 4. 启动本地静态服务
 
 ```bash
 cd /
-python3 -m http.server 8049 --bind localhost
+python3 -m http.server 8061 --bind localhost
 ```
 
 ## 页面地址
 
 - `sum0504`:
-  `http://localhost:8049/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+  `http://localhost:8061/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
 - `version0515zoom_genesis_rigid`:
-  `http://localhost:8049/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal/index.html`
-- `stage1adapter_simple_window`:
-  `http://localhost:8049/home/gaoya/portal_hub_sim/stage1adapter_simple_window_portal/index.html`
+  `http://localhost:8061/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal/index.html`
+- `version0515zoom_genesis_rigid_stage1adapter_simple_window`:
+  `http://localhost:8061/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_portal/index.html`
 
 说明：
 

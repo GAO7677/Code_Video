@@ -14,6 +14,7 @@ The preview is designed for quick inspection rather than final-quality render.
 from __future__ import annotations
 
 import argparse
+import colorsys
 import json
 import math
 import shutil
@@ -39,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_frames", type=int, default=24)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--samples", type=int, default=64)
+    parser.add_argument("--samples", type=int, default=96)
     parser.add_argument("--fps", type=int, default=12)
     parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -139,19 +140,123 @@ def density_material_spec(density_kgm3: float | None, role: str) -> dict[str, An
     }
 
 
+def classify_material_preset(
+    *,
+    role: str,
+    source_object_id: str,
+    density_kgm3: float | None,
+) -> str:
+    role = str(role)
+    source_name = str(source_object_id).lower()
+    if role == "initiator" or "striker" in source_name or "ball" in source_name:
+        return "rubber_plastic"
+    if density_kgm3 is None:
+        return "painted_metal"
+    density = float(density_kgm3)
+    if density >= 900.0:
+        return "painted_metal"
+    if density >= 500.0:
+        return "varnished_wood"
+    if density >= 220.0:
+        return "hard_plastic"
+    return "soft_plastic"
+
+
 def clamp_color01(rgb: np.ndarray) -> list[float]:
     rgb = np.asarray(rgb, dtype=np.float64).reshape(3)
     rgb = np.clip(rgb, 0.0, 1.0)
     return [float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0]
 
 
-def estimate_object_base_colors(
+def blend_rgba(a: list[float] | np.ndarray, b: list[float] | np.ndarray, t: float) -> list[float]:
+    aa = np.asarray(a, dtype=np.float64).reshape(-1)
+    bb = np.asarray(b, dtype=np.float64).reshape(-1)
+    if aa.size == 3:
+        aa = np.concatenate([aa, np.ones(1, dtype=np.float64)], axis=0)
+    if bb.size == 3:
+        bb = np.concatenate([bb, np.ones(1, dtype=np.float64)], axis=0)
+    tt = float(np.clip(t, 0.0, 1.0))
+    out = (1.0 - tt) * aa[:4] + tt * bb[:4]
+    out = np.clip(out, 0.0, 1.0)
+    return [float(out[0]), float(out[1]), float(out[2]), float(out[3])]
+
+
+def rgb_to_hsv01(rgb: list[float] | np.ndarray) -> tuple[float, float, float]:
+    r, g, b = [float(x) for x in np.asarray(rgb, dtype=np.float64).reshape(3)]
+    return colorsys.rgb_to_hsv(r, g, b)
+
+
+def luminance01(rgb: list[float] | np.ndarray) -> float:
+    r, g, b = [float(x) for x in np.asarray(rgb, dtype=np.float64).reshape(3)]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def stabilize_rgba_for_render(
+    rgba: list[float] | np.ndarray,
+    *,
+    sat_scale: float = 1.0,
+    min_value: float = 0.18,
+    max_value: float = 0.84,
+) -> list[float]:
+    rgb = np.asarray(rgba, dtype=np.float64).reshape(-1)
+    alpha = 1.0 if rgb.size < 4 else float(rgb[3])
+    h, s, v = rgb_to_hsv01(rgb[:3])
+    s = float(np.clip(s * sat_scale, 0.04, 0.88))
+    v = float(np.clip(v, min_value, max_value))
+    rr, gg, bb = colorsys.hsv_to_rgb(h, s, v)
+    return [float(rr), float(gg), float(bb), float(np.clip(alpha, 0.0, 1.0))]
+
+
+def shift_hsv(
+    rgba: list[float] | np.ndarray,
+    *,
+    hue_delta: float = 0.0,
+    sat_scale: float = 1.0,
+    sat_bias: float = 0.0,
+    value_scale: float = 1.0,
+    value_bias: float = 0.0,
+    min_value: float = 0.0,
+    max_value: float = 1.0,
+) -> list[float]:
+    rgb = np.asarray(rgba, dtype=np.float64).reshape(-1)
+    alpha = 1.0 if rgb.size < 4 else float(rgb[3])
+    h, s, v = rgb_to_hsv01(rgb[:3])
+    h = (h + float(hue_delta)) % 1.0
+    s = float(np.clip(s * sat_scale + sat_bias, 0.0, 1.0))
+    v = float(np.clip(v * value_scale + value_bias, min_value, max_value))
+    rr, gg, bb = colorsys.hsv_to_rgb(h, s, v)
+    return [float(rr), float(gg), float(bb), float(np.clip(alpha, 0.0, 1.0))]
+
+
+def extract_palette_from_pixels(pixels: np.ndarray, max_colors: int = 4) -> list[list[float]]:
+    if pixels.size == 0:
+        return []
+    arr = np.asarray(pixels, dtype=np.float32)
+    arr = np.clip(arr, 0.0, 1.0)
+    # Quantize colors to stabilize palette extraction on noisy renders.
+    q = np.clip(np.round(arr * 15.0), 0.0, 15.0).astype(np.int16)
+    uniq, counts = np.unique(q, axis=0, return_counts=True)
+    order = np.argsort(-counts)
+    palette: list[list[float]] = []
+    for idx in order.tolist():
+        rgb = (uniq[idx].astype(np.float32) + 0.5) / 16.0
+        if counts[idx] < max(32, int(0.002 * len(arr))):
+            continue
+        palette.append(clamp_color01(rgb))
+        if len(palette) >= max_colors:
+            break
+    if not palette:
+        palette.append(clamp_color01(np.median(arr, axis=0)))
+    return palette
+
+
+def estimate_object_appearance(
     *,
     sample_dir: Path,
     sample_meta: dict[str, Any],
     object_ids: np.ndarray,
     visibility: np.ndarray,
-) -> dict[int, list[float]]:
+) -> dict[int, dict[str, Any]]:
     seg_path = sample_dir / "physics" / "seg.npy"
     if not seg_path.exists():
         return {}
@@ -165,7 +270,7 @@ def estimate_object_base_colors(
         for obj in sample_meta.get("objects", [])
         if isinstance(obj, dict) and obj.get("object_id") is not None and obj.get("seg_id") is not None
     }
-    colors: dict[int, list[float]] = {}
+    appearance: dict[int, dict[str, Any]] = {}
     max_frames = min(int(seg.shape[0]), int(visibility.shape[0]))
     for local_idx, object_id in enumerate(object_ids.tolist()):
         obj_meta = meta_objects.get(int(object_id))
@@ -173,6 +278,7 @@ def estimate_object_base_colors(
             continue
         seg_id = int(obj_meta["seg_id"])
         chosen = None
+        palette: list[list[float]] = []
         for frame_idx in range(max_frames):
             if int(visibility[frame_idx, local_idx]) <= 0:
                 continue
@@ -188,10 +294,14 @@ def estimate_object_base_colors(
             if pixels.size == 0:
                 continue
             chosen = np.median(pixels, axis=0)
+            palette = extract_palette_from_pixels(pixels, max_colors=4)
             break
         if chosen is not None:
-            colors[int(object_id)] = clamp_color01(chosen)
-    return colors
+            appearance[int(object_id)] = {
+                "base_color": clamp_color01(chosen),
+                "palette": palette,
+            }
+    return appearance
 
 
 def apply_sampled_color(material_spec: dict[str, Any], sampled_rgba: list[float] | None) -> dict[str, Any]:
@@ -200,6 +310,139 @@ def apply_sampled_color(material_spec: dict[str, Any], sampled_rgba: list[float]
     out = dict(material_spec)
     out["base_color"] = [float(v) for v in sampled_rgba]
     return out
+
+
+def part_shape_hint(extents_xyz: np.ndarray) -> str:
+    ext = np.maximum(np.asarray(extents_xyz, dtype=np.float64), 1e-6)
+    ordered = np.sort(ext)
+    if ordered[0] / ordered[2] < 0.16 and ordered[1] / ordered[2] > 0.38:
+        return "plate"
+    if ordered[2] / ordered[0] > 5.0:
+        return "slender"
+    return "block"
+
+
+def choose_palette_color_for_part(
+    *,
+    palette: list[list[float]],
+    part_index: int,
+    total_parts: int,
+    shape_hint: str,
+    fallback_rgba: list[float],
+    asset_rgba: list[float] | None = None,
+) -> list[float]:
+    if not palette and asset_rgba is None:
+        return stabilize_rgba_for_render(fallback_rgba)
+    if not palette:
+        return stabilize_rgba_for_render(asset_rgba or fallback_rgba, sat_scale=0.92)
+    cool = [c for c in palette if rgb_to_hsv01(c[:3])[0] >= 0.48 and rgb_to_hsv01(c[:3])[0] <= 0.75]
+    warm = [c for c in palette if rgb_to_hsv01(c[:3])[0] <= 0.15 or rgb_to_hsv01(c[:3])[0] >= 0.9]
+    greenish = [c for c in palette if 0.22 <= rgb_to_hsv01(c[:3])[0] <= 0.45]
+    dark = [c for c in palette if luminance01(c[:3]) < 0.33]
+    chosen = None
+    if shape_hint == "plate":
+        if cool:
+            chosen = cool[min(part_index, len(cool) - 1)]
+    if shape_hint == "slender":
+        pool = dark or warm or greenish
+        if pool:
+            chosen = pool[part_index % len(pool)]
+    if chosen is None and total_parts >= 3 and part_index > 0:
+        accent_pool = cool + greenish + warm + dark
+        if accent_pool:
+            chosen = accent_pool[part_index % len(accent_pool)]
+    if chosen is None:
+        chosen = palette[min(part_index, len(palette) - 1)]
+    if asset_rgba is not None:
+        asset_clean = stabilize_rgba_for_render(asset_rgba, sat_scale=0.96, min_value=0.16, max_value=0.82)
+        chosen = blend_rgba(asset_clean, chosen, 0.36 if shape_hint == "slender" else 0.48)
+    return stabilize_rgba_for_render(chosen, sat_scale=0.96)
+
+
+def override_preset_from_shape_and_color(
+    *,
+    base_preset: str,
+    shape_hint: str,
+    rgba: list[float],
+) -> str:
+    h, s, v = rgb_to_hsv01(rgba[:3])
+    if shape_hint == "plate" and s > 0.18 and 0.48 <= h <= 0.75:
+        return "fabric_cloth"
+    if shape_hint == "plate" and v > 0.55 and s < 0.18:
+        return "painted_plastic"
+    if shape_hint == "slender" and s > 0.20 and (h <= 0.14 or h >= 0.9):
+        return "varnished_wood"
+    if shape_hint == "slender" and 0.22 <= h <= 0.45:
+        return "painted_metal"
+    if base_preset == "hard_plastic" and s < 0.18:
+        return "painted_metal"
+    return base_preset
+
+
+def derive_scene_style(object_appearance: dict[int, dict[str, Any]]) -> dict[str, Any]:
+    all_colors: list[list[float]] = []
+    for item in object_appearance.values():
+        base_color = item.get("base_color")
+        if isinstance(base_color, list) and len(base_color) >= 3:
+            all_colors.append([float(base_color[0]), float(base_color[1]), float(base_color[2]), 1.0])
+        for pal in item.get("palette", []) or []:
+            if isinstance(pal, list) and len(pal) >= 3:
+                all_colors.append([float(pal[0]), float(pal[1]), float(pal[2]), 1.0])
+    if not all_colors:
+        all_colors = [[0.44, 0.48, 0.55, 1.0]]
+
+    rgb_stack = np.asarray([c[:3] for c in all_colors], dtype=np.float64)
+    dominant = clamp_color01(np.median(rgb_stack, axis=0))
+    wall = shift_hsv(
+        dominant,
+        hue_delta=0.48,
+        sat_scale=0.30,
+        sat_bias=0.05,
+        value_scale=0.44,
+        value_bias=0.56,
+        min_value=0.78,
+        max_value=0.92,
+    )
+    wall = blend_rgba(wall, [0.92, 0.92, 0.90, 1.0], 0.35)
+    floor = shift_hsv(
+        dominant,
+        hue_delta=0.06,
+        sat_scale=0.22,
+        sat_bias=0.02,
+        value_scale=0.42,
+        value_bias=0.10,
+        min_value=0.22,
+        max_value=0.40,
+    )
+    floor = blend_rgba(floor, [0.28, 0.29, 0.31, 1.0], 0.55)
+    background = blend_rgba(wall, [0.64, 0.66, 0.70, 1.0], 0.62)
+    key_light = blend_rgba(
+        shift_hsv(dominant, hue_delta=-0.04, sat_scale=0.22, value_scale=0.30, value_bias=0.70, min_value=0.88, max_value=1.0),
+        [1.0, 0.95, 0.88, 1.0],
+        0.72,
+    )
+    fill_light = blend_rgba(
+        shift_hsv(dominant, hue_delta=0.18, sat_scale=0.18, value_scale=0.22, value_bias=0.76, min_value=0.84, max_value=1.0),
+        [0.85, 0.91, 1.0, 1.0],
+        0.78,
+    )
+    rim_light = blend_rgba(
+        shift_hsv(dominant, hue_delta=0.52, sat_scale=0.26, value_scale=0.26, value_bias=0.74, min_value=0.86, max_value=1.0),
+        [1.0, 0.99, 0.96, 1.0],
+        0.58,
+    )
+    return {
+        "dominant": dominant,
+        "wall_color": wall,
+        "floor_color": floor,
+        "background_color": background,
+        "key_light_color": key_light,
+        "fill_light_color": fill_light,
+        "rim_light_color": rim_light,
+        "environment_strength": 0.44,
+        "background_strength": 0.82,
+        "exposure": -0.38,
+    }
 
 
 def estimate_sphere_radius(
@@ -242,6 +485,7 @@ def build_mesh_object_spec(
     positions: np.ndarray,
     quats: np.ndarray,
     sampled_rgba: list[float] | None,
+    sampled_palette: list[list[float]] | None,
 ) -> dict[str, Any]:
     source_object_id = str(object_meta["source_object_id"])
     asset_meta = resolve_asset_meta(dataset_root, source_object_id)
@@ -258,6 +502,7 @@ def build_mesh_object_spec(
         mesh_path = Path(str(part["mesh_path"]))
         mesh = load_mesh(mesh_path)
         local_center = inertial_origin(mesh) * runtime_scale
+        extents = np.asarray(mesh.bounding_box.extents, dtype=np.float64) * runtime_scale
         mass = float(part.get("mass_kg", 1.0) or 1.0)
         weighted_centers.append(local_center * mass)
         weighted_masses.append(mass)
@@ -265,6 +510,13 @@ def build_mesh_object_spec(
             {
                 "mesh_path": str(mesh_path),
                 "density_kgm3": None if part.get("density_kgm3") is None else float(part["density_kgm3"]),
+                "extents_xyz": extents.tolist(),
+                "asset_rgba": None if part.get("color_rgba") is None else [float(v) for v in part["color_rgba"]],
+                "material_preset": classify_material_preset(
+                    role=str(object_meta.get("role", "object")),
+                    source_object_id=source_object_id,
+                    density_kgm3=None if part.get("density_kgm3") is None else float(part["density_kgm3"]),
+                ),
             }
         )
 
@@ -274,6 +526,40 @@ def build_mesh_object_spec(
     else:
         com_local = np.sum(np.stack(weighted_centers, axis=0), axis=0) / total_mass
 
+    palette = list(sampled_palette or [])
+    fallback_rgba = list(sampled_rgba or [0.68, 0.68, 0.68, 1.0])
+    part_volumes = [float(np.prod(np.maximum(np.asarray(part["extents_xyz"], dtype=np.float64), 1e-6))) for part in parts]
+    volume_order = np.argsort(-np.asarray(part_volumes, dtype=np.float64))
+    volume_rank = {int(part_idx): int(rank) for rank, part_idx in enumerate(volume_order.tolist())}
+    rendered_parts = []
+    for part_idx, part in enumerate(parts):
+        shape_hint = part_shape_hint(np.asarray(part["extents_xyz"], dtype=np.float64))
+        color = choose_palette_color_for_part(
+            palette=palette,
+            part_index=volume_rank.get(part_idx, part_idx),
+            total_parts=len(parts),
+            shape_hint=shape_hint,
+            fallback_rgba=fallback_rgba,
+            asset_rgba=part.get("asset_rgba"),
+        )
+        rendered_parts.append(
+            {
+                "mesh_path": part["mesh_path"],
+                "local_offset": (-com_local).tolist(),
+                "local_scale": [runtime_scale, runtime_scale, runtime_scale],
+                "material": {
+                    **apply_sampled_color(
+                        density_material_spec(part["density_kgm3"], str(object_meta.get("role", "object"))),
+                        color,
+                    ),
+                    "material_preset": override_preset_from_shape_and_color(
+                        base_preset=str(part["material_preset"]),
+                        shape_hint=shape_hint,
+                        rgba=color,
+                    ),
+                },
+            }
+        )
     return {
         "kind": "animated_mesh",
         "name": f"{object_meta.get('role','object')}_{source_object_id}",
@@ -284,18 +570,7 @@ def build_mesh_object_spec(
             }
             for pos, quat in zip(positions, quats)
         ],
-        "parts": [
-            {
-                "mesh_path": part["mesh_path"],
-                "local_offset": (-com_local).tolist(),
-                "local_scale": [runtime_scale, runtime_scale, runtime_scale],
-                "material": apply_sampled_color(
-                    density_material_spec(part["density_kgm3"], str(object_meta.get("role", "object"))),
-                    sampled_rgba,
-                ),
-            }
-            for part in parts
-        ],
+        "parts": rendered_parts,
     }
 
 
@@ -309,6 +584,7 @@ def build_sphere_object_spec(
     visibility: np.ndarray,
     camera_intrinsics: dict[str, Any],
     sampled_rgba: list[float] | None,
+    sampled_palette: list[list[float]] | None,
 ) -> dict[str, Any]:
     radius = estimate_sphere_radius(
         bbox_xyxy=bbox_xyxy,
@@ -316,6 +592,13 @@ def build_sphere_object_spec(
         visibility=visibility,
         fx=float(camera_intrinsics["fx"]),
         fy=float(camera_intrinsics["fy"]),
+    )
+    sphere_rgba = choose_palette_color_for_part(
+        palette=list(sampled_palette or []),
+        part_index=0,
+        total_parts=1,
+        shape_hint="block",
+        fallback_rgba=list(sampled_rgba or [0.80, 0.72, 0.22, 1.0]),
     )
     return {
         "kind": "animated_sphere",
@@ -330,8 +613,19 @@ def build_sphere_object_spec(
         ],
         "material": apply_sampled_color(
             density_material_spec(None, str(object_meta.get("role", "initiator"))),
-            sampled_rgba,
-        ),
+            sphere_rgba,
+        )
+        | {
+            "material_preset": override_preset_from_shape_and_color(
+                base_preset=classify_material_preset(
+                    role=str(object_meta.get("role", "initiator")),
+                    source_object_id=str(object_meta.get("source_object_id", "sphere")),
+                    density_kgm3=None,
+                ),
+                shape_hint="block",
+                rgba=sphere_rgba,
+            )
+        },
     }
 
 
@@ -498,12 +792,13 @@ def main() -> None:
     bbox_xyxy = np.asarray(anchor["bbox_xyxy"], dtype=np.float64)
     center_depth = np.asarray(anchor["center_depth"], dtype=np.float64)
     visibility = np.asarray(anchor["visibility_mask"], dtype=np.uint8)
-    object_base_colors = estimate_object_base_colors(
+    object_appearance = estimate_object_appearance(
         sample_dir=sample_dir,
         sample_meta=sample_meta,
         object_ids=object_ids,
         visibility=visibility,
     )
+    scene_style = derive_scene_style(object_appearance)
 
     frame_indices = sample_frame_indices(com_pos.shape[0], args.frame_stride, args.max_frames)
     meta_objects = {
@@ -523,6 +818,7 @@ def main() -> None:
         all_positions.append(sampled_pos)
         source_id = str(obj_meta.get("source_object_id", ""))
         if source_id == "yellow_striker_ball":
+            sampled_appearance = object_appearance.get(int(object_id), {})
             spec = build_sphere_object_spec(
                 object_meta=obj_meta,
                 positions=sampled_pos,
@@ -531,16 +827,19 @@ def main() -> None:
                 center_depth=center_depth[:, local_idx],
                 visibility=visibility[:, local_idx],
                 camera_intrinsics=sample_meta["camera_intrinsics"],
-                sampled_rgba=object_base_colors.get(int(object_id)),
+                sampled_rgba=sampled_appearance.get("base_color"),
+                sampled_palette=sampled_appearance.get("palette"),
             )
         else:
+            sampled_appearance = object_appearance.get(int(object_id), {})
             spec = build_mesh_object_spec(
                 sample_meta=sample_meta,
                 dataset_root=dataset_root,
                 object_meta=obj_meta,
                 positions=sampled_pos,
                 quats=sampled_quat,
-                sampled_rgba=object_base_colors.get(int(object_id)),
+                sampled_rgba=sampled_appearance.get("base_color"),
+                sampled_palette=sampled_appearance.get("palette"),
             )
         for timeline_frame, item in enumerate(spec["frames"], start=1):
             item["timeline_frame"] = timeline_frame
@@ -568,6 +867,7 @@ def main() -> None:
             "samples": int(args.samples),
             "fps": int(args.fps),
             "use_denoising": bool(args.denoise),
+            "exposure": float(scene_style["exposure"]),
         },
         "camera": {
             "position": [float(v) for v in sample_meta["camera"]["pos"]],
@@ -583,35 +883,62 @@ def main() -> None:
             "center": [float(xy_center[0]), float(xy_center[1]), 0.0],
             "extents_xy": [float(xy_extent[0]), float(xy_extent[1])],
             "material": {
-                "base_color": [0.18, 0.21, 0.27, 1.0],
-                "roughness": 0.92,
-                "specular": 0.08,
+                "base_color": scene_style["floor_color"],
+                "roughness": 0.78,
+                "specular": 0.18,
                 "metallic": 0.0,
                 "clearcoat": 0.0,
+                "material_preset": "concrete_floor",
             },
+        },
+        "room": {
+            "enabled": True,
+            "center": [float(xy_center[0]), float(xy_center[1]), 0.0],
+            "depth": float(max(5.6, xy_extent[1] + 4.6)),
+            "width": float(max(6.8, xy_extent[0] + 4.6)),
+            "height": 4.4,
+            "wall_material": {
+                "base_color": scene_style["wall_color"],
+                "roughness": 0.88,
+                "specular": 0.12,
+                "metallic": 0.0,
+                "clearcoat": 0.0,
+                "material_preset": "painted_wall",
+            },
+        },
+        "environment": {
+            "world_exr": "/usr/share/blender/datafiles/studiolights/world/studio.exr",
+            "strength": float(scene_style["environment_strength"]),
+            "rotation_deg": 92.0,
+            "background_strength": float(scene_style["background_strength"]),
+            "background_color": scene_style["background_color"],
         },
         "lighting": {
             "key_area": {
-                "location": [float(xy_center[0] + 0.9), float(xy_center[1] - 2.2), 2.6],
-                "rotation_euler_deg": [58.0, 0.0, 20.0],
-                "energy": 320.0,
-                "size": 2.0,
+                "location": [float(xy_center[0] + 1.35), float(xy_center[1] - 2.6), 2.45],
+                "rotation_euler_deg": [62.0, 0.0, 18.0],
+                "energy": 170.0,
+                "size": 1.7,
+                "color": scene_style["key_light_color"],
             },
             "fill_area": {
-                "location": [float(xy_center[0] - 1.2), float(xy_center[1] + 1.6), 1.8],
-                "rotation_euler_deg": [78.0, 0.0, -32.0],
-                "energy": 110.0,
-                "size": 1.6,
+                "location": [float(xy_center[0] - 1.7), float(xy_center[1] + 1.8), 1.55],
+                "rotation_euler_deg": [88.0, 0.0, -36.0],
+                "energy": 55.0,
+                "size": 2.2,
+                "color": scene_style["fill_light_color"],
             },
             "rim_area": {
-                "location": [float(xy_center[0] - 0.2), float(xy_center[1] + 2.4), 2.2],
-                "rotation_euler_deg": [112.0, 0.0, 180.0],
-                "energy": 180.0,
-                "size": 2.4,
+                "location": [float(xy_center[0] + 0.25), float(xy_center[1] + 2.8), 2.3],
+                "rotation_euler_deg": [116.0, 0.0, 180.0],
+                "energy": 92.0,
+                "size": 2.8,
+                "color": scene_style["rim_light_color"],
             },
             "sun": {
-                "rotation_euler_deg": [38.0, 0.0, 24.0],
-                "energy": 1.2,
+                "rotation_euler_deg": [34.0, 0.0, 32.0],
+                "energy": 0.22,
+                "color": [1.0, 0.98, 0.95, 1.0],
             },
         },
         "objects": object_specs,

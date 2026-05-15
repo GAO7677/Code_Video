@@ -1,0 +1,21 @@
+{
+  "dataset": "version0515zoom_genesis_rigid_stage1",
+  "subset_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/preprocess_v1/stage1_subsets_v1",
+  "stages": {
+    "stage1a_precontact_strict": {
+      "num_windows": 0,
+      "num_skipped": 56,
+      "manifest_path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/preprocess_v1/stage1_subsets_v1/stage1a_precontact_strict/manifest.json"
+    },
+    "stage1b_simple_dynamics": {
+      "num_windows": 49,
+      "num_skipped": 0,
+      "manifest_path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/preprocess_v1/stage1_subsets_v1/stage1b_simple_dynamics/manifest.json"
+    }
+  },
+  "notes": [
+    "Only path index files are created; source stage1 windows are not moved.",
+    "This summary is built from version0515zoom_genesis_rigid/preprocess_v1/stage1_subsets_v1."
+  ],
+  "num_windows": 49
+}
