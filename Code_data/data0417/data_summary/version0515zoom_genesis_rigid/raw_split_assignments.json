@@ -8,6 +8,18 @@
       "collision_bucket": "mixed_c2plus",
       "case_name": "case007_entry_fast_center"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case001_static_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case001_static_left"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10036__case000_static_center__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case000_static_center"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case007_entry_fast_center__rs102": {
       "split": "train",
       "count_bucket": "count_02",
@@ -19,6 +31,24 @@
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
       "case_name": "case006_entry_right"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10033__case002_static_right__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case002_static_right"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case002_static_right__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case002_static_right"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10033__case000_static_center__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case000_static_center"
     },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case000_static_center__rs102": {
       "split": "train",
@@ -38,13 +68,37 @@
       "collision_bucket": "mixed_c2plus",
       "case_name": "case001_static_left"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case000_static_center__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case000_static_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case002_static_right__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case002_static_right"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10035__case005_entry_left__rs102": {
       "split": "train",
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
       "case_name": "case005_entry_left"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10036__case001_static_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case001_static_left"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case005_entry_left__rs102": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case005_entry_left"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10035__case005_entry_left__rs103": {
       "split": "train",
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
@@ -56,7 +110,25 @@
       "collision_bucket": "mixed_c2plus",
       "case_name": "case002_static_right"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10034__case005_entry_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case005_entry_left"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10033__case001_static_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case001_static_left"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10035__case002_static_right__rs102": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case002_static_right"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10036__case002_static_right__rs103": {
       "split": "train",
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
@@ -73,6 +145,12 @@
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
       "case_name": "case000_static_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case001_static_left__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case001_static_left"
     },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10033__case002_static_right__rs102": {
       "split": "train",
@@ -98,17 +176,47 @@
       "collision_bucket": "mixed_c2plus",
       "case_name": "case001_static_left"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10035__case007_entry_fast_center__rs103": {
+      "split": "test",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case007_entry_fast_center"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case002_static_right__rs102": {
       "split": "val",
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
       "case_name": "case002_static_right"
     },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case005_entry_left__rs103": {
+      "split": "val",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c2plus",
+      "case_name": "case005_entry_left"
+    },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case000_static_center__rs102": {
       "split": "val",
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c2plus",
       "case_name": "case000_static_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case000_static_center__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "obj_obj_only_c2plus",
+      "case_name": "case000_static_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case000_static_center__rs103": {
+      "split": "test",
+      "count_bucket": "count_02",
+      "collision_bucket": "obj_obj_only_c2plus",
+      "case_name": "case000_static_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10027__case001_static_left__rs103": {
+      "split": "val",
+      "count_bucket": "count_02",
+      "collision_bucket": "obj_obj_only_c2plus",
+      "case_name": "case001_static_left"
     },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10034__case006_entry_right__rs102": {
       "split": "train",
@@ -127,6 +235,18 @@
       "count_bucket": "count_02",
       "collision_bucket": "mixed_c1",
       "case_name": "case002_static_right"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10034__case007_entry_fast_center__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c1",
+      "case_name": "case007_entry_fast_center"
+    },
+    "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10035__case006_entry_right__rs103": {
+      "split": "train",
+      "count_bucket": "count_02",
+      "collision_bucket": "mixed_c1",
+      "case_name": "case006_entry_right"
     },
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid/interaction_pair_plus_dynamic/count_02/10032__case001_static_left__rs102": {
       "split": "train",
