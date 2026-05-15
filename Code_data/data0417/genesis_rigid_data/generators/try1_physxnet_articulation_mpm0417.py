@@ -2956,6 +2956,52 @@ def _projected_bbox_area_from_local_bounds(
     return float(bbox_w * bbox_h)
 
 
+def _projected_bbox_stats_from_local_bounds(
+    bounds_min: Any,
+    bounds_max: Any,
+    *,
+    pos_world: Any,
+    euler_deg: Any,
+    camera_cfg: Dict[str, Any],
+    cam_intrinsics: Dict[str, float],
+    image_res: Tuple[int, int],
+) -> Dict[str, float]:
+    local_corners = _bbox_corners_from_bounds(bounds_min, bounds_max)
+    world_corners = np.stack(
+        [
+            _rotate_vec_by_euler_deg(local_corner, euler_deg) + np.asarray(pos_world, dtype=np.float64).reshape(3)
+            for local_corner in local_corners
+        ],
+        axis=0,
+    )
+    uv, z_cam = project_points_to_image(
+        world_corners,
+        camera_cfg=camera_cfg,
+        cam_intrinsics=cam_intrinsics,
+    )
+    valid = np.isfinite(uv).all(axis=1) & np.isfinite(z_cam) & (z_cam > 1e-5)
+    if int(np.sum(valid)) < 2:
+        return {
+            "bbox_w_px": 0.0,
+            "bbox_h_px": 0.0,
+            "bbox_area_px": 0.0,
+            "bbox_w_ratio": 0.0,
+            "bbox_h_ratio": 0.0,
+        }
+    width, height = int(image_res[0]), int(image_res[1])
+    u = np.clip(np.asarray(uv[valid, 0], dtype=np.float64), 0.0, float(width - 1))
+    v = np.clip(np.asarray(uv[valid, 1], dtype=np.float64), 0.0, float(height - 1))
+    bbox_w = max(0.0, float(np.max(u) - np.min(u)))
+    bbox_h = max(0.0, float(np.max(v) - np.min(v)))
+    return {
+        "bbox_w_px": float(bbox_w),
+        "bbox_h_px": float(bbox_h),
+        "bbox_area_px": float(bbox_w * bbox_h),
+        "bbox_w_ratio": float(bbox_w / max(float(width), 1.0)),
+        "bbox_h_ratio": float(bbox_h / max(float(height), 1.0)),
+    }
+
+
 def _world_bbox_corners_from_local_bounds(
     bounds_min: Any,
     bounds_max: Any,
@@ -8746,6 +8792,7 @@ def simulate_in_genesis(
     ensure_dir(preview_dir)
     runtime_mesh_dir = preview_dir / "runtime_soft_meshes"
     anchored_overlap_scale_boost = float(getattr(args, "anchored_overlap_scale_boost", 1.0) or 1.0)
+    camera_distance_mult = float(getattr(args, "camera_distance_mult", 1.0) or 1.0)
     gravity_z = float(_case_cfg_or_default(runtime_case_cfg, "gravity_z_override", getattr(args, "gravity_z", -9.81)))
     runtime_striker_speed = float(_case_cfg_or_default(runtime_case_cfg, "striker_speed_override", striker_speed))
     runtime_main_object_scale = 1.0
@@ -8778,6 +8825,8 @@ def simulate_in_genesis(
     )
     min_projected_bbox_area_px = float(getattr(args, "min_projected_bbox_area_px", 2500.0) or 0.0)
     max_auto_scale_up_mult = max(1.0, float(getattr(args, "max_auto_scale_up_mult", 2.5) or 2.5))
+    max_projected_bbox_fill_ratio = float(getattr(args, "max_projected_bbox_fill_ratio", 0.88) or 0.88)
+    max_projected_bbox_fill_ratio = float(np.clip(max_projected_bbox_fill_ratio, 0.45, 0.98))
     label_l = str(scene_label).strip().lower()
     multi_object_scene_scaling = _is_multi_free_motion_scene(scene_label) and (1 + len(custom_object_cfgs) >= 3)
     scene_target_rendered_bbox_area_px = float(min_projected_bbox_area_px)
@@ -8862,7 +8911,7 @@ def simulate_in_genesis(
 
             if multi_layout_est is not None:
                 main_info = multi_layout_est["object_infos"][0]
-                main_area_px = _projected_bbox_area_from_local_bounds(
+                main_bbox_stats = _projected_bbox_stats_from_local_bounds(
                     main_info["local_bounds_min"],
                     main_info["local_bounds_max"],
                     pos_world=main_info["pos_world"],
@@ -8872,7 +8921,7 @@ def simulate_in_genesis(
                     image_res=tuple(EXPORT_CAMERA_RESOLUTION),
                 )
             else:
-                main_area_px = _projected_bbox_area_from_local_bounds(
+                main_bbox_stats = _projected_bbox_stats_from_local_bounds(
                     scaled_bbox_min,
                     scaled_bbox_max,
                     pos_world=placed_pos_est,
@@ -8881,6 +8930,20 @@ def simulate_in_genesis(
                     cam_intrinsics=cam_intrinsics_est,
                     image_res=tuple(EXPORT_CAMERA_RESOLUTION),
                 )
+            main_area_px = float(main_bbox_stats["bbox_area_px"])
+            main_bbox_fill_ratio = float(max(main_bbox_stats["bbox_w_ratio"], main_bbox_stats["bbox_h_ratio"]))
+            auto_visibility_scale_info["main_object_projected_bbox_w_ratio"] = float(main_bbox_stats["bbox_w_ratio"])
+            auto_visibility_scale_info["main_object_projected_bbox_h_ratio"] = float(main_bbox_stats["bbox_h_ratio"])
+            auto_visibility_scale_info["max_projected_bbox_fill_ratio"] = float(max_projected_bbox_fill_ratio)
+            if main_bbox_fill_ratio > max_projected_bbox_fill_ratio + 1e-6:
+                retreat_mult = float(np.clip(main_bbox_fill_ratio / max(max_projected_bbox_fill_ratio, 1e-6), 1.03, 1.35))
+                camera_distance_mult *= retreat_mult
+                auto_visibility_scale_info["camera_retreat_mult"] = float(
+                    max(float(auto_visibility_scale_info.get("camera_retreat_mult", 1.0) or 1.0), retreat_mult)
+                )
+                auto_visibility_scale_info["camera_retreat_reason"] = "main_object_too_large_in_frame"
+                updates_applied = True
+                continue
             if multi_object_scene_scaling and multi_layout_est is not None:
                 object_extent_max_values = list(multi_layout_est.get("object_extent_max_values", []) or [])
                 object_volume_values = list(multi_layout_est.get("object_volume_values", []) or [])
@@ -10050,7 +10113,6 @@ def simulate_in_genesis(
                 cutoff=180.0,
             )
 
-    camera_distance_mult = float(getattr(args, "camera_distance_mult", 1.0) or 1.0)
     liquid_camera_mode = False
     if primary_liquid_target is not None and camera_distance_mult >= 0.999:
         camera_distance_mult = 0.82
@@ -11209,6 +11271,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--camera_tag", type=str, default="", help="Optional camera tag appended to preview/case outputs when using camera overrides")
     parser.add_argument("--min_projected_bbox_area_px", type=float, default=2500.0, help="If an object's estimated first-frame projected bbox area is below this threshold, auto-scale it up before simulation.")
     parser.add_argument("--max_auto_scale_up_mult", type=float, default=2.5, help="Maximum automatic per-object scale-up multiplier used to satisfy --min_projected_bbox_area_px.")
+    parser.add_argument("--max_projected_bbox_fill_ratio", type=float, default=0.88, help="If the main object's estimated first-frame bbox occupies more than this width/height ratio, automatically move the camera back.")
     parser.add_argument("--debug_hide_rigid_visuals", action="store_true", help="Debug render: hide rigid skeleton visuals but keep collisions")
     parser.add_argument("--disable_rigid_visual_double_sided_shell", action="store_true", help="Disable reversed-face duplication for non-watertight rigid visual meshes")
     parser.add_argument("--debug_disable_free_soft", action="store_true", help="Debug render: skip free_soft parts such as pillows")
