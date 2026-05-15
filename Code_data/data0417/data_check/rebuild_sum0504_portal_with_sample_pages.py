@@ -211,6 +211,26 @@ def load_json_maybe(path: Path | None) -> Any:
     return load_json(path)
 
 
+def detect_striker_info(sample_dir: Path, meta: dict[str, Any]) -> tuple[bool, float | None]:
+    objects = list(meta.get("objects", []) or [])
+    has_striker = any(
+        str(obj.get("source_object_id", "")) == "yellow_striker_ball"
+        or str(obj.get("motion_group", "")) == "striker"
+        or str(obj.get("object_motion_group", "")) == "striker"
+        for obj in objects
+        if isinstance(obj, dict)
+    )
+    scene_input = load_json_maybe(sample_dir / "scene_input.json") or {}
+    raw_speed = scene_input.get("striker_speed_mps", None)
+    striker_speed = None
+    if raw_speed is not None:
+        try:
+            striker_speed = float(raw_speed)
+        except Exception:
+            striker_speed = None
+    return bool(has_striker), striker_speed
+
+
 def resolve_source_sample_dir(record: dict[str, Any]) -> Path | None:
     meta = load_json_maybe(record.get("meta_path")) or {}
     pair_meta = load_json_maybe(record.get("pair_meta_path")) or {}
@@ -1015,6 +1035,8 @@ def build_sample_record(group: dict[str, Any], item: dict[str, Any]) -> dict[str
         "detail_caption": str(item.get("detail_caption", "")),
         "dataset": str(item.get("dataset", "")),
         "view_type": view_type,
+        "has_striker": bool(item.get("has_striker", False)),
+        "striker_init_speed": item.get("striker_init_speed", None),
         "media": list(item.get("media", [])),
         "meta_path": meta_path if meta_path.exists() else None,
         "pair_meta_path": pair_meta_path if pair_meta_path.exists() else None,
@@ -1252,6 +1274,7 @@ def build_sample_page(record: dict[str, Any]) -> str:
       <h1>{html.escape(record['sample_name'])}</h1>
       <p>{html.escape(record['group_title'])}</p>
       <p><strong>Dataset:</strong> {html.escape(record['dataset'])} | <strong>View:</strong> {html.escape(record['view_type'])}</p>
+      {f"<p><strong>Striker Initial Speed:</strong> {float(record['striker_init_speed']):.4f} m/s</p>" if record.get('has_striker') and record.get('striker_init_speed') is not None else ""}
       <p><strong>Caption:</strong> {html.escape(record['caption'] or 'n/a')}</p>
       <p><strong>Detail Caption:</strong> {html.escape(record['detail_caption'] or 'n/a')}</p>
       <p><strong>Sample Dir:</strong> <code>{html.escape(str(record['sample_dir']))}</code></p>
@@ -1359,6 +1382,7 @@ def load_groups_from_summary(sample_substring: str = "", collision_bucket_filter
             if not meta_path.exists():
                 meta_path = sample_dir / "metadata.json"
             meta = load_json_maybe(meta_path) or {}
+            has_striker, striker_init_speed = detect_striker_info(sample_dir, meta)
             view_type = "window" if (sample_dir / "pair_meta.json").exists() or (sample_dir / "segment_state.npz").exists() else "raw"
             items.append(
                 {
@@ -1369,6 +1393,8 @@ def load_groups_from_summary(sample_substring: str = "", collision_bucket_filter
                     "detail_caption": str(meta.get("detail_caption") or ""),
                     "dataset": str(meta.get("dataset") or "GenesisRigid"),
                     "view_type": view_type,
+                    "has_striker": bool(has_striker),
+                    "striker_init_speed": striker_init_speed,
                     "media": infer_media_for_sample(sample_dir),
                 }
             )
@@ -1636,6 +1662,13 @@ def build_index(groups: list[dict[str, Any]]) -> str:
       color: var(--muted);
       word-break: break-word;
     }}
+    .striker-note {{
+      margin: 8px 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--accent);
+      font-weight: 600;
+    }}
     .detail-toggle {{
       margin-top: 4px;
       background: none;
@@ -1813,6 +1846,7 @@ def build_index(groups: list[dict[str, Any]]) -> str:
                   <span class="pill">${{item.view_type}}</span>
                 </div>
                 <p class="caption"><strong>Caption:</strong> ${{item.caption || 'n/a'}}</p>
+                ${{item.has_striker && item.striker_init_speed != null ? `<p class="striker-note">Striker Initial Speed: ${{Number(item.striker_init_speed).toFixed(4)}} m/s</p>` : ''}}
                 <div class="detail">
                   <strong>Detail:</strong>
                   <div class="detail-text is-collapsed">${{item.detail_caption || 'n/a'}}</div>

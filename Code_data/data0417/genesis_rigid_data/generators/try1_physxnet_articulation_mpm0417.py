@@ -29,6 +29,7 @@ from collections import deque
 import copy
 import contextlib
 import io
+import hashlib
 import json
 import math
 import os
@@ -1218,10 +1219,26 @@ def build_preview_case_configs(
         angular = np.array([0.0, 0.0, yaw_speed], dtype=np.float64)
         return linear, angular
 
-    def _random_speed_multiplier(case_seed: int, low: float = 1.35, high: float = 2.20) -> float:
-        # Keep v2 visibly different from v1; avoid multipliers too close to 1.
-        rng = np.random.RandomState(case_seed + 9103)
-        return float(rng.uniform(low, high))
+    def _stable_unit_float(key: str) -> float:
+        digest = hashlib.sha1(key.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:8], byteorder="big", signed=False)
+        return float(value / float(1 << 64))
+
+    def _sample_striker_speed_mps(case_seed: int, *, case_tag: str = "") -> Tuple[float, str]:
+        # Sample an absolute striker speed from fixed buckets so the exported
+        # dataset follows the requested 2:4:4 fast/medium/slow ratio.
+        bucket_u = _stable_unit_float(f"striker_speed_bucket::{case_seed}::{case_tag}")
+        speed_u = _stable_unit_float(f"striker_speed_value::{case_seed}::{case_tag}")
+        if bucket_u < 0.2:
+            bucket = ">5m/s"
+            speed = 5.05 + 0.85 * speed_u
+        elif bucket_u < 0.6:
+            bucket = "4~5m/s"
+            speed = 4.00 + 0.98 * speed_u
+        else:
+            bucket = "<4m/s"
+            speed = 3.05 + 0.90 * speed_u
+        return float(speed), bucket
 
     def _make_extra_physxnet_objects_for_case(case_idx: int, case_seed: int) -> List[Dict[str, Any]]:
         if str(getattr(args, "simulator_mode", "rigid")).strip().lower() != "rigid":
@@ -1514,6 +1531,7 @@ def build_preview_case_configs(
         object_euler_deg: Optional[np.ndarray] = None,
         custom_objects: Optional[List[Dict[str, Any]]] = None,
         striker_speed_override: Optional[float] = None,
+        striker_speed_bucket: Optional[str] = None,
         disable_default_striker: bool = False,
     ) -> Dict[str, Any]:
         entry_linear_velocity = np.asarray(
@@ -1555,6 +1573,7 @@ def build_preview_case_configs(
             "liquid_settle_steps_override": liquid_settle_steps_override,
             "liquid_auto_settle_max_steps_override": liquid_auto_settle_max_steps_override,
             "striker_speed_override": None if striker_speed_override is None else float(striker_speed_override),
+            "striker_speed_bucket": None if striker_speed_bucket is None else str(striker_speed_bucket),
             "disable_default_striker": bool(disable_default_striker),
         }
         case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
@@ -2087,9 +2106,10 @@ def build_preview_case_configs(
             )
         return euler_deg, linear, angular
 
-    static_striker_speed_override = float(
-        max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(0)))
-    )
+    static_striker_speed_override, static_striker_speed_bucket = _sample_striker_speed_mps(_case_seed(0), case_tag="case000_static_center")
+    static_left_speed_override, static_left_speed_bucket = _sample_striker_speed_mps(_case_seed(1), case_tag="case001_static_left")
+    static_right_speed_override, static_right_speed_bucket = _sample_striker_speed_mps(_case_seed(2), case_tag="case002_static_right")
+    highdrop_speed_override, highdrop_speed_bucket = _sample_striker_speed_mps(_case_seed(3), case_tag="case003_static_highdrop")
     diverse_templates: List[Dict[str, Any]] = [
         _make_case_cfg(
             case_idx=0,
@@ -2102,6 +2122,7 @@ def build_preview_case_configs(
             object_fixed_override=False,
             custom_objects=_make_custom_objects_for_case(0, _case_seed(0)),
             striker_speed_override=static_striker_speed_override,
+            striker_speed_bucket=static_striker_speed_bucket,
         ),
         _make_case_cfg(
             case_idx=1,
@@ -2113,9 +2134,8 @@ def build_preview_case_configs(
             use_entry_motion=False,
             object_fixed_override=False,
             custom_objects=_make_custom_objects_for_case(1, _case_seed(1)),
-            striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(1)))
-            ),
+            striker_speed_override=static_left_speed_override,
+            striker_speed_bucket=static_left_speed_bucket,
         ),
         _make_case_cfg(
             case_idx=2,
@@ -2127,9 +2147,8 @@ def build_preview_case_configs(
             use_entry_motion=False,
             object_fixed_override=False,
             custom_objects=_make_custom_objects_for_case(2, _case_seed(2)),
-            striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(2)))
-            ),
+            striker_speed_override=static_right_speed_override,
+            striker_speed_bucket=static_right_speed_bucket,
         ),
         _make_case_cfg(
             case_idx=3,
@@ -2146,9 +2165,8 @@ def build_preview_case_configs(
             liquid_settle_steps_override=0 if allow_highdrop else None,
             liquid_auto_settle_max_steps_override=0 if allow_highdrop else None,
             custom_objects=_make_custom_objects_for_case(3, _case_seed(3)),
-            striker_speed_override=float(
-                max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(_case_seed(3)))
-            ),
+            striker_speed_override=highdrop_speed_override,
+            striker_speed_bucket=highdrop_speed_bucket,
         ),
     ]
 
@@ -2161,18 +2179,22 @@ def build_preview_case_configs(
             template_v2["case_name"] = str(base_template["case_name"]) + "_v2"
             template_v2["scene_label"] = str(base_template["scene_label"]) + "_v2"
             template_v2["seed"] = int(base_template["seed"]) + static_seed_offset + 97 * v2_offset
-            base_speed = float(base_template.get("striker_speed_override") or float(getattr(args, "striker_speed", 2.8) or 2.8))
-            template_v2["striker_speed_override"] = float(base_speed * _random_speed_multiplier(int(template_v2["seed"]), 1.45, 2.35))
+            v2_speed, v2_bucket = _sample_striker_speed_mps(int(template_v2["seed"]), case_tag=str(template_v2["case_name"]))
+            template_v2["striker_speed_override"] = float(v2_speed)
+            template_v2["striker_speed_bucket"] = str(v2_bucket)
             template_v2["case_notes"] = _case_description_from_cfg(template_v2)
             static_v2_templates.append(template_v2)
 
     if moving_allowed:
         entry_left_seed = _case_seed(5)
         entry_left_linear, entry_left_angular = _sample_entry_velocity(entry_left_seed, "entry_left")
+        entry_left_speed_override, entry_left_speed_bucket = _sample_striker_speed_mps(entry_left_seed, case_tag="case005_entry_left")
         entry_right_seed = _case_seed(6)
         entry_right_linear, entry_right_angular = _sample_entry_velocity(entry_right_seed, "entry_right")
+        entry_right_speed_override, entry_right_speed_bucket = _sample_striker_speed_mps(entry_right_seed, case_tag="case006_entry_right")
         entry_fast_center_seed = _case_seed(7)
         entry_fast_center_linear, entry_fast_center_angular = _sample_entry_velocity(entry_fast_center_seed, "entry_fast_center")
+        entry_fast_center_speed_override, entry_fast_center_speed_bucket = _sample_striker_speed_mps(entry_fast_center_seed, case_tag="case007_entry_fast_center")
         dynamic_templates = [
             _make_case_cfg(
                 case_idx=5,
@@ -2185,9 +2207,8 @@ def build_preview_case_configs(
                 object_fixed_override=False,
                 entry_linear_velocity=entry_left_linear,
                 entry_angular_velocity=entry_left_angular,
-                striker_speed_override=float(
-                    max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(entry_left_seed))
-                ),
+                striker_speed_override=entry_left_speed_override,
+                striker_speed_bucket=entry_left_speed_bucket,
                 warmup_steps_override=0,
                 pre_record_delay_steps_override=0,
                 initial_still_frames_override=0,
@@ -2206,9 +2227,8 @@ def build_preview_case_configs(
                 object_fixed_override=False,
                 entry_linear_velocity=entry_right_linear,
                 entry_angular_velocity=entry_right_angular,
-                striker_speed_override=float(
-                    max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(entry_right_seed))
-                ),
+                striker_speed_override=entry_right_speed_override,
+                striker_speed_bucket=entry_right_speed_bucket,
                 warmup_steps_override=0,
                 pre_record_delay_steps_override=0,
                 initial_still_frames_override=0,
@@ -2227,9 +2247,8 @@ def build_preview_case_configs(
                 object_fixed_override=False,
                 entry_linear_velocity=entry_fast_center_linear,
                 entry_angular_velocity=entry_fast_center_angular,
-                striker_speed_override=float(
-                    max(0.1, float(getattr(args, "striker_speed", 2.8) or 2.8) * _random_speed_multiplier(entry_fast_center_seed))
-                ),
+                striker_speed_override=entry_fast_center_speed_override,
+                striker_speed_bucket=entry_fast_center_speed_bucket,
                 warmup_steps_override=0,
                 pre_record_delay_steps_override=0,
                 initial_still_frames_override=0,
@@ -10948,6 +10967,8 @@ def simulate_in_genesis(
         "object_fixed": bool(runtime_object_fixed),
         "gravity": [0.0, 0.0, float(gravity_z)],
         "striker_speed_mps": float(runtime_striker_speed),
+        "striker_speed_bucket": runtime_case_cfg.get("striker_speed_bucket", None),
+        "striker_speed_bucket_target_ratio": {">5m/s": 0.2, "4~5m/s": 0.4, "<4m/s": 0.4},
         "counterfactual": counterfactual_meta if counterfactual_meta else None,
         "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
         "frame_sampling": frame_sampling_cfg,
@@ -11073,6 +11094,8 @@ def simulate_in_genesis(
         "camera_intrinsics": cam_intrinsics,
         "runtime_main_object_scale": float(runtime_main_object_scale),
         "runtime_default_striker_radius_mult": float(runtime_striker_radius_mult),
+        "striker_speed_mps": float(runtime_striker_speed),
+        "striker_speed_bucket": runtime_case_cfg.get("striker_speed_bucket", None),
         "auto_visibility_scale": auto_visibility_scale_info,
         "objects": [
             (
