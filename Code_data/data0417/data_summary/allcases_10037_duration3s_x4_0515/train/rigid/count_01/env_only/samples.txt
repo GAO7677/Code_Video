@@ -1,1 +1,0 @@
-/data/gaoya/AAA_test_video/Dataset_physV/0417data/allcases_10037_duration3s_x4_0515/train/rigid/single_object_preview/count_01/10037__case901_high_drop__rs101

@@ -26,6 +26,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_metadata(sample_dir: Path) -> dict:
+    for name in ("metadata.json", "meta.json"):
+        path = sample_dir / name
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"No metadata file found under {sample_dir}")
+
+
 def load_rgb_frames(sample_dir: Path) -> list[np.ndarray]:
     rgb_dir = sample_dir / "rgb"
     frame_paths = sorted(rgb_dir.glob("frame_*.png"))
@@ -217,8 +225,7 @@ def save_contact_timeline_figure(
 def main() -> None:
     args = parse_args()
     sample_dir = Path(args.sample_dir)
-    meta_path = sample_dir / "metadata.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta = load_metadata(sample_dir)
 
     physics_dir = sample_dir / "physics"
     rgb_frames = load_rgb_frames(sample_dir)

@@ -1,1 +1,0 @@
-/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_genericv22_batch100/train/rigid/interaction_pair_plus_dynamic/count_02/10037__case005_entry_left__rs01

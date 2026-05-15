@@ -32,6 +32,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_metadata(sample_dir: Path) -> dict:
+    for name in ("metadata.json", "meta.json"):
+        path = sample_dir / name
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"No metadata file found under {sample_dir}")
+
+
+def find_sample_root(sample_dir: Path) -> Path:
+    for candidate in (sample_dir, *sample_dir.parents):
+        if (candidate / "_asset_cache").exists():
+            return candidate
+    raise FileNotFoundError(f"Could not find dataset root containing _asset_cache for {sample_dir}")
+
+
 def quaternion_wxyz_to_matrix(quat_wxyz: np.ndarray) -> np.ndarray:
     q = np.asarray(quat_wxyz, dtype=np.float64).reshape(4)
     norm = np.linalg.norm(q)
@@ -341,7 +356,7 @@ def build_html(
 def main() -> None:
     args = parse_args()
     sample_dir = Path(args.sample_dir).resolve()
-    metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata = load_metadata(sample_dir)
     rigid_npz = np.load(sample_dir / "physics" / "rigid_kinematics.npz")
 
     vis_dir = sample_dir / "visualizations"
@@ -350,7 +365,7 @@ def main() -> None:
     html_path = vis_dir / "scene_init_interactive.html"
     info_path = vis_dir / "scene_init_info.json"
 
-    sample_root = sample_dir.parents[4]
+    sample_root = find_sample_root(sample_dir)
     camera = metadata["camera"]
     intr = metadata["camera_intrinsics"]
     camera_pos = np.asarray(camera["pos"], dtype=np.float64)
