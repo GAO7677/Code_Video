@@ -39,8 +39,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_frames", type=int, default=24)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--samples", type=int, default=32)
+    parser.add_argument("--samples", type=int, default=64)
     parser.add_argument("--fps", type=int, default=12)
+    parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -223,6 +224,7 @@ def build_mesh_object_spec(
             {
                 "mesh_path": part["mesh_path"],
                 "local_offset": (-com_local).tolist(),
+                "local_scale": [runtime_scale, runtime_scale, runtime_scale],
                 "material": density_material_spec(part["density_kgm3"], str(object_meta.get("role", "object"))),
             }
             for part in parts
@@ -486,6 +488,7 @@ def main() -> None:
             "height": int(args.height),
             "samples": int(args.samples),
             "fps": int(args.fps),
+            "use_denoising": bool(args.denoise),
         },
         "camera": {
             "position": [float(v) for v in sample_meta["camera"]["pos"]],

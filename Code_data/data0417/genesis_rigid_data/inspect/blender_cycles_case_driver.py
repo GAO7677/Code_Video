@@ -128,7 +128,7 @@ def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     scene.cycles.device = "CPU"
     scene.cycles.samples = int(render_spec.get("samples", 32))
     scene.cycles.preview_samples = max(8, int(render_spec.get("samples", 32) // 2))
-    scene.cycles.use_denoising = True
+    scene.cycles.use_denoising = bool(render_spec.get("use_denoising", False))
     scene.render.resolution_x = int(render_spec.get("width", 640))
     scene.render.resolution_y = int(render_spec.get("height", 480))
     scene.render.resolution_percentage = 100
@@ -173,6 +173,7 @@ def build_animated_mesh_object(
                 continue
             obj.parent = root
             obj.location = tuple(float(v) for v in part.get("local_offset", [0.0, 0.0, 0.0]))
+            obj.scale = tuple(float(v) for v in part.get("local_scale", [1.0, 1.0, 1.0]))
             obj.rotation_euler = (0.0, 0.0, 0.0)
             attach_material(obj, mat)
     return root
