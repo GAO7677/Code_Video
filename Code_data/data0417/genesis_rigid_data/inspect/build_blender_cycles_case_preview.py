@@ -30,6 +30,7 @@ from PIL import Image
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BLENDER_DRIVER = SCRIPT_DIR / "blender_cycles_case_driver.py"
+DEFAULT_RENDER_ASSET_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1")
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--samples", type=int, default=96)
     parser.add_argument("--fps", type=int, default=12)
+    parser.add_argument("--render_asset_root", type=Path, default=DEFAULT_RENDER_ASSET_ROOT)
     parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -445,6 +447,100 @@ def derive_scene_style(object_appearance: dict[int, dict[str, Any]]) -> dict[str
     }
 
 
+def load_render_asset_library(asset_root: Path) -> dict[str, Any]:
+    manifest_path = asset_root / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    try:
+        data = load_json(manifest_path)
+    except Exception:
+        return {}
+    data["_asset_root"] = str(asset_root)
+    return data
+
+
+def build_texture_binding(texture_entry: dict[str, Any] | None, *, mapping_scale: list[float]) -> dict[str, Any] | None:
+    if not texture_entry:
+        return None
+    maps = dict(texture_entry.get("maps", {}))
+    base_color = maps.get("base_color")
+    normal = maps.get("normal")
+    roughness = maps.get("roughness")
+    if not base_color or not normal or not roughness:
+        return None
+    binding = {
+        "name": str(texture_entry.get("asset_id", texture_entry.get("name", "texture"))),
+        "base_color": str(base_color),
+        "normal": str(normal),
+        "roughness": str(roughness),
+        "mapping_scale": [float(v) for v in mapping_scale],
+        "normal_strength": float(texture_entry.get("normal_strength", 0.35)),
+        "roughness_mix": float(texture_entry.get("roughness_mix", 0.82)),
+        "base_mix": float(texture_entry.get("base_mix", 0.92)),
+        "projection": str(texture_entry.get("projection", "UV")),
+    }
+    if maps.get("ao"):
+        binding["ao"] = str(maps["ao"])
+        binding["ao_mix"] = float(texture_entry.get("ao_mix", 0.22))
+    return binding
+
+
+def choose_render_asset_bindings(
+    *,
+    object_specs: list[dict[str, Any]],
+    scene_style: dict[str, Any],
+    asset_library: dict[str, Any],
+) -> dict[str, Any]:
+    hdris = dict(asset_library.get("hdris", {}))
+    textures = dict(asset_library.get("textures", {}))
+    if not hdris and not textures:
+        return {}
+
+    preset_counts: dict[str, int] = {}
+    for obj in object_specs:
+        for part in obj.get("parts", []):
+            mat = part.get("material", {})
+            preset = str(mat.get("material_preset", "unknown"))
+            preset_counts[preset] = preset_counts.get(preset, 0) + 1
+
+    wood_like = preset_counts.get("varnished_wood", 0)
+    metal_like = preset_counts.get("painted_metal", 0) + preset_counts.get("hard_plastic", 0) + preset_counts.get("painted_plastic", 0)
+    cloth_like = preset_counts.get("fabric_cloth", 0)
+
+    if wood_like >= max(2, metal_like):
+        hdri_key = "interior_warm"
+        floor_key = "wood_floor"
+        wall_key = "beige_wall_001"
+    elif metal_like >= max(2, wood_like):
+        hdri_key = "studio_warm"
+        floor_key = "painted_concrete"
+        wall_key = "beige_wall_001"
+    elif cloth_like >= 2:
+        hdri_key = "studio_soft"
+        floor_key = "painted_concrete"
+        wall_key = "beige_wall_001"
+    else:
+        hdri_key = "studio_soft"
+        floor_key = "painted_concrete"
+        wall_key = "beige_wall_001"
+
+    hdri_entry = hdris.get(hdri_key) or next(iter(hdris.values()), None)
+    floor_entry = textures.get(floor_key)
+    wall_entry = textures.get(wall_key)
+    return {
+        "hdri": hdri_entry,
+        "floor_texture": build_texture_binding(floor_entry, mapping_scale=[1.8, 1.8, 1.8]),
+        "wall_texture": build_texture_binding(wall_entry, mapping_scale=[1.1, 1.1, 1.1]),
+        "selection": {
+            "hdri_key": hdri_key,
+            "floor_key": floor_key,
+            "wall_key": wall_key,
+            "preset_counts": preset_counts,
+            "dominant_color": scene_style.get("dominant"),
+        },
+    }
+
+
 def estimate_sphere_radius(
     bbox_xyxy: np.ndarray,
     center_depth: np.ndarray,
@@ -741,6 +837,7 @@ def build_html(output_root: Path, spec: dict[str, Any]) -> None:
       <p><strong>Source:</strong> <code>{spec['sample_dir']}</code></p>
       <p><strong>Frames:</strong> sampled {len(spec['sampled_frame_indices'])} / {spec['total_frames']} frames, stride={spec['frame_stride']}</p>
       <p><strong>Cycles:</strong> {spec['render']['width']}x{spec['render']['height']}, samples={spec['render']['samples']}, fps={spec['render']['fps']}</p>
+      <p><strong>Assets:</strong> <code>{spec.get('render_assets', {})}</code></p>
     </div>
     <div class="grid">
       <div class="card">
@@ -776,6 +873,7 @@ def main() -> None:
     args = parse_args()
     sample_dir = args.sample_dir.resolve()
     output_root = args.output_root.resolve()
+    render_asset_root = args.render_asset_root.resolve()
 
     if output_root.exists() and args.overwrite:
         shutil.rmtree(output_root)
@@ -783,6 +881,7 @@ def main() -> None:
 
     sample_meta = load_meta(sample_dir)
     dataset_root = find_dataset_root(sample_dir)
+    asset_library = load_render_asset_library(render_asset_root)
     kinematics = np.load(sample_dir / "physics" / "rigid_kinematics.npz", allow_pickle=True)
     anchor = np.load(sample_dir / "physics" / "anchor_targets.npz", allow_pickle=True)
 
@@ -847,6 +946,11 @@ def main() -> None:
 
     if not object_specs:
         raise RuntimeError(f"No renderable objects resolved from {sample_dir}")
+    render_assets = choose_render_asset_bindings(
+        object_specs=object_specs,
+        scene_style=scene_style,
+        asset_library=asset_library,
+    )
 
     stacked_pos = np.concatenate(all_positions, axis=0)
     xy_min = np.min(stacked_pos[:, :2], axis=0)
@@ -889,6 +993,7 @@ def main() -> None:
                 "metallic": 0.0,
                 "clearcoat": 0.0,
                 "material_preset": "concrete_floor",
+                "texture_set": render_assets.get("floor_texture"),
             },
         },
         "room": {
@@ -904,10 +1009,11 @@ def main() -> None:
                 "metallic": 0.0,
                 "clearcoat": 0.0,
                 "material_preset": "painted_wall",
+                "texture_set": render_assets.get("wall_texture"),
             },
         },
         "environment": {
-            "world_exr": "/usr/share/blender/datafiles/studiolights/world/studio.exr",
+            "world_exr": str((render_assets.get("hdri") or {}).get("path", "/usr/share/blender/datafiles/studiolights/world/studio.exr")),
             "strength": float(scene_style["environment_strength"]),
             "rotation_deg": 92.0,
             "background_strength": float(scene_style["background_strength"]),
@@ -941,6 +1047,7 @@ def main() -> None:
                 "color": [1.0, 0.98, 0.95, 1.0],
             },
         },
+        "render_assets": render_assets.get("selection", {}),
         "objects": object_specs,
     }
     spec_path = output_root / "scene_spec.json"

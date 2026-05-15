@@ -181,17 +181,17 @@ python \
 
 ```bash
 cd /
-python3 -m http.server 8061 --bind localhost
+python3 -m http.server 8062 --bind localhost
 ```
 
 ## 页面地址
 
 - `sum0504`:
-  `http://localhost:8061/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+  `http://localhost:8062/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
 - `version0515zoom_genesis_rigid`:
-  `http://localhost:8061/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal/index.html`
+  `http://localhost:8062/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal/index.html`
 - `version0515zoom_genesis_rigid_stage1adapter_simple_window`:
-  `http://localhost:8061/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_portal/index.html`
+  `http://localhost:8062/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_portal/index.html`
 
 说明：
 

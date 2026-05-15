@@ -21,6 +21,7 @@ import argparse
 import json
 import math
 import sys
+import traceback
 from pathlib import Path
 
 import bpy
@@ -60,6 +61,35 @@ def import_obj(filepath: str) -> list[bpy.types.Object]:
     except Exception:
         bpy.ops.wm.obj_import(filepath=filepath, forward_axis="NEGATIVE_Z", up_axis="Y")
     return [obj for obj in bpy.data.objects if obj.name not in before]
+
+
+def safe_load_image(filepath: str) -> bpy.types.Image | None:
+    path = Path(str(filepath))
+    if not path.exists():
+        return None
+    try:
+        return bpy.data.images.load(str(path), check_existing=True)
+    except Exception:
+        return None
+
+
+def mark_image_as_data(image: bpy.types.Image | None) -> None:
+    if image is None:
+        return
+    try:
+        image.colorspace_settings.name = "Non-Color"
+        return
+    except Exception:
+        pass
+    try:
+        image.colorspace_settings.is_data = True
+        return
+    except Exception:
+        pass
+    try:
+        image.colorspace_settings.name = "Linear"
+    except Exception:
+        pass
 
 
 def make_principled_material(name: str, spec: dict) -> bpy.types.Material:
@@ -256,6 +286,104 @@ def make_principled_material(name: str, spec: dict) -> bpy.types.Material:
             principled.inputs["Metallic"].default_value = max(float(spec.get("metallic", 0.0)), 0.18)
         if "Clearcoat" in principled.inputs:
             principled.inputs["Clearcoat"].default_value = max(float(spec.get("clearcoat", 0.0)), 0.10)
+
+    texture_set = spec.get("texture_set") or {}
+    base_color_img = safe_load_image(str(texture_set.get("base_color", ""))) if texture_set else None
+    if texture_set and base_color_img is not None:
+        texcoord_img = nodes.new("ShaderNodeTexCoord")
+        texcoord_img.location = (-1180.0, 420.0)
+        mapping_img = nodes.new("ShaderNodeMapping")
+        mapping_img.location = (-980.0, 420.0)
+        scale = texture_set.get("mapping_scale", [1.0, 1.0, 1.0])
+        mapping_img.inputs["Scale"].default_value = (
+            float(scale[0]),
+            float(scale[1]),
+            float(scale[2]),
+        )
+        projection = str(texture_set.get("projection", "UV")).upper()
+        if projection == "UV":
+            links.new(texcoord_img.outputs["UV"], mapping_img.inputs["Vector"])
+        else:
+            links.new(texcoord_img.outputs["Object"], mapping_img.inputs["Vector"])
+
+        tex_base = nodes.new("ShaderNodeTexImage")
+        tex_base.location = (-760.0, 500.0)
+        tex_base.image = base_color_img
+        tex_base.interpolation = "Smart"
+        tex_base.projection = "FLAT"
+        links.new(mapping_img.outputs["Vector"], tex_base.inputs["Vector"])
+
+        color_mix = nodes.new("ShaderNodeMixRGB")
+        color_mix.location = (-500.0, 360.0)
+        color_mix.blend_type = "MIX"
+        color_mix.inputs["Fac"].default_value = float(texture_set.get("base_mix", 0.92))
+        links.new(edge_mix.outputs["Color"], color_mix.inputs["Color1"])
+        links.new(tex_base.outputs["Color"], color_mix.inputs["Color2"])
+        color_output = color_mix
+
+        ao_img = safe_load_image(str(texture_set.get("ao", "")))
+        if ao_img is not None:
+            tex_ao = nodes.new("ShaderNodeTexImage")
+            tex_ao.location = (-760.0, 250.0)
+            tex_ao.image = ao_img
+            mark_image_as_data(tex_ao.image)
+            tex_ao.interpolation = "Smart"
+            links.new(mapping_img.outputs["Vector"], tex_ao.inputs["Vector"])
+
+            ao_mix = nodes.new("ShaderNodeMixRGB")
+            ao_mix.location = (-250.0, 360.0)
+            ao_mix.blend_type = "MULTIPLY"
+            ao_mix.inputs["Fac"].default_value = float(texture_set.get("ao_mix", 0.22))
+            links.new(color_output.outputs["Color"], ao_mix.inputs["Color1"])
+            links.new(tex_ao.outputs["Color"], ao_mix.inputs["Color2"])
+            color_output = ao_mix
+
+        links.new(color_output.outputs["Color"], principled.inputs["Base Color"])
+
+        rough_img = safe_load_image(str(texture_set.get("roughness", "")))
+        if rough_img is not None:
+            tex_rough = nodes.new("ShaderNodeTexImage")
+            tex_rough.location = (-760.0, 40.0)
+            tex_rough.image = rough_img
+            mark_image_as_data(tex_rough.image)
+            tex_rough.interpolation = "Smart"
+            links.new(mapping_img.outputs["Vector"], tex_rough.inputs["Vector"])
+
+            rough_bw = nodes.new("ShaderNodeRGBToBW")
+            rough_bw.location = (-520.0, 40.0)
+            links.new(tex_rough.outputs["Color"], rough_bw.inputs["Color"])
+
+            rough_mix = nodes.new("ShaderNodeMixRGB")
+            rough_mix.location = (-250.0, -20.0)
+            rough_mix.blend_type = "MIX"
+            rough_mix.inputs["Fac"].default_value = float(texture_set.get("roughness_mix", 0.82))
+            rough_mix.inputs["Color1"].default_value = (
+                float(spec.get("roughness", 0.45)),
+                float(spec.get("roughness", 0.45)),
+                float(spec.get("roughness", 0.45)),
+                1.0,
+            )
+            links.new(rough_bw.outputs["Val"], rough_mix.inputs["Color2"])
+
+            rough_bw_2 = nodes.new("ShaderNodeRGBToBW")
+            rough_bw_2.location = (-20.0, -20.0)
+            links.new(rough_mix.outputs["Color"], rough_bw_2.inputs["Color"])
+            links.new(rough_bw_2.outputs["Val"], principled.inputs["Roughness"])
+
+        normal_img = safe_load_image(str(texture_set.get("normal", "")))
+        if normal_img is not None:
+            tex_normal = nodes.new("ShaderNodeTexImage")
+            tex_normal.location = (-760.0, -220.0)
+            tex_normal.image = normal_img
+            mark_image_as_data(tex_normal.image)
+            tex_normal.interpolation = "Smart"
+            links.new(mapping_img.outputs["Vector"], tex_normal.inputs["Vector"])
+
+            normal_map = nodes.new("ShaderNodeNormalMap")
+            normal_map.location = (-500.0, -220.0)
+            normal_map.inputs["Strength"].default_value = float(texture_set.get("normal_strength", 0.35))
+            links.new(tex_normal.outputs["Color"], normal_map.inputs["Color"])
+            links.new(normal_map.outputs["Normal"], principled.inputs["Normal"])
     return material
 
 
@@ -615,4 +743,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)
