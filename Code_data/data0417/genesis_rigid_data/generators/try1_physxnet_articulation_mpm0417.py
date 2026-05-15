@@ -429,6 +429,21 @@ def resolve_frame_sampling_cfg(
     requested_fps = float(max(1.0, requested_fps))
     dt = float(max(1e-6, dt))
     base_steps = int(max(1, steps))
+    requested_duration_sec_raw = _case_cfg_or_default(
+        runtime_case_cfg,
+        "duration_sec_override",
+        getattr(args, "duration_sec", None),
+    )
+    requested_duration_sec = None
+    duration_source = "legacy_steps_over_requested_fps"
+    if requested_duration_sec_raw is not None:
+        try:
+            candidate = float(requested_duration_sec_raw)
+        except Exception:
+            candidate = 0.0
+        if math.isfinite(candidate) and candidate > 0.0:
+            requested_duration_sec = float(candidate)
+            duration_source = "explicit_duration_sec"
     sampling_fps_mult = float(
         max(
             1.0,
@@ -445,13 +460,17 @@ def resolve_frame_sampling_cfg(
     target_sampling_fps = float(min(requested_fps * sampling_fps_mult, 1.0 / dt))
     save_every = max(1, int(round((1.0 / dt) / target_sampling_fps)))
     actual_sampling_fps = float(1.0 / (dt * float(save_every)))
-    physical_duration_sec = float(base_steps / requested_fps)
-    total_sim_steps = max(1, int(round(physical_duration_sec / dt)))
+    if requested_duration_sec is None:
+        requested_duration_sec = float(base_steps / requested_fps)
+    total_sim_steps = max(1, int(round(requested_duration_sec / dt)))
     exported_intervals = max(1, int(total_sim_steps // save_every))
     total_sim_steps = max(save_every, exported_intervals * save_every)
     exported_frame_count = int(exported_intervals + 1)
     return {
         "requested_fps": float(requested_fps),
+        "legacy_steps_param": int(base_steps),
+        "requested_duration_sec": float(requested_duration_sec),
+        "duration_source": str(duration_source),
         "sampling_fps_mult": float(sampling_fps_mult),
         "target_sampling_fps": float(target_sampling_fps),
         "actual_sampling_fps": float(actual_sampling_fps),
@@ -10827,11 +10846,14 @@ def simulate_in_genesis(
             "engine_version": str(getattr(gs, "__version__", "unknown")),
             "dt": float(dt),
             "substeps": int(runtime_substeps),
+            "legacy_steps_param": int(frame_sampling_cfg["legacy_steps_param"]),
             "steps_per_frame": int(save_every),
             "frame_dt": float(frame_sampling_cfg["frame_dt"]),
             "video_fps": float(render_video_fps),
             "base_video_fps": float(frame_sampling_cfg["actual_sampling_fps"]),
             "requested_video_fps": float(frame_sampling_cfg["requested_fps"]),
+            "requested_duration_sec": float(frame_sampling_cfg["requested_duration_sec"]),
+            "duration_source": str(frame_sampling_cfg["duration_source"]),
             "sampling_fps_mult": float(frame_sampling_cfg["sampling_fps_mult"]),
             "target_sampling_fps": float(frame_sampling_cfg["target_sampling_fps"]),
             "physical_duration_sec": float(frame_sampling_cfg["physical_duration_sec"]),
@@ -10954,10 +10976,21 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--fallback_density_kgm3", type=float, default=800.0, help="Fallback density only for parts whose JSON lacks density")
     parser.add_argument("--default_friction", type=float, default=0.55, help="Runtime fallback friction only when JSON friction is absent")
     parser.add_argument("--run_genesis", action="store_true", help="Also run a small Genesis demo and render preview.mp4")
-    parser.add_argument("--steps", type=int, default=240, help="Simulation steps for preview")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=240,
+        help="Legacy duration proxy used only when --duration_sec is not provided. Physical duration falls back to steps / fps.",
+    )
     parser.add_argument("--dt", type=float, default=0.005, help="Simulation dt")
     parser.add_argument("--substeps", type=int, default=10, help="Simulation substeps")
     parser.add_argument("--fps", type=int, default=24, help="Preview video fps")
+    parser.add_argument(
+        "--duration_sec",
+        type=float,
+        default=None,
+        help="Explicit physical simulation duration in seconds. When set, it overrides the legacy steps / fps duration rule.",
+    )
     parser.add_argument(
         "--sampling_fps_mult",
         type=float,

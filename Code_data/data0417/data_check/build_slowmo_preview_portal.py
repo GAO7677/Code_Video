@@ -60,6 +60,11 @@ def scan_samples(sample_root: Path) -> list[dict[str, Any]]:
                 "slowdown_factor": float(playback.get("slowdown_factor", sim.get("playback_slowdown_factor", 1.0))),
                 "base_fps": float(playback.get("base_video_fps", sim.get("base_video_fps", sim.get("video_fps", 0.0)))),
                 "effective_fps": float(playback.get("effective_video_fps", sim.get("video_fps", 0.0))),
+                "duration_source": str(sim.get("duration_source", "")),
+                "requested_duration_sec": float(sim.get("requested_duration_sec", 0.0) or 0.0),
+                "physical_duration_sec": float(sim.get("physical_duration_sec", 0.0) or 0.0),
+                "frame_dt": float(sim.get("frame_dt", 0.0) or 0.0),
+                "frames": int(meta.get("frames", 0) or 0),
             }
         )
     return samples
@@ -82,6 +87,8 @@ def render_html(title: str, samples: list[dict[str, Any]]) -> str:
                 <div class="meta"><span>{sample['composition']}</span><span>{sample['motion_category']}</span></div>
                 <div class="badge">slowdown x{sample['slowdown_factor']:.2f}</div>
                 <div class="fps">base {sample['base_fps']:.2f} fps -> export {sample['effective_fps']:.2f} fps</div>
+                <div class="fps">duration_source {sample['duration_source']} | requested {sample['requested_duration_sec']:.3f}s | physical {sample['physical_duration_sec']:.3f}s</div>
+                <div class="fps">frame_dt {sample['frame_dt']:.3f}s | frames {sample['frames']}</div>
                 <div class="path">{sample['meta_path']}</div>
               </div>
             </article>
