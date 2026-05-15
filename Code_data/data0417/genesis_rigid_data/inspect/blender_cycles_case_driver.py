@@ -123,6 +123,16 @@ def create_area_light(name: str, location: list[float], rotation_euler_deg: list
     return obj
 
 
+def create_sun_light(name: str, rotation_euler_deg: list[float], energy: float) -> bpy.types.Object:
+    data = bpy.data.lights.new(name=name, type="SUN")
+    data.energy = float(energy)
+    data.angle = math.radians(9.0)
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.rotation_euler = tuple(math.radians(float(v)) for v in rotation_euler_deg)
+    return obj
+
+
 def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
@@ -140,6 +150,8 @@ def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     scene.render.ffmpeg.ffmpeg_preset = "GOOD"
     scene.render.film_transparent = False
     scene.view_settings.look = "None"
+    scene.view_settings.exposure = -1.2
+    scene.view_settings.gamma = 1.0
     world = scene.world
     if world is None:
         world = bpy.data.worlds.new("World")
@@ -147,8 +159,8 @@ def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     if bg is not None:
-        bg.inputs[0].default_value = (0.965, 0.965, 0.955, 1.0)
-        bg.inputs[1].default_value = 0.45
+        bg.inputs[0].default_value = (0.055, 0.068, 0.092, 1.0)
+        bg.inputs[1].default_value = 0.09
 
 
 def build_animated_mesh_object(
@@ -243,6 +255,18 @@ def main() -> None:
         rotation_euler_deg=spec["lighting"]["fill_area"]["rotation_euler_deg"],
         energy=float(spec["lighting"]["fill_area"]["energy"]),
         size=float(spec["lighting"]["fill_area"]["size"]),
+    )
+    create_area_light(
+        name="RimArea",
+        location=spec["lighting"]["rim_area"]["location"],
+        rotation_euler_deg=spec["lighting"]["rim_area"]["rotation_euler_deg"],
+        energy=float(spec["lighting"]["rim_area"]["energy"]),
+        size=float(spec["lighting"]["rim_area"]["size"]),
+    )
+    create_sun_light(
+        name="SunKey",
+        rotation_euler_deg=spec["lighting"]["sun"]["rotation_euler_deg"],
+        energy=float(spec["lighting"]["sun"]["energy"]),
     )
 
     cam_data = bpy.data.cameras.new("Camera")

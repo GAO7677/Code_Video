@@ -66,7 +66,48 @@ val: 247
   `/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid`
   做 heldout。
 
-### 2. `stage1adapter_simple_window`
+### 2. `version0515zoom_genesis_rigid`
+
+路径：
+
+`/home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid`
+
+数量：
+
+- total: 46
+- train: 36
+- test: 5
+- val: 5
+
+分层统计：
+
+```text
+train: 36
+  count_02
+    obj_obj_only_c2plus: 1
+    mixed_c1: 8
+    mixed_c2plus: 27
+
+test: 5
+  count_02
+    obj_obj_only_c2plus: 1
+    mixed_c1: 1
+    mixed_c2plus: 3
+
+val: 5
+  count_02
+    obj_obj_only_c2plus: 1
+    mixed_c1: 1
+    mixed_c2plus: 3
+```
+
+说明：
+
+- 只记录路径，不移动原始数据。
+- split 来自 Genesis raw `train/rigid` 的 heldout。
+- 当前只保留非空分类目录。
+
+### 3. `stage1adapter_simple_window`
 
 路径：
 
@@ -120,7 +161,18 @@ python \
   --prefer_gif
 ```
 
-### 2. 重建 `stage1adapter_simple_window` 页面
+### 2. 重建 `version0515zoom_genesis_rigid` 页面
+
+```bash
+python \
+  /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
+  --output_root /home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal \
+  --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid \
+  --portal_title "version0515zoom_genesis_rigid Portal" \
+  --prefer_gif
+```
+
+### 3. 重建 `stage1adapter_simple_window` 页面
 
 ```bash
 python \
@@ -142,6 +194,8 @@ python3 -m http.server 8049 --bind localhost
 
 - `sum0504`:
   `http://localhost:8049/home/gaoya/portal_hub_sim/sum0504_portal/index.html`
+- `version0515zoom_genesis_rigid`:
+  `http://localhost:8049/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_portal/index.html`
 - `stage1adapter_simple_window`:
   `http://localhost:8049/home/gaoya/portal_hub_sim/stage1adapter_simple_window_portal/index.html`
 

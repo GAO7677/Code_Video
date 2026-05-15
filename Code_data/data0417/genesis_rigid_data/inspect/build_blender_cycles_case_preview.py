@@ -139,6 +139,69 @@ def density_material_spec(density_kgm3: float | None, role: str) -> dict[str, An
     }
 
 
+def clamp_color01(rgb: np.ndarray) -> list[float]:
+    rgb = np.asarray(rgb, dtype=np.float64).reshape(3)
+    rgb = np.clip(rgb, 0.0, 1.0)
+    return [float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0]
+
+
+def estimate_object_base_colors(
+    *,
+    sample_dir: Path,
+    sample_meta: dict[str, Any],
+    object_ids: np.ndarray,
+    visibility: np.ndarray,
+) -> dict[int, list[float]]:
+    seg_path = sample_dir / "physics" / "seg.npy"
+    if not seg_path.exists():
+        return {}
+    try:
+        seg = np.load(seg_path, mmap_mode="r")
+    except Exception:
+        return {}
+
+    meta_objects = {
+        int(obj["object_id"]): dict(obj)
+        for obj in sample_meta.get("objects", [])
+        if isinstance(obj, dict) and obj.get("object_id") is not None and obj.get("seg_id") is not None
+    }
+    colors: dict[int, list[float]] = {}
+    max_frames = min(int(seg.shape[0]), int(visibility.shape[0]))
+    for local_idx, object_id in enumerate(object_ids.tolist()):
+        obj_meta = meta_objects.get(int(object_id))
+        if obj_meta is None:
+            continue
+        seg_id = int(obj_meta["seg_id"])
+        chosen = None
+        for frame_idx in range(max_frames):
+            if int(visibility[frame_idx, local_idx]) <= 0:
+                continue
+            rgb_path = sample_dir / "rgb" / f"frame_{frame_idx:03d}.png"
+            if not rgb_path.exists():
+                continue
+            mask = np.asarray(seg[frame_idx] == seg_id)
+            if mask.sum() < 64:
+                continue
+            with Image.open(rgb_path) as image:
+                rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+            pixels = rgb[mask]
+            if pixels.size == 0:
+                continue
+            chosen = np.median(pixels, axis=0)
+            break
+        if chosen is not None:
+            colors[int(object_id)] = clamp_color01(chosen)
+    return colors
+
+
+def apply_sampled_color(material_spec: dict[str, Any], sampled_rgba: list[float] | None) -> dict[str, Any]:
+    if sampled_rgba is None:
+        return material_spec
+    out = dict(material_spec)
+    out["base_color"] = [float(v) for v in sampled_rgba]
+    return out
+
+
 def estimate_sphere_radius(
     bbox_xyxy: np.ndarray,
     center_depth: np.ndarray,
@@ -178,6 +241,7 @@ def build_mesh_object_spec(
     object_meta: dict[str, Any],
     positions: np.ndarray,
     quats: np.ndarray,
+    sampled_rgba: list[float] | None,
 ) -> dict[str, Any]:
     source_object_id = str(object_meta["source_object_id"])
     asset_meta = resolve_asset_meta(dataset_root, source_object_id)
@@ -225,7 +289,10 @@ def build_mesh_object_spec(
                 "mesh_path": part["mesh_path"],
                 "local_offset": (-com_local).tolist(),
                 "local_scale": [runtime_scale, runtime_scale, runtime_scale],
-                "material": density_material_spec(part["density_kgm3"], str(object_meta.get("role", "object"))),
+                "material": apply_sampled_color(
+                    density_material_spec(part["density_kgm3"], str(object_meta.get("role", "object"))),
+                    sampled_rgba,
+                ),
             }
             for part in parts
         ],
@@ -241,6 +308,7 @@ def build_sphere_object_spec(
     center_depth: np.ndarray,
     visibility: np.ndarray,
     camera_intrinsics: dict[str, Any],
+    sampled_rgba: list[float] | None,
 ) -> dict[str, Any]:
     radius = estimate_sphere_radius(
         bbox_xyxy=bbox_xyxy,
@@ -260,7 +328,10 @@ def build_sphere_object_spec(
             }
             for pos, quat in zip(positions, quats)
         ],
-        "material": density_material_spec(None, str(object_meta.get("role", "initiator"))),
+        "material": apply_sampled_color(
+            density_material_spec(None, str(object_meta.get("role", "initiator"))),
+            sampled_rgba,
+        ),
     }
 
 
@@ -427,6 +498,12 @@ def main() -> None:
     bbox_xyxy = np.asarray(anchor["bbox_xyxy"], dtype=np.float64)
     center_depth = np.asarray(anchor["center_depth"], dtype=np.float64)
     visibility = np.asarray(anchor["visibility_mask"], dtype=np.uint8)
+    object_base_colors = estimate_object_base_colors(
+        sample_dir=sample_dir,
+        sample_meta=sample_meta,
+        object_ids=object_ids,
+        visibility=visibility,
+    )
 
     frame_indices = sample_frame_indices(com_pos.shape[0], args.frame_stride, args.max_frames)
     meta_objects = {
@@ -454,6 +531,7 @@ def main() -> None:
                 center_depth=center_depth[:, local_idx],
                 visibility=visibility[:, local_idx],
                 camera_intrinsics=sample_meta["camera_intrinsics"],
+                sampled_rgba=object_base_colors.get(int(object_id)),
             )
         else:
             spec = build_mesh_object_spec(
@@ -462,6 +540,7 @@ def main() -> None:
                 object_meta=obj_meta,
                 positions=sampled_pos,
                 quats=sampled_quat,
+                sampled_rgba=object_base_colors.get(int(object_id)),
             )
         for timeline_frame, item in enumerate(spec["frames"], start=1):
             item["timeline_frame"] = timeline_frame
@@ -504,9 +583,9 @@ def main() -> None:
             "center": [float(xy_center[0]), float(xy_center[1]), 0.0],
             "extents_xy": [float(xy_extent[0]), float(xy_extent[1])],
             "material": {
-                "base_color": [0.90, 0.88, 0.84, 1.0],
-                "roughness": 0.82,
-                "specular": 0.12,
+                "base_color": [0.18, 0.21, 0.27, 1.0],
+                "roughness": 0.92,
+                "specular": 0.08,
                 "metallic": 0.0,
                 "clearcoat": 0.0,
             },
@@ -515,14 +594,24 @@ def main() -> None:
             "key_area": {
                 "location": [float(xy_center[0] + 0.9), float(xy_center[1] - 2.2), 2.6],
                 "rotation_euler_deg": [58.0, 0.0, 20.0],
-                "energy": 2400.0,
+                "energy": 320.0,
                 "size": 2.0,
             },
             "fill_area": {
                 "location": [float(xy_center[0] - 1.2), float(xy_center[1] + 1.6), 1.8],
                 "rotation_euler_deg": [78.0, 0.0, -32.0],
-                "energy": 900.0,
+                "energy": 110.0,
                 "size": 1.6,
+            },
+            "rim_area": {
+                "location": [float(xy_center[0] - 0.2), float(xy_center[1] + 2.4), 2.2],
+                "rotation_euler_deg": [112.0, 0.0, 180.0],
+                "energy": 180.0,
+                "size": 2.4,
+            },
+            "sun": {
+                "rotation_euler_deg": [38.0, 0.0, 24.0],
+                "energy": 1.2,
             },
         },
         "objects": object_specs,
