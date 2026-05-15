@@ -482,6 +482,81 @@ def resolve_frame_sampling_cfg(
     }
 
 
+def resolve_trailing_trim_cfg(args: argparse.Namespace) -> Dict[str, Any]:
+    return {
+        "enabled": bool(int(getattr(args, "trim_trailing_still", 1) or 0)),
+        "linear_speed_thresh": float(max(0.0, float(getattr(args, "trim_linear_speed_thresh", 0.05) or 0.05))),
+        "angular_speed_thresh": float(max(0.0, float(getattr(args, "trim_angular_speed_thresh", 0.35) or 0.35))),
+        "post_active_sec": float(max(0.0, float(getattr(args, "trim_post_active_sec", 0.25) or 0.25))),
+        "min_frames": int(max(1, int(getattr(args, "trim_min_frames", 24) or 24))),
+        "min_removed_frames": int(max(1, int(getattr(args, "trim_min_removed_frames", 8) or 8))),
+    }
+
+
+def compute_trailing_trim_info(
+    *,
+    linear_vel_arr: np.ndarray,
+    angular_vel_arr: np.ndarray,
+    frame_dt: float,
+    trim_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    total_frames = int(linear_vel_arr.shape[0]) if linear_vel_arr.ndim >= 2 else 0
+    if total_frames <= 0:
+        return {
+            "enabled": bool(trim_cfg.get("enabled", False)),
+            "applied": False,
+            "total_frames_before_trim": 0,
+            "kept_frame_count": 0,
+            "trimmed_frame_count": 0,
+            "last_active_frame_idx": None,
+            "tail_keep_frames": 0,
+            "frame_dt": float(frame_dt),
+        }
+
+    if not bool(trim_cfg.get("enabled", False)):
+        return {
+            "enabled": False,
+            "applied": False,
+            "total_frames_before_trim": int(total_frames),
+            "kept_frame_count": int(total_frames),
+            "trimmed_frame_count": 0,
+            "last_active_frame_idx": None,
+            "tail_keep_frames": 0,
+            "frame_dt": float(frame_dt),
+        }
+
+    linear_speed = np.linalg.norm(np.asarray(linear_vel_arr, dtype=np.float32), axis=-1)
+    angular_speed = np.linalg.norm(np.asarray(angular_vel_arr, dtype=np.float32), axis=-1)
+    max_linear_speed = np.max(linear_speed, axis=1) if linear_speed.ndim == 2 else np.zeros((total_frames,), dtype=np.float32)
+    max_angular_speed = np.max(angular_speed, axis=1) if angular_speed.ndim == 2 else np.zeros((total_frames,), dtype=np.float32)
+    active_mask = (max_linear_speed > float(trim_cfg["linear_speed_thresh"])) | (
+        max_angular_speed > float(trim_cfg["angular_speed_thresh"])
+    )
+    active_indices = np.flatnonzero(active_mask)
+    last_active_idx = int(active_indices[-1]) if active_indices.size > 0 else 0
+    tail_keep_frames = int(max(0, math.ceil(float(trim_cfg["post_active_sec"]) / max(float(frame_dt), 1e-6))))
+    min_frames = int(max(1, min(int(trim_cfg["min_frames"]), total_frames)))
+    kept_frame_count = int(min(total_frames, max(min_frames, last_active_idx + 1 + tail_keep_frames)))
+    trimmed_frame_count = int(max(0, total_frames - kept_frame_count))
+    if trimmed_frame_count < int(trim_cfg["min_removed_frames"]):
+        kept_frame_count = int(total_frames)
+        trimmed_frame_count = 0
+    return {
+        "enabled": True,
+        "applied": bool(trimmed_frame_count > 0),
+        "total_frames_before_trim": int(total_frames),
+        "kept_frame_count": int(kept_frame_count),
+        "trimmed_frame_count": int(trimmed_frame_count),
+        "last_active_frame_idx": int(last_active_idx),
+        "tail_keep_frames": int(tail_keep_frames),
+        "frame_dt": float(frame_dt),
+        "linear_speed_thresh": float(trim_cfg["linear_speed_thresh"]),
+        "angular_speed_thresh": float(trim_cfg["angular_speed_thresh"]),
+        "max_linear_speed_last": float(max_linear_speed[last_active_idx]) if total_frames > 0 else 0.0,
+        "max_angular_speed_last": float(max_angular_speed[last_active_idx]) if total_frames > 0 else 0.0,
+    }
+
+
 def parse_density_to_kgm3(value: Any, default: Optional[float] = None) -> Optional[float]:
     if value is None:
         return default
@@ -10648,6 +10723,31 @@ def simulate_in_genesis(
     depth_norm_arr = np.stack(depth_frames, axis=0).astype(np.float32)
     seg_arr = np.stack(seg_frames, axis=0).astype(np.int32)
     object_aabb_arr = object_aabb_frames
+    trailing_trim_cfg = resolve_trailing_trim_cfg(args)
+    trailing_trim_info = compute_trailing_trim_info(
+        linear_vel_arr=linear_vel_arr,
+        angular_vel_arr=angular_vel_arr,
+        frame_dt=float(frame_sampling_cfg["frame_dt"]),
+        trim_cfg=trailing_trim_cfg,
+    )
+    kept_frame_count = int(trailing_trim_info["kept_frame_count"])
+    if kept_frame_count > 0 and kept_frame_count < int(com_pos_arr.shape[0]):
+        frames = frames[:kept_frame_count]
+        rgb_frames = rgb_frames[:kept_frame_count]
+        depth_metric_arr = depth_metric_arr[:kept_frame_count]
+        depth_norm_arr = depth_norm_arr[:kept_frame_count]
+        seg_arr = seg_arr[:kept_frame_count]
+        object_aabb_arr = object_aabb_arr[:kept_frame_count]
+        com_pos_arr = com_pos_arr[:kept_frame_count]
+        orientation_quat_arr = orientation_quat_arr[:kept_frame_count]
+        linear_vel_arr = linear_vel_arr[:kept_frame_count]
+        angular_vel_arr = angular_vel_arr[:kept_frame_count]
+        physics_kinetic_frames = physics_kinetic_frames[:kept_frame_count]
+        physics_potential_frames = physics_potential_frames[:kept_frame_count]
+        physics_total_frames = physics_total_frames[:kept_frame_count]
+        physics_kinetic_trans_frames = physics_kinetic_trans_frames[:kept_frame_count]
+        physics_kinetic_rot_frames = physics_kinetic_rot_frames[:kept_frame_count]
+        physics_potential_gravity_frames = physics_potential_gravity_frames[:kept_frame_count]
     contact_graph_frames = []
     environment_contact_events: List[Dict[str, Any]] = []
     environment_names = ["ground"]
@@ -10755,6 +10855,12 @@ def simulate_in_genesis(
         "rigid_restitution_override": None if rigid_restitution_override is None else float(rigid_material_cfg["restitution"]),
         "frame_sampling": frame_sampling_cfg,
         "video_playback": video_playback_cfg,
+        "export_clip": {
+            "frame_count": int(com_pos_arr.shape[0]),
+            "video_duration_sec": float(com_pos_arr.shape[0] / max(render_video_fps, 1e-6)),
+            "physical_span_sec": float(max(0, com_pos_arr.shape[0] - 1) * float(frame_sampling_cfg["frame_dt"])),
+            "trailing_trim": trailing_trim_info,
+        },
         "environment_entities": (
             [{"name": "ground", "special_id": int(ENVIRONMENT_SPECIAL_IDS["ground"]), "entity_type": "container"}]
             + [dict(wall_info, entity_type="wall") for wall_info in preview_wall_infos]
@@ -10857,8 +10963,11 @@ def simulate_in_genesis(
             "sampling_fps_mult": float(frame_sampling_cfg["sampling_fps_mult"]),
             "target_sampling_fps": float(frame_sampling_cfg["target_sampling_fps"]),
             "physical_duration_sec": float(frame_sampling_cfg["physical_duration_sec"]),
+            "exported_video_duration_sec": float(com_pos_arr.shape[0] / max(render_video_fps, 1e-6)),
+            "exported_physical_span_sec": float(max(0, com_pos_arr.shape[0] - 1) * float(frame_sampling_cfg["frame_dt"])),
             "playback_slowdown_factor": float(video_playback_cfg["slowdown_factor"]),
             "gravity": [0.0, 0.0, float(gravity_z)],
+            "trailing_trim": trailing_trim_info,
         },
         "frame_sampling": frame_sampling_cfg,
         "video_playback": video_playback_cfg,
@@ -10997,6 +11106,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=1.0,
         help="Multiplier applied only to exported frame sampling density while keeping physical simulation duration unchanged.",
     )
+    parser.add_argument("--trim_trailing_still", type=int, choices=[0, 1], default=1, help="Trim trailing nearly-static frames from the exported clip while keeping the underlying simulation unchanged.")
+    parser.add_argument("--trim_linear_speed_thresh", type=float, default=0.05, help="Trailing-trim linear-speed threshold in m/s.")
+    parser.add_argument("--trim_angular_speed_thresh", type=float, default=0.35, help="Trailing-trim angular-speed threshold in rad/s.")
+    parser.add_argument("--trim_post_active_sec", type=float, default=0.25, help="Extra seconds to keep after the last active frame before trimming.")
+    parser.add_argument("--trim_min_frames", type=int, default=24, help="Minimum exported frame count after trailing trim.")
+    parser.add_argument("--trim_min_removed_frames", type=int, default=8, help="Only apply trailing trim when at least this many frames would be removed.")
     parser.set_defaults(liquid_free_surface=True)
     parser.add_argument("--disable_liquid_free_surface", dest="liquid_free_surface", action="store_false", help="Use the older more constrained liquid setup with extra seals/guards and denser cavity filling")
     parser.add_argument("--liquid_sampler", type=str, default=None, help="Override Genesis SPH liquid sampler, e.g. pbs or regular")
