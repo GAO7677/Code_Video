@@ -1,0 +1,64 @@
+{
+  "dataset": "version0515zoom_genesis_rigid_stage1adapter_simple_train",
+  "dataset_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter",
+  "source_train_root": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter/train/genesis/rigid",
+  "manifest_path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter/manifests/train_items.json",
+  "num_samples": 40,
+  "scenes": {
+    "interaction_pair_plus_dynamic": 40
+  },
+  "count_buckets": {
+    "count_02": 38,
+    "invalid_by_qa": 2
+  },
+  "collision_buckets": {
+    "none": 40
+  },
+  "motion_complexities": {
+    "simple": 12,
+    "static": 28
+  },
+  "leaf_groups": [
+    {
+      "split": "train",
+      "scene_composition": "interaction_pair_plus_dynamic",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "none",
+      "motion_complexity": "simple",
+      "num_samples": 11,
+      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/simple"
+    },
+    {
+      "split": "train",
+      "scene_composition": "interaction_pair_plus_dynamic",
+      "object_count_bucket": "count_02",
+      "collision_bucket": "none",
+      "motion_complexity": "static",
+      "num_samples": 27,
+      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/static"
+    },
+    {
+      "split": "train",
+      "scene_composition": "interaction_pair_plus_dynamic",
+      "object_count_bucket": "invalid_by_qa",
+      "collision_bucket": "none",
+      "motion_complexity": "simple",
+      "num_samples": 1,
+      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/invalid_by_qa/none/simple"
+    },
+    {
+      "split": "train",
+      "scene_composition": "interaction_pair_plus_dynamic",
+      "object_count_bucket": "invalid_by_qa",
+      "collision_bucket": "none",
+      "motion_complexity": "static",
+      "num_samples": 1,
+      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/invalid_by_qa/none/static"
+    }
+  ],
+  "notes": [
+    "Only path index files are created; stage1adapter sample folders are not moved.",
+    "Grouping is based on exported stage1adapter sample paths plus pair_meta.json fields.",
+    "Samples under invalid_by_qa are preserved as a separate count-bucket-like path component."
+  ]
+}

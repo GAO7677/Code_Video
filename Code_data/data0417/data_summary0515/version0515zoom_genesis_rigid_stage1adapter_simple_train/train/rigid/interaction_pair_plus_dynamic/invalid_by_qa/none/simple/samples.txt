@@ -1,0 +1,1 @@
+/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/invalid_by_qa/count_02/10037__case007_entry_fast_center__rs103

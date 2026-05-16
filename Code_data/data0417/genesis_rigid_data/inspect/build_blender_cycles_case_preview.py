@@ -19,8 +19,27 @@ import json
 import math
 import shutil
 import subprocess
+import sys
+import sysconfig
+import importlib.util
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+if "" in sys.path:
+    sys.path.remove("")
+if str(SCRIPT_DIR) in sys.path:
+    sys.path.remove(str(SCRIPT_DIR))
+stdlib_inspect = Path(sysconfig.get_paths()["stdlib"]) / "inspect.py"
+spec = importlib.util.spec_from_file_location("inspect", stdlib_inspect)
+if spec is None or spec.loader is None:
+    raise ImportError(f"Unable to resolve stdlib inspect module from {stdlib_inspect}")
+py_inspect = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(py_inspect)
+sys.modules["inspect"] = py_inspect
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import imageio.v2 as imageio
 import numpy as np
@@ -29,7 +48,6 @@ from PIL import Image
 
 from core.utils_io import load_json
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 BLENDER_DRIVER = SCRIPT_DIR / "blender_cycles_case_driver.py"
 DEFAULT_RENDER_ASSET_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1")
 
@@ -38,16 +56,101 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample_dir", type=Path, required=True)
     parser.add_argument("--output_root", type=Path, required=True)
-    parser.add_argument("--frame_stride", type=int, default=4)
-    parser.add_argument("--max_frames", type=int, default=24)
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--samples", type=int, default=96)
-    parser.add_argument("--fps", type=int, default=12)
+    parser.add_argument("--quality", choices=("preview", "final"), default="preview")
+    parser.add_argument("--frame_stride", type=int, default=None)
+    parser.add_argument("--max_frames", type=int, default=None)
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--samples", type=int, default=None)
+    parser.add_argument("--fps", type=int, default=None)
     parser.add_argument("--render_asset_root", type=Path, default=DEFAULT_RENDER_ASSET_ROOT)
+    parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto")
     parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
+
+
+def build_quality_profile(args: argparse.Namespace) -> dict[str, Any]:
+    if args.quality == "final":
+        profile = {
+            "frame_stride": 3,
+            "max_frames": 32,
+            "width": 1280,
+            "height": 720,
+            "samples": 384,
+            "fps": 15,
+            "exposure_bias": 2.35,
+            "environment_strength_scale": 1.45,
+            "background_strength_scale": 0.35,
+            "light_energy_scale": 1.9,
+            "sun_energy_scale": 1.2,
+            "noise_threshold": 0.012,
+            "min_samples": 48,
+            "view_transform": "AgX",
+            "look": "Medium High Contrast",
+            "use_denoising": True,
+            "use_motion_blur": True,
+            "motion_blur_shutter": 0.24,
+            "use_depth_of_field": True,
+            "dof_fstop": 5.6,
+            "dof_focus_bias": 0.05,
+            "device": str(args.device),
+        }
+    else:
+        profile = {
+            "frame_stride": 4,
+            "max_frames": 24,
+            "width": 640,
+            "height": 480,
+            "samples": 96,
+            "fps": 12,
+            "exposure_bias": 0.0,
+            "environment_strength_scale": 1.0,
+            "background_strength_scale": 1.0,
+            "light_energy_scale": 1.0,
+            "sun_energy_scale": 1.0,
+            "noise_threshold": 0.0,
+            "min_samples": 0,
+            "view_transform": "Standard",
+            "look": "None",
+            "use_denoising": bool(args.denoise),
+            "use_motion_blur": False,
+            "motion_blur_shutter": 0.0,
+            "use_depth_of_field": False,
+            "dof_fstop": 8.0,
+            "dof_focus_bias": 0.0,
+            "device": str(args.device),
+        }
+
+    for key in ("frame_stride", "max_frames", "width", "height", "samples", "fps"):
+        value = getattr(args, key)
+        if value is not None:
+            profile[key] = int(value)
+    if args.denoise:
+        profile["use_denoising"] = True
+    return profile
+
+
+def estimate_focus_distance(
+    *,
+    camera_pos: np.ndarray,
+    lookat: np.ndarray,
+    stacked_positions: np.ndarray,
+    focus_bias: float = 0.0,
+) -> float:
+    forward = np.asarray(lookat, dtype=np.float64) - np.asarray(camera_pos, dtype=np.float64)
+    norm = float(np.linalg.norm(forward))
+    if norm <= 1e-8:
+        return 2.0
+    forward /= norm
+    rel = np.asarray(stacked_positions, dtype=np.float64) - np.asarray(camera_pos, dtype=np.float64)
+    distances = rel @ forward
+    positive = distances[distances > 0.05]
+    if positive.size == 0:
+        base = norm
+    else:
+        base = float(np.median(positive))
+    return float(max(0.25, base + focus_bias))
 
 def load_meta(sample_dir: Path) -> dict[str, Any]:
     for name in ("meta.json", "metadata.json"):
@@ -867,6 +970,7 @@ def build_html(output_root: Path, spec: dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    quality_profile = build_quality_profile(args)
     sample_dir = args.sample_dir.resolve()
     output_root = args.output_root.resolve()
     render_asset_root = args.render_asset_root.resolve()
@@ -895,7 +999,11 @@ def main() -> None:
     )
     scene_style = derive_scene_style(object_appearance)
 
-    frame_indices = sample_frame_indices(com_pos.shape[0], args.frame_stride, args.max_frames)
+    frame_indices = sample_frame_indices(
+        com_pos.shape[0],
+        quality_profile["frame_stride"],
+        quality_profile["max_frames"],
+    )
     meta_objects = {
         int(obj["object_id"]): dict(obj)
         for obj in sample_meta.get("objects", [])
@@ -953,27 +1061,50 @@ def main() -> None:
     xy_max = np.max(stacked_pos[:, :2], axis=0)
     xy_center = 0.5 * (xy_min + xy_max)
     xy_extent = np.maximum(xy_max - xy_min, 1.6) + 1.2
+    camera_pos = np.asarray(sample_meta["camera"]["pos"], dtype=np.float64)
+    camera_lookat = np.asarray(sample_meta["camera"]["lookat"], dtype=np.float64)
+    focus_distance = estimate_focus_distance(
+        camera_pos=camera_pos,
+        lookat=camera_lookat,
+        stacked_positions=stacked_pos,
+        focus_bias=float(quality_profile["dof_focus_bias"]),
+    )
 
     spec = {
         "sample_name": sample_dir.name,
         "sample_dir": str(sample_dir),
         "output_root": str(output_root),
-        "frame_stride": int(args.frame_stride),
+        "frame_stride": int(quality_profile["frame_stride"]),
         "sampled_frame_indices": frame_indices,
         "total_frames": int(com_pos.shape[0]),
         "render": {
-            "width": int(args.width),
-            "height": int(args.height),
-            "samples": int(args.samples),
-            "fps": int(args.fps),
-            "use_denoising": bool(args.denoise),
-            "exposure": float(scene_style["exposure"]),
+            "quality": str(args.quality),
+            "width": int(quality_profile["width"]),
+            "height": int(quality_profile["height"]),
+            "samples": int(quality_profile["samples"]),
+            "fps": int(quality_profile["fps"]),
+            "use_denoising": bool(quality_profile["use_denoising"]),
+            "exposure": float(scene_style["exposure"]) + float(quality_profile["exposure_bias"]),
+            "noise_threshold": float(quality_profile["noise_threshold"]),
+            "min_samples": int(quality_profile["min_samples"]),
+            "view_transform": str(quality_profile["view_transform"]),
+            "look": str(quality_profile["look"]),
+            "use_motion_blur": bool(quality_profile["use_motion_blur"]),
+            "motion_blur_shutter": float(quality_profile["motion_blur_shutter"]),
+            "device": str(quality_profile["device"]),
         },
         "camera": {
             "position": [float(v) for v in sample_meta["camera"]["pos"]],
             "lookat": [float(v) for v in sample_meta["camera"]["lookat"]],
             "up": [float(v) for v in sample_meta["camera"].get("up", [0.0, 0.0, 1.0])],
             "fov_deg": float(sample_meta["camera"]["fov"]),
+            "depth_of_field": {
+                "enabled": bool(quality_profile["use_depth_of_field"]),
+                "focus_distance": float(focus_distance),
+                "fstop": float(quality_profile["dof_fstop"]),
+                "aperture_blades": 7,
+                "aperture_rotation_deg": 8.0,
+            },
         },
         "timeline": {
             "frame_start": 1,
@@ -1010,36 +1141,39 @@ def main() -> None:
         },
         "environment": {
             "world_exr": str((render_assets.get("hdri") or {}).get("path", "/usr/share/blender/datafiles/studiolights/world/studio.exr")),
-            "strength": float(scene_style["environment_strength"]),
+            "strength": float(scene_style["environment_strength"]) * float(quality_profile["environment_strength_scale"]),
             "rotation_deg": 92.0,
-            "background_strength": float(scene_style["background_strength"]),
+            "background_strength": float(scene_style["background_strength"]) * float(quality_profile["background_strength_scale"]),
             "background_color": scene_style["background_color"],
         },
         "lighting": {
             "key_area": {
                 "location": [float(xy_center[0] + 1.35), float(xy_center[1] - 2.6), 2.45],
                 "rotation_euler_deg": [62.0, 0.0, 18.0],
-                "energy": 170.0,
+                "energy": 170.0 * float(quality_profile["light_energy_scale"]),
                 "size": 1.7,
                 "color": scene_style["key_light_color"],
+                "spread_deg": 118.0,
             },
             "fill_area": {
                 "location": [float(xy_center[0] - 1.7), float(xy_center[1] + 1.8), 1.55],
                 "rotation_euler_deg": [88.0, 0.0, -36.0],
-                "energy": 55.0,
+                "energy": 55.0 * float(quality_profile["light_energy_scale"]) * 0.92,
                 "size": 2.2,
                 "color": scene_style["fill_light_color"],
+                "spread_deg": 132.0,
             },
             "rim_area": {
                 "location": [float(xy_center[0] + 0.25), float(xy_center[1] + 2.8), 2.3],
                 "rotation_euler_deg": [116.0, 0.0, 180.0],
-                "energy": 92.0,
+                "energy": 92.0 * float(quality_profile["light_energy_scale"]) * 1.05,
                 "size": 2.8,
                 "color": scene_style["rim_light_color"],
+                "spread_deg": 104.0,
             },
             "sun": {
                 "rotation_euler_deg": [34.0, 0.0, 32.0],
-                "energy": 0.22,
+                "energy": 0.22 * float(quality_profile["sun_energy_scale"]),
                 "color": [1.0, 0.98, 0.95, 1.0],
             },
         },

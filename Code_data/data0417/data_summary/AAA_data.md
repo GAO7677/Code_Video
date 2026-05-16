@@ -142,6 +142,24 @@ val: 3
 - split 继承自对应 raw sample 在 `version0515zoom_genesis_rigid/raw_split_assignments.json` 中的 heldout。
 - 当前这批 window 都被切成了 `no_collision`。
 
+### 4. `version0515zoom_genesis_rigid/stage1adapter`
+
+路径：
+
+`/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter`
+
+说明：
+
+- 这是从 `version0515zoom_genesis_rigid/train/rigid` 直接抽取的 simple-motion adapter train 包。
+- 只处理 Genesis raw train，不生成 MOVI-D、benchmark 或 portal。
+- 每个导出样本包含 `context_video.mp4`、`future_gt_video.mp4`、`full_video.mp4`、`pair_meta.json`、`state_pair.npz`、`segment_state.npz`。
+- 当前导出统计：
+  - input raw samples: 56
+  - exported simple samples: 40
+  - skipped: 16
+  - collision buckets: `none=40`
+  - motion: `static=28`, `simple=12`
+
 ## 可视化重建
 
 ### 1. 重建 `sum0504` 页面
@@ -197,3 +215,15 @@ python3 -m http.server 8062 --bind localhost
 
 - 首页每个最小类别最多展示 `10` 条。
 - 当前首页和详情页都优先展示 `gif`。
+
+## Stage1Adapter 构建命令
+
+### version0515zoom raw train -> stage1adapter train
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/repair/build_stage1adapter_simple_dataset.py \
+  --raw_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid \
+  --output_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter \
+  --overwrite
+```

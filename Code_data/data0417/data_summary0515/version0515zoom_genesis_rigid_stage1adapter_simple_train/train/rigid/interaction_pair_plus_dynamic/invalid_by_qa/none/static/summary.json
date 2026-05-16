@@ -1,0 +1,9 @@
+{
+  "split": "train",
+  "scene_composition": "interaction_pair_plus_dynamic",
+  "object_count_bucket": "invalid_by_qa",
+  "collision_bucket": "none",
+  "motion_complexity": "static",
+  "num_samples": 1,
+  "relative_dir": "train/rigid/interaction_pair_plus_dynamic/invalid_by_qa/none/static"
+}

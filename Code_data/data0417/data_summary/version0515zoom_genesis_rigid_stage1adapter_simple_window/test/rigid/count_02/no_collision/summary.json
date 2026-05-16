@@ -1,8 +1,0 @@
-{
-  "split": "test",
-  "simulator_type": "rigid",
-  "object_count_bucket": "count_02",
-  "collision_bucket": "no_collision",
-  "num_samples": 4,
-  "relative_dir": "test/rigid/count_02/no_collision"
-}

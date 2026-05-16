@@ -499,14 +499,88 @@ def set_light_color(obj: bpy.types.Object, color: list[float] | None) -> None:
         pass
 
 
+def set_light_spread(obj: bpy.types.Object, spread_deg: float | None) -> None:
+    if obj is None or obj.data is None or spread_deg is None:
+        return
+    if not hasattr(obj.data, "spread"):
+        return
+    try:
+        obj.data.spread = math.radians(float(spread_deg))
+    except Exception:
+        pass
+
+
+def set_view_transform(scene: bpy.types.Scene, view_transform: str, look: str) -> None:
+    view_settings = scene.view_settings
+    preferred_views = [view_transform]
+    if view_transform == "AgX":
+        preferred_views.extend(["Filmic", "Standard"])
+    elif view_transform == "Filmic":
+        preferred_views.extend(["AgX", "Standard"])
+    else:
+        preferred_views.extend(["AgX", "Filmic"])
+    for candidate in preferred_views:
+        try:
+            view_settings.view_transform = candidate
+            break
+        except Exception:
+            continue
+
+    preferred_looks = [look]
+    if look != "None":
+        preferred_looks.extend(["Medium Contrast", "Base Contrast", "None"])
+    else:
+        preferred_looks.extend(["Base Contrast"])
+    for candidate in preferred_looks:
+        try:
+            view_settings.look = candidate
+            break
+        except Exception:
+            continue
+
+
+def enable_best_cycles_device(scene: bpy.types.Scene) -> None:
+    scene.cycles.device = "CPU"
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+        for compute_type in ("OPTIX", "CUDA", "HIP", "METAL", "ONEAPI"):
+            try:
+                prefs.compute_device_type = compute_type
+                prefs.get_devices()
+            except Exception:
+                continue
+            devices = [dev for dev in getattr(prefs, "devices", []) if getattr(dev, "type", "") != "CPU"]
+            if not devices:
+                continue
+            for dev in getattr(prefs, "devices", []):
+                try:
+                    dev.use = True
+                except Exception:
+                    pass
+            scene.cycles.device = "GPU"
+            return
+    except Exception:
+        return
+
+
 def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     scene.render.engine = "CYCLES"
-    scene.cycles.device = "CPU"
+    device = str(render_spec.get("device", "auto")).lower()
+    if device == "gpu":
+        enable_best_cycles_device(scene)
+    elif device == "auto":
+        enable_best_cycles_device(scene)
+    else:
+        scene.cycles.device = "CPU"
     scene.cycles.samples = int(render_spec.get("samples", 32))
     scene.cycles.preview_samples = max(8, int(render_spec.get("samples", 32) // 2))
     scene.cycles.use_denoising = bool(render_spec.get("use_denoising", False))
     if hasattr(scene.cycles, "use_adaptive_sampling"):
         scene.cycles.use_adaptive_sampling = True
+    if hasattr(scene.cycles, "adaptive_threshold"):
+        scene.cycles.adaptive_threshold = float(render_spec.get("noise_threshold", 0.0))
+    if hasattr(scene.cycles, "adaptive_min_samples"):
+        scene.cycles.adaptive_min_samples = int(render_spec.get("min_samples", 0))
     scene.cycles.max_bounces = 8
     scene.cycles.diffuse_bounces = 4
     scene.cycles.glossy_bounces = 4
@@ -527,11 +601,16 @@ def configure_render(scene: bpy.types.Scene, render_spec: dict) -> None:
     scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
     scene.render.ffmpeg.ffmpeg_preset = "GOOD"
     scene.render.film_transparent = False
-    if hasattr(scene.view_settings, "view_transform"):
-        scene.view_settings.view_transform = "Standard"
-    scene.view_settings.look = "None"
+    set_view_transform(
+        scene,
+        str(render_spec.get("view_transform", "Standard")),
+        str(render_spec.get("look", "None")),
+    )
     scene.view_settings.exposure = float(render_spec.get("exposure", -0.55))
     scene.view_settings.gamma = 1.0
+    scene.render.use_motion_blur = bool(render_spec.get("use_motion_blur", False))
+    if scene.render.use_motion_blur:
+        scene.render.motion_blur_shutter = float(render_spec.get("motion_blur_shutter", 0.2))
     world = scene.world
     if world is None:
         world = bpy.data.worlds.new("World")
@@ -688,6 +767,7 @@ def main() -> None:
         size=float(spec["lighting"]["key_area"]["size"]),
     )
     set_light_color(key_light, spec["lighting"]["key_area"].get("color"))
+    set_light_spread(key_light, spec["lighting"]["key_area"].get("spread_deg"))
     fill_light = create_area_light(
         name="FillArea",
         location=spec["lighting"]["fill_area"]["location"],
@@ -696,6 +776,7 @@ def main() -> None:
         size=float(spec["lighting"]["fill_area"]["size"]),
     )
     set_light_color(fill_light, spec["lighting"]["fill_area"].get("color"))
+    set_light_spread(fill_light, spec["lighting"]["fill_area"].get("spread_deg"))
     rim_light = create_area_light(
         name="RimArea",
         location=spec["lighting"]["rim_area"]["location"],
@@ -704,6 +785,7 @@ def main() -> None:
         size=float(spec["lighting"]["rim_area"]["size"]),
     )
     set_light_color(rim_light, spec["lighting"]["rim_area"].get("color"))
+    set_light_spread(rim_light, spec["lighting"]["rim_area"].get("spread_deg"))
     sun_light = create_sun_light(
         name="SunKey",
         rotation_euler_deg=spec["lighting"]["sun"]["rotation_euler_deg"],
@@ -714,6 +796,13 @@ def main() -> None:
     cam_data = bpy.data.cameras.new("Camera")
     cam_data.lens_unit = "FOV"
     cam_data.angle = math.radians(float(spec["camera"]["fov_deg"]))
+    dof_spec = spec["camera"].get("depth_of_field", {})
+    if bool(dof_spec.get("enabled", False)):
+        cam_data.dof.use_dof = True
+        cam_data.dof.focus_distance = float(dof_spec.get("focus_distance", 2.0))
+        cam_data.dof.aperture_fstop = float(dof_spec.get("fstop", 5.6))
+        cam_data.dof.aperture_blades = int(dof_spec.get("aperture_blades", 7))
+        cam_data.dof.aperture_rotation = math.radians(float(dof_spec.get("aperture_rotation_deg", 0.0)))
     cam_obj = bpy.data.objects.new("Camera", cam_data)
     render_collection.objects.link(cam_obj)
     point_camera_at(cam_obj, spec["camera"]["position"], spec["camera"]["lookat"])

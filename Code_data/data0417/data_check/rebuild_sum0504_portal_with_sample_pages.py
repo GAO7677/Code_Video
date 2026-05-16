@@ -1363,9 +1363,12 @@ def load_groups_from_summary(sample_substring: str = "", collision_bucket_filter
     collision_bucket_filter = str(collision_bucket_filter or "")
     for samples_path in sorted(SUMMARY_ROOT.rglob("samples.txt")):
         rel = samples_path.relative_to(SUMMARY_ROOT)
-        if len(rel.parts) != 5:
+        if len(rel.parts) < 5:
             continue
-        split, simulator_type, count_bucket, collision_bucket, _ = rel.parts
+        split = rel.parts[0]
+        simulator_type = rel.parts[1]
+        count_bucket = rel.parts[2]
+        collision_bucket = "/".join(rel.parts[3:-1])
         if collision_bucket_filter and collision_bucket != collision_bucket_filter:
             continue
         lines = [line.strip() for line in samples_path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -1402,7 +1405,8 @@ def load_groups_from_summary(sample_substring: str = "", collision_bucket_filter
                 break
         if not items:
             continue
-        slug = f"{split}__{simulator_type}__{count_bucket}__{collision_bucket}"
+        slug_collision = collision_bucket.replace("/", "__")
+        slug = f"{split}__{simulator_type}__{count_bucket}__{slug_collision}"
         title = f"{split} / {simulator_type} / {count_bucket} / {collision_bucket}"
         groups.append(
             {
