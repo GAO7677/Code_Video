@@ -37,7 +37,7 @@ PROJECT_ROOT = THIS_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from core.utils_io import ensure_dir, make_json_safe, save_video, to_uint8_rgb, write_json
+from core.utils_io import ensure_dir, load_json, make_json_safe, save_video, to_uint8_rgb, write_json
 
 
 @dataclass
@@ -91,15 +91,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8043)
     return parser.parse_args()
 
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def load_json_if_exists(path: Path) -> dict[str, Any] | list[Any] | None:
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json(path)
 
 
 def load_collision_event_payload(physics_dir: Path) -> list[dict[str, Any]]:
@@ -108,7 +103,7 @@ def load_collision_event_payload(physics_dir: Path) -> list[dict[str, Any]]:
         event_path = physics_dir / "collision_events.json"
     if not event_path.exists():
         return []
-    payload = json.loads(event_path.read_text(encoding="utf-8"))
+    payload = load_json(event_path)
     return payload if isinstance(payload, list) else []
 
 

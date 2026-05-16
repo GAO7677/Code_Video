@@ -23,6 +23,36 @@ rigid generator have been removed to reduce ambiguity.
 - `docs/`
   - 当前说明文档和整理记录。
 
+## Repository Framework
+
+This repository is easiest to understand as four layers:
+
+1. User-facing entry points
+   - `generators/generate_physxnet_train_rigid_multi.py`
+   - `generators/generate_rigid_benchmark.py`
+   - `generators/generate_video_captions.py`
+
+2. Shared support modules
+   - `core/utils_io.py` for shared JSON/text/video IO helpers
+   - `core/scene_templates.py` for reusable scene sampling logic
+   - `core/sample_bucket_labels.py` and `core/physinone_benchmark_taxonomy.py`
+     for labeling / taxonomy logic
+
+3. Inspection and dataset maintenance tools
+   - `inspect/` for visualization, validation, HTML browsing, and Blender preview
+   - `repair/` for backfill, re-index, split rebuild, and targeted repair scripts
+
+4. Heavy backends and history
+   - `generators/try1_*` are still-active low-level backends
+   - `legacy/` keeps older generators for reference only
+
+When adding new code, prefer:
+
+- Put reusable file/path/JSON helpers into `core/utils_io.py`
+- Keep `generators/` focused on current production entry points
+- Keep one-off repair logic in `repair/` instead of extending generator CLIs
+- Treat `try1_*` files as backend modules and avoid adding unrelated utilities to them
+
 ## Environment
 
 Run everything in the `wan` conda environment.
@@ -127,7 +157,7 @@ Use these only when needed:
 These are meant to be reused by the entry points above:
 
 - `core/utils_io.py`
-  - Shared JSON, array, image, and video helpers.
+  - Shared JSON, text, path scanning, array, image, and video helpers.
 - `core/scene_templates.py`
   - Shared scene sampling helpers reused by rigid generation code.
 

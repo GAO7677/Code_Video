@@ -1,7 +1,6 @@
 # 用途：从 sum0504 重建 stage1adapter 路径汇总。
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 import sys
@@ -27,6 +26,7 @@ COUNTS = ["count_01", "count_02", "count_03_04"]
 BUCKETS = ["no_collision", "env_only"]
 
 from repair.rebuild_sum0504_index import classify_sample, scan_leaf_sample_dirs
+from core.utils_io import load_json, write_json, write_lines
 
 
 def read_paths(path: Path) -> list[str]:
@@ -35,20 +35,10 @@ def read_paths(path: Path) -> list[str]:
     return [line.strip() for line in path.read_text().splitlines() if line.strip()]
 
 
-def write_text(path: Path, lines: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + ("\n" if lines else ""))
-
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-
-
 def load_raw_assignments() -> dict[str, dict]:
     if not RAW_ASSIGNMENTS_PATH.exists():
         raise FileNotFoundError(f"missing raw assignments: {RAW_ASSIGNMENTS_PATH}")
-    payload = json.loads(RAW_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))
+    payload = load_json(RAW_ASSIGNMENTS_PATH)
     assignments = payload.get("assignments")
     if not isinstance(assignments, dict):
         raise RuntimeError(f"bad assignments payload: {RAW_ASSIGNMENTS_PATH}")
@@ -60,7 +50,7 @@ def resolve_raw_source_from_meta(sample_dir: Path) -> Path | None:
     if not meta_path.exists():
         return None
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta = load_json(meta_path)
     except Exception:
         return None
     candidates = [
@@ -119,7 +109,7 @@ def main() -> None:
                     continue
 
                 out_dir = OUTPUT_ROOT / split / "rigid" / count_bucket / collision_bucket
-                write_text(out_dir / "samples.txt", samples)
+                write_lines(out_dir / "samples.txt", samples)
                 write_json(
                     out_dir / "summary.json",
                     {
@@ -144,7 +134,7 @@ def main() -> None:
                 split_samples.extend(samples)
 
         split_samples = sorted(split_samples)
-        write_text(OUTPUT_ROOT / split / "samples.txt", split_samples)
+        write_lines(OUTPUT_ROOT / split / "samples.txt", split_samples)
         split_summary = {
             "split": split,
             "simulator_type": "rigid",
@@ -159,7 +149,7 @@ def main() -> None:
         root_all_samples.extend(split_samples)
 
     root_all_samples = sorted(root_all_samples)
-    write_text(OUTPUT_ROOT / "all_samples.txt", root_all_samples)
+    write_lines(OUTPUT_ROOT / "all_samples.txt", root_all_samples)
     write_json(
         OUTPUT_ROOT / "summary.json",
         {
@@ -199,7 +189,7 @@ def main() -> None:
         readme_lines.append(
             f"- {row['relative_dir']}: {row['num_samples']}"
         )
-    write_text(OUTPUT_ROOT / "README.md", readme_lines)
+    write_lines(OUTPUT_ROOT / "README.md", readme_lines)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ as train/rigid/<scene_composition>/<object_count_bucket>/... .
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import random
 import shutil
@@ -28,6 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from generators import try1_physxnet_benchmark as try1
+from core.utils_io import write_json
 
 SCENE_COMPOSITIONS = [
     "uniform_dynamic",
@@ -91,30 +91,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--smoke", action="store_true", help="Alias for --one_case_each with short 12-frame output")
     return parser.parse_args()
-
-
-def make_json_safe(x: Any) -> Any:
-    if isinstance(x, dict):
-        return {str(k): make_json_safe(v) for k, v in x.items()}
-    if isinstance(x, (list, tuple)):
-        return [make_json_safe(v) for v in x]
-    if isinstance(x, Path):
-        return str(x)
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    if isinstance(x, (np.integer,)):
-        return int(x)
-    if isinstance(x, (np.floating,)):
-        return float(x)
-    if isinstance(x, (np.bool_,)):
-        return bool(x)
-    return x
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(make_json_safe(payload), ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def sample_object_pool(args: argparse.Namespace, needed: int) -> List[str]:
     if args.object_ids:

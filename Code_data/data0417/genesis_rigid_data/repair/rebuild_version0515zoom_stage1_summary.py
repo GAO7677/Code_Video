@@ -2,11 +2,11 @@
 # 用途：为 version0515zoom_genesis_rigid 的 stage1_subsets_v1 重建路径索引与简要统计。
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any
 
+from core.utils_io import load_json, write_json, write_lines
 
 SUBSET_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/preprocess_v1/stage1_subsets_v1"
@@ -15,21 +15,6 @@ OUTPUT_ROOT = Path(
     "/home/gaoya/Code_Video/Code_data/data0417/data_summary/version0515zoom_genesis_rigid_stage1"
 )
 STAGE_NAMES = ["stage1a_precontact_strict", "stage1b_simple_dynamics"]
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def write_lines(path: Path, lines: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-
 
 def main() -> None:
     if OUTPUT_ROOT.exists():

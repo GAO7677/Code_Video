@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
+from core.utils_io import load_json, write_json, write_lines
 
 WINDOW_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter_simple_window/train/genesis"
@@ -22,26 +22,8 @@ SPLITS = ("train", "test", "val")
 COUNT_BUCKETS = ("count_01", "count_02", "count_03_04")
 COLLISION_BUCKETS = ("no_collision", "env_only")
 
-
-def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def write_lines(path: Path, lines: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = "\n".join(lines)
-    if text:
-        text += "\n"
-    path.write_text(text, encoding="utf-8")
-
-
 def load_raw_assignments() -> dict[str, dict]:
-    payload = read_json(RAW_ASSIGNMENTS_PATH)
+    payload = load_json(RAW_ASSIGNMENTS_PATH)
     assignments = payload.get("assignments")
     if not isinstance(assignments, dict):
         raise RuntimeError(f"Bad raw assignments payload: {RAW_ASSIGNMENTS_PATH}")
@@ -62,7 +44,7 @@ def resolve_raw_source(sample_dir: Path) -> Path | None:
     pair_meta_path = sample_dir / "pair_meta.json"
     candidates: list[str] = []
     if meta_path.exists():
-        meta = read_json(meta_path)
+        meta = load_json(meta_path)
         source_paths = meta.get("source_paths") or {}
         candidates.extend(
             [
@@ -71,7 +53,7 @@ def resolve_raw_source(sample_dir: Path) -> Path | None:
             ]
         )
     if pair_meta_path.exists():
-        pair_meta = read_json(pair_meta_path)
+        pair_meta = load_json(pair_meta_path)
         candidates.extend(
             [
                 str(pair_meta.get("source_sample_dir", "")).strip(),
@@ -124,7 +106,7 @@ def main() -> None:
 
     for sample_dir in iter_window_sample_dirs():
         pair_meta_path = sample_dir / "pair_meta.json"
-        pair_meta = read_json(pair_meta_path)
+        pair_meta = load_json(pair_meta_path)
         raw_source = resolve_raw_source(sample_dir)
         if raw_source is None:
             skipped.append({"sample_dir": str(sample_dir), "reason": "missing_raw_source"})

@@ -17,14 +17,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 import numpy as np
+from core.utils_io import load_json, write_json
 
 
 CASE_NAMES = ("case900_random_parabola", "case901_high_drop")
 META_FILENAMES = ("meta.json", "metadata.json")
-
-
-def _load_json(path: Path) -> Dict:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _find_meta_path(sample_dir: Path) -> Path | None:
@@ -62,8 +59,8 @@ def evaluate_sample(sample_dir: Path, *, margin: float = 24.0) -> Dict:
     if missing:
         return {"sample_dir": str(sample_dir), "valid": False, "reasons": ["missing_files"], "missing": missing}
 
-    meta = _load_json(metadata_path)
-    scene = _load_json(scene_path)
+    meta = load_json(metadata_path)
+    scene = load_json(scene_path)
     width, height = [int(v) for v in meta.get("resolution", [960, 720])]
     kin = np.load(kin_path)
     anchor = np.load(anchor_path)
@@ -147,13 +144,12 @@ def main() -> None:
     for result in results:
         sample_dir = Path(result["sample_dir"])
         if args.write_metrics and sample_dir.exists():
-            (sample_dir / "qa_metrics.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_json(sample_dir / "qa_metrics.json", result)
 
     invalid = [r for r in results if not r.get("valid", False)]
     if args.report is not None:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
         payload = {"total": len(results), "valid": len(results) - len(invalid), "invalid": len(invalid), "samples": results}
-        args.report.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(args.report, payload)
 
     if args.quarantine_dir is not None:
         args.quarantine_dir.mkdir(parents=True, exist_ok=True)

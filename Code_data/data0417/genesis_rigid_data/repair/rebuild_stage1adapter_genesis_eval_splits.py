@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core.utils_io import load_json, write_json
 
 DATASET_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases"
@@ -51,16 +52,6 @@ SPLIT_PLAN: dict[str, dict[str, Any]] = {
         "count02_quota": 6,
     },
 }
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
 
 def sample_sort_key(sample_dir: Path) -> tuple[int, int, str]:
     name = sample_dir.name

@@ -27,6 +27,7 @@ import numpy as np
 import trimesh
 from PIL import Image
 
+from core.utils_io import load_json
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BLENDER_DRIVER = SCRIPT_DIR / "blender_cycles_case_driver.py"
@@ -47,11 +48,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--denoise", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
 
 def load_meta(sample_dir: Path) -> dict[str, Any]:
     for name in ("meta.json", "metadata.json"):

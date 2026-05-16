@@ -25,14 +25,11 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import trimesh
+from core.utils_io import load_json, write_json
 
 
 CURRENT_INERTIAL_POLICY_VERSION = "v2_bbox_fallback_for_nonvolume_meshes"
 DEFAULT_BENCHMARK_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0417data_benchmark")
-
-
-def _load_json(path: Path) -> Dict:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _safe_relpath(path: Path, start: Path) -> str:
@@ -72,7 +69,7 @@ def collect_sample_dirs_by_object(root: Path) -> Dict[str, List[str]]:
     grouped: Dict[str, set[str]] = defaultdict(set)
     for meta_path in iter_sample_metadata_paths(root):
         try:
-            payload = _load_json(meta_path)
+            payload = load_json(meta_path)
         except Exception:
             continue
         sample_dir = str(meta_path.parent)
@@ -95,7 +92,7 @@ def resolve_object_asset_dirs(benchmark_root: Path, benchmark_type: str) -> List
     elif benchmark_type == "physxnet_pool":
         manifest_path = benchmark_root / "benchmark_manifest.json"
         if manifest_path.exists():
-            manifest = _load_json(manifest_path)
+            manifest = load_json(manifest_path)
             work_root = Path(str(manifest.get("work_root", "")))
             cache_root = work_root / "_asset_cache" / "physxnet_objects"
             if cache_root.exists():
@@ -155,7 +152,7 @@ def _combined_bounds(mesh_paths: Sequence[Path], cache: Dict[Path, Optional[Tupl
 
 def audit_object_asset(object_dir: Path, *, benchmark_root: Path, tol: float = 1e-5) -> Dict:
     metadata_path = object_dir / "meta" / "metadata.json"
-    metadata = _load_json(metadata_path)
+    metadata = load_json(metadata_path)
     object_id = str(metadata.get("object_id", object_dir.name))
     urdf_path = object_dir / "rigid" / f"{object_id}.urdf"
 
@@ -311,8 +308,7 @@ def main() -> None:
 
     report = build_report(Path(args.benchmark_root), tol=float(args.tol))
     if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(args.output, report)
 
     print(
         f"benchmark_roots={report['benchmark_root_count']} "

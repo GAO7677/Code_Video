@@ -22,6 +22,7 @@ from core.sample_bucket_labels import (
     find_sample_meta_path,
     load_sample_arrays,
 )
+from core.utils_io import load_json, write_json, write_lines as write_text_lines
 
 
 DEFAULT_OUTPUT_ROOT = Path("/home/gaoya/Code_Video/Code_data/data0417/data_summary/sum0504")
@@ -42,19 +43,13 @@ def parse_args() -> argparse.Namespace:
 def json_dump(path: Path, payload: Dict[str, Any], dry_run: bool) -> None:
     if dry_run:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json(path, payload)
 
 
 def write_lines(path: Path, lines: Iterable[str], dry_run: bool) -> None:
     if dry_run:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-
-
-def load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    write_text_lines(path, lines)
 
 
 def scan_leaf_sample_dirs(root: Path) -> List[Path]:

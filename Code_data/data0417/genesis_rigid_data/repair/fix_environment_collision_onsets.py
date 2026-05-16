@@ -9,13 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+from core.utils_io import load_json, write_json
 
 
 def compact_env_events(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

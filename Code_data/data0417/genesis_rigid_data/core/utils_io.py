@@ -44,6 +44,34 @@ def write_json(path: Path, payload: Any) -> None:
         json.dump(make_json_safe(payload), f, ensure_ascii=False, indent=2)
 
 
+def load_json(path: Path) -> Any:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_text(path: Path, text: str) -> None:
+    ensure_dir(path.parent)
+    path.write_text(text, encoding="utf-8")
+
+
+def write_lines(path: Path, lines: Iterable[str]) -> None:
+    text = "\n".join(str(line) for line in lines)
+    if text:
+        text += "\n"
+    write_text(path, text)
+
+
+def iter_sample_dirs(root: Path, meta_filenames: Iterable[str] = ("meta.json", "metadata.json")) -> List[Path]:
+    if not root.exists():
+        return []
+    sample_dirs: set[Path] = set()
+    for meta_name in meta_filenames:
+        for meta_path in root.rglob(meta_name):
+            if meta_path.parent.is_dir():
+                sample_dirs.add(meta_path.parent)
+    return sorted(sample_dirs)
+
+
 def to_uint8_rgb(frame: np.ndarray) -> np.ndarray:
     arr = np.asarray(frame)
     if arr.dtype == np.uint8:

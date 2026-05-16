@@ -26,6 +26,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+from core.utils_io import load_json, write_json
 from repair.audit_benchmark_inertial_origins import DEFAULT_BENCHMARK_ROOT, build_report, detect_benchmark_type
 
 DEFAULT_WAN_PYTHON = Path("/data/gaoya/miniconda3/envs/wan/bin/python")
@@ -33,10 +34,6 @@ DEFAULT_TRY1_SCRIPT = PROJECT_ROOT / "generators" / "try1_physxnet_articulation_
 DEFAULT_FILTER_SCRIPT = SCRIPT_DIR / "filter_single_object_motion_cases.py"
 DEFAULT_BUILD_SCRIPT = SCRIPT_DIR.parent.parent.parent / "Code_train" / "train_0419" / "state_adapter" / "build_stage1_subsets.py"
 DEFAULT_STAGE1_TRAIN_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases")
-
-
-def _load_json(path: Path) -> Dict:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _iter_sample_dirs(sample_paths: Sequence[str]) -> Iterable[Path]:
@@ -305,7 +302,7 @@ def main() -> None:
     args = build_argparser().parse_args()
     benchmark_root = Path(args.benchmark_root).resolve()
     if args.audit_report is not None and Path(args.audit_report).exists():
-        audit_report = _load_json(Path(args.audit_report))
+        audit_report = load_json(Path(args.audit_report))
     else:
         audit_report = build_report(benchmark_root)
 
@@ -340,7 +337,7 @@ def main() -> None:
                     }
                 )
         elif benchmark_type == "physxnet_pool":
-            manifest = _load_json(root / "benchmark_manifest.json")
+            manifest = load_json(root / "benchmark_manifest.json")
             entries = {str(item["object_id"]): item for item in manifest.get("objects", [])}
             for object_id in flagged_ids:
                 entry = entries.get(object_id)
@@ -377,7 +374,7 @@ def main() -> None:
     }
     report_path = benchmark_root / "regen_inertial_fix_report.json"
     if not bool(args.dry_run):
-        report_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(report_path, summary)
     print(f"success={summary['success']} failed={summary['failed']} report={report_path}")
 
 

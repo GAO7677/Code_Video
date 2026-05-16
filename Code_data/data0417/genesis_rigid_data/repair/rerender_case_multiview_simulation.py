@@ -26,16 +26,13 @@ from generators.try1_physxnet_articulation_mpm0417 import (
     prepare_physxnet_object,
     simulate_in_genesis,
 )
+from core.utils_io import load_json, write_json
 
 
 FORMAL_DATASET_ROOT = Path(
     "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases"
 )
 PORTAL_ROOT = Path("/data/gaoya/AAA_test_video/portal_hub")
-
-
-def _load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _formal_case_info(case_dir: Path) -> Dict[str, Any]:
@@ -47,8 +44,8 @@ def _formal_case_info(case_dir: Path) -> Dict[str, Any]:
         raise FileNotFoundError(scene_input_path)
     if not metadata_path.exists():
         raise FileNotFoundError(metadata_path)
-    scene_input = _load_json(scene_input_path)
-    metadata = _load_json(metadata_path)
+    scene_input = load_json(scene_input_path)
+    metadata = load_json(metadata_path)
     sample_name = str(scene_input.get("sample_name") or case_dir.name)
     object_id = str(scene_input.get("object_id") or sample_name.split("__case", 1)[0])
     case_name = str(scene_input.get("case_name") or sample_name.split("__", 1)[1])
@@ -425,7 +422,7 @@ def main() -> None:
         )
         case_output_dir = Path(metadata_path).parent
         video_path = case_output_dir / "videos" / "rgb.mp4"
-        metadata = _load_json(Path(metadata_path))
+        metadata = load_json(Path(metadata_path))
         view_records.append(
             {
                 "tag": str(view_spec["tag"]),
@@ -444,7 +441,7 @@ def main() -> None:
         "portal_dir": str(portal_dir),
         "views": view_records,
     }
-    (portal_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(portal_dir / "manifest.json", manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 

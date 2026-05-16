@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.utils_io import load_json
 
 DEFAULT_PHYSX_ROOT = Path("/data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/version_1/finaljson")
 META_FILENAMES = ("meta.json", "metadata.json")
@@ -55,11 +56,6 @@ SCENE_DESCRIPTIONS = {
     "omni_showcase": "a mixed multi-object showcase scene",
 }
 INVALID_SAMPLE_MARKERS = {"invalid_case900_901", "invalid_by_qa", "_qa_invalid"}
-
-
-def load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
 
 def is_visual_sample_dir(sample_dir: Path) -> bool:
     return (
