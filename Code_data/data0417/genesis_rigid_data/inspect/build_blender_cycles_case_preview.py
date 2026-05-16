@@ -79,11 +79,11 @@ def build_quality_profile(args: argparse.Namespace) -> dict[str, Any]:
             "height": 720,
             "samples": 384,
             "fps": 15,
-            "exposure_bias": 2.35,
-            "environment_strength_scale": 1.45,
-            "background_strength_scale": 0.35,
-            "light_energy_scale": 1.9,
-            "sun_energy_scale": 1.2,
+            "exposure_bias": 6.0,
+            "environment_strength_scale": 3.2,
+            "background_strength_scale": 1.0,
+            "light_energy_scale": 18.0,
+            "sun_energy_scale": 6.0,
             "noise_threshold": 0.012,
             "min_samples": 48,
             "view_transform": "AgX",
@@ -877,6 +877,48 @@ def make_gif_from_video(video_path: Path, gif_path: Path) -> None:
     )
 
 
+def collect_rendered_frames(frame_root: Path) -> list[Path]:
+    return sorted(frame_root.glob("frame_*.png"))
+
+
+def make_gif_from_frames(frame_paths: list[Path], gif_path: Path, *, fps: int) -> None:
+    frames = []
+    for frame_path in frame_paths:
+        with Image.open(frame_path) as image:
+            frames.append(image.convert("RGB").copy())
+    if not frames:
+        return
+    duration_ms = max(1, int(round(1000.0 / max(1, fps))))
+    frames[0].save(
+        gif_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False,
+    )
+
+
+def make_mp4_from_frames(frame_paths: list[Path], video_path: Path, *, fps: int) -> None:
+    if not frame_paths:
+        return
+    try:
+        writer = imageio.get_writer(
+            str(video_path),
+            fps=max(1, int(fps)),
+            codec="libx264",
+            macro_block_size=None,
+        )
+    except Exception:
+        return
+    try:
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as image:
+                writer.append_data(np.asarray(image.convert("RGB")))
+    finally:
+        writer.close()
+
+
 def build_html(output_root: Path, spec: dict[str, Any]) -> None:
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -1196,10 +1238,12 @@ def main() -> None:
 
     source_gif = output_root / "source_rgb.gif"
     make_source_gif(sample_dir, frame_indices, source_gif)
+    frame_paths = collect_rendered_frames(output_root / "frames")
     video_path = output_root / "cycles_preview.mp4"
     gif_path = output_root / "cycles_preview.gif"
-    if video_path.exists():
-        make_gif_from_video(video_path, gif_path)
+    if frame_paths:
+        make_gif_from_frames(frame_paths, gif_path, fps=int(quality_profile["fps"]))
+        make_mp4_from_frames(frame_paths, video_path, fps=int(quality_profile["fps"]))
     build_html(output_root, spec)
     print(f"[DONE] preview page: {output_root / 'index.html'}")
 
