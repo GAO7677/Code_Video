@@ -1,0 +1,7 @@
+{
+  "split": "val",
+  "simulator_type": "rigid",
+  "object_count_bucket": "count_03_04",
+  "collision_bucket": "mixed_c2plus",
+  "num_samples": 41
+}
