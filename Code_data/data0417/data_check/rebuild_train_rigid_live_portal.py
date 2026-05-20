@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DATA_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid")
-PORTAL_ROOT = Path("/home/gaoya/portal_hub_sim/train_rigid_live_portal")
+DATA_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/train/rigid")
+PORTAL_ROOT = Path("/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_live_portal")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -42,8 +42,13 @@ def sample_record(sample_dir: Path) -> dict[str, Any] | None:
         meta = {}
 
     rel_parts = sample_dir.relative_to(DATA_ROOT).parts
-    scene_composition = rel_parts[0] if len(rel_parts) >= 1 else "unknown"
-    count_bucket = rel_parts[1] if len(rel_parts) >= 2 else "unknown"
+    scene_composition = "unknown"
+    count_bucket = "unknown"
+    for part in rel_parts:
+        if part in {"single_object_preview", "interaction_pair_plus_dynamic", "multi_object_free_motion"}:
+            scene_composition = part
+        if part.startswith("count_"):
+            count_bucket = part
     case_name = str(meta.get("case_name") or "")
     if not case_name:
         parts = sample_dir.name.split("__")
@@ -255,6 +260,7 @@ def build_index(records: list[dict[str, Any]], groups: list[dict[str, Any]]) -> 
 def main() -> None:
     PORTAL_ROOT.mkdir(parents=True, exist_ok=True)
     records = [rec for rec in (sample_record(sample_dir) for sample_dir in iter_sample_dirs(DATA_ROOT)) if rec is not None]
+    records = [rec for rec in records if "/invalid_by_qa/" not in str(rec["sample_dir"])]
     groups = build_group_pages(records)
     summary = {
         "total_samples": len(records),
