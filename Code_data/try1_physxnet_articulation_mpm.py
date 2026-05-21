@@ -1626,6 +1626,8 @@ def _runtime_material_ctor_from_spec(part_meta: dict, material_ctor: str, assemb
     ctor = str(material_ctor or "gs.materials.Rigid")
     role = str(assembly_role or "free_soft")
 
+    if role == "rigid_skeleton" and ctor == "gs.materials.Rigid":
+        return "gs.materials.MPM.Elastic"
     if role == "anchored_soft" and ctor == "gs.materials.PBD.Cloth":
         return "gs.materials.MPM.Elastic"
 
@@ -3654,6 +3656,15 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
         return gs.materials.SPH.Liquid(**kwargs)
 
     if ctor == "gs.materials.PBD.Cloth":
+        if str(spec.get("force_mpm", False)):
+            ctor = "gs.materials.MPM.Elastic"
+            youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params_by_role(ctor, youngs, poisson, role)
+            common_kwargs = {"E": youngs_runtime, "nu": poisson_runtime, "rho": density, "sampler": "pbs"}
+            if role == "anchored_soft":
+                common_kwargs["E"] = min(common_kwargs["E"], 2.0e5)
+                common_kwargs["nu"] = min(common_kwargs["nu"], 0.18)
+                common_kwargs["sampler"] = anchored_sampler
+            return gs.materials.MPM.Elastic(**common_kwargs)
         mat = _make_pbd_cloth_material_from_part(gs, density=density, friction=friction, youngs=youngs, damping=damping)
         # print(f"{spec['part_name']} PBD.Cloth kwargs: {mat.__dict__}")
         # exit()
