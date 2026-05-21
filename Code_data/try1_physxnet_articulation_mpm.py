@@ -843,6 +843,15 @@ def build_preview_case_configs(
         rng = np.random.RandomState(case_seed + 1701)
         return float(rng.uniform(yaw_min, yaw_max))
 
+    def _case000_object_yaw_deg_override() -> Optional[float]:
+        override_raw = getattr(args, "preview_case000_object_yaw_deg_override", None)
+        if override_raw is None:
+            return None
+        try:
+            return float(override_raw)
+        except Exception:
+            return None
+
     def _sample_entry_velocity(case_seed: int, mode: str) -> Tuple[np.ndarray, np.ndarray]:
         # Reproducible per-case random speeds. The mode fixes only direction;
         # magnitude, lateral drift, and yaw rate vary within configured ranges.
@@ -1205,7 +1214,10 @@ def build_preview_case_configs(
             scene_label="static_center",
             seed=seed_anchor + 23,
             placed_pos_offset=np.array([0.0, 0.0, 0.0], dtype=np.float64),
-            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 23)], dtype=np.float64),
+            object_euler_deg=np.array(
+                [0.0, 0.0, _case000_object_yaw_deg_override() if _case000_object_yaw_deg_override() is not None else _sample_object_yaw_deg(seed_anchor + 23)],
+                dtype=np.float64,
+            ),
             use_entry_motion=False,
             object_fixed_override=False,
             custom_objects=_make_custom_objects_for_case(0, seed_anchor + 23),
@@ -7569,6 +7581,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--physxnet_entry_speed_max", type=float, default=1.60, help="Maximum initial entry speed in m/s for moving PhysXNet cases")
     parser.add_argument("--physxnet_object_yaw_deg_min", type=float, default=-180.0, help="Minimum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
     parser.add_argument("--physxnet_object_yaw_deg_max", type=float, default=180.0, help="Maximum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
+    parser.add_argument("--preview_case000_object_yaw_deg_override", type=float, default=None, help="Optional fixed yaw for preview case000_static_center, useful for aligning against a reference sample")
     
     
     
