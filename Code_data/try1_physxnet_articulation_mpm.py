@@ -1552,7 +1552,7 @@ def solver_from_json(
     """
     choice = choose_genesis_material_type(part)
 
-    # choice = _collapse_choice_for_override(choice, solver_family_override=solver_family_override)
+    choice = _collapse_choice_for_override(choice, solver_family_override=solver_family_override)
     return _choice_to_solver_tuple(choice)
 
 
