@@ -243,7 +243,16 @@ def movement_is_support_fixed(desc: Any) -> bool:
     return any(p in s for p in prefixes)
 
 
-def classify_assembly_role(material_ctor: str, movement_desc: Any) -> str:
+def classify_assembly_role(
+    material_ctor: str,
+    movement_desc: Any,
+    solver_family_override: Optional[str] = None,
+) -> str:
+    ov = str(solver_family_override or "").strip().lower()
+    if ov == "mpm_all":
+        if movement_is_support_fixed(movement_desc):
+            return "anchored_soft"
+        return "free_soft"
     if str(material_ctor) == "gs.materials.Rigid":
         return "rigid_skeleton"
     if movement_is_support_fixed(movement_desc):
@@ -1110,6 +1119,14 @@ def build_preview_case_configs(
         case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
         return case_cfg
 
+    def _maybe_disable_case_striker_speed_multiplier(case_cfg: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(getattr(args, "disable_case_striker_speed_multiplier", False)):
+            return case_cfg
+        if "striker_speed_override" in case_cfg and case_cfg["striker_speed_override"] is not None:
+            case_cfg = dict(case_cfg)
+            case_cfg["striker_speed_override"] = float(getattr(args, "striker_speed", 2.8) or 2.8)
+        return case_cfg
+
     def _legacy_random_case(case_idx: int) -> Dict[str, Any]:
         rng = np.random.RandomState(seed_anchor + case_idx * 9973 + 23)
         use_entry_motion = bool(move_flags[case_idx]) if case_idx < len(move_flags) else bool(rng.rand() < entry_prob)
@@ -1322,12 +1339,12 @@ def build_preview_case_configs(
 
     if case_scene_mode in ("auto", "diverse"):
         for template in diverse_templates[:num_cases]:
-            case_configs.append(template)
+            case_configs.append(_maybe_disable_case_striker_speed_multiplier(template))
         for case_idx in range(len(case_configs), num_cases):
-            case_configs.append(_legacy_random_case(case_idx))
+            case_configs.append(_maybe_disable_case_striker_speed_multiplier(_legacy_random_case(case_idx)))
     elif case_scene_mode == "legacy_random":
         for case_idx in range(num_cases):
-            case_configs.append(_legacy_random_case(case_idx))
+            case_configs.append(_maybe_disable_case_striker_speed_multiplier(_legacy_random_case(case_idx)))
     else:
         raise ValueError(f"Unsupported case_scene_mode: {case_scene_mode}")
 
@@ -1476,6 +1493,31 @@ def _collapse_choice_for_override(choice: Dict[str, str], solver_family_override
                 "reason": "mpm override collapsed cloth to MPM elastic",
             }
         return choice
+    if ov == "mpm_all":
+        ctor = str(choice.get("material_ctor", "gs.materials.Rigid"))
+        if ctor == "gs.materials.SPH.Liquid":
+            return {
+                "solver_family": "mpm",
+                "material_ctor": "gs.materials.MPM.Liquid",
+                "reason": "mpm_all override collapsed SPH liquid to MPM liquid",
+            }
+        if ctor in {"gs.materials.Rigid", "gs.materials.PBD.Cloth"}:
+            return {
+                "solver_family": "mpm",
+                "material_ctor": "gs.materials.MPM.Elastic",
+                "reason": "mpm_all override collapsed rigid/cloth to MPM elastic",
+            }
+        if str(ctor).startswith("gs.materials.MPM."):
+            return {
+                "solver_family": "mpm",
+                "material_ctor": ctor,
+                "reason": "mpm_all override kept native MPM material",
+            }
+        return {
+            "solver_family": "mpm",
+            "material_ctor": "gs.materials.MPM.Elastic",
+            "reason": "mpm_all override fell back to MPM elastic",
+        }
     return choice
 
 
@@ -1602,7 +1644,7 @@ def _runtime_solver_family_from_ctor(material_ctor_runtime: str) -> str:
 def build_part_physical(
     part: Dict[str, Any],
     mesh_path: Path,
-    # solver_family_override: Optional[str] = None,
+    solver_family_override: Optional[str] = None,
 ) -> PartPhysical:
     part_id = int(part.get("label", -1))
     density_kgm3 = parse_density_to_kgm3(part.get("density"), default=None)
@@ -1611,9 +1653,16 @@ def build_part_physical(
     friction = safe_optional_float(_first_present_key(part, ["Friction Coefficient", "friction", "coefficient_of_friction"]))
     restitution = safe_optional_float(_first_present_key(part, ["Restitution", "restitution"]))
     damping = safe_optional_float(_first_present_key(part, ["Damping", "damping"]))
-    solver_family, simulator_material, material_ctor = solver_from_json(part)
+    solver_family, simulator_material, material_ctor = solver_from_json(
+        part,
+        solver_family_override=solver_family_override,
+    )
     movement_desc = str(part.get("Movement_description", ""))
-    assembly_role = classify_assembly_role(material_ctor=material_ctor, movement_desc=movement_desc)
+    assembly_role = classify_assembly_role(
+        material_ctor=material_ctor,
+        movement_desc=movement_desc,
+        solver_family_override=solver_family_override,
+    )
     print(f"💚 {part['material']} solver_family={solver_family},simulator_material={simulator_material},material_ctor={material_ctor},assembly_role={assembly_role}")
 
     return PartPhysical(
@@ -2520,7 +2569,11 @@ def prepare_physxnet_object(
         mesh = load_mesh(mesh_path)
         mesh = yup_to_zup_mesh(mesh)   # Y-up → Z-up 坐标系转换（绕X轴旋转-90°）
         part_meshes[pid] = mesh
-        part_phys[pid] = build_part_physical(part, mesh_path)  # 解析 JSON 中的物理参数
+        part_phys[pid] = build_part_physical(
+            part,
+            mesh_path,
+            solver_family_override=solver_family_override,
+        )  # 解析 JSON 中的物理参数
         # print(f"🤍 Part {part_phys[pid].name}: {part_phys[pid].material_ctor}")
 
     if not part_meshes:
@@ -6883,8 +6936,23 @@ def simulate_in_genesis(
         print(
             f"🫙 liquid_container_camera pose={cam_pos.tolist()} lookat={lookat.tolist()} fov={cam_fov}"
         )
+    camera_pos_override = getattr(args, "camera_pos_override", None)
+    camera_lookat_override = getattr(args, "camera_lookat_override", None)
+    camera_fov_override = getattr(args, "camera_fov_override", None)
+    camera_res_override = getattr(args, "camera_res_override", None)
+    if camera_pos_override is not None:
+        cam_pos = np.asarray(camera_pos_override, dtype=np.float64).reshape(3)
+    if camera_lookat_override is not None:
+        lookat = np.asarray(camera_lookat_override, dtype=np.float64).reshape(3)
+    if camera_fov_override is not None:
+        cam_fov = float(camera_fov_override)
+    cam_res = (960, 720)
+    if camera_res_override is not None:
+        arr = np.asarray(camera_res_override, dtype=np.int64).reshape(2)
+        cam_res = (int(arr[0]), int(arr[1]))
+
     cam = scene.add_camera(
-        res=(960, 720),
+        res=cam_res,
         pos=tuple(cam_pos.tolist()),
         lookat=tuple(lookat.tolist()),
         fov=cam_fov,
@@ -7452,6 +7520,11 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--debug_soft_spread_gap", type=float, default=0.45, help="Spacing in meters between spread soft parts in debug mode")
     parser.add_argument("--debug_soft_spread_y_offset", type=float, default=0.85, help="Extra negative-y offset applied when spreading soft parts for debug inspection")
     parser.add_argument("--camera_distance_mult", type=float, default=1.0, help="Multiplier for preview camera distance and height")
+    parser.add_argument("--camera_pos_override", type=float, nargs=3, default=None, help="Explicit camera position override [x y z]")
+    parser.add_argument("--camera_lookat_override", type=float, nargs=3, default=None, help="Explicit camera lookat override [x y z]")
+    parser.add_argument("--camera_fov_override", type=float, default=None, help="Explicit camera field-of-view override in degrees")
+    parser.add_argument("--camera_res_override", type=int, nargs=2, default=None, help="Explicit camera resolution override [w h]")
+    parser.add_argument("--disable_case_striker_speed_multiplier", action="store_true", help="Do not multiply the case striker speed by the per-case random multiplier")
     parser.add_argument("--debug_hide_rigid_visuals", action="store_true", help="Debug render: hide rigid skeleton visuals but keep collisions")
     parser.add_argument("--disable_rigid_visual_double_sided_shell", action="store_true", help="Disable reversed-face duplication for non-watertight rigid visual meshes")
     parser.add_argument("--debug_disable_free_soft", action="store_true", help="Debug render: skip free_soft parts such as pillows")
