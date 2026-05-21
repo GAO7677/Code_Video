@@ -3532,6 +3532,21 @@ def _stabilize_runtime_mpm_params(ctor: str, youngs: float, poisson: float) -> T
     return youngs_val, poisson_val
 
 
+def _stabilize_runtime_mpm_params_by_role(ctor: str, youngs: float, poisson: float, role: str) -> Tuple[float, float]:
+    role = str(role or "").strip().lower()
+    youngs_val = float(youngs)
+    poisson_val = float(poisson)
+    if role == "rigid_skeleton":
+        youngs_val = float(np.clip(youngs_val, 8e6, 5e7))
+        poisson_val = float(np.clip(poisson_val, 0.05, 0.22))
+    elif role == "anchored_soft":
+        youngs_val = float(np.clip(youngs_val, 2e5, 2e6))
+        poisson_val = float(np.clip(poisson_val, 0.08, 0.30))
+    else:
+        youngs_val, poisson_val = _stabilize_runtime_mpm_params(ctor, youngs_val, poisson_val)
+    return youngs_val, poisson_val
+
+
 def _is_pillow_spec(spec: Dict[str, Any]) -> bool:
     role = str(spec.get("assembly_role", "free_soft"))
     part_name = str(spec.get("part_name", "")).lower()
@@ -3594,12 +3609,24 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
             anchored_sampler = "pbs"
 
     if ctor == "gs.materials.Rigid":
-        return _make_genesis_rigid_material(
-            gs,
-            rho=density,
-            friction=float(friction if friction is not None else default_friction),
-            restitution=restitution,
-        )
+        if str(spec.get("force_mpm", False)):
+            # All-MPM mode: approximate rigid-looking parts with a stiff MPM elastic material.
+            role = str(spec.get("assembly_role", "free_soft"))
+            if role == "rigid_skeleton":
+                ctor = "gs.materials.MPM.Elastic"
+                youngs = float(np.clip(max(youngs, 5e6), 5e6, 5e7))
+                poisson = float(np.clip(poisson, 0.05, 0.22))
+            else:
+                ctor = "gs.materials.MPM.Elastic"
+                youngs = float(np.clip(max(youngs, 1e6), 1e6, 1e7))
+                poisson = float(np.clip(poisson, 0.05, 0.30))
+        else:
+            return _make_genesis_rigid_material(
+                gs,
+                rho=density,
+                friction=float(friction if friction is not None else default_friction),
+                restitution=restitution,
+            )
 
     if ctor == "gs.materials.SPH.Liquid":
         # Respect per-part liquid properties from the dataset JSON.
@@ -3632,7 +3659,7 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
         # exit()
         return mat
 
-    youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params(ctor, youngs, poisson)
+    youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params_by_role(ctor, youngs, poisson, role)
     common_kwargs = {"E": youngs_runtime, "nu": poisson_runtime, "rho": density, "sampler": "pbs"}
     if is_pillow and ctor in ("gs.materials.MPM.Elastic", "gs.materials.MPM.ElastoPlastic"):
         # Free pillows are the first parts to numerically explode in the sofa scenes.
@@ -6230,6 +6257,7 @@ def simulate_in_genesis(
     anchored_soft_mesh_source = str(getattr(args, "anchored_soft_mesh_source", "runtime"))
     mpm_vis_mode = str(getattr(args, "mpm_vis_mode", "visual"))
     debug_spread_soft_parts = bool(getattr(args, "debug_spread_soft_parts", False))
+    force_mpm_mode = str(getattr(args, "solver_family_override", "") or "").strip().lower() in {"mpm", "mpm_all"}
     custom_object_cfgs = list(runtime_case_cfg.get("custom_objects", []) or [])
     custom_has_mpm_mesh = any(
         str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) != "rigid_approx"
@@ -6344,79 +6372,11 @@ def simulate_in_genesis(
     aux_runtime_entities: List[Dict[str, Any]] = []
     rigid_urdf_path = obj_dir / "rigid" / f"{prepared.object_id}.urdf"
     skip_rigid_skeleton = bool(getattr(args, "skip_rigid_skeleton", False))
-    has_rigid_skeleton = rigid_urdf_path.exists() and (len(metadata.get("rigid_part_links", [])) > 0 or len(metadata.get("rigid_group_carriers", [])) > 0)
+    has_rigid_skeleton = False
     if skip_rigid_skeleton:
-        has_rigid_skeleton = False
-    use_anchored_hybrid = bool(
-        getattr(args, "use_anchored_hybrid", False) and has_rigid_skeleton and anchored_bindings
-    )
-
-    if has_rigid_skeleton:
-        urdf_kwargs = dict(
-            file=str(rigid_urdf_path),
-            scale=1.0,
-            pos=tuple(placed_pos.tolist()),
-            euler=tuple(object_euler_deg.tolist()),
-            visualization=not debug_hide_rigid_visuals,
-            collision=True,
-            fixed=bool(runtime_object_fixed),
-            merge_fixed_links=False,
-            prioritize_urdf_material=True,
-            file_meshes_are_zup=True,
-        )
-
-        if use_anchored_hybrid:
-            func_soft_from_rigid, func_assoc = _make_anchored_soft_hybrid_callbacks(
-                gs=gs,
-                bindings=anchored_bindings,
-                placed_pos=placed_pos,
-            )
-            anchored_density = float(np.median([float(spec.get("density", 800.0)) for spec in anchored_specs])) if anchored_specs else 800.0
-            anchored_youngs = float(np.median([float(spec.get("youngs", 1e6) or 1e6) for spec in anchored_specs])) if anchored_specs else 1e6
-            anchored_poisson = float(np.median([float(spec.get("poisson", 0.25) or 0.25) for spec in anchored_specs])) if anchored_specs else 0.25
-            anchored_E, anchored_nu = _stabilize_runtime_mpm_params(
-                "gs.materials.MPM.Elastic",
-                anchored_youngs,
-                anchored_poisson,
-            )
-
-            articulated_ent = scene.add_entity(
-                morph=gs.morphs.URDF(**urdf_kwargs),
-                material=gs.materials.Hybrid(
-                    material_rigid=_make_genesis_rigid_material(
-                        gs,
-                        rho=float(rigid_material_cfg["rho"]),
-                        friction=float(rigid_material_cfg["friction"]),
-                        restitution=float(rigid_material_cfg["restitution"]),
-                    ),
-                    material_soft=gs.materials.MPM.Muscle(
-                        E=float(anchored_E),
-                        nu=float(anchored_nu),
-                        rho=float(anchored_density),
-                        sampler="pbs-8",
-                        model="corotation",
-                        n_groups=max(1, len(anchored_bindings)),
-                    ),
-                    damping=0.0,
-                    soft_dv_coef=0.02,
-                    func_instantiate_soft_from_rigid=func_soft_from_rigid,
-                    func_instantiate_rigid_soft_association=func_assoc,
-                ),
-                surface=gs.surfaces.Default(
-                    color=(1.0, 0.15, 0.15, 1.0) if debug_highlight_anchored_soft else (0.35, 0.65, 0.35, 1.0),
-                    vis_mode="visual",
-                ),
-            )
-        else:
-            articulated_ent = scene.add_entity(
-                morph=gs.morphs.URDF(**urdf_kwargs),
-                material=_make_genesis_rigid_material(
-                    gs,
-                    rho=float(rigid_material_cfg["rho"]),
-                    friction=float(rigid_material_cfg["friction"]),
-                    restitution=float(rigid_material_cfg["restitution"]),
-                ),
-            )
+        print("🧪 skip_rigid_skeleton ignored in all-mpm mode")
+    use_anchored_hybrid = False
+    articulated_ent = None
 
     debug_detach_anchored_offset = np.asarray(
         getattr(args, "debug_detach_anchored_offset", [0.0, 0.0, 0.0]),
@@ -6451,7 +6411,7 @@ def simulate_in_genesis(
     liquid_guard_meshes: Dict[int, Dict[str, Any]] = {}
     rigid_container_guard_mesh_path = None
     rigid_container_guard_info: Dict[str, Any] = {}
-    if has_rigid_skeleton:
+    if False:
         rigid_container_guard_mesh_path, rigid_container_guard_info = _build_rigid_container_guard_mesh(
             metadata=metadata,
             runtime_mesh_dir=runtime_mesh_dir,
@@ -6568,10 +6528,7 @@ def simulate_in_genesis(
     # 这里仍然按 part 单独 add_entity，而不是把整件物体压成单一 material_soft。
     for spec in part_specs:
         role = str(spec.get("assembly_role", "free_soft"))
-        if has_rigid_skeleton and role == "rigid_skeleton":
-            continue
-        if use_anchored_hybrid and role == "anchored_soft":
-            continue
+        spec["force_mpm"] = bool(force_mpm_mode)
         if debug_disable_free_soft and role == "free_soft":
             print(f"🧪 skip free_soft in debug render: pid={spec['pid']} part={spec['part_name']}")
             continue
@@ -6603,19 +6560,16 @@ def simulate_in_genesis(
             f"vis_mode={vis_mode} "
             f"material={material.__dict__}"
         )
-        if role != "rigid_skeleton":
-            print(
-                f"    soft_mesh_erosion applied={erosion_info['applied']} "
-                f"reason={erosion_info['reason']} mesh={erosion_info['mesh_path']}"
-            )
+        print(
+            f"    soft_mesh_erosion applied={erosion_info['applied']} "
+            f"reason={erosion_info['reason']} mesh={erosion_info['mesh_path']}"
+        )
         entity_pos = placed_pos.copy()
         runtime_alignment_offset = np.asarray(spec.get("runtime_alignment_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
-        if role != "rigid_skeleton":
-            # All non-rigid parts belong to the same object frame, so they must inherit
-            # the object's initial yaw; otherwise cloth/soft meshes intersect the rotated rigid body.
-            runtime_alignment_offset = _rotate_vec_by_euler_deg(runtime_alignment_offset, object_euler_deg)
+        # In all-MPM mode, every part inherits the same object frame.
+        runtime_alignment_offset = _rotate_vec_by_euler_deg(runtime_alignment_offset, object_euler_deg)
         entity_pos = entity_pos + runtime_alignment_offset
-        if debug_spread_soft_parts and role != "rigid_skeleton":
+        if debug_spread_soft_parts:
             entity_pos = entity_pos + spread_offsets_by_pid.get(int(spec["pid"]), np.zeros(3, dtype=np.float64))
         elif role == "anchored_soft" and np.linalg.norm(debug_detach_anchored_offset) > 0.0:
             entity_pos = entity_pos + debug_detach_anchored_offset
@@ -6640,7 +6594,7 @@ def simulate_in_genesis(
             entity_pos[2] += cloth_follow_gap
 
         part_euler_deg = _compose_euler_deg_xyz(
-            object_euler_deg if role != "rigid_skeleton" else [0.0, 0.0, 0.0],
+            object_euler_deg,
             spec.get("euler", (0.0, 0.0, 0.0)),
         )
 
