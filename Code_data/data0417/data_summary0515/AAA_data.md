@@ -67,30 +67,20 @@ val
 
 数据量：
 
-- total: `40`
-- train: `40`
-
-分层统计：
-
-```text
-train
-  rigid
-    interaction_pair_plus_dynamic
-      count_02
-        none
-          simple: 11
-          static: 27
-      invalid_by_qa
-        none
-          simple: 1
-          static: 1
-```
+- total: `0`
+- train: `0`
 
 说明：
 
 - 来源是 `version0515zoom_genesis_rigid/stage1adapter/train/genesis/rigid`。
-- 这里只有 `train`，当前没有 `test/val`。
-- `invalid_by_qa` 维持原路径，不并入正常分类。
+- 当前按最终筛选标准，这批数据没有合格样本。
+- 规则：
+  - `count_01` 保持旧规则；
+  - `count_02` 允许两个物体共视野；
+  - 但保留下来的 window 内不能出现任何物体-物体接触；
+  - 可以有物体-环境碰撞；
+  - 初始就存在的 `sustained_contact` 也视为不合格。
+- 因为这批 `version0515zoom` 的 `count_02` raw 样本都包含物体-物体接触，所以最终全部被过滤。
 
 ## 可视化重建
 
@@ -107,7 +97,7 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 ### 2. 重建 `version0515zoom_genesis_rigid_stage1adapter_simple_train` 页面
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
   --output_root /home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal \
   --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary0515/version0515zoom_genesis_rigid_stage1adapter_simple_train \
   --portal_title "version0515zoom_genesis_rigid Stage1Adapter Simple Train Portal" \
@@ -119,11 +109,6 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 ```bash
 cd /
 python3 -m http.server 8668 --bind localhost
-
-
-/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html
-/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html
-
 ```
 
 ## 页面地址

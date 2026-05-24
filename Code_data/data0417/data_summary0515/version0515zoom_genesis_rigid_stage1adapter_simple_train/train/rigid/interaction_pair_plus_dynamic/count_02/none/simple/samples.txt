@@ -1,2 +1,0 @@
-/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10033__case001_static_left__rs103
-/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid/stage1adapter/train/genesis/rigid/interaction_pair_plus_dynamic/count_02/10037__case002_static_right__rs102

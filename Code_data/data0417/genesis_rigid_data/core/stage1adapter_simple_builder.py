@@ -172,6 +172,17 @@ def first_new_collision_onset(sample_dir: Path) -> int | None:
     return first
 
 
+def has_object_object_contact_in_prefix(sample_dir: Path, end_exclusive: int) -> bool:
+    for episode in load_interaction_episodes(sample_dir):
+        if str(episode.get("kind", "")).strip() != "object_object":
+            continue
+        start_frame = int(episode.get("start_frame", -1))
+        end_frame = int(episode.get("end_frame", start_frame))
+        if start_frame < int(end_exclusive) and end_frame >= 0:
+            return True
+    return False
+
+
 def iter_raw_samples(train_root: Path) -> list[Path]:
     samples = sorted(path.parent for path in (train_root / "rigid").rglob("metadata.json"))
     return [sample for sample in samples if (sample / "physics" / "anchor_targets.npz").exists()]
@@ -281,6 +292,8 @@ def build_count02_preonset_record_from_raw_sample(sample_dir: Path) -> dict[str,
     segment_end = int(onset_frame) if onset_frame is not None else total_frames
     if segment_end <= CONTEXT_LEN + 1:
         return None
+    if has_object_object_contact_in_prefix(sample_dir, segment_end):
+        return None
 
     context_start = 0
     context_end = CONTEXT_LEN
@@ -363,6 +376,8 @@ def diagnose_count02_preonset_sample(sample_dir: Path) -> str:
     segment_end = int(onset_frame) if onset_frame is not None else total_frames
     if segment_end <= CONTEXT_LEN + 1:
         return f"too_short_preonset_{segment_end}"
+    if has_object_object_contact_in_prefix(sample_dir, segment_end):
+        return "contains_object_object_contact"
     context_start = 0
     context_end = CONTEXT_LEN
     future_start = context_end

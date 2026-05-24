@@ -7,11 +7,7 @@
 
 ## 数量
 
-- train: 48
+- train: 0
 
 ## 叶子分类
 
-- train/rigid/interaction_pair_plus_dynamic/count_02/none/complex: 35
-- train/rigid/interaction_pair_plus_dynamic/count_02/none/moderate: 9
-- train/rigid/interaction_pair_plus_dynamic/count_02/none/simple: 2
-- train/rigid/interaction_pair_plus_dynamic/invalid_by_qa/none/complex: 2

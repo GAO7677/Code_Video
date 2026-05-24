@@ -1,43 +1,6 @@
 {
   "split": "train",
   "dataset": "version0515zoom_genesis_rigid_stage1adapter_simple_train",
-  "num_samples": 48,
-  "leaf_groups": [
-    {
-      "split": "train",
-      "scene_composition": "interaction_pair_plus_dynamic",
-      "object_count_bucket": "count_02",
-      "collision_bucket": "none",
-      "motion_complexity": "complex",
-      "num_samples": 35,
-      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/complex"
-    },
-    {
-      "split": "train",
-      "scene_composition": "interaction_pair_plus_dynamic",
-      "object_count_bucket": "count_02",
-      "collision_bucket": "none",
-      "motion_complexity": "moderate",
-      "num_samples": 9,
-      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/moderate"
-    },
-    {
-      "split": "train",
-      "scene_composition": "interaction_pair_plus_dynamic",
-      "object_count_bucket": "count_02",
-      "collision_bucket": "none",
-      "motion_complexity": "simple",
-      "num_samples": 2,
-      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/simple"
-    },
-    {
-      "split": "train",
-      "scene_composition": "interaction_pair_plus_dynamic",
-      "object_count_bucket": "invalid_by_qa",
-      "collision_bucket": "none",
-      "motion_complexity": "complex",
-      "num_samples": 2,
-      "relative_dir": "train/rigid/interaction_pair_plus_dynamic/invalid_by_qa/none/complex"
-    }
-  ]
+  "num_samples": 0,
+  "leaf_groups": []
 }
