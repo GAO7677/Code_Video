@@ -118,15 +118,20 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 
 ```bash
 cd /
-python3 -m http.server 8068 --bind localhost
+python3 -m http.server 8668 --bind localhost
+
+
+/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html
+/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html
+
 ```
 
 ## 页面地址
 
 - `version_1_genesis_rigid_data_all_cases_sum0504_like`
-  `http://localhost:8068/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html`
+  `http://localhost:8668/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html`
 - `version0515zoom_genesis_rigid_stage1adapter_simple_train`
-  `http://localhost:8068/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html`
+  `http://localhost:8668/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html`
 
 说明：
 

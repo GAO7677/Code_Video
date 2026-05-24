@@ -3,7 +3,7 @@
   "scene_composition": "interaction_pair_plus_dynamic",
   "object_count_bucket": "count_02",
   "collision_bucket": "none",
-  "motion_complexity": "simple",
-  "num_samples": 2,
-  "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/simple"
+  "motion_complexity": "moderate",
+  "num_samples": 9,
+  "relative_dir": "train/rigid/interaction_pair_plus_dynamic/count_02/none/moderate"
 }

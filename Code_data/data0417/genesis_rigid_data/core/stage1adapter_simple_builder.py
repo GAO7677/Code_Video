@@ -33,7 +33,7 @@ from build_stage1_subsets import (  # type: ignore  # noqa: E402
     window_has_visible_object_every_frame,
 )
 from motion_complexity import infer_motion_complexity  # type: ignore  # noqa: E402
-from window_interactions import infer_window_interactions, load_interaction_episodes  # type: ignore  # noqa: E402
+from window_interactions import infer_window_interactions, load_interaction_episodes, summarize_window_range  # type: ignore  # noqa: E402
 
 
 CONTEXT_LEN = 8
@@ -150,6 +150,28 @@ def choose_best_record(records: Iterable[dict[str, Any]]) -> dict[str, Any] | No
     return best
 
 
+def infer_object_count(sample_dir: Path, metadata: dict[str, Any]) -> int:
+    object_count = len(metadata.get("objects", []) or [])
+    if object_count > 0:
+        return int(object_count)
+    for bucket, count in (("count_01", 1), ("count_02", 2), ("count_03_04", 3)):
+        if bucket in sample_dir.parts:
+            return count
+    return 0
+
+
+def first_new_collision_onset(sample_dir: Path) -> int | None:
+    first: int | None = None
+    for episode in load_interaction_episodes(sample_dir):
+        if str(episode.get("window_type", "")).strip() != "contact_onset":
+            continue
+        start_frame = int(episode.get("start_frame", -1))
+        if start_frame < 1:
+            continue
+        first = start_frame if first is None else min(first, start_frame)
+    return first
+
+
 def iter_raw_samples(train_root: Path) -> list[Path]:
     samples = sorted(path.parent for path in (train_root / "rigid").rglob("metadata.json"))
     return [sample for sample in samples if (sample / "physics" / "anchor_targets.npz").exists()]
@@ -232,6 +254,149 @@ def build_strict_candidates_from_raw_sample(sample_dir: Path) -> list[dict[str, 
     return candidates
 
 
+def build_count02_preonset_record_from_raw_sample(sample_dir: Path) -> dict[str, Any] | None:
+    metadata = load_json(sample_dir / "metadata.json")
+    fps = float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0)
+    raw = load_raw_state(sample_dir, fps)
+    state_raw = raw["state_raw"]
+    visibility_mask = raw["visibility_mask"]
+    object_ids = raw["object_ids"]
+    seg_ids = raw["seg_ids"]
+    dt = np.asarray(raw["dt"]).astype(np.float32)
+    total_frames = int(state_raw.shape[0])
+    if total_frames <= CONTEXT_LEN + 1:
+        return None
+
+    width, height = map(float, metadata["resolution"])
+    cam = metadata["camera_intrinsics"]
+    state_norm = normalize_state(
+        state_raw=state_raw,
+        width=width,
+        height=height,
+        depth_near=float(cam["near"]),
+        depth_far=float(cam["far"]),
+    )
+    main_object_index = resolve_main_object_index(metadata, object_ids)
+    onset_frame = first_new_collision_onset(sample_dir)
+    segment_end = int(onset_frame) if onset_frame is not None else total_frames
+    if segment_end <= CONTEXT_LEN + 1:
+        return None
+
+    context_start = 0
+    context_end = CONTEXT_LEN
+    future_start = context_end
+    future_end = segment_end
+    future_visible_ok, future_vis_ratio = future_main_object_visibility_ok(
+        visibility_mask=visibility_mask,
+        start=future_start,
+        end=future_end,
+        main_object_index=main_object_index,
+        threshold=FUTURE_MAIN_VISIBILITY_THRESHOLD,
+    )
+    if not future_visible_ok:
+        return None
+    if not window_has_visible_object_every_frame(visibility_mask, context_start, context_end):
+        return None
+
+    meta_payload = {
+        "prompt": str(metadata.get("prompt", "")).strip()
+        or str(metadata.get("caption", "")).strip()
+        or "a rigid object motion scene",
+        "source_scene_id": str(metadata.get("scene_id", sample_dir.name)),
+        "source_sample_dir": str(sample_dir),
+        "context_len": CONTEXT_LEN,
+        "future_len": int(future_end - future_start),
+        "start_index": 0,
+        "main_object_index": int(main_object_index),
+        "future_main_visibility_ratio": float(future_vis_ratio),
+        "resolution": metadata.get("resolution"),
+        "camera_intrinsics": metadata.get("camera_intrinsics"),
+        "objects": metadata.get("objects", []),
+        "x_frame_paths": rgb_frame_paths(sample_dir, np.arange(context_start, context_end, dtype=np.int32)),
+        "y_frame_paths": rgb_frame_paths(sample_dir, np.arange(future_start, future_end, dtype=np.int32)),
+        "motion_complexity": infer_motion_complexity(
+            state_norm=state_norm[future_start:future_end].astype(np.float32),
+            visibility_mask=visibility_mask[future_start:future_end].astype(np.uint8),
+        ),
+    }
+    motion_label = str((meta_payload.get("motion_complexity") or {}).get("label") or "")
+    if not motion_label:
+        return None
+    record = {
+        "window_dir": str(sample_dir),
+        "source_sample_dir": str(sample_dir),
+        "start_index": 0,
+        "context_len": CONTEXT_LEN,
+        "future_len": int(future_end - future_start),
+        "future_start": future_start,
+        "future_end": future_end,
+        "segment_end": segment_end,
+        "segment_kind": "count02_preonset_until_first_onset",
+        "pre_future_frames": int(future_end - future_start),
+        "collision": "none",
+        "motion": motion_label,
+        "main_object_index": int(main_object_index),
+        "pair_meta": meta_payload,
+    }
+    record["_state_raw_full"] = state_raw
+    record["_state_norm_full"] = state_norm
+    record["_visibility_mask_full"] = visibility_mask
+    record["_object_ids"] = object_ids
+    record["_seg_ids"] = seg_ids
+    record["_dt"] = dt
+    record["_selection_policy"] = "count02_preonset_from_frame0"
+    return record
+
+
+def diagnose_count02_preonset_sample(sample_dir: Path) -> str:
+    metadata = load_json(sample_dir / "metadata.json")
+    fps = float(metadata.get("fps", metadata.get("video_fps", 12.0)) or 12.0)
+    raw = load_raw_state(sample_dir, fps)
+    state_raw = raw["state_raw"]
+    visibility_mask = raw["visibility_mask"]
+    total_frames = int(state_raw.shape[0])
+    if total_frames <= CONTEXT_LEN + 1:
+        return "too_short_total"
+    object_ids = raw["object_ids"]
+    main_object_index = resolve_main_object_index(metadata, object_ids)
+    onset_frame = first_new_collision_onset(sample_dir)
+    segment_end = int(onset_frame) if onset_frame is not None else total_frames
+    if segment_end <= CONTEXT_LEN + 1:
+        return f"too_short_preonset_{segment_end}"
+    context_start = 0
+    context_end = CONTEXT_LEN
+    future_start = context_end
+    future_end = segment_end
+    if not window_has_visible_object_every_frame(visibility_mask, context_start, context_end):
+        return "context_visibility_failed"
+    future_visible_ok, future_vis_ratio = future_main_object_visibility_ok(
+        visibility_mask=visibility_mask,
+        start=future_start,
+        end=future_end,
+        main_object_index=main_object_index,
+        threshold=FUTURE_MAIN_VISIBILITY_THRESHOLD,
+    )
+    if not future_visible_ok:
+        return f"future_visibility_failed_{future_vis_ratio:.3f}"
+    width, height = map(float, metadata["resolution"])
+    cam = metadata["camera_intrinsics"]
+    state_norm = normalize_state(
+        state_raw=state_raw,
+        width=width,
+        height=height,
+        depth_near=float(cam["near"]),
+        depth_far=float(cam["far"]),
+    )
+    motion = infer_motion_complexity(
+        state_norm=state_norm[future_start:future_end].astype(np.float32),
+        visibility_mask=visibility_mask[future_start:future_end].astype(np.uint8),
+    )
+    motion_label = str((motion or {}).get("label") or "")
+    if not motion_label:
+        return "missing_motion_label"
+    return "ok"
+
+
 def build_video(frames: list[np.ndarray], dst: Path, fps: float = 12.0) -> None:
     if not frames:
         return
@@ -304,6 +469,31 @@ def trim_interaction_episodes(source_sample_dir: Path, frame_indices: list[int])
             }
         )
     return local_events
+
+
+def build_local_window_interactions(
+    *,
+    object_count: int,
+    context_len: int,
+    future_len: int,
+    local_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    full_start = 0
+    future_start = int(context_len)
+    future_end = future_start + int(future_len)
+    full_end = future_end
+    full_summary = summarize_window_range(local_events, full_start, full_end)
+    future_summary = summarize_window_range(local_events, future_start, future_end)
+    future_bucket = (
+        f"obj{int(object_count)}__{future_summary['collision_count_bucket']}__{future_summary['collision_type_bucket']}"
+    )
+    return {
+        "object_count": int(object_count),
+        "full_window": full_summary,
+        "future_window": future_summary,
+        "future_bucket": future_bucket,
+        "source_event_episode_count": int(len(local_events)),
+    }
 
 
 def write_local_physics_stub(out_dir: Path, full_state_raw: np.ndarray, object_ids: np.ndarray, seg_ids: np.ndarray) -> None:
@@ -404,6 +594,8 @@ def export_window_package(
 
     write_local_physics_stub(out_dir, full_state_raw, object_ids, seg_ids)
     local_events = trim_interaction_episodes(source_sample_dir, full_orig)
+    if str(record.get("_selection_policy", "")) == "count02_preonset_from_frame0":
+        local_events = []
     write_json(out_dir / "physics" / "event_windows.json", local_events)
 
     local_pair_meta = {
@@ -441,7 +633,15 @@ def export_window_package(
             "orig_full_frame_indices": full_orig,
         },
     }
-    local_pair_meta["window_interactions"] = infer_window_interactions(local_pair_meta)
+    if str(record.get("_selection_policy", "")) == "count02_preonset_from_frame0":
+        local_pair_meta["window_interactions"] = build_local_window_interactions(
+            object_count=len(local_pair_meta.get("objects", []) or []),
+            context_len=int(len(context_orig)),
+            future_len=int(len(future_orig)),
+            local_events=local_events,
+        )
+    else:
+        local_pair_meta["window_interactions"] = infer_window_interactions(local_pair_meta)
     write_json(out_dir / "pair_meta.json", local_pair_meta)
 
     meta_json = {
@@ -539,10 +739,17 @@ def process_dataset(config: BuilderConfig) -> dict[str, Any]:
     motion_counts: Counter[str] = Counter()
 
     for sample_dir in samples:
-        candidates = build_strict_candidates_from_raw_sample(sample_dir)
-        best = choose_best_record(candidates)
+        metadata = load_json(sample_dir / "metadata.json")
+        object_count = infer_object_count(sample_dir, metadata)
+        if object_count == 2:
+            best = build_count02_preonset_record_from_raw_sample(sample_dir)
+            skip_reason = diagnose_count02_preonset_sample(sample_dir) if best is None else ""
+        else:
+            candidates = build_strict_candidates_from_raw_sample(sample_dir)
+            best = choose_best_record(candidates)
+            skip_reason = "no_strict_simple_window"
         if best is None:
-            skipped.append({"sample_dir": str(sample_dir), "reason": "no_strict_simple_window"})
+            skipped.append({"sample_dir": str(sample_dir), "reason": skip_reason})
             continue
         rel_source = rel_source_path(sample_dir, train_root)
         out_dir = train_output_root / rel_source
