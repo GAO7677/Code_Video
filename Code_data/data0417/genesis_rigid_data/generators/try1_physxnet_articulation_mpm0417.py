@@ -4409,6 +4409,75 @@ def color_from_part_id(part_id: int) -> Tuple[float, float, float, float]:
     )
 
 
+def _add_stable_preview_lighting(
+    gs: Any,
+    scene: Any,
+    *,
+    center_world: Sequence[float],
+    lateral_extent: float,
+    top_z: float,
+) -> None:
+    center = np.asarray(center_world, dtype=np.float64).reshape(3)
+    extent = float(max(0.45, lateral_extent))
+    top = float(max(0.55, top_z))
+
+    key_pos = center + np.array([0.55 * extent, -0.95 * extent, 0.95 * extent + 0.42], dtype=np.float64)
+    fill_pos = center + np.array([-0.60 * extent, -0.55 * extent, 0.72 * extent + 0.32], dtype=np.float64)
+    rim_pos = center + np.array([0.00, 0.85 * extent, 0.80 * extent + 0.28], dtype=np.float64)
+    key_dir = _normalize_vec(center - key_pos + np.array([0.0, 0.0, 0.12 * top], dtype=np.float64))
+    fill_dir = _normalize_vec(center - fill_pos + np.array([0.0, 0.0, 0.06 * top], dtype=np.float64))
+    rim_dir = _normalize_vec(center - rim_pos)
+
+    if isinstance(scene.renderer_options, gs.renderers.BatchRenderer):
+        scene.add_light(
+            pos=tuple(key_pos.tolist()),
+            dir=tuple(key_dir.tolist()),
+            color=(0.99, 0.985, 0.97),
+            intensity=7.0,
+            directional=False,
+            castshadow=False,
+            cutoff=92.0,
+            attenuation=0.055,
+        )
+        scene.add_light(
+            pos=tuple(fill_pos.tolist()),
+            dir=tuple(fill_dir.tolist()),
+            color=(0.95, 0.97, 1.0),
+            intensity=2.8,
+            directional=False,
+            castshadow=False,
+            cutoff=105.0,
+            attenuation=0.065,
+        )
+        scene.add_light(
+            pos=tuple(rim_pos.tolist()),
+            dir=tuple(rim_dir.tolist()),
+            color=(1.0, 0.98, 0.95),
+            intensity=1.8,
+            directional=False,
+            castshadow=False,
+            cutoff=115.0,
+            attenuation=0.075,
+        )
+    elif isinstance(scene.renderer_options, gs.renderers.RayTracer):
+        for light_pos, color, intensity, radius in (
+            (key_pos, (0.99, 0.985, 0.97, 1.0), 9.0, 0.14),
+            (fill_pos, (0.95, 0.97, 1.0, 1.0), 4.0, 0.12),
+            (rim_pos, (1.0, 0.98, 0.95, 1.0), 2.4, 0.10),
+        ):
+            scene.add_mesh_light(
+                morph=gs.morphs.Sphere(
+                    radius=float(radius),
+                    pos=tuple(light_pos.tolist()),
+                    euler=(0.0, 0.0, 0.0),
+                ),
+                color=color,
+                intensity=float(intensity),
+                double_sided=True,
+                cutoff=180.0,
+            )
+
+
 def _object_is_container_like(object_name: str, category: str) -> bool:
     category_norm = str(category or "").strip().lower()
     object_name_norm = str(object_name or "").strip().lower()
@@ -10099,51 +10168,6 @@ def simulate_in_genesis(
                     "color_rgba": list(wall_color),
                 }
             )
-        light_pos = np.array(
-            [
-                float(0.5 * (x_min + x_max)),
-                float(0.5 * (wall_front_y + wall_back_y)),
-                float(max(1.10, wall_top - 0.24)),
-            ],
-            dtype=np.float64,
-        )
-        # Use a softer, static lighting setup so motion does not create visible
-        # shadow/highlight flicker frame-to-frame.
-        light_dir = np.array([0.0, 0.15, -1.0], dtype=np.float64)
-        if isinstance(scene.renderer_options, gs.renderers.BatchRenderer):
-            scene.add_light(
-                pos=tuple(light_pos.tolist()),
-                dir=tuple(_normalize_vec(light_dir).tolist()),
-                color=(0.99, 0.985, 0.97),
-                intensity=9.5,
-                directional=False,
-                castshadow=False,
-                cutoff=75.0,
-                attenuation=0.05,
-            )
-            scene.add_light(
-                pos=tuple((light_pos + np.array([0.35, -0.25, 0.15], dtype=np.float64)).tolist()),
-                dir=tuple(_normalize_vec(np.array([-0.15, 0.10, -1.0], dtype=np.float64)).tolist()),
-                color=(0.94, 0.96, 1.0),
-                intensity=3.6,
-                directional=False,
-                castshadow=False,
-                cutoff=90.0,
-                attenuation=0.06,
-            )
-        elif isinstance(scene.renderer_options, gs.renderers.RayTracer):
-            scene.add_mesh_light(
-                morph=gs.morphs.Sphere(
-                    radius=0.11,
-                    pos=tuple(light_pos.tolist()),
-                    euler=(0.0, 0.0, 0.0),
-                ),
-                color=(0.99, 0.985, 0.97, 1.0),
-                intensity=13.0,
-                double_sided=True,
-                cutoff=180.0,
-            )
-
     liquid_camera_mode = False
     if primary_liquid_target is not None and camera_distance_mult >= 0.999:
         camera_distance_mult = 0.82
@@ -10288,6 +10312,25 @@ def simulate_in_genesis(
             f"📷 camera_override tag={camera_tag or 'untagged'} "
             f"pos={cam_pos.tolist()} lookat={lookat.tolist()} up={cam_up.tolist()} fov={float(cam_fov):.2f}"
         )
+
+    light_anchor_points = [placed_pos + bbox_min, placed_pos + bbox_max, placed_pos.copy()]
+    for custom_rec in custom_runtime_objects:
+        light_anchor_points.append(np.asarray(custom_rec.get("start_pos", placed_pos), dtype=np.float64).reshape(3))
+    if multi3_framing_points_world is not None and len(multi3_framing_points_world) > 0:
+        for point in np.asarray(multi3_framing_points_world, dtype=np.float64).reshape(-1, 3):
+            light_anchor_points.append(point)
+    light_anchor_arr = np.asarray(light_anchor_points, dtype=np.float64).reshape(-1, 3)
+    light_center = np.mean(light_anchor_arr, axis=0)
+    light_extent_xy = float(np.max(np.ptp(light_anchor_arr[:, :2], axis=0)))
+    light_top_z = float(np.max(light_anchor_arr[:, 2]))
+    _add_stable_preview_lighting(
+        gs,
+        scene,
+        center_world=light_center,
+        lateral_extent=max(light_extent_xy, float(np.max(bbox_size))),
+        top_z=light_top_z,
+    )
+
     cam = scene.add_camera(
         res=EXPORT_CAMERA_RESOLUTION,
         pos=tuple(cam_pos.tolist()),
