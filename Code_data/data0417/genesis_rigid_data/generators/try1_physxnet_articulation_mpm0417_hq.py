@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 
 THIS_DIR = Path(__file__).resolve().parent
 BACKEND_PATH = THIS_DIR / "try1_physxnet_articulation_mpm0417.py"
@@ -138,6 +140,9 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+LARGE_OBJECT_SINGLE_OBJECT_CASE_IDS = {0, 1, 2, 3, 5, 6, 7, 100, 101, 102, 900, 901}
+LARGE_OBJECT_DYNAMIC_CASE_IDS = {900, 901, 210, 211, 220, 221, 230, 231}
+
 
 def _append_hq_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument(
@@ -164,6 +169,19 @@ def _append_hq_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         "--hq_disable_manifest",
         action="store_true",
         help="Do not emit the extra HQ manifest file.",
+    )
+    parser.add_argument(
+        "--hq_disable_dynamic_for_large_objects",
+        type=int,
+        choices=[0, 1],
+        default=1,
+        help="When enabled, large main objects will not generate free-motion cases such as random parabola / high-drop / multi free-motion.",
+    )
+    parser.add_argument(
+        "--hq_large_object_volume_threshold_m3",
+        type=float,
+        default=None,
+        help="Optional override for the large-object threshold. Defaults to --physxnet_volume_threshold_m3.",
     )
     return parser
 
@@ -289,8 +307,108 @@ def _resolve_object_ids(args: argparse.Namespace) -> List[str]:
     )
 
 
+def _prepared_bbox_volume_m3(prepared: Any) -> float:
+    bbox_min = np.asarray(getattr(prepared, "object_bbox_min", [0.0, 0.0, 0.0]), dtype=np.float64)
+    bbox_max = np.asarray(getattr(prepared, "object_bbox_max", [0.0, 0.0, 0.0]), dtype=np.float64)
+    extent = np.maximum(bbox_max - bbox_min, 1e-6)
+    return float(np.prod(extent))
+
+
+def _large_object_threshold_m3(args: argparse.Namespace) -> float:
+    override = getattr(args, "hq_large_object_volume_threshold_m3", None)
+    if override is not None:
+        return float(override)
+    return float(getattr(args, "physxnet_volume_threshold_m3", 0.20) or 0.20)
+
+
+def _filter_case_configs_for_large_object(
+    case_cfgs: List[Dict[str, Any]],
+    *,
+    prepared: Any,
+    args: argparse.Namespace,
+) -> List[Dict[str, Any]]:
+    if not bool(int(getattr(args, "hq_disable_dynamic_for_large_objects", 1) or 0)):
+        return case_cfgs
+
+    threshold_m3 = _large_object_threshold_m3(args)
+    if threshold_m3 <= 0.0:
+        return case_cfgs
+
+    bbox_volume_m3 = _prepared_bbox_volume_m3(prepared)
+    if bbox_volume_m3 < threshold_m3:
+        return case_cfgs
+
+    filtered: List[Dict[str, Any]] = []
+    removed_names: List[str] = []
+    for cfg in case_cfgs:
+        case_idx = int(cfg.get("case_index", -1))
+        case_name = str(cfg.get("case_name", "") or "")
+        scene_label = str(cfg.get("scene_label", "") or "")
+        use_entry_motion = bool(cfg.get("use_entry_motion", False))
+        object_fixed = bool(cfg.get("object_fixed", False))
+        placed_pos_offset = np.asarray(cfg.get("placed_pos_offset", [0.0, 0.0, 0.0]), dtype=np.float64).reshape(-1)
+        z_offset = float(placed_pos_offset[2]) if placed_pos_offset.size >= 3 else 0.0
+        label = f"{case_name}::{scene_label}".lower()
+        is_single_object_case = (
+            case_idx in LARGE_OBJECT_SINGLE_OBJECT_CASE_IDS
+            or "single_object_preview" in label
+            or "static_center" in label
+            or "static_left" in label
+            or "static_right" in label
+            or "static_highdrop" in label
+            or "entry_left" in label
+            or "entry_right" in label
+            or "entry_fast_center" in label
+            or "random_parabola" in label
+            or "high_drop" in label
+            or "highdrop" in label
+        )
+        is_large_dynamic_case = (
+            use_entry_motion
+            or ((not object_fixed) and z_offset > 1e-4)
+            or case_idx in LARGE_OBJECT_DYNAMIC_CASE_IDS
+            or "random_parabola" in label
+            or "high_drop" in label
+            or "highdrop" in label
+            or ("multi" in label and ("projectile" in label or "drop" in label))
+        )
+        if is_single_object_case or is_large_dynamic_case:
+            removed_names.append(case_name or f"case_{case_idx}")
+            continue
+        filtered.append(cfg)
+
+    if removed_names:
+        preview = ", ".join(removed_names[:8])
+        if len(removed_names) > 8:
+            preview += ", ..."
+        print(
+            "INFO large_object_dynamic_filter "
+            f"object_id={getattr(prepared, 'object_id', 'unknown')} "
+            f"bbox_volume_m3={bbox_volume_m3:.4f} "
+            f"threshold_m3={threshold_m3:.4f} "
+            f"removed={len(removed_names)} "
+            f"cases=[{preview}]"
+        )
+    return filtered
+
+
+def _install_large_object_case_filter() -> None:
+    if bool(getattr(BACKEND, "_hq_large_object_case_filter_installed", False)):
+        return
+
+    original_fn = BACKEND.build_preview_case_configs
+
+    def wrapped_build_preview_case_configs(*, prepared: Any, output_root: Path, object_fixed: bool, args: argparse.Namespace):
+        case_cfgs = original_fn(prepared=prepared, output_root=output_root, object_fixed=object_fixed, args=args)
+        return _filter_case_configs_for_large_object(case_cfgs, prepared=prepared, args=args)
+
+    BACKEND.build_preview_case_configs = wrapped_build_preview_case_configs
+    BACKEND._hq_large_object_case_filter_installed = True
+
+
 def run_single_object(args: argparse.Namespace, object_id: str) -> Dict[str, Any]:
     applied = _apply_overrides(args)
+    _install_large_object_case_filter()
     summary = BACKEND._run_single_object(args=args, object_id=str(object_id))
     _write_hq_manifest(summary, args, applied)
     return summary

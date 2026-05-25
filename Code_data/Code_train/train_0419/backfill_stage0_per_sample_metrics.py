@@ -76,6 +76,13 @@ MODEL_SPECS = [
         "height": 544,
         "width": 720,
     },
+    {
+        "model_name": "vace_v2v_ctx08f_nullcaption",
+        "generated_dir": "output/VACE_1_3B_V2V_nullcaption/context_08f",
+        "runtime_dir": "tools/runtime/vace_v2v_ctx08f_nullcaption",
+        "height": 544,
+        "width": 720,
+    },
 ]
 
 METRIC_KEYS = [

@@ -27,6 +27,12 @@ MODEL_SPECS = [
     ("vace_v2v_ctx02f", "VACE ctx02", "VACE_1_3B_V2V/context_02f"),
     ("vace_v2v_ctx04f", "VACE ctx04", "VACE_1_3B_V2V/context_04f"),
     ("vace_v2v_ctx08f", "VACE ctx08", "VACE_1_3B_V2V/context_08f"),
+    ("vace_v2v_ctx08f_nullcaption", "VACE ctx08_nullcaption", "VACE_1_3B_V2V_nullcaption/context_08f"),
+    (
+        "vace_v2v_fullctx_fullvideo_nullcaption",
+        "VACE fullctx_fullvideo_nullcaption",
+        "VACE_1_3B_V2V_nullcaption/context_fullctx_fullvideo",
+    ),
 ]
 
 MODEL_OUTPUT_DIRS = {name: subdir for name, _, subdir in MODEL_SPECS}
@@ -46,6 +52,8 @@ MODEL_SETUP_ROWS = [
     ("VACE ctx02", "text + VACE video + mask, context=2 frames", "V2V", "720x544"),
     ("VACE ctx04", "text + VACE video + mask, context=4 frames", "V2V", "720x544"),
     ("VACE ctx08", "text + VACE video + mask, context=8 frames", "V2V", "720x544"),
+    ("VACE ctx08_nullcaption", "empty text + VACE video + mask, context=8 frames", "V2V", "720x544"),
+    ("VACE fullctx_fullvideo_nullcaption", "empty text + full context video + full video", "V2V", "720x544"),
 ]
 
 DATASET_LABELS = {
@@ -125,8 +133,8 @@ def load_future_summaries(result_root: Path) -> dict[str, dict[str, Any]]:
 
 def load_vbench_summaries(result_root: Path) -> dict[str, dict[str, Any]]:
     summaries: dict[str, dict[str, Any]] = {}
-    for dirname in ["model_metrics_vbench_short_gpu3", "model_metrics_vbench_short_gpu5"]:
-        summary_path = result_root / dirname / "metrics_by_model.json"
+    candidate_paths = sorted(result_root.glob("model_metrics_vbench_short*/metrics_by_model.json"))
+    for summary_path in candidate_paths:
         if not summary_path.is_file():
             continue
         payload = load_json(summary_path)
@@ -1027,7 +1035,7 @@ def write_index(
       <h1>Stage0 Metric Line Charts</h1>
       <p>future_metrics 折线图基于同名 sidecar / per-sample 汇总的 300 样本平均值；图中每个点的 n 表示该模型当前实际完成 future 指标的样本数。</p>
       <p>vbench_metrics 折线图基于 GPU3/GPU5 汇总出的模型级 `vbench_short_metrics`，使用当前已有完整 300 样本结果。</p>
-      <p>当前 9 个模型的 `future_metrics` 和 `vbench_metrics` 都已完成 300/300 回填；future 指标直接从最新 sidecar 聚合，避免旧 summary 文件滞后。</p>
+      <p>future 指标直接从最新 sidecar 聚合，避免旧 summary 文件滞后；新增的 `VACE ctx08_nullcaption` 和 `VACE fullctx_fullvideo_nullcaption` 都按已并入的实际样本数统计，未完成指标的列会显示为空。</p>
       <p>指标简述：`PSNR/SSIM/DINO` 越高越好，分别偏像素重建、结构一致性、语义一致性；`LPIPS` 越低越好，更接近人眼感知差异；`VBench` 各项主要反映主体稳定、背景稳定、运动平滑、闪烁、画质和美学质量。</p>
     </section>
     <section class="top-layout">

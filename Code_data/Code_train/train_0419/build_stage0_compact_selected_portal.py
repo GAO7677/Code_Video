@@ -26,6 +26,7 @@ MODEL_SPECS = [
     ("vace_v2v_ctx02f", "VACE_1_3B_V2V/context_02f"),
     ("vace_v2v_ctx04f", "VACE_1_3B_V2V/context_04f"),
     ("vace_v2v_ctx08f", "VACE_1_3B_V2V/context_08f"),
+    ("vace_v2v_ctx08f_nullcaption", "VACE_1_3B_V2V_nullcaption/context_08f"),
 ]
 
 DATASET_QUOTAS = {
@@ -273,8 +274,14 @@ def materialize_input_assets(
 
     pipeline_kwargs = model_inputs.get("pipeline_kwargs", []) if isinstance(model_inputs, dict) else []
     if isinstance(pipeline_kwargs, list) and "vace_video" in pipeline_kwargs:
-        return materialize_vace_inputs(payload=payload, benchmark_root=benchmark_root, asset_dir=asset_dir)
-    return materialize_wan_inputs(payload=payload, benchmark_root=benchmark_root, asset_dir=asset_dir)
+        try:
+            return materialize_vace_inputs(payload=payload, benchmark_root=benchmark_root, asset_dir=asset_dir)
+        except FileNotFoundError:
+            return []
+    try:
+        return materialize_wan_inputs(payload=payload, benchmark_root=benchmark_root, asset_dir=asset_dir)
+    except FileNotFoundError:
+        return []
 
 
 def link_reference_asset(

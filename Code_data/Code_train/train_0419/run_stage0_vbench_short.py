@@ -30,6 +30,7 @@ MODEL_SPECS = [
     ("vace_v2v_ctx02f", "output/VACE_1_3B_V2V/context_02f"),
     ("vace_v2v_ctx04f", "output/VACE_1_3B_V2V/context_04f"),
     ("vace_v2v_ctx08f", "output/VACE_1_3B_V2V/context_08f"),
+    ("vace_v2v_ctx08f_nullcaption", "output/VACE_1_3B_V2V_nullcaption/context_08f"),
 ]
 
 VBENCH_DIMENSIONS = [
@@ -73,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Optional model_name filter. Can be passed multiple times.",
     )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Optional device override, e.g. cuda:3.",
+    )
     return parser.parse_args()
 
 
@@ -115,6 +121,11 @@ def bootstrap_vbench(config: Any) -> None:
         os.environ[key] = value
 
 
+def override_runtime_device(config: Any, device: str | None) -> None:
+    if device:
+        config.runtime.device = str(device)
+
+
 def get_vbench_device(config: Any) -> torch.device:
     want = config.runtime.device
     if want.startswith("cuda") and not torch.cuda.is_available():
@@ -140,7 +151,7 @@ def build_manifest_from_current_outputs(
         output_path = paths.get("output_video_path") or paths.get("output_path")
         caption = entry.get("caption")
         sample_id = entry.get("sample_id")
-        if not output_path or not caption or not sample_id:
+        if not output_path or sample_id is None:
             continue
         output_file = Path(str(output_path))
         if not output_file.is_file():
@@ -148,7 +159,7 @@ def build_manifest_from_current_outputs(
         samples.append(
             {
                 "sample_id": str(sample_id),
-                "prompt": str(caption),
+                "prompt": str(caption or ""),
                 "video_path": str(output_file),
             }
         )
@@ -267,6 +278,7 @@ def main() -> None:
     runtime_root = args.runtime_root.expanduser().resolve()
     selected_models = {str(name) for name in args.model_name}
     bench_config = load_config(str(args.vbench_config_path.expanduser().resolve()))
+    override_runtime_device(bench_config, args.device)
     bootstrap_vbench(bench_config)
     from vbench import VBench
     from vbench.utils import init_submodules
@@ -301,9 +313,9 @@ def main() -> None:
         )
         samples = load_manifest(str(manifest_path))
         model_output_dir = output_root / model_name
-        eval_json = model_output_dir / f"{model_name}_eval_results.json"
-        cumulative_eval_payload: dict[str, Any] = {}
         model_output_dir.mkdir(parents=True, exist_ok=True)
+        eval_json = model_output_dir / f"{model_name}_eval_results.json"
+        cumulative_eval_payload: dict[str, Any] = load_json(eval_json) if eval_json.is_file() else {}
         staged = stage_custom_vbench_dataset(
             samples=samples,
             staging_root=str(model_output_dir / "staging"),
@@ -317,6 +329,39 @@ def main() -> None:
         )
         summary_path = model_output_dir / "summary.json"
         for dimension in VBENCH_DIMENSIONS:
+            if dimension in cumulative_eval_payload:
+                rounded_metrics = {key: round6(value) for key, value in rv.parse_vbench_eval(eval_json).items()}
+                per_video_metrics = collect_per_video_vbench_metrics(cumulative_eval_payload)
+                backfill_stats = backfill_sidecars_with_vbench_metrics(
+                    generated_dir=generated_dir,
+                    metrics_by_video=per_video_metrics,
+                    eval_json=eval_json,
+                )
+                payload = write_model_summary(
+                    summary_path=summary_path,
+                    model_name=model_name,
+                    generated_dir=generated_dir,
+                    model_runtime_root=model_runtime_root,
+                    manifest_path=manifest_path,
+                    eval_json=eval_json,
+                    num_samples=num_samples,
+                    completed_dimensions=sorted(cumulative_eval_payload.keys()),
+                    rounded_metrics=rounded_metrics,
+                    backfill_stats=backfill_stats,
+                )
+                print(
+                    json.dumps(
+                        {
+                            "event": "skip_completed_dimension",
+                            "model_name": model_name,
+                            "dimension": dimension,
+                            "num_completed_dimensions": len(cumulative_eval_payload),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                continue
             print(
                 json.dumps(
                     {

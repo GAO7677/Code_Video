@@ -28,6 +28,7 @@ MODEL_SPECS = [
     ("vace_v2v_ctx02f", "output/VACE_1_3B_V2V/context_02f"),
     ("vace_v2v_ctx04f", "output/VACE_1_3B_V2V/context_04f"),
     ("vace_v2v_ctx08f", "output/VACE_1_3B_V2V/context_08f"),
+    ("vace_v2v_ctx08f_nullcaption", "output/VACE_1_3B_V2V_nullcaption/context_08f"),
 ]
 
 METRIC_SPECS = [
@@ -59,6 +60,7 @@ DISPLAY_NAMES = {
     "vace_v2v_ctx02f": "VACE ctx02",
     "vace_v2v_ctx04f": "VACE ctx04",
     "vace_v2v_ctx08f": "VACE ctx08",
+    "vace_v2v_ctx08f_nullcaption": "VACE ctx08_nullcaption",
 }
 
 
