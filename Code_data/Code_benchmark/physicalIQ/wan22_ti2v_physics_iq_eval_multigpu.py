@@ -63,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_generation", action="store_true")
     parser.add_argument("--skip_evaluation", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--allow_subset_cases",
+        action="store_true",
+        help="Allow descriptions_csv to contain a take-1 subset instead of the full 198 cases.",
+    )
 
     # Multi-GPU / sharding options
     parser.add_argument(
@@ -373,7 +378,12 @@ def write_run_manifest(args: argparse.Namespace, metadata_dir: Path) -> None:
 
 def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: Path) -> None:
     cases = load_cases(args.descriptions_csv, args.limit)
-    expected_count = 198 if args.limit is None else args.limit
+    if args.allow_subset_cases:
+        if not cases:
+            raise ValueError(f"No take-1 cases found in {args.descriptions_csv}.")
+        expected_count = len(cases)
+    else:
+        expected_count = 198 if args.limit is None else args.limit
     if len(cases) != expected_count:
         raise ValueError(
             f"Expected {expected_count} take-1 cases, but found {len(cases)} in {args.descriptions_csv}."

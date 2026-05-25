@@ -72,6 +72,37 @@ bash /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/runs/run0417.s
   --seed 20260419
 ```
 
+## 4.1 生成高质量 rigid 预览/样本
+
+功能：使用独立的 HQ 入口生成更稳的相机、采样和裁尾版本；原  
+`try1_physxnet_articulation_mpm0417.py` 不会被改动。
+
+单物体/双物体示例：
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/generators/try1_physxnet_articulation_mpm0417_hq.py \
+  --object_id 10032 \
+  --output_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid \
+  --run_genesis \
+  --generate_all_count_motion_cases \
+  --rigid_count_filter 1 2 \
+  --hq_profile balanced
+```
+
+更密集采样版本：
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python \
+  /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/generators/try1_physxnet_articulation_mpm0417_hq.py \
+  --object_id 10032 \
+  --output_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid \
+  --run_genesis \
+  --generate_all_count_motion_cases \
+  --rigid_count_filter 1 2 \
+  --hq_profile dense
+```
+
 ## 5. 生成 `stage1adapter` window 子集
 
 功能：从完整 Genesis 数据集中切出 Stage-1 window，输出到  
