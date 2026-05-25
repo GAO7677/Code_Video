@@ -1,26 +1,7 @@
 {
   "split": "train",
-  "num_samples": 850,
-  "leaf_counts": {
-    "rigid/count_01/no_collision": 0,
-    "rigid/count_01/env_only": 0,
-    "rigid/count_01/obj_obj_only_c1": 0,
-    "rigid/count_01/obj_obj_only_c2plus": 0,
-    "rigid/count_01/mixed_c1": 0,
-    "rigid/count_01/mixed_c2plus": 0,
-    "rigid/count_02/no_collision": 0,
-    "rigid/count_02/env_only": 28,
-    "rigid/count_02/obj_obj_only_c1": 1,
-    "rigid/count_02/obj_obj_only_c2plus": 1,
-    "rigid/count_02/mixed_c1": 324,
-    "rigid/count_02/mixed_c2plus": 141,
-    "rigid/count_03_04/no_collision": 0,
-    "rigid/count_03_04/env_only": 0,
-    "rigid/count_03_04/obj_obj_only_c1": 0,
-    "rigid/count_03_04/obj_obj_only_c2plus": 1,
-    "rigid/count_03_04/mixed_c1": 22,
-    "rigid/count_03_04/mixed_c2plus": 332
-  },
-  "source": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid",
-  "split_policy": "heldout_from_train_rigid_raw"
+  "num_samples": 0,
+  "leaf_counts": {},
+  "source": "missing_raw_root",
+  "split_policy": "stale_paths_pruned"
 }

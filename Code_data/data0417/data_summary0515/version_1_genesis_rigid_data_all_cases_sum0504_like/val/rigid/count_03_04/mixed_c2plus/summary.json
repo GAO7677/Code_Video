@@ -3,5 +3,7 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "mixed_c2plus",
-  "num_samples": 41
+  "num_samples": 0,
+  "relative_dir": "val/rigid/count_03_04/mixed_c2plus",
+  "note": "All previously recorded sample paths under this leaf no longer exist and were pruned."
 }

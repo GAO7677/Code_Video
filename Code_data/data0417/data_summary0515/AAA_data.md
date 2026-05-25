@@ -10,54 +10,17 @@
 
 数据量：
 
-- total: `1064`
-- train: `850`
-- test: `107`
-- val: `107`
-
-分层统计：
-
-```text
-train
-  rigid
-    count_02
-      env_only: 28
-      obj_obj_only_c1: 1
-      obj_obj_only_c2plus: 1
-      mixed_c1: 324
-      mixed_c2plus: 141
-    count_03_04
-      obj_obj_only_c2plus: 1
-      mixed_c1: 22
-      mixed_c2plus: 332
-
-test
-  rigid
-    count_02
-      env_only: 4
-      obj_obj_only_c2plus: 1
-      mixed_c1: 40
-      mixed_c2plus: 18
-    count_03_04
-      mixed_c1: 3
-      mixed_c2plus: 41
-
-val
-  rigid
-    count_02
-      env_only: 4
-      obj_obj_only_c2plus: 1
-      mixed_c1: 40
-      mixed_c2plus: 18
-    count_03_04
-      mixed_c1: 3
-      mixed_c2plus: 41
-```
+- total: `0`
+- train: `0`
+- test: `0`
+- val: `0`
 
 说明：
 
-- 这是只基于 `count_02` 和 `count_03_04` 的 Genesis rigid summary。
-- `count_01` 当前为空，因此不单列。
+- 这套 summary 原本记录的是 `version_1_genesis_rigid_data_all_cases` 的路径索引。
+- 对应原始数据根目录已经被删除。
+- 我已清理掉所有失效路径，当前只保留真实存在的路径；结果是空集。
+- 如果后续提供新的 raw 根目录，需要重新构建这套 summary。
 
 ### 2. `version0515zoom_genesis_rigid_stage1adapter_simple_train`
 
@@ -87,7 +50,7 @@ val
 ### 1. 重建 `version_1_genesis_rigid_data_all_cases_sum0504_like` 页面
 
 ```bash
-python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_portal_with_sample_pages.py \
   --output_root /home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal \
   --summary_root /home/gaoya/Code_Video/Code_data/data0417/data_summary0515/version_1_genesis_rigid_data_all_cases_sum0504_like \
   --portal_title "data_summary0515 sum0504-like Portal" \
@@ -108,17 +71,17 @@ python /home/gaoya/Code_Video/Code_data/data0417/data_check/rebuild_sum0504_port
 
 ```bash
 cd /
-python3 -m http.server 8668 --bind localhost
+python3 -m http.server 8672 --bind localhost
 ```
 
 ## 页面地址
 
 - `version_1_genesis_rigid_data_all_cases_sum0504_like`
-  `http://localhost:8668/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html`
+  `http://localhost:8672/home/gaoya/portal_hub_sim/data_summary0515_sum0504_like_portal/index.html`
 - `version0515zoom_genesis_rigid_stage1adapter_simple_train`
-  `http://localhost:8668/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html`
+  `http://localhost:8672/home/gaoya/portal_hub_sim/version0515zoom_genesis_rigid_stage1adapter_simple_train_portal/index.html`
 
 说明：
 
-- 首页每个最小类别最多展示 `10` 条。
+- 这两个页面当前都会显示“无样本”提示，不再指向任何不存在的路径。
 - 首页主卡片只放主视频，其他内容放详情页。

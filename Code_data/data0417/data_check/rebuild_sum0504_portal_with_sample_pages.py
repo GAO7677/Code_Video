@@ -1722,6 +1722,14 @@ def build_index(groups: list[dict[str, Any]]) -> str:
       text-decoration: none;
     }}
     .empty {{ color: var(--muted); font-size: 12px; }}
+    .empty-state {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px;
+      color: var(--muted);
+      line-height: 1.6;
+    }}
     @media (max-width: 1100px) {{
       .layout {{ grid-template-columns: 1fr; }}
       aside {{
@@ -1834,7 +1842,23 @@ def build_index(groups: list[dict[str, Any]]) -> str:
       const activeSlug = filtered.length ? filtered[0].slug : '';
       const allowedSlugs = new Set(filtered.map((group) => group.slug));
       const filteredTree = filterTree(NAV_TREE, allowedSlugs);
-      listEl.innerHTML = renderTree(filteredTree, activeSlug);
+      listEl.innerHTML = filteredTree.length
+        ? renderTree(filteredTree, activeSlug)
+        : '<div class="empty-state">当前没有可展示的分类。<br>如果这是 stage1adapter 页面，通常表示该目录下没有符合当前筛选规则的样本。</div>';
+
+      if (!filtered.length) {{
+        groupsEl.innerHTML = `
+          <section class="empty-state">
+            <strong>当前没有可展示的样本。</strong><br>
+            可能原因：<br>
+            1. 这个 summary 目录本身就是空的；<br>
+            2. 当前筛选规则把样本全部过滤掉了；<br>
+            3. 搜索词把现有样本全部过滤掉了。 
+          </section>
+        `;
+        bindInteractions();
+        return;
+      }}
 
       groupsEl.innerHTML = filtered.map((group, idx) => `
         <section class="group ${{idx===0 ? 'active' : ''}}" id="group-${{group.slug}}">

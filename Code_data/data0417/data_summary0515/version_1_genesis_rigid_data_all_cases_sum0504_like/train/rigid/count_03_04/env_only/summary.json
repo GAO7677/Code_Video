@@ -3,5 +3,7 @@
   "simulator_type": "rigid",
   "object_count_bucket": "count_03_04",
   "collision_bucket": "env_only",
-  "num_samples": 0
+  "num_samples": 0,
+  "relative_dir": "train/rigid/count_03_04/env_only",
+  "note": "All previously recorded sample paths under this leaf no longer exist and were pruned."
 }
