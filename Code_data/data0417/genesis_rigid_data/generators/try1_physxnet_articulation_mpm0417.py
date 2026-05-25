@@ -54,11 +54,13 @@ import trimesh
 
 from genesis_energy_utils import particle_entity_kinematic_snapshot, rigid_entity_kinematic_snapshot
 from core.utils_io import depth_to_vis, save_video as save_vis_video
+from generate_video_captions import build_caption as build_video_caption, DEFAULT_PHYSX_ROOT as CAPTION_PHYSX_ROOT
 
 
 ASSET_CACHE_DIRNAME = "_asset_cache"
 PHYSXNET_OBJECT_CACHE_DIRNAME = "physxnet_objects"
 CUSTOM_OBJECT_CACHE_DIRNAME = "custom_object_asset_cache"
+CAPTION_INFO_CACHE: Dict[str, Dict[str, str]] = {}
 
 
 def asset_cache_root(output_root: Path) -> Path:
@@ -75,6 +77,20 @@ def custom_object_cache_root(output_root: Path) -> Path:
 
 def physxnet_object_cache_dir(output_root: Path, object_id: str) -> Path:
     return physxnet_object_cache_root(output_root) / Path(str(object_id)).stem
+
+
+def _write_sample_captions(sample_dir: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    caption, structured = build_video_caption(
+        metadata=metadata,
+        sample_dir=sample_dir,
+        physx_json_dir=CAPTION_PHYSX_ROOT,
+        cache=CAPTION_INFO_CACHE,
+    )
+    simple_caption = str(structured.get("simple_caption", caption)).strip()
+    detail_caption = str(caption).strip()
+    metadata["caption"] = simple_caption
+    metadata["detail_caption"] = detail_caption
+    return metadata
 
 class _LineFilterStream(io.TextIOBase):
     def __init__(self, target: io.TextIOBase, *, allow_prefixes: Optional[Sequence[str]] = None, drop_substrings: Optional[Sequence[str]] = None, passthrough_all: bool = False):
@@ -11221,6 +11237,7 @@ def simulate_in_genesis(
         else:
             obj_meta["dataset_source"] = "PhysXNet"
             obj_meta["source_object_id"] = str(prepared.object_id)
+    metadata_payload = _write_sample_captions(case_dir, metadata_payload)
     (case_dir / "meta.json").write_text(json.dumps(metadata_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     try:
