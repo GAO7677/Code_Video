@@ -31,6 +31,7 @@ MODEL_SPECS = [
     ("vace_v2v_ctx04f", "output/VACE_1_3B_V2V/context_04f"),
     ("vace_v2v_ctx08f", "output/VACE_1_3B_V2V/context_08f"),
     ("vace_v2v_ctx08f_nullcaption", "output/VACE_1_3B_V2V_nullcaption/context_08f"),
+    ("vace_v2v_fullctx_fullvideo_nullcaption", "output/VACE_1_3B_V2V_nullcaption/context_fullctx_fullvideo"),
 ]
 
 VBENCH_DIMENSIONS = [

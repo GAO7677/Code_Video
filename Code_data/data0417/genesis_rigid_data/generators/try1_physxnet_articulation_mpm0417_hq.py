@@ -54,24 +54,24 @@ BACKEND_DEFAULT_ARGS = BACKEND.build_argparser().parse_args(["--output_root", "/
 
 CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
     "single_clean": {
-        "camera_pos_override": [0.0, -3.05, 1.72],
-        "camera_lookat_override": [0.0, 0.0, 0.62],
+        "camera_pos_override": [0.0, -2.45, 1.35],
+        "camera_lookat_override": [0.0, 0.0, 0.58],
         "camera_up_override": [0.0, 0.0, 1.0],
-        "camera_fov_override": 43.0,
+        "camera_fov_override": 38.0,
         "camera_tag": "single_clean",
     },
     "pair_wide": {
-        "camera_pos_override": [0.0, -3.35, 1.82],
-        "camera_lookat_override": [0.0, 0.0, 0.66],
+        "camera_pos_override": [0.0, -2.60, 1.42],
+        "camera_lookat_override": [0.0, 0.0, 0.60],
         "camera_up_override": [0.0, 0.0, 1.0],
-        "camera_fov_override": 46.0,
+        "camera_fov_override": 39.5,
         "camera_tag": "pair_wide",
     },
     "pair_collision": {
-        "camera_pos_override": [0.0, -3.15, 1.78],
-        "camera_lookat_override": [0.0, 0.0, 0.64],
+        "camera_pos_override": [0.0, -2.50, 1.38],
+        "camera_lookat_override": [0.0, 0.0, 0.59],
         "camera_up_override": [0.0, 0.0, 1.0],
-        "camera_fov_override": 44.0,
+        "camera_fov_override": 38.8,
         "camera_tag": "pair_collision",
     },
 }
@@ -96,7 +96,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "min_projected_bbox_area_px": 5000.0,
         "max_auto_scale_up_mult": 2.8,
         "max_projected_bbox_fill_ratio": 0.76,
-        "camera_distance_mult": 1.0,
+        "camera_distance_mult": 0.88,
     },
     "dense": {
         "dt": 0.0025,
@@ -116,7 +116,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "min_projected_bbox_area_px": 5600.0,
         "max_auto_scale_up_mult": 3.0,
         "max_projected_bbox_fill_ratio": 0.74,
-        "camera_distance_mult": 1.0,
+        "camera_distance_mult": 0.88,
     },
     "cautious": {
         "dt": 0.003,
@@ -136,7 +136,7 @@ QUALITY_PRESETS: Dict[str, Dict[str, Any]] = {
         "min_projected_bbox_area_px": 4600.0,
         "max_auto_scale_up_mult": 2.5,
         "max_projected_bbox_fill_ratio": 0.78,
-        "camera_distance_mult": 1.02,
+        "camera_distance_mult": 0.90,
     },
 }
 
@@ -208,17 +208,7 @@ def _infer_target_count(args: argparse.Namespace) -> Optional[int]:
 
 
 def _select_camera_preset(args: argparse.Namespace) -> Optional[str]:
-    requested = str(getattr(args, "hq_camera_preset", "auto") or "auto").strip().lower()
-    if requested != "auto":
-        return requested
-
-    target_count = _infer_target_count(args)
-    disable_striker = bool(getattr(args, "disable_striker", False))
-    if target_count is not None and target_count <= 1:
-        return "single_clean"
-    if disable_striker:
-        return "pair_wide"
-    return "pair_collision"
+    return "single_clean"
 
 
 def _apply_overrides(args: argparse.Namespace) -> Dict[str, Any]:
@@ -235,10 +225,7 @@ def _apply_overrides(args: argparse.Namespace) -> Dict[str, Any]:
     if camera_name:
         camera_cfg = dict(CAMERA_PRESETS[camera_name])
         for key, value in camera_cfg.items():
-            current = getattr(args, key, None)
-            default = getattr(BACKEND_DEFAULT_ARGS, key, None)
-            if current == default or current is None:
-                setattr(args, key, value)
+            setattr(args, key, value)
 
     if getattr(args, "duration_sec", None) is None:
         args.duration_sec = float(profile_cfg["duration_sec"])
@@ -246,6 +233,9 @@ def _apply_overrides(args: argparse.Namespace) -> Dict[str, Any]:
     if getattr(args, "video_slowmo_prob", None) == getattr(BACKEND_DEFAULT_ARGS, "video_slowmo_prob", None):
         args.video_slowmo_prob = 0.0
     args.prefer_existing_runtime_meshes = True
+    args.camera_distance_mult = float(profile_cfg.get("camera_distance_mult", 0.88))
+    args.camera_fov_override = float(CAMERA_PRESETS["single_clean"]["camera_fov_override"])
+    args.camera_tag = "single_clean"
 
     return {
         "hq_profile": profile_name,
@@ -253,6 +243,16 @@ def _apply_overrides(args: argparse.Namespace) -> Dict[str, Any]:
         "quality_overrides": profile_cfg,
         "camera_overrides": camera_cfg,
     }
+
+
+def _hq_case_filter(args: argparse.Namespace, case_cfgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    for cfg in case_cfgs:
+        label = f"{str(cfg.get('case_name', '') or '')}::{str(cfg.get('scene_label', '') or '')}".lower()
+        if "multi3_" in label:
+            continue
+        filtered.append(cfg)
+    return filtered
 
 
 def _write_hq_manifest(prepared_summary: Dict[str, Any], args: argparse.Namespace, applied: Dict[str, Any]) -> None:
@@ -400,7 +400,8 @@ def _install_large_object_case_filter() -> None:
 
     def wrapped_build_preview_case_configs(*, prepared: Any, output_root: Path, object_fixed: bool, args: argparse.Namespace):
         case_cfgs = original_fn(prepared=prepared, output_root=output_root, object_fixed=object_fixed, args=args)
-        return _filter_case_configs_for_large_object(case_cfgs, prepared=prepared, args=args)
+        case_cfgs = _filter_case_configs_for_large_object(case_cfgs, prepared=prepared, args=args)
+        return _hq_case_filter(args, case_cfgs)
 
     BACKEND.build_preview_case_configs = wrapped_build_preview_case_configs
     BACKEND._hq_large_object_case_filter_installed = True

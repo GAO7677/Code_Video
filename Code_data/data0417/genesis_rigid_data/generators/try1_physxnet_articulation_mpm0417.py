@@ -10107,27 +10107,39 @@ def simulate_in_genesis(
             ],
             dtype=np.float64,
         )
-        light_dir = np.array([0.0, 0.12, -1.0], dtype=np.float64)
+        # Use a softer, static lighting setup so motion does not create visible
+        # shadow/highlight flicker frame-to-frame.
+        light_dir = np.array([0.0, 0.15, -1.0], dtype=np.float64)
         if isinstance(scene.renderer_options, gs.renderers.BatchRenderer):
             scene.add_light(
                 pos=tuple(light_pos.tolist()),
                 dir=tuple(_normalize_vec(light_dir).tolist()),
-                color=(1.0, 0.98, 0.94),
-                intensity=16.0,
+                color=(0.99, 0.985, 0.97),
+                intensity=9.5,
                 directional=False,
-                castshadow=True,
+                castshadow=False,
                 cutoff=75.0,
-                attenuation=0.02,
+                attenuation=0.05,
+            )
+            scene.add_light(
+                pos=tuple((light_pos + np.array([0.35, -0.25, 0.15], dtype=np.float64)).tolist()),
+                dir=tuple(_normalize_vec(np.array([-0.15, 0.10, -1.0], dtype=np.float64)).tolist()),
+                color=(0.94, 0.96, 1.0),
+                intensity=3.6,
+                directional=False,
+                castshadow=False,
+                cutoff=90.0,
+                attenuation=0.06,
             )
         elif isinstance(scene.renderer_options, gs.renderers.RayTracer):
             scene.add_mesh_light(
                 morph=gs.morphs.Sphere(
-                    radius=0.07,
+                    radius=0.11,
                     pos=tuple(light_pos.tolist()),
                     euler=(0.0, 0.0, 0.0),
                 ),
-                color=(1.0, 0.98, 0.94, 1.0),
-                intensity=20.0,
+                color=(0.99, 0.985, 0.97, 1.0),
+                intensity=13.0,
                 double_sided=True,
                 cutoff=180.0,
             )
