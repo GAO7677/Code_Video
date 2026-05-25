@@ -2798,9 +2798,12 @@ def _load_single_object_motion_qa(case_dir: Path, margin_px: float = 24.0) -> Di
         width, height = [int(v) for v in metadata.get("resolution", [EXPORT_CAMERA_RESOLUTION[0], EXPORT_CAMERA_RESOLUTION[1]])]
         pos = np.asarray(kin["com_pos"], dtype=np.float64)[:, 0, :]
         vel = np.asarray(kin["linear_vel"], dtype=np.float64)[:, 0, :]
-        uv = np.asarray(anchor["com_uv"], dtype=np.float64)[:, 0, :]
-        vis = np.asarray(anchor["visibility_mask"])[:, 0].astype(bool)
-        bbox = np.asarray(anchor["bbox_xyxy"], dtype=np.float64)[:, 0, :]
+        uv_all = np.asarray(anchor["com_uv"], dtype=np.float64)
+        vis_all = np.asarray(anchor["visibility_mask"]).astype(bool)
+        bbox_all = np.asarray(anchor["bbox_xyxy"], dtype=np.float64)
+        uv = uv_all[:, 0, :]
+        vis = vis_all[:, 0]
+        bbox = bbox_all[:, 0, :]
     except Exception as exc:
         return {"valid": False, "reasons": ["qa_load_failed"], "error": f"{type(exc).__name__}: {exc}"}
 
@@ -2816,6 +2819,20 @@ def _load_single_object_motion_qa(case_dir: Path, margin_px: float = 24.0) -> Di
     bbox_w = np.maximum(0.0, bbox[:, 2] - bbox[:, 0])
     bbox_h = np.maximum(0.0, bbox[:, 3] - bbox[:, 1])
     bbox_area = bbox_w * bbox_h
+    frame_area = float(max(1, width * height))
+    bbox_area_ratio = bbox_area / frame_area
+    bbox_all_w = np.maximum(0.0, bbox_all[..., 2] - bbox_all[..., 0])
+    bbox_all_h = np.maximum(0.0, bbox_all[..., 3] - bbox_all[..., 1])
+    bbox_all_area = bbox_all_w * bbox_all_h
+    bbox_all_ratio = bbox_all_area / frame_area
+    per_object_avg_area_ratio = np.mean(bbox_all_ratio, axis=0) if bbox_all_ratio.size else np.zeros((0,), dtype=np.float64)
+    per_object_visible_avg_area_ratio = np.asarray(
+        [
+            float(np.mean(bbox_all_ratio[:, idx][vis_all[:, idx]])) if np.any(vis_all[:, idx]) else 0.0
+            for idx in range(bbox_all_ratio.shape[1])
+        ],
+        dtype=np.float64,
+    ) if bbox_all_ratio.ndim == 2 else np.zeros((0,), dtype=np.float64)
     speed = np.linalg.norm(vel, axis=1) if vel.size else np.zeros(0, dtype=np.float64)
     xy_radius = np.linalg.norm(pos[:, :2], axis=1) if pos.size else np.zeros(0, dtype=np.float64)
     metrics: Dict[str, Any] = {
@@ -2824,6 +2841,12 @@ def _load_single_object_motion_qa(case_dir: Path, margin_px: float = 24.0) -> Di
         "first_visible_frames": int(np.sum(vis[: min(8, len(vis))])) if vis.size else 0,
         "last_visible_frames": int(np.sum(vis[max(0, len(vis) - 8) :])) if vis.size else 0,
         "median_bbox_area_visible": float(np.median(bbox_area[vis])) if np.any(vis) else 0.0,
+        "avg_bbox_area_ratio": float(np.mean(bbox_area_ratio)) if bbox_area_ratio.size else 0.0,
+        "avg_bbox_area_ratio_visible": float(np.mean(bbox_area_ratio[vis])) if np.any(vis) else 0.0,
+        "min_avg_bbox_area_ratio_all_objects": float(np.min(per_object_avg_area_ratio)) if per_object_avg_area_ratio.size else 0.0,
+        "min_avg_bbox_area_ratio_visible_all_objects": float(np.min(per_object_visible_avg_area_ratio)) if per_object_visible_avg_area_ratio.size else 0.0,
+        "per_object_avg_bbox_area_ratio": per_object_avg_area_ratio.astype(float).tolist(),
+        "per_object_avg_bbox_area_ratio_visible": per_object_visible_avg_area_ratio.astype(float).tolist(),
         "max_speed_mps": float(np.nanmax(speed)) if speed.size else 0.0,
         "max_xy_radius_m": float(np.nanmax(xy_radius)) if xy_radius.size else 0.0,
         "max_abs_z_m": float(np.nanmax(np.abs(pos[:, 2]))) if pos.size else 0.0,
@@ -2842,6 +2865,8 @@ def _load_single_object_motion_qa(case_dir: Path, margin_px: float = 24.0) -> Di
         reasons.append("not_visible_near_end")
     if metrics["median_bbox_area_visible"] < 64.0:
         reasons.append("tiny_or_missing_bbox")
+    if metrics["min_avg_bbox_area_ratio_all_objects"] < 0.010:
+        reasons.append("avg_object_area_below_1pct")
     if metrics["max_speed_mps"] > 20.0:
         reasons.append("speed_explosion")
     if metrics["max_xy_radius_m"] > 6.0:
