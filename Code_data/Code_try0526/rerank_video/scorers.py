@@ -636,6 +636,35 @@ class _VJEPA2Backend:
             "aligned_feature_dim": pred_dim,
         }
 
+    def _infer_future_token_layout(self, token_count: int, frame_count: int) -> tuple[int, int]:
+        spatial_tokens = (self.crop_size // 16) * (self.crop_size // 16)
+        tubelet_size = 2
+        temporal_tokens = max(frame_count // tubelet_size, 1)
+        if temporal_tokens * spatial_tokens == token_count:
+            return temporal_tokens, spatial_tokens
+        if token_count % spatial_tokens == 0:
+            return max(token_count // spatial_tokens, 1), spatial_tokens
+        return 1, token_count
+
+    def _temporal_pool_tokens(self, tokens: torch.Tensor, frame_count: int) -> tuple[torch.Tensor, dict[str, int]]:
+        temporal_tokens, spatial_tokens = self._infer_future_token_layout(int(tokens.shape[1]), frame_count)
+        pooled = tokens.reshape(tokens.shape[0], temporal_tokens, spatial_tokens, tokens.shape[-1]).mean(dim=2)
+        return pooled, {
+            "temporal_token_count": int(temporal_tokens),
+            "spatial_token_count": int(spatial_tokens),
+        }
+
+    @staticmethod
+    def _gram_margin_l1(left: torch.Tensor, right: torch.Tensor, margin: float = 0.1) -> tuple[float, float]:
+        left_norm = F.normalize(left.float(), dim=-1)
+        right_norm = F.normalize(right.float(), dim=-1)
+        left_gram = left_norm @ left_norm.transpose(1, 2)
+        right_gram = right_norm @ right_norm.transpose(1, 2)
+        diff = (left_gram - right_gram).abs()
+        raw_error = float(diff.mean().item())
+        margin_error = float(torch.clamp(diff - margin, min=0.0).mean().item())
+        return raw_error, margin_error
+
     def _load_vjepa2_models(self, ckpt: dict[str, Any]) -> None:
         import src.models.predictor as vit_predictor
         import src.models.vision_transformer as vit_encoder
@@ -775,50 +804,57 @@ class _VJEPA2Backend:
 
         predicted_tokens_aligned = predicted_tokens_aligned.float()
         future_tokens_aligned = future_tokens_aligned.float()
-        pred_vec = predicted_tokens_aligned.mean(dim=1)
-        future_vec = future_tokens_aligned.mean(dim=1)
-        predictive_alignment = float(F.cosine_similarity(pred_vec, future_vec, dim=1).mean().item())
+        predictive_alignment = float(
+            F.cosine_similarity(predicted_tokens_aligned, future_tokens_aligned, dim=-1).mean().item()
+        )
         predictive_l2 = float(torch.mean((predicted_tokens_aligned - future_tokens_aligned) ** 2).item())
 
-        context_mid = len(context_frames) // 2
-        tail_clip = _normalize_clip_uint8_to_imagenet(context_frames[context_mid:], self.crop_size).to(self.device, dtype=self.model_dtype)
-        future_head_clip = _normalize_clip_uint8_to_imagenet(future_frames[: max(2, len(future_frames) // 2)], self.crop_size).to(self.device, dtype=self.model_dtype)
-        with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
-            tail_vec = self.target_encoder(tail_clip).mean(dim=1)
-            future_head_vec = self.target_encoder(future_head_clip).mean(dim=1)
-        tail_vec = tail_vec.float()
-        future_head_vec = future_head_vec.float()
-        continuity = float(F.cosine_similarity(tail_vec, future_head_vec, dim=1).mean().item())
+        predicted_temporal, layout_info = self._temporal_pool_tokens(predicted_tokens_aligned, len(future_frames))
+        future_temporal, _ = self._temporal_pool_tokens(future_tokens_aligned, len(future_frames))
+        time_cosine = float(F.cosine_similarity(predicted_temporal, future_temporal, dim=-1).mean().item())
+        temporal_relation_raw_error, temporal_relation_error = self._gram_margin_l1(
+            predicted_temporal,
+            future_temporal,
+            margin=0.1,
+        )
+        temporal_relation_score = math.exp(-4.0 * temporal_relation_error)
 
-        smoothness_values: list[float] = []
-        for start in range(0, max(len(future_frames) - 7, 1), max(len(future_frames) // 4, 1)):
-            window = future_frames[start : start + min(8, len(future_frames) - start)]
-            if len(window) < 2:
-                continue
-            clip = _normalize_clip_uint8_to_imagenet(window, self.crop_size).to(self.device, dtype=self.model_dtype)
-            with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
-                smoothness_repr = self.target_encoder(clip).mean(dim=1)
-            smoothness_values.append(float(smoothness_repr.float().squeeze(0).norm().item()))
-        if len(smoothness_values) >= 2:
-            smoothness_cv = float(np.std(smoothness_values) / max(np.mean(smoothness_values), 1e-6))
-            temporal_smoothness = math.exp(-smoothness_cv)
+        if predicted_temporal.shape[1] >= 2:
+            pred_delta = predicted_temporal[:, 1:] - predicted_temporal[:, :-1]
+            future_delta = future_temporal[:, 1:] - future_temporal[:, :-1]
+            delta_cosine = float(F.cosine_similarity(pred_delta, future_delta, dim=-1).mean().item())
+            delta_l2 = float(torch.mean((pred_delta - future_delta) ** 2).item())
+            delta_score = math.exp(-5.0 * delta_l2)
         else:
-            temporal_smoothness = 0.5
+            delta_cosine = 0.0
+            delta_l2 = 1.0
+            delta_score = math.exp(-5.0)
 
-        score = float(0.5 * ((predictive_alignment + 1.0) * 0.5) + 0.3 * ((continuity + 1.0) * 0.5) + 0.2 * temporal_smoothness)
+        score = float(
+            0.45 * ((predictive_alignment + 1.0) * 0.5)
+            + 0.35 * temporal_relation_score
+            + 0.20 * delta_score
+        )
         return score, {
             "backend": self.model_variant,
             "model_dtype": str(self.model_dtype).replace("torch.", ""),
+            "score_version": "physalign_temporal_v1",
             "predictive_alignment": predictive_alignment,
             "predictive_l2": predictive_l2,
-            "continuity": continuity,
-            "temporal_smoothness": temporal_smoothness,
+            "time_cosine": time_cosine,
+            "temporal_relation_raw_error": temporal_relation_raw_error,
+            "temporal_relation_error": temporal_relation_error,
+            "temporal_relation_score": temporal_relation_score,
+            "delta_cosine": delta_cosine,
+            "delta_l2": delta_l2,
+            "delta_score": delta_score,
             "context_token_count": int(context_tokens.shape[1]),
             "future_token_count": int(future_token_count),
             "prediction_token_dim": int(predicted_tokens.shape[-1]),
             "future_token_dim": int(future_tokens.shape[-1]),
             "predictor_returned_context": predicted_context_tokens is not None,
             "feature_alignment": feature_alignment,
+            **layout_info,
         }
 
 

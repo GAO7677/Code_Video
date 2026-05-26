@@ -305,16 +305,16 @@ def provider_card(
                 <strong>{score_text(jepa_score)}</strong>
               </div>
               <div class="metric">
-                <span class="label">Pred Align ↑</span>
+                <span class="label">Tok Cos ↑</span>
                 <strong>{score_text(jepa_details.get('predictive_alignment'))}</strong>
               </div>
               <div class="metric">
-                <span class="label">Pred L2 ↓</span>
-                <strong>{score_text(jepa_details.get('predictive_l2'))}</strong>
+                <span class="label">Rel Err ↓</span>
+                <strong>{score_text(jepa_details.get('temporal_relation_error'))}</strong>
               </div>
               <div class="metric">
-                <span class="label">Continuity ↑</span>
-                <strong>{score_text(jepa_details.get('continuity'))}</strong>
+                <span class="label">Delta Err ↓</span>
+                <strong>{score_text(jepa_details.get('delta_l2'))}</strong>
               </div>
             </div>
           </section>
@@ -385,9 +385,9 @@ def metrics_table(
               <th>刚性误差 ↓</th>
               <th>VP 误差 ↓</th>
               <th>JEPA ↑</th>
-              <th>Pred Align ↑</th>
-              <th>Pred L2 ↓</th>
-              <th>Continuity ↑</th>
+              <th>Tok Cos ↑</th>
+              <th>Rel Err ↓</th>
+              <th>Delta Err ↓</th>
             </tr>
           </thead>
           <tbody>
@@ -414,8 +414,8 @@ def metrics_table(
               <td>{score_text(proxy_details.get("vp_error"))}</td>
               <td>{score_text(jepa_row.get("jepa_score") if jepa_row else None)}</td>
               <td>{score_text(jepa_details.get("predictive_alignment"))}</td>
-              <td>{score_text(jepa_details.get("predictive_l2"))}</td>
-              <td>{score_text(jepa_details.get("continuity"))}</td>
+              <td>{score_text(jepa_details.get("temporal_relation_error"))}</td>
+              <td>{score_text(jepa_details.get("delta_l2"))}</td>
             </tr>
             """
         )
@@ -845,11 +845,11 @@ def generate_html(
       <article class="explain-card">
         <h3>3. JEPA 指标怎么计算</h3>
         <p>
-          <strong>JEPA 分数 ↑</strong>：由预测对齐、连续性和平滑性加权得到的总分，表示未来片段是否更像是从 context 合理延伸出来。<br />
-          <strong>Pred Align ↑</strong>：V-JEPA 预测特征和真实 future 特征的余弦相似度，越高表示越可预测。<br />
-          <strong>Pred L2 ↓</strong>：预测特征和 future 特征的 L2 距离，越低表示 surprise 越小。<br />
-          <strong>Continuity ↑</strong>：context 尾部和 future 头部在 JEPA 表征空间中的连续性，越高表示衔接越自然。<br />
-          当前 demo 的 JEPA context 是 <strong>repeat_anchor_frame</strong>，也就是把首帧重复多次作为上下文，所以更适合做相对重排，不适合当最终绝对评测。
+          <strong>JEPA 分数 ↑</strong>：我们现在采用的是参考 PhysAlign 整理出的 JEPA 时空关系分数，由 token 预测对齐、时间关系矩阵一致性和时间差分一致性加权得到。<br />
+          <strong>Tok Cos ↑</strong>：预测 future token 和真实 future token 的逐 token 余弦相似度均值，越高说明预测内容更贴近真实未来。<br />
+          <strong>Rel Err ↓</strong>：先把 future 特征按时间聚合，再按 PhysAlign 的思路构建时间关系 Gram 矩阵；预测矩阵和真实矩阵的 margin-L1 差越小越好。<br />
+          <strong>Delta Err ↓</strong>：比较预测时间特征和真实时间特征的一阶差分 L2，越低说明速度 / 节奏变化更接近真实未来。<br />
+          当前 demo 的 JEPA context 是 <strong>gt_prefix_video</strong>，也就是用 GT 前缀 clip 作为所有方法共享的真实上下文，再分别比较各方法后续 future，因此比重复首帧更接近真实多帧条件；但它仍然是 demo 级 proxy，不等同于完整 benchmark 的最终绝对物理评测。
         </p>
       </article>
       <article class="explain-card">

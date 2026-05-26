@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cv2
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,7 +16,7 @@ from .pdi_proxy_eval import (
 )
 from .scorers import JEPAPredictiveScorer
 from .schemas import JEPAScoreConfig
-from .video_utils import ensure_dir, write_json
+from .video_utils import detect_video_fps, ensure_dir, load_video_frames, write_json
 
 
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/runs/pdi_jepa_eval_demo")
@@ -35,6 +36,8 @@ class EvalResult:
     gt_video_path: Path
     first_frame_path: Path
     video_path: Path
+    context_video_path: Path
+    scored_future_video_path: Path
     jepa_score: float
     jepa_details: dict[str, Any]
 
@@ -115,9 +118,9 @@ def _render_html(results: list[EvalResult], relations: dict[str, Any], output_pa
               <td>{item.provider.upper()}</td>
               <td>{item.jepa_score:.4f}</td>
               <td>{item.jepa_details.get('predictive_alignment', 0.0):.4f}</td>
-              <td>{item.jepa_details.get('predictive_l2', 0.0):.4f}</td>
-              <td>{item.jepa_details.get('continuity', 0.0):.4f}</td>
-              <td>{item.jepa_details.get('temporal_smoothness', 0.0):.4f}</td>
+              <td>{item.jepa_details.get('temporal_relation_error', 0.0):.4f}</td>
+              <td>{item.jepa_details.get('delta_l2', 0.0):.4f}</td>
+              <td>{item.jepa_details.get('context_mode', '-')}</td>
             </tr>
             """
         )
@@ -139,7 +142,7 @@ def _render_html(results: list[EvalResult], relations: dict[str, Any], output_pa
 <body>
   <h1>JEPA Case Eval</h1>
   <div class="note">
-    当前 JEPA context 使用重复首帧构造，因此这里更适合做相对重排实验，不适合作为最终绝对评测。<br />
+    当前 JEPA demo 使用 GT 前缀 clip 作为共享 context，再比较各方法对应的 future clip。<br />
     与官方 PDI 的 Spearman 相关： {corr if corr is not None else "-"}
   </div>
   <table>
@@ -148,10 +151,10 @@ def _render_html(results: list[EvalResult], relations: dict[str, Any], output_pa
         <th>Case</th>
         <th>方法</th>
         <th>JEPA 分数 ↑</th>
-        <th>Predictive Align ↑</th>
-        <th>Predictive L2 ↓</th>
-        <th>Continuity ↑</th>
-        <th>Temporal Smoothness ↑</th>
+        <th>Tok Cos ↑</th>
+        <th>Rel Err ↓</th>
+        <th>Delta Err ↓</th>
+        <th>Context</th>
       </tr>
     </thead>
     <tbody>
@@ -162,6 +165,62 @@ def _render_html(results: list[EvalResult], relations: dict[str, Any], output_pa
 </html>
 """
     output_path.write_text(html, encoding="utf-8")
+
+
+def _write_video_cv2(path: Path, frames: list[np.ndarray], fps: int) -> None:
+    ensure_dir(path.parent)
+    if not frames:
+        raise ValueError(f"No frames to write for {path}")
+    height, width = frames[0].shape[:2]
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        max(int(fps), 1),
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Failed to open cv2.VideoWriter for {path}")
+    try:
+        for frame in frames:
+            writer.write(cv2.cvtColor(np.asarray(frame, dtype=np.uint8), cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
+
+
+def _stage_context_and_future_clips(
+    *,
+    case_id: str,
+    provider: str,
+    gt_video_path: Path,
+    candidate_video_path: Path,
+    clip_root: Path,
+    context_frames: int,
+) -> tuple[Path, Path, dict[str, Any]]:
+    gt_frames = load_video_frames(gt_video_path)
+    candidate_frames = load_video_frames(candidate_video_path)
+    if len(gt_frames) < context_frames + 2:
+        raise ValueError(f"GT video too short for context split: {gt_video_path}")
+    if len(candidate_frames) < context_frames + 2:
+        raise ValueError(f"Candidate video too short for context split: {candidate_video_path}")
+
+    context_clip_frames = gt_frames[:context_frames]
+    future_clip_frames = candidate_frames[context_frames:]
+    if len(future_clip_frames) < 2:
+        raise ValueError(f"Future clip too short after trimming context prefix: {candidate_video_path}")
+
+    case_root = ensure_dir(clip_root / case_id)
+    context_clip_path = case_root / "context_gt_prefix.mp4"
+    future_clip_path = case_root / f"{provider}_future.mp4"
+    fps = detect_video_fps(candidate_video_path, fallback=16)
+    if not context_clip_path.is_file():
+        _write_video_cv2(context_clip_path, context_clip_frames, fps=fps)
+    _write_video_cv2(future_clip_path, future_clip_frames, fps=fps)
+    return context_clip_path, future_clip_path, {
+        "context_mode": "gt_prefix_video",
+        "context_source": "gt_prefix",
+        "context_prefix_frames": int(context_frames),
+        "future_trim_start_frame": int(context_frames),
+    }
 
 
 def run_eval(
@@ -178,6 +237,7 @@ def run_eval(
     gt_root = ensure_dir(tmp_root / "gt_videos")
     ref_root = ensure_dir(run_dir / "reference")
     report_root = ensure_dir(run_dir / "report")
+    clip_root = ensure_dir(tmp_root / "jepa_case_eval_clips")
 
     scorer = JEPAPredictiveScorer(
         JEPAScoreConfig(
@@ -206,10 +266,19 @@ def run_eval(
         for provider, video_path in providers.items():
             if not video_path.is_file():
                 continue
-            score, details = scorer.score_from_anchor_image(
-                anchor_image_path=first_frame_path,
+            context_video_path, future_video_path, split_details = _stage_context_and_future_clips(
+                case_id=case.case_id,
+                provider=provider,
+                gt_video_path=gt_video_path,
                 candidate_video_path=video_path,
+                clip_root=clip_root,
+                context_frames=scorer.config.context_frames,
             )
+            score, details = scorer.score(
+                context_video_path=context_video_path,
+                candidate_video_path=future_video_path,
+            )
+            details = {**split_details, **details}
             results.append(
                 EvalResult(
                     case_id=case.case_id,
@@ -219,6 +288,8 @@ def run_eval(
                     gt_video_path=gt_video_path,
                     first_frame_path=first_frame_path,
                     video_path=video_path,
+                    context_video_path=context_video_path,
+                    scored_future_video_path=future_video_path,
                     jepa_score=float(score),
                     jepa_details=details,
                 )
@@ -234,6 +305,8 @@ def run_eval(
                 "gt_video_path": str(item.gt_video_path),
                 "first_frame_path": str(item.first_frame_path),
                 "video_path": str(item.video_path),
+                "context_video_path": str(item.context_video_path),
+                "scored_future_video_path": str(item.scored_future_video_path),
             }
             for item in results
         ],
