@@ -17,6 +17,9 @@ DEFAULT_INPUT_SUMMARY = Path(
     "/data/gaoya/AAA_test_video/Output_try0526/runs/pdi_proxy_eval_demo/report/summary.json"
 )
 DEFAULT_PROXY_SUMMARY = DEFAULT_INPUT_SUMMARY
+DEFAULT_JEPA_SUMMARY = Path(
+    "/data/gaoya/AAA_test_video/Output_try0526/runs/pdi_jepa_eval_demo/report/summary.json"
+)
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526")
 DEFAULT_PDI_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_benchmark/PDI-Bench-main")
 
@@ -43,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run official PDI-Bench on staged Wan/VACE/GT videos.")
     parser.add_argument("--summary_json", type=Path, default=DEFAULT_INPUT_SUMMARY)
     parser.add_argument("--proxy_summary_json", type=Path, default=DEFAULT_PROXY_SUMMARY)
+    parser.add_argument("--jepa_summary_json", type=Path, default=DEFAULT_JEPA_SUMMARY)
     parser.add_argument("--pdi_root", type=Path, default=DEFAULT_PDI_ROOT)
     parser.add_argument("--output_root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--run_name", default="pdi_official_eval_demo")
@@ -220,14 +224,25 @@ def build_proxy_index(proxy_payload: dict[str, Any]) -> dict[tuple[str, str], di
     return {(row["case_id"], row["provider"]): row for row in proxy_payload.get("results", [])}
 
 
+def build_jepa_index(jepa_payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    return {(row["case_id"], row["provider"]): row for row in jepa_payload.get("results", [])}
+
+
 def score_text(value: float | None, digits: int = 4) -> str:
     return "-" if value is None else f"{value:.{digits}f}"
 
 
-def provider_card(run_root: Path, row: dict[str, Any], proxy_row: dict[str, Any] | None) -> str:
+def provider_card(
+    run_root: Path,
+    row: dict[str, Any],
+    proxy_row: dict[str, Any] | None,
+    jepa_row: dict[str, Any] | None,
+) -> str:
     provider_name = row["provider"].upper()
     proxy_score = proxy_row.get("geometry_score") if proxy_row else None
     proxy_details = proxy_row.get("geometry_details", {}) if proxy_row else {}
+    jepa_score = jepa_row.get("jepa_score") if jepa_row else None
+    jepa_details = jepa_row.get("jepa_details", {}) if jepa_row else {}
     tracks = proxy_details.get("track_count")
     proxy_scale_error = proxy_details.get("scale_error")
     proxy_rigidity_error = proxy_details.get("rigidity_error")
@@ -285,11 +300,28 @@ def provider_card(run_root: Path, row: dict[str, Any], proxy_row: dict[str, Any]
                 <span class="label">VP 误差 ↓</span>
                 <strong>{score_text(proxy_vp_error)}</strong>
               </div>
+              <div class="metric">
+                <span class="label">JEPA 分数 ↑</span>
+                <strong>{score_text(jepa_score)}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">Pred Align ↑</span>
+                <strong>{score_text(jepa_details.get('predictive_alignment'))}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">Pred L2 ↓</span>
+                <strong>{score_text(jepa_details.get('predictive_l2'))}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">Continuity ↑</span>
+                <strong>{score_text(jepa_details.get('continuity'))}</strong>
+              </div>
             </div>
           </section>
         </div>
         <div class="mini-meta">
           <span>轨迹点数: {tracks if tracks is not None else '-'}</span>
+          <span>JEPA context: {html.escape(str(jepa_details.get('context_mode', '-')))}</span>
         </div>
         <div class="thumb-grid">
           {thumb_html(run_root, row.get('mask_png'), '分割掩码')}
@@ -327,7 +359,11 @@ def link_html(run_root: Path, path: str | None, label: str) -> str:
     return f"<a href=\"{rel}\">{safe_label}</a>"
 
 
-def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str], dict[str, Any]]) -> str:
+def metrics_table(
+    rows: list[dict[str, Any]],
+    proxy_index: dict[tuple[str, str], dict[str, Any]],
+    jepa_index: dict[tuple[str, str], dict[str, Any]],
+) -> str:
     header = """
       <div class="table-wrap">
         <table class="metric-table">
@@ -336,7 +372,7 @@ def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str],
               <th rowspan="2">方法</th>
               <th rowspan="2">等级</th>
               <th colspan="4">官方</th>
-              <th colspan="5">自定义</th>
+              <th colspan="9">自定义</th>
             </tr>
             <tr>
               <th>PDI ↓</th>
@@ -348,6 +384,10 @@ def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str],
               <th>尺度误差 ↓</th>
               <th>刚性误差 ↓</th>
               <th>VP 误差 ↓</th>
+              <th>JEPA ↑</th>
+              <th>Pred Align ↑</th>
+              <th>Pred L2 ↓</th>
+              <th>Continuity ↑</th>
             </tr>
           </thead>
           <tbody>
@@ -356,6 +396,8 @@ def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str],
     for row in rows:
         proxy_row = proxy_index.get((row["case_id"], row["provider"]))
         proxy_details = proxy_row.get("geometry_details", {}) if proxy_row else {}
+        jepa_row = jepa_index.get((row["case_id"], row["provider"]))
+        jepa_details = jepa_row.get("jepa_details", {}) if jepa_row else {}
         body_rows.append(
             f"""
             <tr>
@@ -370,6 +412,10 @@ def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str],
               <td>{score_text(proxy_details.get("scale_error"))}</td>
               <td>{score_text(proxy_details.get("rigidity_error"))}</td>
               <td>{score_text(proxy_details.get("vp_error"))}</td>
+              <td>{score_text(jepa_row.get("jepa_score") if jepa_row else None)}</td>
+              <td>{score_text(jepa_details.get("predictive_alignment"))}</td>
+              <td>{score_text(jepa_details.get("predictive_l2"))}</td>
+              <td>{score_text(jepa_details.get("continuity"))}</td>
             </tr>
             """
         )
@@ -386,6 +432,7 @@ def generate_html(
     run_root: Path,
     port: int,
     proxy_payload: dict[str, Any],
+    jepa_payload: dict[str, Any],
 ) -> Path:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in results:
@@ -393,6 +440,7 @@ def generate_html(
 
     case_meta = build_case_meta(proxy_payload)
     proxy_index = build_proxy_index(proxy_payload)
+    jepa_index = build_jepa_index(jepa_payload)
     provider_order = {"gt": 0, "wan": 1, "vace": 2}
 
     sections = []
@@ -403,8 +451,15 @@ def generate_html(
         gt_video = meta.get("gt_video_path")
         cards = []
         for row in rows:
-            cards.append(provider_card(run_root, row, proxy_index.get((case_id, row["provider"]))))
-        table_html = metrics_table(rows, proxy_index)
+            cards.append(
+                provider_card(
+                    run_root,
+                    row,
+                    proxy_index.get((case_id, row["provider"])),
+                    jepa_index.get((case_id, row["provider"])),
+                )
+            )
+        table_html = metrics_table(rows, proxy_index, jepa_index)
         sections.append(
             f"""
             <section class="case-card">
@@ -768,37 +823,41 @@ def generate_html(
     </div>
     <section class="explain-grid">
       <article class="explain-card">
-        <h3>1. 官方 PDI ↓ 是什么</h3>
+        <h3>1. 官方指标怎么计算</h3>
         <p>
-          官方 PDI 是 PDI-Bench 给出的物理几何一致性分数，用来检查目标物体在时间维度上是否保持合理的透视、尺度和结构。
-          它会综合目标物体的尺度变化是否和深度变化一致、运动轨迹是否合理、结构是否保持刚性、以及前景运动是否和背景透视一致。
-          这个分数是误差型指标，所以 <strong>越低越好</strong>：越接近 0，说明视频越符合物理和几何直觉；分数越大，说明几何失真越严重。
+          <strong>PDI ↓</strong>：PDI-Bench 官方总误差，综合下面几个物理几何误差，<strong>越低越好</strong>。<br />
+          <strong>尺度 ε ↓</strong>：比较物体图像尺度变化和深度变化是否匹配，防止物体无故突然变大或变小。<br />
+          <strong>刚性 ε ↓</strong>：检查目标内部结构是否稳定，防止“呼吸感”、拉伸、局部变形。<br />
+          <strong>VP ε ↓</strong>：比较前景运动方向和背景透视消失点是否一致，防止 3D 运动方向不合理。<br />
+          <strong>等级 A / B / C / F</strong>：官方按 PDI 总分给出的粗粒度质量分档。
         </p>
       </article>
       <article class="explain-card">
-        <h3>2. 代理分数 ↑ 是怎么来的</h3>
+        <h3>2. 自定义几何指标怎么计算</h3>
         <p>
-          代理分数是我们自己实现的轻量几何评分，不直接依赖完整的官方 3D 重建流程。
-          它主要利用 SAM2 分割、CoTracker 点轨迹和单目深度 proxy 来衡量三件事：尺度一致性、刚性稳定性、以及前景运动和背景透视的一致性。
-          现在它先计算三个 <strong>误差项</strong>，再做加权求和得到 <strong>代理总误差 ↓</strong>，最后用 <code>exp(-代理总误差)</code> 映射成 <strong>代理分数 ↑</strong>。
-          这样如果同一个视频的三个代理误差都更低，代理分数一定更高，不会再出现方向混乱。
+          <strong>尺度误差 ↓</strong>：用 SAM2 掩码和单目深度 proxy 估计目标尺度与深度的对应关系，越不匹配误差越大。<br />
+          <strong>刚性误差 ↓</strong>：用 CoTracker 轨迹检查目标内部点对距离是否稳定，越像刚体误差越小。<br />
+          <strong>VP 误差 ↓</strong>：比较前景轨迹方向和背景透视方向，方向越冲突误差越大。<br />
+          <strong>代理总误差 ↓</strong>：以上三个误差的加权和。<br />
+          <strong>代理分数 ↑</strong>：把代理总误差做 <code>exp(-error)</code> 映射后的分数，所以误差更小一定会对应更高分。
         </p>
       </article>
       <article class="explain-card">
-        <h3>3. 几个子指标分别表示什么</h3>
+        <h3>3. JEPA 指标怎么计算</h3>
         <p>
-          <strong>尺度误差 Scale ε</strong>：看物体在图像里变大变小，是否和它的深度前后变化相匹配。<br />
-          <strong>刚性误差 Rigidity ε</strong>：看物体内部结构是否稳定，是否出现“呼吸感”、拉伸、局部形变。<br />
-          <strong>消失点误差 VP ε</strong>：看前景物体的运动方向，是否和背景场景的透视关系一致。<br />
-          这些都是误差项，因此统一是 <strong>越低越好</strong>。
+          <strong>JEPA 分数 ↑</strong>：由预测对齐、连续性和平滑性加权得到的总分，表示未来片段是否更像是从 context 合理延伸出来。<br />
+          <strong>Pred Align ↑</strong>：V-JEPA 预测特征和真实 future 特征的余弦相似度，越高表示越可预测。<br />
+          <strong>Pred L2 ↓</strong>：预测特征和 future 特征的 L2 距离，越低表示 surprise 越小。<br />
+          <strong>Continuity ↑</strong>：context 尾部和 future 头部在 JEPA 表征空间中的连续性，越高表示衔接越自然。<br />
+          当前 demo 的 JEPA context 是 <strong>repeat_anchor_frame</strong>，也就是把首帧重复多次作为上下文，所以更适合做相对重排，不适合当最终绝对评测。
         </p>
       </article>
       <article class="explain-card">
-        <h3>4. 等级 A / B / C / F 怎么理解</h3>
+        <h3>4. 这一页怎么读</h3>
         <p>
-          这是官方 PDI 分数对应的粗粒度解释。<strong>A</strong> 表示物理和几何上都比较紧，整体可信；<strong>B</strong> 表示有轻微抖动或小问题；
-          <strong>C</strong> 表示已经能看到明显失真；<strong>F</strong> 表示几何一致性已经明显崩坏。
-          实际比较时，最好优先在 <strong>同一个 case 内部</strong> 比较不同模型，因为不同 case 的运动难度本来就不一样。
+          这页里所有带 <strong>↓</strong> 的量都是误差，都是 <strong>越低越好</strong>；所有带 <strong>↑</strong> 的量都是分数或相似度，都是 <strong>越高越好</strong>。<br />
+          比较时最好优先看 <strong>同一个 case 内</strong> 的 GT、Wan、VACE 排序，因为不同 case 的运动难度本来就不一样。<br />
+          如果官方 PDI 和自定义 / JEPA 排序不一致，优先说明这些 proxy 还没有完全学到官方或人工偏好的物理标准，这正是后续 rerank 方案要继续验证和校准的部分。
         </p>
       </article>
     </section>
@@ -827,6 +886,7 @@ def main() -> None:
     summary_path = run_root / "report" / "summary.json"
 
     proxy_payload = load_proxy_payload(args.proxy_summary_json)
+    jepa_payload = load_proxy_payload(args.jepa_summary_json) if args.jepa_summary_json.is_file() else {"results": []}
 
     if args.render_only:
         if not summary_path.exists():
@@ -856,7 +916,7 @@ def main() -> None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    html_path = generate_html(results, run_root, args.serve_port, proxy_payload)
+    html_path = generate_html(results, run_root, args.serve_port, proxy_payload, jepa_payload)
     print(
         json.dumps(
             {

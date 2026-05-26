@@ -573,11 +573,14 @@ class _VJEPA2Backend:
         self.config = config
         self.device = torch.device(config.device if config.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
         self.crop_size = int(config.crop_size)
+        if self.device.type == "cuda":
+            self.model_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            self.model_dtype = torch.float32
         self.context_encoder = None
         self.target_encoder = None
         self.predictor = None
-        self.tubelet_size = 2
-        self.grid_size = self.crop_size // 16
+        self.model_variant = "vjepa2"
         self._load_models()
 
     def _load_models(self) -> None:
@@ -586,10 +589,58 @@ class _VJEPA2Backend:
         repo_root = self.config.vjepa_repo_root
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
+        ckpt = torch.load(self.config.vjepa_checkpoint, map_location="cpu")
+        if "ema_encoder" in ckpt or self.config.vjepa_model_name.startswith("vjepa2_1_"):
+            self._load_vjepa21_models(ckpt)
+        else:
+            self._load_vjepa2_models(ckpt)
+        self.context_encoder.eval().to(device=self.device, dtype=self.model_dtype)
+        self.target_encoder.eval().to(device=self.device, dtype=self.model_dtype)
+        self.predictor.eval().to(device=self.device, dtype=self.model_dtype)
+
+    @staticmethod
+    def _clean(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        out = {}
+        for key, value in state_dict.items():
+            out[key.replace("module.", "").replace("backbone.", "")] = value
+        return out
+
+    @staticmethod
+    def _align_prediction_to_target(
+        predicted_tokens: torch.Tensor,
+        target_tokens: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any]]:
+        pred_dim = int(predicted_tokens.shape[-1])
+        target_dim = int(target_tokens.shape[-1])
+        if pred_dim == target_dim:
+            return predicted_tokens, target_tokens, {
+                "mode": "identity",
+                "prediction_feature_dim": pred_dim,
+                "target_feature_dim": target_dim,
+            }
+
+        if pred_dim > target_dim:
+            aligned = predicted_tokens[..., -target_dim:]
+            return aligned, target_tokens, {
+                "mode": "take_prediction_tail",
+                "prediction_feature_dim": pred_dim,
+                "target_feature_dim": target_dim,
+                "aligned_feature_dim": target_dim,
+            }
+
+        aligned_target = target_tokens[..., -pred_dim:]
+        return predicted_tokens, aligned_target, {
+            "mode": "take_target_tail",
+            "prediction_feature_dim": pred_dim,
+            "target_feature_dim": target_dim,
+            "aligned_feature_dim": pred_dim,
+        }
+
+    def _load_vjepa2_models(self, ckpt: dict[str, Any]) -> None:
         import src.models.predictor as vit_predictor
         import src.models.vision_transformer as vit_encoder
 
-        ckpt = torch.load(self.config.vjepa_checkpoint, map_location="cpu")
+        self.model_variant = "vjepa2"
         enc_kwargs = dict(
             img_size=(self.crop_size, self.crop_size),
             patch_size=16,
@@ -620,19 +671,79 @@ class _VJEPA2Backend:
             use_silu=False,
             wide_silu=True,
         )
+        context_key = "encoder" if "encoder" in ckpt else "target_encoder"
+        target_key = "target_encoder" if "target_encoder" in ckpt else context_key
+        self.context_encoder.load_state_dict(self._clean(ckpt[context_key]), strict=False)
+        self.target_encoder.load_state_dict(self._clean(ckpt[target_key]), strict=False)
+        self.predictor.load_state_dict(self._clean(ckpt["predictor"]), strict=False)
 
-        def clean(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-            out = {}
-            for key, value in state_dict.items():
-                out[key.replace("module.", "").replace("backbone.", "")] = value
-            return out
+    def _load_vjepa21_models(self, ckpt: dict[str, Any]) -> None:
+        import app.vjepa_2_1.models.predictor as vit_predictor
+        import app.vjepa_2_1.models.vision_transformer as vit_encoder
 
-        self.context_encoder.load_state_dict(clean(ckpt["encoder"]), strict=False)
-        self.target_encoder.load_state_dict(clean(ckpt["target_encoder"]), strict=False)
-        self.predictor.load_state_dict(clean(ckpt["predictor"]), strict=False)
-        self.context_encoder.eval().to(self.device)
-        self.target_encoder.eval().to(self.device)
-        self.predictor.eval().to(self.device)
+        model_name = self.config.vjepa_model_name or "vjepa2_1_vit_large_384"
+        arch_name_map = {
+            "vjepa2_1_vit_base_384": "vit_base",
+            "vjepa2_1_vit_large_384": "vit_large",
+            "vjepa2_1_vit_giant_384": "vit_giant_xformers",
+            "vjepa2_1_vit_gigantic_384": "vit_gigantic_xformers",
+        }
+        predictor_depth_map = {
+            "vjepa2_1_vit_base_384": 12,
+            "vjepa2_1_vit_large_384": 12,
+            "vjepa2_1_vit_giant_384": 24,
+            "vjepa2_1_vit_gigantic_384": 24,
+        }
+        predictor_mask_map = {
+            "vjepa2_1_vit_base_384": 8,
+            "vjepa2_1_vit_large_384": 8,
+            "vjepa2_1_vit_giant_384": 8,
+            "vjepa2_1_vit_gigantic_384": 8,
+        }
+        arch_name = arch_name_map.get(model_name, "vit_large")
+        predictor_depth = predictor_depth_map.get(model_name, 12)
+        predictor_num_mask_tokens = predictor_mask_map.get(model_name, 8)
+        self.model_variant = model_name
+
+        enc_kwargs = dict(
+            patch_size=16,
+            img_size=(self.crop_size, self.crop_size),
+            num_frames=self.config.max_frames,
+            tubelet_size=2,
+            use_sdpa=True,
+            use_SiLU=False,
+            wide_SiLU=True,
+            uniform_power=False,
+            use_rope=True,
+            img_temporal_dim_size=1,
+            interpolate_rope=True,
+        )
+        self.context_encoder = vit_encoder.__dict__[arch_name](**enc_kwargs)
+        self.target_encoder = vit_encoder.__dict__[arch_name](**enc_kwargs)
+        self.predictor = vit_predictor.vit_predictor(
+            img_size=(self.crop_size, self.crop_size),
+            patch_size=16,
+            use_mask_tokens=True,
+            embed_dim=self.context_encoder.embed_dim,
+            predictor_embed_dim=384,
+            teacher_embed_dim=1664,
+            num_frames=self.config.max_frames,
+            tubelet_size=2,
+            depth=predictor_depth,
+            num_heads=12,
+            num_mask_tokens=predictor_num_mask_tokens,
+            use_rope=True,
+            uniform_power=False,
+            use_sdpa=True,
+            use_silu=False,
+            wide_silu=True,
+            n_output_distillation=1,
+            return_all_tokens=True,
+            img_temporal_dim_size=1,
+        )
+        self.context_encoder.load_state_dict(self._clean(ckpt["encoder"]), strict=True)
+        self.target_encoder.load_state_dict(self._clean(ckpt["ema_encoder"]), strict=True)
+        self.predictor.load_state_dict(self._clean(ckpt["predictor"]), strict=True)
 
     @torch.no_grad()
     def score(self, context_frames: list[np.ndarray], future_frames: list[np.ndarray]) -> tuple[float, dict[str, Any]]:
@@ -640,26 +751,43 @@ class _VJEPA2Backend:
         future_frames = uniform_subsample_frames(future_frames, self.config.future_frames)
         if len(context_frames) < 2 or len(future_frames) < 2:
             return 0.0, {"reason": "too_few_frames"}
-        context_clip = _normalize_clip_uint8_to_imagenet(context_frames, self.crop_size).to(self.device)
-        future_clip = _normalize_clip_uint8_to_imagenet(future_frames, self.crop_size).to(self.device)
+        context_clip = _normalize_clip_uint8_to_imagenet(context_frames, self.crop_size).to(self.device, dtype=self.model_dtype)
+        future_clip = _normalize_clip_uint8_to_imagenet(future_frames, self.crop_size).to(self.device, dtype=self.model_dtype)
 
-        context_tokens = self.context_encoder(context_clip)
-        future_tokens = self.target_encoder(future_clip)
-        future_token_count = future_tokens.shape[1]
-        context_positions = torch.arange(context_tokens.shape[1], device=self.device).unsqueeze(0)
-        target_positions = torch.arange(future_token_count, device=self.device).unsqueeze(0) + context_tokens.shape[1]
-        predicted_tokens = self.predictor(context_tokens, masks_x=context_positions, masks_y=target_positions)
-        predicted_tokens = predicted_tokens[:, -future_token_count:, :]
+        autocast_enabled = self.device.type == "cuda"
+        with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
+            context_tokens = self.context_encoder(context_clip)
+            future_tokens = self.target_encoder(future_clip)
+            future_token_count = future_tokens.shape[1]
+            context_positions = torch.arange(context_tokens.shape[1], device=self.device).unsqueeze(0)
+            target_positions = torch.arange(future_token_count, device=self.device).unsqueeze(0) + context_tokens.shape[1]
+            predicted_out = self.predictor(context_tokens, masks_x=context_positions, masks_y=target_positions)
+            predicted_context_tokens = None
+            if isinstance(predicted_out, tuple):
+                predicted_tokens, predicted_context_tokens = predicted_out
+            else:
+                predicted_tokens = predicted_out
 
-        pred_vec = predicted_tokens.mean(dim=1)
-        future_vec = future_tokens.mean(dim=1)
+            predicted_tokens_aligned, future_tokens_aligned, feature_alignment = self._align_prediction_to_target(
+                predicted_tokens,
+                future_tokens,
+            )
+
+        predicted_tokens_aligned = predicted_tokens_aligned.float()
+        future_tokens_aligned = future_tokens_aligned.float()
+        pred_vec = predicted_tokens_aligned.mean(dim=1)
+        future_vec = future_tokens_aligned.mean(dim=1)
         predictive_alignment = float(F.cosine_similarity(pred_vec, future_vec, dim=1).mean().item())
+        predictive_l2 = float(torch.mean((predicted_tokens_aligned - future_tokens_aligned) ** 2).item())
 
         context_mid = len(context_frames) // 2
-        tail_clip = _normalize_clip_uint8_to_imagenet(context_frames[context_mid:], self.crop_size).to(self.device)
-        future_head_clip = _normalize_clip_uint8_to_imagenet(future_frames[: max(2, len(future_frames) // 2)], self.crop_size).to(self.device)
-        tail_vec = self.target_encoder(tail_clip).mean(dim=1)
-        future_head_vec = self.target_encoder(future_head_clip).mean(dim=1)
+        tail_clip = _normalize_clip_uint8_to_imagenet(context_frames[context_mid:], self.crop_size).to(self.device, dtype=self.model_dtype)
+        future_head_clip = _normalize_clip_uint8_to_imagenet(future_frames[: max(2, len(future_frames) // 2)], self.crop_size).to(self.device, dtype=self.model_dtype)
+        with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
+            tail_vec = self.target_encoder(tail_clip).mean(dim=1)
+            future_head_vec = self.target_encoder(future_head_clip).mean(dim=1)
+        tail_vec = tail_vec.float()
+        future_head_vec = future_head_vec.float()
         continuity = float(F.cosine_similarity(tail_vec, future_head_vec, dim=1).mean().item())
 
         smoothness_values: list[float] = []
@@ -667,8 +795,10 @@ class _VJEPA2Backend:
             window = future_frames[start : start + min(8, len(future_frames) - start)]
             if len(window) < 2:
                 continue
-            clip = _normalize_clip_uint8_to_imagenet(window, self.crop_size).to(self.device)
-            smoothness_values.append(float(self.target_encoder(clip).mean(dim=1).squeeze(0).norm().item()))
+            clip = _normalize_clip_uint8_to_imagenet(window, self.crop_size).to(self.device, dtype=self.model_dtype)
+            with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
+                smoothness_repr = self.target_encoder(clip).mean(dim=1)
+            smoothness_values.append(float(smoothness_repr.float().squeeze(0).norm().item()))
         if len(smoothness_values) >= 2:
             smoothness_cv = float(np.std(smoothness_values) / max(np.mean(smoothness_values), 1e-6))
             temporal_smoothness = math.exp(-smoothness_cv)
@@ -677,9 +807,18 @@ class _VJEPA2Backend:
 
         score = float(0.5 * ((predictive_alignment + 1.0) * 0.5) + 0.3 * ((continuity + 1.0) * 0.5) + 0.2 * temporal_smoothness)
         return score, {
+            "backend": self.model_variant,
+            "model_dtype": str(self.model_dtype).replace("torch.", ""),
             "predictive_alignment": predictive_alignment,
+            "predictive_l2": predictive_l2,
             "continuity": continuity,
             "temporal_smoothness": temporal_smoothness,
+            "context_token_count": int(context_tokens.shape[1]),
+            "future_token_count": int(future_token_count),
+            "prediction_token_dim": int(predicted_tokens.shape[-1]),
+            "future_token_dim": int(future_tokens.shape[-1]),
+            "predictor_returned_context": predicted_context_tokens is not None,
+            "feature_alignment": feature_alignment,
         }
 
 
@@ -734,3 +873,21 @@ class JEPAPredictiveScorer:
         context_frames = uniform_subsample_frames(load_video_frames(context_video_path), self.config.max_frames)
         future_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
         return self.backend.score(context_frames, future_frames)
+
+    def score_from_anchor_image(
+        self,
+        *,
+        anchor_image_path: Path,
+        candidate_video_path: Path,
+    ) -> tuple[float, dict[str, Any]]:
+        candidate_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
+        if not candidate_frames:
+            return 0.0, {"reason": "missing_frames"}
+        anchor_image = Image.open(anchor_image_path).convert("RGB")
+        target_height, target_width = candidate_frames[0].shape[:2]
+        anchor_image = anchor_image.resize((target_width, target_height), Image.Resampling.BILINEAR)
+        anchor_frame = np.asarray(anchor_image, dtype=np.uint8)
+        context_frames = [anchor_frame.copy() for _ in range(max(int(self.config.context_repeat_frames), 2))]
+        score, details = self.backend.score(context_frames, candidate_frames)
+        details = {"context_mode": "repeat_anchor_frame", "context_repeat_frames": len(context_frames), **details}
+        return score, details

@@ -66,9 +66,11 @@ class JEPAScoreConfig:
     max_frames: int = 48
     context_frames: int = 16
     future_frames: int = 16
+    context_repeat_frames: int = 8
     crop_size: int = 384
     vjepa_checkpoint: Path | None = None
     vjepa_repo_root: Path | None = None
+    vjepa_model_name: str = "vjepa2_1_vit_large_384"
     videomae_model_id: str = ""
 
 
@@ -194,9 +196,11 @@ def load_run_config(payload: dict[str, Any]) -> RunConfig:
                 max_frames=int(jepa_cfg.get("max_frames", 48)),
                 context_frames=int(jepa_cfg.get("context_frames", 16)),
                 future_frames=int(jepa_cfg.get("future_frames", 16)),
+                context_repeat_frames=int(jepa_cfg.get("context_repeat_frames", 8)),
                 crop_size=int(jepa_cfg.get("crop_size", 384)),
                 vjepa_checkpoint=_path_or_none(jepa_cfg.get("vjepa_checkpoint")),
                 vjepa_repo_root=_path_or_none(jepa_cfg.get("vjepa_repo_root")),
+                vjepa_model_name=str(jepa_cfg.get("vjepa_model_name", "vjepa2_1_vit_large_384")),
                 videomae_model_id=str(jepa_cfg.get("videomae_model_id", "")),
             ),
         ),
