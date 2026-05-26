@@ -164,12 +164,16 @@ class GeometryProxyScorer:
             "cy": float(centroids[best_index][1]),
         }
 
-    def score(self, *, context_video_path: Path, candidate_video_path: Path) -> tuple[float, dict[str, Any]]:
-        context_frames = load_video_frames(context_video_path)
+    def _score_with_anchor_frame(
+        self,
+        *,
+        anchor_frame: np.ndarray,
+        candidate_video_path: Path,
+    ) -> tuple[float, dict[str, Any]]:
         candidate_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
-        if not context_frames or not candidate_frames:
+        if anchor_frame.size == 0 or not candidate_frames:
             return 0.0, {"reason": "missing_frames"}
-        anchor_gray = self._grayscale(context_frames[-1])
+        anchor_gray = self._grayscale(anchor_frame)
         tracks: list[dict[str, float]] = []
         for frame in candidate_frames:
             frame_gray = self._grayscale(frame)
@@ -247,6 +251,33 @@ class GeometryProxyScorer:
             "rigidity_score": rigidity_score,
         }
         return final_score, details
+
+    def score(self, *, context_video_path: Path, candidate_video_path: Path) -> tuple[float, dict[str, Any]]:
+        context_frames = load_video_frames(context_video_path)
+        if not context_frames:
+            return 0.0, {"reason": "missing_frames"}
+        return self._score_with_anchor_frame(
+            anchor_frame=context_frames[-1],
+            candidate_video_path=candidate_video_path,
+        )
+
+    def score_from_anchor_image(
+        self,
+        *,
+        anchor_image_path: Path,
+        candidate_video_path: Path,
+    ) -> tuple[float, dict[str, Any]]:
+        anchor_image = Image.open(anchor_image_path).convert("RGB")
+        candidate_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
+        if not candidate_frames:
+            return 0.0, {"reason": "missing_frames"}
+        target_height, target_width = candidate_frames[0].shape[:2]
+        anchor_image = anchor_image.resize((target_width, target_height), Image.Resampling.BILINEAR)
+        anchor_frame = np.asarray(anchor_image, dtype=np.uint8)
+        return self._score_with_anchor_frame(
+            anchor_frame=anchor_frame,
+            candidate_video_path=candidate_video_path,
+        )
 
 
 def _normalize_clip_uint8_to_imagenet(frames: list[np.ndarray], crop_size: int) -> torch.Tensor:
@@ -440,4 +471,3 @@ class JEPAPredictiveScorer:
         context_frames = uniform_subsample_frames(load_video_frames(context_video_path), self.config.max_frames)
         future_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
         return self.backend.score(context_frames, future_frames)
-
