@@ -63,8 +63,8 @@ class Sam2Wrapper(BasePerceptor):
                     sys.modules[interface_name] = mock_interface
 
                 from transformers import AutoProcessor, AutoModelForCausalLM
-                pdi_logger.info("Loading Florence-2 detector...")
-                model_id = 'microsoft/Florence-2-base'
+                model_id = os.environ.get("PDI_FLORENCE_MODEL_ID", "microsoft/Florence-2-base")
+                pdi_logger.info(f"Loading Florence-2 detector from: {model_id}")
                 
                 self.processor = AutoProcessor.from_pretrained(
                     model_id, 

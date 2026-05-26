@@ -29,7 +29,7 @@ link_file /data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml \
 link_file /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth \
   "$ROOT/checkpoints/tracker/scaled_offline.pth"
 
-link_file /data/gaoya/ckpt/LiheYoung-depth_anything_vitl14/pytorch_model.bin \
+link_file /data/gaoya/ckpt/LiheYoung-depth_anything_vitl14_raw/checkpoints/depth_anything_vitl14.pth \
   "$ROOT/third_party/mega_sam/Depth-Anything/checkpoints/depth_anything_vitl14.pth"
 
 link_file /data/gaoya/ckpt/mega-sam/megasam_final.pth \
