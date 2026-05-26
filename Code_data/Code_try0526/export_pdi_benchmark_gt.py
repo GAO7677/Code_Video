@@ -9,6 +9,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import cv2
+from PIL import Image
+
 from rerank_video.video_utils import ensure_dir, to_jsonable, write_json
 
 
@@ -92,6 +95,18 @@ def copy_video(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+def save_first_frame(src_video_path: Path, image_path: Path) -> Path:
+    ensure_dir(image_path.parent)
+    cap = cv2.VideoCapture(str(src_video_path))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        raise RuntimeError(f"Failed to read first frame from {src_video_path}")
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    image.save(image_path)
+    return image_path
+
+
 def grade_letter(grade: str | None) -> str:
     if not grade:
         return ""
@@ -105,6 +120,7 @@ def build_clip_payload(
     metadata_row: dict[str, str],
     src_video_path: Path,
     dst_video_path: Path,
+    first_frame_path: Path,
     report_path: Path,
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
@@ -116,6 +132,8 @@ def build_clip_payload(
         "clip_name": clip_name,
         "prompt": metadata_row["prompt"],
         "file_path": metadata_row["file_path"],
+        "source": src_video_path,
+        "first_frame": first_frame_path,
         "source_video_path": src_video_path,
         "copied_video_path": dst_video_path,
         "raw_report_path": report_path,
@@ -162,15 +180,18 @@ def export_gt() -> None:
         dst_dir = method_output_root / task
         dst_video_path = dst_dir / f"{clip_name}.mp4"
         dst_json_path = dst_dir / f"{clip_name}.json"
+        first_frame_path = dst_dir / f"{clip_name}.first_frame.png"
 
         metrics = parse_report(report_path)
         copy_video(src_video_path, dst_video_path)
+        save_first_frame(src_video_path, first_frame_path)
         payload = build_clip_payload(
             task=task,
             clip_name=clip_name,
             metadata_row=metadata_row,
             src_video_path=src_video_path,
             dst_video_path=dst_video_path,
+            first_frame_path=first_frame_path,
             report_path=report_path,
             metrics=metrics,
         )
@@ -204,7 +225,7 @@ def export_gt() -> None:
         "summary_report_path": str(summary_path),
     }
 
-    result_csv_path = BENCHMARK_RESULT_ROOT / "official_metrics.csv"
+    result_csv_path = BENCHMARK_RESULT_ROOT / "metrics.csv"
     with result_csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(result_row.keys()))
         writer.writeheader()
