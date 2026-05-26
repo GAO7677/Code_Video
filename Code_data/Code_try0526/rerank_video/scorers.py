@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -130,11 +133,256 @@ class LatentMotionScorer:
 class GeometryProxyScorer:
     def __init__(self, config: GeometryConfig) -> None:
         self.config = config
+        self._pdi_modules_loaded = False
+        self._sam_wrapper_cls = None
+        self._track_wrapper_cls = None
+        self._projection_judge_cls = None
+        self._audit_scale_consistency = None
+        self._audit_rigidity_stability = None
 
     @staticmethod
     def _grayscale(frame: np.ndarray) -> np.ndarray:
         frame_f = np.asarray(frame, dtype=np.float32)
         return (0.299 * frame_f[..., 0] + 0.587 * frame_f[..., 1] + 0.114 * frame_f[..., 2]).astype(np.float32)
+
+    def _lazy_load_pdi_modules(self) -> None:
+        if self._pdi_modules_loaded:
+            return
+        if self.config.pdi_repo_root is None:
+            raise ValueError("GeometryConfig.pdi_repo_root is required for backend='sam_depth'")
+        src_root = self.config.pdi_repo_root / "src"
+        if str(src_root) not in sys.path:
+            sys.path.insert(0, str(src_root))
+        from pdi_eval.perception.sam_wrapper import Sam2Wrapper
+        from pdi_eval.perception.track_wrapper import TrackWrapper
+        from pdi_eval.geometry.projection import ProjectionJudge
+        from pdi_eval.evaluator.scale_audit import audit_scale_consistency
+        from pdi_eval.evaluator.volume_audit import audit_rigidity_stability
+
+        self._sam_wrapper_cls = Sam2Wrapper
+        self._track_wrapper_cls = TrackWrapper
+        self._projection_judge_cls = ProjectionJudge
+        self._audit_scale_consistency = audit_scale_consistency
+        self._audit_rigidity_stability = audit_rigidity_stability
+        self._pdi_modules_loaded = True
+
+    def _cache_root(self) -> Path:
+        if getattr(self.config, "cache_root", None) is not None:
+            root = Path(self.config.cache_root)
+        else:
+            root = Path("/tmp/try0526_geometry_proxy_cache")
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    @staticmethod
+    def _video_id(video_path: Path) -> str:
+        return video_path.stem
+
+    def _extract_depth_anything(self, video_path: Path) -> list[np.ndarray]:
+        if self.config.depth_anything_repo_root is None or self.config.depth_anything_ckpt is None:
+            raise ValueError("depth_anything_repo_root and depth_anything_ckpt are required for backend='sam_depth'")
+        cache_dir = self._cache_root() / self._video_id(video_path) / "depth_anything"
+        depth_files = sorted(cache_dir.glob("*.npy"))
+        if not depth_files:
+            frames_dir = cache_dir.parent / "frames"
+            if frames_dir.exists():
+                shutil.rmtree(frames_dir)
+            frames = load_video_frames(video_path)
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for index, frame in enumerate(frames):
+                image = Image.fromarray(frame).convert("RGB")
+                image.save(frames_dir / f"{index:06d}.jpg")
+            cmd = [
+                sys.executable,
+                str(self.config.depth_anything_repo_root / "run_videos.py"),
+                "--img-path",
+                str(frames_dir),
+                "--outdir",
+                str(cache_dir),
+                "--encoder",
+                "vitl",
+                "--load-from",
+                str(self.config.depth_anything_ckpt),
+            ]
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(self.config.depth_anything_repo_root) + os.pathsep + env.get("PYTHONPATH", "")
+            completed = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=str(self.config.depth_anything_repo_root), env=env)
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"Depth-Anything failed for {video_path}\nstdout:\n{completed.stdout[-2000:]}\nstderr:\n{completed.stderr[-2000:]}"
+                )
+            depth_files = sorted(cache_dir.glob("*.npy"))
+        return [np.load(path).astype(np.float32) for path in depth_files]
+
+    @staticmethod
+    def _vp_inside_bbox(vp_xy: tuple[float, float], masks: np.ndarray, margin_ratio: float = 0.1) -> bool:
+        if masks is None or len(masks) == 0:
+            return False
+        combined = np.any(masks[: min(5, len(masks))], axis=0)
+        ys, xs = np.where(combined)
+        if len(xs) == 0:
+            return False
+        x_min, x_max = int(xs.min()), int(xs.max())
+        y_min, y_max = int(ys.min()), int(ys.max())
+        mx = (x_max - x_min) * margin_ratio
+        my = (y_max - y_min) * margin_ratio
+        return (x_min - mx <= vp_xy[0] <= x_max + mx) and (y_min - my <= vp_xy[1] <= y_max + my)
+
+    def _compute_vp_error(
+        self,
+        *,
+        tracks_use: np.ndarray,
+        bg_tracks: np.ndarray,
+        frames: list[np.ndarray],
+        masks_use: np.ndarray,
+        width: int,
+        height: int,
+    ) -> tuple[float, dict[str, Any]]:
+        self._lazy_load_pdi_modules()
+        cam_cx = width / 2.0
+        cam_cy = height / 2.0
+        proj = self._projection_judge_cls(cx=cam_cx, cy=cam_cy)
+        fg_tracks_ntd = tracks_use.transpose(1, 0, 2)
+        bg_tracks_ntd = bg_tracks.transpose(1, 0, 2) if bg_tracks.ndim == 3 and bg_tracks.shape[0] > 0 else None
+        lsd_frames = np.asarray(frames[: min(3, len(frames))], dtype=np.uint8) if frames else None
+        lsd_masks = masks_use[: len(lsd_frames)] if lsd_frames is not None else None
+        global_vp, fg_vp, bg_vp = proj.estimate_vanishing_point_v2(
+            fg_tracks=fg_tracks_ntd,
+            bg_tracks=bg_tracks_ntd,
+            frames=lsd_frames,
+            masks=lsd_masks,
+        )
+        fg_degenerate = fg_vp == (cam_cx, cam_cy)
+        fg_in_bbox = self._vp_inside_bbox(fg_vp, masks_use)
+        if fg_degenerate or fg_in_bbox:
+            vp = bg_vp
+        else:
+            vp = fg_vp
+        fg_dir = np.array([vp[0] - cam_cx, vp[1] - cam_cy], dtype=np.float64)
+        bg_dir = np.array([bg_vp[0] - cam_cx, bg_vp[1] - cam_cy], dtype=np.float64)
+        fg_norm = float(np.linalg.norm(fg_dir))
+        bg_norm = float(np.linalg.norm(bg_dir))
+        fg_offscreen = vp[0] < 0 or vp[0] > width or vp[1] < 0 or vp[1] > height
+        if fg_norm < 5.0 or bg_norm < 5.0 or fg_offscreen:
+            eps_vp = 0.0
+        else:
+            cos_sim = float(np.dot(fg_dir, bg_dir)) / max(fg_norm * bg_norm, 1e-8)
+            eps_vp = (1.0 - float(np.clip(cos_sim, -1.0, 1.0))) / 2.0
+        return eps_vp, {
+            "global_vp": [float(global_vp[0]), float(global_vp[1])],
+            "fg_vp": [float(fg_vp[0]), float(fg_vp[1])],
+            "bg_vp": [float(bg_vp[0]), float(bg_vp[1])],
+            "selected_vp": [float(vp[0]), float(vp[1])],
+            "fg_in_bbox": bool(fg_in_bbox),
+            "fg_degenerate": bool(fg_degenerate),
+        }
+
+    def _score_sam_depth(
+        self,
+        *,
+        candidate_video_path: Path,
+        target_object: str | None,
+    ) -> tuple[float, dict[str, Any]]:
+        if not target_object:
+            return 0.0, {"reason": "sam_depth_backend_requires_target_object"}
+        self._lazy_load_pdi_modules()
+        if self.config.sam_ckpt is None or self.config.sam_cfg is None or self.config.tracker_ckpt is None:
+            return 0.0, {"reason": "missing_sam_or_tracker_checkpoints"}
+
+        os.environ.setdefault("PDI_FLORENCE_MODEL_ID", "/data/gaoya/ckpt/microsoft-Florence-2-base")
+        sam = self._sam_wrapper_cls(checkpoint=str(self.config.sam_ckpt), config=str(self.config.sam_cfg), device=self.config.device)
+        res_2d = sam.infer(str(candidate_video_path), text_query=target_object)
+        masks = np.asarray(res_2d.masks).astype(bool)
+        if masks.ndim != 3 or len(masks) < 3:
+            return 0.0, {"reason": "too_few_masks"}
+
+        mask_sizes = masks.reshape(len(masks), -1).sum(axis=1)
+        if float(np.median(mask_sizes)) < float(self.config.min_mask_pixels):
+            return 0.0, {"reason": "mask_too_small", "median_mask_pixels": float(np.median(mask_sizes))}
+
+        tracker = self._track_wrapper_cls(checkpoint=str(self.config.tracker_ckpt), device=self.config.device)
+        res_tracks_raw = tracker.infer(str(candidate_video_path), initial_mask=masks[0].astype(np.uint8))
+
+        tracks = np.asarray(res_tracks_raw.tracks_2d)
+        visibility = np.asarray(res_tracks_raw.confidence)
+        bg_tracks = np.asarray(res_tracks_raw.metadata.get("bg_tracks", np.empty((0, 0, 2))))
+
+        depth_maps = self._extract_depth_anything(candidate_video_path)
+        frames = load_video_frames(candidate_video_path)
+
+        T_use = min(len(masks), len(depth_maps), len(tracks), len(frames))
+        masks_use = masks[:T_use]
+        tracks_use = tracks[:T_use]
+        visibility_use = visibility[:T_use]
+        bg_tracks_use = bg_tracks[:T_use] if bg_tracks.ndim == 3 and bg_tracks.shape[0] >= T_use else np.empty((0, 0, 2))
+        frames_use = frames[:T_use]
+        depth_use = depth_maps[:T_use]
+        h_seq = np.asarray(res_2d.h_pixel[:T_use], dtype=np.float64)
+
+        z_seq = []
+        for depth_map, mask in zip(depth_use, masks_use):
+            if depth_map.shape != mask.shape:
+                mask_rs = cv2.resize(mask.astype(np.uint8), (depth_map.shape[1], depth_map.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+            else:
+                mask_rs = mask
+            if np.any(mask_rs):
+                z_seq.append(float(np.median(depth_map[mask_rs])))
+            else:
+                z_seq.append(float(np.median(depth_map)))
+        z_seq = np.asarray(z_seq, dtype=np.float64)
+
+        # Depth-Anything can behave like depth or inverse-depth depending on the
+        # release/checkpoint. Evaluate both orientations and keep the one with
+        # the smaller scale residual so the proxy score is not sign-sensitive.
+        z_seq_norm = z_seq / max(float(z_seq[0]), 1e-6)
+        direct_history = np.asarray(self._audit_scale_consistency(h_seq, z_seq_norm), dtype=np.float64)
+        direct_error = float(direct_history.mean()) if direct_history.size > 0 else 0.0
+        inverse_history = np.asarray(self._audit_scale_consistency(h_seq, 1.0 / np.maximum(z_seq_norm, 1e-6)), dtype=np.float64)
+        inverse_error = float(inverse_history.mean()) if inverse_history.size > 0 else 0.0
+        if inverse_error < direct_error:
+            scale_history = inverse_history
+            scale_error = inverse_error
+            scale_orientation = "inverse_depth"
+        else:
+            scale_history = direct_history
+            scale_error = direct_error
+            scale_orientation = "depth"
+
+        rigidity_error, rigidity_history = self._audit_rigidity_stability(tracks_use, h_seq)
+        rigidity_error = float(rigidity_error)
+
+        vp_error, vp_details = self._compute_vp_error(
+            tracks_use=tracks_use,
+            bg_tracks=bg_tracks_use,
+            frames=frames_use,
+            masks_use=masks_use,
+            width=frames_use[0].shape[1],
+            height=frames_use[0].shape[0],
+        )
+
+        scale_score = math.exp(-scale_error)
+        rigidity_score = math.exp(-rigidity_error)
+        vp_score = math.exp(-2.0 * vp_error)
+        proxy_error_total = float(0.40 * scale_error + 0.35 * rigidity_error + 0.25 * vp_error)
+        proxy_total = float(math.exp(-proxy_error_total))
+
+        return proxy_total, {
+            "backend": "sam_depth",
+            "track_count": int(tracks_use.shape[1]) if tracks_use.ndim == 3 else 0,
+            "median_mask_pixels": float(np.median(mask_sizes[:T_use])),
+            "scale_error": scale_error,
+            "rigidity_error": rigidity_error,
+            "vp_error": float(vp_error),
+            "scale_score": scale_score,
+            "rigidity_score": rigidity_score,
+            "vp_score": vp_score,
+            "proxy_error_total": proxy_error_total,
+            "proxy_total": proxy_total,
+            "scale_orientation": scale_orientation,
+            "scale_history_mean": scale_error,
+            "rigidity_history_mean": float(np.mean(rigidity_history)) if np.size(rigidity_history) > 0 else 0.0,
+            **vp_details,
+        }
 
     def _largest_motion_component(self, anchor_gray: np.ndarray, frame_gray: np.ndarray) -> tuple[np.ndarray | None, dict[str, float]]:
         diff = np.abs(frame_gray - anchor_gray)
@@ -253,6 +501,18 @@ class GeometryProxyScorer:
         return final_score, details
 
     def score(self, *, context_video_path: Path, candidate_video_path: Path) -> tuple[float, dict[str, Any]]:
+        if self.config.backend == "sam_depth":
+            # Generic rerank mode usually does not know the target object name.
+            # Fall back to the legacy anchor-motion proxy instead of failing hard.
+            context_frames = load_video_frames(context_video_path)
+            if not context_frames:
+                return 0.0, {"reason": "missing_frames"}
+            score, details = self._score_with_anchor_frame(
+                anchor_frame=context_frames[-1],
+                candidate_video_path=candidate_video_path,
+            )
+            details = {"backend": "legacy_motion_fallback", **details}
+            return score, details
         context_frames = load_video_frames(context_video_path)
         if not context_frames:
             return 0.0, {"reason": "missing_frames"}
@@ -266,7 +526,10 @@ class GeometryProxyScorer:
         *,
         anchor_image_path: Path,
         candidate_video_path: Path,
+        target_object: str | None = None,
     ) -> tuple[float, dict[str, Any]]:
+        if self.config.backend == "sam_depth":
+            return self._score_sam_depth(candidate_video_path=candidate_video_path, target_object=target_object)
         anchor_image = Image.open(anchor_image_path).convert("RGB")
         candidate_frames = uniform_subsample_frames(load_video_frames(candidate_video_path), self.config.max_frames)
         if not candidate_frames:

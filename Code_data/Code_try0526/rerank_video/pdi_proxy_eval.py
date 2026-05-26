@@ -39,6 +39,13 @@ DEFAULT_CASES = [
     },
 ]
 
+DEFAULT_PDI_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_benchmark/PDI-Bench-main")
+DEFAULT_DEPTH_ANYTHING_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_try0526/mega-sam/Depth-Anything")
+DEFAULT_SAM_CKPT = Path("/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt")
+DEFAULT_SAM_CFG = Path("/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml")
+DEFAULT_TRACKER_CKPT = Path("/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth")
+DEFAULT_DEPTH_ANYTHING_CKPT = Path("/data/gaoya/ckpt/LiheYoung-depth_anything_vitl14_raw/checkpoints/depth_anything_vitl14.pth")
+
 
 @dataclass
 class PDICase:
@@ -239,12 +246,19 @@ def _render_html(results: list[EvalResult], output_path: Path) -> None:
         header = items[0]
         provider_blocks = []
         for item in items:
+            details = item.geometry_details
             provider_blocks.append(
                 f"""
                 <div class="provider-card">
                   <h3>{item.provider}</h3>
                   <video controls preload="metadata" src="{os.path.relpath(item.video_path, output_path.parent)}"></video>
-                  <div class="metric">geometry_proxy: <strong>{item.geometry_score:.4f}</strong></div>
+                  <div class="score-grid">
+                    <div class="metric"><span>代理总分 ↑</span><strong>{item.geometry_score:.4f}</strong></div>
+                    <div class="metric"><span>代理总误差 ↓</span><strong>{details.get('proxy_error_total', 0.0):.4f}</strong></div>
+                    <div class="metric"><span>尺度误差 ↓</span><strong>{details.get('scale_error', 0.0):.4f}</strong></div>
+                    <div class="metric"><span>刚性误差 ↓</span><strong>{details.get('rigidity_error', 0.0):.4f}</strong></div>
+                    <div class="metric"><span>VP 误差 ↓</span><strong>{details.get('vp_error', 0.0):.4f}</strong></div>
+                  </div>
                   <pre>{json.dumps(item.geometry_details, ensure_ascii=False, indent=2)}</pre>
                 </div>
                 """
@@ -272,7 +286,7 @@ def _render_html(results: list[EvalResult], output_path: Path) -> None:
         )
 
     html = f"""<!doctype html>
-<html lang="en">
+  <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -306,7 +320,17 @@ def _render_html(results: list[EvalResult], output_path: Path) -> None:
     }}
     .sub {{
       color: var(--muted);
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }}
+    .note {{
       margin-bottom: 24px;
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.5);
+      color: #453d33;
+      line-height: 1.65;
     }}
     .case-card {{
       border: 1px solid var(--line);
@@ -369,6 +393,18 @@ def _render_html(results: list[EvalResult], output_path: Path) -> None:
       margin: 10px 0 8px;
       font-size: 15px;
     }}
+    .score-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 14px;
+      margin: 12px 0 8px;
+    }}
+    .metric span {{
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }}
     strong {{
       color: var(--accent);
     }}
@@ -385,7 +421,13 @@ def _render_html(results: list[EvalResult], output_path: Path) -> None:
 <body>
   <div class="page">
     <h1>PDI Proxy Eval</h1>
-    <div class="sub">Wan native TI2V vs VACE native TI2V-firstframe on selected PDI-style cases. Scores are local geometry-proxy scores, not official PDI-Bench outputs.</div>
+    <div class="sub">这里展示的是本地代理几何评分，不是官方 PDI-Bench 分数。代理总分由三个误差项直接单调映射得到，因此如果同一个视频的尺度误差、刚性误差、VP 误差都更低，代理总分一定更高。</div>
+    <div class="note">
+      `尺度误差`：检查目标像素高度和深度是否满足 pinhole 关系，重点惩罚突然变大/变小。<br/>
+      `刚性误差`：检查目标内部 CoTracker 点对距离是否稳定，重点惩罚“呼吸感”和局部拉伸。<br/>
+      `VP 误差`：检查前景运动方向和背景透视消失点是否一致，重点惩罚 3D 轨迹折返和透视不合。<br/>
+      `代理总误差` 为三项误差的加权和，`代理总分 = exp(-代理总误差)`，所以 `↓` 越低越好，`↑` 越高越好。
+    </div>
     {''.join(cards)}
   </div>
 </body>
@@ -418,7 +460,18 @@ def run_eval(
     generated_root = ensure_dir(run_dir / "generated")
     report_root = ensure_dir(run_dir / "report")
 
-    scorer = GeometryProxyScorer(GeometryConfig())
+    scorer = GeometryProxyScorer(
+        GeometryConfig(
+            backend="sam_depth",
+            device=device,
+            pdi_repo_root=DEFAULT_PDI_ROOT,
+            sam_ckpt=DEFAULT_SAM_CKPT,
+            sam_cfg=DEFAULT_SAM_CFG,
+            tracker_ckpt=DEFAULT_TRACKER_CKPT,
+            depth_anything_repo_root=DEFAULT_DEPTH_ANYTHING_ROOT,
+            depth_anything_ckpt=DEFAULT_DEPTH_ANYTHING_CKPT,
+        )
+    )
     results: list[EvalResult] = []
 
     prepared_cases: list[tuple[int, PDICase, Path, Path]] = []
@@ -428,6 +481,7 @@ def run_eval(
         geometry_score, geometry_details = scorer.score_from_anchor_image(
             anchor_image_path=first_frame_path,
             candidate_video_path=gt_video_path,
+            target_object=case.target_object,
         )
         results.append(
             EvalResult(
@@ -449,28 +503,36 @@ def run_eval(
         ("vace", VaceTI2VRunner, vace_root, 1),
     ]
     for provider_name, runner_cls, model_root, seed_offset in provider_specs:
-        runner = runner_cls(model_root, device=device)
+        needs_generation = any(
+            not (generated_root / case.case_id / provider_name / f"{provider_name}.mp4").is_file()
+            for _, case, _, _ in prepared_cases
+        )
+        runner = runner_cls(model_root, device=device) if needs_generation else None
         try:
             for case_index, case, gt_video_path, first_frame_path in prepared_cases:
                 output_path = generated_root / case.case_id / provider_name / f"{provider_name}.mp4"
                 ensure_dir(output_path.parent)
-                runner.generate(
-                    first_frame_path=first_frame_path,
-                    prompt=case.prompt,
-                    output_path=output_path,
-                    seed=seed + case_index * 10 + seed_offset,
-                    negative_prompt=negative_prompt,
-                    width=width,
-                    height=height,
-                    num_frames=num_frames,
-                    fps=fps,
-                    num_inference_steps=num_inference_steps,
-                    cfg_scale=cfg_scale,
-                    quality=quality,
-                )
+                if not output_path.is_file():
+                    if runner is None:
+                        raise FileNotFoundError(f"Missing generated video for {provider_name}: {output_path}")
+                    runner.generate(
+                        first_frame_path=first_frame_path,
+                        prompt=case.prompt,
+                        output_path=output_path,
+                        seed=seed + case_index * 10 + seed_offset,
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        num_frames=num_frames,
+                        fps=fps,
+                        num_inference_steps=num_inference_steps,
+                        cfg_scale=cfg_scale,
+                        quality=quality,
+                    )
                 geometry_score, geometry_details = scorer.score_from_anchor_image(
                     anchor_image_path=first_frame_path,
                     candidate_video_path=output_path,
+                    target_object=case.target_object,
                 )
                 results.append(
                     EvalResult(
@@ -486,7 +548,8 @@ def run_eval(
                     )
                 )
         finally:
-            del runner
+            if runner is not None:
+                del runner
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 

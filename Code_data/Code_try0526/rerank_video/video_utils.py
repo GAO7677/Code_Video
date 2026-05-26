@@ -45,11 +45,26 @@ def to_jsonable(value: Any) -> Any:
 
 
 def load_video_frames(path: Path) -> list[np.ndarray]:
-    reader = imageio.get_reader(str(path))
     try:
-        return [np.asarray(frame, dtype=np.uint8) for frame in reader]
-    finally:
-        reader.close()
+        reader = imageio.get_reader(str(path))
+        try:
+            return [np.asarray(frame, dtype=np.uint8) for frame in reader]
+        finally:
+            reader.close()
+    except Exception:
+        cap = cv2.VideoCapture(str(path))
+        frames: list[np.ndarray] = []
+        try:
+            while True:
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        finally:
+            cap.release()
+        if frames:
+            return frames
+        raise
 
 
 def save_video_frames(path: Path, frames: list[np.ndarray], fps: int, quality: int = 5) -> None:

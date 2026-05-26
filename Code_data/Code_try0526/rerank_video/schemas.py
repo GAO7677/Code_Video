@@ -45,9 +45,18 @@ class LatentMotionConfig:
 @dataclass
 class GeometryConfig:
     mode: str = "proxy"
+    backend: str = "legacy_motion"
+    device: str = "cuda"
     max_frames: int = 49
     diff_threshold: float = 18.0
     min_component_area: int = 192
+    min_mask_pixels: int = 64
+    pdi_repo_root: Path | None = None
+    sam_ckpt: Path | None = None
+    sam_cfg: Path | None = None
+    tracker_ckpt: Path | None = None
+    depth_anything_repo_root: Path | None = None
+    depth_anything_ckpt: Path | None = None
 
 
 @dataclass
@@ -166,9 +175,18 @@ def load_run_config(payload: dict[str, Any]) -> RunConfig:
             ),
             geometry=GeometryConfig(
                 mode=str(geometry_cfg.get("mode", "proxy")),
+                backend=str(geometry_cfg.get("backend", "legacy_motion")),
+                device=str(geometry_cfg.get("device", "cuda")),
                 max_frames=int(geometry_cfg.get("max_frames", 49)),
                 diff_threshold=float(geometry_cfg.get("diff_threshold", 18.0)),
                 min_component_area=int(geometry_cfg.get("min_component_area", 192)),
+                min_mask_pixels=int(geometry_cfg.get("min_mask_pixels", 64)),
+                pdi_repo_root=_path_or_none(geometry_cfg.get("pdi_repo_root")),
+                sam_ckpt=_path_or_none(geometry_cfg.get("sam_ckpt")),
+                sam_cfg=_path_or_none(geometry_cfg.get("sam_cfg")),
+                tracker_ckpt=_path_or_none(geometry_cfg.get("tracker_ckpt")),
+                depth_anything_repo_root=_path_or_none(geometry_cfg.get("depth_anything_repo_root")),
+                depth_anything_ckpt=_path_or_none(geometry_cfg.get("depth_anything_ckpt")),
             ),
             jepa=JEPAScoreConfig(
                 backend=str(jepa_cfg.get("backend", "vjepa2")),
@@ -183,4 +201,3 @@ def load_run_config(payload: dict[str, Any]) -> RunConfig:
             ),
         ),
     )
-

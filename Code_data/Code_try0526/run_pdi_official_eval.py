@@ -229,6 +229,10 @@ def provider_card(run_root: Path, row: dict[str, Any], proxy_row: dict[str, Any]
     proxy_score = proxy_row.get("geometry_score") if proxy_row else None
     proxy_details = proxy_row.get("geometry_details", {}) if proxy_row else {}
     tracks = proxy_details.get("track_count")
+    proxy_scale_error = proxy_details.get("scale_error")
+    proxy_rigidity_error = proxy_details.get("rigidity_error")
+    proxy_vp_error = proxy_details.get("vp_error")
+    proxy_error_total = proxy_details.get("proxy_error_total")
     return f"""
       <article class="provider-card">
         <div class="provider-head">
@@ -236,38 +240,67 @@ def provider_card(run_root: Path, row: dict[str, Any], proxy_row: dict[str, Any]
           <div class="grade-badge grade-{html.escape(str(row.get('grade', 'na')).lower())}">{html.escape(str(row.get('grade', '-')))}</div>
         </div>
         <video controls preload="metadata" src="{html.escape(relpath_from_report(run_root, row['staged_video_path']))}"></video>
-        <div class="score-grid">
-          <div class="metric">
-            <span class="label">Official PDI ↓</span>
-            <strong>{score_text(row.get('pdi_score'))}</strong>
-          </div>
-          <div class="metric">
-            <span class="label">Proxy Score ↑</span>
-            <strong>{score_text(proxy_score)}</strong>
-          </div>
-          <div class="metric">
-            <span class="label">Scale ε ↓</span>
-            <strong>{score_text(row.get('scale_component'))}</strong>
-          </div>
-          <div class="metric">
-            <span class="label">Rigidity ε ↓</span>
-            <strong>{score_text(row.get('epsilon_rigidity'))}</strong>
-          </div>
+        <div class="metric-panels">
+          <section class="metric-panel official-panel">
+            <div class="panel-title">官方</div>
+            <div class="score-grid">
+              <div class="metric">
+                <span class="label">PDI 分数 ↓</span>
+                <strong>{score_text(row.get('pdi_score'))}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">尺度误差 ε ↓</span>
+                <strong>{score_text(row.get('scale_component'))}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">刚性误差 ε ↓</span>
+                <strong>{score_text(row.get('epsilon_rigidity'))}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">VP 误差 ε ↓</span>
+                <strong>{score_text(row.get('vp_component'))}</strong>
+              </div>
+            </div>
+          </section>
+          <section class="metric-panel custom-panel">
+            <div class="panel-title">自定义</div>
+            <div class="score-grid">
+              <div class="metric">
+                <span class="label">代理分数 ↑</span>
+                <strong>{score_text(proxy_score)}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">代理总误差 ↓</span>
+                <strong>{score_text(proxy_error_total)}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">尺度误差 ↓</span>
+                <strong>{score_text(proxy_scale_error)}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">刚性误差 ↓</span>
+                <strong>{score_text(proxy_rigidity_error)}</strong>
+              </div>
+              <div class="metric">
+                <span class="label">VP 误差 ↓</span>
+                <strong>{score_text(proxy_vp_error)}</strong>
+              </div>
+            </div>
+          </section>
         </div>
         <div class="mini-meta">
-          <span>VP ε ↓: {score_text(row.get('vp_component'))}</span>
-          <span>Tracks: {tracks if tracks is not None else '-'}</span>
+          <span>轨迹点数: {tracks if tracks is not None else '-'}</span>
         </div>
         <div class="thumb-grid">
-          {thumb_html(run_root, row.get('mask_png'), 'mask')}
-          {thumb_html(run_root, row.get('curves_png'), 'error curves')}
-          {thumb_html(run_root, row.get('volume_png'), 'volume')}
+          {thumb_html(run_root, row.get('mask_png'), '分割掩码')}
+          {thumb_html(run_root, row.get('curves_png'), '误差曲线')}
+          {thumb_html(run_root, row.get('volume_png'), '体积曲线')}
         </div>
         <div class="links">
-          {link_html(run_root, row.get('report_path'), 'report')}
-          {link_html(run_root, row.get('curves_png'), 'curves')}
-          {link_html(run_root, row.get('volume_png'), 'volume')}
-          {link_html(run_root, row.get('mask_png'), 'mask')}
+          {link_html(run_root, row.get('report_path'), '文字报告')}
+          {link_html(run_root, row.get('curves_png'), '误差曲线')}
+          {link_html(run_root, row.get('volume_png'), '体积曲线')}
+          {link_html(run_root, row.get('mask_png'), '分割掩码')}
         </div>
       </article>
     """
@@ -325,15 +358,15 @@ def generate_html(
                   <div class="eyebrow">{html.escape(meta.get('category', case_id))}</div>
                   <h2>{html.escape(case_id)}</h2>
                   <div class="input-block">
-                    <div><span class="input-label">Target</span> {html.escape(str(meta.get('target_object', '-')))}</div>
-                    <div><span class="input-label">Prompt</span> {html.escape(str(meta.get('prompt', '-')))}</div>
+                    <div><span class="input-label">目标</span> {html.escape(str(meta.get('target_object', '-')))}</div>
+                    <div><span class="input-label">提示词</span> {html.escape(str(meta.get('prompt', '-')))}</div>
                   </div>
                 </div>
                 <div class="reference-panel">
-                  <div class="reference-title">Input Reference</div>
+                  <div class="reference-title">输入参考</div>
                   {reference_image(run_root, first_frame)}
                   <div class="reference-links">
-                    {link_html(run_root, gt_video, 'gt-video')}
+                    {link_html(run_root, gt_video, 'GT 视频')}
                   </div>
                 </div>
               </div>
@@ -345,11 +378,11 @@ def generate_html(
         )
 
     html_text = f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PDI Official Eval</title>
+  <title>PDI 官方评测</title>
   <style>
     :root {{
       --bg: #f3efe7;
@@ -398,6 +431,28 @@ def generate_html(
       border-radius: 999px;
       background: rgba(255,255,255,0.6);
       font-size: 13px;
+    }}
+    .explain-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .explain-card {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255,255,255,0.72);
+    }}
+    .explain-card h3 {{
+      margin: 0 0 10px;
+      font-size: 17px;
+    }}
+    .explain-card p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
     }}
     .case-card {{
       border: 1px solid var(--line);
@@ -515,6 +570,30 @@ def generate_html(
       gap: 10px;
       margin-bottom: 10px;
     }}
+    .metric-panels {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 10px;
+    }}
+    .metric-panel {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+    }}
+    .official-panel {{
+      background: rgba(248, 245, 237, 0.92);
+    }}
+    .custom-panel {{
+      background: rgba(252, 248, 241, 0.92);
+    }}
+    .panel-title {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
     .metric {{
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -568,23 +647,61 @@ def generate_html(
     @media (max-width: 1100px) {{
       .provider-grid {{ grid-template-columns: 1fr; }}
       .case-header {{ grid-template-columns: 1fr; }}
+      .explain-grid {{ grid-template-columns: 1fr; }}
+      .metric-panels {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
 <body>
   <div class="page">
-    <h1>PDI Official Eval</h1>
+    <h1>PDI 官方评测</h1>
     <p class="sub">
-      Local viewer: <code>http://127.0.0.1:{port}/report/index.html</code><br />
-      Official PDI and epsilon-style components use <strong>↓ lower better</strong>. Proxy score uses <strong>↑ higher better</strong>.
+      本地页面地址：<code>http://127.0.0.1:{port}/report/index.html</code><br />
+      官方 PDI 以及各个 epsilon 误差项都遵循 <strong>↓ 越低越好</strong>；我们自己的代理分数遵循 <strong>↑ 越高越好</strong>。
     </p>
     <div class="legend">
-      <span>Grouped by case</span>
-      <span>Same-case GT / Wan / VACE side by side</span>
-      <span>Prompt, target object, first frame, video, mask, curves on homepage</span>
-      <span>Official PDI ↓ lower better</span>
-      <span>Proxy Score ↑ higher better</span>
+      <span>按 case 分组展示</span>
+      <span>同一 case 的 GT / Wan / VACE 并排对比</span>
+      <span>首页直接展示提示词、目标、首帧、视频、掩码和曲线</span>
+      <span>官方 PDI ↓ 越低越好</span>
+      <span>代理分数 ↑ 越高越好</span>
     </div>
+    <section class="explain-grid">
+      <article class="explain-card">
+        <h3>1. 官方 PDI ↓ 是什么</h3>
+        <p>
+          官方 PDI 是 PDI-Bench 给出的物理几何一致性分数，用来检查目标物体在时间维度上是否保持合理的透视、尺度和结构。
+          它会综合目标物体的尺度变化是否和深度变化一致、运动轨迹是否合理、结构是否保持刚性、以及前景运动是否和背景透视一致。
+          这个分数是误差型指标，所以 <strong>越低越好</strong>：越接近 0，说明视频越符合物理和几何直觉；分数越大，说明几何失真越严重。
+        </p>
+      </article>
+      <article class="explain-card">
+        <h3>2. 代理分数 ↑ 是怎么来的</h3>
+        <p>
+          代理分数是我们自己实现的轻量几何评分，不直接依赖完整的官方 3D 重建流程。
+          它主要利用 SAM2 分割、CoTracker 点轨迹和单目深度 proxy 来衡量三件事：尺度一致性、刚性稳定性、以及前景运动和背景透视的一致性。
+          现在它先计算三个 <strong>误差项</strong>，再做加权求和得到 <strong>代理总误差 ↓</strong>，最后用 <code>exp(-代理总误差)</code> 映射成 <strong>代理分数 ↑</strong>。
+          这样如果同一个视频的三个代理误差都更低，代理分数一定更高，不会再出现方向混乱。
+        </p>
+      </article>
+      <article class="explain-card">
+        <h3>3. 几个子指标分别表示什么</h3>
+        <p>
+          <strong>尺度误差 Scale ε</strong>：看物体在图像里变大变小，是否和它的深度前后变化相匹配。<br />
+          <strong>刚性误差 Rigidity ε</strong>：看物体内部结构是否稳定，是否出现“呼吸感”、拉伸、局部形变。<br />
+          <strong>消失点误差 VP ε</strong>：看前景物体的运动方向，是否和背景场景的透视关系一致。<br />
+          这些都是误差项，因此统一是 <strong>越低越好</strong>。
+        </p>
+      </article>
+      <article class="explain-card">
+        <h3>4. 等级 A / B / C / F 怎么理解</h3>
+        <p>
+          这是官方 PDI 分数对应的粗粒度解释。<strong>A</strong> 表示物理和几何上都比较紧，整体可信；<strong>B</strong> 表示有轻微抖动或小问题；
+          <strong>C</strong> 表示已经能看到明显失真；<strong>F</strong> 表示几何一致性已经明显崩坏。
+          实际比较时，最好优先在 <strong>同一个 case 内部</strong> 比较不同模型，因为不同 case 的运动难度本来就不一样。
+        </p>
+      </article>
+    </section>
     {''.join(sections)}
   </div>
 </body>
