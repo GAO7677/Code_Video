@@ -327,6 +327,60 @@ def link_html(run_root: Path, path: str | None, label: str) -> str:
     return f"<a href=\"{rel}\">{safe_label}</a>"
 
 
+def metrics_table(rows: list[dict[str, Any]], proxy_index: dict[tuple[str, str], dict[str, Any]]) -> str:
+    header = """
+      <div class="table-wrap">
+        <table class="metric-table">
+          <thead>
+            <tr>
+              <th rowspan="2">方法</th>
+              <th rowspan="2">等级</th>
+              <th colspan="4">官方</th>
+              <th colspan="5">自定义</th>
+            </tr>
+            <tr>
+              <th>PDI ↓</th>
+              <th>尺度 ε ↓</th>
+              <th>刚性 ε ↓</th>
+              <th>VP ε ↓</th>
+              <th>代理分数 ↑</th>
+              <th>总误差 ↓</th>
+              <th>尺度误差 ↓</th>
+              <th>刚性误差 ↓</th>
+              <th>VP 误差 ↓</th>
+            </tr>
+          </thead>
+          <tbody>
+    """
+    body_rows: list[str] = []
+    for row in rows:
+        proxy_row = proxy_index.get((row["case_id"], row["provider"]))
+        proxy_details = proxy_row.get("geometry_details", {}) if proxy_row else {}
+        body_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(row["provider"]).upper())}</td>
+              <td>{html.escape(str(row.get("grade", "-")))}</td>
+              <td>{score_text(row.get("pdi_score"))}</td>
+              <td>{score_text(row.get("scale_component"))}</td>
+              <td>{score_text(row.get("epsilon_rigidity"))}</td>
+              <td>{score_text(row.get("vp_component"))}</td>
+              <td>{score_text(proxy_row.get("geometry_score") if proxy_row else None)}</td>
+              <td>{score_text(proxy_details.get("proxy_error_total"))}</td>
+              <td>{score_text(proxy_details.get("scale_error"))}</td>
+              <td>{score_text(proxy_details.get("rigidity_error"))}</td>
+              <td>{score_text(proxy_details.get("vp_error"))}</td>
+            </tr>
+            """
+        )
+    footer = """
+          </tbody>
+        </table>
+      </div>
+    """
+    return header + "".join(body_rows) + footer
+
+
 def generate_html(
     results: list[dict[str, Any]],
     run_root: Path,
@@ -350,6 +404,7 @@ def generate_html(
         cards = []
         for row in rows:
             cards.append(provider_card(run_root, row, proxy_index.get((case_id, row["provider"]))))
+        table_html = metrics_table(rows, proxy_index)
         sections.append(
             f"""
             <section class="case-card">
@@ -370,6 +425,7 @@ def generate_html(
                   </div>
                 </div>
               </div>
+              {table_html}
               <div class="provider-grid">
                 {''.join(cards)}
               </div>
@@ -526,6 +582,50 @@ def generate_html(
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 18px;
+    }}
+    .table-wrap {{
+      overflow-x: auto;
+      margin-bottom: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.8);
+    }}
+    .metric-table {{
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+    }}
+    .metric-table th,
+    .metric-table td {{
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: center;
+      font-size: 13px;
+      white-space: nowrap;
+    }}
+    .metric-table thead th {{
+      background: rgba(245, 238, 227, 0.95);
+      color: #4d4438;
+      font-weight: 700;
+    }}
+    .metric-table thead tr:first-child th {{
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }}
+    .metric-table tbody tr:nth-child(odd) {{
+      background: rgba(255, 251, 245, 0.82);
+    }}
+    .metric-table tbody tr:nth-child(even) {{
+      background: rgba(250, 246, 238, 0.62);
+    }}
+    .metric-table tbody tr:hover {{
+      background: rgba(239, 230, 214, 0.72);
+    }}
+    .metric-table th:first-child,
+    .metric-table td:first-child {{
+      text-align: left;
+      font-weight: 700;
     }}
     .provider-card {{
       border: 1px solid var(--line);
