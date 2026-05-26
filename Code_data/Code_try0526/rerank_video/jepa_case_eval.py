@@ -187,6 +187,52 @@ def _write_video_cv2(path: Path, frames: list[np.ndarray], fps: int) -> None:
         writer.release()
 
 
+def _save_context_montage(path: Path, frames: list[np.ndarray]) -> Path:
+    if not frames:
+        raise ValueError(f"No frames for context montage: {path}")
+    ensure_dir(path.parent)
+    thumb_h = 120
+    gap = 6
+    thumbs: list[np.ndarray] = []
+    labels = [f"{idx}" for idx in range(len(frames))]
+    for frame, label in zip(frames, labels):
+        h, w = frame.shape[:2]
+        scale = thumb_h / max(h, 1)
+        thumb_w = max(1, int(round(w * scale)))
+        thumb = cv2.resize(frame, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+        thumb_bgr = cv2.cvtColor(thumb, cv2.COLOR_RGB2BGR)
+        cv2.putText(
+            thumb_bgr,
+            f"f{label}",
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            thumb_bgr,
+            f"f{label}",
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (38, 28, 220),
+            1,
+            cv2.LINE_AA,
+        )
+        thumbs.append(thumb_bgr)
+    total_w = sum(item.shape[1] for item in thumbs) + gap * max(len(thumbs) - 1, 0)
+    canvas = np.full((thumb_h, total_w, 3), 246, dtype=np.uint8)
+    cursor = 0
+    for thumb in thumbs:
+        canvas[:, cursor : cursor + thumb.shape[1]] = thumb
+        cursor += thumb.shape[1] + gap
+    if not cv2.imwrite(str(path), canvas):
+        raise RuntimeError(f"Failed to save context montage: {path}")
+    return path
+
+
 def _stage_context_and_future_clips(
     *,
     case_id: str,
@@ -210,16 +256,20 @@ def _stage_context_and_future_clips(
 
     case_root = ensure_dir(clip_root / case_id)
     context_clip_path = case_root / "context_gt_prefix.mp4"
+    context_montage_path = case_root / "context_gt_prefix_montage.png"
     future_clip_path = case_root / f"{provider}_future.mp4"
     fps = detect_video_fps(candidate_video_path, fallback=16)
     if not context_clip_path.is_file():
         _write_video_cv2(context_clip_path, context_clip_frames, fps=fps)
+    if not context_montage_path.is_file():
+        _save_context_montage(context_montage_path, context_clip_frames)
     _write_video_cv2(future_clip_path, future_clip_frames, fps=fps)
     return context_clip_path, future_clip_path, {
         "context_mode": "gt_prefix_video",
         "context_source": "gt_prefix",
         "context_prefix_frames": int(context_frames),
         "future_trim_start_frame": int(context_frames),
+        "context_montage_path": str(context_montage_path),
     }
 
 
@@ -237,7 +287,7 @@ def run_eval(
     gt_root = ensure_dir(tmp_root / "gt_videos")
     ref_root = ensure_dir(run_dir / "reference")
     report_root = ensure_dir(run_dir / "report")
-    clip_root = ensure_dir(tmp_root / "jepa_case_eval_clips")
+    clip_root = ensure_dir(run_dir / "context_clips")
 
     scorer = JEPAPredictiveScorer(
         JEPAScoreConfig(

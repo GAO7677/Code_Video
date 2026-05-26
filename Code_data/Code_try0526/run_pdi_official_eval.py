@@ -205,6 +205,24 @@ def relpath_from_report(run_root: Path, target: str | None) -> str:
     return os.path.relpath(target, run_root / "report")
 
 
+def stage_report_asset(run_root: Path, target: str | None) -> str:
+    if not target:
+        return ""
+    src = Path(target)
+    if not src.is_file():
+        return ""
+    parent_name = src.parent.name or "asset"
+    dst = run_root / "report_assets" / parent_name / src.name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+    return os.path.relpath(dst, run_root / "report")
+
+
 def build_case_meta(proxy_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     meta: dict[str, dict[str, Any]] = {}
     for case in proxy_payload.get("cases", []):
@@ -323,6 +341,7 @@ def provider_card(
           <span>轨迹点数: {tracks if tracks is not None else '-'}</span>
           <span>JEPA context: {html.escape(str(jepa_details.get('context_mode', '-')))}</span>
         </div>
+        {context_preview_html(run_root, jepa_details)}
         <div class="thumb-grid">
           {thumb_html(run_root, row.get('mask_png'), '分割掩码')}
           {thumb_html(run_root, row.get('curves_png'), '误差曲线')}
@@ -348,6 +367,25 @@ def thumb_html(run_root: Path, path: str | None, label: str) -> str:
         <img src="{rel}" alt="{safe_label}" />
         <span>{safe_label}</span>
       </a>
+    """
+
+
+def context_preview_html(run_root: Path, jepa_details: dict[str, Any]) -> str:
+    context_montage_path = jepa_details.get("context_montage_path")
+    if not context_montage_path:
+        return ""
+    rel_path = stage_report_asset(run_root, context_montage_path)
+    if not rel_path:
+        return ""
+    rel = html.escape(rel_path)
+    prefix_frames = jepa_details.get("context_prefix_frames", "-")
+    return f"""
+      <div class="context-strip">
+        <div class="context-strip-title">JEPA Context 帧（前 {html.escape(str(prefix_frames))} 帧）</div>
+        <a class="context-strip-link" href="{rel}">
+          <img src="{rel}" alt="JEPA context frames" />
+        </a>
+      </div>
     """
 
 
@@ -773,6 +811,32 @@ def generate_html(
       color: var(--muted);
       font-size: 13px;
       margin-bottom: 12px;
+    }}
+    .context-strip {{
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(250, 246, 238, 0.75);
+    }}
+    .context-strip-title {{
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }}
+    .context-strip-link {{
+      display: block;
+      text-decoration: none;
+      color: inherit;
+    }}
+    .context-strip img {{
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #f0ece4;
     }}
     .thumb-grid {{
       display: grid;
