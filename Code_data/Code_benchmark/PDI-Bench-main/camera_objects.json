@@ -1,0 +1,40 @@
+{
+  "Biological_Motion": [
+    "large eagle",
+    "dolphin",
+    "large octopus",
+    "snake",
+    "peacock"
+  ],
+  "Curved_Motion": [
+    "silver compact SUV",
+    "sports car",
+    "city bus",
+    "small delivery robot",
+    "green tractor"
+  ],
+  "Dynamic_Tracking": [
+    "red sports car",
+    "autonomous suitcase",
+    "large chrome sphere",
+    "large truck carrying a blue container",
+    "metal logistics crate",
+    "large metal ball"
+  ],
+  "Longitudinal_Convergence": [
+    "red vintage car",
+    "high-speed train",
+    "yellow school bus",
+    "silver metallic sphere",
+    "heavy cargo truck",
+    "large shipping container"
+  ],
+  "Partial_Occlusion": [
+    "car",
+    "train",
+    "bus",
+    "vintage car",
+    "boat",
+    "robot crate"
+  ]
+}

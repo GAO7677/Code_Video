@@ -1,0 +1,97 @@
+# --- PDI-Eval ignore rules ---
+
+# 1. Model weights
+checkpoints/
+*.pth
+*.pt
+
+data/
+!src/pdi_eval/data/
+# 2. Data and results
+output/
+debug_results/
+new_results/
+humanstudy/
+visualization/
+*.mp4
+*.jpg
+*.png
+*.npz
+*.npy
+!figures/**
+*.csv
+videos/
+test_lietorch.py
+test.py
+testing.py
+cotracker_check.py
+sam2_check.py
+debug_results/
+debug_sam2.py
+sam2_check.py
+camera.md
+paper.tex
+allpdi/
+pdi_recalculate.py
+plot_pdi.py
+1.py
+analyze_model_evaluation.py
+app.py
+show/
+# 3. System and environment
+__pycache__/
+.vscode/
+.cursor/
+.DS_Store
+.venv/
+env/data/1s.mp4
+data/1s.mp4
+
+
+# 4. Explicit root-file ignore (keep a small whitelist)
+# keep
+!/.gitignore
+!/README.md
+!/camera_objects.json
+!/camera_prompts.json
+
+# ignore other root files
+/1.py
+/analyze_model_evaluation.py
+/app.py
+/camera.md
+/car_strip4.png
+/check_sam2_npz.py
+/cotracker_check.py
+/cotracker_viz.mp4
+/debug_sam2.py
+/how to start.md
+/improve_list.md
+/improvement_done.md
+/model_eval_analysis_20260420_045447.csv
+/model_eval_analysis_20260420_045447.md
+/my_eval_report_no_fail.csv
+/my_eval_report_no_fail.md
+/my_eval_report_with_fail_mean_gt_anchor.csv
+/my_eval_report_with_fail_mean_gt_anchor.md
+/my_final_report.csv
+/my_final_report.md
+/paper.tex
+/pdi_recalculate.py
+/plot_pdi.py
+/prompt.md
+/prompts.txt
+/README111.md
+/reconstruction_audit.py
+/render_pointcloud_views.py
+/run_cotracker_object_only.py
+/sam2_check.py
+/sam2_preview.mp4
+/Self Forcing.pdf
+/test_lietorch.py
+/test.py
+/video_grid.jpg
+/video_grid.py
+/viz_cotracker.py
+/evaluation/evaluation.py
+/evaluation/evaluation1.py
