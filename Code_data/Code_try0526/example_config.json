@@ -1,0 +1,90 @@
+{
+  "run_name": "demo_try0526",
+  "output_root": "/data/gaoya/AAA_test_video/Output_try0526",
+  "tmp_root": "/data/gaoya/AAA_test_video/Output_try0526/tmp",
+  "input": {
+    "prompt": "A ball rolls down a ramp and collides with a block. The motion is smooth and physically plausible.",
+    "context_video_path": "/path/to/context.mp4"
+  },
+  "generators": [
+    {
+      "key": "wan_ctx",
+      "type": "wan",
+      "enabled": true,
+      "device": "cuda",
+      "model_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+      "num_candidates": 4,
+      "base_seed": 42,
+      "height": 384,
+      "width": 672,
+      "fps": 16,
+      "num_frames": 49,
+      "context_frames": 8,
+      "num_inference_steps": 50,
+      "cfg_scale": 5.0,
+      "negative_prompt": "",
+      "conditioning_mode": "context_aware"
+    },
+    {
+      "key": "vace_ctx08",
+      "type": "vace",
+      "enabled": false,
+      "device": "cuda",
+      "model_root": "/data/gaoya/ckpt/Wan-AI-Wan2.1-VACE-1.3B",
+      "num_candidates": 4,
+      "base_seed": 142,
+      "height": 544,
+      "width": 720,
+      "fps": 16,
+      "num_frames": 49,
+      "context_frames": 8,
+      "num_inference_steps": 50,
+      "cfg_scale": 5.0,
+      "negative_prompt": ""
+    },
+    {
+      "key": "cog_i2v",
+      "type": "cogvideox",
+      "enabled": false,
+      "device": "cuda",
+      "model_root": "/path/to/local/cogvideox-i2v",
+      "num_candidates": 4,
+      "base_seed": 242,
+      "height": 480,
+      "width": 720,
+      "fps": 16,
+      "num_frames": 49,
+      "num_inference_steps": 50,
+      "cfg_scale": 6.0,
+      "negative_prompt": ""
+    }
+  ],
+  "scoring": {
+    "weights": {
+      "latent_motion": 0.34,
+      "geometry": 0.33,
+      "jepa": 0.33
+    },
+    "latent_motion": {
+      "device": "cuda",
+      "vae_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+      "max_frames": 49
+    },
+    "geometry": {
+      "mode": "proxy",
+      "max_frames": 49
+    },
+    "jepa": {
+      "backend": "vjepa2",
+      "device": "cuda",
+      "max_frames": 48,
+      "context_frames": 16,
+      "future_frames": 16,
+      "crop_size": 384,
+      "vjepa_checkpoint": "/data/gaoya/ckpt/Sylvest-vjepa2-vit-g/vitg-384.pt",
+      "vjepa_repo_root": "/home/gaoya/Code_Video/vjepa2-main",
+      "videomae_model_id": ""
+    }
+  }
+}
+
