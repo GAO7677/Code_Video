@@ -78,27 +78,30 @@ def evaluate_single(method: str, task: str, clip_name: str, json_path: Path) -> 
     report_dir = output_dir / clip_name
     report_path = report_dir / f"{clip_name}_pdi_report.txt"
     cache_dir = PDI_ROOT / "output" / "benchmark_cache" / method / task / clip_name
-    config_path = build_temp_config(cache_dir)
+    if report_path.is_file():
+        metrics = parse_report(report_path)
+    else:
+        config_path = build_temp_config(cache_dir)
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    env["PDI_FLORENCE_MODEL_ID"] = str(FLORENCE_MODEL)
-    env["CUDA_VISIBLE_DEVICES"] = env.get("CUDA_VISIBLE_DEVICES", "5")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        env["PDI_FLORENCE_MODEL_ID"] = str(FLORENCE_MODEL)
+        env["CUDA_VISIBLE_DEVICES"] = env.get("CUDA_VISIBLE_DEVICES", "5")
 
-    cmd = [
-        "python",
-        "evaluation/main.py",
-        "--input",
-        str(video_path),
-        "--config",
-        str(config_path),
-        "--output_dir",
-        str(output_dir),
-        "--text",
-        str(payload["prompt"]),
-    ]
-    subprocess.run(cmd, cwd=PDI_ROOT, env=env, check=True)
-    metrics = parse_report(report_path)
+        cmd = [
+            "python",
+            "evaluation/main.py",
+            "--input",
+            str(video_path),
+            "--config",
+            str(config_path),
+            "--output_dir",
+            str(output_dir),
+            "--text",
+            str(payload["prompt"]),
+        ]
+        subprocess.run(cmd, cwd=PDI_ROOT, env=env, check=True)
+        metrics = parse_report(report_path)
     payload["raw_report_path"] = str(report_path)
     payload["metrics"] = {
         **metrics,
