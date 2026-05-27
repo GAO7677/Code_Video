@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""球撞击木块物理仿真 — PyBullet 物理 + Pyrender PBR 渲染"""
+"""球撞击木块物理仿真 — PyBullet 渲染 + 纹理 + 单点光照"""
 
 from __future__ import annotations
 
-import os
-os.environ["PYOPENGL_PLATFORM"] = "egl"
-
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,20 +10,19 @@ import cv2
 import numpy as np
 import pybullet as p
 import pybullet_data
-import pyrender
-import trimesh
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 VIDEO_DIR = OUTPUT_DIR / "videos"
+TEX_DIR = OUTPUT_DIR / "textures"
 FPS = 60
 SIM_DURATION = 2.5
 SIM_STEPS = int(SIM_DURATION * 240)
 RECORD_EVERY = 4
 IMG_W, IMG_H = 1280, 720
 
-CAM_EYE = np.array([0.05, -2.2, 1.2])
-CAM_TARGET = np.array([0.05, 0.3, 0.45])
-CAM_UP = np.array([0, 0, 1])
+CAM_EYE = (0.05, -2.2, 1.2)
+CAM_TARGET = (0.05, 0.3, 0.45)
+CAM_UP = (0, 0, 1)
 
 
 @dataclass
@@ -40,184 +35,147 @@ class Scenario:
 
 
 SCENARIOS = [
-    Scenario("e03_mu05_m1",   "e=0.3  u=0.5  m=1.0kg  plastic",   0.3, 0.5, 1.0),
-    Scenario("e05_mu05_m1",   "e=0.5  u=0.5  m=1.0kg  medium",    0.5, 0.5, 1.0),
-    Scenario("e07_mu05_m1",   "e=0.7  u=0.5  m=1.0kg  bouncy",    0.7, 0.5, 1.0),
-    Scenario("e09_mu05_m1",   "e=0.9  u=0.5  m=1.0kg  superball", 0.9, 0.5, 1.0),
-    Scenario("e07_mu01_m1",   "e=0.7  u=0.1  m=1.0kg  low-fric",  0.7, 0.1, 1.0),
-    Scenario("e07_mu10_m1",   "e=0.7  u=1.0  m=1.0kg  high-fric", 0.7, 1.0, 1.0),
-    Scenario("e07_mu05_m01",  "e=0.7  u=0.5  m=0.1kg  light-ball",0.7, 0.5, 0.1),
-    Scenario("e07_mu05_m5",   "e=0.7  u=0.5  m=5.0kg  heavy-ball",0.7, 0.5, 5.0),
+    Scenario("e03_mu05_m1",   "e=0.3  u=0.5  m=1.0kg  塑性碰撞",    0.3, 0.5, 1.0),
+    Scenario("e05_mu05_m1",   "e=0.5  u=0.5  m=1.0kg  中等弹性",    0.5, 0.5, 1.0),
+    Scenario("e07_mu05_m1",   "e=0.7  u=0.5  m=1.0kg  高弹性",      0.7, 0.5, 1.0),
+    Scenario("e09_mu05_m1",   "e=0.9  u=0.5  m=1.0kg  超高弹性",    0.9, 0.5, 1.0),
+    Scenario("e07_mu01_m1",   "e=0.7  u=0.1  m=1.0kg  低摩擦打滑",  0.7, 0.1, 1.0),
+    Scenario("e07_mu10_m1",   "e=0.7  u=1.0  m=1.0kg  高摩擦咬合",  0.7, 1.0, 1.0),
+    Scenario("e07_mu05_m01",  "e=0.7  u=0.5  m=0.1kg  轻球弹飞",    0.7, 0.5, 0.1),
+    Scenario("e07_mu05_m5",   "e=0.7  u=0.5  m=5.0kg  重球推动",    0.7, 0.5, 5.0),
 ]
 
 
-# ── vertex color textures ─────────────────────────────────────────
+# ── textures ──────────────────────────────────────────────────────
 
-def _make_wood_color(n_verts: int) -> np.ndarray:
-    """Generate wood-like vertex colors for a mesh."""
-    np.random.seed(7)
-    base = np.array([0.52, 0.34, 0.20], dtype=np.float32)
-    colors = np.tile(base, (n_verts, 1))
-    colors += np.random.uniform(-0.06, 0.06, (n_verts, 3)).astype(np.float32)
-    return np.clip(colors, 0, 1)
-
-
-def _make_basketball_color(n_verts: int, vertices: np.ndarray) -> np.ndarray:
-    """Generate basketball-like vertex colors for a sphere."""
-    np.random.seed(42)
-    base = np.array([0.85, 0.42, 0.18], dtype=np.float32)
-    colors = np.tile(base, (n_verts, 1))
-    colors += np.random.uniform(-0.04, 0.04, (n_verts, 3)).astype(np.float32)
-    # Simulate black ribs at equator and two arcs
-    y = vertices[:, 2]  # Z is up in trimesh sphere
-    x = vertices[:, 0]
-    z = vertices[:, 1]
-    r2d = np.sqrt(x**2 + z**2)
-    # Equator band
-    near_equator = np.abs(y) < 0.03
-    colors[near_equator] = [0.06, 0.06, 0.08]
-    # Two arc bands
+def _make_basketball(size: int = 512) -> np.ndarray:
+    x = np.linspace(-1, 1, size); y = np.linspace(-1, 1, size)
+    xx, yy = np.meshgrid(x, y)
+    r = np.sqrt(xx**2 + yy**2)
+    orange = np.array([0.85, 0.42, 0.18])
+    light = np.array([0.92, 0.52, 0.26])
+    edge = np.clip(r, 0.3, 0.98)
+    base = orange + (light - orange) * (1 - edge).reshape(size, size, 1)
+    rib = np.zeros((size, size), np.float32)
+    rib[np.abs(yy) < 0.015] = 1
     for s in [-1, 1]:
-        arc_dist = np.abs(x - s * (0.28 + 0.12 * np.sin(y * np.pi * 1.3)) * r2d)
-        near_arc = (arc_dist < 0.02) & (r2d > 0.05)
-        colors[near_arc] = [0.06, 0.06, 0.08]
-    # Vertical band
-    near_vert = np.abs(x) < 0.02
-    colors[near_vert] = [0.06, 0.06, 0.08]
-    return np.clip(colors, 0, 1)
+        rib[np.abs(xx - s * (0.28 + 0.12 * np.sin(yy * np.pi * 1.3))) < 0.012] = 1
+    rib[np.abs(xx) < 0.012] = 1
+    rib = cv2.GaussianBlur(rib, (3, 3), 0.5)
+    np.random.seed(42)
+    grain = cv2.GaussianBlur(np.random.rand(size, size).astype(np.float32) * 0.06 - 0.03, (3, 3), 0.8)
+    base = np.clip(base + grain[..., None], 0, 1)
+    out = base * (1 - rib[..., None] * 0.85) + np.array([0.06, 0.06, 0.08]) * rib[..., None] * 0.85
+    out[r > 0.97] = [0, 0, 0]
+    return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
-def _make_concrete_color(n_verts: int) -> np.ndarray:
-    """Warm grey vertex colors for floor."""
-    np.random.seed(3)
-    base = np.array([0.62, 0.55, 0.48], dtype=np.float32)
-    colors = np.tile(base, (n_verts, 1))
-    colors += np.random.uniform(-0.03, 0.03, (n_verts, 3)).astype(np.float32)
-    return np.clip(colors, 0, 1)
+def _make_hardwood(size: int = 512) -> np.ndarray:
+    np.random.seed(7)
+    base = np.array([0.52, 0.33, 0.20])
+    plank_w = size // 7
+    tex = np.zeros((size, size, 3), dtype=np.float32)
+    for i in range(7):
+        x0, x1 = i * plank_w, (i + 1) * plank_w if i < 6 else size
+        tone = base + np.random.uniform(-0.05, 0.07, 3)
+        plank = np.tile(tone.reshape(1, 1, 3), (size, x1 - x0, 1))
+        yg = np.linspace(0, 6 * np.pi, size).reshape(-1, 1).astype(np.float32)
+        grain = (np.sin(yg * 1.7 + np.random.uniform(0, 3)) * 0.05
+                 + np.sin(yg * 3.5 + np.random.uniform(0, 3)) * 0.03
+                 + np.random.randn(size, x1 - x0).astype(np.float32) * 0.018)
+        grain = cv2.GaussianBlur(grain.astype(np.float32), (0, 3), 0.6)
+        plank = np.clip(plank + grain[..., None], 0, 1)
+        tex[:, x0:x1] = plank
+    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.012, 0, 1)
+    for i in range(1, 7):
+        sx = i * plank_w
+        tex[:, sx-2:sx+2] *= 0.50
+    return (tex * 255).astype(np.uint8)
 
 
-# ── Pyrender scene and renderer (reused across frames) ────────────
-
-def _look_at_pose(eye, target, up):
-    """Build a 4x4 camera-to-world pose from look-at parameters."""
-    eye = np.asarray(eye, dtype=np.float64)
-    target = np.asarray(target, dtype=np.float64)
-    up = np.asarray(up, dtype=np.float64)
-    z = eye - target
-    z /= np.linalg.norm(z)
-    x = np.cross(up, z)
-    x /= np.linalg.norm(x)
-    y = np.cross(z, x)
-    pose = np.eye(4, dtype=np.float64)
-    pose[:3, 0] = x
-    pose[:3, 1] = y
-    pose[:3, 2] = z
-    pose[:3, 3] = eye
-    return pose
+def _make_neutral_wall(size: int = 128) -> np.ndarray:
+    y = np.linspace(0.72, 0.62, size).reshape(-1, 1).astype(np.float32)
+    val = np.tile(y, (1, size))
+    tex = np.stack([val, val * 0.97, val * 0.92], axis=-1)
+    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.008, 0, 1)
+    return (tex * 255).astype(np.uint8)
 
 
-class SceneRenderer:
-    """Reusable Pyrender renderer with shadows."""
-
-    def __init__(self):
-        self.scene = pyrender.Scene(bg_color=[0.25, 0.28, 0.35], ambient_light=[0.15, 0.15, 0.18])
-
-        # ── floor ──
-        floor = trimesh.creation.box(extents=[5, 3, 0.04])
-        floor.visual.vertex_colors = _make_concrete_color(len(floor.vertices))
-        self.floor_mesh = pyrender.Mesh.from_trimesh(floor, smooth=False)
-        floor_node = self.scene.add(self.floor_mesh, pose=self._tr([0, 0.5, -0.04]))
-
-        # ── back wall ──
-        wall = trimesh.creation.box(extents=[5, 0.02, 2.0])
-        wall.visual.vertex_colors = np.tile([0.55, 0.58, 0.62], (len(wall.vertices), 1))
-        self.wall_mesh = pyrender.Mesh.from_trimesh(wall, smooth=False)
-        self.scene.add(self.wall_mesh, pose=self._tr([0, 2.5, 2.0]))
-
-        # ── side walls ──
-        sw = trimesh.creation.box(extents=[0.02, 3, 2.0])
-        sw.visual.vertex_colors = np.tile([0.50, 0.53, 0.57], (len(sw.vertices), 1))
-        self.sw_mesh = pyrender.Mesh.from_trimesh(sw, smooth=False)
-        self.scene.add(self.sw_mesh, pose=self._tr([-5, 0.5, 2.0]))
-        self.scene.add(self.sw_mesh, pose=self._tr([5, 0.5, 2.0]))
-
-        # ── key light (warm, casts shadows) ──
-        key_light = pyrender.SpotLight(
-            color=[1.0, 0.95, 0.85], intensity=18.0,
-            innerConeAngle=np.pi/6, outerConeAngle=np.pi/4,
-        )
-        light_pose = _look_at_pose([-2.5, -1.5, 3.5], [0, 0.3, 0.3], [0, 0, 1])
-        self.scene.add(key_light, pose=light_pose)
-
-        # ── fill light (cool, no shadow for performance) ──
-        # fill = pyrender.PointLight(color=[0.7, 0.8, 1.0], intensity=4.0)
-        # self.scene.add(fill, pose=self._tr([2.0, -1.2, 2.5]))
-
-        # ── camera ──
-        self.cam = pyrender.PerspectiveCamera(yfov=np.radians(55), aspectRatio=IMG_W/IMG_H)
-        cam_pose = _look_at_pose(CAM_EYE, CAM_TARGET, CAM_UP)
-        self.cam_node = self.scene.add(self.cam, pose=cam_pose)
-
-        # ── renderer ──
-        self.renderer = pyrender.OffscreenRenderer(IMG_W, IMG_H)
-
-        # Dynamic object slots
-        self.ball_node = None
-        self.block_node = None
-
-    @staticmethod
-    def _tr(pos):
-        return np.array([[1,0,0,pos[0]],[0,1,0,pos[1]],[0,0,1,pos[2]],[0,0,0,1]], dtype=np.float64)
-
-    def set_ball(self, pos, quat, radius=0.18):
-        if self.ball_node is not None:
-            self.scene.remove_node(self.ball_node)
-        sphere = trimesh.creation.icosphere(subdivisions=3, radius=radius)
-        sphere.visual.vertex_colors = _make_basketball_color(len(sphere.vertices), sphere.vertices)
-        mesh = pyrender.Mesh.from_trimesh(sphere, smooth=True)
-        pose = self._pose_from_pybullet(pos, quat)
-        self.ball_node = self.scene.add(mesh, pose=pose)
-
-    def set_block(self, pos, quat, half_ext=(0.25, 0.20, 0.30)):
-        if self.block_node is not None:
-            self.scene.remove_node(self.block_node)
-        box = trimesh.creation.box(extents=[2*half_ext[0], 2*half_ext[1], 2*half_ext[2]])
-        box.visual.vertex_colors = _make_wood_color(len(box.vertices))
-        mesh = pyrender.Mesh.from_trimesh(box, smooth=False)
-        pose = self._pose_from_pybullet(pos, quat)
-        self.block_node = self.scene.add(mesh, pose=pose)
-
-    @staticmethod
-    def _pose_from_pybullet(pos, quat):
-        """PyBullet quaternion (x,y,z,w) to 4x4 transform."""
-        from pybullet import getMatrixFromQuaternion
-        mat = np.array(getMatrixFromQuaternion(quat)).reshape(3, 3)
-        pose = np.eye(4, dtype=np.float64)
-        pose[:3, :3] = mat
-        pose[:3, 3] = pos
-        return pose
-
-    def render(self):
-        color, _ = self.renderer.render(self.scene)
-        return color
-
-    def cleanup(self):
-        self.renderer.delete()
+def load_textures() -> dict[str, int]:
+    TEX_DIR.mkdir(parents=True, exist_ok=True)
+    specs = {
+        "basketball": ("basketball.png", _make_basketball()),
+        "hardwood":   ("hardwood.png",   _make_hardwood()),
+        "neutral":    ("neutral.png",    _make_neutral_wall()),
+    }
+    uids = {}
+    for name, (fname, arr) in specs.items():
+        path = TEX_DIR / fname
+        cv2.imwrite(str(path), cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
+        uids[name] = p.loadTexture(str(path))
+    return uids
 
 
-# ── simulation ────────────────────────────────────────────────────
+# ── scene ──────────────────────────────────────────────────────────
 
-def run_scenario(sc: Scenario, output_mp4: Path) -> None:
+def _box(half_ext, pos, tex_uid, spec=(0.03, 0.03, 0.03)):
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_ext)
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half_ext,
+                              rgbaColor=[1, 1, 1, 1], specularColor=spec)
+    body = p.createMultiBody(0, col, vis, basePosition=pos)
+    p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
+    return body
+
+
+def build_static_scene(tex: dict[str, int]) -> list[int]:
+    bodies = []
+    bodies.append(_box([5, 3, 0.04], [0, 0.5, -0.04], tex["hardwood"], spec=[0.12, 0.10, 0.07]))
+    bodies.append(_box([5, 0.02, 2.0], [0, 2.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    bodies.append(_box([0.02, 3, 2.0], [-5, 0.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    bodies.append(_box([0.02, 3, 2.0], [5, 0.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    return bodies
+
+
+def add_light():
+    """Single warm light panel from upper-left."""
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35])
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35],
+                              rgbaColor=[1.0, 0.95, 0.85, 1.0],
+                              specularColor=[0.9, 0.85, 0.75])
+    p.createMultiBody(0, col, vis, basePosition=[-2.2, -1.5, 2.4])
+
+
+def create_ball(mass: float, radius: float, tex_uid: int, pos: tuple) -> int:
+    col = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
+    vis = p.createVisualShape(p.GEOM_SPHERE, radius=radius,
+                              rgbaColor=[1, 1, 1, 1], specularColor=[0.30, 0.25, 0.18])
+    body = p.createMultiBody(mass, col, vis, basePosition=pos)
+    p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
+    return body
+
+
+def create_block(mass: float, half_ext: tuple, tex_uid: int, pos: tuple) -> int:
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_ext)
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half_ext,
+                              rgbaColor=[1, 1, 1, 1], specularColor=[0.08, 0.06, 0.04])
+    body = p.createMultiBody(mass, col, vis, basePosition=pos)
+    p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
+    return body
+
+
+# ── sim ────────────────────────────────────────────────────────────
+
+def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
     p.setGravity(0, 0, -9.81)
-    p.setPhysicsEngineParameter(fixedTimeStep=1.0/240.0, numSolverIterations=100, numSubSteps=1)
+    p.setPhysicsEngineParameter(fixedTimeStep=1.0 / 240.0, numSolverIterations=100, numSubSteps=1)
+
+    static_bodies = build_static_scene(tex)
+    add_light()
 
     ball_r, ball_z = 0.18, 0.20
     block_h = (0.25, 0.20, 0.30)
-
-    col_b = p.createCollisionShape(p.GEOM_SPHERE, radius=ball_r)
-    ball_id = p.createMultiBody(sc.ball_mass, col_b, basePosition=(-1.0, 0.0, ball_z))
-    col_bk = p.createCollisionShape(p.GEOM_BOX, halfExtents=block_h)
-    block_id = p.createMultiBody(1.5, col_bk, basePosition=(0.3, 0.0, block_h[2]))
+    ball_id = create_ball(sc.ball_mass, ball_r, tex["basketball"], (-1.0, 0.0, ball_z))
+    block_id = create_block(1.5, block_h, tex["hardwood"], (0.3, 0.0, block_h[2]))
 
     p.changeDynamics(ball_id, -1, restitution=sc.restitution,
                      lateralFriction=sc.lateral_friction,
@@ -231,43 +189,44 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
     for _ in range(10):
         p.stepSimulation()
 
-    renderer = SceneRenderer()
-    frames = []
+    view_m = p.computeViewMatrix(CAM_EYE, CAM_TARGET, CAM_UP)
+    proj_m = p.computeProjectionMatrixFOV(fov=55, aspect=IMG_W / IMG_H, nearVal=0.05, farVal=30.0)
 
+    frames = []
     for step in range(SIM_STEPS):
         p.stepSimulation()
         if step % RECORD_EVERY != 0:
             continue
         elapsed = step / 240.0
-
-        ball_pos, ball_quat = p.getBasePositionAndOrientation(ball_id)
         ball_vel, _ = p.getBaseVelocity(ball_id)
-        block_pos, block_quat = p.getBasePositionAndOrientation(block_id)
         block_vel, _ = p.getBaseVelocity(block_id)
 
-        renderer.set_ball(ball_pos, ball_quat, ball_r)
-        renderer.set_block(block_pos, block_quat, block_h)
-        color = renderer.render()
+        _, _, rgba, _, _ = p.getCameraImage(
+            IMG_W, IMG_H, view_m, proj_m,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,
+            flags=p.ER_NO_SEGMENTATION_MASK,
+        )
+        frame = np.asarray(rgba[:, :, :3], dtype=np.uint8).copy()
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-        frame = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
         bs, bks = float(np.linalg.norm(ball_vel)), float(np.linalg.norm(block_vel))
         for i, line in enumerate([
             f"t = {elapsed:.2f}s",
             f"Ball |v| = {bs:.2f} m/s",
             f"Block |v| = {bks:.2f} m/s",
         ]):
-            y = 36 + i*34
-            cv2.putText(frame, line, (20,y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (10,10,10), 2, cv2.LINE_AA)
-            cv2.putText(frame, line, (20,y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (250,245,235), 1, cv2.LINE_AA)
+            y = 36 + i * 34
+            cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (10, 10, 10), 2, cv2.LINE_AA)
+            cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (250, 245, 235), 1, cv2.LINE_AA)
         label = sc.label.split("\n")[0]
         tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)[0][0]
-        cv2.putText(frame, label, (IMG_W-tw-20,36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (10,10,10), 2, cv2.LINE_AA)
-        cv2.putText(frame, label, (IMG_W-tw-20,36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (250,245,235), 1, cv2.LINE_AA)
+        cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (10, 10, 10), 2, cv2.LINE_AA)
+        cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (250, 245, 235), 1, cv2.LINE_AA)
+
         frames.append(frame)
 
-    renderer.cleanup()
-    p.removeBody(ball_id)
-    p.removeBody(block_id)
+    for body in [ball_id, block_id] + static_bodies:
+        p.removeBody(body)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(output_mp4), fourcc, FPS, (IMG_W, IMG_H))
@@ -281,13 +240,13 @@ def main():
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
     p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    p.loadURDF("plane.urdf")  # physics ground, loaded once
+    tex = load_textures()
 
-    print(f"Running {len(SCENARIOS)} scenarios with Pyrender...\n")
+    print(f"Running {len(SCENARIOS)} scenarios...\n")
     for i, sc in enumerate(SCENARIOS, 1):
         out = VIDEO_DIR / f"{sc.name}.mp4"
         print(f"[{i}/{len(SCENARIOS)}] {sc.label}")
-        run_scenario(sc, out)
+        run_scenario(sc, tex, out)
 
     p.disconnect()
     print(f"\nDone -> {VIDEO_DIR}")
