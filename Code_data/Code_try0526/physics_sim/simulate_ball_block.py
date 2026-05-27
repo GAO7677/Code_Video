@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""球撞击木块物理仿真 — 逼真纹理 + 光照"""
+"""球撞击木块物理仿真 — 篮球纹理 + 木地板 + 多光源 + 默认背景"""
 
 from __future__ import annotations
 
@@ -21,9 +21,8 @@ SIM_STEPS = int(SIM_DURATION * 240)
 RECORD_EVERY = 4
 IMG_W, IMG_H = 1280, 720
 
-# Closer camera for tighter framing
-CAM_EYE = (0.05, -3.5, 1.8)
-CAM_TARGET = (0.05, 0, 0.55)
+CAM_EYE = (0.05, -2.2, 1.2)
+CAM_TARGET = (0.05, 0.3, 0.45)
 CAM_UP = (0, 0, 1)
 
 
@@ -37,182 +36,219 @@ class Scenario:
 
 
 SCENARIOS = [
-    Scenario("e03_mu05_m1",   "恢复系数 e=0.3  摩擦 μ=0.5  球质量 1.0kg\n塑性碰撞 — 球几乎不反弹",           0.3, 0.5, 1.0),
-    Scenario("e05_mu05_m1",   "恢复系数 e=0.5  摩擦 μ=0.5  球质量 1.0kg\n中等弹性 — 部分动能损失",             0.5, 0.5, 1.0),
-    Scenario("e07_mu05_m1",   "恢复系数 e=0.7  摩擦 μ=0.5  球质量 1.0kg\n高弹性 — 球明显反弹",                 0.7, 0.5, 1.0),
-    Scenario("e09_mu05_m1",   "恢复系数 e=0.9  摩擦 μ=0.5  球质量 1.0kg\n超高弹性 — 球快速弹飞",               0.9, 0.5, 1.0),
-    Scenario("e07_mu01_m1",   "恢复系数 e=0.7  摩擦 μ=0.1  球质量 1.0kg\n低摩擦 — 碰撞打滑，切向力小",         0.7, 0.1, 1.0),
-    Scenario("e07_mu10_m1",   "恢复系数 e=0.7  摩擦 μ=1.0  球质量 1.0kg\n高摩擦 — 咬合，木块被带转",           0.7, 1.0, 1.0),
-    Scenario("e07_mu05_m01",  "恢复系数 e=0.7  摩擦 μ=0.5  球质量 0.1kg\n轻球 — 自己弹飞，木块几乎不动",       0.7, 0.5, 0.1),
-    Scenario("e07_mu05_m5",   "恢复系数 e=0.7  摩擦 μ=0.5  球质量 5.0kg\n重球 — 推动木块滑行",                 0.7, 0.5, 5.0),
+    Scenario("e03_mu05_m1",   "e=0.3  u=0.5  m=1.0kg  塑性碰撞",    0.3, 0.5, 1.0),
+    Scenario("e05_mu05_m1",   "e=0.5  u=0.5  m=1.0kg  中等弹性",    0.5, 0.5, 1.0),
+    Scenario("e07_mu05_m1",   "e=0.7  u=0.5  m=1.0kg  高弹性",      0.7, 0.5, 1.0),
+    Scenario("e09_mu05_m1",   "e=0.9  u=0.5  m=1.0kg  超高弹性",    0.9, 0.5, 1.0),
+    Scenario("e07_mu01_m1",   "e=0.7  u=0.1  m=1.0kg  低摩擦打滑",  0.7, 0.1, 1.0),
+    Scenario("e07_mu10_m1",   "e=0.7  u=1.0  m=1.0kg  高摩擦咬合",  0.7, 1.0, 1.0),
+    Scenario("e07_mu05_m01",  "e=0.7  u=0.5  m=0.1kg  轻球弹飞",    0.7, 0.5, 0.1),
+    Scenario("e07_mu05_m5",   "e=0.7  u=0.5  m=5.0kg  重球推动",    0.7, 0.5, 5.0),
 ]
 
 
-# ── procedural textures ────────────────────────────────────────────
+# ── textures ──────────────────────────────────────────────────────
 
-def _make_wood_texture(size: int = 512) -> np.ndarray:
-    """Generate wood-grain texture using sinusoidal rings + noise."""
-    x = np.linspace(-1, 1, size)
-    y = np.linspace(-1, 1, size)
+def _make_basketball(size: int = 512) -> np.ndarray:
+    x = np.linspace(-1, 1, size); y = np.linspace(-1, 1, size)
     xx, yy = np.meshgrid(x, y)
-    r = np.sqrt(xx ** 2 + yy ** 2)
-    # Rings
-    grain = np.sin(r * 28 + 0.3 * np.sin(xx * 15) * np.cos(yy * 18))
-    grain = (grain + 1.0) * 0.5
-    # Fine noise
-    noise = np.random.randn(size, size).astype(np.float32) * 0.04
-    grain = np.clip(grain + noise, 0, 1)
-    # Color: warm wood tones
-    base = np.array([0.55, 0.32, 0.17], dtype=np.float32)  # dark wood
-    light = np.array([0.78, 0.52, 0.28], dtype=np.float32)  # light grain
-    tex = base + (light - base) * grain[..., None]
-    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.03, 0, 1)
+    r = np.sqrt(xx**2 + yy**2)
+    orange = np.array([0.85, 0.42, 0.18])
+    light = np.array([0.92, 0.52, 0.26])
+    edge = np.clip(r, 0.3, 0.98)
+    base = orange + (light - orange) * (1 - edge).reshape(size, size, 1)
+    # Rib lines
+    rib = np.zeros((size, size), np.float32)
+    rib[np.abs(yy) < 0.015] = 1
+    for s in [-1, 1]:
+        rib[np.abs(xx - s * (0.28 + 0.12 * np.sin(yy * np.pi * 1.3))) < 0.012] = 1
+    rib[np.abs(xx) < 0.012] = 1
+    rib = cv2.GaussianBlur(rib, (3, 3), 0.5)
+    # Grain
+    np.random.seed(42)
+    grain = cv2.GaussianBlur(np.random.rand(size, size).astype(np.float32) * 0.06 - 0.03, (3, 3), 0.8)
+    base = np.clip(base + grain[..., None], 0, 1)
+    out = base * (1 - rib[..., None] * 0.85) + np.array([0.06, 0.06, 0.08]) * rib[..., None] * 0.85
+    out[r > 0.97] = [0, 0, 0]
+    return (np.clip(out, 0, 1) * 255).astype(np.uint8)
+
+
+def _make_hardwood(size: int = 512) -> np.ndarray:
+    np.random.seed(7)
+    base = np.array([0.52, 0.33, 0.20])
+    plank_w = size // 7
+    tex = np.zeros((size, size, 3), dtype=np.float32)
+    for i in range(7):
+        x0, x1 = i * plank_w, (i + 1) * plank_w if i < 6 else size
+        tone = base + np.random.uniform(-0.05, 0.07, 3)
+        plank = np.tile(tone.reshape(1, 1, 3), (size, x1 - x0, 1))
+        yg = np.linspace(0, 6 * np.pi, size).reshape(-1, 1).astype(np.float32)
+        grain = (np.sin(yg * 1.7 + np.random.uniform(0, 3)) * 0.05
+                 + np.sin(yg * 3.5 + np.random.uniform(0, 3)) * 0.03
+                 + np.random.randn(size, x1 - x0).astype(np.float32) * 0.018)
+        grain = cv2.GaussianBlur(grain.astype(np.float32), (0, 3), 0.6)
+        plank = np.clip(plank + grain[..., None], 0, 1)
+        tex[:, x0:x1] = plank
+    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.012, 0, 1)
+    for i in range(1, 7):
+        sx = i * plank_w
+        tex[:, sx-2:sx+2] *= 0.50
     return (tex * 255).astype(np.uint8)
 
 
-def _make_metal_texture(size: int = 512) -> np.ndarray:
-    """Brushed metal texture."""
-    x = np.linspace(-1, 1, size)
-    y = np.linspace(-1, 1, size)
-    xx, yy = np.meshgrid(x, y)
-    # Brushed lines
-    brush = np.sin(yy * 200 + np.sin(xx * 40) * 3.0) * 0.5 + 0.5
-    brush = brush * 0.15 + 0.55  # mid-grey base
-    # Noise
-    noise = np.random.randn(size, size).astype(np.float32) * 0.03
-    val = np.clip(brush + noise, 0, 1)
-    # Slight bluish tint
-    tex = np.stack([val, val, val * 1.05], axis=-1)
-    tex = np.clip(tex, 0, 1)
+def _make_neutral_wall(size: int = 128) -> np.ndarray:
+    """Soft warm-grey wall with subtle gradient (studio look)."""
+    y = np.linspace(0.72, 0.62, size).reshape(-1, 1).astype(np.float32)
+    val = np.tile(y, (1, size))
+    tex = np.stack([val, val * 0.97, val * 0.92], axis=-1)
+    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.008, 0, 1)
     return (tex * 255).astype(np.uint8)
 
 
-def _make_concrete_texture(size: int = 512) -> np.ndarray:
-    """Concrete/stone ground texture."""
-    noise1 = np.random.randn(size // 8, size // 8).astype(np.float32)
-    noise1 = cv2.resize(noise1, (size, size), interpolation=cv2.INTER_CUBIC)
-    noise2 = np.random.randn(size // 2, size // 2).astype(np.float32)
-    noise2 = cv2.resize(noise2, (size, size), interpolation=cv2.INTER_CUBIC)
-    val = noise1 * 0.12 + noise2 * 0.05 + 0.55
-    val = np.clip(val, 0, 1)
-    # Warm grey
-    tex = np.stack([val, val * 0.96, val * 0.90], axis=-1)
-    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.02, 0, 1)
-    return (tex * 255).astype(np.uint8)
-
-
-def _make_sky_texture(size: int = 512) -> np.ndarray:
-    """Soft gradient for background / sky."""
-    y = np.linspace(0, 1, size).reshape(-1, 1).astype(np.float32)
-    # Top: warm sky, bottom: slightly darker
-    top = np.array([0.45, 0.62, 0.78])
-    bot = np.array([0.65, 0.60, 0.52])
-    tex = bot + (top - bot) * y
-    tex = np.clip(tex + np.random.randn(size, 1, 3).astype(np.float32) * 0.01, 0, 1)
-    tex_big = np.tile(tex, (1, size, 1))
-    return (tex_big * 255).astype(np.uint8)
-
-
-def generate_textures() -> dict[str, int]:
-    """Generate procedural textures, save to disk, return name→uid map."""
+def load_textures() -> dict[str, int]:
     TEX_DIR.mkdir(parents=True, exist_ok=True)
-    textures = {
-        "wood": ("wood.png", _make_wood_texture()),
-        "metal": ("metal.png", _make_metal_texture()),
-        "concrete": ("concrete.png", _make_concrete_texture()),
-        "sky": ("sky.png", _make_sky_texture()),
+    specs = {
+        "basketball": ("basketball.png", _make_basketball()),
+        "hardwood":   ("hardwood.png",   _make_hardwood()),
+        "neutral":    ("neutral.png",    _make_neutral_wall()),
     }
-    uids: dict[str, int] = {}
-    for name, (fname, arr) in textures.items():
+    uids = {}
+    for name, (fname, arr) in specs.items():
         path = TEX_DIR / fname
         cv2.imwrite(str(path), cv2.cvtColor(arr, cv2.COLOR_RGB2BGR))
-        uid = p.loadTexture(str(path))
-        uids[name] = uid
+        uids[name] = p.loadTexture(str(path))
     return uids
 
 
-# ── scene construction ─────────────────────────────────────────────
+# ── scene ──────────────────────────────────────────────────────────
 
-def _box_body(half_ext, pos, tex_uid: int, specular=(0.05, 0.05, 0.05)):
-    """Helper: create a textured box body."""
+def _box(half_ext, pos, tex_uid, spec=(0.03, 0.03, 0.03)):
     col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_ext)
     vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half_ext,
-                              rgbaColor=[1, 1, 1, 1], specularColor=specular)
+                              rgbaColor=[1, 1, 1, 1], specularColor=spec)
     body = p.createMultiBody(0, col, vis, basePosition=pos)
     p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
     return body
 
 
-def build_scene(tex: dict[str, int]):
-    """Build the full 3D scene with textured objects and walls."""
-    _box_body([8, 4, 0.05], [0, 0, -0.05], tex["concrete"], specular=[0.04, 0.04, 0.04])   # ground
-    _box_body([8, 0.02, 2.5], [0, -3.5, 2.5], tex["sky"], specular=[0.01, 0.01, 0.01])     # back wall
-    _box_body([0.02, 4, 2.5], [-8, 0, 2.5], tex["sky"], specular=[0.01, 0.01, 0.01])        # left wall
-    _box_body([0.02, 4, 2.5], [8, 0, 2.5], tex["sky"], specular=[0.01, 0.01, 0.01])         # right wall
+def build_static_scene(tex: dict[str, int]) -> list[int]:
+    bodies = []
+    # Hardwood floor
+    bodies.append(_box([5, 3, 0.04], [0, 0.5, -0.04], tex["hardwood"], spec=[0.12, 0.10, 0.07]))
+    # Neutral back wall
+    bodies.append(_box([5, 0.02, 2.0], [0, 2.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    # Neutral side walls
+    bodies.append(_box([0.02, 3, 2.0], [-5, 0.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    bodies.append(_box([0.02, 3, 2.0], [5, 0.5, 2.0], tex["neutral"], spec=[0.01, 0.01, 0.01]))
+    return bodies
 
 
-def create_ball(mass: float, radius: float, tex_uid: int, start_pos: tuple) -> int:
+def add_lights():
+    """Single side light panel — warm key light from upper-left."""
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35])
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35],
+                                rgbaColor=[1.0, 0.95, 0.85, 1.0],
+                                specularColor=[0.9, 0.85, 0.75])
+    p.createMultiBody(0, col, vis, basePosition=[-2.2, -1.5, 2.4])
+
+
+def create_ball(mass: float, radius: float, tex_uid: int, pos: tuple) -> int:
     col = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
     vis = p.createVisualShape(p.GEOM_SPHERE, radius=radius,
-                              rgbaColor=[1, 1, 1, 1], specularColor=[0.55, 0.55, 0.6])
-    body = p.createMultiBody(mass, col, vis, basePosition=start_pos)
+                              rgbaColor=[1, 1, 1, 1], specularColor=[0.30, 0.25, 0.18])
+    body = p.createMultiBody(mass, col, vis, basePosition=pos)
     p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
     return body
 
 
-def create_block(mass: float, half_ext: tuple, tex_uid: int, start_pos: tuple) -> int:
+def create_block(mass: float, half_ext: tuple, tex_uid: int, pos: tuple) -> int:
     col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_ext)
     vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half_ext,
-                              rgbaColor=[1, 1, 1, 1], specularColor=[0.06, 0.04, 0.03])
-    body = p.createMultiBody(mass, col, vis, basePosition=start_pos)
+                              rgbaColor=[1, 1, 1, 1], specularColor=[0.08, 0.06, 0.04])
+    body = p.createMultiBody(mass, col, vis, basePosition=pos)
     p.changeVisualShape(body, -1, textureUniqueId=tex_uid)
     return body
 
 
-# ── main simulation ────────────────────────────────────────────────
+# ── sim ────────────────────────────────────────────────────────────
 
-def run_scenario(scenario: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
-    p.connect(p.DIRECT)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
     p.setGravity(0, 0, -9.81)
-    p.setPhysicsEngineParameter(
-        fixedTimeStep=1.0 / 240.0,
-        numSolverIterations=100,
-        numSubSteps=1,
-    )
+    p.setPhysicsEngineParameter(fixedTimeStep=1.0 / 240.0, numSolverIterations=100, numSubSteps=1)
 
-    build_scene(tex)
+    static_bodies = build_static_scene(tex)
+    add_lights()
 
-    ball_radius = 0.18
-    ball_start = (-1.6, 0.0, ball_radius + 0.02)
-    block_half = (0.25, 0.20, 0.30)
-    block_start = (0.3, 0.0, block_half[2])
+    ball_r, ball_z = 0.18, 0.20
+    block_h = (0.25, 0.20, 0.30)
+    ball_id = create_ball(sc.ball_mass, ball_r, tex["basketball"],
+                          (-1.0, 0.0, ball_z))
+    block_id = create_block(1.5, block_h, tex["hardwood"],
+                            (0.3, 0.0, block_h[2]))
 
-    ball_id = create_ball(scenario.ball_mass, ball_radius, tex["metal"], ball_start)
-    block_id = create_block(1.5, block_half, tex["wood"], block_start)
-
-    p.changeDynamics(ball_id, -1, restitution=scenario.restitution,
-                     lateralFriction=scenario.lateral_friction,
+    p.changeDynamics(ball_id, -1, restitution=sc.restitution,
+                     lateralFriction=sc.lateral_friction,
                      spinningFriction=0.003, linearDamping=0.03, angularDamping=0.03)
-    p.changeDynamics(block_id, -1, restitution=scenario.restitution,
-                     lateralFriction=scenario.lateral_friction,
+    p.changeDynamics(block_id, -1, restitution=sc.restitution,
+                     lateralFriction=sc.lateral_friction,
                      spinningFriction=0.008, linearDamping=0.06, angularDamping=0.06,
                      activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING)
-
     p.resetBaseVelocity(ball_id, linearVelocity=[3.5, 0.0, 1.8])
 
     for _ in range(10):
         p.stepSimulation()
 
     view_m = p.computeViewMatrix(CAM_EYE, CAM_TARGET, CAM_UP)
-    proj_m = p.computeProjectionMatrixFOV(fov=50, aspect=IMG_W / IMG_H, nearVal=0.05, farVal=30.0)
+    proj_m = p.computeProjectionMatrixFOV(fov=55, aspect=IMG_W / IMG_H, nearVal=0.05, farVal=30.0)
+
+    # Precompute view+projection for world-to-screen
+    V = np.array(view_m).reshape(4, 4).T
+    P = np.array(proj_m).reshape(4, 4).T
+    VP = P @ V
+
+    def _world_to_screen(wx: float, wy: float, wz: float) -> tuple[int, int] | None:
+        p4 = VP @ np.array([wx, wy, wz, 1.0])
+        if abs(p4[3]) < 1e-8:
+            return None
+        ndc_x = p4[0] / p4[3]
+        ndc_y = p4[1] / p4[3]
+        if ndc_x < -1 or ndc_x > 1 or ndc_y < -1 or ndc_y > 1:
+            return None
+        sx = int((ndc_x + 1) * 0.5 * IMG_W)
+        sy = int((1 - ndc_y) * 0.5 * IMG_H)
+        return sx, sy
+
+    def _draw_soft_shadow(frame: np.ndarray, cx: int, cy: int, height: float, radius: float):
+        """Blob shadow: dark ellipse, size/opacity based on height above ground."""
+        if height < 0.02:
+            return
+        # Shadow radius: bigger when object is higher, softer
+        shadow_r = int(radius * 260 * (1.0 + height * 0.6))
+        shadow_r = max(8, min(shadow_r, 200))
+        opacity = max(0.30, 0.65 - height * 0.10)
+        x0 = max(0, cx - shadow_r); x1 = min(IMG_W, cx + shadow_r)
+        y0 = max(0, cy - shadow_r // 2); y1 = min(IMG_H, cy + shadow_r // 2)
+        if x1 <= x0 or y1 <= y0:
+            return
+        patch = frame[y0:y1, x0:x1].astype(np.float32)
+        ys, xs = np.ogrid[:patch.shape[0], :patch.shape[1]]
+        dist_x = (xs - (cx - x0)) / max(shadow_r, 1)
+        dist_y = (ys - (cy - y0)) / max(shadow_r // 2, 1)
+        falloff = np.clip(1.0 - np.sqrt(dist_x**2 + dist_y**2), 0, 1)
+        # Apply stronger blur for softer edges
+        ksize = max(5, shadow_r // 3)
+        if ksize % 2 == 0:
+            ksize += 1
+        falloff = cv2.GaussianBlur(falloff.astype(np.float32), (ksize, ksize), shadow_r / 4.0) if falloff.size > 0 else falloff
+        darken = 1.0 - falloff * opacity
+        patch[:] = np.clip(patch * darken[..., None], 0, 255)
+        frame[y0:y1, x0:x1] = patch.astype(np.uint8)
 
     frames = []
     for step in range(SIM_STEPS):
         p.stepSimulation()
         if step % RECORD_EVERY != 0:
             continue
-
         elapsed = step / 240.0
         ball_pos, _ = p.getBasePositionAndOrientation(ball_id)
         ball_vel, _ = p.getBaseVelocity(ball_id)
@@ -227,58 +263,56 @@ def run_scenario(scenario: Scenario, tex: dict[str, int], output_mp4: Path) -> N
         frame = np.asarray(rgba[:, :, :3], dtype=np.uint8).copy()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-        # ── HUD ──
-        ball_speed = float(np.linalg.norm(ball_vel))
-        block_speed = float(np.linalg.norm(block_vel))
-        lines_info = [
-            f"t = {elapsed:.2f}s",
-            f"Ball  |v| = {ball_speed:.2f} m/s",
-            f"Block |v| = {block_speed:.2f} m/s",
-        ]
-        for i, line in enumerate(lines_info):
-            y = 42 + i * 36
-            cv2.putText(frame, line, (24, y), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (20, 20, 20), 2, cv2.LINE_AA)
-            cv2.putText(frame, line, (24, y), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (245, 240, 230), 1, cv2.LINE_AA)
+        # Blob shadows on ground
+        ball_ground = _world_to_screen(ball_pos[0], ball_pos[1], 0.03)
+        if ball_ground:
+            _draw_soft_shadow(frame, ball_ground[0], ball_ground[1], ball_pos[2], 0.18)
+        block_ground = _world_to_screen(block_pos[0], block_pos[1], 0.03)
+        if block_ground:
+            _draw_soft_shadow(frame, block_ground[0], block_ground[1], block_pos[2], 0.25)
 
-        param_lines = scenario.label.split("\n")
-        for i, line in enumerate(param_lines):
-            y = 40 + i * 26
-            text_w = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
-            x = IMG_W - text_w - 24
-            cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (20, 20, 20), 2, cv2.LINE_AA)
-            cv2.putText(frame, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (245, 240, 230), 1, cv2.LINE_AA)
+        bs, bks = float(np.linalg.norm(ball_vel)), float(np.linalg.norm(block_vel))
+        for i, line in enumerate([
+            f"t = {elapsed:.2f}s",
+            f"Ball |v| = {bs:.2f} m/s",
+            f"Block |v| = {bks:.2f} m/s",
+        ]):
+            y = 36 + i * 34
+            cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (10, 10, 10), 2, cv2.LINE_AA)
+            cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (250, 245, 235), 1, cv2.LINE_AA)
+        label = sc.label.split("\n")[0]
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)[0][0]
+        cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (10, 10, 10), 2, cv2.LINE_AA)
+        cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (250, 245, 235), 1, cv2.LINE_AA)
 
         frames.append(frame)
 
-    p.disconnect()
+    # Cleanup all bodies
+    for body in [ball_id, block_id] + static_bodies:
+        p.removeBody(body)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(output_mp4), fourcc, FPS, (IMG_W, IMG_H))
     for f in frames:
         out.write(f)
     out.release()
-    print(f"  → {output_mp4.name} ({len(frames)} frames)")
+    print(f"  -> {output_mp4.name} ({len(frames)} frames)")
 
 
 def main():
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Generate textures once (need a temp connection for loadTexture)
     p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    tex = generate_textures()
-    p.disconnect()
+    tex = load_textures()
 
-    print(f"Running {len(SCENARIOS)} scenarios...")
-    print(f"Gravity: 9.81 m/s^2  |  Initial velocity: (3.5, 0, 1.8) m/s")
-    print(f"FPS: {FPS}  |  Duration: {SIM_DURATION}s\n")
-
+    print(f"Running {len(SCENARIOS)} scenarios...\n")
     for i, sc in enumerate(SCENARIOS, 1):
         out = VIDEO_DIR / f"{sc.name}.mp4"
-        print(f"[{i}/{len(SCENARIOS)}] {sc.label.split(chr(10))[0]}")
+        print(f"[{i}/{len(SCENARIOS)}] {sc.label}")
         run_scenario(sc, tex, out)
 
-    print(f"\nDone → {VIDEO_DIR}")
+    p.disconnect()
+    print(f"\nDone -> {VIDEO_DIR}")
 
 
 if __name__ == "__main__":
