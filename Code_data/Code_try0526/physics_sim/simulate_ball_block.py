@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""球撞击木块物理仿真 — PyBullet 渲染 + 纹理 + 单点光照"""
+"""球撞击木块物理仿真 — PyBullet 渲染 + 纹理 + 后处理软阴影"""
 
 from __future__ import annotations
 
@@ -136,15 +136,6 @@ def build_static_scene(tex: dict[str, int]) -> list[int]:
     return bodies
 
 
-def add_light():
-    """Single warm light panel from upper-left."""
-    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35])
-    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[0.5, 0.02, 0.35],
-                              rgbaColor=[1.0, 0.95, 0.85, 1.0],
-                              specularColor=[0.9, 0.85, 0.75])
-    p.createMultiBody(0, col, vis, basePosition=[-2.2, -1.5, 2.4])
-
-
 def create_ball(mass: float, radius: float, tex_uid: int, pos: tuple) -> int:
     col = p.createCollisionShape(p.GEOM_SPHERE, radius=radius)
     vis = p.createVisualShape(p.GEOM_SPHERE, radius=radius,
@@ -163,6 +154,53 @@ def create_block(mass: float, half_ext: tuple, tex_uid: int, pos: tuple) -> int:
     return body
 
 
+# ── shadow rendering ──────────────────────────────────────────────
+
+def _world_to_screen(VP, wx, wy, wz):
+    p4 = VP @ np.array([wx, wy, wz, 1.0])
+    if abs(p4[3]) < 1e-8:
+        return None
+    ndc_x, ndc_y = p4[0] / p4[3], p4[1] / p4[3]
+    if ndc_x < -1 or ndc_x > 1 or ndc_y < -1 or ndc_y > 1:
+        return None
+    return int((ndc_x + 1) * 0.5 * IMG_W), int((1 - ndc_y) * 0.5 * IMG_H)
+
+
+def _draw_shadow(frame, cx, cy, height, radius):
+    """Draw a soft shadow ellipse under an object on the ground plane."""
+    if height < 0.02:
+        return
+    # Large, soft shadow ellipse
+    sr = int(radius * 550 * (1.0 + height * 0.3))
+    sr = max(20, min(sr, 300))
+    half_h = max(10, sr * 2 // 5)
+    # Darker + larger when object is near ground
+    alpha = max(0.45, 0.75 - height * 0.20)
+
+    x0 = max(0, cx - sr); x1 = min(IMG_W, cx + sr)
+    y0 = max(0, cy - half_h); y1 = min(IMG_H, cy + half_h)
+    pw, ph = x1 - x0, y1 - y0
+    if pw < 6 or ph < 6:
+        return
+
+    # Radial falloff: 1 at center, 0 at edge
+    ys, xs = np.ogrid[:ph, :pw]
+    dx = (xs - (cx - x0)) / max(sr, 1)
+    dy = (ys - (cy - y0)) / max(half_h, 1)
+    mask = 1.0 - np.sqrt(dx**2 + dy**2)
+    mask = np.clip(mask, 0, 1) ** 1.5  # softer edge
+    # Heavy blur for soft shadow
+    k = min(41, sr // 3)
+    if k % 2 == 0: k += 1
+    mask = cv2.GaussianBlur(mask.astype(np.float32), (k, k), sr / 3.0)
+
+    # Apply shadow as multiplicative darkening
+    patch = frame[y0:y1, x0:x1].astype(np.float32)
+    factor = 1.0 - mask * alpha
+    patch[:] = np.clip(patch * factor[..., None], 0, 255)
+    frame[y0:y1, x0:x1] = patch.astype(np.uint8)
+
+
 # ── sim ────────────────────────────────────────────────────────────
 
 def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
@@ -170,7 +208,6 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
     p.setPhysicsEngineParameter(fixedTimeStep=1.0 / 240.0, numSolverIterations=100, numSubSteps=1)
 
     static_bodies = build_static_scene(tex)
-    add_light()
 
     ball_r, ball_z = 0.18, 0.20
     block_h = (0.25, 0.20, 0.30)
@@ -191,6 +228,9 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
 
     view_m = p.computeViewMatrix(CAM_EYE, CAM_TARGET, CAM_UP)
     proj_m = p.computeProjectionMatrixFOV(fov=55, aspect=IMG_W / IMG_H, nearVal=0.05, farVal=30.0)
+    V = np.array(view_m).reshape(4, 4).T
+    P = np.array(proj_m).reshape(4, 4).T
+    VP = P @ V
 
     frames = []
     for step in range(SIM_STEPS):
@@ -198,7 +238,9 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
         if step % RECORD_EVERY != 0:
             continue
         elapsed = step / 240.0
+        ball_pos, _ = p.getBasePositionAndOrientation(ball_id)
         ball_vel, _ = p.getBaseVelocity(ball_id)
+        block_pos, _ = p.getBasePositionAndOrientation(block_id)
         block_vel, _ = p.getBaseVelocity(block_id)
 
         _, _, rgba, _, _ = p.getCameraImage(
@@ -208,6 +250,14 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
         )
         frame = np.asarray(rgba[:, :, :3], dtype=np.uint8).copy()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+        # Draw soft shadows on ground
+        bg = _world_to_screen(VP, ball_pos[0], ball_pos[1], 0.03)
+        if bg:
+            _draw_shadow(frame, bg[0], bg[1], ball_pos[2], 0.18)
+        bkg = _world_to_screen(VP, block_pos[0], block_pos[1], 0.03)
+        if bkg:
+            _draw_shadow(frame, bkg[0], bkg[1], block_pos[2], 0.25)
 
         bs, bks = float(np.linalg.norm(ball_vel)), float(np.linalg.norm(block_vel))
         for i, line in enumerate([
