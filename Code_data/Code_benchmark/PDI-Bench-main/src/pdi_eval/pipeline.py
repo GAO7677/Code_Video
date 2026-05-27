@@ -24,12 +24,39 @@ class PDIEvaluationPipeline:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.cache = CacheManager(cache_dir=config.get("cache_dir", "output/cache/"))
+        self.cache_dir = config.get("cache_dir", "output/cache/")
         self.video_id = ""
         self.video_path = ""
         self.last_report = None
         self.last_res_tracks = None
         self.last_masks = None
         self.last_pointmaps = None
+        self.sam_wrapper: Optional[Sam2Wrapper] = None
+        self.track_wrapper: Optional[TrackWrapper] = None
+        self.mega_sam_wrapper: Optional[MegaSamWrapper] = None
+
+    def set_cache_dir(self, cache_dir: str) -> None:
+        self.cache_dir = cache_dir
+        self.config["cache_dir"] = cache_dir
+        self.cache = CacheManager(cache_dir=cache_dir)
+
+    def _get_sam_wrapper(self) -> Sam2Wrapper:
+        if self.sam_wrapper is None:
+            self.sam_wrapper = Sam2Wrapper(
+                checkpoint=self.config['sam_ckpt'],
+                config=self.config.get('sam_cfg'),
+            )
+        return self.sam_wrapper
+
+    def _get_track_wrapper(self) -> TrackWrapper:
+        if self.track_wrapper is None:
+            self.track_wrapper = TrackWrapper(checkpoint=self.config['tracker_ckpt'])
+        return self.track_wrapper
+
+    def _get_mega_sam_wrapper(self) -> MegaSamWrapper:
+        if self.mega_sam_wrapper is None:
+            self.mega_sam_wrapper = MegaSamWrapper(checkpoint=self.config.get('mega_sam_ckpt'))
+        return self.mega_sam_wrapper
 
     def run(self, video_path: str, click_points: Optional[list] = None, text_query: Optional[str] = None, box_prompt: Optional[list] = None, render_output_dir: Optional[str] = None) -> Dict[str, Any]:
         self.video_path = video_path
@@ -41,7 +68,7 @@ class PDIEvaluationPipeline:
             pdi_logger.info("Found SAM2 cache, skipping...")
             res_2d = self.cache.load_step(self.video_id, "sam2")
         else:
-            sam = Sam2Wrapper(checkpoint=self.config['sam_ckpt'], config=self.config.get('sam_cfg'))
+            sam = self._get_sam_wrapper()
             res_2d_raw = sam.infer(video_path, click_points=click_points, text_query=text_query, box_prompt=box_prompt)
             self.cache.save_step(self.video_id, "sam2", {
                 "masks": res_2d_raw.masks,
@@ -50,7 +77,7 @@ class PDIEvaluationPipeline:
                 "is_truncated": res_2d_raw.is_truncated
             })
             res_2d = self.cache.load_step(self.video_id, "sam2")
-            del res_2d_raw, sam
+            del res_2d_raw
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -59,7 +86,7 @@ class PDIEvaluationPipeline:
             pdi_logger.info("Found Co-Tracker cache, skipping...")
             res_tracks = self.cache.load_step(self.video_id, "cotracker")
         else:
-            tracker = TrackWrapper(checkpoint=self.config['tracker_ckpt'])
+            tracker = self._get_track_wrapper()
             res_tracks_raw = tracker.infer(video_path, initial_mask=res_2d['masks'][0])
             self.cache.save_step(self.video_id, "cotracker", {
                 "tracks": res_tracks_raw.tracks_2d,
@@ -68,7 +95,7 @@ class PDIEvaluationPipeline:
                 "bg_visibility": res_tracks_raw.metadata.get("bg_visibility", np.empty((0, 0))),
             })
             res_tracks = self.cache.load_step(self.video_id, "cotracker")
-            del res_tracks_raw, tracker
+            del res_tracks_raw
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -78,7 +105,7 @@ class PDIEvaluationPipeline:
             pdi_logger.info(f"Found {engine_type} cache, skipping...")
             res_3d = self.cache.load_step(self.video_id, engine_type)
         else:
-            perceptor = MegaSamWrapper(checkpoint=self.config.get('mega_sam_ckpt'))
+            perceptor = self._get_mega_sam_wrapper()
             res_3d_raw = perceptor.infer(video_path, masks=res_2d['masks'])
             
             self.cache.save_step(self.video_id, engine_type, {
@@ -88,7 +115,7 @@ class PDIEvaluationPipeline:
                 "pointmaps": res_3d_raw.pointmaps
             })
             res_3d = self.cache.load_step(self.video_id, engine_type)
-            del res_3d_raw, perceptor
+            del res_3d_raw
             gc.collect()
             torch.cuda.empty_cache()
 
