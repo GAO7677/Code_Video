@@ -104,7 +104,9 @@ class MegaSamWrapper(BasePerceptor):
         return env
 
     def infer(self, video_path: str, masks: np.ndarray, **kwargs) -> PerceptionResult:
-        video_id = os.path.basename(video_path).split(".")[0]
+        # Allow callers to override the Mega-SAM workspace key so videos with the
+        # same stem under different categories/providers do not collide.
+        video_id = os.environ.get("PDI_EVAL_VIDEO_ID") or os.path.basename(video_path).split(".")[0]
         work = os.path.join(self.mega_sam_root, "work_space", video_id)
         frames_dir = os.path.join(work, "frames")
         
@@ -235,8 +237,9 @@ class MegaSamWrapper(BasePerceptor):
         """Safe fallback when Mega-SAM subprocesses fail."""
         T = len(masks)
         h_pixel, x_center = _masks_to_h_pixel_x_center(masks)
+        video_id = os.environ.get("PDI_EVAL_VIDEO_ID") or os.path.basename(video_path).split(".")[0]
         return PerceptionResult(
-            video_id=os.path.basename(video_path).split(".")[0],
+            video_id=video_id,
             frames_count=T,
             masks=masks,
             h_pixel=h_pixel,

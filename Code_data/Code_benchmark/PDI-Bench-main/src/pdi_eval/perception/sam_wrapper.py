@@ -19,6 +19,7 @@ class Sam2Wrapper(BasePerceptor):
         super().__init__(device)
         self.checkpoint = os.path.abspath(checkpoint)
         self.config = config
+        self.keep_detector_loaded = os.environ.get("PDI_KEEP_FLORENCE_LOADED", "0") == "1"
         
         # Florence-2 auto-detector (lazy init)
         self.processor = None
@@ -168,7 +169,7 @@ class Sam2Wrapper(BasePerceptor):
             truncated_list.append(is_edge)
             
         self.model.reset_state(state)
-        if self.detector:
+        if self.detector and not self.keep_detector_loaded:
             del self.detector, self.processor
             self.detector, self.processor = None, None
             torch.cuda.empty_cache()
