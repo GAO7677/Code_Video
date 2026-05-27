@@ -89,11 +89,13 @@ def _make_hardwood(size: int = 512) -> np.ndarray:
         grain = cv2.GaussianBlur(grain.astype(np.float32), (0, 3), 0.6)
         plank = np.clip(plank + grain[..., None], 0, 1)
         tex[:, x0:x1] = plank
-    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.012, 0, 1)
+    tex = np.clip(tex + np.random.randn(size, size, 1).astype(np.float32) * 0.008, 0, 1)
     for i in range(1, 7):
         sx = i * plank_w
-        tex[:, sx-2:sx+2] *= 0.50
-    return (tex * 255).astype(np.uint8)
+        tex[:, sx-1:sx+1] *= 0.70
+    # Reduce overall contrast so shadows are visible
+    tex = tex * 0.75 + 0.12
+    return (np.clip(tex, 0, 1) * 255).astype(np.uint8)
 
 
 def _make_neutral_wall(size: int = 128) -> np.ndarray:
@@ -223,11 +225,12 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
         if height < 0.02:
             return
         # Shadow radius: bigger when object is higher, softer
-        shadow_r = int(radius * 260 * (1.0 + height * 0.6))
-        shadow_r = max(8, min(shadow_r, 200))
-        opacity = max(0.30, 0.65 - height * 0.10)
+        shadow_r = int(radius * 700 * (1.0 + height * 1.0))
+        shadow_r = max(25, min(shadow_r, 350))
+        opacity = max(0.70, 0.92 - height * 0.04)
+        half_h = max(8, shadow_r // 3)
         x0 = max(0, cx - shadow_r); x1 = min(IMG_W, cx + shadow_r)
-        y0 = max(0, cy - shadow_r // 2); y1 = min(IMG_H, cy + shadow_r // 2)
+        y0 = max(0, cy - half_h); y1 = min(IMG_H, cy + half_h)
         if x1 <= x0 or y1 <= y0:
             return
         patch = frame[y0:y1, x0:x1].astype(np.float32)
@@ -241,7 +244,16 @@ def run_scenario(sc: Scenario, tex: dict[str, int], output_mp4: Path) -> None:
             ksize += 1
         falloff = cv2.GaussianBlur(falloff.astype(np.float32), (ksize, ksize), shadow_r / 4.0) if falloff.size > 0 else falloff
         darken = 1.0 - falloff * opacity
-        patch[:] = np.clip(patch * darken[..., None], 0, 255)
+        # Tighter core shadow for depth
+        inner_r = max(4, shadow_r // 3)
+        inner_ys, inner_xs = np.ogrid[:patch.shape[0], :patch.shape[1]]
+        inner_dist_x = (inner_xs - (cx - x0)) / max(inner_r, 1)
+        inner_dist_y = (inner_ys - (cy - y0)) / max(inner_r // 2, 1)
+        inner_falloff = np.clip(1.0 - np.sqrt(inner_dist_x**2 + inner_dist_y**2), 0, 1)
+        inner_falloff = cv2.GaussianBlur(inner_falloff.astype(np.float32), (7, 7), 2.0) if inner_falloff.size > 0 else inner_falloff
+        # Combine: soft outer + darker inner core
+        combined = np.maximum(falloff * opacity, inner_falloff * 0.35)
+        patch[:] = np.clip(patch * (1.0 - combined)[..., None], 0, 255)
         frame[y0:y1, x0:x1] = patch.astype(np.uint8)
 
     frames = []
