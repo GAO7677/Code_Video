@@ -1,119 +1,120 @@
 #!/usr/bin/env python3
-"""WMReward vs Old JEPA — 视频 + 分数并排对比"""
+"""WMReward JEPA 完整对比 — PDI-Bench方法 + 仿真视频"""
 
-import json, sys, subprocess
+import json, os, csv, sys, subprocess
 from pathlib import Path
 
 DATA_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
-DIRS = [
-    ("ball_block", "Baseline (8 scenarios)"),
-    ("jepa_sensitivity", "Motion Sensitivity (20 scenarios)"),
-]
+PDI_OUTPUT = Path("/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output")
+PDI_METRICS = Path("/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/result/metrics.csv")
 REPORT_DIR = DATA_DIR / "wmreward_report"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 def fv(v): return f"{v:.4f}" if isinstance(v,(int,float)) else str(v)
 
-sections = ""
-for dname, dlabel in DIRS:
-    vdir = DATA_DIR / "videos" / dname
+# ---- Section 1: PDI-Bench method-level comparison ----
+method_stats = {}
+for jp in PDI_OUTPUT.rglob("*.json"):
+    d = json.loads(jp.read_text())
+    wmr = d.get("wmreward_jepa", {}).get("similarity")
+    if wmr is None: continue
+    method = jp.parent.parent.name
+    if method not in method_stats:
+        method_stats[method] = []
+    method_stats[method].append(wmr)
+
+pdi_stats = {}
+with open(PDI_METRICS) as f:
+    for row in csv.DictReader(f):
+        pdi_stats[row["provider"]] = float(row["mean_pdi_score"])
+
+# Method comparison table
+method_rows = ""
+for m in ["GT", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08", "wan22-5B-TI2V"]:
+    scores = method_stats.get(m, [])
+    mean_w = sum(scores)/len(scores) if scores else 0
+    mean_p = pdi_stats.get(m, 0)
+    method_rows += f"<tr><td>{m}</td><td class='n'>{len(scores)}</td><td class='n pdi'>{mean_p:.4f}</td><td class='n jepa'>{mean_w:.4f}</td><td class='n'>{min(scores):.4f}</td><td class='n'>{max(scores):.4f}</td></tr>"
+
+# ---- Section 2: Per-case detail ----
+case_rows = ""
+for method in ["GT", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08", "wan22-5B-TI2V"]:
+    mdir = PDI_OUTPUT / method
+    if not mdir.exists(): continue
+    for cat_dir in sorted(mdir.iterdir()):
+        if not cat_dir.is_dir(): continue
+        for vp in sorted(cat_dir.glob("*.mp4")):
+            jp = vp.with_suffix(".json")
+            d = json.loads(jp.read_text()) if jp.exists() else {}
+            wmr = d.get("wmreward_jepa", {}).get("similarity")
+            rel = str(vp.relative_to(PDI_OUTPUT.parent))
+            cat = cat_dir.name
+            case = vp.stem
+            case_rows += f"<tr><td>{method}</td><td>{cat}</td><td>{case}</td><td class='n'>{fv(wmr)}</td></tr>"
+
+# ---- Section 3: Simulation videos summary ----
+sim_dirs = [
+    ("ball_block", DATA_DIR / "videos" / "ball_block"),
+    ("jepa_sensitivity", DATA_DIR / "videos" / "jepa_sensitivity"),
+]
+sim_rows = ""
+for dname, vdir in sim_dirs:
     if not vdir.exists(): continue
-    cards = ""
+    scores = []
     for jp in sorted(vdir.glob("*.json")):
         d = json.loads(jp.read_text())
-        name = d.get("scenario", jp.stem)
-        desc = d.get("description", "")
-        old_j = d.get("jepa", {}).get("jepa_score")
-        wmr = d.get("wmreward_jepa", {})
-        wmr_sim = wmr.get("similarity")
-        wmr_surp = wmr.get("surprise")
-        delta = wmr_sim - old_j if (wmr_sim and old_j) else None
-        vid = f"videos/{dname}/{jp.stem}.mp4"
-
-        # Score bar visualization: normalize 0.44-0.50 for WMR, 0.72-0.76 for old
-        def bar(val, lo, hi, color):
-            if val is None: return ""
-            pct = max(0, min(100, (val-lo)/(hi-lo)*100))
-            return f'<div class="bar-bg"><div class="bar-fill" style="width:{pct:.0f}%;background:{color}"></div></div>'
-
-        cards += f"""
-        <div class="card">
-          <video src="{vid}" controls muted preload="metadata"></video>
-          <div class="info">
-            <div class="name">{name}</div>
-            <div class="desc">{desc[:80]}</div>
-            <div class="scores">
-              <div class="score-block old">
-                <div class="score-label">Old JEPA</div>
-                <div class="score-val">{fv(old_j)}</div>
-                {bar(old_j, 0.725, 0.755, 'var(--muted)')}
-              </div>
-              <div class="score-block wmr">
-                <div class="score-label">WMReward</div>
-                <div class="score-val">{fv(wmr_sim)}</div>
-                {bar(wmr_sim, 0.445, 0.500, 'var(--accent)')}
-              </div>
-              <div class="score-block delta">
-                <div class="score-label">Δ</div>
-                <div class="score-val" style="color:{'var(--red)' if delta and delta<0 else 'var(--green)'}">{fv(delta) if delta else '-'}</div>
-              </div>
-            </div>
-          </div>
-        </div>"""
-
-    sections += f"""
-    <section class="group">
-      <h2>{dlabel}</h2>
-      <div class="card-grid">{cards}</div>
-    </section>"""
+        wmr = d.get("wmreward_jepa", {}).get("similarity")
+        if wmr: scores.append(wmr)
+    if scores:
+        sim_rows += f"<tr><td>{dname}</td><td class='n'>{len(scores)}</td><td class='n jepa'>{sum(scores)/len(scores):.4f}</td><td class='n'>{min(scores):.4f}</td><td class='n'>{max(scores):.4f}</td></tr>"
 
 html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>WMReward vs Old JEPA</title>
+<title>WMReward JEPA — Full Comparison</title>
 <style>
-:root{{--bg:#1a1815;--panel:#252320;--line:#3d3830;--text:#e8e4dd;--muted:#9d968a;--accent:#e08840;--red:#e05550;--green:#6db87d}}
+:root{{--bg:#1a1815;--panel:#252320;--line:#3d3830;--text:#e8e4dd;--muted:#9d968a;--accent:#e08840;--red:#e05550;--green:#6db87d;--blue:#6ba4d1}}
 *{{box-sizing:border-box}}body{{margin:0;color:var(--text);font-family:system-ui,sans-serif;background:var(--bg)}}
-.page{{max-width:1600px;margin:0 auto;padding:24px}}
-h1{{margin:0 0 4px;font-size:26px}}.sub{{color:var(--muted);margin:0 0 18px;font-size:14px}}
-.finding{{padding:12px 18px;background:rgba(224,136,64,0.1);border:1px solid var(--accent);border-radius:10px;margin:0 0 24px;font-size:13px;line-height:1.6}}
+.page{{max-width:1400px;margin:0 auto;padding:24px}}h1{{margin:0 0 4px}}h2{{font-size:16px;margin:24px 0 8px}}.sub{{color:var(--muted);margin:0 0 16px;font-size:14px}}
+table{{width:100%;border-collapse:collapse;background:var(--panel);border-radius:10px;overflow:hidden;margin-bottom:16px}}
+th,td{{padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}}
+th{{background:rgba(255,255,255,0.05);font-size:11px;text-transform:uppercase;white-space:nowrap}}
+.n{{text-align:right;font-variant-numeric:tabular-nums}}.pdi{{color:var(--blue)}}.jepa{{color:var(--accent)}}
+.finding{{padding:14px 18px;background:rgba(224,136,64,0.1);border:1px solid var(--accent);border-radius:10px;margin:0 0 20px;font-size:13px;line-height:1.7}}
 .finding strong{{color:var(--accent)}}
-.group h2{{font-size:16px;margin:24px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}}
-.card-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}}
-.card{{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#1a1818;transition:border-color .2s}}
-.card:hover{{border-color:var(--accent)}}
-.card video{{width:100%;display:block;aspect-ratio:16/9;object-fit:cover}}
-.info{{padding:10px 12px}}
-.name{{font-size:13px;font-weight:700;margin-bottom:2px}}
-.desc{{font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.3}}
-.scores{{display:flex;gap:8px}}
-.score-block{{flex:1;text-align:center}}
-.score-label{{font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:2px}}
-.score-val{{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}}
-.score-block.old .score-val{{color:var(--muted)}}
-.score-block.wmr .score-val{{color:var(--accent)}}
-.bar-bg{{height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin-top:3px}}
-.bar-fill{{height:100%;border-radius:2px}}
-.summary{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}}
-.stat{{border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;background:var(--panel)}}
-.stat .val{{font-size:26px;font-weight:700}}.stat .lbl{{font-size:11px;color:var(--muted);margin-top:2px}}
-@media(max-width:800px){{.card-grid{{grid-template-columns:repeat(2,1fr)}}.summary{{grid-template-columns:repeat(2,1fr)}}}}
+.finding .inv{{color:var(--red)}}
+.summary{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}}
+.stat{{border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;background:var(--panel)}}
+.stat .val{{font-size:28px;font-weight:700}}.stat .lbl{{font-size:11px;color:var(--muted);margin-top:2px}}
+.cor{{font-size:12px;color:var(--muted);margin-top:4px}}
 </style></head><body><div class="page">
-<h1>WMReward vs Old Custom JEPA</h1>
-<p class="sub">Same video, two scoring methods — Old: custom 3-way composite (cos+Gram+delta) &nbsp;|&nbsp; WMR: Meta official sliding-window cosine distance</p>
-
-<div class="summary">
-  <div class="stat"><div class="val" style="color:var(--accent)">28</div><div class="lbl">videos</div></div>
-  <div class="stat"><div class="val" style="color:var(--red)">0.28</div><div class="lbl">avg |Δ| (WMR − Old)</div></div>
-  <div class="stat"><div class="val" style="color:var(--green)">0.045</div><div class="lbl">WMReward range</div></div>
-  <div class="stat"><div class="val" style="color:var(--muted)">0.029</div><div class="lbl">Old JEPA range</div></div>
-</div>
+<h1>WMReward JEPA — Full Evaluation</h1>
+<p class="sub">PDI-Bench videos (GT + 3 methods × 15 cases) &amp; simulation videos (ball_block + jepa_sensitivity)</p>
 
 <div class="finding">
-<strong>V-JEPA2 对合成刚体仿真视频区分力很弱</strong>，无论用旧自定义方法还是 WMReward 官方方法。
-WMReward 区分力稍强（range 0.045 vs 0.029），但绝对值低（~0.47 = 高 surprise）。
-Score bar 范围：Old 0.725-0.755 | WMR 0.445-0.500
+<strong class="inv">Key finding: PDI and JEPA rankings are INVERTED for real/gen videos.</strong><br>
+GT (real) → <strong>best PDI (0.144)</strong> but <strong>worst JEPA (0.412)</strong> — real videos are geometrically accurate but visually unpredictable.<br>
+Wan (generated) → <strong>worst PDI (0.878)</strong> but <strong>best JEPA (0.435)</strong> — generated videos are geometrically flawed but visually bland/predictable.<br>
+Simulation → JEPA ~0.47 (highest similarity, most predictable) — synthetic rigid-body motion is trivial for V-JEPA2.<br>
+<strong>PDI measures geometric correctness. JEPA measures visual predictability. They are complementary, not redundant.</strong>
 </div>
-{sections}
+
+<div class="summary">
+  <div class="stat"><div class="val" style="color:var(--accent)">88</div><div class="lbl">videos evaluated (WMReward)</div></div>
+  <div class="stat"><div class="val" style="color:var(--red)">Inverted</div><div class="lbl">PDI vs JEPA ranking</div><div class="cor">GT: PDI best, JEPA worst</div></div>
+  <div class="stat"><div class="val" style="color:var(--green)">0.38~0.47</div><div class="lbl">WMReward range across all</div><div class="cor">Real < Gen < Sim</div></div>
+</div>
+
+<h2>PDI-Bench Methods — WMReward JEPA vs PDI</h2>
+<table><thead><tr><th>Method</th><th>N</th><th class="pdi">mean PDI↓</th><th class="jepa">mean WMR↑</th><th>min WMR</th><th>max WMR</th></tr></thead>
+<tbody>{method_rows}</tbody></table>
+
+<h2>Simulation Videos — WMReward Summary</h2>
+<table><thead><tr><th>Dataset</th><th>N</th><th class="jepa">mean WMR↑</th><th>min</th><th>max</th></tr></thead>
+<tbody>{sim_rows}</tbody></table>
+
+<h2>Per-Case Details (PDI-Bench)</h2>
+<table><thead><tr><th>Method</th><th>Category</th><th>Case</th><th>WMR Sim↑</th></tr></thead>
+<tbody>{case_rows}</tbody></table>
 </div></body></html>"""
 (REPORT_DIR / "index.html").write_text(html)
 
