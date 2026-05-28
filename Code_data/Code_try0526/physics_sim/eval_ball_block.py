@@ -21,25 +21,22 @@ REPORT_DIR = DATA_DIR / "eval_report"
 
 
 def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
-    output_dir.mkdir(parents=True, exist_ok=True)
     stem = video_path.stem
-    report_path = output_dir / f"{stem}_pdi_report.txt"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # PDI-Bench creates a subdir named after the video stem inside output_dir
+    report_dir = output_dir / stem
+    report_path = report_dir / f"{stem}_pdi_report.txt"
 
     if not report_path.exists():
-        # Write a wrapper that patches flash_attn before importing PDI
         wrapper = TMP_DIR / "_pdi_wrapper.py"
         wrapper.parent.mkdir(parents=True, exist_ok=True)
         wrapper.write_text(
             "import sys, os\n"
-            "for mod in ['flash_attn.bert_padding', 'flash_attn.flash_attn_interface', 'flash_attn_2_cuda']:\n"
-            "    if mod not in sys.modules:\n"
-            "        m = type(sys)(mod)\n"
-            "        sys.modules[mod] = m\n"
-            "        if 'bert_padding' in mod:\n"
-            "            def _fail(*a,**k): raise ImportError('flash_attn not available')\n"
-            "            m.index_first_axis = m.pad_input = m.unpad_input = _fail\n"
-            "sys.modules.setdefault('flash_attn', type(sys)('flash_attn'))\n"
-            "sys.modules['flash_attn'].__path__ = []\n"
+            "# Pre-import real flash_attn so transformers doesn't crash\n"
+            "import flash_attn\n"
+            "from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input\n"
+            "from flash_attn.layers.rotary import apply_rotary_emb\n"
+            "from flash_attn.flash_attn_interface import flash_attn_func\n"
             "sys.argv = [sys.argv[0], '--input', sys.argv[1], '--text', sys.argv[2], '--output_dir', sys.argv[3]]\n"
             "import runpy\n"
             "runpy.run_path('evaluation/main.py', run_name='__main__')\n"
@@ -48,6 +45,11 @@ def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
             sys.executable, "-u", str(wrapper),
             str(video_path), "ball", str(output_dir),
         ]
+        # Ensure tracker checkpoint doesn't block torch.hub fallback
+        tracker_ckpt = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth"
+        tracker_bak = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth.bak"
+        if tracker_ckpt.exists() and not tracker_bak.exists():
+            tracker_ckpt.rename(tracker_bak)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
         env["PDI_FLORENCE_MODEL_ID"] = "/data/gaoya/ckpt/microsoft-Florence-2-base"
@@ -73,10 +75,10 @@ def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
 
 
 def run_jepa(video_path: Path) -> dict | None:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rerank_video"))
-    from scorers import JEPAPredictiveScorer
-    from schemas import JEPAScoreConfig
-    from video_utils import load_video_frames, uniform_subsample_frames, ensure_dir
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from rerank_video.scorers import JEPAPredictiveScorer
+    from rerank_video.schemas import JEPAScoreConfig
+    from rerank_video.video_utils import load_video_frames, uniform_subsample_frames, ensure_dir
     import cv2, numpy as np
 
     frames = load_video_frames(video_path)
