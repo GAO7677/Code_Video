@@ -19,7 +19,7 @@ METRIC_LABELS = {
     "traj_component": "Trajectory",
     "epsilon_rigidity": "Rigidity",
     "vp_component": "VP",
-    "wmreward_jepa": "WMReward JEPA",
+    "wmreward_surprise": "WMReward Surprise",
     "vjepa_proxy": "V-JEPA Proxy",
 }
 
@@ -29,6 +29,7 @@ LOWER_IS_BETTER = {
     "traj_component",
     "epsilon_rigidity",
     "vp_component",
+    "wmreward_surprise",
 }
 
 GROUP_C_METRICS = [
@@ -37,7 +38,7 @@ GROUP_C_METRICS = [
     "traj_component",
     "epsilon_rigidity",
     "vp_component",
-    "wmreward_jepa",
+    "wmreward_surprise",
     "vjepa_proxy",
 ]
 
@@ -79,7 +80,7 @@ def text_td(value: Any, classes: str = "") -> str:
 def build_metric_legend() -> str:
     cards = []
     cards.append(_metric_card("official_pdi", "Official PDI", "↓ lower is better", "`metric_results.official_pdi`"))
-    cards.append(_metric_card("wmreward_jepa", "WMReward JEPA", "↑ higher is better", "`metric_results.wmreward_jepa`"))
+    cards.append(_metric_card("wmreward_surprise", "WMReward Surprise", "↓ lower is better", "`metric_results.wmreward_jepa.surprise`"))
     cards.append(_metric_card("vjepa_proxy", "V-JEPA Proxy", "↑ higher is better", "`metric_results.vjepa_proxy`"))
     return f"""
     <section class="legend">
@@ -158,7 +159,7 @@ def build_group_a() -> str:
                 "traj_component": mean_or_none(_metric_list(payloads, "traj_component")),
                 "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
                 "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
-                "wmreward_jepa": mean_or_none(_metric_list(payloads, "wmreward_jepa")),
+                "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
                 "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
             }
         )
@@ -175,7 +176,7 @@ def build_group_a() -> str:
             f"{metric_td('traj_component', row['traj_component'], is_best=mask['traj_component'])}"
             f"{metric_td('epsilon_rigidity', row['epsilon_rigidity'], is_best=mask['epsilon_rigidity'])}"
             f"{metric_td('vp_component', row['vp_component'], is_best=mask['vp_component'])}"
-            f"{metric_td('wmreward_jepa', row['wmreward_jepa'], is_best=mask['wmreward_jepa'])}"
+            f"{metric_td('wmreward_surprise', row['wmreward_surprise'], is_best=mask['wmreward_surprise'])}"
             f"{metric_td('vjepa_proxy', row['vjepa_proxy'], is_best=mask['vjepa_proxy'])}"
             "</tr>"
         )
@@ -195,7 +196,7 @@ def build_group_a() -> str:
         <th class="metric metric-traj_component">Trajectory ↓</th>
         <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
         <th class="metric metric-vp_component">VP ↓</th>
-        <th class="metric metric-wmreward_jepa">WMReward JEPA ↑</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
       </tr>
     </thead>
@@ -288,7 +289,7 @@ def build_group_c() -> str:
         <th class="metric metric-traj_component">Trajectory ↓</th>
         <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
         <th class="metric metric-vp_component">VP ↓</th>
-        <th class="metric metric-wmreward_jepa">WMReward JEPA ↑</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
       </tr>
     </thead>
@@ -308,7 +309,7 @@ def metric_values(payload: dict[str, Any]) -> dict[str, Any]:
         "traj_component": metric_value(payload, "traj_component"),
         "epsilon_rigidity": metric_value(payload, "epsilon_rigidity"),
         "vp_component": metric_value(payload, "vp_component"),
-        "wmreward_jepa": metric_value(payload, "wmreward_jepa"),
+        "wmreward_surprise": metric_value(payload, "wmreward_surprise"),
         "vjepa_proxy": metric_value(payload, "vjepa_proxy"),
     }
 
@@ -321,7 +322,7 @@ def render_metric_cells(row: dict[str, Any], mask: dict[str, bool]) -> str:
             metric_td("traj_component", row["traj_component"], is_best=mask["traj_component"]),
             metric_td("epsilon_rigidity", row["epsilon_rigidity"], is_best=mask["epsilon_rigidity"]),
             metric_td("vp_component", row["vp_component"], is_best=mask["vp_component"]),
-            metric_td("wmreward_jepa", row["wmreward_jepa"], is_best=mask["wmreward_jepa"]),
+            metric_td("wmreward_surprise", row["wmreward_surprise"], is_best=mask["wmreward_surprise"]),
             metric_td("vjepa_proxy", row["vjepa_proxy"], is_best=mask["vjepa_proxy"]),
         ]
     )
@@ -352,7 +353,7 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
         <th class="metric metric-traj_component">Trajectory ↓</th>
         <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
         <th class="metric metric-vp_component">VP ↓</th>
-        <th class="metric metric-wmreward_jepa">WMReward JEPA ↑</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
       </tr>
     </thead>
@@ -375,7 +376,7 @@ def _aggregate_metric_row(method: str, payloads: list[dict[str, Any]]) -> dict[s
         "traj_component": mean_or_none(_metric_list(payloads, "traj_component")),
         "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
         "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
-        "wmreward_jepa": mean_or_none(_metric_list(payloads, "wmreward_jepa")),
+        "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
         "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
     }
 
@@ -455,7 +456,7 @@ def build_html() -> str:
     .metric-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
     .metric-card {{ border: 1px solid var(--line); border-left-width: 6px; border-radius: 14px; background: var(--panel); padding: 14px 16px; }}
     .metric-card.metric-official_pdi {{ border-left-color: var(--pdi); }}
-    .metric-card.metric-wmreward_jepa {{ border-left-color: var(--wmr); }}
+    .metric-card.metric-wmreward_surprise {{ border-left-color: var(--wmr); }}
     .metric-card.metric-vjepa_proxy {{ border-left-color: var(--proxy); }}
     .metric-name {{ font-weight: 700; font-size: 16px; margin-bottom: 4px; }}
     .metric-dir {{ color: var(--muted); font-size: 12px; margin-bottom: 8px; }}
@@ -471,7 +472,7 @@ def build_html() -> str:
     .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
     .metric-official_pdi, .metric-scale_component, .metric-traj_component, .metric-epsilon_rigidity, .metric-vp_component {{ color: var(--pdi); }}
     .metric-scale_component, .metric-traj_component, .metric-epsilon_rigidity, .metric-vp_component {{ color: var(--pdi2); }}
-    .metric-wmreward_jepa {{ color: var(--wmr); }}
+    .metric-wmreward_surprise {{ color: var(--wmr); }}
     .metric-vjepa_proxy {{ color: var(--proxy); }}
     td.best {{
       font-weight: 800;
@@ -490,8 +491,8 @@ def build_html() -> str:
   <div class="page">
     <h1>PhysV ABC Metrics Report</h1>
     <div class="sub">
-      页面只展示三类统一指标名称：<strong>Official PDI</strong>、<strong>WMReward JEPA</strong>、<strong>V-JEPA Proxy</strong>。
-      其中 Official PDI 进一步拆为 <code>score / scale / trajectory / rigidity / vp</code> 五列，避免把元数据和指标混在一起。
+      页面只展示三类统一指标名称：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>V-JEPA Proxy</strong>。
+      其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；Official PDI 进一步拆为 <code>score / scale / trajectory / rigidity / vp</code> 五列，避免把元数据和指标混在一起。
     </div>
     {build_metric_legend()}
     {build_group_a()}

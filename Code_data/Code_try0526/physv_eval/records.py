@@ -101,6 +101,15 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "wmreward_jepa":
         bucket = get_wmreward(payload)
         return None if bucket is None else bucket.get("similarity")
+    if name == "wmreward_surprise":
+        bucket = get_wmreward(payload)
+        if bucket is None:
+            return None
+        surprise = bucket.get("surprise")
+        if surprise is not None:
+            return surprise
+        similarity = bucket.get("similarity")
+        return None if similarity is None else 1.0 - similarity
     if name == "vjepa_proxy":
         bucket = get_proxy(payload)
         return None if bucket is None else bucket.get("score")
