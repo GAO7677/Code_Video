@@ -8,9 +8,13 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import imageio.v2 as imageio
 import numpy as np
 from PIL import Image
+
+try:
+    import imageio.v2 as imageio
+except Exception:
+    imageio = None
 
 
 def ensure_dir(path: Path) -> Path:
@@ -45,39 +49,54 @@ def to_jsonable(value: Any) -> Any:
 
 
 def load_video_frames(path: Path) -> list[np.ndarray]:
+    if imageio is not None:
+        try:
+            reader = imageio.get_reader(str(path))
+            try:
+                return [np.asarray(frame, dtype=np.uint8) for frame in reader]
+            finally:
+                reader.close()
+        except Exception:
+            pass
+
+    cap = cv2.VideoCapture(str(path))
+    frames: list[np.ndarray] = []
     try:
-        reader = imageio.get_reader(str(path))
-        try:
-            return [np.asarray(frame, dtype=np.uint8) for frame in reader]
-        finally:
-            reader.close()
-    except Exception:
-        cap = cv2.VideoCapture(str(path))
-        frames: list[np.ndarray] = []
-        try:
-            while True:
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    break
-                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        finally:
-            cap.release()
-        if frames:
-            return frames
-        raise
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    finally:
+        cap.release()
+    if frames:
+        return frames
+    raise RuntimeError(f"Failed to decode video frames from {path}")
 
 
 def save_video_frames(path: Path, frames: list[np.ndarray], fps: int, quality: int = 5) -> None:
     ensure_dir(path.parent)
-    with imageio.get_writer(
-        str(path),
-        fps=max(int(fps), 1),
-        codec="libx264",
-        quality=int(quality),
-        macro_block_size=None,
-    ) as writer:
+    if imageio is not None:
+        with imageio.get_writer(
+            str(path),
+            fps=max(int(fps), 1),
+            codec="libx264",
+            quality=int(quality),
+            macro_block_size=None,
+        ) as writer:
+            for frame in frames:
+                writer.append_data(np.asarray(frame, dtype=np.uint8))
+        return
+
+    height, width = frames[0].shape[:2]
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), max(int(fps), 1), (width, height))
+    if not writer.isOpened():
+        raise RuntimeError(f"Failed to open cv2.VideoWriter for {path}")
+    try:
         for frame in frames:
-            writer.append_data(np.asarray(frame, dtype=np.uint8))
+            writer.write(cv2.cvtColor(np.asarray(frame, dtype=np.uint8), cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
 
 
 def pil_list_to_numpy(frames: list[Image.Image]) -> list[np.ndarray]:

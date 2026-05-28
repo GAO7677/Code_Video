@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import shutil
@@ -176,7 +177,9 @@ class GeometryProxyScorer:
 
     @staticmethod
     def _video_id(video_path: Path) -> str:
-        return video_path.stem
+        resolved = video_path.expanduser().resolve()
+        digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
+        return f"{resolved.stem}_{digest}"
 
     def _extract_depth_anything(self, video_path: Path) -> list[np.ndarray]:
         if self.config.depth_anything_repo_root is None or self.config.depth_anything_ckpt is None:
@@ -500,19 +503,23 @@ class GeometryProxyScorer:
         }
         return final_score, details
 
-    def score(self, *, context_video_path: Path, candidate_video_path: Path) -> tuple[float, dict[str, Any]]:
+    def score(
+        self,
+        *,
+        context_video_path: Path,
+        candidate_video_path: Path,
+        target_object: str | None = None,
+    ) -> tuple[float, dict[str, Any]]:
         if self.config.backend == "sam_depth":
-            # Generic rerank mode usually does not know the target object name.
-            # Fall back to the legacy anchor-motion proxy instead of failing hard.
-            context_frames = load_video_frames(context_video_path)
-            if not context_frames:
-                return 0.0, {"reason": "missing_frames"}
-            score, details = self._score_with_anchor_frame(
-                anchor_frame=context_frames[-1],
+            if not target_object:
+                raise ValueError(
+                    "GeometryProxyScorer backend='sam_depth' requires target_object. "
+                    "Use score_from_anchor_image(...) or pass target_object explicitly."
+                )
+            return self._score_sam_depth(
                 candidate_video_path=candidate_video_path,
+                target_object=target_object,
             )
-            details = {"backend": "legacy_motion_fallback", **details}
-            return score, details
         context_frames = load_video_frames(context_video_path)
         if not context_frames:
             return 0.0, {"reason": "missing_frames"}
@@ -573,9 +580,14 @@ class _VJEPA2Backend:
         self.config = config
         self.device = torch.device(config.device if config.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
         self.crop_size = int(config.crop_size)
-        if self.device.type == "cuda":
-            self.model_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        dtype_name = os.environ.get("TRY0526_VJEPA_DTYPE", "float32").lower()
+        if dtype_name == "bfloat16":
+            self.model_dtype = torch.bfloat16
+        elif dtype_name == "float16":
+            self.model_dtype = torch.float16
         else:
+            # V-JEPA2.1 large has shown illegal memory access in mixed precision on this machine.
+            # Default to float32 so the proxy metric is stable and reproducible.
             self.model_dtype = torch.float32
         self.context_encoder = None
         self.target_encoder = None
@@ -783,7 +795,7 @@ class _VJEPA2Backend:
         context_clip = _normalize_clip_uint8_to_imagenet(context_frames, self.crop_size).to(self.device, dtype=self.model_dtype)
         future_clip = _normalize_clip_uint8_to_imagenet(future_frames, self.crop_size).to(self.device, dtype=self.model_dtype)
 
-        autocast_enabled = self.device.type == "cuda"
+        autocast_enabled = self.device.type == "cuda" and self.model_dtype != torch.float32
         with torch.autocast(device_type=self.device.type, dtype=self.model_dtype, enabled=autocast_enabled):
             context_tokens = self.context_encoder(context_clip)
             future_tokens = self.target_encoder(future_clip)

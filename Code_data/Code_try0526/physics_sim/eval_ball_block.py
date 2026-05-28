@@ -32,11 +32,14 @@ def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
         wrapper.parent.mkdir(parents=True, exist_ok=True)
         wrapper.write_text(
             "import sys, os\n"
-            "# Pre-import real flash_attn so transformers doesn't crash\n"
-            "import flash_attn\n"
-            "from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input\n"
-            "from flash_attn.layers.rotary import apply_rotary_emb\n"
-            "from flash_attn.flash_attn_interface import flash_attn_func\n"
+            "# Pre-import flash_attn when available; some envs do not ship it.\n"
+            "try:\n"
+            "    import flash_attn\n"
+            "    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input\n"
+            "    from flash_attn.layers.rotary import apply_rotary_emb\n"
+            "    from flash_attn.flash_attn_interface import flash_attn_func\n"
+            "except Exception:\n"
+            "    pass\n"
             "sys.argv = [sys.argv[0], '--input', sys.argv[1], '--text', sys.argv[2], '--output_dir', sys.argv[3]]\n"
             "import runpy\n"
             "runpy.run_path('evaluation/main.py', run_name='__main__')\n"
@@ -48,12 +51,18 @@ def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
         # Ensure tracker checkpoint doesn't block torch.hub fallback
         tracker_ckpt = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth"
         tracker_bak = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth.bak"
+        renamed_tracker_ckpt = False
         if tracker_ckpt.exists() and not tracker_bak.exists():
             tracker_ckpt.rename(tracker_bak)
+            renamed_tracker_ckpt = True
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
         env["PDI_FLORENCE_MODEL_ID"] = "/data/gaoya/ckpt/microsoft-Florence-2-base"
-        r = subprocess.run(cmd, cwd=PDI_ROOT, env=env, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, cwd=PDI_ROOT, env=env, capture_output=True, text=True)
+        finally:
+            if renamed_tracker_ckpt and tracker_bak.exists() and not tracker_ckpt.exists():
+                tracker_bak.rename(tracker_ckpt)
         if r.returncode != 0:
             print(f"    FAILED: {r.stderr[-200:]}")
             return None

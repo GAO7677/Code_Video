@@ -258,17 +258,20 @@ def _stage_context_and_future_clips(
     context_clip_path = case_root / "context_gt_prefix.mp4"
     context_montage_path = case_root / "context_gt_prefix_montage.png"
     future_clip_path = case_root / f"{provider}_future.mp4"
-    fps = detect_video_fps(candidate_video_path, fallback=16)
+    context_fps = detect_video_fps(gt_video_path, fallback=16)
+    future_fps = detect_video_fps(candidate_video_path, fallback=context_fps)
+    clip_fps = future_fps if provider != "gt" else context_fps
     if not context_clip_path.is_file():
-        _write_video_cv2(context_clip_path, context_clip_frames, fps=fps)
+        _write_video_cv2(context_clip_path, context_clip_frames, fps=clip_fps)
     if not context_montage_path.is_file():
         _save_context_montage(context_montage_path, context_clip_frames)
-    _write_video_cv2(future_clip_path, future_clip_frames, fps=fps)
+    _write_video_cv2(future_clip_path, future_clip_frames, fps=clip_fps)
     return context_clip_path, future_clip_path, {
         "context_mode": "gt_prefix_video",
         "context_source": "gt_prefix",
         "context_prefix_frames": int(context_frames),
         "future_trim_start_frame": int(context_frames),
+        "clip_fps": int(clip_fps),
         "context_montage_path": str(context_montage_path),
     }
 
