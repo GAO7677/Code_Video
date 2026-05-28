@@ -10,7 +10,7 @@ import signal
 import subprocess
 from pathlib import Path
 
-OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+OUTPUT_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
 VIDEO_DIR = OUTPUT_DIR / "videos"
 DEFAULT_PORT = 18702
 
