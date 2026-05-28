@@ -22,7 +22,7 @@ import trimesh
 from pyrender.constants import RenderFlags
 
 OUTPUT_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
-VIDEO_DIR = OUTPUT_DIR / "videos"
+VIDEO_DIR = OUTPUT_DIR / "videos" / "ball_block"
 FPS = 60
 SIM_DURATION = 2.5
 SIM_STEPS = int(SIM_DURATION * 240)
@@ -268,6 +268,8 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
     import json
     meta = {
         "video": str(output_mp4),
+        "combination": "ball_block",
+        "caption": "Ball colliding with a wooden block",
         "scenario": sc.name,
         "parameters": {
             "restitution": sc.restitution,

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 OUTPUT_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
-VIDEO_DIR = OUTPUT_DIR / "videos"
+VIDEO_DIR = OUTPUT_DIR / "videos" / "ball_block"
 DEFAULT_PORT = 18702
 
 
@@ -65,7 +65,7 @@ def generate_html(port: int) -> Path:
             video_cards.append(f"""
             <div class="video-card">
               <video controls autoplay loop muted playsinline>
-                <source src="videos/{html.escape(item['filename'])}" type="video/mp4">
+                <source src="videos/ball_block/{html.escape(item['filename'])}" type="video/mp4">
               </video>
               <div class="param-bar">
                 <span class="param-badge">e = {item['e']}</span>
