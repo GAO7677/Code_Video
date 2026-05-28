@@ -263,7 +263,48 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
     for f in frames:
         out.write(f)
     out.release()
-    print(f"  -> {output_mp4.name} ({len(frames)} frames)")
+
+    # Write metadata JSON
+    import json
+    meta = {
+        "video": str(output_mp4),
+        "scenario": sc.name,
+        "parameters": {
+            "restitution": sc.restitution,
+            "lateral_friction": sc.lateral_friction,
+            "ball_mass_kg": sc.ball_mass,
+            "block_mass_kg": 1.5,
+        },
+        "initial_conditions": {
+            "ball_radius_m": ball_r,
+            "ball_start_xyz": [-1.0, 0.0, ball_z],
+            "ball_velocity_ms": [3.5, 0.0, 1.8],
+            "block_half_extents_m": list(block_h),
+            "block_start_xyz": [0.3, 0.0, block_h[2]],
+            "gravity_ms2": [0, 0, -9.81],
+        },
+        "rendering": {
+            "engine": "pyrender",
+            "light": "SpotLight, intensity=70, cone=0.4/1.0, pos=(-1.5,-1.5,2.5)",
+            "shadows": "SHADOWS_SPOT",
+            "fps": FPS,
+            "duration_s": SIM_DURATION,
+            "resolution": [IMG_W, IMG_H],
+            "frames": len(frames),
+        },
+        "physics": {
+            "engine": "pybullet",
+            "timestep_s": 1.0/240.0,
+            "solver_iterations": 100,
+            "spinning_friction_ball": 0.003,
+            "spinning_friction_block": 0.008,
+            "linear_damping_ball": 0.03,
+            "linear_damping_block": 0.06,
+        },
+    }
+    json_path = output_mp4.with_suffix(".json")
+    json_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  -> {output_mp4.name} ({len(frames)} frames) + {json_path.name}")
 
 
 def main():
