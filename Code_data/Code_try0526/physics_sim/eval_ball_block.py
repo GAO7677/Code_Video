@@ -26,18 +26,34 @@ def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
     report_path = output_dir / f"{stem}_pdi_report.txt"
 
     if not report_path.exists():
+        # Write a wrapper that patches flash_attn before importing PDI
+        wrapper = TMP_DIR / "_pdi_wrapper.py"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(
+            "import sys, os\n"
+            "for mod in ['flash_attn.bert_padding', 'flash_attn.flash_attn_interface', 'flash_attn_2_cuda']:\n"
+            "    if mod not in sys.modules:\n"
+            "        m = type(sys)(mod)\n"
+            "        sys.modules[mod] = m\n"
+            "        if 'bert_padding' in mod:\n"
+            "            def _fail(*a,**k): raise ImportError('flash_attn not available')\n"
+            "            m.index_first_axis = m.pad_input = m.unpad_input = _fail\n"
+            "sys.modules.setdefault('flash_attn', type(sys)('flash_attn'))\n"
+            "sys.modules['flash_attn'].__path__ = []\n"
+            "sys.argv = [sys.argv[0], '--input', sys.argv[1], '--text', sys.argv[2], '--output_dir', sys.argv[3]]\n"
+            "import runpy\n"
+            "runpy.run_path('evaluation/main.py', run_name='__main__')\n"
+        )
         cmd = [
-            sys.executable, "evaluation/main.py",
-            "--input", str(video_path),
-            "--text", "ball",
-            "--output_dir", str(output_dir),
+            sys.executable, "-u", str(wrapper),
+            str(video_path), "ball", str(output_dir),
         ]
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
         env["PDI_FLORENCE_MODEL_ID"] = "/data/gaoya/ckpt/microsoft-Florence-2-base"
         r = subprocess.run(cmd, cwd=PDI_ROOT, env=env, capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"    PDI stderr: {r.stderr[-300:]}")
+            print(f"    FAILED: {r.stderr[-200:]}")
             return None
 
     text = report_path.read_text()
@@ -139,8 +155,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip-pdi", action="store_true")
     ap.add_argument("--skip-jepa", action="store_true")
+    ap.add_argument("--gpu", type=str, default=None)
     ap.add_argument("--port", type=int, default=18703)
     args = ap.parse_args()
+    if args.gpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
     videos = sorted(VIDEO_DIR.glob("*.mp4"))
     print(f"{len(videos)} videos\n")
