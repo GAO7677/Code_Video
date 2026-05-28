@@ -136,6 +136,70 @@ videos/jepa_sensitivity/   # 20 组运动变体 mp4 + json (JEPA)
 # 外观敏感性 → http://127.0.0.1:18705
 python3 physics_sim/serve_appearance_compare.py
 
-# JEPA 敏感性 → http://127.0.0.1:18703
-python3 physics_sim/eval_ball_block.py
+# JEPA 敏感性 → http://127.0.0.1:18706
+python3 physics_sim/serve_jepa_sensitivity.py
 ```
+
+---
+
+## JEPA Scorer 合理性分析
+
+### 当前实现 vs WMReward（官方）
+
+WMReward（`/home/gaoya/Code_Video/WMReward-main1/WMReward-main/`）是 Meta 官方发布的 V-JEPA2 视频评估代码。
+
+| | WMReward (官方) | Code_try0526 (我们的) |
+|---|---|---|
+| 采样策略 | **滑动窗口** (16帧/窗, stride 2) | 单次切分 (前60帧=ctx, 后=未来) |
+| 损失函数 | **cosine distance** `1-cos(pred,target)` | 3路加权: cos(0.45) + Gram矩阵(0.35) + delta(0.20) |
+| 聚合方式 | mean/max across windows | 单次预测 |
+| 模型来源 | `torch.hub.load("facebookresearch/vjepa2")` | 本地 ckpt + 自定义加载 |
+| 参考论文 | WMReward (Meta, 2025) | 参考 PhysAlign 思路 |
+| 本质 | 多段预测损失的统计量 | 单次预测 + 时域结构相似度 |
+
+### 差异分析
+
+1. **滑动窗口 vs 单次切分**：WMReward 在视频上滑动多个窗口，取平均 loss，更鲁棒。我们只切一次，对切分位置敏感。
+
+2. **损失函数**：WMReward 用 `1 - cos_sim(pred, target)`，即 predictor 输出与 target encoder 特征的余弦距离——这是 V-JEPA2 预训练时使用的评估指标。我们的三路加权是自定义的，Gram 矩阵和 delta 项在 V-JEPA2 论文中未见使用。
+
+3. **模型加载**：WMReward 用 torch.hub 加载官方发布权重。我们使用本地 checkpoint `vjepa2_1_vitl_dist_vitG_384.pt`（ViT-L encoder distills ViT-G target），模型架构不同。
+
+4. **核心问题**：即使换成 WMReward 的官方方法，对合成刚体视频的区分力大概率仍然很低——因为 V-JEPA2 的 predictor 在自然视频上训练，简单刚体碰撞不触发其 predictive surprise 机制。这已在 PhysAlign 论文中得到间接验证（V-JEPA2 特征对齐用于训练约束，而非直接作为评分器）。
+
+### 结论
+
+当前 JEPA scorer 不是标准实现，三路加权分数缺乏论文支撑。已改用 WMReward 的滑动窗口 + cosine distance 方法重新评估。
+
+---
+
+## Experiment 3: WMReward JEPA Comparison
+
+### 方法
+
+WMReward（Meta 官方）的 `compute_vjepa_surprise()`：滑动窗口(16f, stride 2)，causal masking(8f ctx→8f pred)，cosine distance loss，mean 聚合。模型: ViT-Giant 384，checkpoint: `/data/gaoya/ckpt/Sylvest-vjepa2-vit-g/vitg-384.pt`
+
+### 结果对比
+
+| 指标 | 旧自定义 JEPA | WMReward 官方 |
+|---|---|---|
+| 方法 | 单次切分 + 三路加权 | 滑动窗口 + cosine distance |
+| ball_block 范围 | 0.740–0.750 | **0.450–0.469** |
+| 敏感性范围 | 0.726–0.754 | **0.450–0.495** |
+| 全范围(max-min) | 0.029 | **0.045** |
+| 绝对分数 | ~0.74 (高) | ~0.47 (低, 偏"意外") |
+
+### 关键排序 (WMReward)
+
+| 最高意外 (低相似度) | 最低意外 (高相似度) |
+|---|---|
+| e07_mu10 (高摩擦) 0.450 | nomiss (不碰撞) 0.495 |
+| e07_mu01 (低摩擦) 0.457 | mass_2000 (重球) 0.491 |
+| e09 (超高弹性) 0.454 | mass_9999 (巨型球) 0.490 |
+
+### Analysis
+
+1. WMReward 官方方法比旧方法区分力稍强（0.045 vs 0.029），但绝对值仍低（~0.5 = 高 surprise），说明合成视频对 V-JEPA2 本身就"意外"
+2. 碰撞视频比不碰撞视频更"意外"——V-JEPA2 认为有交互的动力学更难预测
+3. 摩擦/弹性差异对 surprise 有微弱影响（高摩擦 > 低摩擦 > 无摩擦）
+4. 即使 WMReward 官方方法，对纯刚体仿真的区分力仍然很弱
