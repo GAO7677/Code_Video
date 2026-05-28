@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .paths import A_OUTPUT, PDI_FLORENCE_MODEL, PDI_ROOT, RUN_ROOT
 from .records import load_payload, stable_path_id
@@ -73,23 +77,40 @@ def resolve_text_query(video_path: Path, payload: dict[str, Any]) -> str:
     return "ball"
 
 
+def build_temp_config(cache_dir: Path) -> Path:
+    with (PDI_ROOT / "configs" / "default.yaml").open("r", encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    config["cache_dir"] = str(cache_dir)
+    config_path = cache_dir / "default_eval.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return config_path
+
+
 class OfficialPDIRunner:
     def __init__(
         self,
         *,
         python_bin: str | None = None,
         cuda_visible_devices: str | None = None,
+        max_retries: int = 3,
     ) -> None:
         self.python_bin = python_bin or sys.executable
         self.cuda_visible_devices = cuda_visible_devices
+        self.max_retries = max(int(max_retries), 1)
 
     def run(self, video_path: Path, text_query: str, refresh: bool = False) -> dict[str, Any]:
         sample_id = stable_path_id(video_path)
         output_dir = RUN_ROOT / "pdi" / sample_id
         report_dir = output_dir / video_path.stem
         report_path = report_dir / f"{video_path.stem}_pdi_report.txt"
+        cache_dir = RUN_ROOT / "pdi_cache" / sample_id
         if report_path.exists() and not refresh:
             return parse_report(report_path)
+        if refresh and cache_dir.exists():
+            shutil.rmtree(cache_dir)
+
+        config_path = build_temp_config(cache_dir)
 
         env = os.environ.copy()
         env["PYTHONNOUSERSITE"] = "1"
@@ -110,25 +131,35 @@ class OfficialPDIRunner:
             "evaluation/main.py",
             "--input",
             str(video_path),
+            "--config",
+            str(config_path),
             "--text",
             text_query,
             "--output_dir",
             str(output_dir),
         ]
+        last_error = ""
         try:
-            completed = subprocess.run(
-                cmd,
-                cwd=PDI_ROOT,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            for attempt in range(1, self.max_retries + 1):
+                completed = subprocess.run(
+                    cmd,
+                    cwd=PDI_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if completed.returncode == 0:
+                    return parse_report(report_path)
+
+                stderr_tail = completed.stderr[-2000:] if completed.stderr else ""
+                last_error = stderr_tail
+                transient_cuda = "illegal memory access" in stderr_tail.lower() or "cublas" in stderr_tail.lower()
+                if attempt >= self.max_retries or not transient_cuda:
+                    break
+                time.sleep(2.0 * attempt)
         finally:
             if renamed_tracker and tracker_bak.exists() and not tracker_ckpt.exists():
                 tracker_bak.rename(tracker_ckpt)
 
-        if completed.returncode != 0:
-            stderr_tail = completed.stderr[-2000:] if completed.stderr else ""
-            raise RuntimeError(f"Official PDI failed for {video_path.name}\n{stderr_tail}")
-        return parse_report(report_path)
+        raise RuntimeError(f"Official PDI failed for {video_path.name}\n{last_error}")

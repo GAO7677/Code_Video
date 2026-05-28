@@ -23,6 +23,28 @@ METRIC_LABELS = {
     "vjepa_proxy": "V-JEPA Proxy",
 }
 
+LOWER_IS_BETTER = {
+    "official_pdi",
+    "scale_component",
+    "traj_component",
+    "epsilon_rigidity",
+    "vp_component",
+}
+
+GROUP_C_METRICS = [
+    "official_pdi",
+    "scale_component",
+    "traj_component",
+    "epsilon_rigidity",
+    "vp_component",
+    "wmreward_jepa",
+    "vjepa_proxy",
+]
+
+GROUP_C_GT_OVERRIDES = {
+    "bus": A_OUTPUT / "GT" / "Dynamic_Tracking" / "bus.json",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve unified PhysV ABC report.")
@@ -42,8 +64,11 @@ def mean_or_none(values: list[float]) -> float | None:
     return statistics.mean(values) if values else None
 
 
-def metric_td(name: str, value: Any) -> str:
-    return f"<td class='num metric metric-{name}'>{fv(value)}</td>"
+def metric_td(name: str, value: Any, *, is_best: bool = False) -> str:
+    classes = f"num metric metric-{name}"
+    if is_best:
+        classes += " best"
+    return f"<td class='{classes}'>{fv(value)}</td>"
 
 
 def text_td(value: Any, classes: str = "") -> str:
@@ -96,6 +121,24 @@ def standard_table(thead: str, rows: list[str]) -> str:
     return f"<table>{thead}<tbody>{''.join(rows)}</tbody></table>"
 
 
+def best_metric_mask(rows: list[dict[str, Any]], metric_names: list[str]) -> list[dict[str, bool]]:
+    best: dict[str, float] = {}
+    for metric_name in metric_names:
+        values = [row.get(metric_name) for row in rows if row.get(metric_name) is not None]
+        if not values:
+            continue
+        best[metric_name] = min(values) if metric_name in LOWER_IS_BETTER else max(values)
+
+    masks: list[dict[str, bool]] = []
+    for row in rows:
+        row_mask: dict[str, bool] = {}
+        for metric_name in metric_names:
+            value = row.get(metric_name)
+            row_mask[metric_name] = value is not None and metric_name in best and value == best[metric_name]
+        masks.append(row_mask)
+    return masks
+
+
 def build_group_a() -> str:
     by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for json_path in iter_group_jsons("A"):
@@ -103,20 +146,37 @@ def build_group_a() -> str:
         method = str(payload.get("method") or payload.get("provider") or json_path.parts[-3])
         by_method[method].append(payload)
 
-    rows = []
+    row_data = []
     for method in sorted(by_method):
         payloads = by_method[method]
+        row_data.append(
+            {
+                "method": method,
+                "count": len(payloads),
+                "official_pdi": mean_or_none(_metric_list(payloads, "official_pdi")),
+                "scale_component": mean_or_none(_metric_list(payloads, "scale_component")),
+                "traj_component": mean_or_none(_metric_list(payloads, "traj_component")),
+                "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
+                "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
+                "wmreward_jepa": mean_or_none(_metric_list(payloads, "wmreward_jepa")),
+                "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
+            }
+        )
+    masks = best_metric_mask(row_data, GROUP_C_METRICS)
+
+    rows = []
+    for row, mask in zip(row_data, masks):
         rows.append(
             "<tr>"
-            f"{text_td(method, 'label-cell')}"
-            f"{text_td(len(payloads), 'num')}"
-            f"{metric_td('official_pdi', mean_or_none(_metric_list(payloads, 'official_pdi')))}"
-            f"{metric_td('scale_component', mean_or_none(_metric_list(payloads, 'scale_component')))}"
-            f"{metric_td('traj_component', mean_or_none(_metric_list(payloads, 'traj_component')))}"
-            f"{metric_td('epsilon_rigidity', mean_or_none(_metric_list(payloads, 'epsilon_rigidity')))}"
-            f"{metric_td('vp_component', mean_or_none(_metric_list(payloads, 'vp_component')))}"
-            f"{metric_td('wmreward_jepa', mean_or_none(_metric_list(payloads, 'wmreward_jepa')))}"
-            f"{metric_td('vjepa_proxy', mean_or_none(_metric_list(payloads, 'vjepa_proxy')))}"
+            f"{text_td(row['method'], 'label-cell')}"
+            f"{text_td(row['count'], 'num')}"
+            f"{metric_td('official_pdi', row['official_pdi'], is_best=mask['official_pdi'])}"
+            f"{metric_td('scale_component', row['scale_component'], is_best=mask['scale_component'])}"
+            f"{metric_td('traj_component', row['traj_component'], is_best=mask['traj_component'])}"
+            f"{metric_td('epsilon_rigidity', row['epsilon_rigidity'], is_best=mask['epsilon_rigidity'])}"
+            f"{metric_td('vp_component', row['vp_component'], is_best=mask['vp_component'])}"
+            f"{metric_td('wmreward_jepa', row['wmreward_jepa'], is_best=mask['wmreward_jepa'])}"
+            f"{metric_td('vjepa_proxy', row['vjepa_proxy'], is_best=mask['vjepa_proxy'])}"
             "</tr>"
         )
 
@@ -144,80 +204,140 @@ def build_group_a() -> str:
 
 
 def build_group_b1() -> str:
-    rows = []
+    row_data = []
     for json_path in iter_group_jsons("B1"):
         payload = load_payload(json_path)
         params = payload.get("parameters", {})
-        rows.append(
-            "<tr>"
-            f"{text_td(json_path.stem, 'label-cell')}"
-            f"{text_td(params.get('restitution', '-'), 'num')}"
-            f"{text_td(params.get('lateral_friction', '-'), 'num')}"
-            f"{text_td(params.get('ball_mass_kg', '-'), 'num')}"
-            f"{metric_row(payload)}"
-            "</tr>"
+        row_data.append(
+            {
+                "label": json_path.stem,
+                "meta": [params.get("restitution", "-"), params.get("lateral_friction", "-"), params.get("ball_mass_kg", "-")],
+                **metric_values(payload),
+            }
         )
-    return _sample_group_section("B1", "Scenario", ["e", "μ", "m"], rows)
+    return _sample_group_section("B1", "Scenario", ["e", "μ", "m"], row_data)
 
 
 def build_group_b2() -> str:
-    rows = []
+    row_data = []
     for json_path in iter_group_jsons("B2"):
         payload = load_payload(json_path)
-        rows.append(
-            "<tr>"
-            f"{text_td(json_path.stem, 'label-cell')}"
-            f"{text_td(payload.get('description', payload.get('experiment', '-')))}"
-            f"{metric_row(payload)}"
-            "</tr>"
+        row_data.append(
+            {
+                "label": json_path.stem,
+                "meta": [payload.get("description", payload.get("experiment", "-"))],
+                **metric_values(payload),
+            }
         )
-    return _sample_group_section("B2", "Scenario", ["Description"], rows)
+    return _sample_group_section("B2", "Scenario", ["Description"], row_data)
 
 
 def build_group_b3() -> str:
-    rows = []
+    row_data = []
     for json_path in iter_group_jsons("B3"):
         payload = load_payload(json_path)
-        rows.append(
-            "<tr>"
-            f"{text_td(payload.get('scenario', json_path.stem), 'label-cell')}"
-            f"{text_td(payload.get('appearance_variant', '-'))}"
-            f"{metric_row(payload)}"
-            "</tr>"
+        row_data.append(
+            {
+                "label": payload.get("scenario", json_path.stem),
+                "meta": [payload.get("appearance_variant", "-")],
+                **metric_values(payload),
+            }
         )
-    return _sample_group_section("B3", "Base Scenario", ["Appearance"], rows)
+    return _sample_group_section("B3", "Base Scenario", ["Appearance"], row_data)
 
 
 def build_group_c() -> str:
-    rows = []
+    shuffle_payloads: list[dict[str, Any]] = []
+    noshuffle_payloads: list[dict[str, Any]] = []
+    originals_in_c = {json_path.stem: json_path for json_path in iter_group_jsons("C") if json_path.stem.endswith("_original")}
+
     for json_path in iter_group_jsons("C"):
-        payload = load_payload(json_path)
+        if not json_path.stem.endswith("_shuffled"):
+            continue
+        shuffle_payloads.append(load_payload(json_path))
+        noshuffle_payloads.append(load_payload(_resolve_group_c_original_path(json_path, originals_in_c)))
+
+    row_data = [
+        _aggregate_metric_row("noshuffle", noshuffle_payloads),
+        _aggregate_metric_row("shuffle", shuffle_payloads),
+    ]
+    masks = best_metric_mask(row_data, GROUP_C_METRICS)
+
+    rows = []
+    for row, mask in zip(row_data, masks):
         rows.append(
             "<tr>"
-            f"{text_td(json_path.stem, 'label-cell')}"
-            f"{metric_row(payload)}"
+            f"{text_td(row['method'], 'label-cell')}"
+            f"{text_td(row['count'], 'num')}"
+            f"{render_metric_cells(row, mask)}"
             "</tr>"
         )
-    return _sample_group_section("C", "Video", [], rows)
+
+    thead = """
+    <thead>
+      <tr>
+        <th colspan="2">Method Metadata</th>
+        <th colspan="5">Official PDI Breakdown</th>
+        <th colspan="2">Predictive Metrics</th>
+      </tr>
+      <tr>
+        <th>Method</th>
+        <th>N</th>
+        <th class="metric metric-official_pdi">Official PDI ↓</th>
+        <th class="metric metric-scale_component">Scale ↓</th>
+        <th class="metric metric-traj_component">Trajectory ↓</th>
+        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
+        <th class="metric metric-vp_component">VP ↓</th>
+        <th class="metric metric-wmreward_jepa">WMReward JEPA ↑</th>
+        <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
+      </tr>
+    </thead>
+    """
+    spec = GROUP_SPECS["C"]
+    description = (
+        f"{spec.description} 当前按 `shuffle` / `noshuffle` 两种方法聚合显示均值；"
+        " `noshuffle` 优先使用 C 组显式 original，其余样本回溯到对应 A/B 原始结果。"
+    )
+    return section_header("C", spec.title, description) + standard_table(thead, rows) + section_footer()
 
 
-def metric_row(payload: dict[str, Any]) -> str:
+def metric_values(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "official_pdi": metric_value(payload, "official_pdi"),
+        "scale_component": metric_value(payload, "scale_component"),
+        "traj_component": metric_value(payload, "traj_component"),
+        "epsilon_rigidity": metric_value(payload, "epsilon_rigidity"),
+        "vp_component": metric_value(payload, "vp_component"),
+        "wmreward_jepa": metric_value(payload, "wmreward_jepa"),
+        "vjepa_proxy": metric_value(payload, "vjepa_proxy"),
+    }
+
+
+def render_metric_cells(row: dict[str, Any], mask: dict[str, bool]) -> str:
     return "".join(
         [
-            metric_td("official_pdi", metric_value(payload, "official_pdi")),
-            metric_td("scale_component", metric_value(payload, "scale_component")),
-            metric_td("traj_component", metric_value(payload, "traj_component")),
-            metric_td("epsilon_rigidity", metric_value(payload, "epsilon_rigidity")),
-            metric_td("vp_component", metric_value(payload, "vp_component")),
-            metric_td("wmreward_jepa", metric_value(payload, "wmreward_jepa")),
-            metric_td("vjepa_proxy", metric_value(payload, "vjepa_proxy")),
+            metric_td("official_pdi", row["official_pdi"], is_best=mask["official_pdi"]),
+            metric_td("scale_component", row["scale_component"], is_best=mask["scale_component"]),
+            metric_td("traj_component", row["traj_component"], is_best=mask["traj_component"]),
+            metric_td("epsilon_rigidity", row["epsilon_rigidity"], is_best=mask["epsilon_rigidity"]),
+            metric_td("vp_component", row["vp_component"], is_best=mask["vp_component"]),
+            metric_td("wmreward_jepa", row["wmreward_jepa"], is_best=mask["wmreward_jepa"]),
+            metric_td("vjepa_proxy", row["vjepa_proxy"], is_best=mask["vjepa_proxy"]),
         ]
     )
 
 
-def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], rows: list[str]) -> str:
+def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], row_data: list[dict[str, Any]]) -> str:
     meta_colspan = 1 + len(extra_headers)
     meta_headers = [f"<th>{label1}</th>"] + [f"<th>{header}</th>" for header in extra_headers]
+    masks = best_metric_mask(row_data, GROUP_C_METRICS)
+    rows = []
+    for row, mask in zip(row_data, masks):
+        meta_cells = "".join(
+            [text_td(row["label"], "label-cell")] + [text_td(value, "num" if isinstance(value, (int, float)) else "") for value in row["meta"]]
+        )
+        rows.append("<tr>" + meta_cells + render_metric_cells(row, mask) + "</tr>")
+
     thead = f"""
     <thead>
       <tr>
@@ -244,6 +364,62 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
 def _metric_list(payloads: list[dict[str, Any]], name: str) -> list[float]:
     values = [metric_value(payload, name) for payload in payloads]
     return [float(value) for value in values if value is not None]
+
+
+def _aggregate_metric_row(method: str, payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "method": method,
+        "count": len(payloads),
+        "official_pdi": mean_or_none(_metric_list(payloads, "official_pdi")),
+        "scale_component": mean_or_none(_metric_list(payloads, "scale_component")),
+        "traj_component": mean_or_none(_metric_list(payloads, "traj_component")),
+        "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
+        "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
+        "wmreward_jepa": mean_or_none(_metric_list(payloads, "wmreward_jepa")),
+        "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
+    }
+
+
+def _resolve_group_c_original_path(shuffled_path: Path, originals_in_c: dict[str, Path]) -> Path:
+    stem = shuffled_path.stem
+    if not stem.endswith("_shuffled"):
+        raise ValueError(f"Expected shuffled C sample, got: {shuffled_path}")
+
+    prefix, sample_key = stem.split("_", 1)
+    sample_key = sample_key[: -len("_shuffled")]
+
+    explicit_original = originals_in_c.get(f"{prefix}_{sample_key}_original")
+    if explicit_original is not None:
+        return explicit_original
+
+    if prefix == "gt":
+        return _resolve_group_c_gt_original_path(sample_key)
+    if prefix == "sim":
+        return _resolve_group_c_sim_original_path(sample_key)
+    raise ValueError(f"Unsupported C sample prefix in {shuffled_path.name}")
+
+
+def _resolve_group_c_gt_original_path(sample_key: str) -> Path:
+    override = GROUP_C_GT_OVERRIDES.get(sample_key)
+    if override is not None:
+        return override
+
+    matches = sorted((A_OUTPUT / "GT").rglob(f"{sample_key}.json"))
+    if not matches:
+        raise FileNotFoundError(f"No GT original json found for C sample {sample_key!r}")
+    if len(matches) > 1:
+        raise ValueError(f"Ambiguous GT original json for C sample {sample_key!r}: {matches}")
+    return matches[0]
+
+
+def _resolve_group_c_sim_original_path(sample_key: str) -> Path:
+    for candidate in [
+        DATA_ROOT / "videos" / "ball_block" / f"{sample_key}.json",
+        DATA_ROOT / "videos" / "jepa_sensitivity" / f"{sample_key}.json",
+    ]:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"No sim original json found for C sample {sample_key!r}")
 
 
 def build_html() -> str:
@@ -297,6 +473,12 @@ def build_html() -> str:
     .metric-scale_component, .metric-traj_component, .metric-epsilon_rigidity, .metric-vp_component {{ color: var(--pdi2); }}
     .metric-wmreward_jepa {{ color: var(--wmr); }}
     .metric-vjepa_proxy {{ color: var(--proxy); }}
+    td.best {{
+      font-weight: 800;
+      background: linear-gradient(180deg, rgba(240,154,92,0.18), rgba(240,154,92,0.08));
+      box-shadow: inset 0 0 0 1px rgba(240,154,92,0.45);
+      border-radius: 8px;
+    }}
     tbody tr:hover {{ background: rgba(255,255,255,0.03); }}
     @media (max-width: 1200px) {{
       .metric-grid {{ grid-template-columns: 1fr; }}

@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--refresh-wmreward", action="store_true")
     parser.add_argument("--refresh-proxy", action="store_true")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--proxy-device", default=None)
     parser.add_argument("--cuda-visible-devices", default=os.environ.get("CUDA_VISIBLE_DEVICES"))
     parser.add_argument("--pdi-python", default=sys.executable)
     parser.add_argument("--wmreward-autocast-dtype", default="bfloat16", choices=["bfloat16", "float16", "none"])
@@ -74,6 +75,14 @@ def update_payload(
     payload = load_payload(json_path)
     video_path = resolve_video_path(json_path, payload)
     changed = {"pdi": False, "wmreward": False, "proxy": False}
+    needs_save = False
+    canonical_video = str(video_path)
+    if payload.get("video") != canonical_video:
+        payload["video"] = canonical_video
+        needs_save = True
+    if payload.get("video_path") is not None and payload.get("video_path") != canonical_video:
+        payload["video_path"] = canonical_video
+        needs_save = True
 
     if pdi_runner is not None and should_run_pdi(payload, refresh_pdi):
         result = pdi_runner.run(video_path, resolve_text_query(video_path, payload), refresh=refresh_pdi)
@@ -91,7 +100,7 @@ def update_payload(
             set_proxy(payload, result)
             changed["proxy"] = True
 
-    if any(changed.values()):
+    if any(changed.values()) or needs_save:
         save_payload(json_path, payload)
     return changed
 
@@ -127,7 +136,8 @@ def main() -> None:
         if "wmreward" in enabled_metrics
         else None
     )
-    proxy_runner = ProxyRunner(device=args.device) if "proxy" in enabled_metrics else None
+    proxy_device = args.proxy_device or args.device
+    proxy_runner = ProxyRunner(device=proxy_device) if "proxy" in enabled_metrics else None
 
     summary: dict[str, Any] = {}
     for group_id in args.groups:
