@@ -203,3 +203,42 @@ WMReward（Meta 官方）的 `compute_vjepa_surprise()`：滑动窗口(16f, stri
 2. 碰撞视频比不碰撞视频更"意外"——V-JEPA2 认为有交互的动力学更难预测
 3. 摩擦/弹性差异对 surprise 有微弱影响（高摩擦 > 低摩擦 > 无摩擦）
 4. 即使 WMReward 官方方法，对纯刚体仿真的区分力仍然很弱
+
+---
+
+## Experiment 4: Frame Shuffle Sanity Check
+
+### 目的
+
+随机打乱 GT 视频所有帧，破坏全部时序信息。PDI 应显著恶化（几何审计无法完成），WMReward JEPA 应大幅下降（future prediction 变为不可能）。测试两个指标的时序敏感性。
+
+### 方法
+
+取 GT/Longitudinal_Convergence/ball.mp4（52 帧），用 `random.shuffle` 打乱帧序，固定 seed=42。原始和打乱版本分别跑 PDI 和 WMReward JEPA。
+
+### Results
+
+| 视频 | PDI ↓ | WMReward JEPA ↑ |
+|------|-------|-----------------|
+| GT ball 原始帧序 | 0.175 (B) | 0.454 |
+| GT ball **随机打乱** | **0.102 (B)** | **0.439** |
+| 变化 | **-0.073 (变好?)** | **-0.015 (微降)** |
+
+### Analysis
+
+1. **PDI 未通过 sanity check**。打乱帧后 PDI 反而改善（0.175→0.102）。原因：SAM2 的视频分割依赖时序连续性，打乱帧导致 mask 传播失败、跟踪点稀疏，几何审计在更少/更差的数据上反而计算出更低误差——暴露了 PDI pipeline 对感知前端（SAM2/CoTracker3）的质量依赖。
+
+2. **WMReward JEPA 几乎不敏感**。完全时间混乱仅降 0.015，仍在所有 GT 视频的正常波动范围内（0.38–0.45）。V-JEPA2 的 sliding window 机制在每个 16 帧窗口内做 causal prediction，即使全局帧序被打乱，窗口内的局部 patch token 仍可被"预测"（因为 V-JEPA2 预测的是空间纹理 token 而非时序事件 token）。
+
+3. **两个指标都反映感知前端的瓶颈**。PDI 依赖 SAM2/CoTracker3/DepthAnything 的视觉质量，JEPA 依赖 V-JEPA2 的 token-level 重建能力。两者都不是"纯物理"指标。
+
+### 输出
+
+```
+videos/shuffle_test/gt_ball_original.mp4   # 原始帧序副本
+videos/shuffle_test/gt_ball_shuffled.mp4   # 随机打乱帧序
+```
+
+### 可视化
+
+`http://127.0.0.1:18707` — Sanity Check: Frame Shuffle 部分

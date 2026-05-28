@@ -11,7 +11,15 @@ DATA.mkdir(parents=True, exist_ok=True)
 with open("/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/result/metrics.csv") as f:
     csv_rows = list(csv.DictReader(f))
 
-thead = "<tr>" + "".join(f"<th>{k.replace('_',' ')}</th>" for k in csv_rows[0]) + "</tr>"
+def _th(k):
+    label = k.replace("_", " ")
+    if k in ("wmreward_jepa",):
+        return f"<th>{label} ↑</th>"
+    if k in ("method", "num_videos"):
+        return f"<th>{label}</th>"
+    return f"<th>{label} ↓</th>"
+
+thead = "<tr>" + "".join(_th(k) for k in csv_rows[0]) + "</tr>"
 tbody = ""
 for r in csv_rows:
     tbody += "<tr>" + "".join(f"<td class='n'>{v}</td>" for v in r.values()) + "</tr>"
@@ -34,6 +42,13 @@ CASES = [
             {"label": "m=0.1kg light-ball",  "sub": "PDI=2.064 (Grade F)", "video": "sim_videos/ball_block/e07_mu05_m01.mp4", "pdi": "2.064", "wmr": "0.467", "hl": "red"},
             {"label": "m=5.0kg heavy-ball",  "sub": "Best JEPA (0.469)", "video": "sim_videos/ball_block/e07_mu05_m5.mp4", "pdi": "0.139", "wmr": "0.469", "hl": "green"},
             {"label": "u=1.0 high-fric",     "sub": "Worst JEPA (0.450)", "video": "sim_videos/ball_block/e07_mu10_m1.mp4", "pdi": "0.138", "wmr": "0.450", "hl": "red"},
+        ]
+    },
+    {
+        "group": "Sanity Check: Frame Shuffle",
+        "cards": [
+            {"label": "GT ball · Original",  "sub": "PDI=0.175 WMR=0.454", "video": "shuffle_videos/gt_ball_original.mp4", "pdi": "0.175", "wmr": "0.454", "hl": "green"},
+            {"label": "GT ball · SHUFFLED",  "sub": "FRAMES RANDOMIZED — PDI=0.102 WMR=0.439", "video": "shuffle_videos/gt_ball_shuffled.mp4", "pdi": "0.102", "wmr": "0.439", "hl": "red"},
         ]
     },
 ]
@@ -78,7 +93,9 @@ h2{{font-size:15px;margin:24px 0 10px;padding-bottom:6px;border-bottom:1px solid
 <div class="finding">
 <strong>PDI and JEPA ranks are inverted:</strong> GT has the best PDI (0.144) but the worst JEPA (0.412). Wan has the worst PDI (0.878) but the best JEPA (0.435).
 Real videos are geometrically correct but visually unpredictable; generated videos are geometrically flawed but visually simple.
-The two metrics capture <strong>complementary</strong> dimensions of video quality.
+The two metrics capture <strong>complementary</strong> dimensions of video quality.<br><br>
+<strong>Sanity check:</strong> Randomly shuffling all frames in a GT video → PDI paradoxically <strong>improves</strong> (0.175→0.102, SAM2 tracking breaks on shuffled frames),
+WMReward JEPA drops only <strong>0.015</strong> (0.454→0.439). Complete temporal chaos barely registers for V-JEPA2.
 </div>
 
 <table>{thead}{tbody}</table>
@@ -91,6 +108,7 @@ The two metrics capture <strong>complementary</strong> dimensions of video quali
 for name, target in [
     ("sim_videos", Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos")),
     ("pdi_videos", Path("/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output")),
+    ("shuffle_videos", Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/shuffle_test")),
 ]:
     link = DATA / name
     if not link.exists(): link.symlink_to(target)
