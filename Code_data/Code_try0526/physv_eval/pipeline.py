@@ -3,16 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from .datasets import GROUP_SPECS, iter_group_jsons
 from .official_pdi import OfficialPDIRunner, resolve_text_query
+from .paths import REPO_ROOT, VPHY_PYTHON
 from .proxy_runner import ProxyRunner
 from .records import (
     get_official_pdi,
     get_proxy,
+    get_videophy2_auto,
     get_wmreward,
     load_payload,
     metric_value,
@@ -37,16 +40,19 @@ def parse_args() -> argparse.Namespace:
         "--metrics",
         nargs="+",
         default=["pdi", "wmreward", "proxy"],
-        choices=["pdi", "wmreward", "proxy"],
+        choices=["pdi", "wmreward", "proxy", "videophy2"],
     )
     parser.add_argument("--refresh-pdi", action="store_true")
     parser.add_argument("--refresh-wmreward", action="store_true")
     parser.add_argument("--refresh-proxy", action="store_true")
+    parser.add_argument("--refresh-videophy2", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--proxy-device", default=None)
     parser.add_argument("--cuda-visible-devices", default=os.environ.get("CUDA_VISIBLE_DEVICES"))
     parser.add_argument("--pdi-python", default=sys.executable)
     parser.add_argument("--wmreward-autocast-dtype", default="bfloat16", choices=["bfloat16", "float16", "none"])
+    parser.add_argument("--videophy-python", default=str(VPHY_PYTHON))
+    parser.add_argument("--videophy-cuda-visible-devices", default=None)
     return parser.parse_args()
 
 
@@ -60,6 +66,10 @@ def should_run_wmreward(payload: dict[str, Any], refresh: bool) -> bool:
 
 def should_run_proxy(payload: dict[str, Any], refresh: bool) -> bool:
     return refresh or get_proxy(payload) is None or metric_value(payload, "vjepa_proxy") is None
+
+
+def should_run_videophy2(payload: dict[str, Any], refresh: bool) -> bool:
+    return refresh or get_videophy2_auto(payload) is None or metric_value(payload, "videophy2_auto_pc") is None
 
 
 def update_payload(
@@ -105,9 +115,9 @@ def update_payload(
     return changed
 
 
-def summarize_group_a() -> dict[str, int]:
-    stats = {"total": 0, "pdi": 0, "wmreward": 0, "proxy": 0}
-    for json_path in iter_group_jsons("A"):
+def summarize_group(group_id: str) -> dict[str, int]:
+    stats = {"total": 0, "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0}
+    for json_path in iter_group_jsons(group_id):
         payload = load_payload(json_path)
         stats["total"] += 1
         if metric_value(payload, "official_pdi") is not None:
@@ -116,7 +126,33 @@ def summarize_group_a() -> dict[str, int]:
             stats["wmreward"] += 1
         if metric_value(payload, "vjepa_proxy") is not None:
             stats["proxy"] += 1
+        if metric_value(payload, "videophy2_auto_pc") is not None:
+            stats["videophy2"] += 1
     return stats
+
+
+def run_videophy2_batch(
+    *,
+    groups: list[str],
+    refresh: bool,
+    python_bin: str,
+    cuda_visible_devices: str | None,
+) -> None:
+    cmd = [
+        python_bin,
+        str(REPO_ROOT / "physics_sim" / "eval_videophy2_auto.py"),
+        "--task",
+        "pc",
+        "--groups",
+        *groups,
+    ]
+    if refresh:
+        cmd.append("--refresh")
+    env = os.environ.copy()
+    env["PYTHONNOUSERSITE"] = "1"
+    if cuda_visible_devices is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+    subprocess.run(cmd, check=True, env=env)
 
 
 def main() -> None:
@@ -142,7 +178,7 @@ def main() -> None:
     summary: dict[str, Any] = {}
     for group_id in args.groups:
         rows = iter_group_jsons(group_id)
-        stats = {"total": len(rows), "pdi": 0, "wmreward": 0, "proxy": 0}
+        stats = {"total": len(rows), "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0}
         print(f"[{group_id}] {GROUP_SPECS[group_id].title}: {len(rows)} files", flush=True)
         for index, json_path in enumerate(rows, start=1):
             print(f"  [{index}/{len(rows)}] {json_path.name}", flush=True)
@@ -158,7 +194,18 @@ def main() -> None:
             for key, flag in changed.items():
                 if flag:
                     stats[key] += 1
-        summary[group_id] = summarize_group_a() if group_id == "A" else stats
+        summary[group_id] = summarize_group(group_id)
+
+    if "videophy2" in enabled_metrics:
+        print("[videophy2] running official VideoPhy-2 AutoEval in vphy env", flush=True)
+        run_videophy2_batch(
+            groups=args.groups,
+            refresh=args.refresh_videophy2,
+            python_bin=args.videophy_python,
+            cuda_visible_devices=args.videophy_cuda_visible_devices,
+        )
+        for group_id in args.groups:
+            summary[group_id] = summarize_group(group_id)
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

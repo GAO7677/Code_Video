@@ -234,7 +234,10 @@ class MplugOwlConfig(PretrainedConfig):
 
         if text_config is None:
             # we use LLAMA 7b by default
-            from ..llama.configuration_llama import LlamaConfig
+            try:
+                from transformers.models.llama.configuration_llama import LlamaConfig
+            except ImportError:
+                from transformers import LlamaConfig
 
             text_config = LlamaConfig(pad_token_id=2).to_dict()
             logger.info("text_config is None.")

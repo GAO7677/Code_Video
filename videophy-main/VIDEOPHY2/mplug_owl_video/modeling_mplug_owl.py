@@ -417,7 +417,7 @@ class MplugOwlPreTrainedModel(PreTrainedModel):
         "LlamaForCausalLM",
         "Parameter",
     ]
-    _keep_in_fp32_modules = ["wo"]
+    _keep_in_fp32_modules: list[str] = []
 
     def _init_weights(self, module):
         """Initialize the weights"""
