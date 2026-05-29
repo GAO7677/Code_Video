@@ -94,6 +94,29 @@ def get_videophy2_auto(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def get_phyground(payload: dict[str, Any]) -> dict[str, Any] | None:
+    bucket = payload.get("metric_results", {}).get("phyground")
+    if isinstance(bucket, dict):
+        return bucket
+    value = payload.get("phyground")
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def get_cosmos_reason1(payload: dict[str, Any]) -> dict[str, Any] | None:
+    bucket = payload.get("metric_results", {}).get("cosmos_reason1")
+    if isinstance(bucket, dict):
+        return bucket
+    value = payload.get("cosmos_reason1")
+    if isinstance(value, dict):
+        return value
+    scalar = payload.get("cosmos_reason1_score")
+    if scalar is not None:
+        return {"score": scalar}
+    return None
+
+
 def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "official_pdi":
         bucket = get_official_pdi(payload)
@@ -176,6 +199,30 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
         if sa_score is None or pc_score is None:
             return None
         return 1.0 if sa_score >= 4 and pc_score >= 4 else 0.0
+    if name == "phyground_sa":
+        bucket = get_phyground(payload)
+        return None if bucket is None else bucket.get("general", {}).get("SA")
+    if name == "phyground_ptv":
+        bucket = get_phyground(payload)
+        return None if bucket is None else bucket.get("general", {}).get("PTV")
+    if name == "phyground_persistence":
+        bucket = get_phyground(payload)
+        return None if bucket is None else bucket.get("general", {}).get("persistence")
+    if name == "phyground_general_avg":
+        bucket = get_phyground(payload)
+        return None if bucket is None else bucket.get("general_avg")
+    if name == "phyground_physical_avg":
+        bucket = get_phyground(payload)
+        return None if bucket is None else bucket.get("physical_avg")
+    if name.startswith("phyground_law_"):
+        bucket = get_phyground(payload)
+        if bucket is None:
+            return None
+        law_name = name[len("phyground_law_") :]
+        return bucket.get("physical_laws", {}).get(law_name)
+    if name == "cosmos_reason1":
+        bucket = get_cosmos_reason1(payload)
+        return None if bucket is None else bucket.get("score")
     raise KeyError(name)
 
 
@@ -281,3 +328,50 @@ def set_videophy2_auto(payload: dict[str, Any], result: dict[str, Any]) -> None:
     bucket["last_task"] = task
     bucket["num_frames"] = result.get("num_frames")
     bucket["checkpoint"] = result.get("checkpoint")
+
+
+def set_phyground(payload: dict[str, Any], result: dict[str, Any]) -> None:
+    bucket = {
+        "general": dict(result.get("general") or {}),
+        "general_avg": result.get("general_avg"),
+        "physical_laws": dict(result.get("physical_laws") or {}),
+        "physical_avg": result.get("physical_avg"),
+        "coverage": result.get("coverage"),
+        "raw": dict(result.get("raw") or {}),
+        "method": result.get("method"),
+        "adapter_dir": result.get("adapter_dir"),
+        "infer_script": result.get("infer_script"),
+        "max_new_tokens": result.get("max_new_tokens"),
+        "temperature": result.get("temperature"),
+        "fps": result.get("fps"),
+        "max_pixels": result.get("max_pixels"),
+    }
+    get_metric_bucket(payload)["phyground"] = bucket
+    payload["phyground"] = {
+        "general_avg": bucket["general_avg"],
+        "physical_avg": bucket["physical_avg"],
+        "SA": bucket["general"].get("SA"),
+        "PTV": bucket["general"].get("PTV"),
+        "persistence": bucket["general"].get("persistence"),
+    }
+
+
+def set_cosmos_reason1(payload: dict[str, Any], result: dict[str, Any]) -> None:
+    bucket = {
+        "score": result.get("score"),
+        "raw": result.get("raw"),
+        "method": result.get("method"),
+        "model": result.get("model"),
+        "prompt_path": result.get("prompt_path"),
+        "fps": result.get("fps"),
+        "total_pixels": result.get("total_pixels"),
+        "max_new_tokens": result.get("max_new_tokens"),
+        "temperature": result.get("temperature"),
+        "top_k": result.get("top_k"),
+        "top_p": result.get("top_p"),
+        "repetition_penalty": result.get("repetition_penalty"),
+        "seed": result.get("seed"),
+    }
+    get_metric_bucket(payload)["cosmos_reason1"] = bucket
+    payload["cosmos_reason1"] = {"score": bucket["score"]}
+    payload["cosmos_reason1_score"] = bucket["score"]

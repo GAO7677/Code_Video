@@ -20,10 +20,15 @@ METRIC_LABELS = {
     "epsilon_rigidity": "Rigidity",
     "vp_component": "VP",
     "wmreward_surprise": "WMReward Surprise",
+    "cosmos_reason1": "Cosmos Reason1",
     "vjepa_predictive_alignment": "V-JEPA AlignAux",
     "vjepa_temporal_relation_raw_error": "V-JEPA RelRaw",
     "vjepa_delta_relation_raw_error": "V-JEPA DeltaRel",
     "vjepa_delta_profile_error": "V-JEPA DeltaProf",
+    "phyground_general_avg": "PhyGround General",
+    "phyground_sa": "PhyGround SA",
+    "phyground_ptv": "PhyGround PTV",
+    "phyground_persistence": "PhyGround Persistence",
     "videophy2_auto_sa": "VideoPhy-2 SA",
     "videophy2_auto_pc": "VideoPhy-2 PC",
     "videophy2_auto_joint": "VideoPhy-2 Joint",
@@ -48,9 +53,14 @@ GROUP_C_METRICS = [
     "epsilon_rigidity",
     "vp_component",
     "wmreward_surprise",
+    "cosmos_reason1",
     "vjepa_temporal_relation_raw_error",
     "vjepa_delta_relation_raw_error",
     "vjepa_delta_profile_error",
+    "phyground_general_avg",
+    "phyground_sa",
+    "phyground_ptv",
+    "phyground_persistence",
     "videophy2_auto_sa",
     "videophy2_auto_pc",
     "videophy2_auto_joint",
@@ -59,9 +69,11 @@ GROUP_C_METRICS = [
 REPRESENTATIVE_METRICS = [
     "official_pdi",
     "wmreward_surprise",
+    "cosmos_reason1",
     "vjepa_temporal_relation_raw_error",
     "vjepa_delta_relation_raw_error",
     "vjepa_delta_profile_error",
+    "phyground_general_avg",
     "videophy2_auto_sa",
     "videophy2_auto_pc",
     "videophy2_auto_joint",
@@ -70,9 +82,11 @@ REPRESENTATIVE_METRICS = [
 REPRESENTATIVE_METRIC_TITLES = {
     "official_pdi": "Official PDI ↓",
     "wmreward_surprise": "WMReward Surprise ↓",
+    "cosmos_reason1": "Cosmos ↑",
     "vjepa_temporal_relation_raw_error": "RelRaw ↓",
     "vjepa_delta_relation_raw_error": "DeltaRel ↓",
     "vjepa_delta_profile_error": "DeltaProf ↓",
+    "phyground_general_avg": "PhyGround ↑",
     "videophy2_auto_sa": "SA ↑",
     "videophy2_auto_pc": "PC ↑",
     "videophy2_auto_joint": "Joint ↑",
@@ -117,16 +131,21 @@ def build_metric_legend() -> str:
     cards = []
     cards.append(_metric_card("official_pdi", "Official PDI", "↓ lower is better", "`metric_results.official_pdi`"))
     cards.append(_metric_card("wmreward_surprise", "WMReward Surprise", "↓ lower is better", "`metric_results.wmreward_jepa.surprise`"))
+    cards.append(_metric_card("cosmos_reason1", "Cosmos Reason1", "↑ higher is better", "`metric_results.cosmos_reason1.score`"))
     cards.append(_metric_card("vjepa_temporal_relation_raw_error", "V-JEPA RelRaw", "↓ lower is better", "`metric_results.vjepa_proxy.details.temporal_relation_raw_error`"))
     cards.append(_metric_card("vjepa_delta_relation_raw_error", "V-JEPA DeltaRel", "↓ lower is better", "`metric_results.vjepa_proxy.details.delta_relation_raw_error`"))
     cards.append(_metric_card("vjepa_delta_profile_error", "V-JEPA DeltaProf", "↓ lower is better", "`metric_results.vjepa_proxy.details.delta_profile_error`"))
+    cards.append(_metric_card("phyground_general_avg", "PhyGround General", "↑ higher is better", "`metric_results.phyground.general_avg`"))
+    cards.append(_metric_card("phyground_sa", "PhyGround SA", "↑ higher is better", "`metric_results.phyground.general.SA`"))
+    cards.append(_metric_card("phyground_ptv", "PhyGround PTV", "↑ higher is better", "`metric_results.phyground.general.PTV`"))
+    cards.append(_metric_card("phyground_persistence", "PhyGround Persistence", "↑ higher is better", "`metric_results.phyground.general.persistence`"))
     cards.append(_metric_card("videophy2_auto_sa", "VideoPhy-2 SA", "↑ higher is better", "`metric_results.videophy2_auto.sa_score`"))
     cards.append(_metric_card("videophy2_auto_pc", "VideoPhy-2 PC", "↑ higher is better", "`metric_results.videophy2_auto.pc_score`"))
     cards.append(_metric_card("videophy2_auto_joint", "VideoPhy-2 Joint", "↑ higher is better", "`1[SA>=4 & PC>=4]`"))
     return f"""
     <section class="legend">
       <h2>指标图例</h2>
-      <div class="legend-sub">元数据列与指标列分开渲染；PDI 拆成总分和 4 个子指标；V-JEPA 主看连续原始结构误差。<code>AlignAux</code> 已移到每组下方的折叠诊断区，只作为辅助诊断，不建议单独拿来排方法优劣。Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。</div>
+      <div class="legend-sub">元数据列与指标列分开渲染；PDI 拆成总分和 4 个子指标；WMReward 保持官方 surprise 口径；Cosmos Reason1 是 cookbook 中 Reason1 physical-plausibility prompt 的 1-5 分；V-JEPA 主看连续原始结构误差；PhyGround 主表先展示稳定的 general 维度。<code>AlignAux</code> 已移到每组下方的折叠诊断区，只作为辅助诊断，不建议单独拿来排方法优劣。Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。</div>
       <div class="metric-grid">{''.join(cards)}</div>
     </section>
     """
@@ -223,9 +242,14 @@ def build_group_a() -> str:
                 "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
                 "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
                 "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
+                "cosmos_reason1": mean_or_none(_metric_list(payloads, "cosmos_reason1")),
                 "vjepa_temporal_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_temporal_relation_raw_error")),
                 "vjepa_delta_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_delta_relation_raw_error")),
                 "vjepa_delta_profile_error": mean_or_none(_metric_list(payloads, "vjepa_delta_profile_error")),
+                "phyground_general_avg": mean_or_none(_metric_list(payloads, "phyground_general_avg")),
+                "phyground_sa": mean_or_none(_metric_list(payloads, "phyground_sa")),
+                "phyground_ptv": mean_or_none(_metric_list(payloads, "phyground_ptv")),
+                "phyground_persistence": mean_or_none(_metric_list(payloads, "phyground_persistence")),
                 "videophy2_auto_sa": mean_or_none(_metric_list(payloads, "videophy2_auto_sa")),
                 "videophy2_auto_pc": mean_or_none(_metric_list(payloads, "videophy2_auto_pc")),
                 "videophy2_auto_joint": mean_or_none(_metric_list(payloads, "videophy2_auto_joint")),
@@ -245,9 +269,14 @@ def build_group_a() -> str:
             f"{metric_td('epsilon_rigidity', row['epsilon_rigidity'], is_best=mask['epsilon_rigidity'])}"
             f"{metric_td('vp_component', row['vp_component'], is_best=mask['vp_component'])}"
             f"{metric_td('wmreward_surprise', row['wmreward_surprise'], is_best=mask['wmreward_surprise'])}"
+            f"{metric_td('cosmos_reason1', row['cosmos_reason1'], is_best=mask['cosmos_reason1'])}"
             f"{metric_td('vjepa_temporal_relation_raw_error', row['vjepa_temporal_relation_raw_error'], is_best=mask['vjepa_temporal_relation_raw_error'])}"
             f"{metric_td('vjepa_delta_relation_raw_error', row['vjepa_delta_relation_raw_error'], is_best=mask['vjepa_delta_relation_raw_error'])}"
             f"{metric_td('vjepa_delta_profile_error', row['vjepa_delta_profile_error'], is_best=mask['vjepa_delta_profile_error'])}"
+            f"{metric_td('phyground_general_avg', row['phyground_general_avg'], is_best=mask['phyground_general_avg'])}"
+            f"{metric_td('phyground_sa', row['phyground_sa'], is_best=mask['phyground_sa'])}"
+            f"{metric_td('phyground_ptv', row['phyground_ptv'], is_best=mask['phyground_ptv'])}"
+            f"{metric_td('phyground_persistence', row['phyground_persistence'], is_best=mask['phyground_persistence'])}"
             f"{metric_td('videophy2_auto_sa', row['videophy2_auto_sa'], is_best=mask['videophy2_auto_sa'])}"
             f"{metric_td('videophy2_auto_pc', row['videophy2_auto_pc'], is_best=mask['videophy2_auto_pc'])}"
             f"{metric_td('videophy2_auto_joint', row['videophy2_auto_joint'], is_best=mask['videophy2_auto_joint'])}"
@@ -259,7 +288,7 @@ def build_group_a() -> str:
       <tr>
         <th colspan="2">Method Metadata</th>
         <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="7">Predictive Metrics</th>
+        <th colspan="12">Predictive Metrics</th>
       </tr>
       <tr>
         <th>Method</th>
@@ -270,9 +299,14 @@ def build_group_a() -> str:
         <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
         <th class="metric metric-vp_component">VP ↓</th>
         <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
         <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
         <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
         <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-phyground_general_avg">PhyGround General ↑</th>
+        <th class="metric metric-phyground_sa">PhyGround SA ↑</th>
+        <th class="metric metric-phyground_ptv">PhyGround PTV ↑</th>
+        <th class="metric metric-phyground_persistence">PhyGround Persist ↑</th>
         <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
         <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
         <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
@@ -408,9 +442,14 @@ def metric_values(payload: dict[str, Any]) -> dict[str, Any]:
         "epsilon_rigidity": metric_value(payload, "epsilon_rigidity"),
         "vp_component": metric_value(payload, "vp_component"),
         "wmreward_surprise": metric_value(payload, "wmreward_surprise"),
+        "cosmos_reason1": metric_value(payload, "cosmos_reason1"),
         "vjepa_temporal_relation_raw_error": metric_value(payload, "vjepa_temporal_relation_raw_error"),
         "vjepa_delta_relation_raw_error": metric_value(payload, "vjepa_delta_relation_raw_error"),
         "vjepa_delta_profile_error": metric_value(payload, "vjepa_delta_profile_error"),
+        "phyground_general_avg": metric_value(payload, "phyground_general_avg"),
+        "phyground_sa": metric_value(payload, "phyground_sa"),
+        "phyground_ptv": metric_value(payload, "phyground_ptv"),
+        "phyground_persistence": metric_value(payload, "phyground_persistence"),
         "videophy2_auto_sa": metric_value(payload, "videophy2_auto_sa"),
         "videophy2_auto_pc": metric_value(payload, "videophy2_auto_pc"),
         "videophy2_auto_joint": metric_value(payload, "videophy2_auto_joint"),
@@ -426,9 +465,14 @@ def render_metric_cells(row: dict[str, Any], mask: dict[str, bool]) -> str:
             metric_td("epsilon_rigidity", row["epsilon_rigidity"], is_best=mask["epsilon_rigidity"]),
             metric_td("vp_component", row["vp_component"], is_best=mask["vp_component"]),
             metric_td("wmreward_surprise", row["wmreward_surprise"], is_best=mask["wmreward_surprise"]),
+            metric_td("cosmos_reason1", row["cosmos_reason1"], is_best=mask["cosmos_reason1"]),
             metric_td("vjepa_temporal_relation_raw_error", row["vjepa_temporal_relation_raw_error"], is_best=mask["vjepa_temporal_relation_raw_error"]),
             metric_td("vjepa_delta_relation_raw_error", row["vjepa_delta_relation_raw_error"], is_best=mask["vjepa_delta_relation_raw_error"]),
             metric_td("vjepa_delta_profile_error", row["vjepa_delta_profile_error"], is_best=mask["vjepa_delta_profile_error"]),
+            metric_td("phyground_general_avg", row["phyground_general_avg"], is_best=mask["phyground_general_avg"]),
+            metric_td("phyground_sa", row["phyground_sa"], is_best=mask["phyground_sa"]),
+            metric_td("phyground_ptv", row["phyground_ptv"], is_best=mask["phyground_ptv"]),
+            metric_td("phyground_persistence", row["phyground_persistence"], is_best=mask["phyground_persistence"]),
             metric_td("videophy2_auto_sa", row["videophy2_auto_sa"], is_best=mask["videophy2_auto_sa"]),
             metric_td("videophy2_auto_pc", row["videophy2_auto_pc"], is_best=mask["videophy2_auto_pc"]),
             metric_td("videophy2_auto_joint", row["videophy2_auto_joint"], is_best=mask["videophy2_auto_joint"]),
@@ -452,7 +496,7 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
       <tr>
         <th colspan="{meta_colspan}">Sample Metadata</th>
         <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="7">Predictive Metrics</th>
+        <th colspan="12">Predictive Metrics</th>
       </tr>
       <tr>
         {''.join(meta_headers)}
@@ -462,9 +506,14 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
         <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
         <th class="metric metric-vp_component">VP ↓</th>
         <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
         <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
         <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
         <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-phyground_general_avg">PhyGround General ↑</th>
+        <th class="metric metric-phyground_sa">PhyGround SA ↑</th>
+        <th class="metric metric-phyground_ptv">PhyGround PTV ↑</th>
+        <th class="metric metric-phyground_persistence">PhyGround Persist ↑</th>
         <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
         <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
         <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
@@ -496,9 +545,14 @@ def _aggregate_metric_row(method: str, payloads: list[dict[str, Any]]) -> dict[s
         "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
         "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
         "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
+        "cosmos_reason1": mean_or_none(_metric_list(payloads, "cosmos_reason1")),
         "vjepa_temporal_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_temporal_relation_raw_error")),
         "vjepa_delta_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_delta_relation_raw_error")),
         "vjepa_delta_profile_error": mean_or_none(_metric_list(payloads, "vjepa_delta_profile_error")),
+        "phyground_general_avg": mean_or_none(_metric_list(payloads, "phyground_general_avg")),
+        "phyground_sa": mean_or_none(_metric_list(payloads, "phyground_sa")),
+        "phyground_ptv": mean_or_none(_metric_list(payloads, "phyground_ptv")),
+        "phyground_persistence": mean_or_none(_metric_list(payloads, "phyground_persistence")),
         "videophy2_auto_sa": mean_or_none(_metric_list(payloads, "videophy2_auto_sa")),
         "videophy2_auto_pc": mean_or_none(_metric_list(payloads, "videophy2_auto_pc")),
         "videophy2_auto_joint": mean_or_none(_metric_list(payloads, "videophy2_auto_joint")),
@@ -829,8 +883,8 @@ def build_html() -> str:
   <div class="page">
     <h1>PhysV ABC Metrics Report</h1>
     <div class="sub">
-      页面统一展示四类结果：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>V-JEPA 子指标</strong>、<strong>VideoPhy-2 SA / PC / Joint</strong>。
-      其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；V-JEPA 去掉手工加权总分和 margin 截断，直接展示 <code>predictive_alignment / temporal_relation_raw_error / delta_relation_raw_error / delta_profile_error</code>，其中前三项里的后三者是主误差项，<code>predictive_alignment</code> 只保留为辅助诊断；VideoPhy-2 的 SA / PC 是 1-5 离散评分，越高越好；Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。
+      页面统一展示六类结果：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>Cosmos Reason1</strong>、<strong>V-JEPA 子指标</strong>、<strong>PhyGround General</strong>、<strong>VideoPhy-2 SA / PC / Joint</strong>。
+      其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；Cosmos Reason1 复用 cookbook 中 Reason1 physical-plausibility prompt 的 1-5 分，越高越好；V-JEPA 去掉手工加权总分和 margin 截断，直接展示 <code>predictive_alignment / temporal_relation_raw_error / delta_relation_raw_error / delta_profile_error</code>，其中前三项里的后三者是主误差项，<code>predictive_alignment</code> 只保留为辅助诊断；PhyGround 主表当前展示 released judge 稳定的 general 维度 <code>GeneralAvg / SA / PTV / Persistence</code>；VideoPhy-2 的 SA / PC 是 1-5 离散评分，越高越好；Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。
     </div>
     {build_metric_legend()}
     {build_group_a()}

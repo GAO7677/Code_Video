@@ -11,8 +11,11 @@ from typing import Any
 from .datasets import GROUP_SPECS, iter_group_jsons
 from .official_pdi import OfficialPDIRunner, resolve_text_query
 from .paths import A_OUTPUT, REPO_ROOT, VPHY_PYTHON
+from .paths import FLUX_PYTHON
 from .proxy_runner import ProxyRunner
 from .records import (
+    get_cosmos_reason1,
+    get_phyground,
     get_official_pdi,
     get_proxy,
     get_videophy2_auto,
@@ -21,7 +24,9 @@ from .records import (
     metric_value,
     resolve_video_path,
     save_payload,
+    set_cosmos_reason1,
     set_official_pdi,
+    set_phyground,
     set_proxy,
     set_wmreward,
 )
@@ -40,12 +45,14 @@ def parse_args() -> argparse.Namespace:
         "--metrics",
         nargs="+",
         default=["pdi", "wmreward", "proxy"],
-        choices=["pdi", "wmreward", "proxy", "videophy2"],
+        choices=["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos"],
     )
     parser.add_argument("--refresh-pdi", action="store_true")
     parser.add_argument("--refresh-wmreward", action="store_true")
     parser.add_argument("--refresh-proxy", action="store_true")
     parser.add_argument("--refresh-videophy2", action="store_true")
+    parser.add_argument("--refresh-phyground", action="store_true")
+    parser.add_argument("--refresh-cosmos", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--proxy-device", default=None)
     parser.add_argument("--cuda-visible-devices", default=os.environ.get("CUDA_VISIBLE_DEVICES"))
@@ -53,6 +60,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wmreward-cuda-visible-devices", default=None)
     parser.add_argument("--videophy-python", default=str(VPHY_PYTHON))
     parser.add_argument("--videophy-cuda-visible-devices", default=None)
+    parser.add_argument("--flux-python", default=str(FLUX_PYTHON))
+    parser.add_argument("--flux-cuda-visible-devices", default=None)
     return parser.parse_args()
 
 
@@ -70,6 +79,14 @@ def should_run_proxy(payload: dict[str, Any], refresh: bool) -> bool:
 
 def should_run_videophy2(payload: dict[str, Any], refresh: bool) -> bool:
     return refresh or get_videophy2_auto(payload) is None or metric_value(payload, "videophy2_auto_pc") is None
+
+
+def should_run_phyground(payload: dict[str, Any], refresh: bool) -> bool:
+    return refresh or get_phyground(payload) is None or metric_value(payload, "phyground_general_avg") is None
+
+
+def should_run_cosmos(payload: dict[str, Any], refresh: bool) -> bool:
+    return refresh or get_cosmos_reason1(payload) is None or metric_value(payload, "cosmos_reason1") is None
 
 
 def resolve_proxy_context_video(json_path: Path, video_path: Path) -> Path:
@@ -139,7 +156,7 @@ def update_payload(
 
 
 def summarize_group(group_id: str) -> dict[str, int]:
-    stats = {"total": 0, "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0}
+    stats = {"total": 0, "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0, "phyground": 0, "cosmos": 0}
     for json_path in iter_group_jsons(group_id):
         payload = load_payload(json_path)
         stats["total"] += 1
@@ -151,6 +168,10 @@ def summarize_group(group_id: str) -> dict[str, int]:
             stats["proxy"] += 1
         if metric_value(payload, "videophy2_auto_pc") is not None:
             stats["videophy2"] += 1
+        if metric_value(payload, "phyground_general_avg") is not None:
+            stats["phyground"] += 1
+        if metric_value(payload, "cosmos_reason1") is not None:
+            stats["cosmos"] += 1
     return stats
 
 
@@ -171,6 +192,32 @@ def run_videophy2_batch(
     ]
     if refresh:
         cmd.append("--refresh")
+    env = os.environ.copy()
+    env["PYTHONNOUSERSITE"] = "1"
+    if cuda_visible_devices is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+    subprocess.run(cmd, check=True, env=env)
+
+
+def run_flux_batch(
+    *,
+    script_name: str,
+    groups: list[str],
+    refresh: bool,
+    python_bin: str,
+    cuda_visible_devices: str | None,
+    extra_args: list[str] | None = None,
+) -> None:
+    cmd = [
+        python_bin,
+        str(REPO_ROOT / "physics_sim" / script_name),
+        "--groups",
+        *groups,
+    ]
+    if refresh:
+        cmd.append("--refresh")
+    if extra_args:
+        cmd.extend(extra_args)
     env = os.environ.copy()
     env["PYTHONNOUSERSITE"] = "1"
     if cuda_visible_devices is not None:
@@ -200,7 +247,7 @@ def main() -> None:
     summary: dict[str, Any] = {}
     for group_id in args.groups:
         rows = iter_group_jsons(group_id)
-        stats = {"total": len(rows), "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0}
+        stats = {"total": len(rows), "pdi": 0, "wmreward": 0, "proxy": 0, "videophy2": 0, "phyground": 0, "cosmos": 0}
         print(f"[{group_id}] {GROUP_SPECS[group_id].title}: {len(rows)} files", flush=True)
         for index, json_path in enumerate(rows, start=1):
             print(f"  [{index}/{len(rows)}] {json_path.name}", flush=True)
@@ -225,6 +272,31 @@ def main() -> None:
             refresh=args.refresh_videophy2,
             python_bin=args.videophy_python,
             cuda_visible_devices=args.videophy_cuda_visible_devices,
+        )
+        for group_id in args.groups:
+            summary[group_id] = summarize_group(group_id)
+
+    if "phyground" in enabled_metrics:
+        print("[phyground] running official-compatible PhyGround batch in flux env", flush=True)
+        run_flux_batch(
+            script_name="eval_phyground.py",
+            groups=args.groups,
+            refresh=args.refresh_phyground,
+            python_bin=args.flux_python,
+            cuda_visible_devices=args.flux_cuda_visible_devices or args.cuda_visible_devices,
+            extra_args=["--general-only"],
+        )
+        for group_id in args.groups:
+            summary[group_id] = summarize_group(group_id)
+
+    if "cosmos" in enabled_metrics:
+        print("[cosmos] running official-compatible Cosmos Reason1 batch in flux env", flush=True)
+        run_flux_batch(
+            script_name="eval_cosmos_reason1.py",
+            groups=args.groups,
+            refresh=args.refresh_cosmos,
+            python_bin=args.flux_python,
+            cuda_visible_devices=args.flux_cuda_visible_devices or args.cuda_visible_devices,
         )
         for group_id in args.groups:
             summary[group_id] = summarize_group(group_id)
