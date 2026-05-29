@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from .datasets import GROUP_SPECS, iter_group_jsons
+from .official_pdi import resolve_text_query as resolve_pdi_text_query
 from .paths import VIDEOPHY_ROOT, VIDEOPHY2_CKPT
+from .paths import DATA_ROOT
 from .records import (
     load_payload,
     resolve_video_path,
@@ -53,6 +55,41 @@ def _resolve_text_query(payload: dict[str, Any], keys: list[str]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _resolve_group_c_sim_original(sample_key: str) -> Path:
+    for candidate in [
+        DATA_ROOT / "videos" / "ball_block" / f"{sample_key}.json",
+        DATA_ROOT / "videos" / "jepa_sensitivity" / f"{sample_key}.json",
+    ]:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"No C-group sim original json found for {sample_key!r}")
+
+
+def resolve_videophy2_sa_query(video_path: Path, payload: dict[str, Any]) -> str:
+    direct = _resolve_text_query(payload, ["caption", "text_prompt", "prompt", "target_object"])
+    if direct is not None:
+        return direct
+
+    stem = video_path.stem
+    if "shuffle_test" in video_path.parts:
+        if stem.startswith("gt_"):
+            return resolve_pdi_text_query(video_path, payload)
+        if stem.startswith("sim_"):
+            sample_key = stem[len("sim_") :]
+            for suffix in ("_original", "_shuffled"):
+                if sample_key.endswith(suffix):
+                    sample_key = sample_key[: -len(suffix)]
+            source_payload = load_payload(_resolve_group_c_sim_original(sample_key))
+            direct = _resolve_text_query(source_payload, ["caption", "text_prompt", "prompt", "target_object"])
+            if direct is not None:
+                return direct
+
+    fallback = _resolve_text_query(payload, ["description", "scenario", "experiment"])
+    if fallback is not None:
+        return fallback
+    return "ball"
 
 
 class VideoPhy2Runner:
@@ -274,19 +311,22 @@ def _run_json_mode(args: argparse.Namespace, runner: VideoPhy2Runner) -> None:
     selected = _iter_selected_jsons(args.groups, args.json_path)
     if not selected:
         return
-    if args.task != "pc":
-        raise ValueError("JSON/group mode currently supports only task=pc")
 
     for index, json_path in enumerate(selected, start=1):
         payload = load_payload(json_path)
-        if not args.refresh and payload.get("metric_results", {}).get("videophy2_auto", {}).get("pc_score") is not None:
+        video_path = resolve_video_path(json_path, payload)
+        result_bucket = payload.get("metric_results", {}).get("videophy2_auto", {})
+        if args.task == "pc" and not args.refresh and result_bucket.get("pc_score") is not None:
             print(f"[{index}/{len(selected)}] skip {json_path.name}: existing pc_score", flush=True)
             continue
-        video_path = resolve_video_path(json_path, payload)
-        result = runner.score_video(video_path, task="pc")
+        if args.task == "sa" and not args.refresh and result_bucket.get("sa_score") is not None:
+            print(f"[{index}/{len(selected)}] skip {json_path.name}: existing sa_score", flush=True)
+            continue
+        caption = resolve_videophy2_sa_query(video_path, payload) if args.task == "sa" else None
+        result = runner.score_video(video_path, task=args.task, caption=caption)
         set_videophy2_auto(payload, result)
         save_payload(json_path, payload)
-        print(f"[{index}/{len(selected)}] {json_path.name}: pc={result['score']}", flush=True)
+        print(f"[{index}/{len(selected)}] {json_path.name}: {args.task}={result['score']}", flush=True)
 
 
 def main() -> None:

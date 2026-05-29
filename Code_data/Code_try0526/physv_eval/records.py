@@ -128,6 +128,18 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "videophy2_auto_pc":
         bucket = get_videophy2_auto(payload)
         return None if bucket is None else bucket.get("pc_score")
+    if name == "videophy2_auto_sa":
+        bucket = get_videophy2_auto(payload)
+        return None if bucket is None else bucket.get("sa_score")
+    if name == "videophy2_auto_joint":
+        bucket = get_videophy2_auto(payload)
+        if bucket is None:
+            return None
+        sa_score = bucket.get("sa_score")
+        pc_score = bucket.get("pc_score")
+        if sa_score is None or pc_score is None:
+            return None
+        return 1.0 if sa_score >= 4 and pc_score >= 4 else 0.0
     raise KeyError(name)
 
 
@@ -191,8 +203,13 @@ def set_videophy2_auto(payload: dict[str, Any], result: dict[str, Any]) -> None:
         payload["videophy2_auto_pc"] = result.get("score")
     elif task == "sa":
         bucket["sa_score"] = result.get("score")
+        payload["videophy2_auto_sa"] = result.get("score")
     elif task == "rule":
         bucket["rule_score"] = result.get("score")
+        payload["videophy2_auto_rule"] = result.get("score")
+    if task:
+        bucket[f"{task}_raw_output"] = result.get("raw_output")
     bucket["raw_output"] = result.get("raw_output")
+    bucket["last_task"] = task
     bucket["num_frames"] = result.get("num_frames")
     bucket["checkpoint"] = result.get("checkpoint")

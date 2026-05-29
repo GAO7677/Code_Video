@@ -21,7 +21,9 @@ METRIC_LABELS = {
     "vp_component": "VP",
     "wmreward_surprise": "WMReward Surprise",
     "vjepa_proxy": "V-JEPA Proxy",
+    "videophy2_auto_sa": "VideoPhy-2 SA",
     "videophy2_auto_pc": "VideoPhy-2 PC",
+    "videophy2_auto_joint": "VideoPhy-2 Joint",
 }
 
 LOWER_IS_BETTER = {
@@ -41,7 +43,9 @@ GROUP_C_METRICS = [
     "vp_component",
     "wmreward_surprise",
     "vjepa_proxy",
+    "videophy2_auto_sa",
     "videophy2_auto_pc",
+    "videophy2_auto_joint",
 ]
 
 GROUP_C_GT_OVERRIDES = {
@@ -84,11 +88,13 @@ def build_metric_legend() -> str:
     cards.append(_metric_card("official_pdi", "Official PDI", "↓ lower is better", "`metric_results.official_pdi`"))
     cards.append(_metric_card("wmreward_surprise", "WMReward Surprise", "↓ lower is better", "`metric_results.wmreward_jepa.surprise`"))
     cards.append(_metric_card("vjepa_proxy", "V-JEPA Proxy", "↑ higher is better", "`metric_results.vjepa_proxy`"))
+    cards.append(_metric_card("videophy2_auto_sa", "VideoPhy-2 SA", "↑ higher is better", "`metric_results.videophy2_auto.sa_score`"))
     cards.append(_metric_card("videophy2_auto_pc", "VideoPhy-2 PC", "↑ higher is better", "`metric_results.videophy2_auto.pc_score`"))
+    cards.append(_metric_card("videophy2_auto_joint", "VideoPhy-2 Joint", "↑ higher is better", "`1[SA>=4 & PC>=4]`"))
     return f"""
     <section class="legend">
       <h2>指标图例</h2>
-      <div class="legend-sub">元数据列与指标列分开渲染；PDI 拆成总分和 4 个子指标，预测 / 判别指标统一放在右侧并参与最优高亮。</div>
+      <div class="legend-sub">元数据列与指标列分开渲染；PDI 拆成总分和 4 个子指标，预测 / 判别指标统一放在右侧并参与最优高亮。Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。</div>
       <div class="metric-grid">{''.join(cards)}</div>
     </section>
     """
@@ -164,7 +170,9 @@ def build_group_a() -> str:
                 "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
                 "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
                 "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
+                "videophy2_auto_sa": mean_or_none(_metric_list(payloads, "videophy2_auto_sa")),
                 "videophy2_auto_pc": mean_or_none(_metric_list(payloads, "videophy2_auto_pc")),
+                "videophy2_auto_joint": mean_or_none(_metric_list(payloads, "videophy2_auto_joint")),
             }
         )
     masks = best_metric_mask(row_data, GROUP_C_METRICS)
@@ -182,7 +190,9 @@ def build_group_a() -> str:
             f"{metric_td('vp_component', row['vp_component'], is_best=mask['vp_component'])}"
             f"{metric_td('wmreward_surprise', row['wmreward_surprise'], is_best=mask['wmreward_surprise'])}"
             f"{metric_td('vjepa_proxy', row['vjepa_proxy'], is_best=mask['vjepa_proxy'])}"
+            f"{metric_td('videophy2_auto_sa', row['videophy2_auto_sa'], is_best=mask['videophy2_auto_sa'])}"
             f"{metric_td('videophy2_auto_pc', row['videophy2_auto_pc'], is_best=mask['videophy2_auto_pc'])}"
+            f"{metric_td('videophy2_auto_joint', row['videophy2_auto_joint'], is_best=mask['videophy2_auto_joint'])}"
             "</tr>"
         )
 
@@ -191,7 +201,7 @@ def build_group_a() -> str:
       <tr>
         <th colspan="2">Method Metadata</th>
         <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="3">Predictive Metrics</th>
+        <th colspan="5">Predictive Metrics</th>
       </tr>
       <tr>
         <th>Method</th>
@@ -203,7 +213,9 @@ def build_group_a() -> str:
         <th class="metric metric-vp_component">VP ↓</th>
         <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
         <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
       </tr>
     </thead>
     """
@@ -285,7 +297,7 @@ def build_group_c() -> str:
       <tr>
         <th colspan="2">Method Metadata</th>
         <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="3">Predictive Metrics</th>
+        <th colspan="5">Predictive Metrics</th>
       </tr>
       <tr>
         <th>Method</th>
@@ -297,7 +309,9 @@ def build_group_c() -> str:
         <th class="metric metric-vp_component">VP ↓</th>
         <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
         <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
       </tr>
     </thead>
     """
@@ -318,7 +332,9 @@ def metric_values(payload: dict[str, Any]) -> dict[str, Any]:
         "vp_component": metric_value(payload, "vp_component"),
         "wmreward_surprise": metric_value(payload, "wmreward_surprise"),
         "vjepa_proxy": metric_value(payload, "vjepa_proxy"),
+        "videophy2_auto_sa": metric_value(payload, "videophy2_auto_sa"),
         "videophy2_auto_pc": metric_value(payload, "videophy2_auto_pc"),
+        "videophy2_auto_joint": metric_value(payload, "videophy2_auto_joint"),
     }
 
 
@@ -332,7 +348,9 @@ def render_metric_cells(row: dict[str, Any], mask: dict[str, bool]) -> str:
             metric_td("vp_component", row["vp_component"], is_best=mask["vp_component"]),
             metric_td("wmreward_surprise", row["wmreward_surprise"], is_best=mask["wmreward_surprise"]),
             metric_td("vjepa_proxy", row["vjepa_proxy"], is_best=mask["vjepa_proxy"]),
+            metric_td("videophy2_auto_sa", row["videophy2_auto_sa"], is_best=mask["videophy2_auto_sa"]),
             metric_td("videophy2_auto_pc", row["videophy2_auto_pc"], is_best=mask["videophy2_auto_pc"]),
+            metric_td("videophy2_auto_joint", row["videophy2_auto_joint"], is_best=mask["videophy2_auto_joint"]),
         ]
     )
 
@@ -353,7 +371,7 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
       <tr>
         <th colspan="{meta_colspan}">Sample Metadata</th>
         <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="3">Predictive Metrics</th>
+        <th colspan="5">Predictive Metrics</th>
       </tr>
       <tr>
         {''.join(meta_headers)}
@@ -364,7 +382,9 @@ def _sample_group_section(group_id: str, label1: str, extra_headers: list[str], 
         <th class="metric metric-vp_component">VP ↓</th>
         <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
         <th class="metric metric-vjepa_proxy">V-JEPA Proxy ↑</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
         <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
       </tr>
     </thead>
     """
@@ -388,7 +408,9 @@ def _aggregate_metric_row(method: str, payloads: list[dict[str, Any]]) -> dict[s
         "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
         "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
         "vjepa_proxy": mean_or_none(_metric_list(payloads, "vjepa_proxy")),
+        "videophy2_auto_sa": mean_or_none(_metric_list(payloads, "videophy2_auto_sa")),
         "videophy2_auto_pc": mean_or_none(_metric_list(payloads, "videophy2_auto_pc")),
+        "videophy2_auto_joint": mean_or_none(_metric_list(payloads, "videophy2_auto_joint")),
     }
 
 
@@ -464,12 +486,14 @@ def build_html() -> str:
     .sub {{ color: var(--muted); margin-bottom: 22px; line-height: 1.65; max-width: 1120px; }}
     .legend {{ margin-bottom: 26px; }}
     .legend-sub {{ color: var(--muted); margin: 6px 0 14px; }}
-    .metric-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }}
+    .metric-grid {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
     .metric-card {{ border: 1px solid var(--line); border-left-width: 6px; border-radius: 14px; background: var(--panel); padding: 14px 16px; }}
     .metric-card.metric-official_pdi {{ border-left-color: var(--pdi); }}
     .metric-card.metric-wmreward_surprise {{ border-left-color: var(--wmr); }}
     .metric-card.metric-vjepa_proxy {{ border-left-color: var(--proxy); }}
+    .metric-card.metric-videophy2_auto_sa {{ border-left-color: #bf7bff; }}
     .metric-card.metric-videophy2_auto_pc {{ border-left-color: #f36f6f; }}
+    .metric-card.metric-videophy2_auto_joint {{ border-left-color: #ffb84f; }}
     .metric-name {{ font-weight: 700; font-size: 16px; margin-bottom: 4px; }}
     .metric-dir {{ color: var(--muted); font-size: 12px; margin-bottom: 8px; }}
     .metric-field {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #d9e2ea; font-size: 12px; }}
@@ -486,7 +510,9 @@ def build_html() -> str:
     .metric-scale_component, .metric-traj_component, .metric-epsilon_rigidity, .metric-vp_component {{ color: var(--pdi2); }}
     .metric-wmreward_surprise {{ color: var(--wmr); }}
     .metric-vjepa_proxy {{ color: var(--proxy); }}
+    .metric-videophy2_auto_sa {{ color: #d3a6ff; }}
     .metric-videophy2_auto_pc {{ color: #f8a3a3; }}
+    .metric-videophy2_auto_joint {{ color: #ffd08a; }}
     td.best {{
       font-weight: 800;
       background: linear-gradient(180deg, rgba(240,154,92,0.18), rgba(240,154,92,0.08));
@@ -504,8 +530,8 @@ def build_html() -> str:
   <div class="page">
     <h1>PhysV ABC Metrics Report</h1>
     <div class="sub">
-      页面统一展示四类指标：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>V-JEPA Proxy</strong>、<strong>VideoPhy-2 PC</strong>。
-      其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；VideoPhy-2 PC 是 1-5 离散评分，越高越好；Official PDI 进一步拆为 <code>score / scale / trajectory / rigidity / vp</code> 五列，避免把元数据和指标混在一起。
+      页面统一展示五类指标：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>V-JEPA Proxy</strong>、<strong>VideoPhy-2 SA / PC / Joint</strong>。
+      其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；VideoPhy-2 的 SA / PC 是 1-5 离散评分，越高越好；Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率；Official PDI 进一步拆为 <code>score / scale / trajectory / rigidity / vp</code> 五列，避免把元数据和指标混在一起。
     </div>
     {build_metric_legend()}
     {build_group_a()}
