@@ -82,6 +82,18 @@ def get_proxy(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def get_videophy2_auto(payload: dict[str, Any]) -> dict[str, Any] | None:
+    bucket = payload.get("metric_results", {}).get("videophy2_auto")
+    if isinstance(bucket, dict):
+        return bucket
+    value = payload.get("videophy2_auto")
+    if isinstance(value, dict):
+        return value
+    if payload.get("videophy2_auto_pc") is not None:
+        return {"pc_score": payload.get("videophy2_auto_pc")}
+    return None
+
+
 def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "official_pdi":
         bucket = get_official_pdi(payload)
@@ -113,6 +125,9 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "vjepa_proxy":
         bucket = get_proxy(payload)
         return None if bucket is None else bucket.get("score")
+    if name == "videophy2_auto_pc":
+        bucket = get_videophy2_auto(payload)
+        return None if bucket is None else bucket.get("pc_score")
     raise KeyError(name)
 
 
@@ -166,3 +181,18 @@ def set_proxy(payload: dict[str, Any], result: dict[str, Any]) -> None:
     get_metric_bucket(payload)["vjepa_proxy"] = bucket
     payload["jepa"] = {"jepa_score": bucket["score"]}
     payload["vjepa_proxy"] = bucket["score"]
+
+
+def set_videophy2_auto(payload: dict[str, Any], result: dict[str, Any]) -> None:
+    bucket = get_metric_bucket(payload).setdefault("videophy2_auto", {})
+    task = result.get("task")
+    if task == "pc":
+        bucket["pc_score"] = result.get("score")
+        payload["videophy2_auto_pc"] = result.get("score")
+    elif task == "sa":
+        bucket["sa_score"] = result.get("score")
+    elif task == "rule":
+        bucket["rule_score"] = result.get("score")
+    bucket["raw_output"] = result.get("raw_output")
+    bucket["num_frames"] = result.get("num_frames")
+    bucket["checkpoint"] = result.get("checkpoint")
