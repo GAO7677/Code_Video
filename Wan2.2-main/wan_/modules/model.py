@@ -208,6 +208,12 @@ class WanAttentionBlock(nn.Module):
             elementwise_affine=True) if cross_attn_norm else nn.Identity()
         self.cross_attn = WanCrossAttention(dim, num_heads, (-1, -1), qk_norm,
                                             eps)
+        self.state_adapter_norm = WanLayerNorm(
+            dim, eps,
+            elementwise_affine=True) if cross_attn_norm else nn.Identity()
+        self.state_adapter_attn = WanCrossAttention(
+            dim, num_heads, (-1, -1), qk_norm, eps)
+        self.state_adapter_gate = nn.Parameter(torch.zeros(1))
         self.norm2 = WanLayerNorm(dim, eps)
         self.ffn = nn.Sequential(
             nn.Linear(dim, ffn_dim), nn.GELU(approximate='tanh'),
@@ -225,6 +231,9 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        state_context=None,
+        state_context_lens=None,
+        state_scale=1.0,
     ):
         r"""
         Args:
@@ -247,15 +256,22 @@ class WanAttentionBlock(nn.Module):
             x = x + y * e[2].squeeze(2)
 
         # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
+        def cross_attn_ffn(x, context, context_lens, e, state_context,
+                           state_context_lens, state_scale):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            if state_context is not None:
+                state_gate = torch.tanh(self.state_adapter_gate).to(x.dtype)
+                x = x + state_scale * state_gate * self.state_adapter_attn(
+                    self.state_adapter_norm(x), state_context,
+                    state_context_lens)
             y = self.ffn(
                 self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
                 x = x + y * e[5].squeeze(2)
             return x
 
-        x = cross_attn_ffn(x, context, context_lens, e)
+        x = cross_attn_ffn(x, context, context_lens, e, state_context,
+                           state_context_lens, state_scale)
         return x
 
 
@@ -407,6 +423,78 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
+    def _embed_text_context(self, context):
+        return self.text_embedding(
+            torch.stack([
+                torch.cat(
+                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
+                for u in context
+            ]))
+
+    def _prepare_state_context(self, state_context, batch_size=None):
+        if state_context is None:
+            return None, None
+        if isinstance(state_context, torch.Tensor):
+            if state_context.dim() == 2:
+                state_context = [state_context]
+            elif state_context.dim() == 3:
+                state_context = list(state_context.unbind(0))
+            else:
+                raise ValueError(
+                    "state_context tensor must have shape [L, C] or [B, L, C]"
+                )
+        if len(state_context) == 0:
+            return None, None
+        if batch_size is not None and len(state_context) != batch_size:
+            raise ValueError(
+                f"state_context batch size {len(state_context)} does not match latent batch size {batch_size}"
+            )
+
+        device = self.patch_embedding.weight.device
+        dtype = self.patch_embedding.weight.dtype
+        state_context = [
+            u.to(device=device,
+                 dtype=dtype if u.is_floating_point() else None)
+            for u in state_context
+        ]
+        if any(u.dim() != 2 for u in state_context):
+            raise ValueError("each state_context item must have shape [L, C]")
+        if any(u.size(-1) != self.dim for u in state_context):
+            raise ValueError(
+                f"state_context last dim must equal model dim={self.dim}")
+
+        state_context_lens = torch.tensor([u.size(0) for u in state_context],
+                                          dtype=torch.long,
+                                          device=device)
+        max_state_len = int(state_context_lens.max().item())
+        if max_state_len <= 0:
+            return None, None
+        state_context = torch.stack([
+            torch.cat(
+                [u, u.new_zeros(max_state_len - u.size(0), u.size(1))])
+            for u in state_context
+        ])
+        return state_context, state_context_lens
+
+    def get_state_adapter_state_dict(self):
+        return {
+            key: value
+            for key, value in self.state_dict().items()
+            if 'state_adapter_' in key
+        }
+
+    def load_state_adapter_state_dict(self, state_dict, strict=True):
+        missing, unexpected = self.load_state_dict(state_dict, strict=False)
+        filtered_missing = [key for key in missing if 'state_adapter_' in key]
+        filtered_unexpected = [
+            key for key in unexpected if 'state_adapter_' in key
+        ]
+        if strict and (filtered_missing or filtered_unexpected):
+            raise RuntimeError(
+                f"state adapter load mismatch, missing={filtered_missing}, unexpected={filtered_unexpected}"
+            )
+        return filtered_missing, filtered_unexpected
+
     def forward(
         self,
         x,
@@ -414,6 +502,8 @@ class WanModel(ModelMixin, ConfigMixin):
         context,
         seq_len,
         y=None,
+        state_context=None,
+        state_scale=1.0,
     ):
         r"""
         Forward pass through the diffusion model
@@ -470,12 +560,9 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
-        context = self.text_embedding(
-            torch.stack([
-                torch.cat(
-                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                for u in context
-            ]))
+        context = self._embed_text_context(context)
+        state_context, state_context_lens = self._prepare_state_context(
+            state_context, batch_size=len(x))
 
         # arguments
         kwargs = dict(
@@ -484,7 +571,10 @@ class WanModel(ModelMixin, ConfigMixin):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens)
+            context_lens=context_lens,
+            state_context=state_context,
+            state_context_lens=state_context_lens,
+            state_scale=state_scale)
 
         for block in self.blocks:
             x = block(x, **kwargs)

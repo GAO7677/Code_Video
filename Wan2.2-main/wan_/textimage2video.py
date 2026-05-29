@@ -20,6 +20,7 @@ from .distributed.fsdp import shard_model
 from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
 from .distributed.util import get_world_size
 from .modules.model import WanModel
+from .state_condition import WanObjectStateAdapter, canonicalize_state_condition
 from .modules.t5 import T5EncoderModel
 from .modules.vae2_2 import Wan2_2_VAE
 from .utils.fm_solvers import (
@@ -114,6 +115,7 @@ class WanTI2V:
             self.sp_size = 1
 
         self.sample_neg_prompt = config.sample_neg_prompt
+        self.state_adapter = None
 
     def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
                          convert_model_dtype):
@@ -159,6 +161,66 @@ class WanTI2V:
 
         return model
 
+    def _infer_state_adapter_dims(self, state_condition):
+        payload = canonicalize_state_condition(state_condition)
+        return {
+            'state_token_dim':
+            None if payload.get('state_tokens') is None else payload[
+                'state_tokens'].shape[-1],
+            'memory_token_dim':
+            None if payload.get('memory_tokens') is None else payload[
+                'memory_tokens'].shape[-1],
+            'map_token_dim':
+            None if payload.get('condition_maps') is None else payload[
+                'condition_maps'].shape[2],
+        }
+
+    def _ensure_state_adapter(self, state_condition=None, adapter_config=None):
+        if self.state_adapter is not None:
+            return
+        if adapter_config is None:
+            if state_condition is None:
+                raise ValueError(
+                    "state_condition or adapter_config is required to initialize the state adapter"
+                )
+            adapter_config = self._infer_state_adapter_dims(state_condition)
+        self.state_adapter = WanObjectStateAdapter(model_dim=self.model.dim,
+                                                   **adapter_config)
+        self.state_adapter.eval().requires_grad_(False)
+        if not self.init_on_cpu:
+            self.state_adapter.to(self.device)
+
+    def load_state_adapter(self, checkpoint_path, state_condition=None):
+        state_bundle = torch.load(checkpoint_path, map_location='cpu')
+        self._ensure_state_adapter(
+            state_condition=state_condition,
+            adapter_config=state_bundle.get('state_adapter_config'))
+        self.state_adapter.load_state_dict(state_bundle['state_adapter'])
+        self.model.load_state_adapter_state_dict(
+            state_bundle['model_state_adapter'])
+
+    def export_state_adapter(self):
+        if self.state_adapter is None:
+            raise RuntimeError("state adapter has not been initialized")
+        return {
+            'state_adapter_config': self.state_adapter.get_config(),
+            'state_adapter': self.state_adapter.state_dict(),
+            'model_state_adapter': self.model.get_state_adapter_state_dict(),
+        }
+
+    def _build_state_context(self, state_condition, offload_model):
+        if state_condition is None:
+            return None
+        payload = canonicalize_state_condition(state_condition)
+        self._ensure_state_adapter(state_condition=payload)
+        if offload_model or self.init_on_cpu:
+            self.state_adapter.to(self.device)
+        encoded = self.state_adapter({
+            key: value.to(self.device) if isinstance(value, torch.Tensor) else value
+            for key, value in payload.items()
+        })
+        return list(encoded.unbind(0))
+
     def generate(self,
                  input_prompt,
                  img=None,
@@ -171,7 +233,9 @@ class WanTI2V:
                  guide_scale=5.0,
                  n_prompt="",
                  seed=-1,
-                 offload_model=True):
+                 offload_model=True,
+                 state_condition=None,
+                 state_scale=1.0):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -222,7 +286,9 @@ class WanTI2V:
                 guide_scale=guide_scale,
                 n_prompt=n_prompt,
                 seed=seed,
-                offload_model=offload_model)
+                offload_model=offload_model,
+                state_condition=state_condition,
+                state_scale=state_scale)
         # t2v
         return self.t2v(
             input_prompt=input_prompt,
@@ -234,7 +300,9 @@ class WanTI2V:
             guide_scale=guide_scale,
             n_prompt=n_prompt,
             seed=seed,
-            offload_model=offload_model)
+            offload_model=offload_model,
+            state_condition=state_condition,
+            state_scale=state_scale)
 
     def t2v(self,
             input_prompt,
@@ -246,7 +314,9 @@ class WanTI2V:
             guide_scale=5.0,
             n_prompt="",
             seed=-1,
-            offload_model=True):
+            offload_model=True,
+            state_condition=None,
+            state_scale=1.0):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -331,6 +401,8 @@ class WanTI2V:
                 torch.no_grad(),
                 no_sync(),
         ):
+            state_context = self._build_state_context(state_condition,
+                                                      offload_model)
 
             if sample_solver == 'unipc':
                 sample_scheduler = FlowUniPCMultistepScheduler(
@@ -357,8 +429,18 @@ class WanTI2V:
             latents = noise
             mask1, mask2 = masks_like(noise, zero=False)
 
-            arg_c = {'context': context, 'seq_len': seq_len}
-            arg_null = {'context': context_null, 'seq_len': seq_len}
+            arg_c = {
+                'context': context,
+                'seq_len': seq_len,
+                'state_context': state_context,
+                'state_scale': state_scale,
+            }
+            arg_null = {
+                'context': context_null,
+                'seq_len': seq_len,
+                'state_context': state_context,
+                'state_scale': state_scale,
+            }
 
             if offload_model or self.init_on_cpu:
                 self.model.to(self.device)
@@ -395,6 +477,8 @@ class WanTI2V:
             x0 = latents
             if offload_model:
                 self.model.cpu()
+                if self.state_adapter is not None:
+                    self.state_adapter.cpu()
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
             if self.rank == 0:
@@ -421,7 +505,9 @@ class WanTI2V:
             guide_scale=5.0,
             n_prompt="",
             seed=-1,
-            offload_model=True):
+            offload_model=True,
+            state_condition=None,
+            state_scale=1.0):
         r"""
         Generates video frames from input image and text prompt using diffusion process.
 
@@ -523,6 +609,8 @@ class WanTI2V:
                 torch.no_grad(),
                 no_sync(),
         ):
+            state_context = self._build_state_context(state_condition,
+                                                      offload_model)
 
             if sample_solver == 'unipc':
                 sample_scheduler = FlowUniPCMultistepScheduler(
@@ -553,11 +641,15 @@ class WanTI2V:
             arg_c = {
                 'context': [context[0]],
                 'seq_len': seq_len,
+                'state_context': state_context,
+                'state_scale': state_scale,
             }
 
             arg_null = {
                 'context': context_null,
                 'seq_len': seq_len,
+                'state_context': state_context,
+                'state_scale': state_scale,
             }
 
             if offload_model or self.init_on_cpu:
@@ -602,6 +694,8 @@ class WanTI2V:
 
             if offload_model:
                 self.model.cpu()
+                if self.state_adapter is not None:
+                    self.state_adapter.cpu()
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 

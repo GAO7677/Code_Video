@@ -221,6 +221,23 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--state_condition",
+        type=str,
+        default=None,
+        help="Optional path to a .npz/.pt state-condition file for Wan I2V/TI2V state adapter injection."
+    )
+    parser.add_argument(
+        "--state_adapter_ckpt",
+        type=str,
+        default=None,
+        help="Optional checkpoint containing the trainable Wan state adapter weights."
+    )
+    parser.add_argument(
+        "--state_scale",
+        type=float,
+        default=1.0,
+        help="Residual scale applied to the Wan state adapter branch.")
 
     # animate
     parser.add_argument(
@@ -375,6 +392,13 @@ def generate(args):
     if args.image is not None:
         img = Image.open(args.image).convert("RGB")
         logging.info(f"Input image: {args.image}")
+    if args.state_condition is not None:
+        logging.info(f"Input state condition: {args.state_condition}")
+        if args.state_adapter_ckpt is None and ("i2v" in args.task
+                                                or "ti2v" in args.task):
+            logging.warning(
+                "state_condition was provided without --state_adapter_ckpt. The new Wan state adapter branch is wired in, but its gates default to zero until trained weights are loaded."
+            )
 
     # prompt extend
     if args.use_prompt_extend:
@@ -438,6 +462,9 @@ def generate(args):
             t5_cpu=args.t5_cpu,
             convert_model_dtype=args.convert_model_dtype,
         )
+        if args.state_adapter_ckpt is not None:
+            wan_ti2v.load_state_adapter(
+                args.state_adapter_ckpt, state_condition=args.state_condition)
 
         logging.info(f"Generating video ...")
         video = wan_ti2v.generate(
@@ -451,7 +478,9 @@ def generate(args):
             sampling_steps=args.sample_steps,
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
-            offload_model=args.offload_model)
+            offload_model=args.offload_model,
+            state_condition=args.state_condition,
+            state_scale=args.state_scale)
     elif "animate" in args.task:
         logging.info("Creating Wan-Animate pipeline.")
         wan_animate = wan.WanAnimate(
@@ -526,6 +555,9 @@ def generate(args):
             t5_cpu=args.t5_cpu,
             convert_model_dtype=args.convert_model_dtype,
         )
+        if args.state_adapter_ckpt is not None:
+            wan_i2v.load_state_adapter(
+                args.state_adapter_ckpt, state_condition=args.state_condition)
         logging.info("Generating video ...")
         video = wan_i2v.generate(
             args.prompt,
@@ -537,7 +569,9 @@ def generate(args):
             sampling_steps=args.sample_steps,
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
-            offload_model=args.offload_model)
+            offload_model=args.offload_model,
+            state_condition=args.state_condition,
+            state_scale=args.state_scale)
 
     if rank == 0:
         if args.save_file is None:

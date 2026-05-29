@@ -68,6 +68,8 @@ def sp_dit_forward(
     context,
     seq_len,
     y=None,
+    state_context=None,
+    state_scale=1.0,
 ):
     """
     x:              A list of videos each with shape [C, T, H, W].
@@ -110,11 +112,9 @@ def sp_dit_forward(
 
     # context
     context_lens = None
-    context = self.text_embedding(
-        torch.stack([
-            torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-            for u in context
-        ]))
+    context = self._embed_text_context(context)
+    state_context, state_context_lens = self._prepare_state_context(
+        state_context, batch_size=len(x))
 
     # Context Parallel
     x = torch.chunk(x, get_world_size(), dim=1)[get_rank()]
@@ -128,7 +128,10 @@ def sp_dit_forward(
         grid_sizes=grid_sizes,
         freqs=self.freqs,
         context=context,
-        context_lens=context_lens)
+        context_lens=context_lens,
+        state_context=state_context,
+        state_context_lens=state_context_lens,
+        state_scale=state_scale)
 
     for block in self.blocks:
         x = block(x, **kwargs)
