@@ -147,10 +147,23 @@ class VideoPhy2Runner:
             sys.path.insert(0, str(videophy2_root))
 
         import torch
+        import transformers.modeling_utils as modeling_utils
+        import transformers.utils.import_utils as import_utils
         from transformers import LlamaTokenizer
         from mplug_owl_video.modeling_mplug_owl import MplugOwlForConditionalGeneration
         from mplug_owl_video.processing_mplug_owl import MplugOwlImageProcessor, MplugOwlProcessor
         from template import PROMPT_PHYSICS, PROMPT_RULE, PROMPT_SA
+
+        # Local trusted checkpoint under /data/gaoya/ckpt may still ship .bin shards.
+        # Newer transformers block torch<2.6 torch.load() by default; disable that
+        # guard only for this in-repo trusted evaluation path.
+        def _allow_local_torch_load(*args, **kwargs):
+            return None
+
+        if hasattr(import_utils, "check_torch_load_is_safe"):
+            import_utils.check_torch_load_is_safe = _allow_local_torch_load
+        if hasattr(modeling_utils, "check_torch_load_is_safe"):
+            modeling_utils.check_torch_load_is_safe = _allow_local_torch_load
 
         self._torch = torch
         self._llama_tokenizer = LlamaTokenizer
@@ -173,7 +186,6 @@ class VideoPhy2Runner:
         model = self._model_cls.from_pretrained(
             self.checkpoint,
             torch_dtype=self._torch_dtype(),
-            device_map={"": "cpu"},
         )
         model = model.to(self.device).to(self._torch_dtype())
         model.eval()

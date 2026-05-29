@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from .paths import A_OUTPUT, PDI_FLORENCE_MODEL, PDI_ROOT, RUN_ROOT
+from .paths import A_OUTPUT, PDI_FLORENCE_MODEL, PDI_ROOT, RUN_ROOT, SAM_PYTHON
 from .records import load_payload, stable_path_id
 
 
@@ -95,7 +95,8 @@ class OfficialPDIRunner:
         cuda_visible_devices: str | None = None,
         max_retries: int = 3,
     ) -> None:
-        self.python_bin = python_bin or sys.executable
+        default_python = str(SAM_PYTHON) if SAM_PYTHON.is_file() else sys.executable
+        self.python_bin = python_bin or default_python
         self.cuda_visible_devices = cuda_visible_devices
         self.max_retries = max(int(max_retries), 1)
 
@@ -119,13 +120,6 @@ class OfficialPDIRunner:
         if self.cuda_visible_devices is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
 
-        tracker_ckpt = PDI_ROOT / "checkpoints" / "tracker" / "scaled_offline.pth"
-        tracker_bak = tracker_ckpt.with_suffix(".pth.bak")
-        renamed_tracker = False
-        if tracker_ckpt.exists() and not tracker_bak.exists():
-            tracker_ckpt.rename(tracker_bak)
-            renamed_tracker = True
-
         cmd = [
             self.python_bin,
             "evaluation/main.py",
@@ -139,27 +133,23 @@ class OfficialPDIRunner:
             str(output_dir),
         ]
         last_error = ""
-        try:
-            for attempt in range(1, self.max_retries + 1):
-                completed = subprocess.run(
-                    cmd,
-                    cwd=PDI_ROOT,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if completed.returncode == 0:
-                    return parse_report(report_path)
+        for attempt in range(1, self.max_retries + 1):
+            completed = subprocess.run(
+                cmd,
+                cwd=PDI_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return parse_report(report_path)
 
-                stderr_tail = completed.stderr[-2000:] if completed.stderr else ""
-                last_error = stderr_tail
-                transient_cuda = "illegal memory access" in stderr_tail.lower() or "cublas" in stderr_tail.lower()
-                if attempt >= self.max_retries or not transient_cuda:
-                    break
-                time.sleep(2.0 * attempt)
-        finally:
-            if renamed_tracker and tracker_bak.exists() and not tracker_ckpt.exists():
-                tracker_bak.rename(tracker_ckpt)
+            stderr_tail = completed.stderr[-2000:] if completed.stderr else ""
+            last_error = stderr_tail
+            transient_cuda = "illegal memory access" in stderr_tail.lower() or "cublas" in stderr_tail.lower()
+            if attempt >= self.max_retries or not transient_cuda:
+                break
+            time.sleep(2.0 * attempt)
 
         raise RuntimeError(f"Official PDI failed for {video_path.name}\n{last_error}")

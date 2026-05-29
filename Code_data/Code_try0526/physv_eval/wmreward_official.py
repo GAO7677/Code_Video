@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .paths import WMREWARD_ROOT, WMREWARD_VJEPA2_ROOT
+from .paths import VPHY_PYTHON, WMREWARD_ROOT, WMREWARD_VJEPA2_ROOT
 
 
 class WMRewardRunner:
@@ -52,17 +52,28 @@ class WMRewardRunner:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
         os.environ.setdefault("PYTHONNOUSERSITE", "1")
 
+        import torch
+        self._torch = torch
+
+        try:
+            import decord  # noqa: F401
+        except Exception:
+            vphy_site_packages = VPHY_PYTHON.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+            if vphy_site_packages.is_dir():
+                site_path = str(vphy_site_packages)
+                if site_path not in sys.path:
+                    sys.path.append(site_path)
+            import decord  # noqa: F401
+
         vjepa2_root = str(WMREWARD_VJEPA2_ROOT)
         vjepa2_src = str(WMREWARD_VJEPA2_ROOT / "src")
         for path in [str(WMREWARD_ROOT), vjepa2_root, vjepa2_src]:
             if path not in sys.path:
                 sys.path.insert(0, path)
 
-        import torch
         from compute_wmreward import load_vjepa_models, load_video_as_tensor
         from utils import compute_vjepa_loss_sliding_window
 
-        self._torch = torch
         self._load_vjepa_models = load_vjepa_models
         self._load_video_as_tensor = load_video_as_tensor
         self._compute_loss = compute_vjepa_loss_sliding_window

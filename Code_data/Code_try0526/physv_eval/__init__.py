@@ -1,4 +1,11 @@
-from .pipeline import main as run_eval
-from .report import main as serve_report
+def run_eval(*args, **kwargs):
+    from .pipeline import main
+    return main(*args, **kwargs)
+
+
+def serve_report(*args, **kwargs):
+    from .report import main
+    return main(*args, **kwargs)
+
 
 __all__ = ["run_eval", "serve_report"]

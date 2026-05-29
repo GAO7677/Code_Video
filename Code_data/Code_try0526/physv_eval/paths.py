@@ -25,6 +25,7 @@ PHYJUDGE_ADAPTER = Path("/data/gaoya/ckpt/phyjudge-9B")
 PHYJUDGE_INFER = PHYJUDGE_ADAPTER / "infer.py"
 PHYJUDGE_BASE = Path("/data/gaoya/ckpt/Qwen-Qwen3.5-9B")
 FLUX_PYTHON = Path("/home/gaoya/miniconda3/envs/flux/bin/python")
+SAM_PYTHON = Path("/home/gaoya/miniconda3/envs/sam/bin/python")
 COSMOS_COOKBOOK_ROOT = REPO_ROOT / "cosmos-cookbook"
 COSMOS_REASON1_ROOT = REPO_ROOT / "cosmos-reason1"
 COSMOS_REASON1_MODEL = Path("/home/gaoya/model_weights/Cosmos-Reason1-7B")

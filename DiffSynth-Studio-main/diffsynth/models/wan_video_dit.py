@@ -11,19 +11,19 @@ from .wantodance import WanToDanceRotaryEmbedding, WanToDanceMusicEncoderLayer
 try:
     import flash_attn_interface
     FLASH_ATTN_3_AVAILABLE = True
-except ModuleNotFoundError:
+except Exception:
     FLASH_ATTN_3_AVAILABLE = False
 
 try:
     import flash_attn
     FLASH_ATTN_2_AVAILABLE = True
-except ModuleNotFoundError:
+except Exception:
     FLASH_ATTN_2_AVAILABLE = False
 
 try:
     from sageattention import sageattn
     SAGE_ATTN_AVAILABLE = True
-except ModuleNotFoundError:
+except Exception:
     SAGE_ATTN_AVAILABLE = False
     
     
