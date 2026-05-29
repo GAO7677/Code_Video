@@ -73,9 +73,10 @@ class ProxyRunner:
         self._write_clip(context_path, context_frames, fps=16)
         self._write_clip(future_path, future_frames, fps=16)
 
-        score, _details = self._scorer.score(context_video_path=context_path, candidate_video_path=future_path)
+        score, details = self._scorer.score(context_video_path=context_path, candidate_video_path=future_path)
         return {
             "score": float(score),
             "context_frames": len(context_frames),
             "future_frames": len(future_frames),
+            "details": details,
         }

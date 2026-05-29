@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proxy-device", default=None)
     parser.add_argument("--cuda-visible-devices", default=os.environ.get("CUDA_VISIBLE_DEVICES"))
     parser.add_argument("--pdi-python", default=sys.executable)
-    parser.add_argument("--wmreward-autocast-dtype", default="bfloat16", choices=["bfloat16", "float16", "none"])
+    parser.add_argument("--wmreward-cuda-visible-devices", default=None)
     parser.add_argument("--videophy-python", default=str(VPHY_PYTHON))
     parser.add_argument("--videophy-cuda-visible-devices", default=None)
     return parser.parse_args()
@@ -166,8 +166,7 @@ def main() -> None:
     )
     wmreward_runner = (
         WMRewardRunner(
-            device=args.device,
-            autocast_dtype=args.wmreward_autocast_dtype if args.wmreward_autocast_dtype != "none" else "none",
+            cuda_visible_devices=args.wmreward_cuda_visible_devices or args.cuda_visible_devices,
         )
         if "wmreward" in enabled_metrics
         else None

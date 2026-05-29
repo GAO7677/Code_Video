@@ -125,6 +125,24 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
     if name == "vjepa_proxy":
         bucket = get_proxy(payload)
         return None if bucket is None else bucket.get("score")
+    if name == "vjepa_predictive_alignment":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("predictive_alignment")
+    if name == "vjepa_temporal_relation_error":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("temporal_relation_error")
+    if name == "vjepa_delta_l2":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("delta_l2")
     if name == "videophy2_auto_pc":
         bucket = get_videophy2_auto(payload)
         return None if bucket is None else bucket.get("pc_score")
@@ -185,13 +203,41 @@ def set_wmreward(payload: dict[str, Any], result: dict[str, Any]) -> None:
 
 
 def set_proxy(payload: dict[str, Any], result: dict[str, Any]) -> None:
+    details = result.get("details") or {}
     bucket = {
         "score": result.get("score"),
         "context_frames": result.get("context_frames"),
         "future_frames": result.get("future_frames"),
+        "details": {
+            "backend": details.get("backend"),
+            "score_version": details.get("score_version"),
+            "model_dtype": details.get("model_dtype"),
+            "predictive_alignment": details.get("predictive_alignment"),
+            "predictive_l2": details.get("predictive_l2"),
+            "time_cosine": details.get("time_cosine"),
+            "temporal_relation_raw_error": details.get("temporal_relation_raw_error"),
+            "temporal_relation_error": details.get("temporal_relation_error"),
+            "temporal_relation_score": details.get("temporal_relation_score"),
+            "delta_cosine": details.get("delta_cosine"),
+            "delta_l2": details.get("delta_l2"),
+            "delta_score": details.get("delta_score"),
+            "context_token_count": details.get("context_token_count"),
+            "future_token_count": details.get("future_token_count"),
+            "prediction_token_dim": details.get("prediction_token_dim"),
+            "future_token_dim": details.get("future_token_dim"),
+            "predictor_returned_context": details.get("predictor_returned_context"),
+            "feature_alignment": details.get("feature_alignment"),
+            "temporal_token_count": details.get("temporal_token_count"),
+            "spatial_token_count": details.get("spatial_token_count"),
+        },
     }
     get_metric_bucket(payload)["vjepa_proxy"] = bucket
-    payload["jepa"] = {"jepa_score": bucket["score"]}
+    payload["jepa"] = {
+        "jepa_score": bucket["score"],
+        "predictive_alignment": bucket["details"].get("predictive_alignment"),
+        "temporal_relation_error": bucket["details"].get("temporal_relation_error"),
+        "delta_l2": bucket["details"].get("delta_l2"),
+    }
     payload["vjepa_proxy"] = bucket["score"]
 
 
