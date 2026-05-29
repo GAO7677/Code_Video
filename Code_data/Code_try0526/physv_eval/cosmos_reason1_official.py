@@ -109,6 +109,26 @@ class OfficialCosmosReason1Runner:
             },
         ]
 
+    def _generate_raw(self, inputs: Any, *, max_new_tokens: int) -> str:
+        outputs = self._model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=self.temperature > 0,
+            temperature=self.temperature,
+            top_k=self.top_k,
+            top_p=self.top_p,
+            repetition_penalty=self.repetition_penalty,
+        )
+        trimmed = [
+            output_ids[len(input_ids):]
+            for input_ids, output_ids in zip(inputs.input_ids, outputs, strict=False)
+        ]
+        return self._processor.batch_decode(
+            trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )[0]
+
     def score(self, video_path: Path) -> dict[str, Any]:
         self._load_once()
         self._torch.manual_seed(self.seed)
@@ -137,25 +157,15 @@ class OfficialCosmosReason1Runner:
             **video_kwargs,
         )
         inputs = inputs.to(self._model.device)
-        outputs = self._model.generate(
-            **inputs,
-            max_new_tokens=self.max_new_tokens,
-            do_sample=self.temperature > 0,
-            temperature=self.temperature,
-            top_k=self.top_k,
-            top_p=self.top_p,
-            repetition_penalty=self.repetition_penalty,
-        )
-        trimmed = [
-            output_ids[len(input_ids):]
-            for input_ids, output_ids in zip(inputs.input_ids, outputs, strict=False)
-        ]
-        raw = self._processor.batch_decode(
-            trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )[0]
-        parsed = parse_response(raw)
+        attempts: list[tuple[int, str, dict[str, Any] | None]] = []
+        for max_new_tokens in [self.max_new_tokens, max(self.max_new_tokens * 2, 512)]:
+            raw = self._generate_raw(inputs, max_new_tokens=max_new_tokens)
+            parsed = parse_response(raw)
+            attempts.append((max_new_tokens, raw, parsed))
+            if parsed is not None:
+                break
+
+        used_max_new_tokens, raw, parsed = attempts[-1]
         score = None if parsed is None else parsed.get("answer")
         return {
             "score": score,
@@ -165,10 +175,11 @@ class OfficialCosmosReason1Runner:
             "prompt_path": str(self.prompt_path),
             "fps": self.fps,
             "total_pixels": self.total_pixels,
-            "max_new_tokens": self.max_new_tokens,
+            "max_new_tokens": used_max_new_tokens,
             "temperature": self.temperature,
             "top_k": self.top_k,
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
             "seed": self.seed,
+            "attempt_count": len(attempts),
         }
