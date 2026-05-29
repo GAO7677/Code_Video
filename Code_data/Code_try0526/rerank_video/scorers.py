@@ -677,6 +677,22 @@ class _VJEPA2Backend:
         margin_error = float(torch.clamp(diff - margin, min=0.0).mean().item())
         return raw_error, margin_error
 
+    @staticmethod
+    def _gram_l1(left: torch.Tensor, right: torch.Tensor) -> float:
+        left_norm = F.normalize(left.float(), dim=-1)
+        right_norm = F.normalize(right.float(), dim=-1)
+        left_gram = left_norm @ left_norm.transpose(1, 2)
+        right_gram = right_norm @ right_norm.transpose(1, 2)
+        return float((left_gram - right_gram).abs().mean().item())
+
+    @staticmethod
+    def _profile_l1(left: torch.Tensor, right: torch.Tensor, eps: float = 1e-6) -> float:
+        left_profile = torch.linalg.vector_norm(left.float(), dim=-1)
+        right_profile = torch.linalg.vector_norm(right.float(), dim=-1)
+        left_profile = left_profile / left_profile.mean(dim=1, keepdim=True).clamp_min(eps)
+        right_profile = right_profile / right_profile.mean(dim=1, keepdim=True).clamp_min(eps)
+        return float((left_profile - right_profile).abs().mean().item())
+
     def _load_vjepa2_models(self, ckpt: dict[str, Any]) -> None:
         import src.models.predictor as vit_predictor
         import src.models.vision_transformer as vit_encoder
@@ -821,52 +837,64 @@ class _VJEPA2Backend:
         )
         predictive_l2 = float(torch.mean((predicted_tokens_aligned - future_tokens_aligned) ** 2).item())
 
-        predicted_temporal, layout_info = self._temporal_pool_tokens(predicted_tokens_aligned, len(future_frames))
-        future_temporal, _ = self._temporal_pool_tokens(future_tokens_aligned, len(future_frames))
-        time_cosine = float(F.cosine_similarity(predicted_temporal, future_temporal, dim=-1).mean().item())
-        temporal_relation_raw_error, temporal_relation_error = self._gram_margin_l1(
-            predicted_temporal,
-            future_temporal,
-            margin=0.1,
-        )
-        temporal_relation_score = math.exp(-4.0 * temporal_relation_error)
+        # Primary proxy metrics should not depend on the ad-hoc feature-dimension truncation above.
+        # Pool predicted and target futures in their native feature spaces, then compare only
+        # dimension-invariant temporal structures and motion profiles.
+        predicted_temporal_native, predicted_layout = self._temporal_pool_tokens(predicted_tokens.float(), len(future_frames))
+        future_temporal_native, future_layout = self._temporal_pool_tokens(future_tokens.float(), len(future_frames))
 
-        if predicted_temporal.shape[1] >= 2:
-            pred_delta = predicted_temporal[:, 1:] - predicted_temporal[:, :-1]
-            future_delta = future_temporal[:, 1:] - future_temporal[:, :-1]
-            delta_cosine = float(F.cosine_similarity(pred_delta, future_delta, dim=-1).mean().item())
-            delta_l2 = float(torch.mean((pred_delta - future_delta) ** 2).item())
-            delta_score = math.exp(-5.0 * delta_l2)
+        predicted_temporal_aligned, _ = self._temporal_pool_tokens(predicted_tokens_aligned, len(future_frames))
+        future_temporal_aligned, _ = self._temporal_pool_tokens(future_tokens_aligned, len(future_frames))
+        time_cosine = float(F.cosine_similarity(predicted_temporal_aligned, future_temporal_aligned, dim=-1).mean().item())
+
+        temporal_relation_raw_error = self._gram_l1(predicted_temporal_native, future_temporal_native)
+        temporal_relation_error = temporal_relation_raw_error
+
+        if predicted_temporal_native.shape[1] >= 2 and future_temporal_native.shape[1] >= 2:
+            pred_delta_native = predicted_temporal_native[:, 1:] - predicted_temporal_native[:, :-1]
+            future_delta_native = future_temporal_native[:, 1:] - future_temporal_native[:, :-1]
+            delta_relation_raw_error = self._gram_l1(pred_delta_native, future_delta_native)
+            delta_profile_error = self._profile_l1(pred_delta_native, future_delta_native)
+        else:
+            delta_relation_raw_error = 1.0
+            delta_profile_error = 1.0
+
+        if predicted_temporal_aligned.shape[1] >= 2:
+            pred_delta_aligned = predicted_temporal_aligned[:, 1:] - predicted_temporal_aligned[:, :-1]
+            future_delta_aligned = future_temporal_aligned[:, 1:] - future_temporal_aligned[:, :-1]
+            delta_cosine = float(F.cosine_similarity(pred_delta_aligned, future_delta_aligned, dim=-1).mean().item())
+            delta_l2 = float(torch.mean((pred_delta_aligned - future_delta_aligned) ** 2).item())
         else:
             delta_cosine = 0.0
             delta_l2 = 1.0
-            delta_score = math.exp(-5.0)
 
-        score = float(
-            0.45 * ((predictive_alignment + 1.0) * 0.5)
-            + 0.35 * temporal_relation_score
-            + 0.20 * delta_score
-        )
+        # Keep a hidden compatibility score for old plumbing, but make it a simple monotonic
+        # transform of the new raw errors instead of a hand-tuned weighted aggregate.
+        score = float(math.exp(-(temporal_relation_raw_error + delta_relation_raw_error + delta_profile_error)))
         return score, {
             "backend": self.model_variant,
             "model_dtype": str(self.model_dtype).replace("torch.", ""),
-            "score_version": "physalign_temporal_v1",
+            "score_version": "physalign_temporal_v2_raw_error_triplet",
             "predictive_alignment": predictive_alignment,
             "predictive_l2": predictive_l2,
             "time_cosine": time_cosine,
             "temporal_relation_raw_error": temporal_relation_raw_error,
             "temporal_relation_error": temporal_relation_error,
-            "temporal_relation_score": temporal_relation_score,
+            "temporal_relation_score": None,
+            "delta_relation_raw_error": delta_relation_raw_error,
+            "delta_profile_error": delta_profile_error,
             "delta_cosine": delta_cosine,
             "delta_l2": delta_l2,
-            "delta_score": delta_score,
+            "delta_score": None,
             "context_token_count": int(context_tokens.shape[1]),
             "future_token_count": int(future_token_count),
             "prediction_token_dim": int(predicted_tokens.shape[-1]),
             "future_token_dim": int(future_tokens.shape[-1]),
             "predictor_returned_context": predicted_context_tokens is not None,
             "feature_alignment": feature_alignment,
-            **layout_info,
+            **predicted_layout,
+            "future_temporal_token_count": future_layout.get("temporal_token_count"),
+            "future_spatial_token_count": future_layout.get("spatial_token_count"),
         }
 
 

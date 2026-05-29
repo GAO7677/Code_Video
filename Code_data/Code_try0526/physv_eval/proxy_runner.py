@@ -55,15 +55,21 @@ class ProxyRunner:
         finally:
             writer.release()
 
-    def score(self, video_path: Path) -> dict[str, Any] | None:
+    def score(self, video_path: Path, *, context_video_path: Path | None = None) -> dict[str, Any] | None:
         self._lazy_imports()
-        frames = self._load_video_frames(video_path)
-        total = len(frames)
+        candidate_frames_all = self._load_video_frames(video_path)
+        total = len(candidate_frames_all)
         if total < 30:
             return None
-        split = min(60, total // 2)
-        context_frames = self._uniform_subsample_frames(frames[:split], 8)
-        future_frames = self._uniform_subsample_frames(frames[split:], 16)
+        context_source_path = context_video_path or video_path
+        context_frames_all = self._load_video_frames(context_source_path)
+        if len(context_frames_all) < 16:
+            return None
+
+        context_split = min(60, len(context_frames_all) // 2)
+        future_split = min(60, total // 2)
+        context_frames = self._uniform_subsample_frames(context_frames_all[:context_split], 8)
+        future_frames = self._uniform_subsample_frames(candidate_frames_all[future_split:], 16)
         if len(context_frames) < 2 or len(future_frames) < 2:
             return None
 
@@ -78,5 +84,6 @@ class ProxyRunner:
             "score": float(score),
             "context_frames": len(context_frames),
             "future_frames": len(future_frames),
+            "context_video": str(context_source_path),
             "details": details,
         }

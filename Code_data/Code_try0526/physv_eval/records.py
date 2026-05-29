@@ -137,6 +137,24 @@ def metric_value(payload: dict[str, Any], name: str) -> float | None:
             return None
         details = bucket.get("details", {})
         return details.get("temporal_relation_error")
+    if name == "vjepa_temporal_relation_raw_error":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("temporal_relation_raw_error")
+    if name == "vjepa_delta_relation_raw_error":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("delta_relation_raw_error")
+    if name == "vjepa_delta_profile_error":
+        bucket = get_proxy(payload)
+        if bucket is None:
+            return None
+        details = bucket.get("details", {})
+        return details.get("delta_profile_error")
     if name == "vjepa_delta_l2":
         bucket = get_proxy(payload)
         if bucket is None:
@@ -208,6 +226,7 @@ def set_proxy(payload: dict[str, Any], result: dict[str, Any]) -> None:
         "score": result.get("score"),
         "context_frames": result.get("context_frames"),
         "future_frames": result.get("future_frames"),
+        "context_video": result.get("context_video"),
         "details": {
             "backend": details.get("backend"),
             "score_version": details.get("score_version"),
@@ -218,6 +237,8 @@ def set_proxy(payload: dict[str, Any], result: dict[str, Any]) -> None:
             "temporal_relation_raw_error": details.get("temporal_relation_raw_error"),
             "temporal_relation_error": details.get("temporal_relation_error"),
             "temporal_relation_score": details.get("temporal_relation_score"),
+            "delta_relation_raw_error": details.get("delta_relation_raw_error"),
+            "delta_profile_error": details.get("delta_profile_error"),
             "delta_cosine": details.get("delta_cosine"),
             "delta_l2": details.get("delta_l2"),
             "delta_score": details.get("delta_score"),
@@ -235,8 +256,9 @@ def set_proxy(payload: dict[str, Any], result: dict[str, Any]) -> None:
     payload["jepa"] = {
         "jepa_score": bucket["score"],
         "predictive_alignment": bucket["details"].get("predictive_alignment"),
-        "temporal_relation_error": bucket["details"].get("temporal_relation_error"),
-        "delta_l2": bucket["details"].get("delta_l2"),
+        "temporal_relation_raw_error": bucket["details"].get("temporal_relation_raw_error"),
+        "delta_relation_raw_error": bucket["details"].get("delta_relation_raw_error"),
+        "delta_profile_error": bucket["details"].get("delta_profile_error"),
     }
     payload["vjepa_proxy"] = bucket["score"]
 

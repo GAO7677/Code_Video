@@ -10,7 +10,7 @@ from typing import Any
 
 from .datasets import GROUP_SPECS, iter_group_jsons
 from .official_pdi import OfficialPDIRunner, resolve_text_query
-from .paths import REPO_ROOT, VPHY_PYTHON
+from .paths import A_OUTPUT, REPO_ROOT, VPHY_PYTHON
 from .proxy_runner import ProxyRunner
 from .records import (
     get_official_pdi,
@@ -72,6 +72,26 @@ def should_run_videophy2(payload: dict[str, Any], refresh: bool) -> bool:
     return refresh or get_videophy2_auto(payload) is None or metric_value(payload, "videophy2_auto_pc") is None
 
 
+def resolve_proxy_context_video(json_path: Path, video_path: Path) -> Path:
+    try:
+        rel = json_path.relative_to(A_OUTPUT)
+    except ValueError:
+        return video_path
+
+    if not rel.parts:
+        return video_path
+    method = rel.parts[0]
+    if method == "GT":
+        return video_path
+
+    gt_json = A_OUTPUT / "GT" / Path(*rel.parts[1:])
+    if not gt_json.is_file():
+        return video_path
+
+    gt_payload = load_payload(gt_json)
+    return resolve_video_path(gt_json, gt_payload)
+
+
 def update_payload(
     json_path: Path,
     *,
@@ -105,7 +125,10 @@ def update_payload(
         changed["wmreward"] = True
 
     if proxy_runner is not None and should_run_proxy(payload, refresh_proxy):
-        result = proxy_runner.score(video_path)
+        result = proxy_runner.score(
+            video_path,
+            context_video_path=resolve_proxy_context_video(json_path, video_path),
+        )
         if result is not None:
             set_proxy(payload, result)
             changed["proxy"] = True
