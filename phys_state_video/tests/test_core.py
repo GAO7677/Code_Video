@@ -12,6 +12,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.extraction import AnnotationPseudoStateExtractor, compute_scale_depth_consistency
+from phys_state_video.proxy_state import extract_primary_track
 
 
 class ExtractionTests(unittest.TestCase):
@@ -30,6 +31,16 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(outputs["states"].shape, (2, 1, 10))
         self.assertEqual(outputs["boxes"].shape, (2, 1, 4))
         self.assertGreater(outputs["states"][1, 0, 4], 0.0)
+
+    def test_proxy_track_shapes(self):
+        frames = np.zeros((4, 3, 32, 32), dtype=np.float32)
+        for idx in range(4):
+            frames[idx, 0, 8:16, 4 + idx:12 + idx] = 1.0
+        outputs = extract_primary_track(frames)
+        self.assertEqual(outputs.boxes.shape, (4, 1, 4))
+        self.assertEqual(outputs.states.shape, (4, 1, 10))
+        self.assertEqual(outputs.appearance.shape, (1, 64))
+        self.assertTrue(np.isfinite(outputs.states).all())
 
 
 if __name__ == "__main__":
