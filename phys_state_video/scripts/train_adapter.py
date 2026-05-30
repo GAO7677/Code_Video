@@ -38,6 +38,11 @@ def parse_args():
     parser.add_argument("--val-data",
                         default=None,
                         help="Optional validation episode directory.")
+    parser.add_argument(
+        "--gpu-ids",
+        default=None,
+        help="Comma-separated CUDA device ids for DataParallel, for example '0,1,2,3'.",
+    )
     return parser.parse_args()
 
 
@@ -73,6 +78,9 @@ def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode):
 
 def main():
     args = parse_args()
+    gpu_ids = None
+    if args.gpu_ids:
+        gpu_ids = [int(item) for item in args.gpu_ids.split(",") if item.strip()]
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
     dataset = NpzEpisodeDataset(args.data)
@@ -92,7 +100,26 @@ def main():
         frame_width=sample.context_frames.shape[-1],
     )
     adapter_cfg = AdapterConfig(freeze_backbone=args.freeze_backbone, future_steps=sample.future_frames.shape[0])
-    model = TinyVideoBackbone(adapter_cfg).to(args.device)
+    base_model = TinyVideoBackbone(adapter_cfg).to(args.device)
+
+    init_bundle = build_condition_bundle(
+        torch.from_numpy(sample.future_states[None]).to(args.device),
+        torch.from_numpy(sample.future_boxes[None]).to(args.device),
+        torch.from_numpy(sample.appearance[None]).to(args.device),
+        cond_cfg,
+    )
+    init_bundle = apply_condition_mode(init_bundle, args.condition_mode)
+    with torch.no_grad():
+        base_model(
+            torch.from_numpy(sample.context_frames[None]).to(args.device),
+            init_bundle.maps,
+            init_bundle.memory_tokens,
+        )
+
+    if gpu_ids and args.device.startswith("cuda") and len(gpu_ids) > 1:
+        model = torch.nn.DataParallel(base_model, device_ids=gpu_ids)
+    else:
+        model = base_model
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
     history = []
 
@@ -114,12 +141,15 @@ def main():
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    model_state = model.module.state_dict() if isinstance(
+        model, torch.nn.DataParallel) else model.state_dict()
     torch.save({
         "config": asdict(adapter_cfg),
         "conditioning": asdict(cond_cfg),
         "condition_mode": args.condition_mode,
+        "gpu_ids": gpu_ids,
         "history": history,
-        "model": model.state_dict()
+        "model": model_state
     }, output)
     print(f"saved adapter checkpoint to {output}")
 
