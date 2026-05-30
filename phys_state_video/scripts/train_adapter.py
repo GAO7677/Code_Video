@@ -43,6 +43,11 @@ def parse_args():
         default=None,
         help="Comma-separated CUDA device ids for DataParallel, for example '0,1,2,3'.",
     )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Optional checkpoint to resume model weights and append history from.",
+    )
     return parser.parse_args()
 
 
@@ -120,8 +125,15 @@ def main():
         model = torch.nn.DataParallel(base_model, device_ids=gpu_ids)
     else:
         model = base_model
-    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+
     history = []
+    if args.resume is not None:
+        resume_ckpt = torch.load(args.resume, map_location=args.device)
+        base_model.load_state_dict(resume_ckpt["model"])
+        history.extend(resume_ckpt.get("history", []))
+        print(f"resumed weights from {args.resume}")
+
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
 
     for epoch in range(args.epochs):
         train_metrics = run_epoch(model, loader, optimizer, args.device,
