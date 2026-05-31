@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import html
 import json
 import math
@@ -28,11 +27,11 @@ import trimesh
 from pyrender.constants import RenderFlags
 
 
-DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_rigid_v3_preview")
+DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_rigid_simple_v1_preview")
 OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
 VIDEO_DIR = OUTPUT_ROOT / "videos"
 META_DIR = OUTPUT_ROOT / "meta"
-DEFAULT_PORT = 18823
+DEFAULT_PORT = 18825
 
 IMG_W = 960
 IMG_H = 540
@@ -45,24 +44,6 @@ CAM_EYE = np.array([0.0, -3.0, 1.42], dtype=np.float64)
 CAM_TARGET = np.array([0.0, 0.28, 0.38], dtype=np.float64)
 CAM_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 EARTH_GRAVITY = 9.81
-
-ASSET_ROOTS = {
-    "kaolin": Path("/home/gaoya/Code_Video/kaolin-master/sample_data/meshes"),
-    "genesis_mesh": Path("/home/gaoya/Code_Video/Genesis_main/genesis/assets/meshes"),
-    "genesis_wheel": Path("/home/gaoya/Code_Video/Genesis_main/genesis/assets/urdf/wheel"),
-    "demo": Path("/home/gaoya/Code_Video/Code_data/demo_outputs"),
-}
-
-LOCAL_ASSETS = {
-    "avocado": ASSET_ROOTS["kaolin"] / "avocado.obj",
-    "pizza": ASSET_ROOTS["kaolin"] / "pizza.obj",
-    "fox": ASSET_ROOTS["kaolin"] / "fox.obj",
-    "armchair": ASSET_ROOTS["kaolin"] / "armchair.obj",
-    "duck": ASSET_ROOTS["genesis_mesh"] / "duck.obj",
-    "bunny": ASSET_ROOTS["genesis_mesh"] / "bunny.obj",
-    "fancy_wheel": ASSET_ROOTS["genesis_wheel"] / "fancy_wheel.obj",
-    "bowl": ASSET_ROOTS["demo"] / "raw_bowl_mesh" / "raw_bowl_mesh.obj",
-}
 
 
 @dataclass
@@ -82,12 +63,7 @@ class ObjectSpec:
     linear_velocity: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     angular_velocity: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     role: str = "dynamic"
-    render_mode: str = "primitive"
     texture_style: str = "solid"
-    mesh_path: str = ""
-    mesh_target_extents: List[float] = field(default_factory=list)
-    mesh_euler_deg: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    collision_proxy: Dict[str, object] | None = None
 
 
 @dataclass
@@ -101,7 +77,7 @@ class ScenarioSpec:
     objects: List[ObjectSpec]
     seed: int
     pre_roll_s: float = 0.75
-    sim_type: str = "rigid"
+    sim_type: str = "rigid_simple"
 
 
 def _quat_from_euler_deg(values: List[float]) -> List[float]:
@@ -137,48 +113,6 @@ def _pb_pose(pos: List[float], quat: List[float]) -> np.ndarray:
     return pose
 
 
-def _apply_euler_transform(mesh: trimesh.Trimesh, euler_deg: List[float]) -> trimesh.Trimesh:
-    mesh = mesh.copy()
-    quat = _quat_from_euler_deg(euler_deg)
-    rot = np.array(p.getMatrixFromQuaternion(quat), dtype=np.float64).reshape(3, 3)
-    transform = np.eye(4, dtype=np.float64)
-    transform[:3, :3] = rot
-    mesh.apply_transform(transform)
-    return mesh
-
-
-def _normalize_mesh(mesh: trimesh.Trimesh, target_extents: List[float]) -> trimesh.Trimesh:
-    mesh = mesh.copy()
-    bounds = mesh.bounds
-    center = (bounds[0] + bounds[1]) * 0.5
-    mesh.apply_translation(-center)
-    extents = np.maximum(mesh.extents.astype(np.float64), 1e-6)
-    if target_extents:
-        target = np.asarray(target_extents, dtype=np.float64)
-        scale = float(np.min(target / extents))
-        mesh.apply_scale(scale)
-    return mesh
-
-
-def _make_primitive_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
-    if obj.shape == "sphere":
-        mesh = trimesh.creation.icosphere(subdivisions=3, radius=obj.size["radius"])
-    elif obj.shape == "box":
-        mesh = trimesh.creation.box(extents=[
-            obj.size["hx"] * 2.0,
-            obj.size["hy"] * 2.0,
-            obj.size["hz"] * 2.0,
-        ])
-    elif obj.shape == "cylinder":
-        mesh = trimesh.creation.cylinder(radius=obj.size["radius"], height=obj.size["height"], sections=40)
-    elif obj.shape == "capsule":
-        mesh = trimesh.creation.capsule(radius=obj.size["radius"], height=obj.size["height"], count=[16, 24])
-    else:
-        raise ValueError(f"unsupported primitive shape: {obj.shape}")
-    _apply_procedural_material(mesh, obj)
-    return mesh
-
-
 def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     verts = np.asarray(mesh.vertices, dtype=np.float32)
     base = np.tile(np.asarray(obj.color, dtype=np.float32), (len(verts), 1))
@@ -186,13 +120,13 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     if style == "solid":
         colors = base
     elif style == "wood":
-        grain = 0.5 + 0.5 * np.sin(verts[:, 2] * 26.0 + verts[:, 0] * 4.0)
+        grain = 0.5 + 0.5 * np.sin(verts[:, 2] * 24.0 + verts[:, 0] * 5.0)
         colors = base.copy()
         colors[:, 0] += grain * 0.10
         colors[:, 1] += grain * 0.06
     elif style == "metal":
         sheen = 0.35 + 0.65 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
-        colors = base * (0.8 + 0.3 * sheen[:, None])
+        colors = base * (0.82 + 0.28 * sheen[:, None])
     elif style == "rubber":
         speckle = 0.5 + 0.5 * np.sin(verts[:, 0] * 55.0) * np.cos(verts[:, 1] * 40.0)
         colors = base * (0.82 + 0.18 * speckle[:, None])
@@ -205,55 +139,123 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     mesh.visual.vertex_colors = np.clip(colors + noise, 0.0, 1.0)
 
 
-def _load_render_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
-    if obj.render_mode == "primitive":
-        return _make_primitive_mesh(obj)
-    mesh_path = Path(obj.mesh_path)
-    mesh = trimesh.load(mesh_path, force="mesh")
-    mesh = _apply_euler_transform(mesh, obj.mesh_euler_deg)
-    mesh = _normalize_mesh(mesh, obj.mesh_target_extents)
-    if not isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals):
-        colors = np.tile(np.asarray(obj.color, dtype=np.float32), (len(mesh.vertices), 1))
-        mesh.visual.vertex_colors = colors
+def _make_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
+    s = obj.size
+    if obj.shape == "sphere":
+        mesh = trimesh.creation.icosphere(subdivisions=3, radius=s["radius"])
+    elif obj.shape == "box":
+        mesh = trimesh.creation.box(extents=[2 * s["hx"], 2 * s["hy"], 2 * s["hz"]])
+    elif obj.shape == "rounded_box":
+        core = trimesh.creation.box(extents=[2 * s["hx"], 2 * s["hy"], 2 * s["hz"]])
+        bumps = []
+        r = s["corner_radius"]
+        for sx in [-1, 1]:
+            for sy in [-1, 1]:
+                for sz in [-1, 1]:
+                    sp = trimesh.creation.icosphere(subdivisions=2, radius=r)
+                    sp.apply_translation([
+                        sx * max(s["hx"] - r, 0.0),
+                        sy * max(s["hy"] - r, 0.0),
+                        sz * max(s["hz"] - r, 0.0),
+                    ])
+                    bumps.append(sp)
+        mesh = trimesh.util.concatenate([core] + bumps)
+    elif obj.shape == "cylinder":
+        mesh = trimesh.creation.cylinder(radius=s["radius"], height=s["height"], sections=40)
+    elif obj.shape == "capsule":
+        mesh = trimesh.creation.capsule(radius=s["radius"], height=s["height"], count=[16, 24])
+    elif obj.shape == "ellipsoid":
+        mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+        mesh.apply_scale([s["rx"], s["ry"], s["rz"]])
+    elif obj.shape == "puck":
+        mesh = trimesh.creation.cylinder(radius=s["radius"], height=s["height"], sections=40)
+    elif obj.shape == "cone_frustum":
+        sections = 40
+        angles = np.linspace(0.0, 2.0 * np.pi, num=sections, endpoint=False)
+        bottom = np.stack([s["r_base"] * np.cos(angles), s["r_base"] * np.sin(angles), np.full_like(angles, -0.5 * s["height"])], axis=1)
+        top = np.stack([s["r_top"] * np.cos(angles), s["r_top"] * np.sin(angles), np.full_like(angles, 0.5 * s["height"])], axis=1)
+        vertices = np.concatenate([bottom, top], axis=0)
+        faces = []
+        for i in range(sections):
+            j = (i + 1) % sections
+            faces.append([i, j, sections + j])
+            faces.append([i, sections + j, sections + i])
+        bottom_center = len(vertices)
+        top_center = len(vertices) + 1
+        vertices = np.concatenate([vertices, [[0.0, 0.0, -0.5 * s["height"]], [0.0, 0.0, 0.5 * s["height"]]]], axis=0)
+        for i in range(sections):
+            j = (i + 1) % sections
+            faces.append([bottom_center, j, i])
+            faces.append([top_center, sections + i, sections + j])
+        mesh = trimesh.Trimesh(vertices=vertices, faces=np.asarray(faces, dtype=np.int64), process=False)
+    elif obj.shape == "wedge":
+        hx, hy, hz = s["hx"], s["hy"], s["hz"]
+        vertices = np.array([
+            [-hx, -hy, -hz],
+            [ hx, -hy, -hz],
+            [ hx,  hy, -hz],
+            [-hx,  hy, -hz],
+            [-hx, -hy,  hz],
+            [ hx, -hy,  hz],
+        ], dtype=np.float64)
+        faces = np.array([
+            [0, 1, 2], [0, 2, 3],
+            [0, 1, 5], [0, 5, 4],
+            [1, 2, 5],
+            [0, 3, 4],
+            [3, 2, 5], [3, 5, 4],
+            [0, 4, 3],
+        ], dtype=np.int64)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    elif obj.shape == "wheel_thick":
+        outer = trimesh.creation.cylinder(radius=s["radius"], height=s["width"], sections=48)
+        band = trimesh.creation.cylinder(radius=s["radius"] * 0.78, height=s["width"] * 0.72, sections=48)
+        band.apply_scale([1.0, 1.0, 1.0])
+        mesh = trimesh.util.concatenate([outer, band])
+    elif obj.shape == "spool":
+        core = trimesh.creation.cylinder(radius=s["core_radius"], height=s["width"], sections=40)
+        flange_a = trimesh.creation.cylinder(radius=s["flange_radius"], height=s["flange_width"], sections=40)
+        flange_b = flange_a.copy()
+        flange_a.apply_translation([0.0, 0.0, -0.5 * (s["width"] - s["flange_width"])])
+        flange_b.apply_translation([0.0, 0.0, 0.5 * (s["width"] - s["flange_width"])])
+        mesh = trimesh.util.concatenate([core, flange_a, flange_b])
+    elif obj.shape == "dumbbell":
+        bar = trimesh.creation.cylinder(radius=s["bar_radius"], height=s["length"], sections=32)
+        left = trimesh.creation.icosphere(subdivisions=2, radius=s["weight_radius"])
+        right = left.copy()
+        left.apply_translation([0.0, 0.0, -0.5 * s["length"]])
+        right.apply_translation([0.0, 0.0, 0.5 * s["length"]])
+        mesh = trimesh.util.concatenate([bar, left, right])
+    else:
+        raise ValueError(f"unsupported shape: {obj.shape}")
+
+    quat = _quat_from_euler_deg(obj.orientation_euler_deg)
+    rot = np.array(p.getMatrixFromQuaternion(quat), dtype=np.float64).reshape(3, 3)
+    T = np.eye(4, dtype=np.float64)
+    T[:3, :3] = rot
+    mesh.apply_transform(T)
+    _apply_procedural_material(mesh, obj)
     return mesh
 
 
-def _collision_proxy_for_object(obj: ObjectSpec) -> Dict[str, object]:
-    if obj.collision_proxy is not None:
-        return obj.collision_proxy
-    if obj.shape == "sphere":
-        return {"shape": "sphere", "radius": obj.size["radius"]}
-    if obj.shape == "box":
-        return {"shape": "box", "hx": obj.size["hx"], "hy": obj.size["hy"], "hz": obj.size["hz"]}
-    if obj.shape == "cylinder":
-        return {"shape": "cylinder", "radius": obj.size["radius"], "height": obj.size["height"]}
+def _collision_shape(obj: ObjectSpec) -> int:
+    s = obj.size
+    if obj.shape in {"sphere", "ellipsoid"}:
+        radius = s["radius"] if "radius" in s else max(s["rx"], s["ry"], s["rz"])
+        return p.createCollisionShape(p.GEOM_SPHERE, radius=float(radius))
+    if obj.shape in {"box", "rounded_box", "wedge"}:
+        return p.createCollisionShape(p.GEOM_BOX, halfExtents=[float(s["hx"]), float(s["hy"]), float(s["hz"])])
+    if obj.shape in {"cylinder", "puck", "wheel_thick", "spool"}:
+        radius = s["radius"] if "radius" in s else s.get("flange_radius", s.get("core_radius"))
+        height = s["height"] if "height" in s else s.get("width")
+        return p.createCollisionShape(p.GEOM_CYLINDER, radius=float(radius), height=float(height))
     if obj.shape == "capsule":
-        return {"shape": "capsule", "radius": obj.size["radius"], "height": obj.size["height"]}
-    raise ValueError(f"no collision proxy for shape={obj.shape}")
-
-
-def _create_collision_shape(proxy: Dict[str, object]) -> int:
-    shape = proxy["shape"]
-    if shape == "sphere":
-        return p.createCollisionShape(p.GEOM_SPHERE, radius=float(proxy["radius"]))
-    if shape == "box":
-        return p.createCollisionShape(
-            p.GEOM_BOX,
-            halfExtents=[float(proxy["hx"]), float(proxy["hy"]), float(proxy["hz"])],
-        )
-    if shape == "cylinder":
-        return p.createCollisionShape(
-            p.GEOM_CYLINDER,
-            radius=float(proxy["radius"]),
-            height=float(proxy["height"]),
-        )
-    if shape == "capsule":
-        return p.createCollisionShape(
-            p.GEOM_CAPSULE,
-            radius=float(proxy["radius"]),
-            height=float(proxy["height"]),
-        )
-    raise ValueError(f"unsupported collision proxy: {shape}")
+        return p.createCollisionShape(p.GEOM_CAPSULE, radius=float(s["radius"]), height=float(s["height"]))
+    if obj.shape == "cone_frustum":
+        return p.createCollisionShape(p.GEOM_CYLINDER, radius=float(max(s["r_top"], s["r_base"])), height=float(s["height"]))
+    if obj.shape == "dumbbell":
+        return p.createCollisionShape(p.GEOM_CAPSULE, radius=float(s["weight_radius"]), height=float(s["length"]))
+    raise ValueError(f"unsupported collision shape: {obj.shape}")
 
 
 def _floor_colors(mesh: trimesh.Trimesh) -> np.ndarray:
@@ -301,7 +303,7 @@ class PreviewRenderer:
         self.nodes: Dict[str, pyrender.Node] = {}
 
     def add_object(self, obj: ObjectSpec) -> None:
-        mesh = _load_render_mesh(obj)
+        mesh = _make_mesh(obj)
         node = self.scene.add(
             pyrender.Mesh.from_trimesh(mesh, smooth=True),
             pose=_tr(obj.position[0], obj.position[1], obj.position[2]),
@@ -319,7 +321,7 @@ class PreviewRenderer:
         self.renderer.delete()
 
 
-def primitive(
+def make_obj(
     *,
     name: str,
     shape: str,
@@ -354,415 +356,391 @@ def primitive(
     )
 
 
-def textured_mesh(
-    *,
-    name: str,
-    asset_key: str,
-    position: List[float],
-    target_extents: List[float],
-    collision_proxy: Dict[str, object],
-    mass: float = 1.0,
-    dynamic: bool = True,
-    color: List[float] | None = None,
-    restitution: float = 0.45,
-    friction: float = 0.55,
-    orientation_euler_deg: List[float] | None = None,
-    mesh_euler_deg: List[float] | None = None,
-    linear_velocity: List[float] | None = None,
-    angular_velocity: List[float] | None = None,
-    role: str = "dynamic",
-) -> ObjectSpec:
-    return ObjectSpec(
-        name=name,
-        shape="mesh",
-        color=color or [0.75, 0.75, 0.75],
-        mass=mass,
-        position=position,
-        size={"fit_x": target_extents[0], "fit_y": target_extents[1], "fit_z": target_extents[2]},
-        dynamic=dynamic,
-        restitution=restitution,
-        friction=friction,
-        orientation_euler_deg=orientation_euler_deg or [0.0, 0.0, 0.0],
-        linear_velocity=linear_velocity or [0.0, 0.0, 0.0],
-        angular_velocity=angular_velocity or [0.0, 0.0, 0.0],
-        role=role,
-        render_mode="mesh",
-        texture_style="mesh_texture",
-        mesh_path=str(LOCAL_ASSETS[asset_key]),
-        mesh_target_extents=target_extents,
-        mesh_euler_deg=mesh_euler_deg or [0.0, 0.0, 0.0],
-        collision_proxy=collision_proxy,
-    )
-
-
 def build_preview_scenarios() -> List[ScenarioSpec]:
-    scenarios = [
+    return [
         ScenarioSpec(
-            key="rigid_f1_avocado_rollin",
+            key="simple_f1_sphere_bounce_roll",
             family="F1 单物体运动",
-            title="牛油果连续入镜并落地滚动",
-            description="物体在录制开始前已经存在于相机外，通过 pre-roll 连续进入画面，并在可见段中完成明显落地后滚动。",
-            gravity=EARTH_GRAVITY,
-            floor_friction=0.92,
-            seed=1101,
-            pre_roll_s=0.28,
-            objects=[
-                textured_mesh(
-                    name="avocado",
-                    asset_key="avocado",
-                    position=[-2.15, -0.12, 0.75],
-                    target_extents=[0.26, 0.18, 0.18],
-                    collision_proxy={"shape": "sphere", "radius": 0.15},
-                    restitution=0.18,
-                    friction=0.92,
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
-                    linear_velocity=[2.95, 0.05, -0.25],
-                    angular_velocity=[0.0, 11.0, 0.0],
-                ),
-            ],
-        ),
-        ScenarioSpec(
-            key="rigid_f1_textured_wheel",
-            family="F1 单物体运动",
-            title="复杂轮胎滚动",
-            description="使用本地复杂 mesh 轮胎进行渲染，物理侧仍使用稳定的圆柱代理碰撞。",
-            gravity=EARTH_GRAVITY,
-            floor_friction=1.05,
-            seed=1102,
-            pre_roll_s=0.80,
-            objects=[
-                textured_mesh(
-                    name="wheel",
-                    asset_key="fancy_wheel",
-                    position=[-3.10, -0.34, 0.27],
-                    target_extents=[0.22, 0.54, 0.54],
-                    collision_proxy={"shape": "cylinder", "radius": 0.27, "height": 0.16},
-                    restitution=0.14,
-                    friction=1.05,
-                    orientation_euler_deg=[90.0, 0.0, 0.0],
-                    mesh_euler_deg=[0.0, 0.0, 0.0],
-                    linear_velocity=[2.95, 0.03, 0.0],
-                    angular_velocity=[12.0, 0.0, 0.0],
-                ),
-            ],
-        ),
-        ScenarioSpec(
-            key="rigid_f2_duck_hits_crate",
-            family="F2 双体交互",
-            title="小鸭撞木箱",
-            description="复杂 mesh 动态物体与木纹箱体碰撞，检查 mesh 渲染下的身份保持和碰撞后速度传递。",
+            title="球体入镜后弹跳滚动",
+            description="球体从画外连续入镜，在真实重力下落地后发生弹跳和滚动。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.74,
-            seed=2101,
-            pre_roll_s=0.45,
+            seed=1001,
+            pre_roll_s=0.26,
             objects=[
-                textured_mesh(
-                    name="duck",
-                    asset_key="duck",
-                    position=[-2.40, -0.10, 0.22],
-                    target_extents=[0.28, 0.22, 0.30],
-                    collision_proxy={"shape": "box", "hx": 0.13, "hy": 0.10, "hz": 0.15},
-                    restitution=0.34,
-                    friction=0.58,
-                    linear_velocity=[3.45, 0.08, 0.20],
-                    angular_velocity=[0.0, 0.0, 1.6],
-                ),
-                primitive(
-                    name="crate",
-                    shape="box",
-                    color=[0.49, 0.33, 0.18],
-                    position=[0.20, -0.02, 0.22],
-                    size={"hx": 0.23, "hy": 0.20, "hz": 0.22},
-                    mass=1.6,
-                    texture_style="wood",
-                    restitution=0.20,
-                    friction=0.78,
+                make_obj(
+                    name="lead_sphere",
+                    shape="sphere",
+                    color=[0.84, 0.35, 0.22],
+                    position=[-1.85, -0.18, 0.82],
+                    size={"radius": 0.16},
+                    texture_style="rubber",
+                    restitution=0.58,
+                    friction=0.62,
+                    linear_velocity=[2.95, 0.10, -0.05],
+                    angular_velocity=[0.0, 7.0, 0.0],
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f2_pizza_glancing",
-            family="F2 双体交互",
-            title="披萨盘擦碰金属块",
-            description="贴图 mesh 与程序金属材质方块发生斜向擦碰，用于检查复杂轮廓物体的偏转。",
-            gravity=EARTH_GRAVITY,
-            floor_friction=0.52,
-            seed=2102,
-            pre_roll_s=0.12,
-            objects=[
-                textured_mesh(
-                    name="pizza",
-                    asset_key="pizza",
-                    position=[-1.65, 0.48, 0.12],
-                    target_extents=[0.44, 0.44, 0.08],
-                    collision_proxy={"shape": "cylinder", "radius": 0.21, "height": 0.06},
-                    restitution=0.16,
-                    friction=0.58,
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
-                    linear_velocity=[4.65, -0.22, 0.02],
-                    angular_velocity=[0.0, 0.0, 6.2],
-                ),
-                primitive(
-                    name="metal_cube",
-                    shape="box",
-                    color=[0.55, 0.59, 0.64],
-                    position=[0.45, 0.20, 0.22],
-                    size={"hx": 0.22, "hy": 0.22, "hz": 0.22},
-                    mass=1.2,
-                    texture_style="metal",
-                    restitution=0.14,
-                    friction=0.66,
-                ),
-            ],
-        ),
-        ScenarioSpec(
-            key="rigid_f3_avocado_duck_chain",
-            family="F3 多体连锁",
-            title="牛油果触发小鸭再推动木块",
-            description="链式传播中同时混入贴图 mesh 和程序木纹物体，检查多物体因果传递。",
+            key="simple_f1_capsule_slide_spin",
+            family="F1 单物体运动",
+            title="胶囊体滑行并自旋",
+            description="胶囊体以初速度入镜，在地面摩擦作用下滑行并伴随姿态变化。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.88,
-            seed=3101,
-            pre_roll_s=0.55,
+            seed=1002,
+            pre_roll_s=0.18,
             objects=[
-                textured_mesh(
-                    name="lead_avocado",
-                    asset_key="avocado",
-                    position=[-2.50, -0.18, 0.16],
-                    target_extents=[0.24, 0.17, 0.17],
-                    collision_proxy={"shape": "sphere", "radius": 0.15},
-                    restitution=0.18,
-                    friction=0.90,
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
-                    linear_velocity=[4.10, 0.0, 0.0],
-                    angular_velocity=[0.0, 10.5, 0.0],
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.28, 0.49, 0.78],
+                    position=[-1.95, 0.32, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="metal",
+                    restitution=0.10,
+                    friction=0.84,
+                    orientation_euler_deg=[90.0, 10.0, 0.0],
+                    linear_velocity=[3.25, -0.10, 0.0],
+                    angular_velocity=[9.0, 0.0, 2.0],
                 ),
-                textured_mesh(
-                    name="duck_mid",
-                    asset_key="duck",
-                    position=[-0.45, -0.18, 0.22],
-                    target_extents=[0.27, 0.22, 0.30],
-                    collision_proxy={"shape": "box", "hx": 0.13, "hy": 0.10, "hz": 0.15},
-                    restitution=0.28,
-                    friction=0.62,
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f2_puck_hits_box",
+            family="F2 双体交互",
+            title="圆盘撞击方块",
+            description="扁平圆盘斜向滑入并撞击方块，观察速度传递和偏转。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.61,
+            seed=2001,
+            pre_roll_s=0.12,
+            objects=[
+                make_obj(
+                    name="impact_puck",
+                    shape="puck",
+                    color=[0.76, 0.44, 0.20],
+                    position=[-1.76, 0.42, 0.05],
+                    size={"radius": 0.21, "height": 0.06},
+                    texture_style="rubber",
+                    restitution=0.08,
+                    friction=0.55,
+                    linear_velocity=[4.40, -0.28, 0.0],
+                    angular_velocity=[0.0, 0.0, 7.0],
                 ),
-                primitive(
-                    name="end_block",
+                make_obj(
+                    name="target_box",
                     shape="box",
-                    color=[0.46, 0.30, 0.16],
-                    position=[0.62, -0.18, 0.24],
-                    size={"hx": 0.20, "hy": 0.18, "hz": 0.24},
-                    mass=1.0,
+                    color=[0.53, 0.33, 0.20],
+                    position=[0.30, 0.06, 0.18],
+                    size={"hx": 0.18, "hy": 0.18, "hz": 0.18},
+                    mass=1.2,
                     texture_style="wood",
-                    restitution=0.18,
+                    restitution=0.12,
+                    friction=0.72,
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f2_cylinder_hits_cylinder",
+            family="F2 双体交互",
+            title="卧圆柱撞立圆柱",
+            description="卧放圆柱滚入后撞击立柱，观察碰撞后的平移与转动耦合。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.70,
+            seed=2002,
+            pre_roll_s=0.20,
+            objects=[
+                make_obj(
+                    name="rolling_cylinder",
+                    shape="cylinder",
+                    color=[0.28, 0.58, 0.80],
+                    position=[-2.10, -0.16, 0.12],
+                    size={"radius": 0.12, "height": 0.30},
+                    texture_style="checker",
+                    restitution=0.10,
+                    friction=0.74,
+                    orientation_euler_deg=[90.0, 0.0, 0.0],
+                    linear_velocity=[3.85, 0.12, 0.0],
+                    angular_velocity=[11.0, 0.0, 0.0],
+                ),
+                make_obj(
+                    name="upright_cylinder",
+                    shape="cylinder",
+                    color=[0.78, 0.49, 0.20],
+                    position=[0.18, 0.02, 0.22],
+                    size={"radius": 0.11, "height": 0.44},
+                    mass=1.1,
+                    texture_style="wood",
+                    restitution=0.10,
+                    friction=0.72,
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f3_sphere_chain_reaction",
+            family="F3 多体连锁",
+            title="球体触发双方块连锁",
+            description="球体先撞第一个方块，再带动第二个方块，测试简单几何下的因果传播。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.67,
+            seed=3001,
+            pre_roll_s=0.24,
+            objects=[
+                make_obj(
+                    name="lead_ball",
+                    shape="sphere",
+                    color=[0.84, 0.31, 0.22],
+                    position=[-2.10, -0.14, 0.16],
+                    size={"radius": 0.16},
+                    texture_style="rubber",
+                    restitution=0.42,
+                    friction=0.48,
+                    linear_velocity=[4.05, 0.0, 0.0],
+                    angular_velocity=[0.0, 7.0, 0.0],
+                ),
+                make_obj(
+                    name="mid_box",
+                    shape="box",
+                    color=[0.78, 0.49, 0.20],
+                    position=[-0.20, -0.14, 0.17],
+                    size={"hx": 0.17, "hy": 0.17, "hz": 0.17},
+                    mass=0.95,
+                    texture_style="wood",
+                    restitution=0.08,
+                    friction=0.74,
+                ),
+                make_obj(
+                    name="box_tail",
+                    shape="box",
+                    color=[0.55, 0.34, 0.18],
+                    position=[0.74, -0.14, 0.18],
+                    size={"hx": 0.18, "hy": 0.18, "hz": 0.18},
+                    mass=0.95,
+                    texture_style="wood",
+                    restitution=0.08,
                     friction=0.76,
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f3_bunny_wheel_chain",
+            key="simple_f3_capsule_box_cylinder_chain",
             family="F3 多体连锁",
-            title="轮胎触发兔子和木柱",
-            description="多体链式传播中加入更高轮廓复杂度的兔子 mesh，观察倒伏和后续接触。",
+            title="胶囊推动方块再碰圆柱",
+            description="胶囊体推动方块，再由方块碰到圆柱，形成三体链式传播。",
             gravity=EARTH_GRAVITY,
-            floor_friction=1.00,
-            seed=3102,
-            pre_roll_s=0.65,
+            floor_friction=0.79,
+            seed=3002,
+            pre_roll_s=0.30,
             objects=[
-                textured_mesh(
-                    name="lead_wheel",
-                    asset_key="fancy_wheel",
-                    position=[-2.85, 0.14, 0.27],
-                    target_extents=[0.22, 0.54, 0.54],
-                    collision_proxy={"shape": "cylinder", "radius": 0.27, "height": 0.16},
-                    restitution=0.10,
-                    friction=1.00,
+                make_obj(
+                    name="lead_capsule",
+                    shape="capsule",
+                    color=[0.26, 0.48, 0.78],
+                    position=[-2.20, 0.12, 0.13],
+                    size={"radius": 0.09, "height": 0.26},
+                    texture_style="metal",
+                    restitution=0.12,
+                    friction=0.78,
                     orientation_euler_deg=[90.0, 0.0, 0.0],
-                    linear_velocity=[3.30, 0.0, 0.0],
-                    angular_velocity=[12.0, 0.0, 0.0],
+                    linear_velocity=[3.75, 0.0, 0.0],
+                    angular_velocity=[8.0, 0.0, 0.0],
                 ),
-                textured_mesh(
-                    name="bunny_mid",
-                    asset_key="bunny",
-                    position=[-0.45, 0.14, 0.21],
-                    target_extents=[0.24, 0.18, 0.24],
-                    collision_proxy={"shape": "box", "hx": 0.10, "hy": 0.08, "hz": 0.12},
-                    restitution=0.08,
-                    friction=0.70,
-                    linear_velocity=[0.0, 0.0, 0.0],
-                ),
-                primitive(
-                    name="wood_post",
+                make_obj(
+                    name="push_box",
                     shape="box",
-                    color=[0.57, 0.39, 0.21],
-                    position=[0.52, 0.14, 0.29],
-                    size={"hx": 0.09, "hy": 0.18, "hz": 0.29},
-                    mass=0.75,
+                    color=[0.74, 0.48, 0.22],
+                    position=[-0.18, 0.12, 0.16],
+                    size={"hx": 0.16, "hy": 0.16, "hz": 0.16},
+                    mass=0.85,
                     texture_style="wood",
+                    restitution=0.08,
+                    friction=0.78,
+                ),
+                make_obj(
+                    name="tail_cylinder",
+                    shape="cylinder",
+                    color=[0.58, 0.60, 0.64],
+                    position=[0.78, 0.12, 0.18],
+                    size={"radius": 0.10, "height": 0.36},
+                    mass=0.90,
+                    texture_style="metal",
                     restitution=0.10,
-                    friction=0.80,
+                    friction=0.70,
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f4_ball_behind_armchair",
+            key="simple_f4_ball_behind_pillars",
             family="F4 遮挡与重现",
-            title="球体经过扶手椅后方",
-            description="使用贴图扶手椅作为静态遮挡物，动态球体在 pre-roll 后从画外连续入镜并完成遮挡-重现。",
+            title="球体经过双柱后方",
+            description="使用两个静态柱体做遮挡，动态球体从画外连续入镜并完成遮挡-重现。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.68,
-            seed=4101,
-            pre_roll_s=0.85,
+            seed=4001,
+            pre_roll_s=0.78,
             objects=[
-                primitive(
+                make_obj(
                     name="moving_ball",
                     shape="sphere",
                     color=[0.86, 0.29, 0.20],
-                    position=[-3.05, 0.76, 0.18],
+                    position=[-2.90, 0.78, 0.18],
                     size={"radius": 0.18},
-                    mass=1.0,
                     texture_style="rubber",
                     restitution=0.68,
                     friction=0.42,
                     linear_velocity=[3.70, 0.0, 0.0],
                     angular_velocity=[0.0, 6.0, 0.0],
                 ),
-                textured_mesh(
-                    name="armchair_occ",
-                    asset_key="armchair",
-                    position=[0.0, -0.08, 0.42],
-                    target_extents=[0.95, 0.72, 0.82],
-                    collision_proxy={"shape": "box", "hx": 0.32, "hy": 0.28, "hz": 0.42},
-                    mass=0.0,
+                make_obj(
+                    name="pillar_left_occ",
+                    shape="cylinder",
+                    color=[0.55, 0.52, 0.48],
+                    position=[-0.18, -0.06, 0.48],
+                    size={"radius": 0.16, "height": 0.96},
                     dynamic=False,
-                    restitution=0.05,
-                    friction=0.85,
+                    mass=0.0,
                     role="occluder",
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
+                    texture_style="checker",
+                    friction=0.84,
+                ),
+                make_obj(
+                    name="pillar_right_occ",
+                    shape="cylinder",
+                    color=[0.50, 0.48, 0.45],
+                    position=[0.18, -0.06, 0.48],
+                    size={"radius": 0.16, "height": 0.96},
+                    dynamic=False,
+                    mass=0.0,
+                    role="occluder",
+                    texture_style="checker",
+                    friction=0.84,
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f4_duck_cross_chair",
+            key="simple_f4_dual_sphere_cross_occlusion",
             family="F4 遮挡与重现",
-            title="小鸭与牛油果在扶手椅后方交叉",
-            description="两个不同 mesh 物体在大型静态物体后方交叉，主要看 identity 是否稳定。",
+            title="双球在柱体后交叉",
+            description="两个球体从左右两侧入镜，在遮挡柱后交叉并重现，检查 identity 保持。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.72,
-            seed=4102,
-            pre_roll_s=0.75,
+            seed=4002,
+            pre_roll_s=0.66,
             objects=[
-                textured_mesh(
-                    name="duck_cross",
-                    asset_key="duck",
-                    position=[-2.55, 0.62, 0.22],
-                    target_extents=[0.27, 0.22, 0.30],
-                    collision_proxy={"shape": "box", "hx": 0.13, "hy": 0.10, "hz": 0.15},
-                    restitution=0.24,
-                    friction=0.58,
-                    linear_velocity=[3.25, 0.0, 0.0],
+                make_obj(
+                    name="cross_ball_left",
+                    shape="sphere",
+                    color=[0.86, 0.33, 0.24],
+                    position=[-2.55, 0.72, 0.16],
+                    size={"radius": 0.16},
+                    texture_style="rubber",
+                    restitution=0.56,
+                    friction=0.50,
+                    linear_velocity=[3.10, 0.0, 0.0],
+                    angular_velocity=[0.0, 6.0, 0.0],
                 ),
-                textured_mesh(
-                    name="avocado_cross",
-                    asset_key="avocado",
-                    position=[2.65, 0.90, 0.16],
-                    target_extents=[0.24, 0.17, 0.17],
-                    collision_proxy={"shape": "sphere", "radius": 0.15},
-                    restitution=0.14,
-                    friction=0.88,
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
+                make_obj(
+                    name="cross_ball_right",
+                    shape="sphere",
+                    color=[0.28, 0.48, 0.80],
+                    position=[2.40, 0.92, 0.16],
+                    size={"radius": 0.16},
+                    texture_style="rubber",
+                    restitution=0.56,
+                    friction=0.50,
                     linear_velocity=[-2.85, 0.0, 0.0],
-                    angular_velocity=[0.0, -8.0, 0.0],
+                    angular_velocity=[0.0, -6.0, 0.0],
                 ),
-                textured_mesh(
-                    name="chair_occ",
-                    asset_key="armchair",
-                    position=[0.0, -0.06, 0.42],
-                    target_extents=[0.95, 0.72, 0.82],
-                    collision_proxy={"shape": "box", "hx": 0.32, "hy": 0.28, "hz": 0.42},
-                    mass=0.0,
+                make_obj(
+                    name="occ_column",
+                    shape="cylinder",
+                    color=[0.52, 0.50, 0.46],
+                    position=[0.0, -0.04, 0.50],
+                    size={"radius": 0.18, "height": 1.00},
                     dynamic=False,
-                    restitution=0.05,
-                    friction=0.85,
+                    mass=0.0,
                     role="occluder",
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
+                    texture_style="checker",
+                    friction=0.84,
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f5_avocado_into_bowl",
+            key="simple_f5_sphere_drop_on_platform",
             family="F5 支撑与跌落",
-            title="牛油果跌入碗中",
-            description="用 bowl mesh 做支撑容器，顶部跌落的牛油果在复杂形状附近发生离散事件切换。",
+            title="球体落到平台后滚下",
+            description="球体落到平台后继续滚动并离开支撑面，测试支撑切换。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.84,
-            seed=5101,
-            pre_roll_s=0.10,
+            seed=5001,
+            pre_roll_s=0.05,
             objects=[
-                textured_mesh(
-                    name="drop_avocado",
-                    asset_key="avocado",
-                    position=[-0.18, 0.0, 1.30],
-                    target_extents=[0.24, 0.17, 0.17],
-                    collision_proxy={"shape": "sphere", "radius": 0.15},
-                    restitution=0.26,
-                    friction=0.84,
-                    mesh_euler_deg=[-90.0, 0.0, 0.0],
-                    linear_velocity=[0.22, 0.0, -0.05],
+                make_obj(
+                    name="drop_ball",
+                    shape="sphere",
+                    color=[0.84, 0.35, 0.22],
+                    position=[-0.30, 0.0, 1.10],
+                    size={"radius": 0.15},
+                    texture_style="rubber",
+                    restitution=0.34,
+                    friction=0.74,
+                    linear_velocity=[0.55, 0.0, -0.08],
+                    angular_velocity=[0.0, 3.0, 0.0],
                 ),
-                textured_mesh(
-                    name="bowl_support",
-                    asset_key="bowl",
-                    position=[0.10, 0.0, 0.07],
-                    target_extents=[0.62, 0.62, 0.22],
-                    collision_proxy={"shape": "cylinder", "radius": 0.28, "height": 0.12},
-                    mass=0.0,
+                make_obj(
+                    name="support_platform",
+                    shape="box",
+                    color=[0.50, 0.34, 0.20],
+                    position=[0.12, 0.0, 0.16],
+                    size={"hx": 0.34, "hy": 0.26, "hz": 0.16},
                     dynamic=False,
-                    color=[0.83, 0.80, 0.76],
-                    restitution=0.05,
-                    friction=0.92,
+                    mass=0.0,
                     role="support",
+                    texture_style="wood",
+                    friction=0.88,
                 ),
             ],
         ),
         ScenarioSpec(
-            key="rigid_f5_bunny_topple",
+            key="simple_f5_cylinder_topple",
             family="F5 支撑与跌落",
-            title="兔子在窄台上失稳倒下",
-            description="复杂 mesh 放在窄支撑台上，通过轻微初始偏置和角速度触发失稳倒伏。",
+            title="圆柱在窄底座上失稳倒下",
+            description="圆柱立在窄底座上并带轻微倾斜，开始后在重力作用下自然失稳倒伏。",
             gravity=EARTH_GRAVITY,
             floor_friction=0.78,
-            seed=5102,
+            seed=5002,
             pre_roll_s=0.05,
             objects=[
-                primitive(
+                make_obj(
                     name="pedestal",
                     shape="box",
                     color=[0.45, 0.32, 0.18],
-                    position=[0.0, 0.0, 0.12],
-                    size={"hx": 0.13, "hy": 0.13, "hz": 0.12},
-                    mass=0.0,
+                    position=[0.0, 0.0, 0.11],
+                    size={"hx": 0.13, "hy": 0.13, "hz": 0.11},
                     dynamic=False,
-                    texture_style="wood",
+                    mass=0.0,
                     role="support",
+                    texture_style="wood",
                     friction=0.82,
                 ),
-                textured_mesh(
-                    name="topple_bunny",
-                    asset_key="bunny",
-                    position=[0.17, 0.0, 0.33],
-                    target_extents=[0.28, 0.20, 0.28],
-                    collision_proxy={"shape": "box", "hx": 0.10, "hy": 0.08, "hz": 0.14},
+                make_obj(
+                    name="topple_cylinder",
+                    shape="cylinder",
+                    color=[0.26, 0.58, 0.82],
+                    position=[0.12, 0.0, 0.43],
+                    size={"radius": 0.12, "height": 0.42},
+                    texture_style="metal",
                     restitution=0.08,
-                    friction=0.64,
-                    orientation_euler_deg=[0.0, 8.0, 16.0],
+                    friction=0.66,
+                    orientation_euler_deg=[0.0, 8.0, 14.0],
                     linear_velocity=[0.03, 0.0, 0.0],
-                    angular_velocity=[0.0, 0.45, 0.18],
+                    angular_velocity=[0.0, 0.40, 0.16],
                 ),
             ],
         ),
     ]
-    return scenarios
 
 
 def _overlay_text(frame_bgr: np.ndarray, lines: List[str]) -> None:
@@ -795,7 +773,7 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
         quat = _quat_from_euler_deg(obj.orientation_euler_deg)
         body_id = p.createMultiBody(
             baseMass=obj.mass if obj.dynamic else 0.0,
-            baseCollisionShapeIndex=_create_collision_shape(_collision_proxy_for_object(obj)),
+            baseCollisionShapeIndex=_collision_shape(obj),
             basePosition=obj.position,
             baseOrientation=quat,
         )
@@ -908,9 +886,8 @@ def generate_html(report_items: List[dict], port: int) -> Path:
             for obj in item["objects"]:
                 role = obj["role"]
                 role_text = "遮挡物" if role == "occluder" else ("支撑物" if role == "support" else "动态物体")
-                render_text = "mesh" if obj["render_mode"] == "mesh" else obj["shape"]
                 object_badges.append(
-                    f"<span class='badge'>{html.escape(obj['name'])}: {html.escape(render_text)} / {role_text}</span>"
+                    f"<span class='badge'>{html.escape(obj['name'])}: {html.escape(obj['shape'])} / {role_text}</span>"
                 )
             cards.append(
                 f"""
@@ -953,7 +930,7 @@ def generate_html(report_items: List[dict], port: int) -> Path:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rigid Sim ObjState Preview v2</title>
+  <title>Rigid Simple Sim Preview v1</title>
   <style>
     :root {{
       --bg: #181612;
@@ -986,7 +963,7 @@ def generate_html(report_items: List[dict], port: int) -> Path:
     }}
     .lead {{
       margin: 0;
-      max-width: 1020px;
+      max-width: 1040px;
       color: var(--muted);
       line-height: 1.75;
       font-size: 15px;
@@ -1107,14 +1084,13 @@ def generate_html(report_items: List[dict], port: int) -> Path:
 <body>
   <div class="page">
     <section class="hero">
-      <h1>Rigid 仿真 Object-State 预览集 v3</h1>
+      <h1>Rigid Simple 仿真预览集 v1</h1>
       <p class="lead">
-        这一版只包含 rigid-body 场景，不和 MPM 混合。所有动态物体都在录制开始前已经存在，
-        通过 pre-roll 从画外连续入镜，避免“凭空出现”。同时引入了本地 textured mesh 资源和 render mesh / collision proxy 分离，
-        让外观更复杂、碰撞仍然稳定。当前 rigid 预览统一采用地球重力 `9.81 m/s²`，并把地面摩擦系数作为显式场景参数纳入变化范围。
+        这一版只保留碰撞形状和视觉形状高度一致的简单刚体：sphere、box、cylinder、capsule、puck。
+        所有场景固定使用地球重力 `9.81 m/s²`，并把地面摩擦系数作为显式场景参数纳入变化范围，避免引入大幅 mesh-collision mismatch。
       </p>
       <div class="hero-row">
-        <span class="pill">simulation type = rigid</span>
+        <span class="pill">simulation type = rigid_simple</span>
         <span class="pill">分辨率 {IMG_W}×{IMG_H}</span>
         <span class="pill">FPS {FPS}</span>
         <span class="pill">{len(report_items)} 个 preview case</span>
@@ -1159,7 +1135,7 @@ def start_server(port: int) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a rigid-body simulation preview gallery.")
+    parser = argparse.ArgumentParser(description="Generate a rigid-core simulation preview gallery.")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--serve-only", action="store_true")
