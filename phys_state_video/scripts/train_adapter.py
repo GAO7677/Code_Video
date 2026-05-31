@@ -85,6 +85,18 @@ def parse_args():
         default=None,
         help="Optional best-checkpoint path. Defaults to '<output stem>.best<suffix>'.",
     )
+    parser.add_argument(
+        "--spatial-loss-scale",
+        type=float,
+        default=0.5,
+        help="Global multiplier for the spatial auxiliary loss on center/bbox maps.",
+    )
+    parser.add_argument(
+        "--spatial-foreground-weight",
+        type=float,
+        default=4.0,
+        help="Extra weight assigned to foreground pixels in the spatial auxiliary loss.",
+    )
     return parser.parse_args()
 
 
@@ -112,6 +124,17 @@ def infer_best_from_history(history: list[dict]) -> tuple[int | None, float | No
     return best_epoch, best_metric
 
 
+def same_loss_setup(resume_ckpt: dict, args, state_loss_weights: list[float]) -> bool:
+    return (
+        resume_ckpt.get("condition_mode", "state") == args.condition_mode
+        and list(resume_ckpt.get("state_loss_weights", state_loss_weights)) == list(state_loss_weights)
+        and float(resume_ckpt.get("state_loss_scale", args.state_loss_scale)) == float(args.state_loss_scale)
+        and float(resume_ckpt.get("spatial_loss_scale", 0.0)) == float(args.spatial_loss_scale)
+        and float(resume_ckpt.get("spatial_foreground_weight", args.spatial_foreground_weight))
+        == float(args.spatial_foreground_weight)
+    )
+
+
 def save_checkpoint(
     output_path: Path,
     model,
@@ -136,6 +159,8 @@ def save_checkpoint(
             "model": model_state,
             "state_loss_weights": state_loss_weights,
             "state_loss_scale": args.state_loss_scale,
+            "spatial_loss_scale": args.spatial_loss_scale,
+            "spatial_foreground_weight": args.spatial_foreground_weight,
             "best_epoch": best_epoch,
             "best_metric": best_metric,
         },
@@ -165,8 +190,19 @@ def load_model_state(module, state_dict, checkpoint_label: str) -> None:
         )
 
 
-def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode, state_loss_weights, state_loss_scale):
-    running = {"loss": 0.0, "recon": 0.0, "state_aux": 0.0}
+def run_epoch(
+    model,
+    loader,
+    optimizer,
+    device,
+    cond_cfg,
+    condition_mode,
+    state_loss_weights,
+    state_loss_scale,
+    spatial_loss_scale,
+    spatial_foreground_weight,
+):
+    running = {"loss": 0.0, "recon": 0.0, "state_aux": 0.0, "spatial_aux": 0.0}
     is_train = optimizer is not None
     model.train(mode=is_train)
     for batch in loader:
@@ -180,6 +216,7 @@ def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode, state_
         bundle = apply_condition_mode(bundle, condition_mode)
         outputs = model(batch["context_frames"].to(device), bundle.maps,
                         bundle.memory_tokens)
+        target_spatial_maps = bundle.maps[:, :, 0:2]
         losses = adapter_loss(
             outputs["frames"],
             batch["future_frames"].to(device),
@@ -187,6 +224,10 @@ def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode, state_
             future_states,
             state_loss_weights=state_loss_weights,
             state_loss_scale=state_loss_scale,
+            predicted_spatial_logits=outputs["spatial_logits"],
+            target_spatial_maps=target_spatial_maps,
+            spatial_loss_scale=spatial_loss_scale,
+            spatial_foreground_weight=spatial_foreground_weight,
         )
         if is_train:
             losses["loss"].backward()
@@ -262,10 +303,15 @@ def main():
         resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
         load_model_state(base_model, resume_ckpt["model"], args.resume)
         history.extend(resume_ckpt.get("history", []))
-        best_epoch = resume_ckpt.get("best_epoch")
-        best_metric = resume_ckpt.get("best_metric")
-        if best_metric is None and history:
-            best_epoch, best_metric = infer_best_from_history(history)
+        if same_loss_setup(resume_ckpt, args, state_loss_weights):
+            best_epoch = resume_ckpt.get("best_epoch")
+            best_metric = resume_ckpt.get("best_metric")
+            if best_metric is None and history:
+                best_epoch, best_metric = infer_best_from_history(history)
+        else:
+            print("resume checkpoint uses a different loss setup; resetting best metric tracking for this run")
+            best_epoch = None
+            best_metric = None
         print(f"resumed weights from {args.resume}")
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
@@ -299,6 +345,8 @@ def main():
                 "val_episodes": len(val_loader.dataset) if val_loader is not None else 0,
                 "state_loss_weights": state_loss_weights,
                 "state_loss_scale": args.state_loss_scale,
+                "spatial_loss_scale": args.spatial_loss_scale,
+                "spatial_foreground_weight": args.spatial_foreground_weight,
             },
         )
 
@@ -317,6 +365,8 @@ def main():
             args.condition_mode,
             state_loss_weight_tensor,
             args.state_loss_scale,
+            args.spatial_loss_scale,
+            args.spatial_foreground_weight,
         )
         record = {"epoch": epoch_index, "train": train_metrics}
         if val_loader is not None:
@@ -330,6 +380,8 @@ def main():
                     args.condition_mode,
                     state_loss_weight_tensor,
                     args.state_loss_scale,
+                    args.spatial_loss_scale,
+                    args.spatial_foreground_weight,
                 )
             record["val"] = val_metrics
             print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f} val_loss={val_metrics['loss']:.6f}")

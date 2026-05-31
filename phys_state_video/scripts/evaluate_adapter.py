@@ -77,6 +77,8 @@ def main():
     condition_mode = args.condition_mode or ckpt.get("condition_mode", "state")
     state_loss_weights = ckpt.get("state_loss_weights")
     state_loss_scale = float(ckpt.get("state_loss_scale", 0.1))
+    spatial_loss_scale = float(ckpt.get("spatial_loss_scale", 0.0))
+    spatial_foreground_weight = float(ckpt.get("spatial_foreground_weight", 4.0))
     dataset = NpzEpisodeDataset(args.data)
     loader = torch.utils.data.DataLoader(dataset,
                                          batch_size=args.batch_size,
@@ -94,6 +96,7 @@ def main():
         "loss": 0.0,
         "recon": 0.0,
         "state_aux": 0.0,
+        "spatial_aux": 0.0,
         "center_error": 0.0,
         "log_scale_error": 0.0,
         "visibility_error": 0.0,
@@ -113,13 +116,18 @@ def main():
                 bundle = perturb_condition_bundle(bundle)
             outputs = model(batch["context_frames"].to(args.device), bundle.maps,
                             bundle.memory_tokens)
+            target_spatial_maps = bundle.maps[:, :, 0:2]
             losses = adapter_loss(outputs["frames"],
                                   batch["future_frames"].to(args.device),
                                   outputs["state_logits"],
                                   future_states,
                                   state_loss_weights=state_loss_weight_tensor,
-                                  state_loss_scale=state_loss_scale)
-            for key in ("loss", "recon", "state_aux"):
+                                  state_loss_scale=state_loss_scale,
+                                  predicted_spatial_logits=outputs.get("spatial_logits"),
+                                  target_spatial_maps=target_spatial_maps,
+                                  spatial_loss_scale=spatial_loss_scale,
+                                  spatial_foreground_weight=spatial_foreground_weight)
+            for key in ("loss", "recon", "state_aux", "spatial_aux"):
                 totals[key] += float(losses[key].detach().cpu()) * batch_size
 
             generated = detach_to_cpu_numpy(outputs["frames"])
@@ -140,6 +148,8 @@ def main():
         "corruption": args.corruption,
         "state_loss_weights": state_loss_weights,
         "state_loss_scale": state_loss_scale,
+        "spatial_loss_scale": spatial_loss_scale,
+        "spatial_foreground_weight": spatial_foreground_weight,
         "metrics": averages,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
