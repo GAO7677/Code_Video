@@ -103,9 +103,15 @@ def adapter_loss(
     target_frames: torch.Tensor,
     predicted_state_logits: torch.Tensor,
     target_states: torch.Tensor,
+    state_loss_weights: torch.Tensor | None = None,
+    state_loss_scale: float = 0.1,
 ) -> Dict[str, torch.Tensor]:
     recon = torch.mean(torch.abs(predicted_frames - target_frames))
     pooled_target = target_states.mean(dim=2)
-    state_aux = torch.mean((predicted_state_logits - pooled_target) ** 2)
-    total = recon + 0.1 * state_aux
+    state_error = (predicted_state_logits - pooled_target) ** 2
+    if state_loss_weights is not None:
+        view_shape = [1] * (state_error.ndim - 1) + [state_error.shape[-1]]
+        state_error = state_error * state_loss_weights.view(*view_shape)
+    state_aux = torch.mean(state_error)
+    total = recon + state_loss_scale * state_aux
     return {"loss": total, "recon": recon, "state_aux": state_aux}

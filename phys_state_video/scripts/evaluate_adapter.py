@@ -46,13 +46,22 @@ def parse_args():
     return parser.parse_args()
 
 
+def load_checkpoint(checkpoint_path: str, map_location):
+    try:
+        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location=map_location)
+
+
 def main():
     args = parse_args()
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    ckpt = torch.load(args.checkpoint, map_location=args.device)
+    ckpt = load_checkpoint(args.checkpoint, map_location=args.device)
     condition_mode = args.condition_mode or ckpt.get("condition_mode", "state")
+    state_loss_weights = ckpt.get("state_loss_weights")
+    state_loss_scale = float(ckpt.get("state_loss_scale", 0.1))
     dataset = NpzEpisodeDataset(args.data)
     loader = torch.utils.data.DataLoader(dataset,
                                          batch_size=args.batch_size,
@@ -62,6 +71,9 @@ def main():
     model.load_state_dict(ckpt["model"])
     model.eval()
     cond_cfg = ConditioningConfig(**ckpt["conditioning"])
+    state_loss_weight_tensor = None
+    if state_loss_weights is not None:
+        state_loss_weight_tensor = torch.tensor(state_loss_weights, dtype=torch.float32, device=args.device)
 
     totals = {
         "loss": 0.0,
@@ -88,7 +100,10 @@ def main():
                             bundle.memory_tokens)
             losses = adapter_loss(outputs["frames"],
                                   batch["future_frames"].to(args.device),
-                                  outputs["state_logits"], future_states)
+                                  outputs["state_logits"],
+                                  future_states,
+                                  state_loss_weights=state_loss_weight_tensor,
+                                  state_loss_scale=state_loss_scale)
             for key in ("loss", "recon", "state_aux"):
                 totals[key] += float(losses[key].detach().cpu()) * batch_size
 
@@ -108,6 +123,8 @@ def main():
         "samples": count,
         "condition_mode": condition_mode,
         "corruption": args.corruption,
+        "state_loss_weights": state_loss_weights,
+        "state_loss_scale": state_loss_scale,
         "metrics": averages,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

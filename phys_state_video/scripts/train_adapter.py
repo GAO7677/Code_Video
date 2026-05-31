@@ -25,6 +25,9 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     wandb = None
 
 
+DEFAULT_STATE_LOSS_WEIGHTS = [1.0, 1.0, 0.05, 1.0, 0.25, 0.25, 0.05, 1.0, 0.25, 0.05]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the state-conditioned video adapter.")
     parser.add_argument("--data", required=True, help="Directory containing episode .npz files.")
@@ -66,10 +69,88 @@ def parse_args():
         default="online",
         choices=["online", "offline", "disabled"],
     )
+    parser.add_argument(
+        "--state-loss-weights",
+        default=",".join(str(value) for value in DEFAULT_STATE_LOSS_WEIGHTS),
+        help="Comma-separated per-dimension weights for the 10D state auxiliary loss.",
+    )
+    parser.add_argument(
+        "--state-loss-scale",
+        type=float,
+        default=0.1,
+        help="Global multiplier applied to the weighted state auxiliary loss.",
+    )
+    parser.add_argument(
+        "--best-output",
+        default=None,
+        help="Optional best-checkpoint path. Defaults to '<output stem>.best<suffix>'.",
+    )
     return parser.parse_args()
 
 
-def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode):
+def parse_state_loss_weights(value: str) -> list[float]:
+    weights = [float(item.strip()) for item in value.split(",") if item.strip()]
+    if len(weights) != 10:
+        raise ValueError(f"--state-loss-weights must contain 10 values, got {len(weights)}")
+    return weights
+
+
+def default_best_output(output_path: Path) -> Path:
+    if output_path.suffix:
+        return output_path.with_name(f"{output_path.stem}.best{output_path.suffix}")
+    return output_path.with_name(f"{output_path.name}.best")
+
+
+def infer_best_from_history(history: list[dict]) -> tuple[int | None, float | None]:
+    best_epoch = None
+    best_metric = None
+    for record in history:
+        monitor = record.get("val", record["train"])["loss"]
+        if best_metric is None or monitor < best_metric:
+            best_metric = monitor
+            best_epoch = int(record["epoch"])
+    return best_epoch, best_metric
+
+
+def save_checkpoint(
+    output_path: Path,
+    model,
+    adapter_cfg: AdapterConfig,
+    cond_cfg: ConditioningConfig,
+    args,
+    gpu_ids,
+    history,
+    state_loss_weights: list[float],
+    best_epoch: int | None,
+    best_metric: float | None,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+    torch.save(
+        {
+            "config": asdict(adapter_cfg),
+            "conditioning": asdict(cond_cfg),
+            "condition_mode": args.condition_mode,
+            "gpu_ids": gpu_ids,
+            "history": history,
+            "model": model_state,
+            "state_loss_weights": state_loss_weights,
+            "state_loss_scale": args.state_loss_scale,
+            "best_epoch": best_epoch,
+            "best_metric": best_metric,
+        },
+        output_path,
+    )
+
+
+def load_checkpoint(checkpoint_path: str, map_location):
+    try:
+        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location=map_location)
+
+
+def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode, state_loss_weights, state_loss_scale):
     running = {"loss": 0.0, "recon": 0.0, "state_aux": 0.0}
     is_train = optimizer is not None
     model.train(mode=is_train)
@@ -89,6 +170,8 @@ def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode):
             batch["future_frames"].to(device),
             outputs["state_logits"],
             future_states,
+            state_loss_weights=state_loss_weights,
+            state_loss_scale=state_loss_scale,
         )
         if is_train:
             losses["loss"].backward()
@@ -106,6 +189,7 @@ def main():
         gpu_ids = [int(item) for item in args.gpu_ids.split(",") if item.strip()]
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    state_loss_weights = parse_state_loss_weights(args.state_loss_weights)
     dataset = NpzEpisodeDataset(args.data)
     pin_memory = not args.no_pin_memory
     persistent_workers = (not args.no_persistent_workers and args.num_workers > 0)
@@ -155,10 +239,18 @@ def main():
         model = base_model
 
     history = []
+    best_epoch = None
+    best_metric = None
     if args.resume is not None:
-        resume_ckpt = torch.load(args.resume, map_location=args.device)
+        # Load checkpoints on CPU first to avoid device-specific restore issues
+        # when resuming under a different visible CUDA device mapping.
+        resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
         base_model.load_state_dict(resume_ckpt["model"])
         history.extend(resume_ckpt.get("history", []))
+        best_epoch = resume_ckpt.get("best_epoch")
+        best_metric = resume_ckpt.get("best_metric")
+        if best_metric is None and history:
+            best_epoch, best_metric = infer_best_from_history(history)
         print(f"resumed weights from {args.resume}")
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
@@ -190,17 +282,40 @@ def main():
                 "persistent_workers": persistent_workers,
                 "train_episodes": len(dataset),
                 "val_episodes": len(val_loader.dataset) if val_loader is not None else 0,
+                "state_loss_weights": state_loss_weights,
+                "state_loss_scale": args.state_loss_scale,
             },
         )
 
+    output = Path(args.output)
+    best_output = Path(args.best_output) if args.best_output is not None else default_best_output(output)
+    state_loss_weight_tensor = torch.tensor(state_loss_weights, dtype=torch.float32, device=args.device)
     start_epoch = len(history)
     for epoch in range(args.epochs):
         epoch_index = start_epoch + epoch + 1
-        train_metrics = run_epoch(model, loader, optimizer, args.device, cond_cfg, args.condition_mode)
+        train_metrics = run_epoch(
+            model,
+            loader,
+            optimizer,
+            args.device,
+            cond_cfg,
+            args.condition_mode,
+            state_loss_weight_tensor,
+            args.state_loss_scale,
+        )
         record = {"epoch": epoch_index, "train": train_metrics}
         if val_loader is not None:
             with torch.no_grad():
-                val_metrics = run_epoch(model, val_loader, None, args.device, cond_cfg, args.condition_mode)
+                val_metrics = run_epoch(
+                    model,
+                    val_loader,
+                    None,
+                    args.device,
+                    cond_cfg,
+                    args.condition_mode,
+                    state_loss_weight_tensor,
+                    args.state_loss_scale,
+                )
             record["val"] = val_metrics
             print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f} val_loss={val_metrics['loss']:.6f}")
         else:
@@ -210,21 +325,42 @@ def main():
             if "val" in record:
                 log_payload.update({f"val/{key}": value for key, value in record["val"].items()})
             log_payload["epoch"] = epoch_index
+            if best_metric is not None:
+                log_payload["best/metric"] = best_metric
+            if best_epoch is not None:
+                log_payload["best/epoch"] = best_epoch
             wandb.log(log_payload, step=epoch_index)
         history.append(record)
+        monitor = record["val"]["loss"] if "val" in record else record["train"]["loss"]
+        if best_metric is None or monitor < best_metric:
+            best_metric = monitor
+            best_epoch = epoch_index
+            save_checkpoint(
+                best_output,
+                model,
+                adapter_cfg,
+                cond_cfg,
+                args,
+                gpu_ids,
+                history,
+                state_loss_weights,
+                best_epoch,
+                best_metric,
+            )
+            print(f"saved best checkpoint to {best_output} (epoch={best_epoch}, metric={best_metric:.6f})")
 
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    model_state = model.module.state_dict() if isinstance(
-        model, torch.nn.DataParallel) else model.state_dict()
-    torch.save({
-        "config": asdict(adapter_cfg),
-        "conditioning": asdict(cond_cfg),
-        "condition_mode": args.condition_mode,
-        "gpu_ids": gpu_ids,
-        "history": history,
-        "model": model_state
-    }, output)
+    save_checkpoint(
+        output,
+        model,
+        adapter_cfg,
+        cond_cfg,
+        args,
+        gpu_ids,
+        history,
+        state_loss_weights,
+        best_epoch,
+        best_metric,
+    )
     print(f"saved adapter checkpoint to {output}")
     if wandb_run is not None:
         wandb.finish()
