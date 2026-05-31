@@ -115,7 +115,10 @@ def main():
             if args.corruption == "perturbed":
                 bundle = perturb_condition_bundle(bundle)
             outputs = model(batch["context_frames"].to(args.device), bundle.maps,
-                            bundle.memory_tokens)
+                            bundle.memory_tokens,
+                            context_states=batch["context_states"].to(args.device),
+                            prompt_token_ids=batch["prompt_token_ids"].to(args.device),
+                            prompt_token_mask=batch["prompt_token_mask"].to(args.device))
             target_spatial_maps = bundle.maps[:, :, 0:2]
             losses = adapter_loss(outputs["frames"],
                                   batch["future_frames"].to(args.device),

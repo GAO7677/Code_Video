@@ -215,7 +215,10 @@ def run_epoch(
                                         cond_cfg)
         bundle = apply_condition_mode(bundle, condition_mode)
         outputs = model(batch["context_frames"].to(device), bundle.maps,
-                        bundle.memory_tokens)
+                        bundle.memory_tokens,
+                        context_states=batch["context_states"].to(device),
+                        prompt_token_ids=batch["prompt_token_ids"].to(device),
+                        prompt_token_mask=batch["prompt_token_mask"].to(device))
         target_spatial_maps = bundle.maps[:, :, 0:2]
         losses = adapter_loss(
             outputs["frames"],
@@ -287,6 +290,8 @@ def main():
             torch.from_numpy(sample.context_frames[None]).to(args.device),
             init_bundle.maps,
             init_bundle.memory_tokens,
+            context_states=torch.from_numpy(sample.context_states[None]).to(args.device),
+            prompts=[sample.prompt],
         )
 
     if gpu_ids and args.device.startswith("cuda") and len(gpu_ids) > 1:

@@ -45,6 +45,8 @@ class AdapterConfig:
     cond_channels: int = 7
     memory_dim: int = 96
     latent_dim: int = 128
+    prompt_vocab_size: int = 4096
+    prompt_embed_dim: int = 64
     num_heads: int = 4
     future_steps: int = 12
     freeze_backbone: bool = False

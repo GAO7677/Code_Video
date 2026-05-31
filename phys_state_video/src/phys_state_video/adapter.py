@@ -1,25 +1,58 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List, Sequence
 
 from .config import AdapterConfig
-from .schemas import STATE_DIM
-from .utils import require_torch
+from .schemas import STATE_DIM, StateIndex
+from .utils import hash_prompt_tokens, require_torch
 
 torch = require_torch()
 nn = torch.nn
+
+
+class PromptEncoder(nn.Module):
+    def __init__(self, vocab_size: int, embed_dim: int):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embedding = nn.EmbeddingBag(vocab_size, embed_dim, mode="mean")
+
+    def forward(self, prompts: Sequence[str], device) -> torch.Tensor:
+        token_ids: List[int] = []
+        offsets = [0]
+        for prompt in prompts:
+            ids = hash_prompt_tokens(prompt, self.vocab_size)
+            token_ids.extend(ids)
+            offsets.append(offsets[-1] + len(ids))
+        flat = torch.tensor(token_ids, dtype=torch.long, device=device)
+        offsets_tensor = torch.tensor(offsets[:-1], dtype=torch.long, device=device)
+        return self.embedding(flat, offsets_tensor)
+
+    def forward_tokens(self, token_ids: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
+        embeddings = self.embedding.weight[token_ids]
+        masked = embeddings * token_mask.unsqueeze(-1)
+        denom = token_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        return masked.sum(dim=1) / denom
 
 
 class StateCrossAttentionAdapter(nn.Module):
     def __init__(self, latent_dim: int, memory_dim: int, num_heads: int, dropout: float):
         super().__init__()
         self.memory_proj = nn.LazyLinear(memory_dim)
+        self.extra_memory_proj = nn.Linear(latent_dim, memory_dim)
         self.query_proj = nn.Linear(latent_dim, memory_dim)
         self.attn = nn.MultiheadAttention(memory_dim, num_heads=num_heads, dropout=dropout, batch_first=True)
         self.out_proj = nn.Linear(memory_dim, latent_dim)
 
-    def forward(self, latent_tokens: torch.Tensor, memory_tokens: torch.Tensor) -> torch.Tensor:
-        memory = self.memory_proj(memory_tokens)
+    def forward(
+        self,
+        latent_tokens: torch.Tensor,
+        memory_tokens: torch.Tensor,
+        extra_memory_tokens: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        memory_parts = [self.memory_proj(memory_tokens)]
+        if extra_memory_tokens is not None:
+            memory_parts.append(self.extra_memory_proj(extra_memory_tokens))
+        memory = torch.cat(memory_parts, dim=1)
         query = self.query_proj(latent_tokens)
         attended, _ = self.attn(query, memory, memory, need_weights=False)
         return self.out_proj(attended)
@@ -48,6 +81,27 @@ class TinyVideoBackbone(nn.Module):
             nn.Conv3d(config.latent_dim, config.latent_dim, kernel_size=1),
         )
         self.context_frame_score = nn.Linear(config.latent_dim, 1)
+        self.context_state_encoder = nn.GRU(
+            input_size=STATE_DIM,
+            hidden_size=config.latent_dim,
+            num_layers=1,
+            batch_first=True,
+        )
+        self.context_state_proj = nn.Sequential(
+            nn.LayerNorm(config.latent_dim),
+            nn.Linear(config.latent_dim, config.latent_dim),
+            nn.GELU(),
+            nn.Linear(config.latent_dim, config.latent_dim),
+        )
+        self.prompt_encoder = PromptEncoder(config.prompt_vocab_size, config.prompt_embed_dim)
+        self.prompt_proj = nn.Sequential(
+            nn.LayerNorm(config.prompt_embed_dim),
+            nn.Linear(config.prompt_embed_dim, config.latent_dim),
+            nn.GELU(),
+            nn.Linear(config.latent_dim, config.latent_dim),
+        )
+        self.state_token_type = nn.Parameter(torch.zeros(1, 1, config.latent_dim))
+        self.prompt_token_type = nn.Parameter(torch.zeros(1, 1, config.latent_dim))
         self.cond_encoder = nn.Sequential(
             nn.LazyConv2d(config.latent_dim // 2, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
@@ -87,6 +141,10 @@ class TinyVideoBackbone(nn.Module):
         nn.init.zeros_(self.context_temporal[-1].bias)
         nn.init.zeros_(self.context_frame_score.weight)
         nn.init.zeros_(self.context_frame_score.bias)
+        nn.init.zeros_(self.context_state_proj[-1].weight)
+        nn.init.zeros_(self.context_state_proj[-1].bias)
+        nn.init.zeros_(self.prompt_proj[-1].weight)
+        nn.init.zeros_(self.prompt_proj[-1].bias)
 
     def encode_context(self, context_frames: torch.Tensor) -> torch.Tensor:
         batch, context_steps, channels, height, width = context_frames.shape
@@ -102,15 +160,54 @@ class TinyVideoBackbone(nn.Module):
             dim=2,
         )
 
+    def encode_context_states(self, context_states: torch.Tensor) -> torch.Tensor:
+        batch, context_steps, num_objects, state_dim = context_states.shape
+        if state_dim != STATE_DIM:
+            raise ValueError(f"expected state dim {STATE_DIM}, got {state_dim}")
+        state_inputs = context_states.permute(0, 2, 1, 3).reshape(batch * num_objects, context_steps, state_dim)
+        _, hidden = self.context_state_encoder(state_inputs)
+        object_tokens = hidden[-1].reshape(batch, num_objects, self.config.latent_dim)
+        object_tokens = self.context_state_proj(object_tokens)
+
+        visibility = context_states[:, -1, :, StateIndex.VISIBILITY]
+        existence = context_states[:, -1, :, StateIndex.EXISTENCE]
+        confidence = context_states[:, -1, :, StateIndex.CONFIDENCE]
+        object_weights = (0.5 * visibility + 0.25 * existence + 0.25 * confidence).clamp_min(1e-3)
+        object_weights = object_weights / object_weights.sum(dim=1, keepdim=True).clamp_min(1e-3)
+        return object_tokens * object_weights.unsqueeze(-1)
+
+    def encode_prompts(self, prompts: Sequence[str], device) -> torch.Tensor:
+        prompt_embed = self.prompt_encoder(prompts, device)
+        return self.prompt_proj(prompt_embed).unsqueeze(1)
+
+    def encode_prompt_tokens(self, prompt_token_ids: torch.Tensor, prompt_token_mask: torch.Tensor) -> torch.Tensor:
+        prompt_embed = self.prompt_encoder.forward_tokens(prompt_token_ids, prompt_token_mask)
+        return self.prompt_proj(prompt_embed).unsqueeze(1)
+
     def forward(
         self,
         context_frames: torch.Tensor,
         cond_maps: torch.Tensor,
         memory_tokens: torch.Tensor,
+        context_states: torch.Tensor | None = None,
+        prompts: Sequence[str] | None = None,
+        prompt_token_ids: torch.Tensor | None = None,
+        prompt_token_mask: torch.Tensor | None = None,
     ) -> Dict[str, torch.Tensor]:
         batch, _, _, height, width = context_frames.shape
         future_steps = cond_maps.shape[1]
         context_latent = self.encode_context(context_frames)
+        extra_memory_tokens = []
+        if context_states is not None:
+            state_tokens = self.encode_context_states(context_states).to(context_frames.dtype)
+            extra_memory_tokens.append(state_tokens + self.state_token_type.to(context_frames.dtype))
+        if prompt_token_ids is not None and prompt_token_mask is not None:
+            prompt_tokens = self.encode_prompt_tokens(prompt_token_ids, prompt_token_mask).to(context_frames.dtype)
+            extra_memory_tokens.append(prompt_tokens + self.prompt_token_type.to(context_frames.dtype))
+        elif prompts is not None:
+            prompt_tokens = self.encode_prompts(prompts, context_frames.device).to(context_frames.dtype)
+            extra_memory_tokens.append(prompt_tokens + self.prompt_token_type.to(context_frames.dtype))
+        fused_extra_memory = torch.cat(extra_memory_tokens, dim=1) if extra_memory_tokens else None
         latent_h, latent_w = context_latent.shape[-2:]
 
         output_frames = []
@@ -120,7 +217,7 @@ class TinyVideoBackbone(nn.Module):
             cond_latent = self.cond_encoder(cond_maps[:, step])
             fused = context_latent + cond_latent
             tokens = fused.flatten(2).transpose(1, 2)
-            tokens = tokens + self.adapter(tokens, memory_tokens)
+            tokens = tokens + self.adapter(tokens, memory_tokens, extra_memory_tokens=fused_extra_memory)
             pooled = tokens.mean(dim=1)
             state_logits.append(self.state_head(pooled))
             fused = tokens.transpose(1, 2).reshape(batch, self.config.latent_dim, latent_h, latent_w)

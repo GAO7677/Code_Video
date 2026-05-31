@@ -71,7 +71,13 @@ class StateConditionedGenerationPipeline:
     ):
         predicted_states = self.predict_states(context_states, appearance, camera, prompts)
         bundle, future_boxes = self.build_conditions(predicted_states, context_boxes, appearance)
-        outputs = self.video_model(context_frames, bundle.maps, bundle.memory_tokens)
+        outputs = self.video_model(
+            context_frames,
+            bundle.maps,
+            bundle.memory_tokens,
+            context_states=context_states,
+            prompts=prompts,
+        )
         return {
             "predicted_states": predicted_states,
             "future_boxes": future_boxes,
