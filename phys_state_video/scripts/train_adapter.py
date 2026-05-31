@@ -19,6 +19,11 @@ from phys_state_video.utils import require_torch
 
 torch = require_torch()
 
+try:
+    import wandb
+except ImportError:  # pragma: no cover - optional runtime dependency
+    wandb = None
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the state-conditioned video adapter.")
@@ -47,6 +52,19 @@ def parse_args():
         "--resume",
         default=None,
         help="Optional checkpoint to resume model weights and append history from.",
+    )
+    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument("--no-pin-memory", action="store_true")
+    parser.add_argument("--no-persistent-workers", action="store_true")
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-run-name", default=None)
+    parser.add_argument("--wandb-group", default=None)
+    parser.add_argument(
+        "--wandb-mode",
+        default="online",
+        choices=["online", "offline", "disabled"],
     )
     return parser.parse_args()
 
@@ -89,15 +107,25 @@ def main():
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
     dataset = NpzEpisodeDataset(args.data)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_episodes)
+    pin_memory = not args.no_pin_memory
+    persistent_workers = (not args.no_persistent_workers and args.num_workers > 0)
+    loader_kwargs = {
+        "batch_size": args.batch_size,
+        "collate_fn": collate_episodes,
+        "num_workers": args.num_workers,
+        "pin_memory": pin_memory,
+        "persistent_workers": persistent_workers,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
+    loader = torch.utils.data.DataLoader(dataset, shuffle=True, **loader_kwargs)
     val_loader = None
     if args.val_data is not None:
         val_dataset = NpzEpisodeDataset(args.val_data)
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
-            batch_size=args.batch_size,
             shuffle=False,
-            collate_fn=collate_episodes,
+            **loader_kwargs,
         )
     sample = dataset[0]
     cond_cfg = ConditioningConfig(
@@ -134,21 +162,55 @@ def main():
         print(f"resumed weights from {args.resume}")
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    wandb_run = None
+    if args.wandb_mode != "disabled":
+        if wandb is None:
+            raise RuntimeError("wandb is not installed in the active environment.")
+        wandb_run = wandb.init(
+            project=args.wandb_project or "phys-state-video",
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            group=args.wandb_group,
+            mode=args.wandb_mode,
+            config={
+                "data": args.data,
+                "val_data": args.val_data,
+                "output": args.output,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "device": args.device,
+                "freeze_backbone": args.freeze_backbone,
+                "condition_mode": args.condition_mode,
+                "gpu_ids": gpu_ids,
+                "resume": args.resume,
+                "num_workers": args.num_workers,
+                "prefetch_factor": args.prefetch_factor,
+                "pin_memory": pin_memory,
+                "persistent_workers": persistent_workers,
+                "train_episodes": len(dataset),
+                "val_episodes": len(val_loader.dataset) if val_loader is not None else 0,
+            },
+        )
 
+    start_epoch = len(history)
     for epoch in range(args.epochs):
-        train_metrics = run_epoch(model, loader, optimizer, args.device,
-                                  cond_cfg, args.condition_mode)
-        record = {"epoch": epoch + 1, "train": train_metrics}
+        epoch_index = start_epoch + epoch + 1
+        train_metrics = run_epoch(model, loader, optimizer, args.device, cond_cfg, args.condition_mode)
+        record = {"epoch": epoch_index, "train": train_metrics}
         if val_loader is not None:
             with torch.no_grad():
-                val_metrics = run_epoch(model, val_loader, None, args.device,
-                                        cond_cfg, args.condition_mode)
+                val_metrics = run_epoch(model, val_loader, None, args.device, cond_cfg, args.condition_mode)
             record["val"] = val_metrics
-            print(
-                f"epoch={epoch + 1} train_loss={train_metrics['loss']:.6f} "
-                f"val_loss={val_metrics['loss']:.6f}")
+            print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f} val_loss={val_metrics['loss']:.6f}")
         else:
-            print(f"epoch={epoch + 1} train_loss={train_metrics['loss']:.6f}")
+            print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f}")
+        if wandb_run is not None:
+            log_payload = {f"train/{key}": value for key, value in train_metrics.items()}
+            if "val" in record:
+                log_payload.update({f"val/{key}": value for key, value in record["val"].items()})
+            log_payload["epoch"] = epoch_index
+            wandb.log(log_payload, step=epoch_index)
         history.append(record)
 
     output = Path(args.output)
@@ -164,6 +226,8 @@ def main():
         "model": model_state
     }, output)
     print(f"saved adapter checkpoint to {output}")
+    if wandb_run is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":
