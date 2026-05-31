@@ -33,6 +33,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def load_checkpoint(checkpoint_path: str, map_location):
+    try:
+        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location=map_location)
+
+
+def load_model_state(module, state_dict, checkpoint_label: str) -> None:
+    try:
+        module.load_state_dict(state_dict)
+    except RuntimeError as exc:
+        message = str(exc)
+        key_mismatch = "Missing key(s) in state_dict" in message or "Unexpected key(s) in state_dict" in message
+        if not key_mismatch:
+            raise
+        incompatible = module.load_state_dict(state_dict, strict=False)
+        print(
+            f"loaded {checkpoint_label} with non-strict state dict; "
+            f"missing={len(incompatible.missing_keys)} unexpected={len(incompatible.unexpected_keys)}"
+        )
+
+
 def main():
     args = parse_args()
     if args.device is None:
@@ -40,12 +62,12 @@ def main():
     dataset = NpzEpisodeDataset(args.episode)
     batch = collate_episodes([dataset[0]])
 
-    predictor_ckpt = torch.load(args.predictor, map_location=args.device)
-    adapter_ckpt = torch.load(args.adapter, map_location=args.device)
+    predictor_ckpt = load_checkpoint(args.predictor, map_location=args.device)
+    adapter_ckpt = load_checkpoint(args.adapter, map_location=args.device)
     predictor = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
     predictor.load_state_dict(predictor_ckpt["model"])
     adapter = TinyVideoBackbone(AdapterConfig(**adapter_ckpt["config"])).to(args.device)
-    adapter.load_state_dict(adapter_ckpt["model"])
+    load_model_state(adapter, adapter_ckpt["model"], args.adapter)
     pipeline = StateConditionedGenerationPipeline(
         predictor=predictor.eval(),
         projector=ConfidenceAwareProjector(),

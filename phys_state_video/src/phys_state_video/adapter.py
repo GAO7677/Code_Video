@@ -35,6 +35,19 @@ class TinyVideoBackbone(nn.Module):
             nn.Conv2d(config.latent_dim // 2, config.latent_dim, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
         )
+        temporal_padding = config.temporal_kernel_size // 2
+        self.context_temporal = nn.Sequential(
+            nn.Conv3d(
+                config.latent_dim,
+                config.latent_dim,
+                kernel_size=(config.temporal_kernel_size, 1, 1),
+                padding=(temporal_padding, 0, 0),
+                groups=config.latent_dim,
+            ),
+            nn.GELU(),
+            nn.Conv3d(config.latent_dim, config.latent_dim, kernel_size=1),
+        )
+        self.context_frame_score = nn.Linear(config.latent_dim, 1)
         self.cond_encoder = nn.Sequential(
             nn.LazyConv2d(config.latent_dim // 2, kernel_size=3, stride=2, padding=1),
             nn.GELU(),
@@ -65,6 +78,25 @@ class TinyVideoBackbone(nn.Module):
                 for param in module.parameters():
                     param.requires_grad = False
 
+        nn.init.zeros_(self.context_temporal[-1].weight)
+        nn.init.zeros_(self.context_temporal[-1].bias)
+        nn.init.zeros_(self.context_frame_score.weight)
+        nn.init.zeros_(self.context_frame_score.bias)
+
+    def encode_context(self, context_frames: torch.Tensor) -> torch.Tensor:
+        batch, context_steps, channels, height, width = context_frames.shape
+        frame_latents = self.context_encoder(context_frames.reshape(batch * context_steps, channels, height, width))
+        latent_h, latent_w = frame_latents.shape[-2:]
+        frame_latents = frame_latents.reshape(batch, context_steps, self.config.latent_dim, latent_h, latent_w)
+        frame_latents = frame_latents.permute(0, 2, 1, 3, 4)
+        temporal_latents = frame_latents + self.context_temporal(frame_latents)
+        frame_descriptors = temporal_latents.mean(dim=(-1, -2)).transpose(1, 2)
+        frame_weights = torch.softmax(self.context_frame_score(frame_descriptors), dim=1)
+        return torch.sum(
+            temporal_latents * frame_weights.transpose(1, 2).unsqueeze(-1).unsqueeze(-1),
+            dim=2,
+        )
+
     def forward(
         self,
         context_frames: torch.Tensor,
@@ -73,8 +105,7 @@ class TinyVideoBackbone(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         batch, _, _, height, width = context_frames.shape
         future_steps = cond_maps.shape[1]
-        context_summary = context_frames.mean(dim=1)
-        context_latent = self.context_encoder(context_summary)
+        context_latent = self.encode_context(context_frames)
         latent_h, latent_w = context_latent.shape[-2:]
 
         output_frames = []

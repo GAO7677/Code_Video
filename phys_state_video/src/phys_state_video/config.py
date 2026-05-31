@@ -49,3 +49,4 @@ class AdapterConfig:
     future_steps: int = 12
     freeze_backbone: bool = False
     dropout: float = 0.1
+    temporal_kernel_size: int = 3

@@ -53,6 +53,21 @@ def load_checkpoint(checkpoint_path: str, map_location):
         return torch.load(checkpoint_path, map_location=map_location)
 
 
+def load_model_state(module, state_dict, checkpoint_label: str) -> None:
+    try:
+        module.load_state_dict(state_dict)
+    except RuntimeError as exc:
+        message = str(exc)
+        key_mismatch = "Missing key(s) in state_dict" in message or "Unexpected key(s) in state_dict" in message
+        if not key_mismatch:
+            raise
+        incompatible = module.load_state_dict(state_dict, strict=False)
+        print(
+            f"loaded {checkpoint_label} with non-strict state dict; "
+            f"missing={len(incompatible.missing_keys)} unexpected={len(incompatible.unexpected_keys)}"
+        )
+
+
 def main():
     args = parse_args()
     if args.device is None:
@@ -68,7 +83,7 @@ def main():
                                          shuffle=False,
                                          collate_fn=collate_episodes)
     model = TinyVideoBackbone(AdapterConfig(**ckpt["config"])).to(args.device)
-    model.load_state_dict(ckpt["model"])
+    load_model_state(model, ckpt["model"], args.checkpoint)
     model.eval()
     cond_cfg = ConditioningConfig(**ckpt["conditioning"])
     state_loss_weight_tensor = None

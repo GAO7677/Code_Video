@@ -150,6 +150,21 @@ def load_checkpoint(checkpoint_path: str, map_location):
         return torch.load(checkpoint_path, map_location=map_location)
 
 
+def load_model_state(module, state_dict, checkpoint_label: str) -> None:
+    try:
+        module.load_state_dict(state_dict)
+    except RuntimeError as exc:
+        message = str(exc)
+        key_mismatch = "Missing key(s) in state_dict" in message or "Unexpected key(s) in state_dict" in message
+        if not key_mismatch:
+            raise
+        incompatible = module.load_state_dict(state_dict, strict=False)
+        print(
+            f"loaded {checkpoint_label} with non-strict state dict; "
+            f"missing={len(incompatible.missing_keys)} unexpected={len(incompatible.unexpected_keys)}"
+        )
+
+
 def run_epoch(model, loader, optimizer, device, cond_cfg, condition_mode, state_loss_weights, state_loss_scale):
     running = {"loss": 0.0, "recon": 0.0, "state_aux": 0.0}
     is_train = optimizer is not None
@@ -245,7 +260,7 @@ def main():
         # Load checkpoints on CPU first to avoid device-specific restore issues
         # when resuming under a different visible CUDA device mapping.
         resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
-        base_model.load_state_dict(resume_ckpt["model"])
+        load_model_state(base_model, resume_ckpt["model"], args.resume)
         history.extend(resume_ckpt.get("history", []))
         best_epoch = resume_ckpt.get("best_epoch")
         best_metric = resume_ckpt.get("best_metric")
