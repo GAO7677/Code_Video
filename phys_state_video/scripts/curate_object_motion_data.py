@@ -176,6 +176,23 @@ class CaptionDecision:
     recaption: str
 
 
+@dataclass(slots=True)
+class ResizeMetadata:
+    mode: str
+    target_height: int
+    target_width: int
+    original_height: int
+    original_width: int
+    resized_height: int
+    resized_width: int
+    scale_y: float
+    scale_x: float
+    pad_top: int
+    pad_bottom: int
+    pad_left: int
+    pad_right: int
+
+
 class OpenVidSource:
     def __init__(self, roots: Sequence[Path]):
         self.files: list[dict[str, object]] = []
@@ -231,6 +248,12 @@ def parse_args() -> argparse.Namespace:
     openvid_parser.add_argument("--output-root", type=Path, required=True)
     openvid_parser.add_argument("--height", type=int, default=96)
     openvid_parser.add_argument("--width", type=int, default=96)
+    openvid_parser.add_argument(
+        "--resize-mode",
+        choices=["stretch", "letterbox"],
+        default="stretch",
+        help="Frame resize policy before proxy-state extraction.",
+    )
     openvid_parser.add_argument("--context-frames", type=int, default=8)
     openvid_parser.add_argument("--future-frames", type=int, default=16)
     openvid_parser.add_argument("--train-count", type=int, default=512)
@@ -249,6 +272,12 @@ def parse_args() -> argparse.Namespace:
     webvid_parser.add_argument("--metadata-root", type=Path, required=True)
     webvid_parser.add_argument("--height", type=int, default=96)
     webvid_parser.add_argument("--width", type=int, default=96)
+    webvid_parser.add_argument(
+        "--resize-mode",
+        choices=["stretch", "letterbox"],
+        default="stretch",
+        help="Frame resize policy before proxy-state extraction.",
+    )
     webvid_parser.add_argument("--context-frames", type=int, default=8)
     webvid_parser.add_argument("--future-frames", type=int, default=16)
     webvid_parser.add_argument("--train-count", type=int, default=96)
@@ -434,14 +463,79 @@ def summarize_track_motion(track) -> dict[str, float]:
     }
 
 
-def resize_frames_uint8(frames: Sequence[np.ndarray], height: int, width: int) -> np.ndarray:
+def resize_frames_uint8(
+    frames: Sequence[np.ndarray],
+    height: int,
+    width: int,
+    *,
+    resize_mode: str = "stretch",
+) -> tuple[np.ndarray, ResizeMetadata]:
+    if not frames:
+        raise ValueError("expected at least one frame")
+    first_frame = frames[0]
+    if first_frame.ndim != 3:
+        raise ValueError(f"expected HWC frame, got shape {first_frame.shape}")
+    original_height, original_width = first_frame.shape[:2]
+
     resized: list[np.ndarray] = []
+    resize_meta: ResizeMetadata | None = None
     for frame in frames:
         if frame.ndim != 3:
             raise ValueError(f"expected HWC frame, got shape {frame.shape}")
-        resized_frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        if frame.shape[:2] != (original_height, original_width):
+            raise ValueError("all frames in a clip must share the same spatial size")
+
+        if resize_mode == "stretch":
+            resized_frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+            if resize_meta is None:
+                resize_meta = ResizeMetadata(
+                    mode="stretch",
+                    target_height=height,
+                    target_width=width,
+                    original_height=original_height,
+                    original_width=original_width,
+                    resized_height=height,
+                    resized_width=width,
+                    scale_y=float(height) / float(original_height),
+                    scale_x=float(width) / float(original_width),
+                    pad_top=0,
+                    pad_bottom=0,
+                    pad_left=0,
+                    pad_right=0,
+                )
+        elif resize_mode == "letterbox":
+            scale = min(float(width) / float(original_width), float(height) / float(original_height))
+            resized_width = max(1, int(round(original_width * scale)))
+            resized_height = max(1, int(round(original_height * scale)))
+            content = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+            canvas = np.zeros((height, width, frame.shape[2]), dtype=np.uint8)
+            pad_top = (height - resized_height) // 2
+            pad_left = (width - resized_width) // 2
+            pad_bottom = height - resized_height - pad_top
+            pad_right = width - resized_width - pad_left
+            canvas[pad_top:pad_top + resized_height, pad_left:pad_left + resized_width] = content
+            resized_frame = canvas
+            if resize_meta is None:
+                resize_meta = ResizeMetadata(
+                    mode="letterbox",
+                    target_height=height,
+                    target_width=width,
+                    original_height=original_height,
+                    original_width=original_width,
+                    resized_height=resized_height,
+                    resized_width=resized_width,
+                    scale_y=float(resized_height) / float(original_height),
+                    scale_x=float(resized_width) / float(original_width),
+                    pad_top=pad_top,
+                    pad_bottom=pad_bottom,
+                    pad_left=pad_left,
+                    pad_right=pad_right,
+                )
+        else:
+            raise ValueError(f"unsupported resize_mode: {resize_mode}")
         resized.append(np.transpose(resized_frame.astype(np.float32) / 255.0, (2, 0, 1)))
-    return np.stack(resized, axis=0)
+    assert resize_meta is not None
+    return np.stack(resized, axis=0), resize_meta
 
 
 def write_episode(
@@ -451,6 +545,7 @@ def write_episode(
     frames_chw: np.ndarray,
     prompt: str,
     metadata: dict[str, object],
+    resize_meta: ResizeMetadata | None,
     context_frames: int,
     future_frames: int,
     min_visible_fraction: float,
@@ -491,6 +586,8 @@ def write_episode(
         "source": metadata,
         "track_motion": motion_summary,
     }
+    if resize_meta is not None:
+        payload["resize"] = asdict(resize_meta)
     episode_path.with_suffix(".json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -502,6 +599,7 @@ def write_episode(
         "track_motion": motion_summary,
         "prompt": prompt,
         "source": metadata,
+        "resize": asdict(resize_meta) if resize_meta is not None else None,
     }, None
 
 
@@ -664,7 +762,12 @@ def build_openvid(args: argparse.Namespace) -> None:
             reject_counts["decode_error"] = reject_counts.get("decode_error", 0) + 1
             continue
 
-        frames_chw = resize_frames_uint8(frames_hwc, args.height, args.width)
+        frames_chw, resize_meta = resize_frames_uint8(
+            frames_hwc,
+            args.height,
+            args.width,
+            resize_mode=args.resize_mode,
+        )
         split = "train" if len(records) < args.train_count else "val"
         metadata = {
             "dataset": "OpenVidHD",
@@ -682,6 +785,7 @@ def build_openvid(args: argparse.Namespace) -> None:
             "source_video_name": source_video_name,
             "parquet_path": parquet_path,
             "parquet_row_id": row_id,
+            "resize_mode": args.resize_mode,
         }
         record, reject_reason = write_episode(
             output_root=output_root,
@@ -690,6 +794,7 @@ def build_openvid(args: argparse.Namespace) -> None:
             frames_chw=frames_chw,
             prompt=decision.recaption,
             metadata=metadata,
+            resize_meta=resize_meta,
             context_frames=args.context_frames,
             future_frames=args.future_frames,
             min_visible_fraction=args.min_visible_fraction,
@@ -709,6 +814,9 @@ def build_openvid(args: argparse.Namespace) -> None:
 
     summary = {
         "output_root": str(output_root),
+        "height": args.height,
+        "width": args.width,
+        "resize_mode": args.resize_mode,
         "train_count": sum(1 for r in records if r["split"] == "train"),
         "val_count": sum(1 for r in records if r["split"] == "val"),
         "target_train_count": args.train_count,
@@ -786,7 +894,12 @@ def download_webvid(args: argparse.Namespace) -> None:
             reject_counts["download_or_decode_error"] = reject_counts.get("download_or_decode_error", 0) + 1
             continue
 
-        frames_chw = resize_frames_uint8(frames_hwc, args.height, args.width)
+        frames_chw, resize_meta = resize_frames_uint8(
+            frames_hwc,
+            args.height,
+            args.width,
+            resize_mode=args.resize_mode,
+        )
         split = "train" if len(records) < args.train_count else "val"
         metadata = {
             "dataset": "WebVid10M",
@@ -800,6 +913,7 @@ def download_webvid(args: argparse.Namespace) -> None:
             "raw_total_frames": total_frames,
             "clip_start_frame": start_frame,
             "page_dir": row.get("page_dir", ""),
+            "resize_mode": args.resize_mode,
         }
         record, reject_reason = write_episode(
             output_root=output_root,
@@ -808,6 +922,7 @@ def download_webvid(args: argparse.Namespace) -> None:
             frames_chw=frames_chw,
             prompt=decision.recaption,
             metadata=metadata,
+            resize_meta=resize_meta,
             context_frames=args.context_frames,
             future_frames=args.future_frames,
             min_visible_fraction=args.min_visible_fraction,
@@ -828,6 +943,9 @@ def download_webvid(args: argparse.Namespace) -> None:
 
     summary = {
         "output_root": str(output_root),
+        "height": args.height,
+        "width": args.width,
+        "resize_mode": args.resize_mode,
         "train_count": sum(1 for r in records if r["split"] == "train"),
         "val_count": sum(1 for r in records if r["split"] == "val"),
         "target_train_count": args.train_count,
