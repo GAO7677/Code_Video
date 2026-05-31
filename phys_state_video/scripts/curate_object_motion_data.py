@@ -106,16 +106,26 @@ OBJECT_GROUPS: dict[str, tuple[str, ...]] = {
         "car", "cars", "truck", "trucks", "bus", "buses", "train", "trains",
         "motorcycle", "motorcycles", "bike", "bikes", "bicycle", "bicycles",
         "scooter", "scooters", "tram", "vehicle", "vehicles", "engine",
-        "dashboard", "steering wheel", "race track",
+        "dashboard", "steering wheel", "race track", "suv", "suvs", "sedan",
+        "sedans", "van", "vans", "minivan", "minivans", "pickup", "pickups",
+        "pickup truck", "pickup trucks", "semi", "semi truck", "semi-truck",
+        "lorry", "lorries", "trailer", "trailers", "rv", "rvs", "jeep",
+        "jeeps", "taxi", "taxis", "cab", "cabs", "formula 1", "formula one",
+        "f1 car", "go-kart", "go-karts", "gokart", "gokarts", "kart", "karts",
+        "atv", "atvs", "quad bike", "quad bikes",
     ),
     "maritime": (
         "boat", "boats", "ship", "ships", "yacht", "yachts", "marina",
         "harbor", "harbour", "sailing", "sailboat", "sailboats", "vessel",
-        "vessels", "watercraft", "kayak", "canoe", "ferry",
+        "vessels", "watercraft", "kayak", "canoe", "ferry", "ferries",
+        "cargo ship", "cargo ships", "container ship", "container ships",
+        "cruise ship", "cruise ships", "tanker", "tankers", "barge", "barges",
+        "submarine", "submarines", "jet ski", "jet skis", "jetski", "jetskis",
     ),
     "aviation": (
         "airplane", "airplanes", "plane", "planes", "helicopter", "helicopters",
-        "jet", "jets", "aircraft",
+        "jet", "jets", "aircraft", "drone", "drones", "glider", "gliders",
+        "hot air balloon", "hot-air balloon",
     ),
     "animals": (
         "dog", "dogs", "cat", "cats", "bird", "birds", "horse", "horses",
@@ -124,11 +134,15 @@ OBJECT_GROUPS: dict[str, tuple[str, ...]] = {
     "industrial": (
         "robot", "robots", "machine", "machines", "forklift", "crane",
         "excavator", "bulldozer", "loader", "conveyor", "assembly line",
+        "tractor", "tractors", "combine harvester", "harvester", "harvesters",
+        "dump truck", "dump trucks", "cement mixer", "cement mixers",
+        "road roller", "road rollers", "steamroller",
     ),
     "object_interaction": (
         "ball", "balls", "box", "boxes", "container", "containers", "package",
         "packages", "door", "wheels", "wheel", "domino", "marble", "toy",
-        "toys", "cookie", "cookies", "glass", "bottle", "bottles",
+        "toys", "cookie", "cookies", "glass", "bottle", "bottles", "gear",
+        "gears", "chain", "chains", "propeller", "propellers",
     ),
     "natural_motion": (
         "rain", "snow", "smoke", "fire", "cloud", "clouds", "forest", "tree",
@@ -227,6 +241,28 @@ class OpenVidSource:
                 yield parquet_path, row_id, info, raw_video
 
 
+class OpenVidClipSource:
+    def __init__(self, roots: Sequence[Path]):
+        self.meta_files: list[Path] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            self.meta_files.extend(sorted(root.glob("*/meta.json")))
+        if not self.meta_files:
+            raise FileNotFoundError("no OpenVid clip meta.json files found")
+
+    def iter_candidates(self, seed: int) -> Iterable[tuple[Path, dict[str, object]]]:
+        ordered = list(self.meta_files)
+        rng = random.Random(seed)
+        rng.shuffle(ordered)
+        for meta_path in ordered:
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            yield meta_path, payload
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Curate non-human object-motion datasets.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -261,11 +297,46 @@ def parse_args() -> argparse.Namespace:
     openvid_parser.add_argument("--seed", type=int, default=20260531)
     openvid_parser.add_argument("--min-aesthetic", type=float, default=4.8)
     openvid_parser.add_argument("--min-motion", type=float, default=1.4)
+    openvid_parser.add_argument("--min-temporal-consistency", type=float, default=0.995)
     openvid_parser.add_argument("--min-visible-fraction", type=float, default=0.65)
     openvid_parser.add_argument("--min-score", type=float, default=2.0)
     openvid_parser.add_argument("--min-track-displacement", type=float, default=0.05)
     openvid_parser.add_argument("--min-track-path", type=float, default=0.12)
     openvid_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
+
+    openvid_clip_parser = subparsers.add_parser(
+        "build-openvid-clips",
+        help="Build curated episodes from local OpenVid clip directories with meta.json + full_video.mp4.",
+    )
+    openvid_clip_parser.add_argument(
+        "--clip-root",
+        type=Path,
+        action="append",
+        required=True,
+        help="One or more local clip roots, e.g. mytest or train_subset_0530_mytest_800",
+    )
+    openvid_clip_parser.add_argument("--output-root", type=Path, required=True)
+    openvid_clip_parser.add_argument("--height", type=int, default=96)
+    openvid_clip_parser.add_argument("--width", type=int, default=96)
+    openvid_clip_parser.add_argument(
+        "--resize-mode",
+        choices=["stretch", "letterbox"],
+        default="stretch",
+        help="Frame resize policy before proxy-state extraction.",
+    )
+    openvid_clip_parser.add_argument("--context-frames", type=int, default=8)
+    openvid_clip_parser.add_argument("--future-frames", type=int, default=16)
+    openvid_clip_parser.add_argument("--train-count", type=int, default=512)
+    openvid_clip_parser.add_argument("--val-count", type=int, default=64)
+    openvid_clip_parser.add_argument("--seed", type=int, default=20260531)
+    openvid_clip_parser.add_argument("--min-aesthetic", type=float, default=4.8)
+    openvid_clip_parser.add_argument("--min-motion", type=float, default=1.4)
+    openvid_clip_parser.add_argument("--min-temporal-consistency", type=float, default=0.995)
+    openvid_clip_parser.add_argument("--min-visible-fraction", type=float, default=0.65)
+    openvid_clip_parser.add_argument("--min-score", type=float, default=2.0)
+    openvid_clip_parser.add_argument("--min-track-displacement", type=float, default=0.05)
+    openvid_clip_parser.add_argument("--min-track-path", type=float, default=0.12)
+    openvid_clip_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
 
     webvid_parser = subparsers.add_parser("download-webvid", help="Download a small direct-link WebVid object-motion subset and build episodes.")
     webvid_parser.add_argument("--output-root", type=Path, required=True)
@@ -630,6 +701,25 @@ def decode_video_bytes(raw_video: bytes, *, target_frames: int, sample_key: str)
             os.remove(temp_path)
 
 
+def decode_video_path(video_path: Path, *, target_frames: int, sample_key: str) -> tuple[list[np.ndarray], int, int, int]:
+    reader = imageio.get_reader(str(video_path))
+    try:
+        total_frames = reader.count_frames()
+        if total_frames < target_frames:
+            raise ValueError(f"{sample_key}: only {total_frames} frames")
+        meta = reader.get_meta_data()
+        fps = int(round(float(meta.get("fps", 24)))) if meta.get("fps") else 24
+        max_start = total_frames - target_frames
+        start_frame = stable_hash(sample_key) % (max_start + 1)
+        frames = [
+            np.asarray(reader.get_data(frame_id), dtype=np.uint8)
+            for frame_id in range(start_frame, start_frame + target_frames)
+        ]
+        return frames, max(1, fps), start_frame, total_frames
+    finally:
+        reader.close()
+
+
 def stable_hash(text: str) -> int:
     import hashlib
 
@@ -747,7 +837,7 @@ def build_openvid(args: argparse.Namespace) -> None:
         if motion_score is not None and motion_score < args.min_motion:
             reject_counts["low_motion"] = reject_counts.get("low_motion", 0) + 1
             continue
-        if temporal_score is not None and temporal_score < 0.995:
+        if temporal_score is not None and temporal_score < args.min_temporal_consistency:
             reject_counts["low_temporal_consistency"] = reject_counts.get("low_temporal_consistency", 0) + 1
             continue
 
@@ -785,6 +875,130 @@ def build_openvid(args: argparse.Namespace) -> None:
             "source_video_name": source_video_name,
             "parquet_path": parquet_path,
             "parquet_row_id": row_id,
+            "resize_mode": args.resize_mode,
+        }
+        record, reject_reason = write_episode(
+            output_root=output_root,
+            split=split,
+            sample_id=sample_id,
+            frames_chw=frames_chw,
+            prompt=decision.recaption,
+            metadata=metadata,
+            resize_meta=resize_meta,
+            context_frames=args.context_frames,
+            future_frames=args.future_frames,
+            min_visible_fraction=args.min_visible_fraction,
+            min_track_displacement=args.min_track_displacement,
+            min_track_path=args.min_track_path,
+            min_track_scale_span=args.min_track_scale_span,
+        )
+        if record is None:
+            key = reject_reason or "episode_write_rejected"
+            reject_counts[key] = reject_counts.get(key, 0) + 1
+            continue
+
+        seen_source_names.add(source_video_name)
+        records.append(record)
+        if len(records) % 50 == 0:
+            print(f"accepted {len(records)} / {total_target}")
+
+    summary = {
+        "output_root": str(output_root),
+        "height": args.height,
+        "width": args.width,
+        "resize_mode": args.resize_mode,
+        "train_count": sum(1 for r in records if r["split"] == "train"),
+        "val_count": sum(1 for r in records if r["split"] == "val"),
+        "target_train_count": args.train_count,
+        "target_val_count": args.val_count,
+        "reject_counts": reject_counts,
+        "examples": records[:20],
+    }
+    (output_root / "manifest.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def build_openvid_clips(args: argparse.Namespace) -> None:
+    output_root = args.output_root
+    output_root.mkdir(parents=True, exist_ok=True)
+    total_target = args.train_count + args.val_count
+    source = OpenVidClipSource(args.clip_root)
+    seen_source_names: set[str] = set()
+    records: list[dict[str, object]] = []
+    reject_counts: dict[str, int] = {}
+
+    for meta_path, meta in source.iter_candidates(args.seed):
+        if len(records) >= total_target:
+            break
+        caption = clean_text(str(meta.get("caption") or ""))
+        source_video_name = str(meta.get("source_video_name") or "")
+        if source_video_name and source_video_name in seen_source_names:
+            reject_counts["duplicate_source_video"] = reject_counts.get("duplicate_source_video", 0) + 1
+            continue
+
+        motion_score = optional_positive_float(meta.get("motion_score"))
+        aesthetic_score = optional_positive_float(meta.get("aesthetic_score"))
+        temporal_score = optional_positive_float(meta.get("temporal_consistency_score"))
+        decision = classify_caption(
+            caption,
+            motion_score=motion_score,
+            aesthetic_score=aesthetic_score,
+        )
+        if not decision.keep or decision.score < args.min_score:
+            reject_counts[decision.reason] = reject_counts.get(decision.reason, 0) + 1
+            continue
+        if aesthetic_score is not None and aesthetic_score < args.min_aesthetic:
+            reject_counts["low_aesthetic"] = reject_counts.get("low_aesthetic", 0) + 1
+            continue
+        if motion_score is not None and motion_score < args.min_motion:
+            reject_counts["low_motion"] = reject_counts.get("low_motion", 0) + 1
+            continue
+        if temporal_score is not None and temporal_score < args.min_temporal_consistency:
+            reject_counts["low_temporal_consistency"] = reject_counts.get("low_temporal_consistency", 0) + 1
+            continue
+
+        paths = meta.get("paths") or {}
+        full_video_path = Path(str(paths.get("full_video_path") or meta_path.with_name("full_video.mp4")))
+        if not full_video_path.exists():
+            reject_counts["missing_full_video"] = reject_counts.get("missing_full_video", 0) + 1
+            continue
+
+        sample_id = f"openvid_clip_{len(records):05d}__{meta.get('sample_id', meta_path.parent.name)}"
+        try:
+            frames_hwc, fps, start_frame, total_frames = decode_video_path(
+                full_video_path,
+                target_frames=args.context_frames + args.future_frames,
+                sample_key=sample_id,
+            )
+        except Exception:
+            reject_counts["decode_error"] = reject_counts.get("decode_error", 0) + 1
+            continue
+
+        frames_chw, resize_meta = resize_frames_uint8(
+            frames_hwc,
+            args.height,
+            args.width,
+            resize_mode=args.resize_mode,
+        )
+        split = "train" if len(records) < args.train_count else "val"
+        metadata = {
+            "dataset": "OpenVidHD",
+            "source_type": "local_clip_dir",
+            "caption": caption,
+            "recaption": decision.recaption,
+            "categories": decision.categories,
+            "aesthetic_score": aesthetic_score,
+            "motion_score": motion_score,
+            "temporal_consistency_score": temporal_score,
+            "camera_motion": str(meta.get("camera_motion") or ""),
+            "fps": fps,
+            "raw_total_frames": total_frames,
+            "clip_start_frame": start_frame,
+            "source_video_name": source_video_name,
+            "meta_path": str(meta_path),
+            "full_video_path": str(full_video_path),
+            "parquet_path": str(meta.get("parquet_path") or ""),
+            "parquet_row_id": meta.get("parquet_row_index"),
             "resize_mode": args.resize_mode,
         }
         record, reject_reason = write_episode(
@@ -1062,6 +1276,8 @@ def main() -> None:
         filter_episodes(args)
     elif args.command == "build-openvid":
         build_openvid(args)
+    elif args.command == "build-openvid-clips":
+        build_openvid_clips(args)
     elif args.command == "download-webvid":
         download_webvid(args)
     elif args.command == "build-panda-candidates":
