@@ -82,7 +82,10 @@ STATIC_CONTEXT_RE = re.compile(
     r"showcasing its design and features|showcasing the engine|appears to be parked|"
     r"stationary|repair shop|garage|car hood|transmission|cardan|wheel removed|"
     r"disk break|disc brake|axel|axle|inside the crowded train|inside the train|"
-    r"train interior"
+    r"train interior|product showcase|product shot|studio shot|promotional ad|"
+    r"promotional advertisement|advertisement|steady camera angle|focus remains on|"
+    r"placed on a white surface|placed on a black surface|on display|display stand|"
+    r"close-up of a .* placed on|simple product showcase|details of the .* throughout"
     r")\b",
     re.IGNORECASE,
 )
@@ -92,7 +95,9 @@ DISALLOWED_CONTEXT_RE = re.compile(
     r"dashboard|steering wheel|showroom|car show|engine cover|split-screen comparison|"
     r"comparison of two cars|repair shop|garage|car hood|transmission|cardan|"
     r"wheel removed|disk break|disc brake|axel|axle|inside the crowded train|"
-    r"inside the train|train interior"
+    r"inside the train|train interior|product showcase|product shot|studio shot|"
+    r"promotional ad|promotional advertisement|steady camera angle|focus remains on|"
+    r"placed on a white surface|placed on a black surface|on display|display stand"
     r")\b",
     re.IGNORECASE,
 )
@@ -207,6 +212,18 @@ class ResizeMetadata:
     pad_right: int
 
 
+@dataclass(slots=True)
+class MotionAuditSummary:
+    path_length: float
+    net_displacement: float
+    scale_span: float
+    global_mean: float
+    global_p90: float
+    foreground_mean: float
+    foreground_p90: float
+    foreground_coverage: float
+
+
 class OpenVidSource:
     def __init__(self, roots: Sequence[Path]):
         self.files: list[dict[str, object]] = []
@@ -272,6 +289,16 @@ def parse_args() -> argparse.Namespace:
     filter_parser.add_argument("--output-root", type=Path, required=True)
     filter_parser.add_argument("--symlink", action="store_true")
     filter_parser.add_argument("--min-score", type=float, default=1.5)
+    filter_parser.add_argument("--min-track-displacement", type=float, default=0.05)
+    filter_parser.add_argument("--min-track-path", type=float, default=0.12)
+    filter_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
+    filter_parser.add_argument("--min-global-motion", type=float, default=0.008)
+    filter_parser.add_argument("--min-foreground-motion", type=float, default=0.012)
+    filter_parser.add_argument(
+        "--drop-missing-motion",
+        action="store_true",
+        help="Reject episodes that have neither stored motion metadata nor enough frame tensors to recompute it.",
+    )
 
     openvid_parser = subparsers.add_parser("build-openvid", help="Build curated episodes directly from local OpenVid parquet roots.")
     openvid_parser.add_argument(
@@ -282,12 +309,12 @@ def parse_args() -> argparse.Namespace:
         help="One or more parquet directories, e.g. train_subset_0530/train",
     )
     openvid_parser.add_argument("--output-root", type=Path, required=True)
-    openvid_parser.add_argument("--height", type=int, default=96)
-    openvid_parser.add_argument("--width", type=int, default=96)
+    openvid_parser.add_argument("--height", type=int, default=144)
+    openvid_parser.add_argument("--width", type=int, default=256)
     openvid_parser.add_argument(
         "--resize-mode",
         choices=["stretch", "letterbox"],
-        default="stretch",
+        default="letterbox",
         help="Frame resize policy before proxy-state extraction.",
     )
     openvid_parser.add_argument("--context-frames", type=int, default=8)
@@ -303,6 +330,8 @@ def parse_args() -> argparse.Namespace:
     openvid_parser.add_argument("--min-track-displacement", type=float, default=0.05)
     openvid_parser.add_argument("--min-track-path", type=float, default=0.12)
     openvid_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
+    openvid_parser.add_argument("--min-global-motion", type=float, default=0.008)
+    openvid_parser.add_argument("--min-foreground-motion", type=float, default=0.012)
 
     openvid_clip_parser = subparsers.add_parser(
         "build-openvid-clips",
@@ -316,12 +345,12 @@ def parse_args() -> argparse.Namespace:
         help="One or more local clip roots, e.g. mytest or train_subset_0530_mytest_800",
     )
     openvid_clip_parser.add_argument("--output-root", type=Path, required=True)
-    openvid_clip_parser.add_argument("--height", type=int, default=96)
-    openvid_clip_parser.add_argument("--width", type=int, default=96)
+    openvid_clip_parser.add_argument("--height", type=int, default=144)
+    openvid_clip_parser.add_argument("--width", type=int, default=256)
     openvid_clip_parser.add_argument(
         "--resize-mode",
         choices=["stretch", "letterbox"],
-        default="stretch",
+        default="letterbox",
         help="Frame resize policy before proxy-state extraction.",
     )
     openvid_clip_parser.add_argument("--context-frames", type=int, default=8)
@@ -337,16 +366,18 @@ def parse_args() -> argparse.Namespace:
     openvid_clip_parser.add_argument("--min-track-displacement", type=float, default=0.05)
     openvid_clip_parser.add_argument("--min-track-path", type=float, default=0.12)
     openvid_clip_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
+    openvid_clip_parser.add_argument("--min-global-motion", type=float, default=0.008)
+    openvid_clip_parser.add_argument("--min-foreground-motion", type=float, default=0.012)
 
     webvid_parser = subparsers.add_parser("download-webvid", help="Download a small direct-link WebVid object-motion subset and build episodes.")
     webvid_parser.add_argument("--output-root", type=Path, required=True)
     webvid_parser.add_argument("--metadata-root", type=Path, required=True)
-    webvid_parser.add_argument("--height", type=int, default=96)
-    webvid_parser.add_argument("--width", type=int, default=96)
+    webvid_parser.add_argument("--height", type=int, default=144)
+    webvid_parser.add_argument("--width", type=int, default=256)
     webvid_parser.add_argument(
         "--resize-mode",
         choices=["stretch", "letterbox"],
-        default="stretch",
+        default="letterbox",
         help="Frame resize policy before proxy-state extraction.",
     )
     webvid_parser.add_argument("--context-frames", type=int, default=8)
@@ -362,6 +393,8 @@ def parse_args() -> argparse.Namespace:
     webvid_parser.add_argument("--min-track-displacement", type=float, default=0.05)
     webvid_parser.add_argument("--min-track-path", type=float, default=0.12)
     webvid_parser.add_argument("--min-track-scale-span", type=float, default=0.10)
+    webvid_parser.add_argument("--min-global-motion", type=float, default=0.008)
+    webvid_parser.add_argument("--min-foreground-motion", type=float, default=0.012)
     webvid_parser.add_argument("--hf-endpoint", type=str, default=DEFAULT_HF_ENDPOINT)
     webvid_parser.add_argument("--hf-token", type=str, default=DEFAULT_HF_TOKEN)
 
@@ -407,6 +440,11 @@ def recaption_object_motion(text: str, categories: Sequence[str]) -> str:
     cleaned = clean_text(text)
     cleaned = LEADING_VIDEO_RE.sub("", cleaned)
     cleaned = cleaned.strip(" .")
+    existing_prefix = "a real-world clip focused on "
+    existing_suffix = "motion is the main signal in the scene"
+    lowered = cleaned.lower()
+    if lowered.startswith(existing_prefix) and lowered.endswith(existing_suffix):
+        return cleaned[0].upper() + cleaned[1:] if cleaned else cleaned
     if not cleaned:
         cleaned = "a non-human object-focused scene"
     cleaned = cleaned[0].lower() + cleaned[1:] if cleaned else cleaned
@@ -534,6 +572,99 @@ def summarize_track_motion(track) -> dict[str, float]:
     }
 
 
+def summarize_clip_motion(frames: np.ndarray, track=None) -> dict[str, float]:
+    if frames.shape[0] < 2:
+        return {
+            "global_mean": 0.0,
+            "global_p90": 0.0,
+            "foreground_mean": 0.0,
+            "foreground_p90": 0.0,
+            "foreground_coverage": 0.0,
+        }
+
+    diffs = np.abs(np.diff(frames.astype(np.float32), axis=0))
+    per_frame_global = diffs.mean(axis=(1, 2, 3))
+
+    if track is None:
+        return {
+            "global_mean": float(per_frame_global.mean()),
+            "global_p90": float(np.percentile(per_frame_global, 90)),
+            "foreground_mean": float(per_frame_global.mean()),
+            "foreground_p90": float(np.percentile(per_frame_global, 90)),
+            "foreground_coverage": 1.0,
+        }
+
+    height = frames.shape[-2]
+    width = frames.shape[-1]
+    visibility = track.states[:, 0, StateIndex.VISIBILITY] > 0.5
+    boxes = track.boxes[:, 0, :]
+
+    foreground_scores: list[float] = []
+    foreground_coverages: list[float] = []
+    for idx in range(frames.shape[0] - 1):
+        if not (visibility[idx] or visibility[idx + 1]):
+            continue
+        box0 = boxes[idx]
+        box1 = boxes[idx + 1]
+        x0 = max(0, min(int(np.floor(min(box0[0], box1[0]) * width)), width - 1))
+        y0 = max(0, min(int(np.floor(min(box0[1], box1[1]) * height)), height - 1))
+        x1 = max(x0 + 1, min(int(np.ceil(max(box0[2], box1[2]) * width)), width))
+        y1 = max(y0 + 1, min(int(np.ceil(max(box0[3], box1[3]) * height)), height))
+        patch = diffs[idx, :, y0:y1, x0:x1]
+        if patch.size == 0:
+            continue
+        foreground_scores.append(float(patch.mean()))
+        foreground_coverages.append(float(((y1 - y0) * (x1 - x0)) / max(height * width, 1)))
+
+    if not foreground_scores:
+        foreground_scores = [0.0]
+        foreground_coverages = [0.0]
+
+    return {
+        "global_mean": float(per_frame_global.mean()),
+        "global_p90": float(np.percentile(per_frame_global, 90)),
+        "foreground_mean": float(np.mean(foreground_scores)),
+        "foreground_p90": float(np.percentile(np.asarray(foreground_scores, dtype=np.float32), 90)),
+        "foreground_coverage": float(np.mean(foreground_coverages)),
+    }
+
+
+def collect_motion_audit(frames: np.ndarray, track) -> MotionAuditSummary:
+    track_summary = summarize_track_motion(track)
+    clip_summary = summarize_clip_motion(frames, track=track)
+    return MotionAuditSummary(
+        path_length=track_summary["path_length"],
+        net_displacement=track_summary["net_displacement"],
+        scale_span=track_summary["scale_span"],
+        global_mean=clip_summary["global_mean"],
+        global_p90=clip_summary["global_p90"],
+        foreground_mean=clip_summary["foreground_mean"],
+        foreground_p90=clip_summary["foreground_p90"],
+        foreground_coverage=clip_summary["foreground_coverage"],
+    )
+
+
+def is_low_motion(
+    audit: MotionAuditSummary,
+    *,
+    min_track_displacement: float,
+    min_track_path: float,
+    min_track_scale_span: float,
+    min_global_motion: float,
+    min_foreground_motion: float,
+) -> bool:
+    low_track = (
+        audit.net_displacement < min_track_displacement
+        and audit.path_length < min_track_path
+        and audit.scale_span < min_track_scale_span
+    )
+    low_clip = (
+        audit.global_mean < min_global_motion
+        and audit.foreground_mean < min_foreground_motion
+    )
+    return low_track or low_clip
+
+
 def resize_frames_uint8(
     frames: Sequence[np.ndarray],
     height: int,
@@ -623,6 +754,8 @@ def write_episode(
     min_track_displacement: float,
     min_track_path: float,
     min_track_scale_span: float,
+    min_global_motion: float,
+    min_foreground_motion: float,
 ) -> tuple[dict[str, object] | None, str | None]:
     if frames_chw.shape[0] < context_frames + future_frames:
         return None, "too_few_frames"
@@ -630,13 +763,16 @@ def write_episode(
     track = extract_primary_track(clip)
     if track.visible_fraction < min_visible_fraction:
         return None, "low_visible_fraction"
-    motion_summary = summarize_track_motion(track)
-    if (
-        motion_summary["net_displacement"] < min_track_displacement
-        and motion_summary["path_length"] < min_track_path
-        and motion_summary["scale_span"] < min_track_scale_span
+    motion_audit = collect_motion_audit(clip, track)
+    if is_low_motion(
+        motion_audit,
+        min_track_displacement=min_track_displacement,
+        min_track_path=min_track_path,
+        min_track_scale_span=min_track_scale_span,
+        min_global_motion=min_global_motion,
+        min_foreground_motion=min_foreground_motion,
     ):
-        return None, "low_track_motion"
+        return None, "low_motion"
 
     split_dir = output_root / split
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -655,7 +791,18 @@ def write_episode(
     payload = {
         "prompt": prompt,
         "source": metadata,
-        "track_motion": motion_summary,
+        "track_motion": {
+            "path_length": motion_audit.path_length,
+            "net_displacement": motion_audit.net_displacement,
+            "scale_span": motion_audit.scale_span,
+        },
+        "clip_motion": {
+            "global_mean": motion_audit.global_mean,
+            "global_p90": motion_audit.global_p90,
+            "foreground_mean": motion_audit.foreground_mean,
+            "foreground_p90": motion_audit.foreground_p90,
+            "foreground_coverage": motion_audit.foreground_coverage,
+        },
     }
     if resize_meta is not None:
         payload["resize"] = asdict(resize_meta)
@@ -667,7 +814,18 @@ def write_episode(
         "sample_id": sample_id,
         "split": split,
         "visible_fraction": track.visible_fraction,
-        "track_motion": motion_summary,
+        "track_motion": {
+            "path_length": motion_audit.path_length,
+            "net_displacement": motion_audit.net_displacement,
+            "scale_span": motion_audit.scale_span,
+        },
+        "clip_motion": {
+            "global_mean": motion_audit.global_mean,
+            "global_p90": motion_audit.global_p90,
+            "foreground_mean": motion_audit.foreground_mean,
+            "foreground_p90": motion_audit.foreground_p90,
+            "foreground_coverage": motion_audit.foreground_coverage,
+        },
         "prompt": prompt,
         "source": metadata,
         "resize": asdict(resize_meta) if resize_meta is not None else None,
@@ -748,6 +906,38 @@ def link_or_copy(src: Path, dst: Path, symlink: bool) -> None:
         dst.write_bytes(src.read_bytes())
 
 
+def motion_audit_from_payload(payload: dict[str, object]) -> MotionAuditSummary | None:
+    track_motion = payload.get("track_motion")
+    clip_motion = payload.get("clip_motion")
+    if not isinstance(track_motion, dict) or not isinstance(clip_motion, dict):
+        return None
+    try:
+        return MotionAuditSummary(
+            path_length=float(track_motion.get("path_length", 0.0)),
+            net_displacement=float(track_motion.get("net_displacement", 0.0)),
+            scale_span=float(track_motion.get("scale_span", 0.0)),
+            global_mean=float(clip_motion.get("global_mean", 0.0)),
+            global_p90=float(clip_motion.get("global_p90", 0.0)),
+            foreground_mean=float(clip_motion.get("foreground_mean", 0.0)),
+            foreground_p90=float(clip_motion.get("foreground_p90", 0.0)),
+            foreground_coverage=float(clip_motion.get("foreground_coverage", 0.0)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def motion_audit_from_episode(npz_path: Path) -> MotionAuditSummary | None:
+    try:
+        payload = np.load(npz_path, allow_pickle=False)
+        frames = np.concatenate([payload["context_frames"], payload["future_frames"]], axis=0).astype(np.float32)
+    except Exception:
+        return None
+    if frames.ndim != 4:
+        return None
+    track = extract_primary_track(frames)
+    return collect_motion_audit(frames, track)
+
+
 def filter_episodes(args: argparse.Namespace) -> None:
     summary: dict[str, object] = {"splits": {}, "examples": []}
     for split in ("train", "val"):
@@ -770,6 +960,24 @@ def filter_episodes(args: argparse.Namespace) -> None:
                 skipped += 1
                 reasons[decision.reason] = reasons.get(decision.reason, 0) + 1
                 continue
+            audit = motion_audit_from_payload(payload)
+            if audit is None:
+                audit = motion_audit_from_episode(npz_path)
+            if audit is None and args.drop_missing_motion:
+                skipped += 1
+                reasons["missing_motion_metadata"] = reasons.get("missing_motion_metadata", 0) + 1
+                continue
+            if audit is not None and is_low_motion(
+                audit,
+                min_track_displacement=args.min_track_displacement,
+                min_track_path=args.min_track_path,
+                min_track_scale_span=args.min_track_scale_span,
+                min_global_motion=args.min_global_motion,
+                min_foreground_motion=args.min_foreground_motion,
+            ):
+                skipped += 1
+                reasons["low_motion"] = reasons.get("low_motion", 0) + 1
+                continue
             kept += 1
             if len(summary["examples"]) < 20:
                 summary["examples"].append(
@@ -780,6 +988,7 @@ def filter_episodes(args: argparse.Namespace) -> None:
                         "recaption": decision.recaption,
                         "categories": decision.categories,
                         "score": decision.score,
+                        "motion_audit": asdict(audit) if audit is not None else None,
                     }
                 )
             dst_npz = output_dir / npz_path.name
@@ -789,6 +998,19 @@ def filter_episodes(args: argparse.Namespace) -> None:
                 "prompt": decision.recaption,
                 "curation": asdict(decision),
             }
+            if audit is not None:
+                new_payload["track_motion"] = {
+                    "path_length": audit.path_length,
+                    "net_displacement": audit.net_displacement,
+                    "scale_span": audit.scale_span,
+                }
+                new_payload["clip_motion"] = {
+                    "global_mean": audit.global_mean,
+                    "global_p90": audit.global_p90,
+                    "foreground_mean": audit.foreground_mean,
+                    "foreground_p90": audit.foreground_p90,
+                    "foreground_coverage": audit.foreground_coverage,
+                }
             dst_json.write_text(json.dumps(new_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         summary["splits"][split] = {
             "kept": kept,
@@ -891,6 +1113,8 @@ def build_openvid(args: argparse.Namespace) -> None:
             min_track_displacement=args.min_track_displacement,
             min_track_path=args.min_track_path,
             min_track_scale_span=args.min_track_scale_span,
+            min_global_motion=args.min_global_motion,
+            min_foreground_motion=args.min_foreground_motion,
         )
         if record is None:
             key = reject_reason or "episode_write_rejected"
@@ -1015,6 +1239,8 @@ def build_openvid_clips(args: argparse.Namespace) -> None:
             min_track_displacement=args.min_track_displacement,
             min_track_path=args.min_track_path,
             min_track_scale_span=args.min_track_scale_span,
+            min_global_motion=args.min_global_motion,
+            min_foreground_motion=args.min_foreground_motion,
         )
         if record is None:
             key = reject_reason or "episode_write_rejected"
@@ -1143,6 +1369,8 @@ def download_webvid(args: argparse.Namespace) -> None:
             min_track_displacement=args.min_track_displacement,
             min_track_path=args.min_track_path,
             min_track_scale_span=args.min_track_scale_span,
+            min_global_motion=args.min_global_motion,
+            min_foreground_motion=args.min_foreground_motion,
         )
         if record is None:
             key = reject_reason or "episode_write_rejected"
@@ -1247,16 +1475,52 @@ def merge_episodes(args: argparse.Namespace) -> None:
     output_root = args.output_root
     output_root.mkdir(parents=True, exist_ok=True)
     summary: dict[str, object] = {"sources": [str(path) for path in args.input_root], "splits": {}}
+    seen_signatures: set[str] = set()
+
+    def build_source_signature(json_path: Path) -> str:
+        if not json_path.exists():
+            return f"missing_json::{json_path.stem}"
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            return f"bad_json::{json_path.stem}"
+        source = payload.get("source")
+        if not isinstance(source, dict):
+            return f"stem::{json_path.stem}"
+        dataset = clean_text(source.get("dataset", "")) or "unknown"
+        source_type = clean_text(source.get("source_type", "")) or "unknown"
+        if source.get("full_video_path"):
+            clip_start = source.get("clip_start_frame", "na")
+            return f"{dataset}::{source_type}::full::{source.get('full_video_path')}::{clip_start}"
+        if source.get("content_url"):
+            clip_start = source.get("clip_start_frame", "na")
+            return f"{dataset}::{source_type}::url::{source.get('content_url')}::{clip_start}"
+        parquet_path = clean_text(source.get("parquet_path", ""))
+        parquet_row_id = source.get("parquet_row_id")
+        if parquet_path and parquet_row_id is not None:
+            return f"{dataset}::{source_type}::parquet::{parquet_path}::{parquet_row_id}"
+        source_video_name = clean_text(source.get("source_video_name", ""))
+        clip_start = source.get("clip_start_frame", "na")
+        if source_video_name:
+            return f"{dataset}::{source_type}::video::{source_video_name}::{clip_start}"
+        prompt = clean_text(payload.get("prompt", ""))
+        return f"{dataset}::{source_type}::fallback::{json_path.stem}::{prompt[:160]}"
+
     for split in ("train", "val"):
         split_dir = output_root / split
         split_dir.mkdir(parents=True, exist_ok=True)
         count = 0
+        deduped = 0
         for root in args.input_root:
             input_dir = root / split
             if not input_dir.exists():
                 continue
             for npz_path in sorted(input_dir.glob("*.npz")):
                 json_path = npz_path.with_suffix(".json")
+                signature = build_source_signature(json_path)
+                if signature in seen_signatures:
+                    deduped += 1
+                    continue
                 dst_npz = split_dir / npz_path.name
                 dst_json = split_dir / json_path.name
                 if dst_npz.exists() or dst_npz.is_symlink():
@@ -1264,8 +1528,9 @@ def merge_episodes(args: argparse.Namespace) -> None:
                 dst_npz.symlink_to(npz_path)
                 if json_path.exists():
                     dst_json.symlink_to(json_path)
+                seen_signatures.add(signature)
                 count += 1
-        summary["splits"][split] = {"count": count}
+        summary["splits"][split] = {"count": count, "deduped": deduped}
     (output_root / "manifest.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

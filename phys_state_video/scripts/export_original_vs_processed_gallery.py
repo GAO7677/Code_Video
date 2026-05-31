@@ -171,7 +171,7 @@ def render_html(report: dict[str, object]) -> str:
                   <div class="note">来自本地原视频，按训练时使用的 frame window 截取，但不做训练分辨率压缩。</div>
                 </div>
                 <div class="video-card">
-                  <div class="title">处理后训练视频 `96x96`</div>
+                  <div class="title">处理后训练视频 `{case['train_hw']}`</div>
                   <video controls preload="metadata" src="{case['processed_video_rel']}"></video>
                   <div class="note">这是模型真正读入的 episode 张量，已经被压到训练分辨率。</div>
                 </div>

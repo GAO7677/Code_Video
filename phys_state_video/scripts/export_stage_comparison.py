@@ -67,6 +67,11 @@ def parse_args():
     parser.add_argument("--device", default=None)
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--max-cases", type=int, default=12)
+    parser.add_argument(
+        "--model-specs-json",
+        default=None,
+        help="Optional json file containing a list of model specs. Each item may include id, label, checkpoint, and condition_mode.",
+    )
     return parser.parse_args()
 
 
@@ -91,6 +96,30 @@ def load_model_state(module, state_dict, checkpoint_label: str) -> dict[str, lis
             "missing": list(incompatible.missing_keys),
             "unexpected": list(incompatible.unexpected_keys),
         }
+
+
+def load_model_specs(path: str | None) -> list[dict[str, str]]:
+    if path is None:
+        return list(MODEL_SPECS)
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("--model-specs-json must point to a json list")
+    specs: list[dict[str, str]] = []
+    for idx, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ValueError(f"model spec at index {idx} must be an object")
+        checkpoint = str(item.get("checkpoint") or "").strip()
+        if not checkpoint:
+            raise ValueError(f"model spec at index {idx} is missing checkpoint")
+        specs.append(
+            {
+                "id": str(item.get("id") or f"model_{idx:02d}").strip(),
+                "label": str(item.get("label") or item.get("id") or f"Model {idx:02d}").strip(),
+                "checkpoint": checkpoint,
+                "condition_mode": str(item.get("condition_mode") or "").strip(),
+            }
+        )
+    return specs
 
 
 def to_uint8_rgb(frame_chw: np.ndarray) -> np.ndarray:
@@ -424,8 +453,9 @@ def main():
         frame_width=episodes[0].context_frames.shape[-1],
     )
 
+    model_specs = load_model_specs(args.model_specs_json)
     models = []
-    for spec in MODEL_SPECS:
+    for spec in model_specs:
         ckpt = load_checkpoint(spec["checkpoint"], map_location=args.device)
         adapter_cfg = AdapterConfig(**ckpt["config"])
         model = TinyVideoBackbone(adapter_cfg).to(args.device)
@@ -436,7 +466,7 @@ def main():
                 "id": spec["id"],
                 "label": spec["label"],
                 "checkpoint": spec["checkpoint"],
-                "condition_mode": ckpt.get("condition_mode", "state"),
+                "condition_mode": spec["condition_mode"] or ckpt.get("condition_mode", "state"),
                 "state_loss_weights": ckpt.get("state_loss_weights"),
                 "state_loss_scale": float(ckpt.get("state_loss_scale", 0.1)),
                 "spatial_loss_scale": float(ckpt.get("spatial_loss_scale", 0.0)),

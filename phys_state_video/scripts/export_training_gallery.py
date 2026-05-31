@@ -365,7 +365,7 @@ def render_html(report: dict[str, object]) -> str:
               <div class="prompt">{case['prompt']}</div>
               <div class="asset-grid">
                 <div class="asset-card">
-                  <div class="asset-title">训练张量预览 `96x96`</div>
+                  <div class="asset-title">训练张量预览 `{case['train_hw']}`</div>
                   <video controls preload="metadata" src="{case['video_rel']}"></video>
                   <div class="asset-note">这是模型真实读入的训练 episode，已经在构建阶段被直接压成正方形。</div>
                 </div>
@@ -592,7 +592,7 @@ def render_html(report: dict[str, object]) -> str:
   <div class="wrap">
     <h1>训练样本可视化</h1>
     <div class="lead">
-      这页展示当前 object-motion 训练集里一批代表样本。左侧的 `96x96` 预览就是模型真实看到的训练 episode；
+      这页展示当前 object-motion 训练集里一批代表样本。左侧的训练张量预览就是模型真实看到的训练 episode；
       这些 episode 在构建时被直接 resize 成正方形，所以会出现低分辨率和宽高比形变。右侧预览仅用于展示，
       会依据元数据里可恢复的原始宽高比，把同一段训练张量反变形回更接近原视频的比例，便于检查样本内容本身。
     </div>

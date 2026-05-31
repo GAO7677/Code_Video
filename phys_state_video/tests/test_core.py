@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.extraction import AnnotationPseudoStateExtractor, compute_scale_depth_consistency
 from phys_state_video.proxy_state import extract_primary_track
-from scripts.curate_object_motion_data import resize_frames_uint8
+from scripts.curate_object_motion_data import classify_caption, resize_frames_uint8, summarize_clip_motion
 
 
 class ExtractionTests(unittest.TestCase):
@@ -66,6 +66,24 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(np.allclose(letterboxed[:4], 0.0))
         self.assertTrue(np.allclose(letterboxed[12:], 0.0))
         self.assertGreater(float(letterboxed[4:12, :, 1].mean()), 0.7)
+
+    def test_summarize_clip_motion_detects_static_vs_dynamic(self):
+        static = np.zeros((4, 3, 16, 16), dtype=np.float32)
+        dynamic = np.zeros((4, 3, 16, 16), dtype=np.float32)
+        for idx in range(4):
+            dynamic[idx, :, 4:8, 2 + idx:6 + idx] = 1.0
+        static_summary = summarize_clip_motion(static)
+        dynamic_summary = summarize_clip_motion(dynamic)
+        self.assertLess(static_summary["global_mean"], 1e-6)
+        self.assertGreater(dynamic_summary["global_mean"], static_summary["global_mean"])
+        self.assertGreater(dynamic_summary["foreground_mean"], static_summary["foreground_mean"])
+
+    def test_classify_caption_rejects_product_showcase(self):
+        decision = classify_caption(
+            "A close-up product showcase of a motorcycle helmet placed on a white surface with a steady camera angle."
+        )
+        self.assertFalse(decision.keep)
+        self.assertEqual(decision.reason, "disallowed_context")
 
 
 if __name__ == "__main__":
