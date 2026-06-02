@@ -46,6 +46,15 @@ CAM_TARGET = np.array([0.0, 0.28, 0.38], dtype=np.float64)
 CAM_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 EARTH_GRAVITY = 9.81
 ACTIVE_THEME = DEFAULT_THEME
+TEXTURE_ROOT = Path("/data/gaoya/dataset/textures/polyhaven_wood")
+WOOD_TEXTURES = {
+    "wood_planks": TEXTURE_ROOT / "wood_planks_diff_4k.jpg",
+    "plywood": TEXTURE_ROOT / "plywood_diff_4k.jpg",
+    "dark_wood": TEXTURE_ROOT / "dark_wood_diff_4k.jpg",
+    "weathered_planks": TEXTURE_ROOT / "weathered_brown_planks_diff_4k.jpg",
+    "wood_floor": Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures/wood_floor/wood_floor_diff_2k.jpg"),
+}
+TEXTURE_CACHE: Dict[str, np.ndarray] = {}
 
 
 @dataclass
@@ -66,6 +75,7 @@ class ObjectSpec:
     angular_velocity: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     role: str = "dynamic"
     texture_style: str = "solid"
+    texture_asset: str = ""
 
 
 @dataclass
@@ -121,12 +131,80 @@ def _pb_pose(pos: List[float], quat: List[float]) -> np.ndarray:
     return pose
 
 
+def _load_texture_rgb(texture_asset: str) -> np.ndarray | None:
+    if not texture_asset:
+        return None
+    if texture_asset in TEXTURE_CACHE:
+        return TEXTURE_CACHE[texture_asset]
+    path = WOOD_TEXTURES.get(texture_asset)
+    if path is None or not path.exists():
+        return None
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    TEXTURE_CACHE[texture_asset] = rgb
+    return rgb
+
+
+def _sample_texture(texture: np.ndarray, uv: np.ndarray) -> np.ndarray:
+    h, w = texture.shape[:2]
+    uv = uv - np.floor(uv)
+    x = np.clip((uv[:, 0] * (w - 1)).astype(np.int32), 0, w - 1)
+    y = np.clip(((1.0 - uv[:, 1]) * (h - 1)).astype(np.int32), 0, h - 1)
+    return texture[y, x]
+
+
+def _textured_vertex_colors(mesh: trimesh.Trimesh, texture_asset: str, tint: np.ndarray, repeat: float = 2.2) -> np.ndarray | None:
+    texture = _load_texture_rgb(texture_asset)
+    if texture is None:
+        return None
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
+    if len(verts) == 0 or len(normals) == 0:
+        return None
+
+    abs_normals = np.abs(normals)
+    dominant = np.argmax(abs_normals, axis=1)
+    mins = verts.min(axis=0)
+    spans = np.maximum(verts.max(axis=0) - mins, 1e-6)
+
+    uv_xy = np.stack([(verts[:, 0] - mins[0]) / spans[0], (verts[:, 1] - mins[1]) / spans[1]], axis=1) * repeat
+    uv_xz = np.stack([(verts[:, 0] - mins[0]) / spans[0], (verts[:, 2] - mins[2]) / spans[2]], axis=1) * repeat
+    uv_yz = np.stack([(verts[:, 1] - mins[1]) / spans[1], (verts[:, 2] - mins[2]) / spans[2]], axis=1) * repeat
+
+    colors = np.zeros((len(verts), 3), dtype=np.float32)
+    idx_x = dominant == 0
+    idx_y = dominant == 1
+    idx_z = dominant == 2
+    if np.any(idx_x):
+        colors[idx_x] = _sample_texture(texture, uv_yz[idx_x])
+    if np.any(idx_y):
+        colors[idx_y] = _sample_texture(texture, uv_xz[idx_y])
+    if np.any(idx_z):
+        colors[idx_z] = _sample_texture(texture, uv_xy[idx_z])
+
+    brightness = 0.88 + 0.12 * (verts[:, 2] - mins[2]) / spans[2]
+    colors = colors * brightness[:, None]
+    colors = np.clip(colors * (0.82 + 0.18 * tint[None, :]), 0.0, 1.0)
+    return colors
+
+
 def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     verts = np.asarray(mesh.vertices, dtype=np.float32)
     base = np.tile(np.asarray(obj.color, dtype=np.float32), (len(verts), 1))
     style = obj.texture_style
     if style == "solid":
         colors = base
+    elif style == "wood_real":
+        sampled = _textured_vertex_colors(mesh, obj.texture_asset, np.asarray(obj.color, dtype=np.float32))
+        if sampled is None:
+            grain = 0.5 + 0.5 * np.sin(verts[:, 2] * 24.0 + verts[:, 0] * 5.0)
+            colors = base.copy()
+            colors[:, 0] += grain * 0.10
+            colors[:, 1] += grain * 0.06
+        else:
+            colors = sampled
     elif style == "painted":
         band = 0.5 + 0.5 * np.sin(verts[:, 2] * 14.0)
         topcoat = np.array([0.96, 0.95, 0.92], dtype=np.float32)
@@ -188,6 +266,7 @@ def _make_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
         mesh = trimesh.creation.icosphere(subdivisions=3, radius=s["radius"])
     elif obj.shape == "box":
         mesh = trimesh.creation.box(extents=[2 * s["hx"], 2 * s["hy"], 2 * s["hz"]])
+        mesh = mesh.subdivide().subdivide()
     elif obj.shape == "rounded_box":
         core = trimesh.creation.box(extents=[2 * s["hx"], 2 * s["hy"], 2 * s["hz"]])
         bumps = []
@@ -380,6 +459,7 @@ def make_obj(
     linear_velocity: List[float] | None = None,
     angular_velocity: List[float] | None = None,
     role: str = "dynamic",
+    texture_asset: str = "",
 ) -> ObjectSpec:
     return ObjectSpec(
         name=name,
@@ -396,6 +476,7 @@ def make_obj(
         angular_velocity=angular_velocity or [0.0, 0.0, 0.0],
         role=role,
         texture_style=texture_style,
+        texture_asset=texture_asset,
     )
 
 
@@ -417,8 +498,9 @@ def _apply_industrial_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]
                 new_obj.color = [0.78, 0.76, 0.72] if "left" in obj.name or "occ" in obj.name else [0.68, 0.72, 0.78]
                 new_obj.texture_style = "painted"
             elif obj.role == "support":
-                new_obj.color = [0.82, 0.58, 0.24]
-                new_obj.texture_style = "two_tone"
+                new_obj.color = [0.92, 0.88, 0.82]
+                new_obj.texture_style = "wood_real"
+                new_obj.texture_asset = "plywood"
             elif obj.shape == "sphere":
                 new_obj.color = [0.88, 0.34, 0.16]
                 new_obj.texture_style = "rubber"
@@ -426,15 +508,21 @@ def _apply_industrial_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]
                 new_obj.color = [0.92, 0.62, 0.20]
                 new_obj.texture_style = "stripe"
             elif obj.shape == "box":
-                new_obj.color = [0.84, 0.70, 0.34] if "target" not in obj.name else [0.28, 0.63, 0.76]
-                new_obj.texture_style = "painted"
+                if "target" in obj.name or "mid" in obj.name or "push" in obj.name or "tail" in obj.name:
+                    new_obj.color = [0.96, 0.92, 0.88]
+                    new_obj.texture_style = "wood_real"
+                    new_obj.texture_asset = "wood_planks" if "target" in obj.name else "weathered_planks"
+                else:
+                    new_obj.color = [0.84, 0.70, 0.34]
+                    new_obj.texture_style = "painted"
             elif obj.shape == "cylinder":
                 if "rolling" in obj.name or "topple" in obj.name or "tail" in obj.name:
                     new_obj.color = [0.24, 0.60, 0.82]
                     new_obj.texture_style = "label"
                 else:
-                    new_obj.color = [0.94, 0.82, 0.42]
-                    new_obj.texture_style = "two_tone"
+                    new_obj.color = [0.95, 0.90, 0.84]
+                    new_obj.texture_style = "wood_real"
+                    new_obj.texture_asset = "dark_wood"
             elif obj.shape == "puck":
                 new_obj.color = [0.84, 0.46, 0.18]
                 new_obj.texture_style = "rubber"
@@ -455,8 +543,9 @@ def _apply_daily_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]:
                 new_obj.color = [0.93, 0.88, 0.74] if "left" in obj.name or "occ" in obj.name else [0.78, 0.86, 0.93]
                 new_obj.texture_style = "painted"
             elif obj.role == "support":
-                new_obj.color = [0.96, 0.74, 0.31]
-                new_obj.texture_style = "painted"
+                new_obj.color = [0.96, 0.93, 0.88]
+                new_obj.texture_style = "wood_real"
+                new_obj.texture_asset = "wood_floor"
             elif obj.shape == "sphere":
                 new_obj.color = [0.93, 0.30, 0.25] if "left" in obj.name or "lead" in obj.name or "drop" in obj.name else [0.29, 0.61, 0.90]
                 new_obj.texture_style = "plastic"
@@ -464,8 +553,13 @@ def _apply_daily_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]:
                 new_obj.color = [0.97, 0.73, 0.27]
                 new_obj.texture_style = "two_tone"
             elif obj.shape == "box":
-                new_obj.color = [0.26, 0.68, 0.78] if "target" in obj.name or "tail" in obj.name else [0.96, 0.82, 0.34]
-                new_obj.texture_style = "two_tone"
+                if "target" in obj.name or "mid" in obj.name or "push" in obj.name or "tail" in obj.name:
+                    new_obj.color = [0.95, 0.92, 0.86] if "target" in obj.name else [0.90, 0.86, 0.80]
+                    new_obj.texture_style = "wood_real"
+                    new_obj.texture_asset = "plywood" if "target" in obj.name else "wood_planks"
+                else:
+                    new_obj.color = [0.96, 0.82, 0.34]
+                    new_obj.texture_style = "two_tone"
             elif obj.shape == "cylinder":
                 new_obj.color = [0.29, 0.72, 0.56] if "tail" in obj.name or "rolling" in obj.name else [0.98, 0.57, 0.31]
                 new_obj.texture_style = "stripe"
