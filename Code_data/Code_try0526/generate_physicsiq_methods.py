@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--methods", nargs="+", choices=METHODS, default=METHODS)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--sample-ids-file", type=Path, default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -56,6 +57,17 @@ def iter_meta_paths(limit: int | None) -> list[Path]:
     if limit is not None:
         meta_paths = meta_paths[:limit]
     return meta_paths
+
+
+def load_selected_sample_ids(path: Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    sample_ids = {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    return sample_ids or None
 
 
 def load_case(meta_path: Path) -> dict[str, Any]:
@@ -335,7 +347,10 @@ def write_manifest(output_root: Path, cases: list[dict[str, Any]], methods: list
 
 def main() -> None:
     args = parse_args()
+    selected_sample_ids = load_selected_sample_ids(args.sample_ids_file)
     cases = [load_case(path) for path in iter_meta_paths(args.limit)]
+    if selected_sample_ids is not None:
+        cases = [case for case in cases if case["sample_id"] in selected_sample_ids]
     write_manifest(args.output_root, cases, args.methods)
     if "GT" in args.methods:
         run_gt(args.output_root, cases, args.overwrite)
