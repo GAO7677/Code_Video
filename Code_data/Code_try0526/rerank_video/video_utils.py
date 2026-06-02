@@ -77,16 +77,21 @@ def load_video_frames(path: Path) -> list[np.ndarray]:
 def save_video_frames(path: Path, frames: list[np.ndarray], fps: int, quality: int = 5) -> None:
     ensure_dir(path.parent)
     if imageio is not None:
-        with imageio.get_writer(
-            str(path),
-            fps=max(int(fps), 1),
-            codec="libx264",
-            quality=int(quality),
-            macro_block_size=None,
-        ) as writer:
-            for frame in frames:
-                writer.append_data(np.asarray(frame, dtype=np.uint8))
-        return
+        try:
+            with imageio.get_writer(
+                str(path),
+                fps=max(int(fps), 1),
+                codec="libx264",
+                quality=int(quality),
+                macro_block_size=None,
+            ) as writer:
+                for frame in frames:
+                    writer.append_data(np.asarray(frame, dtype=np.uint8))
+            return
+        except Exception:
+            # Some inference envs ship imageio without ffmpeg/pyav backends.
+            # Fall back to OpenCV mp4 writing so generation can still complete.
+            pass
 
     height, width = frames[0].shape[:2]
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), max(int(fps), 1), (width, height))
