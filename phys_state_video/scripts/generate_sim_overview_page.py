@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import html
 import json
 import os
@@ -11,9 +12,11 @@ import time
 from pathlib import Path
 
 
-DEFAULT_INDUSTRIAL_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_rigid_simple_v1_preview")
-DEFAULT_DAILY_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_rigid_daily_v1_preview")
-DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_overview_v1")
+DEFAULT_PROJECT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601")
+DEFAULT_PREVIEW_ROOT = DEFAULT_PROJECT_ROOT / "preview_v1"
+DEFAULT_INDUSTRIAL_ROOT = DEFAULT_PREVIEW_ROOT / "industrial"
+DEFAULT_DAILY_ROOT = DEFAULT_PREVIEW_ROOT / "daily"
+DEFAULT_OUTPUT_ROOT = DEFAULT_PREVIEW_ROOT / "overview"
 DEFAULT_PORT = 18827
 
 
@@ -45,12 +48,31 @@ def object_summary(item: dict) -> str:
     return "；".join(parts)
 
 
+def summarize_counts(items: list[dict]) -> tuple[int, dict[str, int], dict[str, int]]:
+    family_counter: collections.Counter[str] = collections.Counter()
+    shape_counter: collections.Counter[str] = collections.Counter()
+    for item in items:
+        family_counter[item["family"]] += 1
+        dynamic_objects = [obj for obj in item["objects"] if obj.get("role") == "dynamic"]
+        main_shape = dynamic_objects[0]["shape"] if dynamic_objects else "unknown"
+        shape_counter[main_shape] += 1
+    return len(items), dict(family_counter), dict(shape_counter)
+
+
+def format_counter(title: str, counts: dict[str, int]) -> str:
+    parts = [f"{name} {count}" for name, count in counts.items()]
+    body = "；".join(parts) if parts else "无"
+    return f"{title}：{body}"
+
+
 def build_page(industrial: list[dict], daily: list[dict], output_root: Path, port: int) -> Path:
     industrial_by_key = {item["key"]: item for item in industrial}
     daily_by_key = {item["key"]: item for item in daily}
     ordered_keys = [item["key"] for item in industrial if item["key"] in daily_by_key]
 
     capsule_keys = [key for key in ordered_keys if key.startswith("simple_f1_capsule")]
+    industrial_total, industrial_family, industrial_shape = summarize_counts(industrial)
+    daily_total, daily_family, daily_shape = summarize_counts(daily)
     paired_cards: list[str] = []
     for key in ordered_keys:
         item_i = industrial_by_key[key]
@@ -157,6 +179,31 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
       background: rgba(255, 255, 255, 0.04);
       color: var(--text);
       font-size: 13px;
+    }}
+    .stats-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }}
+    .stats-card {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px 18px;
+      background: rgba(255, 255, 255, 0.03);
+    }}
+    .stats-card h3 {{
+      margin: 0 0 10px;
+      font-size: 18px;
+    }}
+    .stats-card p {{
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.8;
+      font-size: 13px;
+    }}
+    .stats-card p + p {{
+      margin-top: 8px;
     }}
     .section {{
       padding: 20px 22px;
@@ -278,6 +325,9 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
     }}
     a {{ color: var(--accent2); }}
     @media (max-width: 980px) {{
+      .stats-grid {{
+        grid-template-columns: 1fr;
+      }}
       .video-grid {{
         grid-template-columns: 1fr;
       }}
@@ -300,12 +350,28 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
         并保留逐帧 object-level 状态真值。页面内部把同一组物理 case 的工业训练数据版和日常物体版并排展示，方便直接对比外观风格和运动结果。
       </p>
       <div class="pills">
-        <span class="pill">总案例数 {len(ordered_keys)}</span>
+        <span class="pill">配对案例数 {len(ordered_keys)}</span>
+        <span class="pill">工业版总数 {industrial_total}</span>
+        <span class="pill">日常版总数 {daily_total}</span>
         <span class="pill">Capsule 变体 {len(capsule_keys)}</span>
         <span class="pill">默认生成主题 = 工业训练数据版</span>
         <span class="pill">工业版目录 {html.escape(str(DEFAULT_INDUSTRIAL_ROOT))}</span>
         <span class="pill">日常版目录 {html.escape(str(DEFAULT_DAILY_ROOT))}</span>
         <span class="pill">总页面端口 {port}</span>
+      </div>
+      <div class="stats-grid">
+        <section class="stats-card">
+          <h3>工业训练数据版统计</h3>
+          <p>总数据量：{industrial_total} 个 case。</p>
+          <p>{html.escape(format_counter("分类别", industrial_family))}</p>
+          <p>{html.escape(format_counter("分类型", industrial_shape))}</p>
+        </section>
+        <section class="stats-card">
+          <h3>日常物体版统计</h3>
+          <p>总数据量：{daily_total} 个 case。</p>
+          <p>{html.escape(format_counter("分类别", daily_family))}</p>
+          <p>{html.escape(format_counter("分类型", daily_shape))}</p>
+        </section>
       </div>
     </section>
 

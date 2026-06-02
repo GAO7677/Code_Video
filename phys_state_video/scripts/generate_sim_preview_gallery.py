@@ -27,7 +27,7 @@ import trimesh
 from pyrender.constants import RenderFlags
 
 
-DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/sim_objstate_rigid_simple_v1_preview")
+DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/preview_v1/industrial")
 OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
 VIDEO_DIR = OUTPUT_ROOT / "videos"
 META_DIR = OUTPUT_ROOT / "meta"
