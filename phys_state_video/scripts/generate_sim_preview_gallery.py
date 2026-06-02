@@ -351,11 +351,6 @@ def _make_mesh(obj: ObjectSpec) -> trimesh.Trimesh:
     else:
         raise ValueError(f"unsupported shape: {obj.shape}")
 
-    quat = _quat_from_euler_deg(obj.orientation_euler_deg)
-    rot = np.array(p.getMatrixFromQuaternion(quat), dtype=np.float64).reshape(3, 3)
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = rot
-    mesh.apply_transform(T)
     _apply_procedural_material(mesh, obj)
     return mesh
 
