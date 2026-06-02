@@ -1142,7 +1142,7 @@ def _overlay_text(frame_bgr: np.ndarray, lines: List[str]) -> None:
         cv2.putText(frame_bgr, line, (18, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (244, 242, 237), 1, cv2.LINE_AA)
 
 
-def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
+def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text: bool = True) -> dict:
     np.random.seed(scenario.seed)
     p.resetSimulation()
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -1212,13 +1212,14 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
 
         frame_rgb = renderer.render()
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        _overlay_text(
-            frame_bgr,
-            [
-                f"{scenario.family} | {scenario.title}",
-                f"{scenario.key} | t={visible_time:0.2f}s | pre-roll={scenario.pre_roll_s:0.2f}s | floor_mu={scenario.floor_friction:0.2f} | objects={object_count}",
-            ],
-        )
+        if overlay_text:
+            _overlay_text(
+                frame_bgr,
+                [
+                    f"{scenario.family} | {scenario.title}",
+                    f"{scenario.key} | t={visible_time:0.2f}s | pre-roll={scenario.pre_roll_s:0.2f}s | floor_mu={scenario.floor_friction:0.2f} | objects={object_count}",
+                ],
+            )
         frames.append(frame_bgr)
         frame_index += 1
 
@@ -1241,6 +1242,11 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
         frame_times=np.arange(frame_index, dtype=np.float32) / FPS,
         object_names=np.asarray([body["spec"].name for body in bodies]),
         object_roles=np.asarray([body["spec"].role for body in bodies]),
+        camera_eye=CAM_EYE.astype(np.float32),
+        camera_target=CAM_TARGET.astype(np.float32),
+        camera_up=CAM_UP.astype(np.float32),
+        frame_width=np.asarray([IMG_W], dtype=np.int32),
+        frame_height=np.asarray([IMG_H], dtype=np.int32),
     )
 
     meta = {
@@ -1259,6 +1265,12 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
         "resolution": [IMG_W, IMG_H],
         "duration_s": len(frames) / FPS,
         "pre_roll_s": scenario.pre_roll_s,
+        "camera": {
+            "eye": CAM_EYE.tolist(),
+            "target": CAM_TARGET.tolist(),
+            "up": CAM_UP.tolist(),
+            "yfov_deg": 50.0,
+        },
         "objects": [asdict(obj) for obj in scenario.objects],
     }
     (META_DIR / f"{scenario.key}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
