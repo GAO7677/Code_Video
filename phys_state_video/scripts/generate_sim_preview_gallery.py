@@ -9,7 +9,7 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List
 
@@ -32,6 +32,7 @@ OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
 VIDEO_DIR = OUTPUT_ROOT / "videos"
 META_DIR = OUTPUT_ROOT / "meta"
 DEFAULT_PORT = 18825
+DEFAULT_THEME = "industrial"
 
 IMG_W = 960
 IMG_H = 540
@@ -44,6 +45,7 @@ CAM_EYE = np.array([0.0, -3.0, 1.42], dtype=np.float64)
 CAM_TARGET = np.array([0.0, 0.28, 0.38], dtype=np.float64)
 CAM_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 EARTH_GRAVITY = 9.81
+ACTIVE_THEME = DEFAULT_THEME
 
 
 @dataclass
@@ -78,6 +80,12 @@ class ScenarioSpec:
     seed: int
     pre_roll_s: float = 0.75
     sim_type: str = "rigid_simple"
+
+
+THEME_LABELS = {
+    "industrial": "工业训练数据",
+    "daily_objects": "日常物体",
+}
 
 
 def _quat_from_euler_deg(values: List[float]) -> List[float]:
@@ -389,6 +397,126 @@ def make_obj(
         role=role,
         texture_style=texture_style,
     )
+
+
+def apply_theme_to_scenarios(scenarios: List[ScenarioSpec], theme: str) -> List[ScenarioSpec]:
+    if theme not in THEME_LABELS:
+        raise ValueError(f"unsupported theme: {theme}")
+    if theme == "industrial":
+        return _apply_industrial_theme(scenarios)
+    return _apply_daily_theme(scenarios)
+
+
+def _apply_industrial_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]:
+    styled: List[ScenarioSpec] = []
+    for scenario in scenarios:
+        objects: List[ObjectSpec] = []
+        for obj in scenario.objects:
+            new_obj = replace(obj)
+            if obj.role == "occluder":
+                new_obj.color = [0.78, 0.76, 0.72] if "left" in obj.name or "occ" in obj.name else [0.68, 0.72, 0.78]
+                new_obj.texture_style = "painted"
+            elif obj.role == "support":
+                new_obj.color = [0.82, 0.58, 0.24]
+                new_obj.texture_style = "two_tone"
+            elif obj.shape == "sphere":
+                new_obj.color = [0.88, 0.34, 0.16]
+                new_obj.texture_style = "rubber"
+            elif obj.shape == "capsule":
+                new_obj.color = [0.92, 0.62, 0.20]
+                new_obj.texture_style = "stripe"
+            elif obj.shape == "box":
+                new_obj.color = [0.84, 0.70, 0.34] if "target" not in obj.name else [0.28, 0.63, 0.76]
+                new_obj.texture_style = "painted"
+            elif obj.shape == "cylinder":
+                if "rolling" in obj.name or "topple" in obj.name or "tail" in obj.name:
+                    new_obj.color = [0.24, 0.60, 0.82]
+                    new_obj.texture_style = "label"
+                else:
+                    new_obj.color = [0.94, 0.82, 0.42]
+                    new_obj.texture_style = "two_tone"
+            elif obj.shape == "puck":
+                new_obj.color = [0.84, 0.46, 0.18]
+                new_obj.texture_style = "rubber"
+            objects.append(new_obj)
+        styled.append(replace(scenario, objects=objects, sim_type="rigid_simple_industrial"))
+    return styled
+
+
+def _apply_daily_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]:
+    styled: List[ScenarioSpec] = []
+    for scenario in scenarios:
+        objects: List[ObjectSpec] = []
+        title = scenario.title
+        description = scenario.description
+        for obj in scenario.objects:
+            new_obj = replace(obj)
+            if obj.role == "occluder":
+                new_obj.color = [0.93, 0.88, 0.74] if "left" in obj.name or "occ" in obj.name else [0.78, 0.86, 0.93]
+                new_obj.texture_style = "painted"
+            elif obj.role == "support":
+                new_obj.color = [0.96, 0.74, 0.31]
+                new_obj.texture_style = "painted"
+            elif obj.shape == "sphere":
+                new_obj.color = [0.93, 0.30, 0.25] if "left" in obj.name or "lead" in obj.name or "drop" in obj.name else [0.29, 0.61, 0.90]
+                new_obj.texture_style = "plastic"
+            elif obj.shape == "capsule":
+                new_obj.color = [0.97, 0.73, 0.27]
+                new_obj.texture_style = "two_tone"
+            elif obj.shape == "box":
+                new_obj.color = [0.26, 0.68, 0.78] if "target" in obj.name or "tail" in obj.name else [0.96, 0.82, 0.34]
+                new_obj.texture_style = "two_tone"
+            elif obj.shape == "cylinder":
+                new_obj.color = [0.29, 0.72, 0.56] if "tail" in obj.name or "rolling" in obj.name else [0.98, 0.57, 0.31]
+                new_obj.texture_style = "stripe"
+            elif obj.shape == "puck":
+                new_obj.color = [0.97, 0.50, 0.21]
+                new_obj.texture_style = "label"
+            objects.append(new_obj)
+
+        daily_title = title
+        daily_desc = description
+        if scenario.key == "simple_f1_sphere_bounce_roll":
+            daily_title = "训练球入镜后弹跳滚动"
+            daily_desc = "像儿童训练球一样的彩色球体从画外连续入镜，在重力下弹跳后滚动。"
+        elif scenario.key == "simple_f1_capsule_slide_spin":
+            daily_title = "胶囊收纳盒滑行并自旋"
+            daily_desc = "像日常塑料收纳盒一样的胶囊体滑入画面，在摩擦作用下滑行并转动。"
+        elif scenario.key == "simple_f2_puck_hits_box":
+            daily_title = "塑料圆盘撞击积木盒"
+            daily_desc = "扁平塑料圆盘斜向滑入并撞击彩色积木盒，观察速度传递和偏转。"
+        elif scenario.key == "simple_f2_cylinder_hits_cylinder":
+            daily_title = "卷筒撞击杯罐"
+            daily_desc = "卧放卷筒样物体滚入后撞击立起的杯罐样物体，观察碰撞后的平移与转动耦合。"
+        elif scenario.key == "simple_f3_sphere_chain_reaction":
+            daily_title = "玩具球触发收纳盒连锁"
+            daily_desc = "玩具球先撞第一个收纳盒，再带动第二个收纳盒，测试简单几何下的因果传播。"
+        elif scenario.key == "simple_f3_capsule_box_cylinder_chain":
+            daily_title = "收纳盒推动纸罐连锁"
+            daily_desc = "胶囊收纳盒推动彩色方盒，再由方盒碰到纸罐样圆柱，形成三体连锁传播。"
+        elif scenario.key == "simple_f4_ball_behind_pillars":
+            daily_title = "玩具球经过路障柱后方"
+            daily_desc = "使用两个彩色路障柱做遮挡，玩具球从画外连续入镜并完成遮挡-重现。"
+        elif scenario.key == "simple_f4_dual_sphere_cross_occlusion":
+            daily_title = "双球在路障柱后交叉"
+            daily_desc = "两个彩色玩具球从左右两侧入镜，在路障柱后交叉并重现，检查 identity 保持。"
+        elif scenario.key == "simple_f5_sphere_drop_on_platform":
+            daily_title = "训练球落到矮台后滚下"
+            daily_desc = "彩色训练球落到矮平台后继续滚动并离开支撑面，测试支撑切换。"
+        elif scenario.key == "simple_f5_cylinder_topple":
+            daily_title = "罐状物在窄底座上失稳倒下"
+            daily_desc = "像饮料罐一样的圆柱立在窄底座上并带轻微倾斜，在重力作用下自然失稳倒伏。"
+
+        styled.append(
+            replace(
+                scenario,
+                title=daily_title,
+                description=daily_desc,
+                objects=objects,
+                sim_type="rigid_simple_daily_objects",
+            )
+        )
+    return styled
 
 
 def build_preview_scenarios() -> List[ScenarioSpec]:
@@ -909,6 +1037,7 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec) -> dict:
 
 
 def generate_html(report_items: List[dict], port: int) -> Path:
+    theme_label = THEME_LABELS.get(ACTIVE_THEME, ACTIVE_THEME)
     by_family: Dict[str, List[dict]] = {}
     for item in report_items:
         by_family.setdefault(item["family"], []).append(item)
@@ -965,7 +1094,7 @@ def generate_html(report_items: List[dict], port: int) -> Path:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Rigid Simple Sim Preview v1</title>
+  <title>Rigid Simple Sim Preview v1 - {html.escape(theme_label)}</title>
   <style>
     :root {{
       --bg: #181612;
@@ -1119,13 +1248,15 @@ def generate_html(report_items: List[dict], port: int) -> Path:
 <body>
   <div class="page">
     <section class="hero">
-      <h1>Rigid Simple 仿真预览集 v1</h1>
+      <h1>Rigid Simple 仿真预览集 v1 · {html.escape(theme_label)}</h1>
       <p class="lead">
         这一版只保留碰撞形状和视觉形状高度一致的简单刚体：sphere、box、cylinder、capsule、puck。
         所有场景固定使用地球重力 `9.81 m/s²`，并把地面摩擦系数作为显式场景参数纳入变化范围，避免引入大幅 mesh-collision mismatch。
+        当前展示主题为“{html.escape(theme_label)}”，物理配置保持一致，仅切换对象的视觉语义、配色和程序化材质。
       </p>
       <div class="hero-row">
         <span class="pill">simulation type = rigid_simple</span>
+        <span class="pill">theme = {html.escape(ACTIVE_THEME)}</span>
         <span class="pill">分辨率 {IMG_W}×{IMG_H}</span>
         <span class="pill">FPS {FPS}</span>
         <span class="pill">{len(report_items)} 个 preview case</span>
@@ -1173,14 +1304,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a rigid-core simulation preview gallery.")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--theme", type=str, default=DEFAULT_THEME, choices=sorted(THEME_LABELS.keys()))
     parser.add_argument("--serve-only", action="store_true")
     parser.add_argument("--clean", action="store_true")
     args = parser.parse_args()
 
-    global OUTPUT_ROOT, VIDEO_DIR, META_DIR
+    global OUTPUT_ROOT, VIDEO_DIR, META_DIR, ACTIVE_THEME
     OUTPUT_ROOT = args.output_root
     VIDEO_DIR = OUTPUT_ROOT / "videos"
     META_DIR = OUTPUT_ROOT / "meta"
+    ACTIVE_THEME = args.theme
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
@@ -1193,7 +1326,7 @@ def main() -> None:
         VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         META_DIR.mkdir(parents=True, exist_ok=True)
 
-    scenarios = build_preview_scenarios()
+    scenarios = apply_theme_to_scenarios(build_preview_scenarios(), args.theme)
     manifest: List[dict]
     if not args.serve_only:
         p.connect(p.DIRECT)
