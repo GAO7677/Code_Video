@@ -119,6 +119,37 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     style = obj.texture_style
     if style == "solid":
         colors = base
+    elif style == "painted":
+        band = 0.5 + 0.5 * np.sin(verts[:, 2] * 14.0)
+        topcoat = np.array([0.96, 0.95, 0.92], dtype=np.float32)
+        colors = base * (0.78 + 0.14 * band[:, None])
+        colors = colors * 0.82 + topcoat[None, :] * (0.18 * band[:, None])
+    elif style == "stripe":
+        stripe = (np.sin(verts[:, 0] * 26.0) > 0).astype(np.float32)
+        accent = np.clip(np.asarray(obj.color, dtype=np.float32) * np.array([1.10, 0.92, 0.82], dtype=np.float32), 0.0, 1.0)
+        light = np.array([0.95, 0.94, 0.90], dtype=np.float32)
+        colors = accent[None, :] * stripe[:, None] + light[None, :] * (1.0 - stripe[:, None])
+        colors = colors * 0.92
+    elif style == "two_tone":
+        split = (verts[:, 1] > np.median(verts[:, 1])).astype(np.float32)
+        alt = np.clip(
+            np.array(
+                [
+                    min(1.0, obj.color[2] * 0.90 + 0.20),
+                    min(1.0, obj.color[0] * 0.70 + 0.18),
+                    min(1.0, obj.color[1] * 0.75 + 0.18),
+                ],
+                dtype=np.float32,
+            ),
+            0.0,
+            1.0,
+        )
+        colors = base * split[:, None] + alt[None, :] * (1.0 - split[:, None])
+    elif style == "label":
+        label = (np.abs(verts[:, 2]) < 0.045).astype(np.float32)
+        label *= (np.cos(verts[:, 0] * 18.0) > -0.15).astype(np.float32)
+        colors = base * 0.85
+        colors += label[:, None] * np.array([0.92, 0.90, 0.82], dtype=np.float32) * 0.55
     elif style == "wood":
         grain = 0.5 + 0.5 * np.sin(verts[:, 2] * 24.0 + verts[:, 0] * 5.0)
         colors = base.copy()
@@ -130,6 +161,10 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
     elif style == "rubber":
         speckle = 0.5 + 0.5 * np.sin(verts[:, 0] * 55.0) * np.cos(verts[:, 1] * 40.0)
         colors = base * (0.82 + 0.18 * speckle[:, None])
+    elif style == "plastic":
+        soften = 0.55 + 0.45 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
+        colors = base * (0.88 + 0.08 * soften[:, None])
+        colors += np.array([0.03, 0.03, 0.02], dtype=np.float32)
     elif style == "checker":
         pattern = (((verts[:, 0] * 10).astype(int) + (verts[:, 1] * 10).astype(int)) % 2).astype(np.float32)
         colors = base * (0.72 + 0.28 * pattern[:, None])
@@ -395,10 +430,10 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="slide_capsule",
                     shape="capsule",
-                    color=[0.28, 0.49, 0.78],
+                    color=[0.91, 0.62, 0.24],
                     position=[-1.95, 0.32, 0.17],
                     size={"radius": 0.10, "height": 0.28},
-                    texture_style="metal",
+                    texture_style="stripe",
                     restitution=0.10,
                     friction=0.84,
                     orientation_euler_deg=[90.0, 10.0, 0.0],
@@ -432,11 +467,11 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="target_box",
                     shape="box",
-                    color=[0.53, 0.33, 0.20],
+                    color=[0.30, 0.63, 0.76],
                     position=[0.30, 0.06, 0.18],
                     size={"hx": 0.18, "hy": 0.18, "hz": 0.18},
                     mass=1.2,
-                    texture_style="wood",
+                    texture_style="painted",
                     restitution=0.12,
                     friction=0.72,
                 ),
@@ -455,10 +490,10 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="rolling_cylinder",
                     shape="cylinder",
-                    color=[0.28, 0.58, 0.80],
+                    color=[0.22, 0.66, 0.72],
                     position=[-2.10, -0.16, 0.12],
                     size={"radius": 0.12, "height": 0.30},
-                    texture_style="checker",
+                    texture_style="label",
                     restitution=0.10,
                     friction=0.74,
                     orientation_euler_deg=[90.0, 0.0, 0.0],
@@ -468,11 +503,11 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="upright_cylinder",
                     shape="cylinder",
-                    color=[0.78, 0.49, 0.20],
+                    color=[0.94, 0.82, 0.42],
                     position=[0.18, 0.02, 0.22],
                     size={"radius": 0.11, "height": 0.44},
                     mass=1.1,
-                    texture_style="wood",
+                    texture_style="two_tone",
                     restitution=0.10,
                     friction=0.72,
                 ),
@@ -503,22 +538,22 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="mid_box",
                     shape="box",
-                    color=[0.78, 0.49, 0.20],
+                    color=[0.84, 0.54, 0.28],
                     position=[-0.20, -0.14, 0.17],
                     size={"hx": 0.17, "hy": 0.17, "hz": 0.17},
                     mass=0.95,
-                    texture_style="wood",
+                    texture_style="painted",
                     restitution=0.08,
                     friction=0.74,
                 ),
                 make_obj(
                     name="box_tail",
                     shape="box",
-                    color=[0.55, 0.34, 0.18],
+                    color=[0.28, 0.58, 0.76],
                     position=[0.74, -0.14, 0.18],
                     size={"hx": 0.18, "hy": 0.18, "hz": 0.18},
                     mass=0.95,
-                    texture_style="wood",
+                    texture_style="two_tone",
                     restitution=0.08,
                     friction=0.76,
                 ),
@@ -537,10 +572,10 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="lead_capsule",
                     shape="capsule",
-                    color=[0.26, 0.48, 0.78],
+                    color=[0.83, 0.47, 0.26],
                     position=[-2.20, 0.12, 0.13],
                     size={"radius": 0.09, "height": 0.26},
-                    texture_style="metal",
+                    texture_style="label",
                     restitution=0.12,
                     friction=0.78,
                     orientation_euler_deg=[90.0, 0.0, 0.0],
@@ -550,22 +585,22 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="push_box",
                     shape="box",
-                    color=[0.74, 0.48, 0.22],
+                    color=[0.88, 0.72, 0.36],
                     position=[-0.18, 0.12, 0.16],
                     size={"hx": 0.16, "hy": 0.16, "hz": 0.16},
                     mass=0.85,
-                    texture_style="wood",
+                    texture_style="painted",
                     restitution=0.08,
                     friction=0.78,
                 ),
                 make_obj(
                     name="tail_cylinder",
                     shape="cylinder",
-                    color=[0.58, 0.60, 0.64],
+                    color=[0.36, 0.70, 0.58],
                     position=[0.78, 0.12, 0.18],
                     size={"radius": 0.10, "height": 0.36},
                     mass=0.90,
-                    texture_style="metal",
+                    texture_style="stripe",
                     restitution=0.10,
                     friction=0.70,
                 ),
@@ -596,25 +631,25 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="pillar_left_occ",
                     shape="cylinder",
-                    color=[0.55, 0.52, 0.48],
+                    color=[0.76, 0.74, 0.68],
                     position=[-0.18, -0.06, 0.48],
                     size={"radius": 0.16, "height": 0.96},
                     dynamic=False,
                     mass=0.0,
                     role="occluder",
-                    texture_style="checker",
+                    texture_style="painted",
                     friction=0.84,
                 ),
                 make_obj(
                     name="pillar_right_occ",
                     shape="cylinder",
-                    color=[0.50, 0.48, 0.45],
+                    color=[0.66, 0.70, 0.76],
                     position=[0.18, -0.06, 0.48],
                     size={"radius": 0.16, "height": 0.96},
                     dynamic=False,
                     mass=0.0,
                     role="occluder",
-                    texture_style="checker",
+                    texture_style="painted",
                     friction=0.84,
                 ),
             ],
@@ -656,13 +691,13 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="occ_column",
                     shape="cylinder",
-                    color=[0.52, 0.50, 0.46],
+                    color=[0.74, 0.72, 0.67],
                     position=[0.0, -0.04, 0.50],
                     size={"radius": 0.18, "height": 1.00},
                     dynamic=False,
                     mass=0.0,
                     role="occluder",
-                    texture_style="checker",
+                    texture_style="painted",
                     friction=0.84,
                 ),
             ],
@@ -692,13 +727,13 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="support_platform",
                     shape="box",
-                    color=[0.50, 0.34, 0.20],
+                    color=[0.83, 0.63, 0.30],
                     position=[0.12, 0.0, 0.16],
                     size={"hx": 0.34, "hy": 0.26, "hz": 0.16},
                     dynamic=False,
                     mass=0.0,
                     role="support",
-                    texture_style="wood",
+                    texture_style="painted",
                     friction=0.88,
                 ),
             ],
@@ -716,22 +751,22 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                 make_obj(
                     name="pedestal",
                     shape="box",
-                    color=[0.45, 0.32, 0.18],
+                    color=[0.82, 0.58, 0.26],
                     position=[0.0, 0.0, 0.11],
                     size={"hx": 0.13, "hy": 0.13, "hz": 0.11},
                     dynamic=False,
                     mass=0.0,
                     role="support",
-                    texture_style="wood",
+                    texture_style="two_tone",
                     friction=0.82,
                 ),
                 make_obj(
                     name="topple_cylinder",
                     shape="cylinder",
-                    color=[0.26, 0.58, 0.82],
+                    color=[0.24, 0.61, 0.84],
                     position=[0.12, 0.0, 0.43],
                     size={"radius": 0.12, "height": 0.42},
-                    texture_style="metal",
+                    texture_style="stripe",
                     restitution=0.08,
                     friction=0.66,
                     orientation_euler_deg=[0.0, 8.0, 14.0],
