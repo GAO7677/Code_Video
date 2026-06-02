@@ -482,6 +482,21 @@ def _apply_daily_theme(scenarios: List[ScenarioSpec]) -> List[ScenarioSpec]:
         elif scenario.key == "simple_f1_capsule_slide_spin":
             daily_title = "胶囊收纳盒滑行并自旋"
             daily_desc = "像日常塑料收纳盒一样的胶囊体滑入画面，在摩擦作用下滑行并转动。"
+        elif scenario.key == "simple_f1_capsule_low_spin_long_slide":
+            daily_title = "收纳盒低速自旋长距离滑行"
+            daily_desc = "胶囊收纳盒以较小角速度和中等线速度入镜，主要观察长距离滑行与缓慢转姿。"
+        elif scenario.key == "simple_f1_capsule_fast_spin_glancing":
+            daily_title = "收纳盒高速自旋斜向滑入"
+            daily_desc = "胶囊收纳盒带更大的横向分量和更高角速度斜向滑入，观察快速姿态耦合变化。"
+        elif scenario.key == "simple_f1_capsule_upright_tumble_slide":
+            daily_title = "收纳盒大倾角翻滚滑行"
+            daily_desc = "胶囊收纳盒以更大的初始倾角入镜，在滑行中发生明显翻滚和轴向姿态切换。"
+        elif scenario.key == "simple_f1_capsule_highspeed_lowspin":
+            daily_title = "收纳盒高速低自旋掠过"
+            daily_desc = "胶囊收纳盒以更高线速度但较低角速度快速掠过画面，观察平移主导的运动形态。"
+        elif scenario.key == "simple_f1_capsule_reverse_spin_sweep":
+            daily_title = "收纳盒反向自旋横向扫过"
+            daily_desc = "胶囊收纳盒带反向角速度与较强横向速度分量横扫画面，观察反向滚滑耦合。"
         elif scenario.key == "simple_f2_puck_hits_box":
             daily_title = "塑料圆盘撞击积木盒"
             daily_desc = "扁平塑料圆盘斜向滑入并撞击彩色积木盒，观察速度传递和偏转。"
@@ -567,6 +582,131 @@ def build_preview_scenarios() -> List[ScenarioSpec]:
                     orientation_euler_deg=[90.0, 10.0, 0.0],
                     linear_velocity=[3.25, -0.10, 0.0],
                     angular_velocity=[9.0, 0.0, 2.0],
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f1_capsule_low_spin_long_slide",
+            family="F1 单物体运动",
+            title="胶囊体低速自旋长距离滑行",
+            description="胶囊体以较小角速度和中等线速度入镜，主要观察长距离滑行与缓慢转姿。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.84,
+            seed=1011,
+            pre_roll_s=0.16,
+            objects=[
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.91, 0.62, 0.24],
+                    position=[-2.15, 0.24, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="stripe",
+                    restitution=0.08,
+                    friction=0.76,
+                    orientation_euler_deg=[90.0, 4.0, -8.0],
+                    linear_velocity=[2.65, -0.04, 0.0],
+                    angular_velocity=[4.0, 0.0, 0.8],
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f1_capsule_fast_spin_glancing",
+            family="F1 单物体运动",
+            title="胶囊体高速自旋斜向滑入",
+            description="胶囊体带更大的横向分量和更高角速度斜向滑入，观察快速姿态耦合变化。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.82,
+            seed=1012,
+            pre_roll_s=0.20,
+            objects=[
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.91, 0.62, 0.24],
+                    position=[-2.10, 0.56, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="stripe",
+                    restitution=0.10,
+                    friction=0.82,
+                    orientation_euler_deg=[90.0, 18.0, 12.0],
+                    linear_velocity=[3.95, -0.34, 0.0],
+                    angular_velocity=[12.0, 0.0, 3.2],
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f1_capsule_upright_tumble_slide",
+            family="F1 单物体运动",
+            title="胶囊体大倾角翻滚滑行",
+            description="胶囊体以更大的初始倾角入镜，在滑行中发生明显翻滚和轴向姿态切换。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.90,
+            seed=1013,
+            pre_roll_s=0.12,
+            objects=[
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.91, 0.62, 0.24],
+                    position=[-1.90, -0.08, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="stripe",
+                    restitution=0.09,
+                    friction=0.88,
+                    orientation_euler_deg=[78.0, 24.0, 28.0],
+                    linear_velocity=[3.10, 0.08, 0.0],
+                    angular_velocity=[7.5, 1.6, 4.0],
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f1_capsule_highspeed_lowspin",
+            family="F1 单物体运动",
+            title="胶囊体高速低自旋掠过",
+            description="胶囊体以更高线速度但较低角速度快速掠过画面，观察平移主导的运动形态。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.80,
+            seed=1014,
+            pre_roll_s=0.24,
+            objects=[
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.91, 0.62, 0.24],
+                    position=[-2.35, -0.26, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="stripe",
+                    restitution=0.08,
+                    friction=0.72,
+                    orientation_euler_deg=[90.0, -6.0, 5.0],
+                    linear_velocity=[4.55, 0.18, 0.0],
+                    angular_velocity=[3.4, 0.0, 0.6],
+                ),
+            ],
+        ),
+        ScenarioSpec(
+            key="simple_f1_capsule_reverse_spin_sweep",
+            family="F1 单物体运动",
+            title="胶囊体反向自旋横向扫过",
+            description="胶囊体带反向角速度与较强横向速度分量横扫画面，观察反向滚滑耦合。",
+            gravity=EARTH_GRAVITY,
+            floor_friction=0.86,
+            seed=1015,
+            pre_roll_s=0.18,
+            objects=[
+                make_obj(
+                    name="slide_capsule",
+                    shape="capsule",
+                    color=[0.91, 0.62, 0.24],
+                    position=[-2.05, 0.62, 0.17],
+                    size={"radius": 0.10, "height": 0.28},
+                    texture_style="stripe",
+                    restitution=0.10,
+                    friction=0.80,
+                    orientation_euler_deg=[90.0, -14.0, -18.0],
+                    linear_velocity=[3.45, -0.48, 0.0],
+                    angular_velocity=[-8.0, 0.0, -2.6],
                 ),
             ],
         ),
