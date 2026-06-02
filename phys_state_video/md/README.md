@@ -27,9 +27,6 @@ ROOT=/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/preview_v1/overvie
 LISTEN_PID=$(ss -ltnp | awk '/:18827 / {print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1)
 if [ -n "$LISTEN_PID" ]; then kill "$LISTEN_PID"; fi
 rm -f "$ROOT/http_${PORT}.pid"
-
-
-
 /data/gaoya/miniconda3/envs/wan/bin/python \
   /home/gaoya/Code_Video/phys_state_video/scripts/generate_sim_overview_page.py \
   --clean \
