@@ -38,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--appearance-dim", type=int, default=16)
     parser.add_argument("--limit-samples", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--splits",
+        default="train,val,test",
+        help="Comma-separated splits to process, e.g. 'val,test'.",
+    )
     return parser.parse_args()
 
 
@@ -217,6 +222,18 @@ def build_camera_vector(camera: dict[str, np.ndarray | float], width: int, heigh
 
 
 def process_sample(sample_dir: Path, args: argparse.Namespace, split: str, output_split_root: Path, manifest_records: list[dict]) -> int:
+    required_paths = [
+        sample_dir / "meta.json",
+        sample_dir / "states.npz",
+        sample_dir / "video.mp4",
+    ]
+    missing_paths = [path for path in required_paths if not path.exists()]
+    if missing_paths:
+        print(
+            f"[skip] split={split} sample={sample_dir} missing="
+            + ",".join(path.name for path in missing_paths)
+        )
+        return 0
     meta = json.loads((sample_dir / "meta.json").read_text(encoding="utf-8"))
     states = np.load(sample_dir / "states.npz")
     frames = read_video_frames(sample_dir / "video.mp4", resize_height=args.height, resize_width=args.width)
@@ -328,6 +345,7 @@ def process_sample(sample_dir: Path, args: argparse.Namespace, split: str, outpu
 
 def main() -> None:
     args = parse_args()
+    selected_splits = [item.strip() for item in args.splits.split(",") if item.strip()]
     output_root = args.output_root
     output_root.mkdir(parents=True, exist_ok=True)
     manifest = {
@@ -344,6 +362,8 @@ def main() -> None:
     }
 
     for split in ["train", "val", "test"]:
+        if split not in selected_splits:
+            continue
         sample_dirs = sample_directories(args.input_root, split)
         if args.limit_samples is not None:
             sample_dirs = sample_dirs[: args.limit_samples]

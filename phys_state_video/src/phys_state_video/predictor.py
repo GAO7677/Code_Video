@@ -28,6 +28,12 @@ class PromptEncoder(nn.Module):
         offsets_tensor = torch.tensor(offsets[:-1], dtype=torch.long, device=device)
         return self.embedding(flat, offsets_tensor)
 
+    def forward_tokens(self, token_ids: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
+        embeddings = self.embedding.weight[token_ids]
+        masked = embeddings * token_mask.unsqueeze(-1)
+        denom = token_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        return masked.sum(dim=1) / denom
+
 
 class FutureStatePredictor(nn.Module):
     def __init__(self, config: PredictorConfig | None = None):
@@ -57,7 +63,9 @@ class FutureStatePredictor(nn.Module):
         context_states: torch.Tensor,
         appearance: torch.Tensor,
         camera: torch.Tensor,
-        prompts: Sequence[str],
+        prompts: Sequence[str] | None = None,
+        prompt_token_ids: torch.Tensor | None = None,
+        prompt_token_mask: torch.Tensor | None = None,
         future_steps: int | None = None,
     ) -> Dict[str, torch.Tensor]:
         batch, context_steps, num_objects, state_dim = context_states.shape
@@ -65,7 +73,12 @@ class FutureStatePredictor(nn.Module):
             raise ValueError(f"expected state dim {STATE_DIM}, got {state_dim}")
         future_steps = future_steps or self.config.future_steps
 
-        prompt_embed = self.prompt_encoder(prompts, context_states.device)
+        if prompt_token_ids is not None and prompt_token_mask is not None:
+            prompt_embed = self.prompt_encoder.forward_tokens(prompt_token_ids, prompt_token_mask)
+        elif prompts is not None:
+            prompt_embed = self.prompt_encoder(prompts, context_states.device)
+        else:
+            raise ValueError("either prompts or prompt_token_ids/prompt_token_mask must be provided")
         prompt_expand = prompt_embed[:, None, None, :].expand(batch, context_steps, num_objects, -1)
         appearance_expand = appearance[:, None, :, :].expand(batch, context_steps, num_objects, -1)
         camera_expand = camera[:, :, None, :].expand(batch, context_steps, num_objects, -1)

@@ -6,6 +6,7 @@ import collections
 import html
 import json
 import os
+import os.path
 import shutil
 import subprocess
 import time
@@ -17,6 +18,10 @@ DEFAULT_PREVIEW_ROOT = DEFAULT_PROJECT_ROOT / "preview_v1"
 DEFAULT_INDUSTRIAL_ROOT = DEFAULT_PREVIEW_ROOT / "industrial"
 DEFAULT_DAILY_ROOT = DEFAULT_PREVIEW_ROOT / "daily"
 DEFAULT_OUTPUT_ROOT = DEFAULT_PREVIEW_ROOT / "overview"
+DEFAULT_RAW_DATASET_ROOT = DEFAULT_PROJECT_ROOT / "raw_v1" / "industrial_s1_scale2_merged"
+DEFAULT_EPISODE_DATASET_ROOT = (
+    DEFAULT_PROJECT_ROOT / "episodes_v1" / "industrial_s1_scale2_256x144_s8_f16_n6"
+)
 DEFAULT_PORT = 18827
 
 
@@ -25,6 +30,13 @@ def load_manifest(root: Path) -> list[dict]:
     if not manifest_path.exists():
         raise FileNotFoundError(f"missing manifest: {manifest_path}")
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def safe_read_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def ensure_symlink(src: Path, dst: Path) -> None:
@@ -59,13 +71,76 @@ def summarize_counts(items: list[dict]) -> tuple[int, dict[str, int], dict[str, 
     return len(items), dict(family_counter), dict(shape_counter)
 
 
+def summarize_raw_dataset(root: Path) -> dict:
+    split_counter: collections.Counter[str] = collections.Counter()
+    family_counter: collections.Counter[str] = collections.Counter()
+    shape_counter: collections.Counter[str] = collections.Counter()
+    total = 0
+    if not root.exists():
+        return {
+            "exists": False,
+            "total": 0,
+            "split_counts": {},
+            "family_counts": {},
+            "shape_counts": {},
+        }
+
+    meta_paths: list[Path] = []
+    for dirpath, _, filenames in os.walk(root, followlinks=True):
+        if "meta.json" in filenames:
+            meta_paths.append(Path(dirpath) / "meta.json")
+
+    for meta_path in sorted(meta_paths):
+        data = safe_read_json(meta_path)
+        if not data:
+            continue
+        total += 1
+        split = str(data.get("split", meta_path.parts[-4] if len(meta_path.parts) >= 4 else "unknown"))
+        family_slug = str(data.get("family_slug", meta_path.parent.parent.name))
+        family_name = str(data.get("family", family_slug))
+        dynamic_objects = [obj for obj in data.get("objects", []) if obj.get("role") == "dynamic"]
+        main_shape = dynamic_objects[0].get("shape", "unknown") if dynamic_objects else "unknown"
+        split_counter[split] += 1
+        family_counter[family_name] += 1
+        shape_counter[str(main_shape)] += 1
+
+    return {
+        "exists": True,
+        "total": total,
+        "split_counts": dict(split_counter),
+        "family_counts": dict(family_counter),
+        "shape_counts": dict(shape_counter),
+    }
+
+
+def summarize_episode_dataset(root: Path) -> dict:
+    split_counter: collections.Counter[str] = collections.Counter()
+    total = 0
+    if not root.exists():
+        return {"exists": False, "total": 0, "split_counts": {}}
+    for npz_path in sorted(root.rglob("*.npz")):
+        split = npz_path.parent.name
+        split_counter[split] += 1
+        total += 1
+    return {"exists": True, "total": total, "split_counts": dict(split_counter)}
+
+
 def format_counter(title: str, counts: dict[str, int]) -> str:
     parts = [f"{name} {count}" for name, count in counts.items()]
     body = "；".join(parts) if parts else "无"
     return f"{title}：{body}"
 
 
-def build_page(industrial: list[dict], daily: list[dict], output_root: Path, port: int) -> Path:
+def build_page(
+    industrial: list[dict],
+    daily: list[dict],
+    output_root: Path,
+    port: int,
+    raw_summary: dict,
+    episode_summary: dict,
+    raw_root: Path,
+    episode_root: Path,
+) -> Path:
     industrial_by_key = {item["key"]: item for item in industrial}
     daily_by_key = {item["key"]: item for item in daily}
     ordered_keys = [item["key"] for item in industrial if item["key"] in daily_by_key]
@@ -113,6 +188,13 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
             </article>
             """
         )
+
+    raw_total = raw_summary["total"]
+    raw_splits = raw_summary["split_counts"]
+    raw_family = raw_summary["family_counts"]
+    raw_shape = raw_summary["shape_counts"]
+    episode_total = episode_summary["total"]
+    episode_splits = episode_summary["split_counts"]
 
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -350,9 +432,11 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
         并保留逐帧 object-level 状态真值。页面内部把同一组物理 case 的工业训练数据版和日常物体版并排展示，方便直接对比外观风格和运动结果。
       </p>
       <div class="pills">
-        <span class="pill">配对案例数 {len(ordered_keys)}</span>
-        <span class="pill">工业版总数 {industrial_total}</span>
-        <span class="pill">日常版总数 {daily_total}</span>
+        <span class="pill">页面展示样本 {len(ordered_keys)}</span>
+        <span class="pill">工业预览模板 {industrial_total}</span>
+        <span class="pill">日常预览模板 {daily_total}</span>
+        <span class="pill">工业完整原始数据 {raw_total}</span>
+        <span class="pill">工业 episode 已导出 {episode_total}</span>
         <span class="pill">Capsule 变体 {len(capsule_keys)}</span>
         <span class="pill">默认生成主题 = 工业训练数据版</span>
         <span class="pill">工业版目录 {html.escape(str(DEFAULT_INDUSTRIAL_ROOT))}</span>
@@ -361,14 +445,29 @@ def build_page(industrial: list[dict], daily: list[dict], output_root: Path, por
       </div>
       <div class="stats-grid">
         <section class="stats-card">
-          <h3>工业训练数据版统计</h3>
-          <p>总数据量：{industrial_total} 个 case。</p>
+          <h3>预览模板统计</h3>
+          <p>当前页面只展示 15 个模板 case；这些卡片用于看场景设计和渲染效果，不代表训练全集规模。</p>
+          <p>工业预览模板：{industrial_total} 个 case；日常预览模板：{daily_total} 个 case。</p>
           <p>{html.escape(format_counter("分类别", industrial_family))}</p>
           <p>{html.escape(format_counter("分类型", industrial_shape))}</p>
         </section>
         <section class="stats-card">
-          <h3>日常物体版统计</h3>
-          <p>总数据量：{daily_total} 个 case。</p>
+          <h3>工业完整原始数据统计</h3>
+          <p>总数据量：{raw_total} 个 raw case。</p>
+          <p>{html.escape(format_counter("按 split", raw_splits))}</p>
+          <p>{html.escape(format_counter("分类别", raw_family))}</p>
+          <p>{html.escape(format_counter("分类型", raw_shape))}</p>
+        </section>
+        <section class="stats-card">
+          <h3>工业 episode 导出进度</h3>
+          <p>当前已导出：{episode_total} 个训练 episode。</p>
+          <p>{html.escape(format_counter("按 split", episode_splits))}</p>
+          <p>原始数据目录：{html.escape(str(raw_root))}</p>
+          <p>episode 目录：{html.escape(str(episode_root))}</p>
+        </section>
+        <section class="stats-card">
+          <h3>日常物体版预览统计</h3>
+          <p>日常物体版目前仍是预览对照集合，不参与这次工业训练全集统计。</p>
           <p>{html.escape(format_counter("分类别", daily_family))}</p>
           <p>{html.escape(format_counter("分类型", daily_shape))}</p>
         </section>
@@ -447,6 +546,8 @@ def main() -> None:
     parser.add_argument("--industrial-root", type=Path, default=DEFAULT_INDUSTRIAL_ROOT)
     parser.add_argument("--daily-root", type=Path, default=DEFAULT_DAILY_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--raw-dataset-root", type=Path, default=DEFAULT_RAW_DATASET_ROOT)
+    parser.add_argument("--episode-dataset-root", type=Path, default=DEFAULT_EPISODE_DATASET_ROOT)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--serve-only", action="store_true")
     parser.add_argument("--clean", action="store_true")
@@ -467,7 +568,18 @@ def main() -> None:
 
     industrial = load_manifest(args.industrial_root)
     daily = load_manifest(args.daily_root)
-    html_path = build_page(industrial, daily, args.output_root, args.port)
+    raw_summary = summarize_raw_dataset(args.raw_dataset_root)
+    episode_summary = summarize_episode_dataset(args.episode_dataset_root)
+    html_path = build_page(
+        industrial,
+        daily,
+        args.output_root,
+        args.port,
+        raw_summary,
+        episode_summary,
+        args.raw_dataset_root,
+        args.episode_dataset_root,
+    )
     pid = start_server(args.output_root, args.port)
     print(f"overview: {html_path}")
     print(f"server: http://127.0.0.1:{args.port}")

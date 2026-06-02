@@ -11,61 +11,257 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.config import PredictorConfig
-from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
+from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
 from phys_state_video.predictor import FutureStatePredictor, predictor_loss
 from phys_state_video.utils import require_torch
 
 torch = require_torch()
+
+try:
+    import wandb
+except ImportError:  # pragma: no cover - optional runtime dependency
+    wandb = None
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the future object-state predictor.")
     parser.add_argument("--data", required=True, help="Directory containing episode .npz files.")
     parser.add_argument("--output", required=True, help="Output checkpoint path.")
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--val-data", default=None, help="Optional validation episode directory.")
+    parser.add_argument(
+        "--gpu-ids",
+        default=None,
+        help="Comma-separated CUDA device ids for DataParallel, for example '0,1,2,3'.",
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Optional checkpoint to resume model weights and append history from.",
+    )
+    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument("--no-pin-memory", action="store_true")
+    parser.add_argument("--no-persistent-workers", action="store_true")
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-run-name", default=None)
+    parser.add_argument("--wandb-group", default=None)
+    parser.add_argument(
+        "--wandb-mode",
+        default="online",
+        choices=["online", "offline", "disabled"],
+    )
+    parser.add_argument(
+        "--best-output",
+        default=None,
+        help="Optional best-checkpoint path. Defaults to '<output stem>.best<suffix>'.",
+    )
     return parser.parse_args()
+
+
+def default_best_output(output_path: Path) -> Path:
+    if output_path.suffix:
+        return output_path.with_name(f"{output_path.stem}.best{output_path.suffix}")
+    return output_path.with_name(f"{output_path.name}.best")
+
+
+def infer_best_from_history(history: list[dict]) -> tuple[int | None, float | None]:
+    best_epoch = None
+    best_metric = None
+    for record in history:
+        monitor = record.get("val", record["train"])["loss"]
+        if best_metric is None or monitor < best_metric:
+            best_metric = monitor
+            best_epoch = int(record["epoch"])
+    return best_epoch, best_metric
+
+
+def save_checkpoint(output_path: Path, model, config: PredictorConfig, args, gpu_ids, history, best_epoch, best_metric):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    model_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+    torch.save(
+        {
+            "config": asdict(config),
+            "gpu_ids": gpu_ids,
+            "history": history,
+            "model": model_state,
+            "best_epoch": best_epoch,
+            "best_metric": best_metric,
+        },
+        output_path,
+    )
+
+
+def load_checkpoint(checkpoint_path: str, map_location):
+    try:
+        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location=map_location)
+
+
+def run_epoch(model, loader, optimizer, device):
+    running = {
+        "loss": 0.0,
+        "mse": 0.0,
+        "visibility": 0.0,
+        "existence": 0.0,
+        "smoothness": 0.0,
+        "scale_depth": 0.0,
+    }
+    is_train = optimizer is not None
+    model.train(mode=is_train)
+    for batch in loader:
+        if is_train:
+            optimizer.zero_grad(set_to_none=True)
+        outputs = model(
+            batch["context_states"].to(device),
+            batch["appearance"].to(device),
+            batch["camera"].to(device),
+            prompt_token_ids=batch["prompt_token_ids"].to(device),
+            prompt_token_mask=batch["prompt_token_mask"].to(device),
+            future_steps=batch["future_states"].shape[1],
+        )
+        losses = predictor_loss(outputs["states"], batch["future_states"].to(device))
+        if is_train:
+            losses["loss"].backward()
+            optimizer.step()
+        for key in running:
+            running[key] += float(losses[key].detach().cpu())
+    denom = max(len(loader), 1)
+    return {key: value / denom for key, value in running.items()}
 
 
 def main():
     args = parse_args()
+    gpu_ids = None
+    if args.gpu_ids:
+        gpu_ids = [int(item) for item in args.gpu_ids.split(",") if item.strip()]
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
-    dataset = NpzEpisodeDataset(args.data)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_episodes)
+
+    dataset = NpzPredictorDataset(args.data)
+    pin_memory = not args.no_pin_memory
+    persistent_workers = (not args.no_persistent_workers and args.num_workers > 0)
+    loader_kwargs = {
+        "batch_size": args.batch_size,
+        "collate_fn": collate_predictor_episodes,
+        "num_workers": args.num_workers,
+        "pin_memory": pin_memory,
+        "persistent_workers": persistent_workers,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
+    loader = torch.utils.data.DataLoader(dataset, shuffle=True, **loader_kwargs)
+
+    val_loader = None
+    if args.val_data is not None:
+        val_dataset = NpzPredictorDataset(args.val_data)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset,
+            shuffle=False,
+            **loader_kwargs,
+        )
+
     sample = dataset[0]
     config = PredictorConfig(
+        state_dim=sample.context_states.shape[-1],
         appearance_dim=sample.appearance.shape[-1],
         camera_dim=sample.camera.shape[-1],
         future_steps=sample.future_states.shape[0],
     )
-    model = FutureStatePredictor(config).to(args.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    base_model = FutureStatePredictor(config).to(args.device)
 
-    for epoch in range(args.epochs):
-        model.train()
-        running = 0.0
-        for batch in loader:
-            optimizer.zero_grad(set_to_none=True)
-            outputs = model(
-                batch["context_states"].to(args.device),
-                batch["appearance"].to(args.device),
-                batch["camera"].to(args.device),
-                batch["prompts"],
-            )
-            losses = predictor_loss(outputs["states"], batch["future_states"].to(args.device))
-            losses["loss"].backward()
-            optimizer.step()
-            running += float(losses["loss"].detach().cpu())
-        avg = running / max(len(loader), 1)
-        print(f"epoch={epoch + 1} loss={avg:.6f}")
+    if gpu_ids and args.device.startswith("cuda") and len(gpu_ids) > 1:
+        model = torch.nn.DataParallel(base_model, device_ids=gpu_ids)
+    else:
+        model = base_model
+
+    history = []
+    best_epoch = None
+    best_metric = None
+    if args.resume is not None:
+        resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
+        base_model.load_state_dict(resume_ckpt["model"])
+        history.extend(resume_ckpt.get("history", []))
+        best_epoch = resume_ckpt.get("best_epoch")
+        best_metric = resume_ckpt.get("best_metric")
+        if best_metric is None and history:
+            best_epoch, best_metric = infer_best_from_history(history)
+        print(f"resumed weights from {args.resume}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    wandb_run = None
+    if args.wandb_mode != "disabled":
+        if wandb is None:
+            raise RuntimeError("wandb is not installed in the active environment.")
+        wandb_run = wandb.init(
+            project=args.wandb_project or "phys-state-video",
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            group=args.wandb_group,
+            mode=args.wandb_mode,
+            config={
+                "data": args.data,
+                "val_data": args.val_data,
+                "output": args.output,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "device": args.device,
+                "gpu_ids": gpu_ids,
+                "resume": args.resume,
+                "num_workers": args.num_workers,
+                "prefetch_factor": args.prefetch_factor,
+                "pin_memory": pin_memory,
+                "persistent_workers": persistent_workers,
+                "train_episodes": len(dataset),
+                "val_episodes": len(val_loader.dataset) if val_loader is not None else 0,
+                "predictor_config": asdict(config),
+            },
+        )
 
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"config": asdict(config), "model": model.state_dict()}, output)
+    best_output = Path(args.best_output) if args.best_output is not None else default_best_output(output)
+    start_epoch = len(history)
+    for epoch in range(args.epochs):
+        epoch_index = start_epoch + epoch + 1
+        train_metrics = run_epoch(model, loader, optimizer, args.device)
+        record = {"epoch": epoch_index, "train": train_metrics}
+        if val_loader is not None:
+            with torch.no_grad():
+                val_metrics = run_epoch(model, val_loader, None, args.device)
+            record["val"] = val_metrics
+            print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f} val_loss={val_metrics['loss']:.6f}")
+        else:
+            print(f"epoch={epoch_index} train_loss={train_metrics['loss']:.6f}")
+
+        if wandb_run is not None:
+            log_payload = {f"train/{key}": value for key, value in train_metrics.items()}
+            if "val" in record:
+                log_payload.update({f"val/{key}": value for key, value in record["val"].items()})
+            log_payload["epoch"] = epoch_index
+            if best_metric is not None:
+                log_payload["best/metric"] = best_metric
+            if best_epoch is not None:
+                log_payload["best/epoch"] = best_epoch
+            wandb.log(log_payload, step=epoch_index)
+
+        history.append(record)
+        monitor = record["val"]["loss"] if "val" in record else record["train"]["loss"]
+        if best_metric is None or monitor < best_metric:
+            best_metric = monitor
+            best_epoch = epoch_index
+            save_checkpoint(best_output, model, config, args, gpu_ids, history, best_epoch, best_metric)
+            print(f"saved best checkpoint to {best_output} (epoch={best_epoch}, metric={best_metric:.6f})")
+
+    save_checkpoint(output, model, config, args, gpu_ids, history, best_epoch, best_metric)
     print(f"saved predictor checkpoint to {output}")
+    if wandb_run is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":
