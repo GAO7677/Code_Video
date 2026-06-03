@@ -40,6 +40,7 @@ def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
     from wan_.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
     from wan_.image2video import WanI2V
     from wan_.modules.vae2_1 import Wan2_1_VAE
+    from wan_.modules.vae2_2 import Wan2_2_VAE
 
     return {
         "WAN_CONFIGS": WAN_CONFIGS,
@@ -48,6 +49,7 @@ def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
         "SUPPORTED_SIZES": SUPPORTED_SIZES,
         "WanI2V": WanI2V,
         "Wan2_1_VAE": Wan2_1_VAE,
+        "Wan2_2_VAE": Wan2_2_VAE,
     }
 
 
@@ -241,22 +243,22 @@ class WanLatentExtractor:
         self._wan_configs = modules["WAN_CONFIGS"]
         if self.task not in self._wan_configs:
             raise ValueError(f"unsupported Wan task: {self.task}")
-        vae_checkpoint = self._wan_configs[self.task].vae_checkpoint
+        task_config = self._wan_configs[self.task]
+        vae_checkpoint = task_config.vae_checkpoint
         vae_dtype = torch.bfloat16 if str(self.device).startswith("cuda") else torch.float32
-        self.vae = modules["Wan2_1_VAE"](
-            vae_pth=str(Path(self.ckpt_dir) / vae_checkpoint),
-            dtype=vae_dtype,
-            device=self.device,
-        )
+        vae_class = modules["Wan2_1_VAE"]
+        if "2.2" in str(vae_checkpoint):
+            vae_class = modules["Wan2_2_VAE"]
+        self.vae = vae_class(vae_pth=str(Path(self.ckpt_dir) / vae_checkpoint), dtype=vae_dtype, device=self.device)
+        self.temporal_stride = int(task_config.vae_stride[0])
 
-    def encode_context_frames(self, context_frames: torch.Tensor) -> torch.Tensor:
+    def encode_context_frames_raw(self, context_frames: torch.Tensor) -> torch.Tensor:
         if context_frames.ndim != 5:
             raise ValueError(
                 f"expected context frames with shape [B, K, 3, H, W], got {tuple(context_frames.shape)}"
             )
-        batch, context_steps = context_frames.shape[:2]
         normalized = _normalize_video_range(context_frames.to(self.device))
-        videos = [normalized[b].permute(1, 0, 2, 3).contiguous() for b in range(batch)]
+        videos = [normalized[b].permute(1, 0, 2, 3).contiguous() for b in range(context_frames.shape[0])]
         with torch.no_grad():
             encoded = self.vae.encode(videos)
 
@@ -264,8 +266,17 @@ class WanLatentExtractor:
         for latent in encoded:
             if latent.ndim != 4:
                 raise ValueError(f"expected Wan latent with shape [C, T, H, W], got {tuple(latent.shape)}")
-            latent_slices.append(_resample_video_latents_to_frame_steps(latent, context_steps))
+            latent_slices.append(latent.permute(1, 0, 2, 3).contiguous())
         return torch.stack(latent_slices, dim=0)
+
+    def encode_context_frames(self, context_frames: torch.Tensor) -> torch.Tensor:
+        batch, context_steps = context_frames.shape[:2]
+        raw_latents = self.encode_context_frames_raw(context_frames)
+        aligned = []
+        for latent in raw_latents:
+            latent_cthw = latent.permute(1, 0, 2, 3).contiguous()
+            aligned.append(_resample_video_latents_to_frame_steps(latent_cthw, context_steps))
+        return torch.stack(aligned, dim=0)
 
 
 @dataclass(slots=True)

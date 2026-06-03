@@ -1,5 +1,6 @@
 from .config import AdapterConfig, ConditioningConfig, PredictorConfig, ProjectionConfig
 from .predictor_wan_state import WanStateLatentPredictorConfig
+from .predictor_wan_state_v2 import WanStateLatentPredictorV2Config
 from .schemas import STATE_DIM, StateIndex
 
 __all__ = [
@@ -8,6 +9,7 @@ __all__ = [
     "PredictorConfig",
     "ProjectionConfig",
     "WanStateLatentPredictorConfig",
+    "WanStateLatentPredictorV2Config",
     "STATE_DIM",
     "StateIndex",
 ]

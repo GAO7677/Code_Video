@@ -14,6 +14,12 @@ from phys_state_video.predictor_wan_state import (
     WanStateLatentPredictorConfig,
     wan_state_predictor_loss,
 )
+from phys_state_video.predictor_wan_state_v2 import (
+    WanStateLatentPredictorV2,
+    WanStateLatentPredictorV2Config,
+    resample_temporal_states,
+    wan_state_predictor_v2_loss,
+)
 from phys_state_video.utils import require_torch
 from phys_state_video.wan_bridge import (
     _apply_clean_prefix_to_latent,
@@ -23,6 +29,12 @@ from phys_state_video.wan_bridge import (
     _pad_future_state_tokens,
     _resample_state_tokens_to_steps,
     _resample_video_latents_to_frame_steps,
+)
+from phys_state_video.wan_state_v2_helpers import (
+    MockLatentExtractor,
+    compute_future_latent_steps,
+    compute_latent_step_count,
+    resample_camera_to_latent_steps,
 )
 
 torch = require_torch()
@@ -152,6 +164,88 @@ class WanStatePredictorTests(unittest.TestCase):
         self.assertAlmostEqual(float(resized[-1, 0, 0, 0]), 10.0, places=5)
         self.assertGreater(float(resized[1, 0, 0, 0]), 0.0)
         self.assertGreater(float(resized[2, 0, 0, 0]), float(resized[1, 0, 0, 0]))
+
+    def test_v2_helper_step_counts(self):
+        self.assertEqual(compute_latent_step_count(4, 4), 1)
+        self.assertEqual(compute_latent_step_count(5, 4), 2)
+        self.assertEqual(compute_future_latent_steps(4, 6, 4), 2)
+
+    def test_v2_mock_latent_extractor_shape(self):
+        extractor = MockLatentExtractor(latent_channels=16, latent_height=8, latent_width=8, temporal_stride=4)
+        frames = torch.randn(2, 4, 3, 32, 32)
+        latents = extractor.encode_context_frames_raw(frames)
+        self.assertEqual(tuple(latents.shape), (2, 1, 16, 8, 8))
+
+    def test_v2_predictor_shapes(self):
+        batch, context_steps, future_steps, num_objects = 2, 3, 2, 2
+        model = WanStateLatentPredictorV2(
+            WanStateLatentPredictorV2Config(
+                latent_channels=16,
+                camera_dim=8,
+                max_context_latent_steps=context_steps,
+                max_future_latent_steps=future_steps,
+                max_objects=num_objects,
+                hidden_dim=64,
+                state_latent_dim=32,
+                num_heads=4,
+                num_encoder_layers=2,
+                num_decoder_layers=2,
+            )
+        )
+        outputs = model(
+            context_latents=torch.randn(batch, context_steps, 16, 8, 8),
+            camera=torch.randn(batch, context_steps, 8),
+            prompts=["latent time"] * batch,
+            future_latent_steps=future_steps,
+            num_objects=num_objects,
+        )
+        self.assertEqual(tuple(outputs["context_state_latents"].shape), (batch, context_steps, 32))
+        self.assertEqual(tuple(outputs["future_state_latents"].shape), (batch, future_steps, 32))
+        self.assertEqual(tuple(outputs["context_state_predictions"].shape), (batch, context_steps, num_objects, 10))
+        self.assertEqual(tuple(outputs["future_state_predictions"].shape), (batch, future_steps, num_objects, 10))
+
+    def test_v2_resampling_shapes(self):
+        camera = torch.randn(1, 4, 8)
+        camera_resized = resample_camera_to_latent_steps(camera, 2)
+        self.assertEqual(tuple(camera_resized.shape), (1, 2, 8))
+
+        states = torch.randn(1, 6, 2, 10)
+        state_resized = resample_temporal_states(states, 2)
+        self.assertEqual(tuple(state_resized.shape), (1, 2, 2, 10))
+
+    def test_v2_loss_stages_are_finite(self):
+        batch, context_steps, future_steps, num_objects = 1, 2, 3, 2
+        model = WanStateLatentPredictorV2(
+            WanStateLatentPredictorV2Config(
+                latent_channels=16,
+                camera_dim=8,
+                max_context_latent_steps=context_steps,
+                max_future_latent_steps=future_steps,
+                max_objects=num_objects,
+                hidden_dim=64,
+                state_latent_dim=32,
+                num_heads=4,
+                num_encoder_layers=2,
+                num_decoder_layers=2,
+            )
+        )
+        outputs = model(
+            context_latents=torch.randn(batch, context_steps, 16, 8, 8),
+            camera=torch.randn(batch, context_steps, 8),
+            prompts=["grouped head test"],
+            future_latent_steps=future_steps,
+            num_objects=num_objects,
+        )
+        context_target = torch.randn(batch, context_steps, num_objects, 10)
+        future_target = torch.randn(batch, future_steps, num_objects, 10)
+        for stage in ("context_only", "future_only", "joint_finetune"):
+            losses = wan_state_predictor_v2_loss(
+                outputs=outputs,
+                context_target=context_target,
+                future_target=future_target,
+                train_stage=stage,
+            )
+            self.assertTrue(torch.isfinite(losses["loss"]).item())
 
 
 if __name__ == "__main__":
