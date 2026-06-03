@@ -1,3 +1,13 @@
+Metadata-Version: 2.4
+Name: phys-state-video
+Version: 0.1.0
+Summary: Object-state-conditioned, geometry-aware future video generation MVP
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.24
+Provides-Extra: torch
+Requires-Dist: torch>=2.1; extra == "torch"
+
 # phys-state-video
 
 `phys-state-video` is a standalone MVP for object-state-conditioned future video generation.

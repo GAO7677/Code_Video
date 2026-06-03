@@ -208,7 +208,9 @@ def select_ti2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.P
 
     if hasattr(pipeline.text_encoder, "model"):
         pipeline.text_encoder.model.eval().requires_grad_(False)
-    pipeline.vae.eval().requires_grad_(False)
+    vae_module = getattr(pipeline.vae, "model", None)
+    if vae_module is not None and hasattr(vae_module, "eval"):
+        vae_module.eval().requires_grad_(False)
     pipeline.model.eval()
     pipeline.model.requires_grad_(False)
     pipeline.state_adapter.train()

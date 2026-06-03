@@ -101,7 +101,12 @@ class WanTI2V:
             device=self.device)
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
-        self.model = WanModel.from_pretrained(checkpoint_dir)
+        # Newer diffusers defaults may instantiate the module on meta devices
+        # for low-memory loading, but Wan still moves the assembled model with
+        # a plain `.to(device)`. Force eager materialization here so both local
+        # training and TI2V inference can use the same path reliably.
+        self.model = WanModel.from_pretrained(checkpoint_dir,
+                                              low_cpu_mem_usage=False)
         self.model = self._configure_model(
             model=self.model,
             use_sp=use_sp,
