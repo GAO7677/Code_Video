@@ -4,13 +4,13 @@ import torch
 try:
     import flash_attn_interface
     FLASH_ATTN_3_AVAILABLE = True
-except ModuleNotFoundError:
+except Exception:
     FLASH_ATTN_3_AVAILABLE = False
 
 try:
     import flash_attn
     FLASH_ATTN_2_AVAILABLE = True
-except ModuleNotFoundError:
+except Exception:
     FLASH_ATTN_2_AVAILABLE = False
 
 import warnings
@@ -19,6 +19,66 @@ __all__ = [
     'flash_attention',
     'attention',
 ]
+
+
+def _scaled_dot_product_attention_fallback(
+    q,
+    k,
+    v,
+    q_lens=None,
+    k_lens=None,
+    dropout_p=0.,
+    softmax_scale=None,
+    q_scale=None,
+    causal=False,
+    window_size=(-1, -1),
+    dtype=torch.bfloat16,
+):
+    if q_lens is not None or k_lens is not None:
+        warnings.warn(
+            'Using scaled_dot_product_attention fallback with padding lengths; this is slower than flash-attn.',
+            stacklevel=2,
+        )
+    if window_size != (-1, -1):
+        warnings.warn(
+            'scaled_dot_product_attention fallback ignores window_size and uses dense attention.',
+            stacklevel=2,
+        )
+
+    q = q.transpose(1, 2).to(dtype)
+    k = k.transpose(1, 2).to(dtype)
+    v = v.transpose(1, 2).to(dtype)
+
+    if q_scale is not None:
+        q = q * q_scale
+    elif softmax_scale is not None:
+        q = q * (softmax_scale**0.5)
+
+    attn_mask = None
+    if k_lens is not None:
+        key_positions = torch.arange(k.size(-2), device=k.device)
+        key_mask = key_positions.unsqueeze(0) >= k_lens.to(k.device).unsqueeze(1)
+        attn_mask = ~key_mask[:, None, None, :]
+        if q_lens is not None:
+            query_positions = torch.arange(q.size(-2), device=q.device)
+            query_mask = query_positions.unsqueeze(0) < q_lens.to(
+                q.device).unsqueeze(1)
+            attn_mask = attn_mask & query_mask[:, None, :, None]
+
+    out = torch.nn.functional.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask=attn_mask,
+        dropout_p=dropout_p,
+        is_causal=causal,
+    )
+    out = out.transpose(1, 2).contiguous()
+    if q_lens is not None:
+        query_positions = torch.arange(out.size(1), device=out.device)
+        query_mask = query_positions.unsqueeze(0) < q_lens.to(out.device).unsqueeze(1)
+        out = out * query_mask[:, :, None, None].to(out.dtype)
+    return out
 
 
 def flash_attention(
@@ -108,8 +168,7 @@ def flash_attention(
             softmax_scale=softmax_scale,
             causal=causal,
             deterministic=deterministic)[0].unflatten(0, (b, lq))
-    else:
-        assert FLASH_ATTN_2_AVAILABLE
+    elif FLASH_ATTN_2_AVAILABLE:
         x = flash_attn.flash_attn_varlen_func(
             q=q,
             k=k,
@@ -125,6 +184,20 @@ def flash_attention(
             causal=causal,
             window_size=window_size,
             deterministic=deterministic).unflatten(0, (b, lq))
+    else:
+        return _scaled_dot_product_attention_fallback(
+            q=q.unflatten(0, (b, lq)),
+            k=k.unflatten(0, (b, lk)),
+            v=v.unflatten(0, (b, lk)),
+            q_lens=q_lens,
+            k_lens=k_lens,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            q_scale=q_scale,
+            causal=causal,
+            window_size=window_size,
+            dtype=dtype,
+        ).type(out_dtype)
 
     # output
     return x.type(out_dtype)
