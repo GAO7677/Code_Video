@@ -353,6 +353,55 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 - `当前状态`
   这版目前仍然是 predictor-only 分支，还没有单独接入新的 adapter 训练脚本、case watcher 和总页面入口；现阶段重点是先验证视觉上下文驱动 predictor 相比旧显式输入 predictor 的收敛和泛化表现。
 
+## 2026-06-03 prefix_infill_v1 context clean latent + future noisy latent 补全版
+
+### 1. 方法流程
+
+这版方案把“先预测状态、再生成视频”的主链路改成“前缀视频 latent 已知、未来视频 latent 补全”：先把完整视频编码成 `z_all ∈ R^{B×(K+T)×C×H'×W'}`，再切成 `context_latents ∈ R^{B×K×C×H'×W'}` 和 `future_latents_gt ∈ R^{B×T×C×H'×W'}`；训练时保持 `context_latents` 干净不加噪，只对 `future_latents_gt` 加噪得到 `future_latents_noisy ∈ R^{B×T×C×H'×W'}`，随后把两段拼成 `sequence_latents ∈ R^{B×(K+T)×C×H'×W'}`，并配套 `future_mask ∈ R^{B×(K+T)}` 标明哪些时间步属于未来段。视频模型主干接收 `context clean + future noisy` 的整段 latent 序列，只对 future 段做噪声预测 / latent 补全；如果保留 predictor，则 predictor 不再主输出绝对显式状态，而是输出 `future_prior_tokens ∈ R^{B×T×N×D}` 或 `future_latent_prior ∈ R^{B×T×M×D}` 作为未来段隐式先验，同时从这些隐式 token 上接 `state/motion` head 做辅助监督。推理时输入真实 `context`，后面 future 段直接 padding 高斯噪声，再让模型在 context 前缀条件下把未来 latent 逐步 denoise 成未来视频。
+
+### 1.1 Predictor 输入输出
+
+这版里 predictor 不是必须模块；如果启用 predictor，它的输入优先改为 `context_frames` 或 `context_latents` 加 prompt，而不是 `context_states`。`predictor` 输出不再以绝对 `future_states ∈ R^{B×T×N×10}` 作为视频生成主条件，而是以 `future_prior_tokens ∈ R^{B×T×N×D}` 或 `future_latent_prior ∈ R^{B×T×M×D}` 作为主输出；同时可以保留辅助显式分支 `states ∈ R^{B×T×N×10}`、`motion ∈ R^{B×T×N×3}`，这些显式量只负责监督和诊断，不再承担主生成条件的职责。
+
+### 1.2 视频生成模型的 Condition + 条件注入
+
+视频生成模型的主输入是整段 latent 序列：`context_latents_clean ∈ R^{B×K×C×H'×W'}` 与 `future_latents_noisy ∈ R^{B×T×C×H'×W'}` 拼接后的 `sequence_latents ∈ R^{B×(K+T)×C×H'×W'}`，外加 `future_mask`、prompt，以及可选的 `future_prior_tokens`。这版的关键是 `future-only condition 注入`：`context` 段 latent 作为真实前缀保留，不再额外注入 object condition；外部条件只作用在 `future` 段 token 上。条件进入视频模型的形式建议是 `full-sequence self-attention + future-only cross-attention / adapter 注入`：整段 token 一起做时序建模，使 future 能看到 context；但 predictor prior、object memory、prompt bias 等条件只通过 `future_mask` gated 的 adapter 或 cross-attention 注入到 future token，而不改写 context token。本质上，这版不是 `ControlNet-style` 空间图主控制，而是 `prefix latent + future-only token condition` 的视频补全结构。
+
+### 1.3 可训练模块
+
+这版的可训练模块主要包括：整段视频 latent 补全主干、future-only adapter / cross-attention 注入层、prompt / prior token 投影层，以及可选 predictor 的 future prior 分支和其上的显式监督 head。如果需要显式物理约束，可以从 future latent token 上接 `state/motion` heads 做辅助监督，但这些 heads 不是主生成链路的一部分。
+
+### 2. 关键实现
+
+- `当前状态`
+  这版目前还是方法设计稿，尚未在仓库中落成独立实现文件；下一步应复制出新的版本化文件，而不是直接改坏 `latent_v2` 或 `visual_context_predictor_v3` 的现有接口。
+
+- `建议新增的主干实现`
+  路径：`/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/adapter_prefix_infill_v1.py`
+  关键函数：`PrefixInfillVideoBackbone.forward()`
+
+- `建议新增的训练入口`
+  路径：`/home/gaoya/Code_Video/phys_state_video/scripts/train_adapter_prefix_infill_v1.py`
+  关键函数：`run_epoch()`、`main()`
+
+- `建议新增的推理入口`
+  路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_prefix_infill_v1.py`
+  关键函数：`main()`
+
+### 3. 输出目录与可视化指令
+
+- `当前状态`
+  这版尚未开始正式实现和训练，因此还没有固定的运行目录、checkpoint 目录和可视化页面。
+
+- `建议训练输出目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_prefix_infill_v1`
+
+- `建议可视化目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_prefix_infill_v1/viz/trained_cases_v1`
+
+- `当前定位`
+  这版是下一条主线候选方案，目标是替代当前“predictor 先 rollout future state，再由 adapter 猜视频”的结构，改为“context latent 保持干净、future latent 补噪补全”的 prefix-conditioned 生成方式。
+
 ## 统一可视化入口与跨方法对比
 
 ### 1. 页面说明

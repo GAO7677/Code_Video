@@ -40,6 +40,14 @@ METHOD_SPECS = [
         "best_report": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v2" / "viz" / "training_ckpts" / "cases" / "adapter_best" / "report.json",
         "timeline_dir": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v2" / "viz" / "training_ckpts",
     },
+    {
+        "id": "visualctx_v3",
+        "label": "visualctx_v3 视觉上下文 predictor-only 版",
+        "desc": "predictor 主输入改为 context frames；当前页面展示 predictor-only case，可视化 GT future 上的预测轨迹/尺度 overlay 和显式条件图。",
+        "best_dir": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_visualctx_predictor_v3_gpu0123" / "viz" / "predictor_cases_v1",
+        "best_report": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_visualctx_predictor_v3_gpu0123" / "viz" / "predictor_cases_v1" / "report.json",
+        "timeline_dir": None,
+    },
 ]
 
 
