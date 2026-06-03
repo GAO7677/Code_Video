@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +26,11 @@ def parse_args():
     parser.add_argument("--episode", required=True, help="Episode .npz file.")
     parser.add_argument("--predictor", required=True, help="Predictor checkpoint path.")
     parser.add_argument("--wan-ckpt-dir", required=True, help="Wan checkpoint directory.")
+    parser.add_argument(
+        "--wan-state-adapter-ckpt",
+        default=None,
+        help="Checkpoint for the Wan state adapter branch. Strongly recommended when using predictor state tokens.",
+    )
     parser.add_argument("--output", required=True, help="Output directory.")
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
     parser.add_argument("--wan-task", default="i2v-A14B")
@@ -88,11 +94,18 @@ def main():
         task=args.wan_task,
         device=args.device,
     )
+    if args.wan_state_adapter_ckpt is None:
+        warnings.warn(
+            "running Wan inference without --wan-state-adapter-ckpt: state tokens will be wired in, "
+            "but the Wan state adapter branch may stay near ineffective default initialization.",
+            stacklevel=2,
+        )
     backend = WanImageToVideoBackend(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
         task=args.wan_task,
         device=args.device,
+        state_adapter_ckpt=args.wan_state_adapter_ckpt,
     )
 
     context_frames = batch["context_frames"].to(args.device)
@@ -171,6 +184,7 @@ def main():
                 "shift": args.shift,
                 "state_scale": args.state_scale,
                 "seed": args.seed,
+                "wan_state_adapter_ckpt": args.wan_state_adapter_ckpt,
                 "predictor_version": predictor_ckpt.get("predictor_version", "wan_state_v1"),
             },
             ensure_ascii=False,

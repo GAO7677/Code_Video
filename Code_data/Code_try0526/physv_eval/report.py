@@ -8,8 +8,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import imageio_ffmpeg
-
 from .datasets import GROUP_SPECS, iter_group_jsons
 from .paths import A_OUTPUT, ABC_REPORT_ROOT, DATA_ROOT
 from .records import load_payload, metric_value, resolve_video_path
@@ -833,8 +831,11 @@ def ensure_preview_video(video_path: Path) -> str:
     preview_path = PREVIEW_ROOT / relative_key
     preview_path.parent.mkdir(parents=True, exist_ok=True)
 
+    ffmpeg_exe = _resolve_ffmpeg_exe()
+    if ffmpeg_exe is None:
+        return relative_key
+
     if not preview_path.exists() or preview_path.stat().st_mtime < source.stat().st_mtime:
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
             ffmpeg_exe,
             "-y",
@@ -851,6 +852,21 @@ def ensure_preview_video(video_path: Path) -> str:
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return f"preview_videos/{relative_key}"
+
+
+def _resolve_ffmpeg_exe() -> str | None:
+    try:
+        import imageio_ffmpeg
+    except Exception:
+        imageio_ffmpeg = None
+
+    if imageio_ffmpeg is not None:
+        try:
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+
+    return None
 
 
 def build_html() -> str:

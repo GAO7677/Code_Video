@@ -4,6 +4,7 @@ import gc
 import math
 import random
 import sys
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -173,6 +174,40 @@ def _pad_future_state_tokens(state_tokens: torch.Tensor, target_steps: int) -> t
     return torch.cat([state_tokens, pad_source.expand(-1, pad_steps, -1)], dim=1)
 
 
+def _resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
+    if state_tokens.ndim != 3:
+        raise ValueError(f"expected state tokens with shape [B, T, D], got {tuple(state_tokens.shape)}")
+    if target_steps <= 0:
+        raise ValueError(f"target_steps must be positive, got {target_steps}")
+    if state_tokens.shape[1] == target_steps:
+        return state_tokens
+    tokens_bdt = state_tokens.transpose(1, 2)
+    resized = torch.nn.functional.interpolate(
+        tokens_bdt,
+        size=target_steps,
+        mode="linear",
+        align_corners=False,
+    )
+    return resized.transpose(1, 2).contiguous()
+
+
+def _resample_video_latents_to_frame_steps(latent_clip: torch.Tensor, target_steps: int) -> torch.Tensor:
+    if latent_clip.ndim != 4:
+        raise ValueError(f"expected latent clip with shape [C, T, H, W], got {tuple(latent_clip.shape)}")
+    if target_steps <= 0:
+        raise ValueError(f"target_steps must be positive, got {target_steps}")
+    channels, clip_steps, lat_h, lat_w = latent_clip.shape
+    flattened = latent_clip.permute(0, 2, 3, 1).contiguous().view(1, channels * lat_h * lat_w, clip_steps)
+    resized = torch.nn.functional.interpolate(
+        flattened,
+        size=target_steps,
+        mode="linear",
+        align_corners=False,
+    )
+    resized = resized.view(channels, lat_h, lat_w, target_steps)
+    return resized.permute(3, 0, 1, 2).contiguous()
+
+
 def _resize_video_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
     if frames.ndim != 4:
         raise ValueError(f"expected frames with shape [T, 3, H, W], got {tuple(frames.shape)}")
@@ -221,7 +256,7 @@ class WanLatentExtractor:
             )
         batch, context_steps = context_frames.shape[:2]
         normalized = _normalize_video_range(context_frames.to(self.device))
-        videos = [normalized[b, step].unsqueeze(1) for b in range(batch) for step in range(context_steps)]
+        videos = [normalized[b].permute(1, 0, 2, 3).contiguous() for b in range(batch)]
         with torch.no_grad():
             encoded = self.vae.encode(videos)
 
@@ -229,9 +264,8 @@ class WanLatentExtractor:
         for latent in encoded:
             if latent.ndim != 4:
                 raise ValueError(f"expected Wan latent with shape [C, T, H, W], got {tuple(latent.shape)}")
-            latent_slices.append(latent[:, 0] if latent.shape[1] == 1 else latent.mean(dim=1))
-        stacked = torch.stack(latent_slices, dim=0)
-        return stacked.reshape(batch, context_steps, *stacked.shape[1:])
+            latent_slices.append(_resample_video_latents_to_frame_steps(latent, context_steps))
+        return torch.stack(latent_slices, dim=0)
 
 
 @dataclass(slots=True)
@@ -240,6 +274,7 @@ class WanImageToVideoBackend:
     wan_repo_root: str | Path | None = None
     task: str = "i2v-A14B"
     device: str = "cuda"
+    state_adapter_ckpt: str | Path | None = None
 
     def __post_init__(self) -> None:
         if not str(self.device).startswith("cuda"):
@@ -296,7 +331,7 @@ class WanImageToVideoBackend:
         max_area = self._max_area_configs[size]
         context_frames = context_frames.to(self.pipeline.device)
         normalized_context = _normalize_video_range(context_frames)
-        condition_tokens = _pad_future_state_tokens(condition_tokens.to(self.pipeline.device), total_frames - context_steps)
+        condition_tokens = condition_tokens.to(self.pipeline.device)
 
         height, width = normalized_context.shape[-2:]
         aspect_ratio = height / width
@@ -337,6 +372,8 @@ class WanImageToVideoBackend:
                 "context prefix covers all Wan latent steps, leaving no future latent step to denoise: "
                 f"prefix_len={prefix_len}, latent_steps={noise.shape[1]}"
             )
+        future_latent_steps = int(noise.shape[1] - prefix_len)
+        condition_tokens = _resample_state_tokens_to_steps(condition_tokens, future_latent_steps)
 
         i2v_video = torch.zeros(
             3,
@@ -384,6 +421,17 @@ class WanImageToVideoBackend:
             no_sync_low_noise(),
             no_sync_high_noise(),
         ):
+            if self.state_adapter_ckpt is None and self.pipeline.state_adapter is None:
+                warnings.warn(
+                    "state_tokens were provided without state_adapter_ckpt; Wan will build the adapter branch "
+                    "from shape only, but its gates remain at default initialization until trained weights are loaded.",
+                    stacklevel=2,
+                )
+            if self.state_adapter_ckpt is not None and self.pipeline.state_adapter is None:
+                self.pipeline.load_state_adapter(
+                    str(self.state_adapter_ckpt),
+                    state_condition={"state_tokens": condition_tokens},
+                )
             state_context = self.pipeline._build_state_context(
                 {"state_tokens": condition_tokens},
                 offload_model,

@@ -8,11 +8,13 @@ from .utils import hash_prompt_tokens, require_torch
 
 torch = require_torch()
 nn = torch.nn
+F = torch.nn.functional
 
 
 @dataclass(slots=True)
 class WanStateLatentPredictorConfig:
     latent_channels: int = 16
+    latent_pool_side: int = 2
     camera_dim: int = 8
     prompt_vocab_size: int = 4096
     prompt_embed_dim: int = 64
@@ -56,8 +58,8 @@ class WanStateLatentPredictor(nn.Module):
         super().__init__()
         self.config = config or WanStateLatentPredictorConfig()
 
-        stats_dim = self.config.latent_channels * 2
-        encoder_dim = stats_dim + self.config.camera_dim + self.config.prompt_embed_dim
+        latent_feature_dim = self.config.latent_channels * (self.config.latent_pool_side ** 2 + 2)
+        encoder_dim = latent_feature_dim + self.config.camera_dim + self.config.prompt_embed_dim
 
         self.prompt_encoder = PromptEncoder(self.config.prompt_vocab_size, self.config.prompt_embed_dim)
         self.prompt_proj = nn.Sequential(
@@ -134,14 +136,20 @@ class WanStateLatentPredictor(nn.Module):
             raise ValueError("either prompts or prompt_token_ids/prompt_token_mask must be provided")
         return self.prompt_proj(prompt_embed)
 
-    def _latent_stats(self, context_latents: torch.Tensor) -> torch.Tensor:
+    def _latent_features(self, context_latents: torch.Tensor) -> torch.Tensor:
         if context_latents.ndim != 5:
             raise ValueError(
                 f"expected context latents with shape [B, K, C, H, W], got {tuple(context_latents.shape)}"
             )
+        batch, context_steps, channels, height, width = context_latents.shape
+        pooled = F.adaptive_avg_pool2d(
+            context_latents.reshape(batch * context_steps, channels, height, width),
+            output_size=(self.config.latent_pool_side, self.config.latent_pool_side),
+        )
+        pooled = pooled.reshape(batch, context_steps, channels * self.config.latent_pool_side ** 2)
         mean = context_latents.mean(dim=(-1, -2))
         std = context_latents.var(dim=(-1, -2), unbiased=False).add(1e-6).sqrt()
-        return torch.cat([mean, std], dim=-1)
+        return torch.cat([pooled, mean, std], dim=-1)
 
     def _decode_object_states(self, state_latents: torch.Tensor, num_objects: int) -> torch.Tensor:
         if num_objects > self.config.max_objects:
@@ -182,8 +190,8 @@ class WanStateLatentPredictor(nn.Module):
         )
         prompt_context = prompt_context.unsqueeze(1).expand(-1, context_steps, -1)
 
-        latent_stats = self._latent_stats(context_latents)
-        encoder_input = torch.cat([latent_stats, camera, prompt_context], dim=-1)
+        latent_features = self._latent_features(context_latents)
+        encoder_input = torch.cat([latent_features, camera, prompt_context], dim=-1)
         encoder_input = self.context_input_proj(encoder_input)
         encoder_input = encoder_input + self.context_pos_embed[:, :context_steps]
         context_hidden = self.context_encoder(encoder_input)

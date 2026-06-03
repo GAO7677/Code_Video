@@ -78,3 +78,37 @@ Run inference:
   --adapter /path/to/checkpoints/adapter.pt \
   --output /path/to/output_dir
 ```
+
+## Wan state-condition export
+
+To connect `phys_state_video` episodes with the external Wan `state_condition` interface, export per-sample bundles containing:
+
+- `input_image.png`: the first context frame
+- `state_condition.npz`: Wan-readable condition payload
+- `meta.json`: shape/source metadata
+- `prompt.txt`: prompt text
+- `manifest.jsonl`: dataset manifest
+
+Ground-truth future states can be exported directly:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/export_wan_state_condition_dataset.py \
+  --episodes /path/to/episodes \
+  --output /path/to/wan_state_condition_gt \
+  --future-state-source ground_truth
+```
+
+When a trained `wan_state_v1` predictor checkpoint is available, export predictor-produced `state_tokens`:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/export_wan_state_condition_dataset.py \
+  --episodes /path/to/episodes \
+  --output /path/to/wan_state_condition_predictor \
+  --future-state-source wan_predictor \
+  --predictor /path/to/wan_state_predictor.pt \
+  --wan-ckpt-dir /path/to/wan_ckpt_dir
+```
+
+## Current local checkpoint note
+
+This workspace currently has a local `Wan2.2-TI2V-5B` checkpoint under `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B`. It does not currently include a local `i2v-A14B` checkpoint, so the `Wan` smoke test that can be run end-to-end here is limited to the generic external `state_condition` path rather than the full local `clean_prefix_latents + WanI2V` continuation bridge.
