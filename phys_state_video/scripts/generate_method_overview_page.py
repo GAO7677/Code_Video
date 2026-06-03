@@ -32,6 +32,14 @@ METHOD_SPECS = [
         "best_report": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v1" / "viz" / "training_ckpts" / "cases" / "adapter_best" / "report.json",
         "timeline_dir": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v1" / "viz" / "training_ckpts",
     },
+    {
+        "id": "latent_v2",
+        "label": "latent_v2 latent-only 生成版",
+        "desc": "显式 state 主要用于监督，视频生成主条件切换为 future latent tokens；展示 best ckpt 和训练中 ckpt 时间线页面。",
+        "best_dir": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v2" / "viz" / "training_ckpts" / "cases" / "adapter_best",
+        "best_report": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v2" / "viz" / "training_ckpts" / "cases" / "adapter_best" / "report.json",
+        "timeline_dir": DEFAULT_RUNS_ROOT / "industrial_s1_scale2_latent_v2" / "viz" / "training_ckpts",
+    },
 ]
 
 
@@ -103,9 +111,13 @@ def metric_text(report: dict | None) -> str:
 def build_index_html(method_entries: list[dict], port: int) -> str:
     cards = []
     for method in method_entries:
-        extra_link = ""
+        links = []
+        if method.get("best_rel"):
+            links.append(f'<a class="link" href="{html.escape(method["best_rel"])}/index.html">best ckpt case 页面</a>')
+        else:
+            links.append('<span class="pending">best ckpt case 页面尚未就绪</span>')
         if method.get("timeline_rel"):
-            extra_link = f'<a class="link secondary" href="{html.escape(method["timeline_rel"])}/index.html">训练中 ckpt 时间线</a>'
+            links.append(f'<a class="link secondary" href="{html.escape(method["timeline_rel"])}/index.html">训练中 ckpt 时间线</a>')
         cards.append(
             f"""
             <article class="card">
@@ -114,8 +126,7 @@ def build_index_html(method_entries: list[dict], port: int) -> str:
               <p class="desc">{html.escape(method['desc'])}</p>
               <p class="meta">{html.escape(method['metrics'])}</p>
               <div class="link-row">
-                <a class="link" href="{html.escape(method['best_rel'])}/index.html">best ckpt case 页面</a>
-                {extra_link}
+                {''.join(links)}
               </div>
             </article>
             """
@@ -180,6 +191,10 @@ def build_index_html(method_entries: list[dict], port: int) -> str:
     }}
     .secondary {{
       color: #7f4f28;
+    }}
+    .pending {{
+      color: #9b8f82;
+      font-weight: 700;
     }}
     .compare {{
       display: inline-block;
@@ -397,29 +412,37 @@ def main():
     reports: dict[str, dict] = {}
     for spec in METHOD_SPECS:
         report = safe_read_json(spec["best_report"])
-        if not report:
-            continue
-        best_link_name = f"{spec['id']}_best"
-        ensure_symlink(spec["best_dir"], methods_root / best_link_name)
+        best_rel = None
+        if report and spec["best_dir"].exists():
+            best_link_name = f"{spec['id']}_best"
+            ensure_symlink(spec["best_dir"], methods_root / best_link_name)
+            best_rel = f"methods/{best_link_name}"
+
         timeline_rel = None
-        if spec.get("timeline_dir"):
+        if spec.get("timeline_dir") and spec["timeline_dir"].exists():
             timeline_link_name = f"{spec['id']}_timeline"
             ensure_symlink(spec["timeline_dir"], methods_root / timeline_link_name)
             timeline_rel = f"methods/{timeline_link_name}"
+
+        if not report and not timeline_rel:
+            continue
+
         valid_methods.append(
             {
                 "id": spec["id"],
                 "label": spec["label"],
                 "desc": spec["desc"],
-                "best_rel": f"methods/{best_link_name}",
+                "best_rel": best_rel,
                 "timeline_rel": timeline_rel,
-                "metrics": metric_text(report),
+                "metrics": metric_text(report) if report else "训练中，best report 尚未生成",
             }
         )
-        reports[spec["id"]] = report
+        if report:
+            reports[spec["id"]] = report
 
-    if len(valid_methods) >= 2:
-        compare_html = build_compare_html(valid_methods, reports)
+    compare_methods = [method for method in valid_methods if method["id"] in reports]
+    if len(compare_methods) >= 2:
+        compare_html = build_compare_html(compare_methods, reports)
         (compare_root / "index.html").write_text(compare_html, encoding="utf-8")
 
     index_html = build_index_html(valid_methods, args.port)

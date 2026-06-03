@@ -16,22 +16,17 @@
 
 这版基线方法采用显式 object state 作为主条件：给定前 `K` 帧 context 视频及其物体级状态，先将每个样本整理为 `context_frames ∈ R^{B×K×3×H×W}`、`context_states ∈ R^{B×K×N×10}`、`appearance ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；`Future State Predictor` 直接基于 `context_states + appearance + camera + prompt` 预测未来显式状态 `future_states ∈ R^{B×T×N×10}`，其中 10 维状态为 `center_x, center_y, depth, log_scale, vel_x, vel_y, depth_vel, visibility, existence, confidence`；随后把 `future_states` 转成 `condition_maps ∈ R^{B×T×C_map×H×W}`，包括 heatmap、bbox、depth、visibility、velocity map，同时从 `appearance` 和末帧尺度等信息构造 `memory_tokens`；最后 `State-Conditioned Video Adapter` 接收 `context_frames`、`condition_maps` 和 `memory_tokens` 进行未来视频重建，输出 `generated_frames ∈ R^{B×T×3×H×W}`，训练时主要依赖视频重建损失、显式 state auxiliary loss 和 spatial auxiliary loss，使视频模型尽量服从显式位置、尺度、深度和可见性条件。
 
-### 1.1 Predictor 输入
+### 1.1 Predictor 输入输出
 
-`predictor` 输入为 `context_states ∈ R^{B×K×N×10}`、`appearance ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；当前这版不直接把 `context_frames` 输入给 predictor，而是依赖已经抽取好的 object-level state 与外观向量。
+`predictor` 输入为 `context_states ∈ R^{B×K×N×10}`、`appearance ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；当前这版不直接把 `context_frames` 输入给 predictor，而是依赖已经抽取好的 object-level state 与外观向量。`predictor` 输出为未来显式状态 `future_states ∈ R^{B×T×N×10}`，10 维分别表示 `center_x, center_y, depth, log_scale, vel_x, vel_y, depth_vel, visibility, existence, confidence`；这版没有额外的 future latent 输出。
 
-### 1.2 Predictor 输出
+### 1.2 视频生成模型的 Condition + 条件注入
 
-`predictor` 输出为未来显式状态 `future_states ∈ R^{B×T×N×10}`，10 维分别表示 `center_x, center_y, depth, log_scale, vel_x, vel_y, depth_vel, visibility, existence, confidence`；这版没有额外的 future latent 输出。
+视频生成模型接收三类 condition：`context_frames ∈ R^{B×K×3×H×W}`、显式空间条件 `condition_maps ∈ R^{B×T×C_map×H×W}`、以及物体级 `memory_tokens`；其中 `condition_maps` 由 `future_states` 投影得到，包含 heatmap、bbox、depth、visibility、velocity 等空间图，`memory_tokens` 主要包含 `appearance` 和末帧尺度置信信息。这版的条件注入形式是 `空间图 + memory token + adapter`：`condition_maps` 先经过卷积编码器，以 `ControlNet-style / spatial adapter-style` 的方式和 context latent 做逐帧相加融合；`memory_tokens` 再作为 `cross-attention memory` 输入到 `StateCrossAttentionAdapter` 中，对视频 latent token 做条件注入。换句话说，这版不是把状态直接拼到 token 维度，而是“空间条件走卷积支路，物体身份条件走 cross-attention adapter”。
 
-### 1.3 视频生成模型的 Condition
+### 1.3 可训练模块
 
-视频生成模型接收三类 condition：
-`context_frames ∈ R^{B×K×3×H×W}`、显式空间条件 `condition_maps ∈ R^{B×T×C_map×H×W}`、以及物体级 `memory_tokens`；其中 `condition_maps` 由 `future_states` 投影得到，包含 heatmap、bbox、depth、visibility、velocity 等空间图，`memory_tokens` 主要包含 `appearance` 和末帧尺度置信信息。
-
-### 1.4 Condition 进入视频模型的形式
-
-这版是 `空间图 + memory token + adapter` 的形式：`condition_maps` 先经过卷积编码器，以 `ControlNet-style / spatial adapter-style` 的方式和 context latent 做逐帧相加融合；`memory_tokens` 再作为 `cross-attention memory` 输入到 `StateCrossAttentionAdapter` 中，对视频 latent token 做条件注入。换句话说，这版不是把状态直接拼到 token 维度，而是“空间条件走卷积支路，物体身份条件走 cross-attention adapter”。
+这版中可训练模块主要包括两部分：`Future State Predictor` 整体可训练，用于从历史 object state 预测未来显式状态；`State-Conditioned Video Adapter` 及其内部的条件编码器、cross-attention adapter、decoder、state/spatial 辅助头可训练，用于在给定显式 condition 的情况下重建未来视频。
 
 ### 2. 关键实现
 
@@ -83,21 +78,17 @@
 
 整个方法可以写成一条链：给定前 `K` 帧 context 视频及其物体级状态，先把每个样本整理成 `context_frames ∈ R^{B×K×3×H×W}`、`context_states ∈ R^{B×K×N×S}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt，其中当前实现里 `S=10`；`Future Latent Predictor` 以 `context_states + appearance/physics + camera + prompt` 为输入，先编码成历史隐状态，再为每个未来时刻、每个物体预测 `future_latents ∈ R^{B×T×N×D}`，当前可设 `D=128`，并从这些 latent 上接显式监督 head，得到 `states ∈ R^{B×T×N×10}` 和 `motion ∈ R^{B×T×N×3}`，其中 `states` 包含 `center/depth/log_scale/visibility` 等可解释变量；随后把显式状态投影成空间条件 `condition_maps ∈ R^{B×T×C_map×H×W}`，例如 heatmap、bbox、depth、visibility、velocity map，同时把 `future_latents` 直接作为 object-temporal memory token；最后 `State/Latent-Conditioned Video Adapter` 接收 `context_frames`、`condition_maps`、`memory_tokens` 以及 `future_latent_tokens`，在内部把像素特征从 `R^{B×K×3×H×W}` 编到时空 latent，再与 `R^{B×T×N×D}` 的未来物体 latent 做 cross-attention 融合，输出未来视频 `generated_frames ∈ R^{B×T×3×H×W}`，训练时同时用视频重建损失和 latent 上各个显式 head 的监督损失约束，使模型既保留可解释的物体状态控制，又能用高带宽 latent 表达接触相位、姿态变化和复杂动力学。
 
-### 1.1 Predictor 输入
+### 1.1 Predictor 输入输出
 
-`predictor` 输入为 `context_states ∈ R^{B×K×N×10}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；其中 `appearance/physics` 里已经编码了物体类别、颜色、尺寸、质量、摩擦等静态属性。
+`predictor` 输入为 `context_states ∈ R^{B×K×N×10}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；其中 `appearance/physics` 里已经编码了物体类别、颜色、尺寸、质量、摩擦等静态属性。`predictor` 主输出为 `future_latents ∈ R^{B×T×N×128}`；同时从这些 latent 上接显式监督 head，输出 `states ∈ R^{B×T×N×10}` 和 `motion ∈ R^{B×T×N×3}`。这里 `future_latents` 是高带宽隐式未来状态，`states/motion` 是可解释监督分支。
 
-### 1.2 Predictor 输出
+### 1.2 视频生成模型的 Condition + 条件注入
 
-`predictor` 主输出为 `future_latents ∈ R^{B×T×N×128}`；同时从这些 latent 上接显式监督 head，输出 `states ∈ R^{B×T×N×10}` 和 `motion ∈ R^{B×T×N×3}`。这里 `future_latents` 是高带宽隐式未来状态，`states/motion` 是可解释监督分支。
+视频生成模型接收 `context_frames ∈ R^{B×K×3×H×W}`、显式空间条件 `condition_maps ∈ R^{B×T×7×H×W}`、`memory_tokens`、`future_latent_tokens ∈ R^{B×T×N×128}`、以及由 `context_states` 和 prompt 编码得到的额外 memory token；其中 `condition_maps` 来自显式 `states` 投影，`future_latent_tokens` 来自 predictor 的主输出。这版的条件注入形式是 `空间图 + future latent cross-attention + context/prompt adapter`：`condition_maps` 走卷积条件支路，与 context latent 逐帧相加；`future_latent_tokens` 作为 `cross-attention memory` 按时间步注入到视频 token 中；`context_states` 和 prompt 也会编码成 token，经由同一个 `StateCrossAttentionAdapter` 作为额外 memory 一起参与 attention。也就是说，这版仍然保留 `ControlNet-style / spatial adapter-style` 显式图条件，但新增了一个更强的 `future latent adapter` 支路。
 
-### 1.3 视频生成模型的 Condition
+### 1.3 可训练模块
 
-视频生成模型接收 `context_frames ∈ R^{B×K×3×H×W}`、显式空间条件 `condition_maps ∈ R^{B×T×7×H×W}`、`memory_tokens`、`future_latent_tokens ∈ R^{B×T×N×128}`、以及由 `context_states` 和 prompt 编码得到的额外 memory token；其中 `condition_maps` 来自显式 `states` 投影，`future_latent_tokens` 来自 predictor 的主输出。
-
-### 1.4 Condition 进入视频模型的形式
-
-这版是 `空间图 + future latent cross-attention + context/prompt adapter` 的形式：`condition_maps` 走卷积条件支路，与 context latent 逐帧相加；`future_latent_tokens` 作为 `cross-attention memory` 按时间步注入到视频 token 中；`context_states` 和 prompt 也会编码成 token，经由同一个 `StateCrossAttentionAdapter` 作为额外 memory 一起参与 attention。也就是说，这版仍然保留 `ControlNet-style / spatial adapter-style` 显式图条件，但新增了一个更强的 `future latent adapter` 支路。
+这版中可训练模块主要包括两部分：`Future Latent Predictor` 整体可训练，包括 latent 主干和显式监督 head；`State/Latent-Conditioned Video Adapter` 整体可训练，包括 condition encoder、`StateCrossAttentionAdapter`、decoder、state/spatial 辅助头，以及 context state / prompt 的条件投影分支。
 
 ### 2. 关键实现
 
@@ -194,21 +185,17 @@ tmux capture-pane -pt phys_state_latent_v1_viz:0 | tail -n 80
 
 这版方法把显式 object state 从“视频生成主条件”降级为“监督信号”：给定前 `K` 帧 context 视频及其物体级状态，先整理成 `context_frames ∈ R^{B×K×3×H×W}`、`context_states ∈ R^{B×K×N×10}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；`Future Latent Predictor` 先基于 `context_states + appearance/physics + camera + prompt` 预测未来物体 latent `future_latents ∈ R^{B×T×N×128}`，并从 latent 上接显式 head 输出 `states ∈ R^{B×T×N×10}` 与 `motion ∈ R^{B×T×N×3}`，这些显式量只用来和 GT 做 predictor 监督；随后仍然可把 `states` 投影成 `condition_maps ∈ R^{B×T×7×H×W}` 用于可视化和 adapter 的 spatial auxiliary target，但在真正喂给视频模型时，会通过 `latent_only` 模式把 future state maps 置零，并把 memory token 中末帧 `log_scale/confidence` 显式分量清掉，只保留 object identity / shape / color / size / mass / friction 等 object memory；最终 `State/Latent-Conditioned Video Adapter` 主要接收 `context_frames`、`future_latent_tokens ∈ R^{B×T×N×128}`、`object memory tokens`、`context state tokens` 和 `prompt tokens` 做 cross-attention 融合，输出 `generated_frames ∈ R^{B×T×3×H×W}`，训练时再通过视频重建损失、adapter state auxiliary loss 和 spatial auxiliary loss 把生成结果拉回到正确的物体轨迹、尺度与可见性上。
 
-### 1.1 Predictor 输入
+### 1.1 Predictor 输入输出
 
-`predictor` 输入与 `latent_v1` 相同，为 `context_states ∈ R^{B×K×N×10}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；这一版没有删除旧 predictor 接口，只改变了视频生成器使用 predictor 输出的方式。
+`predictor` 输入与 `latent_v1` 相同，为 `context_states ∈ R^{B×K×N×10}`、`appearance/physics ∈ R^{B×N×A}`、`camera ∈ R^{B×K×C}` 和 prompt；这一版没有删除旧 predictor 接口，只改变了视频生成器使用 predictor 输出的方式。`predictor` 主输出仍然是 `future_latents ∈ R^{B×T×N×128}`，同时输出显式监督分支 `states ∈ R^{B×T×N×10}` 与 `motion ∈ R^{B×T×N×3}`；其中 `states/motion` 在这版里主要用于和 GT 做监督，以及做可视化诊断，不再是视频生成器的主条件。
 
-### 1.2 Predictor 输出
+### 1.2 视频生成模型的 Condition + 条件注入
 
-`predictor` 主输出仍然是 `future_latents ∈ R^{B×T×N×128}`，同时输出显式监督分支 `states ∈ R^{B×T×N×10}` 与 `motion ∈ R^{B×T×N×3}`；其中 `states/motion` 在这版里主要用于和 GT 做监督，以及做可视化诊断，不再是视频生成器的主条件。
+视频生成模型主 condition 为 `context_frames ∈ R^{B×K×3×H×W}`、`future_latent_tokens ∈ R^{B×T×N×128}`、`object memory tokens`、`context state tokens` 和 `prompt tokens`；显式 `condition_maps ∈ R^{B×T×7×H×W}` 只作为辅助监督 target 和调试可视化存在，不再作为主生成条件输入。这版的条件注入形式是 `future latent cross-attention + object/context/prompt adapter`：`future_latent_tokens` 按时间步作为 `cross-attention memory` 注入视频 latent token；`object memory tokens`、`context_states` 编码 token、prompt token 也一起作为 `StateCrossAttentionAdapter` 的 memory 参与 attention；显式 `condition_maps` 在 `latent_only` 模式下会被清零，所以不再承担 `ControlNet-style` 的主控制作用。换句话说，这版的生成主链路不是“空间图控制”，而是“future latent token 通过 adapter/cross-attention 控制”。
 
-### 1.3 视频生成模型的 Condition
+### 1.3 可训练模块
 
-视频生成模型主 condition 为 `context_frames ∈ R^{B×K×3×H×W}`、`future_latent_tokens ∈ R^{B×T×N×128}`、`object memory tokens`、`context state tokens` 和 `prompt tokens`；显式 `condition_maps ∈ R^{B×T×7×H×W}` 只作为辅助监督 target 和调试可视化存在，不再作为主生成条件输入。
-
-### 1.4 Condition 进入视频模型的形式
-
-这版是 `future latent cross-attention + object/context/prompt adapter` 为主的形式：`future_latent_tokens` 按时间步作为 `cross-attention memory` 注入视频 latent token；`object memory tokens`、`context_states` 编码 token、prompt token 也一起作为 `StateCrossAttentionAdapter` 的 memory 参与 attention；显式 `condition_maps` 在 `latent_only` 模式下会被清零，所以不再承担 `ControlNet-style` 的主控制作用。换句话说，这版的生成主链路不是“空间图控制”，而是“future latent token 通过 adapter/cross-attention 控制”。
+这版中可训练模块包括：`Future Latent Predictor` 整体可训练，包括 latent 主干和显式监督 head；`State/Latent-Conditioned Video Adapter` 整体可训练，但其主控制信号已经切换为 future latent 分支，因此重点可训练部分是 `StateCrossAttentionAdapter`、future latent 注入相关投影层、decoder，以及 state/spatial 辅助头。
 
 ### 2. 关键实现
 
@@ -294,6 +281,77 @@ tmux new-session -d -s phys_state_latent_v2_viz \
 tmux capture-pane -pt phys_state_latent_v2_train:0 | tail -n 80
 tmux capture-pane -pt phys_state_latent_v2_viz:0 | tail -n 80
 ```
+
+## 2026-06-03 visual_context_predictor_v3 视觉上下文驱动 predictor 分支
+
+### 1. 方法流程
+
+这版不是在旧 `predictor.py` 上继续改，而是单独复制出新的 predictor 分支，核心思路是：既然 predictor 的主输出已经变成隐式 `future_latents`，那 predictor 的输入也不应该继续强依赖带误差的 `context_states` 抽取结果，而应该直接吃 `context_frames` 的视觉压缩表示。具体做法是先把 `context_frames ∈ R^{B×K×3×H×W}` 送入一个轻量视觉编码器，得到每帧的压缩特征，再通过一个 VAE-style 压缩器得到时序视觉 latent；随后用时序编码器把这些视觉 latent 聚合成历史上下文表征，并结合 prompt 形成全局条件；再引入可学习的 object slot query，为每个未来物体位置生成一个 slot 隐变量，逐步 rollout 出 `future_latents ∈ R^{B×T×N×128}`，同时从这些 latent 上接显式监督 head，输出 `states ∈ R^{B×T×N×10}` 与 `motion ∈ R^{B×T×N×3}`。这版当前先把 predictor 独立做成新文件和新训练脚本，旧版本 predictor/adapter 链路保持不动，后续如果验证有效，再在新的 adapter 版本中把这条视觉 predictor 分支接进去。
+
+### 1.1 Predictor 输入输出
+
+`predictor` 输入改为以视觉为主：`context_frames ∈ R^{B×K×3×H×W}` 和 prompt 是主输入，当前实现里为了兼容现有 episode 数据格式，batch 中仍然保留 `context_states`、`appearance`、`camera`，但新 predictor 主干并不依赖它们做未来 latent 预测。`predictor` 输出为 `future_latents ∈ R^{B×T×N×128}`，同时保留显式监督分支 `states ∈ R^{B×T×N×10}` 和 `motion ∈ R^{B×T×N×3}`，并额外输出视觉压缩器的 `kl` 正则项，用于约束视觉上下文压缩空间。
+
+### 1.2 视频生成模型的 Condition + 条件注入
+
+这版当前还没有替换现有视频生成模型分支，重点是在 predictor 侧建立“视觉上下文 -> future latent”的新接口，所以视频生成模型的 condition 注入方式暂时不变；后续推荐的接法是：把该 predictor 输出的 `future_latents ∈ R^{B×T×N×128}` 作为主条件，通过 `cross-attention memory / adapter 注入` 的形式送入视频模型，而不是再依赖由 `context_states` 推导出的显式 future state maps。换句话说，这个版本先解决 predictor 输入源的问题，再决定新的 adapter 版本如何接入。
+
+### 1.3 可训练模块
+
+这版目前新增且可训练的模块包括：视觉编码器、VAE-style 压缩器、时序编码器、prompt 投影层、object slot query、future latent 解码器，以及从 latent 到 `states/motion` 的监督 head。旧版 `predictor.py`、`train_predictor.py`、`train_adapter.py` 和现有 `latent_v1/v2` 训练链路都没有被覆盖，仍然保持原状可复现。
+
+### 2. 关键实现
+
+- `视觉上下文 predictor`
+  路径：[predictor_visual_v3.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/predictor_visual_v3.py)
+  关键函数：`VisualContextLatentPredictorV3.forward()`、`predictor_visual_v3_loss()`
+
+- `predictor 数据 collate 扩展`
+  路径：[dataset.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/dataset.py)
+  关键函数：`NpzPredictorDataset.__getitem__()`、`collate_predictor_episodes()`
+
+- `视觉 predictor 训练入口`
+  路径：[train_predictor_visual_v3.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_predictor_visual_v3.py)
+  关键函数：`run_epoch()`、`main()`
+
+### 3. 输出目录与可视化指令
+
+- `episode 数据目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6`
+
+- `当前方法训练输出目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_visualctx_predictor_v3_gpu0123`
+
+- `旧版两卡来源目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_visualctx_predictor_v3_gpu67`
+
+- `checkpoint 目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_visualctx_predictor_v3_gpu0123/checkpoints`
+
+- `训练日志目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_visualctx_predictor_v3_gpu0123/logs`
+
+- `配置导出目录`
+  路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_visualctx_predictor_v3_gpu0123/configs`
+
+- `训练说明`
+  这版保持和之前四卡方案一致的 batch 设计，使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`、`--gpu-ids 0,1,2,3`、`batch-size=512`；为了不浪费已经跑出的进度，训练会从旧版两卡实验的 `predictor_last.epoch025.pt` 继续续训 15 个 epoch，在新目录中产出新的 best/last checkpoint。
+
+- `启动训练指令`
+
+```bash
+tmux new-session -d -s phys_state_visualctx_v3_gpu0123 \
+  'bash -lc "/home/gaoya/Code_Video/phys_state_video/scripts/run_industrial_s1_scale2_visualctx_predictor_v3_gpu0123.sh"'
+```
+
+- `查看训练 tmux 输出`
+
+```bash
+tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
+```
+
+- `当前状态`
+  这版目前仍然是 predictor-only 分支，还没有单独接入新的 adapter 训练脚本、case watcher 和总页面入口；现阶段重点是先验证视觉上下文驱动 predictor 相比旧显式输入 predictor 的收敛和泛化表现。
 
 ## 统一可视化入口与跨方法对比
 

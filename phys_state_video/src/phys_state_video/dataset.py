@@ -48,6 +48,7 @@ class NpzEpisodeDataset:
 
 @dataclass(slots=True)
 class PredictorEpisodeArrays:
+    context_frames: np.ndarray
     context_states: np.ndarray
     future_states: np.ndarray
     appearance: np.ndarray
@@ -76,6 +77,7 @@ class NpzPredictorDataset:
             prompt = json.loads(meta_path.read_text()).get("prompt", "")
         with np.load(path, allow_pickle=False) as payload:
             return PredictorEpisodeArrays(
+                context_frames=payload["context_frames"].astype(np.float32),
                 context_states=payload["context_states"].astype(np.float32),
                 future_states=payload["future_states"].astype(np.float32),
                 appearance=payload["appearance"].astype(np.float32),
@@ -118,6 +120,7 @@ def collate_predictor_episodes(batch: List[PredictorEpisodeArrays]) -> Dict[str,
         prompt_token_ids[idx, :len(tokens)] = np.asarray(tokens, dtype=np.int64)
         prompt_token_mask[idx, :len(tokens)] = 1.0
     return {
+        "context_frames": torch.from_numpy(np.stack([item.context_frames for item in batch], axis=0)),
         "context_states": torch.from_numpy(np.stack([item.context_states for item in batch], axis=0)),
         "future_states": torch.from_numpy(np.stack([item.future_states for item in batch], axis=0)),
         "appearance": torch.from_numpy(np.stack([item.appearance for item in batch], axis=0)),
