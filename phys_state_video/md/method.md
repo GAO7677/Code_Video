@@ -357,36 +357,48 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 
 ### 1. 方法流程
 
-这版方案把“先预测状态、再生成视频”的主链路改成“前缀视频 latent 已知、未来视频 latent 补全”：先把完整视频编码成 `z_all ∈ R^{B×(K+T)×C×H'×W'}`，再切成 `context_latents ∈ R^{B×K×C×H'×W'}` 和 `future_latents_gt ∈ R^{B×T×C×H'×W'}`；训练时保持 `context_latents` 干净不加噪，只对 `future_latents_gt` 加噪得到 `future_latents_noisy ∈ R^{B×T×C×H'×W'}`，随后把两段拼成 `sequence_latents ∈ R^{B×(K+T)×C×H'×W'}`，并配套 `future_mask ∈ R^{B×(K+T)}` 标明哪些时间步属于未来段。视频模型主干接收 `context clean + future noisy` 的整段 latent 序列，只对 future 段做噪声预测 / latent 补全；如果保留 predictor，则 predictor 不再主输出绝对显式状态，而是输出 `future_prior_tokens ∈ R^{B×T×N×D}` 或 `future_latent_prior ∈ R^{B×T×M×D}` 作为未来段隐式先验，同时从这些隐式 token 上接 `state/motion` head 做辅助监督。推理时输入真实 `context`，后面 future 段直接 padding 高斯噪声，再让模型在 context 前缀条件下把未来 latent 逐步 denoise 成未来视频。
+这版方案把整体结构拆成“物理状态 latent predictor + 视频生成器”两部分，并明确区分 `state latent` 空间和 `video VAE latent` 空间：先用一个 `frozen` 的视频 VAE / tokenizer 把完整视频编码成 `z_all ∈ R^{B×(K+T)×C×H'×W'}`，再切成 `context_latents ∈ R^{B×K×C×H'×W'}` 和 `future_latents_gt ∈ R^{B×T×C×H'×W'}`；其中 `context_latents` 只作为 predictor 的视觉输入和视频生成器的前缀条件，`state latents` 则是 predictor 内部学习出的独立物理语义空间，不与 VAE latent 共享表征。具体做法是：`State Latent Predictor` 读取 `context_latents + camera + prompt`，先把前缀视频压缩成 `context_state_latents ∈ R^{B×K×D_s}`，再通过一个时序 transformer 预测按帧输出的 `future_state_latents ∈ R^{B×T×D_s}`；训练时在 `context_state_latents` 和 `future_state_latents` 两端都接物理状态 head，回归仿真导出的物理真值作为监督，使这套 `state latent` 明确承载位置、速度、深度、接触变化等物理信息。推理时丢掉这些监督 head，只保留 predictor 输出的 `future_state_latents` 作为视频生成条件；生成视频时可以走两条后端路线：如果使用 Wan，则把整段视频作为主 DiT latent 序列输入，其中前 `K` 帧是干净的 `context latents`、后 `T` 帧是待去噪的 `noise latents`，并让 `future_state_latents` 只作为 future 段的条件注入；如果使用 VACE，则直接沿用其已有的 V2V 视频续写范式，把 `context video` 作为输入前缀，把 predictor 输出的 `future_state_latents` 作为未来段控制条件，驱动续写出未来视频。
 
 ### 1.1 Predictor 输入输出
 
-这版里 predictor 不是必须模块；如果启用 predictor，它的输入优先改为 `context_frames` 或 `context_latents` 加 prompt，而不是 `context_states`。`predictor` 输出不再以绝对 `future_states ∈ R^{B×T×N×10}` 作为视频生成主条件，而是以 `future_prior_tokens ∈ R^{B×T×N×D}` 或 `future_latent_prior ∈ R^{B×T×M×D}` 作为主输出；同时可以保留辅助显式分支 `states ∈ R^{B×T×N×10}`、`motion ∈ R^{B×T×N×3}`，这些显式量只负责监督和诊断，不再承担主生成条件的职责。
+`predictor` 的输入固定为 `context_latents ∈ R^{B×K×C×H'×W'}`、`camera ∈ R^{B×K×C_cam}` 和 prompt；这里 `context_latents` 来自冻结视频 VAE，是 predictor 的主输入，`camera` 和 prompt 提供视角与语义先验。这版不再把显式 `context_states` 作为 predictor 输入，避免训练和推理时对外部状态提取链路产生依赖。`predictor` 首先把输入压缩到独立的物理表征空间，得到 `context_state_latents ∈ R^{B×K×D_s}`；然后用时序 transformer 按帧预测未来状态 latent，输出 `future_state_latents ∈ R^{B×T×D_s}`。训练阶段在 `context_state_latents` 和 `future_state_latents` 上分别接共享或分离的物理状态 head，预测物体级或场景级物理真值，并使用仿真视频导出的 GT 状态做监督；推理阶段这些 head 全部丢弃，只保留 `future_state_latents` 作为后续视频生成条件。换句话说，这版 predictor 的主输出不是 future video latent，也不是 future pixel，而是一个按帧组织、专门为物理状态建模的独立 `state latent` 序列。
 
 ### 1.2 视频生成模型的 Condition + 条件注入
 
-视频生成模型的主输入是整段 latent 序列：`context_latents_clean ∈ R^{B×K×C×H'×W'}` 与 `future_latents_noisy ∈ R^{B×T×C×H'×W'}` 拼接后的 `sequence_latents ∈ R^{B×(K+T)×C×H'×W'}`，外加 `future_mask`、prompt，以及可选的 `future_prior_tokens`。这版的关键是 `future-only condition 注入`：`context` 段 latent 作为真实前缀保留，不再额外注入 object condition；外部条件只作用在 `future` 段 token 上。条件进入视频模型的形式建议是 `full-sequence self-attention + future-only cross-attention / adapter 注入`：整段 token 一起做时序建模，使 future 能看到 context；但 predictor prior、object memory、prompt bias 等条件只通过 `future_mask` gated 的 adapter 或 cross-attention 注入到 future token，而不改写 context token。本质上，这版不是 `ControlNet-style` 空间图主控制，而是 `prefix latent + future-only token condition` 的视频补全结构。
+视频生成模型的主 condition 分成两类：一类是视频自身的前缀条件，另一类是 predictor 给出的未来物理条件。前缀条件始终是 `context video / context latents`；未来物理条件则是 `future_state_latents ∈ R^{B×T×D_s}`，必要时再加 camera 和 prompt 的条件编码。这版的条件进入视频模型的形式根据后端不同分为两条实现路径。`Wan` 路线中，condition 进入形式是 `前缀 latent 直接拼接 + future-only condition 注入`：整段视频 latent 序列长度为 `K+T`，前 `K` 帧放真实 `context latents`，后 `T` 帧放 `noise latents`，模型只对 future 段执行去噪更新；`future_state_latents` 通过 `cross-attention memory / adapter` 形式注入到 future token，不改写前缀 token，本质上属于 `prefix latent + future-only condition` 结构。`VACE` 路线中，condition 进入形式是 `V2V 前缀续写 + 外部 state latent 条件`：沿用 VACE 已有的视频续写输入方式，把 `context video` 作为续写前缀，再把 `future_state_latents` 作为未来段条件通过其条件接口或附加 adapter 注入，用于控制未来内容演化。换句话说，这版不再以显式空间图或 future video latent 作为主条件，而是统一以 predictor 产出的按帧 `future_state_latents` 作为视频生成器的核心未来条件。
 
 ### 1.3 可训练模块
 
-这版的可训练模块主要包括：整段视频 latent 补全主干、future-only adapter / cross-attention 注入层、prompt / prior token 投影层，以及可选 predictor 的 future prior 分支和其上的显式监督 head。如果需要显式物理约束，可以从 future latent token 上接 `state/motion` heads 做辅助监督，但这些 heads 不是主生成链路的一部分。
+这版的可训练模块至少包括两部分：`State Latent Predictor` 主干，以及视频生成器侧接收 `future_state_latents` 的条件注入层；如果选择 Wan 路线，还包括 future 段的去噪主干；如果选择 VACE 路线，则是在其 V2V 续写主干上增加 `state latent` 条件接入。`video VAE / tokenizer` 默认保持 `frozen`，只负责把视频映射到稳定的 `video latent` 空间，不参与 `state latent` 表征学习。训练时 predictor 的主监督是物理真值回归损失，即用 `context_state_latents` 和 `future_state_latents` 上接的 head 去预测仿真导出的真实状态；视频生成器侧的主监督则仍然是未来视频重建 / 去噪损失。这样分工之后，predictor 负责学“未来物理会怎样演化”，Wan 或 VACE 负责学“在给定未来物理条件下视频该怎样生成”，两者通过 `future_state_latents` 这一独立条件空间衔接，而不是共享同一个 latent 表征。
 
 ### 2. 关键实现
 
 - `当前状态`
   这版目前还是方法设计稿，尚未在仓库中落成独立实现文件；下一步应复制出新的版本化文件，而不是直接改坏 `latent_v2` 或 `visual_context_predictor_v3` 的现有接口。
 
+- `建议新增的共享 latent codec 封装`
+  路径：`/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/video_tokenizer_prefix_infill_v1.py`
+  关键函数：`encode_video_latents()`、`decode_video_latents()`
+
+- `建议新增的 predictor prior 实现`
+  路径：`/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/predictor_prefix_infill_v1.py`
+  关键函数：`StateLatentPredictor.forward()`、`predict_physical_heads()`
+
 - `建议新增的主干实现`
   路径：`/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/adapter_prefix_infill_v1.py`
-  关键函数：`PrefixInfillVideoBackbone.forward()`
+  关键函数：`WanPrefixInfillBackbone.forward()`、`build_future_only_attention_mask()`
+
+- `建议新增的 VACE 条件接入实现`
+  路径：`/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/vace_prefix_infill_v1.py`
+  关键函数：`inject_future_state_latents()`、`run_v2v_prefix_completion()`
 
 - `建议新增的训练入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/train_adapter_prefix_infill_v1.py`
-  关键函数：`run_epoch()`、`main()`
+  关键函数：`train_predictor_epoch()`、`train_video_generator_epoch()`、`main()`
 
 - `建议新增的推理入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_prefix_infill_v1.py`
-  关键函数：`main()`
+  关键函数：`predict_future_state_latents()`、`run_wan_prefix_infill()`、`run_vace_prefix_completion()`、`main()`
 
 ### 3. 输出目录与可视化指令
 

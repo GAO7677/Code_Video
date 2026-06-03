@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import random
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .paths import COSMOS_REASON1_MODEL, COSMOS_REASON1_ROOT
+from .paths import COSMOS_REASON1_MODEL, COSMOS_REASON1_ROOT, VPHY_PYTHON
 
 
 DEFAULT_PROMPT_PATH = (
@@ -74,7 +75,15 @@ class OfficialCosmosReason1Runner:
             return
         import torch
         import transformers
-        from qwen_vl_utils import process_vision_info
+        try:
+            from qwen_vl_utils import process_vision_info
+        except Exception:
+            vphy_site_packages = VPHY_PYTHON.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+            if vphy_site_packages.is_dir():
+                site_path = str(vphy_site_packages)
+                if site_path not in sys.path:
+                    sys.path.append(site_path)
+            from qwen_vl_utils import process_vision_info
 
         self._torch = torch
         self._transformers = transformers
