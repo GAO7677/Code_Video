@@ -35,10 +35,11 @@ class PromptEncoder(nn.Module):
 
 
 class StateCrossAttentionAdapter(nn.Module):
-    def __init__(self, latent_dim: int, memory_dim: int, num_heads: int, dropout: float):
+    def __init__(self, latent_dim: int, memory_dim: int, num_heads: int, dropout: float, future_latent_dim: int):
         super().__init__()
         self.memory_proj = nn.LazyLinear(memory_dim)
         self.extra_memory_proj = nn.Linear(latent_dim, memory_dim)
+        self.future_memory_proj = nn.Linear(future_latent_dim, memory_dim)
         self.query_proj = nn.Linear(latent_dim, memory_dim)
         self.attn = nn.MultiheadAttention(memory_dim, num_heads=num_heads, dropout=dropout, batch_first=True)
         self.out_proj = nn.Linear(memory_dim, latent_dim)
@@ -48,10 +49,13 @@ class StateCrossAttentionAdapter(nn.Module):
         latent_tokens: torch.Tensor,
         memory_tokens: torch.Tensor,
         extra_memory_tokens: torch.Tensor | None = None,
+        future_memory_tokens: torch.Tensor | None = None,
     ) -> torch.Tensor:
         memory_parts = [self.memory_proj(memory_tokens)]
         if extra_memory_tokens is not None:
             memory_parts.append(self.extra_memory_proj(extra_memory_tokens))
+        if future_memory_tokens is not None:
+            memory_parts.append(self.future_memory_proj(future_memory_tokens))
         memory = torch.cat(memory_parts, dim=1)
         query = self.query_proj(latent_tokens)
         attended, _ = self.attn(query, memory, memory, need_weights=False)
@@ -124,6 +128,7 @@ class TinyVideoBackbone(nn.Module):
             memory_dim=config.memory_dim,
             num_heads=config.num_heads,
             dropout=config.dropout,
+            future_latent_dim=config.future_latent_dim,
         )
         self.state_head = nn.Sequential(
             nn.LayerNorm(config.latent_dim),
@@ -189,6 +194,7 @@ class TinyVideoBackbone(nn.Module):
         context_frames: torch.Tensor,
         cond_maps: torch.Tensor,
         memory_tokens: torch.Tensor,
+        future_latent_tokens: torch.Tensor | None = None,
         context_states: torch.Tensor | None = None,
         prompts: Sequence[str] | None = None,
         prompt_token_ids: torch.Tensor | None = None,
@@ -217,7 +223,13 @@ class TinyVideoBackbone(nn.Module):
             cond_latent = self.cond_encoder(cond_maps[:, step])
             fused = context_latent + cond_latent
             tokens = fused.flatten(2).transpose(1, 2)
-            tokens = tokens + self.adapter(tokens, memory_tokens, extra_memory_tokens=fused_extra_memory)
+            step_future_tokens = future_latent_tokens[:, step] if future_latent_tokens is not None else None
+            tokens = tokens + self.adapter(
+                tokens,
+                memory_tokens,
+                extra_memory_tokens=fused_extra_memory,
+                future_memory_tokens=step_future_tokens,
+            )
             pooled = tokens.mean(dim=1)
             state_logits.append(self.state_head(pooled))
             fused = tokens.transpose(1, 2).reshape(batch, self.config.latent_dim, latent_h, latent_w)

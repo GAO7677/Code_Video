@@ -46,9 +46,11 @@ class StateConditionedGenerationPipeline:
         appearance: torch.Tensor,
         camera: torch.Tensor,
         prompts: Sequence[str],
-    ) -> torch.Tensor:
-        predicted = self.predictor(context_states, appearance, camera, prompts)["states"]
-        return self.projector.project(predicted)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        predictor_outputs = self.predictor(context_states, appearance, camera, prompts)
+        predicted = self.projector.project(predictor_outputs["states"])
+        future_latents = predictor_outputs.get("latents")
+        return predicted, future_latents
 
     def build_conditions(
         self,
@@ -69,17 +71,19 @@ class StateConditionedGenerationPipeline:
         camera: torch.Tensor,
         prompts: Sequence[str],
     ):
-        predicted_states = self.predict_states(context_states, appearance, camera, prompts)
+        predicted_states, future_latents = self.predict_states(context_states, appearance, camera, prompts)
         bundle, future_boxes = self.build_conditions(predicted_states, context_boxes, appearance)
         outputs = self.video_model(
             context_frames,
             bundle.maps,
             bundle.memory_tokens,
+            future_latent_tokens=future_latents,
             context_states=context_states,
             prompts=prompts,
         )
         return {
             "predicted_states": predicted_states,
+            "future_latents": future_latents,
             "future_boxes": future_boxes,
             "condition_maps": bundle.maps,
             "generated_frames": outputs["frames"],

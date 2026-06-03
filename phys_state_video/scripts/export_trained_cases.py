@@ -45,6 +45,7 @@ def parse_args():
     parser.add_argument("--port", type=int, default=18832)
     parser.add_argument("--device", default=None)
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
 
 
@@ -559,10 +560,11 @@ def main():
     (output_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "index.html").write_text(render_html(report), encoding="utf-8")
 
-    pid = start_server(output_dir, args.port)
     print(f"exported cases to {output_dir}")
-    print(f"server: http://127.0.0.1:{args.port}")
-    print(f"pid: {pid}")
+    if not args.no_serve:
+        pid = start_server(output_dir, args.port)
+        print(f"server: http://127.0.0.1:{args.port}")
+        print(f"pid: {pid}")
 
 
 if __name__ == "__main__":

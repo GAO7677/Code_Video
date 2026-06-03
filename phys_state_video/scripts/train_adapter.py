@@ -12,9 +12,10 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
 from phys_state_video.conditioning import build_condition_bundle
-from phys_state_video.config import AdapterConfig, ConditioningConfig
+from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
 from phys_state_video.experiment import apply_condition_mode
+from phys_state_video.predictor import FutureStatePredictor
 from phys_state_video.utils import require_torch
 
 torch = require_torch()
@@ -46,6 +47,11 @@ def parse_args():
     parser.add_argument("--val-data",
                         default=None,
                         help="Optional validation episode directory.")
+    parser.add_argument(
+        "--predictor-checkpoint",
+        default=None,
+        help="Optional frozen predictor checkpoint used to provide future latent tokens during adapter training.",
+    )
     parser.add_argument(
         "--gpu-ids",
         default=None,
@@ -97,6 +103,12 @@ def parse_args():
         default=4.0,
         help="Extra weight assigned to foreground pixels in the spatial auxiliary loss.",
     )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=0,
+        help="If > 0, also save epoch snapshots every N epochs next to the main checkpoint.",
+    )
     return parser.parse_args()
 
 
@@ -111,6 +123,12 @@ def default_best_output(output_path: Path) -> Path:
     if output_path.suffix:
         return output_path.with_name(f"{output_path.stem}.best{output_path.suffix}")
     return output_path.with_name(f"{output_path.name}.best")
+
+
+def epoch_snapshot_path(output_path: Path, epoch_index: int) -> Path:
+    if output_path.suffix:
+        return output_path.with_name(f"{output_path.stem}.epoch{epoch_index:03d}{output_path.suffix}")
+    return output_path.with_name(f"{output_path.name}.epoch{epoch_index:03d}")
 
 
 def infer_best_from_history(history: list[dict]) -> tuple[int | None, float | None]:
@@ -146,6 +164,7 @@ def save_checkpoint(
     state_loss_weights: list[float],
     best_epoch: int | None,
     best_metric: float | None,
+    predictor_checkpoint: str | None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     model_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
@@ -163,6 +182,7 @@ def save_checkpoint(
             "spatial_foreground_weight": args.spatial_foreground_weight,
             "best_epoch": best_epoch,
             "best_metric": best_metric,
+            "predictor_checkpoint": predictor_checkpoint,
         },
         output_path,
     )
@@ -192,6 +212,7 @@ def load_model_state(module, state_dict, checkpoint_label: str) -> None:
 
 def run_epoch(
     model,
+    predictor_model,
     loader,
     optimizer,
     device,
@@ -205,17 +226,32 @@ def run_epoch(
     running = {"loss": 0.0, "recon": 0.0, "state_aux": 0.0, "spatial_aux": 0.0}
     is_train = optimizer is not None
     model.train(mode=is_train)
+    if predictor_model is not None:
+        predictor_model.eval()
     for batch in loader:
         if is_train:
             optimizer.zero_grad(set_to_none=True)
         future_states = batch["future_states"].to(device)
         future_boxes = batch["future_boxes"].to(device)
         appearance = batch["appearance"].to(device)
+        future_latent_tokens = None
+        if predictor_model is not None:
+            with torch.no_grad():
+                predictor_outputs = predictor_model(
+                    batch["context_states"].to(device),
+                    appearance,
+                    batch["camera"].to(device),
+                    prompt_token_ids=batch["prompt_token_ids"].to(device),
+                    prompt_token_mask=batch["prompt_token_mask"].to(device),
+                    future_steps=future_states.shape[1],
+                )
+            future_latent_tokens = predictor_outputs["latents"]
         bundle = build_condition_bundle(future_states, future_boxes, appearance,
                                         cond_cfg)
         bundle = apply_condition_mode(bundle, condition_mode)
         outputs = model(batch["context_frames"].to(device), bundle.maps,
                         bundle.memory_tokens,
+                        future_latent_tokens=future_latent_tokens,
                         context_states=batch["context_states"].to(device),
                         prompt_token_ids=batch["prompt_token_ids"].to(device),
                         prompt_token_mask=batch["prompt_token_mask"].to(device))
@@ -319,6 +355,17 @@ def main():
             best_metric = None
         print(f"resumed weights from {args.resume}")
 
+    predictor_model = None
+    if args.predictor_checkpoint is not None:
+        predictor_ckpt = load_checkpoint(args.predictor_checkpoint, map_location="cpu")
+        predictor_cfg = PredictorConfig(**predictor_ckpt["config"])
+        predictor_model = FutureStatePredictor(predictor_cfg).to(args.device)
+        load_model_state(predictor_model, predictor_ckpt["model"], args.predictor_checkpoint)
+        predictor_model.eval()
+        for param in predictor_model.parameters():
+            param.requires_grad = False
+        print(f"loaded frozen predictor from {args.predictor_checkpoint}")
+
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
     wandb_run = None
     if args.wandb_mode != "disabled":
@@ -342,6 +389,7 @@ def main():
                 "condition_mode": args.condition_mode,
                 "gpu_ids": gpu_ids,
                 "resume": args.resume,
+                "predictor_checkpoint": args.predictor_checkpoint,
                 "num_workers": args.num_workers,
                 "prefetch_factor": args.prefetch_factor,
                 "pin_memory": pin_memory,
@@ -363,6 +411,7 @@ def main():
         epoch_index = start_epoch + epoch + 1
         train_metrics = run_epoch(
             model,
+            predictor_model,
             loader,
             optimizer,
             args.device,
@@ -378,6 +427,7 @@ def main():
             with torch.no_grad():
                 val_metrics = run_epoch(
                     model,
+                    predictor_model,
                     val_loader,
                     None,
                     args.device,
@@ -418,8 +468,25 @@ def main():
                 state_loss_weights,
                 best_epoch,
                 best_metric,
+                args.predictor_checkpoint,
             )
             print(f"saved best checkpoint to {best_output} (epoch={best_epoch}, metric={best_metric:.6f})")
+        if args.save_every > 0 and epoch_index % args.save_every == 0:
+            snapshot = epoch_snapshot_path(output, epoch_index)
+            save_checkpoint(
+                snapshot,
+                model,
+                adapter_cfg,
+                cond_cfg,
+                args,
+                gpu_ids,
+                history,
+                state_loss_weights,
+                best_epoch,
+                best_metric,
+                args.predictor_checkpoint,
+            )
+            print(f"saved snapshot checkpoint to {snapshot}")
 
     save_checkpoint(
         output,
@@ -432,6 +499,7 @@ def main():
         state_loss_weights,
         best_epoch,
         best_metric,
+        args.predictor_checkpoint,
     )
     print(f"saved adapter checkpoint to {output}")
     if wandb_run is not None:

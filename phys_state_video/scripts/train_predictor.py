@@ -60,6 +60,12 @@ def parse_args():
         default=None,
         help="Optional best-checkpoint path. Defaults to '<output stem>.best<suffix>'.",
     )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=0,
+        help="If > 0, also save epoch snapshots every N epochs next to the main checkpoint.",
+    )
     return parser.parse_args()
 
 
@@ -96,6 +102,12 @@ def save_checkpoint(output_path: Path, model, config: PredictorConfig, args, gpu
     )
 
 
+def epoch_snapshot_path(output_path: Path, epoch_index: int) -> Path:
+    if output_path.suffix:
+        return output_path.with_name(f"{output_path.stem}.epoch{epoch_index:03d}{output_path.suffix}")
+    return output_path.with_name(f"{output_path.name}.epoch{epoch_index:03d}")
+
+
 def load_checkpoint(checkpoint_path: str, map_location):
     try:
         return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
@@ -111,6 +123,9 @@ def run_epoch(model, loader, optimizer, device):
         "existence": 0.0,
         "smoothness": 0.0,
         "scale_depth": 0.0,
+        "motion_aux": 0.0,
+        "velocity_align": 0.0,
+        "latent_smooth": 0.0,
     }
     is_train = optimizer is not None
     model.train(mode=is_train)
@@ -125,7 +140,7 @@ def run_epoch(model, loader, optimizer, device):
             prompt_token_mask=batch["prompt_token_mask"].to(device),
             future_steps=batch["future_states"].shape[1],
         )
-        losses = predictor_loss(outputs["states"], batch["future_states"].to(device))
+        losses = predictor_loss(outputs, batch["future_states"].to(device))
         if is_train:
             losses["loss"].backward()
             optimizer.step()
@@ -257,6 +272,10 @@ def main():
             best_epoch = epoch_index
             save_checkpoint(best_output, model, config, args, gpu_ids, history, best_epoch, best_metric)
             print(f"saved best checkpoint to {best_output} (epoch={best_epoch}, metric={best_metric:.6f})")
+        if args.save_every > 0 and epoch_index % args.save_every == 0:
+            snapshot = epoch_snapshot_path(output, epoch_index)
+            save_checkpoint(snapshot, model, config, args, gpu_ids, history, best_epoch, best_metric)
+            print(f"saved snapshot checkpoint to {snapshot}")
 
     save_checkpoint(output, model, config, args, gpu_ids, history, best_epoch, best_metric)
     print(f"saved predictor checkpoint to {output}")
