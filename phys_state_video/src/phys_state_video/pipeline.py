@@ -6,6 +6,7 @@ from typing import Sequence
 from .adapter import TinyVideoBackbone
 from .conditioning import ConditionBundle, build_condition_bundle
 from .config import ConditioningConfig
+from .experiment import apply_condition_mode
 from .projection import ConfidenceAwareProjector
 from .schemas import StateIndex
 from .utils import require_torch
@@ -39,6 +40,7 @@ class StateConditionedGenerationPipeline:
     projector: ConfidenceAwareProjector
     video_model: TinyVideoBackbone
     conditioning_config: ConditioningConfig
+    condition_mode: str = "state"
 
     def predict_states(
         self,
@@ -73,10 +75,11 @@ class StateConditionedGenerationPipeline:
     ):
         predicted_states, future_latents = self.predict_states(context_states, appearance, camera, prompts)
         bundle, future_boxes = self.build_conditions(predicted_states, context_boxes, appearance)
+        adapter_bundle = apply_condition_mode(bundle, self.condition_mode)
         outputs = self.video_model(
             context_frames,
-            bundle.maps,
-            bundle.memory_tokens,
+            adapter_bundle.maps,
+            adapter_bundle.memory_tokens,
             future_latent_tokens=future_latents,
             context_states=context_states,
             prompts=prompts,
@@ -86,6 +89,7 @@ class StateConditionedGenerationPipeline:
             "future_latents": future_latents,
             "future_boxes": future_boxes,
             "condition_maps": bundle.maps,
+            "adapter_condition_maps": adapter_bundle.maps,
             "generated_frames": outputs["frames"],
             "state_logits": outputs["state_logits"],
         }

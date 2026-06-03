@@ -12,11 +12,12 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
 from phys_state_video.conditioning import build_condition_bundle
-from phys_state_video.config import AdapterConfig, ConditioningConfig
+from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
 from phys_state_video.experiment import (apply_condition_mode,
                                          compute_state_metrics,
                                          perturb_condition_bundle)
+from phys_state_video.predictor import FutureStatePredictor
 from phys_state_video.proxy_state import extract_primary_track
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 
@@ -33,7 +34,7 @@ def parse_args():
     parser.add_argument(
         "--condition-mode",
         default=None,
-        choices=["state", "maps_only", "memory_only", "none"],
+        choices=["state", "maps_only", "memory_only", "latent_only", "none"],
         help="Override condition mode used at evaluation time.",
     )
     parser.add_argument(
@@ -87,6 +88,13 @@ def main():
     model = TinyVideoBackbone(AdapterConfig(**ckpt["config"])).to(args.device)
     load_model_state(model, ckpt["model"], args.checkpoint)
     model.eval()
+    predictor_model = None
+    predictor_checkpoint = ckpt.get("predictor_checkpoint")
+    if predictor_checkpoint:
+        predictor_ckpt = load_checkpoint(predictor_checkpoint, map_location="cpu")
+        predictor_model = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
+        load_model_state(predictor_model, predictor_ckpt["model"], predictor_checkpoint)
+        predictor_model.eval()
     cond_cfg = ConditioningConfig(**ckpt["conditioning"])
     state_loss_weight_tensor = None
     if state_loss_weights is not None:
@@ -109,17 +117,33 @@ def main():
             future_states = batch["future_states"].to(args.device)
             future_boxes = batch["future_boxes"].to(args.device)
             appearance = batch["appearance"].to(args.device)
-            bundle = build_condition_bundle(future_states, future_boxes,
-                                            appearance, cond_cfg)
-            bundle = apply_condition_mode(bundle, condition_mode)
+            future_latent_tokens = None
+            if predictor_model is not None:
+                predictor_outputs = predictor_model(
+                    batch["context_states"].to(args.device),
+                    appearance,
+                    batch["camera"].to(args.device),
+                    prompt_token_ids=batch["prompt_token_ids"].to(args.device),
+                    prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+                    future_steps=future_states.shape[1],
+                )
+                future_latent_tokens = predictor_outputs["latents"]
+            target_bundle = build_condition_bundle(
+                future_states,
+                future_boxes,
+                appearance,
+                cond_cfg,
+            )
+            bundle = apply_condition_mode(target_bundle, condition_mode)
             if args.corruption == "perturbed":
                 bundle = perturb_condition_bundle(bundle)
             outputs = model(batch["context_frames"].to(args.device), bundle.maps,
                             bundle.memory_tokens,
+                            future_latent_tokens=future_latent_tokens,
                             context_states=batch["context_states"].to(args.device),
                             prompt_token_ids=batch["prompt_token_ids"].to(args.device),
                             prompt_token_mask=batch["prompt_token_mask"].to(args.device))
-            target_spatial_maps = bundle.maps[:, :, 0:2]
+            target_spatial_maps = target_bundle.maps[:, :, 0:2]
             losses = adapter_loss(outputs["frames"],
                                   batch["future_frames"].to(args.device),
                                   outputs["state_logits"],
@@ -153,6 +177,7 @@ def main():
         "state_loss_scale": state_loss_scale,
         "spatial_loss_scale": spatial_loss_scale,
         "spatial_foreground_weight": spatial_foreground_weight,
+        "predictor_checkpoint": predictor_checkpoint,
         "metrics": averages,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

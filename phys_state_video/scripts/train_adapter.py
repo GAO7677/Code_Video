@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--condition-mode",
         default="state",
-        choices=["state", "maps_only", "memory_only", "none"],
+        choices=["state", "maps_only", "memory_only", "latent_only", "none"],
         help="Which state condition channels are exposed during training.",
     )
     parser.add_argument("--val-data",
@@ -246,16 +246,20 @@ def run_epoch(
                     future_steps=future_states.shape[1],
                 )
             future_latent_tokens = predictor_outputs["latents"]
-        bundle = build_condition_bundle(future_states, future_boxes, appearance,
-                                        cond_cfg)
-        bundle = apply_condition_mode(bundle, condition_mode)
+        target_bundle = build_condition_bundle(
+            future_states,
+            future_boxes,
+            appearance,
+            cond_cfg,
+        )
+        bundle = apply_condition_mode(target_bundle, condition_mode)
         outputs = model(batch["context_frames"].to(device), bundle.maps,
                         bundle.memory_tokens,
                         future_latent_tokens=future_latent_tokens,
                         context_states=batch["context_states"].to(device),
                         prompt_token_ids=batch["prompt_token_ids"].to(device),
                         prompt_token_mask=batch["prompt_token_mask"].to(device))
-        target_spatial_maps = bundle.maps[:, :, 0:2]
+        target_spatial_maps = target_bundle.maps[:, :, 0:2]
         losses = adapter_loss(
             outputs["frames"],
             batch["future_frames"].to(device),
@@ -314,13 +318,13 @@ def main():
     adapter_cfg = AdapterConfig(freeze_backbone=args.freeze_backbone, future_steps=sample.future_frames.shape[0])
     base_model = TinyVideoBackbone(adapter_cfg).to(args.device)
 
-    init_bundle = build_condition_bundle(
+    init_target_bundle = build_condition_bundle(
         torch.from_numpy(sample.future_states[None]).to(args.device),
         torch.from_numpy(sample.future_boxes[None]).to(args.device),
         torch.from_numpy(sample.appearance[None]).to(args.device),
         cond_cfg,
     )
-    init_bundle = apply_condition_mode(init_bundle, args.condition_mode)
+    init_bundle = apply_condition_mode(init_target_bundle, args.condition_mode)
     with torch.no_grad():
         base_model(
             torch.from_numpy(sample.context_frames[None]).to(args.device),

@@ -31,6 +31,15 @@ def apply_condition_mode(bundle: ConditionBundle, mode: str) -> ConditionBundle:
     if mode == "memory_only":
         return ConditionBundle(maps=torch.zeros_like(bundle.maps),
                                memory_tokens=bundle.memory_tokens)
+    if mode == "latent_only":
+        # Keep object identity / appearance memory, but remove any explicit
+        # future-state channels from the adapter input. By construction the last
+        # two dims are [last_log_scale, last_confidence].
+        memory_tokens = bundle.memory_tokens.clone()
+        if memory_tokens.shape[-1] >= 2:
+            memory_tokens[..., -2:] = 0.0
+        return ConditionBundle(maps=torch.zeros_like(bundle.maps),
+                               memory_tokens=memory_tokens)
     if mode == "none":
         return ConditionBundle(maps=torch.zeros_like(bundle.maps),
                                memory_tokens=torch.zeros_like(

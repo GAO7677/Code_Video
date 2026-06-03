@@ -17,9 +17,10 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
 from phys_state_video.conditioning import build_condition_bundle
-from phys_state_video.config import AdapterConfig, ConditioningConfig
+from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
 from phys_state_video.experiment import apply_condition_mode, compute_state_metrics, perturb_condition_bundle
+from phys_state_video.predictor import FutureStatePredictor
 from phys_state_video.proxy_state import extract_primary_track
 from phys_state_video.utils import require_torch
 
@@ -117,6 +118,7 @@ def load_model_specs(path: str | None) -> list[dict[str, str]]:
                 "label": str(item.get("label") or item.get("id") or f"Model {idx:02d}").strip(),
                 "checkpoint": checkpoint,
                 "condition_mode": str(item.get("condition_mode") or "").strip(),
+                "predictor_checkpoint": str(item.get("predictor_checkpoint") or "").strip(),
             }
         )
     return specs
@@ -461,17 +463,26 @@ def main():
         model = TinyVideoBackbone(adapter_cfg).to(args.device)
         load_info = load_model_state(model, ckpt["model"], spec["checkpoint"])
         model.eval()
+        predictor_checkpoint = spec["predictor_checkpoint"] or ckpt.get("predictor_checkpoint")
+        predictor_model = None
+        if predictor_checkpoint:
+            predictor_ckpt = load_checkpoint(predictor_checkpoint, map_location="cpu")
+            predictor_model = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
+            load_model_state(predictor_model, predictor_ckpt["model"], predictor_checkpoint)
+            predictor_model.eval()
         models.append(
             {
                 "id": spec["id"],
                 "label": spec["label"],
                 "checkpoint": spec["checkpoint"],
                 "condition_mode": spec["condition_mode"] or ckpt.get("condition_mode", "state"),
+                "predictor_checkpoint": predictor_checkpoint,
                 "state_loss_weights": ckpt.get("state_loss_weights"),
                 "state_loss_scale": float(ckpt.get("state_loss_scale", 0.1)),
                 "spatial_loss_scale": float(ckpt.get("spatial_loss_scale", 0.0)),
                 "spatial_foreground_weight": float(ckpt.get("spatial_foreground_weight", 4.0)),
                 "load_info": load_info,
+                "predictor_model": predictor_model,
                 "model": model,
             }
         )
@@ -490,18 +501,30 @@ def main():
                 future_states = batch["future_states"].to(args.device)
                 future_boxes = batch["future_boxes"].to(args.device)
                 appearance = batch["appearance"].to(args.device)
-                bundle = build_condition_bundle(future_states, future_boxes, appearance, cond_cfg)
-                bundle = apply_condition_mode(bundle, model_info["condition_mode"])
+                target_bundle = build_condition_bundle(future_states, future_boxes, appearance, cond_cfg)
+                bundle = apply_condition_mode(target_bundle, model_info["condition_mode"])
+                future_latent_tokens = None
+                if model_info["predictor_model"] is not None:
+                    predictor_outputs = model_info["predictor_model"](
+                        batch["context_states"].to(args.device),
+                        appearance,
+                        batch["camera"].to(args.device),
+                        prompt_token_ids=batch["prompt_token_ids"].to(args.device),
+                        prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+                        future_steps=future_states.shape[1],
+                    )
+                    future_latent_tokens = predictor_outputs["latents"]
 
                 outputs = model_info["model"](
                     batch["context_frames"].to(args.device),
                     bundle.maps,
                     bundle.memory_tokens,
+                    future_latent_tokens=future_latent_tokens,
                     context_states=batch["context_states"].to(args.device),
                     prompt_token_ids=batch["prompt_token_ids"].to(args.device),
                     prompt_token_mask=batch["prompt_token_mask"].to(args.device),
                 )
-                target_spatial_maps = bundle.maps[:, :, 0:2]
+                target_spatial_maps = target_bundle.maps[:, :, 0:2]
                 state_loss_weight_tensor = None
                 if model_info["state_loss_weights"] is not None:
                     state_loss_weight_tensor = torch.tensor(model_info["state_loss_weights"], dtype=torch.float32, device=args.device)
@@ -532,6 +555,7 @@ def main():
                     batch["context_frames"].to(args.device),
                     perturbed_bundle.maps,
                     perturbed_bundle.memory_tokens,
+                    future_latent_tokens=future_latent_tokens,
                     context_states=batch["context_states"].to(args.device),
                     prompt_token_ids=batch["prompt_token_ids"].to(args.device),
                     prompt_token_mask=batch["prompt_token_mask"].to(args.device),
@@ -544,7 +568,7 @@ def main():
                     state_loss_weights=state_loss_weight_tensor,
                     state_loss_scale=model_info["state_loss_scale"],
                     predicted_spatial_logits=perturbed_outputs.get("spatial_logits"),
-                    target_spatial_maps=perturbed_bundle.maps[:, :, 0:2],
+                    target_spatial_maps=target_bundle.maps[:, :, 0:2],
                     spatial_loss_scale=model_info["spatial_loss_scale"],
                     spatial_foreground_weight=model_info["spatial_foreground_weight"],
                 )
@@ -575,6 +599,7 @@ def main():
                 "label": model_info["label"],
                 "checkpoint": model_info["checkpoint"],
                 "condition_mode": model_info["condition_mode"],
+                "predictor_checkpoint": model_info["predictor_checkpoint"],
                 "spatial_loss_scale": model_info["spatial_loss_scale"],
                 "load_info": model_info["load_info"],
                 "correct": {key: value / denom for key, value in totals_correct.items()},

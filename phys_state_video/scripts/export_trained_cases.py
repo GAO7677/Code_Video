@@ -400,13 +400,14 @@ def render_html(report: dict) -> str:
     <section class="hero">
       <h1>当前训练模型 Video Cases</h1>
       <p class="lead">
-        这页展示的是当前最佳 predictor 与当前最佳 adapter 的端到端生成结果。每个 case 给出 context、真实 future、模型生成 future，以及模型真正使用的 predicted condition maps，
-        方便直接判断状态预测是否合理，以及视频生成是否真的跟随 state condition。
+        这页展示的是当前最佳 predictor 与当前最佳 adapter 的端到端生成结果。每个 case 给出 context、真实 future、模型生成 future，以及 predictor 导出的显式 predicted conditions。
+        当方法使用的是 latent-only 条件时，这里的 condition 视频主要用于诊断 predictor 轨迹和尺度预测，本身不一定是 adapter 直接消费的主条件。
       </p>
       <div class="hero-meta">
         <span>cases: {report['case_count']}</span>
         <span>predictor: {html.escape(report['predictor_checkpoint_name'])}</span>
         <span>adapter: {html.escape(report['adapter_checkpoint_name'])}</span>
+        <span>condition_mode: {html.escape(report['condition_mode'])}</span>
         <span>url: http://127.0.0.1:{report['port']}</span>
       </div>
     </section>
@@ -456,6 +457,7 @@ def main():
         projector=ConfidenceAwareProjector(),
         video_model=adapter,
         conditioning_config=cond_cfg,
+        condition_mode=adapter_ckpt.get("condition_mode", "state"),
     )
 
     eval_metrics: dict[str, dict | None] = {}
@@ -549,6 +551,7 @@ def main():
         "predictor_load_info": predictor_info,
         "adapter_load_info": adapter_info,
         "port": args.port,
+        "condition_mode": adapter_ckpt.get("condition_mode", "state"),
         "case_count": len(cases),
         "eval_metrics": eval_metrics,
         "aggregate_preview": {

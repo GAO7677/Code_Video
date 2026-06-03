@@ -73,6 +73,7 @@ def main():
         projector=ConfidenceAwareProjector(),
         video_model=adapter.eval(),
         conditioning_config=ConditioningConfig(**adapter_ckpt["conditioning"]),
+        condition_mode=adapter_ckpt.get("condition_mode", "state"),
     )
 
     with torch.no_grad():
@@ -93,6 +94,7 @@ def main():
         future_boxes=detach_to_cpu_numpy(outputs["future_boxes"]),
         generated_frames=detach_to_cpu_numpy(outputs["generated_frames"]),
         condition_maps=detach_to_cpu_numpy(outputs["condition_maps"]),
+        adapter_condition_maps=detach_to_cpu_numpy(outputs["adapter_condition_maps"]),
         state_logits=detach_to_cpu_numpy(outputs["state_logits"]),
     )
     (output_dir / "meta.json").write_text(json.dumps({"prompt": batch["prompts"][0]}, ensure_ascii=False, indent=2))
