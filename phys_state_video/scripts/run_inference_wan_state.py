@@ -149,7 +149,6 @@ def main():
     full_video = ((generated_video + 1.0) * 0.5).clamp(0.0, 1.0)
     generated_future = full_video[:, context_steps:context_steps + future_steps]
     context_np = detach_to_cpu_numpy(batch["context_frames"][0])
-    future_gt_np = detach_to_cpu_numpy(batch["future_frames"][0])
     predicted_states_np = detach_to_cpu_numpy(state_predictions[0])
     state_tokens_np = detach_to_cpu_numpy(state_tokens[0])
     full_video_np = detach_to_cpu_numpy(full_video)
@@ -158,7 +157,6 @@ def main():
     np.savez_compressed(
         output_dir / "wan_inference_outputs.npz",
         context_frames=context_np,
-        future_gt_frames=future_gt_np,
         predicted_future_states=predicted_states_np,
         future_state_latents=state_tokens_np,
         generated_full_video=full_video_np,
@@ -166,7 +164,6 @@ def main():
     )
 
     write_mp4(output_dir / "context.mp4", context_np, args.fps)
-    write_mp4(output_dir / "gt_future.mp4", future_gt_np, args.fps)
     write_mp4(output_dir / "wan_full.mp4", full_video_np, args.fps)
     write_mp4(output_dir / "wan_future.mp4", generated_future_np, args.fps)
 

@@ -120,7 +120,7 @@ def _apply_clean_prefix_to_latent(
             f"prefix_len={prefix_len}, latent_steps={latents.shape[1]}"
         )
     output = latents.clone()
-    output[:, :, :prefix_len] = clean_prefix_latents
+    output[:, :prefix_len] = clean_prefix_latents
     return output
 
 

@@ -16,6 +16,7 @@ from phys_state_video.predictor_wan_state import (
 )
 from phys_state_video.utils import require_torch
 from phys_state_video.wan_bridge import (
+    _apply_clean_prefix_to_latent,
     _align_wan_frame_num,
     _build_prefix_condition_mask,
     _build_prefix_latent_noise_mask,
@@ -114,6 +115,16 @@ class WanStatePredictorTests(unittest.TestCase):
         self.assertTrue(torch.equal(latent_noise_mask[:, 0], torch.zeros_like(latent_noise_mask[:, 0])))
         self.assertTrue(torch.equal(latent_noise_mask[:, 1], torch.zeros_like(latent_noise_mask[:, 1])))
         self.assertTrue(torch.equal(latent_noise_mask[:, 2], torch.ones_like(latent_noise_mask[:, 2])))
+
+    def test_apply_clean_prefix_to_latent_overwrites_time_axis_only(self):
+        latents = torch.full((2, 4, 3, 5), fill_value=-1.0)
+        clean_prefix = torch.arange(2 * 2 * 3 * 5, dtype=torch.float32).view(2, 2, 3, 5)
+
+        updated = _apply_clean_prefix_to_latent(latents, clean_prefix)
+
+        self.assertTrue(torch.equal(updated[:, :2], clean_prefix))
+        self.assertTrue(torch.equal(updated[:, 2:], latents[:, 2:]))
+        self.assertTrue(torch.equal(updated[:, :, :, 2:], torch.cat([clean_prefix, latents[:, 2:]], dim=1)[:, :, :, 2:]))
 
     def test_state_token_padding(self):
         tokens = torch.randn(1, 3, 8)
