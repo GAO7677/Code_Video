@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from pathlib import Path
 
 from .predictor_wan_state_v2 import resample_temporal_features
@@ -182,6 +183,9 @@ class WanPromptContextEncoder:
     wan_repo_root: str | Path | None = None
     task: str = "i2v-A14B"
     device: str = "cpu"
+    text_encoder: Any = field(init=False, repr=False)
+    context_dim: int = field(init=False)
+    max_text_len: int = field(init=False)
 
     def __post_init__(self) -> None:
         from .wan_bridge import load_wan_modules

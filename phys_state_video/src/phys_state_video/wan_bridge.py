@@ -5,7 +5,7 @@ import math
 import random
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +44,24 @@ def _ensure_wan_importable(wan_repo_root: str | Path | None = None) -> Path:
 def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
     _ensure_wan_importable(wan_repo_root)
 
-    from wan_.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
-    from wan_.image2video import WanI2V
-    from wan_.textimage2video import WanTI2V
-    from wan_.modules.t5 import T5EncoderModel
-    from wan_.modules.vae2_1 import Wan2_1_VAE
-    from wan_.modules.vae2_2 import Wan2_2_VAE
+    original_current_device = getattr(torch.cuda, "current_device", None)
+    patched_current_device = False
+    if original_current_device is not None:
+        try:
+            original_current_device()
+        except Exception:
+            torch.cuda.current_device = lambda: 0
+            patched_current_device = True
+    try:
+        from wan_.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
+        from wan_.image2video import WanI2V
+        from wan_.textimage2video import WanTI2V
+        from wan_.modules.t5 import T5EncoderModel
+        from wan_.modules.vae2_1 import Wan2_1_VAE
+        from wan_.modules.vae2_2 import Wan2_2_VAE
+    finally:
+        if patched_current_device and original_current_device is not None:
+            torch.cuda.current_device = original_current_device
 
     return {
         "WAN_CONFIGS": WAN_CONFIGS,
@@ -239,6 +251,9 @@ class WanLatentExtractor:
     wan_repo_root: str | Path | None = None
     task: str = "i2v-A14B"
     device: str = "cuda"
+    _wan_configs: dict[str, Any] = field(init=False, repr=False)
+    vae: Any = field(init=False, repr=False)
+    temporal_stride: int = field(init=False)
 
     def __post_init__(self) -> None:
         modules = load_wan_modules(self.wan_repo_root)
@@ -288,6 +303,10 @@ class WanImageToVideoBackend:
     task: str = "i2v-A14B"
     device: str = "cuda"
     state_adapter_ckpt: str | Path | None = None
+    _wan_configs: dict[str, Any] = field(init=False, repr=False)
+    _max_area_configs: dict[str, int] = field(init=False, repr=False)
+    _supported_sizes: dict[str, tuple[str, ...]] = field(init=False, repr=False)
+    pipeline: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not str(self.device).startswith("cuda"):
@@ -583,6 +602,11 @@ class WanTextImageToVideoBackend:
     task: str = "ti2v-5B"
     device: str = "cuda"
     state_adapter_ckpt: str | Path | None = None
+    _wan_configs: dict[str, Any] = field(init=False, repr=False)
+    _max_area_configs: dict[str, int] = field(init=False, repr=False)
+    _size_configs: dict[str, tuple[int, int]] = field(init=False, repr=False)
+    _supported_sizes: dict[str, tuple[str, ...]] = field(init=False, repr=False)
+    pipeline: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not str(self.device).startswith("cuda"):

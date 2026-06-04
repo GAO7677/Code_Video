@@ -7,6 +7,8 @@ LOG_ROOT="${INPUT_ROOT}/logs"
 FLUX_PY="/home/gaoya/miniconda3/envs/flux/bin/python"
 VPHY_PY="/data/gaoya/miniconda3/envs/vphy/bin/python"
 METHODS=(wan22-5B-TI2V VACE_1p3B_TI2V)
+GPU_IDS=(5 6 7)
+NUM_SHARDS="${#GPU_IDS[@]}"
 
 mkdir -p "${LOG_ROOT}"
 
@@ -41,18 +43,15 @@ PY
 
 run_flux_phase() {
   local metric_name="$1"
-  local shards="$2"
-  shift 2
-  local gpu_ids=("$@")
   local pids=()
   local i=0
-  for gpu in "${gpu_ids[@]}"; do
+  for gpu in "${GPU_IDS[@]}"; do
     CUDA_VISIBLE_DEVICES="${gpu}" PYTHONUNBUFFERED=1 \
       "${FLUX_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
       --input-root "${INPUT_ROOT}" \
       --methods "${METHODS[@]}" \
       --metrics "${metric_name}" \
-      --num-shards "${shards}" \
+      --num-shards "${NUM_SHARDS}" \
       --shard-id "${i}" \
       --continue-on-error \
       --skip-summary \
@@ -66,18 +65,15 @@ run_flux_phase() {
 }
 
 run_videophy_phase() {
-  local shards="$1"
-  shift
-  local gpu_ids=("$@")
   local pids=()
   local i=0
-  for gpu in "${gpu_ids[@]}"; do
+  for gpu in "${GPU_IDS[@]}"; do
     CUDA_VISIBLE_DEVICES="${gpu}" PYTHONUNBUFFERED=1 \
       "${VPHY_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
       --input-root "${INPUT_ROOT}" \
       --methods "${METHODS[@]}" \
       --metrics videophy2 \
-      --num-shards "${shards}" \
+      --num-shards "${NUM_SHARDS}" \
       --shard-id "${i}" \
       --continue-on-error \
       --skip-summary \
@@ -90,17 +86,17 @@ run_videophy_phase() {
   done
 }
 
-wait_for_no_match "eval_benchmark_dir_metrics.py --input-root ${INPUT_ROOT} --methods wan22-5B-TI2V VACE_1p3B_TI2V --metrics pdi wmreward"
+wait_for_no_match "eval_benchmark_dir_metrics.py --input-root ${INPUT_ROOT}"
 
 # Retry the slowest metrics once in continue-on-error mode after the initial
 # shard swarm finishes. Already-computed samples are skipped, so this mainly
 # picks up stragglers from transient CUDA/SAM failures.
-run_flux_phase "pdi" 8 0 1 2 3 4 5 6 7
-run_flux_phase "wmreward" 4 0 1 2 3
+run_flux_phase "pdi"
+run_flux_phase "wmreward"
 
-run_flux_phase proxy 4 0 1 2 3
-run_flux_phase cosmos 2 4 5
-run_videophy_phase 2 6 7
+run_flux_phase proxy
+run_flux_phase cosmos
+run_videophy_phase
 
 "${FLUX_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
   --input-root "${INPUT_ROOT}" \
