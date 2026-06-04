@@ -19,6 +19,7 @@ from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanImageToVideoBackend, WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
     MockLatentExtractor,
+    WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
 )
@@ -122,6 +123,15 @@ def build_predictor_latent_extractor(args, checkpoint):
     )
 
 
+def build_prompt_context_encoder(args):
+    return WanPromptContextEncoder(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.wan_task,
+        device=args.device,
+    )
+
+
 def main():
     args = parse_args()
     if args.device is None:
@@ -133,6 +143,7 @@ def main():
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
 
     latent_extractor = build_predictor_latent_extractor(args, predictor_ckpt)
+    prompt_context_encoder = build_prompt_context_encoder(args) if predictor_version == "wan_state_v2_latent_time" else None
     backend = WanImageToVideoBackend(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -156,11 +167,12 @@ def main():
                 temporal_stride=latent_extractor.temporal_stride,
             )
             camera_latent = resample_camera_to_latent_steps(batch["camera"].to(args.device), context_latent_steps)
+            prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
             outputs = predictor(
                 context_latents=context_latents,
                 camera=camera_latent,
-                prompt_token_ids=batch["prompt_token_ids"].to(args.device),
-                prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+                prompt_context=prompt_context.to(args.device),
+                prompt_mask=prompt_mask.to(args.device),
                 future_latent_steps=future_latent_steps,
                 num_objects=batch["context_states"].shape[2],
             )
@@ -183,7 +195,6 @@ def main():
             context_frames=context_frames[0],
             size=args.wan_size,
             frame_num=frame_num,
-            state_tokens=state_tokens[0],
             memory_tokens=memory_tokens[0],
             condition_maps=condition_maps[0],
             sample_solver=args.sample_solver,
@@ -220,7 +231,7 @@ def main():
         memory_tokens=memory_tokens_np,
         condition_maps=condition_maps_np,
         future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
-        future_object_slots=detach_to_cpu_numpy(outputs["future_object_slots"][0]),
+        future_object_slots=detach_to_cpu_numpy(outputs["debug_future_object_slots"][0]),
         generated_full_video=full_video_np,
         generated_future_frames=generated_future_np,
     )

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict
 
 from .schemas import STATE_DIM, StateIndex
-from .utils import hash_prompt_tokens, require_torch
+from .utils import require_torch
 
 torch = require_torch()
 nn = torch.nn
@@ -32,16 +32,15 @@ VIS_STATE_INDICES = (
 @dataclass(slots=True)
 class WanStateLatentPredictorV2Config:
     latent_channels: int = 16
-    latent_pool_side: int = 2
     camera_dim: int = 8
-    prompt_vocab_size: int = 4096
-    prompt_embed_dim: int = 64
+    prompt_context_dim: int = 4096
     hidden_dim: int = 256
     state_latent_dim: int = 128
     state_map_height: int = 2
     state_map_width: int = 2
     max_context_latent_steps: int = 16
     max_future_latent_steps: int = 16
+    max_prompt_tokens: int = 512
     max_objects: int = 6
     num_heads: int = 8
     num_encoder_layers: int = 4
@@ -77,30 +76,6 @@ def resample_temporal_states(states: torch.Tensor, target_steps: int) -> torch.T
         align_corners=False,
     )
     return resized.view(batch, num_objects, state_dim, target_steps).permute(0, 3, 1, 2).contiguous()
-
-
-class PromptEncoder(nn.Module):
-    def __init__(self, vocab_size: int, embed_dim: int):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.embedding = nn.EmbeddingBag(vocab_size, embed_dim, mode="mean")
-
-    def forward(self, prompts: Sequence[str], device) -> torch.Tensor:
-        token_ids: List[int] = []
-        offsets = [0]
-        for prompt in prompts:
-            ids = hash_prompt_tokens(prompt, self.vocab_size)
-            token_ids.extend(ids)
-            offsets.append(offsets[-1] + len(ids))
-        flat = torch.tensor(token_ids, dtype=torch.long, device=device)
-        offsets_tensor = torch.tensor(offsets[:-1], dtype=torch.long, device=device)
-        return self.embedding(flat, offsets_tensor)
-
-    def forward_tokens(self, token_ids: torch.Tensor, token_mask: torch.Tensor) -> torch.Tensor:
-        embeddings = self.embedding.weight[token_ids]
-        masked = embeddings * token_mask.unsqueeze(-1)
-        denom = token_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
-        return masked.sum(dim=1) / denom
 
 
 class GroupedStateHeads(nn.Module):
@@ -200,13 +175,18 @@ class StateTokenHead(nn.Module):
     def forward(self, state_maps: torch.Tensor) -> torch.Tensor:
         if state_maps.ndim != 5:
             raise ValueError(f"expected state maps [B, T, H, W, D], got {tuple(state_maps.shape)}")
-        projected = self.proj(state_maps)
-        return projected
+        return self.proj(state_maps)
 
 
 class MemoryTokenHead(nn.Module):
     def __init__(self, hidden_dim: int):
         super().__init__()
+        self.score = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
         self.proj = nn.Sequential(
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, hidden_dim),
@@ -219,8 +199,11 @@ class MemoryTokenHead(nn.Module):
             raise ValueError(
                 f"expected context object slots [B, T, N, D], got {tuple(context_object_slots.shape)}"
             )
-        # Use the latest context step as compact object memory.
-        return self.proj(context_object_slots[:, -1])
+        slots_bntd = context_object_slots.permute(0, 2, 1, 3).contiguous()
+        weights = self.score(slots_bntd).squeeze(-1)
+        weights = torch.softmax(weights, dim=-1)
+        pooled = torch.sum(slots_bntd * weights.unsqueeze(-1), dim=2)
+        return self.proj(pooled)
 
 
 class WanStateLatentPredictorV2(nn.Module):
@@ -229,10 +212,15 @@ class WanStateLatentPredictorV2(nn.Module):
         self.config = config or WanStateLatentPredictorV2Config()
         self.model_dim = self.config.state_latent_dim
 
-        self.prompt_encoder = PromptEncoder(self.config.prompt_vocab_size, self.config.prompt_embed_dim)
-        self.prompt_proj = nn.Sequential(
-            nn.LayerNorm(self.config.prompt_embed_dim),
-            nn.Linear(self.config.prompt_embed_dim, self.model_dim),
+        self.prompt_token_proj = nn.Sequential(
+            nn.LayerNorm(self.config.prompt_context_dim),
+            nn.Linear(self.config.prompt_context_dim, self.model_dim),
+            nn.GELU(),
+            nn.Linear(self.model_dim, self.model_dim),
+        )
+        self.prompt_summary_proj = nn.Sequential(
+            nn.LayerNorm(self.model_dim),
+            nn.Linear(self.model_dim, self.model_dim),
             nn.GELU(),
             nn.Linear(self.model_dim, self.model_dim),
         )
@@ -247,13 +235,13 @@ class WanStateLatentPredictorV2(nn.Module):
             nn.GELU(),
             nn.Conv2d(self.model_dim, self.model_dim, kernel_size=3, padding=1),
         )
-        self.context_pos_embed = nn.Parameter(
+        self.context_time_pos_embed = nn.Parameter(
             torch.randn(1, self.config.max_context_latent_steps, 1, 1, self.model_dim) * 0.02
         )
         self.future_time_queries = nn.Parameter(
             torch.randn(1, self.config.max_future_latent_steps, 1, 1, self.model_dim) * 0.02
         )
-        self.future_spatial_pos_embed = nn.Parameter(
+        self.spatial_pos_embed = nn.Parameter(
             torch.randn(
                 1,
                 1,
@@ -263,6 +251,13 @@ class WanStateLatentPredictorV2(nn.Module):
             )
             * 0.02
         )
+        self.context_prompt_cross_attn = nn.MultiheadAttention(
+            embed_dim=self.model_dim,
+            num_heads=self.config.num_heads,
+            dropout=self.config.dropout,
+            batch_first=True,
+        )
+        self.context_prompt_norm = nn.LayerNorm(self.model_dim)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.model_dim,
             nhead=self.config.num_heads,
@@ -303,26 +298,32 @@ class WanStateLatentPredictorV2(nn.Module):
     def unfreeze_state_heads(self) -> None:
         self.state_heads.unfreeze()
 
-    def _encode_prompt(
+    def _encode_prompt_context(
         self,
-        prompts: Sequence[str] | None,
-        prompt_token_ids: torch.Tensor | None,
-        prompt_token_mask: torch.Tensor | None,
-        device,
-    ) -> torch.Tensor:
-        if prompt_token_ids is not None and prompt_token_mask is not None:
-            prompt_embed = self.prompt_encoder.forward_tokens(prompt_token_ids, prompt_token_mask)
-        elif prompts is not None:
-            prompt_embed = self.prompt_encoder(prompts, device)
-        else:
-            raise ValueError("either prompts or prompt_token_ids/prompt_token_mask must be provided")
-        return self.prompt_proj(prompt_embed)
+        prompt_context: torch.Tensor,
+        prompt_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if prompt_context.ndim != 3:
+            raise ValueError(
+                f"expected prompt_context [B, L_prompt, D_prompt], got {tuple(prompt_context.shape)}"
+            )
+        if prompt_mask.ndim != 2 or prompt_mask.shape[:2] != prompt_context.shape[:2]:
+            raise ValueError(
+                f"expected prompt_mask [B, L_prompt] matching prompt_context, got {tuple(prompt_mask.shape)}"
+            )
+        prompt_tokens = self.prompt_token_proj(prompt_context)
+        masked = prompt_tokens * prompt_mask.unsqueeze(-1)
+        denom = prompt_mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        prompt_summary = self.prompt_summary_proj(masked.sum(dim=1) / denom)
+        return prompt_tokens, prompt_summary
 
     def _build_context_state_maps(
         self,
         context_latents: torch.Tensor,
         camera: torch.Tensor,
-        prompt_embed: torch.Tensor,
+        prompt_tokens: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        prompt_summary: torch.Tensor,
     ) -> torch.Tensor:
         batch, steps, _, height, width = context_latents.shape
         visual = self.visual_stem(context_latents.view(batch * steps, context_latents.shape[2], height, width))
@@ -338,22 +339,38 @@ class WanStateLatentPredictorV2(nn.Module):
             self.config.state_map_width,
         ).permute(0, 1, 3, 4, 2).contiguous()
         camera_embed = self.camera_proj(camera).view(batch, steps, 1, 1, self.model_dim)
-        prompt_embed = prompt_embed.view(batch, 1, 1, 1, self.model_dim)
-        state_maps = visual + camera_embed + prompt_embed + self.context_pos_embed[:, :steps]
+        prompt_embed = prompt_summary.view(batch, 1, 1, 1, self.model_dim)
+        state_maps = (
+            visual
+            + camera_embed
+            + prompt_embed
+            + self.context_time_pos_embed[:, :steps]
+            + self.spatial_pos_embed
+        )
         grid_h, grid_w = self.config.state_map_height, self.config.state_map_width
-        encoded = state_maps.permute(0, 2, 3, 1, 4).contiguous().view(batch * grid_h * grid_w, steps, self.model_dim)
-        encoded = self.context_encoder(encoded)
-        encoded = encoded.view(batch, grid_h, grid_w, steps, self.model_dim).permute(0, 3, 1, 2, 4).contiguous()
-        return encoded
+        context_tokens = state_maps.view(batch, steps * grid_h * grid_w, self.model_dim)
+        context_tokens = self.context_encoder(context_tokens)
+        prompt_padding_mask = prompt_mask <= 0
+        attended_prompt, _ = self.context_prompt_cross_attn(
+            self.context_prompt_norm(context_tokens),
+            prompt_tokens,
+            prompt_tokens,
+            key_padding_mask=prompt_padding_mask,
+            need_weights=False,
+        )
+        context_tokens = context_tokens + attended_prompt
+        return context_tokens.view(batch, steps, grid_h, grid_w, self.model_dim)
 
     def _build_future_state_maps(
         self,
         context_state_maps: torch.Tensor,
+        prompt_tokens: torch.Tensor,
         future_latent_steps: int,
     ) -> torch.Tensor:
         batch, context_steps, grid_h, grid_w, hidden_dim = context_state_maps.shape
-        memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
-        future_queries = self.future_time_queries[:, :future_latent_steps] + self.future_spatial_pos_embed
+        context_memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
+        memory = torch.cat([context_memory, prompt_tokens], dim=1)
+        future_queries = self.future_time_queries[:, :future_latent_steps] + self.spatial_pos_embed
         future_queries = future_queries.expand(batch, -1, -1, -1, -1).contiguous()
         future_tokens = future_queries.view(batch, future_latent_steps * grid_h * grid_w, hidden_dim)
         future_hidden = self.future_decoder(future_tokens, memory)
@@ -363,9 +380,8 @@ class WanStateLatentPredictorV2(nn.Module):
         self,
         context_latents: torch.Tensor,
         camera: torch.Tensor,
-        prompts: Sequence[str] | None = None,
-        prompt_token_ids: torch.Tensor | None = None,
-        prompt_token_mask: torch.Tensor | None = None,
+        prompt_context: torch.Tensor,
+        prompt_mask: torch.Tensor,
         future_latent_steps: int | None = None,
         num_objects: int | None = None,
     ) -> Dict[str, torch.Tensor]:
@@ -389,51 +405,55 @@ class WanStateLatentPredictorV2(nn.Module):
             raise ValueError(
                 f"camera shape {tuple(camera.shape)} does not match context latents batch/steps {(batch, context_steps)}"
             )
+        if prompt_context.shape[0] != batch or prompt_mask.shape[0] != batch:
+            raise ValueError(
+                f"prompt batch size must match context batch {batch}, got {tuple(prompt_context.shape)} and "
+                f"{tuple(prompt_mask.shape)}"
+            )
 
-        prompt_embed = self._encode_prompt(
-            prompts,
-            prompt_token_ids,
-            prompt_token_mask,
-            context_latents.device,
+        prompt_tokens, prompt_summary = self._encode_prompt_context(prompt_context, prompt_mask)
+        context_state_maps = self._build_context_state_maps(
+            context_latents,
+            camera,
+            prompt_tokens,
+            prompt_mask,
+            prompt_summary,
         )
-        context_state_maps = self._build_context_state_maps(context_latents, camera, prompt_embed)
-        future_state_maps = self._build_future_state_maps(context_state_maps, future_latent_steps)
+        future_state_maps = self._build_future_state_maps(context_state_maps, prompt_tokens, future_latent_steps)
 
         context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
         future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
         projected_future_maps = self.state_token_head(future_state_maps)
-        state_tokens = projected_future_maps.view(
-            projected_future_maps.shape[0],
-            projected_future_maps.shape[1] * projected_future_maps.shape[2] * projected_future_maps.shape[3],
-            projected_future_maps.shape[4],
+        condition_maps = projected_future_maps.permute(0, 1, 4, 2, 3).contiguous()
+        state_tokens = condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(
+            condition_maps.shape[0],
+            condition_maps.shape[1] * condition_maps.shape[3] * condition_maps.shape[4],
+            condition_maps.shape[2],
         )
         memory_tokens = self.memory_token_head(context_object_slots)
-        condition_maps = projected_future_maps.permute(0, 1, 4, 2, 3).contiguous()
 
         context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
         future_grouped = self.state_heads(future_object_slots, num_objects=num_objects)
         return {
-            "context_state_latents": context_state_maps,
-            "future_state_latents": future_state_maps,
             "context_state_maps": context_state_maps,
             "future_state_maps": future_state_maps,
-            "projected_future_state_maps": projected_future_maps,
-            "context_object_slots": context_object_slots,
-            "future_object_slots": future_object_slots,
+            "condition_maps": condition_maps,
             "state_tokens": state_tokens,
             "memory_tokens": memory_tokens,
-            "condition_maps": condition_maps,
-            "future_adapter_tokens": state_tokens,
+            "context_state_predictions": context_grouped["state"],
+            "future_state_predictions": future_grouped["state"],
             "context_geom_predictions": context_grouped["geom"],
             "context_motion_predictions": context_grouped["motion"],
             "context_vis_predictions": context_grouped["vis"],
             "context_vis_logits": context_grouped["vis_logits"],
-            "context_state_predictions": context_grouped["state"],
             "future_geom_predictions": future_grouped["geom"],
             "future_motion_predictions": future_grouped["motion"],
             "future_vis_predictions": future_grouped["vis"],
             "future_vis_logits": future_grouped["vis_logits"],
-            "future_state_predictions": future_grouped["state"],
+            "debug_context_object_slots": context_object_slots,
+            "debug_future_object_slots": future_object_slots,
+            "debug_projected_future_state_maps": projected_future_maps,
+            "debug_prompt_tokens": prompt_tokens,
         }
 
 

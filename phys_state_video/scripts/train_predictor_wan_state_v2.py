@@ -23,7 +23,9 @@ from phys_state_video.wan_adapter_training import load_frozen_state_adapter_enco
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
     MockLatentExtractor,
+    WanPromptContextEncoder,
     compute_future_latent_steps,
+    compute_latent_step_count,
     resample_camera_to_latent_steps,
 )
 
@@ -80,6 +82,17 @@ def build_latent_extractor(args):
     )
 
 
+def build_prompt_context_encoder(args):
+    if args.wan_ckpt_dir is None:
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 now uses frozen Wan T5 prompt context")
+    return WanPromptContextEncoder(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.wan_task,
+        device=args.device,
+    )
+
+
 def load_checkpoint(checkpoint_path: str, map_location):
     try:
         return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
@@ -100,21 +113,43 @@ def load_teacher_predictor(checkpoint_path: str, device: str) -> WanStateLatentP
     return model
 
 
-def infer_model_config(sample, latent_extractor) -> WanStateLatentPredictorV2Config:
-    sample_frames = torch.from_numpy(sample.context_frames[None]).to(latent_extractor.device)
+def infer_model_config(dataset, latent_extractor, prompt_context_encoder) -> WanStateLatentPredictorV2Config:
+    first_sample = dataset[0]
+    sample_frames = torch.from_numpy(first_sample.context_frames[None]).to(latent_extractor.device)
     with torch.no_grad():
         context_latents = latent_extractor.encode_context_frames_raw(sample_frames)
-    future_latent_steps = compute_future_latent_steps(
-        context_steps=sample.context_frames.shape[0],
-        future_steps=sample.future_states.shape[0],
+
+    max_context_latent_steps = int(context_latents.shape[1])
+    max_future_latent_steps = compute_future_latent_steps(
+        context_steps=first_sample.context_frames.shape[0],
+        future_steps=first_sample.future_states.shape[0],
         temporal_stride=latent_extractor.temporal_stride,
     )
+    max_objects = int(first_sample.context_states.shape[1])
+
+    for index in range(1, len(dataset)):
+        sample = dataset[index]
+        context_latent_steps = compute_latent_step_count(
+            frame_steps=sample.context_frames.shape[0],
+            temporal_stride=latent_extractor.temporal_stride,
+        )
+        future_latent_steps = compute_future_latent_steps(
+            context_steps=sample.context_frames.shape[0],
+            future_steps=sample.future_states.shape[0],
+            temporal_stride=latent_extractor.temporal_stride,
+        )
+        max_context_latent_steps = max(max_context_latent_steps, int(context_latent_steps))
+        max_future_latent_steps = max(max_future_latent_steps, int(future_latent_steps))
+        max_objects = max(max_objects, int(sample.context_states.shape[1]))
+
     return WanStateLatentPredictorV2Config(
         latent_channels=context_latents.shape[2],
-        camera_dim=sample.camera.shape[-1],
-        max_context_latent_steps=context_latents.shape[1],
-        max_future_latent_steps=future_latent_steps,
-        max_objects=sample.context_states.shape[1],
+        camera_dim=first_sample.camera.shape[-1],
+        prompt_context_dim=prompt_context_encoder.context_dim,
+        max_context_latent_steps=max_context_latent_steps,
+        max_future_latent_steps=max_future_latent_steps,
+        max_prompt_tokens=prompt_context_encoder.max_text_len,
+        max_objects=max_objects,
     )
 
 
@@ -168,6 +203,7 @@ def save_checkpoint(
 def run_epoch(
     model,
     latent_extractor,
+    prompt_context_encoder,
     loader,
     optimizer,
     device,
@@ -212,12 +248,14 @@ def run_epoch(
         camera_latent = resample_camera_to_latent_steps(camera, context_latent_steps)
         context_target = resample_temporal_states(context_states, context_latent_steps)
         future_target = resample_temporal_states(future_states, future_latent_steps)
+        with torch.no_grad():
+            prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
 
         outputs = model(
             context_latents=context_latents,
             camera=camera_latent,
-            prompt_token_ids=batch["prompt_token_ids"].to(device),
-            prompt_token_mask=batch["prompt_token_mask"].to(device),
+            prompt_context=prompt_context.to(device),
+            prompt_mask=prompt_mask.to(device),
             future_latent_steps=future_latent_steps,
             num_objects=context_states.shape[2],
         )
@@ -238,8 +276,8 @@ def run_epoch(
                 teacher_outputs = teacher_predictor(
                     context_latents=context_latents,
                     camera=camera_latent,
-                    prompt_token_ids=batch["prompt_token_ids"].to(device),
-                    prompt_token_mask=batch["prompt_token_mask"].to(device),
+                    prompt_context=prompt_context.to(device),
+                    prompt_mask=prompt_mask.to(device),
                     future_latent_steps=future_latent_steps,
                     num_objects=context_states.shape[2],
                 )
@@ -275,8 +313,9 @@ def main():
     )
 
     latent_extractor = build_latent_extractor(args)
+    prompt_context_encoder = build_prompt_context_encoder(args)
     args.temporal_stride = latent_extractor.temporal_stride
-    config = infer_model_config(dataset[0], latent_extractor)
+    config = infer_model_config(dataset, latent_extractor, prompt_context_encoder)
     model = WanStateLatentPredictorV2(config).to(args.device)
     teacher_predictor = None
     adapter_encoder = None
@@ -308,6 +347,7 @@ def main():
             metrics = run_epoch(
                 model=model,
                 latent_extractor=latent_extractor,
+                prompt_context_encoder=prompt_context_encoder,
                 loader=loader,
                 optimizer=optimizer,
                 device=args.device,

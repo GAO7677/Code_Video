@@ -20,6 +20,7 @@ from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
     MockLatentExtractor,
+    WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
 )
@@ -40,7 +41,7 @@ def parse_args():
         help=(
             "Source of future condition. "
             "`ground_truth` exports `predicted_states=future_states`; "
-            "`wan_predictor` exports predictor `state_tokens` and `predicted_states`."
+            "`wan_predictor` exports predictor `condition_maps`, compatibility `state_tokens`, and `predicted_states`."
         ),
     )
     parser.add_argument(
@@ -115,6 +116,17 @@ def build_predictor_latent_extractor(args, predictor_ckpt):
     )
 
 
+def build_prompt_context_encoder(args) -> WanPromptContextEncoder:
+    if args.wan_ckpt_dir is None:
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 export uses frozen Wan T5 prompt context")
+    return WanPromptContextEncoder(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.wan_task,
+        device=args.device,
+    )
+
+
 def save_frame_png(frame_chw: np.ndarray, path: Path) -> None:
     frame = np.clip(frame_chw, 0.0, 1.0)
     frame = (frame.transpose(1, 2, 0) * 255.0).round().astype(np.uint8)
@@ -136,6 +148,7 @@ def build_predictor_state_condition(
     predictor,
     predictor_ckpt,
     latent_extractor,
+    prompt_context_encoder,
     device: str,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
@@ -150,11 +163,12 @@ def build_predictor_state_condition(
                 temporal_stride=latent_extractor.temporal_stride,
             )
             camera_latent = resample_camera_to_latent_steps(batch["camera"].to(device), context_latent_steps)
+            prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
             outputs = predictor(
                 context_latents=context_latents,
                 camera=camera_latent,
-                prompt_token_ids=batch["prompt_token_ids"].to(device),
-                prompt_token_mask=batch["prompt_token_mask"].to(device),
+                prompt_context=prompt_context.to(device),
+                prompt_mask=prompt_mask.to(device),
                 future_latent_steps=future_latent_steps,
                 num_objects=batch["context_states"].shape[2],
             )
@@ -181,11 +195,11 @@ def build_predictor_state_condition(
         "predicted_states": predicted_states,
         "context_state_predictions": context_state_predictions,
         "future_state_maps": detach_to_cpu_numpy(outputs["future_state_maps"][0]).astype(np.float32),
-        "future_object_slots": detach_to_cpu_numpy(outputs["future_object_slots"][0]).astype(np.float32),
-        "context_object_slots": detach_to_cpu_numpy(outputs["context_object_slots"][0]).astype(np.float32),
+        "future_object_slots": detach_to_cpu_numpy(outputs["debug_future_object_slots"][0]).astype(np.float32),
+        "context_object_slots": detach_to_cpu_numpy(outputs["debug_context_object_slots"][0]).astype(np.float32),
     }
     condition_meta = {
-        "future_condition_kind": "wan_predictor_state_tokens",
+        "future_condition_kind": "wan_predictor_condition_maps",
         "predictor_version": predictor_version,
         "state_tokens_shape": list(state_tokens.shape),
         "memory_tokens_shape": list(memory_tokens.shape),
@@ -198,7 +212,9 @@ def build_predictor_state_condition(
     }
     if predictor_version == "wan_state_v2_latent_time":
         condition_meta["context_latent_steps"] = int(context_latents.shape[1])
-        condition_meta["future_latent_steps"] = int(state_tokens.shape[0])
+        condition_meta["future_latent_steps"] = int(future_latent_steps)
+        condition_meta["future_state_token_count"] = int(state_tokens.shape[0])
+        condition_meta["future_state_map_spatial_shape"] = list(condition_maps.shape[-2:])
         condition_meta["temporal_stride"] = int(latent_extractor.temporal_stride)
         condition_meta["predictor_latent_source"] = predictor_ckpt.get("latent_source", "mock")
     return meta, condition_meta
@@ -221,9 +237,12 @@ def main():
     predictor = None
     predictor_ckpt = None
     latent_extractor = None
+    prompt_context_encoder = None
     if args.future_state_source == "wan_predictor":
         predictor, predictor_ckpt = load_wan_state_predictor(args.predictor, args.device)
         latent_extractor = build_predictor_latent_extractor(args, predictor_ckpt)
+        if predictor_ckpt.get("predictor_version", "wan_state_v1") == "wan_state_v2_latent_time":
+            prompt_context_encoder = build_prompt_context_encoder(args)
 
     records = []
     limit = args.limit if args.limit > 0 else len(dataset)
@@ -241,6 +260,7 @@ def main():
                 predictor=predictor,
                 predictor_ckpt=predictor_ckpt,
                 latent_extractor=latent_extractor,
+                prompt_context_encoder=prompt_context_encoder,
                 device=args.device,
             )
         else:

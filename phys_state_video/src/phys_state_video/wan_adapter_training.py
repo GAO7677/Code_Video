@@ -8,6 +8,16 @@ from pathlib import Path
 import numpy as np
 
 from .utils import require_torch
+from .wan_state_v2_helpers import (
+    align_wan_frame_num as align_wan_frame_num_shared,
+    apply_clean_prefix_to_latents as apply_clean_prefix_to_latents_shared,
+    build_prefix_latent_mask as build_prefix_latent_mask_shared,
+    build_prefix_timestep_tensor as build_prefix_timestep_tensor_shared,
+    filter_state_condition_payload_for_adapter as filter_state_condition_payload_for_adapter_shared,
+    flatten_condition_maps_to_state_tokens as flatten_condition_maps_to_state_tokens_shared,
+    resample_condition_maps_to_steps as resample_condition_maps_to_steps_shared,
+    resample_state_tokens_to_steps as resample_state_tokens_to_steps_shared,
+)
 
 torch = require_torch()
 F = torch.nn.functional
@@ -40,12 +50,7 @@ class StateConditionBundleRecord:
 
 
 def align_wan_frame_num(frame_num: int) -> int:
-    if frame_num <= 0:
-        raise ValueError(f"frame_num must be positive, got {frame_num}")
-    remainder = (frame_num - 1) % 4
-    if remainder == 0:
-        return frame_num
-    return frame_num + (4 - remainder)
+    return align_wan_frame_num_shared(frame_num)
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -214,13 +219,7 @@ def build_first_frame_mask(latent: torch.Tensor) -> torch.Tensor:
 
 
 def build_prefix_latent_mask(latent: torch.Tensor, prefix_len: int) -> torch.Tensor:
-    if latent.ndim != 4:
-        raise ValueError(f"expected latent with shape [C, T, H, W], got {tuple(latent.shape)}")
-    if prefix_len <= 0 or prefix_len >= latent.shape[1]:
-        raise ValueError(f"prefix_len must be in [1, {latent.shape[1] - 1}], got {prefix_len}")
-    mask = torch.ones_like(latent)
-    mask[:, :prefix_len] = 0
-    return mask
+    return build_prefix_latent_mask_shared(latent, prefix_len)
 
 
 def build_ti2v_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq_len: int) -> torch.Tensor:
@@ -237,16 +236,7 @@ def build_ti2v_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq_l
 
 
 def build_prefix_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq_len: int) -> torch.Tensor:
-    if mask.ndim != 4:
-        raise ValueError(f"expected mask with shape [C, T, H, W], got {tuple(mask.shape)}")
-    if timestep.ndim != 1 or timestep.shape[0] != 1:
-        raise ValueError(f"expected timestep with shape [1], got {tuple(timestep.shape)}")
-    masked = (mask[0][:, ::2, ::2] * timestep).flatten()
-    if masked.numel() > seq_len:
-        raise ValueError(f"masked timestep token count {masked.numel()} exceeds seq_len {seq_len}")
-    if masked.numel() < seq_len:
-        masked = torch.cat([masked, masked.new_ones(seq_len - masked.numel()) * timestep])
-    return masked.unsqueeze(0)
+    return build_prefix_timestep_tensor_shared(mask, timestep, seq_len)
 
 
 def compute_ti2v_seq_len(latent: torch.Tensor, patch_size: tuple[int, int]) -> int:
@@ -257,81 +247,23 @@ def compute_ti2v_seq_len(latent: torch.Tensor, patch_size: tuple[int, int]) -> i
 
 
 def apply_clean_prefix_to_latents(latent: torch.Tensor, clean_prefix_latents: torch.Tensor) -> torch.Tensor:
-    if latent.ndim != 4 or clean_prefix_latents.ndim != 4:
-        raise ValueError(
-            f"expected latent and clean_prefix_latents with shape [C, T, H, W], got {tuple(latent.shape)} and "
-            f"{tuple(clean_prefix_latents.shape)}"
-        )
-    prefix_len = int(clean_prefix_latents.shape[1])
-    if prefix_len <= 0 or prefix_len >= latent.shape[1]:
-        raise ValueError(f"invalid prefix_len={prefix_len} for latent_steps={latent.shape[1]}")
-    updated = latent.clone()
-    updated[:, :prefix_len] = clean_prefix_latents
-    return updated
+    return apply_clean_prefix_to_latents_shared(latent, clean_prefix_latents)
 
 
 def resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
-    if state_tokens.ndim == 2:
-        state_tokens = state_tokens.unsqueeze(0)
-    if state_tokens.ndim != 3:
-        raise ValueError(f"expected state_tokens with shape [B, T, D] or [T, D], got {tuple(state_tokens.shape)}")
-    if target_steps <= 0:
-        raise ValueError(f"target_steps must be positive, got {target_steps}")
-    if state_tokens.shape[1] == target_steps:
-        return state_tokens
-    resized = F.interpolate(
-        state_tokens.transpose(1, 2),
-        size=target_steps,
-        mode="linear",
-        align_corners=False,
-    )
-    return resized.transpose(1, 2).contiguous()
+    return resample_state_tokens_to_steps_shared(state_tokens, target_steps)
 
 
 def resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps: int) -> torch.Tensor:
-    if condition_maps.ndim == 4:
-        condition_maps = condition_maps.unsqueeze(0)
-    if condition_maps.ndim != 5:
-        raise ValueError(
-            f"expected condition_maps with shape [B, T, C, H, W] or [T, C, H, W], got {tuple(condition_maps.shape)}"
-        )
-    if target_steps <= 0:
-        raise ValueError(f"target_steps must be positive, got {target_steps}")
-    if condition_maps.shape[1] == target_steps:
-        return condition_maps
-    batch, steps, channels, height, width = condition_maps.shape
-    flattened = condition_maps.permute(0, 2, 3, 4, 1).contiguous().view(batch, channels * height * width, steps)
-    resized = F.interpolate(
-        flattened,
-        size=target_steps,
-        mode="linear",
-        align_corners=False,
-    )
-    return resized.view(batch, channels, height, width, target_steps).permute(0, 4, 1, 2, 3).contiguous()
+    return resample_condition_maps_to_steps_shared(condition_maps, target_steps)
 
 
 def flatten_condition_maps_to_state_tokens(condition_maps: torch.Tensor) -> torch.Tensor:
-    if condition_maps.ndim == 4:
-        condition_maps = condition_maps.unsqueeze(0)
-    if condition_maps.ndim != 5:
-        raise ValueError(
-            f"expected condition_maps with shape [B, T, C, H, W] or [T, C, H, W], got {tuple(condition_maps.shape)}"
-        )
-    batch, steps, channels, height, width = condition_maps.shape
-    return condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(batch, steps * height * width, channels)
+    return flatten_condition_maps_to_state_tokens_shared(condition_maps)
 
 
 def filter_state_condition_payload_for_adapter(state_condition: dict[str, torch.Tensor], adapter) -> dict[str, torch.Tensor]:
-    filtered: dict[str, torch.Tensor] = {}
-    if getattr(adapter, "state_token_dim", None) is not None and state_condition.get("state_tokens") is not None:
-        filtered["state_tokens"] = state_condition["state_tokens"]
-    if getattr(adapter, "memory_token_dim", None) is not None and state_condition.get("memory_tokens") is not None:
-        filtered["memory_tokens"] = state_condition["memory_tokens"]
-    if getattr(adapter, "map_token_dim", None) is not None and state_condition.get("condition_maps") is not None:
-        filtered["condition_maps"] = state_condition["condition_maps"]
-    if not filtered:
-        raise ValueError("state_condition payload does not match any initialized adapter branch")
-    return filtered
+    return filter_state_condition_payload_for_adapter_shared(state_condition, adapter)
 
 
 def select_ti2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.Parameter]]:
