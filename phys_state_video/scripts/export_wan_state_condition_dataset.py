@@ -91,9 +91,9 @@ def build_predictor_latent_extractor(args, predictor_ckpt):
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
     if predictor_version == "wan_state_v2_latent_time":
         latent_source = predictor_ckpt.get("latent_source")
-        if latent_source not in (None, "wan"):
+        if latent_source != "wan":
             raise ValueError(
-                "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+                "wan_state_v2_latent_time checkpoints must explicitly declare latent_source='wan' in the current mainline, "
                 f"got latent_source={latent_source!r}"
             )
     if args.wan_ckpt_dir is None:

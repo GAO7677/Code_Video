@@ -100,9 +100,9 @@ def build_predictor_latent_extractor(args, checkpoint):
     predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
     if predictor_version == "wan_state_v2_latent_time":
         latent_source = checkpoint.get("latent_source")
-        if latent_source not in (None, "wan"):
+        if latent_source != "wan":
             raise ValueError(
-                "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+                "wan_state_v2_latent_time checkpoints must explicitly declare latent_source='wan' in the current mainline, "
                 f"got latent_source={latent_source!r}"
             )
         if args.wan_ckpt_dir is None:
@@ -178,7 +178,6 @@ def main():
                 future_steps=future_steps,
                 num_objects=batch["context_states"].shape[2],
             )
-        state_tokens = outputs["state_tokens"]
         memory_tokens = outputs["memory_tokens"]
         condition_maps = outputs["condition_maps"]
         state_predictions = outputs["future_state_predictions"]
@@ -209,7 +208,6 @@ def main():
     generated_future = full_video[:, context_steps:context_steps + future_steps]
     context_np = detach_to_cpu_numpy(batch["context_frames"][0])
     predicted_states_np = detach_to_cpu_numpy(state_predictions[0])
-    state_tokens_np = detach_to_cpu_numpy(state_tokens[0])
     memory_tokens_np = detach_to_cpu_numpy(memory_tokens[0])
     condition_maps_np = detach_to_cpu_numpy(condition_maps[0])
     full_video_np = detach_to_cpu_numpy(full_video)
@@ -219,7 +217,6 @@ def main():
         output_dir / "wan_inference_outputs.npz",
         context_frames=context_np,
         predicted_future_states=predicted_states_np,
-        state_tokens=state_tokens_np,
         memory_tokens=memory_tokens_np,
         condition_maps=condition_maps_np,
         future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),

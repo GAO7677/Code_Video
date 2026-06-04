@@ -4,6 +4,7 @@ import gc
 import math
 import random
 import sys
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,13 @@ def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
         try:
             original_current_device()
         except Exception:
+            warnings.warn(
+                "Wan upstream imports touched torch.cuda.current_device() during module import. "
+                "Applying a temporary CPU-safe compatibility patch in load_wan_modules(); "
+                "this should be treated as an environment/upstream compatibility workaround, not normal flow.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             torch.cuda.current_device = lambda: 0
             patched_current_device = True
     try:

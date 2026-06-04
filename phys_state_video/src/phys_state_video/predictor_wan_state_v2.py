@@ -367,15 +367,28 @@ class WanStateLatentPredictorV2(nn.Module):
         self,
         context_state_maps: torch.Tensor,
         prompt_tokens: torch.Tensor,
+        prompt_mask: torch.Tensor,
         future_latent_steps: int,
     ) -> torch.Tensor:
         batch, context_steps, grid_h, grid_w, hidden_dim = context_state_maps.shape
         context_memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
         memory = torch.cat([context_memory, prompt_tokens], dim=1)
+        context_padding_mask = torch.zeros(
+            batch,
+            context_memory.shape[1],
+            dtype=torch.bool,
+            device=context_state_maps.device,
+        )
+        prompt_padding_mask = prompt_mask <= 0
+        memory_padding_mask = torch.cat([context_padding_mask, prompt_padding_mask], dim=1)
         future_queries = self.future_time_queries[:, :future_latent_steps] + self.spatial_pos_embed
         future_queries = future_queries.expand(batch, -1, -1, -1, -1).contiguous()
         future_tokens = future_queries.view(batch, future_latent_steps * grid_h * grid_w, hidden_dim)
-        future_hidden = self.future_decoder(future_tokens, memory)
+        future_hidden = self.future_decoder(
+            future_tokens,
+            memory,
+            memory_key_padding_mask=memory_padding_mask,
+        )
         return future_hidden.view(batch, future_latent_steps, grid_h, grid_w, hidden_dim)
 
     def forward(
@@ -421,7 +434,12 @@ class WanStateLatentPredictorV2(nn.Module):
             prompt_mask,
             prompt_summary,
         )
-        future_state_maps = self._build_future_state_maps(context_state_maps, prompt_tokens, future_latent_steps)
+        future_state_maps = self._build_future_state_maps(
+            context_state_maps,
+            prompt_tokens,
+            prompt_mask,
+            future_latent_steps,
+        )
 
         context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
         future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)

@@ -50,9 +50,9 @@ def load_checkpoint(checkpoint_path: str, map_location):
 
 def build_latent_extractor(args, checkpoint) -> object:
     latent_source = checkpoint.get("latent_source")
-    if latent_source not in (None, "wan"):
+    if latent_source != "wan":
         raise ValueError(
-            "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+            "wan_state_v2_latent_time checkpoints must explicitly declare latent_source='wan' in the current mainline, "
             f"got latent_source={latent_source!r}"
         )
     if args.wan_ckpt_dir is None:
@@ -129,7 +129,6 @@ def main():
         context_state_maps=detach_to_cpu_numpy(outputs["context_state_maps"][0]),
         future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
         condition_maps=detach_to_cpu_numpy(outputs["condition_maps"][0]),
-        state_tokens=detach_to_cpu_numpy(outputs["state_tokens"][0]),
         memory_tokens=detach_to_cpu_numpy(outputs["memory_tokens"][0]),
         context_object_slots=detach_to_cpu_numpy(outputs["debug_context_object_slots"][0]),
         future_object_slots=detach_to_cpu_numpy(outputs["debug_future_object_slots"][0]),
