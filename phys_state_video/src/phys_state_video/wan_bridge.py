@@ -199,6 +199,14 @@ def _frame_to_pil_image(frame: torch.Tensor | np.ndarray | Image.Image | str | P
     raise TypeError(f"unsupported frame type for TI2V image conversion: {type(frame)!r}")
 
 
+def _to_detached_tensor(value: torch.Tensor | np.ndarray | None) -> torch.Tensor | None:
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        return value.detach()
+    return torch.as_tensor(value, dtype=torch.float32)
+
+
 def _encode_video_prefix_latents(
     vae,
     frames: torch.Tensor,
@@ -619,10 +627,10 @@ class WanTextImageToVideoBackend:
         total_latent_steps = (total_frames - 1) // self.pipeline.vae_stride[0] + 1
         target_condition_steps = max(int(total_latent_steps - 1), 1)
 
-        condition_memory = None if memory_tokens is None else memory_tokens.detach()
+        condition_memory = _to_detached_tensor(memory_tokens)
         if condition_memory is not None and condition_memory.ndim == 2:
             condition_memory = condition_memory.unsqueeze(0)
-        condition_maps_tensor = condition_maps.detach()
+        condition_maps_tensor = _to_detached_tensor(condition_maps)
         if condition_maps_tensor.ndim == 4:
             condition_maps_tensor = condition_maps_tensor.unsqueeze(0)
         if condition_maps_tensor.ndim != 5:

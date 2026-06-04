@@ -216,6 +216,40 @@ def build_ti2v_state_condition_payload(
     )
 
 
+def encode_ti2v_training_sample_inputs(
+    pipeline,
+    sample: dict[str, object],
+) -> dict[str, torch.Tensor]:
+    device = pipeline.device
+    input_video = sample["input_video"].to(device=device, dtype=torch.float32)
+    first_frame = sample["first_frame"].to(device=device, dtype=torch.float32)
+
+    t5_model = getattr(pipeline.text_encoder, "model", None)
+    vae_module = getattr(pipeline.vae, "model", None)
+    with torch.no_grad():
+        if t5_model is not None:
+            t5_model.to(device)
+        if vae_module is not None:
+            vae_module.to(device)
+        text_context = pipeline.text_encoder([sample["prompt"]], device)[0].detach().cpu().float()
+        input_latents = pipeline.vae.encode([input_video.permute(1, 0, 2, 3).contiguous()])[0].detach().cpu().float()
+        first_frame_latents = (
+            pipeline.vae.encode([first_frame.permute(1, 0, 2, 3).contiguous()])[0].detach().cpu().float()
+        )
+        if t5_model is not None:
+            t5_model.to("cpu")
+        if vae_module is not None:
+            vae_module.to("cpu")
+
+    del input_video, first_frame
+    torch.cuda.empty_cache()
+    return {
+        "text_context": text_context,
+        "input_latents": input_latents,
+        "first_frame_latents": first_frame_latents,
+    }
+
+
 def run_step(
     *,
     pipeline,
@@ -228,27 +262,10 @@ def run_step(
     device = pipeline.device
     model_dtype = pipeline.model.patch_embedding.weight.dtype
 
-    input_video = sample["input_video"].to(device=device, dtype=torch.float32)
-    first_frame = sample["first_frame"].to(device=device, dtype=torch.float32)
     raw_state_condition = sample["state_condition"]
-
-    t5_model = getattr(pipeline.text_encoder, "model", None)
-    vae_module = getattr(pipeline.vae, "model", None)
-    with torch.no_grad():
-        if t5_model is not None:
-            t5_model.to(device)
-        if vae_module is not None:
-            vae_module.to(device)
-        context = pipeline.text_encoder([sample["prompt"]], device)
-        input_latents = pipeline.vae.encode([input_video.permute(1, 0, 2, 3).contiguous()])[0]
-        first_frame_latents = pipeline.vae.encode([first_frame.permute(1, 0, 2, 3).contiguous()])[0]
-        if t5_model is not None:
-            t5_model.to("cpu")
-        if vae_module is not None:
-            vae_module.to("cpu")
-
-    del input_video, first_frame
-    torch.cuda.empty_cache()
+    context_item = sample["text_context"].to(device=device, dtype=torch.float32)
+    input_latents = sample["input_latents"].to(device=device, dtype=torch.float32)
+    first_frame_latents = sample["first_frame_latents"].to(device=device, dtype=torch.float32)
 
     latent_mask = build_first_frame_mask(input_latents)
     timestep = scheduler.sample_timestep(device=device, dtype=torch.float32)
@@ -276,7 +293,7 @@ def run_step(
         noise_pred = pipeline.model(
             [noised_latents.to(dtype=model_dtype)],
             t=timestep_tokens.to(device=device, dtype=torch.float32),
-            context=[context[0]],
+            context=[context_item],
             seq_len=seq_len,
             state_context=state_context,
             state_scale=state_scale,
@@ -285,7 +302,7 @@ def run_step(
         loss = loss * scheduler.training_weight(timestep)
 
     (loss / max(int(grad_accum_steps), 1)).backward()
-    del context, state_context, timestep_tokens, noised_latents, training_target, noise_pred
+    del context_item, state_context, timestep_tokens, noised_latents, training_target, noise_pred
     torch.cuda.empty_cache()
 
     return {
@@ -368,12 +385,14 @@ def main():
     global_step = 0
     best_loss = float("inf")
     optimizer.zero_grad(set_to_none=True)
+    encoded_sample_cache: dict[str, dict[str, torch.Tensor]] = {}
 
     world_size = int(ctx["world_size"])
     rank = int(ctx["rank"])
     is_rank0 = rank == 0
     stop_training = False
     pending_metrics: list[dict[str, float]] = []
+    defer_epoch_checkpoint_writes = args.max_steps > 0
 
     for epoch in range(args.epochs):
         epoch_indices = build_rank_epoch_indices(
@@ -389,6 +408,12 @@ def main():
                 output_size=output_size,
                 frame_num=args.frame_num,
             )
+            cache_key = str(record.bundle_dir)
+            encoded_inputs = encoded_sample_cache.get(cache_key)
+            if encoded_inputs is None:
+                encoded_inputs = encode_ti2v_training_sample_inputs(pipeline, sample)
+                encoded_sample_cache[cache_key] = encoded_inputs
+            sample.update(encoded_inputs)
             metrics = run_step(
                 pipeline=pipeline,
                 scheduler=scheduler,
@@ -475,12 +500,34 @@ def main():
                     "grad_accum_steps": int(args.grad_accum_steps),
                 },
             )
-            torch.save(current_payload, output_path)
+            if not defer_epoch_checkpoint_writes:
+                torch.save(current_payload, output_path)
             if epoch_loss <= best_loss:
                 best_loss = epoch_loss
-                torch.save(current_payload, default_best_output(output_path))
+                if not defer_epoch_checkpoint_writes:
+                    torch.save(current_payload, default_best_output(output_path))
         if stop_training:
             break
+
+    if is_rank0:
+        final_payload = serialize_ti2v_state_adapter_checkpoint(
+            pipeline.export_state_adapter(),
+            meta={
+                "task": args.task,
+                "size": args.size,
+                "wan_ckpt_dir": args.wan_ckpt_dir,
+                "state_condition_root": args.state_condition_root,
+                "global_step": global_step,
+                "epoch": epoch + 1 if args.epochs > 0 else 0,
+                "epoch_loss": epoch_loss if "epoch_loss" in locals() else float("inf"),
+                "frame_num_arg": int(args.frame_num),
+                "history_tail": history[-8:],
+                "world_size": world_size,
+                "grad_accum_steps": int(args.grad_accum_steps),
+            },
+        )
+        torch.save(final_payload, output_path)
+        torch.save(final_payload, default_best_output(output_path))
 
     summary = {
         "status": "finished",
