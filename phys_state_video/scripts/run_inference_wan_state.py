@@ -174,14 +174,18 @@ def main():
                 future_steps=future_steps,
                 num_objects=batch["context_states"].shape[2],
             )
-        state_tokens = outputs["future_adapter_tokens"]
+        state_tokens = outputs["state_tokens"]
+        memory_tokens = outputs["memory_tokens"]
+        condition_maps = outputs["condition_maps"]
         state_predictions = outputs["future_state_predictions"]
         generated_video = backend.generate(
             prompt=batch["prompts"][0],
             context_frames=context_frames[0],
-            state_tokens=state_tokens[0],
             size=args.wan_size,
             frame_num=frame_num,
+            state_tokens=state_tokens[0],
+            memory_tokens=memory_tokens[0],
+            condition_maps=condition_maps[0],
             sample_solver=args.sample_solver,
             sampling_steps=args.sampling_steps,
             guide_scale=args.guide_scale,
@@ -203,6 +207,8 @@ def main():
     context_np = detach_to_cpu_numpy(batch["context_frames"][0])
     predicted_states_np = detach_to_cpu_numpy(state_predictions[0])
     state_tokens_np = detach_to_cpu_numpy(state_tokens[0])
+    memory_tokens_np = detach_to_cpu_numpy(memory_tokens[0])
+    condition_maps_np = detach_to_cpu_numpy(condition_maps[0])
     full_video_np = detach_to_cpu_numpy(full_video)
     generated_future_np = detach_to_cpu_numpy(generated_future)
 
@@ -210,7 +216,9 @@ def main():
         output_dir / "wan_inference_outputs.npz",
         context_frames=context_np,
         predicted_future_states=predicted_states_np,
-        future_adapter_tokens=state_tokens_np,
+        state_tokens=state_tokens_np,
+        memory_tokens=memory_tokens_np,
+        condition_maps=condition_maps_np,
         future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
         future_object_slots=detach_to_cpu_numpy(outputs["future_object_slots"][0]),
         generated_full_video=full_video_np,

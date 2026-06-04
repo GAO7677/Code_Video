@@ -187,20 +187,40 @@ class SpatialObjectQueryDecoder(nn.Module):
         return slots.view(batch, steps, num_objects, hidden_dim)
 
 
-class AdapterTokenHead(nn.Module):
+class StateTokenHead(nn.Module):
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.proj = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 2),
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-    def forward(self, state_maps: torch.Tensor, object_slots: torch.Tensor) -> torch.Tensor:
-        spatial_summary = state_maps.mean(dim=(2, 3))
-        slot_summary = object_slots.mean(dim=2)
-        return self.proj(torch.cat([spatial_summary, slot_summary], dim=-1))
+    def forward(self, state_maps: torch.Tensor) -> torch.Tensor:
+        if state_maps.ndim != 5:
+            raise ValueError(f"expected state maps [B, T, H, W, D], got {tuple(state_maps.shape)}")
+        projected = self.proj(state_maps)
+        return projected
+
+
+class MemoryTokenHead(nn.Module):
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+    def forward(self, context_object_slots: torch.Tensor) -> torch.Tensor:
+        if context_object_slots.ndim != 4:
+            raise ValueError(
+                f"expected context object slots [B, T, N, D], got {tuple(context_object_slots.shape)}"
+            )
+        # Use the latest context step as compact object memory.
+        return self.proj(context_object_slots[:, -1])
 
 
 class WanStateLatentPredictorV2(nn.Module):
@@ -269,7 +289,8 @@ class WanStateLatentPredictorV2(nn.Module):
             num_heads=self.config.num_heads,
             dropout=self.config.dropout,
         )
-        self.adapter_token_head = AdapterTokenHead(hidden_dim=self.model_dim)
+        self.state_token_head = StateTokenHead(hidden_dim=self.model_dim)
+        self.memory_token_head = MemoryTokenHead(hidden_dim=self.model_dim)
         self.state_heads = GroupedStateHeads(
             latent_dim=self.model_dim,
             hidden_dim=self.config.hidden_dim,
@@ -380,7 +401,14 @@ class WanStateLatentPredictorV2(nn.Module):
 
         context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
         future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
-        future_adapter_tokens = self.adapter_token_head(future_state_maps, future_object_slots)
+        projected_future_maps = self.state_token_head(future_state_maps)
+        state_tokens = projected_future_maps.view(
+            projected_future_maps.shape[0],
+            projected_future_maps.shape[1] * projected_future_maps.shape[2] * projected_future_maps.shape[3],
+            projected_future_maps.shape[4],
+        )
+        memory_tokens = self.memory_token_head(context_object_slots)
+        condition_maps = projected_future_maps.permute(0, 1, 4, 2, 3).contiguous()
 
         context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
         future_grouped = self.state_heads(future_object_slots, num_objects=num_objects)
@@ -389,9 +417,13 @@ class WanStateLatentPredictorV2(nn.Module):
             "future_state_latents": future_state_maps,
             "context_state_maps": context_state_maps,
             "future_state_maps": future_state_maps,
+            "projected_future_state_maps": projected_future_maps,
             "context_object_slots": context_object_slots,
             "future_object_slots": future_object_slots,
-            "future_adapter_tokens": future_adapter_tokens,
+            "state_tokens": state_tokens,
+            "memory_tokens": memory_tokens,
+            "condition_maps": condition_maps,
+            "future_adapter_tokens": state_tokens,
             "context_geom_predictions": context_grouped["geom"],
             "context_motion_predictions": context_grouped["motion"],
             "context_vis_predictions": context_grouped["vis"],
@@ -453,11 +485,11 @@ def wan_state_predictor_v2_loss(
         "vis": future_vis_loss,
     }
 
-    future_adapter_tokens = outputs["future_adapter_tokens"]
-    if future_adapter_tokens.shape[1] > 1:
-        latent_smooth = torch.mean((future_adapter_tokens[:, 1:] - future_adapter_tokens[:, :-1]) ** 2)
+    future_state_maps = outputs["future_state_maps"]
+    if future_state_maps.shape[1] > 1:
+        latent_smooth = torch.mean((future_state_maps[:, 1:] - future_state_maps[:, :-1]) ** 2)
     else:
-        latent_smooth = torch.zeros((), device=future_adapter_tokens.device, dtype=future_adapter_tokens.dtype)
+        latent_smooth = torch.zeros((), device=future_state_maps.device, dtype=future_state_maps.dtype)
 
     if train_stage == "context_only":
         total = context_losses["loss"]

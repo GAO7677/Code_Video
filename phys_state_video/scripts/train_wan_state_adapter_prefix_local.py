@@ -23,10 +23,13 @@ from phys_state_video.wan_adapter_training import (
     build_prefix_timestep_tensor,
     compute_ti2v_seq_len,
     discover_state_condition_bundles,
+    filter_state_condition_payload_for_adapter,
+    flatten_condition_maps_to_state_tokens,
     is_i2v_state_adapter_checkpoint,
     load_episode_npz,
     load_state_condition_npz,
     normalize_video_range,
+    resample_condition_maps_to_steps,
     resample_state_tokens_to_steps,
     select_i2v_state_adapter_parameters,
     serialize_i2v_state_adapter_checkpoint,
@@ -132,7 +135,7 @@ def run_step(
     device = pipeline.device
     full_video = sample["training_video"].to(device=device, dtype=torch.float32)
     context_frames = sample["context_frames"].to(device=device, dtype=torch.float32)
-    state_tokens = torch.from_numpy(sample["state_condition"]["state_tokens"]).to(device=device, dtype=torch.float32)
+    raw_condition = sample["state_condition"]
 
     aspect_ratio = float(full_video.shape[-2]) / float(full_video.shape[-1])
     _, _, out_h, out_w = compute_i2v_output_shape(pipeline, max_area=max_area, aspect_ratio=aspect_ratio)
@@ -163,7 +166,21 @@ def run_step(
             f"prefix_len={prefix_len}, latent_steps={full_latents.shape[1]}"
         )
     future_latent_steps = int(full_latents.shape[1] - prefix_len)
-    state_tokens = resample_state_tokens_to_steps(state_tokens, target_steps=future_latent_steps)
+    condition_maps = torch.from_numpy(raw_condition["condition_maps"]).to(device=device, dtype=torch.float32)
+    condition_maps = resample_condition_maps_to_steps(condition_maps, target_steps=future_latent_steps)
+    state_tokens = flatten_condition_maps_to_state_tokens(condition_maps)
+    if "memory_tokens" in raw_condition:
+        memory_tokens = torch.from_numpy(raw_condition["memory_tokens"]).to(device=device, dtype=torch.float32)
+        if memory_tokens.ndim == 2:
+            memory_tokens = memory_tokens.unsqueeze(0)
+    else:
+        memory_tokens = None
+    state_condition_payload = {
+        "state_tokens": state_tokens,
+        "condition_maps": condition_maps,
+    }
+    if memory_tokens is not None:
+        state_condition_payload["memory_tokens"] = memory_tokens
     latent_mask = build_prefix_latent_mask(full_latents, prefix_len=prefix_len)
     timestep = scheduler.sample_timestep(device=device, dtype=torch.float32)
     noise = torch.randn_like(full_latents)
@@ -192,7 +209,8 @@ def run_step(
     seq_len = compute_ti2v_seq_len(full_latents, patch_size=tuple(pipeline.patch_size[1:]))
     seq_len = int(math.ceil(seq_len / pipeline.sp_size) * pipeline.sp_size)
     timestep_tokens = build_prefix_timestep_tensor(latent_mask, timestep=timestep, seq_len=seq_len)
-    state_context = pipeline._build_state_context({"state_tokens": state_tokens}, offload_model=False)
+    adapter_payload = filter_state_condition_payload_for_adapter(state_condition_payload, pipeline.state_adapter)
+    state_context = pipeline._build_state_context(adapter_payload, offload_model=False)
     boundary = pipeline.boundary * pipeline.num_train_timesteps
     model = pipeline._prepare_model_for_timestep(timestep, boundary, offload_model=False)
 
@@ -252,13 +270,27 @@ def main():
     )
 
     first_sample = prepare_training_sample(bundle_records[0], frame_num=args.frame_num)
-    first_state_tokens = torch.from_numpy(first_sample["state_condition"]["state_tokens"]).to(device=pipeline.device, dtype=torch.float32)
-    pipeline._build_state_context({"state_tokens": first_state_tokens}, offload_model=False)
+    first_condition_maps = torch.from_numpy(first_sample["state_condition"]["condition_maps"]).to(
+        device=pipeline.device, dtype=torch.float32
+    )
+    first_state_tokens = flatten_condition_maps_to_state_tokens(first_condition_maps)
+    first_payload = {
+        "state_tokens": first_state_tokens,
+        "condition_maps": first_condition_maps,
+    }
+    if "memory_tokens" in first_sample["state_condition"]:
+        first_memory_tokens = torch.from_numpy(first_sample["state_condition"]["memory_tokens"]).to(
+            device=pipeline.device, dtype=torch.float32
+        )
+        if first_memory_tokens.ndim == 2:
+            first_memory_tokens = first_memory_tokens.unsqueeze(0)
+        first_payload["memory_tokens"] = first_memory_tokens
+    pipeline._build_state_context(first_payload, offload_model=False)
     if args.resume is not None:
         state_bundle = load_checkpoint(args.resume, map_location="cpu")
         if not is_i2v_state_adapter_checkpoint(state_bundle):
             raise ValueError(f"resume checkpoint is not an I2V state-adapter checkpoint: {args.resume}")
-        pipeline.load_state_adapter(args.resume, state_condition={"state_tokens": first_state_tokens})
+        pipeline.load_state_adapter(args.resume, state_condition=first_payload)
 
     trainable_params = select_i2v_state_adapter_parameters(pipeline)
     optimizer = torch.optim.AdamW(

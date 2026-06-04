@@ -192,6 +192,51 @@ def _resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: in
     return resized.transpose(1, 2).contiguous()
 
 
+def _resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps: int) -> torch.Tensor:
+    if condition_maps.ndim != 5:
+        raise ValueError(
+            f"expected condition_maps with shape [B, T, C, H, W], got {tuple(condition_maps.shape)}"
+        )
+    if target_steps <= 0:
+        raise ValueError(f"target_steps must be positive, got {target_steps}")
+    if condition_maps.shape[1] == target_steps:
+        return condition_maps
+    batch, steps, channels, lat_h, lat_w = condition_maps.shape
+    flattened = condition_maps.permute(0, 2, 3, 4, 1).contiguous().view(batch, channels * lat_h * lat_w, steps)
+    resized = torch.nn.functional.interpolate(
+        flattened,
+        size=target_steps,
+        mode="linear",
+        align_corners=False,
+    )
+    return resized.view(batch, channels, lat_h, lat_w, target_steps).permute(0, 4, 1, 2, 3).contiguous()
+
+
+def _flatten_condition_maps_to_state_tokens(condition_maps: torch.Tensor) -> torch.Tensor:
+    if condition_maps.ndim != 5:
+        raise ValueError(
+            f"expected condition_maps with shape [B, T, C, H, W], got {tuple(condition_maps.shape)}"
+        )
+    batch, steps, channels, lat_h, lat_w = condition_maps.shape
+    return condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(batch, steps * lat_h * lat_w, channels)
+
+
+def _filter_state_condition_payload_for_adapter(
+    state_condition: dict[str, torch.Tensor],
+    adapter,
+) -> dict[str, torch.Tensor]:
+    filtered: dict[str, torch.Tensor] = {}
+    if getattr(adapter, "state_token_dim", None) is not None and state_condition.get("state_tokens") is not None:
+        filtered["state_tokens"] = state_condition["state_tokens"]
+    if getattr(adapter, "memory_token_dim", None) is not None and state_condition.get("memory_tokens") is not None:
+        filtered["memory_tokens"] = state_condition["memory_tokens"]
+    if getattr(adapter, "map_token_dim", None) is not None and state_condition.get("condition_maps") is not None:
+        filtered["condition_maps"] = state_condition["condition_maps"]
+    if not filtered:
+        raise ValueError("state_condition payload does not match any initialized adapter branch")
+    return filtered
+
+
 def _resample_video_latents_to_frame_steps(latent_clip: torch.Tensor, target_steps: int) -> torch.Tensor:
     if latent_clip.ndim != 4:
         raise ValueError(f"expected latent clip with shape [C, T, H, W], got {tuple(latent_clip.shape)}")
@@ -307,9 +352,11 @@ class WanImageToVideoBackend:
         self,
         prompt: str,
         context_frames: torch.Tensor,
-        state_tokens: torch.Tensor,
         size: str,
         frame_num: int,
+        state_tokens: torch.Tensor | None = None,
+        memory_tokens: torch.Tensor | None = None,
+        condition_maps: torch.Tensor | None = None,
         sample_solver: str = "unipc",
         sampling_steps: int = 40,
         guide_scale: float = 5.0,
@@ -330,9 +377,17 @@ class WanImageToVideoBackend:
             raise ValueError(
                 f"frame_num must be larger than context length so there is future to generate, got {frame_num=} and K={context_frames.shape[0]}"
             )
-        condition_tokens = state_tokens.detach()
-        if condition_tokens.ndim == 2:
+        if state_tokens is None and memory_tokens is None and condition_maps is None:
+            raise ValueError("at least one of state_tokens, memory_tokens, condition_maps must be provided")
+        condition_tokens = None if state_tokens is None else state_tokens.detach()
+        if condition_tokens is not None and condition_tokens.ndim == 2:
             condition_tokens = condition_tokens.unsqueeze(0)
+        condition_memory = None if memory_tokens is None else memory_tokens.detach()
+        if condition_memory is not None and condition_memory.ndim == 2:
+            condition_memory = condition_memory.unsqueeze(0)
+        condition_maps_tensor = None if condition_maps is None else condition_maps.detach()
+        if condition_maps_tensor is not None and condition_maps_tensor.ndim == 4:
+            condition_maps_tensor = condition_maps_tensor.unsqueeze(0)
         if negative_prompt == "":
             negative_prompt = self.pipeline.sample_neg_prompt
 
@@ -342,7 +397,12 @@ class WanImageToVideoBackend:
         max_area = self._max_area_configs[size]
         context_frames = context_frames.to(self.pipeline.device)
         normalized_context = _normalize_video_range(context_frames)
-        condition_tokens = condition_tokens.to(self.pipeline.device)
+        if condition_tokens is not None:
+            condition_tokens = condition_tokens.to(self.pipeline.device)
+        if condition_memory is not None:
+            condition_memory = condition_memory.to(self.pipeline.device)
+        if condition_maps_tensor is not None:
+            condition_maps_tensor = condition_maps_tensor.to(self.pipeline.device)
 
         height, width = normalized_context.shape[-2:]
         aspect_ratio = height / width
@@ -384,7 +444,11 @@ class WanImageToVideoBackend:
                 f"prefix_len={prefix_len}, latent_steps={noise.shape[1]}"
             )
         future_latent_steps = int(noise.shape[1] - prefix_len)
-        condition_tokens = _resample_state_tokens_to_steps(condition_tokens, future_latent_steps)
+        if condition_maps_tensor is not None:
+            condition_maps_tensor = _resample_condition_maps_to_steps(condition_maps_tensor, future_latent_steps)
+            condition_tokens = _flatten_condition_maps_to_state_tokens(condition_maps_tensor)
+        elif condition_tokens is not None:
+            condition_tokens = _resample_state_tokens_to_steps(condition_tokens, future_latent_steps)
 
         i2v_video = torch.zeros(
             3,
@@ -434,16 +498,27 @@ class WanImageToVideoBackend:
         ):
             if self.state_adapter_ckpt is None and self.pipeline.state_adapter is None:
                 raise ValueError(
-                    "state_tokens were provided but no trained state adapter is loaded. "
+                    "state_condition was provided but no trained state adapter is loaded. "
                     "Pass state_adapter_ckpt when constructing WanImageToVideoBackend."
                 )
+            state_condition_payload = {}
+            if condition_tokens is not None:
+                state_condition_payload["state_tokens"] = condition_tokens
+            if condition_memory is not None:
+                state_condition_payload["memory_tokens"] = condition_memory
+            if condition_maps_tensor is not None:
+                state_condition_payload["condition_maps"] = condition_maps_tensor
             if self.state_adapter_ckpt is not None and self.pipeline.state_adapter is None:
                 self.pipeline.load_state_adapter(
                     str(self.state_adapter_ckpt),
-                    state_condition={"state_tokens": condition_tokens},
+                    state_condition=state_condition_payload,
                 )
+            state_condition_payload = _filter_state_condition_payload_for_adapter(
+                state_condition_payload,
+                self.pipeline.state_adapter,
+            )
             state_context = self.pipeline._build_state_context(
-                {"state_tokens": condition_tokens},
+                state_condition_payload,
                 offload_model,
             )
             boundary = self.pipeline.boundary * self.pipeline.num_train_timesteps

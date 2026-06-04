@@ -205,7 +205,10 @@ class WanStatePredictorTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["future_state_latents"].shape), (batch, future_steps, 2, 2, 32))
         self.assertEqual(tuple(outputs["context_object_slots"].shape), (batch, context_steps, num_objects, 32))
         self.assertEqual(tuple(outputs["future_object_slots"].shape), (batch, future_steps, num_objects, 32))
-        self.assertEqual(tuple(outputs["future_adapter_tokens"].shape), (batch, future_steps, 32))
+        self.assertEqual(tuple(outputs["state_tokens"].shape), (batch, future_steps * 2 * 2, 32))
+        self.assertEqual(tuple(outputs["memory_tokens"].shape), (batch, num_objects, 32))
+        self.assertEqual(tuple(outputs["condition_maps"].shape), (batch, future_steps, 32, 2, 2))
+        self.assertEqual(tuple(outputs["future_adapter_tokens"].shape), (batch, future_steps * 2 * 2, 32))
         self.assertEqual(tuple(outputs["context_state_predictions"].shape), (batch, context_steps, num_objects, 10))
         self.assertEqual(tuple(outputs["future_state_predictions"].shape), (batch, future_steps, num_objects, 10))
 
