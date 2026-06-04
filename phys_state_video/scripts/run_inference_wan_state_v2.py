@@ -21,7 +21,6 @@ from phys_state_video.predictor_wan_state_v2 import (
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
-    MockLatentExtractor,
     WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
@@ -36,10 +35,9 @@ def parse_args():
     parser.add_argument("--predictor", required=True, help="Predictor v2 checkpoint.")
     parser.add_argument("--output", required=True, help="Output directory.")
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--latent-source", choices=["mock", "wan", "auto"], default="auto")
     parser.add_argument("--wan-ckpt-dir", default=None)
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
-    parser.add_argument("--wan-task", default="ti2v-5B")
+    parser.add_argument("--wan-task", default="i2v-A14B")
     return parser.parse_args()
 
 
@@ -51,18 +49,14 @@ def load_checkpoint(checkpoint_path: str, map_location):
 
 
 def build_latent_extractor(args, checkpoint) -> object:
-    latent_source = args.latent_source
-    if latent_source == "auto":
-        latent_source = checkpoint.get("latent_source", "mock")
-    if latent_source == "mock":
-        return MockLatentExtractor(
-            latent_channels=int(checkpoint.get("mock_latent_channels") or checkpoint["config"]["latent_channels"]),
-            latent_height=int(checkpoint.get("mock_latent_height") or 8),
-            latent_width=int(checkpoint.get("mock_latent_width") or 8),
-            device=args.device,
+    latent_source = checkpoint.get("latent_source")
+    if latent_source not in (None, "wan"):
+        raise ValueError(
+            "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+            f"got latent_source={latent_source!r}"
         )
     if args.wan_ckpt_dir is None:
-        raise ValueError("--wan-ckpt-dir is required when using Wan latent extraction")
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 now always uses Wan VAE latents")
     return WanLatentExtractor(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -147,7 +141,7 @@ def main():
         json.dumps(
             {
                 "predictor_version": checkpoint.get("predictor_version", "wan_state_v2_latent_time"),
-                "latent_source": checkpoint.get("latent_source"),
+                "latent_source": checkpoint.get("latent_source", "wan"),
                 "prompt": batch["prompts"][0],
                 "context_frame_steps": int(context_frames.shape[1]),
                 "context_latent_steps": int(context_latent_steps),

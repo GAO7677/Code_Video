@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 from .utils import require_torch
 from .wan_state_v2_helpers import (
@@ -17,9 +18,7 @@ from .wan_state_v2_helpers import (
     apply_clean_prefix_to_latents,
     build_state_condition_payload_from_condition_maps,
     filter_state_condition_payload_for_adapter,
-    flatten_condition_maps_to_state_tokens,
     resample_condition_maps_to_steps,
-    resample_state_tokens_to_steps,
 )
 
 torch = require_torch()
@@ -47,6 +46,7 @@ def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
 
     from wan_.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
     from wan_.image2video import WanI2V
+    from wan_.textimage2video import WanTI2V
     from wan_.modules.t5 import T5EncoderModel
     from wan_.modules.vae2_1 import Wan2_1_VAE
     from wan_.modules.vae2_2 import Wan2_2_VAE
@@ -57,6 +57,7 @@ def load_wan_modules(wan_repo_root: str | Path | None = None) -> dict[str, Any]:
         "MAX_AREA_CONFIGS": MAX_AREA_CONFIGS,
         "SUPPORTED_SIZES": SUPPORTED_SIZES,
         "WanI2V": WanI2V,
+        "WanTI2V": WanTI2V,
         "T5EncoderModel": T5EncoderModel,
         "Wan2_1_VAE": Wan2_1_VAE,
         "Wan2_2_VAE": Wan2_2_VAE,
@@ -146,36 +147,8 @@ def _build_separated_timestep(
     return tokens.unsqueeze(0)
 
 
-def _pad_future_state_tokens(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
-    if state_tokens.ndim != 3:
-        raise ValueError(f"expected state tokens with shape [B, T, D], got {tuple(state_tokens.shape)}")
-    if target_steps <= 0:
-        raise ValueError(f"target_steps must be positive, got {target_steps}")
-    if state_tokens.shape[1] == target_steps:
-        return state_tokens
-    if state_tokens.shape[1] > target_steps:
-        return state_tokens[:, :target_steps]
-    pad_steps = target_steps - state_tokens.shape[1]
-    pad_source = state_tokens[:, -1:] if state_tokens.shape[1] > 0 else torch.zeros(
-        state_tokens.shape[0],
-        1,
-        state_tokens.shape[2],
-        dtype=state_tokens.dtype,
-        device=state_tokens.device,
-    )
-    return torch.cat([state_tokens, pad_source.expand(-1, pad_steps, -1)], dim=1)
-
-
-def _resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
-    return resample_state_tokens_to_steps(state_tokens, target_steps)
-
-
 def _resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps: int) -> torch.Tensor:
     return resample_condition_maps_to_steps(condition_maps, target_steps)
-
-
-def _flatten_condition_maps_to_state_tokens(condition_maps: torch.Tensor) -> torch.Tensor:
-    return flatten_condition_maps_to_state_tokens(condition_maps)
 
 
 def _filter_state_condition_payload_for_adapter(
@@ -211,6 +184,43 @@ def _resize_video_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.
         mode="bicubic",
         align_corners=False,
     ).to(frames.dtype)
+
+
+def _frame_to_pil_image(frame: torch.Tensor | np.ndarray | Image.Image | str | Path) -> Image.Image:
+    if isinstance(frame, (str, Path)):
+        return Image.open(frame).convert("RGB")
+    if isinstance(frame, Image.Image):
+        return frame.convert("RGB")
+    if isinstance(frame, torch.Tensor):
+        tensor = frame.detach().float().cpu()
+        if tensor.ndim != 3:
+            raise ValueError(f"expected frame tensor with shape [3, H, W], got {tuple(tensor.shape)}")
+        if tensor.shape[0] != 3:
+            raise ValueError(f"expected 3-channel RGB frame, got {tuple(tensor.shape)}")
+        min_value = float(tensor.min()) if tensor.numel() > 0 else 0.0
+        max_value = float(tensor.max()) if tensor.numel() > 0 else 1.0
+        if min_value >= -1.0 and max_value <= 1.0:
+            if min_value < 0.0:
+                tensor = (tensor + 1.0) * 0.5
+        elif min_value >= 0.0 and max_value <= 255.0:
+            tensor = tensor / 255.0
+        else:
+            tensor = tensor.clamp(0.0, 1.0)
+        array = (tensor.clamp(0.0, 1.0).permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
+        return Image.fromarray(array).convert("RGB")
+    if isinstance(frame, np.ndarray):
+        array = np.asarray(frame)
+        if array.ndim != 3:
+            raise ValueError(f"expected frame array with 3 dims, got shape {tuple(array.shape)}")
+        if array.shape[0] == 3:
+            array = np.transpose(array, (1, 2, 0))
+        if array.shape[-1] != 3:
+            raise ValueError(f"expected RGB frame array, got shape {tuple(array.shape)}")
+        if array.dtype != np.uint8:
+            array = np.clip(array, 0.0, 1.0) if array.max() <= 1.0 else np.clip(array, 0.0, 255.0) / 255.0
+            array = (array * 255.0).round().astype(np.uint8)
+        return Image.fromarray(array).convert("RGB")
+    raise TypeError(f"unsupported frame type for TI2V image conversion: {type(frame)!r}")
 
 
 def _encode_video_prefix_latents(
@@ -302,7 +312,6 @@ class WanImageToVideoBackend:
         context_frames: torch.Tensor,
         size: str,
         frame_num: int,
-        state_tokens: torch.Tensor | None = None,
         memory_tokens: torch.Tensor | None = None,
         condition_maps: torch.Tensor | None = None,
         sample_solver: str = "unipc",
@@ -325,11 +334,8 @@ class WanImageToVideoBackend:
             raise ValueError(
                 f"frame_num must be larger than context length so there is future to generate, got {frame_num=} and K={context_frames.shape[0]}"
             )
-        if state_tokens is None and memory_tokens is None and condition_maps is None:
-            raise ValueError("at least one of state_tokens, memory_tokens, condition_maps must be provided")
-        condition_tokens = None if state_tokens is None else state_tokens.detach()
-        if condition_tokens is not None and condition_tokens.ndim == 2:
-            condition_tokens = condition_tokens.unsqueeze(0)
+        if condition_maps is None:
+            raise ValueError("condition_maps is required for wan_state_v2 clean-prefix inference")
         condition_memory = None if memory_tokens is None else memory_tokens.detach()
         if condition_memory is not None and condition_memory.ndim == 2:
             condition_memory = condition_memory.unsqueeze(0)
@@ -345,8 +351,6 @@ class WanImageToVideoBackend:
         max_area = self._max_area_configs[size]
         context_frames = context_frames.to(self.pipeline.device)
         normalized_context = _normalize_video_range(context_frames)
-        if condition_tokens is not None:
-            condition_tokens = condition_tokens.to(self.pipeline.device)
         if condition_memory is not None:
             condition_memory = condition_memory.to(self.pipeline.device)
         if condition_maps_tensor is not None:
@@ -392,14 +396,7 @@ class WanImageToVideoBackend:
                 f"prefix_len={prefix_len}, latent_steps={noise.shape[1]}"
             )
         future_latent_steps = int(noise.shape[1] - prefix_len)
-        if condition_maps_tensor is not None:
-            condition_maps_tensor = _resample_condition_maps_to_steps(condition_maps_tensor, future_latent_steps)
-            condition_tokens = _flatten_condition_maps_to_state_tokens(condition_maps_tensor)
-        elif condition_tokens is not None:
-            raise ValueError(
-                "flattened state_tokens-only conditioning is no longer supported for wan_state_v2 clean-prefix "
-                "inference because it loses spatial token layout. Pass condition_maps instead."
-            )
+        condition_maps_tensor = _resample_condition_maps_to_steps(condition_maps_tensor, future_latent_steps)
 
         i2v_video = torch.zeros(
             3,
@@ -451,11 +448,6 @@ class WanImageToVideoBackend:
                 raise ValueError(
                     "state_condition was provided but no trained state adapter is loaded. "
                     "Pass state_adapter_ckpt when constructing WanImageToVideoBackend."
-                )
-            if condition_maps_tensor is None:
-                raise ValueError(
-                    "condition_maps is required for wan_state_v2 clean-prefix inference; state_tokens is now only a "
-                    "derived compatibility view."
                 )
             state_condition_payload = build_state_condition_payload_from_condition_maps(
                 condition_maps_tensor,
@@ -581,4 +573,116 @@ class WanImageToVideoBackend:
         if offload_model:
             gc.collect()
             torch.cuda.synchronize()
+        return video[:, :requested_total_frames].detach().cpu()
+
+
+@dataclass(slots=True)
+class WanTextImageToVideoBackend:
+    ckpt_dir: str | Path
+    wan_repo_root: str | Path | None = None
+    task: str = "ti2v-5B"
+    device: str = "cuda"
+    state_adapter_ckpt: str | Path | None = None
+
+    def __post_init__(self) -> None:
+        if not str(self.device).startswith("cuda"):
+            raise ValueError("WanTextImageToVideoBackend currently requires a CUDA device")
+        modules = load_wan_modules(self.wan_repo_root)
+        self._wan_configs = modules["WAN_CONFIGS"]
+        self._max_area_configs = modules["MAX_AREA_CONFIGS"]
+        self._size_configs = modules["SIZE_CONFIGS"]
+        self._supported_sizes = modules["SUPPORTED_SIZES"]
+        if self.task not in self._wan_configs:
+            raise ValueError(f"unsupported Wan task: {self.task}")
+        device_id = int(str(self.device).split(":")[1]) if ":" in str(self.device) else 0
+        self.pipeline = modules["WanTI2V"](
+            config=self._wan_configs[self.task],
+            checkpoint_dir=str(self.ckpt_dir),
+            device_id=device_id,
+            rank=0,
+        )
+
+    def generate(
+        self,
+        prompt: str,
+        first_frame: torch.Tensor | np.ndarray | Image.Image | str | Path,
+        size: str,
+        frame_num: int,
+        memory_tokens: torch.Tensor | None = None,
+        condition_maps: torch.Tensor | None = None,
+        sample_solver: str = "unipc",
+        sampling_steps: int = 40,
+        guide_scale: float = 5.0,
+        shift: float = 5.0,
+        negative_prompt: str = "",
+        seed: int = -1,
+        offload_model: bool = True,
+        state_scale: float = 1.0,
+    ) -> torch.Tensor:
+        if size not in self._supported_sizes[self.task]:
+            raise ValueError(
+                f"unsupported size '{size}' for task '{self.task}', expected one of {self._supported_sizes[self.task]}"
+            )
+        if condition_maps is None:
+            raise ValueError("condition_maps is required for wan_state_v2 TI2V inference")
+
+        requested_total_frames = int(frame_num)
+        total_frames = _align_wan_frame_num(requested_total_frames)
+        total_latent_steps = (total_frames - 1) // self.pipeline.vae_stride[0] + 1
+        target_condition_steps = max(int(total_latent_steps - 1), 1)
+
+        condition_memory = None if memory_tokens is None else memory_tokens.detach()
+        if condition_memory is not None and condition_memory.ndim == 2:
+            condition_memory = condition_memory.unsqueeze(0)
+        condition_maps_tensor = condition_maps.detach()
+        if condition_maps_tensor.ndim == 4:
+            condition_maps_tensor = condition_maps_tensor.unsqueeze(0)
+        if condition_maps_tensor.ndim != 5:
+            raise ValueError(
+                "condition_maps must have shape [T, C, H, W] or [B, T, C, H, W] for TI2V inference"
+            )
+        condition_maps_tensor = condition_maps_tensor.to(self.pipeline.device)
+        condition_maps_tensor = _resample_condition_maps_to_steps(condition_maps_tensor, target_condition_steps)
+        if condition_memory is not None:
+            condition_memory = condition_memory.to(self.pipeline.device)
+
+        state_condition_payload = build_state_condition_payload_from_condition_maps(
+            condition_maps_tensor,
+            memory_tokens=condition_memory,
+            include_condition_maps=True,
+        )
+        if self.state_adapter_ckpt is not None and self.pipeline.state_adapter is None:
+            self.pipeline.load_state_adapter(
+                str(self.state_adapter_ckpt),
+                state_condition=state_condition_payload,
+            )
+        if self.pipeline.state_adapter is None:
+            raise ValueError(
+                "state_condition was provided but no trained state adapter is loaded. "
+                "Pass state_adapter_ckpt when constructing WanTextImageToVideoBackend."
+            )
+        state_condition_payload = _filter_state_condition_payload_for_adapter(
+            state_condition_payload,
+            self.pipeline.state_adapter,
+        )
+        input_image = _frame_to_pil_image(first_frame)
+        n_prompt = negative_prompt if negative_prompt else ""
+        video = self.pipeline.generate(
+            prompt,
+            img=input_image,
+            size=self._size_configs[size],
+            max_area=self._max_area_configs[size],
+            frame_num=total_frames,
+            shift=shift,
+            sample_solver=sample_solver,
+            sampling_steps=sampling_steps,
+            guide_scale=guide_scale,
+            n_prompt=n_prompt,
+            seed=seed,
+            offload_model=offload_model,
+            state_condition=state_condition_payload,
+            state_scale=state_scale,
+        )
+        if video is None:
+            raise RuntimeError("WanTI2V returned None")
         return video[:, :requested_total_frames].detach().cpu()

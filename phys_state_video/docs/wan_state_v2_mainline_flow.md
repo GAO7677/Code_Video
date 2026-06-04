@@ -1,10 +1,15 @@
-# 2026-06-04 Mainline Flow: `wan_state_v2_latent_time` + Wan Clean-Prefix Infill
+# 2026-06-04 Mainline Flow: `wan_state_v2_latent_time` + Wan State-Condition Backbones
 
-这份文档只描述当前仓库里已经落地的主线实现：`wan_state_v2_latent_time predictor -> state_condition bundle -> Wan clean-prefix adapter -> Wan I2V inference`。这里不再沿用旧版 `future_state_latents / prompt_token_ids` 的叙述，统一以当前代码中的真实接口和真实 shape 为准。
+这份文档描述当前仓库里已经落地的 v2 主线实现：`wan_state_v2_latent_time predictor -> state_condition bundle -> Wan state adapter -> Wan video backbone inference`。当前主线已经明确拆成两条下游 backbone：
+
+- `Wan I2V clean-prefix infill`
+- `Wan TI2V first-frame conditioning`
+
+这里不再沿用旧版 `future_state_latents / prompt_token_ids` 的叙述，统一以当前代码中的真实接口、真实 shape、真实脚本为准。
 
 ## 1. 一句话流程
 
-输入一个 episode 后，先把 `context_frames` 编码到 Wan latent 时间轴，再用 `WanStateLatentPredictorV2` 在 latent 时间轴上预测未来的 `future_state_maps`；随后把它转成 Wan 侧消费的 `condition_maps` 和兼容视图 `state_tokens`；Wan 正式推理时把 context video 编码成 `clean_prefix_latents` 并在每个 diffusion step 前后都覆盖回主 latent 序列，只让 future latent 被去噪更新，同时将 predictor 输出的 `condition_maps + memory_tokens` 经过训练好的 `state adapter` 编成 `state_context` 注入 Wan DiT。
+输入一个 episode 后，先把 `context_frames` 通过冻结的 Wan VAE 编码到 Wan latent 时间轴，再用 `WanStateLatentPredictorV2` 在 latent 时间轴上预测未来的 `future_state_maps`；随后把它转成 Wan 侧消费的 canonical 条件表示 `condition_maps`，并可选附带 `memory_tokens`；下游 Wan backbone 不再把 `state_tokens` 当成主条件输入，而是统一先把 `condition_maps + memory_tokens` 经过训练好的 `state adapter` 编成 `state_context`，再注入对应的 Wan DiT。
 
 ## 2. 记号与时间轴
 
@@ -31,16 +36,20 @@ latent 时间步由 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_
 
 ## 3. 主线分段
 
-主线代码链路如下：
+当前主线代码链路如下：
 
 1. [train_predictor_wan_state_v2.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_predictor_wan_state_v2.py:1)
-   训练 latent-time predictor。
+   训练 latent-time predictor。当前 v2 主线固定只使用 Wan VAE latents。
 2. [export_wan_state_condition_dataset.py](/home/gaoya/Code_Video/phys_state_video/scripts/export_wan_state_condition_dataset.py:1)
-   导出 `condition_maps` 主条件和兼容 `state_tokens`。
+   导出 `condition_maps` 主条件、`memory_tokens` 与状态预测。
 3. [train_wan_state_adapter_prefix_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py:1)
-   在 clean-prefix 语义下训练 Wan state adapter。
+   在 I2V clean-prefix 语义下训练 Wan state adapter。
 4. [run_inference_wan_state.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state.py:1)
-   用 predictor + Wan backend 做正式推理。
+   用 predictor + Wan I2V backend 做正式推理。
+5. [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)
+   在 TI2V 首帧条件语义下训练 Wan state adapter。
+6. [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)
+   用 predictor + Wan TI2V backend 做正式推理。
 
 ## 4. Predictor 输入、输出与 shape
 
@@ -76,7 +85,7 @@ latent 时间步由 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_
 3. 同时生成 padding mask：
    `prompt_mask ∈ R^{B×L_prompt}`。
 
-实现位于 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_state_v2_helpers.py:176) 的 `WanPromptContextEncoder`。
+实现位于 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_state_v2_helpers.py:178) 的 `WanPromptContextEncoder`。
 
 这比旧的 bag-of-words prompt 分支更合理，因为：
 
@@ -142,7 +151,7 @@ latent 时间步由 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_
 - `context_time_pos_embed ∈ R^{1×L_ctx×1×1×D_s}`
 - `spatial_pos_embed ∈ R^{1×1×H_s×W_s×D_s}`
 
-得到：
+相加后当前会先经过一层 `LayerNorm`，再作为 encoder 输入。得到：
 
 - `state_maps ∈ R^{B×L_ctx×H_s×W_s×D_s}`
 
@@ -158,7 +167,7 @@ latent 时间步由 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_
 
 - `context_state_maps ∈ R^{B×L_ctx×H_s×W_s×D_s}`
 
-这是这次重构里最关键的设计修正之一。旧实现把每个 spatial cell 独立看成一条时间序列，缺乏跨空间通信；现在 encoder 直接在完整时空 token 序列上做 self-attention，空间与时间都能交互。
+这是这次重构里最关键的设计修正之一。旧实现把每个 spatial cell 独立看成一条时间序列，缺乏跨空间通信；现在 encoder 直接在完整时空 token 序列上做 self-attention，空间与时间都能交互。同时，融合后的 `LayerNorm` 也让 `visual / camera / prompt / pos` 几路特征的初始尺度更稳定。
 
 #### 模块 E: `context_prompt_cross_attn`
 
@@ -244,7 +253,7 @@ query 来自：
 这里必须强调：
 
 - `condition_maps` 是当前 v2 主线的 canonical 条件表示。
-- `state_tokens` 只是由 `condition_maps` flatten 得到的兼容视图。
+- `state_tokens` 只是由 `condition_maps` flatten 得到的兼容视图，不再是主线训练/推理接口。
 - 因此旧文档里“`state_tokens ∈ R^{L_future×D_s}`”是错误的；真实 shape 是 `R^{B×(L_future·H_s·W_s)×D_s}`。
 
 #### 模块 J: `GroupedStateHeads`
@@ -312,23 +321,21 @@ loss 位于 [predictor_wan_state_v2.py](/home/gaoya/Code_Video/phys_state_video/
 当前推荐导出内容为：
 
 - `condition_maps ∈ R^{L_future×D_s×H_s×W_s}`
-- `state_tokens ∈ R^{(L_future·H_s·W_s)×D_s}`
 - `memory_tokens ∈ R^{N×D_s}`
 - `predicted_states ∈ R^{L_future×N×10}`
 
 以及 metadata：
 
 - `future_latent_steps`
-- `future_state_token_count`
 - `future_state_map_spatial_shape`
 - `temporal_stride`
 
 这里的设计原则是：
 
 - adapter/video-side 以 `condition_maps` 为主。
-- `state_tokens` 仅保留给仍依赖 token branch 的兼容接口。
+- `state_tokens` 仍然可以从 `condition_maps` 派生，但不再作为推荐导出主条件。
 
-## 7. Wan clean-prefix adapter 训练
+## 7. Wan I2V clean-prefix adapter 训练
 
 训练脚本位于 [train_wan_state_adapter_prefix_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py:1)。
 
@@ -359,7 +366,7 @@ clean-prefix 训练语义是：
 
 这样与正式推理语义一致，不再是“首帧 clean”的简化版本。
 
-## 8. 正式推理
+## 8. Wan I2V 正式推理
 
 推理入口在 [run_inference_wan_state.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state.py:1)，Wan backend 主逻辑在 [wan_bridge.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_bridge.py:1)。
 
@@ -371,11 +378,55 @@ clean-prefix 训练语义是：
 4. 在每个 diffusion step 前后都覆盖 `:L_ctx` 前缀。
 5. future 段使用 state adapter 编成的 `state_context` 做条件注入。
 
-当前 v2 语义下，`WanImageToVideoBackend.generate()` 已经明确禁止只传 `state_tokens` 而不传 `condition_maps` 的危险 fallback，因为那会把 flatten 后的空间 token 误当成纯时间维序列做插值，导致时空混叠。
+当前 v2 语义下，`WanImageToVideoBackend.generate()` 已经把 `condition_maps` 设为必选输入，不再允许主线只传 `state_tokens` 的危险 fallback。
 
-## 9. 可训练模块与冻结模块
+## 9. Wan TI2V adapter 训练
 
-### 9.1 predictor 训练阶段可训练模块
+训练脚本位于 [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)。
+
+这条 backbone 的语义不是 clean-prefix video continuation，而是：
+
+1. 用 episode 的首帧作为 TI2V 图像条件。
+2. 用完整训练视频 `first_frame + future_frames` 构造 TI2V 监督视频。
+3. 用首帧 latent 作为 clean anchor，只对后续 latent 步做噪声回归。
+4. 将 predictor 导出的 `condition_maps + memory_tokens` 重采样到 `target_condition_steps = latent_steps - 1`，再构造成 canonical payload 后送入 state adapter。
+
+单个样本的关键张量是：
+
+- `input_video ∈ R^{F×3×H×W}`，其中 `F = align_wan_frame_num(1 + T)`
+- `first_frame ∈ R^{1×3×H×W}`
+- `input_latents ∈ R^{C_w×L×H'_w×W'_w}`
+- `condition_maps ∈ R^{1×(L-1)×D_s×H_s×W_s}`，由 bundle 条件重采样到 TI2V latent 时间轴
+- `memory_tokens ∈ R^{1×N×D_s}`，如果 bundle 中存在
+
+与 I2V 侧一样，TI2V 训练也统一通过：
+
+- `build_state_condition_payload_from_condition_maps(...)`
+- `filter_state_condition_payload_for_adapter(...)`
+
+构造并筛选真正送入 adapter 的 payload。
+
+## 10. Wan TI2V 正式推理
+
+推理入口在 [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)，Wan backend 主逻辑在 [wan_bridge.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_bridge.py:579) 的 `WanTextImageToVideoBackend`。
+
+正式推理时：
+
+1. predictor 仍先读取完整 `context_frames`，输出 `condition_maps` 与 `memory_tokens`。
+2. TI2V backbone 只消费 `context_frames[:, 0]` 作为首帧图像条件。
+3. `condition_maps` 被重采样到 `target_condition_steps = total_latent_steps - 1`。
+4. `condition_maps + memory_tokens` 经 state adapter 编成 `state_context`，注入 `WanTI2V`。
+5. 默认总输出帧数是 `1 + future_steps`，因为 TI2V 主干只显式锚定首帧图像。
+
+这里 predictor 和 TI2V backbone 的时间语义需要区分：
+
+- predictor 仍然基于 `K` 帧 context video 建模。
+- TI2V backbone 只直接看到首帧图像。
+- 二者共享的是 future state condition，而不是共享相同的视觉条件输入形式。
+
+## 11. 可训练模块与冻结模块
+
+### 11.1 predictor 训练阶段可训练模块
 
 当前 v2 predictor 中可训练的主要模块是：
 
@@ -392,25 +443,28 @@ clean-prefix 训练语义是：
 - `state_heads`
 - 各类位置参数与 query 参数
 
-### 9.2 predictor 训练阶段冻结模块
+### 11.2 predictor 训练阶段冻结模块
 
 - `WanPromptContextEncoder` 内的 Wan tokenizer / T5 encoder
 - `WanLatentExtractor` 内的 Wan VAE
 
 也就是说，prompt 与 visual latent 都来自冻结的 Wan 模块，predictor 只学习“如何把这些条件映射成 future state map / state condition”。
 
-### 9.3 adapter 训练阶段可训练模块
+### 11.3 adapter 训练阶段可训练模块
 
 - `pipeline.state_adapter`
 - Wan DiT 内部已经显式暴露出来的 `state_adapter_*` 注入权重
 
-### 9.4 adapter 训练阶段冻结模块
+对 I2V 是 `low_noise_model / high_noise_model` 中的注入权重；
+对 TI2V 是 `model` 中的注入权重。
+
+### 11.4 adapter 训练阶段冻结模块
 
 - Wan text encoder
 - Wan VAE
 - Wan 主干里除 `state_adapter_*` 外的参数
 
-## 10. 这轮 review 后确认的问题与修正
+## 12. 这轮 review 后确认的问题与修正
 
 这轮对照代码后，以下问题确实存在且已经按更合理的方向修正：
 
@@ -425,17 +479,20 @@ clean-prefix 训练语义是：
 5. `MemoryTokenHead` 只取最后一步。
    当前已改为时间 attention pooling。
 6. `state_tokens`-only fallback 危险。
-   当前 v2 正式推理已禁止该路径。
+   当前 v2 I2V/TI2V 主线都已经把 `condition_maps` 设为 canonical 输入。
 7. Wan bridge / adapter training 里的重复 helper。
    当前已经集中到共享 helper 模块中复用。
+8. `latent_source` 混乱。
+   当前 v2 主线固定只使用 Wan VAE latents，不再推荐 `MockLatentExtractor` 作为训练/部署分布。
+9. I2V 与 TI2V 原先没有统一的 state-condition backbone 适配层。
+   当前已经分别收敛到 `WanImageToVideoBackend` 与 `WanTextImageToVideoBackend` 两个独立 backend，但共享相同的 payload helper。
 
 仍然保留但需要后续再看的一点是：
 
-- `MockLatentExtractor` 与真实 Wan VAE 仍存在域差；它适合 CPU 单测和 smoke，但不应被当作最优训练分布。
+- `MockLatentExtractor` 与真实 Wan VAE 仍存在域差；它适合 CPU 单测和 smoke，但不应被当作当前 v2 主线的训练/部署分布。
 
-## 11. 当前主线最简结论
+## 13. 当前主线最简结论
 
 当前仓库里更准确的一句话不是“predictor 预测 `future_state_latents` 再送给 Wan”，而是：
 
-`context video + frozen Wan T5 prompt tokens -> predictor 预测 future_state_maps -> 导出 condition_maps/memory_tokens -> Wan 在 clean-prefix 语义下只补全 future latent。`
-
+`context video + frozen Wan T5 prompt tokens -> predictor 预测 future_state_maps -> 导出 condition_maps/memory_tokens -> Wan 将其编码成 state_context，再交给 I2V clean-prefix 或 TI2V first-frame backbone 生成 future video。`

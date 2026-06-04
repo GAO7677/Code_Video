@@ -19,7 +19,6 @@ from phys_state_video.predictor_wan_state_v2 import WanStateLatentPredictorV2, W
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
-    MockLatentExtractor,
     WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
@@ -41,7 +40,7 @@ def parse_args():
         help=(
             "Source of future condition. "
             "`ground_truth` exports `predicted_states=future_states`; "
-            "`wan_predictor` exports predictor `condition_maps`, compatibility `state_tokens`, and `predicted_states`."
+            "`wan_predictor` exports predictor `condition_maps`, `memory_tokens`, and `predicted_states`."
         ),
     )
     parser.add_argument(
@@ -56,12 +55,6 @@ def parse_args():
     )
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
     parser.add_argument("--wan-task", default="i2v-A14B")
-    parser.add_argument(
-        "--predictor-latent-source",
-        default="auto",
-        choices=["auto", "mock", "wan"],
-        help="How to build latents when exporting from a predictor checkpoint.",
-    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--limit", type=int, default=0, help="If > 0, export only the first N episodes.")
     return parser.parse_args()
@@ -96,18 +89,15 @@ def load_wan_state_predictor(checkpoint_path: str, device: str):
 
 def build_predictor_latent_extractor(args, predictor_ckpt):
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
-    latent_source = args.predictor_latent_source
-    if latent_source == "auto":
-        latent_source = predictor_ckpt.get("latent_source", "wan" if predictor_version == "wan_state_v1" else "mock")
-    if latent_source == "mock":
-        return MockLatentExtractor(
-            latent_channels=int(predictor_ckpt.get("mock_latent_channels") or predictor_ckpt["config"]["latent_channels"]),
-            latent_height=int(predictor_ckpt.get("mock_latent_height") or 8),
-            latent_width=int(predictor_ckpt.get("mock_latent_width") or 8),
-            device=args.device,
-        )
+    if predictor_version == "wan_state_v2_latent_time":
+        latent_source = predictor_ckpt.get("latent_source")
+        if latent_source not in (None, "wan"):
+            raise ValueError(
+                "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+                f"got latent_source={latent_source!r}"
+            )
     if args.wan_ckpt_dir is None:
-        raise ValueError("--wan-ckpt-dir is required when predictor latent source is Wan")
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 mainline always uses Wan VAE latents")
     return WanLatentExtractor(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -183,13 +173,11 @@ def build_predictor_state_condition(
                 num_objects=batch["context_states"].shape[2],
             )
 
-    state_tokens = detach_to_cpu_numpy(outputs["state_tokens"][0]).astype(np.float32)
     memory_tokens = detach_to_cpu_numpy(outputs["memory_tokens"][0]).astype(np.float32)
     condition_maps = detach_to_cpu_numpy(outputs["condition_maps"][0]).astype(np.float32)
     predicted_states = detach_to_cpu_numpy(outputs["future_state_predictions"][0]).astype(np.float32)
     context_state_predictions = detach_to_cpu_numpy(outputs["context_state_predictions"][0]).astype(np.float32)
     meta = {
-        "state_tokens": state_tokens,
         "memory_tokens": memory_tokens,
         "condition_maps": condition_maps,
         "predicted_states": predicted_states,
@@ -201,7 +189,6 @@ def build_predictor_state_condition(
     condition_meta = {
         "future_condition_kind": "wan_predictor_condition_maps",
         "predictor_version": predictor_version,
-        "state_tokens_shape": list(state_tokens.shape),
         "memory_tokens_shape": list(memory_tokens.shape),
         "condition_maps_shape": list(condition_maps.shape),
         "predicted_states_shape": list(predicted_states.shape),
@@ -213,10 +200,9 @@ def build_predictor_state_condition(
     if predictor_version == "wan_state_v2_latent_time":
         condition_meta["context_latent_steps"] = int(context_latents.shape[1])
         condition_meta["future_latent_steps"] = int(future_latent_steps)
-        condition_meta["future_state_token_count"] = int(state_tokens.shape[0])
         condition_meta["future_state_map_spatial_shape"] = list(condition_maps.shape[-2:])
         condition_meta["temporal_stride"] = int(latent_extractor.temporal_stride)
-        condition_meta["predictor_latent_source"] = predictor_ckpt.get("latent_source", "mock")
+        condition_meta["predictor_latent_source"] = predictor_ckpt.get("latent_source", "wan")
     return meta, condition_meta
 
 
@@ -225,10 +211,9 @@ def main():
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
     if args.future_state_source == "wan_predictor" and (args.predictor is None or args.wan_ckpt_dir is None):
-        if args.predictor_latent_source == "wan":
-            raise ValueError("--predictor and --wan-ckpt-dir are required when --future-state-source=wan_predictor")
         if args.predictor is None:
             raise ValueError("--predictor is required when --future-state-source=wan_predictor")
+        raise ValueError("--wan-ckpt-dir is required when --future-state-source=wan_predictor")
 
     dataset = NpzPredictorDataset(args.episodes)
     output_dir = Path(args.output)

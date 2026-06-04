@@ -16,7 +16,7 @@ from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_epis
 from phys_state_video.predictor_wan_state import WanStateLatentPredictor, WanStateLatentPredictorConfig
 from phys_state_video.predictor_wan_state_v2 import WanStateLatentPredictorV2, WanStateLatentPredictorV2Config
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
-from phys_state_video.wan_bridge import WanImageToVideoBackend, WanLatentExtractor
+from phys_state_video.wan_bridge import WanLatentExtractor, WanTextImageToVideoBackend
 from phys_state_video.wan_state_v2_helpers import (
     WanPromptContextEncoder,
     compute_future_latent_steps,
@@ -27,24 +27,31 @@ torch = require_torch()
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run Wan prefix-continuation inference with state-latent conditioning.")
+    parser = argparse.ArgumentParser(
+        description="Run Wan TI2V inference from a phys_state_video predictor checkpoint and episode."
+    )
     parser.add_argument("--episode", required=True, help="Episode .npz file.")
     parser.add_argument("--predictor", required=True, help="Predictor checkpoint path.")
     parser.add_argument("--wan-ckpt-dir", required=True, help="Wan checkpoint directory.")
     parser.add_argument(
         "--wan-state-adapter-ckpt",
         required=True,
-        help="Checkpoint for the trained Wan state adapter branch.",
+        help="Checkpoint for the trained Wan TI2V state adapter branch.",
     )
     parser.add_argument("--output", required=True, help="Output directory.")
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
-    parser.add_argument("--wan-task", default="i2v-A14B")
-    parser.add_argument("--wan-size", default="480*832")
+    parser.add_argument("--wan-task", default="ti2v-5B")
+    parser.add_argument(
+        "--predictor-wan-task",
+        default=None,
+        help="Optional Wan task override used only for predictor latent extraction and prompt encoding.",
+    )
+    parser.add_argument("--wan-size", default="704*1280")
     parser.add_argument(
         "--frame-num",
         type=int,
         default=None,
-        help="Total output frame count K+T. Defaults to context_steps + future_steps.",
+        help="Total TI2V output frame count. Defaults to 1 + future_steps.",
     )
     parser.add_argument("--sample-solver", default="unipc", choices=["unipc", "dpm++"])
     parser.add_argument("--sampling-steps", type=int, default=40)
@@ -55,7 +62,6 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--device", default=None)
     parser.add_argument("--fps", type=int, default=6)
-    parser.add_argument("--state-guidance-scale", type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -96,30 +102,36 @@ def load_predictor(checkpoint_path: str, device: str):
     return predictor, checkpoint
 
 
-def build_predictor_latent_extractor(args, checkpoint):
-    predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
+def resolve_predictor_wan_task(args, predictor_ckpt) -> str:
+    if args.predictor_wan_task:
+        return args.predictor_wan_task
+    return str(predictor_ckpt.get("wan_task") or args.wan_task)
+
+
+def build_predictor_latent_extractor(args, predictor_ckpt):
+    predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
     if predictor_version == "wan_state_v2_latent_time":
-        latent_source = checkpoint.get("latent_source")
+        latent_source = predictor_ckpt.get("latent_source")
         if latent_source not in (None, "wan"):
             raise ValueError(
-                "wan_state_v2_latent_time checkpoints must use Wan VAE latents in the current mainline, "
+                "wan_state_v2_latent_time checkpoints must use Wan VAE latents for TI2V inference, "
                 f"got latent_source={latent_source!r}"
             )
-        if args.wan_ckpt_dir is None:
-            raise ValueError("--wan-ckpt-dir is required because wan_state_v2 now always uses Wan VAE latents")
+    predictor_task = resolve_predictor_wan_task(args, predictor_ckpt)
     return WanLatentExtractor(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
-        task=args.wan_task,
+        task=predictor_task,
         device=args.device,
     )
 
 
-def build_prompt_context_encoder(args):
+def build_prompt_context_encoder(args, predictor_ckpt):
+    predictor_task = resolve_predictor_wan_task(args, predictor_ckpt)
     return WanPromptContextEncoder(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
-        task=args.wan_task,
+        task=predictor_task,
         device=args.device,
     )
 
@@ -128,6 +140,7 @@ def main():
     args = parse_args()
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
+
     dataset = NpzPredictorDataset(args.episode)
     batch = collate_predictor_episodes([dataset[0]])
 
@@ -135,8 +148,8 @@ def main():
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
 
     latent_extractor = build_predictor_latent_extractor(args, predictor_ckpt)
-    prompt_context_encoder = build_prompt_context_encoder(args) if predictor_version == "wan_state_v2_latent_time" else None
-    backend = WanImageToVideoBackend(
+    prompt_context_encoder = build_prompt_context_encoder(args, predictor_ckpt) if predictor_version == "wan_state_v2_latent_time" else None
+    backend = WanTextImageToVideoBackend(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
         task=args.wan_task,
@@ -145,14 +158,14 @@ def main():
     )
 
     context_frames = batch["context_frames"].to(args.device)
-    context_steps = context_frames.shape[1]
-    future_steps = batch["future_states"].shape[1]
-    frame_num = args.frame_num or (context_steps + future_steps)
+    context_steps = int(context_frames.shape[1])
+    future_steps = int(batch["future_states"].shape[1])
+    frame_num = args.frame_num or (1 + future_steps)
 
     with torch.no_grad():
         if predictor_version == "wan_state_v2_latent_time":
             context_latents = latent_extractor.encode_context_frames_raw(context_frames)
-            context_latent_steps = context_latents.shape[1]
+            context_latent_steps = int(context_latents.shape[1])
             future_latent_steps = compute_future_latent_steps(
                 context_steps=context_steps,
                 future_steps=future_steps,
@@ -178,13 +191,13 @@ def main():
                 future_steps=future_steps,
                 num_objects=batch["context_states"].shape[2],
             )
-        state_tokens = outputs["state_tokens"]
-        memory_tokens = outputs["memory_tokens"]
+
         condition_maps = outputs["condition_maps"]
+        memory_tokens = outputs["memory_tokens"]
         state_predictions = outputs["future_state_predictions"]
         generated_video = backend.generate(
             prompt=batch["prompts"][0],
-            context_frames=context_frames[0],
+            first_frame=context_frames[0, 0],
             size=args.wan_size,
             frame_num=frame_num,
             memory_tokens=memory_tokens[0],
@@ -196,30 +209,29 @@ def main():
             negative_prompt=args.negative_prompt,
             seed=args.seed,
             state_scale=args.state_scale,
-            state_guidance_scale=args.state_guidance_scale,
         )
 
     if generated_video.ndim != 4:
-        raise ValueError(f"Wan backend returned unexpected shape {tuple(generated_video.shape)}")
+        raise ValueError(f"Wan TI2V backend returned unexpected shape {tuple(generated_video.shape)}")
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     full_video = ((generated_video + 1.0) * 0.5).clamp(0.0, 1.0)
-    generated_future = full_video[:, context_steps:context_steps + future_steps]
+    generated_future = full_video[:, 1 : 1 + future_steps]
     context_np = detach_to_cpu_numpy(batch["context_frames"][0])
+    first_frame_np = detach_to_cpu_numpy(batch["context_frames"][0, 0])
     predicted_states_np = detach_to_cpu_numpy(state_predictions[0])
-    state_tokens_np = detach_to_cpu_numpy(state_tokens[0])
     memory_tokens_np = detach_to_cpu_numpy(memory_tokens[0])
     condition_maps_np = detach_to_cpu_numpy(condition_maps[0])
     full_video_np = detach_to_cpu_numpy(full_video)
     generated_future_np = detach_to_cpu_numpy(generated_future)
 
     np.savez_compressed(
-        output_dir / "wan_inference_outputs.npz",
-        context_frames=context_np,
+        output_dir / "wan_ti2v_inference_outputs.npz",
+        predictor_context_frames=context_np,
+        ti2v_input_frame=first_frame_np,
         predicted_future_states=predicted_states_np,
-        state_tokens=state_tokens_np,
         memory_tokens=memory_tokens_np,
         condition_maps=condition_maps_np,
         future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
@@ -228,24 +240,25 @@ def main():
         generated_future_frames=generated_future_np,
     )
 
-    write_mp4(output_dir / "context.mp4", context_np, args.fps)
-    write_mp4(output_dir / "wan_full.mp4", full_video_np, args.fps)
-    write_mp4(output_dir / "wan_future.mp4", generated_future_np, args.fps)
+    write_mp4(output_dir / "predictor_context.mp4", context_np, args.fps)
+    write_mp4(output_dir / "wan_ti2v_full.mp4", full_video_np, args.fps)
+    write_mp4(output_dir / "wan_ti2v_future.mp4", generated_future_np, args.fps)
 
     (output_dir / "meta.json").write_text(
         json.dumps(
             {
                 "prompt": batch["prompts"][0],
                 "wan_task": args.wan_task,
+                "predictor_wan_task": resolve_predictor_wan_task(args, predictor_ckpt),
                 "wan_size": args.wan_size,
                 "frame_num": frame_num,
-                "context_steps": context_steps,
+                "predictor_context_steps": context_steps,
+                "ti2v_conditioning_steps": 1,
                 "future_steps": future_steps,
                 "sampling_steps": args.sampling_steps,
                 "guide_scale": args.guide_scale,
                 "shift": args.shift,
                 "state_scale": args.state_scale,
-                "state_guidance_scale": args.state_guidance_scale,
                 "seed": args.seed,
                 "wan_state_adapter_ckpt": args.wan_state_adapter_ckpt,
                 "predictor_version": predictor_version,
@@ -255,7 +268,7 @@ def main():
             indent=2,
         )
     )
-    print(f"saved Wan inference outputs to {output_dir}")
+    print(f"saved Wan TI2V inference outputs to {output_dir}")
 
 
 if __name__ == "__main__":

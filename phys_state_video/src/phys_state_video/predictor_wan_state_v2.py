@@ -257,6 +257,7 @@ class WanStateLatentPredictorV2(nn.Module):
             dropout=self.config.dropout,
             batch_first=True,
         )
+        self.context_fusion_norm = nn.LayerNorm(self.model_dim)
         self.context_prompt_norm = nn.LayerNorm(self.model_dim)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.model_dim,
@@ -347,6 +348,7 @@ class WanStateLatentPredictorV2(nn.Module):
             + self.context_time_pos_embed[:, :steps]
             + self.spatial_pos_embed
         )
+        state_maps = self.context_fusion_norm(state_maps)
         grid_h, grid_w = self.config.state_map_height, self.config.state_map_width
         context_tokens = state_maps.view(batch, steps * grid_h * grid_w, self.model_dim)
         context_tokens = self.context_encoder(context_tokens)

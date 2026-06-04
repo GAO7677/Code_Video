@@ -22,7 +22,8 @@ from phys_state_video.utils import require_torch
 from phys_state_video.wan_adapter_training import load_frozen_state_adapter_encoder
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
-    MockLatentExtractor,
+    build_state_condition_payload_from_condition_maps,
+    filter_state_condition_payload_for_adapter,
     WanPromptContextEncoder,
     compute_future_latent_steps,
     compute_latent_step_count,
@@ -44,13 +45,10 @@ def parse_args():
     parser.add_argument("--epochs-future", type=int, default=1)
     parser.add_argument("--epochs-joint", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--latent-source", choices=["mock", "wan"], default="mock")
+    parser.add_argument("--latent-source", choices=["wan"], default="wan")
     parser.add_argument("--wan-ckpt-dir", default=None)
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
-    parser.add_argument("--wan-task", default="ti2v-5B")
-    parser.add_argument("--mock-latent-channels", type=int, default=16)
-    parser.add_argument("--mock-latent-height", type=int, default=8)
-    parser.add_argument("--mock-latent-width", type=int, default=8)
+    parser.add_argument("--wan-task", default="i2v-A14B")
     parser.add_argument("--latent-smooth-scale", type=float, default=0.05)
     parser.add_argument("--teacher-predictor", default=None, help="Optional frozen teacher predictor checkpoint for adapter-space alignment.")
     parser.add_argument("--adapter-align-ckpt", default=None, help="Optional trained Wan state-adapter checkpoint used to compute adapter-space alignment.")
@@ -65,15 +63,8 @@ def default_best_output(output_path: Path) -> Path:
 
 
 def build_latent_extractor(args):
-    if args.latent_source == "mock":
-        return MockLatentExtractor(
-            latent_channels=args.mock_latent_channels,
-            latent_height=args.mock_latent_height,
-            latent_width=args.mock_latent_width,
-            device=args.device,
-        )
     if args.wan_ckpt_dir is None:
-        raise ValueError("--wan-ckpt-dir is required when --latent-source=wan")
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 now always uses Wan VAE latents")
     return WanLatentExtractor(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -179,10 +170,7 @@ def save_checkpoint(
             "model": model.state_dict(),
             "history": history,
             "predictor_version": "wan_state_v2_latent_time",
-            "latent_source": args.latent_source,
-            "mock_latent_channels": getattr(args, "mock_latent_channels", None),
-            "mock_latent_height": getattr(args, "mock_latent_height", None),
-            "mock_latent_width": getattr(args, "mock_latent_width", None),
+            "latent_source": "wan",
             "wan_ckpt_dir": args.wan_ckpt_dir,
             "wan_repo_root": args.wan_repo_root,
             "wan_task": args.wan_task,
@@ -281,8 +269,20 @@ def run_epoch(
                     future_latent_steps=future_latent_steps,
                     num_objects=context_states.shape[2],
                 )
-                teacher_state_context = adapter_encoder({"state_tokens": teacher_outputs["state_tokens"]})
-            predicted_state_context = adapter_encoder({"state_tokens": outputs["state_tokens"]})
+                teacher_payload = build_state_condition_payload_from_condition_maps(
+                    teacher_outputs["condition_maps"],
+                    memory_tokens=teacher_outputs["memory_tokens"],
+                    include_condition_maps=True,
+                )
+                teacher_payload = filter_state_condition_payload_for_adapter(teacher_payload, adapter_encoder)
+                teacher_state_context = adapter_encoder(teacher_payload)
+            predicted_payload = build_state_condition_payload_from_condition_maps(
+                outputs["condition_maps"],
+                memory_tokens=outputs["memory_tokens"],
+                include_condition_maps=True,
+            )
+            predicted_payload = filter_state_condition_payload_for_adapter(predicted_payload, adapter_encoder)
+            predicted_state_context = adapter_encoder(predicted_payload)
             adapter_align = torch.mean((predicted_state_context - teacher_state_context) ** 2)
         else:
             adapter_align = losses["loss"].new_zeros(())

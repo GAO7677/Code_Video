@@ -93,7 +93,7 @@ class OfficialPDIRunner:
         *,
         python_bin: str | None = None,
         cuda_visible_devices: str | None = None,
-        max_retries: int = 3,
+        max_retries: int = 5,
     ) -> None:
         default_python = str(SAM_PYTHON) if SAM_PYTHON.is_file() else sys.executable
         self.python_bin = python_bin or default_python

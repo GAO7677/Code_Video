@@ -63,10 +63,15 @@ class ProxyRunner:
             return None
         context_source_path = context_video_path or video_path
         context_frames_all = self._load_video_frames(context_source_path)
-        if len(context_frames_all) < 16:
+        if len(context_frames_all) < 2:
             return None
 
-        context_split = min(60, len(context_frames_all) // 2)
+        # For explicit conditioning clips such as PhyGenBench first-frame ctx08,
+        # use the whole provided context video instead of halving it again.
+        if context_video_path is not None:
+            context_split = len(context_frames_all)
+        else:
+            context_split = min(60, len(context_frames_all) // 2)
         future_split = min(60, total // 2)
         context_frames = self._uniform_subsample_frames(context_frames_all[:context_split], 8)
         future_frames = self._uniform_subsample_frames(candidate_frames_all[future_split:], 16)

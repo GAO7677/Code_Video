@@ -152,6 +152,7 @@ def build_state_condition_payload_from_condition_maps(
     memory_tokens: torch.Tensor | None = None,
     *,
     include_condition_maps: bool = False,
+    include_state_tokens: bool = False,
 ) -> dict[str, torch.Tensor]:
     if condition_maps.ndim == 4:
         condition_maps = condition_maps.unsqueeze(0)
@@ -159,9 +160,9 @@ def build_state_condition_payload_from_condition_maps(
         raise ValueError(
             f"expected condition_maps with shape [B, T, C, H, W] or [T, C, H, W], got {tuple(condition_maps.shape)}"
         )
-    payload = {
-        "state_tokens": flatten_condition_maps_to_state_tokens(condition_maps),
-    }
+    payload: dict[str, torch.Tensor] = {}
+    if include_state_tokens:
+        payload["state_tokens"] = flatten_condition_maps_to_state_tokens(condition_maps)
     if memory_tokens is not None:
         if memory_tokens.ndim == 2:
             memory_tokens = memory_tokens.unsqueeze(0)

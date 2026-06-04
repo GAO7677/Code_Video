@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -14,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.utils import require_torch
+from phys_state_video.wan_bridge import WanTextImageToVideoBackend
 
 torch = require_torch()
 
@@ -83,41 +83,30 @@ def main():
     if str(wan_repo_root) not in sys.path:
         sys.path.insert(0, str(wan_repo_root))
 
-    from wan_.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
-    from wan_.textimage2video import WanTI2V
-
-    if args.task not in WAN_CONFIGS:
-        raise ValueError(f"unsupported task: {args.task}")
-    if args.size not in SUPPORTED_SIZES[args.task]:
-        raise ValueError(f"unsupported size {args.size} for task {args.task}")
-
     prompt = prompt_path.read_text(encoding="utf-8").strip()
-    image = Image.open(image_path).convert("RGB")
     state_condition = load_state_condition(state_condition_path)
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
 
-    pipeline = WanTI2V(
-        config=WAN_CONFIGS[args.task],
-        checkpoint_dir=str(args.wan_ckpt_dir),
-        device_id=0,
-        rank=0,
+    backend = WanTextImageToVideoBackend(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.task,
+        device="cuda:0",
+        state_adapter_ckpt=args.state_adapter_ckpt,
     )
-    if args.state_adapter_ckpt is not None:
-        pipeline.load_state_adapter(args.state_adapter_ckpt, state_condition=state_condition)
-
-    video = pipeline.generate(
-        prompt,
-        img=image,
-        size=SIZE_CONFIGS[args.size],
-        max_area=MAX_AREA_CONFIGS[args.size],
+    video = backend.generate(
+        prompt=prompt,
+        first_frame=image_path,
+        size=args.size,
         frame_num=args.frame_num,
-        shift=args.shift,
+        memory_tokens=state_condition.get("memory_tokens"),
+        condition_maps=state_condition.get("condition_maps"),
         sample_solver=args.sample_solver,
         sampling_steps=args.sampling_steps,
         guide_scale=args.guide_scale,
+        shift=args.shift,
+        negative_prompt="",
         seed=args.seed,
-        offload_model=True,
-        state_condition=state_condition,
         state_scale=args.state_scale,
     )
 

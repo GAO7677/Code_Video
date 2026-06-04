@@ -31,6 +31,11 @@ from phys_state_video.wan_adapter_training import (
     serialize_ti2v_state_adapter_checkpoint,
 )
 from phys_state_video.wan_bridge import _ensure_wan_importable
+from phys_state_video.wan_state_v2_helpers import (
+    build_state_condition_payload_from_condition_maps,
+    filter_state_condition_payload_for_adapter,
+    resample_condition_maps_to_steps,
+)
 
 torch = require_torch()
 F = torch.nn.functional
@@ -190,6 +195,31 @@ def prepare_training_sample(record, *, output_size: tuple[int, int], frame_num: 
     }
 
 
+def build_ti2v_state_condition_payload(
+    raw_state_condition: dict[str, object],
+    *,
+    device,
+    target_steps: int,
+) -> dict[str, torch.Tensor]:
+    if "condition_maps" not in raw_state_condition:
+        raise ValueError(
+            "TI2V adapter training now expects exported predictor condition_maps in each bundle; "
+            "state_condition.npz is missing 'condition_maps'."
+        )
+    condition_maps = torch.from_numpy(raw_state_condition["condition_maps"]).to(device=device, dtype=torch.float32)
+    condition_maps = resample_condition_maps_to_steps(condition_maps, target_steps=target_steps)
+    memory_tokens = None
+    if "memory_tokens" in raw_state_condition:
+        memory_tokens = torch.from_numpy(raw_state_condition["memory_tokens"]).to(device=device, dtype=torch.float32)
+        if memory_tokens.ndim == 2:
+            memory_tokens = memory_tokens.unsqueeze(0)
+    return build_state_condition_payload_from_condition_maps(
+        condition_maps,
+        memory_tokens=memory_tokens,
+        include_condition_maps=True,
+    )
+
+
 def run_step(
     *,
     pipeline,
@@ -204,10 +234,7 @@ def run_step(
 
     input_video = sample["input_video"].to(device=device, dtype=torch.float32)
     first_frame = sample["first_frame"].to(device=device, dtype=torch.float32)
-    state_condition = {
-        key: torch.from_numpy(value).to(device=device, dtype=torch.float32)
-        for key, value in sample["state_condition"].items()
-    }
+    raw_state_condition = sample["state_condition"]
 
     t5_model = getattr(pipeline.text_encoder, "model", None)
     vae_module = getattr(pipeline.vae, "model", None)
@@ -234,12 +261,19 @@ def run_step(
     noised_latents = (1.0 - latent_mask) * first_frame_latents + latent_mask * noised_latents
     training_target = scheduler.training_target(input_latents, noise, timestep)
     latent_steps = float(input_latents.shape[1])
+    target_condition_steps = max(int(input_latents.shape[1] - 1), 1)
+    state_condition_payload = build_ti2v_state_condition_payload(
+        raw_state_condition,
+        device=device,
+        target_steps=target_condition_steps,
+    )
 
     seq_len = compute_ti2v_seq_len(input_latents, patch_size=tuple(pipeline.patch_size[1:]))
     seq_len = int(math.ceil(seq_len / pipeline.sp_size)) * pipeline.sp_size
     timestep_tokens = build_ti2v_timestep_tensor(latent_mask, timestep=timestep, seq_len=seq_len)
-    state_context = pipeline._build_state_context(state_condition, offload_model=False)
-    del state_condition, input_latents, noise, first_frame_latents, latent_mask
+    adapter_payload = filter_state_condition_payload_for_adapter(state_condition_payload, pipeline.state_adapter)
+    state_context = pipeline._build_state_context(adapter_payload, offload_model=False)
+    del state_condition_payload, adapter_payload, input_latents, noise, first_frame_latents, latent_mask
     torch.cuda.empty_cache()
 
     with torch.amp.autocast("cuda", dtype=pipeline.param_dtype):
@@ -308,18 +342,20 @@ def main():
         output_size=output_size,
         frame_num=args.frame_num,
     )
+    first_condition_payload = build_ti2v_state_condition_payload(
+        first_sample["state_condition"],
+        device=pipeline.device,
+        target_steps=max(int((first_sample["training_frame_num"] - 1) // pipeline.vae_stride[0]), 1),
+    )
     pipeline._build_state_context(
-        {
-            key: torch.from_numpy(value).to(device=pipeline.device, dtype=torch.float32)
-            for key, value in first_sample["state_condition"].items()
-        },
+        first_condition_payload,
         offload_model=False,
     )
     if args.resume is not None:
         state_bundle = load_checkpoint(args.resume, map_location="cpu")
         if not is_ti2v_state_adapter_checkpoint(state_bundle):
             raise ValueError(f"resume checkpoint is not a TI2V state-adapter checkpoint: {args.resume}")
-        pipeline.load_state_adapter(args.resume, state_condition=first_sample["state_condition"])
+        pipeline.load_state_adapter(args.resume, state_condition=first_condition_payload)
 
     trainable_params = select_ti2v_state_adapter_parameters(pipeline)
     optimizer = torch.optim.AdamW(

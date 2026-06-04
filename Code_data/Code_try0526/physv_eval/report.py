@@ -22,6 +22,14 @@ PHYSICSIQ_METHOD_LABELS = {
     "VACE_1p3B_TI2V": "VACE 1.3B TI2V",
     "VACE_1p3B_ctx08": "VACE 1.3B ctx=8",
 }
+PHYGENBENCH_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/phygenbench")
+PHYGENBENCH_OUTPUT = PHYGENBENCH_ROOT / "output"
+PHYGENBENCH_BENCHMARK = "phygenbench"
+PHYGENBENCH_METHODS = ["wan22-5B-TI2V", "VACE_1p3B_TI2V"]
+PHYGENBENCH_METHOD_LABELS = {
+    "wan22-5B-TI2V": "Wan2.2-5B TI2V",
+    "VACE_1p3B_TI2V": "VACE 1.3B TI2V",
+}
 
 METRIC_LABELS = {
     "official_pdi": "Official PDI",
@@ -400,6 +408,92 @@ def build_group_d() -> str:
     )
 
 
+def build_group_e() -> str:
+    by_method: dict[str, list[dict[str, Any]]] = {}
+    sample_sets: list[set[str]] = []
+    for method in PHYGENBENCH_METHODS:
+        method_paths = sorted((PHYGENBENCH_OUTPUT / method / PHYGENBENCH_BENCHMARK).glob("*.json"))
+        by_method[method] = [load_payload(path) for path in method_paths]
+        sample_sets.append({path.stem for path in method_paths})
+
+    full_compare_count = len(set.intersection(*sample_sets)) if sample_sets else 0
+
+    row_data = []
+    for method in PHYGENBENCH_METHODS:
+        payloads = by_method.get(method, [])
+        row_data.append(
+            {
+                "method": PHYGENBENCH_METHOD_LABELS[method],
+                "count": len(payloads),
+                "official_pdi": mean_or_none(_metric_list(payloads, "official_pdi")),
+                "scale_component": mean_or_none(_metric_list(payloads, "scale_component")),
+                "traj_component": mean_or_none(_metric_list(payloads, "traj_component")),
+                "epsilon_rigidity": mean_or_none(_metric_list(payloads, "epsilon_rigidity")),
+                "vp_component": mean_or_none(_metric_list(payloads, "vp_component")),
+                "wmreward_surprise": mean_or_none(_metric_list(payloads, "wmreward_surprise")),
+                "cosmos_reason1": mean_or_none(_metric_list(payloads, "cosmos_reason1")),
+                "vjepa_temporal_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_temporal_relation_raw_error")),
+                "vjepa_delta_relation_raw_error": mean_or_none(_metric_list(payloads, "vjepa_delta_relation_raw_error")),
+                "vjepa_delta_profile_error": mean_or_none(_metric_list(payloads, "vjepa_delta_profile_error")),
+                "videophy2_auto_sa": mean_or_none(_metric_list(payloads, "videophy2_auto_sa")),
+                "videophy2_auto_pc": mean_or_none(_metric_list(payloads, "videophy2_auto_pc")),
+                "videophy2_auto_joint": mean_or_none(_metric_list(payloads, "videophy2_auto_joint")),
+            }
+        )
+    masks = best_metric_mask(row_data, GROUP_C_METRICS)
+
+    rows = []
+    for row, mask in zip(row_data, masks):
+        rows.append(
+            "<tr>"
+            f"{text_td(row['method'], 'label-cell')}"
+            f"{text_td(row['count'], 'num')}"
+            f"{render_metric_cells(row, mask)}"
+            "</tr>"
+        )
+
+    thead = """
+    <thead>
+      <tr>
+        <th colspan="2">Method Metadata</th>
+        <th colspan="5">Official PDI Breakdown</th>
+        <th colspan="8">Predictive Metrics</th>
+      </tr>
+      <tr>
+        <th>Method</th>
+        <th>N</th>
+        <th class="metric metric-official_pdi">Official PDI ↓</th>
+        <th class="metric metric-scale_component">Scale ↓</th>
+        <th class="metric metric-traj_component">Trajectory ↓</th>
+        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
+        <th class="metric metric-vp_component">VP ↓</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
+        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
+        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
+        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
+        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
+      </tr>
+    </thead>
+    """
+    aux_rows = [
+        (PHYGENBENCH_METHOD_LABELS[method], mean_or_none(_metric_list(by_method[method], "vjepa_predictive_alignment")))
+        for method in PHYGENBENCH_METHODS
+    ]
+    description = (
+        f"PhyGenBench 物理视频生成 benchmark。当前只纳入已经完整生成且可本地复现的两条 TI2V 链路，"
+        f"共 {full_compare_count} 个 case 可直接做方法级对比；FLUX 首帧和未完成的 ctx08 不作为主表可比方法。"
+    )
+    return (
+        section_header("E", "PhyGenBench", description)
+        + standard_table(thead, rows)
+        + aux_details_table("展开查看 E 组 AlignAux 诊断", aux_rows)
+        + section_footer()
+    )
+
+
 def build_group_b1() -> str:
     row_data = []
     for json_path in iter_group_jsons("B1"):
@@ -666,6 +760,7 @@ def _resolve_group_c_sim_original_path(sample_key: str) -> Path:
 
 def build_representative_samples() -> str:
     physicsiq_case = _first_physicsiq_full_compare_case()
+    phygenbench_case = _first_phygenbench_full_compare_case()
     case_specs = [
         {
             "group": "A",
@@ -726,6 +821,21 @@ def build_representative_samples() -> str:
                 "samples": [
                     {"label": PHYSICSIQ_METHOD_LABELS[method], "json_path": PHYSICSIQ_OUTPUT / method / PHYSICSIQ_BENCHMARK / f"{physicsiq_case}.json"}
                     for method in PHYSICSIQ_METHODS
+                ],
+            }
+        )
+    if phygenbench_case is not None:
+        case_specs.append(
+            {
+                "group": "E",
+                "title": f"E 组方法对比: PhyGenBench / {phygenbench_case}",
+                "description": "同一个 PhyGenBench case 下并排放 Wan 和 VACE TI2V，方便看这套开放链路在物理 plausibility 指标上的相对排序。",
+                "samples": [
+                    {
+                        "label": PHYGENBENCH_METHOD_LABELS[method],
+                        "json_path": PHYGENBENCH_OUTPUT / method / PHYGENBENCH_BENCHMARK / f"{phygenbench_case}.json",
+                    }
+                    for method in PHYGENBENCH_METHODS
                 ],
             }
         )
@@ -815,6 +925,7 @@ def _video_url(video_path: Path) -> str:
         ("dataset_videos", (DATA_ROOT / "videos").resolve()),
         ("pdi_output", A_OUTPUT.resolve()),
         ("physicsiq_output", PHYSICSIQ_OUTPUT.resolve()),
+        ("phygenbench_output", PHYGENBENCH_OUTPUT.resolve()),
     ]
     for prefix, root in roots:
         try:
@@ -875,7 +986,7 @@ def build_html() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PhysV ABCD Report</title>
+  <title>PhysV ABCDE Metrics Report</title>
   <style>
     :root {{
       --bg: #0f1417;
@@ -1005,9 +1116,9 @@ def build_html() -> str:
 </head>
 <body>
   <div class="page">
-    <h1>PhysV ABCD Metrics Report</h1>
+    <h1>PhysV ABCDE Metrics Report</h1>
     <div class="sub">
-      页面统一展示 A/B/C 仿真评测和 D 组 Physics-IQ 的同一套结果：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>Cosmos Reason1</strong>、<strong>V-JEPA 子指标</strong>、<strong>VideoPhy-2 SA / PC / Joint</strong>。
+      页面统一展示 A/B/C 仿真评测、D 组 Physics-IQ 和 E 组 PhyGenBench 的同一套结果：<strong>Official PDI</strong>、<strong>WMReward Surprise</strong>、<strong>Cosmos Reason1</strong>、<strong>V-JEPA 子指标</strong>、<strong>VideoPhy-2 SA / PC / Joint</strong>。
       其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；Cosmos Reason1 复用 cookbook 中 Reason1 physical-plausibility prompt 的 1-5 分，越高越好；V-JEPA 去掉手工加权总分和 margin 截断，直接展示 <code>predictive_alignment / temporal_relation_raw_error / delta_relation_raw_error / delta_profile_error</code>，其中前三项里的后三者是主误差项，<code>predictive_alignment</code> 只保留为辅助诊断；VideoPhy-2 的 SA / PC 是 1-5 离散评分，越高越好；Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。PhyGround 当前不进主表，原因是 released <code>phyjudge-9B/infer.py</code> 在本批视频上经常生成超长自由文本而不稳定落出结构化分数，无法保证官方 case 和批处理 case 都稳定同分。
     </div>
     {build_metric_legend()}
@@ -1017,6 +1128,7 @@ def build_html() -> str:
     {build_group_b3()}
     {build_group_c()}
     {build_group_d()}
+    {build_group_e()}
     {build_representative_samples()}
   </div>
 </body>
@@ -1032,12 +1144,28 @@ def _first_physicsiq_full_compare_case() -> str | None:
     return None
 
 
+def _first_phygenbench_full_compare_case() -> str | None:
+    method_roots = [PHYGENBENCH_OUTPUT / method / PHYGENBENCH_BENCHMARK for method in PHYGENBENCH_METHODS]
+    if not all(root.is_dir() for root in method_roots):
+        return None
+    sample_sets = [{path.stem for path in root.glob("*.json")} for root in method_roots]
+    if not sample_sets:
+        return None
+    common = sorted(set.intersection(*sample_sets))
+    return common[0] if common else None
+
+
 def main() -> None:
     args = parse_args()
     ABC_REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     (ABC_REPORT_ROOT / "index.html").write_text(build_html(), encoding="utf-8")
 
-    for name, target in [("dataset_videos", DATA_ROOT / "videos"), ("pdi_output", A_OUTPUT), ("physicsiq_output", PHYSICSIQ_OUTPUT)]:
+    for name, target in [
+        ("dataset_videos", DATA_ROOT / "videos"),
+        ("pdi_output", A_OUTPUT),
+        ("physicsiq_output", PHYSICSIQ_OUTPUT),
+        ("phygenbench_output", PHYGENBENCH_OUTPUT),
+    ]:
         link = ABC_REPORT_ROOT / name
         if not link.exists():
             link.symlink_to(target)
