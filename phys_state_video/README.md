@@ -340,7 +340,8 @@ Formal Wan prefix infill inference now requires a trained state adapter checkpoi
 
 At inference time, the saved adapter checkpoint can be loaded by:
 
-- `/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_ti2v_state_condition_smoke.py --state-adapter-ckpt ...`
+- `/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_state_condition_bundle.py --state-adapter-ckpt ...`
+- `/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_ti2v_state_condition_smoke.py --state-adapter-ckpt ...` as a compatibility alias
 - the native `WanTI2V.load_state_adapter(...)` interface
 
 ## Formal tests

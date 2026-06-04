@@ -404,11 +404,11 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 - `Wan TI2V smoke test 入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_ti2v_state_condition_smoke.py`
   关键函数：`load_state_condition()`、`main()`
-  作用：直接读取上一步导出的 bundle，用本地现成的 `Wan2.2-TI2V-5B` 权重验证外部 `Wan` 官方 `state_condition` 接口能否跑通；这条脚本主要用于当前机器环境下的桥接 smoke test，而不是最终的 prefix continuation 正式推理入口。
+  作用：当前保留为兼容别名，实际项目侧入口已经切到 `phys_state_video/scripts/run_wan_state_condition_bundle.py`；两者都会直接读取上一步导出的 bundle，用本地现成的 `Wan2.2-TI2V-5B` 权重验证 `state_condition` 路线，但推荐统一使用项目目录下的新脚本名，避免再把外部 Wan 仓库里的 CLI 当成项目入口。
 
 - `Wan 侧外部依赖`
   路径：`/home/gaoya/Code_Video/Wan2.2-main`
-  关键文件：`wan_/image2video.py`、`wan_/textimage2video.py`、`wan_/state_condition.py`、`generate.py`
+  关键文件：`wan_/image2video.py`、`wan_/textimage2video.py`、`wan_/state_condition.py`
   作用：
   `wan_/image2video.py`
   对应 `WanI2V`，是当前 `clean_prefix_latents + future noisy latent` 正式桥接逻辑最终复用的主接口。
@@ -416,13 +416,12 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
   对应 `WanTI2V`，是当前本地现成 `Wan2.2-TI2V-5B` 权重可直接验证的 `state_condition` 路线。
   `wan_/state_condition.py`
   定义 `state_tokens / predicted_states / memory_tokens / condition_maps` 的规范化接口和 `WanObjectStateAdapter`。
-  `generate.py`
-  给出了官方 CLI 路径，也明确说明了“提供了 `state_condition` 但没有 `state_adapter_ckpt` 时，state branch 仍可能接近零门控默认状态”这一关键限制。
+  这里保留的是 Wan runtime 模块本身；项目侧可执行脚本现在统一放在 `phys_state_video/scripts`，不再把 `Wan2.2-main/generate.py` 当成本项目入口。
 
 ### 3. 输出目录与可视化指令
 
 - `当前状态`
-  这版已经可以单独训练 predictor、单独做 `predictor + Wan` 推理，也可以把 episode 导出成外部 `Wan state_condition` bundle；但 `Wan state adapter` 的训练和 checkpoint 仍依赖外部 Wan 仓库脚本，不在当前目录里统一管理。
+  这版已经可以单独训练 predictor、单独做 `predictor + Wan` 推理，也可以把 episode 导出成外部 `Wan state_condition` bundle；项目侧训练、导出和 bundle 推理入口已经统一放在 `phys_state_video/scripts`，外部 `Wan2.2-main` 仅保留底层 runtime/backbone 模块。
 
 - `建议训练输出目录`
   路径：`/data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/runs_v1/industrial_s1_scale2_prefix_infill_v1`
