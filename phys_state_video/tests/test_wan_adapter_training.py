@@ -28,7 +28,6 @@ from phys_state_video.wan_adapter_training import (
     discover_state_condition_bundles,
     is_i2v_state_adapter_checkpoint,
     is_ti2v_state_adapter_checkpoint,
-    resample_state_tokens_to_steps,
 )
 
 torch = require_torch()
@@ -96,15 +95,6 @@ class WanAdapterTrainingTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(updated[:, :2], clean_prefix))
         self.assertTrue(torch.equal(updated[:, 2:], latent[:, 2:]))
-
-    def test_resample_state_tokens_to_steps(self):
-        tokens = torch.tensor([[[0.0], [10.0]]])
-        resized = resample_state_tokens_to_steps(tokens, target_steps=4)
-
-        self.assertEqual(tuple(resized.shape), (1, 4, 1))
-        self.assertAlmostEqual(float(resized[0, 0, 0]), 0.0, places=5)
-        self.assertAlmostEqual(float(resized[0, -1, 0]), 10.0, places=5)
-        self.assertGreater(float(resized[0, 1, 0]), 0.0)
 
     def test_discover_state_condition_bundles_from_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:

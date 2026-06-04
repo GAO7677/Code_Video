@@ -26,8 +26,6 @@ from phys_state_video.wan_bridge import (
     _align_wan_frame_num,
     _build_prefix_condition_mask,
     _build_prefix_latent_noise_mask,
-    _pad_future_state_tokens,
-    _resample_state_tokens_to_steps,
     _resample_video_latents_to_frame_steps,
 )
 from phys_state_video.wan_state_v2_helpers import (
@@ -138,24 +136,6 @@ class WanStatePredictorTests(unittest.TestCase):
         self.assertTrue(torch.equal(updated[:, 2:], latents[:, 2:]))
         self.assertTrue(torch.equal(updated[:, :, :, 2:], torch.cat([clean_prefix, latents[:, 2:]], dim=1)[:, :, :, 2:]))
 
-    def test_state_token_padding(self):
-        tokens = torch.randn(1, 3, 8)
-        padded = _pad_future_state_tokens(tokens, target_steps=5)
-        self.assertEqual(tuple(padded.shape), (1, 5, 8))
-        self.assertTrue(torch.equal(padded[:, :3], tokens))
-        self.assertTrue(torch.equal(padded[:, 3], tokens[:, 2]))
-        self.assertTrue(torch.equal(padded[:, 4], tokens[:, 2]))
-
-    def test_state_token_resampling(self):
-        tokens = torch.tensor([[[0.0], [10.0]]])
-        resized = _resample_state_tokens_to_steps(tokens, target_steps=4)
-        self.assertEqual(tuple(resized.shape), (1, 4, 1))
-        self.assertAlmostEqual(float(resized[0, 0, 0]), 0.0, places=5)
-        self.assertAlmostEqual(float(resized[0, -1, 0]), 10.0, places=5)
-        self.assertGreater(float(resized[0, 1, 0]), 0.0)
-        self.assertLess(float(resized[0, 1, 0]), 10.0)
-        self.assertGreater(float(resized[0, 2, 0]), float(resized[0, 1, 0]))
-
     def test_video_latent_resampling(self):
         latent = torch.tensor([[[[0.0]], [[10.0]]]])
         resized = _resample_video_latents_to_frame_steps(latent, target_steps=4)
@@ -208,7 +188,6 @@ class WanStatePredictorTests(unittest.TestCase):
         self.assertEqual(tuple(outputs["future_state_maps"].shape), (batch, future_steps, 2, 2, 32))
         self.assertEqual(tuple(outputs["debug_context_object_slots"].shape), (batch, context_steps, num_objects, 32))
         self.assertEqual(tuple(outputs["debug_future_object_slots"].shape), (batch, future_steps, num_objects, 32))
-        self.assertEqual(tuple(outputs["state_tokens"].shape), (batch, future_steps * 2 * 2, 32))
         self.assertEqual(tuple(outputs["memory_tokens"].shape), (batch, num_objects, 32))
         self.assertEqual(tuple(outputs["condition_maps"].shape), (batch, future_steps, 32, 2, 2))
         self.assertEqual(tuple(outputs["debug_projected_future_state_maps"].shape), (batch, future_steps, 2, 2, 32))

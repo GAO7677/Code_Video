@@ -14,6 +14,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.utils import require_torch
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.wan_adapter_training import (
     LocalWanFlowMatchScheduler,
     align_wan_frame_num,
@@ -22,20 +23,19 @@ from phys_state_video.wan_adapter_training import (
     build_prefix_training_video,
     build_prefix_timestep_tensor,
     compute_ti2v_seq_len,
-    discover_state_condition_bundles,
     filter_state_condition_payload_for_adapter,
-    is_i2v_state_adapter_checkpoint,
-    load_episode_npz,
-    load_state_condition_npz,
     normalize_video_range,
     resample_condition_maps_to_steps,
     select_i2v_state_adapter_parameters,
     serialize_i2v_state_adapter_checkpoint,
 )
-from phys_state_video.wan_bridge import (
-    _build_prefix_condition_mask,
-    _ensure_wan_importable,
-    _resize_video_frames,
+from phys_state_video.wan_bridge import _build_prefix_condition_mask, _resize_video_frames
+from phys_state_video.wan_runtime import ensure_wan_importable
+from phys_state_video.wan_state_condition_bundles import (
+    discover_state_condition_bundles,
+    is_i2v_state_adapter_checkpoint,
+    load_episode_npz,
+    load_state_condition_npz,
 )
 from phys_state_video.wan_state_v2_helpers import build_state_condition_payload_from_condition_maps
 
@@ -80,13 +80,6 @@ def default_best_output(output_path: Path) -> Path:
     if output_path.suffix:
         return output_path.with_name(f"{output_path.stem}.best{output_path.suffix}")
     return output_path.with_name(f"{output_path.name}.best")
-
-
-def load_checkpoint(path: str, map_location: str):
-    try:
-        return torch.load(path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(path, map_location=map_location)
 
 
 def prepare_training_sample(record, *, frame_num: int) -> dict[str, object]:
@@ -245,7 +238,7 @@ def main():
         )
 
     device, device_id = resolve_device(args.device)
-    _ensure_wan_importable(args.wan_repo_root)
+    ensure_wan_importable(args.wan_repo_root)
 
     from wan_.configs import MAX_AREA_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
     from wan_.image2video import WanI2V
@@ -284,7 +277,7 @@ def main():
         first_payload["memory_tokens"] = first_memory_tokens
     pipeline._build_state_context(first_payload, offload_model=False)
     if args.resume is not None:
-        state_bundle = load_checkpoint(args.resume, map_location="cpu")
+        state_bundle = load_torch_checkpoint(args.resume, map_location="cpu")
         if not is_i2v_state_adapter_checkpoint(state_bundle):
             raise ValueError(f"resume checkpoint is not an I2V state-adapter checkpoint: {args.resume}")
         pipeline.load_state_adapter(args.resume, state_condition=first_payload)

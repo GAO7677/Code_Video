@@ -13,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.adapter import TinyVideoBackbone
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
 from phys_state_video.pipeline import StateConditionedGenerationPipeline
@@ -31,13 +32,6 @@ def parse_args():
     parser.add_argument("--output", required=True, help="Output directory.")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
-
-
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
 
 
 def load_model_state(module, state_dict, checkpoint_label: str) -> None:
@@ -62,8 +56,8 @@ def main():
     dataset = NpzEpisodeDataset(args.episode)
     batch = collate_episodes([dataset[0]])
 
-    predictor_ckpt = load_checkpoint(args.predictor, map_location=args.device)
-    adapter_ckpt = load_checkpoint(args.adapter, map_location=args.device)
+    predictor_ckpt = load_torch_checkpoint(args.predictor, map_location=args.device)
+    adapter_ckpt = load_torch_checkpoint(args.adapter, map_location=args.device)
     predictor = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
     predictor.load_state_dict(predictor_ckpt["model"])
     adapter = TinyVideoBackbone(AdapterConfig(**adapter_ckpt["config"])).to(args.device)

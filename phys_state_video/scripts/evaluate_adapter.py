@@ -11,6 +11,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.conditioning import build_condition_bundle
 from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
@@ -47,13 +48,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
 def load_model_state(module, state_dict, checkpoint_label: str) -> None:
     try:
         module.load_state_dict(state_dict)
@@ -74,7 +68,7 @@ def main():
     if args.device is None:
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    ckpt = load_checkpoint(args.checkpoint, map_location=args.device)
+    ckpt = load_torch_checkpoint(args.checkpoint, map_location=args.device)
     condition_mode = args.condition_mode or ckpt.get("condition_mode", "state")
     state_loss_weights = ckpt.get("state_loss_weights")
     state_loss_scale = float(ckpt.get("state_loss_scale", 0.1))
@@ -91,7 +85,7 @@ def main():
     predictor_model = None
     predictor_checkpoint = ckpt.get("predictor_checkpoint")
     if predictor_checkpoint:
-        predictor_ckpt = load_checkpoint(predictor_checkpoint, map_location="cpu")
+        predictor_ckpt = load_torch_checkpoint(predictor_checkpoint, map_location="cpu")
         predictor_model = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
         load_model_state(predictor_model, predictor_ckpt["model"], predictor_checkpoint)
         predictor_model.eval()

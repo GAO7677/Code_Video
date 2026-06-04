@@ -11,6 +11,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.conditioning import build_condition_bundle
 from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
@@ -188,13 +189,6 @@ def save_checkpoint(
     )
 
 
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
 def load_model_state(module, state_dict, checkpoint_label: str) -> None:
     try:
         module.load_state_dict(state_dict)
@@ -345,7 +339,7 @@ def main():
     if args.resume is not None:
         # Load checkpoints on CPU first to avoid device-specific restore issues
         # when resuming under a different visible CUDA device mapping.
-        resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
+        resume_ckpt = load_torch_checkpoint(args.resume, map_location="cpu")
         load_model_state(base_model, resume_ckpt["model"], args.resume)
         history.extend(resume_ckpt.get("history", []))
         if same_loss_setup(resume_ckpt, args, state_loss_weights):
@@ -361,7 +355,7 @@ def main():
 
     predictor_model = None
     if args.predictor_checkpoint is not None:
-        predictor_ckpt = load_checkpoint(args.predictor_checkpoint, map_location="cpu")
+        predictor_ckpt = load_torch_checkpoint(args.predictor_checkpoint, map_location="cpu")
         predictor_cfg = PredictorConfig(**predictor_ckpt["config"])
         predictor_model = FutureStatePredictor(predictor_cfg).to(args.device)
         load_model_state(predictor_model, predictor_ckpt["model"], args.predictor_checkpoint)

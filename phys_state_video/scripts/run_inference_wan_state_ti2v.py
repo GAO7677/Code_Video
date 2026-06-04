@@ -13,12 +13,15 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
-from phys_state_video.predictor_wan_state import WanStateLatentPredictor, WanStateLatentPredictorConfig
-from phys_state_video.predictor_wan_state_v2 import WanStateLatentPredictorV2, WanStateLatentPredictorV2Config
+from phys_state_video.wan_predictor_runtime import (
+    build_predictor_latent_extractor,
+    build_predictor_prompt_context_encoder,
+    load_wan_state_predictor,
+    resolve_predictor_wan_task,
+)
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
-from phys_state_video.wan_bridge import WanLatentExtractor, WanTextImageToVideoBackend
+from phys_state_video.wan_bridge import WanTextImageToVideoBackend
 from phys_state_video.wan_state_v2_helpers import (
-    WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
 )
@@ -65,13 +68,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
 def write_mp4(path: Path, frames_tchw: np.ndarray, fps: int) -> None:
     import cv2
 
@@ -88,54 +84,6 @@ def write_mp4(path: Path, frames_tchw: np.ndarray, fps: int) -> None:
         writer.release()
 
 
-def load_predictor(checkpoint_path: str, device: str):
-    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
-    predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
-    if predictor_version == "wan_state_v2_latent_time":
-        predictor = WanStateLatentPredictorV2(WanStateLatentPredictorV2Config(**checkpoint["config"])).to(device)
-        predictor.load_state_dict(checkpoint["model"])
-        predictor.eval()
-        return predictor, checkpoint
-    predictor = WanStateLatentPredictor(WanStateLatentPredictorConfig(**checkpoint["config"])).to(device)
-    predictor.load_state_dict(checkpoint["model"])
-    predictor.eval()
-    return predictor, checkpoint
-
-
-def resolve_predictor_wan_task(args, predictor_ckpt) -> str:
-    if args.predictor_wan_task:
-        return args.predictor_wan_task
-    return str(predictor_ckpt.get("wan_task") or args.wan_task)
-
-
-def build_predictor_latent_extractor(args, predictor_ckpt):
-    predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
-    if predictor_version == "wan_state_v2_latent_time":
-        latent_source = predictor_ckpt.get("latent_source")
-        if latent_source != "wan":
-            raise ValueError(
-                "wan_state_v2_latent_time checkpoints must explicitly declare latent_source='wan' for TI2V inference, "
-                f"got latent_source={latent_source!r}"
-            )
-    predictor_task = resolve_predictor_wan_task(args, predictor_ckpt)
-    return WanLatentExtractor(
-        ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        task=predictor_task,
-        device=args.device,
-    )
-
-
-def build_prompt_context_encoder(args, predictor_ckpt):
-    predictor_task = resolve_predictor_wan_task(args, predictor_ckpt)
-    return WanPromptContextEncoder(
-        ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        task=predictor_task,
-        device=args.device,
-    )
-
-
 def main():
     args = parse_args()
     if args.device is None:
@@ -144,11 +92,29 @@ def main():
     dataset = NpzPredictorDataset(args.episode)
     batch = collate_predictor_episodes([dataset[0]])
 
-    predictor, predictor_ckpt = load_predictor(args.predictor, args.device)
+    predictor, predictor_ckpt = load_wan_state_predictor(args.predictor, args.device)
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
 
-    latent_extractor = build_predictor_latent_extractor(args, predictor_ckpt)
-    prompt_context_encoder = build_prompt_context_encoder(args, predictor_ckpt) if predictor_version == "wan_state_v2_latent_time" else None
+    latent_extractor = build_predictor_latent_extractor(
+        wan_ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        device=args.device,
+        predictor_ckpt=predictor_ckpt,
+        default_wan_task=args.wan_task,
+        predictor_wan_task=args.predictor_wan_task,
+        context="Wan TI2V inference",
+    )
+    prompt_context_encoder = None
+    if predictor_version == "wan_state_v2_latent_time":
+        prompt_context_encoder = build_predictor_prompt_context_encoder(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=args.device,
+            predictor_ckpt=predictor_ckpt,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_wan_task,
+            context="Wan TI2V inference",
+        )
     backend = WanTextImageToVideoBackend(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -249,7 +215,11 @@ def main():
             {
                 "prompt": batch["prompts"][0],
                 "wan_task": args.wan_task,
-                "predictor_wan_task": resolve_predictor_wan_task(args, predictor_ckpt),
+                "predictor_wan_task": resolve_predictor_wan_task(
+                    predictor_ckpt,
+                    default_wan_task=args.wan_task,
+                    predictor_wan_task=args.predictor_wan_task,
+                ),
                 "wan_size": args.wan_size,
                 "frame_num": frame_num,
                 "predictor_context_steps": context_steps,

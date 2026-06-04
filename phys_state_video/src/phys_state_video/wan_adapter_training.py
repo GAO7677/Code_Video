@@ -1,134 +1,37 @@
 from __future__ import annotations
 
-import json
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from .utils import require_torch
+from .wan_runtime import ensure_wan_importable
+from .wan_state_condition_bundles import (
+    REQUIRED_STATE_ADAPTER_KEYS_I2V,
+    REQUIRED_STATE_ADAPTER_KEYS_TI2V,
+    StateConditionBundleRecord,
+    discover_state_condition_bundles,
+    is_i2v_state_adapter_checkpoint,
+    is_ti2v_state_adapter_checkpoint,
+    load_episode_npz,
+    load_state_condition_npz,
+)
 from .wan_state_v2_helpers import (
     align_wan_frame_num as align_wan_frame_num_shared,
     apply_clean_prefix_to_latents as apply_clean_prefix_to_latents_shared,
     build_prefix_latent_mask as build_prefix_latent_mask_shared,
     build_prefix_timestep_tensor as build_prefix_timestep_tensor_shared,
     filter_state_condition_payload_for_adapter as filter_state_condition_payload_for_adapter_shared,
-    flatten_condition_maps_to_state_tokens as flatten_condition_maps_to_state_tokens_shared,
     resample_condition_maps_to_steps as resample_condition_maps_to_steps_shared,
-    resample_state_tokens_to_steps as resample_state_tokens_to_steps_shared,
 )
 
 torch = require_torch()
 F = torch.nn.functional
 
 
-REQUIRED_STATE_ADAPTER_KEYS_TI2V = {
-    "state_adapter_config",
-    "state_adapter",
-    "model_state_adapter",
-}
-REQUIRED_STATE_ADAPTER_KEYS_I2V = {
-    "state_adapter_config",
-    "state_adapter",
-    "low_noise_model_state_adapter",
-    "high_noise_model_state_adapter",
-}
-
-
-@dataclass(slots=True)
-class StateConditionBundleRecord:
-    sample_id: str
-    bundle_dir: Path
-    episode_path: Path
-    image_path: Path
-    state_condition_path: Path
-    meta_path: Path
-    prompt_path: Path
-    prompt: str
-    meta: dict[str, object]
-
-
 def align_wan_frame_num(frame_num: int) -> int:
     return align_wan_frame_num_shared(frame_num)
-
-
-def _read_json(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_state_condition_npz(path: str | Path) -> dict[str, np.ndarray]:
-    path = Path(path)
-    with np.load(path, allow_pickle=False) as payload:
-        return {key: payload[key] for key in payload.files}
-
-
-def is_ti2v_state_adapter_checkpoint(state_bundle: dict[str, object]) -> bool:
-    return REQUIRED_STATE_ADAPTER_KEYS_TI2V.issubset(state_bundle.keys())
-
-
-def is_i2v_state_adapter_checkpoint(state_bundle: dict[str, object]) -> bool:
-    return REQUIRED_STATE_ADAPTER_KEYS_I2V.issubset(state_bundle.keys())
-
-
-def _discover_bundle_dirs(root: Path) -> list[Path]:
-    manifest_path = root / "manifest.jsonl"
-    if manifest_path.is_file():
-        bundle_dirs: list[Path] = []
-        with manifest_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                state_condition_path = Path(record["state_condition_path"]).resolve()
-                bundle_dirs.append(state_condition_path.parent)
-        return bundle_dirs
-    return sorted(
-        path
-        for path in root.iterdir()
-        if path.is_dir() and (path / "state_condition.npz").is_file() and (path / "meta.json").is_file()
-    )
-
-
-def discover_state_condition_bundles(root: str | Path, limit: int = 0) -> list[StateConditionBundleRecord]:
-    root = Path(root)
-    if not root.exists():
-        raise FileNotFoundError(f"state-condition root does not exist: {root}")
-    bundle_dirs = _discover_bundle_dirs(root)
-    if limit > 0:
-        bundle_dirs = bundle_dirs[:limit]
-    records: list[StateConditionBundleRecord] = []
-    for bundle_dir in bundle_dirs:
-        meta_path = bundle_dir / "meta.json"
-        state_condition_path = bundle_dir / "state_condition.npz"
-        image_path = bundle_dir / "input_image.png"
-        prompt_path = bundle_dir / "prompt.txt"
-        meta = _read_json(meta_path)
-        episode_path = Path(str(meta["episode_path"])).resolve()
-        prompt = prompt_path.read_text(encoding="utf-8").strip() if prompt_path.is_file() else str(meta.get("prompt", ""))
-        records.append(
-            StateConditionBundleRecord(
-                sample_id=str(meta.get("sample_id", bundle_dir.name)),
-                bundle_dir=bundle_dir.resolve(),
-                episode_path=episode_path,
-                image_path=image_path.resolve(),
-                state_condition_path=state_condition_path.resolve(),
-                meta_path=meta_path.resolve(),
-                prompt_path=prompt_path.resolve(),
-                prompt=prompt,
-                meta=meta,
-            )
-        )
-    if not records:
-        raise FileNotFoundError(f"no state-condition bundles found under {root}")
-    return records
-
-
-def load_episode_npz(path: str | Path) -> dict[str, np.ndarray]:
-    path = Path(path)
-    with np.load(path, allow_pickle=False) as payload:
-        return {key: payload[key] for key in payload.files}
 
 
 def to_frame_tensor(frames: np.ndarray | torch.Tensor) -> torch.Tensor:
@@ -249,17 +152,8 @@ def compute_ti2v_seq_len(latent: torch.Tensor, patch_size: tuple[int, int]) -> i
 def apply_clean_prefix_to_latents(latent: torch.Tensor, clean_prefix_latents: torch.Tensor) -> torch.Tensor:
     return apply_clean_prefix_to_latents_shared(latent, clean_prefix_latents)
 
-
-def resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
-    return resample_state_tokens_to_steps_shared(state_tokens, target_steps)
-
-
 def resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps: int) -> torch.Tensor:
     return resample_condition_maps_to_steps_shared(condition_maps, target_steps)
-
-
-def flatten_condition_maps_to_state_tokens(condition_maps: torch.Tensor) -> torch.Tensor:
-    return flatten_condition_maps_to_state_tokens_shared(condition_maps)
 
 
 def filter_state_condition_payload_for_adapter(state_condition: dict[str, torch.Tensor], adapter) -> dict[str, torch.Tensor]:
@@ -383,11 +277,7 @@ def load_frozen_state_adapter_encoder(
     wan_repo_root: str | Path = "/home/gaoya/Code_Video/Wan2.2-main",
     device: str = "cpu",
 ):
-    import sys
-
-    root = Path(wan_repo_root)
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+    ensure_wan_importable(wan_repo_root)
     from wan_.state_condition import WanObjectStateAdapter
 
     state_bundle = torch.load(str(checkpoint_path), map_location="cpu")

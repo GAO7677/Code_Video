@@ -11,6 +11,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.predictor_wan_state import (
     WanStateLatentPredictor,
     WanStateLatentPredictorConfig,
@@ -109,13 +110,6 @@ def save_checkpoint(
         },
         output_path,
     )
-
-
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
 
 
 def encode_context_latents(latent_extractor: WanLatentExtractor, context_frames: torch.Tensor) -> torch.Tensor:
@@ -236,7 +230,7 @@ def main():
     best_epoch = None
     best_metric = None
     if args.resume is not None:
-        resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
+        resume_ckpt = load_torch_checkpoint(args.resume, map_location="cpu")
         base_model.load_state_dict(resume_ckpt["model"])
         history.extend(resume_ckpt.get("history", []))
         best_epoch = resume_ckpt.get("best_epoch")

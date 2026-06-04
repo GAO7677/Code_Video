@@ -445,11 +445,6 @@ class WanStateLatentPredictorV2(nn.Module):
         future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
         projected_future_maps = self.state_token_head(future_state_maps)
         condition_maps = projected_future_maps.permute(0, 1, 4, 2, 3).contiguous()
-        state_tokens = condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(
-            condition_maps.shape[0],
-            condition_maps.shape[1] * condition_maps.shape[3] * condition_maps.shape[4],
-            condition_maps.shape[2],
-        )
         memory_tokens = self.memory_token_head(context_object_slots)
 
         context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
@@ -458,7 +453,6 @@ class WanStateLatentPredictorV2(nn.Module):
             "context_state_maps": context_state_maps,
             "future_state_maps": future_state_maps,
             "condition_maps": condition_maps,
-            "state_tokens": state_tokens,
             "memory_tokens": memory_tokens,
             "context_state_predictions": context_grouped["state"],
             "future_state_predictions": future_grouped["state"],

@@ -20,6 +20,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.experiment import compute_state_metrics
 from phys_state_video.predictor_visual_v3 import (
     VisualContextLatentPredictorV3,
@@ -46,13 +47,6 @@ def parse_args():
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
-
-
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
 
 
 def to_uint8_rgb(frame_chw: np.ndarray) -> np.ndarray:
@@ -552,7 +546,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint = load_checkpoint(args.predictor, map_location="cpu")
+    checkpoint = load_torch_checkpoint(args.predictor, map_location="cpu")
     config = checkpoint["config"]
     model = VisualContextLatentPredictorV3(config=VisualLatentPredictorConfig(**config))
     model.load_state_dict(checkpoint["model"])

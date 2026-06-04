@@ -18,6 +18,7 @@ from phys_state_video.predictor_wan_state_v2 import (
     resample_temporal_states,
     wan_state_predictor_v2_loss,
 )
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.utils import require_torch
 from phys_state_video.wan_adapter_training import load_frozen_state_adapter_encoder
 from phys_state_video.wan_bridge import WanLatentExtractor
@@ -84,15 +85,8 @@ def build_prompt_context_encoder(args):
     )
 
 
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
 def load_teacher_predictor(checkpoint_path: str, device: str) -> WanStateLatentPredictorV2:
-    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
+    checkpoint = load_torch_checkpoint(checkpoint_path, map_location=device)
     if checkpoint.get("predictor_version") != "wan_state_v2_latent_time":
         raise ValueError(
             f"teacher predictor must be a wan_state_v2_latent_time checkpoint, got {checkpoint.get('predictor_version')!r}"

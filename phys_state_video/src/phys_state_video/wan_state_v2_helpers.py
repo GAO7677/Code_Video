@@ -81,24 +81,6 @@ def build_prefix_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq
     return masked.unsqueeze(0)
 
 
-def resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
-    if state_tokens.ndim == 2:
-        state_tokens = state_tokens.unsqueeze(0)
-    if state_tokens.ndim != 3:
-        raise ValueError(f"expected state_tokens with shape [B, T, D] or [T, D], got {tuple(state_tokens.shape)}")
-    if target_steps <= 0:
-        raise ValueError(f"target_steps must be positive, got {target_steps}")
-    if state_tokens.shape[1] == target_steps:
-        return state_tokens
-    resized = F.interpolate(
-        state_tokens.transpose(1, 2),
-        size=target_steps,
-        mode="linear",
-        align_corners=False,
-    )
-    return resized.transpose(1, 2).contiguous()
-
-
 def resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps: int) -> torch.Tensor:
     if condition_maps.ndim == 4:
         condition_maps = condition_maps.unsqueeze(0)
@@ -121,30 +103,20 @@ def resample_condition_maps_to_steps(condition_maps: torch.Tensor, target_steps:
     return resized.view(batch, channels, height, width, target_steps).permute(0, 4, 1, 2, 3).contiguous()
 
 
-def flatten_condition_maps_to_state_tokens(condition_maps: torch.Tensor) -> torch.Tensor:
-    if condition_maps.ndim == 4:
-        condition_maps = condition_maps.unsqueeze(0)
-    if condition_maps.ndim != 5:
-        raise ValueError(
-            f"expected condition_maps with shape [B, T, C, H, W] or [T, C, H, W], got {tuple(condition_maps.shape)}"
-        )
-    batch, steps, channels, height, width = condition_maps.shape
-    return condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(batch, steps * height * width, channels)
-
-
 def filter_state_condition_payload_for_adapter(
     state_condition: dict[str, torch.Tensor],
     adapter,
 ) -> dict[str, torch.Tensor]:
     filtered: dict[str, torch.Tensor] = {}
-    if getattr(adapter, "state_token_dim", None) is not None and state_condition.get("state_tokens") is not None:
-        filtered["state_tokens"] = state_condition["state_tokens"]
     if getattr(adapter, "memory_token_dim", None) is not None and state_condition.get("memory_tokens") is not None:
         filtered["memory_tokens"] = state_condition["memory_tokens"]
     if getattr(adapter, "map_token_dim", None) is not None and state_condition.get("condition_maps") is not None:
         filtered["condition_maps"] = state_condition["condition_maps"]
     if not filtered:
-        raise ValueError("state_condition payload does not match any initialized adapter branch")
+        raise ValueError(
+            "state_condition payload does not match any initialized adapter branch. "
+            "The v2 mainline only supports condition_maps + memory_tokens payloads."
+        )
     return filtered
 
 
@@ -153,7 +125,6 @@ def build_state_condition_payload_from_condition_maps(
     memory_tokens: torch.Tensor | None = None,
     *,
     include_condition_maps: bool = False,
-    include_state_tokens: bool = False,
 ) -> dict[str, torch.Tensor]:
     if condition_maps.ndim == 4:
         condition_maps = condition_maps.unsqueeze(0)
@@ -162,8 +133,6 @@ def build_state_condition_payload_from_condition_maps(
             f"expected condition_maps with shape [B, T, C, H, W] or [T, C, H, W], got {tuple(condition_maps.shape)}"
         )
     payload: dict[str, torch.Tensor] = {}
-    if include_state_tokens:
-        payload["state_tokens"] = flatten_condition_maps_to_state_tokens(condition_maps)
     if memory_tokens is not None:
         if memory_tokens.ndim == 2:
             memory_tokens = memory_tokens.unsqueeze(0)
@@ -188,7 +157,7 @@ class WanPromptContextEncoder:
     max_text_len: int = field(init=False)
 
     def __post_init__(self) -> None:
-        from .wan_bridge import load_wan_modules
+        from .wan_runtime import load_wan_modules
 
         modules = load_wan_modules(self.wan_repo_root)
         wan_configs = modules["WAN_CONFIGS"]

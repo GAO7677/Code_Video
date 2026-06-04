@@ -16,6 +16,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.adapter import TinyVideoBackbone, adapter_loss
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.conditioning import build_condition_bundle
 from phys_state_video.config import AdapterConfig, ConditioningConfig, PredictorConfig
 from phys_state_video.dataset import NpzEpisodeDataset, collate_episodes
@@ -74,13 +75,6 @@ def parse_args():
         help="Optional json file containing a list of model specs. Each item may include id, label, checkpoint, and condition_mode.",
     )
     return parser.parse_args()
-
-
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
 
 
 def load_model_state(module, state_dict, checkpoint_label: str) -> dict[str, list[str]]:
@@ -458,7 +452,7 @@ def main():
     model_specs = load_model_specs(args.model_specs_json)
     models = []
     for spec in model_specs:
-        ckpt = load_checkpoint(spec["checkpoint"], map_location=args.device)
+        ckpt = load_torch_checkpoint(spec["checkpoint"], map_location=args.device)
         adapter_cfg = AdapterConfig(**ckpt["config"])
         model = TinyVideoBackbone(adapter_cfg).to(args.device)
         load_info = load_model_state(model, ckpt["model"], spec["checkpoint"])
@@ -466,7 +460,7 @@ def main():
         predictor_checkpoint = spec["predictor_checkpoint"] or ckpt.get("predictor_checkpoint")
         predictor_model = None
         if predictor_checkpoint:
-            predictor_ckpt = load_checkpoint(predictor_checkpoint, map_location="cpu")
+            predictor_ckpt = load_torch_checkpoint(predictor_checkpoint, map_location="cpu")
             predictor_model = FutureStatePredictor(PredictorConfig(**predictor_ckpt["config"])).to(args.device)
             load_model_state(predictor_model, predictor_ckpt["model"], predictor_checkpoint)
             predictor_model.eval()

@@ -11,6 +11,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.config import PredictorConfig
+from phys_state_video.checkpoint_io import load_torch_checkpoint
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
 from phys_state_video.predictor import FutureStatePredictor, predictor_loss
 from phys_state_video.utils import require_torch
@@ -108,13 +109,6 @@ def epoch_snapshot_path(output_path: Path, epoch_index: int) -> Path:
     return output_path.with_name(f"{output_path.name}.epoch{epoch_index:03d}")
 
 
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
 def run_epoch(model, loader, optimizer, device):
     running = {
         "loss": 0.0,
@@ -199,7 +193,7 @@ def main():
     best_epoch = None
     best_metric = None
     if args.resume is not None:
-        resume_ckpt = load_checkpoint(args.resume, map_location="cpu")
+        resume_ckpt = load_torch_checkpoint(args.resume, map_location="cpu")
         base_model.load_state_dict(resume_ckpt["model"])
         history.extend(resume_ckpt.get("history", []))
         best_epoch = resume_ckpt.get("best_epoch")

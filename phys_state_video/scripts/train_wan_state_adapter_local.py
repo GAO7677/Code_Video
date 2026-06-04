@@ -14,6 +14,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.utils import require_torch
+from phys_state_video.checkpoint_io import load_torch_checkpoint
+from phys_state_video.wan_runtime import ensure_wan_importable
+from phys_state_video.wan_state_condition_bundles import (
+    discover_state_condition_bundles,
+    is_ti2v_state_adapter_checkpoint,
+    load_episode_npz,
+    load_state_condition_npz,
+)
 from phys_state_video.wan_adapter_training import (
     LocalWanFlowMatchScheduler,
     align_wan_frame_num,
@@ -21,16 +29,11 @@ from phys_state_video.wan_adapter_training import (
     build_ti2v_timestep_tensor,
     build_ti2v_training_video,
     compute_ti2v_seq_len,
-    discover_state_condition_bundles,
-    is_ti2v_state_adapter_checkpoint,
-    load_episode_npz,
-    load_state_condition_npz,
     normalize_video_range,
     resize_and_center_crop_frames,
     select_ti2v_state_adapter_parameters,
     serialize_ti2v_state_adapter_checkpoint,
 )
-from phys_state_video.wan_bridge import _ensure_wan_importable
 from phys_state_video.wan_state_v2_helpers import (
     build_state_condition_payload_from_condition_maps,
     filter_state_condition_payload_for_adapter,
@@ -101,13 +104,6 @@ def default_best_output(output_path: Path) -> Path:
     if output_path.suffix:
         return output_path.with_name(f"{output_path.stem}.best{output_path.suffix}")
     return output_path.with_name(f"{output_path.name}.best")
-
-
-def load_checkpoint(path: str, map_location: str):
-    try:
-        return torch.load(path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(path, map_location=map_location)
 
 
 def broadcast_object(obj, *, src: int = 0):
@@ -314,7 +310,7 @@ def main():
         device_id = int(ctx["local_rank"])
         device = f"cuda:{device_id}"
     torch.cuda.set_device(device_id)
-    _ensure_wan_importable(args.wan_repo_root)
+    ensure_wan_importable(args.wan_repo_root)
 
     from wan_.configs import SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
     from wan_.textimage2video import WanTI2V
@@ -352,7 +348,7 @@ def main():
         offload_model=False,
     )
     if args.resume is not None:
-        state_bundle = load_checkpoint(args.resume, map_location="cpu")
+        state_bundle = load_torch_checkpoint(args.resume, map_location="cpu")
         if not is_ti2v_state_adapter_checkpoint(state_bundle):
             raise ValueError(f"resume checkpoint is not a TI2V state-adapter checkpoint: {args.resume}")
         pipeline.load_state_adapter(args.resume, state_condition=first_condition_payload)

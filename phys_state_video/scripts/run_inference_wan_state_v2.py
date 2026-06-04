@@ -13,15 +13,14 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
-from phys_state_video.predictor_wan_state_v2 import (
-    WanStateLatentPredictorV2,
-    WanStateLatentPredictorV2Config,
-    resample_temporal_states,
+from phys_state_video.predictor_wan_state_v2 import resample_temporal_states
+from phys_state_video.wan_predictor_runtime import (
+    build_predictor_latent_extractor,
+    build_predictor_prompt_context_encoder,
+    load_wan_state_predictor,
 )
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
-from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
-    WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
 )
@@ -38,42 +37,12 @@ def parse_args():
     parser.add_argument("--wan-ckpt-dir", default=None)
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
     parser.add_argument("--wan-task", default="i2v-A14B")
+    parser.add_argument(
+        "--predictor-wan-task",
+        default=None,
+        help="Optional Wan task override used only for predictor latent extraction and prompt encoding.",
+    )
     return parser.parse_args()
-
-
-def load_checkpoint(checkpoint_path: str, map_location):
-    try:
-        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(checkpoint_path, map_location=map_location)
-
-
-def build_latent_extractor(args, checkpoint) -> object:
-    latent_source = checkpoint.get("latent_source")
-    if latent_source != "wan":
-        raise ValueError(
-            "wan_state_v2_latent_time checkpoints must explicitly declare latent_source='wan' in the current mainline, "
-            f"got latent_source={latent_source!r}"
-        )
-    if args.wan_ckpt_dir is None:
-        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 now always uses Wan VAE latents")
-    return WanLatentExtractor(
-        ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        task=args.wan_task,
-        device=args.device,
-    )
-
-
-def build_prompt_context_encoder(args) -> WanPromptContextEncoder:
-    if args.wan_ckpt_dir is None:
-        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 uses frozen Wan T5 prompt context")
-    return WanPromptContextEncoder(
-        ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        task=args.wan_task,
-        device=args.device,
-    )
 
 
 def main():
@@ -81,14 +50,25 @@ def main():
     dataset = NpzPredictorDataset(args.episode)
     batch = collate_predictor_episodes([dataset[0]])
 
-    checkpoint = load_checkpoint(args.predictor, map_location=args.device)
-    config = WanStateLatentPredictorV2Config(**checkpoint["config"])
-    predictor = WanStateLatentPredictorV2(config).to(args.device)
-    predictor.load_state_dict(checkpoint["model"])
-    predictor.eval()
-
-    latent_extractor = build_latent_extractor(args, checkpoint)
-    prompt_context_encoder = build_prompt_context_encoder(args)
+    predictor, checkpoint = load_wan_state_predictor(args.predictor, args.device)
+    latent_extractor = build_predictor_latent_extractor(
+        wan_ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        device=args.device,
+        predictor_ckpt=checkpoint,
+        default_wan_task=args.wan_task,
+        predictor_wan_task=args.predictor_wan_task,
+        context="Wan predictor v2 inference",
+    )
+    prompt_context_encoder = build_predictor_prompt_context_encoder(
+        wan_ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        device=args.device,
+        predictor_ckpt=checkpoint,
+        default_wan_task=args.wan_task,
+        predictor_wan_task=args.predictor_wan_task,
+        context="Wan predictor v2 inference",
+    )
 
     context_frames = batch["context_frames"].to(args.device)
     context_states = batch["context_states"].to(args.device)
