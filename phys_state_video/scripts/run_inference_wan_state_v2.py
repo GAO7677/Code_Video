@@ -22,6 +22,7 @@ from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
     MockLatentExtractor,
+    WanPromptContextEncoder,
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
 )
@@ -70,6 +71,17 @@ def build_latent_extractor(args, checkpoint) -> object:
     )
 
 
+def build_prompt_context_encoder(args) -> WanPromptContextEncoder:
+    if args.wan_ckpt_dir is None:
+        raise ValueError("--wan-ckpt-dir is required because wan_state_v2 uses frozen Wan T5 prompt context")
+    return WanPromptContextEncoder(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.wan_task,
+        device=args.device,
+    )
+
+
 def main():
     args = parse_args()
     dataset = NpzPredictorDataset(args.episode)
@@ -82,6 +94,7 @@ def main():
     predictor.eval()
 
     latent_extractor = build_latent_extractor(args, checkpoint)
+    prompt_context_encoder = build_prompt_context_encoder(args)
 
     context_frames = batch["context_frames"].to(args.device)
     context_states = batch["context_states"].to(args.device)
@@ -99,11 +112,12 @@ def main():
         camera_latent = resample_camera_to_latent_steps(camera, context_latent_steps)
         context_target = resample_temporal_states(context_states, context_latent_steps)
         future_target = resample_temporal_states(future_states, future_latent_steps)
+        prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
         outputs = predictor(
             context_latents=context_latents,
             camera=camera_latent,
-            prompt_token_ids=batch["prompt_token_ids"].to(args.device),
-            prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+            prompt_context=prompt_context.to(args.device),
+            prompt_mask=prompt_mask.to(args.device),
             future_latent_steps=future_latent_steps,
             num_objects=context_states.shape[2],
         )
@@ -116,14 +130,16 @@ def main():
         context_latents=detach_to_cpu_numpy(context_latents[0]),
         context_state_targets=detach_to_cpu_numpy(context_target[0]),
         future_state_targets=detach_to_cpu_numpy(future_target[0]),
-        context_state_latents=detach_to_cpu_numpy(outputs["context_state_latents"][0]),
-        future_state_latents=detach_to_cpu_numpy(outputs["future_state_latents"][0]),
+        prompt_context=detach_to_cpu_numpy(prompt_context[0]),
+        prompt_mask=detach_to_cpu_numpy(prompt_mask[0]),
+        context_state_maps=detach_to_cpu_numpy(outputs["context_state_maps"][0]),
+        future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
         condition_maps=detach_to_cpu_numpy(outputs["condition_maps"][0]),
         state_tokens=detach_to_cpu_numpy(outputs["state_tokens"][0]),
         memory_tokens=detach_to_cpu_numpy(outputs["memory_tokens"][0]),
-        context_object_slots=detach_to_cpu_numpy(outputs["context_object_slots"][0]),
-        future_object_slots=detach_to_cpu_numpy(outputs["future_object_slots"][0]),
-        future_adapter_tokens=detach_to_cpu_numpy(outputs["future_adapter_tokens"][0]),
+        context_object_slots=detach_to_cpu_numpy(outputs["debug_context_object_slots"][0]),
+        future_object_slots=detach_to_cpu_numpy(outputs["debug_future_object_slots"][0]),
+        projected_future_state_maps=detach_to_cpu_numpy(outputs["debug_projected_future_state_maps"][0]),
         context_state_predictions=detach_to_cpu_numpy(outputs["context_state_predictions"][0]),
         future_state_predictions=detach_to_cpu_numpy(outputs["future_state_predictions"][0]),
     )

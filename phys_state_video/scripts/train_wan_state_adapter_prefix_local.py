@@ -24,22 +24,20 @@ from phys_state_video.wan_adapter_training import (
     compute_ti2v_seq_len,
     discover_state_condition_bundles,
     filter_state_condition_payload_for_adapter,
-    flatten_condition_maps_to_state_tokens,
     is_i2v_state_adapter_checkpoint,
     load_episode_npz,
     load_state_condition_npz,
     normalize_video_range,
     resample_condition_maps_to_steps,
-    resample_state_tokens_to_steps,
     select_i2v_state_adapter_parameters,
     serialize_i2v_state_adapter_checkpoint,
 )
 from phys_state_video.wan_bridge import (
     _build_prefix_condition_mask,
-    _encode_video_prefix_latents,
     _ensure_wan_importable,
     _resize_video_frames,
 )
+from phys_state_video.wan_state_v2_helpers import build_state_condition_payload_from_condition_maps
 
 torch = require_torch()
 F = torch.nn.functional
@@ -153,34 +151,34 @@ def run_step(
             vae_module.to(device)
         context = pipeline.text_encoder([sample["prompt"]], device)
         full_latents = pipeline.vae.encode([full_video.permute(1, 0, 2, 3).contiguous()])[0]
-        clean_prefix_latents = _encode_video_prefix_latents(pipeline.vae, resized_context)
         if t5_model is not None:
             t5_model.to("cpu")
         if vae_module is not None:
             vae_module.to("cpu")
 
-    prefix_len = int(clean_prefix_latents.shape[1])
+    prefix_len = 1 + max(int(resized_context.shape[0]) - 1, 0) // int(pipeline.vae_stride[0])
     if prefix_len >= full_latents.shape[1]:
         raise ValueError(
             f"context prefix covers all latent steps for sample {sample['sample_id']}: "
             f"prefix_len={prefix_len}, latent_steps={full_latents.shape[1]}"
         )
+    # During training we have the full GT video, so with Wan's causal VAE we can
+    # reuse the prefix slice from full_latents instead of encoding context twice.
+    clean_prefix_latents = full_latents[:, :prefix_len].contiguous()
     future_latent_steps = int(full_latents.shape[1] - prefix_len)
     condition_maps = torch.from_numpy(raw_condition["condition_maps"]).to(device=device, dtype=torch.float32)
     condition_maps = resample_condition_maps_to_steps(condition_maps, target_steps=future_latent_steps)
-    state_tokens = flatten_condition_maps_to_state_tokens(condition_maps)
     if "memory_tokens" in raw_condition:
         memory_tokens = torch.from_numpy(raw_condition["memory_tokens"]).to(device=device, dtype=torch.float32)
         if memory_tokens.ndim == 2:
             memory_tokens = memory_tokens.unsqueeze(0)
     else:
         memory_tokens = None
-    state_condition_payload = {
-        "state_tokens": state_tokens,
-        "condition_maps": condition_maps,
-    }
-    if memory_tokens is not None:
-        state_condition_payload["memory_tokens"] = memory_tokens
+    state_condition_payload = build_state_condition_payload_from_condition_maps(
+        condition_maps,
+        memory_tokens=memory_tokens,
+        include_condition_maps=True,
+    )
     latent_mask = build_prefix_latent_mask(full_latents, prefix_len=prefix_len)
     timestep = scheduler.sample_timestep(device=device, dtype=torch.float32)
     noise = torch.randn_like(full_latents)
@@ -273,11 +271,10 @@ def main():
     first_condition_maps = torch.from_numpy(first_sample["state_condition"]["condition_maps"]).to(
         device=pipeline.device, dtype=torch.float32
     )
-    first_state_tokens = flatten_condition_maps_to_state_tokens(first_condition_maps)
-    first_payload = {
-        "state_tokens": first_state_tokens,
-        "condition_maps": first_condition_maps,
-    }
+    first_payload = build_state_condition_payload_from_condition_maps(
+        first_condition_maps,
+        include_condition_maps=True,
+    )
     if "memory_tokens" in first_sample["state_condition"]:
         first_memory_tokens = torch.from_numpy(first_sample["state_condition"]["memory_tokens"]).to(
             device=pipeline.device, dtype=torch.float32

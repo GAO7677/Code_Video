@@ -178,10 +178,12 @@ class WanStatePredictorTests(unittest.TestCase):
 
     def test_v2_predictor_shapes(self):
         batch, context_steps, future_steps, num_objects = 2, 3, 2, 2
+        prompt_steps, prompt_dim = 5, 48
         model = WanStateLatentPredictorV2(
             WanStateLatentPredictorV2Config(
                 latent_channels=16,
                 camera_dim=8,
+                prompt_context_dim=prompt_dim,
                 max_context_latent_steps=context_steps,
                 max_future_latent_steps=future_steps,
                 max_objects=num_objects,
@@ -197,18 +199,20 @@ class WanStatePredictorTests(unittest.TestCase):
         outputs = model(
             context_latents=torch.randn(batch, context_steps, 16, 8, 8),
             camera=torch.randn(batch, context_steps, 8),
-            prompts=["latent time"] * batch,
+            prompt_context=torch.randn(batch, prompt_steps, prompt_dim),
+            prompt_mask=torch.ones(batch, prompt_steps),
             future_latent_steps=future_steps,
             num_objects=num_objects,
         )
-        self.assertEqual(tuple(outputs["context_state_latents"].shape), (batch, context_steps, 2, 2, 32))
-        self.assertEqual(tuple(outputs["future_state_latents"].shape), (batch, future_steps, 2, 2, 32))
-        self.assertEqual(tuple(outputs["context_object_slots"].shape), (batch, context_steps, num_objects, 32))
-        self.assertEqual(tuple(outputs["future_object_slots"].shape), (batch, future_steps, num_objects, 32))
+        self.assertEqual(tuple(outputs["context_state_maps"].shape), (batch, context_steps, 2, 2, 32))
+        self.assertEqual(tuple(outputs["future_state_maps"].shape), (batch, future_steps, 2, 2, 32))
+        self.assertEqual(tuple(outputs["debug_context_object_slots"].shape), (batch, context_steps, num_objects, 32))
+        self.assertEqual(tuple(outputs["debug_future_object_slots"].shape), (batch, future_steps, num_objects, 32))
         self.assertEqual(tuple(outputs["state_tokens"].shape), (batch, future_steps * 2 * 2, 32))
         self.assertEqual(tuple(outputs["memory_tokens"].shape), (batch, num_objects, 32))
         self.assertEqual(tuple(outputs["condition_maps"].shape), (batch, future_steps, 32, 2, 2))
-        self.assertEqual(tuple(outputs["future_adapter_tokens"].shape), (batch, future_steps * 2 * 2, 32))
+        self.assertEqual(tuple(outputs["debug_projected_future_state_maps"].shape), (batch, future_steps, 2, 2, 32))
+        self.assertEqual(tuple(outputs["debug_prompt_tokens"].shape), (batch, prompt_steps, 32))
         self.assertEqual(tuple(outputs["context_state_predictions"].shape), (batch, context_steps, num_objects, 10))
         self.assertEqual(tuple(outputs["future_state_predictions"].shape), (batch, future_steps, num_objects, 10))
 
@@ -223,10 +227,12 @@ class WanStatePredictorTests(unittest.TestCase):
 
     def test_v2_loss_stages_are_finite(self):
         batch, context_steps, future_steps, num_objects = 1, 2, 3, 2
+        prompt_steps, prompt_dim = 4, 48
         model = WanStateLatentPredictorV2(
             WanStateLatentPredictorV2Config(
                 latent_channels=16,
                 camera_dim=8,
+                prompt_context_dim=prompt_dim,
                 max_context_latent_steps=context_steps,
                 max_future_latent_steps=future_steps,
                 max_objects=num_objects,
@@ -242,7 +248,8 @@ class WanStatePredictorTests(unittest.TestCase):
         outputs = model(
             context_latents=torch.randn(batch, context_steps, 16, 8, 8),
             camera=torch.randn(batch, context_steps, 8),
-            prompts=["grouped head test"],
+            prompt_context=torch.randn(batch, prompt_steps, prompt_dim),
+            prompt_mask=torch.ones(batch, prompt_steps),
             future_latent_steps=future_steps,
             num_objects=num_objects,
         )
