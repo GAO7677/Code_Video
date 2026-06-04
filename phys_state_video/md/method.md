@@ -516,6 +516,16 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 - `当前阻塞`
   本机 `nvidia-smi` 正常，驱动版本为 `570.124.06`，CUDA 版本显示为 `12.8`；但 `wan` 环境中的 PyTorch 是 `torch 2.11.0+cu130`，`torch.version.cuda == 13.0`，因此 `torch.cuda.is_available()` 返回 `False`，并报 `found version 12080` 的 driver/runtime mismatch。结论是：当前 `mock latent` predictor 路线和正式单测都可运行；本地 `Wan TI2V` 与 `Wan I2V clean-prefix` 两条 state adapter 训练脚本都已经补齐，但真实 GPU 训练、真实 Wan latent 提取、以及保存 adapter 后再做 Wan 采样，仍然是环境阻塞，而不是当前仓库缺少训练 loop。
 
+### 4. 当前主线代码细化说明与流程图
+
+- `当前主线代码细化说明`
+  路径：[wan_state_v2_mainline_flow.md](/home/gaoya/Code_Video/phys_state_video/docs/wan_state_v2_mainline_flow.md)
+  说明：按 `predictor 训练 -> state_condition 导出 -> prefix adapter 训练 -> 正式 Wan 推理` 四段重写当前主线代码流程，逐模块说明输入、输出、shape 和训练/冻结关系。
+
+- `当前主线流程图页面`
+  路径：[wan_state_v2_mainline_flowchart.html](/home/gaoya/Code_Video/phys_state_video/docs/wan_state_v2_mainline_flowchart.html)
+  说明：浏览器版流程图，总结 latent-time predictor、clean-prefix adapter 训练和正式推理链路，并在节点中标出关键 shape。
+
 ## 统一可视化入口与跨方法对比
 
 ### 1. 页面说明

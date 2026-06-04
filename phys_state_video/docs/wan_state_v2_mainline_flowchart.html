@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wan State V2 Mainline Flow</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: rgba(255, 251, 245, 0.96);
+      --ink: #1f1c16;
+      --muted: #655d53;
+      --line: #cebca6;
+      --accent: #9a4f1a;
+      --accent-2: #0d6b61;
+      --accent-3: #6b7f2a;
+      --shadow: 0 22px 48px rgba(74, 52, 28, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Source Han Sans SC", "Noto Sans SC", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(201, 164, 114, 0.20), transparent 26%),
+        radial-gradient(circle at top right, rgba(74, 136, 126, 0.18), transparent 28%),
+        linear-gradient(180deg, #fbf5ec 0%, #eee3d1 100%);
+    }
+
+    .page {
+      max-width: 1700px;
+      margin: 0 auto;
+      padding: 28px 28px 54px;
+    }
+
+    .hero {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .hero p {
+      margin: 8px 0;
+      color: var(--muted);
+      line-height: 1.72;
+      max-width: 1200px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff9f1;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .dot-a { background: var(--accent); }
+    .dot-b { background: var(--accent-2); }
+    .dot-c { background: var(--accent-3); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 18px 22px 0;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -0.01em;
+    }
+
+    .panel-head p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.68;
+    }
+
+    .diagram-wrap {
+      padding: 12px 16px 18px;
+      overflow-x: auto;
+    }
+
+    svg {
+      width: 100%;
+      min-width: 1050px;
+      height: auto;
+    }
+
+    .box {
+      fill: #fffaf3;
+      stroke: #ccb79d;
+      stroke-width: 2;
+      rx: 20;
+      ry: 20;
+    }
+
+    .box-strong {
+      fill: #fff4e6;
+      stroke: #bf7e41;
+    }
+
+    .box-state {
+      fill: #f2fbf8;
+      stroke: #409083;
+    }
+
+    .box-train {
+      fill: #f7f9ed;
+      stroke: #7b8e34;
+    }
+
+    .stage-tag {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      fill: #8b6437;
+    }
+
+    .title {
+      font-size: 21px;
+      font-weight: 700;
+      fill: #1f1c16;
+    }
+
+    .desc {
+      font-size: 15px;
+      fill: #5d564d;
+    }
+
+    .shape {
+      font-size: 14px;
+      font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+      fill: #24403b;
+    }
+
+    .arrow {
+      stroke: #9b8668;
+      stroke-width: 3;
+      fill: none;
+      marker-end: url(#arrowhead);
+    }
+
+    .side {
+      padding: 6px 22px 24px;
+    }
+
+    .side h3 {
+      margin: 18px 0 8px;
+      font-size: 18px;
+    }
+
+    .side p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      line-height: 1.72;
+    }
+
+    .side ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.74;
+    }
+
+    .side li {
+      margin: 6px 0;
+    }
+
+    .note {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: #fff7eb;
+      border: 1px solid #e0c7a4;
+      color: #6a5841;
+    }
+
+    .mono {
+      font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+      font-size: 0.96em;
+    }
+
+    @media (max-width: 1200px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>`wan_state_v2_latent_time` + `Wan clean-prefix infill` 当前主线流程图</h1>
+      <p>这张图只对应当前推荐主线，不混入旧版 `frame-time predictor` 或 `latent-only adapter` 方案。核心结构是：先在 Wan latent 时间轴上训练 predictor，导出 `state_tokens`，再用 `I2V clean-prefix` 语义训练 Wan state adapter，最后在正式推理里把 context video 固定成 clean prefix，只补全 future latent。</p>
+      <p>这页配套说明文档在同目录的 <span class="mono">wan_state_v2_mainline_flow.md</span>。如果只抓一句话：当前系统真正要学的是 <span class="mono">context video -> future_state_latents -> state_context -> future latent infill</span> 这条链，而不是“先回到原始帧时间轴再做普通视频生成”。</p>
+      <div class="legend">
+        <span class="chip"><span class="dot dot-a"></span> predictor / latent-time</span>
+        <span class="chip"><span class="dot dot-b"></span> state tokens / adapter / Wan condition</span>
+        <span class="chip"><span class="dot dot-c"></span> adapter training / clean-prefix loss</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Flow Graph</h2>
+          <p>左半是数据和 predictor，右半是 adapter 训练和正式推理。每个框里都写了主要张量 shape，箭头表示数据实际在代码里怎么流动。</p>
+        </div>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 1240 1220" role="img" aria-label="Wan state v2 mainline flow diagram">
+            <defs>
+              <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M 0 0 L 12 6 L 0 12 z" fill="#9b8668"></path>
+              </marker>
+            </defs>
+
+            <text x="60" y="54" class="stage-tag">Dataset</text>
+            <rect x="40" y="70" width="520" height="140" class="box"></rect>
+            <text x="64" y="108" class="title">Episode Batch</text>
+            <text x="64" y="138" class="desc">context, future GT states, camera, prompt</text>
+            <text x="64" y="168" class="shape">context_frames: [B, K, 3, H, W]</text>
+            <text x="64" y="192" class="shape">future_states: [B, T, N, 10]</text>
+
+            <text x="60" y="272" class="stage-tag">Stage A</text>
+            <rect x="40" y="288" width="520" height="164" class="box box-strong"></rect>
+            <text x="64" y="326" class="title">WanLatentExtractor / MockLatentExtractor</text>
+            <text x="64" y="356" class="desc">compress video from frame-time to latent-time</text>
+            <text x="64" y="386" class="shape">context_latents_raw: [B, L_ctx, C_w, H_w, W_w]</text>
+            <text x="64" y="410" class="shape">camera_latent: [B, L_ctx, C_cam]</text>
+            <text x="64" y="434" class="shape">context_target / future_target resampled to latent-time</text>
+
+            <rect x="40" y="520" width="520" height="248" class="box box-strong"></rect>
+            <text x="64" y="558" class="title">WanStateLatentPredictorV2</text>
+            <text x="64" y="588" class="desc">context encoder + future decoder + grouped state heads</text>
+            <text x="64" y="618" class="shape">input: [B, L_ctx, C_w, H_w, W_w] + [B, L_ctx, C_cam]</text>
+            <text x="64" y="642" class="shape">context_state_latents: [B, L_ctx, D_s]</text>
+            <text x="64" y="666" class="shape">future_state_latents: [B, L_future, D_s]</text>
+            <text x="64" y="690" class="shape">future_state_predictions: [B, L_future, N, 10]</text>
+            <text x="64" y="726" class="desc">train stages: context_only / future_only / joint_finetune</text>
+            <text x="64" y="750" class="desc">optional adapter-space alignment with frozen teacher + frozen adapter encoder</text>
+
+            <rect x="40" y="838" width="520" height="148" class="box box-state"></rect>
+            <text x="64" y="876" class="title">State Condition Export</text>
+            <text x="64" y="906" class="desc">serialize predictor outputs into Wan-readable bundles</text>
+            <text x="64" y="936" class="shape">state_tokens: [L_future, D_s]</text>
+            <text x="64" y="960" class="shape">predicted_states: [L_future, N, 10]</text>
+
+            <rect x="680" y="70" width="520" height="208" class="box box-train"></rect>
+            <text x="704" y="108" class="title">Stage C: Prefix Adapter Training</text>
+            <text x="704" y="138" class="desc">rebuild full video, encode clean prefix and future together</text>
+            <text x="704" y="168" class="shape">full_latents: [C_w, L, H_w, W_w]</text>
+            <text x="704" y="192" class="shape">clean_prefix_latents: [C_w, L_ctx, H_w, W_w]</text>
+            <text x="704" y="216" class="shape">state_tokens -> resampled to [1, L_future, D_s]</text>
+            <text x="704" y="246" class="desc">noise entire clip, then overwrite prefix back to clean before loss</text>
+
+            <rect x="680" y="356" width="520" height="152" class="box box-train"></rect>
+            <text x="704" y="394" class="title">Clean-Prefix Loss</text>
+            <text x="704" y="424" class="desc">only future latent steps contribute to training loss</text>
+            <text x="704" y="454" class="shape">loss on noise_pred[:, L_ctx:] vs target[:, L_ctx:] only</text>
+            <text x="704" y="484" class="desc">trainable: state_adapter + DiT state_adapter_* params</text>
+
+            <rect x="680" y="584" width="520" height="206" class="box box-state"></rect>
+            <text x="704" y="622" class="title">Stage D: Formal Wan Inference</text>
+            <text x="704" y="652" class="desc">encode context as clean prefix, sample only future latent region</text>
+            <text x="704" y="682" class="shape">clean_prefix_latents: [C_w, L_ctx, H'_w, W'_w]</text>
+            <text x="704" y="706" class="shape">noise / latent: [C_w, L, H'_w, W'_w]</text>
+            <text x="704" y="730" class="shape">condition_tokens: [1, L_future, D_s]</text>
+            <text x="704" y="760" class="desc">per step: overwrite prefix again after scheduler step</text>
+
+            <rect x="680" y="860" width="520" height="172" class="box box-state"></rect>
+            <text x="704" y="898" class="title">State-Aware CFG + Decode</text>
+            <text x="704" y="928" class="desc">three branches: uncond / text-only / text+state</text>
+            <text x="704" y="958" class="shape">state_context from trained Wan state adapter</text>
+            <text x="704" y="982" class="shape">video output: [3, F, H_out, W_out]</text>
+            <text x="704" y="1012" class="desc">prefix remains fixed; only future latent changes</text>
+
+            <path d="M 300 210 L 300 288" class="arrow"></path>
+            <path d="M 300 452 L 300 520" class="arrow"></path>
+            <path d="M 300 768 L 300 838" class="arrow"></path>
+            <path d="M 560 910 L 680 910 L 680 174" class="arrow"></path>
+            <path d="M 940 278 L 940 356" class="arrow"></path>
+            <path d="M 940 508 L 940 584" class="arrow"></path>
+            <path d="M 940 790 L 940 860" class="arrow"></path>
+            <path d="M 560 644 L 680 644" class="arrow"></path>
+
+            <text x="578" y="626" class="desc">future_state_latents</text>
+            <text x="582" y="892" class="desc">exported bundles</text>
+          </svg>
+        </div>
+      </article>
+
+      <aside class="panel side">
+        <div class="panel-head">
+          <h2>Reading Notes</h2>
+          <p>这里把最容易混淆的 shape 和设计点单独摘出来，浏览图时可以一起看。</p>
+        </div>
+
+        <h3>1. 两套时间轴</h3>
+        <ul>
+          <li><span class="mono">K / T</span> 是原始视频帧数，<span class="mono">L_ctx / L_future</span> 是 Wan latent 时间步数。</li>
+          <li>predictor v2 已经完全切到 latent-time，所以未来状态 token 是 <span class="mono">[B, L_future, D_s]</span>，不是 <span class="mono">[B, T, D_s]</span>。</li>
+        </ul>
+
+        <h3>2. Predictor 真正输入什么</h3>
+        <ul>
+          <li>主干只看 <span class="mono">context_latents + camera_latent + prompt</span>。</li>
+          <li><span class="mono">context_states / future_states</span> 只参与 loss，不进入 predictor 主干前向。</li>
+        </ul>
+
+        <h3>3. 为什么叫 clean-prefix infill</h3>
+        <ul>
+          <li>Wan 推理初始化时先把总噪声前缀替换成 <span class="mono">clean_prefix_latents</span>。</li>
+          <li>每个 diffusion step 之后再覆盖一次前缀，所以 prefix latent 实际上保持不变。</li>
+          <li>真正被 scheduler 更新的只有 future 区间。</li>
+        </ul>
+
+        <h3>4. Adapter 训练到底训什么</h3>
+        <ul>
+          <li>不是训整个 Wan 主干。</li>
+          <li>只训练 <span class="mono">pipeline.state_adapter</span> 和 DiT 里名字带 <span class="mono">state_adapter_</span> 的注入参数。</li>
+          <li>VAE、text encoder、低噪声和高噪声主模型主体都保持冻结。</li>
+        </ul>
+
+        <h3>5. 正式推理里的状态条件怎么进模型</h3>
+        <ul>
+          <li><span class="mono">future_state_latents</span> 先重采样到当前 Wan 所需的 <span class="mono">L_future</span>。</li>
+          <li>然后送进训练好的 Wan state adapter，变成 <span class="mono">state_context</span>。</li>
+          <li>再以 adapter / cross-attention memory 的形式进入 Wan DiT。</li>
+        </ul>
+
+        <div class="note">
+          当前正式推理要求显式提供训练好的 <span class="mono">state_adapter_ckpt</span>。如果缺失 checkpoint，流程会直接报错，不再“继续跑但没有真正状态控制”。
+        </div>
+      </aside>
+    </section>
+  </div>
+</body>
+</html>

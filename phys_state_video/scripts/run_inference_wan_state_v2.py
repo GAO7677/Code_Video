@@ -118,6 +118,9 @@ def main():
         future_state_targets=detach_to_cpu_numpy(future_target[0]),
         context_state_latents=detach_to_cpu_numpy(outputs["context_state_latents"][0]),
         future_state_latents=detach_to_cpu_numpy(outputs["future_state_latents"][0]),
+        context_object_slots=detach_to_cpu_numpy(outputs["context_object_slots"][0]),
+        future_object_slots=detach_to_cpu_numpy(outputs["future_object_slots"][0]),
+        future_adapter_tokens=detach_to_cpu_numpy(outputs["future_adapter_tokens"][0]),
         context_state_predictions=detach_to_cpu_numpy(outputs["context_state_predictions"][0]),
         future_state_predictions=detach_to_cpu_numpy(outputs["future_state_predictions"][0]),
     )

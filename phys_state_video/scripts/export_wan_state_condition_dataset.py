@@ -169,13 +169,15 @@ def build_predictor_state_condition(
                 num_objects=batch["context_states"].shape[2],
             )
 
-    state_tokens = detach_to_cpu_numpy(outputs["future_state_latents"][0]).astype(np.float32)
+    state_tokens = detach_to_cpu_numpy(outputs["future_adapter_tokens"][0]).astype(np.float32)
     predicted_states = detach_to_cpu_numpy(outputs["future_state_predictions"][0]).astype(np.float32)
     context_state_predictions = detach_to_cpu_numpy(outputs["context_state_predictions"][0]).astype(np.float32)
     meta = {
         "state_tokens": state_tokens,
         "predicted_states": predicted_states,
         "context_state_predictions": context_state_predictions,
+        "future_state_maps": detach_to_cpu_numpy(outputs["future_state_maps"][0]).astype(np.float32),
+        "future_object_slots": detach_to_cpu_numpy(outputs["future_object_slots"][0]).astype(np.float32),
     }
     condition_meta = {
         "future_condition_kind": "wan_predictor_state_tokens",
@@ -183,6 +185,8 @@ def build_predictor_state_condition(
         "state_tokens_shape": list(state_tokens.shape),
         "predicted_states_shape": list(predicted_states.shape),
         "context_state_predictions_shape": list(context_state_predictions.shape),
+        "future_state_maps_shape": list(meta["future_state_maps"].shape),
+        "future_object_slots_shape": list(meta["future_object_slots"].shape),
     }
     if predictor_version == "wan_state_v2_latent_time":
         condition_meta["context_latent_steps"] = int(context_latents.shape[1])

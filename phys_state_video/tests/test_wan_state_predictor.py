@@ -187,6 +187,8 @@ class WanStatePredictorTests(unittest.TestCase):
                 max_objects=num_objects,
                 hidden_dim=64,
                 state_latent_dim=32,
+                state_map_height=2,
+                state_map_width=2,
                 num_heads=4,
                 num_encoder_layers=2,
                 num_decoder_layers=2,
@@ -199,8 +201,11 @@ class WanStatePredictorTests(unittest.TestCase):
             future_latent_steps=future_steps,
             num_objects=num_objects,
         )
-        self.assertEqual(tuple(outputs["context_state_latents"].shape), (batch, context_steps, 32))
-        self.assertEqual(tuple(outputs["future_state_latents"].shape), (batch, future_steps, 32))
+        self.assertEqual(tuple(outputs["context_state_latents"].shape), (batch, context_steps, 2, 2, 32))
+        self.assertEqual(tuple(outputs["future_state_latents"].shape), (batch, future_steps, 2, 2, 32))
+        self.assertEqual(tuple(outputs["context_object_slots"].shape), (batch, context_steps, num_objects, 32))
+        self.assertEqual(tuple(outputs["future_object_slots"].shape), (batch, future_steps, num_objects, 32))
+        self.assertEqual(tuple(outputs["future_adapter_tokens"].shape), (batch, future_steps, 32))
         self.assertEqual(tuple(outputs["context_state_predictions"].shape), (batch, context_steps, num_objects, 10))
         self.assertEqual(tuple(outputs["future_state_predictions"].shape), (batch, future_steps, num_objects, 10))
 
@@ -224,6 +229,8 @@ class WanStatePredictorTests(unittest.TestCase):
                 max_objects=num_objects,
                 hidden_dim=64,
                 state_latent_dim=32,
+                state_map_height=2,
+                state_map_width=2,
                 num_heads=4,
                 num_encoder_layers=2,
                 num_decoder_layers=2,

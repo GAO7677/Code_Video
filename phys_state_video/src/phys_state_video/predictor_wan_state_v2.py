@@ -38,6 +38,8 @@ class WanStateLatentPredictorV2Config:
     prompt_embed_dim: int = 64
     hidden_dim: int = 256
     state_latent_dim: int = 128
+    state_map_height: int = 2
+    state_map_width: int = 2
     max_context_latent_steps: int = 16
     max_future_latent_steps: int = 16
     max_objects: int = 6
@@ -109,35 +111,32 @@ class GroupedStateHeads(nn.Module):
             nn.LayerNorm(latent_dim),
             nn.Linear(latent_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, max_objects * len(GEOM_STATE_INDICES)),
+            nn.Linear(hidden_dim, len(GEOM_STATE_INDICES)),
         )
         self.motion_head = nn.Sequential(
             nn.LayerNorm(latent_dim),
             nn.Linear(latent_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, max_objects * len(MOTION_STATE_INDICES)),
+            nn.Linear(hidden_dim, len(MOTION_STATE_INDICES)),
         )
         self.vis_head = nn.Sequential(
             nn.LayerNorm(latent_dim),
             nn.Linear(latent_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, max_objects * len(VIS_STATE_INDICES)),
+            nn.Linear(hidden_dim, len(VIS_STATE_INDICES)),
         )
 
-    def forward(self, state_latents: torch.Tensor, num_objects: int) -> Dict[str, torch.Tensor]:
+    def forward(self, state_slots: torch.Tensor, num_objects: int) -> Dict[str, torch.Tensor]:
+        if state_slots.ndim != 4:
+            raise ValueError(f"expected state slots [B, T, N, D], got {tuple(state_slots.shape)}")
         if num_objects > self.max_objects:
             raise ValueError(f"num_objects={num_objects} exceeds max_objects={self.max_objects}")
-        batch, steps = state_latents.shape[:2]
-        geom = self.geom_head(state_latents).view(batch, steps, self.max_objects, len(GEOM_STATE_INDICES))
-        motion = self.motion_head(state_latents).view(batch, steps, self.max_objects, len(MOTION_STATE_INDICES))
-        vis_logits = self.vis_head(state_latents).view(batch, steps, self.max_objects, len(VIS_STATE_INDICES))
+        slots = state_slots[:, :, :num_objects]
+        geom = self.geom_head(slots)
+        motion = self.motion_head(slots)
+        vis_logits = self.vis_head(slots)
         vis = torch.sigmoid(vis_logits)
-        geom = geom[:, :, :num_objects]
-        motion = motion[:, :, :num_objects]
-        vis_logits = vis_logits[:, :, :num_objects]
-        vis = vis[:, :, :num_objects]
-
-        merged = state_latents.new_zeros((batch, steps, num_objects, STATE_DIM))
+        merged = state_slots.new_zeros((slots.shape[0], slots.shape[1], num_objects, STATE_DIM))
         merged[..., list(GEOM_STATE_INDICES)] = geom
         merged[..., list(MOTION_STATE_INDICES)] = motion
         merged[..., list(VIS_STATE_INDICES)] = vis
@@ -156,31 +155,105 @@ class GroupedStateHeads(nn.Module):
         self.requires_grad_(True)
 
 
+class SpatialObjectQueryDecoder(nn.Module):
+    def __init__(self, hidden_dim: int, max_objects: int, num_heads: int, dropout: float):
+        super().__init__()
+        self.max_objects = max_objects
+        self.object_queries = nn.Parameter(torch.randn(1, max_objects, hidden_dim) * 0.02)
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.out_norm = nn.LayerNorm(hidden_dim)
+        self.out_proj = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+    def forward(self, state_maps: torch.Tensor, num_objects: int) -> torch.Tensor:
+        if state_maps.ndim != 5:
+            raise ValueError(f"expected state maps [B, T, H, W, D], got {tuple(state_maps.shape)}")
+        if num_objects > self.max_objects:
+            raise ValueError(f"num_objects={num_objects} exceeds max_objects={self.max_objects}")
+        batch, steps, height, width, hidden_dim = state_maps.shape
+        memory = state_maps.view(batch * steps, height * width, hidden_dim)
+        queries = self.object_queries[:, :num_objects].expand(batch * steps, -1, -1)
+        attended, _ = self.cross_attn(queries, memory, memory, need_weights=False)
+        slots = self.out_norm(queries + attended)
+        slots = self.out_proj(slots)
+        return slots.view(batch, steps, num_objects, hidden_dim)
+
+
+class AdapterTokenHead(nn.Module):
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+    def forward(self, state_maps: torch.Tensor, object_slots: torch.Tensor) -> torch.Tensor:
+        spatial_summary = state_maps.mean(dim=(2, 3))
+        slot_summary = object_slots.mean(dim=2)
+        return self.proj(torch.cat([spatial_summary, slot_summary], dim=-1))
+
+
 class WanStateLatentPredictorV2(nn.Module):
     def __init__(self, config: WanStateLatentPredictorV2Config | None = None):
         super().__init__()
         self.config = config or WanStateLatentPredictorV2Config()
-        latent_feature_dim = self.config.latent_channels * (self.config.latent_pool_side ** 2 + 2)
+        self.model_dim = self.config.state_latent_dim
 
         self.prompt_encoder = PromptEncoder(self.config.prompt_vocab_size, self.config.prompt_embed_dim)
         self.prompt_proj = nn.Sequential(
             nn.LayerNorm(self.config.prompt_embed_dim),
-            nn.Linear(self.config.prompt_embed_dim, self.config.hidden_dim),
+            nn.Linear(self.config.prompt_embed_dim, self.model_dim),
             nn.GELU(),
-            nn.Linear(self.config.hidden_dim, self.config.hidden_dim),
+            nn.Linear(self.model_dim, self.model_dim),
         )
-        encoder_dim = latent_feature_dim + self.config.camera_dim + self.config.hidden_dim
-        self.context_input_proj = nn.Sequential(
-            nn.LayerNorm(encoder_dim),
-            nn.Linear(encoder_dim, self.config.hidden_dim),
+        self.camera_proj = nn.Sequential(
+            nn.LayerNorm(self.config.camera_dim),
+            nn.Linear(self.config.camera_dim, self.model_dim),
             nn.GELU(),
-            nn.Linear(self.config.hidden_dim, self.config.hidden_dim),
+            nn.Linear(self.model_dim, self.model_dim),
+        )
+        self.visual_stem = nn.Sequential(
+            nn.Conv2d(self.config.latent_channels, self.model_dim, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(self.model_dim, self.model_dim, kernel_size=3, padding=1),
         )
         self.context_pos_embed = nn.Parameter(
-            torch.randn(1, self.config.max_context_latent_steps, self.config.hidden_dim) * 0.02
+            torch.randn(1, self.config.max_context_latent_steps, 1, 1, self.model_dim) * 0.02
+        )
+        self.future_time_queries = nn.Parameter(
+            torch.randn(1, self.config.max_future_latent_steps, 1, 1, self.model_dim) * 0.02
+        )
+        self.future_spatial_pos_embed = nn.Parameter(
+            torch.randn(
+                1,
+                1,
+                self.config.state_map_height,
+                self.config.state_map_width,
+                self.model_dim,
+            )
+            * 0.02
         )
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=self.config.hidden_dim,
+            d_model=self.model_dim,
+            nhead=self.config.num_heads,
+            dim_feedforward=4 * self.config.hidden_dim,
+            dropout=self.config.dropout,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=self.model_dim,
             nhead=self.config.num_heads,
             dim_feedforward=4 * self.config.hidden_dim,
             dropout=self.config.dropout,
@@ -189,33 +262,16 @@ class WanStateLatentPredictorV2(nn.Module):
             activation="gelu",
         )
         self.context_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.config.num_encoder_layers)
-        self.context_state_latent_proj = nn.Sequential(
-            nn.LayerNorm(self.config.hidden_dim),
-            nn.Linear(self.config.hidden_dim, self.config.state_latent_dim),
-        )
-
-        self.future_queries = nn.Parameter(
-            torch.randn(1, self.config.max_future_latent_steps, self.config.hidden_dim) * 0.02
-        )
-        self.future_pos_embed = nn.Parameter(
-            torch.randn(1, self.config.max_future_latent_steps, self.config.hidden_dim) * 0.02
-        )
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=self.config.hidden_dim,
-            nhead=self.config.num_heads,
-            dim_feedforward=4 * self.config.hidden_dim,
-            dropout=self.config.dropout,
-            batch_first=True,
-            norm_first=True,
-            activation="gelu",
-        )
         self.future_decoder = nn.TransformerDecoder(decoder_layer, num_layers=self.config.num_decoder_layers)
-        self.future_state_latent_proj = nn.Sequential(
-            nn.LayerNorm(self.config.hidden_dim),
-            nn.Linear(self.config.hidden_dim, self.config.state_latent_dim),
+        self.object_query_decoder = SpatialObjectQueryDecoder(
+            hidden_dim=self.model_dim,
+            max_objects=self.config.max_objects,
+            num_heads=self.config.num_heads,
+            dropout=self.config.dropout,
         )
+        self.adapter_token_head = AdapterTokenHead(hidden_dim=self.model_dim)
         self.state_heads = GroupedStateHeads(
-            latent_dim=self.config.state_latent_dim,
+            latent_dim=self.model_dim,
             hidden_dim=self.config.hidden_dim,
             max_objects=self.config.max_objects,
         )
@@ -241,20 +297,46 @@ class WanStateLatentPredictorV2(nn.Module):
             raise ValueError("either prompts or prompt_token_ids/prompt_token_mask must be provided")
         return self.prompt_proj(prompt_embed)
 
-    def _latent_features(self, context_latents: torch.Tensor) -> torch.Tensor:
-        if context_latents.ndim != 5:
-            raise ValueError(
-                f"expected context latents [B, T, C, H, W], got {tuple(context_latents.shape)}"
-            )
-        batch, steps, channels, height, width = context_latents.shape
-        pooled = F.adaptive_avg_pool2d(
-            context_latents.reshape(batch * steps, channels, height, width),
-            output_size=(self.config.latent_pool_side, self.config.latent_pool_side),
+    def _build_context_state_maps(
+        self,
+        context_latents: torch.Tensor,
+        camera: torch.Tensor,
+        prompt_embed: torch.Tensor,
+    ) -> torch.Tensor:
+        batch, steps, _, height, width = context_latents.shape
+        visual = self.visual_stem(context_latents.view(batch * steps, context_latents.shape[2], height, width))
+        visual = F.adaptive_avg_pool2d(
+            visual,
+            output_size=(self.config.state_map_height, self.config.state_map_width),
         )
-        pooled = pooled.reshape(batch, steps, channels * self.config.latent_pool_side ** 2)
-        mean = context_latents.mean(dim=(-1, -2))
-        std = context_latents.var(dim=(-1, -2), unbiased=False).add(1e-6).sqrt()
-        return torch.cat([pooled, mean, std], dim=-1)
+        visual = visual.view(
+            batch,
+            steps,
+            self.model_dim,
+            self.config.state_map_height,
+            self.config.state_map_width,
+        ).permute(0, 1, 3, 4, 2).contiguous()
+        camera_embed = self.camera_proj(camera).view(batch, steps, 1, 1, self.model_dim)
+        prompt_embed = prompt_embed.view(batch, 1, 1, 1, self.model_dim)
+        state_maps = visual + camera_embed + prompt_embed + self.context_pos_embed[:, :steps]
+        grid_h, grid_w = self.config.state_map_height, self.config.state_map_width
+        encoded = state_maps.permute(0, 2, 3, 1, 4).contiguous().view(batch * grid_h * grid_w, steps, self.model_dim)
+        encoded = self.context_encoder(encoded)
+        encoded = encoded.view(batch, grid_h, grid_w, steps, self.model_dim).permute(0, 3, 1, 2, 4).contiguous()
+        return encoded
+
+    def _build_future_state_maps(
+        self,
+        context_state_maps: torch.Tensor,
+        future_latent_steps: int,
+    ) -> torch.Tensor:
+        batch, context_steps, grid_h, grid_w, hidden_dim = context_state_maps.shape
+        memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
+        future_queries = self.future_time_queries[:, :future_latent_steps] + self.future_spatial_pos_embed
+        future_queries = future_queries.expand(batch, -1, -1, -1, -1).contiguous()
+        future_tokens = future_queries.view(batch, future_latent_steps * grid_h * grid_w, hidden_dim)
+        future_hidden = self.future_decoder(future_tokens, memory)
+        return future_hidden.view(batch, future_latent_steps, grid_h, grid_w, hidden_dim)
 
     def forward(
         self,
@@ -266,6 +348,10 @@ class WanStateLatentPredictorV2(nn.Module):
         future_latent_steps: int | None = None,
         num_objects: int | None = None,
     ) -> Dict[str, torch.Tensor]:
+        if context_latents.ndim != 5:
+            raise ValueError(
+                f"expected context latents [B, T, C, H, W], got {tuple(context_latents.shape)}"
+            )
         batch, context_steps = context_latents.shape[:2]
         future_latent_steps = future_latent_steps or self.config.max_future_latent_steps
         num_objects = num_objects or self.config.max_objects
@@ -283,31 +369,29 @@ class WanStateLatentPredictorV2(nn.Module):
                 f"camera shape {tuple(camera.shape)} does not match context latents batch/steps {(batch, context_steps)}"
             )
 
-        prompt_context = self._encode_prompt(
+        prompt_embed = self._encode_prompt(
             prompts,
             prompt_token_ids,
             prompt_token_mask,
             context_latents.device,
-        ).unsqueeze(1).expand(-1, context_steps, -1)
-        latent_features = self._latent_features(context_latents)
-        encoder_input = torch.cat([latent_features, camera, prompt_context], dim=-1)
-        encoder_input = self.context_input_proj(encoder_input)
-        encoder_input = encoder_input + self.context_pos_embed[:, :context_steps]
+        )
+        context_state_maps = self._build_context_state_maps(context_latents, camera, prompt_embed)
+        future_state_maps = self._build_future_state_maps(context_state_maps, future_latent_steps)
 
-        context_hidden = self.context_encoder(encoder_input)
-        context_state_latents = self.context_state_latent_proj(context_hidden)
+        context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
+        future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
+        future_adapter_tokens = self.adapter_token_head(future_state_maps, future_object_slots)
 
-        global_context = context_hidden.mean(dim=1, keepdim=True)
-        future_queries = self.future_queries[:, :future_latent_steps] + self.future_pos_embed[:, :future_latent_steps]
-        future_queries = future_queries.expand(batch, -1, -1) + global_context
-        future_hidden = self.future_decoder(future_queries, context_hidden)
-        future_state_latents = self.future_state_latent_proj(future_hidden)
-
-        context_grouped = self.state_heads(context_state_latents, num_objects=num_objects)
-        future_grouped = self.state_heads(future_state_latents, num_objects=num_objects)
+        context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
+        future_grouped = self.state_heads(future_object_slots, num_objects=num_objects)
         return {
-            "context_state_latents": context_state_latents,
-            "future_state_latents": future_state_latents,
+            "context_state_latents": context_state_maps,
+            "future_state_latents": future_state_maps,
+            "context_state_maps": context_state_maps,
+            "future_state_maps": future_state_maps,
+            "context_object_slots": context_object_slots,
+            "future_object_slots": future_object_slots,
+            "future_adapter_tokens": future_adapter_tokens,
             "context_geom_predictions": context_grouped["geom"],
             "context_motion_predictions": context_grouped["motion"],
             "context_vis_predictions": context_grouped["vis"],
@@ -323,19 +407,6 @@ class WanStateLatentPredictorV2(nn.Module):
 
 def _group_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.mean((predicted - target) ** 2)
-
-
-def _compute_grouped_losses(predicted: torch.Tensor, target: torch.Tensor) -> Dict[str, torch.Tensor]:
-    geom_loss = _group_loss(predicted[..., list(GEOM_STATE_INDICES)], target[..., list(GEOM_STATE_INDICES)])
-    motion_loss = _group_loss(predicted[..., list(MOTION_STATE_INDICES)], target[..., list(MOTION_STATE_INDICES)])
-    vis_loss = _group_loss(predicted[..., list(VIS_STATE_INDICES)], target[..., list(VIS_STATE_INDICES)])
-    total = geom_loss + motion_loss + 0.5 * vis_loss
-    return {
-        "loss": total,
-        "geom": geom_loss,
-        "motion": motion_loss,
-        "vis": vis_loss,
-    }
 
 
 def wan_state_predictor_v2_loss(
@@ -382,11 +453,11 @@ def wan_state_predictor_v2_loss(
         "vis": future_vis_loss,
     }
 
-    future_state_latents = outputs["future_state_latents"]
-    if future_state_latents.shape[1] > 1:
-        latent_smooth = torch.mean((future_state_latents[:, 1:] - future_state_latents[:, :-1]) ** 2)
+    future_adapter_tokens = outputs["future_adapter_tokens"]
+    if future_adapter_tokens.shape[1] > 1:
+        latent_smooth = torch.mean((future_adapter_tokens[:, 1:] - future_adapter_tokens[:, :-1]) ** 2)
     else:
-        latent_smooth = torch.zeros((), device=future_state_latents.device, dtype=future_state_latents.dtype)
+        latent_smooth = torch.zeros((), device=future_adapter_tokens.device, dtype=future_adapter_tokens.dtype)
 
     if train_stage == "context_only":
         total = context_losses["loss"]

@@ -174,7 +174,7 @@ def main():
                 future_steps=future_steps,
                 num_objects=batch["context_states"].shape[2],
             )
-        state_tokens = outputs["future_state_latents"]
+        state_tokens = outputs["future_adapter_tokens"]
         state_predictions = outputs["future_state_predictions"]
         generated_video = backend.generate(
             prompt=batch["prompts"][0],
@@ -210,7 +210,9 @@ def main():
         output_dir / "wan_inference_outputs.npz",
         context_frames=context_np,
         predicted_future_states=predicted_states_np,
-        future_state_latents=state_tokens_np,
+        future_adapter_tokens=state_tokens_np,
+        future_state_maps=detach_to_cpu_numpy(outputs["future_state_maps"][0]),
+        future_object_slots=detach_to_cpu_numpy(outputs["future_object_slots"][0]),
         generated_full_video=full_video_np,
         generated_future_frames=generated_future_np,
     )

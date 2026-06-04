@@ -243,8 +243,8 @@ def run_epoch(
                     future_latent_steps=future_latent_steps,
                     num_objects=context_states.shape[2],
                 )
-                teacher_state_context = adapter_encoder({"state_tokens": teacher_outputs["future_state_latents"]})
-            predicted_state_context = adapter_encoder({"state_tokens": outputs["future_state_latents"]})
+                teacher_state_context = adapter_encoder({"state_tokens": teacher_outputs["future_adapter_tokens"]})
+            predicted_state_context = adapter_encoder({"state_tokens": outputs["future_adapter_tokens"]})
             adapter_align = torch.mean((predicted_state_context - teacher_state_context) ** 2)
         else:
             adapter_align = losses["loss"].new_zeros(())
