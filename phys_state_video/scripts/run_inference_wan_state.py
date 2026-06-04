@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +14,14 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
 from phys_state_video.predictor_wan_state import WanStateLatentPredictor, WanStateLatentPredictorConfig
+from phys_state_video.predictor_wan_state_v2 import WanStateLatentPredictorV2, WanStateLatentPredictorV2Config
 from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_bridge import WanImageToVideoBackend, WanLatentExtractor
+from phys_state_video.wan_state_v2_helpers import (
+    MockLatentExtractor,
+    compute_future_latent_steps,
+    resample_camera_to_latent_steps,
+)
 
 torch = require_torch()
 
@@ -28,8 +33,8 @@ def parse_args():
     parser.add_argument("--wan-ckpt-dir", required=True, help="Wan checkpoint directory.")
     parser.add_argument(
         "--wan-state-adapter-ckpt",
-        default=None,
-        help="Checkpoint for the Wan state adapter branch. Strongly recommended when using predictor state tokens.",
+        required=True,
+        help="Checkpoint for the trained Wan state adapter branch.",
     )
     parser.add_argument("--output", required=True, help="Output directory.")
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
@@ -50,6 +55,13 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument("--device", default=None)
     parser.add_argument("--fps", type=int, default=6)
+    parser.add_argument("--state-guidance-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--predictor-latent-source",
+        default="auto",
+        choices=["auto", "mock", "wan"],
+        help="How to build predictor latents when the checkpoint is wan_state_v2_latent_time.",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +88,40 @@ def write_mp4(path: Path, frames_tchw: np.ndarray, fps: int) -> None:
         writer.release()
 
 
+def load_predictor(checkpoint_path: str, device: str):
+    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
+    predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
+    if predictor_version == "wan_state_v2_latent_time":
+        predictor = WanStateLatentPredictorV2(WanStateLatentPredictorV2Config(**checkpoint["config"])).to(device)
+        predictor.load_state_dict(checkpoint["model"])
+        predictor.eval()
+        return predictor, checkpoint
+    predictor = WanStateLatentPredictor(WanStateLatentPredictorConfig(**checkpoint["config"])).to(device)
+    predictor.load_state_dict(checkpoint["model"])
+    predictor.eval()
+    return predictor, checkpoint
+
+
+def build_predictor_latent_extractor(args, checkpoint):
+    predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
+    latent_source = args.predictor_latent_source
+    if latent_source == "auto":
+        latent_source = checkpoint.get("latent_source", "wan" if predictor_version == "wan_state_v1" else "mock")
+    if latent_source == "mock":
+        return MockLatentExtractor(
+            latent_channels=int(checkpoint.get("mock_latent_channels") or checkpoint["config"]["latent_channels"]),
+            latent_height=int(checkpoint.get("mock_latent_height") or 8),
+            latent_width=int(checkpoint.get("mock_latent_width") or 8),
+            device=args.device,
+        )
+    return WanLatentExtractor(
+        ckpt_dir=args.wan_ckpt_dir,
+        wan_repo_root=args.wan_repo_root,
+        task=args.wan_task,
+        device=args.device,
+    )
+
+
 def main():
     args = parse_args()
     if args.device is None:
@@ -83,23 +129,10 @@ def main():
     dataset = NpzPredictorDataset(args.episode)
     batch = collate_predictor_episodes([dataset[0]])
 
-    predictor_ckpt = load_checkpoint(args.predictor, map_location=args.device)
-    predictor = WanStateLatentPredictor(WanStateLatentPredictorConfig(**predictor_ckpt["config"])).to(args.device)
-    predictor.load_state_dict(predictor_ckpt["model"])
-    predictor.eval()
+    predictor, predictor_ckpt = load_predictor(args.predictor, args.device)
+    predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
 
-    latent_extractor = WanLatentExtractor(
-        ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        task=args.wan_task,
-        device=args.device,
-    )
-    if args.wan_state_adapter_ckpt is None:
-        warnings.warn(
-            "running Wan inference without --wan-state-adapter-ckpt: state tokens will be wired in, "
-            "but the Wan state adapter branch may stay near ineffective default initialization.",
-            stacklevel=2,
-        )
+    latent_extractor = build_predictor_latent_extractor(args, predictor_ckpt)
     backend = WanImageToVideoBackend(
         ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
@@ -114,15 +147,33 @@ def main():
     frame_num = args.frame_num or (context_steps + future_steps)
 
     with torch.no_grad():
-        context_latents = latent_extractor.encode_context_frames(context_frames)
-        outputs = predictor(
-            context_latents,
-            batch["camera"].to(args.device),
-            prompt_token_ids=batch["prompt_token_ids"].to(args.device),
-            prompt_token_mask=batch["prompt_token_mask"].to(args.device),
-            future_steps=future_steps,
-            num_objects=batch["context_states"].shape[2],
-        )
+        if predictor_version == "wan_state_v2_latent_time":
+            context_latents = latent_extractor.encode_context_frames_raw(context_frames)
+            context_latent_steps = context_latents.shape[1]
+            future_latent_steps = compute_future_latent_steps(
+                context_steps=context_steps,
+                future_steps=future_steps,
+                temporal_stride=latent_extractor.temporal_stride,
+            )
+            camera_latent = resample_camera_to_latent_steps(batch["camera"].to(args.device), context_latent_steps)
+            outputs = predictor(
+                context_latents=context_latents,
+                camera=camera_latent,
+                prompt_token_ids=batch["prompt_token_ids"].to(args.device),
+                prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+                future_latent_steps=future_latent_steps,
+                num_objects=batch["context_states"].shape[2],
+            )
+        else:
+            context_latents = latent_extractor.encode_context_frames(context_frames)
+            outputs = predictor(
+                context_latents,
+                batch["camera"].to(args.device),
+                prompt_token_ids=batch["prompt_token_ids"].to(args.device),
+                prompt_token_mask=batch["prompt_token_mask"].to(args.device),
+                future_steps=future_steps,
+                num_objects=batch["context_states"].shape[2],
+            )
         state_tokens = outputs["future_state_latents"]
         state_predictions = outputs["future_state_predictions"]
         generated_video = backend.generate(
@@ -138,6 +189,7 @@ def main():
             negative_prompt=args.negative_prompt,
             seed=args.seed,
             state_scale=args.state_scale,
+            state_guidance_scale=args.state_guidance_scale,
         )
 
     if generated_video.ndim != 4:
@@ -180,9 +232,11 @@ def main():
                 "guide_scale": args.guide_scale,
                 "shift": args.shift,
                 "state_scale": args.state_scale,
+                "state_guidance_scale": args.state_guidance_scale,
                 "seed": args.seed,
                 "wan_state_adapter_ckpt": args.wan_state_adapter_ckpt,
-                "predictor_version": predictor_ckpt.get("predictor_version", "wan_state_v1"),
+                "predictor_version": predictor_version,
+                "predictor_latent_source": args.predictor_latent_source,
             },
             ensure_ascii=False,
             indent=2,

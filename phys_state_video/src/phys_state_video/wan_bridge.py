@@ -4,7 +4,6 @@ import gc
 import math
 import random
 import sys
-import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -319,6 +318,7 @@ class WanImageToVideoBackend:
         seed: int = -1,
         offload_model: bool = True,
         state_scale: float = 1.0,
+        state_guidance_scale: float = 1.0,
     ) -> torch.Tensor:
         if size not in self._supported_sizes[self.task]:
             raise ValueError(
@@ -433,10 +433,9 @@ class WanImageToVideoBackend:
             no_sync_high_noise(),
         ):
             if self.state_adapter_ckpt is None and self.pipeline.state_adapter is None:
-                warnings.warn(
-                    "state_tokens were provided without state_adapter_ckpt; Wan will build the adapter branch "
-                    "from shape only, but its gates remain at default initialization until trained weights are loaded.",
-                    stacklevel=2,
+                raise ValueError(
+                    "state_tokens were provided but no trained state adapter is loaded. "
+                    "Pass state_adapter_ckpt when constructing WanImageToVideoBackend."
                 )
             if self.state_adapter_ckpt is not None and self.pipeline.state_adapter is None:
                 self.pipeline.load_state_adapter(
@@ -483,12 +482,19 @@ class WanImageToVideoBackend:
                 "state_context": state_context,
                 "state_scale": state_scale,
             }
+            arg_text_only = {
+                "context": [context[0]],
+                "seq_len": seq_len,
+                "y": [y],
+                "state_context": None,
+                "state_scale": 0.0,
+            }
             arg_null = {
                 "context": context_null,
                 "seq_len": seq_len,
                 "y": [y],
-                "state_context": state_context,
-                "state_scale": state_scale,
+                "state_context": None,
+                "state_scale": 0.0,
             }
 
             if offload_model:
@@ -510,13 +516,20 @@ class WanImageToVideoBackend:
                 if isinstance(guide_scale, tuple):
                     sample_guide_scale = guide_scale[1] if timestep_value.item() >= boundary else guide_scale[0]
 
-                noise_pred_cond = model(latent_model_input, t=token_timestep, **arg_c)[0]
+                noise_pred_text_state = model(latent_model_input, t=token_timestep, **arg_c)[0]
+                if offload_model:
+                    torch.cuda.empty_cache()
+                noise_pred_text_only = model(latent_model_input, t=token_timestep, **arg_text_only)[0]
                 if offload_model:
                     torch.cuda.empty_cache()
                 noise_pred_uncond = model(latent_model_input, t=token_timestep, **arg_null)[0]
                 if offload_model:
                     torch.cuda.empty_cache()
-                noise_pred = noise_pred_uncond + sample_guide_scale * (noise_pred_cond - noise_pred_uncond)
+                noise_pred = (
+                    noise_pred_uncond
+                    + sample_guide_scale * (noise_pred_text_only - noise_pred_uncond)
+                    + state_guidance_scale * (noise_pred_text_state - noise_pred_text_only)
+                )
 
                 latent = sample_scheduler.step(
                     noise_pred.unsqueeze(0),

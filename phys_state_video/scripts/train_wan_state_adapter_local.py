@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import random
 import sys
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from phys_state_video.wan_bridge import _ensure_wan_importable
 
 torch = require_torch()
 F = torch.nn.functional
+dist = torch.distributed
 
 
 def parse_args():
@@ -55,6 +58,9 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=0, help="If > 0, only use the first N bundles.")
     parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument("--resume", default=None, help="Optional existing TI2V state-adapter checkpoint to resume from.")
+    parser.add_argument("--grad-accum-steps", type=int, default=1, help="Number of local micro-steps to accumulate before each optimizer step.")
+    parser.add_argument("--save-every-steps", type=int, default=0, help="If > 0, save a checkpoint every N optimizer steps on rank 0.")
+    parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
 
 
@@ -65,6 +71,25 @@ def resolve_device(device: str) -> tuple[str, int]:
     if ":" in device:
         return device, int(device.split(":")[1])
     return device, 0
+
+
+def distributed_context() -> dict[str, int | bool]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", str(rank)))
+    return {
+        "enabled": world_size > 1,
+        "world_size": world_size,
+        "rank": rank,
+        "local_rank": local_rank,
+    }
+
+
+def init_distributed_if_needed() -> dict[str, int | bool]:
+    ctx = distributed_context()
+    if ctx["enabled"] and not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    return ctx
 
 
 def default_best_output(output_path: Path) -> Path:
@@ -78,6 +103,62 @@ def load_checkpoint(path: str, map_location: str):
         return torch.load(path, map_location=map_location, weights_only=False)
     except TypeError:
         return torch.load(path, map_location=map_location)
+
+
+def broadcast_object(obj, *, src: int = 0):
+    if not dist.is_initialized():
+        return obj
+    payload = [obj if dist.get_rank() == src else None]
+    dist.broadcast_object_list(payload, src=src)
+    return payload[0]
+
+
+def shuffled_epoch_indices(num_records: int, *, epoch: int, seed: int) -> list[int]:
+    if num_records <= 0:
+        raise ValueError("num_records must be positive")
+    indices = list(range(num_records))
+    random.Random(seed + epoch).shuffle(indices)
+    return indices
+
+
+def build_rank_epoch_indices(
+    shuffled_indices: list[int],
+    *,
+    world_size: int,
+    rank: int,
+) -> list[int]:
+    if world_size <= 0:
+        raise ValueError(f"world_size must be positive, got {world_size}")
+    if not shuffled_indices:
+        raise ValueError("shuffled_indices must not be empty")
+    steps_per_rank = int(math.ceil(len(shuffled_indices) / world_size))
+    rank_indices: list[int] = []
+    for local_step in range(steps_per_rank):
+        global_slot = local_step * world_size + rank
+        rank_indices.append(shuffled_indices[global_slot % len(shuffled_indices)])
+    return rank_indices
+
+
+def average_gradients(trainable_params) -> None:
+    if not dist.is_initialized():
+        return
+    world_size = dist.get_world_size()
+    if world_size <= 1:
+        return
+    for _, param in trainable_params:
+        if param.grad is None:
+            continue
+        dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+        param.grad.div_(world_size)
+
+
+def reduce_scalar(value: float, *, device) -> float:
+    if not dist.is_initialized():
+        return float(value)
+    tensor = torch.tensor([float(value)], device=device, dtype=torch.float32)
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+    tensor.div_(dist.get_world_size())
+    return float(tensor.item())
 
 
 def prepare_training_sample(record, *, output_size: tuple[int, int], frame_num: int) -> dict[str, object]:
@@ -116,6 +197,7 @@ def run_step(
     sample: dict[str, object],
     optimizer,
     state_scale: float,
+    grad_accum_steps: int = 1,
 ) -> dict[str, float]:
     device = pipeline.device
     model_dtype = pipeline.model.patch_embedding.weight.dtype
@@ -126,8 +208,6 @@ def run_step(
         key: torch.from_numpy(value).to(device=device, dtype=torch.float32)
         for key, value in sample["state_condition"].items()
     }
-
-    optimizer.zero_grad(set_to_none=True)
 
     t5_model = getattr(pipeline.text_encoder, "model", None)
     vae_module = getattr(pipeline.vae, "model", None)
@@ -174,10 +254,9 @@ def run_step(
         loss = F.mse_loss(noise_pred[:, 1:].float(), training_target[:, 1:].float())
         loss = loss * scheduler.training_weight(timestep)
 
-    loss.backward()
+    (loss / max(int(grad_accum_steps), 1)).backward()
     del context, state_context, timestep_tokens, noised_latents, training_target, noise_pred
     torch.cuda.empty_cache()
-    optimizer.step()
 
     return {
         "loss": float(loss.detach().cpu()),
@@ -195,7 +274,12 @@ def main():
             "stack is CUDA 12.8 / driver 570.124.06, so real Wan training remains environment-blocked."
         )
 
+    ctx = init_distributed_if_needed()
     device, device_id = resolve_device(args.device)
+    if ctx["enabled"]:
+        device_id = int(ctx["local_rank"])
+        device = f"cuda:{device_id}"
+    torch.cuda.set_device(device_id)
     _ensure_wan_importable(args.wan_repo_root)
 
     from wan_.configs import SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
@@ -215,7 +299,7 @@ def main():
         config=WAN_CONFIGS[args.task],
         checkpoint_dir=str(args.wan_ckpt_dir),
         device_id=device_id,
-        rank=0,
+        rank=int(ctx["rank"]),
         init_on_cpu=False,
     )
 
@@ -251,10 +335,23 @@ def main():
     history: list[dict[str, object]] = []
     global_step = 0
     best_loss = float("inf")
-    best_payload = None
+    optimizer.zero_grad(set_to_none=True)
+
+    world_size = int(ctx["world_size"])
+    rank = int(ctx["rank"])
+    is_rank0 = rank == 0
+    stop_training = False
+    pending_metrics: list[dict[str, float]] = []
 
     for epoch in range(args.epochs):
-        for record in bundle_records:
+        epoch_indices = build_rank_epoch_indices(
+            shuffled_epoch_indices(len(bundle_records), epoch=epoch, seed=args.seed),
+            world_size=world_size,
+            rank=rank,
+        )
+        epoch_step_losses: list[float] = []
+        for local_step, record_index in enumerate(epoch_indices):
+            record = bundle_records[record_index]
             sample = prepare_training_sample(
                 record,
                 output_size=output_size,
@@ -266,18 +363,70 @@ def main():
                 sample=sample,
                 optimizer=optimizer,
                 state_scale=args.state_scale,
+                grad_accum_steps=args.grad_accum_steps,
             )
+            pending_metrics.append(metrics)
+            should_step = ((local_step + 1) % max(args.grad_accum_steps, 1) == 0) or (local_step + 1 == len(epoch_indices))
+            if not should_step:
+                continue
+
+            average_gradients(trainable_params)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
             global_step += 1
+            mean_loss = sum(item["loss"] for item in pending_metrics) / max(len(pending_metrics), 1)
+            mean_frame_num = sum(item["training_frame_num"] for item in pending_metrics) / max(len(pending_metrics), 1)
+            mean_latent_steps = sum(item["latent_steps"] for item in pending_metrics) / max(len(pending_metrics), 1)
+            reduced_loss = reduce_scalar(mean_loss, device=pipeline.device)
+            reduced_frame_num = reduce_scalar(mean_frame_num, device=pipeline.device)
+            reduced_latent_steps = reduce_scalar(mean_latent_steps, device=pipeline.device)
+            epoch_step_losses.append(reduced_loss)
             history_record = {
                 "epoch": epoch + 1,
                 "step": global_step,
                 "sample_id": record.sample_id,
-                "metrics": metrics,
+                "metrics": {
+                    "loss": reduced_loss,
+                    "training_frame_num": reduced_frame_num,
+                    "latent_steps": reduced_latent_steps,
+                },
             }
-            history.append(history_record)
-            if global_step % max(args.log_every, 1) == 0:
-                print(json.dumps(history_record, ensure_ascii=False))
+            if is_rank0:
+                history.append(history_record)
+                if global_step % max(args.log_every, 1) == 0:
+                    print(json.dumps(history_record, ensure_ascii=False))
 
+            pending_metrics = []
+            if is_rank0 and args.save_every_steps > 0 and global_step % args.save_every_steps == 0:
+                current_payload = serialize_ti2v_state_adapter_checkpoint(
+                    pipeline.export_state_adapter(),
+                    meta={
+                        "task": args.task,
+                        "size": args.size,
+                        "wan_ckpt_dir": args.wan_ckpt_dir,
+                        "state_condition_root": args.state_condition_root,
+                        "global_step": global_step,
+                        "epoch": epoch + 1,
+                        "sample_id": record.sample_id,
+                        "loss": reduced_loss,
+                        "frame_num_arg": int(args.frame_num),
+                        "aligned_frame_num": align_wan_frame_num(int(round(reduced_frame_num))),
+                        "history_tail": history[-8:],
+                        "world_size": world_size,
+                        "grad_accum_steps": int(args.grad_accum_steps),
+                    },
+                )
+                torch.save(current_payload, output_path)
+
+            if args.max_steps > 0 and global_step >= args.max_steps:
+                stop_training = True
+                break
+        epoch_loss = reduce_scalar(
+            sum(epoch_step_losses) / max(len(epoch_step_losses), 1) if epoch_step_losses else float("inf"),
+            device=pipeline.device,
+        )
+        if is_rank0:
             current_payload = serialize_ti2v_state_adapter_checkpoint(
                 pipeline.export_state_adapter(),
                 meta={
@@ -287,22 +436,18 @@ def main():
                     "state_condition_root": args.state_condition_root,
                     "global_step": global_step,
                     "epoch": epoch + 1,
-                    "sample_id": record.sample_id,
-                    "loss": metrics["loss"],
+                    "epoch_loss": epoch_loss,
                     "frame_num_arg": int(args.frame_num),
-                    "aligned_frame_num": align_wan_frame_num(int(sample["training_frame_num"])),
                     "history_tail": history[-8:],
+                    "world_size": world_size,
+                    "grad_accum_steps": int(args.grad_accum_steps),
                 },
             )
             torch.save(current_payload, output_path)
-            if metrics["loss"] <= best_loss:
-                best_loss = metrics["loss"]
-                best_payload = current_payload
-                torch.save(best_payload, default_best_output(output_path))
-
-            if args.max_steps > 0 and global_step >= args.max_steps:
-                break
-        if args.max_steps > 0 and global_step >= args.max_steps:
+            if epoch_loss <= best_loss:
+                best_loss = epoch_loss
+                torch.save(current_payload, default_best_output(output_path))
+        if stop_training:
             break
 
     summary = {
@@ -319,9 +464,15 @@ def main():
         "size": args.size,
         "device": device,
         "frame_num_arg": int(args.frame_num),
+        "world_size": world_size,
+        "grad_accum_steps": int(args.grad_accum_steps),
     }
-    output_path.with_suffix(".json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if is_rank0:
+        output_path.with_suffix(".json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

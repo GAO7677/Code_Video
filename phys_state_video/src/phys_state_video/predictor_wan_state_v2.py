@@ -130,9 +130,11 @@ class GroupedStateHeads(nn.Module):
         batch, steps = state_latents.shape[:2]
         geom = self.geom_head(state_latents).view(batch, steps, self.max_objects, len(GEOM_STATE_INDICES))
         motion = self.motion_head(state_latents).view(batch, steps, self.max_objects, len(MOTION_STATE_INDICES))
-        vis = self.vis_head(state_latents).view(batch, steps, self.max_objects, len(VIS_STATE_INDICES))
+        vis_logits = self.vis_head(state_latents).view(batch, steps, self.max_objects, len(VIS_STATE_INDICES))
+        vis = torch.sigmoid(vis_logits)
         geom = geom[:, :, :num_objects]
         motion = motion[:, :, :num_objects]
+        vis_logits = vis_logits[:, :, :num_objects]
         vis = vis[:, :, :num_objects]
 
         merged = state_latents.new_zeros((batch, steps, num_objects, STATE_DIM))
@@ -143,6 +145,7 @@ class GroupedStateHeads(nn.Module):
             "geom": geom,
             "motion": motion,
             "vis": vis,
+            "vis_logits": vis_logits,
             "state": merged,
         }
 
@@ -308,10 +311,12 @@ class WanStateLatentPredictorV2(nn.Module):
             "context_geom_predictions": context_grouped["geom"],
             "context_motion_predictions": context_grouped["motion"],
             "context_vis_predictions": context_grouped["vis"],
+            "context_vis_logits": context_grouped["vis_logits"],
             "context_state_predictions": context_grouped["state"],
             "future_geom_predictions": future_grouped["geom"],
             "future_motion_predictions": future_grouped["motion"],
             "future_vis_predictions": future_grouped["vis"],
+            "future_vis_logits": future_grouped["vis_logits"],
             "future_state_predictions": future_grouped["state"],
         }
 
@@ -340,8 +345,42 @@ def wan_state_predictor_v2_loss(
     train_stage: str,
     latent_smooth_scale: float = 0.05,
 ) -> Dict[str, torch.Tensor]:
-    context_losses = _compute_grouped_losses(outputs["context_state_predictions"], context_target)
-    future_losses = _compute_grouped_losses(outputs["future_state_predictions"], future_target)
+    context_geom_loss = _group_loss(
+        outputs["context_state_predictions"][..., list(GEOM_STATE_INDICES)],
+        context_target[..., list(GEOM_STATE_INDICES)],
+    )
+    context_motion_loss = _group_loss(
+        outputs["context_state_predictions"][..., list(MOTION_STATE_INDICES)],
+        context_target[..., list(MOTION_STATE_INDICES)],
+    )
+    context_vis_loss = F.binary_cross_entropy_with_logits(
+        outputs["context_vis_logits"],
+        context_target[..., list(VIS_STATE_INDICES)].clamp(0.0, 1.0),
+    )
+    context_losses = {
+        "loss": context_geom_loss + context_motion_loss + 0.5 * context_vis_loss,
+        "geom": context_geom_loss,
+        "motion": context_motion_loss,
+        "vis": context_vis_loss,
+    }
+    future_geom_loss = _group_loss(
+        outputs["future_state_predictions"][..., list(GEOM_STATE_INDICES)],
+        future_target[..., list(GEOM_STATE_INDICES)],
+    )
+    future_motion_loss = _group_loss(
+        outputs["future_state_predictions"][..., list(MOTION_STATE_INDICES)],
+        future_target[..., list(MOTION_STATE_INDICES)],
+    )
+    future_vis_loss = F.binary_cross_entropy_with_logits(
+        outputs["future_vis_logits"],
+        future_target[..., list(VIS_STATE_INDICES)].clamp(0.0, 1.0),
+    )
+    future_losses = {
+        "loss": future_geom_loss + future_motion_loss + 0.5 * future_vis_loss,
+        "geom": future_geom_loss,
+        "motion": future_motion_loss,
+        "vis": future_vis_loss,
+    }
 
     future_state_latents = outputs["future_state_latents"]
     if future_state_latents.shape[1] > 1:

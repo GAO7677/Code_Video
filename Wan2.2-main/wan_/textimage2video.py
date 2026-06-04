@@ -189,8 +189,9 @@ class WanTI2V:
                     "state_condition or adapter_config is required to initialize the state adapter"
                 )
             adapter_config = self._infer_state_adapter_dims(state_condition)
-        self.state_adapter = WanObjectStateAdapter(model_dim=self.model.dim,
-                                                   **adapter_config)
+        adapter_config = dict(adapter_config)
+        adapter_config.setdefault('model_dim', self.model.dim)
+        self.state_adapter = WanObjectStateAdapter(**adapter_config)
         self.state_adapter.eval().requires_grad_(False)
         if not self.init_on_cpu:
             self.state_adapter.to(self.device)

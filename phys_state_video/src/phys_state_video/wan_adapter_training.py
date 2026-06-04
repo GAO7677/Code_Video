@@ -18,6 +18,12 @@ REQUIRED_STATE_ADAPTER_KEYS_TI2V = {
     "state_adapter",
     "model_state_adapter",
 }
+REQUIRED_STATE_ADAPTER_KEYS_I2V = {
+    "state_adapter_config",
+    "state_adapter",
+    "low_noise_model_state_adapter",
+    "high_noise_model_state_adapter",
+}
 
 
 @dataclass(slots=True)
@@ -54,6 +60,10 @@ def load_state_condition_npz(path: str | Path) -> dict[str, np.ndarray]:
 
 def is_ti2v_state_adapter_checkpoint(state_bundle: dict[str, object]) -> bool:
     return REQUIRED_STATE_ADAPTER_KEYS_TI2V.issubset(state_bundle.keys())
+
+
+def is_i2v_state_adapter_checkpoint(state_bundle: dict[str, object]) -> bool:
+    return REQUIRED_STATE_ADAPTER_KEYS_I2V.issubset(state_bundle.keys())
 
 
 def _discover_bundle_dirs(root: Path) -> list[Path]:
@@ -174,6 +184,27 @@ def build_ti2v_training_video(
     return torch.cat([base_video, pad_frame], dim=0)
 
 
+def build_prefix_training_video(
+    context_frames: np.ndarray | torch.Tensor,
+    future_frames: np.ndarray | torch.Tensor,
+    frame_num: int | None = None,
+) -> torch.Tensor:
+    context_tensor = to_frame_tensor(context_frames)
+    future_tensor = to_frame_tensor(future_frames)
+    base_video = torch.cat([context_tensor, future_tensor], dim=0)
+    min_frame_num = align_wan_frame_num(int(base_video.shape[0]))
+    target_frame_num = min_frame_num if frame_num in (None, 0) else align_wan_frame_num(int(frame_num))
+    if target_frame_num < min_frame_num:
+        raise ValueError(
+            f"frame_num={frame_num} is too small for this sample: need at least {min_frame_num} frames after Wan alignment"
+        )
+    if base_video.shape[0] == target_frame_num:
+        return base_video
+    pad_count = target_frame_num - int(base_video.shape[0])
+    pad_frame = base_video[-1:].expand(pad_count, -1, -1, -1)
+    return torch.cat([base_video, pad_frame], dim=0)
+
+
 def build_first_frame_mask(latent: torch.Tensor) -> torch.Tensor:
     if latent.ndim != 4:
         raise ValueError(f"expected latent with shape [C, T, H, W], got {tuple(latent.shape)}")
@@ -182,7 +213,30 @@ def build_first_frame_mask(latent: torch.Tensor) -> torch.Tensor:
     return mask
 
 
+def build_prefix_latent_mask(latent: torch.Tensor, prefix_len: int) -> torch.Tensor:
+    if latent.ndim != 4:
+        raise ValueError(f"expected latent with shape [C, T, H, W], got {tuple(latent.shape)}")
+    if prefix_len <= 0 or prefix_len >= latent.shape[1]:
+        raise ValueError(f"prefix_len must be in [1, {latent.shape[1] - 1}], got {prefix_len}")
+    mask = torch.ones_like(latent)
+    mask[:, :prefix_len] = 0
+    return mask
+
+
 def build_ti2v_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq_len: int) -> torch.Tensor:
+    if mask.ndim != 4:
+        raise ValueError(f"expected mask with shape [C, T, H, W], got {tuple(mask.shape)}")
+    if timestep.ndim != 1 or timestep.shape[0] != 1:
+        raise ValueError(f"expected timestep with shape [1], got {tuple(timestep.shape)}")
+    masked = (mask[0][:, ::2, ::2] * timestep).flatten()
+    if masked.numel() > seq_len:
+        raise ValueError(f"masked timestep token count {masked.numel()} exceeds seq_len {seq_len}")
+    if masked.numel() < seq_len:
+        masked = torch.cat([masked, masked.new_ones(seq_len - masked.numel()) * timestep])
+    return masked.unsqueeze(0)
+
+
+def build_prefix_timestep_tensor(mask: torch.Tensor, timestep: torch.Tensor, seq_len: int) -> torch.Tensor:
     if mask.ndim != 4:
         raise ValueError(f"expected mask with shape [C, T, H, W], got {tuple(mask.shape)}")
     if timestep.ndim != 1 or timestep.shape[0] != 1:
@@ -200,6 +254,38 @@ def compute_ti2v_seq_len(latent: torch.Tensor, patch_size: tuple[int, int]) -> i
         raise ValueError(f"expected latent with shape [C, T, H, W], got {tuple(latent.shape)}")
     _, latent_steps, lat_h, lat_w = latent.shape
     return latent_steps * lat_h * lat_w // (patch_size[0] * patch_size[1])
+
+
+def apply_clean_prefix_to_latents(latent: torch.Tensor, clean_prefix_latents: torch.Tensor) -> torch.Tensor:
+    if latent.ndim != 4 or clean_prefix_latents.ndim != 4:
+        raise ValueError(
+            f"expected latent and clean_prefix_latents with shape [C, T, H, W], got {tuple(latent.shape)} and "
+            f"{tuple(clean_prefix_latents.shape)}"
+        )
+    prefix_len = int(clean_prefix_latents.shape[1])
+    if prefix_len <= 0 or prefix_len >= latent.shape[1]:
+        raise ValueError(f"invalid prefix_len={prefix_len} for latent_steps={latent.shape[1]}")
+    updated = latent.clone()
+    updated[:, :prefix_len] = clean_prefix_latents
+    return updated
+
+
+def resample_state_tokens_to_steps(state_tokens: torch.Tensor, target_steps: int) -> torch.Tensor:
+    if state_tokens.ndim == 2:
+        state_tokens = state_tokens.unsqueeze(0)
+    if state_tokens.ndim != 3:
+        raise ValueError(f"expected state_tokens with shape [B, T, D] or [T, D], got {tuple(state_tokens.shape)}")
+    if target_steps <= 0:
+        raise ValueError(f"target_steps must be positive, got {target_steps}")
+    if state_tokens.shape[1] == target_steps:
+        return state_tokens
+    resized = F.interpolate(
+        state_tokens.transpose(1, 2),
+        size=target_steps,
+        mode="linear",
+        align_corners=False,
+    )
+    return resized.transpose(1, 2).contiguous()
 
 
 def select_ti2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.Parameter]]:
@@ -228,6 +314,36 @@ def select_ti2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.P
             continue
         param.requires_grad_(True)
         trainable.append((f"model.{name}", param))
+    return trainable
+
+
+def select_i2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.Parameter]]:
+    if getattr(pipeline, "state_adapter", None) is None:
+        raise RuntimeError("pipeline.state_adapter is not initialized")
+
+    if hasattr(pipeline.text_encoder, "model"):
+        pipeline.text_encoder.model.eval().requires_grad_(False)
+    vae_module = getattr(pipeline.vae, "model", None)
+    if vae_module is not None and hasattr(vae_module, "eval"):
+        vae_module.eval().requires_grad_(False)
+    pipeline.low_noise_model.train().requires_grad_(False)
+    pipeline.high_noise_model.train().requires_grad_(False)
+    pipeline.state_adapter.train().requires_grad_(True)
+
+    trainable: list[tuple[str, torch.nn.Parameter]] = []
+    for name, param in pipeline.state_adapter.named_parameters():
+        param.requires_grad_(True)
+        trainable.append((f"state_adapter.{name}", param))
+    for module_name, module in (
+        ("low_noise_model", pipeline.low_noise_model),
+        ("high_noise_model", pipeline.high_noise_model),
+    ):
+        for name, param in module.named_parameters():
+            if "state_adapter_" not in name:
+                param.requires_grad_(False)
+                continue
+            param.requires_grad_(True)
+            trainable.append((f"{module_name}.{name}", param))
     return trainable
 
 
@@ -275,3 +391,30 @@ def serialize_ti2v_state_adapter_checkpoint(exported_bundle: dict[str, object], 
     payload = dict(exported_bundle)
     payload["trainer_meta"] = meta
     return payload
+
+
+def serialize_i2v_state_adapter_checkpoint(exported_bundle: dict[str, object], meta: dict[str, object]) -> dict[str, object]:
+    payload = dict(exported_bundle)
+    payload["trainer_meta"] = meta
+    return payload
+
+
+def load_frozen_state_adapter_encoder(
+    checkpoint_path: str | Path,
+    *,
+    wan_repo_root: str | Path = "/home/gaoya/Code_Video/Wan2.2-main",
+    device: str = "cpu",
+):
+    import sys
+
+    root = Path(wan_repo_root)
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from wan_.state_condition import WanObjectStateAdapter
+
+    state_bundle = torch.load(str(checkpoint_path), map_location="cpu")
+    adapter_config = dict(state_bundle["state_adapter_config"])
+    adapter = WanObjectStateAdapter(**adapter_config)
+    adapter.load_state_dict(state_bundle["state_adapter"])
+    adapter.eval().requires_grad_(False)
+    return adapter.to(device)
