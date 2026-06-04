@@ -19,6 +19,7 @@ from phys_state_video.predictor_wan_state_v2 import (
     wan_state_predictor_v2_loss,
 )
 from phys_state_video.utils import require_torch
+from phys_state_video.wan_adapter_training import load_frozen_state_adapter_encoder
 from phys_state_video.wan_bridge import WanLatentExtractor
 from phys_state_video.wan_state_v2_helpers import (
     MockLatentExtractor,
@@ -49,6 +50,9 @@ def parse_args():
     parser.add_argument("--mock-latent-height", type=int, default=8)
     parser.add_argument("--mock-latent-width", type=int, default=8)
     parser.add_argument("--latent-smooth-scale", type=float, default=0.05)
+    parser.add_argument("--teacher-predictor", default=None, help="Optional frozen teacher predictor checkpoint for adapter-space alignment.")
+    parser.add_argument("--adapter-align-ckpt", default=None, help="Optional trained Wan state-adapter checkpoint used to compute adapter-space alignment.")
+    parser.add_argument("--adapter-align-scale", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -74,6 +78,26 @@ def build_latent_extractor(args):
         task=args.wan_task,
         device=args.device,
     )
+
+
+def load_checkpoint(checkpoint_path: str, map_location):
+    try:
+        return torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location=map_location)
+
+
+def load_teacher_predictor(checkpoint_path: str, device: str) -> WanStateLatentPredictorV2:
+    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
+    if checkpoint.get("predictor_version") != "wan_state_v2_latent_time":
+        raise ValueError(
+            f"teacher predictor must be a wan_state_v2_latent_time checkpoint, got {checkpoint.get('predictor_version')!r}"
+        )
+    model = WanStateLatentPredictorV2(WanStateLatentPredictorV2Config(**checkpoint["config"])).to(device)
+    model.load_state_dict(checkpoint["model"])
+    model.eval()
+    model.requires_grad_(False)
+    return model
 
 
 def infer_model_config(sample, latent_extractor) -> WanStateLatentPredictorV2Config:
@@ -128,6 +152,9 @@ def save_checkpoint(
             "wan_repo_root": args.wan_repo_root,
             "wan_task": args.wan_task,
             "temporal_stride": getattr(args, "temporal_stride", None),
+            "teacher_predictor": args.teacher_predictor,
+            "adapter_align_ckpt": args.adapter_align_ckpt,
+            "adapter_align_scale": args.adapter_align_scale,
             "train_schedule": {
                 "epochs_context": args.epochs_context,
                 "epochs_future": args.epochs_future,
@@ -138,7 +165,18 @@ def save_checkpoint(
     )
 
 
-def run_epoch(model, latent_extractor, loader, optimizer, device, train_stage: str, latent_smooth_scale: float):
+def run_epoch(
+    model,
+    latent_extractor,
+    loader,
+    optimizer,
+    device,
+    train_stage: str,
+    latent_smooth_scale: float,
+    teacher_predictor=None,
+    adapter_encoder=None,
+    adapter_align_scale: float = 0.0,
+):
     is_train = optimizer is not None
     model.train(mode=is_train)
     running = {
@@ -152,6 +190,7 @@ def run_epoch(model, latent_extractor, loader, optimizer, device, train_stage: s
         "future_motion": 0.0,
         "future_vis": 0.0,
         "latent_smooth": 0.0,
+        "adapter_align": 0.0,
     }
     for batch in loader:
         if is_train:
@@ -189,6 +228,28 @@ def run_epoch(model, latent_extractor, loader, optimizer, device, train_stage: s
             train_stage=train_stage,
             latent_smooth_scale=latent_smooth_scale,
         )
+        if (
+            teacher_predictor is not None
+            and adapter_encoder is not None
+            and adapter_align_scale > 0.0
+            and train_stage != "context_only"
+        ):
+            with torch.no_grad():
+                teacher_outputs = teacher_predictor(
+                    context_latents=context_latents,
+                    camera=camera_latent,
+                    prompt_token_ids=batch["prompt_token_ids"].to(device),
+                    prompt_token_mask=batch["prompt_token_mask"].to(device),
+                    future_latent_steps=future_latent_steps,
+                    num_objects=context_states.shape[2],
+                )
+                teacher_state_context = adapter_encoder({"state_tokens": teacher_outputs["future_state_latents"]})
+            predicted_state_context = adapter_encoder({"state_tokens": outputs["future_state_latents"]})
+            adapter_align = torch.mean((predicted_state_context - teacher_state_context) ** 2)
+        else:
+            adapter_align = losses["loss"].new_zeros(())
+        losses["adapter_align"] = adapter_align
+        losses["loss"] = losses["loss"] + adapter_align_scale * adapter_align
         if is_train:
             losses["loss"].backward()
             optimizer.step()
@@ -200,6 +261,10 @@ def run_epoch(model, latent_extractor, loader, optimizer, device, train_stage: s
 
 def main():
     args = parse_args()
+    if args.adapter_align_scale > 0.0 and (args.teacher_predictor is None or args.adapter_align_ckpt is None):
+        raise ValueError(
+            "--teacher-predictor and --adapter-align-ckpt are required when --adapter-align-scale > 0"
+        )
     dataset = NpzPredictorDataset(args.data)
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -213,6 +278,16 @@ def main():
     args.temporal_stride = latent_extractor.temporal_stride
     config = infer_model_config(dataset[0], latent_extractor)
     model = WanStateLatentPredictorV2(config).to(args.device)
+    teacher_predictor = None
+    adapter_encoder = None
+    if args.teacher_predictor is not None:
+        teacher_predictor = load_teacher_predictor(args.teacher_predictor, args.device)
+    if args.adapter_align_ckpt is not None:
+        adapter_encoder = load_frozen_state_adapter_encoder(
+            args.adapter_align_ckpt,
+            wan_repo_root=args.wan_repo_root,
+            device=args.device,
+        )
 
     schedule = [
         ("context_only", args.epochs_context),
@@ -238,6 +313,9 @@ def main():
                 device=args.device,
                 train_stage=stage_name,
                 latent_smooth_scale=args.latent_smooth_scale,
+                teacher_predictor=teacher_predictor,
+                adapter_encoder=adapter_encoder,
+                adapter_align_scale=args.adapter_align_scale,
             )
             record = {"stage": stage_name, "epoch": epoch + 1, "metrics": metrics}
             history.append(record)

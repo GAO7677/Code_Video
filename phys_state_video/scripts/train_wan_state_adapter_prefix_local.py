@@ -21,6 +21,7 @@ from phys_state_video.wan_adapter_training import (
     build_prefix_latent_mask,
     build_prefix_training_video,
     build_prefix_timestep_tensor,
+    compute_ti2v_seq_len,
     discover_state_condition_bundles,
     is_i2v_state_adapter_checkpoint,
     load_episode_npz,
@@ -34,7 +35,6 @@ from phys_state_video.wan_bridge import (
     _build_prefix_condition_mask,
     _encode_video_prefix_latents,
     _ensure_wan_importable,
-    _normalize_video_range,
     _resize_video_frames,
 )
 
@@ -102,7 +102,6 @@ def prepare_training_sample(record, *, frame_num: int) -> dict[str, object]:
         "state_condition": state_condition,
         "training_video": training_video,
         "context_frames": torch.from_numpy(np.asarray(episode["context_frames"])).float(),
-        "future_frames": torch.from_numpy(np.asarray(episode["future_frames"])).float(),
         "episode_path": str(record.episode_path),
         "bundle_dir": str(record.bundle_dir),
         "training_frame_num": int(training_video.shape[0]),
@@ -190,7 +189,8 @@ def run_step(
     ).to(i2v_latent.dtype)
     y = torch.concat([i2v_mask, i2v_latent], dim=0)
 
-    seq_len = int(math.ceil((full_latents.shape[1] * full_latents.shape[2] * full_latents.shape[3] // (pipeline.patch_size[1] * pipeline.patch_size[2])) / pipeline.sp_size) * pipeline.sp_size)
+    seq_len = compute_ti2v_seq_len(full_latents, patch_size=tuple(pipeline.patch_size[1:]))
+    seq_len = int(math.ceil(seq_len / pipeline.sp_size) * pipeline.sp_size)
     timestep_tokens = build_prefix_timestep_tensor(latent_mask, timestep=timestep, seq_len=seq_len)
     state_context = pipeline._build_state_context({"state_tokens": state_tokens}, offload_model=False)
     boundary = pipeline.boundary * pipeline.num_train_timesteps

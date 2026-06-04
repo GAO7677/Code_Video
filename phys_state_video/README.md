@@ -51,6 +51,17 @@ The default system Python in this workspace does not include PyTorch. Use the ex
 /data/gaoya/miniconda3/envs/wan/bin/python -m pip install -e /home/gaoya/Code_Video/phys_state_video
 ```
 
+## Current mainline
+
+As of `2026-06-04`, the recommended mainline is:
+
+- `wan_state_v2_latent_time` predictor training on the Wan latent time axis
+- exported `state_tokens ∈ R^{L_future×D_s}` as the video-side condition interface
+- a trained Wan state adapter checkpoint as a required dependency for formal Wan inference
+- `WanImageToVideoBackend.generate()` with clean prefix latents held fixed and only future latents denoised
+
+The old `wan_state_v1` predictor and older TI2V-first adapter path are still kept for reproducibility, but they are no longer the recommended default path for new experiments.
+
 ## Quick start
 
 Train the future state predictor:
@@ -96,6 +107,10 @@ The repository now also contains a `wan_state_v2_latent_time` predictor path. Th
   - `context_only`
   - `future_only`
   - `joint_finetune`
+- optional adapter-space alignment can be added during `future_only` and `joint_finetune`
+  - freeze a trained Wan state adapter
+  - optionally freeze a teacher `wan_state_v2_latent_time` predictor
+  - align predictor-produced `future_state_latents` after the adapter encoder
 
 ### v2 latent sources
 
@@ -109,6 +124,23 @@ There are two supported ways to build predictor inputs:
   - Uses `WanLatentExtractor.encode_context_frames_raw()`
   - Requires Wan VAE checkpoint access
   - Intended for real latent-time training once the local Wan runtime is available
+
+### Recommended predictor training path
+
+The recommended predictor training path is now:
+
+1. train a baseline `wan_state_v2_latent_time` predictor
+2. train a Wan state adapter from exported `state_tokens`
+3. continue predictor training with `--adapter-align-ckpt` and optional `--teacher-predictor`
+4. run formal Wan inference through `run_inference_wan_state.py`
+
+The adapter-space alignment stage is intentionally lightweight in the current repo:
+
+- it freezes a trained Wan state adapter encoder
+- it compares the encoded `state_context` from the current predictor against a frozen teacher predictor
+- it adds `adapter_align_scale * L2(pred_state_context, teacher_state_context)` during non-`context_only` stages
+
+This is not yet full future-latent diffusion supervision, but it directly ties the predictor token space to a trained adapter space and is much stronger than state-head-only supervision.
 
 ### v2 smoke path on this machine
 
@@ -187,6 +219,14 @@ Training is staged:
 - `future_only`: freeze state heads and train the future latent rollout
 - `joint_finetune`: unfreeze all predictor modules and fine-tune jointly
 
+Optional adapter alignment:
+
+- `--teacher-predictor /path/to/predictor_v2_teacher.pt`
+- `--adapter-align-ckpt /path/to/trained_state_adapter.pt`
+- `--adapter-align-scale 1.0`
+
+This adds an adapter-space alignment loss while keeping the teacher predictor and adapter frozen.
+
 ## Wan state-condition export
 
 To connect `phys_state_video` episodes with the external Wan `state_condition` interface, export per-sample bundles containing:
@@ -233,12 +273,13 @@ For `wan_state_v2_latent_time`, the export path keeps the predictor on latent ti
 
 ## Local Wan adapter training
 
-The repository now includes a local TI2V state-adapter trainer:
+The repository now includes two local state-adapter trainers:
 
 - script: `/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py`
+- script: `/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py`
 - helpers: `/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_adapter_training.py`
 
-This trainer is intentionally aligned with the current exported bundle format instead of depending on the older external dataset wrapper:
+`train_wan_state_adapter_local.py` is the older TI2V-aligned path:
 
 - it reads `manifest.jsonl` or per-bundle directories under `--state-condition-root`
 - it loads `state_condition.npz`
@@ -247,6 +288,18 @@ This trainer is intentionally aligned with the current exported bundle format in
 - it pads the target video to Wan's `4n+1` frame convention by repeating the last frame when needed
 - it trains only the Wan `state_adapter` parameters and the model's internal `state_adapter_*` weights
 - it saves checkpoints in the format expected by `WanTI2V.load_state_adapter()`
+
+`train_wan_state_adapter_prefix_local.py` is the new recommended prefix-infill-aligned path:
+
+- it reads the same exported `state_tokens` bundles
+- it rebuilds the full `context + future` training video
+- it encodes the full clip and also separately encodes the clean context prefix
+- it keeps the entire prefix latent segment clean
+- it only adds noise to future latent steps
+- it computes training loss only on future latent steps
+- it saves checkpoints in the format expected by `WanI2V.load_state_adapter()`
+
+This second path is important because it matches the semantics of formal prefix infill inference much more closely than the older “clean first frame only” TI2V trainer.
 
 Example command:
 
@@ -258,6 +311,31 @@ Example command:
   --size 704*1280 \
   --output /path/to/checkpoints/wan_ti2v_state_adapter.pt \
   --device cuda:0
+```
+
+Recommended prefix-infill-aligned adapter training command:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py \
+  --state-condition-root /path/to/wan_state_condition_predictor_v2 \
+  --wan-ckpt-dir /path/to/Wan-I2V-checkpoint \
+  --task i2v-A14B \
+  --size 480*832 \
+  --output /path/to/checkpoints/wan_i2v_prefix_state_adapter.pt \
+  --device cuda:0
+```
+
+Formal Wan prefix infill inference now requires a trained state adapter checkpoint:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state.py \
+  --episode /path/to/episode.npz \
+  --predictor /path/to/checkpoints/predictor_v2.pt \
+  --wan-ckpt-dir /path/to/Wan-I2V-checkpoint \
+  --wan-state-adapter-ckpt /path/to/checkpoints/wan_i2v_prefix_state_adapter.pt \
+  --output /path/to/output_dir \
+  --predictor-latent-source auto \
+  --state-guidance-scale 1.0
 ```
 
 At inference time, the saved adapter checkpoint can be loaded by:
@@ -273,6 +351,7 @@ Formal unit tests now cover:
 - `wan_state_v2_latent_time` predictor shapes and staged losses
 - latent-time helper utilities
 - local TI2V adapter-training helpers such as bundle discovery, `4n+1` alignment, and checkpoint format checks
+- prefix-infill adapter helper utilities such as full-context training-video assembly, prefix masking, and prefix latent overwrite helpers
 
 Run:
 
@@ -291,5 +370,5 @@ This workspace currently has a local `Wan2.2-TI2V-5B` checkpoint under `/data/ga
 
 - CPU predictor smoke tests work
 - mock-latent v2 training/inference works
-- local Wan adapter training code is present but real optimization is blocked in this environment
+- local Wan adapter training code for both TI2V and I2V-prefix paths is present but real optimization is blocked in this environment
 - real Wan latent extraction and Wan sampling should be treated as environment-blocked until the PyTorch/CUDA build is aligned with the installed driver stack

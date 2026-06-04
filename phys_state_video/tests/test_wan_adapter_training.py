@@ -15,13 +15,20 @@ if str(SRC_ROOT) not in sys.path:
 
 from phys_state_video.utils import require_torch
 from phys_state_video.wan_adapter_training import (
+    REQUIRED_STATE_ADAPTER_KEYS_I2V,
     REQUIRED_STATE_ADAPTER_KEYS_TI2V,
+    apply_clean_prefix_to_latents,
     align_wan_frame_num,
     build_first_frame_mask,
+    build_prefix_latent_mask,
+    build_prefix_timestep_tensor,
+    build_prefix_training_video,
     build_ti2v_timestep_tensor,
     build_ti2v_training_video,
     discover_state_condition_bundles,
+    is_i2v_state_adapter_checkpoint,
     is_ti2v_state_adapter_checkpoint,
+    resample_state_tokens_to_steps,
 )
 
 torch = require_torch()
@@ -56,6 +63,48 @@ class WanAdapterTrainingTests(unittest.TestCase):
         self.assertEqual(tuple(timestep_tokens.shape), (1, 48))
         self.assertEqual(float(timestep_tokens[0, 0].item()), 0.0)
         self.assertEqual(float(timestep_tokens[0, -1].item()), 500.0)
+
+    def test_build_prefix_training_video_keeps_full_context_and_pads_last_frame(self):
+        context = torch.arange(4 * 3 * 2 * 2, dtype=torch.float32).view(4, 3, 2, 2)
+        future = 1000 + torch.arange(6 * 3 * 2 * 2, dtype=torch.float32).view(6, 3, 2, 2)
+
+        video = build_prefix_training_video(context, future)
+
+        self.assertEqual(tuple(video.shape), (13, 3, 2, 2))
+        self.assertTrue(torch.equal(video[:4], context))
+        self.assertTrue(torch.equal(video[4:10], future))
+        self.assertTrue(torch.equal(video[-1], future[-1]))
+
+    def test_prefix_mask_and_timestep_tensor(self):
+        latent = torch.zeros(16, 4, 8, 8)
+        mask = build_prefix_latent_mask(latent, prefix_len=2)
+        timestep = torch.tensor([300.0], dtype=torch.float32)
+        timestep_tokens = build_prefix_timestep_tensor(mask, timestep=timestep, seq_len=64)
+
+        self.assertEqual(tuple(mask.shape), (16, 4, 8, 8))
+        self.assertTrue(torch.equal(mask[:, :2], torch.zeros_like(mask[:, :2])))
+        self.assertTrue(torch.equal(mask[:, 2:], torch.ones_like(mask[:, 2:])))
+        self.assertEqual(tuple(timestep_tokens.shape), (1, 64))
+        self.assertEqual(float(timestep_tokens[0, 0].item()), 0.0)
+        self.assertEqual(float(timestep_tokens[0, -1].item()), 300.0)
+
+    def test_apply_clean_prefix_to_latents(self):
+        latent = torch.full((2, 5, 3, 3), fill_value=-1.0)
+        clean_prefix = torch.arange(2 * 2 * 3 * 3, dtype=torch.float32).view(2, 2, 3, 3)
+
+        updated = apply_clean_prefix_to_latents(latent, clean_prefix)
+
+        self.assertTrue(torch.equal(updated[:, :2], clean_prefix))
+        self.assertTrue(torch.equal(updated[:, 2:], latent[:, 2:]))
+
+    def test_resample_state_tokens_to_steps(self):
+        tokens = torch.tensor([[[0.0], [10.0]]])
+        resized = resample_state_tokens_to_steps(tokens, target_steps=4)
+
+        self.assertEqual(tuple(resized.shape), (1, 4, 1))
+        self.assertAlmostEqual(float(resized[0, 0, 0]), 0.0, places=5)
+        self.assertAlmostEqual(float(resized[0, -1, 0]), 10.0, places=5)
+        self.assertGreater(float(resized[0, 1, 0]), 0.0)
 
     def test_discover_state_condition_bundles_from_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -107,6 +156,12 @@ class WanAdapterTrainingTests(unittest.TestCase):
         bad = {"state_adapter": object()}
         self.assertTrue(is_ti2v_state_adapter_checkpoint(good))
         self.assertFalse(is_ti2v_state_adapter_checkpoint(bad))
+
+    def test_is_i2v_state_adapter_checkpoint(self):
+        good = {key: object() for key in REQUIRED_STATE_ADAPTER_KEYS_I2V}
+        bad = {"state_adapter": object()}
+        self.assertTrue(is_i2v_state_adapter_checkpoint(good))
+        self.assertFalse(is_i2v_state_adapter_checkpoint(bad))
 
 
 if __name__ == "__main__":

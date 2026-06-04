@@ -433,23 +433,23 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 - `当前定位`
   这版是下一条主线候选方案，目标是替代当前“predictor 先 rollout future state，再由 adapter 猜视频”的结构，改为“context latent 保持干净、future latent 补噪补全”的 prefix-conditioned 生成方式。当前仓库内已经有 3 个应该优先看的入口：`train_predictor_wan_state.py` 负责训练 `wan_state_v1 predictor`，`run_inference_wan_state.py` 负责正式的 prefix continuation 推理链路，`export_wan_state_condition_dataset.py` 负责把现有 episode 对齐到外部 `Wan state adapter` 训练/验证接口；如果只是排查本机环境能否把外部 `Wan` 跑起来，则看 `run_wan_ti2v_state_condition_smoke.py`。
 
-## 2026-06-03 wan_state_v2_latent_time predictor + TI2V state adapter 本地训练版
+## 2026-06-04 prefix_infill_v2 latent-time aligned 主线版
 
 ### 1. 方法流程
 
-这一版是当前仓库里已经落地并通过正式单测的 `v2 predictor` 主线，核心变化是 predictor 不再把 Wan latent 时间维插值回原视频帧数，而是始终停留在 `Wan VAE latent` 的时间轴上训练和推理。dataset 输入仍然来自 episode：`context_frames ∈ R^{B×K×3×H×W}`、`camera ∈ R^{B×K×C_cam}`、`context_states ∈ R^{B×K×N×10}`、`future_states ∈ R^{B×T×N×10}`、prompt。训练 predictor 时，先把 `context_frames` 编码成 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`；这里 `L_ctx = 1 + floor((K-1)/stride_t)`，`stride_t` 由 Wan VAE 决定，当前 smoke case 中 `stride_t=4`，所以例如 `K=4` 时会得到 `L_ctx=1`。随后把 `camera ∈ R^{B×K×C_cam}` 沿时间维重采样到 `camera_latent ∈ R^{B×L_ctx×C_cam}`，把 `context_states` 也重采样到 `R^{B×L_ctx×N×10}` 仅用于监督；predictor 输出 `context_state_latents ∈ R^{B×L_ctx×D_s}`、`future_state_latents ∈ R^{B×L_future×D_s}`，并通过 grouped state heads 解码出 `context_state_predictions ∈ R^{B×L_ctx×N×10}`、`future_state_predictions ∈ R^{B×L_future×N×10}`。其中 `L_future = compute_future_latent_steps(K, T, stride_t)`，也是直接按 latent 时间轴定义，而不是按原视频 future 帧数定义。训练 schedule 采用三阶段：先 `context_only`，只用 context loss 把 grouped state heads 训稳；再 `future_only`，冻结 state heads，只训练 future latent rollout；最后 `joint_finetune` 小步联合微调。推理时，给定单个 episode，先走同样的 latent-time predictor 得到 `future_state_latents ∈ R^{L_future×D_s}`，然后有两条后续路径：如果只是验证 predictor，本仓库直接用 `run_inference_wan_state_v2.py` 导出 `npz/meta`；如果要接入 Wan，则通过 `export_wan_state_condition_dataset.py` 把它写成 `state_tokens ∈ R^{L_future×D_s}` 的 bundle，再交给本地 `Wan TI2V state adapter` 训练或推理路径。
+这一版是当前仓库推荐的主线，不再把 `wan_state_v2_latent_time` 当作支线说明，而是把它和正式 `Wan I2V clean-prefix infill` 推理链路对齐成一套完整方案。整个方法分成三段：第一段是 latent-time predictor，输入 episode 中的 `context_frames ∈ R^{B×K×3×H×W}`、`camera ∈ R^{B×K×C_cam}`、`context_states ∈ R^{B×K×N×10}`、`future_states ∈ R^{B×T×N×10}`、prompt；先用 Wan VAE 把 `context_frames` 编码成原生 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`，其中 `L_ctx = 1 + floor((K-1)/stride_t)`，`stride_t` 来自 Wan VAE 的时间压缩步长。随后把 `camera` 重采样到 `camera_latent ∈ R^{B×L_ctx×C_cam}`，并把 `context_states/future_states` 仅作为监督目标重采样到 latent 时间轴；predictor 输出 `context_state_latents ∈ R^{B×L_ctx×D_s}`、`future_state_latents ∈ R^{B×L_future×D_s}`，同时解码出 `context_state_predictions ∈ R^{B×L_ctx×N×10}`、`future_state_predictions ∈ R^{B×L_future×N×10}`。第二段是 state adapter 训练：把 predictor 产出的 `future_state_latents` 写成 `state_tokens ∈ R^{L_future×D_s}` 的 bundle，分别支持旧的 `TI2V first-frame clean` 路线和新的 `I2V clean-prefix` 路线；其中主线推荐的是新的 `I2V clean-prefix` adapter 训练，即把 `context_frames + future_frames` 组成完整训练视频，编码成总 latent `z_full ∈ R^{C_w×L×H_w×W_w}`，再单独对 context 编码得到 `clean_prefix_latents ∈ R^{C_w×L_ctx×H_w×W_w}`，训练时仅对 future 部分 `L_future = L-L_ctx` 加噪，且每次 step 前后都把 `:L_ctx` 覆盖回 clean prefix，只在 future latent 上计算损失。第三段是正式推理：给定单个 episode，先用 latent-time predictor 得到 `future_state_latents ∈ R^{L_future×D_s}`，再由 `WanImageToVideoBackend.generate()` 构造总噪声 `noise ∈ R^{C_w×L×H'_w×W'_w}`，把前缀覆盖成 `clean_prefix_latents` 并在每个 diffusion step 后再次覆盖；与此同时，将 `future_state_latents` 重采样到与当前 `L_future` 对齐的 `state_tokens`，经训练好的 `Wan state adapter` 编码成 `state_context` 注入 Wan DiT。这样整个主线真正对齐成“训练 predictor 在 latent 时间轴上预测 future state tokens，训练 adapter 在 clean-prefix 语义下把 token 变成可用条件，推理时固定干净前缀 latent、只补全 future latent”。
 
 ### 1.1 Predictor 输入输出
 
-当前 `WanStateLatentPredictorV2` 的真实输入是 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`、`camera_latent ∈ R^{B×L_ctx×C_cam}` 和 prompt token；`context_states/future_states` 不进入 predictor 主干，只在 loss 中作为监督目标。每个 latent step 的视觉特征会先经过空间池化和线性投影，送入 context encoder；decoder 再基于 learned future queries 产生 `future_state_latents ∈ R^{B×L_future×D_s}`。当前实现中的显式状态 head 不是一个单独的大 head，而是按物理语义分组：`geom` 头输出 `4` 维，对应 `center_x, center_y, depth, log_scale`；`motion` 头输出 `3` 维，对应 `vel_x, vel_y, depth_vel`；`vis` 头输出 `3` 维，对应 `visibility, existence, confidence`。三组拼起来后得到 `context_state_predictions ∈ R^{B×L_ctx×N×10}` 和 `future_state_predictions ∈ R^{B×L_future×N×10}`。因此这版 predictor 的主输出仍然是 `future_state_latents`，显式 `10` 维状态是监督分支；和旧 `v1` 不同的是，这里的时间维全部是 `Wan latent` 时间维。当前已经支持两种 latent 来源：`mock latent` 路径使用 `MockLatentExtractor`，输入 `context_frames ∈ R^{B×K×3×H×W}` 后输出 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`，可以在 CPU 上跑单测和 smoke；`real Wan latent` 路径使用 `WanLatentExtractor.encode_context_frames_raw()`，输出 shape 相同，但需要本地 Wan VAE 和可用 CUDA 运行时。
+当前 `WanStateLatentPredictorV2` 的真实输入是 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`、`camera_latent ∈ R^{B×L_ctx×C_cam}` 和 prompt token；`context_states/future_states` 不进入 predictor 主干，只在 loss 中作为监督目标。每个 latent step 的视觉特征会先经过空间池化和线性投影，送入 context encoder；decoder 再基于 learned future queries 产生 `future_state_latents ∈ R^{B×L_future×D_s}`。当前实现中的显式状态 head 不是一个单独的大 head，而是按物理语义分组：`geom` 头输出 `4` 维，对应 `center_x, center_y, depth, log_scale`；`motion` 头输出 `3` 维，对应 `vel_x, vel_y, depth_vel`；`vis` 头输出 `3` 维，对应 `visibility, existence, confidence`，并已在实现上改成有界概率输出。三组拼起来后得到 `context_state_predictions ∈ R^{B×L_ctx×N×10}` 和 `future_state_predictions ∈ R^{B×L_future×N×10}`。因此这版 predictor 的主输出仍然是 `future_state_latents`，显式 `10` 维状态是监督分支；和旧 `v1` 不同的是，这里的时间维全部是 `Wan latent` 时间维。当前已经支持两种 latent 来源：`mock latent` 路径使用 `MockLatentExtractor`，输入 `context_frames ∈ R^{B×K×3×H×W}` 后输出 `context_latents_raw ∈ R^{B×L_ctx×C_w×H_w×W_w}`，可以在 CPU 上跑单测和 smoke；`real Wan latent` 路径使用 `WanLatentExtractor.encode_context_frames_raw()`，输出 shape 相同，但需要本地 Wan VAE 和可用 CUDA 运行时。为了缓解“只靠显式 state head 监督，`future_state_latents` 不一定落在 Wan adapter 真正好用的条件空间”这个问题，这版 predictor 训练脚本还新增了可选的 `adapter-space alignment`：可以加载一个冻结的 `wan_state_v2_latent_time teacher predictor` 和一个冻结的、已经训练好的 `Wan state adapter` 编码器，把当前 predictor 输出的 `future_state_latents` 和 teacher 输出分别送入同一个冻结 adapter encoder，得到 `pred_state_context / teacher_state_context`，再加 `L2(pred_state_context, teacher_state_context)` 对齐损失；这项损失只在 `future_only` 和 `joint_finetune` 阶段启用，不干扰 `context_only` 阶段稳定显式 head。
 
 ### 1.2 视频生成模型的 Condition + 条件注入
 
-这版和旧 prefix continuation 的区别是，当前仓库里 predictor 已经升级到 latent-time 版本，但真正接上的视频模型路径首先是 `Wan state_condition / TI2V adapter` 路线，而不是直接把 `v2 predictor` 接回 `WanI2V clean-prefix continuation`。具体来说，`export_wan_state_condition_dataset.py` 会把每个样本导出成一个 bundle：`input_image.png` 是首帧 context 图像，`state_condition.npz` 在 predictor 模式下保存 `state_tokens ∈ R^{L_future×D_s}`，`meta.json` 记录 `episode_path`、`context_latent_steps`、`future_latent_steps`、`temporal_stride` 等信息，`prompt.txt` 保存文本提示。Wan 侧的条件注入形式是 `adapter 注入 + cross-attention memory`：`wan_/state_condition.py` 先把 `state_tokens` 编码成 `state_context`，然后 `WanObjectStateAdapter` 的输出以 `cross-attention memory` 的形式注入 `WanTI2V.model` 的每个 block 内部 `state_adapter_*` 分支。因此当前仓库里真正训练的视频模型条件，不再是旧 baseline 里的 `condition_maps` 或 `memory_tokens`，而是 `state_tokens ∈ R^{L_future×D_s}`。在本地 `TI2V` 训练脚本里，监督视频不是 `K` 帧 context 全拼进去，而是按照当前 dataset 和 `WanTI2V` 的接口对齐为“首帧图像 + future video”：构造 `training_video ∈ R^{F_train×3×H_out×W_out}`，其中第一帧来自 `context_frames[0]`，后面接 `future_frames`，再按 Wan 规则补齐到 `4n+1` 帧。例如若 episode 里 `T=6`，则 `1+T=7`，对齐后训练视频长度会补到 `F_train=9`。训练时 `WanTI2V` 把整段 `training_video` 编码成 `input_latents ∈ R^{C_w×L×H_w×W_w}`，首帧单独编码成 `first_frame_latents ∈ R^{C_w×1×H_w×W_w}`，然后只对 `t>=1` 的 latent step 加噪，保持第一个 latent step 为 clean first-frame condition。
+视频生成模型的主 condition 已经不再是旧 baseline 里的 `condition_maps`，也不再把 `wan_state_v2_latent_time` 限定在 `TI2V first-frame clean` 路线上，而是统一成 `clean prefix latent + future state token` 这条主链。具体来说，`export_wan_state_condition_dataset.py` 会把每个样本导出成一个 bundle：`input_image.png` 是首帧 context 图像，`state_condition.npz` 在 predictor 模式下保存 `state_tokens ∈ R^{L_future×D_s}`，`meta.json` 记录 `episode_path`、`context_latent_steps`、`future_latent_steps`、`temporal_stride` 等信息，`prompt.txt` 保存文本提示。Wan 侧的条件注入形式仍然是 `adapter 注入 + cross-attention memory`：`wan_/state_condition.py` 先把 `state_tokens` 编码成 `state_context`，然后 `WanObjectStateAdapter` 的输出以 `cross-attention memory` 的形式注入 `Wan DiT` 每个 block 内部的 `state_adapter_*` 分支。主线现在有两条可复用的训练/推理语义：旧的 `TI2V first-frame clean` 路线仍然保留，用于首帧图像条件的 state adapter 训练和 smoke；新的推荐主线是 `I2V clean-prefix` 路线，即正式推理时 `WanImageToVideoBackend.generate()` 先把 `context_frames ∈ R^{K×3×H×W}` resize 后编码成 `clean_prefix_latents ∈ R^{C_w×L_ctx×H'_w×W'_w}`，构造总 latent `noise ∈ R^{C_w×L×H'_w×W'_w}`，然后在每个 diffusion step 前后都用 `clean_prefix_latents` 覆盖 `:L_ctx` 前缀，只让 future `L_future=L-L_ctx` 被采样更新；与此同时，将 `future_state_latents ∈ R^{L_future×D_s}` 送入训练好的 `state_adapter` 编成 `state_context`。为了让 state 条件更明确地影响采样，这版还把 Wan 侧 CFG 改成了 `uncond / text-only / text+state` 三分支组合：文本引导仍由 `guide_scale` 控制，而 state 条件由单独的 `state_guidance_scale` 控制，从而避免之前 cond/uncond 两支都带相同 `state_context` 时，state 条件无法被单独放大。需要特别写清楚的是：正式 prefix infill 推理现在要求显式提供训练好的 `state_adapter_ckpt`；没有 checkpoint 时，代码会直接报错，而不是仅 warning 后继续。
 
 ### 1.3 可训练模块
 
-这版实际可训练模块已经明确分成两段。第一段是 `phys_state_video` 内部的 `WanStateLatentPredictorV2`，包括 visual latent encoder、prompt encoder、context encoder、future decoder、future latent projection，以及三组显式状态 heads；训练时通过 `context_only -> future_only -> joint_finetune` 三阶段优化。第二段是本地 `Wan TI2V state adapter` 训练：`train_wan_state_adapter_local.py` 先读取导出的 bundle，再回溯 `meta.json["episode_path"]` 到原始 episode，构造首帧图像加 future 视频的监督样本，然后只训练 `pipeline.state_adapter` 本身和 `WanTI2V.model` 里所有名字包含 `state_adapter_` 的参数；`text_encoder`、`vae`、以及主 DiT 其它权重保持冻结。保存出的 checkpoint 也已经对齐到 Wan 原生格式：`state_adapter_config`、`state_adapter`、`model_state_adapter`，可以直接通过 `WanTI2V.load_state_adapter()` 或 `run_wan_ti2v_state_condition_smoke.py --state-adapter-ckpt` 加载。需要如实说明的是：代码层面这条本地 adapter 训练闭环已经补全，并且 bundle 发现、`4n+1` 对齐、checkpoint 格式判断等逻辑有正式单测；但在当前机器的 `wan` 环境里，真实训练仍被 CUDA 运行时失配阻塞，因此本次还没有完成真实 GPU 优化和保存后再采样的视频 smoke。
+这版实际可训练模块已经明确分成三段。第一段是 `phys_state_video` 内部的 `WanStateLatentPredictorV2`，包括 visual latent encoder、prompt encoder、context encoder、future decoder、future latent projection，以及三组显式状态 heads；训练时通过 `context_only -> future_only -> joint_finetune` 三阶段优化，并可选叠加 `adapter-space alignment`，把 predictor 输出的 latent 空间和训练好的 adapter 空间进一步绑紧。第二段是本地 `Wan state adapter` 训练：旧 `train_wan_state_adapter_local.py` 对齐的是 `TI2V first-frame clean` 语义，只训练 `pipeline.state_adapter` 和 `WanTI2V.model` 里所有名字包含 `state_adapter_` 的参数；新的推荐主线 `train_wan_state_adapter_prefix_local.py` 对齐的是 `I2V clean-prefix` 语义，只训练 `pipeline.state_adapter` 和 `WanI2V.low_noise_model / high_noise_model` 中所有名字包含 `state_adapter_` 的参数，`text_encoder`、`vae`、以及主 DiT 其它权重保持冻结。第三段是正式推理侧的 `Wan I2V clean-prefix continuation`：`run_inference_wan_state.py` 现已同时兼容 `wan_state_v1` 和 `wan_state_v2_latent_time` predictor checkpoint，但主线推荐的是 `wan_state_v2_latent_time`；它要求显式加载训练好的 `state_adapter_ckpt`，并允许单独设置 `state_guidance_scale`。换句话说，当前仓库已经不再是“predictor-only 支线”或“只有导出 bundle 但训练还在外部”的状态，而是具备了 `predictor latent-time training -> exported state_tokens -> local adapter training -> formal clean-prefix inference` 这整条主线闭环。需要如实说明的是：代码层面这条闭环已经补全，并且新增的 prefix adapter helper、checkpoint 格式判断、prefix mask / timestep 构造逻辑都有正式单测；但在当前机器的 `wan` 环境里，真实 GPU 训练仍被 CUDA 运行时失配阻塞，因此真实 Wan latent 提取、真实 adapter 优化和保存后再采样的视频 smoke，仍然是环境阻塞而非仓库缺实现。
 
 ### 2. 关键实现
 
@@ -465,13 +465,18 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 
 - `v2 predictor 训练入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/train_predictor_wan_state_v2.py`
-  关键函数：`build_latent_extractor()`、`configure_stage()`、`run_epoch()`、`main()`
-  作用：支持 `mock`/`wan` 两种 latent 路径，并按三阶段 schedule 训练 predictor。
+  关键函数：`build_latent_extractor()`、`load_teacher_predictor()`、`run_epoch()`、`main()`
+  作用：支持 `mock`/`wan` 两种 latent 路径，并按三阶段 schedule 训练 predictor；可选加载冻结 teacher predictor 和冻结 state adapter encoder，增加 `adapter-space alignment`。
 
-- `v2 predictor 推理入口`
+- `正式 prefix infill 推理入口`
+  路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state.py`
+  关键函数：`load_predictor()`、`build_predictor_latent_extractor()`、`main()`
+  作用：统一加载 `wan_state_v1 / wan_state_v2_latent_time` checkpoint，并在正式 Wan I2V clean-prefix 推理中要求显式加载训练好的 `state_adapter_ckpt`；同时支持独立的 `state_guidance_scale`。
+
+- `v2 predictor 诊断推理入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_v2.py`
   关键函数：`main()`
-  作用：加载 `wan_state_v2_latent_time` checkpoint，导出 `context_latents`、`future_state_latents`、`context_state_predictions`、`future_state_predictions` 等结果。
+  作用：仅用于加载 `wan_state_v2_latent_time` checkpoint，导出 `context_latents`、`future_state_latents`、`context_state_predictions`、`future_state_predictions` 等诊断结果。
 
 - `state_condition 导出入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/export_wan_state_condition_dataset.py`
@@ -488,6 +493,11 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
   关键函数：`prepare_training_sample()`、`run_step()`、`main()`
   作用：读取 bundle 和原始 episode，训练 Wan TI2V 的 state adapter，并导出 `WanTI2V.load_state_adapter()` 兼容 checkpoint。
 
+- `本地 I2V clean-prefix adapter 训练入口`
+  路径：`/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py`
+  关键函数：`prepare_training_sample()`、`run_step()`、`main()`
+  作用：读取 bundle 和原始 episode，构造完整 `context + future` 训练视频，只对 future latent 加噪，并导出 `WanI2V.load_state_adapter()` 兼容 checkpoint；这是当前与正式 prefix infill 推理语义最一致的 adapter 训练入口。
+
 - `Wan TI2V smoke 推理入口`
   路径：`/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_ti2v_state_condition_smoke.py`
   关键函数：`main()`
@@ -498,13 +508,13 @@ tmux capture-pane -pt phys_state_visualctx_v3_gpu0123:0 | tail -n 80
 - `正式单测`
   路径：`/home/gaoya/Code_Video/phys_state_video/tests/test_wan_state_predictor.py`
   路径：`/home/gaoya/Code_Video/phys_state_video/tests/test_wan_adapter_training.py`
-  当前结果：`17 passed`
+  当前结果：`22 passed`
 
 - `已跑通的 smoke`
-  这版已经跑通过 `toy dataset -> train_predictor_wan_state_v2.py --latent-source mock -> run_inference_wan_state_v2.py -> export_wan_state_condition_dataset.py` 的 CPU smoke，说明 `predictor_v2 -> export state_tokens` 这半条链是通的。
+  这版已经跑通过 `toy dataset -> train_predictor_wan_state_v2.py --latent-source mock -> run_inference_wan_state_v2.py -> export_wan_state_condition_dataset.py` 的 CPU smoke，说明 `predictor_v2 -> export state_tokens` 这半条链是通的；另外，新增的 prefix adapter helper 和新的正式推理入口也已经通过 `py_compile + unittest` 级别验证，说明主线代码在本仓库层面已自洽。
 
 - `当前阻塞`
-  本机 `nvidia-smi` 正常，驱动版本为 `570.124.06`，CUDA 版本显示为 `12.8`；但 `wan` 环境中的 PyTorch 是 `torch 2.11.0+cu130`，`torch.version.cuda == 13.0`，因此 `torch.cuda.is_available()` 返回 `False`，并报 `found version 12080` 的 driver/runtime mismatch。结论是：当前 `mock latent` predictor 路线和正式单测都可运行；本地 `Wan TI2V state adapter` 训练脚本已经补齐，但真实 GPU 训练、真实 Wan latent 提取、以及保存 adapter 后再做 Wan 采样，仍然是环境阻塞，而不是当前仓库缺少训练 loop。
+  本机 `nvidia-smi` 正常，驱动版本为 `570.124.06`，CUDA 版本显示为 `12.8`；但 `wan` 环境中的 PyTorch 是 `torch 2.11.0+cu130`，`torch.version.cuda == 13.0`，因此 `torch.cuda.is_available()` 返回 `False`，并报 `found version 12080` 的 driver/runtime mismatch。结论是：当前 `mock latent` predictor 路线和正式单测都可运行；本地 `Wan TI2V` 与 `Wan I2V clean-prefix` 两条 state adapter 训练脚本都已经补齐，但真实 GPU 训练、真实 Wan latent 提取、以及保存 adapter 后再做 Wan 采样，仍然是环境阻塞，而不是当前仓库缺少训练 loop。
 
 ## 统一可视化入口与跨方法对比
 
