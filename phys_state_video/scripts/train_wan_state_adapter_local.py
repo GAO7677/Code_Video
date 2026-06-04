@@ -129,12 +129,23 @@ def run_step(
 
     optimizer.zero_grad(set_to_none=True)
 
+    t5_model = getattr(pipeline.text_encoder, "model", None)
+    vae_module = getattr(pipeline.vae, "model", None)
     with torch.no_grad():
-        if hasattr(pipeline.text_encoder, "model"):
-            pipeline.text_encoder.model.to(device)
+        if t5_model is not None:
+            t5_model.to(device)
+        if vae_module is not None:
+            vae_module.to(device)
         context = pipeline.text_encoder([sample["prompt"]], device)
         input_latents = pipeline.vae.encode([input_video.permute(1, 0, 2, 3).contiguous()])[0]
         first_frame_latents = pipeline.vae.encode([first_frame.permute(1, 0, 2, 3).contiguous()])[0]
+        if t5_model is not None:
+            t5_model.to("cpu")
+        if vae_module is not None:
+            vae_module.to("cpu")
+
+    del input_video, first_frame
+    torch.cuda.empty_cache()
 
     latent_mask = build_first_frame_mask(input_latents)
     timestep = scheduler.sample_timestep(device=device, dtype=torch.float32)
@@ -142,11 +153,14 @@ def run_step(
     noised_latents = scheduler.add_noise(input_latents, noise, timestep)
     noised_latents = (1.0 - latent_mask) * first_frame_latents + latent_mask * noised_latents
     training_target = scheduler.training_target(input_latents, noise, timestep)
+    latent_steps = float(input_latents.shape[1])
 
     seq_len = compute_ti2v_seq_len(input_latents, patch_size=tuple(pipeline.patch_size[1:]))
     seq_len = int(math.ceil(seq_len / pipeline.sp_size)) * pipeline.sp_size
     timestep_tokens = build_ti2v_timestep_tensor(latent_mask, timestep=timestep, seq_len=seq_len)
     state_context = pipeline._build_state_context(state_condition, offload_model=False)
+    del state_condition, input_latents, noise, first_frame_latents, latent_mask
+    torch.cuda.empty_cache()
 
     with torch.amp.autocast("cuda", dtype=pipeline.param_dtype):
         noise_pred = pipeline.model(
@@ -161,12 +175,14 @@ def run_step(
         loss = loss * scheduler.training_weight(timestep)
 
     loss.backward()
+    del context, state_context, timestep_tokens, noised_latents, training_target, noise_pred
+    torch.cuda.empty_cache()
     optimizer.step()
 
     return {
         "loss": float(loss.detach().cpu()),
         "training_frame_num": float(sample["training_frame_num"]),
-        "latent_steps": float(input_latents.shape[1]),
+        "latent_steps": latent_steps,
     }
 
 

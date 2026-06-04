@@ -3,6 +3,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 
@@ -409,6 +410,7 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # head
         self.head = Head(dim, out_dim, patch_size, eps)
+        self.gradient_checkpointing = False
 
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
@@ -424,12 +426,15 @@ class WanModel(ModelMixin, ConfigMixin):
         self.init_weights()
 
     def _embed_text_context(self, context):
-        return self.text_embedding(
-            torch.stack([
-                torch.cat(
-                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                for u in context
-            ]))
+        context_lens = torch.tensor([u.size(0) for u in context],
+                                    dtype=torch.long,
+                                    device=context[0].device)
+        padded = torch.stack([
+            torch.cat(
+                [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
+            for u in context
+        ])
+        return self.text_embedding(padded), context_lens
 
     def _prepare_state_context(self, state_context, batch_size=None):
         if state_context is None:
@@ -495,6 +500,12 @@ class WanModel(ModelMixin, ConfigMixin):
             )
         return filtered_missing, filtered_unexpected
 
+    def enable_gradient_checkpointing(self):
+        self.gradient_checkpointing = True
+
+    def disable_gradient_checkpointing(self):
+        self.gradient_checkpointing = False
+
     def forward(
         self,
         x,
@@ -559,8 +570,7 @@ class WanModel(ModelMixin, ConfigMixin):
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
-        context_lens = None
-        context = self._embed_text_context(context)
+        context, context_lens = self._embed_text_context(context)
         state_context, state_context_lens = self._prepare_state_context(
             state_context, batch_size=len(x))
 
@@ -577,7 +587,13 @@ class WanModel(ModelMixin, ConfigMixin):
             state_scale=state_scale)
 
         for block in self.blocks:
-            x = block(x, **kwargs)
+            if self.training and self.gradient_checkpointing:
+                x = torch.utils.checkpoint.checkpoint(
+                    lambda hidden_states: block(hidden_states, **kwargs),
+                    x,
+                    use_reentrant=False)
+            else:
+                x = block(x, **kwargs)
 
         # head
         x = self.head(x, e)

@@ -211,7 +211,9 @@ def select_ti2v_state_adapter_parameters(pipeline) -> list[tuple[str, torch.nn.P
     vae_module = getattr(pipeline.vae, "model", None)
     if vae_module is not None and hasattr(vae_module, "eval"):
         vae_module.eval().requires_grad_(False)
-    pipeline.model.eval()
+    if hasattr(pipeline.model, "enable_gradient_checkpointing"):
+        pipeline.model.enable_gradient_checkpointing()
+    pipeline.model.train()
     pipeline.model.requires_grad_(False)
     pipeline.state_adapter.train()
     pipeline.state_adapter.requires_grad_(True)
