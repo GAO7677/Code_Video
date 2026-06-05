@@ -22,8 +22,7 @@ from phys_state_video.wan_adapter_training import (
     build_prefix_latent_mask,
     build_prefix_timestep_tensor,
     build_prefix_training_video,
-    normalize_video_range,
-    resize_and_center_crop_frames,
+    preprocess_ti2v_prefix_frames,
     resample_condition_maps_to_steps,
     select_ti2v_state_adapter_parameters,
     serialize_ti2v_state_adapter_checkpoint,
@@ -37,7 +36,9 @@ from phys_state_video.wan_state_condition_bundles import (
     load_state_condition_npz,
 )
 from phys_state_video.wan_state_v2_helpers import (
+    build_future_step_loss_mask,
     build_state_condition_payload_from_condition_maps,
+    compute_future_latent_steps,
     filter_state_condition_payload_for_adapter,
 )
 
@@ -87,6 +88,8 @@ def default_best_output(output_path: Path) -> Path:
 def prepare_training_sample(record, *, frame_num: int) -> dict[str, object]:
     episode = load_episode_npz(record.episode_path)
     state_condition = load_state_condition_npz(record.state_condition_path)
+    context_frame_num = int(np.asarray(episode["context_frames"]).shape[0])
+    future_frame_num = int(np.asarray(episode["future_frames"]).shape[0])
     training_video = build_prefix_training_video(
         context_frames=episode["context_frames"],
         future_frames=episode["future_frames"],
@@ -98,6 +101,8 @@ def prepare_training_sample(record, *, frame_num: int) -> dict[str, object]:
         "state_condition": state_condition,
         "training_video": training_video,
         "context_frames": torch.from_numpy(np.asarray(episode["context_frames"])).float(),
+        "context_frame_num": context_frame_num,
+        "future_frame_num": future_frame_num,
         "episode_path": str(record.episode_path),
         "bundle_dir": str(record.bundle_dir),
         "training_frame_num": int(training_video.shape[0]),
@@ -143,8 +148,8 @@ def run_step(
     full_video = sample["training_video"].to(device=device, dtype=torch.float32)
     context_frames = sample["context_frames"].to(device=device, dtype=torch.float32)
     out_h, out_w = int(output_size[0]), int(output_size[1])
-    full_video = resize_and_center_crop_frames(normalize_video_range(full_video), out_h=out_h, out_w=out_w)
-    resized_context = resize_and_center_crop_frames(normalize_video_range(context_frames), out_h=out_h, out_w=out_w)
+    full_video = preprocess_ti2v_prefix_frames(full_video, out_h=out_h, out_w=out_w)
+    resized_context = preprocess_ti2v_prefix_frames(context_frames, out_h=out_h, out_w=out_w)
 
     optimizer.zero_grad(set_to_none=True)
 
@@ -180,6 +185,16 @@ def run_step(
         )
     clean_prefix_latents = full_latents[:, :prefix_len].contiguous()
     future_latent_steps = int(full_latents.shape[1] - prefix_len)
+    valid_future_latent_steps = compute_future_latent_steps(
+        context_steps=int(sample["context_frame_num"]),
+        future_steps=int(sample["future_frame_num"]),
+        temporal_stride=int(pipeline.vae_stride[0]),
+    )
+    if valid_future_latent_steps > future_latent_steps:
+        raise ValueError(
+            f"valid_future_latent_steps exceeds padded future_latent_steps for sample {sample['sample_id']}: "
+            f"{valid_future_latent_steps=} vs {future_latent_steps=}"
+        )
     state_condition_payload = build_ti2v_prefix_state_condition_payload(
         sample["state_condition"],
         device=device,
@@ -220,7 +235,18 @@ def run_step(
             state_context=state_context,
             state_scale=state_scale,
         )[0]
-        loss = F.mse_loss(noise_pred[:, prefix_len:].float(), training_target[:, prefix_len:].float())
+        future_noise_pred = noise_pred[:, prefix_len:].float()
+        future_target = training_target[:, prefix_len:].float()
+        future_loss_mask = build_future_step_loss_mask(
+            future_latent_steps=future_latent_steps,
+            valid_future_latent_steps=valid_future_latent_steps,
+            device=future_noise_pred.device,
+            dtype=future_noise_pred.dtype,
+        )
+        squared_error = (future_noise_pred - future_target) ** 2
+        masked_error = squared_error * future_loss_mask
+        denom = future_loss_mask.sum() * future_noise_pred.shape[0] * future_noise_pred.shape[2] * future_noise_pred.shape[3]
+        loss = masked_error.sum() / denom.clamp_min(1.0)
         loss = loss * scheduler.training_weight(timestep)
 
     loss.backward()
@@ -231,6 +257,8 @@ def run_step(
         "training_frame_num": float(full_video.shape[0]),
         "prefix_latent_steps": float(prefix_len),
         "future_latent_steps": float(future_latent_steps),
+        "valid_future_latent_steps": float(valid_future_latent_steps),
+        "padded_future_latent_steps": float(future_latent_steps - valid_future_latent_steps),
     }
 
 

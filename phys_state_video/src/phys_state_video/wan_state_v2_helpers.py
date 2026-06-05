@@ -11,6 +11,36 @@ torch = require_torch()
 F = torch.nn.functional
 
 
+def normalize_video_range_shared(frames: torch.Tensor) -> torch.Tensor:
+    if not torch.is_floating_point(frames):
+        frames = frames.float()
+    max_value = float(frames.max()) if frames.numel() > 0 else 1.0
+    min_value = float(frames.min()) if frames.numel() > 0 else 0.0
+    if min_value >= 0.0 and max_value <= 1.0:
+        return frames * 2.0 - 1.0
+    if min_value >= 0.0 and max_value <= 255.0:
+        return frames / 127.5 - 1.0
+    return frames.clamp(-1.0, 1.0)
+
+
+def resize_and_center_crop_frames_shared(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
+    if frames.ndim != 4:
+        raise ValueError(f"expected frames with shape [T, 3, H, W], got {tuple(frames.shape)}")
+    _, _, in_h, in_w = frames.shape
+    scale = max(out_h / max(in_h, 1), out_w / max(in_w, 1))
+    resized_h = max(int(round(in_h * scale)), out_h)
+    resized_w = max(int(round(in_w * scale)), out_w)
+    resized = F.interpolate(frames, size=(resized_h, resized_w), mode="bilinear", align_corners=False)
+    top = max((resized_h - out_h) // 2, 0)
+    left = max((resized_w - out_w) // 2, 0)
+    return resized[:, :, top : top + out_h, left : left + out_w].contiguous()
+
+
+def preprocess_ti2v_prefix_frames_shared(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
+    normalized = normalize_video_range_shared(frames)
+    return resize_and_center_crop_frames_shared(normalized, out_h=out_h, out_w=out_w)
+
+
 def compute_latent_step_count(frame_steps: int, temporal_stride: int) -> int:
     if frame_steps <= 0:
         raise ValueError(f"frame_steps must be positive, got {frame_steps}")
@@ -29,6 +59,24 @@ def compute_future_latent_steps(context_steps: int, future_steps: int, temporal_
             f"temporal_stride={temporal_stride}, total_latents={total}, context_latents={context}"
         )
     return future
+
+
+def build_future_step_loss_mask(
+    future_latent_steps: int,
+    valid_future_latent_steps: int,
+    *,
+    device,
+    dtype,
+) -> torch.Tensor:
+    if future_latent_steps <= 0:
+        raise ValueError(f"future_latent_steps must be positive, got {future_latent_steps}")
+    if valid_future_latent_steps <= 0 or valid_future_latent_steps > future_latent_steps:
+        raise ValueError(
+            f"valid_future_latent_steps must be in [1, {future_latent_steps}], got {valid_future_latent_steps}"
+        )
+    mask = torch.zeros((1, future_latent_steps, 1, 1), device=device, dtype=dtype)
+    mask[:, :valid_future_latent_steps] = 1
+    return mask
 
 
 def resample_camera_to_latent_steps(camera: torch.Tensor, target_steps: int) -> torch.Tensor:

@@ -23,6 +23,9 @@ from .wan_state_v2_helpers import (
     build_prefix_latent_mask as build_prefix_latent_mask_shared,
     build_prefix_timestep_tensor as build_prefix_timestep_tensor_shared,
     filter_state_condition_payload_for_adapter as filter_state_condition_payload_for_adapter_shared,
+    normalize_video_range_shared,
+    preprocess_ti2v_prefix_frames_shared,
+    resize_and_center_crop_frames_shared,
     resample_condition_maps_to_steps as resample_condition_maps_to_steps_shared,
 )
 
@@ -45,28 +48,15 @@ def to_frame_tensor(frames: np.ndarray | torch.Tensor) -> torch.Tensor:
 
 
 def resize_and_center_crop_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
-    if frames.ndim != 4:
-        raise ValueError(f"expected frames with shape [T, 3, H, W], got {tuple(frames.shape)}")
-    _, _, in_h, in_w = frames.shape
-    scale = max(out_h / max(in_h, 1), out_w / max(in_w, 1))
-    resized_h = max(int(round(in_h * scale)), out_h)
-    resized_w = max(int(round(in_w * scale)), out_w)
-    resized = F.interpolate(frames, size=(resized_h, resized_w), mode="bilinear", align_corners=False)
-    top = max((resized_h - out_h) // 2, 0)
-    left = max((resized_w - out_w) // 2, 0)
-    return resized[:, :, top : top + out_h, left : left + out_w].contiguous()
+    return resize_and_center_crop_frames_shared(frames, out_h, out_w)
 
 
 def normalize_video_range(frames: torch.Tensor) -> torch.Tensor:
-    if not torch.is_floating_point(frames):
-        frames = frames.float()
-    max_value = float(frames.max()) if frames.numel() > 0 else 1.0
-    min_value = float(frames.min()) if frames.numel() > 0 else 0.0
-    if min_value >= 0.0 and max_value <= 1.0:
-        return frames * 2.0 - 1.0
-    if min_value >= 0.0 and max_value <= 255.0:
-        return frames / 127.5 - 1.0
-    return frames.clamp(-1.0, 1.0)
+    return normalize_video_range_shared(frames)
+
+
+def preprocess_ti2v_prefix_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
+    return preprocess_ti2v_prefix_frames_shared(frames, out_h, out_w)
 
 
 def build_ti2v_training_video(

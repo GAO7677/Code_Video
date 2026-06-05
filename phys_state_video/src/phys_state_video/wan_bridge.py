@@ -24,6 +24,8 @@ from .wan_state_v2_helpers import (
     apply_clean_prefix_to_latents,
     build_state_condition_payload_from_condition_maps,
     filter_state_condition_payload_for_adapter,
+    normalize_video_range_shared,
+    preprocess_ti2v_prefix_frames_shared,
     resample_condition_maps_to_steps,
 )
 
@@ -43,11 +45,7 @@ def load_wan_modules(wan_repo_root: str | Path | None = None):
 
 
 def _normalize_video_range(frames: torch.Tensor) -> torch.Tensor:
-    if torch.is_floating_point(frames):
-        if float(frames.min()) >= 0.0 and float(frames.max()) <= 1.0:
-            return frames * 2.0 - 1.0
-        return frames.clamp(-1.0, 1.0)
-    return frames.float().div(127.5).sub(1.0).clamp(-1.0, 1.0)
+    return normalize_video_range_shared(frames)
 
 
 def _build_prefix_condition_mask(
@@ -162,6 +160,10 @@ def _resize_video_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.
         mode="bicubic",
         align_corners=False,
     ).to(frames.dtype)
+
+
+def _prepare_ti2v_prefix_frames(frames: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
+    return preprocess_ti2v_prefix_frames_shared(frames, out_h=out_h, out_w=out_w)
 
 
 def _frame_to_pil_image(frame: torch.Tensor | np.ndarray | Image.Image | str | Path) -> Image.Image:
@@ -760,8 +762,7 @@ class WanTextImageToVideoPrefixBackend:
 
         context_steps = int(context_frames.shape[0])
         context_frames = context_frames.to(self.pipeline.device)
-        normalized_context = _normalize_video_range(context_frames)
-        resized_context = _resize_video_frames(normalized_context, out_h=out_h, out_w=out_w)
+        resized_context = _prepare_ti2v_prefix_frames(context_frames, out_h=out_h, out_w=out_w)
         clean_prefix_latents = _encode_video_prefix_latents(self.pipeline.vae, resized_context)
 
         seed = seed if seed >= 0 else random.randint(0, sys.maxsize)

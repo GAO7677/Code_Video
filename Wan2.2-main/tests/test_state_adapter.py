@@ -88,6 +88,18 @@ class StateAdapterTests(unittest.TestCase):
         # 2 memory tokens + (3 time steps * 4 * 4 spatial cells) map tokens
         self.assertEqual(tuple(encoded.shape), (1, 50, 24))
 
+    def test_condition_map_tokens_receive_spatiotemporal_position_signal(self):
+        adapter = self.state_mod.WanObjectStateAdapter(
+            model_dim=24,
+            map_token_dim=3,
+        )
+        encoded = adapter({
+            "condition_maps": torch.zeros(1, 2, 3, 2, 2),
+        })
+        self.assertEqual(tuple(encoded.shape), (1, 8, 24))
+        self.assertFalse(torch.allclose(encoded[:, 0], encoded[:, 1]))
+        self.assertFalse(torch.allclose(encoded[:, 0], encoded[:, -1]))
+
     def test_wan_model_accepts_state_context(self):
         model = self.model_mod.WanModel(
             model_type="t2v",

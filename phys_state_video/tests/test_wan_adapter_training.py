@@ -28,7 +28,9 @@ from phys_state_video.wan_adapter_training import (
     discover_state_condition_bundles,
     is_i2v_state_adapter_checkpoint,
     is_ti2v_state_adapter_checkpoint,
+    preprocess_ti2v_prefix_frames,
 )
+from phys_state_video.wan_state_v2_helpers import build_future_step_loss_mask, compute_future_latent_steps
 
 torch = require_torch()
 
@@ -95,6 +97,31 @@ class WanAdapterTrainingTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(updated[:, :2], clean_prefix))
         self.assertTrue(torch.equal(updated[:, 2:], latent[:, 2:]))
+
+    def test_preprocess_ti2v_prefix_frames_normalizes_and_center_crops(self):
+        frames = torch.zeros(1, 3, 4, 8, dtype=torch.float32)
+        frames[:, :, :, 2:4] = 255.0
+        processed = preprocess_ti2v_prefix_frames(frames, out_h=4, out_w=4)
+
+        self.assertEqual(tuple(processed.shape), (1, 3, 4, 4))
+        self.assertLessEqual(float(processed.max()), 1.0)
+        self.assertGreaterEqual(float(processed.min()), -1.0)
+        self.assertTrue(torch.allclose(processed[:, :, :, :2], torch.ones_like(processed[:, :, :, :2])))
+        self.assertTrue(torch.allclose(processed[:, :, :, 2:], -torch.ones_like(processed[:, :, :, 2:])))
+
+    def test_compute_future_latent_steps_excludes_4n_plus_1_padding_tail(self):
+        self.assertEqual(compute_future_latent_steps(context_steps=4, future_steps=6, temporal_stride=4), 2)
+
+    def test_build_future_step_loss_mask_marks_only_valid_future_steps(self):
+        mask = build_future_step_loss_mask(
+            future_latent_steps=3,
+            valid_future_latent_steps=2,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+        self.assertEqual(tuple(mask.shape), (1, 3, 1, 1))
+        self.assertTrue(torch.equal(mask[:, :2], torch.ones_like(mask[:, :2])))
+        self.assertTrue(torch.equal(mask[:, 2:], torch.zeros_like(mask[:, 2:])))
 
     def test_discover_state_condition_bundles_from_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:

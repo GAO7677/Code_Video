@@ -39,6 +39,47 @@ def _flatten_condition_maps_to_tokens(condition_maps):
         batch, steps * height * width, channels)
 
 
+def _build_1d_sincos_positions(length, dim, device, dtype):
+    if length <= 0:
+        raise ValueError(f"position length must be positive, got {length}")
+    if dim <= 0:
+        raise ValueError(f"position dim must be positive, got {dim}")
+    positions = torch.arange(length, device=device, dtype=torch.float32)
+    half_dim = dim // 2
+    if half_dim == 0:
+        return positions.unsqueeze(-1).to(dtype)
+    exponent = torch.arange(half_dim, device=device, dtype=torch.float32)
+    exponent = exponent / max(half_dim - 1, 1)
+    omega = torch.exp(-torch.log(torch.tensor(10000.0, device=device)) * exponent)
+    angles = positions.unsqueeze(-1) * omega.unsqueeze(0)
+    embeddings = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
+    if embeddings.shape[-1] < dim:
+        embeddings = torch.cat(
+            [embeddings, torch.zeros(length, dim - embeddings.shape[-1], device=device, dtype=embeddings.dtype)],
+            dim=-1,
+        )
+    return embeddings[:, :dim].to(dtype)
+
+
+def _build_condition_map_positional_tokens(steps, height, width, dim, device, dtype):
+    if min(steps, height, width) <= 0:
+        raise ValueError(
+            f"steps, height, width must be positive, got steps={steps}, height={height}, width={width}"
+        )
+    t_dim = max(dim // 3, 1)
+    h_dim = max(dim // 3, 1)
+    w_dim = max(dim - t_dim - h_dim, 1)
+    while t_dim + h_dim + w_dim > dim:
+        w_dim -= 1
+    t_pos = _build_1d_sincos_positions(steps, t_dim, device=device, dtype=dtype).view(steps, 1, 1, t_dim)
+    h_pos = _build_1d_sincos_positions(height, h_dim, device=device, dtype=dtype).view(1, height, 1, h_dim)
+    w_pos = _build_1d_sincos_positions(width, w_dim, device=device, dtype=dtype).view(1, 1, width, w_dim)
+    t_pos = t_pos.expand(steps, height, width, t_dim)
+    h_pos = h_pos.expand(steps, height, width, h_dim)
+    w_pos = w_pos.expand(steps, height, width, w_dim)
+    return torch.cat([t_pos, h_pos, w_pos], dim=-1).view(1, steps * height * width, dim)
+
+
 def canonicalize_state_condition(state_condition):
     if state_condition is None:
         return None
@@ -163,7 +204,16 @@ class WanObjectStateAdapter(nn.Module):
             if self.map_token_encoder is None:
                 raise RuntimeError("map_token_encoder is not initialized")
             map_tokens = _flatten_condition_maps_to_tokens(condition_maps)
-            tokens.append(self.map_token_encoder(map_tokens))
+            encoded_map_tokens = self.map_token_encoder(map_tokens)
+            position_tokens = _build_condition_map_positional_tokens(
+                steps=condition_maps.shape[1],
+                height=condition_maps.shape[3],
+                width=condition_maps.shape[4],
+                dim=encoded_map_tokens.shape[-1],
+                device=encoded_map_tokens.device,
+                dtype=encoded_map_tokens.dtype,
+            )
+            tokens.append(encoded_map_tokens + position_tokens)
 
         if not tokens:
             return None
