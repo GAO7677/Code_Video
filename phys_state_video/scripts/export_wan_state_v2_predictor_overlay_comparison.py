@@ -655,42 +655,74 @@ def main():
     predictor_a, predictor_ckpt_a = load_wan_state_predictor(args.predictor_a, device)
     predictor_b, predictor_ckpt_b = load_wan_state_predictor(args.predictor_b, device)
 
-    latent_extractor_a = build_predictor_latent_extractor(
-        wan_ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        device=device,
-        predictor_ckpt=predictor_ckpt_a,
+    resolved_task_a = resolve_predictor_wan_task(
+        predictor_ckpt_a,
         default_wan_task=args.wan_task,
         predictor_wan_task=args.predictor_a_wan_task,
-        context="wan_state_v2 predictor comparison export A",
     )
-    prompt_context_encoder_a = build_predictor_prompt_context_encoder(
-        wan_ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        device=device,
-        predictor_ckpt=predictor_ckpt_a,
-        default_wan_task=args.wan_task,
-        predictor_wan_task=args.predictor_a_wan_task,
-        context="wan_state_v2 predictor comparison export A",
-    )
-    latent_extractor_b = build_predictor_latent_extractor(
-        wan_ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        device=device,
-        predictor_ckpt=predictor_ckpt_b,
+    resolved_task_b = resolve_predictor_wan_task(
+        predictor_ckpt_b,
         default_wan_task=args.wan_task,
         predictor_wan_task=args.predictor_b_wan_task,
-        context="wan_state_v2 predictor comparison export B",
     )
-    prompt_context_encoder_b = build_predictor_prompt_context_encoder(
-        wan_ckpt_dir=args.wan_ckpt_dir,
-        wan_repo_root=args.wan_repo_root,
-        device=device,
-        predictor_ckpt=predictor_ckpt_b,
-        default_wan_task=args.wan_task,
-        predictor_wan_task=args.predictor_b_wan_task,
-        context="wan_state_v2 predictor comparison export B",
-    )
+    if resolved_task_a == resolved_task_b:
+        latent_extractor_a = build_predictor_latent_extractor(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_a,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_a_wan_task,
+            context="wan_state_v2 predictor comparison export shared",
+        )
+        prompt_context_encoder_a = build_predictor_prompt_context_encoder(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_a,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_a_wan_task,
+            context="wan_state_v2 predictor comparison export shared",
+        )
+        latent_extractor_b = latent_extractor_a
+        prompt_context_encoder_b = prompt_context_encoder_a
+    else:
+        latent_extractor_a = build_predictor_latent_extractor(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_a,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_a_wan_task,
+            context="wan_state_v2 predictor comparison export A",
+        )
+        prompt_context_encoder_a = build_predictor_prompt_context_encoder(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_a,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_a_wan_task,
+            context="wan_state_v2 predictor comparison export A",
+        )
+        latent_extractor_b = build_predictor_latent_extractor(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_b,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_b_wan_task,
+            context="wan_state_v2 predictor comparison export B",
+        )
+        prompt_context_encoder_b = build_predictor_prompt_context_encoder(
+            wan_ckpt_dir=args.wan_ckpt_dir,
+            wan_repo_root=args.wan_repo_root,
+            device=device,
+            predictor_ckpt=predictor_ckpt_b,
+            default_wan_task=args.wan_task,
+            predictor_wan_task=args.predictor_b_wan_task,
+            context="wan_state_v2 predictor comparison export B",
+        )
 
     cases = []
     aggregate = {
@@ -849,16 +881,8 @@ def main():
         "predictor_b_name": Path(args.predictor_b).name,
         "label_a": args.label_a,
         "label_b": args.label_b,
-        "predictor_a_wan_task": resolve_predictor_wan_task(
-            predictor_ckpt_a,
-            default_wan_task=args.wan_task,
-            predictor_wan_task=args.predictor_a_wan_task,
-        ),
-        "predictor_b_wan_task": resolve_predictor_wan_task(
-            predictor_ckpt_b,
-            default_wan_task=args.wan_task,
-            predictor_wan_task=args.predictor_b_wan_task,
-        ),
+        "predictor_a_wan_task": resolved_task_a,
+        "predictor_b_wan_task": resolved_task_b,
         "port": args.port,
         "case_count": len(cases),
         "model_summaries": [
