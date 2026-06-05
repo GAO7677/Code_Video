@@ -3,9 +3,11 @@ from __future__ import annotations
 import gc
 import math
 import random
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -681,4 +683,287 @@ class WanTextImageToVideoBackend:
         )
         if video is None:
             raise RuntimeError("WanTI2V returned None")
+        return video[:, :requested_total_frames].detach().cpu()
+
+
+@dataclass(slots=True)
+class WanTextImageToVideoPrefixBackend:
+    ckpt_dir: str | Path
+    wan_repo_root: str | Path | None = None
+    task: str = "ti2v-5B"
+    device: str = "cuda"
+    state_adapter_ckpt: str | Path | None = None
+    _wan_configs: dict[str, Any] = field(init=False, repr=False)
+    _max_area_configs: dict[str, int] = field(init=False, repr=False)
+    _size_configs: dict[str, tuple[int, int]] = field(init=False, repr=False)
+    _supported_sizes: dict[str, tuple[str, ...]] = field(init=False, repr=False)
+    pipeline: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not str(self.device).startswith("cuda"):
+            raise ValueError("WanTextImageToVideoPrefixBackend currently requires a CUDA device")
+        modules = load_wan_modules(self.wan_repo_root)
+        self._wan_configs = modules["WAN_CONFIGS"]
+        self._max_area_configs = modules["MAX_AREA_CONFIGS"]
+        self._size_configs = modules["SIZE_CONFIGS"]
+        self._supported_sizes = modules["SUPPORTED_SIZES"]
+        if self.task not in self._wan_configs:
+            raise ValueError(f"unsupported Wan task: {self.task}")
+        device_id = int(str(self.device).split(":")[1]) if ":" in str(self.device) else 0
+        self.pipeline = modules["WanTI2V"](
+            config=self._wan_configs[self.task],
+            checkpoint_dir=str(self.ckpt_dir),
+            device_id=device_id,
+            rank=0,
+        )
+
+    def generate(
+        self,
+        prompt: str,
+        context_frames: torch.Tensor,
+        size: str,
+        frame_num: int,
+        memory_tokens: torch.Tensor | None = None,
+        condition_maps: torch.Tensor | None = None,
+        sample_solver: str = "unipc",
+        sampling_steps: int = 40,
+        guide_scale: float = 5.0,
+        shift: float = 5.0,
+        negative_prompt: str = "",
+        seed: int = -1,
+        offload_model: bool = True,
+        state_scale: float = 1.0,
+        state_guidance_scale: float = 1.0,
+    ) -> torch.Tensor:
+        if size not in self._supported_sizes[self.task]:
+            raise ValueError(
+                f"unsupported size '{size}' for task '{self.task}', expected one of {self._supported_sizes[self.task]}"
+            )
+        if context_frames.ndim != 4:
+            raise ValueError(f"expected context frames with shape [K, 3, H, W], got {tuple(context_frames.shape)}")
+        if context_frames.shape[0] >= frame_num:
+            raise ValueError(
+                f"frame_num must be larger than context length so there is future to generate, got {frame_num=} and K={context_frames.shape[0]}"
+            )
+        if condition_maps is None:
+            raise ValueError("condition_maps is required for wan_state_v2 TI2V clean-prefix inference")
+
+        requested_total_frames = int(frame_num)
+        total_frames = _align_wan_frame_num(requested_total_frames)
+        out_h, out_w = self._size_configs[size]
+        lat_h = out_h // self.pipeline.vae_stride[1]
+        lat_w = out_w // self.pipeline.vae_stride[2]
+        seq_len = ((total_frames - 1) // self.pipeline.vae_stride[0] + 1) * lat_h * lat_w // (
+            self.pipeline.patch_size[1] * self.pipeline.patch_size[2]
+        )
+        seq_len = int(math.ceil(seq_len / self.pipeline.sp_size)) * self.pipeline.sp_size
+
+        context_steps = int(context_frames.shape[0])
+        context_frames = context_frames.to(self.pipeline.device)
+        normalized_context = _normalize_video_range(context_frames)
+        resized_context = _resize_video_frames(normalized_context, out_h=out_h, out_w=out_w)
+        clean_prefix_latents = _encode_video_prefix_latents(self.pipeline.vae, resized_context)
+
+        seed = seed if seed >= 0 else random.randint(0, sys.maxsize)
+        seed_g = torch.Generator(device=self.pipeline.device)
+        seed_g.manual_seed(seed)
+        noise = torch.randn(
+            self.pipeline.vae.model.z_dim,
+            (total_frames - 1) // self.pipeline.vae_stride[0] + 1,
+            lat_h,
+            lat_w,
+            dtype=torch.float32,
+            generator=seed_g,
+            device=self.pipeline.device,
+        )
+        prefix_len = int(clean_prefix_latents.shape[1])
+        if prefix_len >= noise.shape[1]:
+            raise ValueError(
+                "context prefix covers all Wan latent steps, leaving no future latent step to denoise: "
+                f"prefix_len={prefix_len}, latent_steps={noise.shape[1]}"
+            )
+        future_latent_steps = int(noise.shape[1] - prefix_len)
+
+        condition_memory = _to_detached_tensor(memory_tokens)
+        if condition_memory is not None and condition_memory.ndim == 2:
+            condition_memory = condition_memory.unsqueeze(0)
+        condition_maps_tensor = _to_detached_tensor(condition_maps)
+        if condition_maps_tensor.ndim == 4:
+            condition_maps_tensor = condition_maps_tensor.unsqueeze(0)
+        if condition_maps_tensor.ndim != 5:
+            raise ValueError(
+                "condition_maps must have shape [T, C, H, W] or [B, T, C, H, W] for TI2V clean-prefix inference"
+            )
+        condition_maps_tensor = condition_maps_tensor.to(self.pipeline.device)
+        condition_maps_tensor = _resample_condition_maps_to_steps(condition_maps_tensor, future_latent_steps)
+        if condition_memory is not None:
+            condition_memory = condition_memory.to(self.pipeline.device)
+
+        if negative_prompt == "":
+            negative_prompt = self.pipeline.sample_neg_prompt
+
+        i2v_video = torch.zeros(
+            3,
+            total_frames,
+            out_h,
+            out_w,
+            dtype=resized_context.dtype,
+            device=self.pipeline.device,
+        )
+        i2v_video[:, :1] = resized_context[:1].permute(1, 0, 2, 3)
+        i2v_latent = self.pipeline.vae.encode([i2v_video])[0]
+        i2v_mask = _build_prefix_condition_mask(
+            total_frames=total_frames,
+            context_steps=1,
+            lat_h=lat_h,
+            lat_w=lat_w,
+            device=self.pipeline.device,
+        ).to(i2v_latent.dtype)
+        y = torch.concat([i2v_mask, i2v_latent], dim=0)
+        latent = _apply_clean_prefix_to_latent(noise, clean_prefix_latents)
+
+        if not self.pipeline.t5_cpu:
+            self.pipeline.text_encoder.model.to(self.pipeline.device)
+            context = self.pipeline.text_encoder([prompt], self.pipeline.device)
+            context_null = self.pipeline.text_encoder([negative_prompt], self.pipeline.device)
+            if offload_model:
+                self.pipeline.text_encoder.model.cpu()
+        else:
+            context = self.pipeline.text_encoder([prompt], torch.device("cpu"))
+            context_null = self.pipeline.text_encoder([negative_prompt], torch.device("cpu"))
+            context = [item.to(self.pipeline.device) for item in context]
+            context_null = [item.to(self.pipeline.device) for item in context_null]
+
+        @contextmanager
+        def noop_no_sync():
+            yield
+
+        no_sync = getattr(self.pipeline.model, "no_sync", noop_no_sync)
+
+        with (
+            torch.amp.autocast("cuda", dtype=self.pipeline.param_dtype),
+            torch.no_grad(),
+            no_sync(),
+        ):
+            state_condition_payload = build_state_condition_payload_from_condition_maps(
+                condition_maps_tensor,
+                memory_tokens=condition_memory,
+                include_condition_maps=True,
+            )
+            if self.state_adapter_ckpt is not None and self.pipeline.state_adapter is None:
+                self.pipeline.load_state_adapter(
+                    str(self.state_adapter_ckpt),
+                    state_condition=state_condition_payload,
+                )
+            if self.pipeline.state_adapter is None:
+                raise ValueError(
+                    "state_condition was provided but no trained state adapter is loaded. "
+                    "Pass state_adapter_ckpt when constructing WanTextImageToVideoPrefixBackend."
+                )
+            state_condition_payload = _filter_state_condition_payload_for_adapter(
+                state_condition_payload,
+                self.pipeline.state_adapter,
+            )
+            state_context = self.pipeline._build_state_context(
+                state_condition_payload,
+                offload_model,
+            )
+
+            if sample_solver == "unipc":
+                from wan_.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+
+                sample_scheduler = FlowUniPCMultistepScheduler(
+                    num_train_timesteps=self.pipeline.num_train_timesteps,
+                    shift=1,
+                    use_dynamic_shifting=False,
+                )
+                sample_scheduler.set_timesteps(sampling_steps, device=self.pipeline.device, shift=shift)
+                timesteps = sample_scheduler.timesteps
+            elif sample_solver == "dpm++":
+                from wan_.utils.fm_solvers import (
+                    FlowDPMSolverMultistepScheduler,
+                    get_sampling_sigmas,
+                    retrieve_timesteps,
+                )
+
+                sample_scheduler = FlowDPMSolverMultistepScheduler(
+                    num_train_timesteps=self.pipeline.num_train_timesteps,
+                    shift=1,
+                    use_dynamic_shifting=False,
+                )
+                sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+                timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.pipeline.device, sigmas=sampling_sigmas)
+            else:
+                raise NotImplementedError("Unsupported solver.")
+
+            arg_text_state = {
+                "context": [context[0]],
+                "seq_len": seq_len,
+                "y": [y],
+                "state_context": state_context,
+                "state_scale": state_scale,
+            }
+            arg_text_only = {
+                "context": [context[0]],
+                "seq_len": seq_len,
+                "y": [y],
+                "state_context": None,
+                "state_scale": 0.0,
+            }
+            arg_uncond = {
+                "context": context_null,
+                "seq_len": seq_len,
+                "y": [y],
+                "state_context": None,
+                "state_scale": 0.0,
+            }
+
+            if offload_model or self.pipeline.init_on_cpu:
+                self.pipeline.model.to(self.pipeline.device)
+                torch.cuda.empty_cache()
+
+            for timestep_value in timesteps:
+                latent_model_input = [latent.to(self.pipeline.device)]
+                token_timestep = _build_separated_timestep(
+                    timestep_value=timestep_value.to(self.pipeline.device),
+                    seq_len=seq_len,
+                    latent_steps=latent.shape[1],
+                    prefix_len=prefix_len,
+                    lat_h=latent.shape[2],
+                    lat_w=latent.shape[3],
+                )
+                noise_pred_text_state = self.pipeline.model(latent_model_input, t=token_timestep, **arg_text_state)[0]
+                if offload_model:
+                    torch.cuda.empty_cache()
+                noise_pred_text_only = self.pipeline.model(latent_model_input, t=token_timestep, **arg_text_only)[0]
+                if offload_model:
+                    torch.cuda.empty_cache()
+                noise_pred_uncond = self.pipeline.model(latent_model_input, t=token_timestep, **arg_uncond)[0]
+                if offload_model:
+                    torch.cuda.empty_cache()
+                noise_pred = (
+                    noise_pred_uncond
+                    + guide_scale * (noise_pred_text_only - noise_pred_uncond)
+                    + state_guidance_scale * (noise_pred_text_state - noise_pred_text_only)
+                )
+                latent = sample_scheduler.step(
+                    noise_pred.unsqueeze(0),
+                    timestep_value,
+                    latent.unsqueeze(0),
+                    return_dict=False,
+                    generator=seed_g,
+                )[0].squeeze(0)
+                latent = _apply_clean_prefix_to_latent(latent, clean_prefix_latents)
+
+            if offload_model:
+                self.pipeline.model.cpu()
+                if self.pipeline.state_adapter is not None:
+                    self.pipeline.state_adapter.cpu()
+                torch.cuda.empty_cache()
+
+            video = self.pipeline.vae.decode([latent])[0]
+
+        if offload_model:
+            gc.collect()
+            torch.cuda.synchronize()
         return video[:, :requested_total_frames].detach().cpu()
