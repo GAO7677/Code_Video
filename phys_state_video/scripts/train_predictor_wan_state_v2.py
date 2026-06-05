@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument("--latent-smooth-scale", type=float, default=0.05)
     parser.add_argument("--teacher-predictor", default=None, help="Optional frozen teacher predictor checkpoint for adapter-space alignment.")
     parser.add_argument("--adapter-align-ckpt", default=None, help="Optional trained Wan state-adapter checkpoint used to compute adapter-space alignment.")
-    parser.add_argument("--adapter-align-scale", type=float, default=0.0)
+    parser.add_argument("--adapter-align-scale", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -150,6 +150,63 @@ def configure_stage(model: WanStateLatentPredictorV2, train_stage: str) -> None:
         raise ValueError(f"unsupported train_stage={train_stage}")
 
 
+def encode_adapter_payload_branches(adapter_encoder, payload: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    filtered_payload = filter_state_condition_payload_for_adapter(payload, adapter_encoder)
+    encoded = adapter_encoder(filtered_payload)
+    splits: dict[str, torch.Tensor] = {}
+    offset = 0
+    if filtered_payload.get("memory_tokens") is not None and getattr(adapter_encoder, "memory_token_encoder", None) is not None:
+        mem_len = int(filtered_payload["memory_tokens"].shape[1])
+        splits["memory_context"] = encoded[:, offset : offset + mem_len]
+        offset += mem_len
+    if filtered_payload.get("condition_maps") is not None and getattr(adapter_encoder, "map_token_encoder", None) is not None:
+        maps = filtered_payload["condition_maps"]
+        map_len = int(maps.shape[1] * maps.shape[3] * maps.shape[4])
+        splits["map_context"] = encoded[:, offset : offset + map_len]
+        offset += map_len
+    splits["state_context"] = encoded
+    return splits
+
+
+def cosine_alignment_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    predicted_flat = predicted.flatten(1)
+    target_flat = target.flatten(1)
+    cosine = torch.nn.functional.cosine_similarity(predicted_flat, target_flat, dim=1, eps=1e-6)
+    return 1.0 - cosine.mean()
+
+
+def compute_adapter_alignment_terms(
+    predicted_payload: dict[str, torch.Tensor],
+    reference_payload: dict[str, torch.Tensor],
+    adapter_encoder,
+) -> dict[str, torch.Tensor]:
+    predicted_branches = encode_adapter_payload_branches(adapter_encoder, predicted_payload)
+    with torch.no_grad():
+        reference_branches = encode_adapter_payload_branches(adapter_encoder, reference_payload)
+    losses: dict[str, torch.Tensor] = {}
+    zero = predicted_branches["state_context"].new_zeros(())
+    losses["adapter_align_map"] = zero
+    losses["adapter_align_memory"] = zero
+    if predicted_branches.get("map_context") is not None and reference_branches.get("map_context") is not None:
+        losses["adapter_align_map"] = torch.mean(
+            (predicted_branches["map_context"] - reference_branches["map_context"]) ** 2
+        )
+    if predicted_branches.get("memory_context") is not None and reference_branches.get("memory_context") is not None:
+        losses["adapter_align_memory"] = torch.mean(
+            (predicted_branches["memory_context"] - reference_branches["memory_context"]) ** 2
+        )
+    losses["adapter_align_cosine"] = cosine_alignment_loss(
+        predicted_branches["state_context"],
+        reference_branches["state_context"],
+    )
+    losses["adapter_align"] = (
+        losses["adapter_align_map"]
+        + losses["adapter_align_memory"]
+        + 0.1 * losses["adapter_align_cosine"]
+    )
+    return losses
+
+
 def save_checkpoint(
     output_path: Path,
     model: WanStateLatentPredictorV2,
@@ -209,6 +266,9 @@ def run_epoch(
         "future_vis": 0.0,
         "latent_smooth": 0.0,
         "adapter_align": 0.0,
+        "adapter_align_map": 0.0,
+        "adapter_align_memory": 0.0,
+        "adapter_align_cosine": 0.0,
     }
     for batch in loader:
         if is_train:
@@ -248,13 +308,18 @@ def run_epoch(
             train_stage=train_stage,
             latent_smooth_scale=latent_smooth_scale,
         )
-        if (
-            teacher_predictor is not None
-            and adapter_encoder is not None
-            and adapter_align_scale > 0.0
-            and train_stage != "context_only"
-        ):
+        if adapter_encoder is not None and adapter_align_scale > 0.0 and train_stage != "context_only":
+            predicted_payload = build_state_condition_payload_from_condition_maps(
+                outputs["condition_maps"],
+                memory_tokens=outputs["memory_tokens"],
+                include_condition_maps=True,
+            )
+            predicted_payload = filter_state_condition_payload_for_adapter(predicted_payload, adapter_encoder)
             with torch.no_grad():
+                if teacher_predictor is None:
+                    raise ValueError(
+                        "adapter-space supervision requires --teacher-predictor when adapter_align is enabled"
+                    )
                 teacher_outputs = teacher_predictor(
                     context_latents=context_latents,
                     camera=camera_latent,
@@ -263,25 +328,27 @@ def run_epoch(
                     future_latent_steps=future_latent_steps,
                     num_objects=context_states.shape[2],
                 )
-                teacher_payload = build_state_condition_payload_from_condition_maps(
+                reference_payload = build_state_condition_payload_from_condition_maps(
                     teacher_outputs["condition_maps"],
                     memory_tokens=teacher_outputs["memory_tokens"],
                     include_condition_maps=True,
                 )
-                teacher_payload = filter_state_condition_payload_for_adapter(teacher_payload, adapter_encoder)
-                teacher_state_context = adapter_encoder(teacher_payload)
-            predicted_payload = build_state_condition_payload_from_condition_maps(
-                outputs["condition_maps"],
-                memory_tokens=outputs["memory_tokens"],
-                include_condition_maps=True,
+                reference_payload = filter_state_condition_payload_for_adapter(reference_payload, adapter_encoder)
+            adapter_terms = compute_adapter_alignment_terms(
+                predicted_payload=predicted_payload,
+                reference_payload=reference_payload,
+                adapter_encoder=adapter_encoder,
             )
-            predicted_payload = filter_state_condition_payload_for_adapter(predicted_payload, adapter_encoder)
-            predicted_state_context = adapter_encoder(predicted_payload)
-            adapter_align = torch.mean((predicted_state_context - teacher_state_context) ** 2)
         else:
-            adapter_align = losses["loss"].new_zeros(())
-        losses["adapter_align"] = adapter_align
-        losses["loss"] = losses["loss"] + adapter_align_scale * adapter_align
+            zero = losses["loss"].new_zeros(())
+            adapter_terms = {
+                "adapter_align": zero,
+                "adapter_align_map": zero,
+                "adapter_align_memory": zero,
+                "adapter_align_cosine": zero,
+            }
+        losses.update(adapter_terms)
+        losses["loss"] = losses["loss"] + adapter_align_scale * losses["adapter_align"]
         if is_train:
             losses["loss"].backward()
             optimizer.step()
