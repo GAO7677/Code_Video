@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -12,7 +13,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from phys_state_video.dataset import NpzPredictorDataset, collate_predictor_episodes
+from phys_state_video.dataset import NpzPredictorFullDataset, collate_predictor_full_episodes
 from phys_state_video.predictor_wan_state_v2 import (
     WanStateLatentPredictorV2,
     WanStateLatentPredictorV2Config,
@@ -56,6 +57,13 @@ def parse_args():
     parser.add_argument("--teacher-predictor", default=None, help="Optional frozen teacher predictor checkpoint for adapter-space alignment.")
     parser.add_argument("--adapter-align-ckpt", default=None, help="Optional trained Wan state-adapter checkpoint used to compute adapter-space alignment.")
     parser.add_argument("--adapter-align-scale", type=float, default=0.1)
+    parser.add_argument("--resume", default=None, help="Optional checkpoint to resume or finetune from.")
+    parser.add_argument("--boundary-continuity-scale", type=float, default=0.0, help="Scale for boundary continuity delta loss between context tail and future head.")
+    parser.add_argument("--max-context-frames", type=int, default=12, help="Maximum context frame count used by dynamic training-time slicing.")
+    parser.add_argument("--min-context-frames", type=int, default=4, help="Minimum context frame count used by dynamic training-time slicing.")
+    parser.add_argument("--min-future-frames", type=int, default=8, help="Minimum future frame count preserved after dynamic context slicing.")
+    parser.add_argument("--context-ratio-min", type=float, default=0.25, help="Minimum context ratio relative to the sampled full clip length.")
+    parser.add_argument("--context-ratio-max", type=float, default=0.5, help="Maximum context ratio relative to the sampled full clip length.")
     return parser.parse_args()
 
 
@@ -166,34 +174,123 @@ def load_teacher_predictor(checkpoint_path: str, device: str) -> WanStateLatentP
     return model
 
 
-def infer_model_config(dataset, latent_extractor, prompt_context_encoder) -> WanStateLatentPredictorV2Config:
+def _clamp_int(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(value, upper))
+
+
+def resolve_context_bounds(total_steps: int, args) -> tuple[int, int]:
+    if total_steps <= 0:
+        raise ValueError(f"total_steps must be positive, got {total_steps}")
+    max_context = total_steps - int(args.min_future_frames)
+    if args.max_context_frames is not None and args.max_context_frames > 0:
+        max_context = min(max_context, int(args.max_context_frames))
+    min_context = max(1, int(args.min_context_frames))
+    if max_context < min_context:
+        raise ValueError(
+            f"invalid dynamic slicing bounds for total_steps={total_steps}: "
+            f"min_context={min_context}, max_context={max_context}, min_future={args.min_future_frames}"
+        )
+    return min_context, max_context
+
+
+def choose_context_steps(total_steps: int, args, *, is_train: bool, legacy_context_steps: int) -> int:
+    min_context, max_context = resolve_context_bounds(total_steps, args)
+    if is_train:
+        ratio = random.uniform(float(args.context_ratio_min), float(args.context_ratio_max))
+        sampled = int(round(total_steps * ratio))
+        return _clamp_int(sampled, min_context, max_context)
+    if legacy_context_steps > 0:
+        return _clamp_int(int(legacy_context_steps), min_context, max_context)
+    midpoint_ratio = 0.5 * (float(args.context_ratio_min) + float(args.context_ratio_max))
+    sampled = int(round(total_steps * midpoint_ratio))
+    return _clamp_int(sampled, min_context, max_context)
+
+
+def slice_dynamic_context_batch(batch, args, *, is_train: bool) -> dict[str, torch.Tensor | int]:
+    full_frames = batch["full_frames"]
+    full_states = batch["full_states"]
+    full_camera = batch["camera"]
+    full_lengths = batch["full_lengths"]
+    legacy_context_steps = batch["legacy_context_steps"]
+
+    batch_total_steps = int(full_lengths.min().item())
+    context_steps = choose_context_steps(
+        batch_total_steps,
+        args,
+        is_train=is_train,
+        legacy_context_steps=int(legacy_context_steps.min().item()),
+    )
+    future_steps = batch_total_steps - context_steps
+    if future_steps < int(args.min_future_frames):
+        raise ValueError(
+            f"future_steps={future_steps} violates min_future_frames={args.min_future_frames} for "
+            f"batch_total_steps={batch_total_steps}, context_steps={context_steps}"
+        )
+
+    context_frames_list = []
+    context_states_list = []
+    future_states_list = []
+    context_camera_list = []
+    for batch_index in range(int(full_frames.shape[0])):
+        sample_total = int(full_lengths[batch_index].item())
+        if sample_total < batch_total_steps:
+            raise ValueError(
+                f"sample_total={sample_total} smaller than chosen batch_total_steps={batch_total_steps}"
+            )
+        max_start = sample_total - batch_total_steps
+        start = random.randint(0, max_start) if is_train and max_start > 0 else 0
+        end = start + batch_total_steps
+        sample_frames = full_frames[batch_index, start:end]
+        sample_states = full_states[batch_index, start:end]
+        sample_camera = full_camera[batch_index, start:end]
+        context_frames_list.append(sample_frames[:context_steps])
+        context_states_list.append(sample_states[:context_steps])
+        future_states_list.append(sample_states[context_steps:])
+        context_camera_list.append(sample_camera[:context_steps])
+
+    return {
+        "context_frames": torch.stack(context_frames_list, dim=0),
+        "context_states": torch.stack(context_states_list, dim=0),
+        "future_states": torch.stack(future_states_list, dim=0),
+        "camera": torch.stack(context_camera_list, dim=0),
+        "context_steps": context_steps,
+        "future_steps": future_steps,
+        "window_steps": batch_total_steps,
+    }
+
+
+def infer_model_config(dataset, latent_extractor, prompt_context_encoder, args) -> WanStateLatentPredictorV2Config:
     first_sample = dataset[0]
-    sample_frames = torch.from_numpy(first_sample.context_frames[None]).to(latent_extractor.device)
+    first_total_steps = int(first_sample.full_frames.shape[0])
+    first_min_context, first_max_context = resolve_context_bounds(first_total_steps, args)
+    sample_frames = torch.from_numpy(first_sample.full_frames[:first_max_context][None]).to(latent_extractor.device)
     with torch.no_grad():
         context_latents = latent_extractor.encode_context_frames_raw(sample_frames)
 
     max_context_latent_steps = int(context_latents.shape[1])
     max_future_latent_steps = compute_future_latent_steps(
-        context_steps=first_sample.context_frames.shape[0],
-        future_steps=first_sample.future_states.shape[0],
+        context_steps=first_min_context,
+        future_steps=first_total_steps - first_min_context,
         temporal_stride=latent_extractor.temporal_stride,
     )
-    max_objects = int(first_sample.context_states.shape[1])
+    max_objects = int(first_sample.full_states.shape[1])
 
     for index in range(1, len(dataset)):
         sample = dataset[index]
+        total_steps = int(sample.full_frames.shape[0])
+        min_context_steps, max_context_steps = resolve_context_bounds(total_steps, args)
         context_latent_steps = compute_latent_step_count(
-            frame_steps=sample.context_frames.shape[0],
+            frame_steps=max_context_steps,
             temporal_stride=latent_extractor.temporal_stride,
         )
         future_latent_steps = compute_future_latent_steps(
-            context_steps=sample.context_frames.shape[0],
-            future_steps=sample.future_states.shape[0],
+            context_steps=min_context_steps,
+            future_steps=total_steps - min_context_steps,
             temporal_stride=latent_extractor.temporal_stride,
         )
         max_context_latent_steps = max(max_context_latent_steps, int(context_latent_steps))
         max_future_latent_steps = max(max_future_latent_steps, int(future_latent_steps))
-        max_objects = max(max_objects, int(sample.context_states.shape[1]))
+        max_objects = max(max_objects, int(sample.full_states.shape[1]))
 
     return WanStateLatentPredictorV2Config(
         latent_channels=context_latents.shape[2],
@@ -298,6 +395,15 @@ def save_checkpoint(
             "teacher_predictor": args.teacher_predictor,
             "adapter_align_ckpt": args.adapter_align_ckpt,
             "adapter_align_scale": args.adapter_align_scale,
+            "resume": args.resume,
+            "boundary_continuity_scale": args.boundary_continuity_scale,
+            "dynamic_context": {
+                "max_context_frames": args.max_context_frames,
+                "min_context_frames": args.min_context_frames,
+                "min_future_frames": args.min_future_frames,
+                "context_ratio_min": args.context_ratio_min,
+                "context_ratio_max": args.context_ratio_max,
+            },
             "world_size": get_world_size(),
             "train_schedule": {
                 "epochs_context": args.epochs_context,
@@ -318,6 +424,7 @@ def run_epoch(
     device,
     train_stage: str,
     latent_smooth_scale: float,
+    args,
     teacher_predictor=None,
     adapter_encoder=None,
     adapter_align_scale: float = 0.0,
@@ -339,16 +446,23 @@ def run_epoch(
         "adapter_align_map": 0.0,
         "adapter_align_memory": 0.0,
         "adapter_align_cosine": 0.0,
+        "boundary_continuity": 0.0,
+        "boundary_geom": 0.0,
+        "boundary_motion": 0.0,
+        "window_frames": 0.0,
+        "context_frames": 0.0,
+        "future_frames": 0.0,
     }
     for batch in loader:
         if is_train:
             optimizer.zero_grad(set_to_none=True)
 
         with torch.set_grad_enabled(is_train):
-            context_frames = batch["context_frames"].to(device)
-            camera = batch["camera"].to(device)
-            context_states = batch["context_states"].to(device)
-            future_states = batch["future_states"].to(device)
+            sliced = slice_dynamic_context_batch(batch, args, is_train=is_train)
+            context_frames = sliced["context_frames"].to(device)
+            camera = sliced["camera"].to(device)
+            context_states = sliced["context_states"].to(device)
+            future_states = sliced["future_states"].to(device)
 
             with torch.no_grad():
                 context_latents = latent_extractor.encode_context_frames_raw(context_frames)
@@ -378,6 +492,7 @@ def run_epoch(
                 future_target=future_target,
                 train_stage=train_stage,
                 latent_smooth_scale=latent_smooth_scale,
+                boundary_continuity_scale=args.boundary_continuity_scale,
             )
             if adapter_encoder is not None and adapter_align_scale > 0.0 and train_stage != "context_only":
                 predicted_payload = build_state_condition_payload_from_condition_maps(
@@ -424,7 +539,11 @@ def run_epoch(
             losses["loss"].backward()
             optimizer.step()
         for key in running:
-            running[key] += float(losses[key].detach().cpu())
+            if key in losses:
+                running[key] += float(losses[key].detach().cpu())
+        running["window_frames"] += float(sliced["window_steps"])
+        running["context_frames"] += float(sliced["context_steps"])
+        running["future_frames"] += float(sliced["future_steps"])
     denom = max(len(loader), 1)
     metrics = {key: value / denom for key, value in running.items()}
     return reduce_scalar_dict(metrics, device=device)
@@ -439,8 +558,12 @@ def main():
             raise ValueError(
                 "--teacher-predictor and --adapter-align-ckpt are required when --adapter-align-scale > 0"
             )
-        dataset = NpzPredictorDataset(args.data)
-        val_dataset = NpzPredictorDataset(args.val_data) if args.val_data else None
+        if args.context_ratio_min <= 0.0 or args.context_ratio_max <= 0.0:
+            raise ValueError("context ratios must be positive")
+        if args.context_ratio_min > args.context_ratio_max:
+            raise ValueError("context-ratio-min must be <= context-ratio-max")
+        dataset = NpzPredictorFullDataset(args.data)
+        val_dataset = NpzPredictorFullDataset(args.val_data) if args.val_data else None
         train_sampler = None
         val_sampler = None
         if is_distributed():
@@ -462,7 +585,7 @@ def main():
             batch_size=args.batch_size,
             shuffle=train_sampler is None,
             sampler=train_sampler,
-            collate_fn=collate_predictor_episodes,
+            collate_fn=collate_predictor_full_episodes,
             num_workers=args.num_workers,
         )
         val_loader = None
@@ -472,15 +595,31 @@ def main():
                 batch_size=args.batch_size,
                 shuffle=False,
                 sampler=val_sampler,
-                collate_fn=collate_predictor_episodes,
+                collate_fn=collate_predictor_full_episodes,
                 num_workers=args.num_workers,
             )
 
         latent_extractor = build_latent_extractor(args)
         prompt_context_encoder = build_prompt_context_encoder(args)
         args.temporal_stride = latent_extractor.temporal_stride
-        config = infer_model_config(dataset, latent_extractor, prompt_context_encoder)
+        config = infer_model_config(dataset, latent_extractor, prompt_context_encoder, args)
         model = WanStateLatentPredictorV2(config).to(args.device)
+        if args.resume is not None:
+            resume_ckpt = load_torch_checkpoint(args.resume, map_location="cpu")
+            resume_config = resume_ckpt.get("config")
+            if resume_config is not None and resume_config != asdict(config):
+                if is_main_process():
+                    print(
+                        json.dumps(
+                            {
+                                "warning": "resume_config_differs_from_current_config",
+                                "resume": args.resume,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+            model.load_state_dict(resume_ckpt["model"], strict=True)
         if is_distributed():
             model = torch.nn.parallel.DistributedDataParallel(
                 model,
@@ -531,6 +670,7 @@ def main():
                     device=args.device,
                     train_stage=stage_name,
                     latent_smooth_scale=args.latent_smooth_scale,
+                    args=args,
                     teacher_predictor=teacher_predictor,
                     adapter_encoder=adapter_encoder,
                     adapter_align_scale=args.adapter_align_scale,
@@ -546,6 +686,7 @@ def main():
                         device=args.device,
                         train_stage=stage_name,
                         latent_smooth_scale=args.latent_smooth_scale,
+                        args=args,
                         teacher_predictor=teacher_predictor,
                         adapter_encoder=adapter_encoder,
                         adapter_align_scale=args.adapter_align_scale,

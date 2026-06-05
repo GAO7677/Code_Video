@@ -785,8 +785,12 @@ def write_episode(
         future_states=track.states[context_frames:context_frames + future_frames].astype(np.float32),
         context_boxes=track.boxes[:context_frames].astype(np.float32),
         future_boxes=track.boxes[context_frames:context_frames + future_frames].astype(np.float32),
+        full_frames=track.frames[:context_frames + future_frames].astype(np.float32),
+        full_states=track.states[:context_frames + future_frames].astype(np.float32),
+        full_boxes=track.boxes[:context_frames + future_frames].astype(np.float32),
         appearance=track.appearance.astype(np.float32),
         camera=np.zeros((context_frames, 8), dtype=np.float32),
+        camera_full=np.zeros((context_frames + future_frames, 8), dtype=np.float32),
     )
     payload = {
         "prompt": prompt,

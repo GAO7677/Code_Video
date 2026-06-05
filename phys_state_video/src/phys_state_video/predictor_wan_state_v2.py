@@ -475,12 +475,28 @@ def _group_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.mean((predicted - target) ** 2)
 
 
+def _boundary_delta_loss(
+    predicted_context: torch.Tensor,
+    predicted_future: torch.Tensor,
+    context_target: torch.Tensor,
+    future_target: torch.Tensor,
+    state_indices: tuple[int, ...],
+) -> torch.Tensor:
+    predicted_delta = (
+        predicted_future[:, 0, :, list(state_indices)] - predicted_context[:, -1, :, list(state_indices)]
+    )
+    target_delta = context_target.new_zeros(predicted_delta.shape)
+    target_delta = future_target[:, 0, :, list(state_indices)] - context_target[:, -1, :, list(state_indices)]
+    return torch.mean((predicted_delta - target_delta) ** 2)
+
+
 def wan_state_predictor_v2_loss(
     outputs: Dict[str, torch.Tensor],
     context_target: torch.Tensor,
     future_target: torch.Tensor,
     train_stage: str,
     latent_smooth_scale: float = 0.05,
+    boundary_continuity_scale: float = 0.0,
 ) -> Dict[str, torch.Tensor]:
     context_geom_loss = _group_loss(
         outputs["context_state_predictions"][..., list(GEOM_STATE_INDICES)],
@@ -518,6 +534,21 @@ def wan_state_predictor_v2_loss(
         "motion": future_motion_loss,
         "vis": future_vis_loss,
     }
+    boundary_geom_loss = _boundary_delta_loss(
+        outputs["context_state_predictions"],
+        outputs["future_state_predictions"],
+        context_target,
+        future_target,
+        GEOM_STATE_INDICES,
+    )
+    boundary_motion_loss = _boundary_delta_loss(
+        outputs["context_state_predictions"],
+        outputs["future_state_predictions"],
+        context_target,
+        future_target,
+        MOTION_STATE_INDICES,
+    )
+    boundary_continuity = boundary_geom_loss + boundary_motion_loss
 
     future_state_maps = outputs["future_state_maps"]
     if future_state_maps.shape[1] > 1:
@@ -528,9 +559,18 @@ def wan_state_predictor_v2_loss(
     if train_stage == "context_only":
         total = context_losses["loss"]
     elif train_stage == "future_only":
-        total = future_losses["loss"] + latent_smooth_scale * latent_smooth
+        total = (
+            future_losses["loss"]
+            + latent_smooth_scale * latent_smooth
+            + boundary_continuity_scale * boundary_continuity
+        )
     elif train_stage == "joint_finetune":
-        total = context_losses["loss"] + future_losses["loss"] + latent_smooth_scale * latent_smooth
+        total = (
+            context_losses["loss"]
+            + future_losses["loss"]
+            + latent_smooth_scale * latent_smooth
+            + boundary_continuity_scale * boundary_continuity
+        )
     else:
         raise ValueError(f"unsupported train_stage={train_stage}")
 
@@ -545,4 +585,7 @@ def wan_state_predictor_v2_loss(
         "future_motion": future_losses["motion"],
         "future_vis": future_losses["vis"],
         "latent_smooth": latent_smooth,
+        "boundary_continuity": boundary_continuity,
+        "boundary_geom": boundary_geom_loss,
+        "boundary_motion": boundary_motion_loss,
     }

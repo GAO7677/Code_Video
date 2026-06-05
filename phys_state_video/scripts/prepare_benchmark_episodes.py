@@ -115,8 +115,12 @@ def main():
             future_states=track.states[context_steps:].astype(np.float32),
             context_boxes=track.boxes[:context_steps].astype(np.float32),
             future_boxes=track.boxes[context_steps:].astype(np.float32),
+            full_frames=all_frames.astype(np.float32),
+            full_states=track.states.astype(np.float32),
+            full_boxes=track.boxes.astype(np.float32),
             appearance=track.appearance.astype(np.float32),
             camera=np.zeros((context_steps, 8), dtype=np.float32),
+            camera_full=np.zeros((all_frames.shape[0], 8), dtype=np.float32),
         )
         prompt = load_prompt(meta_path)
         episode_path.with_suffix(".json").write_text(

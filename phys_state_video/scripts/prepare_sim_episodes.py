@@ -296,7 +296,7 @@ def process_sample(sample_dir: Path, args: argparse.Namespace, split: str, outpu
         appearance[obj_idx] = appearance_vector(obj, args.appearance_dim)
 
     camera_vec = build_camera_vector(camera, args.width, args.height)
-    camera_seq = np.repeat(camera_vec[None, :], args.context_steps, axis=0)
+    camera_full = np.repeat(camera_vec[None, :], num_frames, axis=0)
     windows_written = 0
     output_split_root.mkdir(parents=True, exist_ok=True)
     max_start = num_frames - total_steps
@@ -317,8 +317,12 @@ def process_sample(sample_dir: Path, args: argparse.Namespace, split: str, outpu
             future_states=states_arr[future_slice].astype(np.float32),
             context_boxes=boxes[context_slice].astype(np.float32),
             future_boxes=boxes[future_slice].astype(np.float32),
+            full_frames=frames[start:end].astype(np.float32),
+            full_states=states_arr[start:end].astype(np.float32),
+            full_boxes=boxes[start:end].astype(np.float32),
             appearance=appearance.astype(np.float32),
-            camera=camera_seq.astype(np.float32),
+            camera=camera_full[context_slice].astype(np.float32),
+            camera_full=camera_full[start:end].astype(np.float32),
         )
         meta_payload = {
             "prompt": build_prompt(meta),
