@@ -74,6 +74,20 @@ class StateAdapterTests(unittest.TestCase):
         self.assertIn("state_tokens", payload)
         self.assertEqual(tuple(payload["state_tokens"].shape), (1, 6, 10))
 
+    def test_condition_maps_are_flattened_to_spatiotemporal_tokens(self):
+        adapter = self.state_mod.WanObjectStateAdapter(
+            model_dim=24,
+            memory_token_dim=6,
+            map_token_dim=3,
+        )
+        state_condition = {
+            "memory_tokens": torch.randn(1, 2, 6),
+            "condition_maps": torch.randn(1, 3, 3, 4, 4),
+        }
+        encoded = adapter(state_condition)
+        # 2 memory tokens + (3 time steps * 4 * 4 spatial cells) map tokens
+        self.assertEqual(tuple(encoded.shape), (1, 50, 24))
+
     def test_wan_model_accepts_state_context(self):
         model = self.model_mod.WanModel(
             model_type="t2v",

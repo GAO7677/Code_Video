@@ -28,6 +28,17 @@ def _ensure_batch_first(tensor):
     raise ValueError("token tensor must have shape [L, C] or [B, L, C]")
 
 
+def _flatten_condition_maps_to_tokens(condition_maps):
+    if condition_maps is None:
+        return None
+    if condition_maps.dim() != 5:
+        raise ValueError(
+            "condition_maps must have shape [B, T, C, H, W] before flattening")
+    batch, steps, channels, height, width = condition_maps.shape
+    return condition_maps.permute(0, 1, 3, 4, 2).contiguous().view(
+        batch, steps * height * width, channels)
+
+
 def canonicalize_state_condition(state_condition):
     if state_condition is None:
         return None
@@ -151,8 +162,8 @@ class WanObjectStateAdapter(nn.Module):
         if condition_maps is not None:
             if self.map_token_encoder is None:
                 raise RuntimeError("map_token_encoder is not initialized")
-            pooled_maps = condition_maps.flatten(-2).mean(dim=-1)
-            tokens.append(self.map_token_encoder(pooled_maps))
+            map_tokens = _flatten_condition_maps_to_tokens(condition_maps)
+            tokens.append(self.map_token_encoder(map_tokens))
 
         if not tokens:
             return None
