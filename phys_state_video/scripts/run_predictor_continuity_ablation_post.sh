@@ -13,6 +13,7 @@ PORT="${PORT:-18876}"
 DEVICE="${DEVICE:-cuda}"
 MAX_CASES="${MAX_CASES:-8}"
 FPS="${FPS:-6}"
+EXPORT_CUDA_VISIBLE_DEVICES="${EXPORT_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-4}}"
 SERVER_PID_FILE="${SERVER_PID_FILE:-$VIS_ROOT/http_${PORT}.pid}"
 SERVER_LOG_FILE="${SERVER_LOG_FILE:-$VIS_ROOT/http_${PORT}.log}"
 
@@ -40,7 +41,7 @@ for spec in "${SCALE_SPECS[@]}"; do
   wait_for_checkpoint "$ckpt_path"
   out_dir="$VIS_ROOT/$slug"
   echo "[export] $(date '+%F %T') $label -> $out_dir"
-  CUDA_VISIBLE_DEVICES=4 "$PYTHON_BIN" \
+  CUDA_VISIBLE_DEVICES="$EXPORT_CUDA_VISIBLE_DEVICES" "$PYTHON_BIN" \
     "$PROJECT_ROOT/scripts/export_wan_state_v2_predictor_overlay_comparison.py" \
     --episode-root "$EPISODE_ROOT" \
     --predictor-a "$BASELINE_CKPT" \
