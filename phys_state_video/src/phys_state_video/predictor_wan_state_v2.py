@@ -475,19 +475,117 @@ def _group_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.mean((predicted - target) ** 2)
 
 
+def _masked_group_loss(
+    predicted: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if mask is None:
+        return _group_loss(predicted, target)
+    if mask.ndim != predicted.ndim - 1:
+        raise ValueError(
+            f"expected mask ndim {predicted.ndim - 1} for predicted {tuple(predicted.shape)}, got {tuple(mask.shape)}"
+        )
+    error = (predicted - target) ** 2
+    weighted = error * mask.unsqueeze(-1)
+    denom = (mask.sum() * predicted.shape[-1]).clamp_min(1.0)
+    return weighted.sum() / denom
+
+
+def _state_presence_mask(states: torch.Tensor) -> torch.Tensor:
+    existence = states[..., StateIndex.EXISTENCE]
+    visibility = states[..., StateIndex.VISIBILITY]
+    return ((existence > 0.5) | (visibility > 0.2)).to(dtype=states.dtype)
+
+
+def _boundary_object_mask(
+    context_target: torch.Tensor,
+    future_target: torch.Tensor,
+) -> torch.Tensor:
+    context_tail_mask = _state_presence_mask(context_target[:, -1])
+    future_head_mask = _state_presence_mask(future_target[:, 0])
+    return torch.maximum(context_tail_mask, future_head_mask)
+
+
+def _boundary_head_loss(
+    predicted_future: torch.Tensor,
+    future_target: torch.Tensor,
+    state_indices: tuple[int, ...],
+    object_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    predicted_head = predicted_future[:, 0, :, list(state_indices)]
+    target_head = future_target[:, 0, :, list(state_indices)]
+    return _masked_group_loss(predicted_head, target_head, object_mask)
+
+
+def _boundary_rollout_loss(
+    predicted_future: torch.Tensor,
+    future_target: torch.Tensor,
+    state_indices: tuple[int, ...],
+    rollout_steps: int,
+    rollout_decay: float,
+) -> torch.Tensor:
+    horizon = min(int(rollout_steps), int(future_target.shape[1]))
+    if horizon <= 0:
+        return predicted_future.new_zeros(())
+    predicted = predicted_future[:, :horizon, :, list(state_indices)]
+    target = future_target[:, :horizon, :, list(state_indices)]
+    mask = _state_presence_mask(future_target[:, :horizon])
+    weights = predicted.new_tensor(
+        [float(rollout_decay) ** step_idx for step_idx in range(horizon)],
+        dtype=predicted.dtype,
+    ).view(1, horizon, 1)
+    error = ((predicted - target) ** 2).mean(dim=-1)
+    weighted = error * mask * weights
+    denom = (mask * weights).sum().clamp_min(1.0)
+    return weighted.sum() / denom
+
+
 def _boundary_delta_loss(
     predicted_context: torch.Tensor,
     predicted_future: torch.Tensor,
     context_target: torch.Tensor,
     future_target: torch.Tensor,
     state_indices: tuple[int, ...],
+    object_mask: torch.Tensor | None = None,
+    detach_context_tail: bool = False,
 ) -> torch.Tensor:
+    context_tail = predicted_context[:, -1, :, list(state_indices)]
+    if detach_context_tail:
+        context_tail = context_tail.detach()
     predicted_delta = (
-        predicted_future[:, 0, :, list(state_indices)] - predicted_context[:, -1, :, list(state_indices)]
+        predicted_future[:, 0, :, list(state_indices)] - context_tail
     )
     target_delta = context_target.new_zeros(predicted_delta.shape)
     target_delta = future_target[:, 0, :, list(state_indices)] - context_target[:, -1, :, list(state_indices)]
-    return torch.mean((predicted_delta - target_delta) ** 2)
+    return _masked_group_loss(predicted_delta, target_delta, object_mask)
+
+
+def _boundary_curvature_loss(
+    predicted_context: torch.Tensor,
+    predicted_future: torch.Tensor,
+    context_target: torch.Tensor,
+    future_target: torch.Tensor,
+    state_indices: tuple[int, ...],
+    object_mask: torch.Tensor | None = None,
+    detach_context_tail: bool = False,
+) -> torch.Tensor:
+    if future_target.shape[1] < 2:
+        return predicted_future.new_zeros(())
+    context_tail = predicted_context[:, -1, :, list(state_indices)]
+    if detach_context_tail:
+        context_tail = context_tail.detach()
+    predicted_second_delta = (
+        predicted_future[:, 1, :, list(state_indices)]
+        - 2.0 * predicted_future[:, 0, :, list(state_indices)]
+        + context_tail
+    )
+    target_second_delta = (
+        future_target[:, 1, :, list(state_indices)]
+        - 2.0 * future_target[:, 0, :, list(state_indices)]
+        + context_target[:, -1, :, list(state_indices)]
+    )
+    return _masked_group_loss(predicted_second_delta, target_second_delta, object_mask)
 
 
 def wan_state_predictor_v2_loss(
@@ -497,6 +595,11 @@ def wan_state_predictor_v2_loss(
     train_stage: str,
     latent_smooth_scale: float = 0.05,
     boundary_continuity_scale: float = 0.0,
+    boundary_head_scale: float = 0.0,
+    boundary_rollout_scale: float = 0.0,
+    boundary_rollout_steps: int = 3,
+    boundary_rollout_decay: float = 0.5,
+    boundary_curvature_scale: float = 0.0,
 ) -> Dict[str, torch.Tensor]:
     context_geom_loss = _group_loss(
         outputs["context_state_predictions"][..., list(GEOM_STATE_INDICES)],
@@ -534,12 +637,44 @@ def wan_state_predictor_v2_loss(
         "motion": future_motion_loss,
         "vis": future_vis_loss,
     }
+    boundary_mask = _boundary_object_mask(context_target, future_target)
+    boundary_head_geom_loss = _boundary_head_loss(
+        outputs["future_state_predictions"],
+        future_target,
+        GEOM_STATE_INDICES,
+        object_mask=boundary_mask,
+    )
+    boundary_head_motion_loss = _boundary_head_loss(
+        outputs["future_state_predictions"],
+        future_target,
+        MOTION_STATE_INDICES,
+        object_mask=boundary_mask,
+    )
+    boundary_head = boundary_head_geom_loss + boundary_head_motion_loss
+    boundary_rollout_geom_loss = _boundary_rollout_loss(
+        outputs["future_state_predictions"],
+        future_target,
+        GEOM_STATE_INDICES,
+        rollout_steps=boundary_rollout_steps,
+        rollout_decay=boundary_rollout_decay,
+    )
+    boundary_rollout_motion_loss = _boundary_rollout_loss(
+        outputs["future_state_predictions"],
+        future_target,
+        MOTION_STATE_INDICES,
+        rollout_steps=boundary_rollout_steps,
+        rollout_decay=boundary_rollout_decay,
+    )
+    boundary_rollout = boundary_rollout_geom_loss + boundary_rollout_motion_loss
+
     boundary_geom_loss = _boundary_delta_loss(
         outputs["context_state_predictions"],
         outputs["future_state_predictions"],
         context_target,
         future_target,
         GEOM_STATE_INDICES,
+        object_mask=boundary_mask,
+        detach_context_tail=True,
     )
     boundary_motion_loss = _boundary_delta_loss(
         outputs["context_state_predictions"],
@@ -547,8 +682,29 @@ def wan_state_predictor_v2_loss(
         context_target,
         future_target,
         MOTION_STATE_INDICES,
+        object_mask=boundary_mask,
+        detach_context_tail=True,
     )
     boundary_continuity = boundary_geom_loss + boundary_motion_loss
+    boundary_curvature_geom_loss = _boundary_curvature_loss(
+        outputs["context_state_predictions"],
+        outputs["future_state_predictions"],
+        context_target,
+        future_target,
+        GEOM_STATE_INDICES,
+        object_mask=boundary_mask,
+        detach_context_tail=True,
+    )
+    boundary_curvature_motion_loss = _boundary_curvature_loss(
+        outputs["context_state_predictions"],
+        outputs["future_state_predictions"],
+        context_target,
+        future_target,
+        MOTION_STATE_INDICES,
+        object_mask=boundary_mask,
+        detach_context_tail=True,
+    )
+    boundary_curvature = boundary_curvature_geom_loss + boundary_curvature_motion_loss
 
     future_state_maps = outputs["future_state_maps"]
     if future_state_maps.shape[1] > 1:
@@ -562,14 +718,20 @@ def wan_state_predictor_v2_loss(
         total = (
             future_losses["loss"]
             + latent_smooth_scale * latent_smooth
+            + boundary_head_scale * boundary_head
+            + boundary_rollout_scale * boundary_rollout
             + boundary_continuity_scale * boundary_continuity
+            + boundary_curvature_scale * boundary_curvature
         )
     elif train_stage == "joint_finetune":
         total = (
             context_losses["loss"]
             + future_losses["loss"]
             + latent_smooth_scale * latent_smooth
+            + boundary_head_scale * boundary_head
+            + boundary_rollout_scale * boundary_rollout
             + boundary_continuity_scale * boundary_continuity
+            + boundary_curvature_scale * boundary_curvature
         )
     else:
         raise ValueError(f"unsupported train_stage={train_stage}")
@@ -585,7 +747,16 @@ def wan_state_predictor_v2_loss(
         "future_motion": future_losses["motion"],
         "future_vis": future_losses["vis"],
         "latent_smooth": latent_smooth,
+        "boundary_head": boundary_head,
+        "boundary_head_geom": boundary_head_geom_loss,
+        "boundary_head_motion": boundary_head_motion_loss,
+        "boundary_rollout": boundary_rollout,
+        "boundary_rollout_geom": boundary_rollout_geom_loss,
+        "boundary_rollout_motion": boundary_rollout_motion_loss,
         "boundary_continuity": boundary_continuity,
         "boundary_geom": boundary_geom_loss,
         "boundary_motion": boundary_motion_loss,
+        "boundary_curvature": boundary_curvature,
+        "boundary_curvature_geom": boundary_curvature_geom_loss,
+        "boundary_curvature_motion": boundary_curvature_motion_loss,
     }

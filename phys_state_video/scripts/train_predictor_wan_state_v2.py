@@ -59,6 +59,11 @@ def parse_args():
     parser.add_argument("--adapter-align-scale", type=float, default=0.1)
     parser.add_argument("--resume", default=None, help="Optional checkpoint to resume or finetune from.")
     parser.add_argument("--boundary-continuity-scale", type=float, default=0.0, help="Scale for boundary continuity delta loss between context tail and future head.")
+    parser.add_argument("--boundary-head-scale", type=float, default=0.0, help="Scale for direct future-head anchor loss on the first future latent step.")
+    parser.add_argument("--boundary-rollout-scale", type=float, default=0.0, help="Scale for weighted short-horizon rollout supervision near the context/future boundary.")
+    parser.add_argument("--boundary-rollout-steps", type=int, default=3, help="Number of early future latent steps used by boundary rollout supervision.")
+    parser.add_argument("--boundary-rollout-decay", type=float, default=0.5, help="Geometric decay for boundary rollout supervision weights.")
+    parser.add_argument("--boundary-curvature-scale", type=float, default=0.0, help="Scale for cross-boundary second-difference smoothness supervision.")
     parser.add_argument("--max-context-frames", type=int, default=12, help="Maximum context frame count used by dynamic training-time slicing.")
     parser.add_argument("--min-context-frames", type=int, default=4, help="Minimum context frame count used by dynamic training-time slicing.")
     parser.add_argument("--min-future-frames", type=int, default=8, help="Minimum future frame count preserved after dynamic context slicing.")
@@ -397,6 +402,11 @@ def save_checkpoint(
             "adapter_align_scale": args.adapter_align_scale,
             "resume": args.resume,
             "boundary_continuity_scale": args.boundary_continuity_scale,
+            "boundary_head_scale": args.boundary_head_scale,
+            "boundary_rollout_scale": args.boundary_rollout_scale,
+            "boundary_rollout_steps": args.boundary_rollout_steps,
+            "boundary_rollout_decay": args.boundary_rollout_decay,
+            "boundary_curvature_scale": args.boundary_curvature_scale,
             "dynamic_context": {
                 "max_context_frames": args.max_context_frames,
                 "min_context_frames": args.min_context_frames,
@@ -446,9 +456,18 @@ def run_epoch(
         "adapter_align_map": 0.0,
         "adapter_align_memory": 0.0,
         "adapter_align_cosine": 0.0,
+        "boundary_head": 0.0,
+        "boundary_head_geom": 0.0,
+        "boundary_head_motion": 0.0,
+        "boundary_rollout": 0.0,
+        "boundary_rollout_geom": 0.0,
+        "boundary_rollout_motion": 0.0,
         "boundary_continuity": 0.0,
         "boundary_geom": 0.0,
         "boundary_motion": 0.0,
+        "boundary_curvature": 0.0,
+        "boundary_curvature_geom": 0.0,
+        "boundary_curvature_motion": 0.0,
         "window_frames": 0.0,
         "context_frames": 0.0,
         "future_frames": 0.0,
@@ -493,6 +512,11 @@ def run_epoch(
                 train_stage=train_stage,
                 latent_smooth_scale=latent_smooth_scale,
                 boundary_continuity_scale=args.boundary_continuity_scale,
+                boundary_head_scale=args.boundary_head_scale,
+                boundary_rollout_scale=args.boundary_rollout_scale,
+                boundary_rollout_steps=args.boundary_rollout_steps,
+                boundary_rollout_decay=args.boundary_rollout_decay,
+                boundary_curvature_scale=args.boundary_curvature_scale,
             )
             if adapter_encoder is not None and adapter_align_scale > 0.0 and train_stage != "context_only":
                 predicted_payload = build_state_condition_payload_from_condition_maps(
