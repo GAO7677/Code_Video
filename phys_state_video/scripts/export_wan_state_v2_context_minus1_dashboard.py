@@ -585,9 +585,9 @@ def render_html(report: dict) -> str:
                 <h3>{html.escape(model['label'])} · context</h3>
                 <video controls preload="none" playsinline src="{html.escape(model['normal_video'])}"></video>
                 <div class="metric-box">
-                  <div>Center {model['normal_metrics']['center_error']:.4f}</div>
-                  <div>Scale {model['normal_metrics']['log_scale_error']:.4f}</div>
-                  <div>Vis {model['normal_metrics']['visibility_error']:.4f}</div>
+                  <div>Center ↓ {model['normal_metrics']['center_error']:.4f}</div>
+                  <div>Scale ↓ {model['normal_metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis ↓ {model['normal_metrics']['visibility_error']:.4f}</div>
                 </div>
               </article>
               <article class="video-card">
@@ -595,10 +595,10 @@ def render_html(report: dict) -> str:
                 <h3>{html.escape(model['label'])} · context[:-1]</h3>
                 <video controls preload="none" playsinline src="{html.escape(model['trimmed_video'])}"></video>
                 <div class="metric-box">
-                  <div>Center {model['trimmed_metrics']['center_error']:.4f}</div>
-                  <div>Scale {model['trimmed_metrics']['log_scale_error']:.4f}</div>
-                  <div>Vis {model['trimmed_metrics']['visibility_error']:.4f}</div>
-                  <div>Head@new boundary {model['trimmed_metrics']['future_start_head_center_error']:.4f}</div>
+                  <div>Center ↓ {model['trimmed_metrics']['center_error']:.4f}</div>
+                  <div>Scale ↓ {model['trimmed_metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis ↓ {model['trimmed_metrics']['visibility_error']:.4f}</div>
+                  <div>Head@new boundary ↓ {model['trimmed_metrics']['future_start_head_center_error']:.4f}</div>
                 </div>
               </article>
             </div>
@@ -635,10 +635,10 @@ def render_html(report: dict) -> str:
                     <div class="mini-label">tailquery_converge</div>
                     <video controls preload="none" playsinline src="{html.escape(converged_variant['video'])}"></video>
                     <div class="metric-box compact-metrics">
-                      <div>Center {converged_variant['metrics']['center_error']:.4f}</div>
-                      <div>Scale {converged_variant['metrics']['log_scale_error']:.4f}</div>
-                      <div>Vis {converged_variant['metrics']['visibility_error']:.4f}</div>
-                      <div>Head {converged_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                      <div>Center ↓ {converged_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale ↓ {converged_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis ↓ {converged_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head ↓ {converged_variant['metrics']['future_start_head_center_error']:.4f}</div>
                     </div>
                     """
                 )
@@ -648,10 +648,10 @@ def render_html(report: dict) -> str:
                     <div class="mini-label">tailquery_multictx</div>
                     <video controls preload="none" playsinline src="{html.escape(primary_variant['video'])}"></video>
                     <div class="metric-box compact-metrics">
-                      <div>Center {primary_variant['metrics']['center_error']:.4f}</div>
-                      <div>Scale {primary_variant['metrics']['log_scale_error']:.4f}</div>
-                      <div>Vis {primary_variant['metrics']['visibility_error']:.4f}</div>
-                      <div>Head {primary_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                      <div>Center ↓ {primary_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale ↓ {primary_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis ↓ {primary_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head ↓ {primary_variant['metrics']['future_start_head_center_error']:.4f}</div>
                     </div>
                     """
                 )
@@ -661,10 +661,10 @@ def render_html(report: dict) -> str:
                     <div class="mini-label">old tailquery</div>
                     <video controls preload="none" playsinline src="{html.escape(legacy_variant['video'])}"></video>
                     <div class="metric-box compact-metrics">
-                      <div>Center {legacy_variant['metrics']['center_error']:.4f}</div>
-                      <div>Scale {legacy_variant['metrics']['log_scale_error']:.4f}</div>
-                      <div>Vis {legacy_variant['metrics']['visibility_error']:.4f}</div>
-                      <div>Head {legacy_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                      <div>Center ↓ {legacy_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale ↓ {legacy_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis ↓ {legacy_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head ↓ {legacy_variant['metrics']['future_start_head_center_error']:.4f}</div>
                     </div>
                     """
                 )
@@ -921,14 +921,15 @@ def render_html(report: dict) -> str:
       <h1>wan_state_v2 context ablation dashboard</h1>
       <p>这里把两条 overlay 分开展示。每个模型都有两条单独视频：一条对应正常 <code>context</code>，一条对应 <code>context[:-1]</code>。两条视频都只在各自对应的 future 底图上画框。</p>
       <p>页面主区域优先展示同一个 case 下不同 context 比例的分行对比。绿色框表示 GT；`100%` 的预测框是红色，其它缩短比例的预测框是蓝色。</p>
+      <p>下表与卡片中的指标全部都是误差项，因此统一按 <code>↓</code> 理解为越低越好。</p>
       <table>
         <thead>
           <tr>
             <th>Model</th>
-            <th>Center</th>
-            <th>Scale</th>
-            <th>Vis</th>
-            <th>Head@new boundary</th>
+            <th>Center ↓</th>
+            <th>Scale ↓</th>
+            <th>Vis ↓</th>
+            <th>Head@new boundary ↓</th>
           </tr>
         </thead>
         <tbody>
