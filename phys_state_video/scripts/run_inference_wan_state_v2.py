@@ -23,6 +23,7 @@ from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_state_v2_helpers import (
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
+    split_context_future_camera,
 )
 
 torch = require_torch()
@@ -83,7 +84,13 @@ def main():
             future_steps=future_states.shape[1],
             temporal_stride=latent_extractor.temporal_stride,
         )
-        camera_latent = resample_camera_to_latent_steps(camera, context_latent_steps)
+        context_camera, future_camera = split_context_future_camera(
+            camera,
+            context_steps=int(context_frames.shape[1]),
+            future_steps=int(future_states.shape[1]),
+        )
+        camera_latent = resample_camera_to_latent_steps(context_camera, context_latent_steps)
+        future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
         context_target = resample_temporal_states(context_states, context_latent_steps)
         future_target = resample_temporal_states(future_states, future_latent_steps)
         prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
@@ -94,6 +101,7 @@ def main():
             prompt_mask=prompt_mask.to(args.device),
             future_latent_steps=future_latent_steps,
             num_objects=context_states.shape[2],
+            future_camera=future_camera_latent,
         )
 
     output_dir = Path(args.output)

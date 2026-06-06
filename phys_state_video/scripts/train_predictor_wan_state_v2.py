@@ -31,6 +31,7 @@ from phys_state_video.wan_state_v2_helpers import (
     compute_future_latent_steps,
     compute_latent_step_count,
     resample_camera_to_latent_steps,
+    split_context_future_camera,
 )
 
 torch = require_torch()
@@ -69,6 +70,12 @@ def parse_args():
     parser.add_argument("--min-future-frames", type=int, default=8, help="Minimum future frame count preserved after dynamic context slicing.")
     parser.add_argument("--context-ratio-min", type=float, default=0.25, help="Minimum context ratio relative to the sampled full clip length.")
     parser.add_argument("--context-ratio-max", type=float, default=0.5, help="Maximum context ratio relative to the sampled full clip length.")
+    parser.add_argument(
+        "--selection-metric",
+        choices=["loss", "boundary_focus"],
+        default="loss",
+        help="Validation metric used to select the best checkpoint for each stage.",
+    )
     return parser.parse_args()
 
 
@@ -235,7 +242,7 @@ def slice_dynamic_context_batch(batch, args, *, is_train: bool) -> dict[str, tor
     context_frames_list = []
     context_states_list = []
     future_states_list = []
-    context_camera_list = []
+    camera_window_list = []
     for batch_index in range(int(full_frames.shape[0])):
         sample_total = int(full_lengths[batch_index].item())
         if sample_total < batch_total_steps:
@@ -251,13 +258,13 @@ def slice_dynamic_context_batch(batch, args, *, is_train: bool) -> dict[str, tor
         context_frames_list.append(sample_frames[:context_steps])
         context_states_list.append(sample_states[:context_steps])
         future_states_list.append(sample_states[context_steps:])
-        context_camera_list.append(sample_camera[:context_steps])
+        camera_window_list.append(sample_camera)
 
     return {
         "context_frames": torch.stack(context_frames_list, dim=0),
         "context_states": torch.stack(context_states_list, dim=0),
         "future_states": torch.stack(future_states_list, dim=0),
-        "camera": torch.stack(context_camera_list, dim=0),
+        "camera": torch.stack(camera_window_list, dim=0),
         "context_steps": context_steps,
         "future_steps": future_steps,
         "window_steps": batch_total_steps,
@@ -377,6 +384,20 @@ def compute_adapter_alignment_terms(
     return losses
 
 
+def compute_selection_metric(metrics: dict[str, float], selection_metric: str) -> float:
+    if selection_metric == "loss":
+        return float(metrics["loss"])
+    if selection_metric == "boundary_focus":
+        return float(
+            0.35 * metrics["future_loss"]
+            + 0.30 * metrics["boundary_head"]
+            + 0.20 * metrics["boundary_continuity"]
+            + 0.10 * metrics["boundary_rollout"]
+            + 0.05 * metrics["boundary_curvature"]
+        )
+    raise ValueError(f"unsupported selection_metric={selection_metric}")
+
+
 def save_checkpoint(
     output_path: Path,
     model: WanStateLatentPredictorV2,
@@ -414,6 +435,7 @@ def save_checkpoint(
                 "context_ratio_min": args.context_ratio_min,
                 "context_ratio_max": args.context_ratio_max,
             },
+            "selection_metric": args.selection_metric,
             "world_size": get_world_size(),
             "train_schedule": {
                 "epochs_context": args.epochs_context,
@@ -479,9 +501,14 @@ def run_epoch(
         with torch.set_grad_enabled(is_train):
             sliced = slice_dynamic_context_batch(batch, args, is_train=is_train)
             context_frames = sliced["context_frames"].to(device)
-            camera = sliced["camera"].to(device)
+            camera_window = sliced["camera"].to(device)
             context_states = sliced["context_states"].to(device)
             future_states = sliced["future_states"].to(device)
+            context_camera, future_camera = split_context_future_camera(
+                camera_window,
+                context_steps=int(context_frames.shape[1]),
+                future_steps=int(future_states.shape[1]),
+            )
 
             with torch.no_grad():
                 context_latents = latent_extractor.encode_context_frames_raw(context_frames)
@@ -491,7 +518,8 @@ def run_epoch(
                 future_steps=future_states.shape[1],
                 temporal_stride=latent_extractor.temporal_stride,
             )
-            camera_latent = resample_camera_to_latent_steps(camera, context_latent_steps)
+            camera_latent = resample_camera_to_latent_steps(context_camera, context_latent_steps)
+            future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
             context_target = resample_temporal_states(context_states, context_latent_steps)
             future_target = resample_temporal_states(future_states, future_latent_steps)
             with torch.no_grad():
@@ -504,6 +532,7 @@ def run_epoch(
                 prompt_mask=prompt_mask.to(device),
                 future_latent_steps=future_latent_steps,
                 num_objects=context_states.shape[2],
+                future_camera=future_camera_latent,
             )
             losses = wan_state_predictor_v2_loss(
                 outputs=outputs,
@@ -537,6 +566,7 @@ def run_epoch(
                         prompt_mask=prompt_mask.to(device),
                         future_latent_steps=future_latent_steps,
                         num_objects=context_states.shape[2],
+                        future_camera=future_camera_latent,
                     )
                     reference_payload = build_state_condition_payload_from_condition_maps(
                         teacher_outputs["condition_maps"],
@@ -727,7 +757,7 @@ def main():
                 if is_main_process():
                     print(json.dumps(record, ensure_ascii=False), flush=True)
                 selection_metrics = val_metrics if val_metrics is not None else train_metrics
-                selection_loss = float(selection_metrics["loss"])
+                selection_loss = compute_selection_metric(selection_metrics, args.selection_metric)
                 if selection_loss <= best_metric:
                     best_metric = selection_loss
                     if is_main_process():

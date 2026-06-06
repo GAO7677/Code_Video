@@ -24,6 +24,7 @@ from phys_state_video.utils import detach_to_cpu_numpy, require_torch
 from phys_state_video.wan_state_v2_helpers import (
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
+    split_context_future_camera,
 )
 
 torch = require_torch()
@@ -102,7 +103,13 @@ def build_predictor_state_condition(
                 future_steps=batch["future_states"].shape[1],
                 temporal_stride=latent_extractor.temporal_stride,
             )
-            camera_latent = resample_camera_to_latent_steps(batch["camera"].to(device), context_latent_steps)
+            context_camera, future_camera = split_context_future_camera(
+                batch["camera"].to(device),
+                context_steps=int(context_frames.shape[1]),
+                future_steps=int(batch["future_states"].shape[1]),
+            )
+            camera_latent = resample_camera_to_latent_steps(context_camera, context_latent_steps)
+            future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
             prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
             outputs = predictor(
                 context_latents=context_latents,
@@ -111,6 +118,7 @@ def build_predictor_state_condition(
                 prompt_mask=prompt_mask.to(device),
                 future_latent_steps=future_latent_steps,
                 num_objects=batch["context_states"].shape[2],
+                future_camera=future_camera_latent,
             )
         else:
             context_latents = latent_extractor.encode_context_frames(context_frames)

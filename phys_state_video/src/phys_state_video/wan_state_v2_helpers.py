@@ -83,6 +83,35 @@ def resample_camera_to_latent_steps(camera: torch.Tensor, target_steps: int) -> 
     return resample_temporal_features(camera, target_steps)
 
 
+def split_context_future_camera(
+    camera: torch.Tensor,
+    context_steps: int,
+    future_steps: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if camera.ndim == 2:
+        camera = camera.unsqueeze(0)
+    if camera.ndim != 3:
+        raise ValueError(f"expected camera [B, T, D] or [T, D], got {tuple(camera.shape)}")
+    if context_steps <= 0 or future_steps <= 0:
+        raise ValueError(f"context_steps and future_steps must be positive, got {context_steps} and {future_steps}")
+    total_steps = int(camera.shape[1])
+    if total_steps < context_steps:
+        raise ValueError(
+            f"camera length {total_steps} is smaller than required context_steps {context_steps}"
+        )
+    context_camera = camera[:, :context_steps]
+    if total_steps >= context_steps + future_steps:
+        future_camera = camera[:, context_steps : context_steps + future_steps]
+    elif total_steps > context_steps:
+        future_camera = camera[:, context_steps:]
+        pad = future_steps - int(future_camera.shape[1])
+        if pad > 0:
+            future_camera = torch.cat([future_camera, future_camera[:, -1:].expand(-1, pad, -1)], dim=1)
+    else:
+        future_camera = context_camera[:, -1:].expand(-1, future_steps, -1)
+    return context_camera.contiguous(), future_camera.contiguous()
+
+
 def align_wan_frame_num(frame_num: int) -> int:
     if frame_num <= 0:
         raise ValueError(f"frame_num must be positive, got {frame_num}")

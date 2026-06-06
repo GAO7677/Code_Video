@@ -369,6 +369,7 @@ class WanStateLatentPredictorV2(nn.Module):
         prompt_tokens: torch.Tensor,
         prompt_mask: torch.Tensor,
         future_latent_steps: int,
+        future_camera: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch, context_steps, grid_h, grid_w, hidden_dim = context_state_maps.shape
         context_memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
@@ -382,6 +383,14 @@ class WanStateLatentPredictorV2(nn.Module):
         prompt_padding_mask = prompt_mask <= 0
         memory_padding_mask = torch.cat([context_padding_mask, prompt_padding_mask], dim=1)
         future_queries = self.future_time_queries[:, :future_latent_steps] + self.spatial_pos_embed
+        if future_camera is not None:
+            if future_camera.shape[:2] != (batch, future_latent_steps):
+                raise ValueError(
+                    f"future_camera shape {tuple(future_camera.shape)} does not match "
+                    f"(batch={batch}, future_latent_steps={future_latent_steps})"
+                )
+            future_camera_embed = self.camera_proj(future_camera).view(batch, future_latent_steps, 1, 1, hidden_dim)
+            future_queries = future_queries + future_camera_embed
         future_queries = future_queries.expand(batch, -1, -1, -1, -1).contiguous()
         future_tokens = future_queries.view(batch, future_latent_steps * grid_h * grid_w, hidden_dim)
         future_hidden = self.future_decoder(
@@ -399,6 +408,7 @@ class WanStateLatentPredictorV2(nn.Module):
         prompt_mask: torch.Tensor,
         future_latent_steps: int | None = None,
         num_objects: int | None = None,
+        future_camera: torch.Tensor | None = None,
     ) -> Dict[str, torch.Tensor]:
         if context_latents.ndim != 5:
             raise ValueError(
@@ -420,6 +430,10 @@ class WanStateLatentPredictorV2(nn.Module):
             raise ValueError(
                 f"camera shape {tuple(camera.shape)} does not match context latents batch/steps {(batch, context_steps)}"
             )
+        if future_camera is not None and future_camera.shape[0] != batch:
+            raise ValueError(
+                f"future_camera batch size must match context batch {batch}, got {tuple(future_camera.shape)}"
+            )
         if prompt_context.shape[0] != batch or prompt_mask.shape[0] != batch:
             raise ValueError(
                 f"prompt batch size must match context batch {batch}, got {tuple(prompt_context.shape)} and "
@@ -439,6 +453,7 @@ class WanStateLatentPredictorV2(nn.Module):
             prompt_tokens,
             prompt_mask,
             future_latent_steps,
+            future_camera=future_camera,
         )
 
         context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)

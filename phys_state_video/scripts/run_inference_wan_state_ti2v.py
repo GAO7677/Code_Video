@@ -24,6 +24,7 @@ from phys_state_video.wan_bridge import WanTextImageToVideoBackend
 from phys_state_video.wan_state_v2_helpers import (
     compute_future_latent_steps,
     resample_camera_to_latent_steps,
+    split_context_future_camera,
 )
 
 torch = require_torch()
@@ -137,7 +138,13 @@ def main():
                 future_steps=future_steps,
                 temporal_stride=latent_extractor.temporal_stride,
             )
-            camera_latent = resample_camera_to_latent_steps(batch["camera"].to(args.device), context_latent_steps)
+            context_camera, future_camera = split_context_future_camera(
+                batch["camera"].to(args.device),
+                context_steps=context_steps,
+                future_steps=future_steps,
+            )
+            camera_latent = resample_camera_to_latent_steps(context_camera, context_latent_steps)
+            future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
             prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
             outputs = predictor(
                 context_latents=context_latents,
@@ -146,6 +153,7 @@ def main():
                 prompt_mask=prompt_mask.to(args.device),
                 future_latent_steps=future_latent_steps,
                 num_objects=batch["context_states"].shape[2],
+                future_camera=future_camera_latent,
             )
         else:
             context_latents = latent_extractor.encode_context_frames(context_frames)
