@@ -58,6 +58,7 @@ class LoadedModel:
 
 TAILQUERY_CONTEXT_RATIOS = (1.0, 0.75, 0.50, 0.25)
 PRIMARY_TAILQUERY_LABEL = "tailquery_multictx"
+CONVERGED_TAILQUERY_LABEL = "tailquery_converge"
 LEGACY_TAILQUERY_LABEL = "tailquery"
 
 
@@ -555,6 +556,10 @@ def render_html(report: dict) -> str:
             (model for model in case["models"] if model["label"] == PRIMARY_TAILQUERY_LABEL),
             None,
         )
+        converged_tailquery_model = next(
+            (model for model in case["models"] if model["label"] == CONVERGED_TAILQUERY_LABEL),
+            None,
+        )
         legacy_tailquery_model = next(
             (model for model in case["models"] if model["label"] == LEGACY_TAILQUERY_LABEL),
             None,
@@ -565,9 +570,10 @@ def render_html(report: dict) -> str:
         other_models = [
             model
             for model in case["models"]
-            if model["label"] not in {PRIMARY_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}
+            if model["label"] not in {PRIMARY_TAILQUERY_LABEL, CONVERGED_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}
         ]
         tailquery_ratio_variants = case.get("tailquery_ratio_variants", [])
+        converged_tailquery_ratio_variants = case.get("converged_tailquery_ratio_variants", [])
         legacy_tailquery_ratio_variants = case.get("legacy_tailquery_ratio_variants", [])
 
         def _render_model_pair(model: dict, *, primary: bool) -> str:
@@ -600,42 +606,68 @@ def render_html(report: dict) -> str:
 
         collapsed_pairs = "".join(_render_model_pair(model, primary=False) for model in other_models)
         primary_ratio_by_value = {float(item["ratio"]): item for item in tailquery_ratio_variants}
+        converged_ratio_by_value = {float(item["ratio"]): item for item in converged_tailquery_ratio_variants}
         legacy_ratio_by_value = {float(item["ratio"]): item for item in legacy_tailquery_ratio_variants}
+        compare_labels = []
+        if converged_tailquery_model is not None:
+            compare_labels.append(CONVERGED_TAILQUERY_LABEL)
+        if primary_tailquery_model is not None:
+            compare_labels.append(PRIMARY_TAILQUERY_LABEL)
+        if legacy_tailquery_model is not None:
+            compare_labels.append("old tailquery")
+
         ratio_cards = []
         for ratio in TAILQUERY_CONTEXT_RATIOS:
             primary_variant = primary_ratio_by_value.get(float(ratio))
+            converged_variant = converged_ratio_by_value.get(float(ratio))
             legacy_variant = legacy_ratio_by_value.get(float(ratio))
-            if primary_variant is None and legacy_variant is None:
+            if primary_variant is None and converged_variant is None and legacy_variant is None:
                 continue
-            display_variant = primary_variant if primary_variant is not None else legacy_variant
-            primary_block = (
-                f"""
-                <div class="mini-label">new tailquery</div>
-                <video controls preload="none" playsinline src="{html.escape(primary_variant['video'])}"></video>
-                <div class="metric-box compact-metrics">
-                  <div>Center {primary_variant['metrics']['center_error']:.4f}</div>
-                  <div>Scale {primary_variant['metrics']['log_scale_error']:.4f}</div>
-                  <div>Vis {primary_variant['metrics']['visibility_error']:.4f}</div>
-                  <div>Head {primary_variant['metrics']['future_start_head_center_error']:.4f}</div>
-                </div>
-                """
-                if primary_variant is not None
-                else '<div class="mini-label">new tailquery</div><div class="metric-box compact-metrics">missing</div>'
+            display_variant = (
+                converged_variant
+                if converged_variant is not None
+                else (primary_variant if primary_variant is not None else legacy_variant)
             )
-            legacy_block = (
-                f"""
-                <div class="mini-label">old tailquery</div>
-                <video controls preload="none" playsinline src="{html.escape(legacy_variant['video'])}"></video>
-                <div class="metric-box compact-metrics">
-                  <div>Center {legacy_variant['metrics']['center_error']:.4f}</div>
-                  <div>Scale {legacy_variant['metrics']['log_scale_error']:.4f}</div>
-                  <div>Vis {legacy_variant['metrics']['visibility_error']:.4f}</div>
-                  <div>Head {legacy_variant['metrics']['future_start_head_center_error']:.4f}</div>
-                </div>
-                """
-                if legacy_variant is not None
-                else '<div class="mini-label">old tailquery</div><div class="metric-box compact-metrics">missing</div>'
-            )
+            model_blocks = []
+            if converged_variant is not None:
+                model_blocks.append(
+                    f"""
+                    <div class="mini-label">tailquery_converge</div>
+                    <video controls preload="none" playsinline src="{html.escape(converged_variant['video'])}"></video>
+                    <div class="metric-box compact-metrics">
+                      <div>Center {converged_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale {converged_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis {converged_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head {converged_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                    </div>
+                    """
+                )
+            if primary_variant is not None:
+                model_blocks.append(
+                    f"""
+                    <div class="mini-label">tailquery_multictx</div>
+                    <video controls preload="none" playsinline src="{html.escape(primary_variant['video'])}"></video>
+                    <div class="metric-box compact-metrics">
+                      <div>Center {primary_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale {primary_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis {primary_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head {primary_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                    </div>
+                    """
+                )
+            if legacy_variant is not None:
+                model_blocks.append(
+                    f"""
+                    <div class="mini-label">old tailquery</div>
+                    <video controls preload="none" playsinline src="{html.escape(legacy_variant['video'])}"></video>
+                    <div class="metric-box compact-metrics">
+                      <div>Center {legacy_variant['metrics']['center_error']:.4f}</div>
+                      <div>Scale {legacy_variant['metrics']['log_scale_error']:.4f}</div>
+                      <div>Vis {legacy_variant['metrics']['visibility_error']:.4f}</div>
+                      <div>Head {legacy_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                    </div>
+                    """
+                )
             ratio_cards.append(
                 f"""
                 <article class="video-card">
@@ -647,16 +679,15 @@ def render_html(report: dict) -> str:
                     <div>context steps {int(display_variant['context_steps'])}</div>
                     <div>future steps {int(display_variant['future_steps'])}</div>
                   </div>
-                  {primary_block}
-                  {legacy_block}
+                  {''.join(model_blocks)}
                 </article>
                 """
             )
         tailquery_block = (
             f"""
             <div class="feature-head">
-              <h3>{html.escape(primary_tailquery_model['label'] if primary_tailquery_model is not None else PRIMARY_TAILQUERY_LABEL)} 多长度主对比</h3>
-              <p class="meta">同一个 case，下方直接比较主权重在不同 context 比例 `100% / 75% / 50% / 25%` 下预测出的 future overlay。</p>
+              <h3>Tailquery 多长度主对比</h3>
+              <p class="meta">同一个 case，下方按 ratio 直接比较 `{' / '.join(compare_labels)}` 这些预测分支。</p>
             </div>
             <div class="ratio-grid">
               {''.join(ratio_cards)}
@@ -664,8 +695,8 @@ def render_html(report: dict) -> str:
             """
             if ratio_cards
             else (
-                _render_model_pair(primary_tailquery_model, primary=True)
-                if primary_tailquery_model is not None
+                _render_model_pair(converged_tailquery_model or primary_tailquery_model, primary=True)
+                if (converged_tailquery_model is not None or primary_tailquery_model is not None)
                 else '<p class="meta">tailquery result is missing for this case.</p>'
             )
         )
@@ -889,7 +920,7 @@ def render_html(report: dict) -> str:
     <section class="hero">
       <h1>wan_state_v2 context ablation dashboard</h1>
       <p>这里把两条 overlay 分开展示。每个模型都有两条单独视频：一条对应正常 <code>context</code>，一条对应 <code>context[:-1]</code>。两条视频都只在各自对应的 future 底图上画框。</p>
-      <p>页面主区域优先展示同一个 case 下不同 context 比例的三行对比：`Input Context / new tailquery / old tailquery`。绿色框表示 GT；`100%` 的预测框是红色，其它缩短比例的预测框是蓝色。</p>
+      <p>页面主区域优先展示同一个 case 下不同 context 比例的分行对比。绿色框表示 GT；`100%` 的预测框是红色，其它缩短比例的预测框是蓝色。</p>
       <table>
         <thead>
           <tr>
@@ -1017,6 +1048,7 @@ def main():
 
         case_models = []
         tailquery_ratio_variants = []
+        converged_tailquery_ratio_variants = []
         legacy_tailquery_ratio_variants = []
         npz_payload = {
             "full_frames": full_frames,
@@ -1109,7 +1141,7 @@ def main():
             npz_payload[f"{model.label}_pred_future_latent_fullctx"] = pred_future_latent_full
             npz_payload[f"{model.label}_pred_future_fullctx"] = pred_future_full
 
-            if model.label in {PRIMARY_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}:
+            if model.label in {PRIMARY_TAILQUERY_LABEL, CONVERGED_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}:
                 for ratio in TAILQUERY_CONTEXT_RATIOS:
                     ratio_context_steps = resolve_ratio_context_steps(original_context_steps, ratio)
                     ratio_batch, ratio_future_steps = build_batch_with_context_steps(
@@ -1184,6 +1216,8 @@ def main():
                     }
                     if model.label == PRIMARY_TAILQUERY_LABEL:
                         tailquery_ratio_variants.append(ratio_variant_payload)
+                    elif model.label == CONVERGED_TAILQUERY_LABEL:
+                        converged_tailquery_ratio_variants.append(ratio_variant_payload)
                     else:
                         legacy_tailquery_ratio_variants.append(ratio_variant_payload)
                     npz_payload[f"{model.label}_{ratio_slug}_pred_future_latent"] = ratio_pred_future_latent
@@ -1212,6 +1246,7 @@ def main():
                 "trimmed_context_steps": int(trimmed_context_steps),
                 "future_start_idx": int(future_start_idx),
                 "tailquery_ratio_variants": tailquery_ratio_variants,
+                "converged_tailquery_ratio_variants": converged_tailquery_ratio_variants,
                 "legacy_tailquery_ratio_variants": legacy_tailquery_ratio_variants,
                 "models": case_models,
             }
