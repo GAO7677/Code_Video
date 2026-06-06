@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,15 @@ class MaskTrackOutputs:
     prompt_mode: str
 
 
+@dataclass(slots=True)
+class DetectionPromptOutputs:
+    boxes_xyxy: np.ndarray
+    scores: np.ndarray
+    phrases: list[str]
+    prompt_frame_idx: int
+    prompt_mode: str
+
+
 def _mask_to_box_xyxy(mask: np.ndarray) -> np.ndarray:
     rows, cols = np.where(mask > 0)
     if rows.size == 0 or cols.size == 0:
@@ -43,6 +53,28 @@ def _mask_to_box_xyxy(mask: np.ndarray) -> np.ndarray:
 def _normalize_box(box_xyxy: np.ndarray, *, width: int, height: int) -> np.ndarray:
     scale = np.asarray([width, height, width, height], dtype=np.float32)
     return box_xyxy.astype(np.float32) / scale
+
+
+def _box_area_ratio_xyxy(box_xyxy: np.ndarray, *, width: int, height: int) -> float:
+    bw = max(float(box_xyxy[2] - box_xyxy[0]), 0.0)
+    bh = max(float(box_xyxy[3] - box_xyxy[1]), 0.0)
+    return float((bw * bh) / max(float(width * height), 1.0))
+
+
+def _box_iou_xyxy(box_a: np.ndarray, box_b: np.ndarray) -> float:
+    ax0, ay0, ax1, ay1 = [float(v) for v in box_a]
+    bx0, by0, bx1, by1 = [float(v) for v in box_b]
+    inter_x0 = max(ax0, bx0)
+    inter_y0 = max(ay0, by0)
+    inter_x1 = min(ax1, bx1)
+    inter_y1 = min(ay1, by1)
+    inter_w = max(inter_x1 - inter_x0, 0.0)
+    inter_h = max(inter_y1 - inter_y0, 0.0)
+    inter = inter_w * inter_h
+    area_a = max(ax1 - ax0, 0.0) * max(ay1 - ay0, 0.0)
+    area_b = max(bx1 - bx0, 0.0) * max(by1 - by0, 0.0)
+    union = max(area_a + area_b - inter, 1e-6)
+    return float(inter / union)
 
 
 def _encode_mask_appearance(frames_tchw: np.ndarray, masks_tnhw: np.ndarray) -> np.ndarray:
@@ -153,6 +185,188 @@ def build_proxy_prompt_box(
     width = int(frames_tchw.shape[3])
     scale = np.asarray([width, height, width, height], dtype=np.float32)
     return (box * scale).astype(np.float32)
+
+
+class GroundingDINOTextDetector:
+    def __init__(
+        self,
+        *,
+        repo_root: str | Path = "/home/gaoya/Grounded-SAM-2-main",
+        config_path: str | Path = "/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/GroundingDINO_SwinT_OGC.cfg.py",
+        checkpoint_path: str | Path = "/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/groundingdino_swint_ogc.pth",
+        device: str = "cuda",
+        box_threshold: float = 0.25,
+        text_threshold: float = 0.20,
+        max_boxes: int = 4,
+    ) -> None:
+        self.repo_root = Path(repo_root)
+        self.config_path = Path(config_path)
+        self.checkpoint_path = Path(checkpoint_path)
+        self.device = device
+        self.box_threshold = float(box_threshold)
+        self.text_threshold = float(text_threshold)
+        self.max_boxes = int(max_boxes)
+        self._model = None
+        self._predict = None
+        self._model_api = None
+        self._phrase_blacklist = (
+            "static shot",
+            "no camera movement",
+            "camera movement",
+            "plain wall",
+            "background",
+        )
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        repo_root_str = str(self.repo_root)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+        from grounding_dino.groundingdino.util.inference import Model, load_model, predict
+
+        self._model = load_model(
+            str(self.config_path),
+            str(self.checkpoint_path),
+            device=self.device,
+        )
+        self._predict = predict
+        self._model_api = Model
+
+    @staticmethod
+    def _cxcywh_to_xyxy_pixels(box_cxcywh: np.ndarray, *, width: int, height: int) -> np.ndarray:
+        cx, cy, bw, bh = [float(value) for value in box_cxcywh]
+        x0 = (cx - 0.5 * bw) * width
+        y0 = (cy - 0.5 * bh) * height
+        x1 = (cx + 0.5 * bw) * width
+        y1 = (cy + 0.5 * bh) * height
+        return np.asarray([x0, y0, x1, y1], dtype=np.float32)
+
+    def _filter_candidates(
+        self,
+        *,
+        boxes_xyxy: np.ndarray,
+        scores: np.ndarray,
+        phrases: list[str],
+        width: int,
+        height: int,
+        guidance_box_xyxy: np.ndarray | None,
+        max_area_ratio: float = 0.72,
+        min_guidance_iou: float = 0.03,
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        kept_boxes: list[np.ndarray] = []
+        kept_scores: list[float] = []
+        kept_phrases: list[str] = []
+        for box_xyxy, score, phrase in zip(boxes_xyxy, scores, phrases):
+            phrase_norm = str(phrase).strip().lower()
+            if any(blocked in phrase_norm for blocked in self._phrase_blacklist):
+                continue
+            if _box_area_ratio_xyxy(box_xyxy, width=width, height=height) > max_area_ratio:
+                continue
+            kept_boxes.append(np.asarray(box_xyxy, dtype=np.float32))
+            kept_scores.append(float(score))
+            kept_phrases.append(str(phrase))
+
+        if not kept_boxes:
+            return (
+                np.zeros((0, 4), dtype=np.float32),
+                np.zeros((0,), dtype=np.float32),
+                [],
+            )
+
+        boxes_arr = np.stack(kept_boxes, axis=0).astype(np.float32)
+        scores_arr = np.asarray(kept_scores, dtype=np.float32)
+        phrases_arr = kept_phrases
+        if guidance_box_xyxy is not None:
+            overlaps = np.asarray(
+                [_box_iou_xyxy(box_xyxy, guidance_box_xyxy) for box_xyxy in boxes_arr],
+                dtype=np.float32,
+            )
+            if np.any(overlaps >= float(min_guidance_iou)):
+                keep = overlaps >= float(min_guidance_iou)
+                boxes_arr = boxes_arr[keep]
+                scores_arr = scores_arr[keep]
+                phrases_arr = [phrase for phrase, flag in zip(phrases_arr, keep.tolist()) if flag]
+        return boxes_arr, scores_arr, phrases_arr
+
+    def detect(
+        self,
+        frame_chw: np.ndarray,
+        caption: str,
+        *,
+        guidance_box_xyxy: np.ndarray | None = None,
+    ) -> DetectionPromptOutputs:
+        self._load()
+        if not caption.strip():
+            raise ValueError("caption-based detection requires a non-empty caption")
+        rgb = np.transpose(np.clip(frame_chw, 0.0, 1.0), (1, 2, 0))
+        bgr = cv2.cvtColor((rgb * 255.0).round().astype(np.uint8), cv2.COLOR_RGB2BGR)
+        processed = self._model_api.preprocess_image(bgr).to(self.device)
+        boxes, logits, phrases = self._predict(
+            model=self._model,
+            image=processed,
+            caption=caption,
+            box_threshold=self.box_threshold,
+            text_threshold=self.text_threshold,
+            device=self.device,
+        )
+        boxes_np = boxes.detach().cpu().numpy().astype(np.float32)
+        scores_np = logits.detach().cpu().numpy().astype(np.float32)
+        if boxes_np.size == 0:
+            return DetectionPromptOutputs(
+                boxes_xyxy=np.zeros((0, 4), dtype=np.float32),
+                scores=np.zeros((0,), dtype=np.float32),
+                phrases=[],
+                prompt_frame_idx=0,
+                prompt_mode="caption_gdino",
+            )
+        order = np.argsort(-scores_np)
+        if self.max_boxes > 0:
+            order = order[: self.max_boxes]
+        height, width = bgr.shape[:2]
+        xyxy = np.stack(
+            [self._cxcywh_to_xyxy_pixels(boxes_np[idx], width=width, height=height) for idx in order],
+            axis=0,
+        )
+        phrases_sorted = [str(phrases[idx]) for idx in order]
+        scores_sorted = scores_np[order]
+        xyxy, scores_sorted, phrases_sorted = self._filter_candidates(
+            boxes_xyxy=xyxy,
+            scores=scores_sorted,
+            phrases=phrases_sorted,
+            width=width,
+            height=height,
+            guidance_box_xyxy=guidance_box_xyxy,
+        )
+        return DetectionPromptOutputs(
+            boxes_xyxy=xyxy.astype(np.float32),
+            scores=scores_sorted.astype(np.float32),
+            phrases=phrases_sorted,
+            prompt_frame_idx=0,
+            prompt_mode="caption_gdino",
+        )
+
+
+def build_caption_prompt_boxes(
+    frames_tchw: np.ndarray,
+    *,
+    prompt_frame_idx: int,
+    caption: str,
+    detector: GroundingDINOTextDetector,
+    guidance_box_xyxy: np.ndarray | None = None,
+) -> DetectionPromptOutputs:
+    outputs = detector.detect(
+        frames_tchw[int(prompt_frame_idx)],
+        caption,
+        guidance_box_xyxy=guidance_box_xyxy,
+    )
+    return DetectionPromptOutputs(
+        boxes_xyxy=outputs.boxes_xyxy.astype(np.float32),
+        scores=outputs.scores.astype(np.float32),
+        phrases=list(outputs.phrases),
+        prompt_frame_idx=int(prompt_frame_idx),
+        prompt_mode="caption_gdino",
+    )
 
 
 class SAM2VideoMaskTracker:

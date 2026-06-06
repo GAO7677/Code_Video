@@ -22,7 +22,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.mask_tracking import (
+    GroundingDINOTextDetector,
     SAM2VideoMaskTracker,
+    build_caption_prompt_boxes,
     build_mask_track_outputs,
     build_proxy_prompt_box,
 )
@@ -56,6 +58,7 @@ def parse_args():
     parser.add_argument("--context-ratio", type=float, default=0.25)
     parser.add_argument("--future-steps", type=int, default=None)
     parser.add_argument("--prompt-frame", choices=["last_context", "first"], default="last_context")
+    parser.add_argument("--prompt-mode", choices=["proxy_box", "caption_gdino"], default="caption_gdino")
     parser.add_argument("--device", default=None)
     parser.add_argument("--sam2-model-id", default="")
     parser.add_argument(
@@ -66,6 +69,18 @@ def parse_args():
         "--sam2-ckpt",
         default="/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt",
     )
+    parser.add_argument("--gdino-repo-root", default="/home/gaoya/Grounded-SAM-2-main")
+    parser.add_argument(
+        "--gdino-config",
+        default="/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/GroundingDINO_SwinT_OGC.cfg.py",
+    )
+    parser.add_argument(
+        "--gdino-ckpt",
+        default="/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/groundingdino_swint_ogc.pth",
+    )
+    parser.add_argument("--gdino-box-threshold", type=float, default=0.25)
+    parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
+    parser.add_argument("--gdino-max-boxes", type=int, default=4)
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--port", type=int, default=18879)
     parser.add_argument("--clean", action="store_true")
@@ -182,7 +197,7 @@ def draw_box_overlay_video(
     frames_tchw: np.ndarray,
     *,
     boxes_norm: np.ndarray | None = None,
-    prompt_box_xyxy: np.ndarray | None = None,
+    prompt_boxes_xyxy: np.ndarray | None = None,
     prompt_frame_idx: int | None = None,
     masks_tnhw: np.ndarray | None = None,
     include_centers: bool = False,
@@ -214,9 +229,13 @@ def draw_box_overlay_video(
                     cx = int(np.clip((box[0] + box[2]) * 0.5 * width, 0, width - 1))
                     cy = int(np.clip((box[1] + box[3]) * 0.5 * height, 0, height - 1))
                     cv2.circle(canvas, (cx, cy), 3, (70, 210, 120), -1, cv2.LINE_AA)
-        if prompt_box_xyxy is not None and prompt_frame_idx is not None and frame_idx == int(prompt_frame_idx):
-            x0, y0, x1, y1 = pixel_box_to_pixels(prompt_box_xyxy, height, width)
-            cv2.rectangle(canvas, (x0, y0), (x1, y1), (250, 210, 40), 2, cv2.LINE_AA)
+        if prompt_boxes_xyxy is not None and prompt_frame_idx is not None and frame_idx == int(prompt_frame_idx):
+            prompt_boxes = np.asarray(prompt_boxes_xyxy, dtype=np.float32)
+            if prompt_boxes.ndim == 1:
+                prompt_boxes = prompt_boxes[None]
+            for prompt_box_xyxy in prompt_boxes:
+                x0, y0, x1, y1 = pixel_box_to_pixels(prompt_box_xyxy, height, width)
+                cv2.rectangle(canvas, (x0, y0), (x1, y1), (250, 210, 40), 2, cv2.LINE_AA)
         rendered.append(np.transpose(canvas, (2, 0, 1)).astype(np.float32) / 255.0)
     return np.stack(rendered, axis=0)
 
@@ -301,7 +320,12 @@ def render_html(report: dict) -> str:
                     prompt frame={case['prompt_frame_idx']}
                   </p>
                   <p class="meta">
-                    green = SAM2 tracked box, yellow = proxy prompt box on prompt frame only
+                    prompt mode={html.escape(case['prompt_mode'])} |
+                    prompt boxes={case['prompt_box_count']} |
+                    prompt labels={html.escape(', '.join(case['prompt_phrases'])) if case['prompt_phrases'] else 'n/a'}
+                  </p>
+                  <p class="meta">
+                    green = SAM2 tracked box, yellow = detector / proxy prompt box on prompt frame only
                   </p>
                 </div>
               </div>
@@ -479,8 +503,8 @@ def render_html(report: dict) -> str:
   <div class="page">
     <section class="hero">
       <h1>SAM2 Benchmark Box Dashboard</h1>
-      <p>这页直接对 <code>A/B/D.json</code> 中抽取的 source case 运行 <code>proxy_box -&gt; SAM2 双向时序传播</code>。页面里的 <code>Proxy Boxes</code> 是旧运动粗框基线，<code>SAM2</code> 两列则是新 pipeline 提取出的时序框结果。</p>
-      <p>颜色约定：绿色是 SAM2 tracked box，黄色只在 prompt frame 上画出初始化用的 proxy prompt box。视频上不额外叠文字，元信息统一放在卡片文字区。</p>
+      <p>这页直接对 <code>A/B/D.json</code> 中抽取的 source case 运行 <code>caption / proxy prompt -&gt; SAM2 双向时序传播</code>。页面里的 <code>Proxy Boxes</code> 是旧运动粗框基线，<code>SAM2</code> 两列则是新 pipeline 提取出的时序框结果。</p>
+      <p>颜色约定：绿色是 SAM2 tracked box，黄色只在 prompt frame 上画出初始化 prompt box。视频上不额外叠文字，元信息统一放在卡片文字区。</p>
       <table>
         <thead>
           <tr>
@@ -517,6 +541,17 @@ def main():
         model_cfg=args.sam2_config,
         checkpoint_path=args.sam2_ckpt,
     )
+    text_detector = None
+    if args.prompt_mode == "caption_gdino":
+        text_detector = GroundingDINOTextDetector(
+            repo_root=args.gdino_repo_root,
+            config_path=args.gdino_config,
+            checkpoint_path=args.gdino_ckpt,
+            device=device,
+            box_threshold=args.gdino_box_threshold,
+            text_threshold=args.gdino_text_threshold,
+            max_boxes=args.gdino_max_boxes,
+        )
 
     cases = choose_cases(
         Path(args.bench_json_root),
@@ -554,12 +589,31 @@ def main():
         future_steps = int(frames.shape[0] - context_steps)
         prompt_frame_idx = resolve_prompt_frame_idx(context_steps, args.prompt_frame)
 
-        prompt_box_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)
+        prompt_phrases: list[str] = []
+        prompt_scores = np.zeros((0,), dtype=np.float32)
+        if args.prompt_mode == "caption_gdino":
+            detection = build_caption_prompt_boxes(
+                frames,
+                prompt_frame_idx=prompt_frame_idx,
+                caption=spec.caption,
+                detector=text_detector,
+            )
+            if detection.boxes_xyxy.shape[0] == 0:
+                prompt_boxes_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)[None]
+                resolved_prompt_mode = "proxy_box_fallback"
+            else:
+                prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+                prompt_phrases = list(detection.phrases)
+                prompt_scores = detection.scores.astype(np.float32)
+                resolved_prompt_mode = detection.prompt_mode
+        else:
+            prompt_boxes_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)[None]
+            resolved_prompt_mode = "proxy_box"
         sam2_outputs = build_mask_track_outputs(
             frames,
             prompt_frame_idx=prompt_frame_idx,
-            prompt_boxes_xyxy=prompt_box_xyxy[None],
-            prompt_mode="proxy_box",
+            prompt_boxes_xyxy=prompt_boxes_xyxy,
+            prompt_mode=resolved_prompt_mode,
             tracker=tracker,
         )
         proxy_track = extract_primary_track(frames)
@@ -576,7 +630,7 @@ def main():
             draw_box_overlay_video(
                 frames,
                 boxes_norm=proxy_track.boxes,
-                prompt_box_xyxy=prompt_box_xyxy,
+                prompt_boxes_xyxy=prompt_boxes_xyxy,
                 prompt_frame_idx=prompt_frame_idx,
                 include_centers=False,
             ),
@@ -587,7 +641,7 @@ def main():
             draw_box_overlay_video(
                 frames,
                 boxes_norm=sam2_outputs.boxes,
-                prompt_box_xyxy=prompt_box_xyxy,
+                prompt_boxes_xyxy=prompt_boxes_xyxy,
                 prompt_frame_idx=prompt_frame_idx,
                 masks_tnhw=sam2_outputs.masks,
                 include_centers=False,
@@ -635,7 +689,11 @@ def main():
                 "context_steps": int(context_steps),
                 "future_steps": int(future_steps),
                 "prompt_frame_idx": int(prompt_frame_idx),
-                "prompt_box_xyxy": prompt_box_xyxy.tolist(),
+                "prompt_boxes_xyxy": prompt_boxes_xyxy.tolist(),
+                "prompt_box_count": int(prompt_boxes_xyxy.shape[0]),
+                "prompt_phrases": prompt_phrases,
+                "prompt_scores": prompt_scores.tolist(),
+                "prompt_mode": resolved_prompt_mode,
                 "context_video": context_video_rel,
                 "proxy_overlay_video": proxy_overlay_rel,
                 "sam2_full_video": sam2_full_rel,
