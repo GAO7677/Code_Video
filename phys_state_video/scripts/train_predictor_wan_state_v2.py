@@ -17,6 +17,7 @@ from phys_state_video.dataset import NpzPredictorFullDataset, collate_predictor_
 from phys_state_video.predictor_wan_state_v2 import (
     WanStateLatentPredictorV2,
     WanStateLatentPredictorV2Config,
+    load_wan_state_predictor_v2_state_dict,
     resample_temporal_states,
     wan_state_predictor_v2_loss,
 )
@@ -180,7 +181,7 @@ def load_teacher_predictor(checkpoint_path: str, device: str) -> WanStateLatentP
             f"teacher predictor must be a wan_state_v2_latent_time checkpoint, got {checkpoint.get('predictor_version')!r}"
         )
     model = WanStateLatentPredictorV2(WanStateLatentPredictorV2Config(**checkpoint["config"])).to(device)
-    model.load_state_dict(checkpoint["model"])
+    load_wan_state_predictor_v2_state_dict(model, checkpoint["model"])
     model.eval()
     model.requires_grad_(False)
     return model
@@ -673,7 +674,7 @@ def main():
                         ),
                         flush=True,
                     )
-            model.load_state_dict(resume_ckpt["model"], strict=True)
+            load_wan_state_predictor_v2_state_dict(model, resume_ckpt["model"])
         if is_distributed():
             model = torch.nn.parallel.DistributedDataParallel(
                 model,
@@ -764,7 +765,7 @@ def main():
                         save_checkpoint(best_path, model, config, args, history)
             distributed_barrier()
             best_checkpoint = load_torch_checkpoint(str(best_path), map_location="cpu")
-            unwrap_model(model).load_state_dict(best_checkpoint["model"])
+            load_wan_state_predictor_v2_state_dict(unwrap_model(model), best_checkpoint["model"])
             distributed_barrier()
             if is_main_process():
                 print(

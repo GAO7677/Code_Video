@@ -4,7 +4,11 @@ from typing import Any
 
 from .checkpoint_io import load_torch_checkpoint
 from .predictor_wan_state import WanStateLatentPredictor, WanStateLatentPredictorConfig
-from .predictor_wan_state_v2 import WanStateLatentPredictorV2, WanStateLatentPredictorV2Config
+from .predictor_wan_state_v2 import (
+    WanStateLatentPredictorV2,
+    WanStateLatentPredictorV2Config,
+    load_wan_state_predictor_v2_state_dict,
+)
 from .wan_bridge import WanLatentExtractor
 from .wan_state_v2_helpers import WanPromptContextEncoder
 
@@ -14,7 +18,7 @@ def load_wan_state_predictor(checkpoint_path: str, device: str) -> tuple[Any, di
     predictor_version = checkpoint.get("predictor_version", "wan_state_v1")
     if predictor_version == "wan_state_v2_latent_time":
         predictor = WanStateLatentPredictorV2(WanStateLatentPredictorV2Config(**checkpoint["config"])).to(device)
-        predictor.load_state_dict(checkpoint["model"])
+        load_wan_state_predictor_v2_state_dict(predictor, checkpoint["model"])
         predictor.eval()
         return predictor, checkpoint
     predictor = WanStateLatentPredictor(WanStateLatentPredictorConfig(**checkpoint["config"])).to(device)

@@ -235,11 +235,15 @@ class WanStateLatentPredictorV2(nn.Module):
             nn.GELU(),
             nn.Conv2d(self.model_dim, self.model_dim, kernel_size=3, padding=1),
         )
-        self.context_time_pos_embed = nn.Parameter(
-            torch.randn(1, self.config.max_context_latent_steps, 1, 1, self.model_dim) * 0.02
-        )
-        self.future_time_queries = nn.Parameter(
-            torch.randn(1, self.config.max_future_latent_steps, 1, 1, self.model_dim) * 0.02
+        self.base_future_query = nn.Parameter(
+            torch.randn(
+                1,
+                1,
+                self.config.state_map_height,
+                self.config.state_map_width,
+                self.model_dim,
+            )
+            * 0.02
         )
         self.spatial_pos_embed = nn.Parameter(
             torch.randn(
@@ -318,6 +322,29 @@ class WanStateLatentPredictorV2(nn.Module):
         prompt_summary = self.prompt_summary_proj(masked.sum(dim=1) / denom)
         return prompt_tokens, prompt_summary
 
+    def _build_time_embedding(
+        self,
+        steps: int,
+        *,
+        device,
+        dtype,
+        offset: int = 0,
+    ) -> torch.Tensor:
+        if steps <= 0:
+            raise ValueError(f"steps must be positive, got {steps}")
+        half_dim = self.model_dim // 2
+        positions = torch.arange(offset, offset + steps, device=device, dtype=torch.float32)
+        if half_dim <= 0:
+            return positions.view(1, steps, 1, 1, 1).to(dtype=dtype)
+        freq_exponent = -torch.arange(half_dim, device=device, dtype=torch.float32) / max(half_dim, 1)
+        inv_freq = torch.exp(freq_exponent * torch.log(positions.new_tensor(10000.0)))
+        angles = positions[:, None] * inv_freq[None, :]
+        embedding = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
+        if embedding.shape[-1] < self.model_dim:
+            padding = embedding.new_zeros((steps, self.model_dim - embedding.shape[-1]))
+            embedding = torch.cat([embedding, padding], dim=-1)
+        return embedding[:, : self.model_dim].view(1, steps, 1, 1, self.model_dim).to(dtype=dtype)
+
     def _build_context_state_maps(
         self,
         context_latents: torch.Tensor,
@@ -341,11 +368,16 @@ class WanStateLatentPredictorV2(nn.Module):
         ).permute(0, 1, 3, 4, 2).contiguous()
         camera_embed = self.camera_proj(camera).view(batch, steps, 1, 1, self.model_dim)
         prompt_embed = prompt_summary.view(batch, 1, 1, 1, self.model_dim)
+        context_time_embed = self._build_time_embedding(
+            steps,
+            device=context_latents.device,
+            dtype=visual.dtype,
+        )
         state_maps = (
             visual
             + camera_embed
             + prompt_embed
-            + self.context_time_pos_embed[:, :steps]
+            + context_time_embed
             + self.spatial_pos_embed
         )
         state_maps = self.context_fusion_norm(state_maps)
@@ -382,7 +414,13 @@ class WanStateLatentPredictorV2(nn.Module):
         )
         prompt_padding_mask = prompt_mask <= 0
         memory_padding_mask = torch.cat([context_padding_mask, prompt_padding_mask], dim=1)
-        future_queries = self.future_time_queries[:, :future_latent_steps] + self.spatial_pos_embed
+        future_time_embed = self._build_time_embedding(
+            future_latent_steps,
+            device=context_state_maps.device,
+            dtype=context_state_maps.dtype,
+            offset=context_steps,
+        )
+        future_queries = self.base_future_query + self.spatial_pos_embed + future_time_embed
         if future_camera is not None:
             if future_camera.shape[:2] != (batch, future_latent_steps):
                 raise ValueError(
@@ -418,14 +456,6 @@ class WanStateLatentPredictorV2(nn.Module):
         future_latent_steps = future_latent_steps or self.config.max_future_latent_steps
         num_objects = num_objects or self.config.max_objects
 
-        if context_steps > self.config.max_context_latent_steps:
-            raise ValueError(
-                f"context_steps={context_steps} exceeds max_context_latent_steps={self.config.max_context_latent_steps}"
-            )
-        if future_latent_steps > self.config.max_future_latent_steps:
-            raise ValueError(
-                f"future_latent_steps={future_latent_steps} exceeds max_future_latent_steps={self.config.max_future_latent_steps}"
-            )
         if camera.shape[:2] != (batch, context_steps):
             raise ValueError(
                 f"camera shape {tuple(camera.shape)} does not match context latents batch/steps {(batch, context_steps)}"
@@ -484,6 +514,53 @@ class WanStateLatentPredictorV2(nn.Module):
             "debug_projected_future_state_maps": projected_future_maps,
             "debug_prompt_tokens": prompt_tokens,
         }
+
+
+def load_wan_state_predictor_v2_state_dict(
+    model: WanStateLatentPredictorV2,
+    state_dict: dict[str, torch.Tensor],
+) -> None:
+    adapted = dict(state_dict)
+    old_future_queries = adapted.pop("future_time_queries", None)
+    adapted.pop("context_time_pos_embed", None)
+    if old_future_queries is not None and "base_future_query" not in adapted:
+        if old_future_queries.ndim != 5:
+            raise ValueError(
+                f"expected legacy future_time_queries with shape [1, T, H, W, D], got {tuple(old_future_queries.shape)}"
+            )
+        base_future_query = old_future_queries.mean(dim=1, keepdim=True)
+        target_shape = model.base_future_query.shape
+        if base_future_query.shape != target_shape:
+            if base_future_query.shape[0] != 1 or base_future_query.shape[1] != 1 or base_future_query.shape[-1] != target_shape[-1]:
+                raise ValueError(
+                    "legacy future_time_queries cannot be adapted to base_future_query: "
+                    f"legacy_shape={tuple(base_future_query.shape)} target_shape={tuple(target_shape)}"
+                )
+            base_query = base_future_query.permute(0, 1, 4, 2, 3).contiguous().view(
+                1,
+                target_shape[-1],
+                base_future_query.shape[2],
+                base_future_query.shape[3],
+            )
+            resized = F.interpolate(
+                base_query,
+                size=(target_shape[2], target_shape[3]),
+                mode="bilinear",
+                align_corners=False,
+            )
+            base_future_query = resized.view(1, 1, target_shape[-1], target_shape[2], target_shape[3]).permute(
+                0, 1, 3, 4, 2
+            ).contiguous()
+        adapted["base_future_query"] = base_future_query
+    incompatible = model.load_state_dict(adapted, strict=False)
+    missing_keys = set(incompatible.missing_keys)
+    unexpected_keys = set(incompatible.unexpected_keys)
+    allowed_missing = {"base_future_query"}
+    if missing_keys - allowed_missing or unexpected_keys:
+        raise RuntimeError(
+            "failed to load WanStateLatentPredictorV2 state_dict: "
+            f"missing_keys={sorted(missing_keys)} unexpected_keys={sorted(unexpected_keys)}"
+        )
 
 
 def _group_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
