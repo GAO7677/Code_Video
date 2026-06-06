@@ -56,6 +56,9 @@ class LoadedModel:
     wan_task: str
 
 
+TAILQUERY_CONTEXT_RATIOS = (1.0, 0.75, 0.50, 0.25)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Export a context[:-1] dashboard for wan_state_v2 predictors on the full video timeline."
@@ -312,6 +315,13 @@ def build_trimmed_batch(episode: dict[str, np.ndarray], prompt: str) -> tuple[di
     return batch, input_context_steps, future_steps
 
 
+def resolve_ratio_context_steps(total_context_steps: int, ratio: float) -> int:
+    if total_context_steps <= 0:
+        raise ValueError(f"total_context_steps must be positive, got {total_context_steps}")
+    steps = int(round(total_context_steps * ratio))
+    return min(total_context_steps, max(1, steps))
+
+
 def _draw_prediction_track(
     canvas: np.ndarray,
     predicted_future_states: np.ndarray,
@@ -539,33 +549,89 @@ def render_html(report: dict) -> str:
 
     case_cards = []
     for case in report["cases"]:
-        model_cards = []
-        for model in case["models"]:
-            model_cards.append(
+        tailquery_model = next((model for model in case["models"] if model["label"] == "tailquery"), None)
+        other_models = [model for model in case["models"] if model["label"] != "tailquery"]
+        tailquery_ratio_variants = case.get("tailquery_ratio_variants", [])
+
+        def _render_model_pair(model: dict, *, primary: bool) -> str:
+            pair_class = "compare-grid primary-compare" if primary else "compare-grid"
+            return f"""
+            <div class="{pair_class}">
+              <article class="video-card">
+                <div class="video-eyebrow">Model</div>
+                <h3>{html.escape(model['label'])} · context</h3>
+                <video controls preload="none" playsinline src="{html.escape(model['normal_video'])}"></video>
+                <div class="metric-box">
+                  <div>Center {model['normal_metrics']['center_error']:.4f}</div>
+                  <div>Scale {model['normal_metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis {model['normal_metrics']['visibility_error']:.4f}</div>
+                </div>
+              </article>
+              <article class="video-card">
+                <div class="video-eyebrow">Model</div>
+                <h3>{html.escape(model['label'])} · context[:-1]</h3>
+                <video controls preload="none" playsinline src="{html.escape(model['trimmed_video'])}"></video>
+                <div class="metric-box">
+                  <div>Center {model['trimmed_metrics']['center_error']:.4f}</div>
+                  <div>Scale {model['trimmed_metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis {model['trimmed_metrics']['visibility_error']:.4f}</div>
+                  <div>Head@new boundary {model['trimmed_metrics']['future_start_head_center_error']:.4f}</div>
+                </div>
+              </article>
+            </div>
+            """
+
+        collapsed_pairs = "".join(_render_model_pair(model, primary=False) for model in other_models)
+        ratio_cards = []
+        for variant in tailquery_ratio_variants:
+            ratio_cards.append(
                 f"""
                 <article class="video-card">
-                  <div class="video-eyebrow">Model</div>
-                  <h3>{html.escape(model['label'])} · context</h3>
-                  <video controls preload="none" playsinline src="{html.escape(model['normal_video'])}"></video>
+                  <div class="video-eyebrow">Tailquery Ratio</div>
+                  <h3>{html.escape(variant['ratio_label'])}</h3>
+                  <div class="mini-label">Input Context</div>
+                  <video controls preload="none" playsinline src="{html.escape(variant['context_video'])}"></video>
+                  <div class="mini-label">Future Overlay</div>
+                  <video controls preload="none" playsinline src="{html.escape(variant['video'])}"></video>
                   <div class="metric-box">
-                    <div>Center {model['normal_metrics']['center_error']:.4f}</div>
-                    <div>Scale {model['normal_metrics']['log_scale_error']:.4f}</div>
-                    <div>Vis {model['normal_metrics']['visibility_error']:.4f}</div>
-                  </div>
-                </article>
-                <article class="video-card">
-                  <div class="video-eyebrow">Model</div>
-                  <h3>{html.escape(model['label'])} · context[:-1]</h3>
-                  <video controls preload="none" playsinline src="{html.escape(model['trimmed_video'])}"></video>
-                  <div class="metric-box">
-                    <div>Center {model['trimmed_metrics']['center_error']:.4f}</div>
-                    <div>Scale {model['trimmed_metrics']['log_scale_error']:.4f}</div>
-                    <div>Vis {model['trimmed_metrics']['visibility_error']:.4f}</div>
-                    <div>Head@new boundary {model['trimmed_metrics']['future_start_head_center_error']:.4f}</div>
+                    <div>context steps {int(variant['context_steps'])}</div>
+                    <div>future steps {int(variant['future_steps'])}</div>
+                    <div>Center {variant['metrics']['center_error']:.4f}</div>
+                    <div>Scale {variant['metrics']['log_scale_error']:.4f}</div>
+                    <div>Vis {variant['metrics']['visibility_error']:.4f}</div>
+                    <div>Head {variant['metrics']['future_start_head_center_error']:.4f}</div>
                   </div>
                 </article>
                 """
             )
+        tailquery_block = (
+            f"""
+            <div class="feature-head">
+              <h3>Tailquery 多长度主对比</h3>
+              <p class="meta">同一个 case，下方直接比较 `tailquery` 在不同 context 比例 `100% / 75% / 50% / 25%` 下预测出的 future overlay。</p>
+            </div>
+            <div class="ratio-grid">
+              {''.join(ratio_cards)}
+            </div>
+            """
+            if ratio_cards
+            else (
+                _render_model_pair(tailquery_model, primary=True)
+                if tailquery_model is not None
+                else '<p class="meta">tailquery result is missing for this case.</p>'
+            )
+        )
+        collapsed_block = (
+            f"""
+            <details class="collapsed-models">
+              <summary>展开其它方法对比</summary>
+              {(_render_model_pair(tailquery_model, primary=False) if tailquery_model is not None else '')}
+              {collapsed_pairs}
+            </details>
+            """
+            if collapsed_pairs or tailquery_model is not None
+            else ""
+        )
         case_cards.append(
             f"""
             <section class="case-card" id="{html.escape(case['case_id'])}">
@@ -598,8 +664,9 @@ def render_html(report: dict) -> str:
                   <h3>Input Context[:-1]</h3>
                   <video controls preload="none" playsinline src="{html.escape(case['trimmed_context_video'])}"></video>
                 </article>
-                {''.join(model_cards)}
               </div>
+              {tailquery_block}
+              {collapsed_block}
             </section>
             """
         )
@@ -661,8 +728,23 @@ def render_html(report: dict) -> str:
     }}
     .video-grid {{
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 14px;
+    }}
+    .compare-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .ratio-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }}
+    .primary-compare {{
+      margin-top: 10px;
     }}
     .video-card {{
       background: #fcf8f2;
@@ -714,8 +796,36 @@ def render_html(report: dict) -> str:
       line-height: 1.7;
       font-size: 13px;
     }}
+    .mini-label {{
+      margin: 10px 0 6px;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 13px;
+    }}
+    .feature-head {{
+      margin-top: 18px;
+    }}
+    .collapsed-models {{
+      margin-top: 16px;
+      background: #fcf8f2;
+      border: 1px solid #eadfce;
+      border-radius: 14px;
+      padding: 12px;
+    }}
+    .collapsed-models summary {{
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }}
     @media (max-width: 1200px) {{
       .video-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .compare-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .ratio-grid {{
         grid-template-columns: 1fr;
       }}
     }}
@@ -726,7 +836,7 @@ def render_html(report: dict) -> str:
     <section class="hero">
       <h1>wan_state_v2 context ablation dashboard</h1>
       <p>这里把两条 overlay 分开展示。每个模型都有两条单独视频：一条对应正常 <code>context</code>，一条对应 <code>context[:-1]</code>。两条视频都只在各自对应的 future 底图上画框。</p>
-      <p>绿色框表示 GT；正常 <code>context</code> 的 overlay 里预测框是红色；<code>context[:-1]</code> 的 overlay 里预测框是蓝色。因为两条 future 长度不同，分开展示后不会再混淆时间轴。</p>
+      <p>页面主区域优先展示同一个 case 下 `tailquery` 在不同 context 比例下的 future overlay 对比，其它方法先折叠收起。绿色框表示 GT；正常 <code>context</code> 的 overlay 里预测框是红色；<code>context[:-1]</code> 或其它缩短比例的 overlay 里预测框是蓝色。</p>
       <table>
         <thead>
           <tr>
@@ -853,6 +963,7 @@ def main():
         )
 
         case_models = []
+        tailquery_ratio_variants = []
         npz_payload = {
             "full_frames": full_frames,
             "full_states": full_states,
@@ -944,6 +1055,92 @@ def main():
             npz_payload[f"{model.label}_pred_future_latent_fullctx"] = pred_future_latent_full
             npz_payload[f"{model.label}_pred_future_fullctx"] = pred_future_full
 
+            if model.label == "tailquery":
+                for ratio in TAILQUERY_CONTEXT_RATIOS:
+                    ratio_context_steps = resolve_ratio_context_steps(original_context_steps, ratio)
+                    ratio_batch, ratio_future_steps = build_batch_with_context_steps(
+                        episode,
+                        prompt,
+                        ratio_context_steps,
+                    )
+                    ratio_outputs = run_predictor_for_batch(
+                        ratio_batch,
+                        loaded_model=model,
+                        latent_extractor=latent_extractor,
+                        prompt_context_encoder=prompt_context_encoder,
+                        device=device,
+                    )
+                    ratio_pred_future_latent = (
+                        ratio_outputs["future_state_predictions"][0].detach().cpu().numpy().astype(np.float32)
+                    )
+                    ratio_pred_future = resample_predicted_states_to_frame_steps(
+                        ratio_pred_future_latent,
+                        target_steps=ratio_future_steps,
+                    )
+                    ratio_future_frames = full_frames[ratio_context_steps:]
+                    ratio_future_states_gt = full_states[ratio_context_steps:]
+                    ratio_future_boxes_gt = full_boxes[ratio_context_steps:]
+                    ratio_context_last_boxes = [
+                        last_valid_box(full_boxes, obj_idx, ratio_context_steps)
+                        for obj_idx in range(int(full_boxes.shape[1]))
+                    ]
+                    ratio_metrics = compute_state_metrics(ratio_pred_future, ratio_future_states_gt)
+                    ratio_metrics["future_start_head_center_error"] = float(
+                        np.linalg.norm(
+                            ratio_pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
+                            - ratio_future_states_gt[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
+                            axis=-1,
+                        ).mean()
+                    )
+                    ratio_label = f"{int(round(ratio * 100))}%"
+                    ratio_slug = f"r{int(round(ratio * 100)):03d}"
+                    ratio_context_video_rel = f"assets/{case_id}_{model.label}_{ratio_slug}_context.mp4"
+                    ratio_video_rel = f"assets/{case_id}_{model.label}_{ratio_slug}.mp4"
+                    ratio_color = (228, 74, 62) if abs(ratio - 1.0) < 1e-6 else (48, 118, 255)
+                    write_mp4(
+                        output_dir / ratio_context_video_rel,
+                        make_labeled_video(
+                            full_frames[:ratio_context_steps],
+                            [f"context ratio {ratio_label} | length={ratio_context_steps}"],
+                        ),
+                        parsed.fps,
+                    )
+                    write_mp4(
+                        output_dir / ratio_video_rel,
+                        draw_single_future_overlay(
+                            ratio_future_frames,
+                            ratio_future_boxes_gt,
+                            ratio_future_states_gt,
+                            ratio_pred_future,
+                            model_label=model.label,
+                            context_mode_label=f"context ratio {ratio_label}",
+                            pred_color=ratio_color,
+                            context_last_boxes=ratio_context_last_boxes,
+                        ),
+                        parsed.fps,
+                    )
+                    tailquery_ratio_variants.append(
+                        {
+                            "ratio": float(ratio),
+                            "ratio_label": ratio_label,
+                            "context_steps": int(ratio_context_steps),
+                            "future_steps": int(ratio_future_steps),
+                            "context_video": ratio_context_video_rel,
+                            "video": ratio_video_rel,
+                            "metrics": ratio_metrics,
+                        }
+                    )
+                    npz_payload[f"{model.label}_{ratio_slug}_pred_future_latent"] = ratio_pred_future_latent
+                    npz_payload[f"{model.label}_{ratio_slug}_pred_future"] = ratio_pred_future
+                    npz_payload[f"{model.label}_{ratio_slug}_context_steps"] = np.asarray(
+                        [ratio_context_steps],
+                        dtype=np.int64,
+                    )
+                    npz_payload[f"{model.label}_{ratio_slug}_future_steps"] = np.asarray(
+                        [ratio_future_steps],
+                        dtype=np.int64,
+                    )
+
         np.savez_compressed(output_dir / f"assets/{case_id}_context_minus1_outputs.npz", **npz_payload)
         cases.append(
             {
@@ -958,6 +1155,7 @@ def main():
                 "original_context_steps": int(original_context_steps),
                 "trimmed_context_steps": int(trimmed_context_steps),
                 "future_start_idx": int(future_start_idx),
+                "tailquery_ratio_variants": tailquery_ratio_variants,
                 "models": case_models,
             }
         )

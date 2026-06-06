@@ -72,6 +72,12 @@ def parse_args():
     parser.add_argument("--context-ratio-min", type=float, default=0.25, help="Minimum context ratio relative to the sampled full clip length.")
     parser.add_argument("--context-ratio-max", type=float, default=0.5, help="Maximum context ratio relative to the sampled full clip length.")
     parser.add_argument(
+        "--context-ratio-list",
+        default="",
+        help="Optional comma-separated discrete context ratios, e.g. '1.0,0.75,0.5,0.25'. "
+        "When set, training samples one ratio from this list instead of using a uniform ratio range.",
+    )
+    parser.add_argument(
         "--selection-metric",
         choices=["loss", "boundary_focus"],
         default="loss",
@@ -191,6 +197,25 @@ def _clamp_int(value: int, lower: int, upper: int) -> int:
     return max(lower, min(value, upper))
 
 
+def parse_context_ratio_list(raw_value: str) -> list[float]:
+    if not raw_value.strip():
+        return []
+    ratios: list[float] = []
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        ratio = float(token)
+        if ratio <= 0.0:
+            raise ValueError(f"context ratios must be positive, got {ratio}")
+        if ratio > 1.0:
+            raise ValueError(f"context ratios must be <= 1.0, got {ratio}")
+        ratios.append(ratio)
+    if not ratios:
+        raise ValueError("--context-ratio-list was provided but no valid ratios were parsed")
+    return ratios
+
+
 def resolve_context_bounds(total_steps: int, args) -> tuple[int, int]:
     if total_steps <= 0:
         raise ValueError(f"total_steps must be positive, got {total_steps}")
@@ -208,6 +233,15 @@ def resolve_context_bounds(total_steps: int, args) -> tuple[int, int]:
 
 def choose_context_steps(total_steps: int, args, *, is_train: bool, legacy_context_steps: int) -> int:
     min_context, max_context = resolve_context_bounds(total_steps, args)
+    ratio_list = getattr(args, "parsed_context_ratio_list", [])
+    if ratio_list:
+        base_steps = int(legacy_context_steps) if legacy_context_steps > 0 else total_steps
+        if is_train:
+            ratio = random.choice(ratio_list)
+        else:
+            ratio = max(ratio_list)
+        sampled = int(round(base_steps * float(ratio)))
+        return _clamp_int(sampled, min_context, max_context)
     if is_train:
         ratio = random.uniform(float(args.context_ratio_min), float(args.context_ratio_max))
         sampled = int(round(total_steps * ratio))
@@ -435,6 +469,7 @@ def save_checkpoint(
                 "min_future_frames": args.min_future_frames,
                 "context_ratio_min": args.context_ratio_min,
                 "context_ratio_max": args.context_ratio_max,
+                "context_ratio_list": args.parsed_context_ratio_list,
             },
             "selection_metric": args.selection_metric,
             "world_size": get_world_size(),
@@ -613,10 +648,19 @@ def main():
             raise ValueError(
                 "--teacher-predictor and --adapter-align-ckpt are required when --adapter-align-scale > 0"
             )
+        args.parsed_context_ratio_list = parse_context_ratio_list(args.context_ratio_list)
         if args.context_ratio_min <= 0.0 or args.context_ratio_max <= 0.0:
             raise ValueError("context ratios must be positive")
+        if args.context_ratio_min > 1.0 or args.context_ratio_max > 1.0:
+            raise ValueError("context-ratio-min/max must be <= 1.0")
         if args.context_ratio_min > args.context_ratio_max:
             raise ValueError("context-ratio-min must be <= context-ratio-max")
+        if args.min_context_frames < 1:
+            raise ValueError("min-context-frames must be >= 1")
+        if args.max_context_frames is not None and args.max_context_frames < args.min_context_frames:
+            raise ValueError("max-context-frames must be >= min-context-frames")
+        if args.min_future_frames < 1:
+            raise ValueError("min-future-frames must be >= 1")
         dataset = NpzPredictorFullDataset(args.data)
         val_dataset = NpzPredictorFullDataset(args.val_data) if args.val_data else None
         train_sampler = None
