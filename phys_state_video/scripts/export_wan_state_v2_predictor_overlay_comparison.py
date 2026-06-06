@@ -232,14 +232,8 @@ def draw_state_overlay(
                 vx = int(np.clip(px + pred[StateIndex.VEL_X] * width * 0.25, 0, width - 1))
                 vy = int(np.clip(py + pred[StateIndex.VEL_Y] * height * 0.25, 0, height - 1))
                 cv2.arrowedLine(canvas, (px, py), (vx, vy), (228, 74, 62), 2, cv2.LINE_AA, tipLength=0.25)
-        frames.append(
-            draw_text(
-                canvas,
-                "green=GT bbox/center  red=pred bbox/center",
-                f"frame={idx:02d}",
-            )
-        )
-    return np.stack([np.transpose(frame, (2, 0, 1)).astype(np.float32) / 255.0 for frame in frames], axis=0)
+        frames.append(np.transpose(canvas, (2, 0, 1)).astype(np.float32) / 255.0)
+    return np.stack(frames, axis=0)
 
 
 def pca_project_condition_maps(condition_maps: np.ndarray) -> np.ndarray:
@@ -275,12 +269,7 @@ def build_condition_overlay_video(future_frames: np.ndarray, condition_maps: np.
         cond_rgb = rgb_maps[map_idx]
         cond_rgb = cv2.resize(cond_rgb, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
         blended = np.clip(0.55 * rgb + 0.45 * cond_rgb, 0.0, 1.0)
-        annotated = draw_text(
-            (blended * 255.0).round().astype(np.uint8),
-            "condition_maps PCA overlay",
-            f"future_frame={out_idx:02d} latent_step={int(map_idx):02d}",
-        )
-        frames.append(np.transpose(annotated, (2, 0, 1)).astype(np.float32) / 255.0)
+        frames.append(np.transpose((blended * 255.0).round().astype(np.uint8), (2, 0, 1)).astype(np.float32) / 255.0)
     return np.stack(frames, axis=0)
 
 
@@ -339,9 +328,7 @@ def stack_side_by_side(
 ) -> np.ndarray:
     if frames_a.shape != frames_b.shape:
         raise ValueError(f"frame shapes must match, got {frames_a.shape} and {frames_b.shape}")
-    panel_a = make_labeled_panel(frames_a, label_a, line2_a)
-    panel_b = make_labeled_panel(frames_b, label_b, line2_b)
-    return np.concatenate([panel_a, panel_b], axis=-1)
+    return np.concatenate([frames_a, frames_b], axis=-1)
 
 
 def run_predictor_for_batch(
@@ -441,10 +428,12 @@ def render_html(report: dict) -> str:
                 </section>
                 <section class="media-card wide">
                   <div class="media-title">State Overlay Compare</div>
+                  <div class="media-note">左侧固定是 {html.escape(report['label_a'])}，右侧是 {html.escape(report['label_b'])}。两侧都叠加在同一条 GT future video 上：绿色表示 GT bbox/center，红色表示对应 predictor 的预测 bbox/center/velocity。</div>
                   <video controls preload="metadata" src="{html.escape(case['state_compare_video'])}"></video>
                 </section>
                 <section class="media-card wide">
                   <div class="media-title">Condition Overlay Compare</div>
+                  <div class="media-note">左侧固定是 {html.escape(report['label_a'])} 的 condition_maps PCA overlay，右侧是 {html.escape(report['label_b'])} 的 condition_maps PCA overlay。</div>
                   <video controls preload="metadata" src="{html.escape(case['condition_compare_video'])}"></video>
                 </section>
               </div>
@@ -561,6 +550,12 @@ def render_html(report: dict) -> str:
     .media-title {{
       font-weight: 700;
       color: var(--accent);
+      margin-bottom: 10px;
+    }}
+    .media-note {{
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 13px;
       margin-bottom: 10px;
     }}
     video {{

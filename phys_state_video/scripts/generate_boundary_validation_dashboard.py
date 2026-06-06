@@ -227,6 +227,16 @@ def compute_case_metrics(
         + 0.05 * summary["rollout_log_scale_error"]
         + 0.05 * summary["boundary_curvature_log_scale_error"]
     )
+    summary["boundary_discontinuity_index_v1"] = (
+        1.00 * summary["head_center_error"]
+        + 1.00 * summary["boundary_center_delta_error"]
+        + 0.50 * summary["head_motion_error"]
+        + 0.50 * summary["boundary_motion_delta_error"]
+        + 0.35 * summary["boundary_curvature_center_error"]
+        + 0.20 * summary["boundary_jump_direction_error"]
+        + 0.10 * summary["head_log_scale_error"]
+        + 0.10 * summary["boundary_log_scale_delta_error"]
+    )
     return summary
 
 
@@ -476,9 +486,38 @@ def build_dashboard(
                 "models": model_rows,
             }
         )
+        model_by_label = {str(item["label"]): item for item in model_rows}
+        baseline_bdi = float(model_by_label["baseline"]["boundary_discontinuity_index_v1"])
+        ranked_labels = sorted(
+            model_by_label.keys(),
+            key=lambda label: float(model_by_label[label]["boundary_discontinuity_index_v1"]),
+        )
+        rank_by_label = {label: idx + 1 for idx, label in enumerate(ranked_labels)}
+        enriched_compare_videos = []
+        for video in case_entries[-1]["compare_videos"]:
+            label = str(video["label"])
+            metrics = model_by_label[label]
+            model_bdi = float(metrics["boundary_discontinuity_index_v1"])
+            enriched_compare_videos.append(
+                {
+                    **video,
+                    "model_bdi": model_bdi,
+                    "baseline_bdi": baseline_bdi,
+                    "improvement_pct": 100.0 * (baseline_bdi - model_bdi) / max(abs(baseline_bdi), 1e-8),
+                    "rank": rank_by_label[label],
+                    "num_models": len(model_by_label),
+                    "head_center_error": float(metrics["head_center_error"]),
+                    "boundary_center_delta_error": float(metrics["boundary_center_delta_error"]),
+                    "boundary_curvature_center_error": float(metrics["boundary_curvature_center_error"]),
+                    "head_motion_error": float(metrics["head_motion_error"]),
+                    "boundary_motion_delta_error": float(metrics["boundary_motion_delta_error"]),
+                }
+            )
+        case_entries[-1]["compare_videos"] = enriched_compare_videos
 
     summary_rows = []
     metric_keys = [
+        "boundary_discontinuity_index_v1",
         "head_center_error",
         "boundary_center_delta_error",
         "rollout_center_error",
@@ -523,6 +562,10 @@ def fmt(value: float | None) -> str:
     return f"{float(value):.4f}"
 
 
+def fmt_signed_pct(value: float) -> str:
+    return f"{value:+.1f}%"
+
+
 def render_html(dashboard: dict) -> str:
     summary_rows = []
     for row in dashboard["summary"]:
@@ -530,6 +573,7 @@ def render_html(dashboard: dict) -> str:
             f"""
             <tr>
               <td>{html.escape(str(row['label']))}</td>
+              <td>{fmt(row['boundary_discontinuity_index_v1'])}</td>
               <td>{fmt(row['head_center_error'])}</td>
               <td>{fmt(row['boundary_center_delta_error'])}</td>
               <td>{fmt(row['rollout_center_error'])}</td>
@@ -549,6 +593,7 @@ def render_html(dashboard: dict) -> str:
                 f"""
                 <tr>
                   <td>{html.escape(str(model['label']))}</td>
+                  <td>{fmt(model['boundary_discontinuity_index_v1'])}</td>
                   <td>{fmt(model['tail_center_error'])}</td>
                   <td>{fmt(model['head_center_error'])}</td>
                   <td>{fmt(model['boundary_center_delta_error'])}</td>
@@ -583,6 +628,22 @@ def render_html(dashboard: dict) -> str:
                   <div class="video-eyebrow">Overlay</div>
                   <h3>{html.escape(video['title'])}</h3>
                   <video controls preload="none" playsinline src="{html.escape(video['state_compare_video'])}"></video>
+                  <div class="video-metric-card">
+                    <div class="video-metric-top">
+                      <span class="metric-chip metric-primary">BDI-v1 {fmt(video['model_bdi'])}</span>
+                      <span class="metric-chip">vs baseline {fmt_signed_pct(video['improvement_pct'])}</span>
+                      <span class="metric-chip">rank #{int(video['rank'])}/{int(video['num_models'])}</span>
+                    </div>
+                    <div class="video-metric-sub">
+                      <span>HeadCtr {fmt(video['head_center_error'])}</span>
+                      <span>DeltaCtr {fmt(video['boundary_center_delta_error'])}</span>
+                      <span>CurvCtr {fmt(video['boundary_curvature_center_error'])}</span>
+                    </div>
+                    <div class="video-metric-sub">
+                      <span>HeadMotion {fmt(video['head_motion_error'])}</span>
+                      <span>DeltaMotion {fmt(video['boundary_motion_delta_error'])}</span>
+                    </div>
+                  </div>
                   <details>
                     <summary>展开 condition overlay</summary>
                     <video controls preload="none" playsinline src="{html.escape(video['condition_compare_video'])}"></video>
@@ -617,6 +678,7 @@ def render_html(dashboard: dict) -> str:
                   <div><code>Jump Dir</code>: 边界跳变方向误差，比较位移方向是否和 GT 一致，越接近 0 越好。</div>
                   <div><code>Rollout Ctr</code>: future 前 {int(dashboard['rollout_steps'])} 步加权中心误差，越靠近边界的步权重越大，用来看接上之后短轨迹是否稳。</div>
                   <div><code>Curvature Ctr</code>: <code>context[-1], future[0], future[1]</code> 构成的二阶差分误差，用来看边界折点是否自然。</div>
+                  <div><code>BDI-v1</code>: 边界不连续指数，只聚焦 <code>context[-1] -> future[0]</code> 这个边界现象。它综合了首步落点误差、边界跳变量误差、边界 motion、边界曲率、方向偏差和少量 scale 误差；越小表示边界越连续。</div>
                   <div><code>BVS-v1</code>: 聚合验证分数，综合首步误差、跳变量误差、短轨迹误差和曲率误差；越小表示边界整体越连续。</div>
                 </div>
               </div>
@@ -624,6 +686,7 @@ def render_html(dashboard: dict) -> str:
                 <thead>
                   <tr>
                     <th>Model</th>
+                    <th>BDI-v1</th>
                     <th>Tail Ctr</th>
                     <th>Head Ctr</th>
                     <th>Delta Ctr</th>
@@ -797,6 +860,41 @@ def render_html(dashboard: dict) -> str:
       margin: 0 0 10px;
       font-size: 16px;
     }}
+    .video-metric-card {{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: #fcf6ee;
+      border: 1px solid #eadfce;
+    }}
+    .video-metric-top, .video-metric-sub {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }}
+    .video-metric-sub:last-child {{
+      margin-bottom: 0;
+    }}
+    .metric-chip {{
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #efe4d5;
+      color: #5a4a37;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .metric-primary {{
+      background: #dfeee7;
+      color: #144b42;
+    }}
+    .video-metric-sub span {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }}
     .video-eyebrow {{
       color: var(--accent2);
       text-transform: uppercase;
@@ -853,6 +951,7 @@ def render_html(dashboard: dict) -> str:
         <li><code>Delta Ctr</code>: 边界中心跳变量误差，衡量从 context 尾帧跳到 future 首帧的位移是否对。</li>
         <li><code>Rollout Ctr</code>: future 前 {int(dashboard['rollout_steps'])} 步加权中心误差，衡量接上之后短轨迹是否稳。</li>
         <li><code>Curvature Ctr</code>: <code>context[-1], future[0], future[1]</code> 的二阶差分误差，衡量边界折点是否自然。</li>
+        <li><code>BDI-v1</code>: 边界不连续指数，专门用来比较同一个 source case 的不同设置在边界处谁更断、谁更顺；越小越好。</li>
         <li><code>BVS-v1</code>: 一个聚合分数，按“首步 > 跳变 > 短轨迹 > 曲率”的优先级加权；如果它和肉眼判断一致，再考虑把它作为验证指标。</li>
       </ul>
       <div class="case-nav">
@@ -866,6 +965,7 @@ def render_html(dashboard: dict) -> str:
         <thead>
           <tr>
             <th>Model</th>
+            <th>BDI-v1</th>
             <th>Head Ctr</th>
             <th>Delta Ctr</th>
             <th>Rollout Ctr</th>
