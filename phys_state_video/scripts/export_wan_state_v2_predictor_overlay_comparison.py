@@ -59,6 +59,16 @@ def parse_args():
     parser.add_argument("--wan-task", default="ti2v-5B")
     parser.add_argument("--predictor-a-wan-task", default=None)
     parser.add_argument("--predictor-b-wan-task", default=None)
+    parser.add_argument(
+        "--disable-future-camera-a",
+        action="store_true",
+        help="Do not feed future_camera into predictor A. Useful for older checkpoints trained without that branch.",
+    )
+    parser.add_argument(
+        "--disable-future-camera-b",
+        action="store_true",
+        help="Do not feed future_camera into predictor B.",
+    )
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
@@ -340,6 +350,7 @@ def run_predictor_for_batch(
     latent_extractor,
     prompt_context_encoder,
     device: str,
+    use_future_camera: bool,
 ):
     predictor_version = predictor_ckpt.get("predictor_version", "wan_state_v1")
     if predictor_version != "wan_state_v2_latent_time":
@@ -361,7 +372,9 @@ def run_predictor_for_batch(
             future_steps=int(batch["future_states"].shape[1]),
         )
         camera_latent = resample_camera_to_latent_steps(context_camera, context_latent_steps)
-        future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
+        future_camera_latent = None
+        if use_future_camera:
+            future_camera_latent = resample_camera_to_latent_steps(future_camera, future_latent_steps)
         prompt_context, prompt_mask = prompt_context_encoder.encode_prompts(list(batch["prompts"]))
         outputs = predictor(
             context_latents=context_latents,
@@ -768,6 +781,7 @@ def main():
             latent_extractor=latent_extractor_a,
             prompt_context_encoder=prompt_context_encoder_a,
             device=device,
+            use_future_camera=not args.disable_future_camera_a,
         )
         outputs_b = run_predictor_for_batch(
             batch,
@@ -776,6 +790,7 @@ def main():
             latent_extractor=latent_extractor_b,
             prompt_context_encoder=prompt_context_encoder_b,
             device=device,
+            use_future_camera=not args.disable_future_camera_b,
         )
 
         pred_future_latent_a = outputs_a["future_state_predictions"][0].detach().cpu().numpy().astype(np.float32)
@@ -813,6 +828,8 @@ def main():
 
         overlay_a = draw_state_overlay(future_frames, context_boxes, future_boxes, pred_future_a, future_states)
         overlay_b = draw_state_overlay(future_frames, context_boxes, future_boxes, pred_future_b, future_states)
+        condition_overlay_a = build_condition_overlay_video(future_frames, condition_maps_a)
+        condition_overlay_b = build_condition_overlay_video(future_frames, condition_maps_b)
         overlay_compare = stack_side_by_side(
             overlay_a,
             overlay_b,
@@ -822,8 +839,8 @@ def main():
             line2_b=f"boundary dErr={boundary_metrics_b['boundary_center_delta_error']:.3f}",
         )
         condition_compare = stack_side_by_side(
-            build_condition_overlay_video(future_frames, condition_maps_a),
-            build_condition_overlay_video(future_frames, condition_maps_b),
+            condition_overlay_a,
+            condition_overlay_b,
             label_a=args.label_a,
             label_b=args.label_b,
         )
@@ -831,11 +848,19 @@ def main():
         case_id = path.stem
         context_video = f"assets/{case_id}_context.mp4"
         gt_video = f"assets/{case_id}_gt_future.mp4"
+        state_video_a = f"assets/{case_id}_state_{args.label_a}.mp4"
+        state_video_b = f"assets/{case_id}_state_{args.label_b}.mp4"
+        condition_video_a = f"assets/{case_id}_condition_{args.label_a}.mp4"
+        condition_video_b = f"assets/{case_id}_condition_{args.label_b}.mp4"
         state_compare_video = f"assets/{case_id}_state_compare.mp4"
         condition_compare_video = f"assets/{case_id}_condition_compare.mp4"
 
         write_mp4(output_dir / context_video, context_frames, args.fps)
         write_mp4(output_dir / gt_video, future_frames, args.fps)
+        write_mp4(output_dir / state_video_a, overlay_a, args.fps)
+        write_mp4(output_dir / state_video_b, overlay_b, args.fps)
+        write_mp4(output_dir / condition_video_a, condition_overlay_a, args.fps)
+        write_mp4(output_dir / condition_video_b, condition_overlay_b, args.fps)
         write_mp4(output_dir / state_compare_video, overlay_compare, args.fps)
         write_mp4(output_dir / condition_compare_video, condition_compare, args.fps)
 
@@ -859,6 +884,10 @@ def main():
                 "prompt": meta.get("prompt", ""),
                 "context_video": context_video,
                 "gt_video": gt_video,
+                "state_video_a": state_video_a,
+                "state_video_b": state_video_b,
+                "condition_video_a": condition_video_a,
+                "condition_video_b": condition_video_b,
                 "state_compare_video": state_compare_video,
                 "condition_compare_video": condition_compare_video,
                 "models": [

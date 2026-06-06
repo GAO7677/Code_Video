@@ -245,6 +245,18 @@ class WanStateLatentPredictorV2(nn.Module):
             )
             * 0.02
         )
+        self.tail_query_proj = nn.Sequential(
+            nn.LayerNorm(self.model_dim),
+            nn.Linear(self.model_dim, self.model_dim),
+            nn.GELU(),
+            nn.Linear(self.model_dim, self.model_dim),
+        )
+        self.future_delta_proj = nn.Sequential(
+            nn.LayerNorm(self.model_dim),
+            nn.Linear(self.model_dim, self.model_dim),
+            nn.GELU(),
+            nn.Linear(self.model_dim, self.model_dim),
+        )
         self.spatial_pos_embed = nn.Parameter(
             torch.randn(
                 1,
@@ -296,6 +308,10 @@ class WanStateLatentPredictorV2(nn.Module):
             hidden_dim=self.config.hidden_dim,
             max_objects=self.config.max_objects,
         )
+        nn.init.zeros_(self.tail_query_proj[-1].weight)
+        nn.init.zeros_(self.tail_query_proj[-1].bias)
+        nn.init.zeros_(self.future_delta_proj[-1].weight)
+        nn.init.zeros_(self.future_delta_proj[-1].bias)
 
     def freeze_state_heads(self) -> None:
         self.state_heads.freeze()
@@ -404,6 +420,7 @@ class WanStateLatentPredictorV2(nn.Module):
         future_camera: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch, context_steps, grid_h, grid_w, hidden_dim = context_state_maps.shape
+        context_tail = context_state_maps[:, -1:]
         context_memory = context_state_maps.view(batch, context_steps * grid_h * grid_w, hidden_dim)
         memory = torch.cat([context_memory, prompt_tokens], dim=1)
         context_padding_mask = torch.zeros(
@@ -420,7 +437,8 @@ class WanStateLatentPredictorV2(nn.Module):
             dtype=context_state_maps.dtype,
             offset=context_steps,
         )
-        future_queries = self.base_future_query + self.spatial_pos_embed + future_time_embed
+        tail_query = context_tail + self.tail_query_proj(context_tail)
+        future_queries = tail_query + self.base_future_query + self.spatial_pos_embed + future_time_embed
         if future_camera is not None:
             if future_camera.shape[:2] != (batch, future_latent_steps):
                 raise ValueError(
@@ -436,7 +454,10 @@ class WanStateLatentPredictorV2(nn.Module):
             memory,
             memory_key_padding_mask=memory_padding_mask,
         )
-        return future_hidden.view(batch, future_latent_steps, grid_h, grid_w, hidden_dim)
+        future_hidden = future_hidden.view(batch, future_latent_steps, grid_h, grid_w, hidden_dim)
+        # Predict latent deltas from the context tail, then integrate over future time.
+        future_delta = self.future_delta_proj(future_hidden)
+        return context_tail + torch.cumsum(future_delta, dim=1)
 
     def forward(
         self,
@@ -555,7 +576,21 @@ def load_wan_state_predictor_v2_state_dict(
     incompatible = model.load_state_dict(adapted, strict=False)
     missing_keys = set(incompatible.missing_keys)
     unexpected_keys = set(incompatible.unexpected_keys)
-    allowed_missing = {"base_future_query"}
+    allowed_missing = {
+        "base_future_query",
+        "tail_query_proj.0.weight",
+        "tail_query_proj.0.bias",
+        "tail_query_proj.1.weight",
+        "tail_query_proj.1.bias",
+        "tail_query_proj.3.weight",
+        "tail_query_proj.3.bias",
+        "future_delta_proj.0.weight",
+        "future_delta_proj.0.bias",
+        "future_delta_proj.1.weight",
+        "future_delta_proj.1.bias",
+        "future_delta_proj.3.weight",
+        "future_delta_proj.3.bias",
+    }
     if missing_keys - allowed_missing or unexpected_keys:
         raise RuntimeError(
             "failed to load WanStateLatentPredictorV2 state_dict: "

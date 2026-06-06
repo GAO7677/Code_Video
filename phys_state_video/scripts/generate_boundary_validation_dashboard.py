@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import cv2
 import html
 import json
 import math
@@ -24,6 +25,7 @@ MODEL_COLORS = {
     "boundary0.1": "#1f6f8b",
     "boundary0.5": "#0f8a5f",
     "boundary1.0": "#7e3af2",
+    "boundary_new": "#c06c2b",
 }
 
 ORDERED_COMPARE_LABELS = ["control", "boundary0.1", "boundary0.5", "boundary1.0"]
@@ -275,6 +277,50 @@ def collect_reports(comparison_root: Path) -> list[dict]:
     return reports
 
 
+def ensure_cropped_half_video(
+    source_path: Path,
+    output_path: Path,
+    *,
+    side: str,
+    default_fps: float = 6.0,
+) -> None:
+    if side not in {"left", "right"}:
+        raise ValueError(f"side must be left or right, got {side!r}")
+    if output_path.exists() and output_path.stat().st_mtime >= source_path.stat().st_mtime:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    capture = cv2.VideoCapture(str(source_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"failed to open video for cropping: {source_path}")
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    if fps <= 0.0:
+        fps = default_fps
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if width <= 1 or height <= 0:
+        capture.release()
+        raise RuntimeError(f"invalid source video shape for cropping: {source_path} width={width} height={height}")
+    half_width = width // 2
+    if half_width <= 0:
+        capture.release()
+        raise RuntimeError(f"source video too narrow to split: {source_path} width={width}")
+    x0 = 0 if side == "left" else half_width
+    x1 = half_width if side == "left" else width
+    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (x1 - x0, height))
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError(f"failed to open cropped video writer: {output_path}")
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            writer.write(frame[:, x0:x1])
+    finally:
+        writer.release()
+        capture.release()
+
+
 def build_svg_series(case_series: dict, width: int = 760, height: int = 240) -> str:
     padding_left = 42
     padding_right = 18
@@ -349,7 +395,9 @@ def build_dashboard(
     asset_prefix: str,
 ) -> dict:
     compare_reports = {report["_label_b"]: report for report in reports}
-    available_labels = [label for label in ORDERED_COMPARE_LABELS if label in compare_reports]
+    known_labels = [label for label in ORDERED_COMPARE_LABELS if label in compare_reports]
+    extra_labels = sorted(label for label in compare_reports if label not in ORDERED_COMPARE_LABELS)
+    available_labels = known_labels + extra_labels
     if not available_labels:
         raise ValueError("no expected comparison labels found")
     base_report = compare_reports[available_labels[0]]
@@ -361,6 +409,7 @@ def build_dashboard(
 
     for case_meta in base_report["cases"]:
         case_id = str(case_meta["case_id"])
+        base_case_item = next(item for item in base_report["cases"] if str(item["case_id"]) == case_id)
         baseline_npz_path = base_report["_path"].parent / "assets" / f"{case_id}_comparison_outputs.npz"
         with np.load(baseline_npz_path, allow_pickle=False) as payload:
             target_context = payload["target_context_states"].astype(np.float32)
@@ -463,10 +512,14 @@ def build_dashboard(
                 "primary_object": primary_object,
                 "context_video": f"{asset_prefix}/{base_report['_slug']}/{case_meta['context_video']}",
                 "gt_video": f"{asset_prefix}/{base_report['_slug']}/{case_meta['gt_video']}",
+                "baseline_state_video": f"cropped_assets/{case_id}_baseline_state.mp4",
+                "baseline_condition_video": f"cropped_assets/{case_id}_baseline_condition.mp4",
                 "compare_videos": [
                     {
                         "label": label,
                         "title": f"{label} overlay",
+                        "state_video": f"cropped_assets/{case_id}_{label}_state.mp4",
+                        "condition_video": f"cropped_assets/{case_id}_{label}_condition.mp4",
                         "state_compare_video": f"{asset_prefix}/{compare_reports[label]['_slug']}/"
                         f"{next(item for item in compare_reports[label]['cases'] if str(item['case_id']) == case_id)['state_compare_video']}",
                         "condition_compare_video": f"{asset_prefix}/{compare_reports[label]['_slug']}/"
@@ -486,6 +539,31 @@ def build_dashboard(
                 "models": model_rows,
             }
         )
+        ensure_cropped_half_video(
+            base_report["_path"].parent / str(base_case_item["state_compare_video"]),
+            output_dir / case_entries[-1]["baseline_state_video"],
+            side="left",
+        )
+        ensure_cropped_half_video(
+            base_report["_path"].parent / str(base_case_item["condition_compare_video"]),
+            output_dir / case_entries[-1]["baseline_condition_video"],
+            side="left",
+        )
+        for video in case_entries[-1]["compare_videos"]:
+            label = str(video["label"])
+            compare_case_item = next(
+                item for item in compare_reports[label]["cases"] if str(item["case_id"]) == case_id
+            )
+            ensure_cropped_half_video(
+                compare_reports[label]["_path"].parent / str(compare_case_item["state_compare_video"]),
+                output_dir / str(video["state_video"]),
+                side="right",
+            )
+            ensure_cropped_half_video(
+                compare_reports[label]["_path"].parent / str(compare_case_item["condition_compare_video"]),
+                output_dir / str(video["condition_video"]),
+                side="right",
+            )
         model_by_label = {str(item["label"]): item for item in model_rows}
         baseline_bdi = float(model_by_label["baseline"]["boundary_discontinuity_index_v1"])
         ranked_labels = sorted(
@@ -620,14 +698,25 @@ def render_html(dashboard: dict) -> str:
               <video controls preload="none" playsinline src="{html.escape(case['gt_video'])}"></video>
             </article>
             """,
+            f"""
+            <article class="video-card">
+              <div class="video-eyebrow">Overlay</div>
+              <h3>baseline</h3>
+              <video controls preload="none" playsinline src="{html.escape(case['baseline_state_video'])}"></video>
+              <details>
+                <summary>展开 baseline condition overlay</summary>
+                <video controls preload="none" playsinline src="{html.escape(case['baseline_condition_video'])}"></video>
+              </details>
+            </article>
+            """,
         ]
         for video in case["compare_videos"]:
             video_cards.append(
                 f"""
                 <article class="video-card">
                   <div class="video-eyebrow">Overlay</div>
-                  <h3>{html.escape(video['title'])}</h3>
-                  <video controls preload="none" playsinline src="{html.escape(video['state_compare_video'])}"></video>
+                  <h3>{html.escape(video['label'])}</h3>
+                  <video controls preload="none" playsinline src="{html.escape(video['state_video'])}"></video>
                   <div class="video-metric-card">
                     <div class="video-metric-top">
                       <span class="metric-chip metric-primary">BDI-v1 {fmt(video['model_bdi'])}</span>
@@ -646,7 +735,7 @@ def render_html(dashboard: dict) -> str:
                   </div>
                   <details>
                     <summary>展开 condition overlay</summary>
-                    <video controls preload="none" playsinline src="{html.escape(video['condition_compare_video'])}"></video>
+                    <video controls preload="none" playsinline src="{html.escape(video['condition_video'])}"></video>
                   </details>
                 </article>
                 """
