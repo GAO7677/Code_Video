@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import random
@@ -83,6 +84,15 @@ def parse_args():
         default="loss",
         help="Validation metric used to select the best checkpoint for each stage.",
     )
+    parser.add_argument("--early-stop-patience", type=int, default=0, help="Stop a stage early after this many non-improving validation epochs. Disabled when <= 0.")
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.0, help="Minimum selection-metric improvement required to reset early-stop patience.")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging on the main process.")
+    parser.add_argument("--wandb-project", default="phys_state_video", help="wandb project name.")
+    parser.add_argument("--wandb-entity", default="", help="Optional wandb entity/team.")
+    parser.add_argument("--wandb-run-name", default="", help="Optional wandb run name.")
+    parser.add_argument("--wandb-group", default="", help="Optional wandb group name.")
+    parser.add_argument("--wandb-tags", default="", help="Optional comma-separated wandb tags.")
+    parser.add_argument("--wandb-dir", default="", help="Optional local directory for wandb files.")
     return parser.parse_args()
 
 
@@ -433,6 +443,26 @@ def compute_selection_metric(metrics: dict[str, float], selection_metric: str) -
     raise ValueError(f"unsupported selection_metric={selection_metric}")
 
 
+def try_import_wandb():
+    try:
+        wandb = importlib.import_module("wandb")
+    except Exception:
+        return None
+    if not hasattr(wandb, "init") or not hasattr(wandb, "log"):
+        return None
+    return wandb
+
+
+def parse_wandb_tags(raw_value: str) -> list[str]:
+    if not raw_value.strip():
+        return []
+    return [token.strip() for token in raw_value.split(",") if token.strip()]
+
+
+def flatten_metrics(prefix: str, metrics: dict[str, float]) -> dict[str, float]:
+    return {f"{prefix}/{key}": float(value) for key, value in metrics.items()}
+
+
 def save_checkpoint(
     output_path: Path,
     model: WanStateLatentPredictorV2,
@@ -642,6 +672,7 @@ def run_epoch(
 def main():
     local_rank = 0
     args = parse_args()
+    wandb_run = None
     try:
         args.device, local_rank = setup_distributed(args.device)
         if args.adapter_align_scale > 0.0 and (args.teacher_predictor is None or args.adapter_align_ckpt is None):
@@ -736,6 +767,32 @@ def main():
                 wan_repo_root=args.wan_repo_root,
                 device=args.device,
             )
+        if args.wandb and is_main_process():
+            wandb = try_import_wandb()
+            if wandb is None:
+                raise RuntimeError(
+                    "--wandb was requested, but the current environment does not provide a usable wandb package"
+                )
+            wandb_init_kwargs = {
+                "project": args.wandb_project,
+                "config": {
+                    "train_args": vars(args),
+                    "model_config": asdict(config),
+                },
+                "resume": "never",
+            }
+            if args.wandb_entity:
+                wandb_init_kwargs["entity"] = args.wandb_entity
+            if args.wandb_run_name:
+                wandb_init_kwargs["name"] = args.wandb_run_name
+            if args.wandb_group:
+                wandb_init_kwargs["group"] = args.wandb_group
+            tags = parse_wandb_tags(args.wandb_tags)
+            if tags:
+                wandb_init_kwargs["tags"] = tags
+            if args.wandb_dir:
+                wandb_init_kwargs["dir"] = args.wandb_dir
+            wandb_run = wandb.init(**wandb_init_kwargs)
 
         schedule = [
             ("context_only", args.epochs_context),
@@ -756,6 +813,7 @@ def main():
             )
             best_metric = float("inf")
             best_path = stage_best_output(output, stage_name)
+            stale_epochs = 0
             for epoch in range(num_epochs):
                 global_epoch += 1
                 if train_sampler is not None:
@@ -801,12 +859,66 @@ def main():
                 history.append(record)
                 if is_main_process():
                     print(json.dumps(record, ensure_ascii=False), flush=True)
+                    if wandb_run is not None:
+                        wandb_payload = {
+                            "stage": stage_name,
+                            "epoch": epoch + 1,
+                            "global_epoch": global_epoch,
+                            "selection_metric": float("nan"),
+                            "stage_best_metric": float(best_metric),
+                        }
+                        wandb_payload.update(flatten_metrics("train", train_metrics))
+                        if val_metrics is not None:
+                            wandb_payload.update(flatten_metrics("val", val_metrics))
+                        wandb_run.log(wandb_payload, step=global_epoch)
                 selection_metrics = val_metrics if val_metrics is not None else train_metrics
                 selection_loss = compute_selection_metric(selection_metrics, args.selection_metric)
-                if selection_loss <= best_metric:
+                improved = selection_loss < (best_metric - float(args.early_stop_min_delta))
+                if improved:
                     best_metric = selection_loss
+                    stale_epochs = 0
                     if is_main_process():
                         save_checkpoint(best_path, model, config, args, history)
+                        if wandb_run is not None:
+                            wandb_run.summary[f"{stage_name}/best_metric"] = float(best_metric)
+                            wandb_run.summary[f"{stage_name}/best_checkpoint"] = str(best_path)
+                else:
+                    stale_epochs += 1
+                if is_main_process() and wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "stage": stage_name,
+                            "global_epoch": global_epoch,
+                            "selection_metric": float(selection_loss),
+                            "stage_best_metric": float(best_metric),
+                            "stage_stale_epochs": int(stale_epochs),
+                        },
+                        step=global_epoch,
+                    )
+                if args.early_stop_patience > 0 and stale_epochs >= int(args.early_stop_patience):
+                    if is_main_process():
+                        early_stop_record = {
+                            "stage": stage_name,
+                            "global_epoch": global_epoch,
+                            "early_stop": True,
+                            "stale_epochs": stale_epochs,
+                            "best_metric": best_metric,
+                            "patience": args.early_stop_patience,
+                            "min_delta": args.early_stop_min_delta,
+                        }
+                        print(json.dumps(early_stop_record, ensure_ascii=False), flush=True)
+                        if wandb_run is not None:
+                            wandb_run.log(
+                                {
+                                    "stage": stage_name,
+                                    "global_epoch": global_epoch,
+                                    "early_stop_triggered": 1,
+                                    "stage_stale_epochs": int(stale_epochs),
+                                    "stage_best_metric": float(best_metric),
+                                },
+                                step=global_epoch,
+                            )
+                    break
             distributed_barrier()
             best_checkpoint = load_torch_checkpoint(str(best_path), map_location="cpu")
             load_wan_state_predictor_v2_state_dict(unwrap_model(model), best_checkpoint["model"])
@@ -829,6 +941,8 @@ def main():
             save_checkpoint(default_best_output(output), model, config, args, history)
             print(f"saved Wan state predictor v2 checkpoint to {output}", flush=True)
     finally:
+        if wandb_run is not None:
+            wandb_run.finish()
         cleanup_distributed()
 
 

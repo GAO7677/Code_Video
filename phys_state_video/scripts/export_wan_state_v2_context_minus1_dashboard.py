@@ -57,6 +57,8 @@ class LoadedModel:
 
 
 TAILQUERY_CONTEXT_RATIOS = (1.0, 0.75, 0.50, 0.25)
+PRIMARY_TAILQUERY_LABEL = "tailquery_multictx"
+LEGACY_TAILQUERY_LABEL = "tailquery"
 
 
 def parse_args():
@@ -549,9 +551,24 @@ def render_html(report: dict) -> str:
 
     case_cards = []
     for case in report["cases"]:
-        tailquery_model = next((model for model in case["models"] if model["label"] == "tailquery"), None)
-        other_models = [model for model in case["models"] if model["label"] != "tailquery"]
+        primary_tailquery_model = next(
+            (model for model in case["models"] if model["label"] == PRIMARY_TAILQUERY_LABEL),
+            None,
+        )
+        legacy_tailquery_model = next(
+            (model for model in case["models"] if model["label"] == LEGACY_TAILQUERY_LABEL),
+            None,
+        )
+        if primary_tailquery_model is None:
+            primary_tailquery_model = legacy_tailquery_model
+            legacy_tailquery_model = None
+        other_models = [
+            model
+            for model in case["models"]
+            if model["label"] not in {PRIMARY_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}
+        ]
         tailquery_ratio_variants = case.get("tailquery_ratio_variants", [])
+        legacy_tailquery_ratio_variants = case.get("legacy_tailquery_ratio_variants", [])
 
         def _render_model_pair(model: dict, *, primary: bool) -> str:
             pair_class = "compare-grid primary-compare" if primary else "compare-grid"
@@ -582,33 +599,64 @@ def render_html(report: dict) -> str:
             """
 
         collapsed_pairs = "".join(_render_model_pair(model, primary=False) for model in other_models)
+        primary_ratio_by_value = {float(item["ratio"]): item for item in tailquery_ratio_variants}
+        legacy_ratio_by_value = {float(item["ratio"]): item for item in legacy_tailquery_ratio_variants}
         ratio_cards = []
-        for variant in tailquery_ratio_variants:
+        for ratio in TAILQUERY_CONTEXT_RATIOS:
+            primary_variant = primary_ratio_by_value.get(float(ratio))
+            legacy_variant = legacy_ratio_by_value.get(float(ratio))
+            if primary_variant is None and legacy_variant is None:
+                continue
+            display_variant = primary_variant if primary_variant is not None else legacy_variant
+            primary_block = (
+                f"""
+                <div class="mini-label">new tailquery</div>
+                <video controls preload="none" playsinline src="{html.escape(primary_variant['video'])}"></video>
+                <div class="metric-box compact-metrics">
+                  <div>Center {primary_variant['metrics']['center_error']:.4f}</div>
+                  <div>Scale {primary_variant['metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis {primary_variant['metrics']['visibility_error']:.4f}</div>
+                  <div>Head {primary_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                </div>
+                """
+                if primary_variant is not None
+                else '<div class="mini-label">new tailquery</div><div class="metric-box compact-metrics">missing</div>'
+            )
+            legacy_block = (
+                f"""
+                <div class="mini-label">old tailquery</div>
+                <video controls preload="none" playsinline src="{html.escape(legacy_variant['video'])}"></video>
+                <div class="metric-box compact-metrics">
+                  <div>Center {legacy_variant['metrics']['center_error']:.4f}</div>
+                  <div>Scale {legacy_variant['metrics']['log_scale_error']:.4f}</div>
+                  <div>Vis {legacy_variant['metrics']['visibility_error']:.4f}</div>
+                  <div>Head {legacy_variant['metrics']['future_start_head_center_error']:.4f}</div>
+                </div>
+                """
+                if legacy_variant is not None
+                else '<div class="mini-label">old tailquery</div><div class="metric-box compact-metrics">missing</div>'
+            )
             ratio_cards.append(
                 f"""
                 <article class="video-card">
                   <div class="video-eyebrow">Tailquery Ratio</div>
-                  <h3>{html.escape(variant['ratio_label'])}</h3>
+                  <h3>{html.escape(display_variant['ratio_label'])}</h3>
                   <div class="mini-label">Input Context</div>
-                  <video controls preload="none" playsinline src="{html.escape(variant['context_video'])}"></video>
-                  <div class="mini-label">Future Overlay</div>
-                  <video controls preload="none" playsinline src="{html.escape(variant['video'])}"></video>
-                  <div class="metric-box">
-                    <div>context steps {int(variant['context_steps'])}</div>
-                    <div>future steps {int(variant['future_steps'])}</div>
-                    <div>Center {variant['metrics']['center_error']:.4f}</div>
-                    <div>Scale {variant['metrics']['log_scale_error']:.4f}</div>
-                    <div>Vis {variant['metrics']['visibility_error']:.4f}</div>
-                    <div>Head {variant['metrics']['future_start_head_center_error']:.4f}</div>
+                  <video controls preload="none" playsinline src="{html.escape(display_variant['context_video'])}"></video>
+                  <div class="metric-box compact-metrics">
+                    <div>context steps {int(display_variant['context_steps'])}</div>
+                    <div>future steps {int(display_variant['future_steps'])}</div>
                   </div>
+                  {primary_block}
+                  {legacy_block}
                 </article>
                 """
             )
         tailquery_block = (
             f"""
             <div class="feature-head">
-              <h3>Tailquery 多长度主对比</h3>
-              <p class="meta">同一个 case，下方直接比较 `tailquery` 在不同 context 比例 `100% / 75% / 50% / 25%` 下预测出的 future overlay。</p>
+              <h3>{html.escape(primary_tailquery_model['label'] if primary_tailquery_model is not None else PRIMARY_TAILQUERY_LABEL)} 多长度主对比</h3>
+              <p class="meta">同一个 case，下方直接比较主权重在不同 context 比例 `100% / 75% / 50% / 25%` 下预测出的 future overlay。</p>
             </div>
             <div class="ratio-grid">
               {''.join(ratio_cards)}
@@ -616,8 +664,8 @@ def render_html(report: dict) -> str:
             """
             if ratio_cards
             else (
-                _render_model_pair(tailquery_model, primary=True)
-                if tailquery_model is not None
+                _render_model_pair(primary_tailquery_model, primary=True)
+                if primary_tailquery_model is not None
                 else '<p class="meta">tailquery result is missing for this case.</p>'
             )
         )
@@ -625,11 +673,10 @@ def render_html(report: dict) -> str:
             f"""
             <details class="collapsed-models">
               <summary>展开其它方法对比</summary>
-              {(_render_model_pair(tailquery_model, primary=False) if tailquery_model is not None else '')}
               {collapsed_pairs}
             </details>
             """
-            if collapsed_pairs or tailquery_model is not None
+            if collapsed_pairs
             else ""
         )
         case_cards.append(
@@ -796,6 +843,12 @@ def render_html(report: dict) -> str:
       line-height: 1.7;
       font-size: 13px;
     }}
+    .compact-metrics {{
+      margin-top: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.6;
+    }}
     .mini-label {{
       margin: 10px 0 6px;
       color: var(--accent);
@@ -836,7 +889,7 @@ def render_html(report: dict) -> str:
     <section class="hero">
       <h1>wan_state_v2 context ablation dashboard</h1>
       <p>这里把两条 overlay 分开展示。每个模型都有两条单独视频：一条对应正常 <code>context</code>，一条对应 <code>context[:-1]</code>。两条视频都只在各自对应的 future 底图上画框。</p>
-      <p>页面主区域优先展示同一个 case 下 `tailquery` 在不同 context 比例下的 future overlay 对比，其它方法先折叠收起。绿色框表示 GT；正常 <code>context</code> 的 overlay 里预测框是红色；<code>context[:-1]</code> 或其它缩短比例的 overlay 里预测框是蓝色。</p>
+      <p>页面主区域优先展示同一个 case 下不同 context 比例的三行对比：`Input Context / new tailquery / old tailquery`。绿色框表示 GT；`100%` 的预测框是红色，其它缩短比例的预测框是蓝色。</p>
       <table>
         <thead>
           <tr>
@@ -964,6 +1017,7 @@ def main():
 
         case_models = []
         tailquery_ratio_variants = []
+        legacy_tailquery_ratio_variants = []
         npz_payload = {
             "full_frames": full_frames,
             "full_states": full_states,
@@ -1055,7 +1109,7 @@ def main():
             npz_payload[f"{model.label}_pred_future_latent_fullctx"] = pred_future_latent_full
             npz_payload[f"{model.label}_pred_future_fullctx"] = pred_future_full
 
-            if model.label == "tailquery":
+            if model.label in {PRIMARY_TAILQUERY_LABEL, LEGACY_TAILQUERY_LABEL}:
                 for ratio in TAILQUERY_CONTEXT_RATIOS:
                     ratio_context_steps = resolve_ratio_context_steps(original_context_steps, ratio)
                     ratio_batch, ratio_future_steps = build_batch_with_context_steps(
@@ -1119,17 +1173,19 @@ def main():
                         ),
                         parsed.fps,
                     )
-                    tailquery_ratio_variants.append(
-                        {
-                            "ratio": float(ratio),
-                            "ratio_label": ratio_label,
-                            "context_steps": int(ratio_context_steps),
-                            "future_steps": int(ratio_future_steps),
-                            "context_video": ratio_context_video_rel,
-                            "video": ratio_video_rel,
-                            "metrics": ratio_metrics,
-                        }
-                    )
+                    ratio_variant_payload = {
+                        "ratio": float(ratio),
+                        "ratio_label": ratio_label,
+                        "context_steps": int(ratio_context_steps),
+                        "future_steps": int(ratio_future_steps),
+                        "context_video": ratio_context_video_rel,
+                        "video": ratio_video_rel,
+                        "metrics": ratio_metrics,
+                    }
+                    if model.label == PRIMARY_TAILQUERY_LABEL:
+                        tailquery_ratio_variants.append(ratio_variant_payload)
+                    else:
+                        legacy_tailquery_ratio_variants.append(ratio_variant_payload)
                     npz_payload[f"{model.label}_{ratio_slug}_pred_future_latent"] = ratio_pred_future_latent
                     npz_payload[f"{model.label}_{ratio_slug}_pred_future"] = ratio_pred_future
                     npz_payload[f"{model.label}_{ratio_slug}_context_steps"] = np.asarray(
@@ -1156,6 +1212,7 @@ def main():
                 "trimmed_context_steps": int(trimmed_context_steps),
                 "future_start_idx": int(future_start_idx),
                 "tailquery_ratio_variants": tailquery_ratio_variants,
+                "legacy_tailquery_ratio_variants": legacy_tailquery_ratio_variants,
                 "models": case_models,
             }
         )
