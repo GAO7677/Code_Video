@@ -109,6 +109,8 @@ def parse_args():
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--port", type=int, default=18879)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--latent-device", default=None)
+    parser.add_argument("--prompt-device", default=None)
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
     parser.add_argument("--wan-task", default="ti2v-5B")
     parser.add_argument("--sam2-gt-prompt-mode", choices=["proxy_box", "caption_gdino"], default="caption_gdino")
@@ -565,7 +567,14 @@ def build_batch(episode: dict[str, np.ndarray], prompt: str) -> tuple[dict[str, 
     return batch, future_steps
 
 
-def load_models(model_specs: list[ModelSpec], *, device: str, default_wan_task: str):
+def load_models(
+    model_specs: list[ModelSpec],
+    *,
+    device: str,
+    latent_device: str,
+    prompt_device: str,
+    default_wan_task: str,
+):
     loaded: list[LoadedModel] = []
     for spec in model_specs:
         predictor, predictor_ckpt = load_wan_state_predictor(str(spec.checkpoint), device)
@@ -594,7 +603,7 @@ def load_models(model_specs: list[ModelSpec], *, device: str, default_wan_task: 
     latent_extractor = build_predictor_latent_extractor(
         wan_ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
-        device=device,
+        device=latent_device,
         predictor_ckpt=reference_ckpt,
         default_wan_task=shared_wan_task,
         predictor_wan_task=shared_wan_task,
@@ -603,7 +612,7 @@ def load_models(model_specs: list[ModelSpec], *, device: str, default_wan_task: 
     prompt_context_encoder = build_predictor_prompt_context_encoder(
         wan_ckpt_dir=args.wan_ckpt_dir,
         wan_repo_root=args.wan_repo_root,
-        device=device,
+        device=prompt_device,
         predictor_ckpt=reference_ckpt,
         default_wan_task=shared_wan_task,
         predictor_wan_task=shared_wan_task,
@@ -626,10 +635,10 @@ def run_predictor_for_batch(
             f"{loaded_model.label} expects wan_state_v2_latent_time checkpoint, got {predictor_version}"
         )
     with torch.no_grad():
-        context_frames = batch["context_frames"].to(device)
-        future_states = batch["future_states"].to(device)
+        context_frames = batch["context_frames"]
+        future_states = batch["future_states"]
         camera = batch["camera"].to(device)
-        context_latents = latent_extractor.encode_context_frames_raw(context_frames)
+        context_latents = latent_extractor.encode_context_frames_raw(context_frames).to(device)
         context_latent_steps = int(context_latents.shape[1])
         future_latent_steps = compute_future_latent_steps(
             context_steps=int(context_frames.shape[1]),
@@ -965,6 +974,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = parsed.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    latent_device = parsed.latent_device or device
+    prompt_device = parsed.prompt_device or device
     model_specs = parse_model_specs(parsed.model_spec)
     manifest_path = Path(parsed.manifest_json).resolve() if parsed.manifest_json else None
     sam2_cache_report_path = Path(parsed.sam2_cache_report).resolve() if parsed.sam2_cache_report else None
@@ -988,6 +999,8 @@ def main():
     loaded_models, latent_extractor, prompt_context_encoder = load_models(
         model_specs,
         device=device,
+        latent_device=latent_device,
+        prompt_device=prompt_device,
         default_wan_task=parsed.wan_task,
     )
     max_context_latent_steps = min(item.max_context_latent_steps for item in loaded_models)

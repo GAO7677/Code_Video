@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--prompt-mode", choices=["proxy_box", "caption_gdino"], default="caption_gdino")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--sam2-device", default=None)
+    parser.add_argument("--gdino-device", default=None)
     parser.add_argument(
         "--sam2-config",
         default="/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml",
@@ -72,9 +74,11 @@ def main():
     cache_dir = output_dir / "cases"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    device = args.device or "cuda"
+    shared_device = args.device or "cuda"
+    sam2_device = args.sam2_device or shared_device
+    gdino_device = args.gdino_device or shared_device
     tracker = SAM2VideoMaskTracker(
-        device=device,
+        device=sam2_device,
         model_cfg=args.sam2_config,
         checkpoint_path=args.sam2_ckpt,
     )
@@ -84,15 +88,30 @@ def main():
             repo_root=args.gdino_repo_root,
             config_path=args.gdino_config,
             checkpoint_path=args.gdino_ckpt,
-            device=device,
+            device=gdino_device,
             box_threshold=args.gdino_box_threshold,
             text_threshold=args.gdino_text_threshold,
             max_boxes=args.gdino_max_boxes,
         )
 
     case_records = []
+    total_cases = len(manifest["cases"])
+
+    def write_report() -> None:
+        report = {
+            "manifest_json": str(Path(args.manifest_json)),
+            "prompt_mode": args.prompt_mode,
+            "sam2_device": sam2_device,
+            "gdino_device": gdino_device,
+            "case_count": len(case_records),
+            "cases": case_records,
+        }
+        (output_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
     for spec in manifest["cases"]:
         case_id = str(spec["case_id"])
+        case_idx = len(case_records) + 1
+        print(f"[{case_idx}/{total_cases}] start case={case_id}", flush=True)
         source_path = Path(spec["source_video"])
         frames = read_video_frames(
             source_path,
@@ -109,6 +128,7 @@ def main():
         prompt_phrases: list[str] = []
         resolved_prompt_mode = "proxy_box"
         if args.prompt_mode == "caption_gdino" and text_detector is not None and str(spec["caption"]).strip():
+            print(f"[{case_idx}/{total_cases}] gdino detect case={case_id}", flush=True)
             detection = build_caption_prompt_boxes(
                 clip,
                 prompt_frame_idx=prompt_frame_idx,
@@ -122,6 +142,12 @@ def main():
                 resolved_prompt_mode = detection.prompt_mode
             else:
                 resolved_prompt_mode = "proxy_box_fallback"
+            print(
+                f"[{case_idx}/{total_cases}] gdino done case={case_id} mode={resolved_prompt_mode} "
+                f"boxes={int(prompt_boxes_xyxy.shape[0])}",
+                flush=True,
+            )
+        print(f"[{case_idx}/{total_cases}] sam2 track case={case_id}", flush=True)
         outputs = build_mask_track_outputs(
             clip,
             prompt_frame_idx=prompt_frame_idx,
@@ -149,14 +175,14 @@ def main():
                 "primary_object_idx": int(primary_idx),
             }
         )
+        write_report()
+        print(
+            f"[{case_idx}/{total_cases}] done case={case_id} primary={int(primary_idx)} "
+            f"npz={npz_path.name}",
+            flush=True,
+        )
 
-    report = {
-        "manifest_json": str(Path(args.manifest_json)),
-        "prompt_mode": args.prompt_mode,
-        "case_count": len(case_records),
-        "cases": case_records,
-    }
-    (output_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_report()
     print(f"sam2 cache: {output_dir}")
     print(f"cases: {len(case_records)}")
 
