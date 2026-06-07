@@ -592,11 +592,13 @@ def main():
         prompt_phrases: list[str] = []
         prompt_scores = np.zeros((0,), dtype=np.float32)
         if args.prompt_mode == "caption_gdino":
+            proxy_guidance_box = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)
             detection = build_caption_prompt_boxes(
                 frames,
                 prompt_frame_idx=prompt_frame_idx,
                 caption=spec.caption,
                 detector=text_detector,
+                guidance_box_xyxy=proxy_guidance_box,
             )
             if detection.boxes_xyxy.shape[0] == 0:
                 prompt_boxes_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)[None]
