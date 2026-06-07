@@ -24,9 +24,8 @@ if str(SRC_ROOT) not in sys.path:
 from phys_state_video.mask_tracking import (
     GroundingDINOTextDetector,
     SAM2VideoMaskTracker,
-    build_caption_prompt_boxes,
     build_mask_track_outputs,
-    build_proxy_prompt_box,
+    resolve_prompt_boxes,
 )
 from phys_state_video.proxy_state import extract_primary_track, read_video_frames
 from phys_state_video.schemas import StateIndex
@@ -81,6 +80,7 @@ def parse_args():
     parser.add_argument("--gdino-box-threshold", type=float, default=0.25)
     parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
     parser.add_argument("--gdino-max-boxes", type=int, default=4)
+    parser.add_argument("--caption-use-proxy-guidance", action="store_true")
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--port", type=int, default=18879)
     parser.add_argument("--clean", action="store_true")
@@ -597,25 +597,26 @@ def main():
         prompt_phrases: list[str] = []
         prompt_scores = np.zeros((0,), dtype=np.float32)
         if args.prompt_mode == "caption_gdino":
-            proxy_guidance_box = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)
-            detection = build_caption_prompt_boxes(
+            detection = resolve_prompt_boxes(
                 frames,
                 prompt_frame_idx=prompt_frame_idx,
+                prompt_mode="caption_gdino",
                 caption=spec.caption,
                 detector=text_detector,
-                guidance_box_xyxy=proxy_guidance_box,
+                use_proxy_guidance_for_caption=bool(args.caption_use_proxy_guidance),
             )
-            if detection.boxes_xyxy.shape[0] == 0:
-                prompt_boxes_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)[None]
-                resolved_prompt_mode = "proxy_box_fallback"
-            else:
-                prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
-                prompt_phrases = list(detection.phrases)
-                prompt_scores = detection.scores.astype(np.float32)
-                resolved_prompt_mode = detection.prompt_mode
+            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+            prompt_phrases = list(detection.phrases)
+            prompt_scores = detection.scores.astype(np.float32)
+            resolved_prompt_mode = detection.prompt_mode
         else:
-            prompt_boxes_xyxy = build_proxy_prompt_box(frames, prompt_frame_idx=prompt_frame_idx)[None]
-            resolved_prompt_mode = "proxy_box"
+            detection = resolve_prompt_boxes(
+                frames,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_mode="proxy_box",
+            )
+            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+            resolved_prompt_mode = detection.prompt_mode
         sam2_outputs = build_mask_track_outputs(
             frames,
             prompt_frame_idx=prompt_frame_idx,

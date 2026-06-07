@@ -369,6 +369,88 @@ def build_caption_prompt_boxes(
     )
 
 
+def resolve_prompt_boxes(
+    frames_tchw: np.ndarray,
+    *,
+    prompt_frame_idx: int,
+    prompt_mode: str,
+    caption: str = "",
+    detector: GroundingDINOTextDetector | None = None,
+    use_proxy_guidance_for_caption: bool = False,
+) -> DetectionPromptOutputs:
+    if prompt_mode == "caption_gdino" and detector is not None and caption.strip():
+        guidance_box_xyxy = None
+        if use_proxy_guidance_for_caption:
+            guidance_box_xyxy = build_proxy_prompt_box(frames_tchw, prompt_frame_idx=prompt_frame_idx)
+        detection = build_caption_prompt_boxes(
+            frames_tchw,
+            prompt_frame_idx=int(prompt_frame_idx),
+            caption=caption,
+            detector=detector,
+            guidance_box_xyxy=guidance_box_xyxy,
+        )
+        if detection.boxes_xyxy.shape[0] > 0:
+            return detection
+        proxy_box = build_proxy_prompt_box(frames_tchw, prompt_frame_idx=prompt_frame_idx)[None]
+        return DetectionPromptOutputs(
+            boxes_xyxy=proxy_box.astype(np.float32),
+            scores=np.zeros((1,), dtype=np.float32),
+            phrases=[],
+            prompt_frame_idx=int(prompt_frame_idx),
+            prompt_mode="proxy_box_fallback",
+        )
+    proxy_box = build_proxy_prompt_box(frames_tchw, prompt_frame_idx=prompt_frame_idx)[None]
+    return DetectionPromptOutputs(
+        boxes_xyxy=proxy_box.astype(np.float32),
+        scores=np.zeros((1,), dtype=np.float32),
+        phrases=[],
+        prompt_frame_idx=int(prompt_frame_idx),
+        prompt_mode="proxy_box",
+    )
+
+
+def choose_primary_object_index(
+    states: np.ndarray,
+    boxes: np.ndarray,
+    *,
+    prompt_scores: np.ndarray | None = None,
+) -> int:
+    if states.ndim != 3 or boxes.ndim != 3:
+        raise ValueError("expected states [T,N,D] and boxes [T,N,4]")
+    num_objects = int(states.shape[1])
+    if num_objects <= 1:
+        return 0
+
+    areas = np.maximum((boxes[..., 2] - boxes[..., 0]) * (boxes[..., 3] - boxes[..., 1]), 0.0)
+    visibility = np.clip(states[..., StateIndex.VISIBILITY], 0.0, 1.0)
+    existence = np.clip(states[..., StateIndex.EXISTENCE], 0.0, 1.0)
+    presence = visibility * existence
+
+    centers = states[..., StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
+    center_steps = np.linalg.norm(centers[1:] - centers[:-1], axis=-1)
+    valid_steps = presence[1:] * presence[:-1]
+    motion_score = (center_steps * valid_steps).sum(axis=0) / np.maximum(valid_steps.sum(axis=0), 1e-6)
+
+    visible_area = (areas * presence).sum(axis=0) / np.maximum(presence.sum(axis=0), 1e-6)
+    visible_ratio = presence.mean(axis=0)
+    large_area_penalty = np.clip((visible_area - 0.45) / 0.25, 0.0, 1.0)
+
+    if prompt_scores is None or int(np.asarray(prompt_scores).shape[0]) != num_objects:
+        prompt_prior = np.zeros((num_objects,), dtype=np.float32)
+    else:
+        prompt_prior = np.asarray(prompt_scores, dtype=np.float32)
+        prompt_prior = prompt_prior - float(prompt_prior.min())
+        prompt_prior = prompt_prior / max(float(prompt_prior.max()), 1e-6)
+
+    score = (
+        1.5 * prompt_prior
+        + 0.9 * visible_ratio
+        + 1.2 * motion_score
+        - 1.6 * large_area_penalty
+    )
+    return int(np.argmax(score))
+
+
 class SAM2VideoMaskTracker:
     def __init__(
         self,

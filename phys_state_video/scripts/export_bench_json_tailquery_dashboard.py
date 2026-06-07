@@ -25,9 +25,9 @@ from phys_state_video.experiment import compute_state_metrics
 from phys_state_video.mask_tracking import (
     GroundingDINOTextDetector,
     SAM2VideoMaskTracker,
-    build_caption_prompt_boxes,
     build_mask_track_outputs,
-    build_proxy_prompt_box,
+    choose_primary_object_index,
+    resolve_prompt_boxes,
 )
 from phys_state_video.predictor_wan_state_v2 import resample_temporal_states
 from phys_state_video.proxy_state import extract_primary_track, read_video_frames
@@ -134,6 +134,7 @@ def parse_args():
     parser.add_argument("--gdino-box-threshold", type=float, default=0.25)
     parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
     parser.add_argument("--gdino-max-boxes", type=int, default=4)
+    parser.add_argument("--caption-use-proxy-guidance", action="store_true")
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
@@ -325,16 +326,6 @@ def draw_gt_future_overlay(
     return np.stack(frames, axis=0)
 
 
-def choose_primary_object_index(states: np.ndarray, boxes: np.ndarray) -> int:
-    if states.ndim != 3 or boxes.ndim != 3:
-        raise ValueError("expected states [T,N,D] and boxes [T,N,4]")
-    areas = np.maximum((boxes[..., 2] - boxes[..., 0]) * (boxes[..., 3] - boxes[..., 1]), 0.0)
-    visibility = np.clip(states[..., StateIndex.VISIBILITY], 0.0, 1.0)
-    existence = np.clip(states[..., StateIndex.EXISTENCE], 0.0, 1.0)
-    scores = (areas * visibility * existence).mean(axis=0)
-    return int(np.argmax(scores))
-
-
 def slice_single_object_track(
     states: np.ndarray,
     boxes: np.ndarray,
@@ -354,23 +345,18 @@ def build_sam2_gt_track(
     tracker: SAM2VideoMaskTracker,
     text_detector: GroundingDINOTextDetector | None,
     prompt_mode: str,
+    use_proxy_guidance_for_caption: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, int]:
-    proxy_guidance_box = build_proxy_prompt_box(frames_tchw, prompt_frame_idx=prompt_frame_idx)
-    prompt_boxes_xyxy = proxy_guidance_box[None]
-    resolved_prompt_mode = "proxy_box"
-    if prompt_mode == "caption_gdino" and text_detector is not None and caption.strip():
-        detection = build_caption_prompt_boxes(
-            frames_tchw,
-            prompt_frame_idx=prompt_frame_idx,
-            caption=caption,
-            detector=text_detector,
-            guidance_box_xyxy=proxy_guidance_box,
-        )
-        if detection.boxes_xyxy.shape[0] > 0:
-            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
-            resolved_prompt_mode = detection.prompt_mode
-        else:
-            resolved_prompt_mode = "proxy_box_fallback"
+    detection = resolve_prompt_boxes(
+        frames_tchw,
+        prompt_frame_idx=prompt_frame_idx,
+        prompt_mode=prompt_mode,
+        caption=caption,
+        detector=text_detector,
+        use_proxy_guidance_for_caption=use_proxy_guidance_for_caption,
+    )
+    prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+    resolved_prompt_mode = detection.prompt_mode
     outputs = build_mask_track_outputs(
         frames_tchw,
         prompt_frame_idx=int(prompt_frame_idx),
@@ -378,7 +364,11 @@ def build_sam2_gt_track(
         prompt_mode=resolved_prompt_mode,
         tracker=tracker,
     )
-    primary_idx = choose_primary_object_index(outputs.states, outputs.boxes)
+    primary_idx = choose_primary_object_index(
+        outputs.states,
+        outputs.boxes,
+        prompt_scores=detection.scores,
+    )
     states, boxes = slice_single_object_track(outputs.states, outputs.boxes, primary_idx)
     masks = outputs.masks[:, primary_idx].astype(np.uint8)
     return (
@@ -1092,6 +1082,7 @@ def main():
                 tracker=tracker,
                 text_detector=text_detector,
                 prompt_mode=parsed.sam2_gt_prompt_mode,
+                use_proxy_guidance_for_caption=bool(parsed.caption_use_proxy_guidance),
             )
         sam2_context_states = sam2_states_full[:context_steps].astype(np.float32)
         sam2_future_states = sam2_states_full[context_steps:].astype(np.float32)

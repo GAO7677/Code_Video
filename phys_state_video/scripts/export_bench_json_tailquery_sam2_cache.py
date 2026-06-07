@@ -17,12 +17,11 @@ if str(SRC_ROOT) not in sys.path:
 from phys_state_video.mask_tracking import (
     GroundingDINOTextDetector,
     SAM2VideoMaskTracker,
-    build_caption_prompt_boxes,
     build_mask_track_outputs,
-    build_proxy_prompt_box,
+    choose_primary_object_index,
+    resolve_prompt_boxes,
 )
 from phys_state_video.proxy_state import read_video_frames
-from phys_state_video.schemas import StateIndex
 
 
 def parse_args():
@@ -55,15 +54,8 @@ def parse_args():
     parser.add_argument("--gdino-box-threshold", type=float, default=0.25)
     parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
     parser.add_argument("--gdino-max-boxes", type=int, default=4)
+    parser.add_argument("--caption-use-proxy-guidance", action="store_true")
     return parser.parse_args()
-
-
-def choose_primary_object_index(states: np.ndarray, boxes: np.ndarray) -> int:
-    areas = np.maximum((boxes[..., 2] - boxes[..., 0]) * (boxes[..., 3] - boxes[..., 1]), 0.0)
-    visibility = np.clip(states[..., StateIndex.VISIBILITY], 0.0, 1.0)
-    existence = np.clip(states[..., StateIndex.EXISTENCE], 0.0, 1.0)
-    scores = (areas * visibility * existence).mean(axis=0)
-    return int(np.argmax(scores))
 
 
 def main():
@@ -123,30 +115,37 @@ def main():
         future_steps = int(spec["future_steps"])
         clip = frames[start : start + context_steps + future_steps]
         prompt_frame_idx = context_steps - 1
-        proxy_guidance_box = build_proxy_prompt_box(clip, prompt_frame_idx=prompt_frame_idx)
-        prompt_boxes_xyxy = proxy_guidance_box[None]
+        prompt_boxes_xyxy: np.ndarray
         prompt_phrases: list[str] = []
+        prompt_scores = np.zeros((0,), dtype=np.float32)
         resolved_prompt_mode = "proxy_box"
         if args.prompt_mode == "caption_gdino" and text_detector is not None and str(spec["caption"]).strip():
             print(f"[{case_idx}/{total_cases}] gdino detect case={case_id}", flush=True)
-            detection = build_caption_prompt_boxes(
+            detection = resolve_prompt_boxes(
                 clip,
                 prompt_frame_idx=prompt_frame_idx,
+                prompt_mode="caption_gdino",
                 caption=str(spec["caption"]),
                 detector=text_detector,
-                guidance_box_xyxy=proxy_guidance_box,
+                use_proxy_guidance_for_caption=bool(args.caption_use_proxy_guidance),
             )
-            if detection.boxes_xyxy.shape[0] > 0:
-                prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
-                prompt_phrases = [str(x) for x in detection.phrases]
-                resolved_prompt_mode = detection.prompt_mode
-            else:
-                resolved_prompt_mode = "proxy_box_fallback"
+            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+            prompt_phrases = [str(x) for x in detection.phrases]
+            prompt_scores = detection.scores.astype(np.float32)
+            resolved_prompt_mode = detection.prompt_mode
             print(
                 f"[{case_idx}/{total_cases}] gdino done case={case_id} mode={resolved_prompt_mode} "
                 f"boxes={int(prompt_boxes_xyxy.shape[0])}",
                 flush=True,
             )
+        else:
+            detection = resolve_prompt_boxes(
+                clip,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_mode="proxy_box",
+            )
+            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+            resolved_prompt_mode = detection.prompt_mode
         print(f"[{case_idx}/{total_cases}] sam2 track case={case_id}", flush=True)
         outputs = build_mask_track_outputs(
             clip,
@@ -155,7 +154,11 @@ def main():
             prompt_mode=resolved_prompt_mode,
             tracker=tracker,
         )
-        primary_idx = choose_primary_object_index(outputs.states, outputs.boxes)
+        primary_idx = choose_primary_object_index(
+            outputs.states,
+            outputs.boxes,
+            prompt_scores=prompt_scores,
+        )
         npz_path = cache_dir / f"{case_id}.npz"
         np.savez_compressed(
             npz_path,
