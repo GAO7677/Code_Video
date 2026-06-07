@@ -135,6 +135,8 @@ def parse_args():
     parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
     parser.add_argument("--gdino-max-boxes", type=int, default=4)
     parser.add_argument("--caption-use-proxy-guidance", action="store_true")
+    parser.add_argument("--export-source-gt-videos", action="store_true")
+    parser.add_argument("--gt-only", action="store_true")
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
@@ -326,6 +328,54 @@ def draw_gt_future_overlay(
     return np.stack(frames, axis=0)
 
 
+def draw_gt_full_overlay(
+    full_frames: np.ndarray,
+    gt_boxes: np.ndarray,
+    gt_states: np.ndarray,
+    *,
+    label: str,
+    gt_masks: np.ndarray | None = None,
+) -> np.ndarray:
+    frames = []
+    for frame_idx in range(full_frames.shape[0]):
+        rgb = to_uint8_rgb(full_frames[frame_idx])
+        canvas = rgb.copy()
+        if gt_masks is not None and frame_idx < int(gt_masks.shape[0]):
+            apply_mask_tint(canvas, gt_masks[frame_idx])
+        _draw_gt_boxes(canvas, gt_boxes, gt_states, frame_idx)
+        canvas = draw_text(canvas, [label, "green=GT", f"frame={frame_idx:02d}"])
+        frames.append(np.transpose(canvas, (2, 0, 1)).astype(np.float32) / 255.0)
+    return np.stack(frames, axis=0)
+
+
+def pad_track_to_full_video(
+    *,
+    full_steps: int,
+    start_idx: int,
+    clip_states: np.ndarray,
+    clip_boxes: np.ndarray,
+    clip_masks: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    if clip_states.ndim != 3 or clip_boxes.ndim != 3:
+        raise ValueError("expected clip_states [T,N,D] and clip_boxes [T,N,4]")
+    clip_steps = int(clip_states.shape[0])
+    if clip_steps != int(clip_boxes.shape[0]):
+        raise ValueError("clip_states and clip_boxes must have the same temporal length")
+    if start_idx < 0 or start_idx + clip_steps > full_steps:
+        raise ValueError("clip span exceeds full video length")
+    full_states = np.zeros((full_steps, clip_states.shape[1], clip_states.shape[2]), dtype=np.float32)
+    full_boxes = np.zeros((full_steps, clip_boxes.shape[1], clip_boxes.shape[2]), dtype=np.float32)
+    full_states[start_idx : start_idx + clip_steps] = clip_states.astype(np.float32)
+    full_boxes[start_idx : start_idx + clip_steps] = clip_boxes.astype(np.float32)
+    full_masks = None
+    if clip_masks is not None:
+        if clip_masks.ndim != 3:
+            raise ValueError("expected clip_masks [T,H,W]")
+        full_masks = np.zeros((full_steps, clip_masks.shape[1], clip_masks.shape[2]), dtype=np.uint8)
+        full_masks[start_idx : start_idx + clip_steps] = clip_masks.astype(np.uint8)
+    return full_states, full_boxes, full_masks
+
+
 def slice_single_object_track(
     states: np.ndarray,
     boxes: np.ndarray,
@@ -335,6 +385,11 @@ def slice_single_object_track(
         states[:, obj_idx:obj_idx + 1].astype(np.float32),
         boxes[:, obj_idx:obj_idx + 1].astype(np.float32),
     )
+
+
+def slice_single_object_masks(masks: np.ndarray, obj_idx: int) -> np.ndarray:
+    safe_idx = int(np.clip(obj_idx, 0, max(int(masks.shape[1]) - 1, 0)))
+    return masks[:, safe_idx].astype(np.uint8)
 
 
 def build_sam2_gt_track(
@@ -381,6 +436,26 @@ def build_sam2_gt_track(
     )
 
 
+def build_sam2_gt_track_from_prompt_boxes(
+    frames_tchw: np.ndarray,
+    *,
+    prompt_frame_idx: int,
+    prompt_boxes_xyxy: np.ndarray,
+    tracker: SAM2VideoMaskTracker,
+    prompt_mode: str,
+    primary_idx: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    outputs = build_mask_track_outputs(
+        frames_tchw,
+        prompt_frame_idx=int(prompt_frame_idx),
+        prompt_boxes_xyxy=np.asarray(prompt_boxes_xyxy, dtype=np.float32),
+        prompt_mode=str(prompt_mode),
+        tracker=tracker,
+    )
+    safe_idx = int(np.clip(primary_idx, 0, max(int(outputs.states.shape[1]) - 1, 0)))
+    states, boxes = slice_single_object_track(outputs.states, outputs.boxes, safe_idx)
+    masks = slice_single_object_masks(outputs.masks, safe_idx)
+    return states, boxes, masks
 def draw_single_future_overlay(
     future_frames: np.ndarray,
     gt_future_boxes: np.ndarray,
@@ -729,8 +804,31 @@ def render_html(report: dict) -> str:
             </tr>
             """
         )
+    summary_table_html = ""
+    if report.get("model_count", 0) > 0:
+        summary_table_html = f"""
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Proxy Ctr ↓</th>
+            <th>Proxy Scale ↓</th>
+            <th>Proxy Vis ↓</th>
+            <th>Proxy Head ↓</th>
+            <th>SAM2 Ctr ↓</th>
+            <th>SAM2 Scale ↓</th>
+            <th>SAM2 Vis ↓</th>
+            <th>SAM2 Head ↓</th>
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(summary_rows)}
+        </tbody>
+      </table>
+        """
 
     case_cards = []
+    gt_only_layout = report.get("model_count", 0) == 0
     for case in report["cases"]:
         model_cards = []
         for model in case["models"]:
@@ -760,6 +858,68 @@ def render_html(report: dict) -> str:
                 </article>
                 """
             )
+        if gt_only_layout:
+            case_cards.append(
+                f"""
+            <section class="case-card" id="{html.escape(case['case_id'])}">
+              <div class="case-head">
+                <div>
+                  <div class="eyebrow">{html.escape(case['source_name'])} | {html.escape(case['category'])}</div>
+                  <h2>{html.escape(case['case_id'])}</h2>
+                  <p class="prompt">{html.escape(case['caption'])}</p>
+                  <p class="meta">
+                    source index={case['source_index']} |
+                    source frames={case['source_total_frames']} |
+                    clip start={case['clip_start']} |
+                    context={case['context_steps']} |
+                    future={case['future_steps']}
+                  </p>
+                </div>
+              </div>
+              <div class="video-grid gt-grid">
+                <article class="video-card method-col">
+                  <div class="video-eyebrow">Reference</div>
+                  <h3>Input Context</h3>
+                  <video controls preload="none" playsinline src="{html.escape(case['context_video'])}"></video>
+                </article>
+                <article class="video-card method-col">
+                  <div class="video-eyebrow">Reference | Proxy GT</div>
+                  <h3>Proxy GT</h3>
+                  <div class="stack-block">
+                    <div class="stack-title">Source Full</div>
+                    <video controls preload="none" playsinline src="{html.escape(case['proxy_gt_source_video'])}"></video>
+                  </div>
+                  <div class="stack-block">
+                    <div class="stack-title">Future</div>
+                    <video controls preload="none" playsinline src="{html.escape(case['proxy_gt_future_video'])}"></video>
+                  </div>
+                </article>
+                <article class="video-card method-col">
+                  <div class="video-eyebrow">Reference | SAM2 GT</div>
+                  <h3>SAM2 GT</h3>
+                  <div class="stack-block">
+                    <div class="stack-title">Source Full</div>
+                    <video controls preload="none" playsinline src="{html.escape(case['sam2_gt_source_video'])}"></video>
+                  </div>
+                  <div class="stack-block">
+                    <div class="stack-title">Future</div>
+                    <video controls preload="none" playsinline src="{html.escape(case['sam2_gt_future_video'])}"></video>
+                  </div>
+                </article>
+                <article class="video-card method-col">
+                  <div class="video-eyebrow">Prompt</div>
+                  <h3>SAM2 Prompt</h3>
+                  <div class="metric-box">
+                    <div>prompt mode: {html.escape(case['sam2_prompt_mode'])}</div>
+                    <div>prompt boxes: {case['sam2_prompt_box_count']}</div>
+                    <div>primary object idx: {case['sam2_primary_object_idx']}</div>
+                  </div>
+                </article>
+              </div>
+            </section>
+                """
+            )
+            continue
         case_cards.append(
             f"""
             <section class="case-card" id="{html.escape(case['case_id'])}">
@@ -783,6 +943,18 @@ def render_html(report: dict) -> str:
                   <h3>Input Context</h3>
                   <video controls preload="none" playsinline src="{html.escape(case['context_video'])}"></video>
                 </article>
+                {f'''
+                <article class="video-card">
+                  <div class="video-eyebrow">Reference | Proxy GT</div>
+                  <h3>Proxy GT Source Full</h3>
+                  <video controls preload="none" playsinline src="{html.escape(case['proxy_gt_source_video'])}"></video>
+                </article>
+                <article class="video-card">
+                  <div class="video-eyebrow">Reference | SAM2 GT</div>
+                  <h3>SAM2 GT Source Full</h3>
+                  <video controls preload="none" playsinline src="{html.escape(case['sam2_gt_source_video'])}"></video>
+                </article>
+                ''' if case.get('proxy_gt_source_video') and case.get('sam2_gt_source_video') else ''}
                 <article class="video-card">
                   <div class="video-eyebrow">Reference | Proxy GT</div>
                   <h3>Proxy GT Future</h3>
@@ -874,6 +1046,26 @@ def render_html(report: dict) -> str:
       border-radius: 14px;
       padding: 12px;
     }}
+    .method-col {{
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }}
+    .stack-block {{
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }}
+    .stack-title {{
+      color: var(--accent2);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .gt-grid {{
+      grid-template-columns: 1.1fr 1fr 1fr 0.8fr;
+      align-items: start;
+    }}
     .video-eyebrow {{
       color: var(--accent2);
       font-size: 12px;
@@ -929,26 +1121,9 @@ def render_html(report: dict) -> str:
   <div class="page">
     <section class="hero">
       <h1>bench json random clip dashboard</h1>
-      <p>这里直接从 <code>A/B/D.json</code> 里抽样，每个 source video 随机切一段 clip，再用 caption 作为 prompt 跑 predictor。输入只展示截出的 context；输出只在 future 视频底图上叠加框。</p>
-      <p>这页把同一批 predictor 预测结果分别叠在两套 GT 上做对照：一套是项目内的 <code>proxy GT</code>，一套是 <code>SAM2 GT</code>。当前页面支持两种 SAM2 GT 来源：直接在本环境生成，或从外部缓存读取 <code>caption_gdino -&gt; SAM2</code> 结果。颜色约定：绿色框/掩码是当前卡片对应的 GT，红色框是 <code>tailquery_multictx</code>，蓝色框是 <code>tailquery_multictx_converge</code>。下表指标统一按 <code>↓</code> 理解为越低越好。</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th>Proxy Ctr ↓</th>
-            <th>Proxy Scale ↓</th>
-            <th>Proxy Vis ↓</th>
-            <th>Proxy Head ↓</th>
-            <th>SAM2 Ctr ↓</th>
-            <th>SAM2 Scale ↓</th>
-            <th>SAM2 Vis ↓</th>
-            <th>SAM2 Head ↓</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(summary_rows)}
-        </tbody>
-      </table>
+      <p>{"这里直接从 <code>A/B/D.json</code> 里抽样，每个 source video 随机切一段 clip，再用 caption 作为 prompt 跑 predictor。输入只展示截出的 context；输出只在 future 视频底图上叠加框。" if report.get("model_count", 0) > 0 else "这页只展示 GT 可视化，不加载 predictor。每个 case 用同一列展示同一套方法，其中 <code>Source Full</code> 是完整 source video 上的整段结果，<code>Future</code> 是 clip future 段上的对应结果。"} </p>
+      <p>{"这页把同一批 predictor 预测结果分别叠在两套 GT 上做对照：一套是项目内的 <code>proxy GT</code>，一套是 <code>SAM2 GT</code>。当前页面支持两种 SAM2 GT 来源：直接在本环境生成，或从外部缓存读取 <code>caption_gdino -&gt; SAM2</code> 结果。颜色约定：绿色框/掩码是当前卡片对应的 GT，红色框是 <code>tailquery_multictx</code>，蓝色框是 <code>tailquery_multictx_converge</code>。下表指标统一按 <code>↓</code> 理解为越低越好。" if report.get("model_count", 0) > 0 else "<code>Proxy GT Source Full</code> 会在完整 source video 上重新提取整段 proxy 轨迹；<code>SAM2 GT Source Full</code> 会用当前 case 的 prompt frame 和 prompt boxes 在完整 source video 上重新跑整段 SAM2 tracking，因此不应该只在少数帧出现 overlay。"} </p>
+      {summary_table_html}
     </section>
     {''.join(case_cards)}
   </div>
@@ -966,7 +1141,7 @@ def main():
     device = parsed.device or ("cuda" if torch.cuda.is_available() else "cpu")
     latent_device = parsed.latent_device or device
     prompt_device = parsed.prompt_device or device
-    model_specs = parse_model_specs(parsed.model_spec)
+    model_specs = [] if parsed.gt_only else parse_model_specs(parsed.model_spec)
     manifest_path = Path(parsed.manifest_json).resolve() if parsed.manifest_json else None
     sam2_cache_report_path = Path(parsed.sam2_cache_report).resolve() if parsed.sam2_cache_report else None
     if (manifest_path is None) != (sam2_cache_report_path is None):
@@ -986,27 +1161,36 @@ def main():
 
     global args
     args = parsed
-    loaded_models, latent_extractor, prompt_context_encoder = load_models(
-        model_specs,
-        device=device,
-        latent_device=latent_device,
-        prompt_device=prompt_device,
-        default_wan_task=parsed.wan_task,
-    )
-    max_context_latent_steps = min(item.max_context_latent_steps for item in loaded_models)
-    max_future_latent_steps = min(item.max_future_latent_steps for item in loaded_models)
-    camera_dim = min(item.camera_dim for item in loaded_models)
-    temporal_stride = int(latent_extractor.temporal_stride)
+    if parsed.gt_only:
+        loaded_models = []
+        latent_extractor = None
+        prompt_context_encoder = None
+        max_context_latent_steps = 999
+        max_future_latent_steps = 999
+        camera_dim = 8
+        temporal_stride = 4
+    else:
+        loaded_models, latent_extractor, prompt_context_encoder = load_models(
+            model_specs,
+            device=device,
+            latent_device=latent_device,
+            prompt_device=prompt_device,
+            default_wan_task=parsed.wan_task,
+        )
+        max_context_latent_steps = min(item.max_context_latent_steps for item in loaded_models)
+        max_future_latent_steps = min(item.max_future_latent_steps for item in loaded_models)
+        camera_dim = min(item.camera_dim for item in loaded_models)
+        temporal_stride = int(latent_extractor.temporal_stride)
 
     tracker = None
     text_detector = None
-    if not use_external_sam2_cache:
+    if (not use_external_sam2_cache) or parsed.export_source_gt_videos:
         tracker = SAM2VideoMaskTracker(
             device=device,
             model_cfg=parsed.sam2_config,
             checkpoint_path=parsed.sam2_ckpt,
         )
-        if parsed.sam2_gt_prompt_mode == "caption_gdino":
+        if (not use_external_sam2_cache) and parsed.sam2_gt_prompt_mode == "caption_gdino":
             text_detector = GroundingDINOTextDetector(
                 repo_root=parsed.gdino_repo_root,
                 config_path=parsed.gdino_config,
@@ -1063,7 +1247,10 @@ def main():
             )
         clip = full_video[start_idx : start_idx + context_steps + future_steps]
         proxy_episode = build_episode_from_clip(clip, context_steps, camera_dim=camera_dim)
-        batch, target_future_steps = build_batch(proxy_episode, spec.caption)
+        batch = None
+        target_future_steps = int(proxy_episode["future_frames"].shape[0])
+        if not parsed.gt_only:
+            batch, target_future_steps = build_batch(proxy_episode, spec.caption)
         proxy_context_last_boxes = [
             last_valid_box(proxy_episode["full_boxes"], obj_idx, context_steps)
             for obj_idx in range(int(proxy_episode["full_boxes"].shape[1]))
@@ -1099,6 +1286,8 @@ def main():
         context_video_rel = f"assets/{case_id}_context.mp4"
         proxy_gt_video_rel = f"assets/{case_id}_proxy_future_gt.mp4"
         sam2_gt_video_rel = f"assets/{case_id}_sam2_future_gt.mp4"
+        proxy_gt_source_video_rel = None
+        sam2_gt_source_video_rel = None
         write_mp4(
             output_dir / context_video_rel,
             make_labeled_video(
@@ -1132,78 +1321,115 @@ def main():
             ),
             parsed.fps,
         )
+        if parsed.export_source_gt_videos:
+            proxy_track_full = extract_primary_track(full_video)
+            proxy_gt_source_video_rel = f"assets/{case_id}_proxy_source_gt.mp4"
+            write_mp4(
+                output_dir / proxy_gt_source_video_rel,
+                draw_gt_full_overlay(
+                    full_video,
+                    proxy_track_full.boxes,
+                    proxy_track_full.states,
+                    label=f"Proxy GT source full | total={int(full_video.shape[0])}",
+                ),
+                parsed.fps,
+            )
+            if tracker is None:
+                raise RuntimeError("tracker must be initialized when --export-source-gt-videos is enabled")
+            full_prompt_frame_idx = int(start_idx + context_steps - 1)
+            sam2_states_full_source, sam2_boxes_full_source, sam2_masks_full_source = build_sam2_gt_track_from_prompt_boxes(
+                full_video,
+                prompt_frame_idx=full_prompt_frame_idx,
+                prompt_boxes_xyxy=sam2_prompt_boxes_xyxy,
+                tracker=tracker,
+                prompt_mode=sam2_prompt_mode,
+                primary_idx=sam2_primary_object_idx,
+            )
+            sam2_gt_source_video_rel = f"assets/{case_id}_sam2_source_gt.mp4"
+            write_mp4(
+                output_dir / sam2_gt_source_video_rel,
+                draw_gt_full_overlay(
+                    full_video,
+                    sam2_boxes_full_source,
+                    sam2_states_full_source,
+                    label=f"SAM2 GT source full | total={int(full_video.shape[0])}",
+                    gt_masks=sam2_masks_full_source,
+                ),
+                parsed.fps,
+            )
 
         case_models = []
-        for model in loaded_models:
-            outputs = run_predictor_for_batch(
-                batch,
-                loaded_model=model,
-                latent_extractor=latent_extractor,
-                prompt_context_encoder=prompt_context_encoder,
-                device=device,
-            )
-            pred_future_latent = outputs["future_state_predictions"][0].detach().cpu().numpy().astype(np.float32)
-            pred_future = resample_predicted_states_to_frame_steps(pred_future_latent, target_steps=target_future_steps)
-            proxy_metrics = compute_state_metrics(pred_future, proxy_episode["future_states"])
-            proxy_metrics["future_start_head_center_error"] = float(
-                np.linalg.norm(
-                    pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
-                    - proxy_episode["future_states"][0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
-                    axis=-1,
-                ).mean()
-            )
-            sam2_metrics = compute_state_metrics(pred_future, sam2_future_states)
-            sam2_metrics["future_start_head_center_error"] = float(
-                np.linalg.norm(
-                    pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
-                    - sam2_future_states[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
-                    axis=-1,
-                ).mean()
-            )
-            for key, value in proxy_metrics.items():
-                model_aggregate[model.label][f"proxy_{key}"].append(float(value))
-            for key, value in sam2_metrics.items():
-                model_aggregate[model.label][f"sam2_{key}"].append(float(value))
+        if not parsed.gt_only:
+            for model in loaded_models:
+                outputs = run_predictor_for_batch(
+                    batch,
+                    loaded_model=model,
+                    latent_extractor=latent_extractor,
+                    prompt_context_encoder=prompt_context_encoder,
+                    device=device,
+                )
+                pred_future_latent = outputs["future_state_predictions"][0].detach().cpu().numpy().astype(np.float32)
+                pred_future = resample_predicted_states_to_frame_steps(pred_future_latent, target_steps=target_future_steps)
+                proxy_metrics = compute_state_metrics(pred_future, proxy_episode["future_states"])
+                proxy_metrics["future_start_head_center_error"] = float(
+                    np.linalg.norm(
+                        pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
+                        - proxy_episode["future_states"][0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
+                        axis=-1,
+                    ).mean()
+                )
+                sam2_metrics = compute_state_metrics(pred_future, sam2_future_states)
+                sam2_metrics["future_start_head_center_error"] = float(
+                    np.linalg.norm(
+                        pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
+                        - sam2_future_states[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
+                        axis=-1,
+                    ).mean()
+                )
+                for key, value in proxy_metrics.items():
+                    model_aggregate[model.label][f"proxy_{key}"].append(float(value))
+                for key, value in sam2_metrics.items():
+                    model_aggregate[model.label][f"sam2_{key}"].append(float(value))
 
-            pred_color = (228, 74, 62) if model.label == "tailquery_multictx" else (48, 118, 255)
-            proxy_model_video_rel = f"assets/{case_id}_{model.label}_proxy.mp4"
-            sam2_model_video_rel = f"assets/{case_id}_{model.label}_sam2.mp4"
-            write_mp4(
-                output_dir / proxy_model_video_rel,
-                draw_single_future_overlay(
-                    proxy_episode["future_frames"],
-                    proxy_episode["future_boxes"],
-                    proxy_episode["future_states"],
-                    pred_future,
-                    model_label=f"{model.label} | Proxy GT",
-                    pred_color=pred_color,
-                    context_last_boxes=proxy_context_last_boxes,
-                ),
-                parsed.fps,
-            )
-            write_mp4(
-                output_dir / sam2_model_video_rel,
-                draw_single_future_overlay(
-                    proxy_episode["future_frames"],
-                    sam2_future_boxes,
-                    sam2_future_states,
-                    pred_future,
-                    model_label=f"{model.label} | SAM2 GT",
-                    pred_color=pred_color,
-                    context_last_boxes=sam2_context_last_boxes,
-                    gt_future_masks=sam2_future_masks,
-                ),
-                parsed.fps,
-            )
-            case_models.append(
-                {
-                    "label": model.label,
-                    "proxy_video": proxy_model_video_rel,
-                    "sam2_video": sam2_model_video_rel,
-                    "proxy_metrics": proxy_metrics,
-                    "sam2_metrics": sam2_metrics,
-                }
-            )
+                pred_color = (228, 74, 62) if model.label == "tailquery_multictx" else (48, 118, 255)
+                proxy_model_video_rel = f"assets/{case_id}_{model.label}_proxy.mp4"
+                sam2_model_video_rel = f"assets/{case_id}_{model.label}_sam2.mp4"
+                write_mp4(
+                    output_dir / proxy_model_video_rel,
+                    draw_single_future_overlay(
+                        proxy_episode["future_frames"],
+                        proxy_episode["future_boxes"],
+                        proxy_episode["future_states"],
+                        pred_future,
+                        model_label=f"{model.label} | Proxy GT",
+                        pred_color=pred_color,
+                        context_last_boxes=proxy_context_last_boxes,
+                    ),
+                    parsed.fps,
+                )
+                write_mp4(
+                    output_dir / sam2_model_video_rel,
+                    draw_single_future_overlay(
+                        proxy_episode["future_frames"],
+                        sam2_future_boxes,
+                        sam2_future_states,
+                        pred_future,
+                        model_label=f"{model.label} | SAM2 GT",
+                        pred_color=pred_color,
+                        context_last_boxes=sam2_context_last_boxes,
+                        gt_future_masks=sam2_future_masks,
+                    ),
+                    parsed.fps,
+                )
+                case_models.append(
+                    {
+                        "label": model.label,
+                        "proxy_video": proxy_model_video_rel,
+                        "sam2_video": sam2_model_video_rel,
+                        "proxy_metrics": proxy_metrics,
+                        "sam2_metrics": sam2_metrics,
+                    }
+                )
 
         cases.append(
             {
@@ -1218,6 +1444,8 @@ def main():
                 "context_steps": int(context_steps),
                 "future_steps": int(future_steps),
                 "context_video": context_video_rel,
+                "proxy_gt_source_video": proxy_gt_source_video_rel,
+                "sam2_gt_source_video": sam2_gt_source_video_rel,
                 "proxy_gt_future_video": proxy_gt_video_rel,
                 "sam2_gt_future_video": sam2_gt_video_rel,
                 "sam2_prompt_mode": sam2_prompt_mode,
