@@ -22,6 +22,13 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from phys_state_video.experiment import compute_state_metrics
+from phys_state_video.mask_tracking import (
+    GroundingDINOTextDetector,
+    SAM2VideoMaskTracker,
+    build_caption_prompt_boxes,
+    build_mask_track_outputs,
+    build_proxy_prompt_box,
+)
 from phys_state_video.predictor_wan_state_v2 import resample_temporal_states
 from phys_state_video.proxy_state import extract_primary_track, read_video_frames
 from phys_state_video.schemas import StateIndex
@@ -48,6 +55,13 @@ class CaseSpec:
     category: str
     source_video: str
     caption: str
+    case_id: str | None = None
+    clip_start: int | None = None
+    context_steps: int | None = None
+    future_steps: int | None = None
+    height: int | None = None
+    width: int | None = None
+    source_total_frames: int | None = None
 
 
 @dataclass(slots=True)
@@ -75,6 +89,8 @@ def parse_args():
     parser.add_argument("--bench-json-root", required=True)
     parser.add_argument("--wan-ckpt-dir", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--manifest-json", default=None)
+    parser.add_argument("--sam2-cache-report", default=None)
     parser.add_argument(
         "--model-spec",
         action="append",
@@ -95,6 +111,27 @@ def parse_args():
     parser.add_argument("--device", default=None)
     parser.add_argument("--wan-repo-root", default="/home/gaoya/Code_Video/Wan2.2-main")
     parser.add_argument("--wan-task", default="ti2v-5B")
+    parser.add_argument("--sam2-gt-prompt-mode", choices=["proxy_box", "caption_gdino"], default="caption_gdino")
+    parser.add_argument(
+        "--sam2-config",
+        default="/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml",
+    )
+    parser.add_argument(
+        "--sam2-ckpt",
+        default="/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt",
+    )
+    parser.add_argument("--gdino-repo-root", default="/home/gaoya/Grounded-SAM-2-main")
+    parser.add_argument(
+        "--gdino-config",
+        default="/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/GroundingDINO_SwinT_OGC.cfg.py",
+    )
+    parser.add_argument(
+        "--gdino-ckpt",
+        default="/data/gaoya/ckpt/GroundingDINO_SwinT_OGC/groundingdino_swint_ogc.pth",
+    )
+    parser.add_argument("--gdino-box-threshold", type=float, default=0.25)
+    parser.add_argument("--gdino-text-threshold", type=float, default=0.20)
+    parser.add_argument("--gdino-max-boxes", type=int, default=4)
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--no-serve", action="store_true")
     return parser.parse_args()
@@ -207,6 +244,30 @@ def _draw_gt_boxes(canvas: np.ndarray, gt_boxes: np.ndarray, gt_states: np.ndarr
         cv2.circle(canvas, (cx, cy), 3, green, -1, cv2.LINE_AA)
 
 
+def apply_mask_tint(
+    canvas: np.ndarray,
+    mask_hw: np.ndarray | None,
+    *,
+    color: tuple[int, int, int] = (60, 210, 90),
+    alpha: float = 0.35,
+) -> None:
+    if mask_hw is None:
+        return
+    mask = np.asarray(mask_hw)
+    if mask.ndim != 2:
+        raise ValueError(f"expected mask with shape [H, W], got {tuple(mask.shape)}")
+    active = mask > 0
+    if not np.any(active):
+        return
+    tint = np.zeros_like(canvas, dtype=np.float32)
+    tint[..., 0] = float(color[0])
+    tint[..., 1] = float(color[1])
+    tint[..., 2] = float(color[2])
+    mixed = canvas.astype(np.float32)
+    mixed[active] = mixed[active] * (1.0 - alpha) + tint[active] * alpha
+    canvas[...] = np.clip(mixed, 0.0, 255.0).astype(np.uint8)
+
+
 def _draw_prediction_track(
     canvas: np.ndarray,
     predicted_future_states: np.ndarray,
@@ -248,15 +309,84 @@ def draw_gt_future_overlay(
     gt_future_states: np.ndarray,
     *,
     label: str,
+    gt_future_masks: np.ndarray | None = None,
 ) -> np.ndarray:
     frames = []
     for frame_idx in range(future_frames.shape[0]):
         rgb = to_uint8_rgb(future_frames[frame_idx])
         canvas = rgb.copy()
+        if gt_future_masks is not None and frame_idx < int(gt_future_masks.shape[0]):
+            apply_mask_tint(canvas, gt_future_masks[frame_idx])
         _draw_gt_boxes(canvas, gt_future_boxes, gt_future_states, frame_idx)
         canvas = draw_text(canvas, [label, "green=GT", f"frame={frame_idx:02d}"])
         frames.append(np.transpose(canvas, (2, 0, 1)).astype(np.float32) / 255.0)
     return np.stack(frames, axis=0)
+
+
+def choose_primary_object_index(states: np.ndarray, boxes: np.ndarray) -> int:
+    if states.ndim != 3 or boxes.ndim != 3:
+        raise ValueError("expected states [T,N,D] and boxes [T,N,4]")
+    areas = np.maximum((boxes[..., 2] - boxes[..., 0]) * (boxes[..., 3] - boxes[..., 1]), 0.0)
+    visibility = np.clip(states[..., StateIndex.VISIBILITY], 0.0, 1.0)
+    existence = np.clip(states[..., StateIndex.EXISTENCE], 0.0, 1.0)
+    scores = (areas * visibility * existence).mean(axis=0)
+    return int(np.argmax(scores))
+
+
+def slice_single_object_track(
+    states: np.ndarray,
+    boxes: np.ndarray,
+    obj_idx: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        states[:, obj_idx:obj_idx + 1].astype(np.float32),
+        boxes[:, obj_idx:obj_idx + 1].astype(np.float32),
+    )
+
+
+def build_sam2_gt_track(
+    frames_tchw: np.ndarray,
+    *,
+    prompt_frame_idx: int,
+    caption: str,
+    tracker: SAM2VideoMaskTracker,
+    text_detector: GroundingDINOTextDetector | None,
+    prompt_mode: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, int]:
+    proxy_guidance_box = build_proxy_prompt_box(frames_tchw, prompt_frame_idx=prompt_frame_idx)
+    prompt_boxes_xyxy = proxy_guidance_box[None]
+    resolved_prompt_mode = "proxy_box"
+    if prompt_mode == "caption_gdino" and text_detector is not None and caption.strip():
+        detection = build_caption_prompt_boxes(
+            frames_tchw,
+            prompt_frame_idx=prompt_frame_idx,
+            caption=caption,
+            detector=text_detector,
+            guidance_box_xyxy=proxy_guidance_box,
+        )
+        if detection.boxes_xyxy.shape[0] > 0:
+            prompt_boxes_xyxy = detection.boxes_xyxy.astype(np.float32)
+            resolved_prompt_mode = detection.prompt_mode
+        else:
+            resolved_prompt_mode = "proxy_box_fallback"
+    outputs = build_mask_track_outputs(
+        frames_tchw,
+        prompt_frame_idx=int(prompt_frame_idx),
+        prompt_boxes_xyxy=prompt_boxes_xyxy,
+        prompt_mode=resolved_prompt_mode,
+        tracker=tracker,
+    )
+    primary_idx = choose_primary_object_index(outputs.states, outputs.boxes)
+    states, boxes = slice_single_object_track(outputs.states, outputs.boxes, primary_idx)
+    masks = outputs.masks[:, primary_idx].astype(np.uint8)
+    return (
+        states,
+        boxes,
+        masks,
+        prompt_boxes_xyxy.astype(np.float32),
+        resolved_prompt_mode,
+        primary_idx,
+    )
 
 
 def draw_single_future_overlay(
@@ -268,6 +398,7 @@ def draw_single_future_overlay(
     model_label: str,
     pred_color: tuple[int, int, int],
     context_last_boxes: list[np.ndarray | None],
+    gt_future_masks: np.ndarray | None = None,
 ) -> np.ndarray:
     num_objects = int(predicted_future_states.shape[1])
     ref_boxes = context_last_boxes if context_last_boxes is not None else [None for _ in range(num_objects)]
@@ -276,6 +407,8 @@ def draw_single_future_overlay(
     for frame_idx in range(future_frames.shape[0]):
         rgb = to_uint8_rgb(future_frames[frame_idx])
         canvas = rgb.copy()
+        if gt_future_masks is not None and frame_idx < int(gt_future_masks.shape[0]):
+            apply_mask_tint(canvas, gt_future_masks[frame_idx])
         _draw_gt_boxes(canvas, gt_future_boxes, gt_future_states, frame_idx)
         _draw_prediction_track(
             canvas,
@@ -316,6 +449,52 @@ def choose_bench_cases(bench_json_root: Path, json_names: list[str], sample_per_
                 )
             )
     return chosen
+
+
+def load_manifest_cases(manifest_json: Path) -> list[CaseSpec]:
+    payload = json.loads(manifest_json.read_text(encoding="utf-8"))
+    cases: list[CaseSpec] = []
+    for item in payload.get("cases", []):
+        cases.append(
+            CaseSpec(
+                case_id=str(item["case_id"]),
+                source_name=str(item["source_name"]),
+                source_index=int(item["source_index"]),
+                category=str(item.get("category") or "unknown"),
+                source_video=str(item["source_video"]),
+                caption=str(item.get("caption") or ""),
+                clip_start=int(item["clip_start"]),
+                context_steps=int(item["context_steps"]),
+                future_steps=int(item["future_steps"]),
+                height=int(item["height"]),
+                width=int(item["width"]),
+                source_total_frames=int(item.get("source_total_frames", 0)),
+            )
+        )
+    return cases
+
+
+def load_sam2_cache_index(cache_report_path: Path) -> dict[str, dict[str, object]]:
+    payload = json.loads(cache_report_path.read_text(encoding="utf-8"))
+    records: dict[str, dict[str, object]] = {}
+    for item in payload.get("cases", []):
+        records[str(item["case_id"])] = dict(item)
+    return records
+
+
+def load_sam2_case_cache(cache_record: dict[str, object]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, int]:
+    npz_path = Path(str(cache_record["npz"]))
+    payload = np.load(npz_path)
+    states_full = payload["states"].astype(np.float32)
+    boxes_full = payload["boxes"].astype(np.float32)
+    masks_full = payload["masks"].astype(np.uint8)
+    prompt_boxes_xyxy = payload["prompt_boxes_xyxy"].astype(np.float32)
+    primary_idx = int(payload["primary_idx"][0])
+    states = states_full[:, primary_idx:primary_idx + 1].astype(np.float32)
+    boxes = boxes_full[:, primary_idx:primary_idx + 1].astype(np.float32)
+    masks = masks_full[:, primary_idx].astype(np.uint8)
+    prompt_mode = str(cache_record.get("prompt_mode") or "unknown")
+    return states, boxes, masks, prompt_boxes_xyxy, prompt_mode, primary_idx
 
 
 def resolve_clip_bounds(
@@ -540,10 +719,14 @@ def render_html(report: dict) -> str:
             f"""
             <tr>
               <td>{html.escape(row['label'])}</td>
-              <td>{row['center_error_mean']:.4f}</td>
-              <td>{row['log_scale_error_mean']:.4f}</td>
-              <td>{row['visibility_error_mean']:.4f}</td>
-              <td>{row['future_start_head_center_error_mean']:.4f}</td>
+              <td>{row['proxy_center_error_mean']:.4f}</td>
+              <td>{row['proxy_log_scale_error_mean']:.4f}</td>
+              <td>{row['proxy_visibility_error_mean']:.4f}</td>
+              <td>{row['proxy_future_start_head_center_error_mean']:.4f}</td>
+              <td>{row['sam2_center_error_mean']:.4f}</td>
+              <td>{row['sam2_log_scale_error_mean']:.4f}</td>
+              <td>{row['sam2_visibility_error_mean']:.4f}</td>
+              <td>{row['sam2_future_start_head_center_error_mean']:.4f}</td>
             </tr>
             """
         )
@@ -555,14 +738,25 @@ def render_html(report: dict) -> str:
             model_cards.append(
                 f"""
                 <article class="video-card">
-                  <div class="video-eyebrow">Model</div>
+                  <div class="video-eyebrow">Model | Proxy GT</div>
                   <h3>{html.escape(model['label'])}</h3>
-                  <video controls preload="none" playsinline src="{html.escape(model['video'])}"></video>
+                  <video controls preload="none" playsinline src="{html.escape(model['proxy_video'])}"></video>
                   <div class="metric-box">
-                    <div>Center ↓ {model['metrics']['center_error']:.4f}</div>
-                    <div>Scale ↓ {model['metrics']['log_scale_error']:.4f}</div>
-                    <div>Vis ↓ {model['metrics']['visibility_error']:.4f}</div>
-                    <div>Head ↓ {model['metrics']['future_start_head_center_error']:.4f}</div>
+                    <div>Center ↓ {model['proxy_metrics']['center_error']:.4f}</div>
+                    <div>Scale ↓ {model['proxy_metrics']['log_scale_error']:.4f}</div>
+                    <div>Vis ↓ {model['proxy_metrics']['visibility_error']:.4f}</div>
+                    <div>Head ↓ {model['proxy_metrics']['future_start_head_center_error']:.4f}</div>
+                  </div>
+                </article>
+                <article class="video-card">
+                  <div class="video-eyebrow">Model | SAM2 GT</div>
+                  <h3>{html.escape(model['label'])}</h3>
+                  <video controls preload="none" playsinline src="{html.escape(model['sam2_video'])}"></video>
+                  <div class="metric-box">
+                    <div>Center ↓ {model['sam2_metrics']['center_error']:.4f}</div>
+                    <div>Scale ↓ {model['sam2_metrics']['log_scale_error']:.4f}</div>
+                    <div>Vis ↓ {model['sam2_metrics']['visibility_error']:.4f}</div>
+                    <div>Head ↓ {model['sam2_metrics']['future_start_head_center_error']:.4f}</div>
                   </div>
                 </article>
                 """
@@ -591,9 +785,23 @@ def render_html(report: dict) -> str:
                   <video controls preload="none" playsinline src="{html.escape(case['context_video'])}"></video>
                 </article>
                 <article class="video-card">
-                  <div class="video-eyebrow">Reference</div>
-                  <h3>GT Future</h3>
-                  <video controls preload="none" playsinline src="{html.escape(case['gt_future_video'])}"></video>
+                  <div class="video-eyebrow">Reference | Proxy GT</div>
+                  <h3>Proxy GT Future</h3>
+                  <video controls preload="none" playsinline src="{html.escape(case['proxy_gt_future_video'])}"></video>
+                </article>
+                <article class="video-card">
+                  <div class="video-eyebrow">Reference | SAM2 GT</div>
+                  <h3>SAM2 GT Future</h3>
+                  <video controls preload="none" playsinline src="{html.escape(case['sam2_gt_future_video'])}"></video>
+                </article>
+                <article class="video-card">
+                  <div class="video-eyebrow">Prompt</div>
+                  <h3>SAM2 Prompt</h3>
+                  <div class="metric-box">
+                    <div>prompt mode: {html.escape(case['sam2_prompt_mode'])}</div>
+                    <div>prompt boxes: {case['sam2_prompt_box_count']}</div>
+                    <div>primary object idx: {case['sam2_primary_object_idx']}</div>
+                  </div>
                 </article>
                 {''.join(model_cards)}
               </div>
@@ -723,15 +931,19 @@ def render_html(report: dict) -> str:
     <section class="hero">
       <h1>bench json random clip dashboard</h1>
       <p>这里直接从 <code>A/B/D.json</code> 里抽样，每个 source video 随机切一段 clip，再用 caption 作为 prompt 跑 predictor。输入只展示截出的 context；输出只在 future 视频底图上叠加框。</p>
-      <p>颜色约定：绿色框是 GT，红色框是 <code>tailquery_multictx</code>，蓝色框是 <code>tailquery_converge</code>。下表中的指标都是误差项，所以统一按 <code>↓</code> 理解为越低越好。</p>
+      <p>这页把同一批 predictor 预测结果分别叠在两套 GT 上做对照：一套是项目内的 <code>proxy GT</code>，一套是 <code>SAM2 GT</code>。当前页面支持两种 SAM2 GT 来源：直接在本环境生成，或从外部缓存读取 <code>caption_gdino -&gt; SAM2</code> 结果。颜色约定：绿色框/掩码是当前卡片对应的 GT，红色框是 <code>tailquery_multictx</code>，蓝色框是 <code>tailquery_multictx_converge</code>。下表指标统一按 <code>↓</code> 理解为越低越好。</p>
       <table>
         <thead>
           <tr>
             <th>Model</th>
-            <th>Center ↓</th>
-            <th>Scale ↓</th>
-            <th>Vis ↓</th>
-            <th>Head ↓</th>
+            <th>Proxy Ctr ↓</th>
+            <th>Proxy Scale ↓</th>
+            <th>Proxy Vis ↓</th>
+            <th>Proxy Head ↓</th>
+            <th>SAM2 Ctr ↓</th>
+            <th>SAM2 Scale ↓</th>
+            <th>SAM2 Vis ↓</th>
+            <th>SAM2 Head ↓</th>
           </tr>
         </thead>
         <tbody>
@@ -754,12 +966,22 @@ def main():
 
     device = parsed.device or ("cuda" if torch.cuda.is_available() else "cpu")
     model_specs = parse_model_specs(parsed.model_spec)
-    bench_cases = choose_bench_cases(
-        Path(parsed.bench_json_root),
-        json_names=parsed.json_names,
-        sample_per_json=parsed.sample_per_json,
-        seed=parsed.seed,
-    )
+    manifest_path = Path(parsed.manifest_json).resolve() if parsed.manifest_json else None
+    sam2_cache_report_path = Path(parsed.sam2_cache_report).resolve() if parsed.sam2_cache_report else None
+    if (manifest_path is None) != (sam2_cache_report_path is None):
+        raise ValueError("--manifest-json and --sam2-cache-report must be provided together")
+    use_external_sam2_cache = manifest_path is not None
+    if use_external_sam2_cache:
+        bench_cases = load_manifest_cases(manifest_path)
+        sam2_cache_index = load_sam2_cache_index(sam2_cache_report_path)
+    else:
+        bench_cases = choose_bench_cases(
+            Path(parsed.bench_json_root),
+            json_names=parsed.json_names,
+            sample_per_json=parsed.sample_per_json,
+            seed=parsed.seed,
+        )
+        sam2_cache_index = {}
 
     global args
     args = parsed
@@ -773,55 +995,110 @@ def main():
     camera_dim = min(item.camera_dim for item in loaded_models)
     temporal_stride = int(latent_extractor.temporal_stride)
 
+    tracker = None
+    text_detector = None
+    if not use_external_sam2_cache:
+        tracker = SAM2VideoMaskTracker(
+            device=device,
+            model_cfg=parsed.sam2_config,
+            checkpoint_path=parsed.sam2_ckpt,
+        )
+        if parsed.sam2_gt_prompt_mode == "caption_gdino":
+            text_detector = GroundingDINOTextDetector(
+                repo_root=parsed.gdino_repo_root,
+                config_path=parsed.gdino_config,
+                checkpoint_path=parsed.gdino_ckpt,
+                device=device,
+                box_threshold=parsed.gdino_box_threshold,
+                text_threshold=parsed.gdino_text_threshold,
+                max_boxes=parsed.gdino_max_boxes,
+            )
+
     model_aggregate: dict[str, dict[str, list[float]]] = {
         model.label: {
-            "center_error": [],
-            "log_scale_error": [],
-            "visibility_error": [],
-            "future_start_head_center_error": [],
+            "proxy_center_error": [],
+            "proxy_log_scale_error": [],
+            "proxy_visibility_error": [],
+            "proxy_future_start_head_center_error": [],
+            "sam2_center_error": [],
+            "sam2_log_scale_error": [],
+            "sam2_visibility_error": [],
+            "sam2_future_start_head_center_error": [],
         }
         for model in loaded_models
     }
 
-    rng = random.Random(parsed.seed)
     cases = []
+    rng = random.Random(parsed.seed)
     for case_idx, spec in enumerate(bench_cases):
         source_path = Path(spec.source_video)
         if not source_path.exists():
             print(f"skip missing source video: {source_path}")
             continue
+        resize_height = int(spec.height) if spec.height is not None else int(parsed.height)
+        resize_width = int(spec.width) if spec.width is not None else int(parsed.width)
         full_video = read_video_frames(
             source_path,
-            resize_height=parsed.height,
-            resize_width=parsed.width,
+            resize_height=resize_height,
+            resize_width=resize_width,
         )
-        start_idx, context_steps, future_steps = resolve_clip_bounds(
-            int(full_video.shape[0]),
-            temporal_stride=temporal_stride,
-            max_context_latent_steps=max_context_latent_steps,
-            max_future_latent_steps=max_future_latent_steps,
-            context_min=parsed.context_min,
-            context_max=parsed.context_max,
-            future_min=parsed.future_min,
-            future_max=parsed.future_max,
-            rng=rng,
-        )
+        if use_external_sam2_cache:
+            start_idx = int(spec.clip_start)
+            context_steps = int(spec.context_steps)
+            future_steps = int(spec.future_steps)
+        else:
+            start_idx, context_steps, future_steps = resolve_clip_bounds(
+                int(full_video.shape[0]),
+                temporal_stride=temporal_stride,
+                max_context_latent_steps=max_context_latent_steps,
+                max_future_latent_steps=max_future_latent_steps,
+                context_min=parsed.context_min,
+                context_max=parsed.context_max,
+                future_min=parsed.future_min,
+                future_max=parsed.future_max,
+                rng=rng,
+            )
         clip = full_video[start_idx : start_idx + context_steps + future_steps]
-        episode = build_episode_from_clip(clip, context_steps, camera_dim=camera_dim)
-        batch, target_future_steps = build_batch(episode, spec.caption)
-        context_last_boxes = [
-            last_valid_box(episode["full_boxes"], obj_idx, context_steps)
-            for obj_idx in range(int(episode["full_boxes"].shape[1]))
+        proxy_episode = build_episode_from_clip(clip, context_steps, camera_dim=camera_dim)
+        batch, target_future_steps = build_batch(proxy_episode, spec.caption)
+        proxy_context_last_boxes = [
+            last_valid_box(proxy_episode["full_boxes"], obj_idx, context_steps)
+            for obj_idx in range(int(proxy_episode["full_boxes"].shape[1]))
+        ]
+        if use_external_sam2_cache:
+            cache_record = sam2_cache_index.get(str(spec.case_id))
+            if cache_record is None:
+                print(f"skip missing sam2 cache for case: {spec.case_id}")
+                continue
+            sam2_states_full, sam2_boxes_full, sam2_masks_full, sam2_prompt_boxes_xyxy, sam2_prompt_mode, sam2_primary_object_idx = load_sam2_case_cache(cache_record)
+        else:
+            sam2_states_full, sam2_boxes_full, sam2_masks_full, sam2_prompt_boxes_xyxy, sam2_prompt_mode, sam2_primary_object_idx = build_sam2_gt_track(
+                clip,
+                prompt_frame_idx=context_steps - 1,
+                caption=spec.caption,
+                tracker=tracker,
+                text_detector=text_detector,
+                prompt_mode=parsed.sam2_gt_prompt_mode,
+            )
+        sam2_context_states = sam2_states_full[:context_steps].astype(np.float32)
+        sam2_future_states = sam2_states_full[context_steps:].astype(np.float32)
+        sam2_context_boxes = sam2_boxes_full[:context_steps].astype(np.float32)
+        sam2_future_boxes = sam2_boxes_full[context_steps:].astype(np.float32)
+        sam2_future_masks = sam2_masks_full[context_steps:].astype(np.uint8)
+        sam2_context_last_boxes = [
+            last_valid_box(sam2_boxes_full, obj_idx, context_steps)
+            for obj_idx in range(int(sam2_boxes_full.shape[1]))
         ]
 
         stem = source_path.stem.replace(" ", "_")
-        case_id = f"{spec.source_name.lower()}_{spec.source_index:03d}_{case_idx:02d}_{stem}"
+        case_id = str(spec.case_id) if spec.case_id else f"{spec.source_name.lower()}_{spec.source_index:03d}_{case_idx:02d}_{stem}"
         context_video_rel = f"assets/{case_id}_context.mp4"
-        gt_video_rel = f"assets/{case_id}_future_gt.mp4"
+        proxy_gt_video_rel = f"assets/{case_id}_proxy_future_gt.mp4"
+        sam2_gt_video_rel = f"assets/{case_id}_sam2_future_gt.mp4"
         write_mp4(
             output_dir / context_video_rel,
             make_labeled_video(
-                episode["context_frames"],
+                proxy_episode["context_frames"],
                 [
                     f"context | {spec.source_name}:{spec.source_index}",
                     f"category={spec.category}",
@@ -831,12 +1108,23 @@ def main():
             parsed.fps,
         )
         write_mp4(
-            output_dir / gt_video_rel,
+            output_dir / proxy_gt_video_rel,
             draw_gt_future_overlay(
-                episode["future_frames"],
-                episode["future_boxes"],
-                episode["future_states"],
-                label=f"GT future | length={future_steps}",
+                proxy_episode["future_frames"],
+                proxy_episode["future_boxes"],
+                proxy_episode["future_states"],
+                label=f"Proxy GT future | length={future_steps}",
+            ),
+            parsed.fps,
+        )
+        write_mp4(
+            output_dir / sam2_gt_video_rel,
+            draw_gt_future_overlay(
+                proxy_episode["future_frames"],
+                sam2_future_boxes,
+                sam2_future_states,
+                label=f"SAM2 GT future | length={future_steps}",
+                gt_future_masks=sam2_future_masks,
             ),
             parsed.fps,
         )
@@ -852,37 +1140,64 @@ def main():
             )
             pred_future_latent = outputs["future_state_predictions"][0].detach().cpu().numpy().astype(np.float32)
             pred_future = resample_predicted_states_to_frame_steps(pred_future_latent, target_steps=target_future_steps)
-            metrics = compute_state_metrics(pred_future, episode["future_states"])
-            metrics["future_start_head_center_error"] = float(
+            proxy_metrics = compute_state_metrics(pred_future, proxy_episode["future_states"])
+            proxy_metrics["future_start_head_center_error"] = float(
                 np.linalg.norm(
                     pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
-                    - episode["future_states"][0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
+                    - proxy_episode["future_states"][0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
                     axis=-1,
                 ).mean()
             )
-            for key in model_aggregate[model.label]:
-                model_aggregate[model.label][key].append(float(metrics[key]))
+            sam2_metrics = compute_state_metrics(pred_future, sam2_future_states)
+            sam2_metrics["future_start_head_center_error"] = float(
+                np.linalg.norm(
+                    pred_future[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1]
+                    - sam2_future_states[0, :, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1],
+                    axis=-1,
+                ).mean()
+            )
+            for key, value in proxy_metrics.items():
+                model_aggregate[model.label][f"proxy_{key}"].append(float(value))
+            for key, value in sam2_metrics.items():
+                model_aggregate[model.label][f"sam2_{key}"].append(float(value))
 
             pred_color = (228, 74, 62) if model.label == "tailquery_multictx" else (48, 118, 255)
-            model_video_rel = f"assets/{case_id}_{model.label}.mp4"
+            proxy_model_video_rel = f"assets/{case_id}_{model.label}_proxy.mp4"
+            sam2_model_video_rel = f"assets/{case_id}_{model.label}_sam2.mp4"
             write_mp4(
-                output_dir / model_video_rel,
+                output_dir / proxy_model_video_rel,
                 draw_single_future_overlay(
-                    episode["future_frames"],
-                    episode["future_boxes"],
-                    episode["future_states"],
+                    proxy_episode["future_frames"],
+                    proxy_episode["future_boxes"],
+                    proxy_episode["future_states"],
                     pred_future,
-                    model_label=model.label,
+                    model_label=f"{model.label} | Proxy GT",
                     pred_color=pred_color,
-                    context_last_boxes=context_last_boxes,
+                    context_last_boxes=proxy_context_last_boxes,
+                ),
+                parsed.fps,
+            )
+            write_mp4(
+                output_dir / sam2_model_video_rel,
+                draw_single_future_overlay(
+                    proxy_episode["future_frames"],
+                    sam2_future_boxes,
+                    sam2_future_states,
+                    pred_future,
+                    model_label=f"{model.label} | SAM2 GT",
+                    pred_color=pred_color,
+                    context_last_boxes=sam2_context_last_boxes,
+                    gt_future_masks=sam2_future_masks,
                 ),
                 parsed.fps,
             )
             case_models.append(
                 {
                     "label": model.label,
-                    "video": model_video_rel,
-                    "metrics": metrics,
+                    "proxy_video": proxy_model_video_rel,
+                    "sam2_video": sam2_model_video_rel,
+                    "proxy_metrics": proxy_metrics,
+                    "sam2_metrics": sam2_metrics,
                 }
             )
 
@@ -892,14 +1207,18 @@ def main():
                 "source_name": spec.source_name,
                 "source_index": int(spec.source_index),
                 "source_video": str(source_path),
-                "source_total_frames": int(full_video.shape[0]),
+                "source_total_frames": int(spec.source_total_frames) if spec.source_total_frames is not None else int(full_video.shape[0]),
                 "category": spec.category,
                 "caption": spec.caption,
                 "clip_start": int(start_idx),
                 "context_steps": int(context_steps),
                 "future_steps": int(future_steps),
                 "context_video": context_video_rel,
-                "gt_future_video": gt_video_rel,
+                "proxy_gt_future_video": proxy_gt_video_rel,
+                "sam2_gt_future_video": sam2_gt_video_rel,
+                "sam2_prompt_mode": sam2_prompt_mode,
+                "sam2_prompt_box_count": int(sam2_prompt_boxes_xyxy.shape[0]),
+                "sam2_primary_object_idx": int(sam2_primary_object_idx),
                 "models": case_models,
             }
         )
@@ -911,12 +1230,20 @@ def main():
             {
                 "label": model.label,
                 "checkpoint": str(model.checkpoint),
-                "center_error_mean": float(np.mean(metrics["center_error"])) if metrics["center_error"] else 0.0,
-                "log_scale_error_mean": float(np.mean(metrics["log_scale_error"])) if metrics["log_scale_error"] else 0.0,
-                "visibility_error_mean": float(np.mean(metrics["visibility_error"])) if metrics["visibility_error"] else 0.0,
-                "future_start_head_center_error_mean": (
-                    float(np.mean(metrics["future_start_head_center_error"]))
-                    if metrics["future_start_head_center_error"]
+                "proxy_center_error_mean": float(np.mean(metrics["proxy_center_error"])) if metrics["proxy_center_error"] else 0.0,
+                "proxy_log_scale_error_mean": float(np.mean(metrics["proxy_log_scale_error"])) if metrics["proxy_log_scale_error"] else 0.0,
+                "proxy_visibility_error_mean": float(np.mean(metrics["proxy_visibility_error"])) if metrics["proxy_visibility_error"] else 0.0,
+                "proxy_future_start_head_center_error_mean": (
+                    float(np.mean(metrics["proxy_future_start_head_center_error"]))
+                    if metrics["proxy_future_start_head_center_error"]
+                    else 0.0
+                ),
+                "sam2_center_error_mean": float(np.mean(metrics["sam2_center_error"])) if metrics["sam2_center_error"] else 0.0,
+                "sam2_log_scale_error_mean": float(np.mean(metrics["sam2_log_scale_error"])) if metrics["sam2_log_scale_error"] else 0.0,
+                "sam2_visibility_error_mean": float(np.mean(metrics["sam2_visibility_error"])) if metrics["sam2_visibility_error"] else 0.0,
+                "sam2_future_start_head_center_error_mean": (
+                    float(np.mean(metrics["sam2_future_start_head_center_error"]))
+                    if metrics["sam2_future_start_head_center_error"]
                     else 0.0
                 ),
             }
@@ -932,6 +1259,9 @@ def main():
         "summary": summary,
         "cases": cases,
         "mode": "bench_json_tailquery_dashboard",
+        "sam2_source": "external_cache" if use_external_sam2_cache else "inline",
+        "manifest_json": str(manifest_path) if manifest_path is not None else None,
+        "sam2_cache_report": str(sam2_cache_report_path) if sam2_cache_report_path is not None else None,
         "port": parsed.port,
     }
     (output_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
