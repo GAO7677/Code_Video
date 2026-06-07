@@ -109,13 +109,18 @@ def choose_cases(bench_json_root: Path, json_names: list[str], sample_per_json: 
     for json_name in json_names:
         payload = json.loads((bench_json_root / json_name).read_text(encoding="utf-8"))
         indices = list(range(len(payload)))
-        rng.shuffle(indices)
-        for source_index in indices[: min(sample_per_json, len(indices))]:
+        if sample_per_json >= len(indices):
+            selected_indices = indices
+        else:
+            rng.shuffle(indices)
+            selected_indices = indices[: min(sample_per_json, len(indices))]
+        for source_index in selected_indices:
             item = payload[source_index]
+            source_index_value = item.get("source_index_override", item.get("source_index", source_index))
             chosen.append(
                 CaseSpec(
                     json_name=json_name,
-                    source_index=int(source_index),
+                    source_index=int(source_index_value),
                     category=str(item.get("category") or "unknown"),
                     source_video=str(item["source_video"]),
                     caption=str(item.get("caption") or ""),
