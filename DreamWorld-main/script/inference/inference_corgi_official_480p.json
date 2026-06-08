@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "caption": "A small corgi runs across a sunny grass field, realistic motion, natural lighting.",
+      "output_name": "dreamworld_lora_corgi_seed42_832x480_81f_50s",
+      "image_path": null,
+      "video_path": null,
+      "num_inference_steps": 50,
+      "height": 480,
+      "width": 832,
+      "num_frames": 81
+    }
+  ]
+}

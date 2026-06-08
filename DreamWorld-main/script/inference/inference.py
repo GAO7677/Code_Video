@@ -264,6 +264,8 @@ class Inference:
             VIDEO = inference_data.get("video", None)
             EXPORT_FPS = inference_data.get("export_fps", 30)
             OUTPUT_NAME = inference_data.get("output_name", None)
+            if isinstance(OUTPUT_NAME, list):
+                OUTPUT_NAME = OUTPUT_NAME[0] if len(OUTPUT_NAME) > 0 else None
 
             if OUTPUT_NAME is not None:
                 base_filename = utils.string_to_filename(OUTPUT_NAME)
