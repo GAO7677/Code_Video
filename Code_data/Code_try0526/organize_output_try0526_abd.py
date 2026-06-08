@@ -161,13 +161,11 @@ def organize_group_a(summary: dict[str, Any]) -> None:
         for method, method_root in methods.items():
             original_video = method_root / category / f"{clip_name}.mp4"
             original_json = method_root / category / f"{clip_name}.json"
-            out_video = group_dir / method / f"{case_key}.mp4"
             out_json = group_dir / method / f"{case_key}.json"
             if not original_video.exists():
                 group_summary["methods"][method]["missing"] += 1
                 group_summary["methods"][method]["missing_cases"].append(case_key)
                 continue
-            _replace_with_copy(original_video, out_video)
             original_payload = _load_json(original_json) if original_json.exists() else {}
             normalized = {
                 "group": "A",
@@ -179,7 +177,6 @@ def organize_group_a(summary: dict[str, Any]) -> None:
                 "input_prompt": row.get("caption"),
                 "input_image": row.get("first_frame"),
                 "source_video": row.get("source_video"),
-                "organized_video": str(out_video),
                 "output_video": str(original_video),
                 "original_json": str(original_json) if original_json.exists() else None,
                 "metric_summary": _extract_metric_summary(original_payload) if isinstance(original_payload, dict) else {},
@@ -219,15 +216,11 @@ def organize_group_b(summary: dict[str, Any]) -> None:
         clip_name = source_video.stem
         case_key = _case_key(index, category, clip_name)
         original_json = source_video.with_suffix(".json")
-        out_video = group_dir / method_name / f"{case_key}.mp4"
         out_json = group_dir / method_name / f"{case_key}.json"
         if not source_video.exists():
             group_summary["methods"][method_name]["missing"] += 1
             group_summary["methods"][method_name]["missing_cases"].append(case_key)
             continue
-        # B 组主要作为可直接浏览的 source video 视图，使用真实文件拷贝，
-        # 避免本地预览器对 mp4 符号链接兼容性不稳定。
-        _replace_with_copy(source_video, out_video)
         original_payload = _load_json(original_json) if original_json.exists() else {}
         normalized = {
             "group": "B",
@@ -238,7 +231,6 @@ def organize_group_b(summary: dict[str, Any]) -> None:
             "clip_name": clip_name,
             "input_prompt": row.get("caption"),
             "source_video": row.get("source_video"),
-            "organized_video": str(out_video),
             "output_video": str(source_video),
             "original_json": str(original_json) if original_json.exists() else None,
             "metric_summary": _extract_metric_summary(original_payload) if isinstance(original_payload, dict) else {},
@@ -278,13 +270,18 @@ def organize_group_d(summary: dict[str, Any]) -> None:
         for method, method_root in methods.items():
             original_video = method_root / f"{sample_name}.mp4"
             original_json = method_root / f"{sample_name}.json"
-            out_video = group_dir / method / f"{case_key}.mp4"
             out_json = group_dir / method / f"{case_key}.json"
-            if not original_video.exists():
+            source_video = Path(str(row["source_video"])) if row.get("source_video") else None
+
+            if method == "GT":
+                effective_video = source_video
+            else:
+                effective_video = original_video
+
+            if effective_video is None or not effective_video.exists():
                 group_summary["methods"][method]["missing"] += 1
                 group_summary["methods"][method]["missing_cases"].append(case_key)
                 continue
-            _replace_with_copy(original_video, out_video)
             original_payload = _load_json(original_json) if original_json.exists() else {}
             normalized = {
                 "group": "D",
@@ -297,11 +294,12 @@ def organize_group_d(summary: dict[str, Any]) -> None:
                 "input_image": row.get("first_frame"),
                 "input_context_video": row.get("context_video"),
                 "source_video": row.get("source_video"),
-                "organized_video": str(out_video),
-                "output_video": str(original_video),
-                "original_json": str(original_json) if original_json.exists() else None,
-                "metric_summary": _extract_metric_summary(original_payload) if isinstance(original_payload, dict) else {},
+                "output_video": str(source_video) if method == "GT" else str(original_video),
             }
+            if original_json.exists():
+                normalized["original_json"] = str(original_json)
+            if method != "GT" and isinstance(original_payload, dict):
+                normalized["metric_summary"] = _extract_metric_summary(original_payload)
             _write_json(out_json, normalized)
             group_summary["methods"][method]["present"] += 1
 
@@ -364,8 +362,8 @@ Structure:
 
 Important:
 
-- all videos and copied metadata files here are real files, not symlinks
-- jsons here are normalized lightweight metadata files
+- case entries under `A/B/D/*` are normalized lightweight json files
+- videos are referenced by `source_video` and `output_video`; they are no longer copied into `ABD_test/`
 - `B/_meta` keeps lightweight report entry files only; large historical report assets stay in the original directories
 - original benchmark directories remain unchanged
 
