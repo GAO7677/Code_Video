@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "caption": "A small corgi runs across a sunny grass field, realistic motion, natural lighting.",
+      "image_path": null,
+      "video_path": null,
+      "num_inference_steps": 20,
+      "height": 256,
+      "width": 448,
+      "num_frames": 33
+    }
+  ]
+}
