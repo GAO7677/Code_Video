@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "caption": "A red ball rolls forward and collides with a small wooden block on a tabletop. The block slides from the impact. Realistic motion, stable lighting, natural colors.",
+      "output_name": "dreamworld_lora_ball_block_seed42",
+      "image_path": null,
+      "video_path": null,
+      "num_inference_steps": 20,
+      "height": 256,
+      "width": 448,
+      "num_frames": 33
+    }
+  ]
+}

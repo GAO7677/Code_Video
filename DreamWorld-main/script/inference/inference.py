@@ -263,8 +263,12 @@ class Inference:
             IMAGE = inference_data.get("image", None)
             VIDEO = inference_data.get("video", None)
             EXPORT_FPS = inference_data.get("export_fps", 30)
+            OUTPUT_NAME = inference_data.get("output_name", None)
 
-            prompt_filename = utils.string_to_filename(PROMPT)[:25]
+            if OUTPUT_NAME is not None:
+                base_filename = utils.string_to_filename(OUTPUT_NAME)
+            else:
+                base_filename = utils.string_to_filename(PROMPT)[:25]
             artifacts = {
                 "input_image": data.ImageArtifact(value=IMAGE),
                 "input_video": data.VideoArtifact(value=VIDEO),
@@ -281,7 +285,7 @@ class Inference:
                     continue
 
                 time_, rank, ext = int(time.time()), parallel_backend.rank, artifact.file_extension
-                filename = f"inference-{rank}-{index}-{prompt_filename}-{time_}.{ext}"
+                filename = f"inference-{rank}-{index}-{base_filename}-{time_}.{ext}"
                 output_filename = os.path.join(self.args.output_dir, filename)
 
                 if parallel_backend.is_main_process and ext in ["mp4", "jpg", "jpeg", "png"]:
