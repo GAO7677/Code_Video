@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V-JEPA 2 训练流程可视化</title>
+  <style>
+    :root {
+      --bg: #efe7da;
+      --panel: rgba(255, 251, 245, 0.95);
+      --ink: #13212f;
+      --muted: #53616d;
+      --line: #d6c7b4;
+      --accent: #b84a1b;
+      --accent-soft: #f7d8c8;
+      --green: #1f7a5c;
+      --blue: #205b8f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(247, 216, 200, 0.9) 0, transparent 28%),
+        linear-gradient(180deg, #f6f0e8 0%, #ece3d7 100%);
+    }
+    main {
+      width: min(1320px, calc(100vw - 28px));
+      margin: 18px auto 48px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 12px 30px rgba(19, 33, 47, 0.08);
+      backdrop-filter: blur(8px);
+    }
+    h1, h2, h3 { margin: 0 0 10px; }
+    p, li { color: var(--muted); line-height: 1.65; }
+    code {
+      background: #f4ece3;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 0.95em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th { background: var(--accent-soft); }
+    .hero {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .pill {
+      display: inline-block;
+      background: #eef3f7;
+      color: var(--blue);
+      border: 1px solid #cfdae2;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 13px;
+    }
+    .flow-line {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .flow-node {
+      border-radius: 16px;
+      padding: 14px;
+      min-height: 106px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #fffdf9 0%, #f6efe7 100%);
+    }
+    .flow-node strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+    .arrow {
+      text-align: center;
+      color: var(--accent);
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .thumb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .thumb-grid img, video {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #000;
+    }
+    figure { margin: 0; }
+    figcaption {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .mask-card {
+      background: linear-gradient(180deg, rgba(255,251,245,0.98), rgba(247,239,230,0.98));
+    }
+    .concept-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .concept-box {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,0.72);
+    }
+    .concept-box h3 {
+      margin: 0 0 8px;
+    }
+    .concept-box pre {
+      margin: 10px 0 0;
+      background: #15202b;
+      color: #f1f7fa;
+    }
+    .video-grid {
+      display: grid;
+      grid-template-columns: 0.8fr 1.2fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .flow-box {
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.65);
+    }
+    .flow-box div {
+      padding: 8px 0;
+      border-bottom: 1px solid #eadfce;
+      color: var(--muted);
+    }
+    .flow-box div:last-child { border-bottom: 0; }
+    pre {
+      overflow: auto;
+      padding: 12px;
+      border-radius: 12px;
+      background: #1c252f;
+      color: #f3f7fa;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    @media (max-width: 980px) {
+      .hero, .video-grid, .flow-line {
+        grid-template-columns: 1fr;
+      }
+      .arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <div class="hero">
+        <div>
+          <h1>V-JEPA 2 训练流程可视化</h1>
+          <p>这个页面把 <code>V-JEPA 2</code> 标准训练线可视化成可读流程：从输入视频、训练预处理、mask 采样、encoder/target encoder/predictor 的变量 shape，到最终 loss 对齐位置，全部落成一个本地页面。</p>
+          <div class="stats">
+            <span class="pill">输入视频: 854x480</span>
+            <span class="pill">原始帧数: 82</span>
+            <span class="pill">训练采样帧数: 64</span>
+            <span class="pill">token 网格: 32 x 24 x 24</span>
+            <span class="pill">总 token: 18432</span>
+            <span class="pill">encoder hidden: 1408</span>
+            <span class="pill">predictor hidden: 384</span>
+          </div>
+        </div>
+        <div>
+          <video controls muted loop playsinline src="input_video.mp4"></video>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>训练主流程</h2>
+      <div class="flow-line">
+        <div class="flow-node"><strong>1. clips</strong><div><code>[1, 3, 64, 384, 384]</code></div><div>单视频可视化时用 batch=1，实际训练 batch 见配置。</div></div>
+        <div class="arrow">→</div>
+        <div class="flow-node"><strong>2. target_encoder</strong><div><code>[1, 18432, 1408]</code></div><div>teacher 分支看完整 token。</div></div>
+        <div class="arrow">→</div>
+        <div class="flow-node"><strong>3. encoder + masks_enc</strong><div><code>[1, K_enc, 1408]</code></div><div>student 只看可见 context token。</div></div>
+        <div class="arrow">→</div>
+        <div class="flow-node"><strong>4. predictor + masks_pred</strong><div><code>[1, K_pred, 1408]</code></div><div>预测被遮住的 token。</div></div>
+      </div>
+      <p>loss 不是像素重建，而是把 predictor 输出的 masked latent，和 target_encoder 在同位置的 latent 做对齐。</p>
+    </section>
+
+    <section>
+      <h2>训练预处理 Shape</h2>
+      <table>
+        <thead><tr><th>变量</th><th>Shape</th><th>DType</th><th>中文解释</th></tr></thead>
+        <tbody><tr><td>sampled_frames</td><td>[64, 480, 854, 3]</td><td>uint8</td><td>等间隔采样后的原始视频帧，格式是 [T, H, W, C]。</td></tr><tr><td>tchw</td><td>[64, 3, 480, 854]</td><td>uint8</td><td>转成 PyTorch 视频张量 [T, C, H, W]。</td></tr><tr><td>resize_short_side</td><td>[64, 3, 438, 779]</td><td>float32</td><td>短边缩放到 438，保持宽高比。</td></tr><tr><td>center_crop</td><td>[64, 3, 384, 384]</td><td>float32</td><td>中心裁剪成 384x384。</td></tr><tr><td>rescale_0_1</td><td>[64, 3, 384, 384]</td><td>float32</td><td>像素缩放到 0-1。</td></tr><tr><td>normalize</td><td>[64, 3, 384, 384]</td><td>float32</td><td>按 ImageNet mean/std 归一化。</td></tr><tr><td>to_bcthw</td><td>[1, 3, 64, 384, 384]</td><td>float32</td><td>整理成训练时输入 encoder 的 [B, C, T, H, W]。</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>采样帧预览</h2>
+      <p>这些帧来自本次训练可视化实际使用的 64 帧采样序列。页面右下的 mask 叠加视频是在中心裁剪后的训练输入帧上生成的。</p>
+      <div class="thumb-grid">
+        <figure><img src="sample_frames/frame_00.jpg" alt="frame_00"><figcaption>frame_00</figcaption></figure>
+        <figure><img src="sample_frames/frame_21.jpg" alt="frame_21"><figcaption>frame_21</figcaption></figure>
+        <figure><img src="sample_frames/frame_42.jpg" alt="frame_42"><figcaption>frame_42</figcaption></figure>
+        <figure><img src="sample_frames/frame_63.jpg" alt="frame_63"><figcaption>frame_63</figcaption></figure>
+      </div>
+    </section>
+
+    <section>
+      <h2>Patch / Token / Block 示意</h2>
+      <div class="concept-grid">
+        <div class="concept-box">
+          <h3>1. 单帧 Patch 网格</h3>
+          <p>训练输入每一帧是 <code>384 x 384</code>，而 <code>patch_size = 16</code>，所以一帧会被切成 <code>24 x 24 = 576</code> 个空间 patch。</p>
+          <pre>384 px frame
+┌──────────────────────────────┐
+│[][][][][][][][][][][][][][][]│
+│[][][][][][][][][][][][][][][]│
+│[][][][][][][][][][][][][][][]│  24 x 24 cells
+│............ each cell .......│  each cell = 16 x 16 pixels
+│[][][][][][][][][][][][][][][]│
+└──────────────────────────────┘</pre>
+        </div>
+        <div class="concept-box">
+          <h3>2. 视频 Token 网格</h3>
+          <p><code>tubelet_size = 2</code>，所以 64 帧会先变成 32 个时间片。整个视频 token 网格是 <code>32 x 24 x 24</code>。</p>
+          <pre>time depth = 32
+
+slice t=0   : 24 x 24 patches
+slice t=1   : 24 x 24 patches
+...
+slice t=31  : 24 x 24 patches
+
+total tokens = 32 x 24 x 24 = 18432</pre>
+        </div>
+        <div class="concept-box">
+          <h3>3. “覆盖整个时间维”</h3>
+          <p>配置里 <code>temporal_scale = 1.0</code>，意味着一个 mask block 的时间长度 <code>t = 32</code>，也就是从视频开头一直延伸到结尾，不只是盖住几帧。</p>
+          <pre>time axis
+0 ─────────────────────────── 31
+██████████████████████████████
+
+same spatial area
+repeats through all time slices</pre>
+        </div>
+        <div class="concept-box">
+          <h3>4. “空间覆盖 15% 面积”</h3>
+          <p>配置里 <code>spatial_scale = 0.15</code>，是相对单帧 patch 网格面积来说的。单帧有 <code>24 x 24 = 576</code> 个 patch 位置，15% 约等于 <code>86</code> 个 patch。</p>
+          <pre>single frame patch map: 24 x 24 = 576 cells
+
+masked spatial area per block
+≈ 576 x 0.15
+≈ 86 cells
+
+possible rectangle examples:
+8 x 11 = 88
+9 x 10 = 90
+7 x 12 = 84</pre>
+        </div>
+      </div>
+      <p>所以一个 “mask block” 不是一个像素块，而是视频 token 网格里的一个三维长方体区域：<code>t x h x w</code>。在当前配置下，它大致是 “时间贯穿 32 层，空间每层盖住约 86 个 patch 位置”。</p>
+    </section>
+
+    <section>
+      <h2>Mask 与变量 Shape</h2>
+      <p>下面每张卡片对应配置里的一个 mask generator。当前配置有两种 mask：一种是很多个小块，另一种是少量大块。它们都会在同一个训练 step 里产生一个 predictor 输出，并各自参与 loss。</p>
+      
+            <section class="mask-card">
+              <h3>mask_0</h3>
+              <p>被预测 token: <code>11200</code>，可见 context token: <code>7232</code>，mask 比例: <code>60.76%</code></p>
+              <div class="video-grid">
+                <div>
+                  <video controls muted loop playsinline src="mask_overlays/mask_0_overlay.mp4"></video>
+                </div>
+                <div class="flow-box">
+                  <div><code>encoder(clips, masks_enc)</code> -> [1, 7232, 1408]</div>
+                  <div><code>predictor_embed(context)</code> -> [1, 7232, 384]</div>
+                  <div><code>mask tokens</code> -> [1, 11200, 384]</div>
+                  <div><code>concat + sort</code> -> [1, 18432, 384]</div>
+                  <div><code>predictor output</code> -> [1, 11200, 1408]</div>
+                  <div><code>target masked</code> -> [1, 11200, 1408]</div>
+                </div>
+              </div>
+              <div class="thumb-grid"><figure><img src="mask_overlays/mask_0_frame_00_srcidx_000.jpg" alt="mask_0_frame_00_srcidx_000.jpg"><figcaption>mask_0_frame_00_srcidx_000.jpg</figcaption></figure><figure><img src="mask_overlays/mask_0_frame_21_srcidx_027.jpg" alt="mask_0_frame_21_srcidx_027.jpg"><figcaption>mask_0_frame_21_srcidx_027.jpg</figcaption></figure><figure><img src="mask_overlays/mask_0_frame_42_srcidx_054.jpg" alt="mask_0_frame_42_srcidx_054.jpg"><figcaption>mask_0_frame_42_srcidx_054.jpg</figcaption></figure><figure><img src="mask_overlays/mask_0_frame_63_srcidx_081.jpg" alt="mask_0_frame_63_srcidx_081.jpg"><figcaption>mask_0_frame_63_srcidx_081.jpg</figcaption></figure></div>
+              <pre>{
+  "aspect_ratio": [
+    0.75,
+    1.5
+  ],
+  "full_complement": false,
+  "max_keep": null,
+  "max_temporal_keep": 1.0,
+  "num_blocks": 8,
+  "spatial_scale": [
+    0.15,
+    0.15
+  ],
+  "temporal_scale": [
+    1.0,
+    1.0
+  ]
+}</pre>
+            </section>
+            
+            <section class="mask-card">
+              <h3>mask_1</h3>
+              <p>被预测 token: <code>16608</code>，可见 context token: <code>1824</code>，mask 比例: <code>90.10%</code></p>
+              <div class="video-grid">
+                <div>
+                  <video controls muted loop playsinline src="mask_overlays/mask_1_overlay.mp4"></video>
+                </div>
+                <div class="flow-box">
+                  <div><code>encoder(clips, masks_enc)</code> -> [1, 1824, 1408]</div>
+                  <div><code>predictor_embed(context)</code> -> [1, 1824, 384]</div>
+                  <div><code>mask tokens</code> -> [1, 16608, 384]</div>
+                  <div><code>concat + sort</code> -> [1, 18432, 384]</div>
+                  <div><code>predictor output</code> -> [1, 16608, 1408]</div>
+                  <div><code>target masked</code> -> [1, 16608, 1408]</div>
+                </div>
+              </div>
+              <div class="thumb-grid"><figure><img src="mask_overlays/mask_1_frame_00_srcidx_000.jpg" alt="mask_1_frame_00_srcidx_000.jpg"><figcaption>mask_1_frame_00_srcidx_000.jpg</figcaption></figure><figure><img src="mask_overlays/mask_1_frame_21_srcidx_027.jpg" alt="mask_1_frame_21_srcidx_027.jpg"><figcaption>mask_1_frame_21_srcidx_027.jpg</figcaption></figure><figure><img src="mask_overlays/mask_1_frame_42_srcidx_054.jpg" alt="mask_1_frame_42_srcidx_054.jpg"><figcaption>mask_1_frame_42_srcidx_054.jpg</figcaption></figure><figure><img src="mask_overlays/mask_1_frame_63_srcidx_081.jpg" alt="mask_1_frame_63_srcidx_081.jpg"><figcaption>mask_1_frame_63_srcidx_081.jpg</figcaption></figure></div>
+              <pre>{
+  "aspect_ratio": [
+    0.75,
+    1.5
+  ],
+  "full_complement": false,
+  "max_keep": null,
+  "max_temporal_keep": 1.0,
+  "num_blocks": 2,
+  "spatial_scale": [
+    0.7,
+    0.7
+  ],
+  "temporal_scale": [
+    1.0,
+    1.0
+  ]
+}</pre>
+            </section>
+            
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,304 @@
+{
+  "config_path": "/home/gaoya/Code_Video/WAN_2p2/vjepa2-main/configs/train/vitg16/cooldown-384px-64f.yaml",
+  "video_path": "/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output/GT/Biological_Motion/bear.mp4",
+  "video_meta": {
+    "fps": 24.0,
+    "frame_count": 82,
+    "width": 854,
+    "height": 480
+  },
+  "frame_indices": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    10,
+    12,
+    13,
+    14,
+    15,
+    17,
+    18,
+    19,
+    21,
+    22,
+    23,
+    24,
+    26,
+    27,
+    28,
+    30,
+    31,
+    32,
+    33,
+    35,
+    36,
+    37,
+    39,
+    40,
+    41,
+    42,
+    44,
+    45,
+    46,
+    48,
+    49,
+    50,
+    51,
+    53,
+    54,
+    55,
+    57,
+    58,
+    59,
+    60,
+    62,
+    63,
+    64,
+    66,
+    67,
+    68,
+    69,
+    71,
+    72,
+    73,
+    75,
+    76,
+    77,
+    78,
+    80,
+    81
+  ],
+  "preprocess": {
+    "records": [
+      {
+        "name": "sampled_frames",
+        "shape": [
+          64,
+          480,
+          854,
+          3
+        ],
+        "dtype": "uint8",
+        "zh": "等间隔采样后的原始视频帧，格式是 [T, H, W, C]。"
+      },
+      {
+        "name": "tchw",
+        "shape": [
+          64,
+          3,
+          480,
+          854
+        ],
+        "dtype": "uint8",
+        "zh": "转成 PyTorch 视频张量 [T, C, H, W]。"
+      },
+      {
+        "name": "resize_short_side",
+        "shape": [
+          64,
+          3,
+          438,
+          779
+        ],
+        "dtype": "float32",
+        "zh": "短边缩放到 438，保持宽高比。"
+      },
+      {
+        "name": "center_crop",
+        "shape": [
+          64,
+          3,
+          384,
+          384
+        ],
+        "dtype": "float32",
+        "zh": "中心裁剪成 384x384。"
+      },
+      {
+        "name": "rescale_0_1",
+        "shape": [
+          64,
+          3,
+          384,
+          384
+        ],
+        "dtype": "float32",
+        "zh": "像素缩放到 0-1。"
+      },
+      {
+        "name": "normalize",
+        "shape": [
+          64,
+          3,
+          384,
+          384
+        ],
+        "dtype": "float32",
+        "zh": "按 ImageNet mean/std 归一化。"
+      },
+      {
+        "name": "to_bcthw",
+        "shape": [
+          1,
+          3,
+          64,
+          384,
+          384
+        ],
+        "dtype": "float32",
+        "zh": "整理成训练时输入 encoder 的 [B, C, T, H, W]。"
+      }
+    ]
+  },
+  "training_flow": {
+    "num_frames": 64,
+    "crop_size": 384,
+    "patch_size": 16,
+    "tubelet_size": 2,
+    "t_tokens": 32,
+    "h_tokens": 24,
+    "w_tokens": 24,
+    "total_tokens": 18432,
+    "embed_dim": 1408,
+    "pred_embed_dim": 384,
+    "mask_flows": [
+      {
+        "mask_name": "mask_0",
+        "config": {
+          "aspect_ratio": [
+            0.75,
+            1.5
+          ],
+          "full_complement": false,
+          "max_keep": null,
+          "max_temporal_keep": 1.0,
+          "num_blocks": 8,
+          "spatial_scale": [
+            0.15,
+            0.15
+          ],
+          "temporal_scale": [
+            1.0,
+            1.0
+          ]
+        },
+        "k_enc": 7232,
+        "k_pred": 11200,
+        "mask_ratio": 0.6076388888888888,
+        "encoder_in": [
+          1,
+          3,
+          64,
+          384,
+          384
+        ],
+        "target_encoder_out": [
+          1,
+          18432,
+          1408
+        ],
+        "encoder_visible_tokens": [
+          1,
+          7232,
+          1408
+        ],
+        "predictor_embed_context": [
+          1,
+          7232,
+          384
+        ],
+        "predictor_mask_tokens": [
+          1,
+          11200,
+          384
+        ],
+        "predictor_concat_sorted": [
+          1,
+          18432,
+          384
+        ],
+        "predictor_out_masked": [
+          1,
+          11200,
+          1408
+        ],
+        "target_masked_for_loss": [
+          1,
+          11200,
+          1408
+        ]
+      },
+      {
+        "mask_name": "mask_1",
+        "config": {
+          "aspect_ratio": [
+            0.75,
+            1.5
+          ],
+          "full_complement": false,
+          "max_keep": null,
+          "max_temporal_keep": 1.0,
+          "num_blocks": 2,
+          "spatial_scale": [
+            0.7,
+            0.7
+          ],
+          "temporal_scale": [
+            1.0,
+            1.0
+          ]
+        },
+        "k_enc": 1824,
+        "k_pred": 16608,
+        "mask_ratio": 0.9010416666666666,
+        "encoder_in": [
+          1,
+          3,
+          64,
+          384,
+          384
+        ],
+        "target_encoder_out": [
+          1,
+          18432,
+          1408
+        ],
+        "encoder_visible_tokens": [
+          1,
+          1824,
+          1408
+        ],
+        "predictor_embed_context": [
+          1,
+          1824,
+          384
+        ],
+        "predictor_mask_tokens": [
+          1,
+          16608,
+          384
+        ],
+        "predictor_concat_sorted": [
+          1,
+          18432,
+          384
+        ],
+        "predictor_out_masked": [
+          1,
+          16608,
+          1408
+        ],
+        "target_masked_for_loss": [
+          1,
+          16608,
+          1408
+        ]
+      }
+    ]
+  }
+}

@@ -251,7 +251,7 @@ def write_html(
     for name in sorted(os.listdir(preview_dir)):
         if name.endswith(".jpg"):
             preview_imgs.append(
-                f'<figure><img src="{name}" alt="{name}"><figcaption>{name}</figcaption></figure>'
+                f'<figure><img src="preview_frames/{name}" alt="{name}"><figcaption>{name}</figcaption></figure>'
             )
 
     html = f"""<!DOCTYPE html>
