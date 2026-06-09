@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V-JEPA 2 视频 Shape 分析</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --panel: #fffdf8;
+      --ink: #16202a;
+      --muted: #56616b;
+      --line: #d8cfc3;
+      --accent: #c25b2a;
+      --accent-soft: #f4d8ca;
+    }
+    body {
+      margin: 0;
+      font-family: "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #f8d9c7 0, transparent 28%),
+        linear-gradient(180deg, #f7f1e9 0%, #efe7dc 100%);
+    }
+    main {
+      width: min(1200px, calc(100vw - 32px));
+      margin: 24px auto 48px;
+    }
+    section {
+      background: rgba(255, 253, 248, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 18px;
+      box-shadow: 0 12px 30px rgba(22, 32, 42, 0.07);
+      backdrop-filter: blur(8px);
+    }
+    h1, h2 {
+      margin: 0 0 12px;
+    }
+    p, li {
+      color: var(--muted);
+      line-height: 1.65;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: var(--accent-soft);
+      color: var(--ink);
+    }
+    code {
+      background: #f3ece5;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+    }
+    figure {
+      margin: 0;
+    }
+    img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      display: block;
+    }
+    .pill {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>V-JEPA 2 视频 Shape 分析</h1>
+      <p>输入视频：<code>/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output/GT/Biological_Motion/bear.mp4</code></p>
+      <span class="pill">采样帧数：64</span>
+      <span class="pill">裁剪尺寸：384</span>
+      <span class="pill">最终 token 数：18432</span>
+      <span class="pill">隐藏维：1408</span>
+      <p>这个示例对应 V-JEPA 2 的 ViT-g/16 384 版本。输入视频先被标准化为 64 帧、384x384 的张量，再通过 3D patch embedding 压成 18432 个时空 token，每个 token 的维度是 1408，随后 40 层 Transformer 在不改变 token 数的前提下完成特征建模。</p>
+    </section>
+    <section>
+      <h2>视频概况</h2>
+      <p>原视频尺寸 854x480，共 82 帧，FPS 为 24.0。</p>
+      <p>当前示例从 82 帧里等间隔采样 64 帧，因此没有补帧；只是轻微跳帧压缩时间轴。</p>
+      <p>采样索引：<code>[0, 1, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 17, 18, 19, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32, 33, 35, 36, 37, 39, 40, 41, 42, 44, 45, 46, 48, 49, 50, 51, 53, 54, 55, 57, 58, 59, 60, 62, 63, 64, 66, 67, 68, 69, 71, 72, 73, 75, 76, 77, 78, 80, 81]</code></p>
+    </section>
+    <section>
+      <h2>每一步 Shape 变化</h2>
+      <table>
+        <thead>
+          <tr><th>步骤</th><th>Shape</th><th>DType</th><th>中文解释</th></tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+              <td>sampled_frames_thwc</td>
+              <td>[64, 480, 854, 3]</td>
+              <td>uint8</td>
+              <td>从原视频中等间隔采样得到 64 帧，格式是 [时间, 高, 宽, 通道]。</td>
+            </tr>
+            
+            <tr>
+              <td>permute_to_tchw</td>
+              <td>[64, 3, 480, 854]</td>
+              <td>uint8</td>
+              <td>把视频转成 PyTorch 常用格式 [时间, 通道, 高, 宽]，方便后续缩放和归一化。</td>
+            </tr>
+            
+            <tr>
+              <td>resize_short_side</td>
+              <td>[64, 3, 438, 779]</td>
+              <td>float32</td>
+              <td>先按短边缩放到 438，长边按比例变化；这是论文/仓库默认的评测预处理第一步。</td>
+            </tr>
+            
+            <tr>
+              <td>center_crop</td>
+              <td>[64, 3, 384, 384]</td>
+              <td>float32</td>
+              <td>从缩放后的每一帧中心裁剪出 384x384，保证输入空间尺寸固定。</td>
+            </tr>
+            
+            <tr>
+              <td>rescale_0_1</td>
+              <td>[64, 3, 384, 384]</td>
+              <td>float32</td>
+              <td>把像素从 0-255 缩放到 0-1 浮点范围。</td>
+            </tr>
+            
+            <tr>
+              <td>normalize</td>
+              <td>[64, 3, 384, 384]</td>
+              <td>float32</td>
+              <td>按 ImageNet 均值和方差归一化，让输入分布与预训练时一致。</td>
+            </tr>
+            
+            <tr>
+              <td>to_bcthw</td>
+              <td>[1, 3, 64, 384, 384]</td>
+              <td>float32</td>
+              <td>整理成模型真正接收的 [批次, 通道, 时间, 高, 宽]。</td>
+            </tr>
+            
+            <tr>
+              <td>patch_embed</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>3D patch embedding：以 tubelet=2、patch=16x16 的卷积把视频切成时空 token，并映射到隐藏维度。</td>
+            </tr>
+            
+            <tr>
+              <td>final_norm</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>最后一层 LayerNorm 后得到最终 patch-level 视觉表征。</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Transformer Block Shape</h2>
+      <table>
+        <thead>
+          <tr><th>Block</th><th>Shape</th><th>DType</th><th>中文解释</th></tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+              <td>0</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>1</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>2</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>3</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>4</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>5</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>6</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>7</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>8</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>9</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>10</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>11</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>12</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>13</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>14</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>15</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>16</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>17</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>18</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>19</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>20</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>21</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>22</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>23</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>24</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>25</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>26</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>27</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>28</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>29</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>30</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>31</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>32</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>33</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>34</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>35</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>36</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>37</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>38</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+            <tr>
+              <td>39</td>
+              <td>[1, 18432, 1408]</td>
+              <td>float32</td>
+              <td>Transformer block 不改变 token 数和通道维，只在时空 token 间做注意力与 MLP 变换。</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>关键理解</h2>
+      <p><code>[1, 3, 64, 384, 384]</code> 进入模型后，经 3D patch embedding 变成 <code>[1, 18432, 1408]</code>。</p>
+      <p>原因是时间维用 <code>tubelet_size=2</code> 压成 <code>64 / 2 = 32</code> 个时间块，空间维用 <code>patch_size=16</code> 压成 <code>384 / 16 = 24</code>，所以 token 总数为 <code>32 x 24 x 24 = 18432</code>。</p>
+      <p>后续 40 层 ViT block 不再改变 token 数，主要是在 18432 个时空 token 上做特征混合，最后输出每个 token 的 1408 维表示。</p>
+    </section>
+    <section>
+      <h2>采样帧预览</h2>
+      <div class="grid">
+        <figure><img src="sample_00_srcidx_000.jpg" alt="sample_00_srcidx_000.jpg"><figcaption>sample_00_srcidx_000.jpg</figcaption></figure><figure><img src="sample_09_srcidx_012.jpg" alt="sample_09_srcidx_012.jpg"><figcaption>sample_09_srcidx_012.jpg</figcaption></figure><figure><img src="sample_18_srcidx_023.jpg" alt="sample_18_srcidx_023.jpg"><figcaption>sample_18_srcidx_023.jpg</figcaption></figure><figure><img src="sample_27_srcidx_035.jpg" alt="sample_27_srcidx_035.jpg"><figcaption>sample_27_srcidx_035.jpg</figcaption></figure><figure><img src="sample_36_srcidx_046.jpg" alt="sample_36_srcidx_046.jpg"><figcaption>sample_36_srcidx_046.jpg</figcaption></figure><figure><img src="sample_45_srcidx_058.jpg" alt="sample_45_srcidx_058.jpg"><figcaption>sample_45_srcidx_058.jpg</figcaption></figure><figure><img src="sample_54_srcidx_069.jpg" alt="sample_54_srcidx_069.jpg"><figcaption>sample_54_srcidx_069.jpg</figcaption></figure><figure><img src="sample_63_srcidx_081.jpg" alt="sample_63_srcidx_081.jpg"><figcaption>sample_63_srcidx_081.jpg</figcaption></figure>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
