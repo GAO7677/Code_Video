@@ -15,7 +15,7 @@ from typing import Any
 import torch
 
 from rerank_video.generators import VaceGenerator
-from rerank_video.pdi_proxy_eval import VaceTI2VRunner
+from rerank_video.pdi_proxy_eval import VaceTI2VRunner, WanTI2VRunner
 from rerank_video.schemas import GeneratorConfig, InputSpec
 from rerank_video.video_utils import ensure_dir, extract_first_frame, write_json
 
@@ -42,6 +42,7 @@ DEVICE = "cuda"
 WAN_TASK = "ti2v-5B"
 WAN_SIZE = "1280*704"
 WAN_SAMPLE_SOLVER = "unipc"
+WAN_BACKEND = "legacy"
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wan-task", type=str, default=WAN_TASK)
     parser.add_argument("--wan-size", type=str, default=WAN_SIZE)
     parser.add_argument("--wan-sample-solver", type=str, choices=["unipc", "dpm++"], default=WAN_SAMPLE_SOLVER)
+    parser.add_argument("--wan-backend", type=str, choices=["legacy", "official"], default=WAN_BACKEND)
     return parser.parse_args()
 
 
@@ -248,14 +250,17 @@ def run_wan_ti2v(
     rows: list[tuple[int, dict[str, Any]]],
     args: argparse.Namespace,
 ) -> None:
-    runner = OfficialWanTI2VRunner(
-        repo_root=args.wan_repo_root,
-        ckpt_dir=args.wan_ckpt_dir,
-        task=args.wan_task,
-        size=args.wan_size,
-        sample_solver=args.wan_sample_solver,
-        device_id=0,
-    )
+    if args.wan_backend == "official":
+        runner: Any = OfficialWanTI2VRunner(
+            repo_root=args.wan_repo_root,
+            ckpt_dir=args.wan_ckpt_dir,
+            task=args.wan_task,
+            size=args.wan_size,
+            sample_solver=args.wan_sample_solver,
+            device_id=0,
+        )
+    else:
+        runner = WanTI2VRunner(model_root=args.wan_ckpt_dir, device=args.device)
     for index, row in rows:
         category = str(row["category"])
         source_video = Path(str(row["source_video"]))
@@ -267,7 +272,23 @@ def run_wan_ti2v(
             print(f"[skip] wan22-5B-TI2V {case_key}", flush=True)
             continue
         print(f"[run] wan22-5B-TI2V {case_key}", flush=True)
-        runner.generate(prompt=prompt, first_frame=image_path, output_path=output_video_path)
+        if args.wan_backend == "official":
+            runner.generate(prompt=prompt, first_frame=image_path, output_path=output_video_path)
+        else:
+            runner.generate(
+                first_frame_path=image_path,
+                prompt=prompt,
+                output_path=output_video_path,
+                seed=SEED,
+                negative_prompt=NEGATIVE_PROMPT,
+                width=WIDTH,
+                height=HEIGHT,
+                num_frames=NUM_FRAMES,
+                fps=FPS,
+                num_inference_steps=NUM_INFERENCE_STEPS,
+                cfg_scale=CFG_SCALE,
+                quality=QUALITY,
+            )
         write_json(
             output_json_path,
             build_payload(
