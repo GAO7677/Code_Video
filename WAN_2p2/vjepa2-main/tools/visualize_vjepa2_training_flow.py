@@ -410,6 +410,13 @@ def render_html(
       align-items: center;
       margin-top: 14px;
     }}
+    .flow-line-4 {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(180px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin-top: 14px;
+    }}
     .flow-node {{
       border-radius: 16px;
       padding: 14px;
@@ -467,6 +474,42 @@ def render_html(
       margin: 10px 0 0;
       background: #15202b;
       color: #f1f7fa;
+    }}
+    .code-callout {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: linear-gradient(180deg, #fffdf8 0%, #f7efe6 100%);
+      margin-top: 12px;
+    }}
+    .code-callout pre {{
+      margin: 0;
+      background: #101923;
+    }}
+    .detail-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }}
+    .detail-card {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,0.72);
+    }}
+    .detail-card h3 {{
+      margin: 0 0 8px;
+    }}
+    .detail-card .mono-row {{
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      color: var(--ink);
+      background: #f4ece3;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      word-break: break-word;
     }}
     .video-grid {{
       display: grid;
@@ -538,6 +581,71 @@ def render_html(
         <div class="flow-node"><strong>4. predictor + masks_pred</strong><div><code>[1, K_pred, 1408]</code></div><div>预测被遮住的 token。</div></div>
       </div>
       <p>loss 不是像素重建，而是把 predictor 输出的 masked latent，和 target_encoder 在同位置的 latent 做对齐。</p>
+    </section>
+
+    <section>
+      <h2>源码两行的细化流程</h2>
+      <div class="code-callout">
+        <pre>def forward_context(c):
+    z = encoder(c, masks_enc)
+    z = predictor(z, masks_enc, masks_pred)
+    return z</pre>
+      </div>
+      <p>这是 [`app/vjepa/train.py`](/home/gaoya/Code_Video/WAN_2p2/vjepa2-main/app/vjepa/train.py#L435) 里的原始训练代码。这里的 <code>encoder</code> 和 <code>predictor</code> 都带了 wrapper，因此真实输入输出首先是嵌套 list，然后才可以落到单个 mask 的简化 tensor shape。</p>
+
+      <div class="detail-grid">
+        <div class="detail-card">
+          <h3>第一行：<code>z = encoder(c, masks_enc)</code></h3>
+          <div class="mono-row">真实训练输入: c = list[Tensor[B, 3, 64, 384, 384]]</div>
+          <div class="mono-row">真实训练输入: masks_enc = list[list[Tensor[B, K_enc]]]</div>
+          <div class="mono-row">真实训练输出: z = list[list[Tensor[B, K_enc, 1408]]]</div>
+          <p>含义：每个 clip 先被切成完整 token 序列 <code>[B, 18432, 1408]</code>，再按 <code>masks_enc</code> 只保留可见 token。对于当前页面展示的 <code>mask_0</code>，单视频时简化成 <code>[1, 3, 64, 384, 384] -&gt; [1, 5824, 1408]</code>。</p>
+        </div>
+        <div class="detail-card">
+          <h3>第二行：<code>z = predictor(z, masks_enc, masks_pred)</code></h3>
+          <div class="mono-row">真实训练输入: z = list[list[Tensor[B, K_enc, 1408]]]</div>
+          <div class="mono-row">真实训练输入: masks_enc = list[list[Tensor[B, K_enc]]]</div>
+          <div class="mono-row">真实训练输入: masks_pred = list[list[Tensor[B, K_pred]]]</div>
+          <div class="mono-row">真实训练输出: z = list[list[Tensor[B, K_pred, 1408]]]</div>
+          <p>含义：predictor 知道可见 token 原来在什么位置，也知道哪些位置被遮住了要补出来。它会把 context token 映射到 predictor 维度，再造出对应数量的 mask token，占位后拼回完整序列，最后只返回 target 部分的预测结果。</p>
+        </div>
+      </div>
+
+      <div class="flow-line-4">
+        <div class="flow-node">
+          <strong>单个 mask 的 encoder 视角</strong>
+          <div><code>[1, 3, 64, 384, 384]</code></div>
+          <div>先 patch embed 成完整 <code>[1, 18432, 1408]</code>，再按 <code>masks_enc</code> 保留可见 token。</div>
+        </div>
+        <div class="flow-node">
+          <strong>encoder 输出</strong>
+          <div><code>[1, K_enc, 1408]</code></div>
+          <div>当前 <code>mask_0</code> 是 <code>K_enc=5824</code>。这就是 context token。</div>
+        </div>
+        <div class="flow-node">
+          <strong>predictor 内部拼接</strong>
+          <div><code>[1, K_enc, 384]</code> + <code>[1, K_pred, 384]</code></div>
+          <div>当前 <code>mask_0</code> 里 <code>K_pred=12608</code>，拼完会回到完整 token 数。</div>
+        </div>
+        <div class="flow-node">
+          <strong>predictor 输出</strong>
+          <div><code>[1, K_pred, 1408]</code></div>
+          <div>只返回被遮住位置的预测特征，随后与 target encoder 同位置特征做 loss。</div>
+        </div>
+      </div>
+
+      <div class="detail-grid">
+        <div class="detail-card">
+          <h3>为什么 predictor 知道要预测多少个 token</h3>
+          <p>不是从 <code>[1, 5824, 1408]</code> 这个 shape 猜出来的，而是直接从 <code>masks_pred</code> 得知。比如当前 <code>mask_0</code> 里，<code>masks_pred.shape = [1, 12608]</code>，所以 predictor 会生成 <code>12608</code> 个 mask token，占据这些目标位置。</p>
+        </div>
+        <div class="detail-card">
+          <h3>loss 比较的两边是什么</h3>
+          <div class="mono-row">predictor output = [1, K_pred, 1408]</div>
+          <div class="mono-row">target masked = [1, K_pred, 1408]</div>
+          <p>target encoder 先看完整 clip，得到 <code>[1, 18432, 1408]</code>，再按 <code>masks_pred</code> 取出同位置 token。训练时比较的是两个 latent 表征，不是比较像素。</p>
+        </div>
+      </div>
     </section>
 
     <section>

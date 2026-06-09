@@ -187,9 +187,9 @@
             1.0
           ]
         },
-        "k_enc": 7232,
-        "k_pred": 11200,
-        "mask_ratio": 0.6076388888888888,
+        "k_enc": 8800,
+        "k_pred": 9632,
+        "mask_ratio": 0.5225694444444444,
         "encoder_in": [
           1,
           3,
@@ -204,17 +204,17 @@
         ],
         "encoder_visible_tokens": [
           1,
-          7232,
+          8800,
           1408
         ],
         "predictor_embed_context": [
           1,
-          7232,
+          8800,
           384
         ],
         "predictor_mask_tokens": [
           1,
-          11200,
+          9632,
           384
         ],
         "predictor_concat_sorted": [
@@ -224,12 +224,12 @@
         ],
         "predictor_out_masked": [
           1,
-          11200,
+          9632,
           1408
         ],
         "target_masked_for_loss": [
           1,
-          11200,
+          9632,
           1408
         ]
       },
@@ -253,9 +253,9 @@
             1.0
           ]
         },
-        "k_enc": 1824,
-        "k_pred": 16608,
-        "mask_ratio": 0.9010416666666666,
+        "k_enc": 5056,
+        "k_pred": 13376,
+        "mask_ratio": 0.7256944444444444,
         "encoder_in": [
           1,
           3,
@@ -270,17 +270,17 @@
         ],
         "encoder_visible_tokens": [
           1,
-          1824,
+          5056,
           1408
         ],
         "predictor_embed_context": [
           1,
-          1824,
+          5056,
           384
         ],
         "predictor_mask_tokens": [
           1,
-          16608,
+          13376,
           384
         ],
         "predictor_concat_sorted": [
@@ -290,12 +290,12 @@
         ],
         "predictor_out_masked": [
           1,
-          16608,
+          13376,
           1408
         ],
         "target_masked_for_loss": [
           1,
-          16608,
+          13376,
           1408
         ]
       }
