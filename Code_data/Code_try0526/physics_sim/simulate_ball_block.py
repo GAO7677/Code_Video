@@ -10,7 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
+import argparse
+import subprocess
 
 # Fix NumPy 2.0 compat with pyrender
 np.infty = np.inf
@@ -53,6 +56,27 @@ SCENARIOS = [
     Scenario("e07_mu05_m01",  "e=0.7  u=0.5  m=0.1kg  light-ball", 0.7, 0.5, 0.1),
     Scenario("e07_mu05_m5",   "e=0.7  u=0.5  m=5.0kg  heavy-ball", 0.7, 0.5, 5.0),
 ]
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Render ball-block physics simulation videos.")
+    parser.add_argument(
+        "--show-stats-overlay",
+        action="store_true",
+        help="Overlay left-top time and speed stats on frames.",
+    )
+    parser.add_argument(
+        "--hide-scenario-label",
+        action="store_true",
+        help="Do not overlay the top-right scenario label.",
+    )
+    parser.add_argument(
+        "--codec",
+        default="h264",
+        choices=["h264", "mp4v"],
+        help="Output video codec.",
+    )
+    return parser.parse_args()
 
 
 def _look_at(eye, target, up):
@@ -196,7 +220,63 @@ class SceneRenderer:
         self.renderer.delete()
 
 
-def run_scenario(sc: Scenario, output_mp4: Path) -> None:
+def write_video(path: Path, frames: list[np.ndarray], fps: int, codec: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if codec == "mp4v":
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(str(path), fourcc, fps, (IMG_W, IMG_H))
+        for frame in frames:
+            out.write(frame)
+        out.release()
+        return
+
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        f"{IMG_W}x{IMG_H}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        assert proc.stdin is not None
+        for frame in frames:
+            proc.stdin.write(np.ascontiguousarray(frame).tobytes())
+        proc.stdin.close()
+        ret = proc.wait()
+        if ret != 0:
+            raise RuntimeError(f"ffmpeg failed with exit code {ret} for {path}")
+    finally:
+        if proc.stdin is not None and not proc.stdin.closed:
+            proc.stdin.close()
+
+
+def run_scenario(
+    sc: Scenario,
+    output_mp4: Path,
+    *,
+    show_stats_overlay: bool,
+    show_scenario_label: bool,
+    codec: str,
+) -> None:
     p.setGravity(0, 0, -9.81)
     p.setPhysicsEngineParameter(fixedTimeStep=1.0/240.0, numSolverIterations=100, numSubSteps=1)
 
@@ -240,29 +320,27 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
 
         frame = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
         bs, bks = float(np.linalg.norm(ball_vel)), float(np.linalg.norm(block_vel))
-        for i, line in enumerate([
-            f"t = {elapsed:.2f}s",
-            f"Ball |v| = {bs:.2f} m/s",
-            f"Block |v| = {bks:.2f} m/s",
-        ]):
-            y = 36 + i*34
-            cv2.putText(frame, line, (20,y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (10,10,10), 2, cv2.LINE_AA)
-            cv2.putText(frame, line, (20,y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (250,245,235), 1, cv2.LINE_AA)
-        label = sc.label.split("\n")[0]
-        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)[0][0]
-        cv2.putText(frame, label, (IMG_W-tw-20,36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (10,10,10), 2, cv2.LINE_AA)
-        cv2.putText(frame, label, (IMG_W-tw-20,36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (250,245,235), 1, cv2.LINE_AA)
+        if show_stats_overlay:
+            for i, line in enumerate([
+                f"t = {elapsed:.2f}s",
+                f"Ball |v| = {bs:.2f} m/s",
+                f"Block |v| = {bks:.2f} m/s",
+            ]):
+                y = 36 + i * 34
+                cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (10, 10, 10), 2, cv2.LINE_AA)
+                cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (250, 245, 235), 1, cv2.LINE_AA)
+        if show_scenario_label:
+            label = sc.label.split("\n")[0]
+            tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)[0][0]
+            cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (10, 10, 10), 2, cv2.LINE_AA)
+            cv2.putText(frame, label, (IMG_W - tw - 20, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (250, 245, 235), 1, cv2.LINE_AA)
         frames.append(frame)
 
     renderer.cleanup()
     p.removeBody(ball_id)
     p.removeBody(block_id)
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(str(output_mp4), fourcc, FPS, (IMG_W, IMG_H))
-    for f in frames:
-        out.write(f)
-    out.release()
+    write_video(output_mp4, frames, FPS, codec)
 
     # Write metadata JSON
     import json
@@ -293,6 +371,9 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
             "duration_s": SIM_DURATION,
             "resolution": [IMG_W, IMG_H],
             "frames": len(frames),
+            "codec": codec,
+            "overlay_stats": show_stats_overlay,
+            "overlay_scenario_label": show_scenario_label,
         },
         "physics": {
             "engine": "pybullet",
@@ -310,6 +391,7 @@ def run_scenario(sc: Scenario, output_mp4: Path) -> None:
 
 
 def main():
+    args = parse_args()
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
     p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -319,7 +401,13 @@ def main():
     for i, sc in enumerate(SCENARIOS, 1):
         out = VIDEO_DIR / f"{sc.name}.mp4"
         print(f"[{i}/{len(SCENARIOS)}] {sc.label}")
-        run_scenario(sc, out)
+        run_scenario(
+            sc,
+            out,
+            show_stats_overlay=args.show_stats_overlay,
+            show_scenario_label=not args.hide_scenario_label,
+            codec=args.codec,
+        )
 
     p.disconnect()
     print(f"\nDone -> {VIDEO_DIR}")
