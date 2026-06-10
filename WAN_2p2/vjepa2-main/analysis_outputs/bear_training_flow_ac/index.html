@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V-JEPA 2-AC 训练流程可视化</title>
+  <style>
+    :root {
+      --bg: #f0eee8;
+      --panel: rgba(255, 252, 247, 0.95);
+      --ink: #162331;
+      --muted: #56646f;
+      --line: #d8cdbd;
+      --accent: #b45309;
+      --accent-soft: #f5e1cf;
+      --blue: #1d4f7a;
+      --green: #116149;
+      --red: #9d2d2d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(245, 225, 207, 0.9) 0, transparent 28%),
+        linear-gradient(180deg, #f7f2ea 0%, #ece5d9 100%);
+    }
+    main {
+      width: min(1360px, calc(100vw - 28px));
+      margin: 18px auto 48px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 12px 30px rgba(22, 35, 49, 0.08);
+      backdrop-filter: blur(8px);
+    }
+    h1, h2, h3 { margin: 0 0 10px; }
+    p, li { color: var(--muted); line-height: 1.65; }
+    code {
+      background: #f4ece3;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 0.95em;
+    }
+    pre {
+      overflow: auto;
+      padding: 12px;
+      border-radius: 12px;
+      background: #18222d;
+      color: #f3f7fa;
+      font-size: 12px;
+      line-height: 1.55;
+      margin: 0;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      align-items: start;
+    }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .pill {
+      display: inline-block;
+      background: #eef3f7;
+      color: var(--blue);
+      border: 1px solid #cfdae2;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 13px;
+    }
+    .flow-line {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin-top: 14px;
+    }
+    .flow-node {
+      border-radius: 16px;
+      padding: 14px;
+      min-height: 118px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #fffdf9 0%, #f6efe7 100%);
+    }
+    .flow-node strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(70px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .frame-box {
+      padding: 12px 8px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      text-align: center;
+      background: rgba(255,255,255,0.78);
+    }
+    .frame-box.real {
+      border-color: #bdd8c6;
+      background: #eff9f2;
+      color: var(--green);
+    }
+    .frame-box.pred {
+      border-color: #e7c4c4;
+      background: #fff2f2;
+      color: var(--red);
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(300px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,0.72);
+    }
+    .mono-row {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      color: var(--ink);
+      background: #f4ece3;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      word-break: break-word;
+    }
+    .thumb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .thumb-grid img, video {
+      width: 100%;
+      display: block;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #000;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th { background: var(--accent-soft); }
+    .backprop {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .backprop .card {
+      min-height: 160px;
+    }
+    @media (max-width: 980px) {
+      .hero, .two-col, .backprop, .flow-line, .timeline {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <div class="hero">
+        <div>
+          <h1>V-JEPA 2-AC 训练流程可视化</h1>
+          <p>这个页面对应 <code>app/vjepa_droid/train.py</code> 的实际训练线。重点不是 mask 重建，而是 action-conditioned predictor 在 target latent 上做 teacher forcing 和短程 auto-regressive rollout，并用 latent L1 loss 训练。</p>
+          <div class="stats">
+            <span class="pill">输入视频: 854x480</span>
+            <span class="pill">原始帧数: 82</span>
+            <span class="pill">训练帧数: 8</span>
+            <span class="pill">patch/frame: 256</span>
+            <span class="pill">total tokens: 2048</span>
+            <span class="pill">encoder dim: 1408</span>
+            <span class="pill">predictor dim: 1024</span>
+            <span class="pill">auto_steps: 2</span>
+            <span class="pill">loss_exp: 1.0</span>
+          </div>
+        </div>
+        <div>
+          <video controls muted loop playsinline src="input_video.mp4"></video>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>主流程</h2>
+      <div class="flow-line">
+        <div class="flow-node">
+          <strong>1. clips</strong>
+          <div><code>[1, 3, 8, 256, 256]</code></div>
+          <div>输入 8 帧视频，shape 是 <code>[B, C, T, H, W]</code>。</div>
+        </div>
+        <div class="flow-node">
+          <strong>2. target encoder</strong>
+          <div><code>[8, 3, 2, 256, 256]</code> -> <code>[1, 2048, 1408]</code></div>
+          <div>每帧被复制成 2 帧 tubelet 输入，编码成完整目标 latent <code>h</code>。</div>
+        </div>
+        <div class="flow-node">
+          <strong>3. teacher forcing</strong>
+          <div><code>[1, 1792, 1408]</code> -> <code>[1, 1792, 1408]</code></div>
+          <div>真实的 <code>[0..6]</code> 作为输入，预测 <code>[1..7]</code>。</div>
+        </div>
+        <div class="flow-node">
+          <strong>4. rollout</strong>
+          <div><code>[1, 512, 1408]</code> -> <code>[1, 512, 1408]</code></div>
+          <div>从 <code>[0(real), 1(pred)]</code> 继续滚到 <code>2(pred)</code>。</div>
+        </div>
+        <div class="flow-node">
+          <strong>5. latent loss</strong>
+          <div><code>jloss + sloss</code></div>
+          <div>两项都是 latent L1，对齐 target encoder 特征，不比较像素。</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>8 帧时间轴</h2>
+      <p>下面统一用 <code>[0,1,2,3,4,5,6,7]</code> 表示一段训练样本的 8 帧。</p>
+      <div class="timeline">
+        <div class="frame-box real">0<br>real</div>
+        <div class="frame-box real">1<br>real</div>
+        <div class="frame-box real">2<br>real</div>
+        <div class="frame-box real">3<br>real</div>
+        <div class="frame-box real">4<br>real</div>
+        <div class="frame-box real">5<br>real</div>
+        <div class="frame-box real">6<br>real</div>
+        <div class="frame-box real">7<br>real</div>
+      </div>
+      <div class="two-col" style="margin-top:14px;">
+        <div class="card">
+          <h3>target encoder 看哪些帧</h3>
+          <div class="mono-row">target encoder input frames = [0,1,2,3,4,5,6,7]</div>
+          <div class="mono-row">h.shape = [1, 2048, 1408]</div>
+          <p>完整 8 帧都被编码成目标 latent <code>h</code>。每帧有 <code>256</code> 个 patch token，所以总长度是 <code>8 x 256 = 2048</code>。</p>
+        </div>
+        <div class="card">
+          <h3>teacher forcing 输入哪些帧</h3>
+          <div class="mono-row">predictor input = [0(real),1(real),2(real),3(real),4(real),5(real),6(real)]</div>
+          <div class="mono-row">z_tf.shape = [1, 1792, 1408]</div>
+          <p>teacher forcing 阶段输入真实的前 7 帧 latent，输出对齐到下一帧序列，即 <code>[1(pred),2(pred),3(pred),4(pred),5(pred),6(pred),7(pred)]</code>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>auto_steps=2 的 rollout 细化</h2>
+      <div class="two-col">
+        <div class="card">
+          <h3>第 1 步：构造 rollout 起点</h3>
+          <div class="mono-row">_z = concat(z[:, :tokens_per_frame], z_tf[:, :tokens_per_frame])</div>
+          <div class="mono-row">shape = [1, 512, 1408]</div>
+          <div class="mono-row">语义 = [0(real), 1(pred)]</div>
+          <p>这里不是把整段 <code>z_tf</code> 都拿来滚，而是只取它的第一帧预测，也就是 <code>1(pred)</code>，和真实的 <code>0(real)</code> 拼成 rollout 的起点。</p>
+        </div>
+        <div class="card">
+          <h3>第 2 步：继续滚出 2(pred)</h3>
+          <div class="mono-row">_z_nxt = _step_predictor(_z, actions[:, :2], states[:, :2], extrinsics[:, :2])[:, -tokens_per_frame:]</div>
+          <div class="mono-row">full predictor out = [1, 512, 1408]</div>
+          <div class="mono-row">last frame only = [1, 256, 1408]</div>
+          <div class="mono-row">语义 = 2(pred)</div>
+          <p>因为 <code>auto_steps=2</code>，循环只执行一次。输入是 <code>[0(real),1(pred)]</code>，最后一帧切出来就是 <code>2(pred)</code>。</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <h3>最终 rollout 序列</h3>
+        <div class="mono-row">_z = [0(real), 1(pred), 2(pred)]</div>
+        <div class="mono-row">z_ar = _z[:, tokens_per_frame:] = [1(pred), 2(pred)]</div>
+        <div class="mono-row">z_ar.shape = [1, 512, 1408]</div>
+        <p>训练里真正参与 <code>sloss</code> 的不是三帧，而是去掉第一帧 context 之后的两帧预测：<code>[1(pred),2(pred)]</code>。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>jloss 和 sloss 各自比较什么</h2>
+      <div class="two-col">
+        <div class="card">
+          <h3>jloss: teacher forcing loss</h3>
+          <div class="mono-row">z_tf = [1(pred),2(pred),3(pred),4(pred),5(pred),6(pred),7(pred)]</div>
+          <div class="mono-row">target = h[:, tokens_per_frame : z_tf.size(1) + tokens_per_frame]</div>
+          <div class="mono-row">target = [1(target),2(target),3(target),4(target),5(target),6(target),7(target)]</div>
+          <div class="mono-row">shape = [1, 1792, 1408]</div>
+          <p><code>jloss</code> 监督 teacher forcing 输出整段下一帧预测序列，对齐到目标的帧 1 到帧 7。</p>
+        </div>
+        <div class="card">
+          <h3>sloss: rollout loss</h3>
+          <div class="mono-row">z_ar = [1(pred),2(pred)]</div>
+          <div class="mono-row">target = h[:, tokens_per_frame : z_ar.size(1) + tokens_per_frame]</div>
+          <div class="mono-row">target = [1(target),2(target)]</div>
+          <div class="mono-row">shape = [1, 512, 1408]</div>
+          <p>这就是你问的那一项。<code>sloss</code> 比较的是 rollout 结果 <code>[1(pred),2(pred)]</code> 和 target encoder 编码得到的 <code>[1,2]</code> 两帧特征。</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <h3>loss 公式</h3>
+        <pre>def loss_fn(z, h):
+    _h = h[:, tokens_per_frame : z.size(1) + tokens_per_frame]
+    return torch.mean(torch.abs(z - _h) ** loss_exp) / loss_exp</pre>
+        <p>当前配置 <code>loss_exp = 1.0</code>，所以就是逐 token、逐通道的 L1 平均。对 <code>sloss</code> 来说，实际比较张量 shape 是 <code>[1, 512, 1408]</code> 对 <code>[1, 512, 1408]</code>。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>predictor 内部 shape</h2>
+      <div class="two-col">
+        <div class="card">
+          <h3>输入与动作状态拼接</h3>
+          <div class="mono-row">x in = [1, 512, 1408]</div>
+          <div class="mono-row">predictor_embed(x) = [1, 512, 1024]</div>
+          <div class="mono-row">view to [B, T, H*W, D] = [1, 2, 256, 1024]</div>
+          <div class="mono-row">concat action/state = [1, 516, 1024]</div>
+          <p>predictor 每帧除了 patch token，还会在帧前面插入 action token 和 state token，所以每帧内部长度从 <code>H*W</code> 变成 <code>H*W+2</code>。</p>
+        </div>
+        <div class="card">
+          <h3>输出</h3>
+          <div class="mono-row">predictor_proj out = [1, 512, 1408]</div>
+          <p>predictor 最后会把 action/state token 再拆掉，只保留视频 patch token，并投影回 encoder latent 维度 <code>1408</code>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>loss 回传路径</h2>
+      <div class="backprop">
+        <div class="card">
+          <h3>前向</h3>
+          <div class="mono-row">clips -> forward_target(clips) -> h</div>
+          <div class="mono-row">h -> forward_predictions(h) -> z_tf, z_ar</div>
+          <div class="mono-row">loss = jloss + sloss</div>
+          <p>这条训练线里，predictor 的输入直接就是 <code>h</code>，也就是 target encoder 产生的目标 latent。</p>
+        </div>
+        <div class="card">
+          <h3>不会回传到 target encoder</h3>
+          <div class="mono-row">with torch.no_grad(): h = target_encoder(...)</div>
+          <div class="mono-row">for p in target_encoder.parameters(): p.requires_grad = False</div>
+          <p>target encoder 是冻结的，而且前向在 <code>no_grad</code> 里，因此 <code>jloss/sloss</code> 都不会回传到 target encoder。</p>
+        </div>
+        <div class="card">
+          <h3>会回传到 predictor</h3>
+          <div class="mono-row">loss -> z_tf / z_ar -> predictor(...)</div>
+          <div class="mono-row">包括: predictor_embed, action_encoder, state_encoder, transformer blocks, predictor_proj</div>
+          <p>有梯度的是 predictor 全部内部参数，因为 loss 直接由 predictor 输出张量算出来。</p>
+        </div>
+        <div class="card">
+          <h3>当前代码里 encoder 也不吃梯度</h3>
+          <div class="mono-row">train_step 没有调用 encoder(...)</div>
+          <div class="mono-row">loss 计算图里没有 encoder 分支</div>
+          <p>按当前 <code>app/vjepa_droid/train.py</code> 实现，student encoder 并没有参与这条前向，因此这一步训练里它也拿不到梯度。实际被训练的是 predictor，不是标准 JEPA 里的 encoder + predictor 联合更新。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>训练预处理 Shape</h2>
+      <table>
+        <thead><tr><th>变量</th><th>Shape</th><th>DType</th><th>中文解释</th></tr></thead>
+        <tbody><tr><td>sampled_frames</td><td>[8, 480, 854, 3]</td><td>uint8</td><td>等间隔采样后的原始视频帧，格式 [T, H, W, C]。</td></tr><tr><td>tchw</td><td>[8, 3, 480, 854]</td><td>uint8</td><td>转成 PyTorch 视频张量 [T, C, H, W]。</td></tr><tr><td>resize_short_side</td><td>[8, 3, 292, 520]</td><td>float32</td><td>短边缩放到 292，保持宽高比。</td></tr><tr><td>center_crop</td><td>[8, 3, 256, 256]</td><td>float32</td><td>中心裁剪成 256x256。</td></tr><tr><td>rescale_0_1</td><td>[8, 3, 256, 256]</td><td>float32</td><td>像素缩放到 0-1。</td></tr><tr><td>normalize</td><td>[8, 3, 256, 256]</td><td>float32</td><td>按 ImageNet mean/std 归一化。</td></tr><tr><td>to_bcthw</td><td>[1, 3, 8, 256, 256]</td><td>float32</td><td>整理成训练时输入的 [B, C, T, H, W]。</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>采样帧预览</h2>
+      <p>这个页面用的是同一个输入视频做可视化，但只采样 8 帧并裁到当前 droid 配置的 <code>256x256</code>。它只是帮助看 shape，不代表机器人数据集语义本身。</p>
+      <div class="thumb-grid">
+        <img src="sample_frames/frame_00.jpg" alt="frame_00">
+        <img src="sample_frames/frame_02.jpg" alt="frame_02">
+        <img src="sample_frames/frame_05.jpg" alt="frame_05">
+        <img src="sample_frames/frame_07.jpg" alt="frame_07">
+      </div>
+    </section>
+  </main>
+</body>
+</html>

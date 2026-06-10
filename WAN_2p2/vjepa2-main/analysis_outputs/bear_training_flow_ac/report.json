@@ -1,0 +1,222 @@
+{
+  "config_path": "/home/gaoya/Code_Video/WAN_2p2/vjepa2-main/configs/train/vitg16/droid-256px-8f.yaml",
+  "video_path": "/data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output/GT/Biological_Motion/bear.mp4",
+  "video_meta": {
+    "fps": 24.0,
+    "frame_count": 82,
+    "width": 854,
+    "height": 480
+  },
+  "frame_indices": [
+    0,
+    12,
+    23,
+    35,
+    46,
+    58,
+    69,
+    81
+  ],
+  "preprocess": {
+    "records": [
+      {
+        "name": "sampled_frames",
+        "shape": [
+          8,
+          480,
+          854,
+          3
+        ],
+        "dtype": "uint8",
+        "zh": "等间隔采样后的原始视频帧，格式 [T, H, W, C]。"
+      },
+      {
+        "name": "tchw",
+        "shape": [
+          8,
+          3,
+          480,
+          854
+        ],
+        "dtype": "uint8",
+        "zh": "转成 PyTorch 视频张量 [T, C, H, W]。"
+      },
+      {
+        "name": "resize_short_side",
+        "shape": [
+          8,
+          3,
+          292,
+          520
+        ],
+        "dtype": "float32",
+        "zh": "短边缩放到 292，保持宽高比。"
+      },
+      {
+        "name": "center_crop",
+        "shape": [
+          8,
+          3,
+          256,
+          256
+        ],
+        "dtype": "float32",
+        "zh": "中心裁剪成 256x256。"
+      },
+      {
+        "name": "rescale_0_1",
+        "shape": [
+          8,
+          3,
+          256,
+          256
+        ],
+        "dtype": "float32",
+        "zh": "像素缩放到 0-1。"
+      },
+      {
+        "name": "normalize",
+        "shape": [
+          8,
+          3,
+          256,
+          256
+        ],
+        "dtype": "float32",
+        "zh": "按 ImageNet mean/std 归一化。"
+      },
+      {
+        "name": "to_bcthw",
+        "shape": [
+          1,
+          3,
+          8,
+          256,
+          256
+        ],
+        "dtype": "float32",
+        "zh": "整理成训练时输入的 [B, C, T, H, W]。"
+      }
+    ]
+  },
+  "flow": {
+    "num_frames": 8,
+    "crop_size": 256,
+    "patch_size": 16,
+    "tubelet_size": 2,
+    "tokens_per_frame": 256,
+    "total_tokens": 2048,
+    "embed_dim": 1408,
+    "pred_embed_dim": 1024,
+    "auto_steps": 2,
+    "loss_exp": 1.0,
+    "normalize_reps": true,
+    "clips": [
+      1,
+      3,
+      8,
+      256,
+      256
+    ],
+    "forward_target_in": [
+      8,
+      3,
+      2,
+      256,
+      256
+    ],
+    "target_encoder_out_per_frame": [
+      8,
+      256,
+      1408
+    ],
+    "target_flattened_h": [
+      1,
+      2048,
+      1408
+    ],
+    "teacher_forcing_in": [
+      1,
+      1792,
+      1408
+    ],
+    "teacher_forcing_actions": [
+      1,
+      7,
+      7
+    ],
+    "teacher_forcing_states": [
+      1,
+      7,
+      7
+    ],
+    "teacher_forcing_out": [
+      1,
+      1792,
+      1408
+    ],
+    "ar_seed_in": [
+      1,
+      512,
+      1408
+    ],
+    "ar_step_out_full": [
+      1,
+      512,
+      1408
+    ],
+    "ar_step_out_last_frame": [
+      1,
+      256,
+      1408
+    ],
+    "ar_concat": [
+      1,
+      768,
+      1408
+    ],
+    "ar_final": [
+      1,
+      512,
+      1408
+    ],
+    "jloss_target": [
+      1,
+      1792,
+      1408
+    ],
+    "sloss_target": [
+      1,
+      512,
+      1408
+    ],
+    "predictor_internal": {
+      "predictor_embed_in": [
+        1,
+        512,
+        1408
+      ],
+      "predictor_embed_out": [
+        1,
+        512,
+        1024
+      ],
+      "predictor_view": [
+        1,
+        2,
+        256,
+        1024
+      ],
+      "predictor_with_action_state": [
+        1,
+        516,
+        1024
+      ],
+      "predictor_proj_out": [
+        1,
+        512,
+        1408
+      ]
+    }
+  }
+}
