@@ -8,6 +8,7 @@ VPHY_PY="/data/gaoya/miniconda3/envs/vphy/bin/python"
 
 BENCH_ROOT="/data/gaoya/AAA_test_video/Output_try0526/Dataset_physV_B_benchmark"
 ABD_B_ROOT="/data/gaoya/AAA_test_video/Output_try0526/ABD_test/B"
+EVAL_INPUT_ROOT="${ABD_B_ROOT}/_eval_input"
 SUMMARY_CSV="${ABD_B_ROOT}/_meta/method_metrics_summary.csv"
 LOG_ROOT="/data/gaoya/AAA_test_video/Output_try0526/Dataset_physV_B_benchmark_eval_logs"
 
@@ -16,6 +17,14 @@ GPU_IDS=(5 6 7)
 NUM_SHARDS="${#GPU_IDS[@]}"
 
 mkdir -p "${LOG_ROOT}"
+
+prepare_eval_input_root() {
+  rm -rf "${EVAL_INPUT_ROOT}"
+  mkdir -p "${EVAL_INPUT_ROOT}"
+  for method in "${METHODS[@]}"; do
+    ln -s "${ABD_B_ROOT}/${method}" "${EVAL_INPUT_ROOT}/${method}"
+  done
+}
 
 wait_for_no_match() {
   local pattern="$1"
@@ -31,7 +40,7 @@ run_flux_phase() {
   for gpu in "${GPU_IDS[@]}"; do
     CUDA_VISIBLE_DEVICES="${gpu}" PYTHONUNBUFFERED=1 \
       "${FLUX_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
-      --input-root "${ABD_B_ROOT}" \
+      --input-root "${EVAL_INPUT_ROOT}" \
       --methods "${METHODS[@]}" \
       --metrics "${metric_name}" \
       --num-shards "${NUM_SHARDS}" \
@@ -53,7 +62,7 @@ run_videophy_phase() {
   for gpu in "${GPU_IDS[@]}"; do
     CUDA_VISIBLE_DEVICES="${gpu}" PYTHONUNBUFFERED=1 \
       "${VPHY_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
-      --input-root "${ABD_B_ROOT}" \
+      --input-root "${EVAL_INPUT_ROOT}" \
       --methods "${METHODS[@]}" \
       --metrics videophy2 \
       --num-shards "${NUM_SHARDS}" \
@@ -85,7 +94,10 @@ PYTHONUNBUFFERED=1 \
   python3 "${ROOT}/organize_output_try0526_abd.py" \
   > "/data/gaoya/AAA_test_video/Output_try0526/Dataset_physV_B_benchmark.organize.log" 2>&1
 
-wait_for_no_match "eval_benchmark_dir_metrics.py --input-root ${ABD_B_ROOT}"
+echo "[step] prepare eval input root"
+prepare_eval_input_root
+
+wait_for_no_match "eval_benchmark_dir_metrics.py --input-root ${EVAL_INPUT_ROOT}"
 
 echo "[step] refresh pdi"
 run_flux_phase pdi
@@ -101,7 +113,7 @@ run_videophy_phase
 echo "[step] write summary csv"
 PYTHONUNBUFFERED=1 \
   "${FLUX_PY}" "${ROOT}/eval_benchmark_dir_metrics.py" \
-  --input-root "${ABD_B_ROOT}" \
+  --input-root "${EVAL_INPUT_ROOT}" \
   --methods "${METHODS[@]}" \
   --summary-only \
   --summary-csv "${SUMMARY_CSV}" \
