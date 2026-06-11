@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import html
 import json
 import os
@@ -30,6 +31,16 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default="/tmp/abd_test_b_dashboard_18883",
         help="Directory to write report.json, index.html, and linked assets.",
+    )
+    parser.add_argument(
+        "--meta-dir",
+        default=None,
+        help="Optional ABD_test/B/_meta directory to receive selected-case metadata.",
+    )
+    parser.add_argument(
+        "--summary-csv",
+        default=None,
+        help="Optional metrics summary csv path. Defaults to <bench-root>/_meta/method_metrics_summary.csv.",
     )
     parser.add_argument("--max-cases", type=int, default=12, help="Maximum number of cases to show.")
     parser.add_argument("--port", type=int, default=18883, help="Local port for http.server.")
@@ -73,6 +84,13 @@ def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_summary_rows(summary_csv: Path | None) -> list[dict[str, str]]:
+    if summary_csv is None or not summary_csv.is_file():
+        return []
+    with summary_csv.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
 def choose_case_keys(gt_dir: Path, max_cases: int) -> list[str]:
     rows: list[dict[str, str]] = []
     for json_path in sorted(gt_dir.glob("*.json")):
@@ -99,6 +117,42 @@ def choose_case_keys(gt_dir: Path, max_cases: int) -> list[str]:
         for category in ordered_categories:
             for case_key in by_category[category][1:]:
                 selected.append(case_key)
+                if len(selected) >= max_cases:
+                    return selected
+    return selected
+
+
+def choose_case_meta(gt_dir: Path, max_cases: int) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for json_path in sorted(gt_dir.glob("*.json")):
+        payload = load_json(json_path)
+        rows.append(
+            {
+                "case_key": str(payload["case_key"]),
+                "category": str(payload["category"]),
+                "clip_name": str(payload.get("clip_name", payload["case_key"])),
+            }
+        )
+
+    by_category: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        by_category[row["category"]].append(row)
+
+    ordered_categories = sorted(by_category)
+    selected: list[dict[str, str]] = []
+    for category in ordered_categories:
+        first = dict(by_category[category][0])
+        first["reason"] = f"Category coverage pick for {category}."
+        selected.append(first)
+        if len(selected) >= max_cases:
+            return selected
+
+    if len(selected) < max_cases:
+        for category in ordered_categories:
+            for row in by_category[category][1:]:
+                extra = dict(row)
+                extra["reason"] = f"Additional case from {category} to fill the dashboard."
+                selected.append(extra)
                 if len(selected) >= max_cases:
                     return selected
     return selected
@@ -159,6 +213,31 @@ def render_media_card(title: str, rel_path: str | None, kind: str, note: str) ->
 
 
 def build_html(report: dict[str, Any]) -> str:
+    summary_html = ""
+    if report.get("metrics_summary"):
+        header = "".join(
+            f"<th>{html.escape(label)}</th>"
+            for label in ["method", "num_videos", "official_pdi", "wmreward_surprise", "cosmos_reason1", "videophy2_auto_pc", "videophy2_auto_joint"]
+        )
+        rows = []
+        for row in report["metrics_summary"]:
+            cells = "".join(
+                f"<td>{html.escape(str(row.get(key, '')))}</td>"
+                for key in ["method", "num_videos", "official_pdi", "wmreward_surprise", "cosmos_reason1", "videophy2_auto_pc", "videophy2_auto_joint"]
+            )
+            rows.append(f"<tr>{cells}</tr>")
+        summary_html = f"""
+        <section class="metrics-panel">
+          <h2>Metrics Summary</h2>
+          <div class="metrics-scroll">
+            <table class="metrics-table">
+              <thead><tr>{header}</tr></thead>
+              <tbody>{''.join(rows)}</tbody>
+            </table>
+          </div>
+        </section>
+        """
+
     case_html: list[str] = []
     for case in report["cases"]:
         input_cards = "".join(
@@ -295,6 +374,37 @@ def build_html(report: dict[str, Any]) -> str:
       color: var(--muted);
       font-size: 13px;
     }}
+    .metrics-panel {{
+      margin: 18px 0 22px;
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }}
+    .metrics-panel h2 {{
+      margin: 0 0 12px;
+      font-size: 22px;
+    }}
+    .metrics-scroll {{
+      overflow-x: auto;
+    }}
+    .metrics-table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }}
+    .metrics-table th,
+    .metrics-table td {{
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+    }}
+    .metrics-table th {{
+      color: var(--accent);
+      background: rgba(245, 239, 229, 0.88);
+    }}
     .case-card {{
       padding: 20px;
       margin-bottom: 22px;
@@ -421,6 +531,7 @@ def build_html(report: dict[str, Any]) -> str:
         <div class="summary-card"><strong><a class="link" href="http://127.0.0.1:{report['port']}">127.0.0.1:{report['port']}</a></strong><span>local page entry</span></div>
       </div>
     </section>
+    {summary_html}
     {''.join(case_html)}
   </div>
 </body>
@@ -492,18 +603,55 @@ def build_case_record(bench_root: Path, output_dir: Path, case_key: str) -> dict
     }
 
 
+def write_meta_exports(meta_dir: Path, report: dict[str, Any], output_dir: Path) -> None:
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    selected_cases = []
+    for case in report["cases"]:
+        selected_cases.append(
+            {
+                "case_key": case["case_key"],
+                "category": case["category"],
+                "clip_name": case["clip_name"],
+                "caption": case["caption"],
+                "reason": f"Included in ABD_test B dashboard export ({report['case_count']} visualized cases).",
+                "methods": [method["method_name"] for method in case["methods"]],
+            }
+        )
+    (meta_dir / "report_subset_selected_cases.json").write_text(
+        json.dumps({"cases": selected_cases}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (meta_dir / "dashboard_entry.json").write_text(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "index_html": str(output_dir / "index.html"),
+                "report_json": str(output_dir / "report.json"),
+                "mode": report["mode"],
+                "case_count": report["case_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     args = parse_args()
     bench_root = Path(args.bench_root)
     output_dir = Path(args.output_dir)
+    meta_dir = Path(args.meta_dir) if args.meta_dir else (bench_root / "_meta")
+    summary_csv = Path(args.summary_csv) if args.summary_csv else (meta_dir / "method_metrics_summary.csv")
     gt_dir = bench_root / "GT"
 
     if args.clean and output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    case_keys = choose_case_keys(gt_dir, args.max_cases)
-    cases = [build_case_record(bench_root, output_dir, case_key) for case_key in case_keys]
+    case_meta = choose_case_meta(gt_dir, args.max_cases)
+    cases = [build_case_record(bench_root, output_dir, row["case_key"]) for row in case_meta]
+    metrics_summary = load_summary_rows(summary_csv)
 
     report = {
         "title": "Dataset_physV B Group Benchmark Dashboard",
@@ -518,10 +666,13 @@ def main() -> None:
         "gt_count": len(list(gt_dir.glob('*.json'))),
         "method_count": len(METHODS),
         "port": args.port,
+        "summary_csv": str(summary_csv) if summary_csv.exists() else None,
+        "metrics_summary": metrics_summary,
         "cases": cases,
     }
     (output_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "index.html").write_text(build_html(report), encoding="utf-8")
+    write_meta_exports(meta_dir, report, output_dir)
 
     if not args.no_serve:
         pid = start_server(output_dir, args.port)

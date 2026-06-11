@@ -38,6 +38,7 @@ from phys_state_video.wan_state_condition_bundles import (
 from phys_state_video.wan_state_v2_helpers import (
     build_future_step_loss_mask,
     build_state_condition_payload_from_condition_maps,
+    compute_latent_step_count,
     compute_future_latent_steps,
     filter_state_condition_payload_for_adapter,
 )
@@ -132,6 +133,25 @@ def build_ti2v_prefix_state_condition_payload(
         memory_tokens=memory_tokens,
         include_condition_maps=True,
     )
+
+
+def compute_ti2v_prefix_future_latent_steps(
+    *,
+    total_frame_num: int,
+    context_frame_num: int,
+    temporal_stride: int,
+) -> int:
+    total_latent_steps = compute_latent_step_count(total_frame_num, temporal_stride)
+    prefix_latent_steps = compute_latent_step_count(context_frame_num, temporal_stride)
+    future_latent_steps = total_latent_steps - prefix_latent_steps
+    if future_latent_steps <= 0:
+        raise ValueError(
+            "future latent steps must be positive for TI2V clean-prefix training, got "
+            f"total_frame_num={total_frame_num}, context_frame_num={context_frame_num}, "
+            f"temporal_stride={temporal_stride}, total_latent_steps={total_latent_steps}, "
+            f"prefix_latent_steps={prefix_latent_steps}"
+        )
+    return future_latent_steps
 
 
 def run_step(
@@ -294,10 +314,15 @@ def main():
     )
 
     first_sample = prepare_training_sample(bundle_records[0], frame_num=args.frame_num)
+    first_future_latent_steps = compute_ti2v_prefix_future_latent_steps(
+        total_frame_num=int(first_sample["training_frame_num"]),
+        context_frame_num=int(first_sample["context_frame_num"]),
+        temporal_stride=int(pipeline.vae_stride[0]),
+    )
     first_condition_payload = build_ti2v_prefix_state_condition_payload(
         first_sample["state_condition"],
         device=pipeline.device,
-        target_steps=max(int((first_sample["training_frame_num"] - 1) // pipeline.vae_stride[0]), 1),
+        target_steps=first_future_latent_steps,
     )
     pipeline._build_state_context(first_condition_payload, offload_model=False)
     if args.resume is not None:

@@ -1,8 +1,12 @@
 # 2026-06-04 Mainline Flow: `wan_state_v2_latent_time` + Wan State-Condition Backbones
 
-这份文档描述当前仓库里已经落地的 v2 主线实现：`wan_state_v2_latent_time predictor -> state_condition bundle -> Wan state adapter -> Wan video backbone inference`。当前主线已经明确拆成两条下游 backbone：
+这份文档描述当前仓库里已经落地的 v2 主线实现：`wan_state_v2_latent_time predictor -> state_condition bundle -> Wan state adapter -> Wan video backbone inference`。当前推荐主线已经明确拆成两条下游 backbone：
 
 - `Wan I2V clean-prefix infill`
+- `Wan TI2V clean-prefix infill`
+
+同时保留一条 legacy 对照线：
+
 - `Wan TI2V first-frame conditioning`
 
 这里不再沿用旧版 `future_state_latents / prompt_token_ids` 的叙述，统一以当前代码中的真实接口、真实 shape、真实脚本为准。
@@ -46,10 +50,14 @@ latent 时间步由 [wan_state_v2_helpers.py](/home/gaoya/Code_Video/phys_state_
    在 I2V clean-prefix 语义下训练 Wan state adapter。
 4. [run_inference_wan_state.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state.py:1)
    用 predictor + Wan I2V backend 做正式推理。
-5. [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)
-   在 TI2V 首帧条件语义下训练 Wan state adapter。
-6. [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)
-   用 predictor + Wan TI2V backend 做正式推理。
+5. [train_wan_state_adapter_ti2v_prefix_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_ti2v_prefix_local.py:1)
+   在 TI2V clean-prefix 语义下训练 Wan state adapter。
+6. [run_inference_wan_state_ti2v_prefix.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v_prefix.py:1)
+   用 predictor + Wan TI2V clean-prefix backend 做正式推理。
+7. [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)
+   legacy：在 TI2V 首帧条件语义下训练 Wan state adapter。
+8. [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)
+   legacy：用 predictor + Wan TI2V first-frame backend 做正式推理。
 
 ## 4. Predictor 输入、输出与 shape
 
@@ -380,23 +388,25 @@ clean-prefix 训练语义是：
 
 当前 v2 语义下，`WanImageToVideoBackend.generate()` 已经把 `condition_maps` 设为必选输入，不再允许主线只传 `state_tokens` 的危险 fallback。
 
-## 9. Wan TI2V adapter 训练
+## 9. Wan TI2V clean-prefix adapter 训练
 
-训练脚本位于 [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)。
+训练脚本位于 [train_wan_state_adapter_ti2v_prefix_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_ti2v_prefix_local.py:1)。
 
-这条 backbone 的语义不是 clean-prefix video continuation，而是：
+这条 backbone 的语义是 TI2V clean-prefix continuation：
 
-1. 用 episode 的首帧作为 TI2V 图像条件。
-2. 用完整训练视频 `first_frame + future_frames` 构造 TI2V 监督视频。
-3. 用首帧 latent 作为 clean anchor，只对后续 latent 步做噪声回归。
-4. 将 predictor 导出的 `condition_maps + memory_tokens` 重采样到 `target_condition_steps = latent_steps - 1`，再构造成 canonical payload 后送入 state adapter。
+1. 用完整训练视频 `context_frames + future_frames` 构造 TI2V clean-prefix 监督视频。
+2. 对完整训练视频编码得到 `full_latents`。
+3. 用 context 对应的 latent prefix 作为 clean anchor，只对非-context latent 步做噪声回归。
+4. TI2V backbone 仍保留首帧图像条件 `y`，但多帧 context 通过 clean prefix latent 直接固定在主 latent 序列里。
+5. 将 predictor 导出的 `condition_maps + memory_tokens` 重采样到 padded `future_latent_steps`，再构造成 canonical payload 后送入 state adapter。
+6. loss 只在非-context latent steps 上计算，并显式 mask 掉 `4n+1` 对齐带来的无效 padded future latent steps。
 
 单个样本的关键张量是：
 
-- `input_video ∈ R^{F×3×H×W}`，其中 `F = align_wan_frame_num(1 + T)`
-- `first_frame ∈ R^{1×3×H×W}`
-- `input_latents ∈ R^{C_w×L×H'_w×W'_w}`
-- `condition_maps ∈ R^{1×(L-1)×D_s×H_s×W_s}`，由 bundle 条件重采样到 TI2V latent 时间轴
+- `full_video ∈ R^{F×3×H×W}`，其中 `F = align_wan_frame_num(K + T)`
+- `full_latents ∈ R^{C_w×L×H'_w×W'_w}`
+- `clean_prefix_latents ∈ R^{C_w×L_ctx×H'_w×W'_w}`
+- `condition_maps ∈ R^{1×L_future,padded×D_s×H_s×W_s}`，由 bundle 条件重采样到 TI2V future latent 时间轴
 - `memory_tokens ∈ R^{1×N×D_s}`，如果 bundle 中存在
 
 与 I2V 侧一样，TI2V 训练也统一通过：
@@ -406,23 +416,36 @@ clean-prefix 训练语义是：
 
 构造并筛选真正送入 adapter 的 payload。
 
-## 10. Wan TI2V 正式推理
+## 10. Wan TI2V clean-prefix 正式推理
 
-推理入口在 [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)，Wan backend 主逻辑在 [wan_bridge.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_bridge.py:579) 的 `WanTextImageToVideoBackend`。
+推理入口在 [run_inference_wan_state_ti2v_prefix.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v_prefix.py:1)，Wan backend 主逻辑在 [wan_bridge.py](/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_bridge.py:692) 的 `WanTextImageToVideoPrefixBackend`。
 
 正式推理时：
 
 1. predictor 仍先读取完整 `context_frames`，输出 `condition_maps` 与 `memory_tokens`。
-2. TI2V backbone 只消费 `context_frames[:, 0]` 作为首帧图像条件。
-3. `condition_maps` 被重采样到 `target_condition_steps = total_latent_steps - 1`。
-4. `condition_maps + memory_tokens` 经 state adapter 编成 `state_context`，注入 `WanTI2V`。
-5. 默认总输出帧数是 `1 + future_steps`，因为 TI2V 主干只显式锚定首帧图像。
+2. TI2V backbone 接收完整 `context_frames`，并把它们编码成 `clean_prefix_latents ∈ R^{C_w×L_ctx×H'_w×W'_w}`。
+3. 采样从总 latent 噪声 `noise ∈ R^{C_w×L×H'_w×W'_w}` 开始，但在每个 diffusion step 后都把 `:L_ctx` 覆盖回 clean prefix。
+4. TI2V 主干仍保留首帧图像条件 `y` 作为兼容锚点。
+5. `condition_maps` 被重采样到 `future_latent_steps = L - L_ctx`。
+6. `condition_maps + memory_tokens` 经 state adapter 编成 `state_context`，注入 `WanTI2V`。
+7. 默认总输出帧数是 `context_steps + future_steps`，因为 clean-prefix 版本显式保留了整段 context video。
 
 这里 predictor 和 TI2V backbone 的时间语义需要区分：
 
 - predictor 仍然基于 `K` 帧 context video 建模。
-- TI2V backbone 只直接看到首帧图像。
-- 二者共享的是 future state condition，而不是共享相同的视觉条件输入形式。
+- TI2V clean-prefix backbone 既看到首帧图像锚点，也看到完整 context latent prefix。
+- 二者共享的是 future state condition，并且现在也共享多帧 context 的时间边界。
+
+## 10.1 legacy：Wan TI2V first-frame 训练与推理
+
+legacy 训练脚本位于 [train_wan_state_adapter_local.py](/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py:1)，legacy 推理脚本位于 [run_inference_wan_state_ti2v.py](/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v.py:1)。
+
+这条 legacy 线的语义是：
+
+1. 用 episode 的首帧作为 TI2V 图像条件。
+2. 用 `first_frame + future_frames` 构造监督视频。
+3. 用首帧 latent 作为 clean anchor，只对后续 latent 步做噪声回归。
+4. predictor 仍然可以读取完整 `context_frames`，但 TI2V backbone 只直接消费首帧图像。
 
 ## 11. 可训练模块与冻结模块
 

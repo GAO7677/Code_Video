@@ -56,9 +56,9 @@ The default system Python in this workspace does not include PyTorch. Use the ex
 As of `2026-06-04`, the recommended mainline is:
 
 - `wan_state_v2_latent_time` predictor training on the Wan latent time axis
-- exported `state_tokens ∈ R^{L_future×D_s}` as the video-side condition interface
+- exported `condition_maps ∈ R^{L_future×D_s×H_s×W_s}` plus optional `memory_tokens ∈ R^{N×D_s}` as the video-side condition interface
 - a trained Wan state adapter checkpoint as a required dependency for formal Wan inference
-- `WanImageToVideoBackend.generate()` with clean prefix latents held fixed and only future latents denoised
+- either `WanImageToVideoBackend.generate()` for `Wan I2V clean-prefix infill`, or `WanTextImageToVideoPrefixBackend.generate()` for `Wan TI2V clean-prefix infill`, with clean prefix latents held fixed and only future latents denoised
 
 The old `wan_state_v1` predictor and older TI2V-first adapter path are still kept for reproducibility, but they are no longer the recommended default path for new experiments.
 
@@ -273,10 +273,11 @@ For `wan_state_v2_latent_time`, the export path keeps the predictor on latent ti
 
 ## Local Wan adapter training
 
-The repository now includes two local state-adapter trainers:
+The repository now includes three local state-adapter trainers:
 
 - script: `/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_local.py`
 - script: `/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py`
+- script: `/home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_ti2v_prefix_local.py`
 - helpers: `/home/gaoya/Code_Video/phys_state_video/src/phys_state_video/wan_adapter_training.py`
 
 `train_wan_state_adapter_local.py` is the older TI2V-aligned path:
@@ -299,7 +300,17 @@ The repository now includes two local state-adapter trainers:
 - it computes training loss only on future latent steps
 - it saves checkpoints in the format expected by `WanI2V.load_state_adapter()`
 
-This second path is important because it matches the semantics of formal prefix infill inference much more closely than the older “clean first frame only” TI2V trainer.
+`train_wan_state_adapter_ti2v_prefix_local.py` is the TI2V clean-prefix variant:
+
+- it reads the same exported `condition_maps` / `memory_tokens` bundles
+- it rebuilds the full `context + future` training video
+- it encodes the full clip into TI2V latents and keeps the full context prefix latent segment clean
+- it adds noise to the whole latent clip, then overwrites the context prefix back to its clean value
+- it computes loss only on non-context latent steps
+- it masks out any padded future latent steps introduced by Wan's `4n+1` frame alignment
+- it saves checkpoints in the format expected by `WanTI2V.load_state_adapter()`
+
+The two clean-prefix paths are now the recommended ones. The older “clean first frame only” TI2V trainer remains available as a legacy baseline.
 
 Example command:
 
@@ -313,7 +324,7 @@ Example command:
   --device cuda:0
 ```
 
-Recommended prefix-infill-aligned adapter training command:
+Recommended I2V prefix-infill-aligned adapter training command:
 
 ```bash
 /data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_prefix_local.py \
@@ -322,6 +333,18 @@ Recommended prefix-infill-aligned adapter training command:
   --task i2v-A14B \
   --size 480*832 \
   --output /path/to/checkpoints/wan_i2v_prefix_state_adapter.pt \
+  --device cuda:0
+```
+
+Recommended TI2V clean-prefix adapter training command:
+
+```bash
+/data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/phys_state_video/scripts/train_wan_state_adapter_ti2v_prefix_local.py \
+  --state-condition-root /path/to/wan_state_condition_predictor_v2 \
+  --wan-ckpt-dir /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
+  --task ti2v-5B \
+  --size 704*1280 \
+  --output /path/to/checkpoints/wan_ti2v_prefix_state_adapter.pt \
   --device cuda:0
 ```
 
@@ -343,6 +366,10 @@ At inference time, the saved adapter checkpoint can be loaded by:
 - `/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_state_condition_bundle.py --state-adapter-ckpt ...`
 - `/home/gaoya/Code_Video/phys_state_video/scripts/run_wan_ti2v_state_condition_smoke.py --state-adapter-ckpt ...` as a compatibility alias
 - the native `WanTI2V.load_state_adapter(...)` interface
+
+For local TI2V clean-prefix continuation, use:
+
+- `/home/gaoya/Code_Video/phys_state_video/scripts/run_inference_wan_state_ti2v_prefix.py --wan-state-adapter-ckpt ...`
 
 ## Formal tests
 
