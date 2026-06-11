@@ -155,6 +155,9 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+ORIGINAL_JSON_CACHE: dict[str, dict[str, Any]] = {}
+
+
 def is_port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.3)
@@ -245,39 +248,84 @@ def choose_case_keys(group_root: Path, group_name: str) -> list[str]:
     return selected
 
 
+def load_original_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    original_json = payload.get("original_json")
+    if not original_json:
+        return None
+    path = str(original_json)
+    if path in ORIGINAL_JSON_CACHE:
+        return ORIGINAL_JSON_CACHE[path]
+    try:
+        loaded = load_json(Path(path))
+    except Exception:
+        loaded = None
+    if loaded is not None:
+        ORIGINAL_JSON_CACHE[path] = loaded
+    return loaded
+
+
 def resolve_metric_value(payload: dict[str, Any], metric_key: str) -> float | None:
+    original_payload = load_original_payload(payload) or {}
     metric_results = payload.get("metric_results") or {}
+    if not metric_results:
+        metric_results = original_payload.get("metric_results") or {}
+    metric_summary = payload.get("metric_summary") or {}
+    if not metric_summary:
+        metric_summary = original_payload.get("metric_summary") or {}
     if metric_key == "official_pdi":
         value = ((metric_results.get("official_pdi") or {}).get("pdi_score"))
         if value is None:
-            value = payload.get("pdi_score") or (payload.get("metric_summary") or {}).get("pdi_score")
+            value = (
+                payload.get("pdi_score")
+                or original_payload.get("pdi_score")
+                or metric_summary.get("pdi_score")
+                or ((original_payload.get("metrics") or {}).get("pdi_score"))
+            )
         return float(value) if value is not None else None
     if metric_key == "wmreward_surprise":
         value = ((metric_results.get("wmreward_jepa") or {}).get("surprise"))
+        if value is None:
+            bucket = original_payload.get("metric_results", {}).get("wmreward_jepa") or {}
+            value = bucket.get("surprise")
+        if value is None:
+            similarity = payload.get("wmreward_jepa")
+            if similarity is None:
+                similarity = original_payload.get("wmreward_jepa") or metric_summary.get("wmreward_jepa")
+            if similarity is not None:
+                value = 1.0 - float(similarity)
         return float(value) if value is not None else None
     if metric_key == "vjepa_relraw":
         value = (((metric_results.get("vjepa_proxy") or {}).get("details") or {}).get("temporal_relation_raw_error"))
         value = value if value is not None else (((payload.get("jepa") or {}).get("temporal_relation_raw_error")))
+        value = value if value is not None else (((original_payload.get("jepa") or {}).get("temporal_relation_raw_error")))
         return float(value) if value is not None else None
     if metric_key == "vjepa_deltarel":
         value = (((metric_results.get("vjepa_proxy") or {}).get("details") or {}).get("delta_relation_raw_error"))
         value = value if value is not None else (((payload.get("jepa") or {}).get("delta_relation_raw_error")))
+        value = value if value is not None else (((original_payload.get("jepa") or {}).get("delta_relation_raw_error")))
         return float(value) if value is not None else None
     if metric_key == "vjepa_deltaprof":
         value = (((metric_results.get("vjepa_proxy") or {}).get("details") or {}).get("delta_profile_error"))
         value = value if value is not None else (((payload.get("jepa") or {}).get("delta_profile_error")))
+        value = value if value is not None else (((original_payload.get("jepa") or {}).get("delta_profile_error")))
         return float(value) if value is not None else None
     if metric_key == "cosmos_reason1":
         value = ((metric_results.get("cosmos_reason1") or {}).get("score"))
         value = value if value is not None else payload.get("cosmos_reason1_score")
+        value = value if value is not None else original_payload.get("cosmos_reason1_score")
+        value = value if value is not None else metric_summary.get("cosmos_reason1_score")
         return float(value) if value is not None else None
     if metric_key == "videophy2_pc":
         value = ((metric_results.get("videophy2_auto") or {}).get("pc_score"))
         value = value if value is not None else payload.get("videophy2_auto_pc")
+        value = value if value is not None else original_payload.get("videophy2_auto_pc")
+        value = value if value is not None else metric_summary.get("videophy2_auto_pc")
         return float(value) if value is not None else None
     if metric_key == "videophy2_sa":
         value = ((metric_results.get("videophy2_auto") or {}).get("sa_score"))
         value = value if value is not None else payload.get("videophy2_auto_sa")
+        value = value if value is not None else original_payload.get("videophy2_auto_sa")
+        value = value if value is not None else metric_summary.get("videophy2_auto_sa")
         return float(value) if value is not None else None
     if metric_key == "videophy2_joint":
         bucket = metric_results.get("videophy2_auto") or {}
@@ -286,6 +334,10 @@ def resolve_metric_value(payload: dict[str, Any], metric_key: str) -> float | No
             return float(value)
         pc = bucket.get("pc_score", payload.get("videophy2_auto_pc"))
         sa = bucket.get("sa_score", payload.get("videophy2_auto_sa"))
+        if pc is None:
+            pc = original_payload.get("videophy2_auto_pc") or metric_summary.get("videophy2_auto_pc")
+        if sa is None:
+            sa = original_payload.get("videophy2_auto_sa") or metric_summary.get("videophy2_auto_sa")
         if pc is None or sa is None:
             return None
         return float(1.0 if float(pc) >= 4.0 and float(sa) >= 4.0 else 0.0)
@@ -322,6 +374,10 @@ def find_ffmpeg() -> str:
         "/home/gaoya/miniconda3/envs/wan/bin/ffmpeg",
         "/home/gaoya/miniconda3/envs/wan-cu128/bin/ffmpeg",
         "/data/gaoya/miniconda3/envs/wan/bin/ffmpeg",
+        "/data/gaoya/miniconda3/envs/vjepa2/bin/ffmpeg",
+        "/data/gaoya/home_miniconda3/pkgs/ffmpeg-8.0.0-gpl_hc3e963e_905/bin/ffmpeg",
+        "/home/gaoya/.marscode/ai-chat/binary/1.6.38/modules/ai-agent/ffmpeg",
+        "/home/gaoya/.marscode/ai-chat/binary/1.6.36/modules/ai-agent/ffmpeg",
     ]
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
