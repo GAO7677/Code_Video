@@ -170,10 +170,16 @@ def evaluate_sample(
 ) -> dict:
     context_video = sample["context_video"]
     context_boxes = sample["context_boxes"]
+    caption = sample["caption"]
     frames_tchw_01 = ((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
     prompt_frame_idx = max(context_video.shape[1] - 1, 0) if prompt_frame_mode == "last" else 0
-    prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-    sam_out = tracker.track(frames_tchw_01, prompt_frame_idx=prompt_frame_idx, prompt_box_xyxy=prompt_box_xyxy)
+    motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
+    sam_out = tracker.track(
+        frames_tchw_01,
+        prompt_frame_idx=prompt_frame_idx,
+        prompt_box_xyxy=motion_prompt_box_xyxy,
+        caption=caption,
+    )
 
     image_hw = (context_video.shape[-2], context_video.shape[-1])
     valid_gt_indices = []
@@ -215,7 +221,7 @@ def evaluate_sample(
     all_gt_video = render_overlay_video(
         context_video,
         context_boxes,
-        prompt_box_xyxy=prompt_box_xyxy,
+        prompt_box_xyxy=sam_out.prompt_box_xyxy,
         sam_boxes_t4=sam_out.boxes_t4,
         highlight_gt_idx=None,
     )
@@ -230,7 +236,7 @@ def evaluate_sample(
         overlay = render_overlay_video(
             context_video,
             context_boxes,
-            prompt_box_xyxy=prompt_box_xyxy,
+            prompt_box_xyxy=sam_out.prompt_box_xyxy,
             sam_boxes_t4=sam_out.boxes_t4,
             highlight_gt_idx=obj_idx,
         )
@@ -247,10 +253,12 @@ def evaluate_sample(
         )
 
     return {
-        "caption": sample["caption"],
+        "caption": caption,
         "video_path": sample["video_path"],
         "context_frame_indices": sample["context_frame_indices"].tolist(),
         "prompt_frame_idx": int(prompt_frame_idx),
+        "prompt_mode": sam_out.prompt_mode,
+        "prompt_text": sam_out.prompt_text,
         "best_gt_idx": int(best_gt_idx),
         "best_metrics": best_metric,
         "per_object_metrics": per_object_metrics,
@@ -261,7 +269,8 @@ def evaluate_sample(
             "sam_boxes_t4": list(sam_out.boxes_t4.shape),
             "sam_boxes_norm_t4": list(sam_out.boxes_norm_t4.shape),
         },
-        "prompt_box_xyxy": prompt_box_xyxy.tolist(),
+        "motion_prompt_box_xyxy": motion_prompt_box_xyxy.tolist(),
+        "prompt_box_xyxy": sam_out.prompt_box_xyxy.tolist(),
         "all_gt_video": str(browser_all_gt_path.relative_to(output_dir)),
         "object_videos": object_videos,
     }
@@ -278,6 +287,8 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
                 "case_id": idx,
                 "video_path": r["video_path"],
                 "caption": r["caption"],
+                "prompt_mode": r["prompt_mode"],
+                "prompt_text": r["prompt_text"],
                 "best_gt_idx": r["best_gt_idx"],
                 "best_metrics": r["best_metrics"],
                 "per_object_metrics": r["per_object_metrics"],
@@ -317,12 +328,14 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     <p><b>Caption:</b> {result['caption']}</p>
     <p><b>Context frames:</b> {result['context_frame_indices']}</p>
     <p><b>Prompt frame:</b> {result['prompt_frame_idx']} | <b>Best gt idx:</b> {result['best_gt_idx']}</p>
+    <p><b>Prompt mode:</b> {result['prompt_mode']} | <b>Prompt text:</b> {result['prompt_text']}</p>
     <p><b>Best Metrics:</b> mean_center_l1_px={result['best_metrics']['mean_center_l1_px']:.2f}, inside_box_rate={result['best_metrics']['inside_box_rate']:.3f}, valid_track_points={result['best_metrics']['valid_track_points']}</p>
-    <p><b>Prompt box xyxy:</b> {result['prompt_box_xyxy']}</p>
+    <p><b>Motion prompt box xyxy:</b> {result['motion_prompt_box_xyxy']}</p>
+    <p><b>Final prompt box xyxy:</b> {result['prompt_box_xyxy']}</p>
     <div class="video-grid">
       {''.join(video_cards)}
     </div>
-    <pre>{json.dumps({'best_metrics': result['best_metrics'], 'per_object_metrics': result['per_object_metrics'], 'shapes': result['shapes'], 'prompt_box_xyxy': result['prompt_box_xyxy']}, indent=2, ensure_ascii=False)}</pre>
+    <pre>{json.dumps({'best_metrics': result['best_metrics'], 'per_object_metrics': result['per_object_metrics'], 'shapes': result['shapes'], 'prompt_mode': result['prompt_mode'], 'prompt_text': result['prompt_text'], 'motion_prompt_box_xyxy': result['motion_prompt_box_xyxy'], 'prompt_box_xyxy': result['prompt_box_xyxy']}, indent=2, ensure_ascii=False)}</pre>
   </section>
 """
         )
@@ -331,7 +344,7 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>SAM2 Motion vs Box Supervision</title>
+  <title>SAM2 Script-Style Prompt vs Box Supervision</title>
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
     .case {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
@@ -343,8 +356,8 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   </style>
 </head>
 <body>
-  <h1>SAM2 Motion vs Box Supervision</h1>
-  <p>“其他 gt box” 指同一个 clip 里除当前关注对象之外的其他数据集 object slots。现在不再用灰框简化说明，而是把每个 gt object 都单独导出一个 overlay 视频。每个颜色固定对应一个 gt object；橙框是 motion prompt，绿框是 SAM2 跟踪结果。</p>
+  <h1>SAM2 Script-Style Prompt vs Box Supervision</h1>
+  <p>当前页面按官方脚本思路运行：先从 caption 提取对象词，再用 Grounding DINO 在 prompt frame 上检测，接着用 SAM image predictor 把框细化成 mask，最后把 mask 注册到 SAM2 video predictor 并分段传播。若文本检测失败，则退回 motion proxy box。橙框是最终送进 SAM2 的 prompt，绿框是 SAM2 跟踪结果。</p>
   <p><b>Overall:</b> avg_best_mean_center_l1_px={summary['avg_best_mean_center_l1_px']:.2f}, avg_best_inside_box_rate={summary['avg_best_inside_box_rate']:.3f}, num_cases={summary['num_cases']}</p>
   {''.join(blocks)}
 </body>
