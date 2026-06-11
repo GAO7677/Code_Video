@@ -27,6 +27,8 @@ data:
   split: train
   num_frames: 24
   num_context_frames: 8
+  context_fraction: 0.5
+  random_context_frames: true
   resolution: [704, 1280]
   batch_size: 1
   num_workers: 0

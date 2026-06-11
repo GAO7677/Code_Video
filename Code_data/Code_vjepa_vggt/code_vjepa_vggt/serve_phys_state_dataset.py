@@ -118,7 +118,7 @@ def build_report(samples: list[dict], output_dir: Path) -> Path:
 </head>
 <body>
   <h1>phys_state_0601 Context Sampler Viewer</h1>
-  <p>当前可视化展示：context 不再固定为前 8 帧，而是从整段视频前 50% 时间范围内采样任意 8 帧。下面展示多个 case 的采样结果和 object boxes。</p>
+  <p>当前可视化展示：先在整段视频前 50% 范围内随机一个 context 长度，再使用从第 0 帧开始的前缀帧作为 context video。下面展示多个 case 的前缀采样结果和 object boxes。</p>
   {"".join(blocks)}
 </body>
 </html>

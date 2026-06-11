@@ -62,9 +62,10 @@ class ContextVideoTrainer:
             device=str(self.device),
             input_hw=tuple(model_cfg["vggt_input_hw"]),
         ).to(self.device)
+        latent_dim = int(getattr(self.bundle.config, "in_dim", 16))
         self.object_pooler = ObjectTubeProjector(
             jepa_dim=self.jepa_adapter.encoder.backbone.embed_dim,
-            latent_dim=self.bundle.config.in_dim,
+            latent_dim=latent_dim,
             out_dim=cond_dim,
             jepa_window_radius=int(model_cfg["jepa_window_radius"]),
             latent_window_radius=int(model_cfg["latent_window_radius"]),
@@ -87,6 +88,10 @@ class ContextVideoTrainer:
                 root=data_cfg["root"],
                 split=data_cfg["split"],
                 resolution=tuple(data_cfg["resolution"]),
+                num_context_frames=int(data_cfg["num_context_frames"]),
+                context_fraction=float(data_cfg.get("context_fraction", 0.5)),
+                random_context_frames=bool(data_cfg.get("random_context_frames", True)),
+                seed=int(self.cfg.get("experiment", {}).get("seed", 42)),
             )
         else:
             raise ValueError(f"unsupported dataset_type: {dataset_type}")
@@ -115,7 +120,7 @@ class ContextVideoTrainer:
 
     def _encode_text(self, captions: list[str]) -> list[torch.Tensor]:
         with torch.no_grad():
-            ctx = self.bundle.text_encoder(captions, self.device)
+            ctx = self.bundle.text_encoder(captions, self.bundle.text_encoder.device)
         return [u.to(self.device) for u in ctx]
 
     def _encode_video_latents(self, videos_bcthw: torch.Tensor) -> list[torch.Tensor]:

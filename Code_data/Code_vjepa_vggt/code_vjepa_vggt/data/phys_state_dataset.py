@@ -40,19 +40,22 @@ class PhysStateEpisodeDataset(Dataset):
         return F.interpolate(frames_tchw, size=self.resolution, mode="bilinear", align_corners=False)
 
     def _select_context_indices(self, total_frames: int, idx: int) -> torch.Tensor:
-        max_context_end = max(self.num_context_frames, int(total_frames * self.context_fraction))
-        candidate_count = min(total_frames, max_context_end)
-        candidate = torch.arange(candidate_count, dtype=torch.long)
-        if candidate_count <= self.num_context_frames:
-            return candidate[: self.num_context_frames]
-        if self.random_context_frames:
+        max_context_len = max(1, min(total_frames, int(total_frames * self.context_fraction)))
+        if not self.random_context_frames:
+            context_len = min(self.num_context_frames, max_context_len)
+            return torch.arange(context_len, dtype=torch.long)
+
+        if max_context_len <= 1:
+            return torch.arange(1, dtype=torch.long)
+
+        min_context_len = max(1, min(self.num_context_frames, max_context_len))
+        if min_context_len >= max_context_len:
+            context_len = max_context_len
+        else:
             generator = torch.Generator()
             generator.manual_seed(self.seed + idx)
-            perm = torch.randperm(candidate_count, generator=generator)
-            chosen = candidate[perm[: self.num_context_frames]]
-            return chosen.sort().values
-        lin = torch.linspace(0, candidate_count - 1, self.num_context_frames)
-        return lin.round().long()
+            context_len = int(torch.randint(min_context_len, max_context_len + 1, (1,), generator=generator).item())
+        return torch.arange(context_len, dtype=torch.long)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         meta_path = self.samples[idx]

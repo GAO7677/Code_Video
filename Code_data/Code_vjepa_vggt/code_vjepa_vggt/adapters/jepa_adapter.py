@@ -11,7 +11,8 @@ from code_vjepa_vggt.utils.paths import ensure_upstream_paths
 
 ensure_upstream_paths()
 
-from app.vjepa_2_1.utils import init_video_model  # type: ignore
+import app.vjepa_2_1.models.vision_transformer as video_vit  # type: ignore
+from app.vjepa_2_1.wrappers import MultiSeqWrapper  # type: ignore
 
 
 @dataclass
@@ -39,38 +40,32 @@ class JEPAPatchAdapter(nn.Module):
         self.crop_size = crop_size
         self.patch_size = patch_size
         self.tubelet_size = tubelet_size
-        encoder, _predictor = init_video_model(
-            device=self.device_obj,
+        resolved_model_name = model_name
+        encoder_kwargs = dict(
+            img_size=crop_size,
             patch_size=patch_size,
-            max_num_frames=num_frames,
+            num_frames=num_frames,
             tubelet_size=tubelet_size,
-            model_name=model_name,
-            crop_size=crop_size,
-            pred_depth=6,
-            pred_num_heads=None,
-            pred_embed_dim=pred_embed_dim,
             uniform_power=False,
-            use_mask_tokens=False,
-            num_mask_tokens=2,
-            zero_init_mask_tokens=True,
             use_sdpa=False,
-            use_rope=True,
             use_silu=False,
-            use_pred_silu=False,
             wide_silu=True,
-            is_causal=False,
-            pred_is_causal=False,
             use_activation_checkpointing=False,
-            return_all_tokens=False,
-            chop_last_n_tokens=0,
+            is_causal=False,
             init_type="default",
             img_temporal_dim_size=None,
             n_registers=0,
-            n_registers_predictor=0,
             has_cls_first=False,
             interpolate_rope=False,
             modality_embedding=False,
         )
+        if resolved_model_name == "vit_giant_xformers":
+            resolved_model_name = "vit_giant_xformers_rope"
+        else:
+            encoder_kwargs["use_rope"] = True
+
+        encoder_backbone = video_vit.__dict__[resolved_model_name](**encoder_kwargs)
+        encoder = MultiSeqWrapper(encoder_backbone).to(self.device_obj)
         state = torch.load(ckpt_path, map_location="cpu")
         encoder.load_state_dict(self._select_encoder_state(state), strict=False)
         self.encoder = encoder.eval().requires_grad_(False).to(self.device_obj)

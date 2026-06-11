@@ -26,6 +26,7 @@ class ObjectTubeProjector(nn.Module):
         super().__init__()
         self.jepa_window_radius = jepa_window_radius
         self.latent_window_radius = latent_window_radius
+        self.out_dim = out_dim
         self.jepa_proj = nn.Linear(jepa_dim, out_dim)
         self.latent_proj = nn.Linear(latent_dim, out_dim)
         self.geom_proj = nn.Sequential(
@@ -34,6 +35,11 @@ class ObjectTubeProjector(nn.Module):
             nn.Linear(out_dim, out_dim),
         )
         self.out_norm = nn.LayerNorm(out_dim)
+
+    def _ensure_latent_proj(self, latent_dim: int, device: torch.device) -> None:
+        if self.latent_proj.in_features == latent_dim:
+            return
+        self.latent_proj = nn.Linear(latent_dim, self.out_dim).to(device)
 
     @staticmethod
     def _time_indices(src_frames: int, dst_frames: int, device: torch.device) -> torch.Tensor:
@@ -113,6 +119,7 @@ class ObjectTubeProjector(nn.Module):
         )
 
         jepa_tokens = self.jepa_proj(jepa_local)
+        self._ensure_latent_proj(latent_local.shape[-1], latent_local.device)
         latent_tokens = self.latent_proj(latent_local)
         geom_tokens = self.geom_proj(geom_steps).mean(dim=1)
         object_tokens = self.out_norm(jepa_tokens + latent_tokens + geom_tokens)
