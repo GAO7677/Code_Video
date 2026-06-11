@@ -48,13 +48,9 @@ class PhysStateEpisodeDataset(Dataset):
         if max_context_len <= 1:
             return torch.arange(1, dtype=torch.long)
 
-        min_context_len = max(1, min(self.num_context_frames, max_context_len))
-        if min_context_len >= max_context_len:
-            context_len = max_context_len
-        else:
-            generator = torch.Generator()
-            generator.manual_seed(self.seed + idx)
-            context_len = int(torch.randint(min_context_len, max_context_len + 1, (1,), generator=generator).item())
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + idx)
+        context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
         return torch.arange(context_len, dtype=torch.long)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:

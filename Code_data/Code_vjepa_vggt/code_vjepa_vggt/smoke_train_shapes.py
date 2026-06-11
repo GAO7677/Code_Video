@@ -9,13 +9,15 @@ from pathlib import Path
 
 import torch
 
+from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
 from code_vjepa_vggt.data import PhysStateEpisodeDataset
 from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
-from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector, box_centers_to_tracks
+from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
 from code_vjepa_vggt.utils.config import load_yaml_config
-from code_vjepa_vggt.utils.masks import broadcast_latent_mask, latent_frame_mask
+from code_vjepa_vggt.utils.masks import broadcast_latent_mask, expand_context_latents_to_full, latent_frame_mask
 from code_vjepa_vggt.utils.paths import ensure_upstream_paths
+from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_l1_loss
 
 ensure_upstream_paths()
 
@@ -126,10 +128,37 @@ def main() -> None:
     with torch.no_grad():
         jepa_out = jepa(context_video)
 
-    tracks, vis, conf = box_centers_to_tracks(
-        context_boxes,
+    frames_bthwc = context_video.permute(0, 2, 3, 4, 1).float()
+    frames_bthwc = (frames_bthwc + 1.0) / 2.0
+    vggt = VGGTTrackAdapter(
+        model_path=model_cfg.get("vggt_model_path"),
+        num_queries=int(model_cfg["object_num_queries"]),
+        device=str(device),
+        input_hw=tuple(model_cfg["vggt_input_hw"]),
+    ).to(device)
+    with torch.no_grad():
+        vggt_out = vggt(frames_bthwc)
+    tracks = vggt_out.tracks
+    vis = vggt_out.visibility
+    conf = vggt_out.confidence
+    track_image_hw = vggt_out.image_hw
+
+    scale_x = float(context_video.shape[-1]) / float(track_image_hw[1])
+    scale_y = float(context_video.shape[-2]) / float(track_image_hw[0])
+    tracks_native = tracks.clone()
+    tracks_native[..., 0] *= scale_x
+    tracks_native[..., 1] *= scale_y
+    track_alignment = align_tracks_to_boxes(
+        tracks=tracks_native,
+        gt_boxes=context_boxes,
         image_hw=(context_video.shape[-2], context_video.shape[-1]),
     )
+    track_box_loss = track_box_l1_loss(
+        tracks=tracks_native,
+        matched_gt_centers=track_alignment.matched_gt_centers,
+        matched_gt_valid=track_alignment.matched_gt_valid,
+    )
+
     latent_dim = int(getattr(wan_cfg, "in_dim", 16))
     object_pooler = ObjectTubeProjector(
         jepa_dim=jepa.encoder.backbone.embed_dim,
@@ -145,7 +174,7 @@ def main() -> None:
             tracks=tracks,
             visibility=vis,
             confidence=conf,
-            track_image_hw=(context_video.shape[-2], context_video.shape[-1]),
+            track_image_hw=track_image_hw,
         )
 
     fuser = ContextTokenFuser(
@@ -169,7 +198,8 @@ def main() -> None:
     )
     context_mask = broadcast_latent_mask(context_mask_t, latent_clean)
     future_mask = broadcast_latent_mask(future_mask_t, latent_clean)
-    x_t = context_mask * context_clean + (1.0 - context_mask) * x_t_noisy
+    context_clean_full = expand_context_latents_to_full(context_clean, latent_clean)
+    x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t_noisy
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (wan_cfg.patch_size[1] * wan_cfg.patch_size[2])
     t_tokens = torch.full((1, seq_len), timestep_scalar.item(), device=device)
 
@@ -180,6 +210,7 @@ def main() -> None:
         "caption": sample["caption"],
         "video_path": sample["video_path"],
         "context_frame_indices": sample["context_frame_indices"].tolist(),
+        "track_box_l1_loss": float(track_box_loss.item()),
         "shapes": {
             "video": list(video.shape),
             "context_video": list(context_video.shape),
@@ -188,9 +219,16 @@ def main() -> None:
             "full_latents": shape_of_list(full_latents),
             "context_latents": shape_of_list(context_latents),
             "jepa_patch_tokens": list(jepa_out.patch_tokens.shape),
+            "vggt_query_points": list(vggt_out.query_points.shape),
             "tracks": list(tracks.shape),
+            "tracks_native_xy": list(tracks_native.shape),
             "visibility": list(vis.shape),
             "confidence": list(conf.shape),
+            "track_image_hw": list(track_image_hw),
+            "matched_gt_indices": list(track_alignment.matched_gt_indices.shape),
+            "matched_gt_centers": list(track_alignment.matched_gt_centers.shape),
+            "matched_gt_valid": list(track_alignment.matched_gt_valid.shape),
+            "track_pair_cost": list(track_alignment.pair_cost.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
             "object_latent_tokens": list(object_out.latent_tokens.shape),
             "object_geom_tokens": list(object_out.geom_tokens.shape),
@@ -203,6 +241,7 @@ def main() -> None:
             "future_mask_t": list(future_mask_t.shape),
             "context_mask": list(context_mask.shape),
             "future_mask": list(future_mask.shape),
+            "context_clean_full": list(context_clean_full.shape),
             "x_t_after_context_restore": list(x_t.shape),
             "t_tokens": list(t_tokens.shape),
             "seq_len": seq_len,

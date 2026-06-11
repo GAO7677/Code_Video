@@ -12,9 +12,10 @@ from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
 from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
-from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector, box_centers_to_tracks
+from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.utils.masks import broadcast_latent_mask, expand_context_latents_to_full, latent_frame_mask
+from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_l1_loss
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
-from code_vjepa_vggt.utils.masks import broadcast_latent_mask, latent_frame_mask
 
 
 @dataclass
@@ -147,24 +148,13 @@ class ContextVideoTrainer:
         jepa_out = self.jepa_adapter(context_videos)
         frames_bthwc = context_videos.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        if "context_boxes" in batch:
-            context_boxes = batch["context_boxes"].to(self.device)
-            tracks, vis, conf = box_centers_to_tracks(
-                context_boxes,
-                image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
-            )
-            vggt_out = None
-            track_image_hw = (context_videos.shape[-2], context_videos.shape[-1])
-            track_used_model = False
-            query_points = tracks[:, 0]
-        else:
-            vggt_out = self.vggt_adapter(frames_bthwc)
-            tracks = vggt_out.tracks
-            vis = vggt_out.visibility
-            conf = vggt_out.confidence
-            track_image_hw = vggt_out.image_hw
-            track_used_model = bool(vggt_out.used_model)
-            query_points = vggt_out.query_points
+        vggt_out = self.vggt_adapter(frames_bthwc)
+        tracks = vggt_out.tracks
+        vis = vggt_out.visibility
+        conf = vggt_out.confidence
+        track_image_hw = vggt_out.image_hw
+        track_used_model = bool(vggt_out.used_model)
+        query_points = vggt_out.query_points
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latent_batch,
@@ -175,11 +165,31 @@ class ContextVideoTrainer:
         )
         fused_context = self.context_fuser(text_ctx, object_out.object_tokens)
 
+        track_alignment = None
+        track_box_loss = None
+        if "context_boxes" in batch:
+            context_boxes = batch["context_boxes"].to(self.device)
+            scale_x = float(context_videos.shape[-1]) / float(track_image_hw[1])
+            scale_y = float(context_videos.shape[-2]) / float(track_image_hw[0])
+            tracks_native = tracks.clone()
+            tracks_native[..., 0] *= scale_x
+            tracks_native[..., 1] *= scale_y
+            track_alignment = align_tracks_to_boxes(
+                tracks=tracks_native,
+                gt_boxes=context_boxes,
+                image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
+            )
+            track_box_loss = track_box_l1_loss(
+                tracks=tracks_native,
+                matched_gt_centers=track_alignment.matched_gt_centers,
+                matched_gt_valid=track_alignment.matched_gt_valid,
+            )
+
         debug = {
             "说明": {
                 "context_video": "输入给 JEPA / VGGT / VAE 的上下文视频片段",
                 "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]",
-                "vggt_tracks": "若数据集中提供了 boxes，则这里优先使用 box center 生成 object tracks；否则回退到 VGGT / query-point tracks [B,Tctx,K,2]",
+                "vggt_tracks": "当前主路径固定使用 VGGT query-point tracks 作为 object 锚点 [B,Tctx,K,2]；数据集 boxes 只用于训练监督与校验",
                 "object_tokens": "按轨迹在 JEPA 局部 tube + VAE 局部 latent + 几何轨迹特征上池化后得到的 object state tokens [B,K,4096]",
                 "fused_context": "送入 Wan DiT cross-attention 的上下文 token，等于截断后的 text tokens + object tokens",
             },
@@ -210,6 +220,13 @@ class ContextVideoTrainer:
             debug["future_states"] = list(batch["future_states"].shape)
             debug["appearance"] = list(batch["appearance"].shape)
             debug["camera"] = list(batch["camera"].shape)
+            if track_alignment is not None and track_box_loss is not None:
+                debug["matched_gt_indices"] = list(track_alignment.matched_gt_indices.shape)
+                debug["matched_gt_centers"] = list(track_alignment.matched_gt_centers.shape)
+                debug["matched_gt_valid"] = list(track_alignment.matched_gt_valid.shape)
+                debug["track_pair_cost"] = list(track_alignment.pair_cost.shape)
+                debug["track_box_l1_loss"] = float(track_box_loss.item())
+                debug["tracks_native_xy"] = list(tracks_native.shape)
         return {
             "videos": videos,
             "context_videos": context_videos,
@@ -218,6 +235,7 @@ class ContextVideoTrainer:
             "full_latents": full_latents,
             "context_latents": context_latents,
             "fused_context": fused_context,
+            "track_box_loss": track_box_loss,
             "debug": debug,
         }
 
@@ -231,6 +249,7 @@ class ContextVideoTrainer:
         full_latents = prepared["full_latents"]
         context_latents = prepared["context_latents"]
         fused_context = prepared["fused_context"]
+        track_box_loss = prepared["track_box_loss"]
 
         losses = []
         for i, latent_clean in enumerate(full_latents):
@@ -253,7 +272,8 @@ class ContextVideoTrainer:
             )
             context_mask = broadcast_latent_mask(context_mask_t, latent_clean)
             future_mask = broadcast_latent_mask(future_mask_t, latent_clean)
-            x_t = context_mask * context_clean + (1.0 - context_mask) * x_t
+            context_clean_full = expand_context_latents_to_full(context_clean, latent_clean)
+            x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
 
             seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (
                 self.bundle.config.patch_size[1] * self.bundle.config.patch_size[2]
@@ -273,6 +293,8 @@ class ContextVideoTrainer:
             losses.append(loss_main)
 
         loss = torch.stack(losses).mean()
+        if track_box_loss is not None:
+            loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_align", 0.0)) * track_box_loss
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
         self.optimizer.step()
