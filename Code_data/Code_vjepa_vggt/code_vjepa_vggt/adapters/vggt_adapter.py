@@ -51,10 +51,33 @@ class VGGTTrackAdapter(nn.Module):
         points = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)[: self.num_queries]
         return points.unsqueeze(0).expand(batch_size, -1, -1).contiguous()
 
-    def forward(self, frames_bthwc_01: torch.Tensor) -> VGGTTrackOutput:
+    @staticmethod
+    def _resize_query_points(
+        query_points: torch.Tensor,
+        *,
+        src_hw: tuple[int, int],
+        dst_hw: tuple[int, int],
+    ) -> torch.Tensor:
+        scale_x = float(dst_hw[1]) / max(float(src_hw[1]), 1.0)
+        scale_y = float(dst_hw[0]) / max(float(src_hw[0]), 1.0)
+        out = query_points.clone()
+        out[..., 0] *= scale_x
+        out[..., 1] *= scale_y
+        return out
+
+    def forward(
+        self,
+        frames_bthwc_01: torch.Tensor,
+        *,
+        query_points_prior: torch.Tensor | None = None,
+        query_image_hw: tuple[int, int] | None = None,
+    ) -> VGGTTrackOutput:
         batch_size, frames, height, width, _ = frames_bthwc_01.shape
         if self.model is None:
-            query_points = self._make_uniform_queries(batch_size, (height, width), frames_bthwc_01.device)
+            if query_points_prior is not None:
+                query_points = query_points_prior.to(device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
+            else:
+                query_points = self._make_uniform_queries(batch_size, (height, width), frames_bthwc_01.device)
             tracks = query_points.unsqueeze(1).expand(-1, frames, -1, -1).clone()
             vis = torch.ones(batch_size, frames, self.num_queries, device=frames_bthwc_01.device)
             conf = torch.ones(batch_size, frames, self.num_queries, device=frames_bthwc_01.device)
@@ -74,7 +97,16 @@ class VGGTTrackAdapter(nn.Module):
             mode="bilinear",
             align_corners=False,
         ).view(batch_size, frames, 3, self.input_hw[0], self.input_hw[1])
-        query_points = self._make_uniform_queries(batch_size, self.input_hw, resized.device)
+        if query_points_prior is not None:
+            query_points = query_points_prior.to(device=resized.device, dtype=resized.dtype)
+            src_hw = query_image_hw if query_image_hw is not None else (height, width)
+            query_points = self._resize_query_points(
+                query_points,
+                src_hw=src_hw,
+                dst_hw=self.input_hw,
+            )
+        else:
+            query_points = self._make_uniform_queries(batch_size, self.input_hw, resized.device)
         with torch.no_grad():
             aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized)
             track_list, vis, conf = self.model.track_head(
