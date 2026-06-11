@@ -44,6 +44,19 @@ def _mask_to_box_xyxy(mask_hw: np.ndarray) -> np.ndarray:
     return np.asarray([float(cols.min()), float(rows.min()), float(cols.max()), float(rows.max())], dtype=np.float32)
 
 
+def _box_valid(box_xyxy: np.ndarray) -> bool:
+    if box_xyxy.shape != (4,):
+        return False
+    return bool(float(box_xyxy[2] - box_xyxy[0]) > 1e-6 and float(box_xyxy[3] - box_xyxy[1]) > 1e-6)
+
+
+def _frame_to_rgb_uint8(frame_chw_01: np.ndarray) -> np.ndarray:
+    return np.transpose(
+        (np.clip(frame_chw_01, 0.0, 1.0) * 255.0).round().astype(np.uint8),
+        (1, 2, 0),
+    )
+
+
 def build_motion_prompt_box(frames_tchw_01: np.ndarray, prompt_frame_idx: int, history_window: int = 8) -> np.ndarray:
     start = max(0, int(prompt_frame_idx) - int(history_window) + 1)
     clip = frames_tchw_01[start : prompt_frame_idx + 1]
@@ -111,11 +124,15 @@ class SAM2MotionTracker:
         device: str = 'cuda',
         model_cfg: str = '/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml',
         checkpoint_path: str = '/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt',
+        segment_len: int = 8,
     ) -> None:
         self.device = device
         self.model_cfg = model_cfg
         self.checkpoint_path = checkpoint_path
+        self.segment_len = int(segment_len)
         self._predictor = None
+        self._image_model = None
+        self._image_predictor = None
 
     def _resolve_model_cfg(self) -> str:
         cfg_path = Path(self.model_cfg)
@@ -146,6 +163,98 @@ class SAM2MotionTracker:
         self._predictor = predictor
         return predictor
 
+    def _build_image_predictor(self):
+        if self._image_predictor is not None:
+            return self._image_predictor
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+        image_model = build_sam2(
+            self._resolve_model_cfg(),
+            str(self.checkpoint_path),
+            device=self.device,
+        )
+        self._image_model = image_model
+        self._image_predictor = SAM2ImagePredictor(image_model)
+        return self._image_predictor
+
+    def _refine_box_to_mask(self, frame_chw_01: np.ndarray, box_xyxy: np.ndarray) -> np.ndarray | None:
+        if not _box_valid(box_xyxy):
+            return None
+        image_predictor = self._build_image_predictor()
+        image_predictor.set_image(_frame_to_rgb_uint8(frame_chw_01))
+        masks, scores, _ = image_predictor.predict(
+            point_coords=None,
+            point_labels=None,
+            box=box_xyxy.astype(np.float32),
+            multimask_output=False,
+        )
+        if masks.ndim == 4:
+            masks = masks.squeeze(1)
+        if masks.ndim == 3:
+            best_idx = int(np.argmax(scores.reshape(-1)))
+            mask = masks[best_idx]
+        elif masks.ndim == 2:
+            mask = masks
+        else:
+            return None
+        mask = (mask > 0).astype(np.uint8)
+        if int(mask.sum()) <= 0:
+            return None
+        return mask
+
+    def _propagate_segment(
+        self,
+        *,
+        predictor,
+        frame_dir: Path,
+        frames_tchw_01: np.ndarray,
+        anchor_idx: int,
+        current_box_xyxy: np.ndarray,
+        reverse: bool,
+        target_masks: np.ndarray,
+    ) -> tuple[int, np.ndarray] | None:
+        state = predictor.init_state(
+            video_path=str(frame_dir),
+            offload_video_to_cpu=True,
+            async_loading_frames=False,
+        )
+        anchor_mask = self._refine_box_to_mask(frames_tchw_01[int(anchor_idx)], current_box_xyxy)
+        if anchor_mask is not None:
+            predictor.add_new_mask(
+                inference_state=state,
+                frame_idx=int(anchor_idx),
+                obj_id=1,
+                mask=anchor_mask.astype(np.uint8),
+            )
+        else:
+            predictor.add_new_points_or_box(
+                inference_state=state,
+                frame_idx=int(anchor_idx),
+                obj_id=1,
+                box=current_box_xyxy.astype(np.float32),
+            )
+
+        seen_frame_indices: list[int] = []
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
+            state,
+            start_frame_idx=int(anchor_idx),
+            max_frame_num_to_track=int(self.segment_len),
+            reverse=reverse,
+        ):
+            if len(out_obj_ids) == 0:
+                continue
+            mask = (out_mask_logits[0] > 0.0).detach().cpu().numpy().squeeze(0).astype(np.uint8)
+            target_masks[int(out_frame_idx)] = mask
+            seen_frame_indices.append(int(out_frame_idx))
+
+        if not seen_frame_indices:
+            return None
+
+        next_anchor_idx = min(seen_frame_indices) if reverse else max(seen_frame_indices)
+        next_box_xyxy = _mask_to_box_xyxy(target_masks[next_anchor_idx])
+        return next_anchor_idx, next_box_xyxy
+
     def track(self, frames_tchw_01: np.ndarray, prompt_frame_idx: int, prompt_box_xyxy: np.ndarray) -> SAM2TrackOutput:
         predictor = self._build()
         num_frames, _, height, width = frames_tchw_01.shape
@@ -157,25 +266,31 @@ class SAM2MotionTracker:
             _save_frames_to_dir(frames_tchw_01, frame_dir)
             with torch.inference_mode():
                 for direction in ('forward', 'reverse'):
-                    state = predictor.init_state(
-                        video_path=str(frame_dir),
-                        offload_video_to_cpu=True,
-                        async_loading_frames=False,
-                    )
-                    predictor.add_new_points_or_box(
-                        inference_state=state,
-                        frame_idx=int(prompt_frame_idx),
-                        obj_id=1,
-                        box=prompt_box_xyxy.astype(np.float32),
-                    )
-                    for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
-                        state,
-                        start_frame_idx=int(prompt_frame_idx),
-                        reverse=(direction == 'reverse'),
-                    ):
-                        mask = (out_mask_logits[0] > 0.0).detach().cpu().numpy().squeeze(0).astype(np.uint8)
-                        target = reverse_masks if direction == 'reverse' else forward_masks
-                        target[int(out_frame_idx)] = mask
+                    reverse = direction == 'reverse'
+                    target = reverse_masks if reverse else forward_masks
+                    current_anchor_idx = int(prompt_frame_idx)
+                    current_box_xyxy = prompt_box_xyxy.astype(np.float32).copy()
+                    while _box_valid(current_box_xyxy):
+                        segment_out = self._propagate_segment(
+                            predictor=predictor,
+                            frame_dir=frame_dir,
+                            frames_tchw_01=frames_tchw_01,
+                            anchor_idx=current_anchor_idx,
+                            current_box_xyxy=current_box_xyxy,
+                            reverse=reverse,
+                            target_masks=target,
+                        )
+                        if segment_out is None:
+                            break
+                        next_anchor_idx, next_box_xyxy = segment_out
+                        if next_anchor_idx == current_anchor_idx:
+                            break
+                        current_anchor_idx = int(next_anchor_idx)
+                        current_box_xyxy = next_box_xyxy.astype(np.float32)
+                        if reverse and current_anchor_idx <= 0:
+                            break
+                        if (not reverse) and current_anchor_idx >= num_frames - 1:
+                            break
 
         masks = forward_masks.copy()
         before_prompt = np.arange(num_frames) < int(prompt_frame_idx)
