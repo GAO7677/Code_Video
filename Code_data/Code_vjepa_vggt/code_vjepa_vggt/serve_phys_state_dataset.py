@@ -164,7 +164,10 @@ def main() -> None:
         def __init__(self, *handler_args, **handler_kwargs):
             super().__init__(*handler_args, directory=str(output_dir), **handler_kwargs)
 
-    with socketserver.TCPServer(("0.0.0.0", args.port), Handler) as httpd:
+    class ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    with ReusableTCPServer(("0.0.0.0", args.port), Handler) as httpd:
         print(f"serving report at http://0.0.0.0:{args.port}/index.html")
         httpd.serve_forever()
 
