@@ -162,7 +162,7 @@ class SpatialObjectQueryDecoder(nn.Module):
         return slots.view(batch, steps, num_objects, hidden_dim)
 
 
-class StateTokenHead(nn.Module):
+class ConditionMapHead(nn.Module):
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.proj = nn.Sequential(
@@ -301,7 +301,7 @@ class WanStateLatentPredictorV2(nn.Module):
             num_heads=self.config.num_heads,
             dropout=self.config.dropout,
         )
-        self.state_token_head = StateTokenHead(hidden_dim=self.model_dim)
+        self.condition_map_head = ConditionMapHead(hidden_dim=self.model_dim)
         self.memory_token_head = MemoryTokenHead(hidden_dim=self.model_dim)
         self.state_heads = GroupedStateHeads(
             latent_dim=self.model_dim,
@@ -459,6 +459,76 @@ class WanStateLatentPredictorV2(nn.Module):
         future_delta = self.future_delta_proj(future_hidden)
         return context_tail + torch.cumsum(future_delta, dim=1)
 
+    def _predict_future_world(
+        self,
+        context_latents: torch.Tensor,
+        camera: torch.Tensor,
+        prompt_context: torch.Tensor,
+        prompt_mask: torch.Tensor,
+        future_latent_steps: int,
+        future_camera: torch.Tensor | None = None,
+    ) -> Dict[str, torch.Tensor]:
+        prompt_tokens, prompt_summary = self._encode_prompt_context(prompt_context, prompt_mask)
+        context_state_maps = self._build_context_state_maps(
+            context_latents,
+            camera,
+            prompt_tokens,
+            prompt_mask,
+            prompt_summary,
+        )
+        future_state_maps = self._build_future_state_maps(
+            context_state_maps,
+            prompt_tokens,
+            prompt_mask,
+            future_latent_steps,
+            future_camera=future_camera,
+        )
+        return {
+            "context_state_maps": context_state_maps,
+            "future_state_maps": future_state_maps,
+            "prompt_tokens": prompt_tokens,
+        }
+
+    def _readout_object_states(
+        self,
+        context_state_maps: torch.Tensor,
+        future_state_maps: torch.Tensor,
+        *,
+        num_objects: int,
+    ) -> Dict[str, torch.Tensor]:
+        context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
+        future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
+        context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
+        future_grouped = self.state_heads(future_object_slots, num_objects=num_objects)
+        return {
+            "context_object_slots": context_object_slots,
+            "future_object_slots": future_object_slots,
+            "context_state_predictions": context_grouped["state"],
+            "future_state_predictions": future_grouped["state"],
+            "context_geom_predictions": context_grouped["geom"],
+            "context_motion_predictions": context_grouped["motion"],
+            "context_vis_predictions": context_grouped["vis"],
+            "context_vis_logits": context_grouped["vis_logits"],
+            "future_geom_predictions": future_grouped["geom"],
+            "future_motion_predictions": future_grouped["motion"],
+            "future_vis_predictions": future_grouped["vis"],
+            "future_vis_logits": future_grouped["vis_logits"],
+        }
+
+    def _project_wan_conditions(
+        self,
+        future_state_maps: torch.Tensor,
+        context_object_slots: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        projected_condition_maps = self.condition_map_head(future_state_maps)
+        condition_maps = projected_condition_maps.permute(0, 1, 4, 2, 3).contiguous()
+        memory_tokens = self.memory_token_head(context_object_slots)
+        return {
+            "projected_condition_maps": projected_condition_maps,
+            "condition_maps": condition_maps,
+            "memory_tokens": memory_tokens,
+        }
+
     def forward(
         self,
         context_latents: torch.Tensor,
@@ -491,49 +561,46 @@ class WanStateLatentPredictorV2(nn.Module):
                 f"{tuple(prompt_mask.shape)}"
             )
 
-        prompt_tokens, prompt_summary = self._encode_prompt_context(prompt_context, prompt_mask)
-        context_state_maps = self._build_context_state_maps(
+        world_outputs = self._predict_future_world(
             context_latents,
             camera,
-            prompt_tokens,
-            prompt_mask,
-            prompt_summary,
-        )
-        future_state_maps = self._build_future_state_maps(
-            context_state_maps,
-            prompt_tokens,
+            prompt_context,
             prompt_mask,
             future_latent_steps,
             future_camera=future_camera,
         )
-
-        context_object_slots = self.object_query_decoder(context_state_maps, num_objects=num_objects)
-        future_object_slots = self.object_query_decoder(future_state_maps, num_objects=num_objects)
-        projected_future_maps = self.state_token_head(future_state_maps)
-        condition_maps = projected_future_maps.permute(0, 1, 4, 2, 3).contiguous()
-        memory_tokens = self.memory_token_head(context_object_slots)
-
-        context_grouped = self.state_heads(context_object_slots, num_objects=num_objects)
-        future_grouped = self.state_heads(future_object_slots, num_objects=num_objects)
+        readout_outputs = self._readout_object_states(
+            world_outputs["context_state_maps"],
+            world_outputs["future_state_maps"],
+            num_objects=num_objects,
+        )
+        condition_outputs = self._project_wan_conditions(
+            world_outputs["future_state_maps"],
+            readout_outputs["context_object_slots"],
+        )
         return {
-            "context_state_maps": context_state_maps,
-            "future_state_maps": future_state_maps,
-            "condition_maps": condition_maps,
-            "memory_tokens": memory_tokens,
-            "context_state_predictions": context_grouped["state"],
-            "future_state_predictions": future_grouped["state"],
-            "context_geom_predictions": context_grouped["geom"],
-            "context_motion_predictions": context_grouped["motion"],
-            "context_vis_predictions": context_grouped["vis"],
-            "context_vis_logits": context_grouped["vis_logits"],
-            "future_geom_predictions": future_grouped["geom"],
-            "future_motion_predictions": future_grouped["motion"],
-            "future_vis_predictions": future_grouped["vis"],
-            "future_vis_logits": future_grouped["vis_logits"],
-            "debug_context_object_slots": context_object_slots,
-            "debug_future_object_slots": future_object_slots,
-            "debug_projected_future_state_maps": projected_future_maps,
-            "debug_prompt_tokens": prompt_tokens,
+            "context_state_maps": world_outputs["context_state_maps"],
+            "future_state_maps": world_outputs["future_state_maps"],
+            "condition_maps": condition_outputs["condition_maps"],
+            "memory_tokens": condition_outputs["memory_tokens"],
+            "context_state_predictions": readout_outputs["context_state_predictions"],
+            "future_state_predictions": readout_outputs["future_state_predictions"],
+            "context_geom_predictions": readout_outputs["context_geom_predictions"],
+            "context_motion_predictions": readout_outputs["context_motion_predictions"],
+            "context_vis_predictions": readout_outputs["context_vis_predictions"],
+            "context_vis_logits": readout_outputs["context_vis_logits"],
+            "future_geom_predictions": readout_outputs["future_geom_predictions"],
+            "future_motion_predictions": readout_outputs["future_motion_predictions"],
+            "future_vis_predictions": readout_outputs["future_vis_predictions"],
+            "future_vis_logits": readout_outputs["future_vis_logits"],
+            "context_object_slots": readout_outputs["context_object_slots"],
+            "future_object_slots": readout_outputs["future_object_slots"],
+            "projected_condition_maps": condition_outputs["projected_condition_maps"],
+            "prompt_tokens": world_outputs["prompt_tokens"],
+            "debug_context_object_slots": readout_outputs["context_object_slots"],
+            "debug_future_object_slots": readout_outputs["future_object_slots"],
+            "debug_projected_future_state_maps": condition_outputs["projected_condition_maps"],
+            "debug_prompt_tokens": world_outputs["prompt_tokens"],
         }
 
 
