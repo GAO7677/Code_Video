@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
-from code_vjepa_vggt.data import BallBlockVideoDataset
+from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
 from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
-from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector, box_centers_to_tracks
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
 from code_vjepa_vggt.utils.masks import broadcast_latent_mask, latent_frame_mask
 
@@ -74,12 +74,22 @@ class ContextVideoTrainer:
             max_context_len=self.bundle.config.text_len,
         ).to(self.device)
 
-        self.dataset = BallBlockVideoDataset(
-            root=data_cfg["root"],
-            num_frames=data_cfg["num_frames"],
-            num_context_frames=data_cfg["num_context_frames"],
-            resolution=tuple(data_cfg["resolution"]),
-        )
+        dataset_type = data_cfg.get("dataset_type", "ball_block_json")
+        if dataset_type == "ball_block_json":
+            self.dataset = BallBlockVideoDataset(
+                root=data_cfg["root"],
+                num_frames=data_cfg["num_frames"],
+                num_context_frames=data_cfg["num_context_frames"],
+                resolution=tuple(data_cfg["resolution"]),
+            )
+        elif dataset_type == "phys_state_episode":
+            self.dataset = PhysStateEpisodeDataset(
+                root=data_cfg["root"],
+                split=data_cfg["split"],
+                resolution=tuple(data_cfg["resolution"]),
+            )
+        else:
+            raise ValueError(f"unsupported dataset_type: {dataset_type}")
         self.loader = DataLoader(
             self.dataset,
             batch_size=data_cfg["batch_size"],
@@ -132,38 +142,69 @@ class ContextVideoTrainer:
         jepa_out = self.jepa_adapter(context_videos)
         frames_bthwc = context_videos.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        vggt_out = self.vggt_adapter(frames_bthwc)
+        if "context_boxes" in batch:
+            context_boxes = batch["context_boxes"].to(self.device)
+            tracks, vis, conf = box_centers_to_tracks(
+                context_boxes,
+                image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
+            )
+            vggt_out = None
+            track_image_hw = (context_videos.shape[-2], context_videos.shape[-1])
+            track_used_model = False
+            query_points = tracks[:, 0]
+        else:
+            vggt_out = self.vggt_adapter(frames_bthwc)
+            tracks = vggt_out.tracks
+            vis = vggt_out.visibility
+            conf = vggt_out.confidence
+            track_image_hw = vggt_out.image_hw
+            track_used_model = bool(vggt_out.used_model)
+            query_points = vggt_out.query_points
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latent_batch,
-            tracks=vggt_out.tracks,
-            visibility=vggt_out.visibility,
-            confidence=vggt_out.confidence,
-            track_image_hw=vggt_out.image_hw,
+            tracks=tracks,
+            visibility=vis,
+            confidence=conf,
+            track_image_hw=track_image_hw,
         )
         fused_context = self.context_fuser(text_ctx, object_out.object_tokens)
 
         debug = {
+            "说明": {
+                "context_video": "输入给 JEPA / VGGT / VAE 的上下文视频片段",
+                "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]",
+                "vggt_tracks": "若数据集中提供了 boxes，则这里优先使用 box center 生成 object tracks；否则回退到 VGGT / query-point tracks [B,Tctx,K,2]",
+                "object_tokens": "按轨迹在 JEPA 局部 tube + VAE 局部 latent + 几何轨迹特征上池化后得到的 object state tokens [B,K,4096]",
+                "fused_context": "送入 Wan DiT cross-attention 的上下文 token，等于截断后的 text tokens + object tokens",
+            },
             "video": list(videos.shape),
             "context_video": list(context_videos.shape),
             "text_context": self._shape_list(text_ctx),
             "full_latents": self._shape_list(full_latents),
             "context_latents": self._shape_list(context_latents),
             "jepa_patch_tokens": list(jepa_out.patch_tokens.shape),
-            "vggt_query_points": list(vggt_out.query_points.shape),
-            "vggt_tracks": list(vggt_out.tracks.shape),
-            "vggt_visibility": list(vggt_out.visibility.shape),
+            "vggt_query_points": list(query_points.shape),
+            "vggt_tracks": list(tracks.shape),
+            "vggt_visibility": list(vis.shape),
             "object_tokens": list(object_out.object_tokens.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
             "object_latent_tokens": list(object_out.latent_tokens.shape),
             "object_geom_tokens": list(object_out.geom_tokens.shape),
             "fused_context": self._shape_list(fused_context),
-            "vggt_used_model": bool(vggt_out.used_model),
-            "vggt_track_image_hw": list(vggt_out.image_hw),
+            "vggt_used_model": track_used_model,
+            "vggt_track_image_hw": list(track_image_hw),
             "video_path": batch["video_path"][0] if isinstance(batch["video_path"], list) else batch["video_path"],
             "frame_indices": batch["frame_indices"][0].tolist() if batch["frame_indices"].ndim == 2 else batch["frame_indices"].tolist(),
             "caption": captions[0] if captions else "",
         }
+        if "context_boxes" in batch:
+            debug["context_boxes"] = list(batch["context_boxes"].shape)
+            debug["future_boxes"] = list(batch["future_boxes"].shape)
+            debug["context_states"] = list(batch["context_states"].shape)
+            debug["future_states"] = list(batch["future_states"].shape)
+            debug["appearance"] = list(batch["appearance"].shape)
+            debug["camera"] = list(batch["camera"].shape)
         return {
             "videos": videos,
             "context_videos": context_videos,
@@ -270,7 +311,7 @@ class ContextVideoTrainer:
 </head>
 <body>
   <h1>Object-Centric Wan Context Report</h1>
-  <p>query-point tracks drive object anchors; JEPA local tubes and VAE local latents are pooled into object tokens.</p>
+  <p>中文说明：用 query-point tracks 定义 object 锚点；沿着这些轨迹从 V-JEPA 局部时空 tube 和 Wan VAE 局部 latent 里池化，再融合成 object tokens，最后拼进 Wan DiT 的 cross-attention context。</p>
   <div class="grid">
     <div>
       <h2>Source Video</h2>

@@ -122,3 +122,22 @@ class ObjectTubeProjector(nn.Module):
             latent_tokens=latent_tokens,
             geom_tokens=geom_tokens,
         )
+
+
+def box_centers_to_tracks(
+    boxes: torch.Tensor,
+    image_hw: tuple[int, int],
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    # boxes: [B,T,K,4], normalized xyxy in [0,1], zero box means invalid
+    x0 = boxes[..., 0]
+    y0 = boxes[..., 1]
+    x1 = boxes[..., 2]
+    y1 = boxes[..., 3]
+    valid = (x1 - x0 > eps) & (y1 - y0 > eps)
+    cx = 0.5 * (x0 + x1) * image_hw[1]
+    cy = 0.5 * (y0 + y1) * image_hw[0]
+    tracks = torch.stack([cx, cy], dim=-1)
+    vis = valid.float()
+    conf = valid.float()
+    return tracks, vis, conf
