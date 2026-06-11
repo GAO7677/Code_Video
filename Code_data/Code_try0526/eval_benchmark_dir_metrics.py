@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -74,7 +75,16 @@ def parse_args() -> argparse.Namespace:
 
 def iter_json_paths(input_root: Path) -> list[Path]:
     search_root = input_root / "output" if (input_root / "output").is_dir() else input_root
-    return sorted(path for path in search_root.rglob("*.json") if path.is_file())
+    json_paths: list[Path] = []
+    for root, _, files in os.walk(search_root, followlinks=True):
+        root_path = Path(root)
+        for name in files:
+            if not name.endswith(".json"):
+                continue
+            path = root_path / name
+            if path.is_file():
+                json_paths.append(path)
+    return sorted(json_paths)
 
 
 def slice_json_paths(json_paths: list[Path], args: argparse.Namespace) -> list[Path]:
