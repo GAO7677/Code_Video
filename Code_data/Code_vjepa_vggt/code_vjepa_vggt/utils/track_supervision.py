@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 import torch
 
+try:
+    from scipy.optimize import linear_sum_assignment
+except ImportError:  # pragma: no cover
+    linear_sum_assignment = None
+
 
 @dataclass
 class TrackBoxAlignment:
@@ -11,6 +16,28 @@ class TrackBoxAlignment:
     matched_gt_centers: torch.Tensor
     matched_gt_valid: torch.Tensor
     pair_cost: torch.Tensor
+
+
+def _greedy_linear_assignment(cost_matrix: torch.Tensor) -> tuple[list[int], list[int]]:
+    rows = list(range(int(cost_matrix.shape[0])))
+    cols = list(range(int(cost_matrix.shape[1])))
+    out_rows: list[int] = []
+    out_cols: list[int] = []
+    remaining = cost_matrix.clone()
+    while rows and cols:
+        flat_idx = int(torch.argmin(remaining).item())
+        row_local = flat_idx // remaining.shape[1]
+        col_local = flat_idx % remaining.shape[1]
+        out_rows.append(rows.pop(row_local))
+        out_cols.append(cols.pop(col_local))
+        if not rows or not cols:
+            break
+        row_mask = torch.ones(remaining.shape[0], dtype=torch.bool, device=remaining.device)
+        col_mask = torch.ones(remaining.shape[1], dtype=torch.bool, device=remaining.device)
+        row_mask[row_local] = False
+        col_mask[col_local] = False
+        remaining = remaining[row_mask][:, col_mask]
+    return out_rows, out_cols
 
 
 def box_centers_and_validity(
@@ -52,20 +79,15 @@ def align_tracks_to_boxes(
     matched_gt_valid = torch.zeros(batch, frames, pred_objects, dtype=tracks.dtype, device=tracks.device)
 
     for b in range(batch):
-        used_gt: set[int] = set()
+        if linear_sum_assignment is not None:
+            row_ind, col_ind = linear_sum_assignment(pair_cost[b].detach().cpu().numpy())
+            assigned = {int(r): int(c) for r, c in zip(row_ind.tolist(), col_ind.tolist())}
+        else:
+            row_ind, col_ind = _greedy_linear_assignment(pair_cost[b])
+            assigned = {int(r): int(c) for r, c in zip(row_ind, col_ind)}
+        default_gt = int(pair_cost[b].mean(dim=0).argmin().item()) if gt_objects > 0 else 0
         for pred_idx in range(pred_objects):
-            best_gt = None
-            best_cost = None
-            for gt_idx in range(gt_objects):
-                if gt_idx in used_gt:
-                    continue
-                cost = pair_cost[b, pred_idx, gt_idx]
-                if best_cost is None or float(cost.item()) < best_cost:
-                    best_cost = float(cost.item())
-                    best_gt = gt_idx
-            if best_gt is None:
-                best_gt = 0
-            used_gt.add(best_gt)
+            best_gt = assigned.get(pred_idx, default_gt)
             matched_gt_indices[b, pred_idx] = best_gt
             matched_gt_centers[b, :, pred_idx] = gt_centers[b, :, best_gt]
             matched_gt_valid[b, :, pred_idx] = gt_valid[b, :, best_gt]
@@ -86,3 +108,44 @@ def track_box_l1_loss(
     weights = matched_gt_valid.unsqueeze(-1)
     denom = weights.sum().clamp_min(1.0)
     return ((tracks - matched_gt_centers).abs() * weights).sum() / denom
+
+
+def track_box_iou_loss(
+    tracks: torch.Tensor,
+    gt_boxes: torch.Tensor,
+    matched_gt_indices: torch.Tensor,
+    image_hw: tuple[int, int],
+    radius_px: float = 12.0,
+) -> torch.Tensor:
+    batch, frames, pred_objects, _ = tracks.shape
+    height, width = image_hw
+    pred_boxes = tracks.new_zeros(batch, frames, pred_objects, 4)
+    pred_boxes[..., 0] = (tracks[..., 0] - radius_px) / max(float(width), 1.0)
+    pred_boxes[..., 1] = (tracks[..., 1] - radius_px) / max(float(height), 1.0)
+    pred_boxes[..., 2] = (tracks[..., 0] + radius_px) / max(float(width), 1.0)
+    pred_boxes[..., 3] = (tracks[..., 1] + radius_px) / max(float(height), 1.0)
+    pred_boxes = pred_boxes.clamp(0.0, 1.0)
+
+    aligned_gt = gt_boxes.new_zeros(batch, frames, pred_objects, 4)
+    valid = gt_boxes.new_zeros(batch, frames, pred_objects)
+    for b in range(batch):
+        for pred_idx in range(pred_objects):
+            gt_idx = int(matched_gt_indices[b, pred_idx].item())
+            aligned_gt[b, :, pred_idx] = gt_boxes[b, :, gt_idx]
+            box = gt_boxes[b, :, gt_idx]
+            valid[b, :, pred_idx] = ((box[:, 2] - box[:, 0]) > 1e-6) & ((box[:, 3] - box[:, 1]) > 1e-6)
+
+    inter_x0 = torch.maximum(pred_boxes[..., 0], aligned_gt[..., 0])
+    inter_y0 = torch.maximum(pred_boxes[..., 1], aligned_gt[..., 1])
+    inter_x1 = torch.minimum(pred_boxes[..., 2], aligned_gt[..., 2])
+    inter_y1 = torch.minimum(pred_boxes[..., 3], aligned_gt[..., 3])
+    inter_w = (inter_x1 - inter_x0).clamp_min(0.0)
+    inter_h = (inter_y1 - inter_y0).clamp_min(0.0)
+    inter = inter_w * inter_h
+    pred_area = (pred_boxes[..., 2] - pred_boxes[..., 0]).clamp_min(0.0) * (pred_boxes[..., 3] - pred_boxes[..., 1]).clamp_min(0.0)
+    gt_area = (aligned_gt[..., 2] - aligned_gt[..., 0]).clamp_min(0.0) * (aligned_gt[..., 3] - aligned_gt[..., 1]).clamp_min(0.0)
+    union = (pred_area + gt_area - inter).clamp_min(1e-6)
+    iou = inter / union
+    valid = valid.to(dtype=iou.dtype)
+    denom = valid.sum().clamp_min(1.0)
+    return ((1.0 - iou) * valid).sum() / denom

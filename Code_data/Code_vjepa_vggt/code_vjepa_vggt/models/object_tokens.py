@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 @dataclass
@@ -65,27 +66,35 @@ class ObjectTubeProjector(nn.Module):
         tracks: torch.Tensor,
         image_hw: tuple[int, int],
         window_radius: int,
+        frame_valid_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch, frames, grid_h, grid_w, dim = features.shape
         _, _, objects, _ = tracks.shape
-        pooled = features.new_zeros(batch, objects, dim)
         height, width = image_hw
+        feature_map = features.permute(0, 1, 4, 2, 3).reshape(batch * frames, dim, grid_h, grid_w)
+        if window_radius > 0:
+            kernel = 2 * window_radius + 1
+            feature_map = F.avg_pool2d(feature_map, kernel_size=kernel, stride=1, padding=window_radius)
 
-        for b in range(batch):
-            for k in range(objects):
-                token_list = []
-                for t in range(frames):
-                    x = tracks[b, t, k, 0]
-                    y = tracks[b, t, k, 1]
-                    gx = int(torch.clamp(torch.round(x / max(width, 1) * (grid_w - 1)), 0, grid_w - 1).item())
-                    gy = int(torch.clamp(torch.round(y / max(height, 1) * (grid_h - 1)), 0, grid_h - 1).item())
-                    x0 = max(0, gx - window_radius)
-                    x1 = min(grid_w, gx + window_radius + 1)
-                    y0 = max(0, gy - window_radius)
-                    y1 = min(grid_h, gy + window_radius + 1)
-                    token_list.append(features[b, t, y0:y1, x0:x1].reshape(-1, dim).mean(dim=0))
-                pooled[b, k] = torch.stack(token_list, dim=0).mean(dim=0)
-        return pooled
+        x = tracks[..., 0] / max(float(width - 1), 1.0)
+        y = tracks[..., 1] / max(float(height - 1), 1.0)
+        x = x * 2.0 - 1.0
+        y = y * 2.0 - 1.0
+        grid = torch.stack([x, y], dim=-1).view(batch * frames, objects, 1, 2)
+        sampled = F.grid_sample(
+            feature_map,
+            grid,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
+        )
+        sampled = sampled.squeeze(-1).permute(0, 2, 1).reshape(batch, frames, objects, dim)
+        if frame_valid_mask is None:
+            weights = sampled.new_ones(batch, frames, objects, 1)
+        else:
+            weights = frame_valid_mask[:, :, None, None].to(dtype=sampled.dtype, device=sampled.device)
+        denom = weights.sum(dim=1).clamp_min(1.0)
+        return (sampled * weights).sum(dim=1) / denom
 
     def forward(
         self,
@@ -95,6 +104,7 @@ class ObjectTubeProjector(nn.Module):
         visibility: torch.Tensor,
         confidence: torch.Tensor,
         track_image_hw: tuple[int, int],
+        frame_valid_mask: torch.Tensor | None = None,
     ) -> ObjectTokenOutput:
         jepa_time_idx = self._time_indices(tracks.shape[1], jepa_patch_tokens.shape[1], tracks.device)
         latent_time_idx = self._time_indices(tracks.shape[1], context_latents.shape[2], tracks.device)
@@ -102,12 +112,15 @@ class ObjectTubeProjector(nn.Module):
         jepa_tracks = tracks[:, jepa_time_idx]
         latent_tracks = tracks[:, latent_time_idx]
         geom_steps = self._normalized_tracks(tracks, visibility, confidence, track_image_hw)
+        jepa_valid = frame_valid_mask[:, jepa_time_idx] if frame_valid_mask is not None else None
+        latent_valid = frame_valid_mask[:, latent_time_idx] if frame_valid_mask is not None else None
 
         jepa_local = self._pool_feature_grid(
             jepa_patch_tokens,
             jepa_tracks,
             image_hw=track_image_hw,
             window_radius=self.jepa_window_radius,
+            frame_valid_mask=jepa_valid,
         )
 
         latent_grid = context_latents.permute(0, 2, 3, 4, 1).contiguous()
@@ -116,12 +129,18 @@ class ObjectTubeProjector(nn.Module):
             latent_tracks,
             image_hw=track_image_hw,
             window_radius=self.latent_window_radius,
+            frame_valid_mask=latent_valid,
         )
 
         jepa_tokens = self.jepa_proj(jepa_local)
         self._ensure_latent_proj(latent_local.shape[-1], latent_local.device)
         latent_tokens = self.latent_proj(latent_local)
-        geom_tokens = self.geom_proj(geom_steps).mean(dim=1)
+        geom_feat = self.geom_proj(geom_steps)
+        geom_weights = (visibility * confidence).unsqueeze(-1)
+        if frame_valid_mask is not None:
+            geom_weights = geom_weights * frame_valid_mask[:, :, None, None].to(dtype=geom_weights.dtype, device=geom_weights.device)
+        geom_denom = geom_weights.sum(dim=1).clamp_min(1.0)
+        geom_tokens = (geom_feat * geom_weights).sum(dim=1) / geom_denom
         object_tokens = self.out_norm(jepa_tokens + latent_tokens + geom_tokens)
         return ObjectTokenOutput(
             object_tokens=object_tokens,

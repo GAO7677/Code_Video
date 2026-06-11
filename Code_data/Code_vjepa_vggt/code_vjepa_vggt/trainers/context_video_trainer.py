@@ -6,16 +6,29 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
+from code_vjepa_vggt.adapters.sam2_motion import SAM2MotionTracker, build_motion_prompt_box
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
 from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
-from code_vjepa_vggt.utils.masks import broadcast_latent_mask, expand_context_latents_to_full, latent_frame_mask
-from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_l1_loss
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
+from code_vjepa_vggt.training.flow_match import WanFlowMatchScheduler
+from code_vjepa_vggt.utils.masks import (
+    broadcast_latent_mask,
+    collate_video_batch,
+    expand_context_latents_to_full,
+    latent_frame_mask,
+)
+from code_vjepa_vggt.utils.object_priors import build_vggt_query_prior
+from code_vjepa_vggt.utils.track_supervision import (
+    align_tracks_to_boxes,
+    track_box_iou_loss,
+    track_box_l1_loss,
+)
 
 
 @dataclass
@@ -23,27 +36,29 @@ class TrainerState:
     step: int = 0
 
 
-class ContextVideoTrainer:
+class ContextVideoTrainer(nn.Module):
     def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True) -> None:
+        super().__init__()
         self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.build_optimizer = build_optimizer
 
         model_cfg = cfg["model"]
         data_cfg = cfg["data"]
-        opt_cfg = cfg["optimization"]
 
         self.bundle = WanContextVideoModel(
             ckpt_dir=model_cfg["wan_ckpt_dir"],
             task=model_cfg["wan_task"],
-            device=str(self.device),
+            device=str(self.device_obj),
+            load_dit=build_optimizer,
         )
         self.bundle.freeze_parts(
-            freeze_vae=model_cfg["freeze_vae"],
-            freeze_text_encoder=model_cfg["freeze_text_encoder"],
-            freeze_dit=model_cfg["freeze_wan_dit"],
+            freeze_vae=bool(model_cfg["freeze_vae"]),
+            freeze_text_encoder=bool(model_cfg["freeze_text_encoder"]),
+            freeze_dit=bool(model_cfg["freeze_wan_dit"]),
         )
-        self.bundle.dit.train(mode=build_optimizer)
+        if self.bundle.dit is not None:
+            self.bundle.dit.train(mode=build_optimizer)
 
         cond_dim = int(model_cfg.get("cond_proj_dim", self.bundle.config.text_dim))
         if cond_dim != self.bundle.config.text_dim:
@@ -51,18 +66,18 @@ class ContextVideoTrainer:
 
         self.jepa_adapter = JEPAPatchAdapter(
             ckpt_path=str(Path(model_cfg["je_pa_ckpt_dir"]) / "original" / "model.pth"),
-            device=str(self.device),
+            device=str(self.device_obj),
             crop_size=int(model_cfg["jepa_input_size"]),
             num_frames=int(data_cfg["num_context_frames"]),
             patch_size=int(model_cfg["jepa_patch_size"]),
             tubelet_size=int(model_cfg["jepa_tubelet_size"]),
-        ).to(self.device)
+        ).to(self.device_obj)
         self.vggt_adapter = VGGTTrackAdapter(
             model_path=model_cfg.get("vggt_model_path"),
             num_queries=int(model_cfg["object_num_queries"]),
-            device=str(self.device),
+            device=str(self.device_obj),
             input_hw=tuple(model_cfg["vggt_input_hw"]),
-        ).to(self.device)
+        ).to(self.device_obj)
         latent_dim = int(getattr(self.bundle.config, "in_dim", 16))
         self.object_pooler = ObjectTubeProjector(
             jepa_dim=self.jepa_adapter.encoder.backbone.embed_dim,
@@ -70,22 +85,38 @@ class ContextVideoTrainer:
             out_dim=cond_dim,
             jepa_window_radius=int(model_cfg["jepa_window_radius"]),
             latent_window_radius=int(model_cfg["latent_window_radius"]),
-        ).to(self.device)
+        ).to(self.device_obj)
         self.context_fuser = ContextTokenFuser(
             text_dim=cond_dim,
             max_context_len=self.bundle.config.text_len,
-        ).to(self.device)
+            min_text_tokens=int(model_cfg.get("min_text_tokens", 64)),
+        ).to(self.device_obj)
+        self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
 
+        self.enable_sam2_priors = bool(model_cfg.get("enable_sam2_priors", False))
+        self.sam2_tracker = None
+        if self.enable_sam2_priors:
+            self.sam2_tracker = SAM2MotionTracker(
+                device=str(self.device_obj),
+                segment_len=int(model_cfg.get("sam2_segment_len", 8)),
+                enable_text_prompt=bool(model_cfg.get("sam2_enable_text_prompt", True)),
+            )
+
+        self.dataset = self._build_dataset()
+        self.state = TrainerState()
+
+    def _build_dataset(self):
+        data_cfg = self.cfg["data"]
         dataset_type = data_cfg.get("dataset_type", "ball_block_json")
         if dataset_type == "ball_block_json":
-            self.dataset = BallBlockVideoDataset(
+            return BallBlockVideoDataset(
                 root=data_cfg["root"],
                 num_frames=data_cfg["num_frames"],
                 num_context_frames=data_cfg["num_context_frames"],
                 resolution=tuple(data_cfg["resolution"]),
             )
-        elif dataset_type == "phys_state_episode":
-            self.dataset = PhysStateEpisodeDataset(
+        if dataset_type == "phys_state_episode":
+            return PhysStateEpisodeDataset(
                 root=data_cfg["root"],
                 split=data_cfg["split"],
                 resolution=tuple(data_cfg["resolution"]),
@@ -94,51 +125,133 @@ class ContextVideoTrainer:
                 random_context_frames=bool(data_cfg.get("random_context_frames", True)),
                 seed=int(self.cfg.get("experiment", {}).get("seed", 42)),
             )
-        else:
-            raise ValueError(f"unsupported dataset_type: {dataset_type}")
-        self.loader = DataLoader(
+        raise ValueError(f"unsupported dataset_type: {dataset_type}")
+
+    def build_dataloader(self, num_workers: int | None = None) -> DataLoader:
+        data_cfg = self.cfg["data"]
+        return DataLoader(
             self.dataset,
-            batch_size=data_cfg["batch_size"],
+            batch_size=int(data_cfg["batch_size"]),
             shuffle=True,
-            num_workers=data_cfg["num_workers"],
+            num_workers=int(data_cfg["num_workers"] if num_workers is None else num_workers),
             pin_memory=True,
             drop_last=True,
+            collate_fn=collate_video_batch,
         )
 
-        self.optimizer = None
-        if build_optimizer:
-            trainable_params = list(self.bundle.dit.parameters())
-            trainable_params += list(self.context_fuser.parameters())
-            trainable_params += list(self.object_pooler.parameters())
-            self.optimizer = torch.optim.AdamW(
-                trainable_params,
-                lr=opt_cfg["lr"],
-                weight_decay=opt_cfg["weight_decay"],
-                betas=tuple(opt_cfg["betas"]),
-                eps=opt_cfg["eps"],
-            )
-        self.state = TrainerState()
+    def trainable_parameters(self):
+        self.bundle.ensure_dit_loaded()
+        params = list(self.bundle.dit.parameters())
+        params += list(self.context_fuser.parameters())
+        params += list(self.object_pooler.parameters())
+        return [param for param in params if param.requires_grad]
+
+    def export_trainable_state_dict(self) -> dict[str, torch.Tensor]:
+        trainable_names = {name for name, param in self.named_parameters() if param.requires_grad}
+        return {
+            name: tensor.detach().cpu()
+            for name, tensor in self.state_dict().items()
+            if name in trainable_names
+        }
 
     def _encode_text(self, captions: list[str]) -> list[torch.Tensor]:
         with torch.no_grad():
             ctx = self.bundle.text_encoder(captions, self.bundle.text_encoder.device)
-        return [u.to(self.device) for u in ctx]
+        return [u.to(self.device_obj) for u in ctx]
 
     def _encode_video_latents(self, videos_bcthw: torch.Tensor) -> list[torch.Tensor]:
-        videos_list = [u.to(self.device) for u in videos_bcthw]
+        videos_list = [u.to(self.device_obj) for u in videos_bcthw]
         with torch.no_grad():
             zs = self.bundle.vae.encode(videos_list)
         return zs
 
     @staticmethod
+    def _pad_time_axis(tensor: torch.Tensor, target_t: int, *, fill_mode: str) -> torch.Tensor:
+        current_t = int(tensor.shape[1] if tensor.ndim == 4 else tensor.shape[0])
+        if current_t >= target_t:
+            return tensor
+        pad_t = target_t - current_t
+        if tensor.ndim == 4:
+            if fill_mode == "repeat_last":
+                pad = tensor[:, -1:].expand(-1, pad_t, -1, -1).contiguous()
+            else:
+                pad = tensor.new_zeros(tensor.shape[0], pad_t, tensor.shape[2], tensor.shape[3])
+            return torch.cat([tensor, pad], dim=1)
+        if fill_mode == "zeros":
+            pad = tensor.new_zeros((pad_t,) + tuple(tensor.shape[1:]))
+        else:
+            pad = tensor[-1:].expand(pad_t, *tensor.shape[1:]).contiguous()
+        return torch.cat([tensor, pad], dim=0)
+
+    @staticmethod
     def _shape_list(tensors: list[torch.Tensor]) -> list[list[int]]:
         return [list(t.shape) for t in tensors]
 
+    @staticmethod
+    def _frame_valid_mask(max_context_frames: int, num_context_frames: torch.Tensor, device: torch.device) -> torch.Tensor:
+        frame_ids = torch.arange(max_context_frames, device=device).view(1, -1)
+        return frame_ids < num_context_frames.view(-1, 1)
+
+    def _maybe_build_query_priors(
+        self,
+        context_videos: torch.Tensor,
+        num_context_frames: torch.Tensor,
+        captions: list[str],
+    ) -> tuple[torch.Tensor | None, list[str], list[str]]:
+        if self.sam2_tracker is None:
+            return None, [], []
+
+        priors = []
+        prior_sources: list[str] = []
+        prompt_modes: list[str] = []
+        for batch_idx in range(context_videos.shape[0]):
+            valid_frames = int(num_context_frames[batch_idx].item())
+            frames_tchw_01 = ((context_videos[batch_idx, :, :valid_frames].permute(1, 0, 2, 3).float() + 1.0) / 2.0).detach().cpu().numpy()
+            prompt_frame_idx = max(valid_frames - 1, 0)
+            try:
+                motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
+                sam_out = self.sam2_tracker.track(
+                    frames_tchw_01,
+                    prompt_frame_idx=prompt_frame_idx,
+                    prompt_box_xyxy=motion_prompt_box_xyxy,
+                    caption=captions[batch_idx],
+                )
+                query_points_px, prior_source = build_vggt_query_prior(
+                    sam_out.masks_thw,
+                    sam_out.boxes_t4,
+                    num_queries=self.vggt_adapter.num_queries,
+                )
+                priors.append(torch.from_numpy(query_points_px))
+                prior_sources.append(prior_source)
+                prompt_modes.append(sam_out.prompt_mode)
+            except Exception:
+                return None, [], []
+        if not priors:
+            return None, [], []
+        stacked = torch.stack(priors, dim=0).to(device=self.device_obj, dtype=context_videos.dtype)
+        return stacked, prior_sources, prompt_modes
+
     def _prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
-        videos = batch["video"].to(self.device)
-        context_videos = batch["context_video"].to(self.device)
+        videos = batch["video"].to(self.device_obj)
+        context_videos = batch["context_video"].to(self.device_obj)
         captions = list(batch["caption"])
-        num_context_frames = int(batch["num_context_frames"][0]) if torch.is_tensor(batch["num_context_frames"]) else int(batch["num_context_frames"])
+        num_context_frames = batch["num_context_frames"].to(self.device_obj).long()
+        target_context_frames = int(self.cfg["data"]["num_context_frames"])
+        if context_videos.shape[2] < target_context_frames:
+            pad_t = target_context_frames - context_videos.shape[2]
+            pad = context_videos[:, :, -1:].expand(-1, -1, pad_t, -1, -1).contiguous()
+            context_videos = torch.cat([context_videos, pad], dim=2)
+            if "context_boxes" in batch:
+                batch["context_boxes"] = torch.stack(
+                    [self._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in batch["context_boxes"]],
+                    dim=0,
+                )
+            if "context_states" in batch:
+                batch["context_states"] = torch.stack(
+                    [self._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in batch["context_states"]],
+                    dim=0,
+                )
+        frame_valid_mask = self._frame_valid_mask(context_videos.shape[2], num_context_frames, self.device_obj)
 
         text_ctx = self._encode_text(captions)
         full_latents = self._encode_video_latents(videos)
@@ -148,27 +261,37 @@ class ContextVideoTrainer:
         jepa_out = self.jepa_adapter(context_videos)
         frames_bthwc = context_videos.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        vggt_out = self.vggt_adapter(frames_bthwc)
+        query_points_prior, sam_prior_sources, sam_prompt_modes = self._maybe_build_query_priors(
+            context_videos=context_videos,
+            num_context_frames=num_context_frames,
+            captions=captions,
+        )
+        vggt_out = self.vggt_adapter(
+            frames_bthwc,
+            query_points_prior=query_points_prior,
+            query_image_hw=(context_videos.shape[-2], context_videos.shape[-1]) if query_points_prior is not None else None,
+        )
         tracks = vggt_out.tracks
-        vis = vggt_out.visibility
-        conf = vggt_out.confidence
+        visibility = vggt_out.visibility
+        confidence = vggt_out.confidence
         track_image_hw = vggt_out.image_hw
-        track_used_model = bool(vggt_out.used_model)
-        query_points = vggt_out.query_points
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latent_batch,
             tracks=tracks,
-            visibility=vis,
-            confidence=conf,
+            visibility=visibility,
+            confidence=confidence,
             track_image_hw=track_image_hw,
+            frame_valid_mask=frame_valid_mask,
         )
         fused_context = self.context_fuser(text_ctx, object_out.object_tokens)
 
         track_alignment = None
         track_box_loss = None
+        track_iou_loss = None
+        tracks_native = None
         if "context_boxes" in batch:
-            context_boxes = batch["context_boxes"].to(self.device)
+            context_boxes = batch["context_boxes"].to(self.device_obj)
             scale_x = float(context_videos.shape[-1]) / float(track_image_hw[1])
             scale_y = float(context_videos.shape[-2]) / float(track_image_hw[0])
             tracks_native = tracks.clone()
@@ -184,35 +307,50 @@ class ContextVideoTrainer:
                 matched_gt_centers=track_alignment.matched_gt_centers,
                 matched_gt_valid=track_alignment.matched_gt_valid,
             )
+            track_iou_loss = track_box_iou_loss(
+                tracks=tracks_native,
+                gt_boxes=context_boxes,
+                matched_gt_indices=track_alignment.matched_gt_indices,
+                image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
+                radius_px=float(self.cfg.get("loss", {}).get("track_iou_radius_px", 12.0)),
+            )
 
         debug = {
             "说明": {
-                "context_video": "输入给 JEPA / VGGT / VAE 的上下文视频片段",
-                "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]",
-                "vggt_tracks": "当前主路径固定使用 VGGT query-point tracks 作为 object 锚点 [B,Tctx,K,2]；数据集 boxes 只用于训练监督与校验",
-                "object_tokens": "按轨迹在 JEPA 局部 tube + VAE 局部 latent + 几何轨迹特征上池化后得到的 object state tokens [B,K,4096]",
-                "fused_context": "送入 Wan DiT cross-attention 的上下文 token，等于截断后的 text tokens + object tokens",
+                "context_video": "输入给 JEPA / VGGT / VAE 的上下文视频片段，batch 内可变长度会被 padding 到同一长度。",
+                "sam2_prior": "如果开启，则先用 SAM2 在 context clip 上找到目标，再从 frame0 的 mask 或 box 采样 query points 作为 VGGT 的先验。",
+                "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]。",
+                "vggt_tracks": "VGGT 根据 query priors 或默认 queries 预测的 query-point tracks [B,Tctx,K,2]。",
+                "object_tokens": "沿着轨迹从 JEPA 局部 tube、VAE latent、轨迹几何特征中池化并投影得到的 object state tokens [B,K,D]。",
+                "fused_context": "送入 Wan DiT cross-attention 的条件 token，等于 text tokens + 选出的 object tokens。",
             },
             "video": list(videos.shape),
             "context_video": list(context_videos.shape),
+            "num_context_frames": num_context_frames.detach().cpu().tolist(),
+            "context_frame_valid_mask": list(frame_valid_mask.shape),
             "text_context": self._shape_list(text_ctx),
             "full_latents": self._shape_list(full_latents),
             "context_latents": self._shape_list(context_latents),
             "jepa_patch_tokens": list(jepa_out.patch_tokens.shape),
-            "vggt_query_points": list(query_points.shape),
+            "vggt_query_points": list(vggt_out.query_points.shape),
             "vggt_tracks": list(tracks.shape),
-            "vggt_visibility": list(vis.shape),
+            "vggt_visibility": list(visibility.shape),
+            "vggt_confidence": list(confidence.shape),
             "object_tokens": list(object_out.object_tokens.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
             "object_latent_tokens": list(object_out.latent_tokens.shape),
             "object_geom_tokens": list(object_out.geom_tokens.shape),
             "fused_context": self._shape_list(fused_context),
-            "vggt_used_model": track_used_model,
+            "vggt_used_model": bool(vggt_out.used_model),
             "vggt_track_image_hw": list(track_image_hw),
             "video_path": batch["video_path"][0] if isinstance(batch["video_path"], list) else batch["video_path"],
-            "frame_indices": batch["frame_indices"][0].tolist() if batch["frame_indices"].ndim == 2 else batch["frame_indices"].tolist(),
+            "frame_indices": batch["frame_indices"][0].tolist() if isinstance(batch["frame_indices"], torch.Tensor) and batch["frame_indices"].ndim == 2 else batch["frame_indices"],
             "caption": captions[0] if captions else "",
+            "sam_prior_sources": sam_prior_sources,
+            "sam_prompt_modes": sam_prompt_modes,
         }
+        if query_points_prior is not None:
+            debug["sam_query_points"] = list(query_points_prior.shape)
         if "context_boxes" in batch:
             debug["context_boxes"] = list(batch["context_boxes"].shape)
             debug["future_boxes"] = list(batch["future_boxes"].shape)
@@ -220,13 +358,15 @@ class ContextVideoTrainer:
             debug["future_states"] = list(batch["future_states"].shape)
             debug["appearance"] = list(batch["appearance"].shape)
             debug["camera"] = list(batch["camera"].shape)
-            if track_alignment is not None and track_box_loss is not None:
+            if track_alignment is not None and track_box_loss is not None and track_iou_loss is not None and tracks_native is not None:
                 debug["matched_gt_indices"] = list(track_alignment.matched_gt_indices.shape)
                 debug["matched_gt_centers"] = list(track_alignment.matched_gt_centers.shape)
                 debug["matched_gt_valid"] = list(track_alignment.matched_gt_valid.shape)
                 debug["track_pair_cost"] = list(track_alignment.pair_cost.shape)
                 debug["track_box_l1_loss"] = float(track_box_loss.item())
+                debug["track_box_iou_loss"] = float(track_iou_loss.item())
                 debug["tracks_native_xy"] = list(tracks_native.shape)
+
         return {
             "videos": videos,
             "context_videos": context_videos,
@@ -236,13 +376,12 @@ class ContextVideoTrainer:
             "context_latents": context_latents,
             "fused_context": fused_context,
             "track_box_loss": track_box_loss,
+            "track_iou_loss": track_iou_loss,
             "debug": debug,
         }
 
-    def train_step(self, batch: dict[str, Any]) -> dict[str, float]:
-        if self.optimizer is None:
-            raise RuntimeError("trainer was created without optimizer")
-
+    def forward(self, batch: dict[str, Any]) -> torch.Tensor:
+        self.bundle.ensure_dit_loaded()
         prepared = self._prepare_batch(batch)
         videos = prepared["videos"]
         num_context_frames = prepared["num_context_frames"]
@@ -250,61 +389,64 @@ class ContextVideoTrainer:
         context_latents = prepared["context_latents"]
         fused_context = prepared["fused_context"]
         track_box_loss = prepared["track_box_loss"]
+        track_iou_loss = prepared["track_iou_loss"]
 
         losses = []
-        for i, latent_clean in enumerate(full_latents):
-            context_clean = context_latents[i]
+        for sample_idx, latent_clean in enumerate(full_latents):
             noise = torch.randn_like(latent_clean)
-            timestep_scalar = torch.randint(
-                low=0,
-                high=self.bundle.config.num_train_timesteps,
-                size=(1,),
-                device=self.device,
-            ).float()
-            t_norm = timestep_scalar / float(self.bundle.config.num_train_timesteps)
-            x_t = (1.0 - t_norm) * latent_clean + t_norm * noise
+            timestep_id = torch.randint(0, len(self.scheduler.timesteps), (1,), device=self.device_obj)
+            timestep = self.scheduler.timesteps[timestep_id.cpu()].to(device=self.device_obj, dtype=latent_clean.dtype)
+            x_t = self.scheduler.add_noise(latent_clean, noise, timestep.cpu())
 
             context_mask_t, future_mask_t = latent_frame_mask(
                 num_video_frames=videos.shape[2],
-                num_context_frames=num_context_frames,
+                num_context_frames=int(num_context_frames[sample_idx].item()),
                 vae_stride_t=self.bundle.config.vae_stride[0],
-                device=self.device,
+                device=self.device_obj,
             )
             context_mask = broadcast_latent_mask(context_mask_t, latent_clean)
             future_mask = broadcast_latent_mask(future_mask_t, latent_clean)
-            context_clean_full = expand_context_latents_to_full(context_clean, latent_clean)
+            context_clean_full = expand_context_latents_to_full(context_latents[sample_idx], latent_clean)
             x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
 
             seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (
                 self.bundle.config.patch_size[1] * self.bundle.config.patch_size[2]
             )
-            t_tokens = torch.full((1, seq_len), timestep_scalar.item(), device=self.device)
+            t_tokens = torch.full((1, seq_len), float(timestep.item()), device=self.device_obj, dtype=latent_clean.dtype)
             pred = self.bundle.dit(
                 [x_t],
                 t=t_tokens,
-                context=[fused_context[i]],
+                context=[fused_context[sample_idx]],
                 seq_len=seq_len,
                 y=None,
             )[0]
 
-            target = noise
+            target = self.scheduler.training_target(latent_clean, noise, timestep)
             denom = future_mask.sum().clamp_min(1.0)
             loss_main = ((pred - target) ** 2 * future_mask).sum() / denom
+            loss_main = loss_main * self.scheduler.training_weight(
+                timestep,
+                device=loss_main.device,
+                dtype=loss_main.dtype,
+            )
             losses.append(loss_main)
 
         loss = torch.stack(losses).mean()
         if track_box_loss is not None:
             loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_align", 0.0)) * track_box_loss
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        self.optimizer.step()
-        self.state.step += 1
+        if track_iou_loss is not None:
+            loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_iou", 0.0)) * track_iou_loss
+        return loss
 
-        return {"loss": float(loss.item())}
+    def train_step(self, batch: dict[str, Any]) -> dict[str, float]:
+        loss = self.forward(batch)
+        self.state.step += 1
+        return {"loss": float(loss.detach().item())}
 
     @torch.no_grad()
     def inspect_one_batch(self) -> dict[str, Any]:
-        batch = next(iter(self.loader))
+        loader = self.build_dataloader(num_workers=0)
+        batch = next(iter(loader))
         prepared = self._prepare_batch(batch)
         return prepared["debug"]
 
@@ -338,7 +480,7 @@ class ContextVideoTrainer:
 </head>
 <body>
   <h1>Object-Centric Wan Context Report</h1>
-  <p>中文说明：用 query-point tracks 定义 object 锚点；沿着这些轨迹从 V-JEPA 局部时空 tube 和 Wan VAE 局部 latent 里池化，再融合成 object tokens，最后拼进 Wan DiT 的 cross-attention context。</p>
+  <p>中文说明：可变长度 context 先编码成 JEPA / VAE 表征；若开启 SAM2，则先从 context clip 中得到 object prior，再把 frame0 prior query 送入 VGGT 跟踪；沿轨迹池化 JEPA 与 latent 局部特征形成 object tokens，再与文本条件一起送入 Wan DiT。</p>
   <div class="grid">
     <div>
       <h2>Source Video</h2>
@@ -358,19 +500,23 @@ class ContextVideoTrainer:
         return html_path
 
     def train(self) -> None:
-        max_steps = self.cfg["optimization"]["max_steps"]
-        log_every = self.cfg["logging"]["log_every"]
-        out_dir = Path(self.cfg["experiment"]["output_dir"])
-        out_dir.mkdir(parents=True, exist_ok=True)
+        from accelerate import Accelerator
 
-        loader_iter = iter(self.loader)
-        while self.state.step < max_steps:
-            try:
-                batch = next(loader_iter)
-            except StopIteration:
-                loader_iter = iter(self.loader)
-                batch = next(loader_iter)
+        from code_vjepa_vggt.training.runner import launch_training_task
 
-            metrics = self.train_step(batch)
-            if self.state.step % log_every == 0:
-                print(f"[step {self.state.step}] loss={metrics['loss']:.6f}")
+        opt_cfg = self.cfg["optimization"]
+        accelerator = Accelerator(
+            gradient_accumulation_steps=int(opt_cfg.get("grad_accum_steps", 1)),
+            mixed_precision=str(opt_cfg.get("mixed_precision", "no")),
+        )
+        launch_training_task(
+            accelerator,
+            self,
+            learning_rate=float(opt_cfg["lr"]),
+            weight_decay=float(opt_cfg["weight_decay"]),
+            num_workers=int(self.cfg["data"]["num_workers"]),
+            save_every=int(self.cfg["logging"]["save_every"]),
+            max_steps=int(opt_cfg["max_steps"]),
+            grad_accum_steps=int(opt_cfg.get("grad_accum_steps", 1)),
+            max_grad_norm=float(opt_cfg.get("max_grad_norm", 0.0)),
+        )
