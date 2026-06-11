@@ -1,0 +1,54 @@
+experiment:
+  name: ball_block_ctx8_ti2v5b_vjepa_vggt
+  output_dir: /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/ball_block_ctx8_ti2v5b_vjepa_vggt
+  seed: 42
+
+model:
+  wan_task: ti2v-5B
+  wan_ckpt_dir: /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
+  freeze_vae: true
+  freeze_text_encoder: true
+  freeze_wan_dit: false
+  je_pa_variant: vitg384
+  je_pa_ckpt_dir: /data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384
+  vggt_model_path: /data/gaoya/ckpt/vggt
+  vggt_input_hw: [420, 728]
+  object_num_queries: 8
+  jepa_input_size: 384
+  jepa_patch_size: 16
+  jepa_tubelet_size: 2
+  jepa_window_radius: 1
+  latent_window_radius: 1
+  cond_proj_dim: 4096
+
+data:
+  dataset_type: ball_block_json
+  root: /data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block
+  num_frames: 81
+  num_context_frames: 8
+  random_context_frames: false
+  resolution: [704, 1280]
+  batch_size: 1
+  num_workers: 2
+  fps: 24
+
+optimization:
+  lr: 1.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  max_steps: 1000
+  grad_accum_steps: 1
+  max_grad_norm: 1.0
+  mixed_precision: bf16
+
+loss:
+  future_only: true
+  predict_type: noise
+  lambda_main: 1.0
+  lambda_jepa_align: 0.1
+  lambda_vggt_align: 0.1
+
+logging:
+  log_every: 10
+  save_every: 200
