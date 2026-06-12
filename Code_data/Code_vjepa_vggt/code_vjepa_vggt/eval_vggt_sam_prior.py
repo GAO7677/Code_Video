@@ -51,6 +51,48 @@ def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     return x.numpy()
 
 
+def temporal_densify_frames(frames_tchw_01: np.ndarray, factor: int) -> np.ndarray:
+    factor = max(int(factor), 1)
+    if factor <= 1 or int(frames_tchw_01.shape[0]) <= 1:
+        return frames_tchw_01.astype(np.float32, copy=True)
+    out: list[np.ndarray] = []
+    for idx in range(int(frames_tchw_01.shape[0]) - 1):
+        frame_a = frames_tchw_01[idx].astype(np.float32, copy=False)
+        frame_b = frames_tchw_01[idx + 1].astype(np.float32, copy=False)
+        out.append(frame_a.copy())
+        for step in range(1, factor):
+            alpha = float(step) / float(factor)
+            out.append((((1.0 - alpha) * frame_a) + (alpha * frame_b)).astype(np.float32, copy=False))
+    out.append(frames_tchw_01[-1].astype(np.float32, copy=True))
+    return np.stack(out, axis=0).astype(np.float32, copy=False)
+
+
+def temporal_densify_boxes(boxes_tk4: torch.Tensor, factor: int) -> torch.Tensor:
+    factor = max(int(factor), 1)
+    if factor <= 1 or int(boxes_tk4.shape[0]) <= 1:
+        return boxes_tk4.clone()
+    out: list[torch.Tensor] = []
+    for idx in range(int(boxes_tk4.shape[0]) - 1):
+        box_a = boxes_tk4[idx]
+        box_b = boxes_tk4[idx + 1]
+        out.append(box_a.clone())
+        for step in range(1, factor):
+            alpha = float(step) / float(factor)
+            out.append(((1.0 - alpha) * box_a) + (alpha * box_b))
+    out.append(boxes_tk4[-1].clone())
+    return torch.stack(out, dim=0)
+
+
+def densify_context_video(context_video_cthw: torch.Tensor, factor: int) -> torch.Tensor:
+    factor = max(int(factor), 1)
+    if factor <= 1 or int(context_video_cthw.shape[1]) <= 1:
+        return context_video_cthw.clone()
+    frames_tchw_01 = ((context_video_cthw.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
+    dense_frames_tchw_01 = temporal_densify_frames(frames_tchw_01, factor=factor)
+    dense_tensor = torch.from_numpy(dense_frames_tchw_01).permute(1, 0, 2, 3).contiguous()
+    return (dense_tensor * 2.0) - 1.0
+
+
 def write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
@@ -291,19 +333,23 @@ def render_overlay_video(
     return np.stack(frames, axis=0)
 
 
-def evaluate_sample(
-    sample: dict,
+def run_tracking_variant(
     *,
+    context_video: torch.Tensor,
+    context_boxes: torch.Tensor,
+    caption: str,
+    output_prefix: str,
+    fps: int,
+    variant_name: str,
+    assets_dir: Path,
     sam_tracker: SAM2MotionTracker,
     vggt_adapter: VGGTTrackAdapter,
     device: torch.device,
 ) -> dict:
-    context_video = sample["context_video"].unsqueeze(0).to(device)
-    context_boxes = sample["context_boxes"].unsqueeze(0).to(device)
-    caption = sample["caption"]
-
-    frames_tchw_01 = ((context_video[0].permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
-    prompt_frame_idx = max(int(context_video.shape[2]) - 1, 0)
+    context_video_b = context_video.unsqueeze(0).to(device)
+    context_boxes_b = context_boxes.unsqueeze(0).to(device)
+    frames_tchw_01 = ((context_video_b[0].permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
+    prompt_frame_idx = max(int(context_video_b.shape[2]) - 1, 0)
     motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
     sam_out = sam_tracker.track(
         frames_tchw_01,
@@ -317,15 +363,15 @@ def evaluate_sample(
         sam_out.boxes_t4,
         num_queries=vggt_adapter.num_queries,
     )
-    query_points_prior = torch.from_numpy(query_points_px).unsqueeze(0).to(device=device, dtype=context_video.dtype)
+    query_points_prior = torch.from_numpy(query_points_px).unsqueeze(0).to(device=device, dtype=context_video_b.dtype)
 
-    frames_bthwc = context_video.permute(0, 2, 3, 4, 1).float()
+    frames_bthwc = context_video_b.permute(0, 2, 3, 4, 1).float()
     frames_bthwc = (frames_bthwc + 1.0) / 2.0
     with torch.no_grad():
         vggt_out = vggt_adapter(
             frames_bthwc,
             query_points_prior=query_points_prior,
-            query_image_hw=(context_video.shape[-2], context_video.shape[-1]),
+            query_image_hw=(context_video_b.shape[-2], context_video_b.shape[-1]),
         )
 
     tracks = vggt_out.tracks
@@ -333,18 +379,18 @@ def evaluate_sample(
     conf = vggt_out.confidence
     track_image_hw = vggt_out.image_hw
 
-    scale_x = float(context_video.shape[-1]) / float(track_image_hw[1])
-    scale_y = float(context_video.shape[-2]) / float(track_image_hw[0])
+    scale_x = float(context_video_b.shape[-1]) / float(track_image_hw[1])
+    scale_y = float(context_video_b.shape[-2]) / float(track_image_hw[0])
     tracks_native = tracks.clone()
     tracks_native[..., 0] *= scale_x
     tracks_native[..., 1] *= scale_y
 
     alignment = align_tracks_to_boxes(
         tracks=tracks_native,
-        gt_boxes=context_boxes,
-        image_hw=(context_video.shape[-2], context_video.shape[-1]),
+        gt_boxes=context_boxes_b,
+        image_hw=(context_video_b.shape[-2], context_video_b.shape[-1]),
     )
-    gt_valid_any = ((context_boxes[..., 2] - context_boxes[..., 0] > 1e-6) & (context_boxes[..., 3] - context_boxes[..., 1] > 1e-6)).any(dim=1)[0]
+    gt_valid_any = ((context_boxes_b[..., 2] - context_boxes_b[..., 0] > 1e-6) & (context_boxes_b[..., 3] - context_boxes_b[..., 1] > 1e-6)).any(dim=1)[0]
     valid_gt_indices = [int(idx) for idx in torch.nonzero(gt_valid_any, as_tuple=False).flatten().tolist()]
     matched_gt_indices = [int(x) for x in alignment.matched_gt_indices[0].tolist()]
     unmatched_gt_indices = [idx for idx in valid_gt_indices if idx not in set(matched_gt_indices)]
@@ -360,15 +406,15 @@ def evaluate_sample(
             gt_idx = int(alignment.matched_gt_indices[0, q].item())
             hit = track_inside_box(
                 point_xy=tracks_native[0, t, q],
-                box_xyxy=context_boxes[0, t, gt_idx],
-                image_hw=(context_video.shape[-2], context_video.shape[-1]),
+                box_xyxy=context_boxes_b[0, t, gt_idx],
+                image_hw=(context_video_b.shape[-2], context_video_b.shape[-1]),
             )
             inside_hits.append(float(hit))
     inside_rate = float(sum(inside_hits) / len(inside_hits)) if inside_hits else 0.0
 
     overlay_video = render_overlay_video(
-        context_video=sample["context_video"],
-        context_boxes=sample["context_boxes"],
+        context_video=context_video,
+        context_boxes=context_boxes,
         matched_gt_indices=matched_gt_indices,
         unmatched_gt_indices=unmatched_gt_indices,
         sam_boxes_t4=sam_out.boxes_t4,
@@ -378,16 +424,12 @@ def evaluate_sample(
         tracks_native_tk2=tracks_native[0].cpu(),
         visibility_tk=vggt_out.visibility[0].cpu(),
     )
-    assets_dir = Path(sample.get("_output_dir", "."))
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    raw_video_path = assets_dir / f"{sample.get('_case_name', 'case')}__overlay.mp4"
-    write_mp4(raw_video_path, overlay_video, fps=int(sample.get("_fps", 8)))
+    raw_video_path = assets_dir / f"{output_prefix}__{variant_name}.mp4"
+    write_mp4(raw_video_path, overlay_video, fps=fps)
     browser_video_path = ensure_browser_video(raw_video_path)
 
     return {
-        "caption": caption,
-        "video_path": sample["video_path"],
-        "context_frame_indices": sample["context_frame_indices"].tolist(),
+        "variant_name": variant_name,
         "prompt_frame_idx": prompt_frame_idx,
         "sam_prompt_mode": sam_out.prompt_mode,
         "sam_prompt_text": sam_out.prompt_text,
@@ -398,9 +440,10 @@ def evaluate_sample(
         "vggt_used_model": bool(vggt_out.used_model),
         "matched_gt_indices": matched_gt_indices,
         "unmatched_gt_indices": unmatched_gt_indices,
+        "num_frames": int(context_video.shape[1]),
         "shapes": {
-            "context_video": list(context_video.shape),
-            "context_boxes": list(context_boxes.shape),
+            "context_video": list(context_video_b.shape),
+            "context_boxes": list(context_boxes_b.shape),
             "sam_masks_thw": list(sam_out.masks_thw.shape),
             "sam_boxes_t4": list(np.asarray(sam_out.boxes_t4).shape),
             "sam_query_points": list(query_points_prior.shape),
@@ -421,22 +464,76 @@ def evaluate_sample(
     }
 
 
+def evaluate_sample(
+    sample: dict,
+    *,
+    sam_tracker: SAM2MotionTracker,
+    vggt_adapter: VGGTTrackAdapter,
+    device: torch.device,
+    slow_factor: int,
+) -> dict:
+    caption = sample["caption"]
+    assets_dir = Path(sample.get("_output_dir", "."))
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    case_name = sample.get("_case_name", "case")
+    base_fps = int(sample.get("_fps", 8))
+    base_context_video = sample["context_video"]
+    base_context_boxes = sample["context_boxes"]
+
+    original = run_tracking_variant(
+        context_video=base_context_video,
+        context_boxes=base_context_boxes,
+        caption=caption,
+        output_prefix=case_name,
+        fps=base_fps,
+        variant_name="original_overlay",
+        assets_dir=assets_dir,
+        sam_tracker=sam_tracker,
+        vggt_adapter=vggt_adapter,
+        device=device,
+    )
+
+    slow_context_video = densify_context_video(base_context_video, factor=slow_factor)
+    slow_context_boxes = temporal_densify_boxes(base_context_boxes, factor=slow_factor)
+    slowmo = run_tracking_variant(
+        context_video=slow_context_video,
+        context_boxes=slow_context_boxes,
+        caption=caption,
+        output_prefix=case_name,
+        fps=base_fps,
+        variant_name=f"slowx{slow_factor}_overlay",
+        assets_dir=assets_dir,
+        sam_tracker=sam_tracker,
+        vggt_adapter=vggt_adapter,
+        device=device,
+    )
+
+    return {
+        "caption": caption,
+        "video_path": sample["video_path"],
+        "context_frame_indices": sample["context_frame_indices"].tolist(),
+        "slow_factor": int(slow_factor),
+        "original": original,
+        "slowmo": slowmo,
+    }
+
+
 def build_report(results: list[dict], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary = {
         "num_cases": len(results),
-        "avg_mean_center_l1_px": sum(r["metrics"]["mean_center_l1_px"] for r in results) / max(len(results), 1),
-        "avg_inside_box_rate": sum(r["metrics"]["inside_box_rate"] for r in results) / max(len(results), 1),
+        "avg_original_mean_center_l1_px": sum(r["original"]["metrics"]["mean_center_l1_px"] for r in results) / max(len(results), 1),
+        "avg_original_inside_box_rate": sum(r["original"]["metrics"]["inside_box_rate"] for r in results) / max(len(results), 1),
+        "avg_slowmo_mean_center_l1_px": sum(r["slowmo"]["metrics"]["mean_center_l1_px"] for r in results) / max(len(results), 1),
+        "avg_slowmo_inside_box_rate": sum(r["slowmo"]["metrics"]["inside_box_rate"] for r in results) / max(len(results), 1),
         "cases": [
             {
                 "case_id": idx,
                 "video_path": r["video_path"],
                 "caption": r["caption"],
-                "sam_prompt_mode": r["sam_prompt_mode"],
-                "sam_prompt_text": r["sam_prompt_text"],
-                "sam_prior_source": r["sam_prior_source"],
-                "unmatched_gt_indices": r["unmatched_gt_indices"],
-                "metrics": r["metrics"],
+                "slow_factor": r["slow_factor"],
+                "original_metrics": r["original"]["metrics"],
+                "slowmo_metrics": r["slowmo"]["metrics"],
             }
             for idx, r in enumerate(results)
         ],
@@ -446,21 +543,26 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
 
     blocks = []
     for idx, result in enumerate(results):
+        original = result["original"]
+        slowmo = result["slowmo"]
         blocks.append(
             f"""
   <section class="case">
     <h2>Case {idx}</h2>
     <p><b>Caption:</b> {result['caption']}</p>
     <p><b>Context frames:</b> {result['context_frame_indices']}</p>
-    <p><b>SAM prompt:</b> mode={result['sam_prompt_mode']} | text={result['sam_prompt_text']} | prior_source={result['sam_prior_source']} | prompt_frame={result['prompt_frame_idx']}</p>
-    <p><b>Metrics:</b> mean_center_l1_px={result['metrics']['mean_center_l1_px']:.2f}, inside_box_rate={result['metrics']['inside_box_rate']:.3f}, valid_track_points={result['metrics']['valid_track_points']}</p>
-    <p><b>Matched gt indices:</b> {result['matched_gt_indices']}</p>
-    <p><b>Unmatched gt indices:</b> {result['unmatched_gt_indices']}</p>
-    <figure>
-      <video controls preload="none" playsinline src="{result['overlay_video']}"></video>
-      <figcaption>overlay video</figcaption>
-    </figure>
-    <pre>{json.dumps({'metrics': result['metrics'], 'shapes': result['shapes'], 'sam_prompt_mode': result['sam_prompt_mode'], 'sam_prompt_text': result['sam_prompt_text'], 'sam_prior_source': result['sam_prior_source'], 'sam_motion_box_xyxy': result['sam_motion_box_xyxy'], 'sam_prompt_box_xyxy': result['sam_prompt_box_xyxy'], 'matched_gt_indices': result['matched_gt_indices'], 'unmatched_gt_indices': result['unmatched_gt_indices'], 'track_image_hw': result['track_image_hw'], 'vggt_used_model': result['vggt_used_model']}, indent=2, ensure_ascii=False)}</pre>
+    <p><b>Slow factor:</b> x{result['slow_factor']} temporal densification by linear interpolation</p>
+    <div class="video-grid">
+      <figure>
+        <video controls preload="none" playsinline src="{original['overlay_video']}"></video>
+        <figcaption>Original speed overlay</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{slowmo['overlay_video']}"></video>
+        <figcaption>Slow motion overlay (x{result['slow_factor']})</figcaption>
+      </figure>
+    </div>
+    <pre>{json.dumps({'original': {'metrics': original['metrics'], 'shapes': original['shapes'], 'sam_prompt_mode': original['sam_prompt_mode'], 'sam_prompt_text': original['sam_prompt_text'], 'sam_prior_source': original['sam_prior_source'], 'sam_motion_box_xyxy': original['sam_motion_box_xyxy'], 'sam_prompt_box_xyxy': original['sam_prompt_box_xyxy'], 'matched_gt_indices': original['matched_gt_indices'], 'unmatched_gt_indices': original['unmatched_gt_indices'], 'track_image_hw': original['track_image_hw'], 'vggt_used_model': original['vggt_used_model'], 'num_frames': original['num_frames']}, 'slowmo': {'metrics': slowmo['metrics'], 'shapes': slowmo['shapes'], 'sam_prompt_mode': slowmo['sam_prompt_mode'], 'sam_prompt_text': slowmo['sam_prompt_text'], 'sam_prior_source': slowmo['sam_prior_source'], 'sam_motion_box_xyxy': slowmo['sam_motion_box_xyxy'], 'sam_prompt_box_xyxy': slowmo['sam_prompt_box_xyxy'], 'matched_gt_indices': slowmo['matched_gt_indices'], 'unmatched_gt_indices': slowmo['unmatched_gt_indices'], 'track_image_hw': slowmo['track_image_hw'], 'vggt_used_model': slowmo['vggt_used_model'], 'num_frames': slowmo['num_frames']}}, indent=2, ensure_ascii=False)}</pre>
   </section>
 """
         )
@@ -473,6 +575,7 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
     .case {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
+    .video-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
     video {{ width: 100%; border: 1px solid #ccc; background: #000; }}
     figure {{ margin: 0; }}
     figcaption {{ font-size: 12px; color: #444; margin-top: 4px; }}
@@ -480,9 +583,9 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   </style>
 </head>
 <body>
-  <h1>VGGT with SAM Prior</h1>
-  <p>当前页面验证的是：先用 SAM2 依据 caption 和视频内容找到目标物体，再从 SAM2 在 frame0 的 mask/box 里生成 VGGT query priors，随后仍由 VGGT 输出整段轨迹。彩色 gt 框是匹配到 query 的 GT；灰框是当前没有对应 query 的 GT；橙框是送进 SAM2 的 prompt；绿框是 SAM2 跟踪框；黑圈是 frame0 上喂给 VGGT 的 prior 点；彩色圆点是 VGGT 的 tracks。</p>
-  <p><b>Overall:</b> avg_mean_center_l1_px={summary['avg_mean_center_l1_px']:.2f}, avg_inside_box_rate={summary['avg_inside_box_rate']:.3f}, num_cases={summary['num_cases']}</p>
+  <h1>VGGT with SAM Prior: Original vs Slow Motion</h1>
+  <p>同一个 case 在这里会跑两次相同的物体跟踪流程：先用 SAM2 根据视频内容得到物体区域，再从 SAM2 的 mask/box 里生成 VGGT query priors，最后由 VGGT 输出整段轨迹。右侧慢放视频通过线性插帧增加中间帧，以减小相邻帧位移。彩色 gt 框是匹配到 query 的 GT；灰框是当前没有对应 query 的 GT；橙框是送进 SAM2 的 prompt；绿框是 SAM2 跟踪框；黑圈是 frame0 上喂给 VGGT 的 prior 点；彩色圆点是 VGGT 的 tracks。</p>
+  <p><b>Overall:</b> original_mean_center_l1_px={summary['avg_original_mean_center_l1_px']:.2f}, original_inside_box_rate={summary['avg_original_inside_box_rate']:.3f}, slowmo_mean_center_l1_px={summary['avg_slowmo_mean_center_l1_px']:.2f}, slowmo_inside_box_rate={summary['avg_slowmo_inside_box_rate']:.3f}, num_cases={summary['num_cases']}</p>
   {''.join(blocks)}
 </body>
 </html>
@@ -507,6 +610,7 @@ def main() -> None:
         default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/vggt_sam_prior_viewer",
     )
     parser.add_argument("--port", type=int, default=8771)
+    parser.add_argument("--slow-factor", type=int, default=4)
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
@@ -530,7 +634,7 @@ def main() -> None:
         device=str(device),
         input_hw=tuple(model_cfg["vggt_input_hw"]),
     ).to(device)
-    sam_tracker = SAM2MotionTracker(device="cuda" if torch.cuda.is_available() else "cpu")
+    sam_tracker = SAM2MotionTracker(device="cuda" if torch.cuda.is_available() else "cpu", enable_text_prompt=False)
 
     output_dir = Path(args.output_dir)
     results = []
@@ -547,6 +651,7 @@ def main() -> None:
                 sam_tracker=sam_tracker,
                 vggt_adapter=vggt_adapter,
                 device=device,
+                slow_factor=args.slow_factor,
             )
         )
 
