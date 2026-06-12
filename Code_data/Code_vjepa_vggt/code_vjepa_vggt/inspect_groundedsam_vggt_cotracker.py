@@ -14,14 +14,12 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.eval_vggt_sam_multi_object_viewer import (
     OBJECT_COLORS,
     QUERY_COLORS,
     build_query_prior_from_tracks_with_minimum,
     detect_and_track_objects,
 )
-from code_vjepa_vggt.utils.config import load_yaml_config
 
 
 COTRACKER_REPO_ROOT = Path("/home/gaoya/Code_Video/co-tracker-main")
@@ -247,7 +245,7 @@ def build_report(results: dict, output_dir: Path) -> Path:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Grounded-SAM Query Points to VGGT and CoTracker</title>
+  <title>Grounded-SAM Query Points to CoTracker</title>
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
     .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }}
@@ -258,8 +256,8 @@ def build_report(results: dict, output_dir: Path) -> Path:
   </style>
 </head>
 <body>
-  <h1>GroundingDINO -> SAM2 -> Query Points -> VGGT / CoTracker</h1>
-  <p>同一条视频先做 GroundingDINO 文本检测，再逐物体跑 SAM2 得到 mask 和 box，然后从 frame0 的 SAM2 mask 里采样 query points。下方分别展示公共前处理、VGGT 跟踪结果、CoTracker 跟踪结果。</p>
+  <h1>GroundingDINO -> SAM2 -> Query Points -> CoTracker</h1>
+  <p>同一条视频先做 GroundingDINO 文本检测，再逐物体跑 SAM2 得到 mask 和 box，然后从 frame0 的 SAM2 mask 里采样 query points，最后把这些点送入 CoTracker 做整段视频跟踪。下方分别展示 prompt、query points、公共前处理、以及 CoTracker 跟踪结果。</p>
   <div class="grid">
     <figure>
       <img src="{results['prompt_preview']}" alt="prompt preview">
@@ -272,10 +270,6 @@ def build_report(results: dict, output_dir: Path) -> Path:
     <figure>
       <video controls preload="none" playsinline src="{results['sam2_overlay_video']}"></video>
       <figcaption>公共前处理: GroundingDINO + SAM2 + query points</figcaption>
-    </figure>
-    <figure>
-      <video controls preload="none" playsinline src="{results['vggt_overlay_video']}"></video>
-      <figcaption>VGGT tracks overlay</figcaption>
     </figure>
     <figure>
       <video controls preload="none" playsinline src="{results['cotracker_overlay_video']}"></video>
@@ -300,10 +294,6 @@ def main() -> None:
     )
     parser.add_argument("--caption", default="Ball colliding with a wooden block")
     parser.add_argument(
-        "--config",
-        default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/inspect_phys_state_vjepa_vggt.yaml",
-    )
-    parser.add_argument(
         "--cotracker-checkpoint",
         default="/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth",
     )
@@ -319,8 +309,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = load_yaml_config(args.config)
-    model_cfg = cfg["model"]
     output_dir = Path(args.output_dir)
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -375,39 +363,6 @@ def main() -> None:
     write_mp4(sam2_overlay_raw, sam2_overlay, fps=int(args.fps))
     sam2_overlay_video = ensure_browser_video(sam2_overlay_raw)
 
-    vggt_adapter = VGGTTrackAdapter(
-        model_path=model_cfg.get("vggt_model_path"),
-        num_queries=int(args.num_queries),
-        device=str(device),
-        input_hw=tuple(model_cfg["vggt_input_hw"]),
-    ).to(device)
-    frames_bthwc = torch.from_numpy(frames_thwc.astype(np.float32) / 255.0).unsqueeze(0).to(device)
-    query_points_prior = torch.from_numpy(query_points_px).unsqueeze(0).to(device=device, dtype=frames_bthwc.dtype)
-    with torch.no_grad():
-        vggt_out = vggt_adapter(
-            frames_bthwc,
-            query_points_prior=query_points_prior,
-            query_image_hw=(frames_thwc.shape[1], frames_thwc.shape[2]),
-        )
-    vggt_tracks = vggt_out.tracks[0].detach().cpu().numpy().astype(np.float32)
-    scale_x = float(frames_thwc.shape[2]) / float(vggt_out.image_hw[1])
-    scale_y = float(frames_thwc.shape[1]) / float(vggt_out.image_hw[0])
-    vggt_tracks[..., 0] *= scale_x
-    vggt_tracks[..., 1] *= scale_y
-    vggt_visibility = vggt_out.visibility[0].detach().cpu().numpy().astype(np.float32)
-    vggt_overlay = render_track_overlay(
-        frames_thwc=frames_thwc,
-        object_tracks=object_tracks,
-        query_points_px=query_points_px,
-        query_owner=query_owner,
-        tracks_tk2=vggt_tracks,
-        visibility_tk=vggt_visibility,
-        title_prefix="v",
-    )
-    vggt_overlay_raw = assets_dir / "vggt_overlay.mp4"
-    write_mp4(vggt_overlay_raw, vggt_overlay, fps=int(args.fps))
-    vggt_overlay_video = ensure_browser_video(vggt_overlay_raw)
-
     queries = np.concatenate(
         [
             np.zeros((query_points_px.shape[0], 1), dtype=np.float32),
@@ -461,12 +416,8 @@ def main() -> None:
         "query_owner": query_owner,
         "prior_source": prior_source,
         "query_points_shape": list(query_points_px.shape),
-        "vggt_tracks_shape": list(vggt_out.tracks.shape),
-        "vggt_visibility_shape": list(vggt_out.visibility.shape),
         "cotracker_tracks_shape": list(pred_tracks.shape),
         "cotracker_visibility_shape": list(pred_visibility.shape),
-        "vggt_used_model": bool(vggt_out.used_model),
-        "vggt_input_hw": list(vggt_out.image_hw),
     }
     with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
@@ -475,7 +426,6 @@ def main() -> None:
         "prompt_preview": str(prompt_preview_path.relative_to(output_dir)),
         "query_preview": str(query_preview_path.relative_to(output_dir)),
         "sam2_overlay_video": str(sam2_overlay_video.relative_to(output_dir)),
-        "vggt_overlay_video": str(vggt_overlay_video.relative_to(output_dir)),
         "cotracker_overlay_video": str(cotracker_overlay_video.relative_to(output_dir)),
         "meta": meta,
     }
