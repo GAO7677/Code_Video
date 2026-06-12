@@ -9,10 +9,14 @@ model:
   freeze_vae: true
   freeze_text_encoder: true
   freeze_wan_dit: false
-  enable_sam2_priors: false
+  enable_sam2_priors: true
+  sam2_prior_strategy: grounded_text_multi
+  sam2_segment_len: 8
+  sam2_enable_text_prompt: false
+  sam2_max_objects: 4
   je_pa_variant: vitg384
   je_pa_ckpt_dir: /data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384
-  vggt_model_path: /data/gaoya/ckpt/vggt
+  vggt_model_path: /data/gaoya/ckpt/facebook-VGGT-1B
   vggt_input_hw: [420, 728]
   object_num_queries: 8
   jepa_input_size: 384

@@ -5,12 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
-from code_vjepa_vggt.adapters.sam2_motion import SAM2MotionTracker, build_motion_prompt_box
+from code_vjepa_vggt.adapters.sam2_motion import (
+    GroundingDINOTextDetector,
+    SAM2MotionTracker,
+    build_motion_prompt_box,
+)
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
 from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
@@ -29,6 +34,18 @@ from code_vjepa_vggt.utils.track_supervision import (
     track_box_iou_loss,
     track_box_l1_loss,
 )
+
+
+def _build_multi_object_prompt(caption: str) -> str:
+    caption_lower = str(caption).lower()
+    ordered = ["sphere", "ball", "block", "box", "cube", "cylinder", "capsule"]
+    found = []
+    for token in ordered:
+        if token in caption_lower and token not in found:
+            found.append(token)
+    if not found:
+        return str(caption)
+    return " . ".join(found) + " ."
 
 
 @dataclass
@@ -94,13 +111,20 @@ class ContextVideoTrainer(nn.Module):
         self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
 
         self.enable_sam2_priors = bool(model_cfg.get("enable_sam2_priors", False))
+        self.sam2_prior_strategy = str(model_cfg.get("sam2_prior_strategy", "single")).strip().lower()
         self.sam2_tracker = None
+        self.text_detector = None
         if self.enable_sam2_priors:
             self.sam2_tracker = SAM2MotionTracker(
                 device=str(self.device_obj),
                 segment_len=int(model_cfg.get("sam2_segment_len", 8)),
                 enable_text_prompt=bool(model_cfg.get("sam2_enable_text_prompt", True)),
             )
+            if self.sam2_prior_strategy in {"grounded_text_multi", "text_multi", "grounded_text"}:
+                self.text_detector = GroundingDINOTextDetector(
+                    device=str(self.device_obj),
+                    max_boxes=int(model_cfg.get("sam2_max_objects", 4)),
+                )
 
         self.dataset = self._build_dataset()
         self.state = TrainerState()
@@ -198,39 +222,181 @@ class ContextVideoTrainer(nn.Module):
         context_videos: torch.Tensor,
         num_context_frames: torch.Tensor,
         captions: list[str],
-    ) -> tuple[torch.Tensor | None, list[str], list[str]]:
+    ) -> tuple[torch.Tensor | None, list[str], list[str], list[dict[str, Any]]]:
         if self.sam2_tracker is None:
-            return None, [], []
+            return None, [], [], []
 
         priors = []
         prior_sources: list[str] = []
         prompt_modes: list[str] = []
+        prior_debugs: list[dict[str, Any]] = []
         for batch_idx in range(context_videos.shape[0]):
             valid_frames = int(num_context_frames[batch_idx].item())
             frames_tchw_01 = ((context_videos[batch_idx, :, :valid_frames].permute(1, 0, 2, 3).float() + 1.0) / 2.0).detach().cpu().numpy()
             prompt_frame_idx = max(valid_frames - 1, 0)
             try:
-                motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-                sam_out = self.sam2_tracker.track(
-                    frames_tchw_01,
+                query_points_px, prior_source, prompt_mode, prior_debug = self._build_query_prior_for_sample(
+                    frames_tchw_01=frames_tchw_01,
                     prompt_frame_idx=prompt_frame_idx,
-                    prompt_box_xyxy=motion_prompt_box_xyxy,
                     caption=captions[batch_idx],
-                )
-                query_points_px, prior_source = build_vggt_query_prior(
-                    sam_out.masks_thw,
-                    sam_out.boxes_t4,
-                    num_queries=self.vggt_adapter.num_queries,
                 )
                 priors.append(torch.from_numpy(query_points_px))
                 prior_sources.append(prior_source)
-                prompt_modes.append(sam_out.prompt_mode)
+                prompt_modes.append(prompt_mode)
+                prior_debugs.append(
+                    {
+                        "prompt_frame_idx": int(prompt_frame_idx),
+                        "valid_frames": int(valid_frames),
+                        **prior_debug,
+                    }
+                )
             except Exception:
-                return None, [], []
+                return None, [], [], []
         if not priors:
-            return None, [], []
+            return None, [], [], []
         stacked = torch.stack(priors, dim=0).to(device=self.device_obj, dtype=context_videos.dtype)
-        return stacked, prior_sources, prompt_modes
+        return stacked, prior_sources, prompt_modes, prior_debugs
+
+    def _build_query_prior_for_sample(
+        self,
+        *,
+        frames_tchw_01: Any,
+        prompt_frame_idx: int,
+        caption: str,
+    ) -> tuple[Any, str, str, dict[str, Any]]:
+        if self.sam2_prior_strategy in {"grounded_text_multi", "text_multi", "grounded_text"}:
+            return self._build_multi_object_query_prior(
+                frames_tchw_01=frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                caption=caption,
+            )
+
+        motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
+        sam_out = self.sam2_tracker.track(
+            frames_tchw_01,
+            prompt_frame_idx=prompt_frame_idx,
+            prompt_box_xyxy=motion_prompt_box_xyxy,
+            caption=caption,
+        )
+        query_points_px, prior_source = build_vggt_query_prior(
+            sam_out.masks_thw,
+            sam_out.boxes_t4,
+            num_queries=self.vggt_adapter.num_queries,
+        )
+        return query_points_px, prior_source, sam_out.prompt_mode, {
+            "strategy": self.sam2_prior_strategy,
+            "prompt_text": sam_out.prompt_text,
+            "object_count": 1,
+            "used_fallback": bool("fallback" in sam_out.prompt_mode or sam_out.prompt_mode.startswith("proxy_box")),
+            "prior_source": prior_source,
+        }
+
+    def _build_multi_object_query_prior(
+        self,
+        *,
+        frames_tchw_01: np.ndarray,
+        prompt_frame_idx: int,
+        caption: str,
+    ) -> tuple[np.ndarray, str, str, dict[str, Any]]:
+        max_objects = int(self.cfg["model"].get("sam2_max_objects", 4))
+        text_prompt = _build_multi_object_prompt(caption)
+        detected_boxes = None
+        prompt_mode = "caption_gdino_multi"
+        used_fallback = False
+        detector_error = ""
+        if self.text_detector is not None and text_prompt.strip():
+            try:
+                detection = self.text_detector.detect(
+                    frames_tchw_01[int(prompt_frame_idx)],
+                    text_prompt,
+                    guidance_box_xyxy=None,
+                )
+                if detection.boxes_xyxy.shape[0] > 0:
+                    detected_boxes = detection.boxes_xyxy[:max_objects]
+                    prompt_mode = detection.prompt_mode
+            except Exception as exc:
+                used_fallback = True
+                detector_error = f"{type(exc).__name__}: {exc}"
+        if detected_boxes is None or detected_boxes.shape[0] == 0:
+            used_fallback = True
+            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
+            sam_out = self.sam2_tracker.track(
+                frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_box_xyxy=motion_prompt_box_xyxy,
+                caption=caption,
+            )
+            query_points_px, prior_source = build_vggt_query_prior(
+                sam_out.masks_thw,
+                sam_out.boxes_t4,
+                num_queries=self.vggt_adapter.num_queries,
+            )
+            return query_points_px, prior_source, sam_out.prompt_mode, {
+                "strategy": self.sam2_prior_strategy,
+                "prompt_text": text_prompt if text_prompt.strip() else sam_out.prompt_text,
+                "object_count": 1,
+                "used_fallback": used_fallback,
+                "prior_source": prior_source,
+                "detector_error": detector_error,
+            }
+
+        per_object_queries = []
+        object_count = min(int(detected_boxes.shape[0]), int(self.vggt_adapter.num_queries))
+        detected_boxes = detected_boxes[:object_count]
+        base = self.vggt_adapter.num_queries // max(object_count, 1)
+        remainder = max(0, self.vggt_adapter.num_queries - base * object_count)
+        for obj_idx, box_xyxy in enumerate(detected_boxes):
+            sam_out = self.sam2_tracker.track(
+                frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_box_xyxy=box_xyxy.astype(np.float32),
+                caption="",
+            )
+            alloc = base + (1 if obj_idx < remainder else 0)
+            if alloc <= 0:
+                continue
+            query_points_px, _ = build_vggt_query_prior(
+                sam_out.masks_thw,
+                sam_out.boxes_t4,
+                num_queries=alloc,
+            )
+            if query_points_px.shape[0] > 0:
+                per_object_queries.append(query_points_px)
+        if not per_object_queries:
+            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
+            sam_out = self.sam2_tracker.track(
+                frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_box_xyxy=motion_prompt_box_xyxy,
+                caption=caption,
+            )
+            query_points_px, prior_source = build_vggt_query_prior(
+                sam_out.masks_thw,
+                sam_out.boxes_t4,
+                num_queries=self.vggt_adapter.num_queries,
+            )
+            return query_points_px, prior_source, "grounded_text_empty_fallback", {
+                "strategy": self.sam2_prior_strategy,
+                "prompt_text": text_prompt,
+                "object_count": 0,
+                "used_fallback": True,
+                "prior_source": prior_source,
+                "detector_error": detector_error,
+            }
+
+        query_points = np.concatenate(per_object_queries, axis=0)[: self.vggt_adapter.num_queries].astype(np.float32)
+        if query_points.shape[0] < self.vggt_adapter.num_queries:
+            extra = query_points[-1:].repeat(self.vggt_adapter.num_queries - query_points.shape[0], axis=0)
+            query_points = np.concatenate([query_points, extra], axis=0)
+        prior_source = f"grounded_sam_objects{object_count}"
+        return query_points.astype(np.float32), prior_source, f"{prompt_mode}_objects{object_count}", {
+            "strategy": self.sam2_prior_strategy,
+            "prompt_text": text_prompt,
+            "object_count": object_count,
+            "used_fallback": used_fallback,
+            "prior_source": prior_source,
+            "detector_error": detector_error,
+        }
 
     def _prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         videos = batch["video"].to(self.device_obj)
@@ -262,7 +428,7 @@ class ContextVideoTrainer(nn.Module):
         jepa_out = self.jepa_adapter(context_videos)
         frames_bthwc = context_videos.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        query_points_prior, sam_prior_sources, sam_prompt_modes = self._maybe_build_query_priors(
+        query_points_prior, sam_prior_sources, sam_prompt_modes, sam_prior_debug = self._maybe_build_query_priors(
             context_videos=context_videos,
             num_context_frames=num_context_frames,
             captions=captions,
@@ -320,6 +486,7 @@ class ContextVideoTrainer(nn.Module):
             "说明": {
                 "context_video": "输入给 JEPA / VGGT / VAE 的上下文视频片段，batch 内可变长度会被 padding 到同一长度。",
                 "sam2_prior": "如果开启，则先用 SAM2 在 context clip 上找到目标，再从 frame0 的 mask 或 box 采样 query points 作为 VGGT 的先验。",
+                "sam2_prior_strategy": "可选单目标 motion/text prompt，或 Grounded-SAM 文本检测多目标，再分别采样 query points 给 VGGT。",
                 "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]。",
                 "vggt_tracks": "VGGT 根据 query priors 或默认 queries 预测的 query-point tracks [B,Tctx,K,2]。",
                 "object_tokens": "沿着轨迹从 JEPA 局部 tube、VAE latent、轨迹几何特征中池化并投影得到的 object state tokens [B,K,D]。",
@@ -347,8 +514,10 @@ class ContextVideoTrainer(nn.Module):
             "video_path": batch["video_path"][0] if isinstance(batch["video_path"], list) else batch["video_path"],
             "frame_indices": batch["frame_indices"][0].tolist() if isinstance(batch["frame_indices"], torch.Tensor) and batch["frame_indices"].ndim == 2 else batch["frame_indices"],
             "caption": captions[0] if captions else "",
+            "sam2_prior_strategy": self.sam2_prior_strategy,
             "sam_prior_sources": sam_prior_sources,
             "sam_prompt_modes": sam_prompt_modes,
+            "sam_prior_debug": sam_prior_debug,
         }
         if query_points_prior is not None:
             debug["sam_query_points"] = list(query_points_prior.shape)
@@ -481,7 +650,7 @@ class ContextVideoTrainer(nn.Module):
 </head>
 <body>
   <h1>Object-Centric Wan Context Report</h1>
-  <p>中文说明：可变长度 context 先编码成 JEPA / VAE 表征；若开启 SAM2，则先从 context clip 中得到 object prior，再把 frame0 prior query 送入 VGGT 跟踪；沿轨迹池化 JEPA 与 latent 局部特征形成 object tokens，再与文本条件一起送入 Wan DiT。</p>
+  <p>中文说明：可变长度 context 先编码成 JEPA / VAE 表征；若开启 object prior，则优先尝试用 Grounded-SAM 根据 caption 在 prompt frame 上检测物体，再把每个物体的 SAM2 mask/track 采样成 VGGT query points；若文本检测不可用或失败，则退回 motion-based SAM2 prior。随后沿轨迹池化 JEPA 与 latent 局部特征形成 object tokens，再与文本条件一起送入 Wan DiT。</p>
   <div class="grid">
     <div>
       <h2>Source Video</h2>
