@@ -8,6 +8,7 @@ import torch
 
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
+from code_vjepa_vggt.utils.masks import collate_video_batch
 
 
 def main() -> None:
@@ -25,8 +26,8 @@ def main() -> None:
 
     cfg = load_yaml_config(args.config)
     trainer = ContextVideoTrainer(cfg, build_optimizer=False)
-    loader = trainer.build_dataloader(num_workers=0)
-    batch = next(iter(loader))
+    sample = trainer.dataset[args.index]
+    batch = collate_video_batch([sample])
     with torch.no_grad():
         debug = trainer._prepare_batch(batch)["debug"]
     report = {
