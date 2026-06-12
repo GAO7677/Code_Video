@@ -60,8 +60,8 @@ class ContextVideoTrainer(nn.Module):
         if self.bundle.dit is not None:
             self.bundle.dit.train(mode=build_optimizer)
 
-        cond_dim = int(model_cfg.get("cond_proj_dim", self.bundle.config.text_dim))
-        if cond_dim != self.bundle.config.text_dim:
+        cond_dim = int(model_cfg.get("cond_proj_dim", self.bundle.config.text_dim if hasattr(self.bundle.config, "text_dim") else 4096))
+        if hasattr(self.bundle.config, "text_dim") and cond_dim != int(self.bundle.config.text_dim):
             raise ValueError(f"cond_proj_dim must match Wan text_dim={self.bundle.config.text_dim}, got {cond_dim}")
 
         self.jepa_adapter = JEPAPatchAdapter(

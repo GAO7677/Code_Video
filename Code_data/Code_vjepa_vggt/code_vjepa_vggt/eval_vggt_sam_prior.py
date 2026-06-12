@@ -20,6 +20,7 @@ from code_vjepa_vggt.adapters.sam2_motion import SAM2MotionTracker, build_motion
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.utils.config import load_yaml_config
+from code_vjepa_vggt.utils.object_priors import build_vggt_query_prior as build_vggt_query_prior_from_mask
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
 
 
@@ -149,12 +150,11 @@ def build_vggt_query_prior(
     *,
     num_queries: int,
 ) -> tuple[np.ndarray, str]:
-    frame0_mask = sam_masks_thw[0]
-    query_points = sample_points_from_mask(frame0_mask, num_queries)
-    if query_points.shape[0] == num_queries and np.any(frame0_mask > 0):
-        return query_points.astype(np.float32), "sam_mask_frame0"
-    box0 = sam_boxes_t4[0]
-    return sample_points_from_box(box0, num_queries), "sam_box_frame0"
+    return build_vggt_query_prior_from_mask(
+        sam_masks_thw,
+        sam_boxes_t4,
+        num_queries=num_queries,
+    )
 
 
 def color_hex_to_rgb(color: str) -> tuple[int, int, int]:
