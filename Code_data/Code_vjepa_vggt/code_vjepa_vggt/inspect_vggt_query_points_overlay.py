@@ -69,22 +69,12 @@ def pil_to_data_url(image: Image.Image) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def draw_overlay_frame(
-    frame_chw: torch.Tensor,
-    gt_boxes_k4: torch.Tensor,
-    query_points_k2: np.ndarray,
-    tracks_xy_k2: torch.Tensor,
-    vis_k: torch.Tensor,
-    matched_gt_idx_k: torch.Tensor,
-    *,
-    image_hw: tuple[int, int],
-) -> Image.Image:
+def init_canvas(frame_chw: torch.Tensor) -> tuple[Image.Image, ImageDraw.ImageDraw]:
     out = Image.fromarray(tensor_frame_to_uint8_hwc(frame_chw))
-    draw = ImageDraw.Draw(out)
-    width, height = out.size
-    scale_x = width / max(float(image_hw[1]), 1.0)
-    scale_y = height / max(float(image_hw[0]), 1.0)
+    return out, ImageDraw.Draw(out)
 
+
+def draw_gt_boxes(draw: ImageDraw.ImageDraw, gt_boxes_k4: torch.Tensor, *, width: int, height: int) -> None:
     for obj_idx, box in enumerate(gt_boxes_k4.tolist()):
         x0, y0, x1, y1 = box
         if x1 <= x0 or y1 <= y0:
@@ -93,6 +83,17 @@ def draw_overlay_frame(
         draw.rectangle([x0 * width, y0 * height, x1 * width, y1 * height], outline=color, width=2)
         draw.text((x0 * width + 2, y0 * height + 2), f"gt{obj_idx}", fill=color)
 
+
+def draw_query_points(
+    draw: ImageDraw.ImageDraw,
+    query_points_k2: np.ndarray,
+    *,
+    width: int,
+    height: int,
+    image_hw: tuple[int, int],
+) -> None:
+    scale_x = width / max(float(image_hw[1]), 1.0)
+    scale_y = height / max(float(image_hw[0]), 1.0)
     for query_idx, point in enumerate(query_points_k2.tolist()):
         x, y = float(point[0]) * scale_x, float(point[1]) * scale_y
         color = "#111111"
@@ -100,6 +101,19 @@ def draw_overlay_frame(
         draw.ellipse([x - r, y - r, x + r, y + r], outline=color, width=3)
         draw.text((x + 7, y + 4), f"q{query_idx}", fill=color)
 
+
+def draw_track_points(
+    draw: ImageDraw.ImageDraw,
+    tracks_xy_k2: torch.Tensor,
+    vis_k: torch.Tensor,
+    matched_gt_idx_k: torch.Tensor,
+    *,
+    width: int,
+    height: int,
+    image_hw: tuple[int, int],
+) -> None:
+    scale_x = width / max(float(image_hw[1]), 1.0)
+    scale_y = height / max(float(image_hw[0]), 1.0)
     for query_idx, point in enumerate(tracks_xy_k2.tolist()):
         x, y = float(point[0]) * scale_x, float(point[1]) * scale_y
         color = QUERY_PALETTE[query_idx % len(QUERY_PALETTE)]
@@ -110,6 +124,73 @@ def draw_overlay_frame(
         if float(vis_k[query_idx].item()) < 0.5:
             label += "(inv)"
         draw.text((x + 6, y - 6), label, fill=color)
+
+
+def draw_sam_prompt_box(draw: ImageDraw.ImageDraw, sam_prompt_box_xyxy: np.ndarray) -> None:
+    if np.any(sam_prompt_box_xyxy > 0):
+        x0, y0, x1, y1 = [float(v) for v in sam_prompt_box_xyxy.tolist()]
+        draw.rectangle([x0, y0, x1, y1], outline=SAM_PROMPT_COLOR, width=4)
+        draw.text((x0 + 2, max(y0 + 2, 2)), "sam_prompt", fill=SAM_PROMPT_COLOR)
+
+
+def draw_sam_track_box(draw: ImageDraw.ImageDraw, sam_track_box_xyxy: np.ndarray) -> None:
+    if np.any(sam_track_box_xyxy > 0):
+        x0, y0, x1, y1 = [float(v) for v in sam_track_box_xyxy.tolist()]
+        draw.rectangle([x0, y0, x1, y1], outline=SAM_TRACK_COLOR, width=4)
+        draw.text((x0 + 2, max(y0 + 2, 2)), "sam_track", fill=SAM_TRACK_COLOR)
+
+
+def draw_sam_mask(draw: ImageDraw.ImageDraw, sam_mask_hw: np.ndarray) -> None:
+    ys, xs = np.where(sam_mask_hw > 0)
+    if xs.size > 0 and ys.size > 0:
+        step = max(1, xs.size // 800)
+        for x, y in zip(xs[::step], ys[::step]):
+            draw.point((float(x), float(y)), fill=SAM_TRACK_COLOR)
+
+
+def draw_overlay_frame(
+    frame_chw: torch.Tensor,
+    gt_boxes_k4: torch.Tensor,
+    query_points_k2: np.ndarray | None = None,
+    tracks_xy_k2: torch.Tensor | None = None,
+    vis_k: torch.Tensor | None = None,
+    matched_gt_idx_k: torch.Tensor | None = None,
+    sam_prompt_box_xyxy: np.ndarray | None = None,
+    sam_track_box_xyxy: np.ndarray | None = None,
+    sam_mask_hw: np.ndarray | None = None,
+    *,
+    image_hw: tuple[int, int],
+    show_gt: bool = False,
+    show_query: bool = False,
+    show_tracks: bool = False,
+    show_sam_prompt: bool = False,
+    show_sam_track: bool = False,
+    show_sam_mask: bool = False,
+) -> Image.Image:
+    out, draw = init_canvas(frame_chw)
+    draw = ImageDraw.Draw(out)
+    width, height = out.size
+
+    if show_gt:
+        draw_gt_boxes(draw, gt_boxes_k4, width=width, height=height)
+    if show_query and query_points_k2 is not None:
+        draw_query_points(draw, query_points_k2, width=width, height=height, image_hw=image_hw)
+    if show_tracks and tracks_xy_k2 is not None and vis_k is not None and matched_gt_idx_k is not None:
+        draw_track_points(
+            draw,
+            tracks_xy_k2,
+            vis_k,
+            matched_gt_idx_k,
+            width=width,
+            height=height,
+            image_hw=image_hw,
+        )
+    if show_sam_prompt and sam_prompt_box_xyxy is not None:
+        draw_sam_prompt_box(draw, sam_prompt_box_xyxy)
+    if show_sam_track and sam_track_box_xyxy is not None:
+        draw_sam_track_box(draw, sam_track_box_xyxy)
+    if show_sam_mask and sam_mask_hw is not None:
+        draw_sam_mask(draw, sam_mask_hw)
 
     return out
 
@@ -123,35 +204,18 @@ def draw_sam_debug_frame(
     *,
     prompt_frame: bool,
 ) -> Image.Image:
-    out = Image.fromarray(tensor_frame_to_uint8_hwc(frame_chw))
-    draw = ImageDraw.Draw(out)
-    width, height = out.size
-
-    for obj_idx, box in enumerate(gt_boxes_k4.tolist()):
-        x0, y0, x1, y1 = box
-        if x1 <= x0 or y1 <= y0:
-            continue
-        color = GT_PALETTE[obj_idx % len(GT_PALETTE)]
-        draw.rectangle([x0 * width, y0 * height, x1 * width, y1 * height], outline=color, width=2)
-        draw.text((x0 * width + 2, y0 * height + 2), f"gt{obj_idx}", fill=color)
-
-    if prompt_frame and np.any(sam_prompt_box_xyxy > 0):
-        x0, y0, x1, y1 = [float(v) for v in sam_prompt_box_xyxy.tolist()]
-        draw.rectangle([x0, y0, x1, y1], outline=SAM_PROMPT_COLOR, width=4)
-        draw.text((x0 + 2, max(y0 + 2, 2)), "sam_prompt", fill=SAM_PROMPT_COLOR)
-
-    if np.any(sam_track_box_xyxy > 0):
-        x0, y0, x1, y1 = [float(v) for v in sam_track_box_xyxy.tolist()]
-        draw.rectangle([x0, y0, x1, y1], outline=SAM_TRACK_COLOR, width=4)
-        draw.text((x0 + 2, max(y0 + 2, 2)), "sam_track", fill=SAM_TRACK_COLOR)
-
-    ys, xs = np.where(sam_mask_hw > 0)
-    if xs.size > 0 and ys.size > 0:
-        step = max(1, xs.size // 800)
-        for x, y in zip(xs[::step], ys[::step]):
-            draw.point((float(x), float(y)), fill=SAM_TRACK_COLOR)
-
-    return out
+    return draw_overlay_frame(
+        frame_chw=frame_chw,
+        gt_boxes_k4=gt_boxes_k4,
+        sam_prompt_box_xyxy=sam_prompt_box_xyxy if prompt_frame else None,
+        sam_track_box_xyxy=sam_track_box_xyxy,
+        sam_mask_hw=sam_mask_hw,
+        image_hw=(frame_chw.shape[-2], frame_chw.shape[-1]),
+        show_gt=True,
+        show_sam_prompt=prompt_frame,
+        show_sam_track=True,
+        show_sam_mask=True,
+    )
 
 
 def ensure_browser_video(source_path: Path) -> Path:
@@ -200,6 +264,16 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     blocks = []
     for idx, result in enumerate(results):
+        video_cards = []
+        for video in result["videos"]:
+            video_cards.append(
+                f"""
+    <figure class="video-card">
+      <video controls preload="none" playsinline src="{video['path']}"></video>
+      <figcaption><b>{video['title']}</b><br>来源: {video['source']}</figcaption>
+    </figure>
+"""
+            )
         blocks.append(
             f"""
   <section class="case">
@@ -213,14 +287,9 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     <pre>{json.dumps(result['shapes'], indent=2, ensure_ascii=False)}</pre>
     <p><b>Coordinate stats:</b></p>
     <pre>{json.dumps(result['coord_trace'], indent=2, ensure_ascii=False)}</pre>
-    <figure>
-      <video controls preload="none" playsinline src="{result['overlay_video']}"></video>
-      <figcaption>VGGT query points + GT overlay</figcaption>
-    </figure>
-    <figure>
-      <video controls preload="none" playsinline src="{result['sam_debug_video']}"></video>
-      <figcaption>SAM2 prompt / mask / track overlay</figcaption>
-    </figure>
+    <div class="video-grid">
+      {''.join(video_cards)}
+    </div>
   </section>
 """
         )
@@ -233,15 +302,16 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
     .case {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
+    .video-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }}
+    .video-card {{ margin: 0; background: #fff; border: 1px solid #ddd; padding: 12px; }}
     video {{ width: 100%; border: 1px solid #ccc; background: #000; }}
-    figure {{ margin: 0; }}
     figcaption {{ font-size: 12px; color: #444; margin-top: 4px; }}
     pre {{ background: #fff; border: 1px solid #ddd; padding: 16px; white-space: pre-wrap; }}
   </style>
 </head>
 <body>
   <h1>VGGT Query Points Overlay</h1>
-  <p>黑色圆点是喂给 VGGT 的 query points，彩色圆点是 VGGT 跟踪结果，彩色框是数据集 GT box。第二个视频会显示 SAM2 的 prompt box、mask 和跟踪框，方便判断问题出在 SAM2 还是 VGGT。</p>
+  <p>同一个 case 现在按来源拆成多个独立视频。黑色圆点是喂给 VGGT 的 query points，彩色圆点是 VGGT 跟踪结果，彩色框是数据集 GT box。每个视频下方都会标注来源，方便单独检查是哪一路信号出了问题。</p>
   {''.join(blocks)}
 </body>
 </html>
@@ -295,7 +365,7 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
     frames_tchw_01 = ((sample["context_video"].float() + 1.0) / 2.0).permute(1, 0, 2, 3).cpu().numpy()
     prompt_frame_idx = max(int(context_video.shape[2]) - 1, 0)
     motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-    sam_tracker = SAM2MotionTracker(device=str(device), segment_len=8, enable_text_prompt=True)
+    sam_tracker = SAM2MotionTracker(device=str(device), segment_len=8, enable_text_prompt=False)
     sam_out = sam_tracker.track(
         frames_tchw_01,
         prompt_frame_idx=prompt_frame_idx,
@@ -303,36 +373,97 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
         caption=sample["caption"],
     )
 
-    frame_videos = []
-    sam_debug_videos = []
+    video_buffers: dict[str, list[np.ndarray]] = {
+        "raw_context": [],
+        "gt_only": [],
+        "vggt_query_only": [],
+        "vggt_tracks_only": [],
+        "sam_prompt_only": [],
+        "sam_mask_only": [],
+        "sam_track_only": [],
+    }
     context_frames = sample["context_video"].permute(1, 0, 2, 3)
     for t in range(context_frames.shape[0]):
-        img = draw_overlay_frame(
+        raw_img = Image.fromarray(tensor_frame_to_uint8_hwc(context_frames[t]))
+        video_buffers["raw_context"].append(np.array(raw_img))
+
+        gt_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            image_hw=track_image_hw,
+            show_gt=True,
+        )
+        video_buffers["gt_only"].append(np.array(gt_img))
+
+        query_img = draw_overlay_frame(
             frame_chw=context_frames[t],
             gt_boxes_k4=sample["context_boxes"][t],
             query_points_k2=vggt_out.query_points[0].detach().cpu().numpy(),
+            image_hw=track_image_hw,
+            show_query=True,
+        )
+        video_buffers["vggt_query_only"].append(np.array(query_img))
+
+        track_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
             tracks_xy_k2=tracks_native[0, t].detach().cpu(),
             vis_k=vggt_out.visibility[0, t].detach().cpu(),
             matched_gt_idx_k=alignment.matched_gt_indices[0].detach().cpu(),
             image_hw=track_image_hw,
+            show_tracks=True,
         )
-        frame_videos.append(np.array(img))
-        sam_img = draw_sam_debug_frame(
+        video_buffers["vggt_tracks_only"].append(np.array(track_img))
+
+        sam_prompt_img = draw_overlay_frame(
             frame_chw=context_frames[t],
             gt_boxes_k4=sample["context_boxes"][t],
-            sam_prompt_box_xyxy=sam_out.prompt_box_xyxy,
-            sam_track_box_xyxy=sam_out.boxes_t4[t],
-            sam_mask_hw=sam_out.masks_thw[t],
-            prompt_frame=(t == prompt_frame_idx),
+            sam_prompt_box_xyxy=sam_out.prompt_box_xyxy if t == prompt_frame_idx else None,
+            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
+            show_sam_prompt=(t == prompt_frame_idx),
         )
-        sam_debug_videos.append(np.array(sam_img))
+        video_buffers["sam_prompt_only"].append(np.array(sam_prompt_img))
 
-    raw_path = output_dir / f"{Path(sample['video_path']).stem}__vggt_query_overlay.mp4"
-    write_mp4(raw_path, np.stack(frame_videos, axis=0), fps=int(sample.get("_fps", 8)))
-    browser_path = ensure_browser_video(raw_path)
-    sam_raw_path = output_dir / f"{Path(sample['video_path']).stem}__sam_debug_overlay.mp4"
-    write_mp4(sam_raw_path, np.stack(sam_debug_videos, axis=0), fps=int(sample.get("_fps", 8)))
-    sam_browser_path = ensure_browser_video(sam_raw_path)
+        sam_mask_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            sam_mask_hw=sam_out.masks_thw[t],
+            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
+            show_sam_mask=True,
+        )
+        video_buffers["sam_mask_only"].append(np.array(sam_mask_img))
+
+        sam_track_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            sam_track_box_xyxy=sam_out.boxes_t4[t],
+            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
+            show_sam_track=True,
+        )
+        video_buffers["sam_track_only"].append(np.array(sam_track_img))
+
+    video_specs = [
+        ("raw_context", "Raw Context Video", "原始 context 帧"),
+        ("gt_only", "GT Boxes", "数据集 GT boxes"),
+        ("vggt_query_only", "VGGT Query Points", "VGGT 输入 query points"),
+        ("vggt_tracks_only", "VGGT Tracked Points", "VGGT 输出 tracked points"),
+        ("sam_prompt_only", "SAM2 Prompt Box", "SAM2 motion prompt box"),
+        ("sam_mask_only", "SAM2 Mask", "SAM2 输出 mask"),
+        ("sam_track_only", "SAM2 Track Box", "SAM2 输出 tracked box"),
+    ]
+    browser_videos = []
+    for key, title, source in video_specs:
+        raw_path = output_dir / f"{Path(sample['video_path']).stem}__{key}.mp4"
+        write_mp4(raw_path, np.stack(video_buffers[key], axis=0), fps=int(sample.get("_fps", 8)))
+        browser_path = ensure_browser_video(raw_path)
+        browser_videos.append(
+            {
+                "key": key,
+                "title": title,
+                "source": source,
+                "path": str(browser_path.relative_to(output_dir.parent)),
+            }
+        )
 
     return {
         "caption": sample["caption"],
@@ -360,14 +491,13 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
             "sam_masks_thw": list(np.asarray(sam_out.masks_thw).shape),
             "sam_boxes_t4": list(np.asarray(sam_out.boxes_t4).shape),
             "sam_motion_box_xyxy": list(np.asarray(motion_prompt_box_xyxy).shape),
-            "sam_query_points": list(query_points_prior.shape),
+            "sam_query_points": list(query_points_prior_px.shape),
             "vggt_query_points": list(vggt_out.query_points.shape),
             "vggt_tracks": list(vggt_out.tracks.shape),
             "vggt_visibility": list(vggt_out.visibility.shape),
             "vggt_confidence": list(vggt_out.confidence.shape),
         },
-        "overlay_video": str(browser_path.relative_to(output_dir.parent)),
-        "sam_debug_video": str(sam_browser_path.relative_to(output_dir.parent)),
+        "videos": browser_videos,
     }
 
 
