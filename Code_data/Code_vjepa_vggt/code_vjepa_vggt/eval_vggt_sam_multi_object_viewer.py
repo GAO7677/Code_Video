@@ -75,6 +75,40 @@ def write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
         writer.release()
 
 
+def colorize_scalar_video(video_thw: np.ndarray) -> np.ndarray:
+    values = np.asarray(video_thw, dtype=np.float32)
+    valid = np.isfinite(values)
+    if not np.any(valid):
+        zeros = np.zeros(values.shape + (3,), dtype=np.uint8)
+        return zeros
+    lo = float(np.nanpercentile(values[valid], 5.0))
+    hi = float(np.nanpercentile(values[valid], 95.0))
+    if hi <= lo:
+        hi = lo + 1.0
+    norm = np.clip((values - lo) / max(hi - lo, 1.0e-6), 0.0, 1.0)
+    frames = []
+    for frame_hw in norm:
+        heat_bgr = cv2.applyColorMap((frame_hw * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
+        frames.append(cv2.cvtColor(heat_bgr, cv2.COLOR_BGR2RGB))
+    return np.stack(frames, axis=0)
+
+
+def colorize_world_points_video(world_points_thwc: np.ndarray) -> np.ndarray:
+    pts = np.asarray(world_points_thwc, dtype=np.float32)
+    rgb = np.zeros_like(pts, dtype=np.float32)
+    for channel in range(min(3, pts.shape[-1])):
+        values = pts[..., channel]
+        valid = np.isfinite(values)
+        if not np.any(valid):
+            continue
+        lo = float(np.nanpercentile(values[valid], 5.0))
+        hi = float(np.nanpercentile(values[valid], 95.0))
+        if hi <= lo:
+            hi = lo + 1.0
+        rgb[..., channel] = np.clip((values - lo) / max(hi - lo, 1.0e-6), 0.0, 1.0)
+    return (rgb * 255.0).astype(np.uint8)
+
+
 def draw_box_rgb(image: np.ndarray, box_xyxy_px: np.ndarray, color_rgb: tuple[int, int, int], label: str) -> None:
     x0, y0, x1, y1 = [int(round(v)) for v in box_xyxy_px.tolist()]
     if x1 <= x0 or y1 <= y0:
@@ -183,7 +217,8 @@ def detect_and_track_objects(
     frames_tchw_01: np.ndarray,
     caption: str,
     *,
-    device: str,
+    sam2_device: str,
+    gdino_device: str,
     max_objects: int,
     prompt_frame_mode: str,
 ) -> tuple[list[ObjectTrack], int]:
@@ -192,7 +227,7 @@ def detect_and_track_objects(
     else:
         prompt_frame_idx = max(frames_tchw_01.shape[0] - 1, 0)
     text_prompt = build_multi_object_prompt(caption)
-    detector = GroundingDINOTextDetector(device=device, max_boxes=max_objects)
+    detector = GroundingDINOTextDetector(device=gdino_device, max_boxes=max_objects)
     try:
         detection = detector.detect(frames_tchw_01[prompt_frame_idx], text_prompt, guidance_box_xyxy=None)
         track_boxes = detection.boxes_xyxy[:max_objects]
@@ -216,7 +251,7 @@ def detect_and_track_objects(
         else:
             track_phrases = [f"motion_component_{idx}" for idx in range(track_boxes.shape[0])]
 
-    tracker = SAM2MotionTracker(device=device, enable_text_prompt=False)
+    tracker = SAM2MotionTracker(device=sam2_device, enable_text_prompt=False)
     outputs: list[ObjectTrack] = []
     for box_xyxy, score, phrase in zip(track_boxes, track_scores, track_phrases):
         sam_out = tracker.track(
@@ -387,6 +422,8 @@ def evaluate_case(
     case_group: str,
     vggt_adapter: VGGTTrackAdapter,
     device: torch.device,
+    sam2_device: str,
+    gdino_device: str,
     output_dir: Path,
     min_queries_per_object: int,
     prompt_frame_mode: str,
@@ -396,7 +433,8 @@ def evaluate_case(
     object_tracks, prompt_frame_idx = detect_and_track_objects(
         frames_tchw_01,
         sample["caption"],
-        device=str(device),
+        sam2_device=sam2_device,
+        gdino_device=gdino_device,
         max_objects=4,
         prompt_frame_mode=prompt_frame_mode,
     )
@@ -461,6 +499,17 @@ def evaluate_case(
     raw_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__overlay.mp4"
     write_mp4(raw_path, overlay, fps=int(sample.get("_fps", 8)))
 
+    depth_video_path = None
+    world_points_video_path = None
+    if vggt_out.depth is not None:
+        depth_frames = colorize_scalar_video(vggt_out.depth[0, ..., 0].detach().cpu().numpy())
+        depth_video_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__vggt_depth.mp4"
+        write_mp4(depth_video_path, depth_frames, fps=int(sample.get("_fps", 8)))
+    if vggt_out.world_points is not None:
+        world_frames = colorize_world_points_video(vggt_out.world_points[0].detach().cpu().numpy())
+        world_points_video_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__vggt_world_points.mp4"
+        write_mp4(world_points_video_path, world_frames, fps=int(sample.get("_fps", 8)))
+
     return {
         "group": case_group,
         "caption": sample["caption"],
@@ -474,6 +523,8 @@ def evaluate_case(
         "object_phrases": [item.phrase for item in object_tracks],
         "object_scores": [item.score for item in object_tracks],
         "overlay_video": str(raw_path.relative_to(output_dir.parent)),
+        "depth_video": str(depth_video_path.relative_to(output_dir.parent)) if depth_video_path is not None else None,
+        "world_points_video": str(world_points_video_path.relative_to(output_dir.parent)) if world_points_video_path is not None else None,
         "metrics": metrics,
         "correction_stats": {
             "corrected_points": correction_stats.corrected_points,
@@ -509,7 +560,11 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     <p><b>Object scores:</b> {result['object_scores']}</p>
     <p><b>Query alloc per object:</b> {result['query_alloc']}</p>
     {metrics_line}
+    <p><b>流程:</b> GroundingDINO 检测框 -> SAM2 单目标传播 -> 从 mask/box 采样 query points -> VGGT 输出 tracks + depth + world_points</p>
+    <h3>Overlay</h3>
     <video controls preload="none" playsinline src="{result['overlay_video']}"></video>
+    {"<h3>VGGT Depth</h3><video controls preload='none' playsinline src='%s'></video>" % result['depth_video'] if result['depth_video'] is not None else ""}
+    {"<h3>VGGT World Points</h3><video controls preload='none' playsinline src='%s'></video>" % result['world_points_video'] if result['world_points_video'] is not None else ""}
     <pre>{json.dumps({'shapes': result['shapes'], 'query_owner': result['query_owner'], 'prompt_frame_idx': result['prompt_frame_idx']}, indent=2, ensure_ascii=False)}</pre>
   </section>
 """
@@ -557,6 +612,8 @@ def main() -> None:
     parser.add_argument("--num-queries", type=int, default=8)
     parser.add_argument("--min-queries-per-object", type=int, default=4)
     parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
+    parser.add_argument("--sam2-device", default="cpu")
+    parser.add_argument("--gdino-device", default="cpu")
     parser.add_argument("--ball-num-frames", type=int, default=16)
     parser.add_argument("--ball-num-context-frames", type=int, default=16)
     parser.add_argument(
@@ -607,6 +664,8 @@ def main() -> None:
                 case_group="single_phys_state",
                 vggt_adapter=vggt_adapter,
                 device=device,
+                sam2_device=str(args.sam2_device),
+                gdino_device=str(args.gdino_device),
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
                 prompt_frame_mode=str(args.prompt_frame_mode),
@@ -622,6 +681,8 @@ def main() -> None:
                 case_group="multi_ball_block",
                 vggt_adapter=vggt_adapter,
                 device=device,
+                sam2_device=str(args.sam2_device),
+                gdino_device=str(args.gdino_device),
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
                 prompt_frame_mode=str(args.prompt_frame_mode),

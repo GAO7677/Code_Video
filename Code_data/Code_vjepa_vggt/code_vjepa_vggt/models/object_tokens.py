@@ -13,6 +13,7 @@ class ObjectTokenOutput:
     jepa_tokens: torch.Tensor
     latent_tokens: torch.Tensor
     geom_tokens: torch.Tensor
+    vggt_geom_tokens: torch.Tensor | None = None
 
 
 class ObjectTubeProjector(nn.Module):
@@ -32,6 +33,11 @@ class ObjectTubeProjector(nn.Module):
         self.latent_proj = nn.Linear(latent_dim, out_dim)
         self.geom_proj = nn.Sequential(
             nn.Linear(4, out_dim),
+            nn.GELU(),
+            nn.Linear(out_dim, out_dim),
+        )
+        self.vggt_geom_proj = nn.Sequential(
+            nn.Linear(5, out_dim),
             nn.GELU(),
             nn.Linear(out_dim, out_dim),
         )
@@ -104,6 +110,10 @@ class ObjectTubeProjector(nn.Module):
         visibility: torch.Tensor,
         confidence: torch.Tensor,
         track_image_hw: tuple[int, int],
+        vggt_world_points: torch.Tensor | None = None,
+        vggt_world_points_conf: torch.Tensor | None = None,
+        vggt_depth: torch.Tensor | None = None,
+        vggt_depth_conf: torch.Tensor | None = None,
         frame_valid_mask: torch.Tensor | None = None,
     ) -> ObjectTokenOutput:
         jepa_time_idx = self._time_indices(tracks.shape[1], jepa_patch_tokens.shape[1], tracks.device)
@@ -141,12 +151,62 @@ class ObjectTubeProjector(nn.Module):
             geom_weights = geom_weights * frame_valid_mask[:, :, None, None].to(dtype=geom_weights.dtype, device=geom_weights.device)
         geom_denom = geom_weights.sum(dim=1).clamp_min(1.0)
         geom_tokens = (geom_feat * geom_weights).sum(dim=1) / geom_denom
-        object_tokens = self.out_norm(jepa_tokens + latent_tokens + geom_tokens)
+        vggt_geom_tokens = None
+        if vggt_world_points is not None and vggt_depth is not None:
+            world_local = self._pool_feature_grid(
+                vggt_world_points,
+                tracks,
+                image_hw=track_image_hw,
+                window_radius=0,
+                frame_valid_mask=frame_valid_mask,
+            )
+            depth_local = self._pool_feature_grid(
+                vggt_depth,
+                tracks,
+                image_hw=track_image_hw,
+                window_radius=0,
+                frame_valid_mask=frame_valid_mask,
+            )
+            world_conf_local = None
+            depth_conf_local = None
+            if vggt_world_points_conf is not None:
+                world_conf_local = self._pool_feature_grid(
+                    vggt_world_points_conf,
+                    tracks,
+                    image_hw=track_image_hw,
+                    window_radius=0,
+                    frame_valid_mask=frame_valid_mask,
+                )
+            if vggt_depth_conf is not None:
+                depth_conf_local = self._pool_feature_grid(
+                    vggt_depth_conf.unsqueeze(-1),
+                    tracks,
+                    image_hw=track_image_hw,
+                    window_radius=0,
+                    frame_valid_mask=frame_valid_mask,
+                )
+            if world_conf_local is None:
+                world_conf_local = torch.ones_like(depth_local)
+            if depth_conf_local is None:
+                depth_conf_local = torch.ones_like(depth_local)
+            vggt_geom_feat = torch.cat(
+                [
+                    world_local,
+                    depth_local,
+                    0.5 * (world_conf_local + depth_conf_local),
+                ],
+                dim=-1,
+            )
+            vggt_geom_tokens = self.vggt_geom_proj(vggt_geom_feat)
+
+        fused_geom = geom_tokens if vggt_geom_tokens is None else (geom_tokens + vggt_geom_tokens)
+        object_tokens = self.out_norm(jepa_tokens + latent_tokens + fused_geom)
         return ObjectTokenOutput(
             object_tokens=object_tokens,
             jepa_tokens=jepa_tokens,
             latent_tokens=latent_tokens,
             geom_tokens=geom_tokens,
+            vggt_geom_tokens=vggt_geom_tokens,
         )
 
 

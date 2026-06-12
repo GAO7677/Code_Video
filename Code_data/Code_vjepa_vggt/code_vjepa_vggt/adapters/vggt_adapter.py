@@ -22,6 +22,11 @@ class VGGTTrackOutput:
     confidence: torch.Tensor
     image_hw: tuple[int, int]
     used_model: bool
+    pose_enc: torch.Tensor | None = None
+    depth: torch.Tensor | None = None
+    depth_conf: torch.Tensor | None = None
+    world_points: torch.Tensor | None = None
+    world_points_conf: torch.Tensor | None = None
 
 
 class VGGTTrackAdapter(nn.Module):
@@ -109,13 +114,15 @@ class VGGTTrackAdapter(nn.Module):
             query_points = self._make_uniform_queries(batch_size, self.input_hw, resized.device)
         with torch.no_grad():
             aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized)
-            track_list, vis, conf = self.model.track_head(
+            predictions = self.model.token_list_to_predictions(
                 aggregated_tokens_list,
                 images=resized,
                 patch_start_idx=patch_start_idx,
                 query_points=query_points,
             )
-            tracks = track_list[-1] if isinstance(track_list, (list, tuple)) else track_list
+            tracks = predictions["track"]
+            vis = predictions["vis"]
+            conf = predictions["conf"]
 
         return VGGTTrackOutput(
             query_points=query_points,
@@ -124,4 +131,9 @@ class VGGTTrackAdapter(nn.Module):
             confidence=conf,
             image_hw=self.input_hw,
             used_model=True,
+            pose_enc=predictions.get("pose_enc"),
+            depth=predictions.get("depth"),
+            depth_conf=predictions.get("depth_conf"),
+            world_points=predictions.get("world_points"),
+            world_points_conf=predictions.get("world_points_conf"),
         )
