@@ -10,6 +10,8 @@ import cv2
 import numpy as np
 import torch
 
+from code_vjepa_vggt.utils.object_priors import sample_points_from_mask
+
 
 SAM2_REPO_ROOT = Path('/home/gaoya/Grounded-SAM-2-main')
 if str(SAM2_REPO_ROOT) not in sys.path:
@@ -439,6 +441,13 @@ class SAM2MotionTracker:
             return None
         return mask
 
+    def _sample_points_from_mask(self, mask_hw: np.ndarray, num_points: int) -> tuple[np.ndarray, np.ndarray]:
+        points = sample_points_from_mask(mask_hw, num_points, avoid_edges=True)
+        if points.shape[0] <= 0:
+            return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
+        labels = np.ones((points.shape[0],), dtype=np.int32)
+        return points.astype(np.float32), labels
+
     def _propagate_segment(
         self,
         *,
@@ -450,46 +459,70 @@ class SAM2MotionTracker:
         reverse: bool,
         target_masks: np.ndarray,
     ) -> tuple[int, np.ndarray] | None:
-        state = predictor.init_state(
-            video_path=str(frame_dir),
-            offload_video_to_cpu=True,
-            async_loading_frames=False,
-        )
         anchor_mask = self._refine_box_to_mask(frames_tchw_01[int(anchor_idx)], current_box_xyxy)
+        prompt_variants: list[tuple[str, dict[str, np.ndarray]]] = []
         if anchor_mask is not None:
-            predictor.add_new_mask(
-                inference_state=state,
-                frame_idx=int(anchor_idx),
-                obj_id=1,
-                mask=anchor_mask.astype(np.uint8),
+            prompt_variants.append(("mask", {"mask": anchor_mask.astype(np.uint8)}))
+            num_points = max(4, min(8, int(self.segment_len)))
+            points, labels = self._sample_points_from_mask(anchor_mask, num_points=num_points)
+            if points.shape[0] > 0:
+                prompt_variants.append(("points", {"points": points.astype(np.float32), "labels": labels.astype(np.int32)}))
+        prompt_variants.append(("box", {"box": current_box_xyxy.astype(np.float32)}))
+        if anchor_mask is None:
+            center = np.asarray(
+                [(current_box_xyxy[0] + current_box_xyxy[2]) * 0.5, (current_box_xyxy[1] + current_box_xyxy[3]) * 0.5],
+                dtype=np.float32,
             )
-        else:
-            predictor.add_new_points_or_box(
-                inference_state=state,
-                frame_idx=int(anchor_idx),
-                obj_id=1,
-                box=current_box_xyxy.astype(np.float32),
+            prompt_variants.insert(0, ("center_point", {"points": center.reshape(1, 2), "labels": np.ones((1,), dtype=np.int32)}))
+
+        for prompt_mode, prompt_kwargs in prompt_variants:
+            state = predictor.init_state(
+                video_path=str(frame_dir),
+                offload_video_to_cpu=True,
+                async_loading_frames=False,
             )
+            if prompt_mode == "mask":
+                predictor.add_new_mask(
+                    inference_state=state,
+                    frame_idx=int(anchor_idx),
+                    obj_id=1,
+                    mask=prompt_kwargs["mask"],
+                )
+            elif prompt_mode in {"points", "center_point"}:
+                predictor.add_new_points_or_box(
+                    inference_state=state,
+                    frame_idx=int(anchor_idx),
+                    obj_id=1,
+                    points=prompt_kwargs["points"],
+                    labels=prompt_kwargs["labels"],
+                )
+            else:
+                predictor.add_new_points_or_box(
+                    inference_state=state,
+                    frame_idx=int(anchor_idx),
+                    obj_id=1,
+                    box=prompt_kwargs["box"],
+                )
 
-        seen_frame_indices: list[int] = []
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
-            state,
-            start_frame_idx=int(anchor_idx),
-            max_frame_num_to_track=int(self.segment_len),
-            reverse=reverse,
-        ):
-            if len(out_obj_ids) == 0:
-                continue
-            mask = (out_mask_logits[0] > 0.0).detach().cpu().numpy().squeeze(0).astype(np.uint8)
-            target_masks[int(out_frame_idx)] = mask
-            seen_frame_indices.append(int(out_frame_idx))
+            seen_frame_indices: list[int] = []
+            for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
+                state,
+                start_frame_idx=int(anchor_idx),
+                max_frame_num_to_track=int(self.segment_len),
+                reverse=reverse,
+            ):
+                if len(out_obj_ids) == 0:
+                    continue
+                mask = (out_mask_logits[0] > 0.0).detach().cpu().numpy().squeeze(0).astype(np.uint8)
+                target_masks[int(out_frame_idx)] = mask
+                seen_frame_indices.append(int(out_frame_idx))
 
-        if not seen_frame_indices:
-            return None
+            if seen_frame_indices:
+                next_anchor_idx = min(seen_frame_indices) if reverse else max(seen_frame_indices)
+                next_box_xyxy = _mask_to_box_xyxy(target_masks[next_anchor_idx])
+                return next_anchor_idx, next_box_xyxy
 
-        next_anchor_idx = min(seen_frame_indices) if reverse else max(seen_frame_indices)
-        next_box_xyxy = _mask_to_box_xyxy(target_masks[next_anchor_idx])
-        return next_anchor_idx, next_box_xyxy
+        return None
 
     def track(
         self,

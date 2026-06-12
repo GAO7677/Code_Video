@@ -21,6 +21,7 @@ from code_vjepa_vggt.data.ball_block_dataset import BallBlockVideoDataset
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.object_priors import build_vggt_query_prior
+from code_vjepa_vggt.utils.track_correction import project_tracks_to_object_masks
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
 
 
@@ -183,8 +184,12 @@ def detect_and_track_objects(
     *,
     device: str,
     max_objects: int,
+    prompt_frame_mode: str,
 ) -> tuple[list[ObjectTrack], int]:
-    prompt_frame_idx = max(frames_tchw_01.shape[0] - 1, 0)
+    if prompt_frame_mode == "first":
+        prompt_frame_idx = 0
+    else:
+        prompt_frame_idx = max(frames_tchw_01.shape[0] - 1, 0)
     text_prompt = build_multi_object_prompt(caption)
     detector = GroundingDINOTextDetector(device=device, max_boxes=max_objects)
     detection = detector.detect(frames_tchw_01[prompt_frame_idx], text_prompt, guidance_box_xyxy=None)
@@ -277,6 +282,8 @@ def render_overlay_video(
     query_points_px_k2: np.ndarray,
     query_owner: list[int],
     tracks_native_tk2: torch.Tensor,
+    tracks_corrected_tk2: torch.Tensor,
+    correction_mask_tk: torch.Tensor,
     visibility_tk: torch.Tensor,
     gt_boxes: torch.Tensor | None = None,
 ) -> np.ndarray:
@@ -312,6 +319,8 @@ def render_overlay_video(
             if float(visibility_tk[t, q_idx].item()) < 0.5:
                 label += "(inv)"
             draw_point_rgb(frame, point, color, label)
+            if float(correction_mask_tk[t, q_idx].item()) > 0.5:
+                draw_point_rgb(frame, tracks_corrected_tk2[t, q_idx].cpu().numpy().astype(np.float32), (255, 255, 0), f"fix{q_idx}", radius=4)
         frames.append(frame)
     return np.stack(frames, axis=0)
 
@@ -324,6 +333,7 @@ def evaluate_case(
     device: torch.device,
     output_dir: Path,
     min_queries_per_object: int,
+    prompt_frame_mode: str,
 ) -> dict:
     context_video = sample["context_video"]
     frames_tchw_01 = ((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
@@ -332,6 +342,7 @@ def evaluate_case(
         sample["caption"],
         device=str(device),
         max_objects=4,
+        prompt_frame_mode=prompt_frame_mode,
     )
     query_points_px, query_owner, query_alloc, prior_source = build_query_prior_from_tracks_with_minimum(
         object_tracks,
@@ -355,6 +366,14 @@ def evaluate_case(
     tracks_native = tracks.clone()
     tracks_native[..., 0] *= scale_x
     tracks_native[..., 1] *= scale_y
+    tracks_corrected, correction_mask, correction_stats = project_tracks_to_object_masks(
+        tracks_native[0].cpu(),
+        [track.masks_thw for track in object_tracks],
+        query_owner,
+        avoid_edges=True,
+    )
+    tracks_corrected = tracks_corrected.unsqueeze(0).to(device=tracks_native.device, dtype=tracks_native.dtype)
+    correction_mask = correction_mask.unsqueeze(0).to(device=tracks_native.device, dtype=tracks_native.dtype)
 
     gt_boxes = sample.get("context_boxes")
     metrics = None
@@ -378,6 +397,8 @@ def evaluate_case(
         query_points_px_k2=query_points_px,
         query_owner=query_owner,
         tracks_native_tk2=tracks_native[0].cpu(),
+        tracks_corrected_tk2=tracks_corrected[0].cpu(),
+        correction_mask_tk=correction_mask[0].cpu(),
         visibility_tk=vggt_out.visibility[0].cpu(),
         gt_boxes=gt_boxes,
     )
@@ -398,10 +419,17 @@ def evaluate_case(
         "object_scores": [item.score for item in object_tracks],
         "overlay_video": str(raw_path.relative_to(output_dir.parent)),
         "metrics": metrics,
+        "correction_stats": {
+            "corrected_points": correction_stats.corrected_points,
+            "total_points": correction_stats.total_points,
+            "snap_dist_mean_px": correction_stats.snap_dist_mean_px,
+            "snap_dist_max_px": correction_stats.snap_dist_max_px,
+        },
         "shapes": {
             "context_video": list(context_video.unsqueeze(0).shape),
             "query_points": list(query_points_prior.shape),
             "vggt_tracks": list(vggt_out.tracks.shape),
+            "vggt_tracks_corrected": list(tracks_corrected.shape),
             "object_masks": [list(item.masks_thw.shape) for item in object_tracks],
         },
     }
@@ -472,6 +500,9 @@ def main() -> None:
     parser.add_argument("--num-multi", type=int, default=3)
     parser.add_argument("--num-queries", type=int, default=8)
     parser.add_argument("--min-queries-per-object", type=int, default=4)
+    parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
+    parser.add_argument("--ball-num-frames", type=int, default=16)
+    parser.add_argument("--ball-num-context-frames", type=int, default=16)
     parser.add_argument(
         "--output-dir",
         default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/vggt_sam_multi_object_viewer",
@@ -495,8 +526,8 @@ def main() -> None:
     )
     ball_ds = BallBlockVideoDataset(
         root=args.ball_block_root,
-        num_frames=int(data_cfg["num_frames"]),
-        num_context_frames=int(data_cfg["num_context_frames"]),
+        num_frames=int(args.ball_num_frames),
+        num_context_frames=int(args.ball_num_context_frames),
         resolution=tuple(data_cfg["resolution"]),
     )
     vggt_adapter = VGGTTrackAdapter(
@@ -522,6 +553,7 @@ def main() -> None:
                 device=device,
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
+                prompt_frame_mode=str(args.prompt_frame_mode),
             )
         )
 
@@ -536,6 +568,7 @@ def main() -> None:
                 device=device,
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
+                prompt_frame_mode=str(args.prompt_frame_mode),
             )
         )
 
