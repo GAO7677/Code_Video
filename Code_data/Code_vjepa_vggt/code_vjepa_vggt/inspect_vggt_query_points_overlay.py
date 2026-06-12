@@ -35,6 +35,34 @@ def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     return x.numpy()
 
 
+def scale_points_xy(points_k2: np.ndarray, *, src_hw: tuple[int, int], dst_hw: tuple[int, int]) -> np.ndarray:
+    out = np.asarray(points_k2, dtype=np.float32).copy()
+    if out.size == 0:
+        return out.reshape(-1, 2)
+    scale_x = float(dst_hw[1]) / max(float(src_hw[1]), 1.0)
+    scale_y = float(dst_hw[0]) / max(float(src_hw[0]), 1.0)
+    out[..., 0] *= scale_x
+    out[..., 1] *= scale_y
+    return out
+
+
+def point_stats(points_k2: np.ndarray) -> dict[str, object]:
+    pts = np.asarray(points_k2, dtype=np.float32)
+    if pts.size == 0:
+        return {
+            "count": 0,
+            "min_xy": [0.0, 0.0],
+            "max_xy": [0.0, 0.0],
+            "mean_xy": [0.0, 0.0],
+        }
+    return {
+        "count": int(pts.shape[0]),
+        "min_xy": [float(pts[:, 0].min()), float(pts[:, 1].min())],
+        "max_xy": [float(pts[:, 0].max()), float(pts[:, 1].max())],
+        "mean_xy": [float(pts[:, 0].mean()), float(pts[:, 1].mean())],
+    }
+
+
 def pil_to_data_url(image: Image.Image) -> str:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -180,8 +208,11 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     <p><b>Context frames:</b> {result['context_frame_indices']}</p>
     <p><b>Matched GT indices:</b> {result['matched_gt_indices']}</p>
     <p><b>Unmatched GT indices:</b> {result['unmatched_gt_indices']}</p>
+    <p><b>Coordinate trace:</b> {result['coord_trace']['summary']}</p>
     <p><b>Shapes:</b></p>
     <pre>{json.dumps(result['shapes'], indent=2, ensure_ascii=False)}</pre>
+    <p><b>Coordinate stats:</b></p>
+    <pre>{json.dumps(result['coord_trace'], indent=2, ensure_ascii=False)}</pre>
     <figure>
       <video controls preload="none" playsinline src="{result['overlay_video']}"></video>
       <figcaption>VGGT query points + GT overlay</figcaption>
@@ -237,6 +268,19 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
     tracks_native = tracks.clone()
     tracks_native[..., 0] *= scale_x
     tracks_native[..., 1] *= scale_y
+
+    native_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
+    query_points_prior_px = vggt_out.query_points[0].detach().cpu().numpy().astype(np.float32)
+    query_points_vggt_input_px = vggt_out.query_points[0].detach().cpu().numpy().astype(np.float32)
+    query_points_roundtrip_px = scale_points_xy(
+        query_points_vggt_input_px,
+        src_hw=track_image_hw,
+        dst_hw=native_hw,
+    )
+    query_roundtrip_abs_err = np.abs(query_points_roundtrip_px - query_points_prior_px) if query_points_prior_px.size > 0 else np.zeros((0, 2), dtype=np.float32)
+    query_roundtrip_max_abs_err_px = float(query_roundtrip_abs_err.max()) if query_roundtrip_abs_err.size > 0 else 0.0
+    query_roundtrip_mean_abs_err_px = float(query_roundtrip_abs_err.mean()) if query_roundtrip_abs_err.size > 0 else 0.0
+    tracks_native_px = tracks_native[0].detach().cpu().numpy().astype(np.float32)
 
     alignment = align_tracks_to_boxes(
         tracks=tracks_native,
@@ -296,6 +340,19 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
         "context_frame_indices": sample["context_frame_indices"].tolist(),
         "matched_gt_indices": matched_gt_indices,
         "unmatched_gt_indices": unmatched_gt_indices,
+        "coord_trace": {
+            "summary": "SAM2/object priors are sampled in native pixels. VGGT receives those points after resizing to its fixed input size, returns tracks in that resized pixel space, and we scale the tracks back to native pixels for overlay/eval.",
+            "native_hw": list(native_hw),
+            "vggt_input_hw": [int(track_image_hw[0]), int(track_image_hw[1])],
+            "query_points_prior_px": point_stats(query_points_prior_px),
+            "query_points_vggt_input_px": point_stats(query_points_vggt_input_px),
+            "query_points_roundtrip_px": point_stats(query_points_roundtrip_px),
+            "query_roundtrip_max_abs_err_px": query_roundtrip_max_abs_err_px,
+            "query_roundtrip_mean_abs_err_px": query_roundtrip_mean_abs_err_px,
+            "tracks_native_scale": [scale_x, scale_y],
+            "tracks_vggt_input_px": point_stats(tracks[0].detach().cpu().numpy().astype(np.float32).reshape(-1, 2)),
+            "tracks_native_px": point_stats(tracks_native_px.reshape(-1, 2)),
+        },
         "shapes": {
             "context_video": list(context_video.shape),
             "context_boxes": list(context_boxes.shape),
@@ -303,6 +360,7 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
             "sam_masks_thw": list(np.asarray(sam_out.masks_thw).shape),
             "sam_boxes_t4": list(np.asarray(sam_out.boxes_t4).shape),
             "sam_motion_box_xyxy": list(np.asarray(motion_prompt_box_xyxy).shape),
+            "sam_query_points": list(query_points_prior.shape),
             "vggt_query_points": list(vggt_out.query_points.shape),
             "vggt_tracks": list(vggt_out.tracks.shape),
             "vggt_visibility": list(vggt_out.visibility.shape),

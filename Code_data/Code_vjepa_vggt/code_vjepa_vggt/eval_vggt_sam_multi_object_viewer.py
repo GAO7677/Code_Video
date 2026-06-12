@@ -15,6 +15,7 @@ from code_vjepa_vggt.adapters.sam2_motion import (
     GroundingDINOTextDetector,
     SAM2MotionTracker,
     build_motion_prompt_box,
+    build_motion_prompt_boxes,
 )
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.ball_block_dataset import BallBlockVideoDataset
@@ -204,10 +205,16 @@ def detect_and_track_objects(
         track_phrases = []
 
     if track_boxes.shape[0] == 0:
-        motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-        track_boxes = motion_box[None, :]
-        track_scores = np.asarray([1.0], dtype=np.float32)
-        track_phrases = ["motion_proxy"]
+        motion_multi = build_motion_prompt_boxes(frames_tchw_01, max_boxes=max_objects)
+        track_boxes = motion_multi.boxes_xyxy[:max_objects]
+        track_scores = motion_multi.scores[:max_objects]
+        if track_boxes.shape[0] == 0:
+            motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=motion_multi.prompt_frame_idx)
+            track_boxes = motion_box[None, :]
+            track_scores = np.asarray([1.0], dtype=np.float32)
+            track_phrases = ["motion_proxy"]
+        else:
+            track_phrases = [f"motion_component_{idx}" for idx in range(track_boxes.shape[0])]
 
     tracker = SAM2MotionTracker(device=device, enable_text_prompt=False)
     outputs: list[ObjectTrack] = []

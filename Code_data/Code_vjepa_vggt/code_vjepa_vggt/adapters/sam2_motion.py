@@ -36,6 +36,14 @@ class DetectionPromptOutput:
     prompt_mode: str
 
 
+@dataclass
+class MotionPromptBoxesOutput:
+    boxes_xyxy: np.ndarray
+    scores: np.ndarray
+    prompt_frame_idx: int
+    prompt_mode: str
+
+
 def _box_center(box_xyxy: np.ndarray) -> np.ndarray:
     return np.asarray([(box_xyxy[0] + box_xyxy[2]) * 0.5, (box_xyxy[1] + box_xyxy[3]) * 0.5], dtype=np.float32)
 
@@ -161,6 +169,169 @@ def build_motion_prompt_box(frames_tchw_01: np.ndarray, prompt_frame_idx: int, h
                 prev_center = center
         prev = gray
     return best_box.astype(np.float32)
+
+
+def _motion_mask_for_prompt_frame(
+    frames_tchw_01: np.ndarray,
+    prompt_frame_idx: int,
+    history_window: int = 8,
+) -> tuple[np.ndarray, float]:
+    start = max(0, int(prompt_frame_idx) - int(history_window) + 1)
+    clip = frames_tchw_01[start : int(prompt_frame_idx) + 1]
+    if clip.shape[0] < 2:
+        height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
+        return np.zeros((height, width), dtype=np.uint8), 0.0
+
+    grays = []
+    for frame in clip:
+        image = np.transpose((frame * 255.0).clip(0, 255).astype(np.uint8), (1, 2, 0))
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        grays.append(cv2.GaussianBlur(gray, (5, 5), 0))
+
+    ref = grays[0]
+    prev = ref
+    best_mask = np.zeros_like(ref, dtype=np.uint8)
+    best_score = 0.0
+    kernel_small = np.ones((3, 3), dtype=np.uint8)
+    kernel_big = np.ones((7, 7), dtype=np.uint8)
+    for gray in grays[1:]:
+        diff_ref = cv2.absdiff(gray, ref)
+        diff_prev = cv2.absdiff(gray, prev)
+        motion = cv2.max(diff_ref, diff_prev)
+        _, mask = cv2.threshold(motion, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_big)
+        score = float((mask > 0).sum())
+        if score > best_score:
+            best_score = score
+            best_mask = mask.astype(np.uint8)
+        prev = gray
+    return best_mask, best_score
+
+
+def _extract_motion_components(mask_hw: np.ndarray) -> list[dict[str, np.ndarray | float]]:
+    mask_u8 = (mask_hw > 0).astype(np.uint8)
+    if int(mask_u8.sum()) <= 0:
+        return []
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+    total_fg_area = max(int(mask_u8.sum()), 1)
+    min_area = max(24, int(round(total_fg_area * 0.02)))
+    components: list[dict[str, np.ndarray | float]] = []
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < min_area:
+            continue
+        comp_mask = (labels == label).astype(np.uint8)
+        dist = cv2.distanceTransform(comp_mask, cv2.DIST_L2, 5)
+        max_dist = float(dist.max())
+        safe_thresh = max(1.5, 0.25 * max_dist)
+        safe_mask = dist >= safe_thresh
+        safe_area = float(safe_mask.sum())
+        confidence = safe_area / max(float(area), 1.0)
+        score = max(float(area) * max(confidence, 1.0e-3), 1.0)
+        x, y, w, h = cv2.boundingRect(comp_mask)
+        box = np.asarray([x, y, x + w, y + h], dtype=np.float32)
+        components.append(
+            {
+                "mask": comp_mask,
+                "box": box,
+                "area": float(area),
+                "confidence": float(confidence),
+                "score": float(score),
+            }
+        )
+    return sorted(components, key=lambda item: float(item["score"]), reverse=True)
+
+
+def build_motion_prompt_boxes(
+    frames_tchw_01: np.ndarray,
+    *,
+    history_window: int = 8,
+    max_boxes: int = 4,
+    top_frames: int = 3,
+) -> MotionPromptBoxesOutput:
+    num_frames, _, height, width = frames_tchw_01.shape
+    if num_frames <= 0:
+        return MotionPromptBoxesOutput(
+            boxes_xyxy=np.zeros((0, 4), dtype=np.float32),
+            scores=np.zeros((0,), dtype=np.float32),
+            prompt_frame_idx=0,
+            prompt_mode="motion_empty",
+        )
+
+    candidate_frames: list[tuple[float, int, np.ndarray]] = []
+    for frame_idx in range(1, num_frames):
+        mask_hw, score = _motion_mask_for_prompt_frame(
+            frames_tchw_01,
+            prompt_frame_idx=frame_idx,
+            history_window=history_window,
+        )
+        if score > 0:
+            candidate_frames.append((float(score), int(frame_idx), mask_hw))
+
+    if not candidate_frames:
+        fallback_idx = max(num_frames // 2, 0)
+        fallback_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=fallback_idx, history_window=history_window)
+        if _box_valid(fallback_box):
+            return MotionPromptBoxesOutput(
+                boxes_xyxy=fallback_box.reshape(1, 4).astype(np.float32),
+                scores=np.asarray([1.0], dtype=np.float32),
+                prompt_frame_idx=int(fallback_idx),
+                prompt_mode="motion_single",
+            )
+        return MotionPromptBoxesOutput(
+            boxes_xyxy=np.zeros((0, 4), dtype=np.float32),
+            scores=np.zeros((0,), dtype=np.float32),
+            prompt_frame_idx=int(fallback_idx),
+            prompt_mode="motion_empty",
+        )
+
+    candidate_frames.sort(key=lambda item: item[0], reverse=True)
+    prompt_frame_idx = int(candidate_frames[0][1])
+    boxes: list[np.ndarray] = []
+    scores: list[float] = []
+    for motion_score, frame_idx, mask_hw in candidate_frames[: max(1, int(top_frames))]:
+        components = _extract_motion_components(mask_hw)
+        for component in components:
+            box = np.asarray(component["box"], dtype=np.float32)
+            score = float(component["score"]) + 0.01 * float(motion_score)
+            if any(_box_iou_xyxy(box, existing) >= 0.75 for existing in boxes):
+                continue
+            boxes.append(box)
+            scores.append(score)
+            if len(boxes) >= max_boxes:
+                break
+        if len(boxes) >= max_boxes:
+            break
+
+    if not boxes:
+        fallback_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx, history_window=history_window)
+        if _box_valid(fallback_box):
+            return MotionPromptBoxesOutput(
+                boxes_xyxy=fallback_box.reshape(1, 4).astype(np.float32),
+                scores=np.asarray([candidate_frames[0][0]], dtype=np.float32),
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_mode="motion_single",
+            )
+        return MotionPromptBoxesOutput(
+            boxes_xyxy=np.zeros((0, 4), dtype=np.float32),
+            scores=np.zeros((0,), dtype=np.float32),
+            prompt_frame_idx=prompt_frame_idx,
+            prompt_mode="motion_empty",
+        )
+
+    boxes_arr = np.stack(boxes, axis=0).astype(np.float32)
+    scores_arr = np.asarray(scores, dtype=np.float32)
+    order = np.argsort(-scores_arr)
+    boxes_arr = boxes_arr[order][:max_boxes]
+    scores_arr = scores_arr[order][:max_boxes]
+    return MotionPromptBoxesOutput(
+        boxes_xyxy=boxes_arr.astype(np.float32),
+        scores=scores_arr.astype(np.float32),
+        prompt_frame_idx=prompt_frame_idx,
+        prompt_mode="motion_multi",
+    )
 
 
 class GroundingDINOTextDetector:
