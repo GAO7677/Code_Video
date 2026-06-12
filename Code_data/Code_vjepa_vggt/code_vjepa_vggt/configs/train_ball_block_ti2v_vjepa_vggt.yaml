@@ -25,14 +25,15 @@ model:
 
 data:
   dataset_type: ball_block_json
-  root: /data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block
+  root: /data/gaoya/AAA_test_video/Dataset_physV/0526dp/ball_block_dense_episodes
   num_frames: 81
   num_context_frames: 8
   random_context_frames: false
+  sampling_mode: prefix
   resolution: [704, 1280]
   batch_size: 1
   num_workers: 2
-  fps: 24
+  fps: 120
 
 optimization:
   lr: 1.0e-5

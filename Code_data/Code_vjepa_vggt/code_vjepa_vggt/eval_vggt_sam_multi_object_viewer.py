@@ -192,10 +192,16 @@ def detect_and_track_objects(
         prompt_frame_idx = max(frames_tchw_01.shape[0] - 1, 0)
     text_prompt = build_multi_object_prompt(caption)
     detector = GroundingDINOTextDetector(device=device, max_boxes=max_objects)
-    detection = detector.detect(frames_tchw_01[prompt_frame_idx], text_prompt, guidance_box_xyxy=None)
-    track_boxes = detection.boxes_xyxy[:max_objects]
-    track_scores = detection.scores[:max_objects]
-    track_phrases = detection.phrases[:max_objects]
+    try:
+        detection = detector.detect(frames_tchw_01[prompt_frame_idx], text_prompt, guidance_box_xyxy=None)
+        track_boxes = detection.boxes_xyxy[:max_objects]
+        track_scores = detection.scores[:max_objects]
+        track_phrases = detection.phrases[:max_objects]
+    except Exception as exc:
+        print(f"[warn] GroundingDINO detect failed, fallback to motion proxy: {exc}")
+        track_boxes = np.zeros((0, 4), dtype=np.float32)
+        track_scores = np.zeros((0,), dtype=np.float32)
+        track_phrases = []
 
     if track_boxes.shape[0] == 0:
         motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
@@ -223,6 +229,27 @@ def detect_and_track_objects(
                 phrase=str(phrase),
             )
         )
+    if not outputs and track_boxes.shape[0] > 0:
+        height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
+        fallback_box = np.asarray(track_boxes[0], dtype=np.float32)
+        x0, y0, x1, y1 = [int(round(v)) for v in fallback_box.tolist()]
+        x0 = max(0, min(x0, width - 1))
+        x1 = max(0, min(x1, width))
+        y0 = max(0, min(y0, height - 1))
+        y1 = max(0, min(y1, height))
+        masks = np.zeros((frames_tchw_01.shape[0], height, width), dtype=np.uint8)
+        if x1 > x0 and y1 > y0:
+            masks[:, y0:y1, x0:x1] = 1
+        boxes = np.repeat(fallback_box[None, :], repeats=frames_tchw_01.shape[0], axis=0).astype(np.float32)
+        outputs.append(
+            ObjectTrack(
+                box_prompt_xyxy=fallback_box,
+                masks_thw=masks,
+                boxes_t4=boxes,
+                score=float(track_scores[0]) if len(track_scores) > 0 else 1.0,
+                phrase=str(track_phrases[0]) if len(track_phrases) > 0 else "pseudo_box_track",
+            )
+        )
     return outputs, prompt_frame_idx
 
 
@@ -248,6 +275,23 @@ def build_query_prior_from_tracks(tracks: list[ObjectTrack], num_queries: int) -
     return all_points.astype(np.float32), owners, alloc, f"multi_sam_objects{len(tracks)}"
 
 
+def _fallback_points_from_box(box_xyxy: np.ndarray, num_queries: int) -> np.ndarray:
+    x0, y0, x1, y1 = [float(v) for v in box_xyxy.tolist()]
+    if x1 <= x0 or y1 <= y0 or num_queries <= 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    cx = 0.5 * (x0 + x1)
+    cy = 0.5 * (y0 + y1)
+    if num_queries == 1:
+        return np.asarray([[cx, cy]], dtype=np.float32)
+    grid_side = int(np.ceil(np.sqrt(num_queries)))
+    xs = np.linspace(x0 + 0.25 * (x1 - x0), x1 - 0.25 * (x1 - x0), grid_side)
+    ys = np.linspace(y0 + 0.25 * (y1 - y0), y1 - 0.25 * (y1 - y0), grid_side)
+    pts = np.stack(np.meshgrid(xs, ys), axis=-1).reshape(-1, 2)
+    center = np.asarray([[cx, cy]], dtype=np.float32)
+    pts = np.concatenate([center, pts.astype(np.float32)], axis=0)
+    return pts[:num_queries].astype(np.float32)
+
+
 def build_query_prior_from_tracks_with_minimum(
     tracks: list[ObjectTrack],
     num_queries: int,
@@ -263,11 +307,16 @@ def build_query_prior_from_tracks_with_minimum(
             continue
         pts, _ = build_vggt_query_prior(track.masks_thw, track.boxes_t4, num_queries=nq)
         if pts.shape[0] == 0:
-            continue
+            pts = _fallback_points_from_box(track.box_prompt_xyxy.astype(np.float32), nq)
+            if pts.shape[0] == 0:
+                continue
         query_sets.append(pts.astype(np.float32))
         owners.extend([obj_idx] * int(pts.shape[0]))
     if not query_sets:
         pts, src = build_vggt_query_prior(tracks[0].masks_thw, tracks[0].boxes_t4, num_queries=num_queries)
+        if pts.shape[0] == 0:
+            pts = _fallback_points_from_box(tracks[0].box_prompt_xyxy.astype(np.float32), num_queries)
+            src = "fallback_prompt_box_grid"
         return pts.astype(np.float32), [0] * int(pts.shape[0]), alloc, src
     all_points = np.concatenate(query_sets, axis=0)[:num_queries]
     owners = owners[: int(all_points.shape[0])]

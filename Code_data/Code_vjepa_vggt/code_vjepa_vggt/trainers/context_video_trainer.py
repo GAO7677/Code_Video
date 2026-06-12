@@ -114,6 +114,7 @@ class ContextVideoTrainer(nn.Module):
                 num_frames=data_cfg["num_frames"],
                 num_context_frames=data_cfg["num_context_frames"],
                 resolution=tuple(data_cfg["resolution"]),
+                sampling_mode=str(data_cfg.get("sampling_mode", "uniform")),
             )
         if dataset_type == "phys_state_episode":
             return PhysStateEpisodeDataset(

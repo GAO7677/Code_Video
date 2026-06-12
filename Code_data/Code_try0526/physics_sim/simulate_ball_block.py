@@ -26,10 +26,9 @@ from pyrender.constants import RenderFlags
 
 OUTPUT_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
 VIDEO_DIR = OUTPUT_DIR / "videos" / "ball_block"
-FPS = 60
-SIM_DURATION = 2.5
-SIM_STEPS = int(SIM_DURATION * 240)
-RECORD_EVERY = 4
+DEFAULT_FPS = 60
+DEFAULT_SIM_DURATION = 2.5
+SIM_HZ = 240
 IMG_W, IMG_H = 1280, 720
 
 CAM_EYE = np.array([0.05, -2.2, 1.2])
@@ -61,6 +60,45 @@ SCENARIOS = [
 def parse_args():
     parser = argparse.ArgumentParser(description="Render ball-block physics simulation videos.")
     parser.add_argument(
+        "--scenario",
+        nargs="+",
+        default=None,
+        help="Optional scenario name(s) to export. Defaults to all built-in scenarios.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=DEFAULT_FPS,
+        help="Target recorded FPS. Must divide the 240 Hz physics step exactly.",
+    )
+    parser.add_argument(
+        "--record-every",
+        type=int,
+        default=None,
+        help="Record one frame every N physics steps. Overrides --fps when set.",
+    )
+    parser.add_argument(
+        "--sim-duration",
+        type=float,
+        default=DEFAULT_SIM_DURATION,
+        help="Simulation duration in seconds.",
+    )
+    parser.add_argument(
+        "--export-sample-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional raw-sample export root. When set, the script also writes "
+            "train/ball_block_dense/<scenario>/ with video.mp4, meta.json, and states.npz."
+        ),
+    )
+    parser.add_argument(
+        "--video-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for the rendered mp4/json preview files. Defaults to the original ball_block video dir.",
+    )
+    parser.add_argument(
         "--show-stats-overlay",
         action="store_true",
         help="Overlay left-top time and speed stats on frames.",
@@ -77,6 +115,28 @@ def parse_args():
         help="Output video codec.",
     )
     return parser.parse_args()
+
+
+def resolve_record_every(args: argparse.Namespace) -> int:
+    if args.record_every is not None:
+        record_every = int(args.record_every)
+        if record_every <= 0:
+            raise ValueError("--record-every must be positive")
+        if SIM_HZ % record_every != 0:
+            raise ValueError(f"--record-every must divide {SIM_HZ}, got {record_every}")
+        expected_fps = SIM_HZ // record_every
+        if args.fps != expected_fps:
+            raise ValueError(
+                f"--fps={args.fps} is inconsistent with --record-every={record_every}; "
+                f"expected fps={expected_fps} for {SIM_HZ} Hz physics"
+            )
+        return record_every
+
+    if args.fps <= 0:
+        raise ValueError("--fps must be positive")
+    if SIM_HZ % args.fps != 0:
+        raise ValueError(f"--fps must divide {SIM_HZ}, got {args.fps}")
+    return SIM_HZ // args.fps
 
 
 def _look_at(eye, target, up):
@@ -273,9 +333,12 @@ def run_scenario(
     sc: Scenario,
     output_mp4: Path,
     *,
+    record_every: int,
+    sim_duration: float,
     show_stats_overlay: bool,
     show_scenario_label: bool,
     codec: str,
+    export_sample_root: Path | None,
 ) -> None:
     p.setGravity(0, 0, -9.81)
     p.setPhysicsEngineParameter(fixedTimeStep=1.0/240.0, numSolverIterations=100, numSubSteps=1)
@@ -302,17 +365,37 @@ def run_scenario(
 
     renderer = SceneRenderer()
     frames = []
+    positions = []
+    quats = []
+    linvels = []
+    angvels = []
+    times = []
 
-    for step in range(SIM_STEPS):
+    sim_steps = int(sim_duration * SIM_HZ)
+    for step in range(sim_steps):
         p.stepSimulation()
-        if step % RECORD_EVERY != 0:
+        if step % record_every != 0:
             continue
-        elapsed = step / 240.0
+        elapsed = step / float(SIM_HZ)
 
         ball_pos, ball_quat = p.getBasePositionAndOrientation(ball_id)
         ball_vel, _ = p.getBaseVelocity(ball_id)
         block_pos, block_quat = p.getBasePositionAndOrientation(block_id)
         block_vel, _ = p.getBaseVelocity(block_id)
+
+        positions.append(np.asarray([ball_pos, block_pos], dtype=np.float32))
+        quats.append(np.asarray([ball_quat, block_quat], dtype=np.float32))
+        linvels.append(np.asarray([ball_vel, block_vel], dtype=np.float32))
+        angvels.append(
+            np.asarray(
+                [
+                    p.getBaseVelocity(ball_id)[1],
+                    p.getBaseVelocity(block_id)[1],
+                ],
+                dtype=np.float32,
+            )
+        )
+        times.append(float(elapsed))
 
         renderer.set_ball(ball_pos, ball_quat, ball_r)
         renderer.set_block(block_pos, block_quat, block_h)
@@ -340,7 +423,8 @@ def run_scenario(
     p.removeBody(ball_id)
     p.removeBody(block_id)
 
-    write_video(output_mp4, frames, FPS, codec)
+    recorded_fps = SIM_HZ // record_every
+    write_video(output_mp4, frames, recorded_fps, codec)
 
     # Write metadata JSON
     import json
@@ -367,8 +451,8 @@ def run_scenario(
             "engine": "pyrender",
             "light": "SpotLight, intensity=70, cone=0.4/1.0, pos=(-1.5,-1.5,2.5)",
             "shadows": "SHADOWS_SPOT",
-            "fps": FPS,
-            "duration_s": SIM_DURATION,
+            "fps": recorded_fps,
+            "duration_s": sim_duration,
             "resolution": [IMG_W, IMG_H],
             "frames": len(frames),
             "codec": codec,
@@ -377,7 +461,7 @@ def run_scenario(
         },
         "physics": {
             "engine": "pybullet",
-            "timestep_s": 1.0/240.0,
+            "timestep_s": 1.0/float(SIM_HZ),
             "solver_iterations": 100,
             "spinning_friction_ball": 0.003,
             "spinning_friction_block": 0.008,
@@ -387,30 +471,99 @@ def run_scenario(
     }
     json_path = output_mp4.with_suffix(".json")
     json_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    if export_sample_root is not None:
+        sample_dir = export_sample_root / "train" / "ball_block_dense" / sc.name
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        sample_video = sample_dir / "video.mp4"
+        sample_json = sample_dir / "meta.json"
+        sample_npz = sample_dir / "states.npz"
+        sample_video.write_bytes(output_mp4.read_bytes())
+        np.savez_compressed(
+            sample_npz,
+            positions=np.stack(positions, axis=0),
+            quats=np.stack(quats, axis=0),
+            linear_velocities=np.stack(linvels, axis=0),
+            angular_velocities=np.stack(angvels, axis=0),
+            frame_times=np.asarray(times, dtype=np.float32),
+            object_names=np.asarray(["ball", "block"]),
+            object_roles=np.asarray(["dynamic", "dynamic"]),
+        )
+        sample_json.write_text(
+            json.dumps(
+                {
+                    "scenario": sc.name,
+                    "caption": "Ball colliding with a wooden block",
+                    "video": str(sample_video),
+                    "states": str(sample_npz),
+                    "fps": recorded_fps,
+                    "duration_s": sim_duration,
+                    "frames": len(frames),
+                    "camera": {
+                        "eye": CAM_EYE.tolist(),
+                        "target": CAM_TARGET.tolist(),
+                        "up": CAM_UP.tolist(),
+                        "yfov_deg": 55.0,
+                    },
+                    "objects": [
+                        {
+                            "name": "ball",
+                            "shape": "sphere",
+                            "role": "dynamic",
+                            "position": [-1.0, 0.0, ball_z],
+                            "size": {"radius": ball_r},
+                            "mass": sc.ball_mass,
+                            "friction": sc.lateral_friction,
+                        },
+                        {
+                            "name": "block",
+                            "shape": "box",
+                            "role": "dynamic",
+                            "position": [0.3, 0.0, block_h[2]],
+                            "size": {"hx": block_h[0], "hy": block_h[1], "hz": block_h[2]},
+                            "mass": 1.5,
+                            "friction": sc.lateral_friction,
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    if export_sample_root is not None:
+        print(f"  -> dense sample: {sample_dir}")
     print(f"  -> {output_mp4.name} ({len(frames)} frames) + {json_path.name}")
 
 
 def main():
     args = parse_args()
-    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    video_dir = args.video_dir or VIDEO_DIR
+    video_dir.mkdir(parents=True, exist_ok=True)
+    record_every = resolve_record_every(args)
+    selected = set(args.scenario) if args.scenario else None
     p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.loadURDF("plane.urdf")
 
     print(f"Pyrender shadow rendering — {len(SCENARIOS)} scenarios\n")
     for i, sc in enumerate(SCENARIOS, 1):
-        out = VIDEO_DIR / f"{sc.name}.mp4"
+        if selected is not None and sc.name not in selected:
+            continue
+        out = video_dir / f"{sc.name}.mp4"
         print(f"[{i}/{len(SCENARIOS)}] {sc.label}")
         run_scenario(
             sc,
             out,
+            record_every=record_every,
+            sim_duration=float(args.sim_duration),
             show_stats_overlay=args.show_stats_overlay,
             show_scenario_label=not args.hide_scenario_label,
             codec=args.codec,
+            export_sample_root=args.export_sample_root,
         )
 
     p.disconnect()
-    print(f"\nDone -> {VIDEO_DIR}")
+    print(f"\nDone -> {video_dir}")
 
 
 if __name__ == "__main__":
