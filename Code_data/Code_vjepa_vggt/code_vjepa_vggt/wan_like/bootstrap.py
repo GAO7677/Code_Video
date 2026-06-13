@@ -63,13 +63,16 @@ def _patch_wan_attention_fallback() -> None:
 
     if not getattr(model_module, "_codex_bf16_activation_patch", False):
         import torch.nn.functional as F
+        import torch.utils.checkpoint as checkpoint
 
         rope_apply = model_module.rope_apply
         WanLayerNorm = model_module.WanLayerNorm
         WanSelfAttention = model_module.WanSelfAttention
         WanCrossAttention = model_module.WanCrossAttention
         WanAttentionBlock = model_module.WanAttentionBlock
+        WanModel = model_module.WanModel
         Head = model_module.Head
+        sinusoidal_embedding_1d = model_module.sinusoidal_embedding_1d
 
         def safe_layer_norm_forward(self, x):
             weight = self.weight.float() if self.weight is not None else None
@@ -138,11 +141,77 @@ def _patch_wan_attention_fallback() -> None:
             head_in = head_in.to(self.head.weight.dtype)
             return self.head(head_in)
 
+        def safe_model_forward(self, x, t, context, seq_len, y=None):
+            if self.model_type == "i2v":
+                assert y is not None
+            device = self.patch_embedding.weight.device
+            if self.freqs.device != device:
+                self.freqs = self.freqs.to(device)
+
+            if y is not None:
+                x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
+
+            x = [self.patch_embedding(u.unsqueeze(0).to(self.patch_embedding.weight.dtype)) for u in x]
+            grid_sizes = torch.stack([torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
+            x = [u.flatten(2).transpose(1, 2) for u in x]
+            seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
+            assert seq_lens.max() <= seq_len
+            x = torch.cat(
+                [
+                    torch.cat([u, u.new_zeros(1, seq_len - u.size(1), u.size(2))], dim=1)
+                    for u in x
+                ]
+            )
+
+            if t.dim() == 1:
+                t = t.expand(t.size(0), seq_len)
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                bt = t.size(0)
+                t = t.flatten()
+                e = self.time_embedding(
+                    sinusoidal_embedding_1d(self.freq_dim, t).unflatten(0, (bt, seq_len)).float()
+                )
+                e0 = self.time_projection(e).unflatten(2, (6, self.dim))
+
+            context_lens = None
+            context = self.text_embedding(
+                torch.stack(
+                    [
+                        torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
+                        for u in context
+                    ]
+                ).to(self.text_embedding[0].weight.dtype)
+            )
+
+            kwargs = dict(
+                e=e0,
+                seq_lens=seq_lens,
+                grid_sizes=grid_sizes,
+                freqs=self.freqs,
+                context=context,
+                context_lens=context_lens,
+            )
+
+            for block in self.blocks:
+                if self.training:
+                    x = checkpoint.checkpoint(
+                        lambda x_in: block(x_in, **kwargs),
+                        x,
+                        use_reentrant=False,
+                    )
+                else:
+                    x = block(x, **kwargs)
+
+            x = self.head(x, e)
+            x = self.unpatchify(x, grid_sizes)
+            return [u.float() for u in x]
+
         WanLayerNorm.forward = safe_layer_norm_forward
         WanSelfAttention.forward = safe_self_attn_forward
         WanCrossAttention.forward = safe_cross_attn_forward
         WanAttentionBlock.forward = safe_block_forward
         Head.forward = safe_head_forward
+        WanModel.forward = safe_model_forward
         model_module._codex_bf16_activation_patch = True
 
 

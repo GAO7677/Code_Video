@@ -738,6 +738,7 @@ class ContextVideoTrainer(nn.Module):
 
     def train(self) -> None:
         from accelerate import Accelerator
+        from accelerate.utils import DistributedDataParallelKwargs
 
         from code_vjepa_vggt.training.runner import launch_training_task
 
@@ -745,6 +746,7 @@ class ContextVideoTrainer(nn.Module):
         accelerator = Accelerator(
             gradient_accumulation_steps=int(opt_cfg.get("grad_accum_steps", 1)),
             mixed_precision=str(opt_cfg.get("mixed_precision", "no")),
+            kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
         )
         launch_training_task(
             accelerator,

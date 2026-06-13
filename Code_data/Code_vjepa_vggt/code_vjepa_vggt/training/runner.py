@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 from accelerate import Accelerator
+from accelerate.utils import DistributedDataParallelKwargs
 from tqdm import tqdm
 
 
@@ -56,7 +57,7 @@ def launch_training_task(
                 loss = model(batch)
                 accelerator.backward(loss)
                 if max_grad_norm is not None and max_grad_norm > 0:
-                    accelerator.clip_grad_norm_(model.trainable_parameters(), max_grad_norm)
+                    accelerator.clip_grad_norm_(accelerator.unwrap_model(model).trainable_parameters(), max_grad_norm)
                 optimizer.step()
             step += 1
             progress.update(1)

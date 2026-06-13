@@ -44,7 +44,8 @@ class VGGTTrackAdapter(nn.Module):
         self.input_hw = input_hw
         self.model = None
         if model_path and Path(model_path).exists():
-            self.model = VGGT.from_pretrained(model_path).eval().requires_grad_(False).to(self.device_obj)
+            self.model = VGGT.from_pretrained(model_path).eval().requires_grad_(False)
+            self.model = self.model.to(self.device_obj)
 
     def _make_uniform_queries(self, batch_size: int, image_hw: tuple[int, int], device: torch.device) -> torch.Tensor:
         height, width = image_hw
@@ -113,12 +114,13 @@ class VGGTTrackAdapter(nn.Module):
         else:
             query_points = self._make_uniform_queries(batch_size, self.input_hw, resized.device)
         with torch.no_grad():
-            aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized)
+            model_dtype = next(self.model.parameters()).dtype
+            aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized.to(dtype=model_dtype))
             predictions = self.model.token_list_to_predictions(
                 aggregated_tokens_list,
-                images=resized,
+                images=resized.to(dtype=model_dtype),
                 patch_start_idx=patch_start_idx,
-                query_points=query_points,
+                query_points=query_points.to(dtype=model_dtype),
             )
             tracks = predictions["track"]
             vis = predictions["vis"]
