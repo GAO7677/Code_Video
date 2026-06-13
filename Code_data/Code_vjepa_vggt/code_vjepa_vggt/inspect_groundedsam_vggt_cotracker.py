@@ -321,7 +321,8 @@ def main() -> None:
     object_tracks, prompt_frame_idx = detect_and_track_objects(
         frames_tchw_01,
         args.caption,
-        device=str(device),
+        sam2_device=str(device),
+        gdino_device=str(device),
         max_objects=4,
         prompt_frame_mode=str(args.prompt_frame_mode),
     )
