@@ -55,10 +55,15 @@ class TrainerState:
 
 
 class ContextVideoTrainer(nn.Module):
-    def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True) -> None:
+    def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True, device: str | torch.device | None = None) -> None:
         super().__init__()
         self.cfg = cfg
-        self.device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device is not None:
+            self.device_obj = torch.device(device)
+        elif torch.cuda.is_available():
+            self.device_obj = torch.device(f"cuda:{torch.cuda.current_device()}")
+        else:
+            self.device_obj = torch.device("cpu")
         self.build_optimizer = build_optimizer
 
         model_cfg = cfg["model"]
