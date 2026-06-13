@@ -19,6 +19,8 @@ import json
 import os
 from pathlib import Path
 
+import cv2
+import numpy as np
 import torch
 
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
@@ -36,6 +38,66 @@ def _maybe_limit_indices(total: int, start_index: int, num_cases: int) -> range:
     return range(start_index, min(total, start_index + num_cases))
 
 
+def _video_bcthw_to_uint8_thwc(video_bcthw: torch.Tensor) -> np.ndarray:
+    video = video_bcthw.detach().cpu().clamp(-1.0, 1.0)
+    video = ((video + 1.0) * 127.5).to(torch.uint8)
+    return video.permute(1, 2, 3, 0).contiguous().numpy()
+
+
+def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
+    if not writer.isOpened():
+        raise RuntimeError(f"failed to open writer for {path}")
+    try:
+        for frame in frames_thwc_uint8:
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    finally:
+        writer.release()
+
+
+def _resolve_input_videos(
+    sample: dict[str, object],
+    *,
+    context_fraction: float,
+    random_context_frames: bool,
+    seed: int,
+    sample_idx: int,
+    default_num_context_frames: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    video = sample["video"]
+    if not isinstance(video, torch.Tensor):
+        raise TypeError(f"sample['video'] must be a tensor, got {type(video)}")
+
+    context_video = sample.get("context_video")
+    if isinstance(context_video, torch.Tensor) and context_video.numel() > 0:
+        context_video = context_video.contiguous()
+        context_indices = sample.get("context_frame_indices")
+        if isinstance(context_indices, torch.Tensor):
+            context_indices = context_indices.long()
+        else:
+            context_indices = torch.arange(context_video.shape[1], dtype=torch.long)
+        return video.contiguous(), context_video, context_indices
+
+    total_frames = int(video.shape[1])
+    max_context_len = max(1, min(total_frames, int(total_frames * context_fraction)))
+    if not random_context_frames:
+        context_len = min(default_num_context_frames, max_context_len)
+        context_indices = torch.arange(context_len, dtype=torch.long)
+    else:
+        if max_context_len <= 1:
+            context_indices = torch.arange(1, dtype=torch.long)
+        else:
+            generator = torch.Generator()
+            generator.manual_seed(seed + sample_idx)
+            context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
+            context_indices = torch.arange(context_len, dtype=torch.long)
+
+    context_video = video[:, context_indices].contiguous()
+    return video.contiguous(), context_video, context_indices
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint-dir", required=True, help="checkpoint folder containing step_*.pt")
@@ -50,7 +112,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--context-fraction", type=float, default=0.5)
     parser.add_argument("--random-context-frames", action="store_true")
-    parser.add_argument("--save-raw", action="store_true")
+    parser.add_argument("--save-raw", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
     config = load_yaml_config(args.config)
@@ -86,19 +148,33 @@ def main() -> None:
         trainer.dit.eval()
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
 
-    output_dir = Path(args.output_dir) / args.split
+    checkpoint_name = Path(args.checkpoint_dir).name
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    results = []
     for local_idx, dataset_idx in enumerate(_maybe_limit_indices(len(dataset), args.start_index, args.num_cases)):
         sample = dataset[dataset_idx]
-        context_video = sample["context_video"].unsqueeze(0).to(device_obj)
-        num_context_frames = torch.tensor([int(sample["num_context_frames"])], dtype=torch.long, device=device_obj)
+        sample_stem = Path(str(sample["video_path"])).stem
+        input_video, input_context_video, context_indices = _resolve_input_videos(
+            sample,
+            context_fraction=float(args.context_fraction),
+            random_context_frames=bool(args.random_context_frames),
+            seed=int(args.seed),
+            sample_idx=int(dataset_idx),
+            default_num_context_frames=int(config["data"]["num_context_frames"]),
+        )
+        num_context_frames = torch.tensor([int(context_indices.numel())], dtype=torch.long, device=device_obj)
         captions = [str(sample["caption"])]
+
+        input_video_path = output_dir / f"{sample_stem}_input.mp4"
+        input_context_video_path = output_dir / f"{sample_stem}_input_context.mp4"
+        _write_mp4(input_video_path, _video_bcthw_to_uint8_thwc(input_video.unsqueeze(0)), fps=int(args.fps))
+        _write_mp4(input_context_video_path, _video_bcthw_to_uint8_thwc(input_context_video.unsqueeze(0)), fps=int(args.fps))
+
         fused_context, context_latents, prep_debug = _build_cond_context(
             trainer=trainer,
             config=config,
-            context_video=context_video,
+            context_video=input_context_video.unsqueeze(0).to(device_obj),
             captions=captions,
             num_context_frames=num_context_frames,
             device_obj=device_obj,
@@ -107,65 +183,31 @@ def main() -> None:
             bundle=trainer.bundle,
             fused_context=fused_context,
             context_latents=context_latents,
-            total_frames=int(sample["video"].shape[1]),
+            total_frames=int(input_video.shape[1]),
             num_context_frames=int(num_context_frames.item()),
             num_inference_steps=int(args.sampling_steps),
         )
 
-        case_dir = output_dir / f"case_{dataset_idx:06d}"
-        case_dir.mkdir(parents=True, exist_ok=True)
-        result = {
-            "case_id": int(local_idx),
-            "dataset_index": int(dataset_idx),
-            "split": args.split,
-            "caption": sample["caption"],
-            "video_path": sample["video_path"],
-            "context_frame_indices": sample["context_frame_indices"].tolist(),
-            "frame_indices": sample["frame_indices"].tolist(),
-            "prep_debug": prep_debug,
-            "sample_debug": sample_debug,
-            "load_state_info": state_info,
-        }
-        with open(case_dir / "result.json", "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-
+        output_video_path = output_dir / f"{sample_stem}.mp4"
         if args.save_raw:
             with torch.no_grad():
                 decoded = trainer.bundle.vae.decode([pred_latent.to(next(trainer.bundle.vae.model.parameters()).device if hasattr(trainer.bundle.vae, "model") else device_obj)])
             if isinstance(decoded, list):
                 decoded = decoded[0]
-            video_out = decoded.detach().cpu().permute(1, 0, 2, 3).contiguous()
-            video_out = ((video_out.clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8).permute(0, 2, 3, 1).numpy()
-            import cv2
+            _write_mp4(output_video_path, _video_bcthw_to_uint8_thwc(decoded), fps=int(args.fps))
 
-            raw_path = case_dir / "prediction.mp4"
-            writer = cv2.VideoWriter(str(raw_path), cv2.VideoWriter_fourcc(*"mp4v"), int(args.fps), (video_out.shape[2], video_out.shape[1]))
-            try:
-                for frame in video_out:
-                    writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-            finally:
-                writer.release()
-            result["prediction_video"] = str(raw_path)
-            with open(case_dir / "result.json", "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
+        result = {
+            "checkpoint_dir": str(args.checkpoint_dir),
+            "seed": int(args.seed),
+            "input_caption": str(sample["caption"]),
+            "input_video": str(input_video_path),
+            "input_context_video": str(input_context_video_path),
+            "output_video": str(output_video_path),
+        }
+        with open(output_dir / f"{sample_stem}.json", "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
 
-        results.append(result)
-
-    with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "checkpoint_dir": str(args.checkpoint_dir),
-                "dataset_root": str(args.dataset_root),
-                "split": args.split,
-                "num_cases": len(results),
-                "results": results,
-            },
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
-
-    print(json.dumps({"output_dir": str(output_dir), "num_cases": len(results)}, indent=2, ensure_ascii=False))
+    print(json.dumps({"output_dir": str(output_dir), "checkpoint_dir": str(args.checkpoint_dir), "seed": int(args.seed)}, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
