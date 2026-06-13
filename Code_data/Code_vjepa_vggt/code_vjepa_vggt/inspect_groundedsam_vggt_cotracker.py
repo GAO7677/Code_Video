@@ -305,7 +305,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8803)
     parser.add_argument(
         "--output-dir",
-        default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/groundedsam_vggt_cotracker_viewer",
+        default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/viewers/groundedsam_vggt_cotracker_viewer",
     )
     args = parser.parse_args()
 

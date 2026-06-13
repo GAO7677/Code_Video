@@ -1,6 +1,6 @@
 experiment:
-  name: ball_block_ctx8_ti2v5b_vjepa_vggt
-  output_dir: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/ball_block_ctx8_ti2v5b_vjepa_vggt
+  name: ball_block_ctx8_ti2v5b_vjepa_vggt_100step_gpu56
+  output_dir: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/ball_block_ctx8_ti2v5b_vjepa_vggt_100step_gpu56
   seed: 42
 
 model:
@@ -48,7 +48,7 @@ optimization:
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
-  max_steps: 1000
+  max_steps: 100
   grad_accum_steps: 1
   max_grad_norm: 1.0
   mixed_precision: bf16
@@ -64,4 +64,4 @@ loss:
 
 logging:
   log_every: 10
-  save_every: 200
+  save_every: 20

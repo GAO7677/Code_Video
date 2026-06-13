@@ -1,6 +1,6 @@
 experiment:
   name: phys_state_ctx8_fut16_vjepa_vggt
-  output_dir: /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/phys_state_ctx8_fut16_vjepa_vggt
+  output_dir: /data/gaoya/AAA_test_video/0529/vjepa_vggt/reports/phys_state_ctx8_fut16_vjepa_vggt
   seed: 42
 
 model:

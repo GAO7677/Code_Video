@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--index", type=int, default=0)
     parser.add_argument(
         "--output",
-        default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/smoke_train_shapes.json",
+        default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/smoke/smoke_train_shapes.json",
     )
     args = parser.parse_args()
 

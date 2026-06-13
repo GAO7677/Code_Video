@@ -498,7 +498,7 @@ def main() -> None:
     parser.add_argument("--min-queries-per-object", type=int, default=4)
     parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
     parser.add_argument("--cotracker-checkpoint", default="/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth")
-    parser.add_argument("--output-dir", default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/vggt_vs_cotracker_compare")
+    parser.add_argument("--output-dir", default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/viewers/vggt_vs_cotracker_compare")
     parser.add_argument("--port", type=int, default=8805)
     args = parser.parse_args()
 

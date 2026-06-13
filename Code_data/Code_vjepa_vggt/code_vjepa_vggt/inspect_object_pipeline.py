@@ -17,7 +17,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/object_pipeline_report",
+        default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/reports/object_pipeline_report",
     )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--serve", action="store_true")
