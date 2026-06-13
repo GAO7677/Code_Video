@@ -354,6 +354,8 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     <p><b>Geometry stats:</b></p>
     <pre>{json.dumps(result['geometry_stats'], indent=2, ensure_ascii=False)}</pre>
     <div class="grid">
+      <figure><video controls preload="none" playsinline src="{result['depth_full_video']}"></video><figcaption>VGGT full depth heatmap</figcaption></figure>
+      <figure><video controls preload="none" playsinline src="{result['world_points_full_video']}"></video><figcaption>VGGT full world_points RGB</figcaption></figure>
       <figure><video controls preload="none" playsinline src="{result['vggt_track_video']}"></video><figcaption>VGGT tracks</figcaption></figure>
       <figure><video controls preload="none" playsinline src="{result['cotracker_track_video']}"></video><figcaption>CoTracker tracks</figcaption></figure>
       <figure><video controls preload="none" playsinline src="{result['vggt_track_depth_video']}"></video><figcaption>VGGT depth sampled on VGGT tracks</figcaption></figure>
@@ -488,9 +490,13 @@ def evaluate_case(
     depth_cot_frames = colorize_point_feature_video(vggt_depth_on_cotracker[0].detach().cpu().numpy())
     world_vggt_frames = colorize_point_feature_video(vggt_world_on_vggt[0].detach().cpu().numpy())
     world_cot_frames = colorize_point_feature_video(vggt_world_on_cotracker[0].detach().cpu().numpy())
+    depth_full_frames = colorize_scalar_video(vggt_out.depth[0].detach().cpu().numpy()[..., 0])
+    world_points_full_frames = colorize_world_points_video(vggt_out.world_points[0].detach().cpu().numpy())
 
     stem = f"{case_group}__{Path(sample['video_path']).stem}"
     paths = {
+        "depth_full_video": output_dir / f"{stem}__depth_full.mp4",
+        "world_points_full_video": output_dir / f"{stem}__world_points_full.mp4",
         "vggt_track_video": output_dir / f"{stem}__vggt_tracks.mp4",
         "cotracker_track_video": output_dir / f"{stem}__cotracker_tracks.mp4",
         "vggt_track_depth_video": output_dir / f"{stem}__depth_on_vggt_tracks.mp4",
@@ -499,6 +505,8 @@ def evaluate_case(
         "cotracker_track_world_video": output_dir / f"{stem}__world_on_cotracker_tracks.mp4",
     }
     fps = int(sample.get("_fps", 8))
+    write_mp4(paths["depth_full_video"], depth_full_frames, fps=fps)
+    write_mp4(paths["world_points_full_video"], world_points_full_frames, fps=fps)
     write_mp4(paths["vggt_track_video"], vggt_track_video, fps=fps)
     write_mp4(paths["cotracker_track_video"], cotracker_track_video, fps=fps)
     write_mp4(paths["vggt_track_depth_video"], depth_vggt_frames, fps=fps)
@@ -531,9 +539,11 @@ def evaluate_case(
             "vggt_world_points": list(vggt_out.world_points.shape) if vggt_out.world_points is not None else None,
             "depth_on_vggt_tracks": list(vggt_depth_on_vggt.shape),
             "depth_on_cotracker_tracks": list(vggt_depth_on_cotracker.shape),
-            "world_on_vggt_tracks": list(vggt_world_on_vggt.shape),
-            "world_on_cotracker_tracks": list(vggt_world_on_cotracker.shape),
-        },
+        "world_on_vggt_tracks": list(vggt_world_on_vggt.shape),
+        "world_on_cotracker_tracks": list(vggt_world_on_cotracker.shape),
+    },
+        "depth_full_video": str(ensure_browser_video(paths["depth_full_video"]).relative_to(output_dir.parent)),
+        "world_points_full_video": str(ensure_browser_video(paths["world_points_full_video"]).relative_to(output_dir.parent)),
         "vggt_track_video": str(ensure_browser_video(paths["vggt_track_video"]).relative_to(output_dir.parent)),
         "cotracker_track_video": str(ensure_browser_video(paths["cotracker_track_video"]).relative_to(output_dir.parent)),
         "vggt_track_depth_video": str(ensure_browser_video(paths["vggt_track_depth_video"]).relative_to(output_dir.parent)),
