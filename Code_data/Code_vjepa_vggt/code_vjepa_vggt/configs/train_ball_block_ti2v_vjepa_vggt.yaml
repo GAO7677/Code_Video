@@ -18,6 +18,10 @@ model:
   je_pa_ckpt_dir: /data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384
   vggt_model_path: /data/gaoya/ckpt/facebook-VGGT-1B
   vggt_input_hw: [420, 728]
+  track_source: vggt
+  cotracker_checkpoint: /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth
+  cotracker_input_hw: [384, 512]
+  cotracker_window_len: 60
   object_num_queries: 8
   jepa_input_size: 384
   jepa_patch_size: 16

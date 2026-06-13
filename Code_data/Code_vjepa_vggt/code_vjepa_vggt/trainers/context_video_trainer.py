@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
 from code_vjepa_vggt.adapters.sam2_motion import (
     GroundingDINOTextDetector,
@@ -95,6 +96,18 @@ class ContextVideoTrainer(nn.Module):
             device=str(self.device_obj),
             input_hw=tuple(model_cfg["vggt_input_hw"]),
         ).to(self.device_obj)
+        self.track_source = str(model_cfg.get("track_source", "vggt")).strip().lower()
+        if self.track_source not in {"vggt", "cotracker"}:
+            raise ValueError(f"unsupported track_source: {self.track_source}")
+        self.cotracker_adapter = None
+        if self.track_source == "cotracker":
+            self.cotracker_adapter = CoTrackerAdapter(
+                checkpoint_path=model_cfg.get("cotracker_checkpoint"),
+                num_queries=int(model_cfg["object_num_queries"]),
+                device=str(self.device_obj),
+                input_hw=tuple(model_cfg.get("cotracker_input_hw", [384, 512])),
+                window_len=int(model_cfg.get("cotracker_window_len", 60)),
+            ).to(self.device_obj)
         latent_dim = int(getattr(self.bundle.config, "in_dim", 16))
         self.object_pooler = ObjectTubeProjector(
             jepa_dim=self.jepa_adapter.encoder.backbone.embed_dim,
@@ -438,10 +451,23 @@ class ContextVideoTrainer(nn.Module):
             query_points_prior=query_points_prior,
             query_image_hw=(context_videos.shape[-2], context_videos.shape[-1]) if query_points_prior is not None else None,
         )
-        tracks = vggt_out.tracks
-        visibility = vggt_out.visibility
-        confidence = vggt_out.confidence
-        track_image_hw = vggt_out.image_hw
+        cotracker_out = None
+        if self.cotracker_adapter is not None:
+            cotracker_out = self.cotracker_adapter(
+                frames_bthwc,
+                query_points_prior=query_points_prior,
+                query_image_hw=(context_videos.shape[-2], context_videos.shape[-1]) if query_points_prior is not None else None,
+            )
+        if cotracker_out is not None:
+            tracks = cotracker_out.tracks
+            visibility = cotracker_out.visibility
+            confidence = cotracker_out.confidence
+            track_image_hw = cotracker_out.image_hw
+        else:
+            tracks = vggt_out.tracks
+            visibility = vggt_out.visibility
+            confidence = vggt_out.confidence
+            track_image_hw = vggt_out.image_hw
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latent_batch,
@@ -493,6 +519,7 @@ class ContextVideoTrainer(nn.Module):
                 "sam2_prior_strategy": "可选单目标 motion/text prompt，或 Grounded-SAM 文本检测多目标，再分别采样 query points 给 VGGT。",
                 "jepa_patch_tokens": "V-JEPA 对 context video 编码后的局部 patch token 网格 [B,Tj,Hj,Wj,Dj]。",
                 "vggt_tracks": "VGGT 根据 query priors 或默认 queries 预测的 query-point tracks [B,Tctx,K,2]。",
+                "cotracker_tracks": "如果 track_source=cotracker，则同一批 query points 会额外送入 CoTracker，object pooling 和 box 辅助约束都改用 CoTracker 轨迹。",
                 "vggt_dense_geometry": "VGGT 还能输出 pose / depth / world_points；当前版本已把 world_points + depth 沿轨迹采样后并入 object geometry token。",
                 "object_tokens": "沿着轨迹从 JEPA 局部 tube、VAE latent、轨迹几何特征、以及 VGGT dense geometry 中池化并投影得到的 object state tokens [B,K,D]。",
                 "fused_context": "送入 Wan DiT cross-attention 的条件 token，等于 text tokens + 选出的 object tokens。",
@@ -506,14 +533,19 @@ class ContextVideoTrainer(nn.Module):
             "context_latents": self._shape_list(context_latents),
             "jepa_patch_tokens": list(jepa_out.patch_tokens.shape),
             "vggt_query_points": list(vggt_out.query_points.shape),
-            "vggt_tracks": list(tracks.shape),
-            "vggt_visibility": list(visibility.shape),
-            "vggt_confidence": list(confidence.shape),
+            "vggt_tracks": list(vggt_out.tracks.shape),
+            "vggt_visibility": list(vggt_out.visibility.shape),
+            "vggt_confidence": list(vggt_out.confidence.shape),
             "vggt_pose_enc": list(vggt_out.pose_enc.shape) if vggt_out.pose_enc is not None else None,
             "vggt_depth": list(vggt_out.depth.shape) if vggt_out.depth is not None else None,
             "vggt_depth_conf": list(vggt_out.depth_conf.shape) if vggt_out.depth_conf is not None else None,
             "vggt_world_points": list(vggt_out.world_points.shape) if vggt_out.world_points is not None else None,
             "vggt_world_points_conf": list(vggt_out.world_points_conf.shape) if vggt_out.world_points_conf is not None else None,
+            "track_source": self.track_source,
+            "active_tracks": list(tracks.shape),
+            "active_visibility": list(visibility.shape),
+            "active_confidence": list(confidence.shape),
+            "active_track_image_hw": list(track_image_hw),
             "object_tokens": list(object_out.object_tokens.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
             "object_latent_tokens": list(object_out.latent_tokens.shape),
@@ -521,7 +553,7 @@ class ContextVideoTrainer(nn.Module):
             "object_vggt_geom_tokens": list(object_out.vggt_geom_tokens.shape) if object_out.vggt_geom_tokens is not None else None,
             "fused_context": self._shape_list(fused_context),
             "vggt_used_model": bool(vggt_out.used_model),
-            "vggt_track_image_hw": list(track_image_hw),
+            "vggt_track_image_hw": list(vggt_out.image_hw),
             "video_path": batch["video_path"][0] if isinstance(batch["video_path"], list) else batch["video_path"],
             "frame_indices": batch["frame_indices"][0].tolist() if isinstance(batch["frame_indices"], torch.Tensor) and batch["frame_indices"].ndim == 2 else batch["frame_indices"],
             "caption": captions[0] if captions else "",
@@ -532,6 +564,13 @@ class ContextVideoTrainer(nn.Module):
         }
         if query_points_prior is not None:
             debug["sam_query_points"] = list(query_points_prior.shape)
+        if cotracker_out is not None:
+            debug["cotracker_query_points"] = list(cotracker_out.query_points.shape)
+            debug["cotracker_tracks"] = list(cotracker_out.tracks.shape)
+            debug["cotracker_visibility"] = list(cotracker_out.visibility.shape)
+            debug["cotracker_confidence"] = list(cotracker_out.confidence.shape)
+            debug["cotracker_input_hw"] = list(cotracker_out.input_hw)
+            debug["cotracker_used_model"] = bool(cotracker_out.used_model)
         if "context_boxes" in batch:
             debug["context_boxes"] = list(batch["context_boxes"].shape)
             debug["future_boxes"] = list(batch["future_boxes"].shape)
