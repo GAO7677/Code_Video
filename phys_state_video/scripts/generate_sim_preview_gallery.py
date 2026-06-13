@@ -55,6 +55,11 @@ WOOD_TEXTURES = {
     "wood_floor": Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures/wood_floor/wood_floor_diff_2k.jpg"),
 }
 TEXTURE_CACHE: Dict[str, np.ndarray] = {}
+FFMPEG_CANDIDATES = [
+    "ffmpeg",
+    "/data/gaoya/miniconda3/envs/vjepa2/bin/ffmpeg",
+    "/data/gaoya/miniconda3/envs/wan/bin/ffmpeg",
+]
 
 
 @dataclass
@@ -153,6 +158,50 @@ def _sample_texture(texture: np.ndarray, uv: np.ndarray) -> np.ndarray:
     x = np.clip((uv[:, 0] * (w - 1)).astype(np.int32), 0, w - 1)
     y = np.clip(((1.0 - uv[:, 1]) * (h - 1)).astype(np.int32), 0, h - 1)
     return texture[y, x]
+
+
+def _resolve_ffmpeg() -> str:
+    for candidate in FFMPEG_CANDIDATES:
+        resolved = shutil.which(candidate) if os.path.sep not in candidate else candidate
+        if resolved and Path(resolved).exists():
+            return resolved
+    raise RuntimeError(
+        "ffmpeg with libx264 support is required to export H.264 videos, but no usable binary was found"
+    )
+
+
+def _write_video_h264(output_mp4: Path, frames: List[np.ndarray]) -> None:
+    tmp_mp4v = output_mp4.with_suffix(".tmp_mp4v.mp4")
+    writer = cv2.VideoWriter(str(tmp_mp4v), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (IMG_W, IMG_H))
+    if not writer.isOpened():
+        raise RuntimeError(f"failed to open temporary mp4v writer for {tmp_mp4v}")
+    try:
+        for frame in frames:
+            writer.write(frame)
+    finally:
+        writer.release()
+
+    ffmpeg_bin = _resolve_ffmpeg()
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-i",
+        str(tmp_mp4v),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output_mp4),
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"ffmpeg H.264 transcode failed for {output_mp4}: {exc.stderr}") from exc
+    finally:
+        if tmp_mp4v.exists():
+            tmp_mp4v.unlink()
 
 
 def _textured_vertex_colors(mesh: trimesh.Trimesh, texture_asset: str, tint: np.ndarray, repeat: float = 2.2) -> np.ndarray | None:
@@ -1227,10 +1276,7 @@ def run_scenario(renderer: PreviewRenderer, scenario: ScenarioSpec, overlay_text
         p.removeBody(body["body_id"])
 
     output_mp4 = VIDEO_DIR / f"{scenario.key}.mp4"
-    writer = cv2.VideoWriter(str(output_mp4), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (IMG_W, IMG_H))
-    for frame in frames:
-        writer.write(frame)
-    writer.release()
+    _write_video_h264(output_mp4, frames)
 
     output_npz = META_DIR / f"{scenario.key}_states.npz"
     np.savez_compressed(
