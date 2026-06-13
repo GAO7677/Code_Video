@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import torch
@@ -27,6 +28,23 @@ def launch_training_task(
     step = 0
     ckpt_dir = Path(model.cfg["experiment"]["output_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_cfg = model.cfg.get("logging", {})
+    log_every = int(log_cfg.get("log_every", 10))
+    use_wandb = bool(log_cfg.get("use_wandb", False))
+    wandb_run = None
+    if use_wandb and accelerator.is_main_process:
+        import wandb
+
+        wandb_dir = Path(log_cfg.get("wandb_dir", ckpt_dir.parent / "wandb"))
+        wandb_dir.mkdir(parents=True, exist_ok=True)
+        wandb_run = wandb.init(
+            project=str(log_cfg.get("wandb_project", "vjepa-vggt-wan")),
+            entity=log_cfg.get("wandb_entity"),
+            name=str(log_cfg.get("wandb_run_name", model.cfg["experiment"]["name"])),
+            dir=str(wandb_dir),
+            config=json.loads(json.dumps(model.cfg)),
+            resume="allow",
+        )
 
     progress = tqdm(total=max_steps, disable=not accelerator.is_local_main_process)
     while step < max_steps:
@@ -40,6 +58,18 @@ def launch_training_task(
                 optimizer.step()
             step += 1
             progress.update(1)
+            if step % max(1, log_every) == 0:
+                loss_value = float(loss.detach().item())
+                progress.set_postfix(loss=f"{loss_value:.4f}")
+                if accelerator.is_main_process and wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "train/loss": loss_value,
+                            "train/step": step,
+                            "train/lr": float(optimizer.param_groups[0]["lr"]),
+                        },
+                        step=step,
+                    )
             if accelerator.is_local_main_process and step % max(1, save_every) == 0:
                 unwrapped = accelerator.unwrap_model(model)
                 state = {
@@ -50,3 +80,5 @@ def launch_training_task(
             if step >= max_steps:
                 break
     progress.close()
+    if accelerator.is_main_process and wandb_run is not None:
+        wandb_run.finish()
