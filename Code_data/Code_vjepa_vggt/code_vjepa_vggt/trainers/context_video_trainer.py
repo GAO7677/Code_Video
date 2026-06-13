@@ -74,6 +74,10 @@ class ContextVideoTrainer(nn.Module):
             task=model_cfg["wan_task"],
             device=str(self.device_obj),
             load_dit=build_optimizer,
+            lora_rank=int(model_cfg.get("wan_lora_rank", 0)),
+            lora_alpha=int(model_cfg.get("wan_lora_alpha", 0)),
+            lora_dropout=float(model_cfg.get("wan_lora_dropout", 0.0)),
+            lora_init=str(model_cfg.get("wan_lora_init", "gaussian")),
         )
         self.bundle.freeze_parts(
             freeze_vae=bool(model_cfg["freeze_vae"]),
@@ -615,33 +619,41 @@ class ContextVideoTrainer(nn.Module):
         fused_context = prepared["fused_context"]
         track_box_loss = prepared["track_box_loss"]
         track_iou_loss = prepared["track_iou_loss"]
+        dit_param = next(self.bundle.dit.parameters())
+        dit_dtype = dit_param.dtype
+        dit_device = dit_param.device
 
         losses = []
         for sample_idx, latent_clean in enumerate(full_latents):
+            latent_clean = latent_clean.to(device=dit_device, dtype=dit_dtype)
             noise = torch.randn_like(latent_clean)
             timestep_id = torch.randint(0, len(self.scheduler.timesteps), (1,), device=self.device_obj)
-            timestep = self.scheduler.timesteps[timestep_id.cpu()].to(device=self.device_obj, dtype=latent_clean.dtype)
+            timestep = self.scheduler.timesteps[timestep_id.cpu()].to(device=dit_device, dtype=dit_dtype)
             x_t = self.scheduler.add_noise(latent_clean, noise, timestep.cpu())
 
             context_mask_t, future_mask_t = latent_frame_mask(
                 num_video_frames=videos.shape[2],
                 num_context_frames=int(num_context_frames[sample_idx].item()),
                 vae_stride_t=self.bundle.config.vae_stride[0],
-                device=self.device_obj,
+                device=dit_device,
             )
             context_mask = broadcast_latent_mask(context_mask_t, latent_clean)
             future_mask = broadcast_latent_mask(future_mask_t, latent_clean)
-            context_clean_full = expand_context_latents_to_full(context_latents[sample_idx], latent_clean)
+            context_clean_full = expand_context_latents_to_full(
+                context_latents[sample_idx].to(device=dit_device, dtype=dit_dtype),
+                latent_clean,
+            )
             x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
 
             seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (
                 self.bundle.config.patch_size[1] * self.bundle.config.patch_size[2]
             )
-            t_tokens = torch.full((1, seq_len), float(timestep.item()), device=self.device_obj, dtype=latent_clean.dtype)
+            t_tokens = torch.full((1, seq_len), float(timestep.item()), device=dit_device, dtype=dit_dtype)
+            cond_context = fused_context[sample_idx].to(device=dit_device, dtype=dit_dtype)
             pred = self.bundle.dit(
                 [x_t],
                 t=t_tokens,
-                context=[fused_context[sample_idx]],
+                context=[cond_context],
                 seq_len=seq_len,
                 y=None,
             )[0]

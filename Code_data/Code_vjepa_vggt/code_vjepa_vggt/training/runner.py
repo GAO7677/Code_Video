@@ -20,15 +20,17 @@ def launch_training_task(
     grad_accum_steps: int,
     max_grad_norm: float | None,
 ) -> None:
+    base_model = accelerator.unwrap_model(model)
+    cfg = base_model.cfg
     optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=learning_rate, weight_decay=weight_decay)
     dataloader = model.build_dataloader(num_workers=num_workers)
     model.to(device=accelerator.device)
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
 
     step = 0
-    ckpt_dir = Path(model.cfg["experiment"]["output_dir"])
+    ckpt_dir = Path(cfg["experiment"]["output_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    log_cfg = model.cfg.get("logging", {})
+    log_cfg = cfg.get("logging", {})
     log_every = int(log_cfg.get("log_every", 10))
     use_wandb = bool(log_cfg.get("use_wandb", False))
     wandb_run = None
@@ -40,9 +42,9 @@ def launch_training_task(
         wandb_run = wandb.init(
             project=str(log_cfg.get("wandb_project", "vjepa-vggt-wan")),
             entity=log_cfg.get("wandb_entity"),
-            name=str(log_cfg.get("wandb_run_name", model.cfg["experiment"]["name"])),
+            name=str(log_cfg.get("wandb_run_name", cfg["experiment"]["name"])),
             dir=str(wandb_dir),
-            config=json.loads(json.dumps(model.cfg)),
+            config=json.loads(json.dumps(cfg)),
             resume="allow",
         )
 

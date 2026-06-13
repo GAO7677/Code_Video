@@ -5,6 +5,9 @@ import sys
 import types
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
+
+import torch
 
 from code_vjepa_vggt.utils.paths import ensure_upstream_paths
 
@@ -34,6 +37,113 @@ def _load_module(name: str, path: Path):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _patch_wan_attention_fallback() -> None:
+    attention_module = _load_module("wan.modules.attention", WAN_MODULES_ROOT / "attention.py")
+    model_module = _load_module("wan.modules.model", WAN_MODULES_ROOT / "model.py")
+
+    flash_attention_fn = attention_module.flash_attention
+    attention_fn = attention_module.attention
+
+    def safe_flash_attention(*args: Any, **kwargs: Any):
+        try:
+            return flash_attention_fn(*args, **kwargs)
+        except AssertionError:
+            return attention_fn(*args, **kwargs)
+
+    attention_module.flash_attention = safe_flash_attention
+    model_module.flash_attention = safe_flash_attention
+
+    ulysses_name = "wan.distributed.ulysses"
+    ulysses_path = WAN_ROOT / "distributed" / "ulysses.py"
+    if ulysses_path.exists():
+        ulysses_module = _load_module(ulysses_name, ulysses_path)
+        ulysses_module.flash_attention = safe_flash_attention
+
+    if not getattr(model_module, "_codex_bf16_activation_patch", False):
+        import torch.nn.functional as F
+
+        rope_apply = model_module.rope_apply
+        WanLayerNorm = model_module.WanLayerNorm
+        WanSelfAttention = model_module.WanSelfAttention
+        WanCrossAttention = model_module.WanCrossAttention
+        WanAttentionBlock = model_module.WanAttentionBlock
+        Head = model_module.Head
+
+        def safe_layer_norm_forward(self, x):
+            weight = self.weight.float() if self.weight is not None else None
+            bias = self.bias.float() if self.bias is not None else None
+            out = F.layer_norm(
+                x.float(),
+                self.normalized_shape,
+                weight,
+                bias,
+                self.eps,
+            )
+            return out.type_as(x)
+
+        def safe_self_attn_forward(self, x, seq_lens, grid_sizes, freqs):
+            b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
+            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, s, n, d)
+            k = self.norm_k(self.k(x.to(self.k.weight.dtype))).view(b, s, n, d)
+            v = self.v(x.to(self.v.weight.dtype)).view(b, s, n, d)
+            x_out = model_module.flash_attention(
+                q=rope_apply(q, grid_sizes, freqs),
+                k=rope_apply(k, grid_sizes, freqs),
+                v=v,
+                k_lens=seq_lens,
+                window_size=self.window_size,
+            )
+            x_out = x_out.flatten(2)
+            x_out = self.o(x_out.to(self.o.weight.dtype))
+            return x_out
+
+        def safe_cross_attn_forward(self, x, context, context_lens):
+            b, n, d = x.size(0), self.num_heads, self.head_dim
+            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, -1, n, d)
+            k = self.norm_k(self.k(context.to(self.k.weight.dtype))).view(b, -1, n, d)
+            v = self.v(context.to(self.v.weight.dtype)).view(b, -1, n, d)
+            x_out = model_module.flash_attention(q, k, v, k_lens=context_lens)
+            x_out = x_out.flatten(2)
+            x_out = self.o(x_out.to(self.o.weight.dtype))
+            return x_out
+
+        def safe_block_forward(self, x, e, seq_lens, grid_sizes, freqs, context, context_lens):
+            assert e.dtype == torch.float32
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
+            y = self.self_attn(
+                self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
+                seq_lens,
+                grid_sizes,
+                freqs,
+            )
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                x = x + y * e[2].squeeze(2)
+
+            x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            ffn_in = self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2)
+            ffn_in = ffn_in.to(self.ffn[0].weight.dtype)
+            y = self.ffn(ffn_in)
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                x = x + y * e[5].squeeze(2)
+            return x
+
+        def safe_head_forward(self, x, e):
+            assert e.dtype == torch.float32
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
+            head_in = self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
+            head_in = head_in.to(self.head.weight.dtype)
+            return self.head(head_in)
+
+        WanLayerNorm.forward = safe_layer_norm_forward
+        WanSelfAttention.forward = safe_self_attn_forward
+        WanCrossAttention.forward = safe_cross_attn_forward
+        WanAttentionBlock.forward = safe_block_forward
+        Head.forward = safe_head_forward
+        model_module._codex_bf16_activation_patch = True
 
 
 def ensure_wan_module_packages() -> None:
@@ -73,5 +183,6 @@ def load_wan_vae():
 
 def load_wan_model():
     ensure_wan_module_packages()
+    _patch_wan_attention_fallback()
     module = _load_module("wan.modules.model", WAN_MODULES_ROOT / "model.py")
     return module.WanModel

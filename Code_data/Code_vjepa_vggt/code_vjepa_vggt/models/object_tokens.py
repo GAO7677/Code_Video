@@ -74,6 +74,8 @@ class ObjectTubeProjector(nn.Module):
         window_radius: int,
         frame_valid_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if features.ndim == 4:
+            features = features.unsqueeze(-1)
         batch, frames, grid_h, grid_w, dim = features.shape
         _, _, objects, _ = tracks.shape
         height, width = image_hw
