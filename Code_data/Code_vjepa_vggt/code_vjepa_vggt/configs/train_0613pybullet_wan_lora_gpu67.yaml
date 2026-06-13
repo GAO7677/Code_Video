@@ -67,7 +67,7 @@ loss:
   track_iou_radius_px: 12.0
 
 logging:
-  log_every: 10
+  log_every: 1
   save_every: 200
   use_wandb: true
   wandb_project: vjepa_vggt_wan

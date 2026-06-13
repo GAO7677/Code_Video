@@ -657,8 +657,20 @@ class ContextVideoTrainer(nn.Module):
                 seq_len=seq_len,
                 y=None,
             )[0]
+            if not torch.isfinite(pred).all():
+                raise RuntimeError(
+                    f"non-finite pred detected at sample_idx={sample_idx}, "
+                    f"pred_min={float(torch.nan_to_num(pred).min().item())}, "
+                    f"pred_max={float(torch.nan_to_num(pred).max().item())}"
+                )
 
             target = self.scheduler.training_target(latent_clean, noise, timestep)
+            if not torch.isfinite(target).all():
+                raise RuntimeError(
+                    f"non-finite target detected at sample_idx={sample_idx}, "
+                    f"target_min={float(torch.nan_to_num(target).min().item())}, "
+                    f"target_max={float(torch.nan_to_num(target).max().item())}"
+                )
             denom = future_mask.sum().clamp_min(1.0)
             loss_main = ((pred - target) ** 2 * future_mask).sum() / denom
             loss_main = loss_main * self.scheduler.training_weight(
@@ -666,13 +678,28 @@ class ContextVideoTrainer(nn.Module):
                 device=loss_main.device,
                 dtype=loss_main.dtype,
             )
+            if not torch.isfinite(loss_main).all():
+                raise RuntimeError(
+                    f"non-finite loss_main detected at sample_idx={sample_idx}, "
+                    f"pred_finite={bool(torch.isfinite(pred).all())}, "
+                    f"target_finite={bool(torch.isfinite(target).all())}"
+                )
             losses.append(loss_main)
 
         loss = torch.stack(losses).mean()
         if track_box_loss is not None:
+            track_box_loss = torch.nan_to_num(track_box_loss, nan=0.0, posinf=0.0, neginf=0.0)
             loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_align", 0.0)) * track_box_loss
         if track_iou_loss is not None:
+            track_iou_loss = torch.nan_to_num(track_iou_loss, nan=0.0, posinf=0.0, neginf=0.0)
             loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_iou", 0.0)) * track_iou_loss
+        if not torch.isfinite(loss).all():
+            raise RuntimeError(
+                "non-finite total loss detected; "
+                f"loss_main_mean={float(torch.stack(losses).mean().item())}, "
+                f"track_box_loss={None if track_box_loss is None else float(track_box_loss.item())}, "
+                f"track_iou_loss={None if track_iou_loss is None else float(track_iou_loss.item())}"
+            )
         return loss
 
     def train_step(self, batch: dict[str, Any]) -> dict[str, float]:

@@ -62,8 +62,13 @@ class ObjectTubeProjector(nn.Module):
         image_hw: tuple[int, int],
     ) -> torch.Tensor:
         height, width = image_hw
+        tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
+        visibility = torch.nan_to_num(visibility, nan=0.0, posinf=0.0, neginf=0.0)
+        confidence = torch.nan_to_num(confidence, nan=0.0, posinf=0.0, neginf=0.0)
         x = tracks[..., 0] / max(width - 1, 1)
         y = tracks[..., 1] / max(height - 1, 1)
+        x = x.clamp(0.0, 1.0)
+        y = y.clamp(0.0, 1.0)
         return torch.stack([x, y, visibility, confidence], dim=-1)
 
     def _pool_feature_grid(
@@ -79,6 +84,8 @@ class ObjectTubeProjector(nn.Module):
         batch, frames, grid_h, grid_w, dim = features.shape
         _, _, objects, _ = tracks.shape
         height, width = image_hw
+        features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
         feature_map = features.permute(0, 1, 4, 2, 3).reshape(batch * frames, dim, grid_h, grid_w)
         if window_radius > 0:
             kernel = 2 * window_radius + 1
@@ -86,6 +93,8 @@ class ObjectTubeProjector(nn.Module):
 
         x = tracks[..., 0] / max(float(width - 1), 1.0)
         y = tracks[..., 1] / max(float(height - 1), 1.0)
+        x = x.clamp(0.0, float(width - 1)) / max(float(width - 1), 1.0)
+        y = y.clamp(0.0, float(height - 1)) / max(float(height - 1), 1.0)
         x = x * 2.0 - 1.0
         y = y * 2.0 - 1.0
         grid = torch.stack([x, y], dim=-1).view(batch * frames, objects, 1, 2)
@@ -148,7 +157,7 @@ class ObjectTubeProjector(nn.Module):
         self._ensure_latent_proj(latent_local.shape[-1], latent_local.device)
         latent_tokens = self.latent_proj(latent_local)
         geom_feat = self.geom_proj(geom_steps)
-        geom_weights = (visibility * confidence).unsqueeze(-1)
+        geom_weights = torch.nan_to_num((visibility * confidence).unsqueeze(-1), nan=0.0, posinf=0.0, neginf=0.0)
         if frame_valid_mask is not None:
             geom_weights = geom_weights * frame_valid_mask[:, :, None, None].to(dtype=geom_weights.dtype, device=geom_weights.device)
         geom_denom = geom_weights.sum(dim=1).clamp_min(1.0)
@@ -191,14 +200,14 @@ class ObjectTubeProjector(nn.Module):
                 world_conf_local = torch.ones_like(depth_local)
             if depth_conf_local is None:
                 depth_conf_local = torch.ones_like(depth_local)
-            vggt_geom_feat = torch.cat(
+            vggt_geom_feat = torch.nan_to_num(torch.cat(
                 [
                     world_local,
                     depth_local,
                     0.5 * (world_conf_local + depth_conf_local),
                 ],
                 dim=-1,
-            )
+            ), nan=0.0, posinf=0.0, neginf=0.0)
             vggt_geom_tokens = self.vggt_geom_proj(vggt_geom_feat)
 
         fused_geom = geom_tokens if vggt_geom_tokens is None else (geom_tokens + vggt_geom_tokens)

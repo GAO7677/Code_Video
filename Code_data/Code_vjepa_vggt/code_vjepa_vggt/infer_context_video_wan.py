@@ -1,3 +1,14 @@
+
+'''
+
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+/data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67 \
+  --prompt "your prompt here" \
+  --context-video /path/to/context.mp4 \
+  --save-raw
+'''
 from __future__ import annotations
 
 import argparse

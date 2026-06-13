@@ -64,6 +64,8 @@ def align_tracks_to_boxes(
     image_hw: tuple[int, int],
 ) -> TrackBoxAlignment:
     # tracks: [B,T,Kp,2], gt_boxes: [B,T,Kg,4]
+    tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
+    gt_boxes = torch.nan_to_num(gt_boxes, nan=0.0, posinf=0.0, neginf=0.0)
     gt_centers, gt_valid = box_centers_and_validity(gt_boxes, image_hw=image_hw)
     batch, frames, pred_objects, _ = tracks.shape
     gt_objects = gt_boxes.shape[2]
@@ -105,6 +107,9 @@ def track_box_l1_loss(
     matched_gt_centers: torch.Tensor,
     matched_gt_valid: torch.Tensor,
 ) -> torch.Tensor:
+    tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
+    matched_gt_centers = torch.nan_to_num(matched_gt_centers, nan=0.0, posinf=0.0, neginf=0.0)
+    matched_gt_valid = torch.nan_to_num(matched_gt_valid, nan=0.0, posinf=0.0, neginf=0.0)
     weights = matched_gt_valid.unsqueeze(-1)
     denom = weights.sum().clamp_min(1.0)
     return ((tracks - matched_gt_centers).abs() * weights).sum() / denom
@@ -117,6 +122,8 @@ def track_box_iou_loss(
     image_hw: tuple[int, int],
     radius_px: float = 12.0,
 ) -> torch.Tensor:
+    tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
+    gt_boxes = torch.nan_to_num(gt_boxes, nan=0.0, posinf=0.0, neginf=0.0)
     batch, frames, pred_objects, _ = tracks.shape
     height, width = image_hw
     pred_boxes = tracks.new_zeros(batch, frames, pred_objects, 4)

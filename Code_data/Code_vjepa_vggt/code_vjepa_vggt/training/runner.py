@@ -55,6 +55,11 @@ def launch_training_task(
             with accelerator.accumulate(model):
                 optimizer.zero_grad(set_to_none=True)
                 loss = model(batch)
+                if not torch.isfinite(loss):
+                    raise RuntimeError(
+                        f"non-finite loss detected at step={step + 1}: "
+                        f"{float(loss.detach().cpu().item())}"
+                    )
                 accelerator.backward(loss)
                 if max_grad_norm is not None and max_grad_norm > 0:
                     accelerator.clip_grad_norm_(accelerator.unwrap_model(model).trainable_parameters(), max_grad_norm)
@@ -70,6 +75,7 @@ def launch_training_task(
                             "train/loss": loss_value,
                             "train/step": step,
                             "train/lr": float(optimizer.param_groups[0]["lr"]),
+                            "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
                         },
                         step=step,
                     )
