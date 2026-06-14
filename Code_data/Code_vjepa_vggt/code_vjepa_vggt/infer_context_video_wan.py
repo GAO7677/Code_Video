@@ -61,6 +61,20 @@ def _resolve_launch_device() -> str:
     return f"cuda:{local_rank}"
 
 
+def _find_ffmpeg() -> str:
+    candidates = [
+        shutil.which("ffmpeg"),
+        "/data/gaoya/miniconda3/envs/vjepa2/bin/ffmpeg",
+        "/data/gaoya/miniconda3/envs/wan/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+
+
 def _tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     x = frame_chw.detach().cpu().clamp(-1.0, 1.0)
     x = ((x + 1.0) * 127.5).to(torch.uint8).permute(1, 2, 0).contiguous()
@@ -70,9 +84,7 @@ def _tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
 def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+    ffmpeg = _find_ffmpeg()
     tmp_path = path.with_suffix(".tmp.mp4")
     writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
@@ -107,8 +119,9 @@ def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
 
 
 def _ensure_browser_video(source_path: Path) -> Path:
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
+    try:
+        ffmpeg = _find_ffmpeg()
+    except RuntimeError:
         return source_path
     out_path = source_path.with_name(f"{source_path.stem}.browser.mp4")
     if out_path.exists() and out_path.stat().st_mtime_ns >= source_path.stat().st_mtime_ns and out_path.stat().st_size > 0:

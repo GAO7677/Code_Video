@@ -48,12 +48,24 @@ def _video_bcthw_to_uint8_thwc(video_bcthw: torch.Tensor) -> np.ndarray:
     return video.permute(1, 2, 3, 0).contiguous().numpy()
 
 
+def _find_ffmpeg() -> str:
+    candidates = [
+        shutil.which("ffmpeg"),
+        "/data/gaoya/miniconda3/envs/vjepa2/bin/ffmpeg",
+        "/data/gaoya/miniconda3/envs/wan/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+
+
 def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+    ffmpeg = _find_ffmpeg()
     tmp_path = path.with_suffix(".tmp.mp4")
     writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
     if not writer.isOpened():

@@ -20,6 +20,7 @@ def launch_training_task(
     max_steps: int,
     grad_accum_steps: int,
     max_grad_norm: float | None,
+    resume_checkpoint: str | Path | None = None,
 ) -> None:
     base_model = accelerator.unwrap_model(model)
     cfg = base_model.cfg
@@ -29,6 +30,27 @@ def launch_training_task(
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
 
     step = 0
+    if resume_checkpoint is not None:
+        resume_path = Path(resume_checkpoint)
+        if not resume_path.is_file():
+            raise FileNotFoundError(f"resume checkpoint not found: {resume_path}")
+        state = torch.load(resume_path, map_location="cpu")
+        if not isinstance(state, dict):
+            raise RuntimeError(f"unsupported resume checkpoint format in {resume_path}")
+        if "model" not in state:
+            raise RuntimeError(f"resume checkpoint missing 'model' key: {resume_path}")
+        model_state = state["model"]
+        if not isinstance(model_state, dict):
+            raise RuntimeError(f"resume checkpoint 'model' entry must be a dict: {resume_path}")
+        unwrapped = accelerator.unwrap_model(model)
+        missing = unwrapped.load_state_dict(model_state, strict=False)
+        if accelerator.is_main_process:
+            print(
+                f"resumed model weights from {resume_path}; "
+                f"missing_keys={len(missing.missing_keys)} unexpected_keys={len(missing.unexpected_keys)}",
+                flush=True,
+            )
+        step = int(state.get("step", 0))
     ckpt_dir = Path(cfg["experiment"]["output_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_cfg = cfg.get("logging", {})
