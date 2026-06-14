@@ -112,6 +112,11 @@ class WanContextVideoModel(nn.Module):
         if freeze_text_encoder:
             self.text_encoder.model.eval().requires_grad_(False)
         if freeze_dit and self.dit is not None:
+            # Keep activation checkpointing enabled for frozen DIT training so
+            # eval-mode forwards do not explode memory inside Wan attention.
+            self.dit._codex_force_checkpointing = True
+            base_dit = self.dit.get_base_model() if hasattr(self.dit, "get_base_model") else self.dit
+            setattr(base_dit, "_codex_force_checkpointing", True)
             if self.lora_rank > 0:
                 self.dit.eval()
                 for name, param in self.dit.named_parameters():
