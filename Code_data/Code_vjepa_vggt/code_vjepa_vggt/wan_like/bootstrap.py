@@ -45,6 +45,7 @@ def _patch_wan_attention_fallback() -> None:
 
     flash_attention_fn = attention_module.flash_attention
     attention_fn = attention_module.attention
+    rope_apply_fn = model_module.rope_apply
 
     def safe_flash_attention(*args: Any, **kwargs: Any):
         try:
@@ -52,8 +53,13 @@ def _patch_wan_attention_fallback() -> None:
         except AssertionError:
             return attention_fn(*args, **kwargs)
 
+    def safe_rope_apply(x, grid_sizes, freqs):
+        out = rope_apply_fn(x, grid_sizes, freqs)
+        return out.to(dtype=x.dtype)
+
     attention_module.flash_attention = safe_flash_attention
     model_module.flash_attention = safe_flash_attention
+    model_module.rope_apply = safe_rope_apply
 
     ulysses_name = "wan.distributed.ulysses"
     ulysses_path = WAN_ROOT / "distributed" / "ulysses.py"
@@ -65,7 +71,7 @@ def _patch_wan_attention_fallback() -> None:
         import torch.nn.functional as F
         import torch.utils.checkpoint as checkpoint
 
-        rope_apply = model_module.rope_apply
+        rope_apply = safe_rope_apply
         WanLayerNorm = model_module.WanLayerNorm
         WanSelfAttention = model_module.WanSelfAttention
         WanCrossAttention = model_module.WanCrossAttention
@@ -88,9 +94,9 @@ def _patch_wan_attention_fallback() -> None:
 
         def safe_self_attn_forward(self, x, seq_lens, grid_sizes, freqs):
             b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, s, n, d)
-            k = self.norm_k(self.k(x.to(self.k.weight.dtype))).view(b, s, n, d)
-            v = self.v(x.to(self.v.weight.dtype)).view(b, s, n, d)
+            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, s, n, d).to(torch.bfloat16)
+            k = self.norm_k(self.k(x.to(self.k.weight.dtype))).view(b, s, n, d).to(torch.bfloat16)
+            v = self.v(x.to(self.v.weight.dtype)).view(b, s, n, d).to(torch.bfloat16)
             x_out = model_module.flash_attention(
                 q=rope_apply(q, grid_sizes, freqs),
                 k=rope_apply(k, grid_sizes, freqs),
@@ -104,9 +110,9 @@ def _patch_wan_attention_fallback() -> None:
 
         def safe_cross_attn_forward(self, x, context, context_lens):
             b, n, d = x.size(0), self.num_heads, self.head_dim
-            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, -1, n, d)
-            k = self.norm_k(self.k(context.to(self.k.weight.dtype))).view(b, -1, n, d)
-            v = self.v(context.to(self.v.weight.dtype)).view(b, -1, n, d)
+            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, -1, n, d).to(torch.bfloat16)
+            k = self.norm_k(self.k(context.to(self.k.weight.dtype))).view(b, -1, n, d).to(torch.bfloat16)
+            v = self.v(context.to(self.v.weight.dtype)).view(b, -1, n, d).to(torch.bfloat16)
             x_out = model_module.flash_attention(q, k, v, k_lens=context_lens)
             x_out = x_out.flatten(2)
             x_out = self.o(x_out.to(self.o.weight.dtype))
@@ -116,26 +122,26 @@ def _patch_wan_attention_fallback() -> None:
             assert e.dtype == torch.float32
             with torch.amp.autocast("cuda", dtype=torch.float32):
                 e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
-            y = self.self_attn(
-                self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
-                seq_lens,
-                grid_sizes,
-                freqs,
-            )
-            with torch.amp.autocast("cuda", dtype=torch.float32):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                y = self.self_attn(
+                    self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
+                    seq_lens,
+                    grid_sizes,
+                    freqs,
+                )
                 x = x + y * e[2].squeeze(2)
 
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            ffn_in = self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2)
-            ffn_in = ffn_in.to(self.ffn[0].weight.dtype)
-            y = self.ffn(ffn_in)
-            with torch.amp.autocast("cuda", dtype=torch.float32):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                x = x + self.cross_attn(self.norm3(x), context, context_lens)
+                ffn_in = self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2)
+                ffn_in = ffn_in.to(self.ffn[0].weight.dtype)
+                y = self.ffn(ffn_in)
                 x = x + y * e[5].squeeze(2)
             return x
 
         def safe_head_forward(self, x, e):
             assert e.dtype == torch.float32
-            with torch.amp.autocast("cuda", dtype=torch.float32):
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
             head_in = self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
             head_in = head_in.to(self.head.weight.dtype)

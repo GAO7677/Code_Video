@@ -68,6 +68,41 @@ def _tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
 def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is not None:
+        tmp_path = path.with_suffix(".tmp.mp4")
+        writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError(f"failed to open video writer for {tmp_path}")
+        try:
+            for frame in frames_thwc_uint8:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        finally:
+            writer.release()
+        import subprocess
+
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(tmp_path),
+                "-an",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(path),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        tmp_path.unlink(missing_ok=True)
+        return
+
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
         raise RuntimeError(f"failed to open video writer for {path}")
@@ -148,11 +183,15 @@ def _load_trainable_state(checkpoint_dir: Path) -> dict[str, torch.Tensor]:
     raise RuntimeError(f"unsupported checkpoint format in {latest}")
 
 
+def _infer_object_pooler_latent_dim(state_dict: dict[str, torch.Tensor], default_dim: int) -> int:
+    key = "bundle.object_pooler.latent_proj.weight"
+    if key in state_dict and hasattr(state_dict[key], "shape") and len(state_dict[key].shape) == 2:
+        return int(state_dict[key].shape[1])
+    return int(default_dim)
+
+
 def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Path) -> dict[str, object]:
     state_dict = _load_trainable_state(checkpoint_dir)
-    model_state_keys = set(model.state_dict().keys())
-    checkpoint_keys = set(state_dict.keys())
-
     def _normalize_key(key: str) -> str:
         prefixes = ("module.", "bundle.")
         normalized = key
@@ -165,8 +204,32 @@ def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Pat
                     changed = True
         return normalized
 
-    normalized_model_keys = {_normalize_key(key) for key in model_state_keys}
-    normalized_checkpoint_keys = {_normalize_key(key) for key in checkpoint_keys}
+    export_fn = getattr(model, "export_trainable_state_dict", None)
+    if export_fn is None or not callable(export_fn):
+        raise AttributeError("model must implement export_trainable_state_dict() for checkpoint validation")
+    model_state_dict = export_fn()
+    if not isinstance(model_state_dict, dict):
+        raise TypeError(f"export_trainable_state_dict() must return a dict, got {type(model_state_dict)}")
+    model_state_keys = list(model_state_dict.keys())
+    checkpoint_keys = list(state_dict.keys())
+    model_by_normalized: dict[str, str] = {}
+    for key in model_state_keys:
+        model_by_normalized[_normalize_key(key)] = key
+    checkpoint_by_normalized: dict[str, str] = {}
+    for key in checkpoint_keys:
+        checkpoint_by_normalized[_normalize_key(key)] = key
+
+    if hasattr(model, "object_pooler") and hasattr(model.object_pooler, "_ensure_latent_proj"):
+        latent_key = "bundle.object_pooler.latent_proj.weight"
+        latent_state_key = checkpoint_by_normalized.get(_normalize_key(latent_key))
+        if latent_state_key is not None:
+            latent_weight = state_dict[latent_state_key]
+            if hasattr(latent_weight, "shape") and len(latent_weight.shape) == 2:
+                target_latent_dim = int(latent_weight.shape[1])
+                model.object_pooler._ensure_latent_proj(target_latent_dim, getattr(model, "device_obj", torch.device("cpu")))
+
+    normalized_model_keys = set(model_by_normalized.keys())
+    normalized_checkpoint_keys = set(checkpoint_by_normalized.keys())
     missing_trainable = sorted(normalized_model_keys - normalized_checkpoint_keys)
     unexpected_checkpoint = sorted(normalized_checkpoint_keys - normalized_model_keys)
     if missing_trainable or unexpected_checkpoint:
@@ -175,7 +238,10 @@ def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Pat
             f"missing_trainable_keys={missing_trainable}, "
             f"unexpected_checkpoint_keys={unexpected_checkpoint}"
         )
-    filtered_state = {_normalize_key(key): value for key, value in state_dict.items()}
+    filtered_state = {
+        model_by_normalized[norm_key]: state_dict[checkpoint_by_normalized[norm_key]]
+        for norm_key in normalized_model_keys
+    }
     missing = model.load_state_dict(filtered_state, strict=False)
     return {
         "missing_keys": list(missing.missing_keys),

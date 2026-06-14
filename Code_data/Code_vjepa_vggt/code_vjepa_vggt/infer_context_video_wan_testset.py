@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 
 import cv2
@@ -32,6 +33,7 @@ from code_vjepa_vggt.infer_context_video_wan import (
 )
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
+from code_vjepa_vggt.infer_context_video_wan import _infer_object_pooler_latent_dim, _load_trainable_state
 
 
 def _maybe_limit_indices(total: int, start_index: int, num_cases: int) -> range:
@@ -41,12 +43,49 @@ def _maybe_limit_indices(total: int, start_index: int, num_cases: int) -> range:
 def _video_bcthw_to_uint8_thwc(video_bcthw: torch.Tensor) -> np.ndarray:
     video = video_bcthw.detach().cpu().clamp(-1.0, 1.0)
     video = ((video + 1.0) * 127.5).to(torch.uint8)
+    if video.ndim == 5 and video.shape[0] == 1:
+        video = video[0]
     return video.permute(1, 2, 3, 0).contiguous().numpy()
 
 
 def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is not None:
+        tmp_path = path.with_suffix(".tmp.mp4")
+        writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
+        if not writer.isOpened():
+            raise RuntimeError(f"failed to open writer for {tmp_path}")
+        try:
+            for frame in frames_thwc_uint8:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        finally:
+            writer.release()
+        import subprocess
+
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(tmp_path),
+                "-an",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(path),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        tmp_path.unlink(missing_ok=True)
+        return
+
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
     if not writer.isOpened():
         raise RuntimeError(f"failed to open writer for {path}")
@@ -107,6 +146,7 @@ def main() -> None:
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--num-cases", type=int, default=4)
     parser.add_argument("--output-dir", default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/test")
+    parser.add_argument("--num-frames", type=int, default=24)
     parser.add_argument("--sampling-steps", type=int, default=40)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
@@ -129,7 +169,18 @@ def main() -> None:
         seed=int(args.seed),
     )
 
-    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
+    if args.num_frames <= 0:
+        raise ValueError(f"--num-frames must be positive, got {args.num_frames}")
+
+    checkpoint_state = _load_trainable_state(Path(args.checkpoint_dir))
+    object_pooler_latent_dim = _infer_object_pooler_latent_dim(
+        checkpoint_state,
+        int(config["model"].get("object_pooler_latent_dim", 16)),
+    )
+    config["model"]["object_pooler_latent_dim"] = int(object_pooler_latent_dim)
+
+    trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
+    trainer.build_optimizer = False
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
 
     checkpoint_name = Path(args.checkpoint_dir).name
@@ -139,14 +190,25 @@ def main() -> None:
     for local_idx, dataset_idx in enumerate(_maybe_limit_indices(len(dataset), args.start_index, args.num_cases)):
         sample = dataset[dataset_idx]
         sample_stem = Path(str(sample["video_path"])).stem
-        input_video, input_context_video, context_indices = _resolve_input_videos(
-            sample,
-            context_fraction=float(args.context_fraction),
-            random_context_frames=bool(args.random_context_frames),
-            seed=int(args.seed),
-            sample_idx=int(dataset_idx),
-            default_num_context_frames=int(config["data"]["num_context_frames"]),
-        )
+        sample_video = sample["video"]
+        if not isinstance(sample_video, torch.Tensor):
+            raise TypeError(f"sample['video'] must be a tensor, got {type(sample_video)}")
+        total_frames = min(int(args.num_frames), int(sample_video.shape[1]))
+        input_video = sample_video[:, :total_frames].contiguous()
+        total_frames = int(input_video.shape[1])
+        max_context_len = max(1, min(total_frames, int(total_frames * float(args.context_fraction))))
+        if not args.random_context_frames:
+            context_len = min(int(config["data"]["num_context_frames"]), max_context_len)
+            context_indices = torch.arange(context_len, dtype=torch.long)
+        else:
+            if max_context_len <= 1:
+                context_indices = torch.arange(1, dtype=torch.long)
+            else:
+                generator = torch.Generator()
+                generator.manual_seed(int(args.seed) + int(dataset_idx))
+                context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
+                context_indices = torch.arange(context_len, dtype=torch.long)
+        input_context_video = input_video[:, context_indices].contiguous()
         num_context_frames = torch.tensor([int(context_indices.numel())], dtype=torch.long, device=device_obj)
         captions = [str(sample["caption"])]
 
@@ -187,6 +249,7 @@ def main() -> None:
             "input_video": str(input_video_path),
             "input_context_video": str(input_context_video_path),
             "output_video": str(output_video_path),
+            "sample_debug": sample_debug,
         }
         with open(output_dir / f"{sample_stem}.json", "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)

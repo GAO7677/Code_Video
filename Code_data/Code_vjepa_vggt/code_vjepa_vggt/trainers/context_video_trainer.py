@@ -118,6 +118,8 @@ class ContextVideoTrainer(nn.Module):
                 window_len=int(model_cfg.get("cotracker_window_len", 60)),
             ).to(self.device_obj)
         latent_dim = int(getattr(self.bundle.config, "in_dim", 16))
+        latent_dim = int(model_cfg.get("object_pooler_latent_dim", latent_dim))
+        self.object_pooler_latent_dim = latent_dim
         self.object_pooler = ObjectTubeProjector(
             jepa_dim=self.jepa_adapter.encoder.backbone.embed_dim,
             latent_dim=latent_dim,
