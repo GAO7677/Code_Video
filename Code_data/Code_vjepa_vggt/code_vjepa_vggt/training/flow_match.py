@@ -14,6 +14,12 @@ class WanFlowMatchScheduler:
         self.linear_timesteps_weights = None
         self.set_timesteps(self.num_train_timesteps, training=True)
 
+    def _timestep_index(self, timestep: torch.Tensor) -> int:
+        if self.timesteps is None:
+            raise RuntimeError("scheduler timesteps are not initialized")
+        timestep_cpu = timestep.detach().cpu().to(dtype=self.timesteps.dtype)
+        return int(torch.argmin((self.timesteps - timestep_cpu).abs()).item())
+
     def set_timesteps(self, num_inference_steps: int = 1000, training: bool = False) -> None:
         sigma_min = 0.0
         sigma_max = 1.0
@@ -37,7 +43,7 @@ class WanFlowMatchScheduler:
         self.linear_timesteps_weights = weights
 
     def add_noise(self, original_samples: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
-        timestep_id = torch.argmin((self.timesteps - timestep.detach().cpu()).abs())
+        timestep_id = self._timestep_index(timestep)
         sigma = self.sigmas[timestep_id].to(device=original_samples.device, dtype=original_samples.dtype)
         return (1.0 - sigma) * original_samples + sigma * noise
 
@@ -47,6 +53,6 @@ class WanFlowMatchScheduler:
         return noise - sample
 
     def training_weight(self, timestep: torch.Tensor, *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        timestep_id = torch.argmin((self.timesteps - timestep.detach().cpu()).abs())
+        timestep_id = self._timestep_index(timestep)
         weight = self.linear_timesteps_weights[timestep_id]
         return weight.to(device=device, dtype=dtype)

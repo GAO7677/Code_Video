@@ -25,7 +25,6 @@ import torch
 import torch.nn.functional as F
 
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
-from code_vjepa_vggt.training.flow_match import WanFlowMatchScheduler
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.masks import broadcast_latent_mask, expand_context_latents_to_full, latent_frame_mask
@@ -33,6 +32,8 @@ from code_vjepa_vggt.utils.paths import ensure_upstream_paths
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, read_video_prefix, read_video_uniform
 
 ensure_upstream_paths()
+
+from wan.utils import FlowDPMSolverMultistepScheduler, get_sampling_sigmas, retrieve_timesteps
 
 from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
@@ -482,8 +483,18 @@ def _run_sampling(
     copy_t = min(int(context_latents.shape[1]), total_lat_t)
     latent_clean[:, :copy_t] = context_latents[:, :copy_t]
     noise = torch.randn_like(latent_clean)
-    scheduler = WanFlowMatchScheduler(num_train_timesteps=bundle.config.num_train_timesteps)
-    scheduler.set_timesteps(num_inference_steps, training=False)
+    sampling_shift = float(getattr(bundle.config, "sample_shift", 5.0))
+    scheduler = FlowDPMSolverMultistepScheduler(
+        num_train_timesteps=int(bundle.config.num_train_timesteps),
+        shift=1,
+        use_dynamic_shifting=False,
+    )
+    sampling_sigmas = get_sampling_sigmas(int(num_inference_steps), sampling_shift)
+    timesteps, _ = retrieve_timesteps(
+        scheduler,
+        device=dit_device,
+        sigmas=sampling_sigmas,
+    )
     sigma_0 = scheduler.sigmas[0].to(device=dit_device, dtype=dit_dtype)
     x_t = (1.0 - sigma_0) * latent_clean + sigma_0 * noise
     context_mask_t, future_mask_t = latent_frame_mask(
@@ -502,22 +513,24 @@ def _run_sampling(
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
     fused_context = fused_context.to(device=dit_device, dtype=dit_dtype)
     trajectory_stats = []
-    for step_idx, sigma in enumerate(scheduler.sigmas):
-        timestep = scheduler.timesteps[step_idx].to(device=dit_device, dtype=dit_dtype)
-        t_tokens = torch.full((1, seq_len), float(timestep.item()), device=dit_device, dtype=dit_dtype)
+    for step_idx, timestep in enumerate(timesteps):
+        timestep_f = timestep.to(device=dit_device, dtype=dit_dtype)
+        t_tokens = torch.full((1, seq_len), float(timestep_f.item()), device=dit_device, dtype=dit_dtype)
         pred = bundle.dit([x_t], t=t_tokens, context=[fused_context], seq_len=seq_len, y=None)[0]
         _print_tensor_stats(f"pred_step_{step_idx}", pred)
-        next_sigma = scheduler.sigmas[step_idx + 1] if step_idx + 1 < len(scheduler.sigmas) else torch.tensor(0.0)
-        next_sigma = next_sigma.to(device=dit_device, dtype=dit_dtype)
-        sigma = sigma.to(device=dit_device, dtype=dit_dtype)
-        x_t = x_t + (next_sigma - sigma) * pred
+        x_t = scheduler.step(
+            pred,
+            timestep,
+            x_t,
+            return_dict=False,
+        )[0]
         x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
         _print_tensor_stats(f"x_t_step_{step_idx}", x_t)
         trajectory_stats.append(
             {
                 "step": int(step_idx),
-                "sigma": float(sigma.item()),
-                "next_sigma": float(next_sigma.item()),
+                "sigma": float(scheduler.sigmas[min(step_idx, len(scheduler.sigmas) - 1)].item()),
+                "next_sigma": float(scheduler.sigmas[min(step_idx + 1, len(scheduler.sigmas) - 1)].item()),
                 "pred_norm": float(pred.norm().item()),
                 "latent_norm": float(x_t.norm().item()),
             }
@@ -535,6 +548,8 @@ def _run_sampling(
         "future_mask": list(future_mask.shape),
         "loss": float(loss.item()),
         "seq_len": int(seq_len),
+        "sampling_shift": float(sampling_shift),
+        "scheduler": type(scheduler).__name__,
         "trajectory": trajectory_stats[:5],
     }
     return x_t.detach(), debug
@@ -559,6 +574,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--save-raw", action="store_true")
+    parser.add_argument(
+        "--skip-trainable-checkpoint",
+        action="store_true",
+        help="Do not load step_*.pt trainable weights; keep trainable modules randomly initialized.",
+    )
     args = parser.parse_args()
 
     config = load_yaml_config(args.config)
@@ -582,8 +602,18 @@ def main() -> None:
     trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
     trainer.build_optimizer = False
     print("trainer constructed", flush=True)
-    state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
-    print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
+    if args.skip_trainable_checkpoint:
+        state_info = {
+            "skipped": True,
+            "missing_keys": [],
+            "unexpected_keys": [],
+            "model_state_key_count": 0,
+            "checkpoint_key_count": 0,
+        }
+        print("skipping trainable checkpoint load; keeping randomly initialized trainable modules", flush=True)
+    else:
+        state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
+        print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
 
