@@ -85,7 +85,7 @@ class ContextVideoTrainer(nn.Module):
             freeze_dit=bool(model_cfg["freeze_wan_dit"]),
         )
         if self.bundle.dit is not None:
-            self.bundle.dit.train(mode=build_optimizer)
+            self.bundle.dit.train(mode=build_optimizer and not bool(model_cfg["freeze_wan_dit"]))
 
         cond_dim = int(model_cfg.get("cond_proj_dim", self.bundle.config.text_dim if hasattr(self.bundle.config, "text_dim") else 4096))
         if hasattr(self.bundle.config, "text_dim") and cond_dim != int(self.bundle.config.text_dim):

@@ -193,6 +193,8 @@ CUDA_VISIBLE_DEVICES=6,7 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_
   --multi_gpu --num_processes 2 \
   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_context_video_wan.py \
   --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0613pybullet_wan_lora_gpu67.yaml
+
+
 ```
 
 测试集推理命令：
