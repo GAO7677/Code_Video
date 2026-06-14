@@ -120,6 +120,11 @@ class WanContextVideoModel(nn.Module):
             if self.lora_rank > 0:
                 self.dit.eval()
                 for name, param in self.dit.named_parameters():
-                    param.requires_grad = "lora_" in name
+                    is_lora_param = "lora_" in name
+                    param.requires_grad = is_lora_param
+                    if is_lora_param:
+                        # Trainable LoRA weights must stay in fp32, otherwise AMP/GradScaler
+                        # can hit bfloat16 unscale paths and abort during backward.
+                        param.data = param.data.float()
             else:
                 self.dit.eval().requires_grad_(False)
