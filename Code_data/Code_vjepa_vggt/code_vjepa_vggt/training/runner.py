@@ -50,10 +50,10 @@ def launch_training_task(
         )
 
     progress = tqdm(total=max_steps, disable=not accelerator.is_local_main_process)
+    optimizer.zero_grad(set_to_none=True)
     while step < max_steps:
         for batch in dataloader:
             with accelerator.accumulate(model):
-                optimizer.zero_grad(set_to_none=True)
                 loss = model(batch)
                 if not torch.isfinite(loss):
                     raise RuntimeError(
@@ -61,41 +61,44 @@ def launch_training_task(
                         f"{float(loss.detach().cpu().item())}"
                     )
                 accelerator.backward(loss)
-                if max_grad_norm is not None and max_grad_norm > 0:
-                    accelerator.clip_grad_norm_(accelerator.unwrap_model(model).trainable_parameters(), max_grad_norm)
-                optimizer.step()
-            step += 1
-            progress.update(1)
-            if step % max(1, log_every) == 0:
-                loss_value = float(loss.detach().item())
-                progress.set_postfix(loss=f"{loss_value:.4f}")
-                if accelerator.is_main_process and wandb_run is not None:
-                    extra_metrics = {}
+                if accelerator.sync_gradients:
+                    if max_grad_norm is not None and max_grad_norm > 0:
+                        accelerator.clip_grad_norm_(accelerator.unwrap_model(model).trainable_parameters(), max_grad_norm)
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+            if accelerator.sync_gradients:
+                step += 1
+                progress.update(1)
+                if step % max(1, log_every) == 0:
+                    loss_value = float(loss.detach().item())
+                    progress.set_postfix(loss=f"{loss_value:.4f}")
+                    if accelerator.is_main_process and wandb_run is not None:
+                        extra_metrics = {}
+                        unwrapped = accelerator.unwrap_model(model)
+                        if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
+                            extra_metrics = {
+                                key: float(value)
+                                for key, value in unwrapped.last_train_metrics.items()
+                            }
+                        wandb_run.log(
+                            {
+                                "train/loss": loss_value,
+                                "train/step": step,
+                                "train/lr": float(optimizer.param_groups[0]["lr"]),
+                                "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
+                                **extra_metrics,
+                            },
+                            step=step,
+                        )
+                if accelerator.is_local_main_process and step % max(1, save_every) == 0:
                     unwrapped = accelerator.unwrap_model(model)
-                    if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
-                        extra_metrics = {
-                            key: float(value)
-                            for key, value in unwrapped.last_train_metrics.items()
-                        }
-                    wandb_run.log(
-                        {
-                            "train/loss": loss_value,
-                            "train/step": step,
-                            "train/lr": float(optimizer.param_groups[0]["lr"]),
-                            "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
-                            **extra_metrics,
-                        },
-                        step=step,
-                    )
-            if accelerator.is_local_main_process and step % max(1, save_every) == 0:
-                unwrapped = accelerator.unwrap_model(model)
-                state = {
-                    "step": step,
-                    "model": unwrapped.export_trainable_state_dict(),
-                }
-                torch.save(state, ckpt_dir / f"step_{step:07d}.pt")
-            if step >= max_steps:
-                break
+                    state = {
+                        "step": step,
+                        "model": unwrapped.export_trainable_state_dict(),
+                    }
+                    torch.save(state, ckpt_dir / f"step_{step:07d}.pt")
+                if step >= max_steps:
+                    break
     progress.close()
     if accelerator.is_main_process and wandb_run is not None:
         wandb_run.finish()

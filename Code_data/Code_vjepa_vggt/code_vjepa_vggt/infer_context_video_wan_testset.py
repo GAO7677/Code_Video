@@ -30,7 +30,7 @@ from code_vjepa_vggt.infer_context_video_wan import (
     _resolve_launch_device,
     _run_sampling,
 )
-from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
+from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
 
 
@@ -129,23 +129,7 @@ def main() -> None:
         seed=int(args.seed),
     )
 
-    trainer = WanContextVideoModel(
-        ckpt_dir=str(config["model"]["wan_ckpt_dir"]),
-        task=str(config["model"]["wan_task"]),
-        device=device,
-        load_dit=True,
-        lora_rank=int(config["model"].get("wan_lora_rank", 0)),
-        lora_alpha=int(config["model"].get("wan_lora_alpha", 0)),
-        lora_dropout=float(config["model"].get("wan_lora_dropout", 0.0)),
-        lora_init=str(config["model"].get("wan_lora_init", "gaussian")),
-    )
-    trainer.freeze_parts(
-        freeze_vae=bool(config["model"]["freeze_vae"]),
-        freeze_text_encoder=bool(config["model"]["freeze_text_encoder"]),
-        freeze_dit=bool(config["model"]["freeze_wan_dit"]),
-    )
-    if trainer.dit is not None:
-        trainer.dit.eval()
+    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
 
     checkpoint_name = Path(args.checkpoint_dir).name

@@ -150,10 +150,38 @@ def _load_trainable_state(checkpoint_dir: Path) -> dict[str, torch.Tensor]:
 
 def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Path) -> dict[str, object]:
     state_dict = _load_trainable_state(checkpoint_dir)
-    missing = model.load_state_dict(state_dict, strict=False)
+    model_state_keys = set(model.state_dict().keys())
+    checkpoint_keys = set(state_dict.keys())
+
+    def _normalize_key(key: str) -> str:
+        prefixes = ("module.", "bundle.")
+        normalized = key
+        changed = True
+        while changed:
+            changed = False
+            for prefix in prefixes:
+                if normalized.startswith(prefix):
+                    normalized = normalized[len(prefix) :]
+                    changed = True
+        return normalized
+
+    normalized_model_keys = {_normalize_key(key) for key in model_state_keys}
+    normalized_checkpoint_keys = {_normalize_key(key) for key in checkpoint_keys}
+    missing_trainable = sorted(normalized_model_keys - normalized_checkpoint_keys)
+    unexpected_checkpoint = sorted(normalized_checkpoint_keys - normalized_model_keys)
+    if missing_trainable or unexpected_checkpoint:
+        raise RuntimeError(
+            "checkpoint does not match current trainable modules; "
+            f"missing_trainable_keys={missing_trainable}, "
+            f"unexpected_checkpoint_keys={unexpected_checkpoint}"
+        )
+    filtered_state = {_normalize_key(key): value for key, value in state_dict.items()}
+    missing = model.load_state_dict(filtered_state, strict=False)
     return {
         "missing_keys": list(missing.missing_keys),
         "unexpected_keys": list(missing.unexpected_keys),
+        "model_state_key_count": len(model_state_keys),
+        "checkpoint_key_count": len(checkpoint_keys),
     }
 
 
