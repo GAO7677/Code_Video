@@ -182,6 +182,12 @@ def main() -> None:
     trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
     trainer.build_optimizer = False
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
+    if trainer.bundle.dit is not None:
+        trainer.bundle.dit.eval()
+    if trainer.bundle.vae is not None:
+        trainer.bundle.vae.model.eval()
+    if trainer.bundle.text_encoder is not None:
+        trainer.bundle.text_encoder.model.eval()
 
     checkpoint_name = Path(args.checkpoint_dir).name
     output_dir = Path(args.output_dir)
@@ -246,7 +252,9 @@ def main() -> None:
             "checkpoint_dir": str(args.checkpoint_dir),
             "seed": int(args.seed),
             "input_caption": str(sample["caption"]),
-            "input_video": str(input_video_path),
+            # For the testset path, the model condition is the context clip.
+            "input_video": str(input_context_video_path),
+            "input_full_video": str(input_video_path),
             "input_context_video": str(input_context_video_path),
             "output_video": str(output_video_path),
             "sample_debug": sample_debug,

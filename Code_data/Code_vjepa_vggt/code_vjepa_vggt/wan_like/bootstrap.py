@@ -94,9 +94,10 @@ def _patch_wan_attention_fallback() -> None:
 
         def safe_self_attn_forward(self, x, seq_lens, grid_sizes, freqs):
             b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, s, n, d).to(torch.bfloat16)
-            k = self.norm_k(self.k(x.to(self.k.weight.dtype))).view(b, s, n, d).to(torch.bfloat16)
-            v = self.v(x.to(self.v.weight.dtype)).view(b, s, n, d).to(torch.bfloat16)
+            x_bf16 = x.to(torch.bfloat16)
+            q = self.norm_q(self.q(x_bf16)).view(b, s, n, d).to(torch.bfloat16)
+            k = self.norm_k(self.k(x_bf16)).view(b, s, n, d).to(torch.bfloat16)
+            v = self.v(x_bf16).view(b, s, n, d).to(torch.bfloat16)
             x_out = model_module.flash_attention(
                 q=rope_apply(q, grid_sizes, freqs),
                 k=rope_apply(k, grid_sizes, freqs),
@@ -110,9 +111,11 @@ def _patch_wan_attention_fallback() -> None:
 
         def safe_cross_attn_forward(self, x, context, context_lens):
             b, n, d = x.size(0), self.num_heads, self.head_dim
-            q = self.norm_q(self.q(x.to(self.q.weight.dtype))).view(b, -1, n, d).to(torch.bfloat16)
-            k = self.norm_k(self.k(context.to(self.k.weight.dtype))).view(b, -1, n, d).to(torch.bfloat16)
-            v = self.v(context.to(self.v.weight.dtype)).view(b, -1, n, d).to(torch.bfloat16)
+            x_bf16 = x.to(torch.bfloat16)
+            context_bf16 = context.to(torch.bfloat16)
+            q = self.norm_q(self.q(x_bf16)).view(b, -1, n, d).to(torch.bfloat16)
+            k = self.norm_k(self.k(context_bf16)).view(b, -1, n, d).to(torch.bfloat16)
+            v = self.v(context_bf16).view(b, -1, n, d).to(torch.bfloat16)
             x_out = model_module.flash_attention(q, k, v, k_lens=context_lens)
             x_out = x_out.flatten(2)
             x_out = self.o(x_out.to(self.o.weight.dtype))

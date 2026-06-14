@@ -48,7 +48,7 @@ def rope_apply(x, grid_sizes, freqs):
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(
+        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float32).reshape(
             seq_len, n, -1, 2))
         freqs_i = torch.cat([
             freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
@@ -63,7 +63,7 @@ def rope_apply(x, grid_sizes, freqs):
 
         # append to collection
         output.append(x_i)
-    return torch.stack(output).float()
+    return torch.stack(output).to(dtype=x.dtype)
 
 
 class WanRMSNorm(nn.Module):
@@ -79,7 +79,8 @@ class WanRMSNorm(nn.Module):
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return self._norm(x.float()).type_as(x) * self.weight
+        x = x.to(dtype=self.weight.dtype)
+        return self._norm(x).type_as(x) * self.weight
 
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
@@ -95,7 +96,8 @@ class WanLayerNorm(nn.LayerNorm):
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return super().forward(x.float()).type_as(x)
+        x = x.to(dtype=self.weight.dtype if self.weight is not None else x.dtype)
+        return super().forward(x).type_as(x)
 
 
 class WanSelfAttention(nn.Module):
