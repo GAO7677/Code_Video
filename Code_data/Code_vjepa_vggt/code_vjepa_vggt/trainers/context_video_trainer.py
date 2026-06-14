@@ -150,6 +150,7 @@ class ContextVideoTrainer(nn.Module):
 
         self.dataset = self._build_dataset()
         self.state = TrainerState()
+        self.last_train_metrics: dict[str, float] = {}
 
     def _build_dataset(self):
         data_cfg = self.cfg["data"]
@@ -604,6 +605,7 @@ class ContextVideoTrainer(nn.Module):
             "full_latents": full_latents,
             "context_latents": context_latents,
             "fused_context": fused_context,
+            "object_tokens": object_out.object_tokens,
             "track_box_loss": track_box_loss,
             "track_iou_loss": track_iou_loss,
             "debug": debug,
@@ -617,13 +619,18 @@ class ContextVideoTrainer(nn.Module):
         full_latents = prepared["full_latents"]
         context_latents = prepared["context_latents"]
         fused_context = prepared["fused_context"]
+        object_tokens = prepared["object_tokens"]
         track_box_loss = prepared["track_box_loss"]
         track_iou_loss = prepared["track_iou_loss"]
         dit_param = next(self.bundle.dit.parameters())
         dit_dtype = dit_param.dtype
         dit_device = dit_param.device
+        fused_context_abs_max = max(float(ctx.detach().abs().max().item()) for ctx in fused_context)
+        object_tokens_abs_max = float(object_tokens.detach().abs().max().item())
 
         losses = []
+        pred_abs_max_values: list[float] = []
+        latent_abs_max_values: list[float] = []
         for sample_idx, latent_clean in enumerate(full_latents):
             latent_clean = latent_clean.to(device=dit_device, dtype=dit_dtype)
             noise = torch.randn_like(latent_clean)
@@ -644,6 +651,7 @@ class ContextVideoTrainer(nn.Module):
                 latent_clean,
             )
             x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
+            latent_abs_max_values.append(float(x_t.detach().abs().max().item()))
 
             seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (
                 self.bundle.config.patch_size[1] * self.bundle.config.patch_size[2]
@@ -661,8 +669,12 @@ class ContextVideoTrainer(nn.Module):
                 raise RuntimeError(
                     f"non-finite pred detected at sample_idx={sample_idx}, "
                     f"pred_min={float(torch.nan_to_num(pred).min().item())}, "
-                    f"pred_max={float(torch.nan_to_num(pred).max().item())}"
+                    f"pred_max={float(torch.nan_to_num(pred).max().item())}, "
+                    f"x_t_abs_max={float(torch.nan_to_num(x_t).abs().max().item())}, "
+                    f"fused_context_abs_max={fused_context_abs_max}, "
+                    f"object_tokens_abs_max={object_tokens_abs_max}"
                 )
+            pred_abs_max_values.append(float(pred.detach().abs().max().item()))
 
             target = self.scheduler.training_target(latent_clean, noise, timestep)
             if not torch.isfinite(target).all():
@@ -700,6 +712,15 @@ class ContextVideoTrainer(nn.Module):
                 f"track_box_loss={None if track_box_loss is None else float(track_box_loss.item())}, "
                 f"track_iou_loss={None if track_iou_loss is None else float(track_iou_loss.item())}"
             )
+        self.last_train_metrics = {
+            "train/loss_main": float(torch.stack(losses).mean().item()),
+            "train/object_tokens_abs_max": float(object_tokens_abs_max),
+            "train/fused_context_abs_max": float(fused_context_abs_max),
+            "train/pred_abs_max": float(max(pred_abs_max_values) if pred_abs_max_values else 0.0),
+            "train/x_t_abs_max": float(max(latent_abs_max_values) if latent_abs_max_values else 0.0),
+            "train/track_box_loss": float(track_box_loss.item()) if track_box_loss is not None else 0.0,
+            "train/track_iou_loss": float(track_iou_loss.item()) if track_iou_loss is not None else 0.0,
+        }
         return loss
 
     def train_step(self, batch: dict[str, Any]) -> dict[str, float]:

@@ -42,6 +42,8 @@ class ObjectTubeProjector(nn.Module):
             nn.Linear(out_dim, out_dim),
         )
         self.out_norm = nn.LayerNorm(out_dim)
+        self.vggt_world_clip = 16.0
+        self.vggt_depth_clip = 16.0
 
     def _ensure_latent_proj(self, latent_dim: int, device: torch.device) -> None:
         if self.latent_proj.in_features == latent_dim:
@@ -178,6 +180,12 @@ class ObjectTubeProjector(nn.Module):
                 window_radius=0,
                 frame_valid_mask=frame_valid_mask,
             )
+            world_local = torch.nan_to_num(world_local, nan=0.0, posinf=0.0, neginf=0.0).clamp(
+                -self.vggt_world_clip, self.vggt_world_clip
+            )
+            depth_local = torch.nan_to_num(depth_local, nan=0.0, posinf=0.0, neginf=0.0).clamp(
+                -self.vggt_depth_clip, self.vggt_depth_clip
+            )
             world_conf_local = None
             depth_conf_local = None
             if vggt_world_points_conf is not None:
@@ -200,6 +208,8 @@ class ObjectTubeProjector(nn.Module):
                 world_conf_local = torch.ones_like(depth_local)
             if depth_conf_local is None:
                 depth_conf_local = torch.ones_like(depth_local)
+            world_conf_local = torch.nan_to_num(world_conf_local, nan=0.0, posinf=0.0, neginf=0.0).clamp(0.0, 1.0)
+            depth_conf_local = torch.nan_to_num(depth_conf_local, nan=0.0, posinf=0.0, neginf=0.0).clamp(0.0, 1.0)
             vggt_geom_feat = torch.nan_to_num(torch.cat(
                 [
                     world_local,

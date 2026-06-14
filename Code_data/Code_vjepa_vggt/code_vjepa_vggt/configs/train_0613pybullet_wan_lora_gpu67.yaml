@@ -48,13 +48,13 @@ data:
   fps: 30
 
 optimization:
-  lr: 1.0e-4
+  lr: 2.0e-5
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
   max_steps: 20000
   grad_accum_steps: 1
-  max_grad_norm: 1.0
+  max_grad_norm: 0.5
   mixed_precision: bf16
 
 loss:
@@ -62,8 +62,8 @@ loss:
   predict_type: flow_match_velocity
   lambda_main: 1.0
   lambda_jepa_align: 0.1
-  lambda_vggt_align: 0.1
-  lambda_vggt_iou: 0.1
+  lambda_vggt_align: 0.0
+  lambda_vggt_iou: 0.0
   track_iou_radius_px: 12.0
 
 logging:

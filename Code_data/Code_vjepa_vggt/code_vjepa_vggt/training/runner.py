@@ -70,12 +70,20 @@ def launch_training_task(
                 loss_value = float(loss.detach().item())
                 progress.set_postfix(loss=f"{loss_value:.4f}")
                 if accelerator.is_main_process and wandb_run is not None:
+                    extra_metrics = {}
+                    unwrapped = accelerator.unwrap_model(model)
+                    if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
+                        extra_metrics = {
+                            key: float(value)
+                            for key, value in unwrapped.last_train_metrics.items()
+                        }
                     wandb_run.log(
                         {
                             "train/loss": loss_value,
                             "train/step": step,
                             "train/lr": float(optimizer.param_groups[0]["lr"]),
                             "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
+                            **extra_metrics,
                         },
                         step=step,
                     )
