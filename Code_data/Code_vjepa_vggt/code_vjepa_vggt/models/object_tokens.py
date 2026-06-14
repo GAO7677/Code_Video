@@ -129,6 +129,19 @@ class ObjectTubeProjector(nn.Module):
         vggt_depth_conf: torch.Tensor | None = None,
         frame_valid_mask: torch.Tensor | None = None,
     ) -> ObjectTokenOutput:
+        jepa_patch_tokens = torch.nan_to_num(jepa_patch_tokens, nan=0.0, posinf=0.0, neginf=0.0)
+        context_latents = torch.nan_to_num(context_latents, nan=0.0, posinf=0.0, neginf=0.0)
+        tracks = torch.nan_to_num(tracks, nan=0.0, posinf=0.0, neginf=0.0)
+        visibility = torch.nan_to_num(visibility, nan=0.0, posinf=0.0, neginf=0.0)
+        confidence = torch.nan_to_num(confidence, nan=0.0, posinf=0.0, neginf=0.0)
+        if vggt_world_points is not None:
+            vggt_world_points = torch.nan_to_num(vggt_world_points, nan=0.0, posinf=0.0, neginf=0.0)
+        if vggt_world_points_conf is not None:
+            vggt_world_points_conf = torch.nan_to_num(vggt_world_points_conf, nan=0.0, posinf=0.0, neginf=0.0)
+        if vggt_depth is not None:
+            vggt_depth = torch.nan_to_num(vggt_depth, nan=0.0, posinf=0.0, neginf=0.0)
+        if vggt_depth_conf is not None:
+            vggt_depth_conf = torch.nan_to_num(vggt_depth_conf, nan=0.0, posinf=0.0, neginf=0.0)
         jepa_time_idx = self._time_indices(tracks.shape[1], jepa_patch_tokens.shape[1], tracks.device)
         latent_time_idx = self._time_indices(tracks.shape[1], context_latents.shape[2], tracks.device)
 
@@ -139,7 +152,7 @@ class ObjectTubeProjector(nn.Module):
         latent_valid = frame_valid_mask[:, latent_time_idx] if frame_valid_mask is not None else None
 
         jepa_local = self._pool_feature_grid(
-            jepa_patch_tokens,
+            jepa_patch_tokens.float(),
             jepa_tracks,
             image_hw=track_image_hw,
             window_radius=self.jepa_window_radius,
@@ -148,17 +161,17 @@ class ObjectTubeProjector(nn.Module):
 
         latent_grid = context_latents.permute(0, 2, 3, 4, 1).contiguous()
         latent_local = self._pool_feature_grid(
-            latent_grid,
+            latent_grid.float(),
             latent_tracks,
             image_hw=track_image_hw,
             window_radius=self.latent_window_radius,
             frame_valid_mask=latent_valid,
         )
 
-        jepa_tokens = self.jepa_proj(jepa_local)
+        jepa_tokens = self.jepa_proj(torch.nan_to_num(jepa_local, nan=0.0, posinf=0.0, neginf=0.0))
         self._ensure_latent_proj(latent_local.shape[-1], latent_local.device)
-        latent_tokens = self.latent_proj(latent_local)
-        geom_feat = self.geom_proj(geom_steps)
+        latent_tokens = self.latent_proj(torch.nan_to_num(latent_local, nan=0.0, posinf=0.0, neginf=0.0))
+        geom_feat = self.geom_proj(torch.nan_to_num(geom_steps, nan=0.0, posinf=0.0, neginf=0.0))
         geom_weights = torch.nan_to_num((visibility * confidence).unsqueeze(-1), nan=0.0, posinf=0.0, neginf=0.0)
         if frame_valid_mask is not None:
             geom_weights = geom_weights * frame_valid_mask[:, :, None, None].to(dtype=geom_weights.dtype, device=geom_weights.device)
@@ -218,10 +231,10 @@ class ObjectTubeProjector(nn.Module):
                 ],
                 dim=-1,
             ), nan=0.0, posinf=0.0, neginf=0.0)
-            vggt_geom_tokens = self.vggt_geom_proj(vggt_geom_feat)
+            vggt_geom_tokens = self.vggt_geom_proj(torch.nan_to_num(vggt_geom_feat, nan=0.0, posinf=0.0, neginf=0.0))
 
         fused_geom = geom_tokens if vggt_geom_tokens is None else (geom_tokens + vggt_geom_tokens)
-        object_tokens = self.out_norm(jepa_tokens + latent_tokens + fused_geom)
+        object_tokens = self.out_norm(torch.nan_to_num(jepa_tokens + latent_tokens + fused_geom, nan=0.0, posinf=0.0, neginf=0.0))
         return ObjectTokenOutput(
             object_tokens=object_tokens,
             jepa_tokens=jepa_tokens,

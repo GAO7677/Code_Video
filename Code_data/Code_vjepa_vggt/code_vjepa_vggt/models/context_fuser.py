@@ -21,10 +21,16 @@ class ContextTokenFuser(nn.Module):
     ) -> list[torch.Tensor]:
         out = []
         for i, txt in enumerate(text_context):
-            obj = self.norm(self.object_gate * object_tokens[i])
+            txt = torch.nan_to_num(txt, nan=0.0, posinf=0.0, neginf=0.0)
+            obj = torch.nan_to_num(object_tokens[i], nan=0.0, posinf=0.0, neginf=0.0)
+            gate = torch.nan_to_num(self.object_gate, nan=1.0, posinf=1.0, neginf=1.0)
+            obj = (gate.float() * obj.float())
+            obj = self.norm(obj).to(dtype=txt.dtype)
+            obj = torch.nan_to_num(obj, nan=0.0, posinf=0.0, neginf=0.0)
             max_objects = max(0, self.max_context_len - min(int(txt.shape[0]), self.min_text_tokens))
             if obj.shape[0] > max_objects > 0:
                 scores = self.object_score(obj).squeeze(-1)
+                scores = torch.nan_to_num(scores, nan=-1e4, posinf=-1e4, neginf=-1e4)
                 keep_idx = torch.topk(scores, k=max_objects, dim=0).indices
                 keep_idx, _ = torch.sort(keep_idx)
                 obj = obj[keep_idx]
@@ -32,5 +38,6 @@ class ContextTokenFuser(nn.Module):
                 obj = obj[:0]
             keep_text = max(0, self.max_context_len - obj.shape[0])
             fused = torch.cat([txt[:keep_text], obj], dim=0)
+            fused = torch.nan_to_num(fused, nan=0.0, posinf=0.0, neginf=0.0)
             out.append(fused)
         return out
