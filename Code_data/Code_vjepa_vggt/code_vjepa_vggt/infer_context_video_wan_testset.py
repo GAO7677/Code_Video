@@ -99,10 +99,6 @@ def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
 def _resolve_input_videos(
     sample: dict[str, object],
     *,
-    context_fraction: float,
-    random_context_frames: bool,
-    seed: int,
-    sample_idx: int,
     default_num_context_frames: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     video = sample["video"]
@@ -120,19 +116,8 @@ def _resolve_input_videos(
         return video.contiguous(), context_video, context_indices
 
     total_frames = int(video.shape[1])
-    max_context_len = max(1, min(total_frames, int(total_frames * context_fraction)))
-    if not random_context_frames:
-        context_len = min(default_num_context_frames, max_context_len)
-        context_indices = torch.arange(context_len, dtype=torch.long)
-    else:
-        if max_context_len <= 1:
-            context_indices = torch.arange(1, dtype=torch.long)
-        else:
-            generator = torch.Generator()
-            generator.manual_seed(seed + sample_idx)
-            context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
-            context_indices = torch.arange(context_len, dtype=torch.long)
-
+    context_len = min(default_num_context_frames, total_frames)
+    context_indices = torch.arange(context_len, dtype=torch.long)
     context_video = video[:, context_indices].contiguous()
     return video.contiguous(), context_video, context_indices
 
@@ -200,28 +185,17 @@ def main() -> None:
         if not isinstance(sample_video, torch.Tensor):
             raise TypeError(f"sample['video'] must be a tensor, got {type(sample_video)}")
         total_frames = min(int(args.num_frames), int(sample_video.shape[1]))
-        input_video = sample_video[:, :total_frames].contiguous()
-        total_frames = int(input_video.shape[1])
-        max_context_len = max(1, min(total_frames, int(total_frames * float(args.context_fraction))))
-        if not args.random_context_frames:
-            context_len = min(int(config["data"]["num_context_frames"]), max_context_len)
-            context_indices = torch.arange(context_len, dtype=torch.long)
-        else:
-            if max_context_len <= 1:
-                context_indices = torch.arange(1, dtype=torch.long)
-            else:
-                generator = torch.Generator()
-                generator.manual_seed(int(args.seed) + int(dataset_idx))
-                context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
-                context_indices = torch.arange(context_len, dtype=torch.long)
-        input_context_video = input_video[:, context_indices].contiguous()
+        source_video = sample_video[:, :total_frames].contiguous()
+        context_len = min(int(config["data"]["num_context_frames"]), int(source_video.shape[1]))
+        context_indices = torch.arange(context_len, dtype=torch.long)
+        input_context_video = source_video[:, context_indices].contiguous()
         num_context_frames = torch.tensor([int(context_indices.numel())], dtype=torch.long, device=device_obj)
         captions = [str(sample["caption"])]
 
-        input_video_path = output_dir / f"{sample_stem}_input.mp4"
-        input_context_video_path = output_dir / f"{sample_stem}_input_context.mp4"
-        _write_mp4(input_video_path, _video_bcthw_to_uint8_thwc(input_video.unsqueeze(0)), fps=int(args.fps))
-        _write_mp4(input_context_video_path, _video_bcthw_to_uint8_thwc(input_context_video.unsqueeze(0)), fps=int(args.fps))
+        source_video_path = output_dir / f"{sample_stem}_source_video.mp4"
+        input_video_path = output_dir / f"{sample_stem}_input_video.mp4"
+        _write_mp4(source_video_path, _video_bcthw_to_uint8_thwc(source_video.unsqueeze(0)), fps=int(args.fps))
+        _write_mp4(input_video_path, _video_bcthw_to_uint8_thwc(input_context_video.unsqueeze(0)), fps=int(args.fps))
 
         fused_context, context_latents, prep_debug = _build_cond_context(
             trainer=trainer,
@@ -235,7 +209,7 @@ def main() -> None:
             bundle=trainer.bundle,
             fused_context=fused_context,
             context_latents=context_latents,
-            total_frames=int(input_video.shape[1]),
+            total_frames=int(source_video.shape[1]),
             num_context_frames=int(num_context_frames.item()),
             num_inference_steps=int(args.sampling_steps),
         )
@@ -252,10 +226,8 @@ def main() -> None:
             "checkpoint_dir": str(args.checkpoint_dir),
             "seed": int(args.seed),
             "input_caption": str(sample["caption"]),
-            # For the testset path, the model condition is the context clip.
-            "input_video": str(input_context_video_path),
-            "input_full_video": str(input_video_path),
-            "input_context_video": str(input_context_video_path),
+            "source_video": str(source_video_path),
+            "input_video": str(input_video_path),
             "output_video": str(output_video_path),
             "sample_debug": sample_debug,
         }
