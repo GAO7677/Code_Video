@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import gc
 import shutil
 import os
 from pathlib import Path
@@ -70,48 +71,39 @@ def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
     ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is not None:
-        tmp_path = path.with_suffix(".tmp.mp4")
-        writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        if not writer.isOpened():
-            raise RuntimeError(f"failed to open video writer for {tmp_path}")
-        try:
-            for frame in frames_thwc_uint8:
-                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        finally:
-            writer.release()
-        import subprocess
-
-        subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-i",
-                str(tmp_path),
-                "-an",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
-                str(path),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        tmp_path.unlink(missing_ok=True)
-        return
-
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+    tmp_path = path.with_suffix(".tmp.mp4")
+    writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
-        raise RuntimeError(f"failed to open video writer for {path}")
+        raise RuntimeError(f"failed to open video writer for {tmp_path}")
     try:
         for frame in frames_thwc_uint8:
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     finally:
         writer.release()
+    import subprocess
+
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(tmp_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    tmp_path.unlink(missing_ok=True)
 
 
 def _ensure_browser_video(source_path: Path) -> Path:
@@ -171,11 +163,21 @@ def _overlay_mask(frame_hwc: np.ndarray, mask_hw: np.ndarray, color_rgb: tuple[i
     return np.clip(frame, 0.0, 255.0).astype(np.uint8)
 
 
-def _load_trainable_state(checkpoint_dir: Path) -> dict[str, torch.Tensor]:
-    candidates = sorted(checkpoint_dir.glob("step_*.pt"))
-    if not candidates:
-        raise FileNotFoundError(f"no step_*.pt found under {checkpoint_dir}")
-    latest = max(candidates, key=lambda p: p.stat().st_mtime_ns)
+def _resolve_checkpoint_file(checkpoint_path: Path) -> Path:
+    if checkpoint_path.is_file():
+        return checkpoint_path
+    if checkpoint_path.is_dir():
+        candidates = sorted(checkpoint_path.glob("step_*.pt"))
+        if not candidates:
+            raise FileNotFoundError(f"no step_*.pt found under {checkpoint_path}")
+        return max(candidates, key=lambda p: p.stat().st_mtime_ns)
+    if checkpoint_path.suffix == ".pt":
+        raise FileNotFoundError(f"checkpoint file not found: {checkpoint_path}")
+    raise FileNotFoundError(f"checkpoint path not found: {checkpoint_path}")
+
+
+def _load_trainable_state(checkpoint_path: Path) -> dict[str, torch.Tensor]:
+    latest = _resolve_checkpoint_file(checkpoint_path)
     state = torch.load(latest, map_location="cpu")
     if "model" in state and isinstance(state["model"], dict):
         return state["model"]
@@ -191,10 +193,10 @@ def _infer_object_pooler_latent_dim(state_dict: dict[str, torch.Tensor], default
     return int(default_dim)
 
 
-def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Path) -> dict[str, object]:
-    state_dict = _load_trainable_state(checkpoint_dir)
+def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_path: Path) -> dict[str, object]:
+    state_dict = _load_trainable_state(checkpoint_path)
     def _normalize_key(key: str) -> str:
-        prefixes = ("module.", "bundle.")
+        prefixes = ("module.", "bundle.", "bundle.dit.")
         normalized = key
         changed = True
         while changed:
@@ -233,7 +235,7 @@ def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_dir: Pat
     normalized_checkpoint_keys = set(checkpoint_by_normalized.keys())
     missing_trainable = sorted(normalized_model_keys - normalized_checkpoint_keys)
     unexpected_checkpoint = sorted(normalized_checkpoint_keys - normalized_model_keys)
-    if missing_trainable or unexpected_checkpoint:
+    if missing_trainable:
         raise RuntimeError(
             "checkpoint does not match current trainable modules; "
             f"missing_trainable_keys={missing_trainable}, "
@@ -456,6 +458,7 @@ def _run_sampling(
     num_inference_steps: int,
 ) -> tuple[torch.Tensor, dict[str, object]]:
     assert bundle.dit is not None
+    bundle.dit.eval()
     dit_param = next(bundle.dit.parameters())
     dit_dtype = dit_param.dtype
     dit_device = dit_param.device
@@ -530,7 +533,11 @@ def _run_sampling(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint-dir", required=True, help="checkpoint folder containing step_*.pt")
+    parser.add_argument(
+        "--checkpoint-dir",
+        required=True,
+        help="checkpoint folder containing step_*.pt or a direct step_XXXXXXX.pt file",
+    )
     parser.add_argument("--prompt", required=True, help="text prompt for the video")
     parser.add_argument("--context-video", required=True, help="path to input context video")
     parser.add_argument("--config", default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0613pybullet_wan_lora_gpu67.yaml")
@@ -563,10 +570,13 @@ def main() -> None:
     context_video = video[:, context_indices].contiguous().unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
-    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
+    trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
+    trainer.build_optimizer = False
     print("trainer constructed", flush=True)
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
     print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
+    if trainer.bundle.dit is not None:
+        trainer.bundle.dit.eval()
 
     fused_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
@@ -576,14 +586,15 @@ def main() -> None:
         num_context_frames=num_context_frames,
         device_obj=device_obj,
     )
-    pred, sample_debug = _run_sampling(
-        bundle=trainer.bundle,
-        fused_context=fused_context,
-        context_latents=context_latents,
-        total_frames=int(video.shape[1]),
-        num_context_frames=int(num_context_frames.item()),
-        num_inference_steps=int(args.sampling_steps),
-    )
+    with torch.inference_mode():
+        pred, sample_debug = _run_sampling(
+            bundle=trainer.bundle,
+            fused_context=fused_context,
+            context_latents=context_latents,
+            total_frames=int(video.shape[1]),
+            num_context_frames=int(num_context_frames.item()),
+            num_inference_steps=int(args.sampling_steps),
+        )
     print("sampling finished", flush=True)
 
     output_dir = Path(args.output_dir)
@@ -602,6 +613,12 @@ def main() -> None:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
     if args.save_raw:
+        if trainer.bundle.dit is not None:
+            del trainer.bundle.dit
+            trainer.bundle.dit = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         with torch.no_grad():
             decoded = trainer.bundle.vae.decode([pred.to(next(trainer.bundle.vae.model.parameters()).device if hasattr(trainer.bundle.vae, "model") else device_obj)])
         if isinstance(decoded, list):

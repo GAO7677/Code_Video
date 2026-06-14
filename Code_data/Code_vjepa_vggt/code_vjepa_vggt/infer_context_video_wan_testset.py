@@ -52,48 +52,39 @@ def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
     ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is not None:
-        tmp_path = path.with_suffix(".tmp.mp4")
-        writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
-        if not writer.isOpened():
-            raise RuntimeError(f"failed to open writer for {tmp_path}")
-        try:
-            for frame in frames_thwc_uint8:
-                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        finally:
-            writer.release()
-        import subprocess
-
-        subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-i",
-                str(tmp_path),
-                "-an",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
-                str(path),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        tmp_path.unlink(missing_ok=True)
-        return
-
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required to write H.264 mp4 output")
+    tmp_path = path.with_suffix(".tmp.mp4")
+    writer = cv2.VideoWriter(str(tmp_path), cv2.VideoWriter_fourcc(*"mp4v"), int(fps), (width, height))
     if not writer.isOpened():
-        raise RuntimeError(f"failed to open writer for {path}")
+        raise RuntimeError(f"failed to open writer for {tmp_path}")
     try:
         for frame in frames_thwc_uint8:
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     finally:
         writer.release()
+    import subprocess
+
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(tmp_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    tmp_path.unlink(missing_ok=True)
 
 
 def _resolve_input_videos(
@@ -124,7 +115,11 @@ def _resolve_input_videos(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint-dir", required=True, help="checkpoint folder containing step_*.pt")
+    parser.add_argument(
+        "--checkpoint-dir",
+        required=True,
+        help="checkpoint folder containing step_*.pt or a direct step_XXXXXXX.pt file",
+    )
     parser.add_argument("--config", default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0613pybullet_wan_lora_gpu67.yaml")
     parser.add_argument("--split", choices=["test", "val"], default="test")
     parser.add_argument("--dataset-root", default="/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500")
