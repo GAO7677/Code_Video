@@ -55,7 +55,7 @@ optimization:
   max_steps: 20000
   grad_accum_steps: 2
   max_grad_norm: 0.5
-  mixed_precision: bf16
+  mixed_precision: fp16
 
 loss:
   future_only: true
