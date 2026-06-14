@@ -198,12 +198,27 @@ CUDA_VISIBLE_DEVICES=6,7 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_
 测试集推理命令：
 
 ```bash
+CUDA_VISIBLE_DEVICES=2
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 /data/gaoya/miniconda3/envs/wan/bin/python \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan_testset.py \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67/step_0000400.pt \
+  --prompt "A sphere rolls after landing on the platform and leaves the support surface, testing support switching." \
+  --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4 \
+  --output-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/infer_context_video_wan \
+  --num-frames 24 \
+  --sampling-mode prefix \
+  --save-raw
+
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+/data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan_testset.py \
   --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67 \
   --split test \
   --dataset-root /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500 \
   --output-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/test \
-  --num-cases 4
+  --num-cases 4 \
+  --save-raw
+
+
 ```

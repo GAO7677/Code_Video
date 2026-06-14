@@ -25,6 +25,7 @@ import torch.nn.functional as F
 
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
 from code_vjepa_vggt.training.flow_match import WanFlowMatchScheduler
+from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.masks import broadcast_latent_mask, expand_context_latents_to_full, latent_frame_mask
 from code_vjepa_vggt.utils.paths import ensure_upstream_paths
@@ -562,17 +563,10 @@ def main() -> None:
     context_video = video[:, context_indices].contiguous().unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
-    trainer = ContextVideoTrainer(
-        ckpt_dir=str(config["model"]["wan_ckpt_dir"]),
-        task=str(config["model"]["wan_task"]),
-        device=device,
-        build_optimizer=False,
-        lora_rank=int(config["model"].get("wan_lora_rank", 0)),
-        lora_alpha=int(config["model"].get("wan_lora_alpha", 0)),
-        lora_dropout=float(config["model"].get("wan_lora_dropout", 0.0)),
-        lora_init=str(config["model"].get("wan_lora_init", "gaussian")),
-    )
+    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
+    print("trainer constructed", flush=True)
     state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
+    print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
 
     fused_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
@@ -590,6 +584,7 @@ def main() -> None:
         num_context_frames=int(num_context_frames.item()),
         num_inference_steps=int(args.sampling_steps),
     )
+    print("sampling finished", flush=True)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -620,6 +615,7 @@ def main() -> None:
         result["prediction_video"] = str(browser_path)
         with open(output_dir / "result.json", "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
+        print("saved prediction video", flush=True)
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
     print(f"output_dir: {output_dir}")

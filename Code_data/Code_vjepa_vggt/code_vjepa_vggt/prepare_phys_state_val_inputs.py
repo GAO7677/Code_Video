@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
+import random
 import shutil
 from pathlib import Path
 
 import cv2
-
-from code_vjepa_vggt.utils.video_io import read_video_uniform
+from decord import VideoReader, cpu
 
 
 DESCRIPTION_TO_PROMPT: dict[str, str] = {
@@ -103,6 +104,26 @@ def _write_mp4(path: Path, frames_thwc_uint8, fps: int) -> None:
     tmp_path.unlink(missing_ok=True)
 
 
+def _read_video_all(video_path: Path) -> tuple[object, list[int], float]:
+    vr = VideoReader(str(video_path), ctx=cpu(0))
+    frame_indices = list(range(len(vr)))
+    frames = vr.get_batch(frame_indices).asnumpy()
+    fps = float(vr.get_avg_fps())
+    return frames, frame_indices, fps
+
+
+def _sample_context_length(total_frames: int, meta_path: Path) -> int:
+    if total_frames <= 0:
+        raise ValueError(f"video has no frames: {meta_path}")
+    digest = hashlib.sha256(str(meta_path).encode("utf-8")).hexdigest()
+    seed = int(digest[:16], 16)
+    rng = random.Random(seed)
+    # Skew toward smaller ratios so short context clips appear more often.
+    ratio = 0.3 * (rng.random() ** 2.0)
+    context_len = max(1, int(round(total_frames * ratio)))
+    return min(context_len, total_frames)
+
+
 def _update_meta(meta_path: Path, *, dry_run: bool) -> None:
     with open(meta_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
@@ -115,20 +136,33 @@ def _update_meta(meta_path: Path, *, dry_run: bool) -> None:
     source_video = sample_dir / "video.mp4"
     if not source_video.exists():
         source_video = Path(str(meta["video"]))
+    source_video_path = sample_dir / "source_video.mp4"
     input_video_path = sample_dir / "context_video.mp4"
 
     if not dry_run:
-        frames_thwc, _ = read_video_uniform(source_video, NUM_SOURCE_FRAMES)
-        legacy_source_video_path = sample_dir / "source_video.mp4"
-        legacy_source_video_path.unlink(missing_ok=True)
-        _write_mp4(input_video_path, frames_thwc[:NUM_CONTEXT_FRAMES], fps=int(meta.get("fps", 30)))
+        frames_thwc, source_frame_indices, raw_fps = _read_video_all(source_video)
+        context_len = _sample_context_length(len(source_frame_indices), meta_path)
+        _write_mp4(source_video_path, frames_thwc, fps=int(round(raw_fps)) if raw_fps > 0 else int(meta.get("fps", 30)))
+        _write_mp4(input_video_path, frames_thwc[:context_len], fps=int(round(raw_fps)) if raw_fps > 0 else int(meta.get("fps", 30)))
 
-    meta["source_video"] = str(source_video.resolve())
+    meta["raw_video"] = str(source_video.resolve())
+    meta["source_video"] = str(source_video_path.resolve())
     meta["input_video"] = str(input_video_path.resolve())
-    meta["source_num_frames"] = NUM_SOURCE_FRAMES
-    meta["input_num_frames"] = NUM_CONTEXT_FRAMES
-    meta["source_frame_indices"] = list(range(NUM_SOURCE_FRAMES))
-    meta["input_frame_indices"] = list(range(NUM_CONTEXT_FRAMES))
+    if dry_run:
+        meta["source_num_frames"] = NUM_SOURCE_FRAMES
+        meta["input_num_frames"] = NUM_CONTEXT_FRAMES
+        meta["source_frame_indices"] = list(range(NUM_SOURCE_FRAMES))
+        meta["input_frame_indices"] = list(range(NUM_CONTEXT_FRAMES))
+        meta["context_ratio"] = "random_uniform_0_to_0.5"
+        meta["raw_video"] = str(source_video.resolve())
+    else:
+        meta["source_num_frames"] = len(source_frame_indices)
+        meta["input_num_frames"] = context_len
+        meta["source_frame_indices"] = source_frame_indices
+        meta["input_frame_indices"] = list(range(context_len))
+        meta["context_ratio"] = round(context_len / max(len(source_frame_indices), 1), 6)
+        meta["raw_video_num_frames"] = len(source_frame_indices)
+        meta["raw_video_fps"] = float(raw_fps)
     meta["input_prompt"] = DESCRIPTION_TO_PROMPT[description]
 
     if not dry_run:
@@ -161,8 +195,9 @@ def main() -> None:
             {
                 "root": str(root),
                 "num_samples": len(meta_paths),
-                "source_video_mode": f"uniform_{NUM_SOURCE_FRAMES}_frames",
-                "input_video_mode": f"prefix_{NUM_CONTEXT_FRAMES}_frames",
+                "source_video_mode": "raw_full_video",
+                "input_video_mode": "weighted_random_prefix_0_to_30_percent",
+                "source_and_input_same_encoding": True,
                 "dry_run": bool(args.dry_run),
             },
             indent=2,
