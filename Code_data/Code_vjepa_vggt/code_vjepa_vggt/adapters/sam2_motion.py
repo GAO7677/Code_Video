@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -375,7 +376,7 @@ class GroundingDINOTextDetector:
             str(self.config_path),
             str(self.checkpoint_path),
             device=self.device,
-        )
+        ).to(self.device).float()
         self._predict = predict
         self._model_api = Model
 
@@ -448,16 +449,23 @@ class GroundingDINOTextDetector:
                 phrases=[],
                 prompt_mode="empty_text",
             )
-        bgr = cv2.cvtColor(_frame_to_rgb_uint8(frame_chw_01), cv2.COLOR_RGB2BGR)
-        processed = self._model_api.preprocess_image(bgr).to(self.device)
-        boxes, logits, phrases = self._predict(
-            model=self._model,
-            image=processed,
-            caption=text_prompt,
-            box_threshold=self.box_threshold,
-            text_threshold=self.text_threshold,
-            device=self.device,
+
+        autocast_ctx = (
+            torch.amp.autocast("cuda", enabled=False)
+            if torch.cuda.is_available() and str(self.device).startswith("cuda")
+            else nullcontext()
         )
+        with torch.inference_mode(), autocast_ctx:
+            bgr = cv2.cvtColor(_frame_to_rgb_uint8(frame_chw_01), cv2.COLOR_RGB2BGR)
+            processed = self._model_api.preprocess_image(bgr).to(self.device).float()
+            boxes, logits, phrases = self._predict(
+                model=self._model,
+                image=processed,
+                caption=text_prompt,
+                box_threshold=self.box_threshold,
+                text_threshold=self.text_threshold,
+                device=self.device,
+            )
         boxes_np = boxes.detach().cpu().numpy().astype(np.float32)
         scores_np = logits.detach().cpu().numpy().astype(np.float32)
         if boxes_np.size == 0:

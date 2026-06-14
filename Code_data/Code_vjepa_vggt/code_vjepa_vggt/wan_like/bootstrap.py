@@ -197,8 +197,9 @@ def _patch_wan_attention_fallback() -> None:
                 context_lens=context_lens,
             )
 
+            force_checkpoint = bool(getattr(self, "_codex_force_checkpointing", False))
             for block in self.blocks:
-                if self.training:
+                if self.training or force_checkpoint:
                     x = checkpoint.checkpoint(
                         lambda x_in: block(x_in, **kwargs),
                         x,

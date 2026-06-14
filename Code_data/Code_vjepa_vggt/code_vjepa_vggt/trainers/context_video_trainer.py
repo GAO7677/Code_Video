@@ -16,6 +16,7 @@ from code_vjepa_vggt.adapters.sam2_motion import (
     GroundingDINOTextDetector,
     SAM2MotionTracker,
     build_motion_prompt_box,
+    build_motion_prompt_boxes,
 )
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
@@ -335,10 +336,14 @@ class ContextVideoTrainer(nn.Module):
             except Exception as exc:
                 detector_error = f"{type(exc).__name__}: {exc}"
         if detected_boxes is None or detected_boxes.shape[0] == 0:
-            raise RuntimeError(
-                "GroundingDINO failed to detect any boxes for the given prompt; "
-                f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
-            )
+            motion_multi = build_motion_prompt_boxes(frames_tchw_01, max_boxes=max_objects)
+            detected_boxes = motion_multi.boxes_xyxy[:max_objects]
+            prompt_mode = motion_multi.prompt_mode
+            if detected_boxes.shape[0] == 0:
+                raise RuntimeError(
+                    "failed to build any multi-object query priors from GroundingDINO or motion fallback; "
+                    f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
+                )
 
         per_object_queries = []
         object_count = min(int(detected_boxes.shape[0]), int(self.vggt_adapter.num_queries))
