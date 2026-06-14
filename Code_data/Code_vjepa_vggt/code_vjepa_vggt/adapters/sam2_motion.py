@@ -584,7 +584,7 @@ class SAM2MotionTracker:
                 )
                 if detection.boxes_xyxy.shape[0] > 0:
                     return detection.boxes_xyxy[0].astype(np.float32), detection.prompt_mode, text_prompt
-                return guidance_box_xyxy.astype(np.float32), "proxy_box_fallback", text_prompt
+                raise RuntimeError("GroundingDINO did not return any boxes for the provided text prompt")
         return guidance_box_xyxy.astype(np.float32), "proxy_box", ""
 
     def _refine_box_to_mask(self, frame_chw_01: np.ndarray, box_xyxy: np.ndarray) -> np.ndarray | None:
@@ -639,13 +639,6 @@ class SAM2MotionTracker:
             if points.shape[0] > 0:
                 prompt_variants.append(("points", {"points": points.astype(np.float32), "labels": labels.astype(np.int32)}))
         prompt_variants.append(("box", {"box": current_box_xyxy.astype(np.float32)}))
-        if anchor_mask is None:
-            center = np.asarray(
-                [(current_box_xyxy[0] + current_box_xyxy[2]) * 0.5, (current_box_xyxy[1] + current_box_xyxy[3]) * 0.5],
-                dtype=np.float32,
-            )
-            prompt_variants.insert(0, ("center_point", {"points": center.reshape(1, 2), "labels": np.ones((1,), dtype=np.int32)}))
-
         for prompt_mode, prompt_kwargs in prompt_variants:
             state = predictor.init_state(
                 video_path=str(frame_dir),
@@ -693,7 +686,7 @@ class SAM2MotionTracker:
                 next_box_xyxy = _mask_to_box_xyxy(target_masks[next_anchor_idx])
                 return next_anchor_idx, next_box_xyxy
 
-        return None
+        raise RuntimeError("SAM2 tracking failed to propagate any masks")
 
     def track(
         self,

@@ -163,6 +163,32 @@ def _overlay_mask(frame_hwc: np.ndarray, mask_hw: np.ndarray, color_rgb: tuple[i
     return np.clip(frame, 0.0, 255.0).astype(np.uint8)
 
 
+def _tensor_stats(name: str, tensor: torch.Tensor) -> dict[str, object]:
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError(f"{name} must be a tensor, got {type(tensor)}")
+    finite = torch.isfinite(tensor)
+    if not bool(finite.all().item()):
+        bad = int((~finite).sum().item())
+        raise RuntimeError(f"{name} contains non-finite values: bad_count={bad}, shape={list(tensor.shape)}")
+    tensor_f = tensor.detach().float()
+    return {
+        "name": name,
+        "shape": list(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+        "min": float(tensor_f.min().item()) if tensor.numel() > 0 else None,
+        "max": float(tensor_f.max().item()) if tensor.numel() > 0 else None,
+        "mean": float(tensor_f.mean().item()) if tensor.numel() > 0 else None,
+        "std": float(tensor_f.std(unbiased=False).item()) if tensor.numel() > 0 else None,
+    }
+
+
+def _print_tensor_stats(name: str, tensor: torch.Tensor) -> dict[str, object]:
+    stats = _tensor_stats(name, tensor)
+    print(json.dumps(stats, ensure_ascii=False), flush=True)
+    return stats
+
+
 def _resolve_checkpoint_file(checkpoint_path: Path) -> Path:
     if checkpoint_path.is_file():
         return checkpoint_path
@@ -285,14 +311,13 @@ def _build_query_prior_for_sample(
     vggt_num_queries: int,
 ) -> tuple[np.ndarray | None, str, str, dict[str, object]]:
     if sam2_tracker is None:
-        return None, "no_sam2", "no_sam2", {"used_fallback": False}
+        raise RuntimeError("SAM2 tracker is required to build query priors")
 
     if sam2_prior_strategy in {"grounded_text_multi", "text_multi", "grounded_text"}:
         max_objects = 4
         text_prompt = _build_multi_object_prompt(caption)
         detected_boxes = None
         prompt_mode = "caption_gdino_multi"
-        used_fallback = False
         detector_error = ""
         if text_detector is not None and text_prompt.strip():
             try:
@@ -305,30 +330,12 @@ def _build_query_prior_for_sample(
                     detected_boxes = detection.boxes_xyxy[:max_objects]
                     prompt_mode = detection.prompt_mode
             except Exception as exc:
-                used_fallback = True
                 detector_error = f"{type(exc).__name__}: {exc}"
         if detected_boxes is None or detected_boxes.shape[0] == 0:
-            used_fallback = True
-            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-            sam_out = sam2_tracker.track(
-                frames_tchw_01,
-                prompt_frame_idx=prompt_frame_idx,
-                prompt_box_xyxy=motion_prompt_box_xyxy,
-                caption=caption,
+            raise RuntimeError(
+                "GroundingDINO failed to detect any boxes for the given prompt; "
+                f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
             )
-            query_points_px, prior_source = build_vggt_query_prior(
-                sam_out.masks_thw,
-                sam_out.boxes_t4,
-                num_queries=vggt_num_queries,
-            )
-            return query_points_px, prior_source, sam_out.prompt_mode, {
-                "strategy": sam2_prior_strategy,
-                "prompt_text": sam_out.prompt_text,
-                "object_count": 1,
-                "used_fallback": used_fallback,
-                "prior_source": prior_source,
-                "detector_error": detector_error,
-            }
 
         per_object_queries = []
         object_count = min(int(detected_boxes.shape[0]), int(vggt_num_queries))
@@ -353,26 +360,10 @@ def _build_query_prior_for_sample(
             if query_points_px.shape[0] > 0:
                 per_object_queries.append(query_points_px)
         if not per_object_queries:
-            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-            sam_out = sam2_tracker.track(
-                frames_tchw_01,
-                prompt_frame_idx=prompt_frame_idx,
-                prompt_box_xyxy=motion_prompt_box_xyxy,
-                caption=caption,
+            raise RuntimeError(
+                "SAM2 failed to produce any query priors after GroundingDINO detections; "
+                f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
             )
-            query_points_px, prior_source = build_vggt_query_prior(
-                sam_out.masks_thw,
-                sam_out.boxes_t4,
-                num_queries=vggt_num_queries,
-            )
-            return query_points_px, prior_source, "grounded_text_empty_fallback", {
-                "strategy": sam2_prior_strategy,
-                "prompt_text": text_prompt,
-                "object_count": 0,
-                "used_fallback": True,
-                "prior_source": prior_source,
-                "detector_error": detector_error,
-            }
 
         query_points = np.concatenate(per_object_queries, axis=0)[:vggt_num_queries].astype(np.float32)
         if query_points.shape[0] < vggt_num_queries:
@@ -383,7 +374,6 @@ def _build_query_prior_for_sample(
             "strategy": sam2_prior_strategy,
             "prompt_text": text_prompt,
             "object_count": object_count,
-            "used_fallback": used_fallback,
             "prior_source": prior_source,
             "detector_error": detector_error,
         }
@@ -404,7 +394,6 @@ def _build_query_prior_for_sample(
         "strategy": sam2_prior_strategy,
         "prompt_text": sam_out.prompt_text,
         "object_count": 1,
-        "used_fallback": bool("fallback" in sam_out.prompt_mode or sam_out.prompt_mode.startswith("proxy_box")),
         "prior_source": prior_source,
     }
 
@@ -445,6 +434,8 @@ def _build_cond_context(
 
     debug = prepared["debug"]
     debug["cond_proj_dim"] = cond_dim
+    _print_tensor_stats("context_latents", prepared["context_latents"][0])
+    _print_tensor_stats("fused_context", prepared["fused_context"][0])
     return prepared["fused_context"][0], prepared["context_latents"][0], debug
 
 
@@ -463,6 +454,7 @@ def _run_sampling(
     dit_dtype = dit_param.dtype
     dit_device = dit_param.device
     context_latents = context_latents.to(device=dit_device, dtype=dit_dtype)
+    _print_tensor_stats("vae_encoded_context_latents", context_latents)
     latent_h = int(context_latents.shape[2])
     latent_w = int(context_latents.shape[3])
     total_lat_t = max(1, (int(total_frames) - 1) // bundle.config.vae_stride[0] + 1)
@@ -491,6 +483,8 @@ def _run_sampling(
     future_mask = broadcast_latent_mask(future_mask_t, latent_clean)
     context_clean_full = expand_context_latents_to_full(context_latents, latent_clean)
     x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
+    _print_tensor_stats("latent_clean_init", latent_clean)
+    _print_tensor_stats("x_t_init", x_t)
 
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
     fused_context = fused_context.to(device=dit_device, dtype=dit_dtype)
@@ -499,11 +493,13 @@ def _run_sampling(
         timestep = scheduler.timesteps[step_idx].to(device=dit_device, dtype=dit_dtype)
         t_tokens = torch.full((1, seq_len), float(timestep.item()), device=dit_device, dtype=dit_dtype)
         pred = bundle.dit([x_t], t=t_tokens, context=[fused_context], seq_len=seq_len, y=None)[0]
+        _print_tensor_stats(f"pred_step_{step_idx}", pred)
         next_sigma = scheduler.sigmas[step_idx + 1] if step_idx + 1 < len(scheduler.sigmas) else torch.tensor(0.0)
         next_sigma = next_sigma.to(device=dit_device, dtype=dit_dtype)
         sigma = sigma.to(device=dit_device, dtype=dit_dtype)
         x_t = x_t + (next_sigma - sigma) * pred
         x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
+        _print_tensor_stats(f"x_t_step_{step_idx}", x_t)
         trajectory_stats.append(
             {
                 "step": int(step_idx),
@@ -620,9 +616,12 @@ def main() -> None:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         with torch.no_grad():
-            decoded = trainer.bundle.vae.decode([pred.to(next(trainer.bundle.vae.model.parameters()).device if hasattr(trainer.bundle.vae, "model") else device_obj)])
+            decode_input = pred.to(next(trainer.bundle.vae.model.parameters()).device if hasattr(trainer.bundle.vae, "model") else device_obj)
+            _print_tensor_stats("vae_decode_input", decode_input)
+            decoded = trainer.bundle.vae.decode([decode_input])
         if isinstance(decoded, list):
             decoded = decoded[0]
+        _print_tensor_stats("vae_decoded_output", decoded)
         video_out = decoded.detach().cpu()
         video_out = video_out.permute(1, 0, 2, 3).contiguous()
         video_out = ((video_out.clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8).permute(0, 2, 3, 1).numpy()

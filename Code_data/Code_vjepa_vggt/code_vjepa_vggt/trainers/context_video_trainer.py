@@ -249,7 +249,7 @@ class ContextVideoTrainer(nn.Module):
         captions: list[str],
     ) -> tuple[torch.Tensor | None, list[str], list[str], list[dict[str, Any]]]:
         if self.sam2_tracker is None:
-            return None, [], [], []
+            raise RuntimeError("SAM2 tracker is required to build query priors")
 
         priors = []
         prior_sources: list[str] = []
@@ -259,26 +259,21 @@ class ContextVideoTrainer(nn.Module):
             valid_frames = int(num_context_frames[batch_idx].item())
             frames_tchw_01 = ((context_videos[batch_idx, :, :valid_frames].permute(1, 0, 2, 3).float() + 1.0) / 2.0).detach().cpu().numpy()
             prompt_frame_idx = max(valid_frames - 1, 0)
-            try:
-                query_points_px, prior_source, prompt_mode, prior_debug = self._build_query_prior_for_sample(
-                    frames_tchw_01=frames_tchw_01,
-                    prompt_frame_idx=prompt_frame_idx,
-                    caption=captions[batch_idx],
-                )
-                priors.append(torch.from_numpy(query_points_px))
-                prior_sources.append(prior_source)
-                prompt_modes.append(prompt_mode)
-                prior_debugs.append(
-                    {
-                        "prompt_frame_idx": int(prompt_frame_idx),
-                        "valid_frames": int(valid_frames),
-                        **prior_debug,
-                    }
-                )
-            except Exception:
-                return None, [], [], []
-        if not priors:
-            return None, [], [], []
+            query_points_px, prior_source, prompt_mode, prior_debug = self._build_query_prior_for_sample(
+                frames_tchw_01=frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                caption=captions[batch_idx],
+            )
+            priors.append(torch.from_numpy(query_points_px))
+            prior_sources.append(prior_source)
+            prompt_modes.append(prompt_mode)
+            prior_debugs.append(
+                {
+                    "prompt_frame_idx": int(prompt_frame_idx),
+                    "valid_frames": int(valid_frames),
+                    **prior_debug,
+                }
+            )
         stacked = torch.stack(priors, dim=0).to(device=self.device_obj, dtype=context_videos.dtype)
         return stacked, prior_sources, prompt_modes, prior_debugs
 
@@ -312,7 +307,6 @@ class ContextVideoTrainer(nn.Module):
             "strategy": self.sam2_prior_strategy,
             "prompt_text": sam_out.prompt_text,
             "object_count": 1,
-            "used_fallback": bool("fallback" in sam_out.prompt_mode or sam_out.prompt_mode.startswith("proxy_box")),
             "prior_source": prior_source,
         }
 
@@ -327,7 +321,6 @@ class ContextVideoTrainer(nn.Module):
         text_prompt = _build_multi_object_prompt(caption)
         detected_boxes = None
         prompt_mode = "caption_gdino_multi"
-        used_fallback = False
         detector_error = ""
         if self.text_detector is not None and text_prompt.strip():
             try:
@@ -340,30 +333,12 @@ class ContextVideoTrainer(nn.Module):
                     detected_boxes = detection.boxes_xyxy[:max_objects]
                     prompt_mode = detection.prompt_mode
             except Exception as exc:
-                used_fallback = True
                 detector_error = f"{type(exc).__name__}: {exc}"
         if detected_boxes is None or detected_boxes.shape[0] == 0:
-            used_fallback = True
-            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-            sam_out = self.sam2_tracker.track(
-                frames_tchw_01,
-                prompt_frame_idx=prompt_frame_idx,
-                prompt_box_xyxy=motion_prompt_box_xyxy,
-                caption=caption,
+            raise RuntimeError(
+                "GroundingDINO failed to detect any boxes for the given prompt; "
+                f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
             )
-            query_points_px, prior_source = build_vggt_query_prior(
-                sam_out.masks_thw,
-                sam_out.boxes_t4,
-                num_queries=self.vggt_adapter.num_queries,
-            )
-            return query_points_px, prior_source, sam_out.prompt_mode, {
-                "strategy": self.sam2_prior_strategy,
-                "prompt_text": text_prompt if text_prompt.strip() else sam_out.prompt_text,
-                "object_count": 1,
-                "used_fallback": used_fallback,
-                "prior_source": prior_source,
-                "detector_error": detector_error,
-            }
 
         per_object_queries = []
         object_count = min(int(detected_boxes.shape[0]), int(self.vggt_adapter.num_queries))
@@ -388,26 +363,10 @@ class ContextVideoTrainer(nn.Module):
             if query_points_px.shape[0] > 0:
                 per_object_queries.append(query_points_px)
         if not per_object_queries:
-            motion_prompt_box_xyxy = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=prompt_frame_idx)
-            sam_out = self.sam2_tracker.track(
-                frames_tchw_01,
-                prompt_frame_idx=prompt_frame_idx,
-                prompt_box_xyxy=motion_prompt_box_xyxy,
-                caption=caption,
+            raise RuntimeError(
+                "SAM2 failed to produce any query priors after GroundingDINO detections; "
+                f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
             )
-            query_points_px, prior_source = build_vggt_query_prior(
-                sam_out.masks_thw,
-                sam_out.boxes_t4,
-                num_queries=self.vggt_adapter.num_queries,
-            )
-            return query_points_px, prior_source, "grounded_text_empty_fallback", {
-                "strategy": self.sam2_prior_strategy,
-                "prompt_text": text_prompt,
-                "object_count": 0,
-                "used_fallback": True,
-                "prior_source": prior_source,
-                "detector_error": detector_error,
-            }
 
         query_points = np.concatenate(per_object_queries, axis=0)[: self.vggt_adapter.num_queries].astype(np.float32)
         if query_points.shape[0] < self.vggt_adapter.num_queries:
@@ -418,7 +377,6 @@ class ContextVideoTrainer(nn.Module):
             "strategy": self.sam2_prior_strategy,
             "prompt_text": text_prompt,
             "object_count": object_count,
-            "used_fallback": used_fallback,
             "prior_source": prior_source,
             "detector_error": detector_error,
         }

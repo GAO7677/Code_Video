@@ -170,4 +170,7 @@ def build_vggt_query_prior(
     if query_points.shape[0] == num_queries and np.any(frame0_mask > 0):
         return query_points.astype(np.float32), "sam_mask_frame0"
     box0 = sam_boxes_t4[0]
-    return sample_points_from_box(box0, num_queries), "sam_box_frame0"
+    raise RuntimeError(
+        "failed to build VGGT query prior from SAM masks; "
+        f"mask_points={query_points.shape[0]}, box0={box0.tolist()}"
+    )

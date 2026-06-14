@@ -80,21 +80,7 @@ class VGGTTrackAdapter(nn.Module):
     ) -> VGGTTrackOutput:
         batch_size, frames, height, width, _ = frames_bthwc_01.shape
         if self.model is None:
-            if query_points_prior is not None:
-                query_points = query_points_prior.to(device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
-            else:
-                query_points = self._make_uniform_queries(batch_size, (height, width), frames_bthwc_01.device)
-            tracks = query_points.unsqueeze(1).expand(-1, frames, -1, -1).clone()
-            vis = torch.ones(batch_size, frames, self.num_queries, device=frames_bthwc_01.device)
-            conf = torch.ones(batch_size, frames, self.num_queries, device=frames_bthwc_01.device)
-            return VGGTTrackOutput(
-                query_points=query_points,
-                tracks=tracks,
-                visibility=vis,
-                confidence=conf,
-                image_hw=(height, width),
-                used_model=False,
-            )
+            raise RuntimeError("VGGT model is required for inference; fallback tracks are disabled")
 
         frames_bchw = frames_bthwc_01.permute(0, 1, 4, 2, 3)
         resized = F.interpolate(

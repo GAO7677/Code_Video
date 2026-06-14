@@ -107,21 +107,10 @@ class CoTrackerAdapter(nn.Module):
         if query_points_prior is not None:
             query_points_native = query_points_prior.to(device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
         else:
-            query_points_native = self._make_uniform_queries(batch_size, native_hw, frames_bthwc_01.device)
+            raise RuntimeError("query_points_prior is required; uniform query fallback is disabled")
 
         if self.model is None:
-            tracks = query_points_native.unsqueeze(1).expand(-1, frames, -1, -1).clone()
-            visibility = torch.ones(batch_size, frames, self.num_queries, device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
-            confidence = torch.ones_like(visibility)
-            return CoTrackerOutput(
-                query_points=query_points_native,
-                tracks=tracks,
-                visibility=visibility,
-                confidence=confidence,
-                image_hw=native_hw,
-                input_hw=native_hw,
-                used_model=False,
-            )
+            raise RuntimeError("CoTracker model is required for inference; fallback tracks are disabled")
 
         src_hw = query_image_hw if query_image_hw is not None else native_hw
         query_points_cot = self._resize_query_points(query_points_native, src_hw=src_hw, dst_hw=self.input_hw)

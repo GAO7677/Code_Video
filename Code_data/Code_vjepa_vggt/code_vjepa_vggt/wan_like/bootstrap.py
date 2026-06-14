@@ -44,14 +44,10 @@ def _patch_wan_attention_fallback() -> None:
     model_module = _load_module("wan.modules.model", WAN_MODULES_ROOT / "model.py")
 
     flash_attention_fn = attention_module.flash_attention
-    attention_fn = attention_module.attention
     rope_apply_fn = model_module.rope_apply
 
     def safe_flash_attention(*args: Any, **kwargs: Any):
-        try:
-            return flash_attention_fn(*args, **kwargs)
-        except AssertionError:
-            return attention_fn(*args, **kwargs)
+        return flash_attention_fn(*args, **kwargs)
 
     def safe_rope_apply(x, grid_sizes, freqs):
         out = rope_apply_fn(x, grid_sizes, freqs)
