@@ -84,6 +84,7 @@ class ContextVideoTrainer(nn.Module):
             freeze_vae=bool(model_cfg["freeze_vae"]),
             freeze_text_encoder=bool(model_cfg["freeze_text_encoder"]),
             freeze_dit=bool(model_cfg["freeze_wan_dit"]),
+            freeze_lora=bool(model_cfg.get("freeze_wan_lora", False)),
         )
         if self.bundle.dit is not None:
             self.bundle.dit.train(mode=build_optimizer and not bool(model_cfg["freeze_wan_dit"]))
@@ -99,12 +100,14 @@ class ContextVideoTrainer(nn.Module):
             num_frames=int(data_cfg["num_context_frames"]),
             patch_size=int(model_cfg["jepa_patch_size"]),
             tubelet_size=int(model_cfg["jepa_tubelet_size"]),
+            trainable=bool(model_cfg.get("train_jepa", False)),
         ).to(self.device_obj)
         self.vggt_adapter = VGGTTrackAdapter(
             model_path=model_cfg.get("vggt_model_path"),
             num_queries=int(model_cfg["object_num_queries"]),
             device=str(self.device_obj),
             input_hw=tuple(model_cfg["vggt_input_hw"]),
+            trainable=bool(model_cfg.get("train_vggt", False)),
         ).to(self.device_obj)
         self.track_source = str(model_cfg.get("track_source", "vggt")).strip().lower()
         if self.track_source not in {"vggt", "cotracker"}:
@@ -134,6 +137,9 @@ class ContextVideoTrainer(nn.Module):
             min_text_tokens=int(model_cfg.get("min_text_tokens", 64)),
         ).to(self.device_obj)
         self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
+        self.init_wan_lora_from_checkpoint = model_cfg.get("init_wan_lora_from_checkpoint")
+        if self.init_wan_lora_from_checkpoint is not None:
+            self.bundle.load_lora_checkpoint(self.init_wan_lora_from_checkpoint)
 
         self.enable_sam2_priors = bool(model_cfg.get("enable_sam2_priors", False))
         self.sam2_prior_strategy = str(model_cfg.get("sam2_prior_strategy", "single")).strip().lower()
@@ -195,6 +201,10 @@ class ContextVideoTrainer(nn.Module):
         params = list(self.bundle.dit.parameters())
         params += list(self.context_fuser.parameters())
         params += list(self.object_pooler.parameters())
+        if getattr(self.jepa_adapter, "trainable", False):
+            params += list(self.jepa_adapter.parameters())
+        if getattr(self.vggt_adapter, "trainable", False):
+            params += list(self.vggt_adapter.parameters())
         return [param for param in params if param.requires_grad]
 
     def export_trainable_state_dict(self) -> dict[str, torch.Tensor]:

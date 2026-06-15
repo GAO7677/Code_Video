@@ -36,16 +36,21 @@ class VGGTTrackAdapter(nn.Module):
         num_queries: int = 8,
         device: str = "cuda",
         input_hw: tuple[int, int] = (420, 728),
+        trainable: bool = False,
     ) -> None:
         super().__init__()
         self.device_obj = torch.device(device)
         self.model_path = model_path
         self.num_queries = num_queries
         self.input_hw = input_hw
+        self.trainable = bool(trainable)
         self.model = None
         if model_path and Path(model_path).exists():
-            self.model = VGGT.from_pretrained(model_path).eval().requires_grad_(False)
-            self.model = self.model.to(self.device_obj)
+            model = VGGT.from_pretrained(model_path)
+            if self.trainable:
+                self.model = model.train().to(self.device_obj)
+            else:
+                self.model = model.eval().requires_grad_(False).to(self.device_obj)
 
     def _make_uniform_queries(self, batch_size: int, image_hw: tuple[int, int], device: torch.device) -> torch.Tensor:
         height, width = image_hw
@@ -99,7 +104,7 @@ class VGGTTrackAdapter(nn.Module):
             )
         else:
             query_points = self._make_uniform_queries(batch_size, self.input_hw, resized.device)
-        with torch.no_grad():
+        with torch.set_grad_enabled(self.trainable and torch.is_grad_enabled()):
             model_dtype = next(self.model.parameters()).dtype
             aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized.to(dtype=model_dtype))
             predictions = self.model.token_list_to_predictions(

@@ -34,9 +34,11 @@ class JEPAPatchAdapter(nn.Module):
         tubelet_size: int = 2,
         model_name: str = "vit_giant_xformers",
         pred_embed_dim: int = 384,
+        trainable: bool = False,
     ) -> None:
         super().__init__()
         self.device_obj = torch.device(device)
+        self.trainable = bool(trainable)
         self.crop_size = crop_size
         self.patch_size = patch_size
         self.tubelet_size = tubelet_size
@@ -68,7 +70,10 @@ class JEPAPatchAdapter(nn.Module):
         encoder = MultiSeqWrapper(encoder_backbone).to(self.device_obj)
         state = torch.load(ckpt_path, map_location="cpu")
         encoder.load_state_dict(self._select_encoder_state(state), strict=False)
-        self.encoder = encoder.eval().requires_grad_(False).to(self.device_obj)
+        if self.trainable:
+            self.encoder = encoder.train().to(self.device_obj)
+        else:
+            self.encoder = encoder.eval().requires_grad_(False).to(self.device_obj)
 
     @staticmethod
     def _select_encoder_state(state: dict[str, Any]) -> dict[str, torch.Tensor]:
@@ -87,8 +92,13 @@ class JEPAPatchAdapter(nn.Module):
             align_corners=False,
         ).view(batch, frames, 3, self.crop_size, self.crop_size).permute(0, 2, 1, 3, 4)
 
-        with torch.no_grad():
-            feats_nested = self.encoder([resized], masks=None, gram_mode=False, training_mode=False)
+        with torch.set_grad_enabled(self.trainable and torch.is_grad_enabled()):
+            feats_nested = self.encoder(
+                [resized],
+                masks=None,
+                gram_mode=False,
+                training_mode=self.trainable,
+            )
             feats = feats_nested[0]
 
         token_t = max(1, frames // self.tubelet_size)

@@ -106,7 +106,85 @@ class WanContextVideoModel(nn.Module):
         else:
             self.dit.to(self.device_obj)
 
-    def freeze_parts(self, freeze_vae: bool, freeze_text_encoder: bool, freeze_dit: bool) -> None:
+    def load_lora_checkpoint(self, checkpoint_path: str | Path | None) -> dict[str, int] | None:
+        if checkpoint_path is None:
+            return None
+        if self.dit is None:
+            self.ensure_dit_loaded()
+        if self.dit is None:
+            raise RuntimeError("WAN DIT must be loaded before applying a LoRA checkpoint")
+        path = Path(checkpoint_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"LoRA checkpoint not found: {path}")
+
+        if path.suffix == ".safetensors":
+            from safetensors.torch import load_file
+
+            state = load_file(str(path), device="cpu")
+        else:
+            state = torch.load(path, map_location="cpu")
+        if isinstance(state, dict) and "model" in state and isinstance(state["model"], dict):
+            state = state["model"]
+        if not isinstance(state, dict):
+            raise RuntimeError(f"unsupported LoRA checkpoint format: {path}")
+
+        def _normalize_key(key: str) -> str:
+            prefixes = ("module.", "base_model.", "model.", "bundle.", "bundle.dit.")
+            normalized = key
+            changed = True
+            while changed:
+                changed = False
+                for prefix in prefixes:
+                    if normalized.startswith(prefix):
+                        normalized = normalized[len(prefix) :]
+                        changed = True
+            return normalized
+
+        checkpoint_by_normalized: dict[str, str] = {}
+        for key in state.keys():
+            if "lora_" not in key:
+                continue
+            checkpoint_by_normalized[_normalize_key(str(key))] = str(key)
+
+        loaded = 0
+        missing: list[str] = []
+        trainable_named_params = [
+            (name, param)
+            for name, param in self.dit.named_parameters()
+            if "lora_" in name
+        ]
+        for name, param in trainable_named_params:
+            norm_name = _normalize_key(name)
+            state_key = checkpoint_by_normalized.get(norm_name)
+            if state_key is None:
+                missing.append(name)
+                continue
+            tensor = state[state_key]
+            if tuple(tensor.shape) != tuple(param.shape):
+                raise RuntimeError(
+                    f"shape mismatch when loading LoRA checkpoint for {name}: "
+                    f"checkpoint_shape={list(tensor.shape)} model_shape={list(param.shape)}"
+                )
+            param.data.copy_(tensor.to(device=param.device, dtype=param.dtype))
+            loaded += 1
+
+        if missing:
+            raise RuntimeError(
+                f"LoRA checkpoint {path} is missing {len(missing)} trainable tensors; "
+                f"first_missing={missing[0]}"
+            )
+        return {
+            "loaded_lora_tensors": loaded,
+            "checkpoint_lora_tensors": len(checkpoint_by_normalized),
+        }
+
+    def freeze_parts(
+        self,
+        freeze_vae: bool,
+        freeze_text_encoder: bool,
+        freeze_dit: bool,
+        freeze_lora: bool = False,
+    ) -> None:
         if freeze_vae:
             self.vae.model.eval().requires_grad_(False)
         if freeze_text_encoder:
@@ -121,8 +199,8 @@ class WanContextVideoModel(nn.Module):
                 self.dit.eval()
                 for name, param in self.dit.named_parameters():
                     is_lora_param = "lora_" in name
-                    param.requires_grad = is_lora_param
-                    if is_lora_param:
+                    param.requires_grad = is_lora_param and not freeze_lora
+                    if is_lora_param and not freeze_lora:
                         # Trainable LoRA weights must stay in fp32, otherwise AMP/GradScaler
                         # can hit bfloat16 unscale paths and abort during backward.
                         param.data = param.data.float()
