@@ -27,6 +27,13 @@ class ContextTokenFuser(nn.Module):
             obj = (gate.float() * obj.float())
             obj = self.norm(obj).to(dtype=txt.dtype)
             obj = torch.nan_to_num(obj, nan=0.0, posinf=0.0, neginf=0.0)
+            # Zero object tokens carry no conditioning signal and can make the
+            # fused context look valid while actually being empty of object information.
+            nonzero_mask = obj.detach().abs().sum(dim=-1) > 1e-6
+            if nonzero_mask.ndim == 0 or not bool(nonzero_mask.any()):
+                obj = obj[:0]
+            else:
+                obj = obj[nonzero_mask]
             max_objects = max(0, self.max_context_len - min(int(txt.shape[0]), self.min_text_tokens))
             if obj.shape[0] > max_objects > 0:
                 scores = self.object_score(obj).squeeze(-1)
