@@ -200,11 +200,11 @@ CUDA_VISIBLE_DEVICES=6,7 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_
 测试集推理命令：
 
 ```bash
-CUDA_VISIBLE_DEVICES=2
+CUDA_VISIBLE_DEVICES=0
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 /data/gaoya/miniconda3/envs/wan/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py \
-  --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67/step_0000200.pt \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_stage1_adapters_gpu67/step_0000100.pt \
   --prompt "A sphere rolls after landing on the platform and leaves the support surface, testing support switching." \
   --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4 \
   --output-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/infer_context_video_wan \
