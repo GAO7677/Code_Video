@@ -941,6 +941,136 @@ class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
         return len(self.entries) * self.dataset_repeat
 
 
+class RawPhysStateVideoDataset(torch.utils.data.Dataset):
+    """Read raw phys-state simulation videos as Wan TI2V training samples."""
+
+    dataset_kind = "raw_phys_state_video"
+
+    def __init__(
+        self,
+        dataset_base_path,
+        split="train",
+        dataset_repeat=1,
+        max_pixels=1024 * 1024,
+        height=None,
+        width=None,
+        num_frames=24,
+    ):
+        self.dataset_base_path = os.path.abspath(dataset_base_path)
+        self.split = str(split).strip().lower()
+        self.dataset_repeat = int(dataset_repeat)
+        self.max_pixels = max_pixels
+        self.height = height
+        self.width = width
+        self.num_frames = int(num_frames)
+        self.load_from_cache = False
+        self.frame_processor = _frame_processor(height, width, max_pixels)
+
+        self.samples_root = self._resolve_samples_root(self.dataset_base_path, self.split)
+        self.entries = self._gather_entries(self.samples_root)
+        if not self.entries:
+            raise FileNotFoundError(
+                f"No raw phys-state samples found under {self.samples_root}"
+            )
+
+        first_meta = self._load_json(Path(self.entries[0]["meta_path"]))
+        resolution = first_meta.get("resolution", [None, None])
+        self.dataset_stats = {
+            "name": "RawPhysStateVideo",
+            "kind": self.dataset_kind,
+            "path": str(self.samples_root),
+            "split": self.split,
+            "num_samples": len(self.entries),
+            "effective_num_samples": len(self),
+            "resolution": resolution,
+            "raw_frames": int(round(float(first_meta.get("duration_s", 0.0)) * float(first_meta.get("fps", 0)))) if first_meta.get("duration_s") else "variable",
+            "fps": first_meta.get("fps"),
+        }
+
+    @staticmethod
+    def _resolve_samples_root(dataset_base_path, split):
+        base = Path(dataset_base_path)
+        split_dir = base / split
+        if split_dir.is_dir():
+            return split_dir.resolve()
+        return base.resolve()
+
+    @staticmethod
+    def _load_json(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    @classmethod
+    def _build_prompt(cls, meta):
+        candidates = [
+            meta.get("description"),
+            meta.get("title"),
+            meta.get("family"),
+            meta.get("key"),
+        ]
+        for value in candidates:
+            text = _clean_text(value or "")
+            if text:
+                return text
+
+        object_names = []
+        for item in meta.get("objects", []):
+            name = item.get("name") or item.get("role") or item.get("shape")
+            if name:
+                object_names.append(_clean_object_name(name))
+        object_names = [name for name in object_names if name]
+        object_phrase = ", ".join(object_names[:4]) if object_names else "rigid objects"
+        return _clean_text(f"A rigid body simulation showing {object_phrase}.")
+
+    @classmethod
+    def _gather_entries(cls, samples_root):
+        entries = []
+        for meta_path in sorted(Path(samples_root).rglob("meta.json")):
+            sample_dir = meta_path.parent
+            video_path = sample_dir / "video.mp4"
+            if not video_path.exists():
+                continue
+            try:
+                meta = cls._load_json(meta_path)
+            except Exception:
+                continue
+            entries.append(
+                {
+                    "sample_dir": str(sample_dir),
+                    "meta_path": str(meta_path),
+                    "video_path": str(video_path),
+                    "prompt": cls._build_prompt(meta),
+                }
+            )
+        return entries
+
+    def __getitem__(self, index):
+        base_index = index % len(self.entries)
+        for attempt in range(5):
+            row_index = (base_index + attempt) % len(self.entries)
+            entry = self.entries[row_index]
+            try:
+                prompt = _clean_text(entry["prompt"])
+                if not prompt:
+                    raise ValueError("Raw phys-state sample is missing prompt text.")
+                video = _decode_video_path(
+                    entry["video_path"],
+                    num_frames=self.num_frames,
+                    frame_processor=self.frame_processor,
+                    require_min_frames=True,
+                )
+                return {"video": video, "prompt": prompt}
+            except Exception as exc:
+                if attempt == 4:
+                    raise RuntimeError(
+                        f"Failed to load raw phys-state sample: {entry['sample_dir']}"
+                    ) from exc
+        raise RuntimeError("Unexpected raw phys-state dataset retry fallthrough.")
+
+    def __len__(self):
+        return len(self.entries) * self.dataset_repeat
+
+
 class MixedVideoDataset(torch.utils.data.Dataset):
     """Concatenate multiple video datasets and keep their summaries together."""
 
@@ -1044,6 +1174,20 @@ class WanTI2VDataset:
         return False
 
     @staticmethod
+    def _looks_like_raw_phys_state_root(dataset_base_path):
+        base = Path(dataset_base_path)
+        candidate_dirs = [base, base / "train", base / "val", base / "test"]
+        for candidate in candidate_dirs:
+            if not candidate.is_dir():
+                continue
+            for meta_path in candidate.rglob("meta.json"):
+                sample_dir = meta_path.parent
+                if (sample_dir / "video.mp4").is_file():
+                    return True
+                break
+        return False
+
+    @staticmethod
     def _parse_data_file_keys(data_file_keys):
         if isinstance(data_file_keys, str):
             return [key.strip() for key in data_file_keys.split(",") if key.strip()]
@@ -1137,6 +1281,8 @@ class WanTI2VDataset:
             return "genesis_rigid"
         if self._looks_like_phys_state_episode_root(dataset_path):
             return "phys_state_episode"
+        if self._looks_like_raw_phys_state_root(dataset_path):
+            return "raw_phys_state_video"
         return "unified"
 
     def _build_dataset_from_spec(
@@ -1197,6 +1343,18 @@ class WanTI2VDataset:
 
         if dataset_type == "phys_state_episode":
             dataset = PhysStateEpisodeDatasetForWan(
+                dataset_base_path=dataset_path,
+                split=spec.get("split", "train"),
+                dataset_repeat=dataset_repeat,
+                max_pixels=max_pixels,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+            )
+            return {"dataset": dataset, "stats": dataset.dataset_stats}
+
+        if dataset_type == "raw_phys_state_video":
+            dataset = RawPhysStateVideoDataset(
                 dataset_base_path=dataset_path,
                 split=spec.get("split", "train"),
                 dataset_repeat=dataset_repeat,

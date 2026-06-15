@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Continue Wan2.2 TI2V LoRA training on the phys_state episode dataset.
+# Continue Wan2.2 TI2V LoRA training on the raw phys-state simulation videos.
 # Starts from the OpenVid-mixed LoRA checkpoint and keeps the train0419_reference
 # training stack unchanged apart from the dataset source and output directory.
 set -euo pipefail
 
 ACCELERATE_BIN=/data/gaoya/miniconda3/envs/wan/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/train.py
-DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/dataset_phys_state_config.json
-OUTPUT_DIR=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/phys_state_wan_lora_continue_576x1024_f24
+DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/dataset_raw_phys_state_config.json
+OUTPUT_DIR=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24
 INIT_LORA=/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors
 
 EXTRA_ARGS=()
@@ -17,7 +17,7 @@ else
   EXTRA_ARGS+=(--lora_checkpoint "${INIT_LORA}")
 fi
 
-CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
+CUDA_VISIBLE_DEVICES=1,2 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
   --diffsynth_root /home/gaoya/Code_Video/DiffSynth-Studio-main \
   --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
   --dataset_base_path "${DATASET_CONFIG}" \
@@ -45,7 +45,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --save_steps 500 \
   --benchmark_every_steps 1000 \
   --benchmark_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt \
-  --benchmark_cuda_visible_devices 6,7 \
+  --benchmark_cuda_visible_devices 1,2 \
   --benchmark_context_frames 8 \
   --benchmark_num_frames 24 \
   --benchmark_height 576 \

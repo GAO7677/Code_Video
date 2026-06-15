@@ -1,8 +1,0 @@
-[
-  {
-    "type": "phys_state_episode",
-    "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500",
-    "split": "train",
-    "repeat": 1
-  }
-]
