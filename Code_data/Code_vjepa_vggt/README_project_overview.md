@@ -212,6 +212,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
   --sampling-mode prefix \
   --save-raw
 
+
 `--checkpoint-dir` 现在既可以传权重目录，也可以直接传单个 `step_XXXXXXX.pt` 文件的绝对路径；如果传目录，脚本会自动加载该目录下最新的 `step_*.pt`。
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
