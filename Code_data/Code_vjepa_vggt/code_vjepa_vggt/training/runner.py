@@ -9,6 +9,44 @@ from accelerate.utils import DistributedDataParallelKwargs
 from tqdm import tqdm
 
 
+def _first_nonfinite_named_tensor(named_tensors: list[tuple[str, torch.Tensor]]) -> dict[str, object] | None:
+    for name, tensor in named_tensors:
+        if tensor is None:
+            continue
+        tensor_f = tensor.detach().float()
+        if tensor_f.numel() == 0:
+            continue
+        finite_mask = torch.isfinite(tensor_f)
+        if bool(finite_mask.all()):
+            continue
+        return {
+            "name": name,
+            "shape": list(tensor.shape),
+            "bad_count": int((~finite_mask).sum().item()),
+            "has_nan": bool(torch.isnan(tensor_f).any().item()),
+            "has_posinf": bool(torch.isposinf(tensor_f).any().item()),
+            "has_neginf": bool(torch.isneginf(tensor_f).any().item()),
+        }
+    return None
+
+
+def _max_abs_named_tensor(named_tensors: list[tuple[str, torch.Tensor]]) -> float:
+    max_abs = 0.0
+    for _, tensor in named_tensors:
+        if tensor is None:
+            continue
+        tensor_f = tensor.detach().float()
+        if tensor_f.numel() == 0:
+            continue
+        finite_mask = torch.isfinite(tensor_f)
+        if not bool(finite_mask.any()):
+            continue
+        value = float(tensor_f[finite_mask].abs().max().item())
+        if value > max_abs:
+            max_abs = value
+    return max_abs
+
+
 def launch_training_task(
     accelerator: Accelerator,
     model: torch.nn.Module,
@@ -55,7 +93,10 @@ def launch_training_task(
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_cfg = cfg.get("logging", {})
     log_every = int(log_cfg.get("log_every", 10))
+    save_every = int(log_cfg.get("save_every", save_every))
     use_wandb = bool(log_cfg.get("use_wandb", False))
+    nonfinite_probe = bool(log_cfg.get("nonfinite_probe", False))
+    nonfinite_probe_every = int(log_cfg.get("nonfinite_probe_every", 1))
     wandb_run = None
     if use_wandb and accelerator.is_main_process:
         import wandb
@@ -84,19 +125,59 @@ def launch_training_task(
                     )
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
+                    unwrapped = accelerator.unwrap_model(model)
+                    trainable_named_params = [
+                        (name, param)
+                        for name, param in unwrapped.named_parameters()
+                        if param.requires_grad
+                    ]
+                    if nonfinite_probe and step % max(1, nonfinite_probe_every) == 0:
+                        grad_info = _first_nonfinite_named_tensor(
+                            [(name, param.grad) for name, param in trainable_named_params]
+                        )
+                        if grad_info is not None:
+                            raise RuntimeError(
+                                "non-finite gradient detected before optimizer.step; "
+                                f"step={step + 1}, param={grad_info['name']}, "
+                                f"shape={grad_info['shape']}, bad_count={grad_info['bad_count']}, "
+                                f"has_nan={grad_info['has_nan']}, has_posinf={grad_info['has_posinf']}, "
+                                f"has_neginf={grad_info['has_neginf']}"
+                            )
                     if max_grad_norm is not None and max_grad_norm > 0:
-                        accelerator.clip_grad_norm_(accelerator.unwrap_model(model).trainable_parameters(), max_grad_norm)
+                        accelerator.clip_grad_norm_(unwrapped.trainable_parameters(), max_grad_norm)
                     optimizer.step()
+                    if nonfinite_probe and step % max(1, nonfinite_probe_every) == 0:
+                        param_info = _first_nonfinite_named_tensor(trainable_named_params)
+                        if param_info is not None:
+                            if accelerator.is_local_main_process:
+                                state = {
+                                    "step": step + 1,
+                                    "model": unwrapped.export_trainable_state_dict(),
+                                }
+                                torch.save(state, ckpt_dir / f"step_{step + 1:07d}_nonfinite.pt")
+                            raise RuntimeError(
+                                "non-finite trainable parameter detected after optimizer.step; "
+                                f"step={step + 1}, param={param_info['name']}, "
+                                f"shape={param_info['shape']}, bad_count={param_info['bad_count']}, "
+                                f"has_nan={param_info['has_nan']}, has_posinf={param_info['has_posinf']}, "
+                                f"has_neginf={param_info['has_neginf']}"
+                            )
                     optimizer.zero_grad(set_to_none=True)
             if accelerator.sync_gradients:
                 step += 1
                 progress.update(1)
                 if step % max(1, log_every) == 0:
                     loss_value = float(loss.detach().item())
-                    progress.set_postfix(loss=f"{loss_value:.4f}")
+                    unwrapped = accelerator.unwrap_model(model)
+                    trainable_named_params = [
+                        (name, param)
+                        for name, param in unwrapped.named_parameters()
+                        if param.requires_grad
+                    ]
+                    trainable_param_abs_max = _max_abs_named_tensor(trainable_named_params)
+                    progress.set_postfix(loss=f"{loss_value:.4f}", pmax=f"{trainable_param_abs_max:.4f}")
                     if accelerator.is_main_process and wandb_run is not None:
                         extra_metrics = {}
-                        unwrapped = accelerator.unwrap_model(model)
                         if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
                             extra_metrics = {
                                 key: float(value)
@@ -108,6 +189,7 @@ def launch_training_task(
                                 "train/step": step,
                                 "train/lr": float(optimizer.param_groups[0]["lr"]),
                                 "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
+                                "train/trainable_param_abs_max": float(trainable_param_abs_max),
                                 **extra_metrics,
                             },
                             step=step,

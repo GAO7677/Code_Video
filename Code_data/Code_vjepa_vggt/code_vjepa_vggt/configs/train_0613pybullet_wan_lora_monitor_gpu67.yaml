@@ -1,0 +1,77 @@
+experiment:
+  name: pybullet0613_wan_lora_monitor_gpu67
+  output_dir: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_monitor_gpu67
+  seed: 42
+
+model:
+  wan_task: ti2v-5B
+  wan_ckpt_dir: /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
+  freeze_vae: true
+  freeze_text_encoder: true
+  freeze_wan_dit: true
+  wan_lora_rank: 32
+  wan_lora_alpha: 32
+  wan_lora_dropout: 0.0
+  wan_lora_init: gaussian
+  enable_sam2_priors: true
+  sam2_prior_strategy: grounded_text_multi
+  sam2_segment_len: 8
+  sam2_enable_text_prompt: false
+  sam2_max_objects: 4
+  je_pa_variant: vitg384
+  je_pa_ckpt_dir: /data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384
+  vggt_model_path: /data/gaoya/ckpt/facebook-VGGT-1B
+  vggt_input_hw: [420, 728]
+  track_source: vggt
+  cotracker_checkpoint: /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth
+  cotracker_input_hw: [384, 512]
+  cotracker_window_len: 60
+  object_num_queries: 8
+  jepa_input_size: 384
+  jepa_patch_size: 16
+  jepa_tubelet_size: 2
+  jepa_window_radius: 1
+  latent_window_radius: 1
+  cond_proj_dim: 4096
+  min_text_tokens: 64
+
+data:
+  dataset_type: phys_state_episode
+  root: /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
+  split: train
+  resolution: [512, 896]
+  num_context_frames: 8
+  context_fraction: 0.5
+  random_context_frames: false
+  batch_size: 1
+  num_workers: 8
+  fps: 30
+
+optimization:
+  lr: 2.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  max_steps: 20000
+  grad_accum_steps: 2
+  max_grad_norm: 0.5
+  mixed_precision: fp16
+
+loss:
+  future_only: true
+  predict_type: flow_match_velocity
+  lambda_main: 1.0
+  lambda_jepa_align: 0.1
+  lambda_vggt_align: 0.0
+  lambda_vggt_iou: 0.0
+  track_iou_radius_px: 12.0
+
+logging:
+  log_every: 1
+  save_every: 5
+  nonfinite_probe: true
+  nonfinite_probe_every: 1
+  use_wandb: true
+  wandb_project: vjepa_vggt_wan
+  wandb_run_name: pybullet0613_wan_lora_monitor_gpu67
+  wandb_dir: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/logs/wandb
