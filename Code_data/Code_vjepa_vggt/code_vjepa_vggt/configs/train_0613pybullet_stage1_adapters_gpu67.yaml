@@ -40,7 +40,7 @@ data:
   num_context_frames: 12
   context_fraction: 0.5
   random_context_frames: false
-  batch_size: 6
+  batch_size: 2
   num_workers: 8
   fps: 30
 
@@ -50,7 +50,7 @@ optimization:
   betas: [0.9, 0.999]
   eps: 1.0e-8
   max_steps: 20000
-  grad_accum_steps: 1
+  grad_accum_steps: 3
   max_grad_norm: 1.0
   mixed_precision: bf16
 
