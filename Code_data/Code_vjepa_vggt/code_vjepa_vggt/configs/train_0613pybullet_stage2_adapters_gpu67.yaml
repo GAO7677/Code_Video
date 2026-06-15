@@ -13,21 +13,22 @@ model:
   init_wan_lora_from_checkpoint: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_stage1_adapters_gpu67/checkpoint.safetensors
   train_jepa: true
   train_vggt: true
-  enable_sam2_priors: true
-  sam2_prior_strategy: grounded_text_multi
+  jepa_activation_checkpointing: true
+  enable_sam2_priors: false
+  sam2_prior_strategy: disabled
   sam2_segment_len: 8
   sam2_enable_text_prompt: false
   sam2_max_objects: 4
   je_pa_variant: vitg384
   je_pa_ckpt_dir: /data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384
   vggt_model_path: /data/gaoya/ckpt/facebook-VGGT-1B
-  vggt_input_hw: [420, 728]
+  vggt_input_hw: [288, 512]
   track_source: vggt
   cotracker_checkpoint: /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth
   cotracker_input_hw: [384, 512]
   cotracker_window_len: 60
-  object_num_queries: 8
-  jepa_input_size: 384
+  object_num_queries: 4
+  jepa_input_size: 64
   jepa_patch_size: 16
   jepa_tubelet_size: 2
   jepa_window_radius: 1
@@ -39,8 +40,8 @@ data:
   dataset_type: phys_state_episode
   root: /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
   split: train
-  resolution: [704, 1280]
-  num_context_frames: 12
+  resolution: [576, 1024]
+  num_context_frames: 2
   context_fraction: 0.5
   random_context_frames: false
   batch_size: 1
@@ -48,11 +49,11 @@ data:
   fps: 30
 
 optimization:
-  lr: 1.0e-5
+  lr: 5.0e-6
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
-  max_steps: 20000
+  max_steps: 9000
   grad_accum_steps: 1
   max_grad_norm: 1.0
   mixed_precision: bf16
@@ -68,7 +69,7 @@ loss:
 
 logging:
   log_every: 10
-  save_every: 200
+  save_every: 100
   use_wandb: true
   wandb_project: vjepa_vggt_wan
   wandb_run_name: pybullet0613_stage2_adapters_gpu67

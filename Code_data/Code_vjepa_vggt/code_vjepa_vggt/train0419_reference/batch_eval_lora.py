@@ -67,6 +67,8 @@ DEFAULT_SINGLE_CASE_SEED = 42
 DEFAULT_SINGLE_CASE_CONDITIONING_MODE = "context_aware"
 WAN_SPATIAL_DIVISIBILITY = 32
 STEP_TAG_PATTERN = re.compile(r"step-(\d+)")
+OPENVID_LORA_MARKER = "openvid"
+LORA_0613_MARKER = "0613lora"
 PATH_FIELD_ORDER = [
     "sample_dir",
     "context_video_path",
@@ -389,6 +391,16 @@ def sanitize_filename(text: str) -> str:
     return safe or "sample"
 
 
+def build_method_name(lora_path: Path | None) -> str:
+    if lora_path is None:
+        return "unknown_method"
+    base_name = lora_path.parent.name
+    path_text = str(lora_path).lower()
+    if OPENVID_LORA_MARKER in path_text:
+        return f"openvid_{base_name}"
+    return f"0613lora_{base_name}"
+
+
 def build_default_output_name(context_path: Path, prompt: str) -> str:
     context_stem = sanitize_filename(context_path.stem)
     prompt_slug = sanitize_filename(prompt.lower())
@@ -673,7 +685,7 @@ def collect_cases(meta_paths: list[Path], limit: int | None) -> list[dict[str, A
             continue
         sample_id = str(meta.get("sample_id") or meta_path.parent.name)
         caption = str(meta.get("caption") or meta.get("description") or "")
-        output_name = sanitize_filename(f"{dataset_name}__{sample_id}.mp4")
+        output_name = f"{sanitize_filename(sample_id)}.mp4"
         cases.append(
             {
                 "dataset": dataset_name,
@@ -822,16 +834,22 @@ def build_case_metadata(
     benchmark_step = parse_step_tag(args.model_name)
     sidecar_path = output_path.with_suffix(".json")
     source_paths = row.get("source_paths", {})
+    method_name = build_method_name(args.lora_path)
+    sample_id = str(row["sample_id"])
+    case_key = sanitize_filename(sample_id)
+    clip_name = case_key.split("trimmed-")[-1] if "trimmed-" in case_key else case_key
+    input_first_frame = source_paths.get("first_frame_path")
+    input_context_video = source_paths.get("context_video_path")
     payload = {
-        "model_name": args.model_name,
-        "benchmark_step": benchmark_step,
-        "dataset": row["dataset"],
-        "sample_id": row["sample_id"],
-        "scenario": row.get("scenario"),
-        "seed": seed,
-        "caption": row["caption"],
-        "weights_path": str(args.lora_path) if args.lora_path is not None else None,
-        "status": status,
+        "group": "D_clean",
+        "benchmark": "physics-iq-benchmark",
+        "method_name": method_name,
+        "case_key": case_key,
+        "category": str(row["dataset"]).replace(" ", "_"),
+        "clip_name": clip_name,
+        "input_prompt": str(row["caption"]),
+        "input_image": str(input_first_frame) if isinstance(input_first_frame, str) and input_first_frame else None,
+        "input_context_video": str(input_context_video) if isinstance(input_context_video, str) and input_context_video else None,
         "generation_params": {
             "height": args.height,
             "width": args.width,
@@ -841,12 +859,23 @@ def build_case_metadata(
             "requested_output_frames": args.requested_output_frames,
             "aligned_generation_num_frames": args.num_frames,
             "context_frames": args.context_frames,
-            "used_context_frames": used_context_frames,
             "negative_prompt": args.negative_prompt,
             "conditioning_mode": args.conditioning_mode,
-            "task": "tv2v_meta_small_benchmark",
+            "used_context_frames": used_context_frames,
         },
+        "source_video": str(source_paths.get("full_video_path")) if isinstance(source_paths.get("full_video_path"), str) and source_paths.get("full_video_path") else None,
+        "source_meta_json": str(source_paths.get("meta_json_path")) if isinstance(source_paths.get("meta_json_path"), str) and source_paths.get("meta_json_path") else None,
+        "output_video": str(output_path),
+        "output_json": str(sidecar_path),
+        "status": status,
+        "seed": seed,
         "runtime": {
+            "model_name": args.model_name,
+            "benchmark_step": benchmark_step,
+            "dataset": row["dataset"],
+            "sample_id": sample_id,
+            "scenario": row.get("scenario"),
+            "weights_path": str(args.lora_path) if args.lora_path is not None else None,
             "index_in_sorted_list": index,
             "shard_id": args.shard_id,
             "num_shards": args.num_shards,
@@ -914,7 +943,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
         output_path = (
             Path(output_override)
             if isinstance(output_override, str) and output_override
-            else generated_dir / row["output_name"]
+            else generated_dir / build_method_name(args.lora_path) / row["output_name"]
         )
         sidecar_path = output_path.with_suffix(".json")
         context_path = Path(row["context_path"])
@@ -1284,7 +1313,7 @@ def find_selected_video_paths(generated_dir: Path, entries: list[dict[str, Any]]
             seen_datasets.add(dataset)
     if selected:
         return selected
-    for video_path in sorted(generated_dir.glob("*.mp4"))[:2]:
+    for video_path in sorted(generated_dir.rglob("*.mp4"))[:2]:
         selected[video_path.stem] = str(video_path)
     return selected
 

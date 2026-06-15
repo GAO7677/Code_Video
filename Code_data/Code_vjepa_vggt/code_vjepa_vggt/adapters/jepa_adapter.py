@@ -34,6 +34,7 @@ class JEPAPatchAdapter(nn.Module):
         tubelet_size: int = 2,
         model_name: str = "vit_giant_xformers",
         pred_embed_dim: int = 384,
+        use_activation_checkpointing: bool = False,
         trainable: bool = False,
     ) -> None:
         super().__init__()
@@ -49,10 +50,10 @@ class JEPAPatchAdapter(nn.Module):
             num_frames=num_frames,
             tubelet_size=tubelet_size,
             uniform_power=False,
-            use_sdpa=False,
+            use_sdpa=True,
             use_silu=False,
             wide_silu=True,
-            use_activation_checkpointing=False,
+            use_activation_checkpointing=bool(use_activation_checkpointing),
             is_causal=False,
             init_type="default",
             img_temporal_dim_size=None,

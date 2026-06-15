@@ -100,6 +100,7 @@ class ContextVideoTrainer(nn.Module):
             num_frames=int(data_cfg["num_context_frames"]),
             patch_size=int(model_cfg["jepa_patch_size"]),
             tubelet_size=int(model_cfg["jepa_tubelet_size"]),
+            use_activation_checkpointing=bool(model_cfg.get("jepa_activation_checkpointing", False)),
             trainable=bool(model_cfg.get("train_jepa", False)),
         ).to(self.device_obj)
         self.vggt_adapter = VGGTTrackAdapter(
@@ -259,6 +260,17 @@ class ContextVideoTrainer(nn.Module):
         num_context_frames: torch.Tensor,
         captions: list[str],
     ) -> tuple[torch.Tensor | None, list[str], list[str], list[dict[str, Any]]]:
+        if not self.enable_sam2_priors or self.sam2_tracker is None:
+            batch_size = int(context_videos.shape[0])
+            prior_debugs = [
+                {
+                    "strategy": "disabled",
+                    "prior_source": "uniform_queries",
+                    "object_count": 0,
+                }
+                for _ in range(batch_size)
+            ]
+            return None, ["uniform_queries"] * batch_size, ["disabled"] * batch_size, prior_debugs
         if self.sam2_tracker is None:
             raise RuntimeError("SAM2 tracker is required to build query priors")
 

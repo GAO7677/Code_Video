@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from safetensors.torch import load_file as load_safetensors_file
 
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
@@ -219,7 +220,10 @@ def _resolve_checkpoint_file(checkpoint_path: Path) -> Path:
 
 def _load_trainable_state(checkpoint_path: Path) -> dict[str, torch.Tensor]:
     latest = _resolve_checkpoint_file(checkpoint_path)
-    state = torch.load(latest, map_location="cpu")
+    if latest.suffix == ".safetensors":
+        state = load_safetensors_file(str(latest), device="cpu")
+        return state
+    state = torch.load(latest, map_location="cpu", weights_only=False)
     if "model" in state and isinstance(state["model"], dict):
         return state["model"]
     if isinstance(state, dict):
