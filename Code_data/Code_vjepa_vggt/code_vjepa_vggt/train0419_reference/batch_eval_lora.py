@@ -122,6 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--negative_prompt", default=DEFAULT_NEGATIVE_PROMPT)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--no_metadata", action="store_true")
 
     parser.add_argument("--multi_gpu", action="store_true")
     parser.add_argument("--num_shards", type=int, default=1)
@@ -185,6 +186,10 @@ def validate_args(args: argparse.Namespace) -> None:
     if has_single_mode:
         if args.context_path is None or not str(args.prompt or "").strip():
             raise ValueError("Single-case mode requires --context_path and non-empty --prompt.")
+    if args.no_metadata and not has_single_mode:
+        raise ValueError("--no_metadata is only supported in single-case mode.")
+    if args.no_metadata and args.output_video_path is None:
+        raise ValueError("--no_metadata requires --output_video_path.")
 
 
 def write_json(path: Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
@@ -1324,6 +1329,39 @@ def main() -> None:
             f"while saving only the first {args.requested_output_frames} frames."
         )
         args.num_frames = aligned_num_frames
+
+    if args.no_metadata:
+        pipe = build_pipeline(args.wan_root, args.device, args.lora_path)
+        row = build_single_case(args)
+        output_path = Path(row["output_path_override"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        context_path = Path(row["context_path"])
+        assert_exists(context_path, "Context video")
+        first_frame_path = None
+        raw_first_frame_path = row.get("source_paths", {}).get("first_frame_path")
+        if isinstance(raw_first_frame_path, str) and raw_first_frame_path:
+            first_frame_path = Path(raw_first_frame_path)
+        video, _ = generate_one_video(
+            pipe=pipe,
+            context_path=context_path,
+            first_frame_path=first_frame_path,
+            prompt=row["caption"],
+            negative_prompt=args.negative_prompt,
+            seed=args.seed,
+            height=args.height,
+            width=args.width,
+            num_frames=args.num_frames,
+            fps=args.fps,
+            cfg_scale=args.cfg_scale,
+            num_inference_steps=args.num_inference_steps,
+            context_frames=args.context_frames,
+            output_num_frames=args.requested_output_frames,
+            context_resize_mode=row.get("context_resize_mode", "crop"),
+            conditioning_mode=args.conditioning_mode,
+        )
+        save_video(video, str(output_path), fps=args.fps, quality=args.quality)
+        print(output_path)
+        return
 
     generated_dir = args.output_root
     metadata_dir = args.runtime_root / "metadata" / args.model_name

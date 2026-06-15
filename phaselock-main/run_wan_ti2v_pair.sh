@@ -1,31 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# /home/gaoya/Code_Video/phaselock-main/run_wan_ti2v_pair.sh
 
+# Edit only these two variables for a new run.
+INPUT_VIDEO="/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4"
+PROMPT="A sphere rolls after landing on the platform and leaves the support surface, testing support switching."
 
-# sh /home/gaoya/Code_Video/phaselock-main/run_wan_ti2v_pair.sh
 GPU_ID=7
-
-
-# INPUT_VIDEO="/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4"
-# PROMPT="A sphere rolls after landing on the platform and leaves the support surface, testing support switching."
-
-PROMPT = "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement."
-INPUT_VIDEO = "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2p5s_3p5s.mp4"
-
-
-
 SEED=42
 SAMPLE_STEPS=20
 FEW_STEPS=2
-FRAME_NUM=50
+FRAME_NUM=49
 SIZE="1280*704"
 
-REPO_ROOT="/home/gaoya/Code_Video/phaselock-main/"
+REPO_ROOT="/home/gaoya/Code_Video/phaselock-main"
 WAN_ENV_PYTHON="/data/gaoya/miniconda3/envs/wan/bin/python"
 WAN_CKPT_DIR="/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"
 PHASELOCK_SCRIPT="${REPO_ROOT}/code/scripts/wan_ti2v_phaselock.py"
 BASELINE_SCRIPT="${REPO_ROOT}/Wan2.2-main/generate.py"
-OUTPUT_DIR="${REPO_ROOT}/outputs"
+OUTPUT_DIR="/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/AAAphaselock"
 
 mkdir -p "${OUTPUT_DIR}"
+
+if [ ! -f "${INPUT_VIDEO}" ]; then
+  echo "Error: input video not found: ${INPUT_VIDEO}" >&2
+  exit 1
+fi
+
+if [ $(((FRAME_NUM - 1) % 4)) -ne 0 ]; then
+  echo "Error: FRAME_NUM must satisfy 4n+1 for Wan TI2V, got ${FRAME_NUM}." >&2
+  echo "Examples of valid values: 49, 81, 121." >&2
+  exit 1
+fi
 
 BASENAME="$(basename "${INPUT_VIDEO}")"
 BASENAME="${BASENAME%.*}"

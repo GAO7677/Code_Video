@@ -31,8 +31,11 @@ CODE_DIR = THIS_FILE.parents[1]
 REPO_ROOT = CODE_DIR.parent
 WAN_REPO_DIR = REPO_ROOT / "Wan2.2-main"
 
-if str(WAN_REPO_DIR) not in sys.path:
-    sys.path.insert(0, str(WAN_REPO_DIR))
+# Force local repository modules ahead of any site-packages install.
+for path in (str(CODE_DIR), str(WAN_REPO_DIR)):
+    if path in sys.path:
+        sys.path.remove(path)
+    sys.path.insert(0, path)
 
 from phaselock.utils import set_seed  # noqa: E402
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, WAN_CONFIGS  # noqa: E402
