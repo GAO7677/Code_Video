@@ -9,6 +9,7 @@ model:
   freeze_vae: true
   freeze_text_encoder: true
   freeze_wan_dit: true
+  init_wan_lora_from_checkpoint: /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors
   enable_sam2_priors: true
   sam2_prior_strategy: grounded_text_multi
   sam2_segment_len: 8
@@ -39,7 +40,7 @@ data:
   num_context_frames: 12
   context_fraction: 0.5
   random_context_frames: false
-  batch_size: 4
+  batch_size: 6
   num_workers: 8
   fps: 30
 
@@ -64,7 +65,7 @@ loss:
 
 logging:
   log_every: 10
-  save_every: 200
+  save_every: 100
   use_wandb: true
   wandb_project: vjepa_vggt_wan
   wandb_run_name: pybullet0613_stage1_adapters_gpu67
