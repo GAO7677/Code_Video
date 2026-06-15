@@ -1,0 +1,22 @@
+{
+  "model_name": "openvid-step-010000",
+  "lora_path": "/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors",
+  "generated_dir": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+  "metadata_dir": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/metadata/openvid-step-010000",
+  "runtime_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+  "meta_list_path": "None",
+  "eval_csv": null,
+  "num_entries_with_metrics": 0,
+  "summary": {
+    "num_cases": 1,
+    "num_generated": 1,
+    "num_failed": 0,
+    "num_skipped_existing": 0,
+    "success_rate": 1.0,
+    "dataset_cases_physv_0613pybullet_raw": 1,
+    "dataset_success_rate_physv_0613pybullet_raw": 1.0
+  },
+  "selected_videos": {
+    "physv_0613pybullet_raw": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step010000_0002p5s3p5.mp4"
+  }
+}

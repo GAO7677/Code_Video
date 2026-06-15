@@ -49,6 +49,22 @@ from tools.seed import seed_everything  # noqa: E402
 
 
 DEFAULT_NEGATIVE_PROMPT = ""
+DEFAULT_SINGLE_CASE_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp")
+DEFAULT_SINGLE_CASE_LORA_PATH = Path(
+    "/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors"
+)
+DEFAULT_SINGLE_CASE_MODEL_NAME = "step-010000"
+DEFAULT_SINGLE_CASE_DATASET_NAME = "single_case"
+DEFAULT_SINGLE_CASE_SAMPLE_ID = "single_case"
+DEFAULT_SINGLE_CASE_HEIGHT = 704
+DEFAULT_SINGLE_CASE_WIDTH = 1280
+DEFAULT_SINGLE_CASE_NUM_FRAMES = 40
+DEFAULT_SINGLE_CASE_CONTEXT_FRAMES = 7
+DEFAULT_SINGLE_CASE_FPS = 30
+DEFAULT_SINGLE_CASE_NUM_INFERENCE_STEPS = 50
+DEFAULT_SINGLE_CASE_CFG_SCALE = 5.0
+DEFAULT_SINGLE_CASE_SEED = 42
+DEFAULT_SINGLE_CASE_CONDITIONING_MODE = "context_aware"
 WAN_SPATIAL_DIVISIBILITY = 32
 STEP_TAG_PATTERN = re.compile(r"step-(\d+)")
 PATH_FIELD_ORDER = [
@@ -71,16 +87,16 @@ def parse_args() -> argparse.Namespace:
         description="Run a small meta.json-driven benchmark for the context-aware Wan LoRA checkpoint."
     )
     parser.add_argument("--wan_root", type=Path, default=MODEL_ROOT)
-    parser.add_argument("--output_root", type=Path, default=None)
+    parser.add_argument("--output_root", type=Path, default=DEFAULT_SINGLE_CASE_OUTPUT_ROOT)
     parser.add_argument("--runtime_root", type=Path, default=None)
-    parser.add_argument("--lora_path", type=Path, default=None)
+    parser.add_argument("--lora_path", type=Path, default=DEFAULT_SINGLE_CASE_LORA_PATH)
     parser.add_argument("--meta_list_path", type=Path, default=None)
     parser.add_argument("--meta_json_path", type=Path, default=None)
     parser.add_argument("--context_path", type=Path, default=None)
     parser.add_argument("--output_video_path", type=Path, default=None)
     parser.add_argument("--prompt", type=str, default=None)
-    parser.add_argument("--sample_id", type=str, default="single_case")
-    parser.add_argument("--dataset_name", type=str, default="single_case")
+    parser.add_argument("--sample_id", type=str, default=DEFAULT_SINGLE_CASE_SAMPLE_ID)
+    parser.add_argument("--dataset_name", type=str, default=DEFAULT_SINGLE_CASE_DATASET_NAME)
     parser.add_argument("--future_gt_path", type=Path, default=None)
     parser.add_argument("--full_video_path", type=Path, default=None)
     parser.add_argument("--first_frame_path", type=Path, default=None)
@@ -88,21 +104,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--conditioning_mode",
         choices=["context_aware", "input_image_only"],
-        default="context_aware",
+        default=DEFAULT_SINGLE_CASE_CONDITIONING_MODE,
     )
 
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--height", type=int, default=720)
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--num_frames", type=int, default=161)
-    parser.add_argument("--context_frames", type=int, default=8)
+    parser.add_argument("--height", type=int, default=DEFAULT_SINGLE_CASE_HEIGHT)
+    parser.add_argument("--width", type=int, default=DEFAULT_SINGLE_CASE_WIDTH)
+    parser.add_argument("--fps", type=int, default=DEFAULT_SINGLE_CASE_FPS)
+    parser.add_argument("--num_frames", type=int, default=DEFAULT_SINGLE_CASE_NUM_FRAMES)
+    parser.add_argument("--context_frames", type=int, default=DEFAULT_SINGLE_CASE_CONTEXT_FRAMES)
 
-    parser.add_argument("--num_inference_steps", type=int, default=50)
-    parser.add_argument("--cfg_scale", type=float, default=5.0)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num_inference_steps", type=int, default=DEFAULT_SINGLE_CASE_NUM_INFERENCE_STEPS)
+    parser.add_argument("--cfg_scale", type=float, default=DEFAULT_SINGLE_CASE_CFG_SCALE)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SINGLE_CASE_SEED)
     parser.add_argument("--quality", type=int, default=5)
-    parser.add_argument("--model_name", required=True)
+    parser.add_argument("--model_name", default=DEFAULT_SINGLE_CASE_MODEL_NAME)
     parser.add_argument("--negative_prompt", default=DEFAULT_NEGATIVE_PROMPT)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
@@ -167,10 +183,8 @@ def validate_args(args: argparse.Namespace) -> None:
     if has_meta_json_mode and args.output_root is None and args.output_video_path is None:
         raise ValueError("Provide --output_root or --output_video_path when using --meta_json_path.")
     if has_single_mode:
-        if args.context_path is None or args.output_video_path is None or not str(args.prompt or "").strip():
-            raise ValueError(
-                "Single-case mode requires --context_path, --output_video_path, and non-empty --prompt."
-            )
+        if args.context_path is None or not str(args.prompt or "").strip():
+            raise ValueError("Single-case mode requires --context_path and non-empty --prompt.")
 
 
 def write_json(path: Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
@@ -368,6 +382,21 @@ def load_input_image(
 def sanitize_filename(text: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", text).strip("._")
     return safe or "sample"
+
+
+def build_default_output_name(context_path: Path, prompt: str) -> str:
+    context_stem = sanitize_filename(context_path.stem)
+    prompt_slug = sanitize_filename(prompt.lower())
+    if len(prompt_slug) > 48:
+        prompt_slug = prompt_slug[:48].rstrip("._-")
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
+    return f"{context_stem}__{prompt_slug}__{prompt_hash}.mp4"
+
+
+def build_default_sample_id(context_path: Path, prompt: str) -> str:
+    context_stem = sanitize_filename(context_path.stem)
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
+    return f"{context_stem}__{prompt_hash}"
 
 
 def parse_step_tag(model_name: str) -> int | None:
@@ -664,9 +693,15 @@ def collect_cases(meta_paths: list[Path], limit: int | None) -> list[dict[str, A
 
 def build_single_case(args: argparse.Namespace) -> dict[str, Any]:
     dataset_name = str(args.dataset_name).strip() or "single_case"
-    output_video_path = Path(args.output_video_path).expanduser().resolve()
+    context_path = Path(args.context_path).expanduser().resolve()
+    output_root = Path(args.output_root).expanduser().resolve()
+    output_video_path = (
+        Path(args.output_video_path).expanduser().resolve()
+        if args.output_video_path is not None
+        else output_root / build_default_output_name(context_path, str(args.prompt).strip())
+    )
     source_paths: dict[str, str] = {
-        "context_video_path": str(Path(args.context_path).expanduser().resolve()),
+        "context_video_path": str(context_path),
     }
     if args.meta_json_path is not None:
         source_paths["meta_json_path"] = str(Path(args.meta_json_path).expanduser().resolve())
@@ -678,7 +713,8 @@ def build_single_case(args: argparse.Namespace) -> dict[str, Any]:
         source_paths["first_frame_path"] = str(Path(args.first_frame_path).expanduser().resolve())
     return {
         "dataset": dataset_name,
-        "sample_id": str(args.sample_id).strip() or output_video_path.stem,
+        "sample_id": str(args.sample_id).strip()
+        or build_default_sample_id(context_path, str(args.prompt).strip()),
         "caption": str(args.prompt).strip(),
         "context_path": source_paths["context_video_path"],
         "future_gt_path": source_paths.get("future_gt_video_path"),
@@ -1255,6 +1291,8 @@ def main() -> None:
             args.output_root = Path(args.output_video_path).expanduser().resolve().parent
         elif args.meta_json_path is not None:
             args.output_root = Path.cwd() / "generated_videos"
+        else:
+            args.output_root = DEFAULT_SINGLE_CASE_OUTPUT_ROOT
     if args.runtime_root is None:
         args.runtime_root = args.output_root
     assert_exists(args.wan_root, "Wan root")

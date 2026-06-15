@@ -1,0 +1,93 @@
+{
+  "args": {
+    "wan_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+    "output_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+    "runtime_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+    "lora_path": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+    "meta_list_path": null,
+    "meta_json_path": null,
+    "context_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2p5s_3p5s.mp4",
+    "output_video_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step00500_0002p5s3p5.mp4",
+    "prompt": "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement.,",
+    "sample_id": "sample_000335",
+    "dataset_name": "physv_0613pybullet_raw",
+    "future_gt_path": null,
+    "full_video_path": null,
+    "first_frame_path": null,
+    "context_resize_mode": "auto",
+    "conditioning_mode": "context_aware",
+    "device": "cuda",
+    "height": 576,
+    "width": 1024,
+    "fps": 30,
+    "num_frames": 25,
+    "context_frames": 8,
+    "num_inference_steps": 50,
+    "cfg_scale": 5.0,
+    "seed": 42,
+    "quality": 5,
+    "model_name": "step-000500",
+    "negative_prompt": "",
+    "overwrite": false,
+    "limit": null,
+    "multi_gpu": false,
+    "num_shards": 1,
+    "shard_id": 0,
+    "worker": false,
+    "requested_output_frames": 24
+  },
+  "environment": {
+    "timestamp_utc": "2026-06-15T17:37:46.441005+00:00",
+    "python": "3.10.19 (main, Oct 21 2025, 16:43:05) [GCC 11.2.0]",
+    "platform": "Linux-5.15.0-181-generic-x86_64-with-glibc2.35",
+    "torch_version": "2.7.1+cu128",
+    "torch_cuda_version": "12.8",
+    "torch_cudnn_version": 90701,
+    "cuda_available": true,
+    "device_count": 1,
+    "device": "cuda",
+    "multi_gpu": false,
+    "num_shards": 1,
+    "shard_id": 0,
+    "output_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+    "runtime_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow",
+    "context_frames": 8,
+    "meta_list_path": "None",
+    "repos": {
+      "train0419_root": "/home/gaoya/Code_Video/Code_data/Code_train/train_0419",
+      "train0419_commit": "a6f88ca5032a3a1528e79da52137bc2bc62d6703"
+    },
+    "lora": {
+      "path": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+      "exists": true,
+      "sha256": "dc23fc99d859713f18569689d875ca257177980cd37b6475141bcd344bc280a7"
+    },
+    "model_files": {
+      "diffusion_pytorch_model-00001-of-00003.safetensors": {
+        "path": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/diffusion_pytorch_model-00001-of-00003.safetensors",
+        "exists": true,
+        "sha256": "720b06c4ade5e87c1246bba8ac95b664c638749cd9b102cf84d823bb44c026a1"
+      },
+      "diffusion_pytorch_model-00002-of-00003.safetensors": {
+        "path": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/diffusion_pytorch_model-00002-of-00003.safetensors",
+        "exists": true,
+        "sha256": "09ec5ef720d8396f6cfa51fbdcbdb2327e37722afd6e89fd38f1e7e5e782c283"
+      },
+      "diffusion_pytorch_model-00003-of-00003.safetensors": {
+        "path": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/diffusion_pytorch_model-00003-of-00003.safetensors",
+        "exists": true,
+        "sha256": "6306f7894c345de9093ad588771c2abfaeb668a81f7a6d9a918bd26ba3568e49"
+      },
+      "models_t5_umt5-xxl-enc-bf16.pth": {
+        "path": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth",
+        "exists": true,
+        "sha256": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+      },
+      "Wan2.2_VAE.pth": {
+        "path": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B/Wan2.2_VAE.pth",
+        "exists": true,
+        "sha256": "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"
+      }
+    }
+  }
+}

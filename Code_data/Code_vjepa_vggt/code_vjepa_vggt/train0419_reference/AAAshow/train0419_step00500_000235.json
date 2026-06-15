@@ -1,0 +1,73 @@
+{
+  "model_name": "step-000500",
+  "benchmark_step": 500,
+  "dataset": "physv_0613pybullet_raw",
+  "sample_id": "sample_000335",
+  "scenario": null,
+  "seed": 42,
+  "caption": "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement.,",
+  "weights_path": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+  "status": "generated",
+  "generation_params": {
+    "height": 576,
+    "width": 1024,
+    "fps": 30,
+    "num_inference_steps": 50,
+    "cfg_scale": 5.0,
+    "requested_output_frames": 24,
+    "aligned_generation_num_frames": 25,
+    "context_frames": 8,
+    "used_context_frames": 8,
+    "negative_prompt": "",
+    "conditioning_mode": "context_aware",
+    "task": "tv2v_meta_small_benchmark"
+  },
+  "runtime": {
+    "index_in_sorted_list": 0,
+    "shard_id": 0,
+    "num_shards": 1
+  },
+  "paths": {
+    "context_video_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4",
+    "input_path": [
+      "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4",
+      "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4"
+    ],
+    "input_roles": [
+      {
+        "role": "input_image",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4",
+        "note": "first frame extracted from context video at runtime"
+      },
+      {
+        "role": "context_video",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4"
+      }
+    ],
+    "output_video_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step00500_000235.mp4",
+    "output_json_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step00500_000235.json"
+  },
+  "model_inputs": {
+    "conditioning_mode": "context_aware",
+    "pipeline_kwargs": [
+      "input_image",
+      "context_video"
+    ],
+    "source_conditions": [
+      {
+        "role": "input_image",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4",
+        "note": "first frame extracted from context video at runtime"
+      },
+      {
+        "role": "context_video",
+        "path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2s_3s.mp4"
+      }
+    ],
+    "used_context_frames": 8,
+    "notes": [
+      "input_image is the first context frame passed separately",
+      "context_video is the resized context frame sequence"
+    ]
+  }
+}
