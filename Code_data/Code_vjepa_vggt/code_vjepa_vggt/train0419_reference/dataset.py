@@ -3,6 +3,7 @@
 import io
 import hashlib
 import json
+import numpy as np
 import os
 import random
 import struct
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import imageio
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 try:
@@ -812,6 +814,133 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
         return len(self.entries) * self.dataset_repeat
 
 
+class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
+    """Read phys-state episode npz/json windows as Wan TI2V training samples."""
+
+    dataset_kind = "phys_state_episode"
+
+    def __init__(
+        self,
+        dataset_base_path,
+        split="train",
+        dataset_repeat=1,
+        max_pixels=1024 * 1024,
+        height=None,
+        width=None,
+        num_frames=24,
+    ):
+        del max_pixels
+        self.dataset_base_path = os.path.abspath(dataset_base_path)
+        self.split = str(split).strip().lower()
+        self.dataset_repeat = int(dataset_repeat)
+        self.height = int(height) if height is not None else None
+        self.width = int(width) if width is not None else None
+        self.num_frames = int(num_frames)
+        self.load_from_cache = False
+
+        self.samples_root = self._resolve_samples_root(self.dataset_base_path, self.split)
+        self.entries = sorted(self.samples_root.glob("*.json"))
+        if not self.entries:
+            raise FileNotFoundError(
+                f"No phys-state episode json files found under {self.samples_root}"
+            )
+
+        preview_meta = self._load_json(self.entries[0])
+        preview_npz = self.entries[0].with_suffix(".npz")
+        preview_arrays = np.load(preview_npz)
+        preview_frames = preview_arrays["full_frames"]
+        raw_height = int(preview_frames.shape[2])
+        raw_width = int(preview_frames.shape[3])
+        effective_height = int(self.height) if self.height is not None else raw_height
+        effective_width = int(self.width) if self.width is not None else raw_width
+        self.dataset_stats = {
+            "name": "PhysStateEpisode",
+            "kind": self.dataset_kind,
+            "path": str(self.samples_root),
+            "split": self.split,
+            "num_samples": len(self.entries),
+            "effective_num_samples": len(self),
+            "resolution": [effective_width, effective_height],
+            "raw_frames": int(preview_frames.shape[0]),
+            "sample_id": preview_meta.get("sample_id"),
+        }
+
+    @staticmethod
+    def _resolve_samples_root(dataset_base_path, split):
+        base = Path(dataset_base_path)
+        split_dir = base / split
+        if split_dir.is_dir():
+            return split_dir.resolve()
+        return base.resolve()
+
+    @staticmethod
+    def _load_json(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _resize_video_tensor(self, frames_tchw):
+        if self.height is None or self.width is None:
+            return frames_tchw
+        return F.interpolate(
+            frames_tchw,
+            size=(self.height, self.width),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    @staticmethod
+    def _tensor_to_pil_frames(frames_tchw):
+        frames = []
+        for frame in frames_tchw:
+            frame_u8 = (
+                frame.detach()
+                .clamp(0.0, 1.0)
+                .mul(255.0)
+                .round()
+                .to(torch.uint8)
+                .permute(1, 2, 0)
+                .cpu()
+                .numpy()
+            )
+            frames.append(Image.fromarray(frame_u8, mode="RGB"))
+        return frames
+
+    def __getitem__(self, index):
+        base_index = index % len(self.entries)
+        for attempt in range(5):
+            row_index = (base_index + attempt) % len(self.entries)
+            meta_path = self.entries[row_index]
+            npz_path = meta_path.with_suffix(".npz")
+            try:
+                meta = self._load_json(meta_path)
+                arrays = np.load(npz_path)
+                full_frames = torch.from_numpy(arrays["full_frames"]).float()
+                if full_frames.ndim != 4 or full_frames.shape[1] != 3:
+                    raise ValueError(
+                        f"Expected full_frames shape [T,3,H,W], got {tuple(full_frames.shape)}"
+                    )
+                if full_frames.shape[0] < self.num_frames:
+                    raise ValueError(
+                        f"Phys-state sample has only {full_frames.shape[0]} frames, fewer than requested {self.num_frames}."
+                    )
+                full_frames = full_frames[: self.num_frames]
+                full_frames = self._resize_video_tensor(full_frames)
+                video = self._tensor_to_pil_frames(full_frames)
+                prompt = _clean_text(meta.get("prompt", ""))
+                if not prompt:
+                    raise ValueError("Phys-state sample is missing prompt text.")
+                return {"video": video, "prompt": prompt}
+            except Exception as exc:
+                if attempt == 4:
+                    raise RuntimeError(
+                        f"Failed to load phys-state sample: {meta_path}"
+                    ) from exc
+        raise RuntimeError("Unexpected phys-state dataset retry fallthrough.")
+
+    def __len__(self):
+        return len(self.entries) * self.dataset_repeat
+
+
 class MixedVideoDataset(torch.utils.data.Dataset):
     """Concatenate multiple video datasets and keep their summaries together."""
 
@@ -902,6 +1031,17 @@ class WanTI2VDataset:
         if (base / "train" / "rigid").is_dir():
             return True
         return (base / "single_object_preview").is_dir() or (base / "interaction_pair_plus_dynamic").is_dir()
+
+    @staticmethod
+    def _looks_like_phys_state_episode_root(dataset_base_path):
+        base = Path(dataset_base_path)
+        candidate_dirs = [base, base / "train", base / "val", base / "test"]
+        for candidate in candidate_dirs:
+            if not candidate.is_dir():
+                continue
+            if next(candidate.glob("*.json"), None) is not None and next(candidate.glob("*.npz"), None) is not None:
+                return True
+        return False
 
     @staticmethod
     def _parse_data_file_keys(data_file_keys):
@@ -995,6 +1135,8 @@ class WanTI2VDataset:
             return "movi_d"
         if self._looks_like_genesis_rigid_root(dataset_path):
             return "genesis_rigid"
+        if self._looks_like_phys_state_episode_root(dataset_path):
+            return "phys_state_episode"
         return "unified"
 
     def _build_dataset_from_spec(
@@ -1050,6 +1192,18 @@ class WanTI2VDataset:
                 heldout_seed=spec.get("heldout_seed", GENESIS_HELDOUT_DEFAULT_SEED),
                 heldout_count=spec.get("heldout_count", GENESIS_HELDOUT_DEFAULT_COUNT),
                 heldout_ids=spec.get("heldout_ids"),
+            )
+            return {"dataset": dataset, "stats": dataset.dataset_stats}
+
+        if dataset_type == "phys_state_episode":
+            dataset = PhysStateEpisodeDatasetForWan(
+                dataset_base_path=dataset_path,
+                split=spec.get("split", "train"),
+                dataset_repeat=dataset_repeat,
+                max_pixels=max_pixels,
+                height=height,
+                width=width,
+                num_frames=num_frames,
             )
             return {"dataset": dataset, "stats": dataset.dataset_stats}
 
