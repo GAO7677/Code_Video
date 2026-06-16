@@ -166,34 +166,33 @@ def launch_training_task(
             if accelerator.sync_gradients:
                 step += 1
                 progress.update(1)
-                if step % max(1, log_every) == 0:
-                    loss_value = float(loss.detach().item())
-                    unwrapped = accelerator.unwrap_model(model)
-                    trainable_named_params = [
-                        (name, param)
-                        for name, param in unwrapped.named_parameters()
-                        if param.requires_grad
-                    ]
-                    trainable_param_abs_max = _max_abs_named_tensor(trainable_named_params)
-                    progress.set_postfix(loss=f"{loss_value:.4f}", pmax=f"{trainable_param_abs_max:.4f}")
-                    if accelerator.is_main_process and wandb_run is not None:
-                        extra_metrics = {}
-                        if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
-                            extra_metrics = {
-                                key: float(value)
-                                for key, value in unwrapped.last_train_metrics.items()
-                            }
-                        wandb_run.log(
-                            {
-                                "train/loss": loss_value,
-                                "train/step": step,
-                                "train/lr": float(optimizer.param_groups[0]["lr"]),
-                                "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
-                                "train/trainable_param_abs_max": float(trainable_param_abs_max),
-                                **extra_metrics,
-                            },
-                            step=step,
-                        )
+                loss_value = float(loss.detach().item())
+                unwrapped = accelerator.unwrap_model(model)
+                trainable_named_params = [
+                    (name, param)
+                    for name, param in unwrapped.named_parameters()
+                    if param.requires_grad
+                ]
+                trainable_param_abs_max = _max_abs_named_tensor(trainable_named_params)
+                progress.set_postfix(loss=f"{loss_value:.4f}", pmax=f"{trainable_param_abs_max:.4f}")
+                if accelerator.is_main_process and wandb_run is not None:
+                    extra_metrics = {}
+                    if hasattr(unwrapped, "last_train_metrics") and isinstance(unwrapped.last_train_metrics, dict):
+                        extra_metrics = {
+                            key: float(value)
+                            for key, value in unwrapped.last_train_metrics.items()
+                        }
+                    wandb_run.log(
+                        {
+                            "train/loss": loss_value,
+                            "train/step": step,
+                            "train/lr": float(optimizer.param_groups[0]["lr"]),
+                            "train/loss_is_finite": float(torch.isfinite(loss.detach()).item()),
+                            "train/trainable_param_abs_max": float(trainable_param_abs_max),
+                            **extra_metrics,
+                        },
+                        step=step,
+                    )
                 if accelerator.is_local_main_process and step % max(1, save_every) == 0:
                     unwrapped = accelerator.unwrap_model(model)
                     state = {

@@ -50,6 +50,11 @@ class ObjectTubeProjector(nn.Module):
             return
         self.latent_proj = nn.Linear(latent_dim, self.out_dim).to(device)
 
+    def _ensure_jepa_proj(self, jepa_dim: int, device: torch.device) -> None:
+        if self.jepa_proj.in_features == jepa_dim:
+            return
+        self.jepa_proj = nn.Linear(jepa_dim, self.out_dim).to(device)
+
     @staticmethod
     def _time_indices(src_frames: int, dst_frames: int, device: torch.device) -> torch.Tensor:
         if dst_frames <= 1:
@@ -171,6 +176,14 @@ class ObjectTubeProjector(nn.Module):
                 frame_valid_mask=latent_valid,
             )
 
+            expected_jepa_dim = int(self.jepa_proj.in_features)
+            if int(jepa_local.shape[-1]) != expected_jepa_dim:
+                actual_jepa_dim = int(jepa_local.shape[-1])
+                if actual_jepa_dim % expected_jepa_dim == 0:
+                    fold = actual_jepa_dim // expected_jepa_dim
+                    jepa_local = jepa_local.reshape(*jepa_local.shape[:-1], fold, expected_jepa_dim).mean(dim=-2)
+                else:
+                    self._ensure_jepa_proj(actual_jepa_dim, jepa_local.device)
             jepa_tokens = self.jepa_proj(torch.nan_to_num(jepa_local, nan=0.0, posinf=0.0, neginf=0.0))
             self._ensure_latent_proj(latent_local.shape[-1], latent_local.device)
             latent_tokens = self.latent_proj(torch.nan_to_num(latent_local, nan=0.0, posinf=0.0, neginf=0.0))

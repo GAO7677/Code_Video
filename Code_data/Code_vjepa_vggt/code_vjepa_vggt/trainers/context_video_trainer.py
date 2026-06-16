@@ -132,6 +132,8 @@ class ContextVideoTrainer(nn.Module):
             jepa_window_radius=int(model_cfg["jepa_window_radius"]),
             latent_window_radius=int(model_cfg["latent_window_radius"]),
         ).to(self.device_obj)
+        if bool(model_cfg.get("freeze_object_pooler", False)):
+            self.object_pooler.eval().requires_grad_(False)
         self.context_fuser = ContextTokenFuser(
             text_dim=cond_dim,
             max_context_len=self.bundle.config.text_len,
@@ -141,6 +143,11 @@ class ContextVideoTrainer(nn.Module):
         self.init_wan_lora_from_checkpoint = model_cfg.get("init_wan_lora_from_checkpoint")
         if self.init_wan_lora_from_checkpoint is not None:
             self.bundle.load_lora_checkpoint(self.init_wan_lora_from_checkpoint)
+        if hasattr(self.object_pooler, "_ensure_jepa_proj"):
+            self.object_pooler._ensure_jepa_proj(
+                int(self.jepa_adapter.encoder.backbone.embed_dim),
+                self.device_obj,
+            )
 
         self.enable_sam2_priors = bool(model_cfg.get("enable_sam2_priors", False))
         self.sam2_prior_strategy = str(model_cfg.get("sam2_prior_strategy", "single")).strip().lower()
@@ -663,8 +670,10 @@ class ContextVideoTrainer(nn.Module):
                     f"target_min={float(torch.nan_to_num(target).min().item())}, "
                     f"target_max={float(torch.nan_to_num(target).max().item())}"
                 )
-            denom = future_mask.sum().clamp_min(1.0)
-            loss_main = ((pred - target) ** 2 * future_mask).sum() / denom
+            future_mask_sum = future_mask.sum().clamp_min(1.0)
+            masked_mse = ((pred - target) ** 2 * future_mask).sum()
+            loss_main = masked_mse / future_mask.sum().clamp_min(1.0)
+            loss_main = loss_main / float(pred.numel() / max(int(future_mask_sum.item()), 1))
             loss_main = loss_main * self.scheduler.training_weight(
                 timestep,
                 device=loss_main.device,

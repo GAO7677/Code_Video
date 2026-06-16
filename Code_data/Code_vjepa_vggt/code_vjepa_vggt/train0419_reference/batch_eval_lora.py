@@ -943,7 +943,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
         output_path = (
             Path(output_override)
             if isinstance(output_override, str) and output_override
-            else generated_dir / build_method_name(args.lora_path) / row["output_name"]
+            else generated_dir / row["output_name"]
         )
         sidecar_path = output_path.with_suffix(".json")
         context_path = Path(row["context_path"])

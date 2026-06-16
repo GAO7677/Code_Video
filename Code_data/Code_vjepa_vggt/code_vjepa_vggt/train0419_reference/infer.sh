@@ -3,7 +3,7 @@
 set -eu
 
 GPU_ID=1
-META_LIST_PATH=/data/gaoya/dataset/physics-iq-benchmark/D_clean/_meta/high_motion_meta_list.txt
+META_LIST_PATH=/data/gaoya/dataset/physics-iq-benchmark/D_clean/_meta/037_Solid_Mechanics_meta_list.txt
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0529/vjepa_vggt/test/outputs/D_clean
 PYTHON_BIN=/data/gaoya/miniconda3/envs/wan/bin/python
 SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py
@@ -32,6 +32,5 @@ for LORA_PATH in $LORAS; do
       --lora_path "${LORA_PATH}" \
       --output_root "${OUTPUT_ROOT}/${method_name}" \
       --runtime_root "${OUTPUT_ROOT}/${method_name}" \
-      --model_name "${method_name}" \
-      --overwrite
+      --model_name "${method_name}"
 done
