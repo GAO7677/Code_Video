@@ -211,6 +211,57 @@ def zbuffer_to_metric_depth(depth_buffer: np.ndarray, near: float, far: float) -
     return depth.astype(np.float32)
 
 
+def rotation_matrix_to_quaternion(rot: np.ndarray) -> list[float]:
+    trace = float(rot[0, 0] + rot[1, 1] + rot[2, 2])
+    if trace > 0.0:
+        s = math.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * s
+        x = (rot[2, 1] - rot[1, 2]) / s
+        y = (rot[0, 2] - rot[2, 0]) / s
+        z = (rot[1, 0] - rot[0, 1]) / s
+    elif rot[0, 0] > rot[1, 1] and rot[0, 0] > rot[2, 2]:
+        s = math.sqrt(1.0 + rot[0, 0] - rot[1, 1] - rot[2, 2]) * 2.0
+        w = (rot[2, 1] - rot[1, 2]) / s
+        x = 0.25 * s
+        y = (rot[0, 1] + rot[1, 0]) / s
+        z = (rot[0, 2] + rot[2, 0]) / s
+    elif rot[1, 1] > rot[2, 2]:
+        s = math.sqrt(1.0 + rot[1, 1] - rot[0, 0] - rot[2, 2]) * 2.0
+        w = (rot[0, 2] - rot[2, 0]) / s
+        x = (rot[0, 1] + rot[1, 0]) / s
+        y = 0.25 * s
+        z = (rot[1, 2] + rot[2, 1]) / s
+    else:
+        s = math.sqrt(1.0 + rot[2, 2] - rot[0, 0] - rot[1, 1]) * 2.0
+        w = (rot[1, 0] - rot[0, 1]) / s
+        x = (rot[0, 2] + rot[2, 0]) / s
+        y = (rot[1, 2] + rot[2, 1]) / s
+        z = 0.25 * s
+    return [float(x), float(y), float(z), float(w)]
+
+
+def make_backdrop_pose(meta: dict, distance: float = 7.0) -> tuple[list[float], list[float]]:
+    camera = meta["camera"]
+    eye = np.asarray(camera["eye"], dtype=np.float64)
+    target = np.asarray(camera["target"], dtype=np.float64)
+    up_hint = np.asarray(camera["up"], dtype=np.float64)
+    forward = target - eye
+    forward /= np.linalg.norm(forward) + 1e-8
+    right = np.cross(forward, up_hint)
+    right /= np.linalg.norm(right) + 1e-8
+    up = np.cross(right, forward)
+    up /= np.linalg.norm(up) + 1e-8
+
+    # Box local axes: x=width, y=thickness(normal), z=height.
+    rot = np.eye(3, dtype=np.float64)
+    rot[:, 0] = right
+    rot[:, 1] = -forward
+    rot[:, 2] = up
+    center = target + forward * distance
+    quat = rotation_matrix_to_quaternion(rot)
+    return center.astype(np.float32).tolist(), quat
+
+
 def create_collision_shape(obj: dict, client_id: int) -> int:
     size = obj["size"]
     shape = obj["shape"]
@@ -282,26 +333,28 @@ def render_pybullet_groundtruth(case: CaseData, width: int, height: int, out_dir
         body_ids.append(plane_id)
         p.changeDynamics(plane_id, -1, lateralFriction=float(case.meta.get("floor_friction", 0.7)), restitution=0.02, physicsClientId=client_id)
 
-        wall_collision = p.createCollisionShape(
+        backdrop_half_extents = [10.0, 0.03, 6.0]
+        backdrop_pos, backdrop_quat = make_backdrop_pose(case.meta, distance=7.5)
+        backdrop_collision = p.createCollisionShape(
             p.GEOM_BOX,
-            halfExtents=[7.0, 0.015, 1.8],
+            halfExtents=backdrop_half_extents,
             physicsClientId=client_id,
         )
-        wall_visual = p.createVisualShape(
+        backdrop_visual = p.createVisualShape(
             p.GEOM_BOX,
-            halfExtents=[7.0, 0.015, 1.8],
-            rgbaColor=[0.52, 0.51, 0.48, 1.0],
+            halfExtents=backdrop_half_extents,
+            rgbaColor=[0.78, 0.77, 0.74, 1.0],
             physicsClientId=client_id,
         )
-        wall_id = p.createMultiBody(
+        backdrop_id = p.createMultiBody(
             baseMass=0.0,
-            baseCollisionShapeIndex=wall_collision,
-            baseVisualShapeIndex=wall_visual,
-            basePosition=[0.0, 5.0, 1.8],
-            baseOrientation=[0.0, 0.0, 0.0, 1.0],
+            baseCollisionShapeIndex=backdrop_collision,
+            baseVisualShapeIndex=backdrop_visual,
+            basePosition=backdrop_pos,
+            baseOrientation=backdrop_quat,
             physicsClientId=client_id,
         )
-        body_ids.append(wall_id)
+        body_ids.append(backdrop_id)
 
         for obj in case.meta["objects"]:
             collision = create_collision_shape(obj, client_id)
@@ -651,8 +704,6 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int | None, panel_he
         for name, path in modality_dirs.items()
         if name != "montage"
     }
-    montage_w = panel_width * 3
-    montage_h = panel_height * 2
     writers["montage"] = make_writer(modality_dirs["montage"] / "montage.mp4")
     montage_frames_rgb: list[np.ndarray] = []
 
@@ -679,88 +730,23 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int | None, panel_he
                 momentum_rgb = flow_hsv_color(float(flow_vec[0]), float(flow_vec[1]), max_momentum_mag)
                 momentum_panel[update] = np.asarray(momentum_rgb, dtype=np.uint8)
 
-            # Draw arrows and labels on top of the dense panels.
-            for obj in frame_cache[frame_idx]["objects"]:
-                center = obj["center_px"]
-                next_center = obj["next_center_px"]
-                if center is None:
-                    continue
-                obj_idx = int(obj["obj_idx"])
-                color = tuple(int(v) for v in palette[obj_idx % len(palette)])
-                p0 = tuple(int(round(value)) for value in center)
-                if next_center is not None:
-                    p1 = tuple(int(round(value)) for value in next_center)
-                    cv2.arrowedLine(flow_panel, p0, p1, color, 2, cv2.LINE_AA, tipLength=0.2)
-                flow_mag = float(np.linalg.norm(obj["flow_vec"]))
-                momentum_mag = float(obj["momentum_mag"])
-                momentum_scale = 18.0 * momentum_mag / max(max_momentum_mag, 1e-6)
-                if next_center is not None:
-                    dx, dy = obj["flow_vec"]
-                    norm = max(float(np.linalg.norm([dx, dy])), 1e-6)
-                    p1 = (
-                        int(round(center[0] + dx / norm * momentum_scale)),
-                        int(round(center[1] + dy / norm * momentum_scale)),
-                    )
-                    cv2.arrowedLine(momentum_panel, p0, p1, color, 2, cv2.LINE_AA, tipLength=0.2)
-                label = f"{obj['name']} | flow={flow_mag:.2f}px | p={momentum_mag:.2f}"
-                tx = int(np.clip(center[0] + 4, 0, panel_width - 1))
-                ty = int(np.clip(center[1] - 6, 12, panel_height - 1))
-                cv2.putText(flow_panel, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 2, cv2.LINE_AA)
-                cv2.putText(flow_panel, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (18, 18, 18), 1, cv2.LINE_AA)
-                cv2.putText(momentum_panel, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 2, cv2.LINE_AA)
-                cv2.putText(momentum_panel, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (18, 18, 18), 1, cv2.LINE_AA)
-
             # Build depth and mask panels.
-            gt_near = float(pybullet_gt["depth_near"])
-            gt_far = float(pybullet_gt["depth_far"])
             gt_vis_near = float(pybullet_gt["depth_vis_near"])
             gt_vis_far = float(pybullet_gt["depth_vis_far"])
-            depth_norm = (depth_map - gt_vis_near) / max(gt_vis_far - gt_vis_near, 1e-6)
+            depth_clamped = np.where(valid_depth_mask, np.minimum(depth_map, gt_vis_far), gt_vis_far)
+            depth_norm = (depth_clamped - gt_vis_near) / max(gt_vis_far - gt_vis_near, 1e-6)
             depth_norm = np.clip(depth_norm, 0.0, 1.0)
             depth_vis = depth_to_grayscale(1.0 - depth_norm)
-            depth_vis[~valid_depth_mask] = np.asarray([208, 208, 208], dtype=np.uint8)
             depth_panel = depth_vis.copy()
 
             mask_panel = blank_panel(panel_width, panel_height, (8, 8, 8))
             for obj_idx in range(num_objects):
                 color = palette[obj_idx % len(palette)]
                 mask_panel[mask_idx == obj_idx] = color
-            # Add a thin object outline by blending a light border on top of each color region.
             rgb_panel = rgb.copy()
-            draw_text_box(
-                rgb_panel,
-                [
-                    f"RGB  frame={frame_idx:03d}/{num_frames-1:03d}",
-                    f"sample={case.sample_dir.name}",
-                ],
-            )
-            draw_text_box(
-                depth_panel,
-                [f"DEPTH(gt)  abs=[{gt_near:.2f},{gt_far:.2f}]  vis=[{gt_vis_near:.2f},{gt_vis_far:.2f}]"],
-            )
-            draw_text_box(mask_panel, [f"MASK  instances={num_objects}"])
-            draw_text_box(flow_panel, [f"FLOW  max={max_flow_mag:.2f}px/frame"])
-            draw_text_box(momentum_panel, [f"MOMENTUM  max={max_momentum_mag:.2f}"])
 
-            stats_panel = blank_panel(panel_width, panel_height, (24, 22, 18))
-            stats_lines = [
-                case.meta.get("title", case.sample_dir.name),
-                case.meta.get("description", ""),
-                f"split={case.meta.get('split', '?')} family={case.meta.get('family_slug', '?')}",
-                f"seed={case.meta.get('seed', '?')} fps={case.meta.get('fps', '?')}",
-                f"objects={num_objects} duration={case.meta.get('duration_s', '?')}s",
-            ]
-            for obj in frame_cache[frame_idx]["objects"]:
-                line = (
-                    f"{obj['name']}: depth={float(obj['depth']):.2f} "
-                    f"v={float(np.linalg.norm(obj['linear_velocity'])):.2f} "
-                    f"|p|={float(obj['momentum_mag']):.2f}"
-                )
-                stats_lines.append(line)
-            draw_text_box(stats_panel, stats_lines, origin=(8, 22))
-
-            montage_top = np.concatenate([rgb_panel, depth_panel, mask_panel], axis=1)
-            montage_bottom = np.concatenate([flow_panel, momentum_panel, stats_panel], axis=1)
+            montage_top = np.concatenate([rgb_panel, depth_panel], axis=1)
+            montage_bottom = np.concatenate([mask_panel, flow_panel], axis=1)
             montage = np.concatenate([montage_top, montage_bottom], axis=0)
             montage_frames_rgb.append(montage.copy())
 
@@ -917,9 +903,16 @@ def main() -> None:
         out_dir = args.output_dir / sample_dir.name
         out_dir.mkdir(parents=True, exist_ok=True)
         summary = render_case(case, out_dir, args.panel_width, args.panel_height, args.fps)
+        summary_files = {
+            key: os.path.relpath(out_dir / rel_path, args.output_dir)
+            for key, rel_path in summary["files"].items()
+        }
+        summary_preview = os.path.relpath(out_dir / summary["preview"], args.output_dir)
         case_reports.append(
             {
                 **summary,
+                "files": summary_files,
+                "preview": summary_preview,
                 "sample_rel_meta": os.path.relpath(sample_dir / "meta.json", args.output_dir),
             }
         )

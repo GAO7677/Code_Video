@@ -3,9 +3,9 @@
 set -eu
 
 GPU_ID=1
-CONTEXT_PATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step010000_0002p5s3p5.mp4
-PROMPT="Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement.,"
-OUTPUT_ROOT=/data/gaoya/AAA_test_video/0529/vjepa_vggt/test/outputs/D_clean
+CONTEXT_PATH=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4
+PROMPT="A sphere rolls after landing on the platform and leaves the support surface, testing support switching." 
+OUTPUT_ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow
 NUM_FRAMES=80
 
 PYTHON_BIN=/data/gaoya/miniconda3/envs/wan/bin/python

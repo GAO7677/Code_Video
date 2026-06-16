@@ -243,16 +243,7 @@ def movement_is_support_fixed(desc: Any) -> bool:
     return any(p in s for p in prefixes)
 
 
-def classify_assembly_role(
-    material_ctor: str,
-    movement_desc: Any,
-    solver_family_override: Optional[str] = None,
-) -> str:
-    ov = str(solver_family_override or "").strip().lower()
-    if ov == "mpm_all":
-        if movement_is_support_fixed(movement_desc):
-            return "anchored_soft"
-        return "free_soft"
+def classify_assembly_role(material_ctor: str, movement_desc: Any) -> str:
     if str(material_ctor) == "gs.materials.Rigid":
         return "rigid_skeleton"
     if movement_is_support_fixed(movement_desc):
@@ -559,10 +550,7 @@ def _choose_custom_runtime_solver(
 ) -> Tuple[str, str]:
     source_ctor = str(material_ctor or "gs.materials.MPM.Elastic")
     if rigidify_youngs_threshold_pa is not None and youngs is not None and float(youngs) >= float(rigidify_youngs_threshold_pa):
-        # Keep the runtime solver on the MPM path even for very stiff objects.
-        # We still record that this object came from a rigidification threshold,
-        # but the actual simulator material stays MPM.Elastic.
-        return "mpm", "gs.materials.MPM.Elastic"
+        return "rigid_approx", "gs.materials.Rigid"
     return "mpm", source_ctor
 
 
@@ -846,15 +834,6 @@ def build_preview_case_configs(
         rng = np.random.RandomState(case_seed + 1701)
         return float(rng.uniform(yaw_min, yaw_max))
 
-    def _case000_object_yaw_deg_override() -> Optional[float]:
-        override_raw = getattr(args, "preview_case000_object_yaw_deg_override", None)
-        if override_raw is None:
-            return None
-        try:
-            return float(override_raw)
-        except Exception:
-            return None
-
     def _sample_entry_velocity(case_seed: int, mode: str) -> Tuple[np.ndarray, np.ndarray]:
         # Reproducible per-case random speeds. The mode fixes only direction;
         # magnitude, lateral drift, and yaw rate vary within configured ranges.
@@ -993,7 +972,7 @@ def build_preview_case_configs(
                     wz *= 0.35
                     wx *= 0.45
                     wy *= 0.45
-        custom_objects.append(
+            custom_objects.append(
                 {
                     "custom_object_id": f"{prefix}_{case_idx:03d}_{obj_idx:02d}",
                     "source_dataset": str(asset.get("source_kind", "primitive")),
@@ -1131,14 +1110,6 @@ def build_preview_case_configs(
         case_cfg["case_notes"] = _case_description_from_cfg(case_cfg)
         return case_cfg
 
-    def _maybe_disable_case_striker_speed_multiplier(case_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        if not bool(getattr(args, "disable_case_striker_speed_multiplier", False)):
-            return case_cfg
-        if "striker_speed_override" in case_cfg and case_cfg["striker_speed_override"] is not None:
-            case_cfg = dict(case_cfg)
-            case_cfg["striker_speed_override"] = float(getattr(args, "striker_speed", 2.8) or 2.8)
-        return case_cfg
-
     def _legacy_random_case(case_idx: int) -> Dict[str, Any]:
         rng = np.random.RandomState(seed_anchor + case_idx * 9973 + 23)
         use_entry_motion = bool(move_flags[case_idx]) if case_idx < len(move_flags) else bool(rng.rand() < entry_prob)
@@ -1217,10 +1188,7 @@ def build_preview_case_configs(
             scene_label="static_center",
             seed=seed_anchor + 23,
             placed_pos_offset=np.array([0.0, 0.0, 0.0], dtype=np.float64),
-            object_euler_deg=np.array(
-                [0.0, 0.0, _case000_object_yaw_deg_override() if _case000_object_yaw_deg_override() is not None else _sample_object_yaw_deg(seed_anchor + 23)],
-                dtype=np.float64,
-            ),
+            object_euler_deg=np.array([0.0, 0.0, _sample_object_yaw_deg(seed_anchor + 23)], dtype=np.float64),
             use_entry_motion=False,
             object_fixed_override=False,
             custom_objects=_make_custom_objects_for_case(0, seed_anchor + 23),
@@ -1354,12 +1322,12 @@ def build_preview_case_configs(
 
     if case_scene_mode in ("auto", "diverse"):
         for template in diverse_templates[:num_cases]:
-            case_configs.append(_maybe_disable_case_striker_speed_multiplier(template))
+            case_configs.append(template)
         for case_idx in range(len(case_configs), num_cases):
-            case_configs.append(_maybe_disable_case_striker_speed_multiplier(_legacy_random_case(case_idx)))
+            case_configs.append(_legacy_random_case(case_idx))
     elif case_scene_mode == "legacy_random":
         for case_idx in range(num_cases):
-            case_configs.append(_maybe_disable_case_striker_speed_multiplier(_legacy_random_case(case_idx)))
+            case_configs.append(_legacy_random_case(case_idx))
     else:
         raise ValueError(f"Unsupported case_scene_mode: {case_scene_mode}")
 
@@ -1449,7 +1417,7 @@ class PartPhysical:
     json_exact_parameters: Dict[str, Any]
 
 
-CLASSIFICATION_POLICY_VERSION = "v7_runtime_ctor_free_cloth_to_mpm"
+CLASSIFICATION_POLICY_VERSION = "v6_runtime_ctor_anchored_cloth_to_mpm"
 
 
 def _choice_to_solver_tuple(choice: Dict[str, str]) -> Tuple[str, str, str]:
@@ -1508,31 +1476,6 @@ def _collapse_choice_for_override(choice: Dict[str, str], solver_family_override
                 "reason": "mpm override collapsed cloth to MPM elastic",
             }
         return choice
-    if ov == "mpm_all":
-        ctor = str(choice.get("material_ctor", "gs.materials.Rigid"))
-        if ctor == "gs.materials.SPH.Liquid":
-            return {
-                "solver_family": "mpm",
-                "material_ctor": "gs.materials.MPM.Liquid",
-                "reason": "mpm_all override collapsed SPH liquid to MPM liquid",
-            }
-        if ctor in {"gs.materials.Rigid", "gs.materials.PBD.Cloth"}:
-            return {
-                "solver_family": "mpm",
-                "material_ctor": "gs.materials.MPM.Elastic",
-                "reason": "mpm_all override collapsed rigid/cloth to MPM elastic",
-            }
-        if str(ctor).startswith("gs.materials.MPM."):
-            return {
-                "solver_family": "mpm",
-                "material_ctor": ctor,
-                "reason": "mpm_all override kept native MPM material",
-            }
-        return {
-            "solver_family": "mpm",
-            "material_ctor": "gs.materials.MPM.Elastic",
-            "reason": "mpm_all override fell back to MPM elastic",
-        }
     return choice
 
 
@@ -1609,7 +1552,7 @@ def solver_from_json(
     """
     choice = choose_genesis_material_type(part)
 
-    choice = _collapse_choice_for_override(choice, solver_family_override=solver_family_override)
+    # choice = _collapse_choice_for_override(choice, solver_family_override=solver_family_override)
     return _choice_to_solver_tuple(choice)
 
 
@@ -1623,15 +1566,13 @@ def _runtime_material_ctor_from_spec(part_meta: dict, material_ctor: str, assemb
     """
     原始 material_ctor 只由 material 决定。
     运行时允许做一层最小改写：
-      anchored_soft/free_soft + PBD.Cloth -> MPM.Elastic
+      anchored_soft + PBD.Cloth -> MPM.Elastic
     其他情况保持不变。
     """
     ctor = str(material_ctor or "gs.materials.Rigid")
     role = str(assembly_role or "free_soft")
 
-    if role == "rigid_skeleton" and ctor == "gs.materials.Rigid":
-        return "gs.materials.MPM.Elastic"
-    if role in {"anchored_soft", "free_soft"} and ctor == "gs.materials.PBD.Cloth":
+    if role == "anchored_soft" and ctor == "gs.materials.PBD.Cloth":
         return "gs.materials.MPM.Elastic"
 
     return ctor
@@ -1661,7 +1602,7 @@ def _runtime_solver_family_from_ctor(material_ctor_runtime: str) -> str:
 def build_part_physical(
     part: Dict[str, Any],
     mesh_path: Path,
-    solver_family_override: Optional[str] = None,
+    # solver_family_override: Optional[str] = None,
 ) -> PartPhysical:
     part_id = int(part.get("label", -1))
     density_kgm3 = parse_density_to_kgm3(part.get("density"), default=None)
@@ -1670,16 +1611,9 @@ def build_part_physical(
     friction = safe_optional_float(_first_present_key(part, ["Friction Coefficient", "friction", "coefficient_of_friction"]))
     restitution = safe_optional_float(_first_present_key(part, ["Restitution", "restitution"]))
     damping = safe_optional_float(_first_present_key(part, ["Damping", "damping"]))
-    solver_family, simulator_material, material_ctor = solver_from_json(
-        part,
-        solver_family_override=solver_family_override,
-    )
+    solver_family, simulator_material, material_ctor = solver_from_json(part)
     movement_desc = str(part.get("Movement_description", ""))
-    assembly_role = classify_assembly_role(
-        material_ctor=material_ctor,
-        movement_desc=movement_desc,
-        solver_family_override=solver_family_override,
-    )
+    assembly_role = classify_assembly_role(material_ctor=material_ctor, movement_desc=movement_desc)
     print(f"💚 {part['material']} solver_family={solver_family},simulator_material={simulator_material},material_ctor={material_ctor},assembly_role={assembly_role}")
 
     return PartPhysical(
@@ -2311,29 +2245,12 @@ def _make_genesis_rigid_material(gs: Any, rho: float, friction: float, restituti
         return gs.materials.Rigid(**kwargs)
 
 
-def _make_pbd_cloth_material_from_part(
-    gs: Any,
-    density: float,
-    friction: Optional[float],
-    youngs: Optional[float],
-    damping: Optional[float],
-    role: str = "free_soft",
-):
+def _make_pbd_cloth_material_from_part(gs: Any, density: float, friction: Optional[float], youngs: Optional[float], damping: Optional[float]):
     friction_val = float(np.clip(friction if friction is not None else 0.15, 1e-3, 5.0))
-    role = str(role or "free_soft")
     youngs_val = float(max(youngs if youngs is not None else 1e5, 1e3))
-    # Dataset cloth annotations are often much stiffer than a stable preview can tolerate.
-    # We deliberately clamp the runtime cloth stiffness down to keep the cloth from exploding
-    # when it starts in contact with the table or surrounding rigid frame.
-    if role == "anchored_soft":
-        youngs_val = float(np.clip(youngs_val, 5e4, 2e6))
-    else:
-        youngs_val = float(np.clip(youngs_val, 3e4, 8e5))
-    air_resistance = float(max(damping if damping is not None else 5e-3, 1e-4))
-    if role == "anchored_soft":
-        air_resistance = float(max(air_resistance, 2e-3))
-    stretch_compliance = float(np.clip(1.0 / youngs_val, 1e-9, 2e-3))
-    bending_compliance = float(np.clip(10.0 / youngs_val, 1e-8, 8e-2))
+    air_resistance = float(max(damping if damping is not None else 1e-3, 1e-6))
+    stretch_compliance = float(np.clip(1.0 / youngs_val, 1e-9, 1e-3))
+    bending_compliance = float(np.clip(10.0 / youngs_val, 1e-8, 5e-2))
     # Cloth rho is area density (kg/m^2), not volumetric density.
     rho_2d = float(max(density * 0.002, 0.2))
     return gs.materials.PBD.Cloth(
@@ -2603,11 +2520,7 @@ def prepare_physxnet_object(
         mesh = load_mesh(mesh_path)
         mesh = yup_to_zup_mesh(mesh)   # Y-up → Z-up 坐标系转换（绕X轴旋转-90°）
         part_meshes[pid] = mesh
-        part_phys[pid] = build_part_physical(
-            part,
-            mesh_path,
-            solver_family_override=solver_family_override,
-        )  # 解析 JSON 中的物理参数
+        part_phys[pid] = build_part_physical(part, mesh_path)  # 解析 JSON 中的物理参数
         # print(f"🤍 Part {part_phys[pid].name}: {part_phys[pid].material_ctor}")
 
     if not part_meshes:
@@ -3497,32 +3410,6 @@ def _spec_uses_pbd(spec: Dict[str, Any]) -> bool:
     return str(spec.get("material_ctor_runtime", spec.get("material_ctor", ""))) == "gs.materials.PBD.Cloth"
 
 
-def _apply_rigid_to_mpm_override(part_specs: List[Dict[str, Any]]) -> Tuple[int, int]:
-    """
-    Mark all rigid parts so the runtime material builder treats them as MPM.
-
-    Returns:
-      (n_rigid_marked, n_runtime_ctor_rewritten)
-    """
-    marked = 0
-    rewritten = 0
-    for spec in part_specs:
-        original_ctor = str(spec.get("material_ctor", ""))
-        if original_ctor != "gs.materials.Rigid":
-            continue
-
-        marked += 1
-        spec["rigid_to_mpm"] = True
-
-        runtime_ctor = str(spec.get("material_ctor_runtime", original_ctor))
-        if runtime_ctor == "gs.materials.Rigid":
-            spec["material_ctor_runtime"] = "gs.materials.MPM.Elastic"
-            spec["solver_family_runtime"] = "mpm_elastic"
-            rewritten += 1
-
-    return marked, rewritten
-
-
 def _suggest_sph_particle_size(part_specs: List[Dict[str, Any]]) -> float:
     liquid_xy_extents: List[float] = []
     free_surface_liquid = False
@@ -3580,21 +3467,6 @@ def _stabilize_runtime_mpm_params(ctor: str, youngs: float, poisson: float) -> T
     return youngs_val, poisson_val
 
 
-def _stabilize_runtime_mpm_params_by_role(ctor: str, youngs: float, poisson: float, role: str) -> Tuple[float, float]:
-    role = str(role or "").strip().lower()
-    youngs_val = float(youngs)
-    poisson_val = float(poisson)
-    if role == "rigid_skeleton":
-        youngs_val = float(np.clip(youngs_val, 8e6, 5e7))
-        poisson_val = float(np.clip(poisson_val, 0.05, 0.22))
-    elif role == "anchored_soft":
-        youngs_val = float(np.clip(youngs_val, 2e5, 2e6))
-        poisson_val = float(np.clip(poisson_val, 0.08, 0.30))
-    else:
-        youngs_val, poisson_val = _stabilize_runtime_mpm_params(ctor, youngs_val, poisson_val)
-    return youngs_val, poisson_val
-
-
 def _is_pillow_spec(spec: Dict[str, Any]) -> bool:
     role = str(spec.get("assembly_role", "free_soft"))
     part_name = str(spec.get("part_name", "")).lower()
@@ -3609,11 +3481,8 @@ def _is_seat_surface_spec(spec: Dict[str, Any]) -> bool:
 
 def _is_free_cloth_like_spec(spec: Dict[str, Any]) -> bool:
     role = str(spec.get("assembly_role", "free_soft"))
-    ctor_runtime = str(spec.get("material_ctor_runtime", spec.get("material_ctor", "")))
-    ctor_orig = str(spec.get("material_ctor", ""))
-    return role == "free_soft" and (
-        ctor_runtime == "gs.materials.PBD.Cloth" or ctor_orig == "gs.materials.PBD.Cloth"
-    )
+    ctor = str(spec.get("material_ctor_runtime", spec.get("material_ctor", "")))
+    return role == "free_soft" and ctor == "gs.materials.PBD.Cloth"
 
 
 def _make_part_material(gs, spec, default_friction: float = 0.55):
@@ -3637,7 +3506,6 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
     role = str(spec.get("assembly_role", "free_soft"))
     pid = int(spec.get("pid", -1))
     is_pillow = _is_pillow_spec(spec)
-    is_free_cloth = _is_free_cloth_like_spec(spec)
 
     runtime_bounds_min = spec.get("runtime_bounds_min", spec.get("bounds_min"))
     runtime_bounds_max = spec.get("runtime_bounds_max", spec.get("bounds_max"))
@@ -3661,24 +3529,12 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
             anchored_sampler = "pbs"
 
     if ctor == "gs.materials.Rigid":
-        if str(spec.get("force_mpm", False)) or bool(spec.get("rigid_to_mpm", False)):
-            # All-MPM mode: approximate rigid-looking parts with a stiff MPM elastic material.
-            role = str(spec.get("assembly_role", "free_soft"))
-            if role == "rigid_skeleton":
-                ctor = "gs.materials.MPM.Elastic"
-                youngs = float(np.clip(max(youngs, 5e6), 5e6, 5e7))
-                poisson = float(np.clip(poisson, 0.05, 0.22))
-            else:
-                ctor = "gs.materials.MPM.Elastic"
-                youngs = float(np.clip(max(youngs, 1e6), 1e6, 1e7))
-                poisson = float(np.clip(poisson, 0.05, 0.30))
-        else:
-            return _make_genesis_rigid_material(
-                gs,
-                rho=density,
-                friction=float(friction if friction is not None else default_friction),
-                restitution=restitution,
-            )
+        return _make_genesis_rigid_material(
+            gs,
+            rho=density,
+            friction=float(friction if friction is not None else default_friction),
+            restitution=restitution,
+        )
 
     if ctor == "gs.materials.SPH.Liquid":
         # Respect per-part liquid properties from the dataset JSON.
@@ -3706,36 +3562,13 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
         return gs.materials.SPH.Liquid(**kwargs)
 
     if ctor == "gs.materials.PBD.Cloth":
-        if str(spec.get("force_mpm", False)):
-            ctor = "gs.materials.MPM.Elastic"
-            youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params_by_role(ctor, youngs, poisson, role)
-            common_kwargs = {"E": youngs_runtime, "nu": poisson_runtime, "rho": density, "sampler": "pbs"}
-            if role == "anchored_soft":
-                common_kwargs["E"] = min(common_kwargs["E"], 2.0e5)
-                common_kwargs["nu"] = min(common_kwargs["nu"], 0.18)
-                common_kwargs["sampler"] = anchored_sampler
-            return gs.materials.MPM.Elastic(**common_kwargs)
-        mat = _make_pbd_cloth_material_from_part(
-            gs,
-            density=density,
-            friction=friction,
-            youngs=youngs,
-            damping=damping,
-            role=role,
-        )
+        mat = _make_pbd_cloth_material_from_part(gs, density=density, friction=friction, youngs=youngs, damping=damping)
         # print(f"{spec['part_name']} PBD.Cloth kwargs: {mat.__dict__}")
         # exit()
         return mat
 
-    youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params_by_role(ctor, youngs, poisson, role)
+    youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params(ctor, youngs, poisson)
     common_kwargs = {"E": youngs_runtime, "nu": poisson_runtime, "rho": density, "sampler": "pbs"}
-    if is_free_cloth and ctor in ("gs.materials.MPM.Elastic", "gs.materials.MPM.ElastoPlastic"):
-        # Free tablecloth-like sheets are the most failure-prone parts in preview.
-        # Keep them very soft and less volume-preserving so first contact does not blow them apart.
-        common_kwargs["E"] = min(common_kwargs["E"], 8.0e4)
-        common_kwargs["nu"] = min(common_kwargs["nu"], 0.08)
-        common_kwargs["rho"] = min(float(common_kwargs["rho"]), 120.0)
-        common_kwargs["sampler"] = "pbs"
     if is_pillow and ctor in ("gs.materials.MPM.Elastic", "gs.materials.MPM.ElastoPlastic"):
         # Free pillows are the first parts to numerically explode in the sofa scenes.
         # Clamp them into a much softer preview regime by default.
@@ -5002,7 +4835,7 @@ def _prepare_eroded_soft_mesh(
             return best_shift
 
         center = 0.5 * (bounds[0] + bounds[1])
-        base_margin = min(0.020, 0.08 * min_obj_extent)
+        base_margin = min(0.010, 0.04 * min_obj_extent)
         axis_margin = np.minimum(np.full(3, base_margin, dtype=np.float64), 0.12 * size)
         scales = np.clip((size - 2.0 * axis_margin) / size, 0.75, 1.0)
         if np.all(scales > 0.999):
@@ -5019,7 +4852,7 @@ def _prepare_eroded_soft_mesh(
             shift = _compute_free_soft_exit_shift(
                 mesh_bounds=current_bounds,
                 boxes=rigid_boxes,
-                max_shift=min(0.060, 0.22 * min_obj_extent),
+                max_shift=min(0.025, 0.12 * min_obj_extent),
             )
             if shift is None or float(np.linalg.norm(shift)) <= 1e-8:
                 break
@@ -5041,8 +4874,8 @@ def _prepare_eroded_soft_mesh(
         )
         return str(out_path), info
 
-    clearance = min(0.020, max(0.008, 0.016 * min_obj_extent))
-    pitch = min(0.014, max(0.008, 0.025 * min_obj_extent))
+    clearance = min(0.014, max(0.005, 0.012 * min_obj_extent))
+    pitch = min(0.012, max(0.006, 0.02 * min_obj_extent))
     overlap_bounds_min = bounds[0] - clearance
     overlap_bounds_max = bounds[1] + clearance
     is_small_anchored_piece = bool(float(np.max(size)) < 0.35 and float(np.prod(size)) < 0.01)
@@ -5285,11 +5118,11 @@ def _prepare_eroded_soft_mesh(
             secondary_axis = int(np.argsort(size)[1])
             if secondary_axis != preserve_axis:
                 axis_margin[secondary_axis] = min(0.22 * size[secondary_axis], anchored_overlap_scale_boost * (0.9 * overlap_margin[secondary_axis] + 0.7 * clearance))
-            min_scale = 0.68
+            min_scale = 0.74
         else:
-            margin_multiplier = 1.5 * anchored_overlap_scale_boost
-            margin_cap = min(0.34, 0.20 * anchored_overlap_scale_boost)
-            min_scale = 0.68
+            margin_multiplier = 1.3 * anchored_overlap_scale_boost
+            margin_cap = min(0.28, 0.16 * anchored_overlap_scale_boost)
+            min_scale = 0.74
             axis_margin = np.minimum(
                 margin_multiplier * overlap_margin + clearance,
                 margin_cap * size,
@@ -6166,22 +5999,13 @@ def simulate_in_genesis(
     obj_dir = Path(prepared.output_dir)
     metadata = json.loads((obj_dir / "meta" / "metadata.json").read_text(encoding="utf-8"))
 
-    requested_dt = float(dt)
-    # Keep the preview simulation conservative. The scene can contain many sharp contacts,
-    # and the larger dt used during data generation is a common source of contact explosions.
-    runtime_dt = min(requested_dt, 0.002)
-    if runtime_dt < requested_dt - 1e-12:
-        print(f"🛟 stability_guard reduced dt {requested_dt:.6f} -> {runtime_dt:.6f}")
-    dt = runtime_dt
-
     rigid_material_cfg = _default_entity_rigid_material(metadata, default_friction=default_friction)
 
     bbox_min = np.asarray(metadata["object_bbox_min"], dtype=np.float64)
     bbox_max = np.asarray(metadata["object_bbox_max"], dtype=np.float64)
     bbox_center = 0.5 * (bbox_min + bbox_max)
     bbox_size = np.maximum(bbox_max - bbox_min, 1e-6)
-    initial_clearance_z = max(0.006, 0.012 * float(bbox_size[2]))
-    placed_pos = np.array([0.0, 0.0, float(metadata["grounding_offset_z"]) + initial_clearance_z], dtype=np.float64)
+    placed_pos = np.array([0.0, 0.0, float(metadata["grounding_offset_z"]) + 0.002], dtype=np.float64)
     runtime_case_cfg = dict(case_cfg or {})
     case_name = str(runtime_case_cfg.get("case_name", "case000"))
     scene_label = str(runtime_case_cfg.get("scene_label", case_name))
@@ -6212,13 +6036,6 @@ def simulate_in_genesis(
     )
 
     part_specs = _collect_part_specs(obj_dir=obj_dir, metadata=metadata)
-    rigid_to_mpm = bool(getattr(args, "rigid_to_mpm", False))
-    if rigid_to_mpm:
-        n_marked, n_rewritten = _apply_rigid_to_mpm_override(part_specs)
-        print(
-            f"🛟 rigid_to_mpm override enabled: marked_rigid_parts={n_marked} "
-            f"runtime_rewritten={n_rewritten}"
-        )
     part_pid_filter_raw = str(getattr(args, "part_pid_filter", "") or "").strip()
     prefer_existing_runtime_meshes = bool(getattr(args, "prefer_existing_runtime_meshes", False))
     if part_pid_filter_raw:
@@ -6283,13 +6100,7 @@ def simulate_in_genesis(
             rigid_collision_mesh_paths.append(path)
 
     for spec in part_specs:
-        prefer_existing_for_spec = bool(prefer_existing_runtime_meshes)
-        if _is_free_cloth_like_spec(spec):
-            # Cloth is the most sensitive to initial interpenetration, so always rebuild its
-            # runtime mesh instead of reusing a stale eroded cache.
-            prefer_existing_for_spec = False
-
-        existing_runtime = _find_existing_runtime_mesh(spec=spec, runtime_mesh_dir=runtime_mesh_dir) if prefer_existing_for_spec else None
+        existing_runtime = _find_existing_runtime_mesh(spec=spec, runtime_mesh_dir=runtime_mesh_dir) if prefer_existing_runtime_meshes else None
         if existing_runtime is not None:
             runtime_mesh_path = str(existing_runtime)
             erosion_info = {
@@ -6354,10 +6165,9 @@ def simulate_in_genesis(
     anchored_soft_mesh_source = str(getattr(args, "anchored_soft_mesh_source", "runtime"))
     mpm_vis_mode = str(getattr(args, "mpm_vis_mode", "visual"))
     debug_spread_soft_parts = bool(getattr(args, "debug_spread_soft_parts", False))
-    force_mpm_mode = str(getattr(args, "solver_family_override", "") or "").strip().lower() in {"mpm", "mpm_all"}
     custom_object_cfgs = list(runtime_case_cfg.get("custom_objects", []) or [])
     custom_has_mpm_mesh = any(
-        str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) == "mpm"
+        str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) != "rigid_approx"
         for cfg in custom_object_cfgs
     )
 
@@ -6368,7 +6178,7 @@ def simulate_in_genesis(
     has_soft = any(str(spec.get("material_ctor", "")) != "gs.materials.Rigid" for spec in part_specs)
     sph_particle_size = _suggest_sph_particle_size(part_specs) if needs_sph else None
     free_surface_liquids = any(_spec_uses_sph(spec) and _liquid_prefers_free_surface(spec) for spec in part_specs)
-    runtime_substeps = max(int(substeps), int(math.ceil(float(dt) / 1.5e-4)))
+    runtime_substeps = int(substeps)
     if needs_sph and sph_particle_size is not None:
         if free_surface_liquids:
             target_solver_dt = 1.6e-4 if sph_particle_size <= 0.006 else 2.0e-4
@@ -6392,7 +6202,7 @@ def simulate_in_genesis(
             mpm_upper = (2.5, 2.0, 2.2)
         custom_mpm_objects = [
             cfg for cfg in custom_object_cfgs
-            if str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) == "mpm"
+            if str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) != "rigid_approx"
         ]
         if custom_mpm_objects:
             lower = np.asarray(mpm_lower, dtype=np.float64)
@@ -6416,8 +6226,6 @@ def simulate_in_genesis(
     vis_kwargs = {
         "visualize_mpm_boundary": False,
         "visualize_sph_boundary": False,
-        "render_particle_as": "sphere",
-        "particle_size_scale": 1.6,
     }
 
     scene_kwargs = dict(
@@ -6471,11 +6279,79 @@ def simulate_in_genesis(
     aux_runtime_entities: List[Dict[str, Any]] = []
     rigid_urdf_path = obj_dir / "rigid" / f"{prepared.object_id}.urdf"
     skip_rigid_skeleton = bool(getattr(args, "skip_rigid_skeleton", False))
-    has_rigid_skeleton = False
+    has_rigid_skeleton = rigid_urdf_path.exists() and (len(metadata.get("rigid_part_links", [])) > 0 or len(metadata.get("rigid_group_carriers", [])) > 0)
     if skip_rigid_skeleton:
-        print("🧪 skip_rigid_skeleton ignored in all-mpm mode")
-    use_anchored_hybrid = False
-    articulated_ent = None
+        has_rigid_skeleton = False
+    use_anchored_hybrid = bool(
+        getattr(args, "use_anchored_hybrid", False) and has_rigid_skeleton and anchored_bindings
+    )
+
+    if has_rigid_skeleton:
+        urdf_kwargs = dict(
+            file=str(rigid_urdf_path),
+            scale=1.0,
+            pos=tuple(placed_pos.tolist()),
+            euler=tuple(object_euler_deg.tolist()),
+            visualization=not debug_hide_rigid_visuals,
+            collision=True,
+            fixed=bool(runtime_object_fixed),
+            merge_fixed_links=False,
+            prioritize_urdf_material=True,
+            file_meshes_are_zup=True,
+        )
+
+        if use_anchored_hybrid:
+            func_soft_from_rigid, func_assoc = _make_anchored_soft_hybrid_callbacks(
+                gs=gs,
+                bindings=anchored_bindings,
+                placed_pos=placed_pos,
+            )
+            anchored_density = float(np.median([float(spec.get("density", 800.0)) for spec in anchored_specs])) if anchored_specs else 800.0
+            anchored_youngs = float(np.median([float(spec.get("youngs", 1e6) or 1e6) for spec in anchored_specs])) if anchored_specs else 1e6
+            anchored_poisson = float(np.median([float(spec.get("poisson", 0.25) or 0.25) for spec in anchored_specs])) if anchored_specs else 0.25
+            anchored_E, anchored_nu = _stabilize_runtime_mpm_params(
+                "gs.materials.MPM.Elastic",
+                anchored_youngs,
+                anchored_poisson,
+            )
+
+            articulated_ent = scene.add_entity(
+                morph=gs.morphs.URDF(**urdf_kwargs),
+                material=gs.materials.Hybrid(
+                    material_rigid=_make_genesis_rigid_material(
+                        gs,
+                        rho=float(rigid_material_cfg["rho"]),
+                        friction=float(rigid_material_cfg["friction"]),
+                        restitution=float(rigid_material_cfg["restitution"]),
+                    ),
+                    material_soft=gs.materials.MPM.Muscle(
+                        E=float(anchored_E),
+                        nu=float(anchored_nu),
+                        rho=float(anchored_density),
+                        sampler="pbs-8",
+                        model="corotation",
+                        n_groups=max(1, len(anchored_bindings)),
+                    ),
+                    damping=0.0,
+                    soft_dv_coef=0.02,
+                    func_instantiate_soft_from_rigid=func_soft_from_rigid,
+                    func_instantiate_rigid_soft_association=func_assoc,
+                ),
+                surface=gs.surfaces.Default(
+                    color=(1.0, 0.15, 0.15, 1.0) if debug_highlight_anchored_soft else (0.35, 0.65, 0.35, 1.0),
+                    vis_mode="visual",
+                ),
+            )
+        else:
+            articulated_ent = scene.add_entity(
+                morph=gs.morphs.URDF(**urdf_kwargs),
+                material=_make_genesis_rigid_material(
+                    gs,
+                    rho=float(rigid_material_cfg["rho"]),
+                    friction=float(rigid_material_cfg["friction"]),
+                    restitution=float(rigid_material_cfg["restitution"]),
+                ),
+            )
 
     debug_detach_anchored_offset = np.asarray(
         getattr(args, "debug_detach_anchored_offset", [0.0, 0.0, 0.0]),
@@ -6510,7 +6386,7 @@ def simulate_in_genesis(
     liquid_guard_meshes: Dict[int, Dict[str, Any]] = {}
     rigid_container_guard_mesh_path = None
     rigid_container_guard_info: Dict[str, Any] = {}
-    if False:
+    if has_rigid_skeleton:
         rigid_container_guard_mesh_path, rigid_container_guard_info = _build_rigid_container_guard_mesh(
             metadata=metadata,
             runtime_mesh_dir=runtime_mesh_dir,
@@ -6627,7 +6503,10 @@ def simulate_in_genesis(
     # 这里仍然按 part 单独 add_entity，而不是把整件物体压成单一 material_soft。
     for spec in part_specs:
         role = str(spec.get("assembly_role", "free_soft"))
-        spec["force_mpm"] = bool(force_mpm_mode)
+        if has_rigid_skeleton and role == "rigid_skeleton":
+            continue
+        if use_anchored_hybrid and role == "anchored_soft":
+            continue
         if debug_disable_free_soft and role == "free_soft":
             print(f"🧪 skip free_soft in debug render: pid={spec['pid']} part={spec['part_name']}")
             continue
@@ -6642,10 +6521,6 @@ def simulate_in_genesis(
             vis_mode = "visual"
         elif ctor == "gs.materials.MPM.Elastic" or ctor == "gs.materials.MPM.ElastoPlastic":
             vis_mode = mpm_vis_mode
-            if _is_free_cloth_like_spec(spec):
-                # Free cloth-like parts are now simulated as MPM for stability.
-                # Their display path is selectable so we can compare raw particles vs reconstructed surface.
-                vis_mode = str(getattr(args, "free_cloth_vis_mode", "particle"))
         else:
             vis_mode = "particle"
 
@@ -6663,16 +6538,19 @@ def simulate_in_genesis(
             f"vis_mode={vis_mode} "
             f"material={material.__dict__}"
         )
-        print(
-            f"    soft_mesh_erosion applied={erosion_info['applied']} "
-            f"reason={erosion_info['reason']} mesh={erosion_info['mesh_path']}"
-        )
+        if role != "rigid_skeleton":
+            print(
+                f"    soft_mesh_erosion applied={erosion_info['applied']} "
+                f"reason={erosion_info['reason']} mesh={erosion_info['mesh_path']}"
+            )
         entity_pos = placed_pos.copy()
         runtime_alignment_offset = np.asarray(spec.get("runtime_alignment_offset", [0.0, 0.0, 0.0]), dtype=np.float64)
-        # In all-MPM mode, every part inherits the same object frame.
-        runtime_alignment_offset = _rotate_vec_by_euler_deg(runtime_alignment_offset, object_euler_deg)
+        if role != "rigid_skeleton":
+            # All non-rigid parts belong to the same object frame, so they must inherit
+            # the object's initial yaw; otherwise cloth/soft meshes intersect the rotated rigid body.
+            runtime_alignment_offset = _rotate_vec_by_euler_deg(runtime_alignment_offset, object_euler_deg)
         entity_pos = entity_pos + runtime_alignment_offset
-        if debug_spread_soft_parts:
+        if debug_spread_soft_parts and role != "rigid_skeleton":
             entity_pos = entity_pos + spread_offsets_by_pid.get(int(spec["pid"]), np.zeros(3, dtype=np.float64))
         elif role == "anchored_soft" and np.linalg.norm(debug_detach_anchored_offset) > 0.0:
             entity_pos = entity_pos + debug_detach_anchored_offset
@@ -6688,16 +6566,16 @@ def simulate_in_genesis(
             entity_pos = entity_pos + debug_pid_offsets[int(spec["pid"])]
         if _is_free_cloth_like_spec(spec):
             cloth_follow_gap = min(
-                0.060,
+                0.020,
                 max(
-                    0.020,
-                    0.045 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
+                    0.006,
+                    0.015 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
                 ),
             )
             entity_pos[2] += cloth_follow_gap
 
         part_euler_deg = _compose_euler_deg_xyz(
-            object_euler_deg,
+            object_euler_deg if role != "rigid_skeleton" else [0.0, 0.0, 0.0],
             spec.get("euler", (0.0, 0.0, 0.0)),
         )
 
@@ -6765,11 +6643,8 @@ def simulate_in_genesis(
             "color": spec["color"],
             "vis_mode": vis_mode,
         }
-        if vis_mode == "recon":
-            if _is_free_cloth_like_spec(spec):
-                surface_kwargs["recon_backend"] = str(getattr(args, "mpm_recon_backend", "splashsurf"))
-            elif ctor in ("gs.materials.SPH.Liquid", "gs.materials.MPM.Liquid"):
-                surface_kwargs["recon_backend"] = str(getattr(args, "liquid_recon_backend", "splashsurf"))
+        if ctor in ("gs.materials.SPH.Liquid", "gs.materials.MPM.Liquid") and vis_mode == "recon":
+            surface_kwargs["recon_backend"] = str(getattr(args, "liquid_recon_backend", "splashsurf"))
 
         part_ent = scene.add_entity(
             material=material,
@@ -6890,7 +6765,7 @@ def simulate_in_genesis(
             runtime_solver = str(custom_cfg.get("runtime_solver", "mpm"))
             runtime_material_ctor = str(custom_cfg.get("runtime_material_ctor", custom_cfg.get("material_ctor", "gs.materials.MPM.Elastic")))
 
-            if mesh_path and Path(mesh_path).exists() and runtime_solver == "mpm":
+            if mesh_path and Path(mesh_path).exists() and runtime_solver != "rigid_approx":
                 custom_spec = {
                     "pid": -1000 - len(custom_runtime_objects),
                     "part_name": custom_id,
@@ -6909,23 +6784,12 @@ def simulate_in_genesis(
                 custom_material = _make_part_material(gs, custom_spec, default_friction=float(custom_cfg.get("friction", 0.55)))
                 custom_vis_mode = "visual"
                 custom_ctor = str(custom_spec.get("material_ctor_runtime", custom_spec.get("material_ctor", "")))
-                if custom_ctor in (
-                    "gs.materials.MPM.Elastic",
-                    "gs.materials.MPM.ElastoPlastic",
-                    "gs.materials.MPM.Sand",
-                    "gs.materials.MPM.Snow",
-                    "gs.materials.MPM.Liquid",
-                ):
+                if custom_ctor in ("gs.materials.MPM.Sand", "gs.materials.MPM.Snow", "gs.materials.MPM.Liquid"):
                     custom_vis_mode = str(getattr(args, "mpm_vis_mode", "particle"))
                     if custom_vis_mode == "visual":
                         custom_vis_mode = "particle"
                     if custom_ctor == "gs.materials.MPM.Liquid":
                         custom_vis_mode = str(getattr(args, "liquid_vis_mode", "particle"))
-                print(
-                    f"🟧 custom_runtime_object id={custom_id} "
-                    f"runtime_solver={runtime_solver} runtime_ctor={custom_ctor} "
-                    f"vis_mode={custom_vis_mode}"
-                )
                 custom_ent = scene.add_entity(
                     material=custom_material,
                     morph=gs.morphs.Mesh(
@@ -6936,6 +6800,22 @@ def simulate_in_genesis(
                         file_meshes_are_zup=True,
                     ),
                     surface=gs.surfaces.Default(color=color, vis_mode=custom_vis_mode),
+                )
+                clear_extent = custom_scale
+            elif mesh_path and Path(mesh_path).exists() and runtime_solver == "rigid_approx":
+                custom_ent = scene.add_entity(
+                    material=gs.materials.Rigid(
+                        rho=float(custom_cfg.get("density", 1000.0)),
+                        friction=float(custom_cfg.get("friction", 0.55)),
+                    ),
+                    morph=gs.morphs.Mesh(
+                        file=mesh_path,
+                        scale=custom_scale,
+                        pos=tuple(start_pos.tolist()),
+                        euler=custom_euler,
+                        file_meshes_are_zup=True,
+                    ),
+                    surface=gs.surfaces.Default(color=color, vis_mode="visual"),
                 )
                 clear_extent = custom_scale
             else:
@@ -7003,23 +6883,8 @@ def simulate_in_genesis(
         print(
             f"🫙 liquid_container_camera pose={cam_pos.tolist()} lookat={lookat.tolist()} fov={cam_fov}"
         )
-    camera_pos_override = getattr(args, "camera_pos_override", None)
-    camera_lookat_override = getattr(args, "camera_lookat_override", None)
-    camera_fov_override = getattr(args, "camera_fov_override", None)
-    camera_res_override = getattr(args, "camera_res_override", None)
-    if camera_pos_override is not None:
-        cam_pos = np.asarray(camera_pos_override, dtype=np.float64).reshape(3)
-    if camera_lookat_override is not None:
-        lookat = np.asarray(camera_lookat_override, dtype=np.float64).reshape(3)
-    if camera_fov_override is not None:
-        cam_fov = float(camera_fov_override)
-    cam_res = (960, 720)
-    if camera_res_override is not None:
-        arr = np.asarray(camera_res_override, dtype=np.int64).reshape(2)
-        cam_res = (int(arr[0]), int(arr[1]))
-
     cam = scene.add_camera(
-        res=cam_res,
+        res=(960, 720),
         pos=tuple(cam_pos.tolist()),
         lookat=tuple(lookat.tolist()),
         fov=cam_fov,
@@ -7041,7 +6906,7 @@ def simulate_in_genesis(
             aabb = np.asarray(aabb)
 
         z_min = float(aabb[0, 2])
-        clearance = float(initial_clearance_z)
+        clearance = 0.002
         if abs(z_min - clearance) > 1e-6:
             corrected_pos = placed_pos.copy()
             corrected_pos[2] += (clearance - z_min)
@@ -7575,11 +7440,6 @@ def build_argparser() -> argparse.ArgumentParser:
 )
     parser.add_argument("--ball_posx", type=float, default=0.0, help="X position of the ball relative to the striker")
     parser.add_argument("--solver_family_override", type=str, default=None, help="Override solver family for all objects")
-    parser.add_argument(
-        "--rigid_to_mpm",
-        action="store_true",
-        help="Force every rigid part to use an MPM.Elastic runtime approximation while leaving cloth/liquid unchanged.",
-    )
     parser.add_argument("--all_parts_youngs_threshold_gpa", type=float, default=None, 
                         help="Record-only threshold for analysis/debug; it no longer rewrites per-part solver/material.")
     parser.add_argument("--anchored_overlap_scale_boost", type=float, default=1.0, help="Extra aggressiveness multiplier for anchored_soft overlap-driven shrinking")
@@ -7592,11 +7452,6 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--debug_soft_spread_gap", type=float, default=0.45, help="Spacing in meters between spread soft parts in debug mode")
     parser.add_argument("--debug_soft_spread_y_offset", type=float, default=0.85, help="Extra negative-y offset applied when spreading soft parts for debug inspection")
     parser.add_argument("--camera_distance_mult", type=float, default=1.0, help="Multiplier for preview camera distance and height")
-    parser.add_argument("--camera_pos_override", type=float, nargs=3, default=None, help="Explicit camera position override [x y z]")
-    parser.add_argument("--camera_lookat_override", type=float, nargs=3, default=None, help="Explicit camera lookat override [x y z]")
-    parser.add_argument("--camera_fov_override", type=float, default=None, help="Explicit camera field-of-view override in degrees")
-    parser.add_argument("--camera_res_override", type=int, nargs=2, default=None, help="Explicit camera resolution override [w h]")
-    parser.add_argument("--disable_case_striker_speed_multiplier", action="store_true", help="Do not multiply the case striker speed by the per-case random multiplier")
     parser.add_argument("--debug_hide_rigid_visuals", action="store_true", help="Debug render: hide rigid skeleton visuals but keep collisions")
     parser.add_argument("--disable_rigid_visual_double_sided_shell", action="store_true", help="Disable reversed-face duplication for non-watertight rigid visual meshes")
     parser.add_argument("--debug_disable_free_soft", action="store_true", help="Debug render: skip free_soft parts such as pillows")
@@ -7604,8 +7459,6 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--use_anchored_hybrid", action="store_true", help="Use HybridEntity for anchored_soft. Default keeps anchored_soft as independent soft bodies.")
     parser.add_argument("--anchored_soft_mesh_source", choices=["runtime", "original"], default="runtime", help="Which mesh anchored_soft uses for both simulation and rendering")
     parser.add_argument("--mpm_vis_mode", choices=["visual", "particle"], default="visual", help="How MPM soft bodies are rendered")
-    parser.add_argument("--free_cloth_vis_mode", choices=["particle", "recon"], default="particle", help="How free cloth-like MPM parts are rendered")
-    parser.add_argument("--mpm_recon_backend", choices=["splashsurf", "openvdb"], default="splashsurf", help="Backend used when free_cloth_vis_mode=recon")
     parser.add_argument("--liquid_vis_mode", choices=["particle", "recon"], default="particle", help="How liquid parts are rendered in Genesis previews")
     parser.add_argument("--liquid_recon_backend", choices=["splashsurf", "openvdb"], default="splashsurf", help="Backend used when liquid_vis_mode=recon")
     parser.add_argument("--anchored_constraint_stiffness", type=float, default=8000.0, help="Soft spring constraint stiffness used to keep anchored_soft near its matched rigid link while leaving a thin deformable outer shell; set 0 to disable")
@@ -7643,7 +7496,6 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--physxnet_entry_speed_max", type=float, default=1.60, help="Maximum initial entry speed in m/s for moving PhysXNet cases")
     parser.add_argument("--physxnet_object_yaw_deg_min", type=float, default=-180.0, help="Minimum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
     parser.add_argument("--physxnet_object_yaw_deg_max", type=float, default=180.0, help="Maximum initial yaw rotation in degrees for PhysXNet preview cases; roll/pitch remain zero to keep z-up")
-    parser.add_argument("--preview_case000_object_yaw_deg_override", type=float, default=None, help="Optional fixed yaw for preview case000_static_center, useful for aligning against a reference sample")
     
     
     
@@ -7821,14 +7673,11 @@ python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm.py \
 
 
 跑具体某个case
-rm -r //data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm_case_0613/19925
-
-
-PYTHONNOUSERSITE=1
-python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm.py \
+rm -r //data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm0613/19925
+python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm_0427_github.py \
     --physx_root /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/ \
     --object_id 19925 \
-    --output_root /data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm_case_0613 \
+    --output_root /data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm0613 \
     --run_genesis \
     --num_random_cases 4 \
     --prefer_existing_runtime_meshes \
@@ -7850,19 +7699,4 @@ python3 /home/gaoya/Code_Video/Code_data/1_localshow.py \
 12093崩了
 19925可以
 30264可以
-
-
-
-ca physxnet_mpm_env
-python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm.py \
-    --physx_root /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/ \
-    --object_id 19925 \
-    --output_root /data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm11111 \
-    --run_genesis \
-    --num_random_cases 4 \
-    --prefer_existing_runtime_meshes \
-    --dt 0.002 \
-    --substeps 40 \
-    --ball_posx 0.03 \
-    --disable_rigid_visual_double_sided_shell
 '''
