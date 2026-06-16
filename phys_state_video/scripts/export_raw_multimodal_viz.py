@@ -366,6 +366,7 @@ def render_pybullet_groundtruth(case: CaseData, width: int, height: int, out_dir
     depth_far = float(np.max(valid_depths)) if valid_depths.size else 1.0
     if abs(depth_far - depth_near) < 1e-6:
         depth_far = depth_near + 1.0
+    depth_vis_near, depth_vis_far = robust_depth_range(depth_meters, valid_mask)
 
     np.savez_compressed(
         out_dir / "pybullet_depth_gt.npz",
@@ -376,6 +377,8 @@ def render_pybullet_groundtruth(case: CaseData, width: int, height: int, out_dir
         valid_mask=valid_mask.astype(np.uint8),
         near=np.asarray([depth_near], dtype=np.float32),
         far=np.asarray([depth_far], dtype=np.float32),
+        vis_near=np.asarray([depth_vis_near], dtype=np.float32),
+        vis_far=np.asarray([depth_vis_far], dtype=np.float32),
         camera_near=np.asarray([PB_NEAR], dtype=np.float32),
         camera_far=np.asarray([PB_FAR], dtype=np.float32),
     )
@@ -386,6 +389,8 @@ def render_pybullet_groundtruth(case: CaseData, width: int, height: int, out_dir
         "valid_mask": valid_mask,
         "depth_near": depth_near,
         "depth_far": depth_far,
+        "depth_vis_near": depth_vis_near,
+        "depth_vis_far": depth_vis_far,
     }
 
 
@@ -469,6 +474,21 @@ def draw_text_box(canvas: np.ndarray, lines: list[str], origin: tuple[int, int] 
 def depth_to_grayscale(gray01: np.ndarray) -> np.ndarray:
     gray_uint8 = np.clip(gray01 * 255.0, 0, 255).astype(np.uint8)
     return np.repeat(gray_uint8[..., None], 3, axis=2)
+
+
+def robust_depth_range(depth_meters: np.ndarray, valid_mask: np.ndarray) -> tuple[float, float]:
+    valid_depths = depth_meters[valid_mask]
+    if valid_depths.size == 0:
+        return 0.0, 1.0
+    lo = float(np.percentile(valid_depths, 2.0))
+    hi = float(np.percentile(valid_depths, 98.0))
+    abs_lo = float(np.min(valid_depths))
+    abs_hi = float(np.max(valid_depths))
+    lo = max(lo, abs_lo)
+    hi = min(hi, abs_hi)
+    if abs(hi - lo) < 1e-6:
+        hi = lo + 1.0
+    return lo, hi
 
 
 def flow_hsv_color(dx: float, dy: float, ref_mag: float) -> tuple[int, int, int]:
@@ -693,10 +713,12 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int | None, panel_he
             # Build depth and mask panels.
             gt_near = float(pybullet_gt["depth_near"])
             gt_far = float(pybullet_gt["depth_far"])
-            depth_norm = (depth_map - gt_near) / max(gt_far - gt_near, 1e-6)
+            gt_vis_near = float(pybullet_gt["depth_vis_near"])
+            gt_vis_far = float(pybullet_gt["depth_vis_far"])
+            depth_norm = (depth_map - gt_vis_near) / max(gt_vis_far - gt_vis_near, 1e-6)
             depth_norm = np.clip(depth_norm, 0.0, 1.0)
             depth_vis = depth_to_grayscale(1.0 - depth_norm)
-            depth_vis[~valid_depth_mask] = np.asarray([255, 255, 255], dtype=np.uint8)
+            depth_vis[~valid_depth_mask] = np.asarray([208, 208, 208], dtype=np.uint8)
             depth_panel = depth_vis.copy()
 
             mask_panel = blank_panel(panel_width, panel_height, (8, 8, 8))
@@ -712,7 +734,10 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int | None, panel_he
                     f"sample={case.sample_dir.name}",
                 ],
             )
-            draw_text_box(depth_panel, [f"DEPTH(gt)  near={gt_near:.2f} far={gt_far:.2f}"])
+            draw_text_box(
+                depth_panel,
+                [f"DEPTH(gt)  abs=[{gt_near:.2f},{gt_far:.2f}]  vis=[{gt_vis_near:.2f},{gt_vis_far:.2f}]"],
+            )
             draw_text_box(mask_panel, [f"MASK  instances={num_objects}"])
             draw_text_box(flow_panel, [f"FLOW  max={max_flow_mag:.2f}px/frame"])
             draw_text_box(momentum_panel, [f"MOMENTUM  max={max_momentum_mag:.2f}"])
