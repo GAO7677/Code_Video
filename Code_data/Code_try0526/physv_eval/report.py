@@ -157,6 +157,10 @@ def build_metric_legend() -> str:
     """
 
 
+def build_summary_link() -> str:
+    return ""
+
+
 def _metric_card(name: str, title: str, direction: str, field_name: str) -> str:
     return f"""
       <div class="metric-card metric-{name}">
@@ -495,46 +499,138 @@ def build_group_e() -> str:
 
 
 def build_group_b1() -> str:
-    row_data = []
-    for json_path in iter_group_jsons("B1"):
-        payload = load_payload(json_path)
-        params = payload.get("parameters", {})
-        row_data.append(
-            {
-                "label": json_path.stem,
-                "meta": [params.get("restitution", "-"), params.get("lateral_friction", "-"), params.get("ball_mass_kg", "-")],
-                **metric_values(payload),
-            }
-        )
-    return _sample_group_section("B1", "Scenario", ["e", "μ", "m"], row_data)
+    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B1")]
+    row = _aggregate_metric_row(GROUP_SPECS["B1"].title, payloads)
+    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
+    thead = """
+    <thead>
+      <tr>
+        <th colspan="2">Group Metadata</th>
+        <th colspan="5">Official PDI Breakdown</th>
+        <th colspan="8">Predictive Metrics</th>
+      </tr>
+      <tr>
+        <th>Group</th>
+        <th>N</th>
+        <th class="metric metric-official_pdi">Official PDI ↓</th>
+        <th class="metric metric-scale_component">Scale ↓</th>
+        <th class="metric metric-traj_component">Trajectory ↓</th>
+        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
+        <th class="metric metric-vp_component">VP ↓</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
+        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
+        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
+        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
+        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
+      </tr>
+    </thead>
+    """
+    rows = [
+        "<tr>"
+        f"{text_td(row['method'], 'label-cell')}"
+        f"{text_td(row['count'], 'num')}"
+        f"{render_metric_cells(row, mask)}"
+        "</tr>"
+    ]
+    return (
+        section_header("B1", GROUP_SPECS["B1"].title, GROUP_SPECS["B1"].description)
+        + "<div class='group-desc'>当前展示该组所有样本的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
+        + standard_table(thead, rows)
+        + section_footer()
+    )
 
 
 def build_group_b2() -> str:
-    row_data = []
-    for json_path in iter_group_jsons("B2"):
-        payload = load_payload(json_path)
-        row_data.append(
-            {
-                "label": json_path.stem,
-                "meta": [payload.get("description", payload.get("experiment", "-"))],
-                **metric_values(payload),
-            }
-        )
-    return _sample_group_section("B2", "Scenario", ["Description"], row_data)
+    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B2")]
+    row = _aggregate_metric_row(GROUP_SPECS["B2"].title, payloads)
+    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
+    thead = """
+    <thead>
+      <tr>
+        <th colspan="2">Group Metadata</th>
+        <th colspan="5">Official PDI Breakdown</th>
+        <th colspan="8">Predictive Metrics</th>
+      </tr>
+      <tr>
+        <th>Group</th>
+        <th>N</th>
+        <th class="metric metric-official_pdi">Official PDI ↓</th>
+        <th class="metric metric-scale_component">Scale ↓</th>
+        <th class="metric metric-traj_component">Trajectory ↓</th>
+        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
+        <th class="metric metric-vp_component">VP ↓</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
+        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
+        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
+        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
+        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
+      </tr>
+    </thead>
+    """
+    rows = [
+        "<tr>"
+        f"{text_td(row['method'], 'label-cell')}"
+        f"{text_td(row['count'], 'num')}"
+        f"{render_metric_cells(row, mask)}"
+        "</tr>"
+    ]
+    return (
+        section_header("B2", GROUP_SPECS["B2"].title, GROUP_SPECS["B2"].description)
+        + "<div class='group-desc'>当前展示该组所有参数组合的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
+        + standard_table(thead, rows)
+        + section_footer()
+    )
 
 
 def build_group_b3() -> str:
-    row_data = []
-    for json_path in iter_group_jsons("B3"):
-        payload = load_payload(json_path)
-        row_data.append(
-            {
-                "label": payload.get("scenario", json_path.stem),
-                "meta": [payload.get("appearance_variant", "-")],
-                **metric_values(payload),
-            }
-        )
-    return _sample_group_section("B3", "Base Scenario", ["Appearance"], row_data)
+    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B3")]
+    row = _aggregate_metric_row(GROUP_SPECS["B3"].title, payloads)
+    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
+    thead = """
+    <thead>
+      <tr>
+        <th colspan="2">Group Metadata</th>
+        <th colspan="5">Official PDI Breakdown</th>
+        <th colspan="8">Predictive Metrics</th>
+      </tr>
+      <tr>
+        <th>Group</th>
+        <th>N</th>
+        <th class="metric metric-official_pdi">Official PDI ↓</th>
+        <th class="metric metric-scale_component">Scale ↓</th>
+        <th class="metric metric-traj_component">Trajectory ↓</th>
+        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
+        <th class="metric metric-vp_component">VP ↓</th>
+        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
+        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
+        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
+        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
+        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
+        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
+        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
+        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
+      </tr>
+    </thead>
+    """
+    rows = [
+        "<tr>"
+        f"{text_td(row['method'], 'label-cell')}"
+        f"{text_td(row['count'], 'num')}"
+        f"{render_metric_cells(row, mask)}"
+        "</tr>"
+    ]
+    return (
+        section_header("B3", GROUP_SPECS["B3"].title, GROUP_SPECS["B3"].description)
+        + "<div class='group-desc'>当前展示该组所有渲染版本的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
+        + standard_table(thead, rows)
+        + section_footer()
+    )
 
 
 def build_group_c() -> str:

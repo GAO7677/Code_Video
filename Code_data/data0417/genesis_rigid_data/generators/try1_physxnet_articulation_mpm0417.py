@@ -11817,8 +11817,10 @@ bowl with Liquid 12093
 
 rm -rf /data/gaoya/AAA_test_video/Dataset_physV/0417data/physxnet_try1_rigid_all_cases
 # 指定物体id
-python3 /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/try1_physxnet_articulation_mpm0417.py \
-    --object_id 5050 \
+
+ca physxnet_mpm_env
+python3 /home/gaoya/Code_Video/Code_data/data0417/genesis_rigid_data/generators/try1_physxnet_articulation_mpm0417.py \
+    --object_id 19925 \
     --output_root /data/gaoya/AAA_test_video/Dataset_physV/0417data/version_2_genesis_rigid_data_all_cases \
     --run_genesis \
     --generate_all_count_motion_cases \

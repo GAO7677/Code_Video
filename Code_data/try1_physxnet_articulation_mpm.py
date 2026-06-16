@@ -6102,13 +6102,22 @@ def simulate_in_genesis(
     obj_dir = Path(prepared.output_dir)
     metadata = json.loads((obj_dir / "meta" / "metadata.json").read_text(encoding="utf-8"))
 
+    requested_dt = float(dt)
+    # Keep the preview simulation conservative. The scene can contain many sharp contacts,
+    # and the larger dt used during data generation is a common source of contact explosions.
+    runtime_dt = min(requested_dt, 0.002)
+    if runtime_dt < requested_dt - 1e-12:
+        print(f"🛟 stability_guard reduced dt {requested_dt:.6f} -> {runtime_dt:.6f}")
+    dt = runtime_dt
+
     rigid_material_cfg = _default_entity_rigid_material(metadata, default_friction=default_friction)
 
     bbox_min = np.asarray(metadata["object_bbox_min"], dtype=np.float64)
     bbox_max = np.asarray(metadata["object_bbox_max"], dtype=np.float64)
     bbox_center = 0.5 * (bbox_min + bbox_max)
     bbox_size = np.maximum(bbox_max - bbox_min, 1e-6)
-    placed_pos = np.array([0.0, 0.0, float(metadata["grounding_offset_z"]) + 0.002], dtype=np.float64)
+    initial_clearance_z = max(0.006, 0.012 * float(bbox_size[2]))
+    placed_pos = np.array([0.0, 0.0, float(metadata["grounding_offset_z"]) + initial_clearance_z], dtype=np.float64)
     runtime_case_cfg = dict(case_cfg or {})
     case_name = str(runtime_case_cfg.get("case_name", "case000"))
     scene_label = str(runtime_case_cfg.get("scene_label", case_name))
@@ -6282,7 +6291,7 @@ def simulate_in_genesis(
     has_soft = any(str(spec.get("material_ctor", "")) != "gs.materials.Rigid" for spec in part_specs)
     sph_particle_size = _suggest_sph_particle_size(part_specs) if needs_sph else None
     free_surface_liquids = any(_spec_uses_sph(spec) and _liquid_prefers_free_surface(spec) for spec in part_specs)
-    runtime_substeps = int(substeps)
+    runtime_substeps = max(int(substeps), int(math.ceil(float(dt) / 1.5e-4)))
     if needs_sph and sph_particle_size is not None:
         if free_surface_liquids:
             target_solver_dt = 1.6e-4 if sph_particle_size <= 0.006 else 2.0e-4
@@ -6951,7 +6960,7 @@ def simulate_in_genesis(
             aabb = np.asarray(aabb)
 
         z_min = float(aabb[0, 2])
-        clearance = 0.002
+        clearance = float(initial_clearance_z)
         if abs(z_min - clearance) > 1e-6:
             corrected_pos = placed_pos.copy()
             corrected_pos[2] += (clearance - z_min)
@@ -7750,4 +7759,19 @@ python3 /home/gaoya/Code_Video/Code_data/1_localshow.py \
 12093崩了
 19925可以
 30264可以
+
+
+
+ca physxnet_mpm_env
+python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm.py \
+    --physx_root /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/ \
+    --object_id 19925 \
+    --output_root /data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm11111 \
+    --run_genesis \
+    --num_random_cases 4 \
+    --prefer_existing_runtime_meshes \
+    --dt 0.002 \
+    --substeps 40 \
+    --ball_posx 0.03 \
+    --disable_rigid_visual_double_sided_shell
 '''

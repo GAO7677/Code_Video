@@ -690,10 +690,8 @@ class ContextVideoTrainer(nn.Module):
         loss = torch.stack(losses).mean()
         if track_box_loss is not None:
             track_box_loss = torch.nan_to_num(track_box_loss, nan=0.0, posinf=0.0, neginf=0.0)
-            loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_align", 0.0)) * track_box_loss
         if track_iou_loss is not None:
             track_iou_loss = torch.nan_to_num(track_iou_loss, nan=0.0, posinf=0.0, neginf=0.0)
-            loss = loss + float(self.cfg.get("loss", {}).get("lambda_vggt_iou", 0.0)) * track_iou_loss
         if not torch.isfinite(loss).all():
             raise RuntimeError(
                 "non-finite total loss detected; "
