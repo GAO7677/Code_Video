@@ -785,6 +785,7 @@ def build_preview_case_configs(
     entry_prob = float(np.clip(getattr(args, "physxnet_entry_velocity_prob", 0.35), 0.0, 1.0))
     speed_min = max(0.0, float(getattr(args, "physxnet_entry_speed_min", 0.75) or 0.75))
     speed_max = max(speed_min, float(getattr(args, "physxnet_entry_speed_max", 1.60) or 1.60))
+    force_object_fixed = bool(getattr(args, "force_object_fixed", False))
 
     moving_allowed = bool(
         is_physxnet_object
@@ -1070,6 +1071,11 @@ def build_preview_case_configs(
         custom_objects: Optional[List[Dict[str, Any]]] = None,
         striker_speed_override: Optional[float] = None,
     ) -> Dict[str, Any]:
+        if force_object_fixed:
+            use_entry_motion = False
+            object_fixed_override = True
+            entry_linear_velocity = np.zeros(3, dtype=np.float64)
+            entry_angular_velocity = np.zeros(3, dtype=np.float64)
         entry_linear_velocity = np.asarray(
             [0.0, 0.0, 0.0] if entry_linear_velocity is None else entry_linear_velocity,
             dtype=np.float64,
@@ -1124,7 +1130,10 @@ def build_preview_case_configs(
         liquid_settle_steps_override = None
         liquid_auto_settle_max_steps_override = None
 
-        if use_entry_motion:
+        if force_object_fixed:
+            use_entry_motion = False
+            runtime_object_fixed = True
+        elif use_entry_motion:
             runtime_object_fixed = False
             speed = float(rng.uniform(speed_min, speed_max))
             lateral_speed = float(rng.uniform(-0.18, 0.18))
@@ -1146,7 +1155,7 @@ def build_preview_case_configs(
             initial_still_frames_override = 0
             liquid_settle_steps_override = 0
             liquid_auto_settle_max_steps_override = 0
-        elif moving_allowed or force_static_physxnet:
+        elif (moving_allowed or force_static_physxnet) and not force_object_fixed:
             runtime_object_fixed = False
 
         return _make_case_cfg(
@@ -6023,6 +6032,11 @@ def simulate_in_genesis(
         dtype=np.float64,
     )
     apply_object_entry_velocity = bool(runtime_case_cfg.get("use_entry_motion", False))
+    if bool(getattr(args, "force_object_fixed", False)):
+        runtime_object_fixed = True
+        apply_object_entry_velocity = False
+        object_entry_linear_velocity = np.zeros(3, dtype=np.float64)
+        object_entry_angular_velocity = np.zeros(3, dtype=np.float64)
     runtime_striker_speed = float(_case_cfg_or_default(runtime_case_cfg, "striker_speed_override", striker_speed))
     preview_dir = output_root / prepared.object_id / "scene_preview"
     ensure_dir(preview_dir)
@@ -7431,7 +7445,8 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--enable_striker", action="store_true", help="Explicitly add and release the striker sphere in liquid scenes")
     parser.set_defaults(object_fixed=True)
     parser.add_argument("--dynamic_object", dest="object_fixed", action="store_false", help="Let the imported object fall instead of staying fixed on the ground")
-    
+    parser.add_argument("--force_object_fixed", action="store_true", help="Force the imported main object to stay fixed in every generated case and disable entry motion overrides")
+
     parser.add_argument(
     "--object_scale_mult",
     type=float,
@@ -7699,4 +7714,21 @@ python3 /home/gaoya/Code_Video/Code_data/1_localshow.py \
 12093崩了
 19925可以
 30264可以
+
+
+rm -r //data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm0613/19925
+PYTHONNOUSERSITE=1 /data/gaoya/miniconda3/envs/physxnet_mpm_env/bin/python /home/gaoya/Code_Video/Code_data/try1_physxnet_articulation_mpm_0427_github.py \
+    --physx_root /data/gaoya/dataset/Caoza-PhysX-3D/PhysXNet/ \
+    --object_id 19925 \
+    --output_root /data/gaoya/AAA_test_video/Dataset_physV/physxnet_genesis_mpm0613 \
+    --run_genesis \
+    --num_random_cases 2 \
+    --prefer_existing_runtime_meshes \
+    --dt 0.003 \
+    --substeps 40 \
+    --ball_posx 0.03 \
+    --disable_rigid_visual_double_sided_shell \
+    --force_object_fixed 
+
+
 '''
