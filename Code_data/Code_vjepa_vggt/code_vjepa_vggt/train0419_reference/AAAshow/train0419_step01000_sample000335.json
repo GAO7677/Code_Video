@@ -1,0 +1,84 @@
+{
+  "group": "D_clean",
+  "benchmark": "physics-iq-benchmark",
+  "method_name": "0613lora_step-001000",
+  "case_key": "bus",
+  "category": "physv_0613pybullet_raw",
+  "clip_name": "bus",
+  "input_prompt": "A sphere rolls after landing on the platform and leaves the support surface, testing support switching.",
+  "input_image": null,
+  "input_context_video": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4",
+  "generation_params": {
+    "height": 576,
+    "width": 1024,
+    "fps": 30,
+    "num_inference_steps": 50,
+    "cfg_scale": 5.0,
+    "requested_output_frames": 24,
+    "aligned_generation_num_frames": 25,
+    "context_frames": 8,
+    "negative_prompt": "",
+    "conditioning_mode": "context_aware",
+    "used_context_frames": 8
+  },
+  "source_video": null,
+  "source_meta_json": null,
+  "output_video": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step01000_sample000335.mp4",
+  "output_json": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step01000_sample000335.json",
+  "status": "generated",
+  "seed": 42,
+  "runtime": {
+    "model_name": "step-001000",
+    "benchmark_step": 1000,
+    "dataset": "physv_0613pybullet_raw",
+    "sample_id": "bus",
+    "scenario": null,
+    "weights_path": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-001000/checkpoint.safetensors",
+    "index_in_sorted_list": 0,
+    "shard_id": 0,
+    "num_shards": 1
+  },
+  "paths": {
+    "context_video_path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4",
+    "input_path": [
+      "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4",
+      "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4"
+    ],
+    "input_roles": [
+      {
+        "role": "input_image",
+        "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4",
+        "note": "first frame extracted from context video at runtime"
+      },
+      {
+        "role": "context_video",
+        "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4"
+      }
+    ],
+    "output_video_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step01000_sample000335.mp4",
+    "output_json_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step01000_sample000335.json"
+  },
+  "model_inputs": {
+    "conditioning_mode": "context_aware",
+    "pipeline_kwargs": [
+      "input_image",
+      "context_video"
+    ],
+    "source_conditions": [
+      {
+        "role": "input_image",
+        "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4",
+        "note": "first frame extracted from context video at runtime"
+      },
+      {
+        "role": "context_video",
+        "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4"
+      }
+    ],
+    "used_context_frames": 8,
+    "notes": [
+      "input_image is the first context frame passed separately",
+      "context_video is the resized context frame sequence"
+    ]
+  }
+}

@@ -3,8 +3,11 @@
 set -eu
 
 GPU_ID=1
-META_LIST_PATH=/data/gaoya/dataset/physics-iq-benchmark/D_clean/_meta/037_Solid_Mechanics_meta_list.txt
+CONTEXT_PATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step010000_0002p5s3p5.mp4
+PROMPT="Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement.,"
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0529/vjepa_vggt/test/outputs/D_clean
+NUM_FRAMES=80
+
 PYTHON_BIN=/data/gaoya/miniconda3/envs/wan/bin/python
 SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py
 BASE_PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_train/train_0419:/home/gaoya/Code_Video/DiffSynth-Studio-main
@@ -28,9 +31,11 @@ for LORA_PATH in $LORAS; do
 
   CUDA_VISIBLE_DEVICES="${GPU_ID}" PYTHONPATH="${BASE_PYTHONPATH}" \
     "${PYTHON_BIN}" "${SCRIPT}" \
-      --meta_list_path "${META_LIST_PATH}" \
+      --context_path "${CONTEXT_PATH}" \
+      --prompt "${PROMPT}" \
       --lora_path "${LORA_PATH}" \
-      --output_root "${OUTPUT_ROOT}/${method_name}" \
-      --runtime_root "${OUTPUT_ROOT}/${method_name}" \
-      --model_name "${method_name}"
+      --output_video_path "${OUTPUT_ROOT}/${method_name}/train0419_step010000_0002p5s3p5.mp4" \
+      --no_metadata \
+      --num_frames "${NUM_FRAMES}" \
+      --overwrite
 done

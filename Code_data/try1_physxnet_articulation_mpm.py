@@ -559,7 +559,10 @@ def _choose_custom_runtime_solver(
 ) -> Tuple[str, str]:
     source_ctor = str(material_ctor or "gs.materials.MPM.Elastic")
     if rigidify_youngs_threshold_pa is not None and youngs is not None and float(youngs) >= float(rigidify_youngs_threshold_pa):
-        return "rigid_approx", "gs.materials.Rigid"
+        # Keep the runtime solver on the MPM path even for very stiff objects.
+        # We still record that this object came from a rigidification threshold,
+        # but the actual simulator material stays MPM.Elastic.
+        return "mpm", "gs.materials.MPM.Elastic"
     return "mpm", source_ctor
 
 
@@ -990,7 +993,7 @@ def build_preview_case_configs(
                     wz *= 0.35
                     wx *= 0.45
                     wy *= 0.45
-            custom_objects.append(
+        custom_objects.append(
                 {
                     "custom_object_id": f"{prefix}_{case_idx:03d}_{obj_idx:02d}",
                     "source_dataset": str(asset.get("source_kind", "primitive")),
@@ -2308,12 +2311,29 @@ def _make_genesis_rigid_material(gs: Any, rho: float, friction: float, restituti
         return gs.materials.Rigid(**kwargs)
 
 
-def _make_pbd_cloth_material_from_part(gs: Any, density: float, friction: Optional[float], youngs: Optional[float], damping: Optional[float]):
+def _make_pbd_cloth_material_from_part(
+    gs: Any,
+    density: float,
+    friction: Optional[float],
+    youngs: Optional[float],
+    damping: Optional[float],
+    role: str = "free_soft",
+):
     friction_val = float(np.clip(friction if friction is not None else 0.15, 1e-3, 5.0))
+    role = str(role or "free_soft")
     youngs_val = float(max(youngs if youngs is not None else 1e5, 1e3))
-    air_resistance = float(max(damping if damping is not None else 1e-3, 1e-6))
-    stretch_compliance = float(np.clip(1.0 / youngs_val, 1e-9, 1e-3))
-    bending_compliance = float(np.clip(10.0 / youngs_val, 1e-8, 5e-2))
+    # Dataset cloth annotations are often much stiffer than a stable preview can tolerate.
+    # We deliberately clamp the runtime cloth stiffness down to keep the cloth from exploding
+    # when it starts in contact with the table or surrounding rigid frame.
+    if role == "anchored_soft":
+        youngs_val = float(np.clip(youngs_val, 5e4, 2e6))
+    else:
+        youngs_val = float(np.clip(youngs_val, 3e4, 8e5))
+    air_resistance = float(max(damping if damping is not None else 5e-3, 1e-4))
+    if role == "anchored_soft":
+        air_resistance = float(max(air_resistance, 2e-3))
+    stretch_compliance = float(np.clip(1.0 / youngs_val, 1e-9, 2e-3))
+    bending_compliance = float(np.clip(10.0 / youngs_val, 1e-8, 8e-2))
     # Cloth rho is area density (kg/m^2), not volumetric density.
     rho_2d = float(max(density * 0.002, 0.2))
     return gs.materials.PBD.Cloth(
@@ -3477,6 +3497,32 @@ def _spec_uses_pbd(spec: Dict[str, Any]) -> bool:
     return str(spec.get("material_ctor_runtime", spec.get("material_ctor", ""))) == "gs.materials.PBD.Cloth"
 
 
+def _apply_rigid_to_mpm_override(part_specs: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """
+    Mark all rigid parts so the runtime material builder treats them as MPM.
+
+    Returns:
+      (n_rigid_marked, n_runtime_ctor_rewritten)
+    """
+    marked = 0
+    rewritten = 0
+    for spec in part_specs:
+        original_ctor = str(spec.get("material_ctor", ""))
+        if original_ctor != "gs.materials.Rigid":
+            continue
+
+        marked += 1
+        spec["rigid_to_mpm"] = True
+
+        runtime_ctor = str(spec.get("material_ctor_runtime", original_ctor))
+        if runtime_ctor == "gs.materials.Rigid":
+            spec["material_ctor_runtime"] = "gs.materials.MPM.Elastic"
+            spec["solver_family_runtime"] = "mpm_elastic"
+            rewritten += 1
+
+    return marked, rewritten
+
+
 def _suggest_sph_particle_size(part_specs: List[Dict[str, Any]]) -> float:
     liquid_xy_extents: List[float] = []
     free_surface_liquid = False
@@ -3611,7 +3657,7 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
             anchored_sampler = "pbs"
 
     if ctor == "gs.materials.Rigid":
-        if str(spec.get("force_mpm", False)):
+        if str(spec.get("force_mpm", False)) or bool(spec.get("rigid_to_mpm", False)):
             # All-MPM mode: approximate rigid-looking parts with a stiff MPM elastic material.
             role = str(spec.get("assembly_role", "free_soft"))
             if role == "rigid_skeleton":
@@ -3665,7 +3711,14 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
                 common_kwargs["nu"] = min(common_kwargs["nu"], 0.18)
                 common_kwargs["sampler"] = anchored_sampler
             return gs.materials.MPM.Elastic(**common_kwargs)
-        mat = _make_pbd_cloth_material_from_part(gs, density=density, friction=friction, youngs=youngs, damping=damping)
+        mat = _make_pbd_cloth_material_from_part(
+            gs,
+            density=density,
+            friction=friction,
+            youngs=youngs,
+            damping=damping,
+            role=role,
+        )
         # print(f"{spec['part_name']} PBD.Cloth kwargs: {mat.__dict__}")
         # exit()
         return mat
@@ -6148,6 +6201,13 @@ def simulate_in_genesis(
     )
 
     part_specs = _collect_part_specs(obj_dir=obj_dir, metadata=metadata)
+    rigid_to_mpm = bool(getattr(args, "rigid_to_mpm", False))
+    if rigid_to_mpm:
+        n_marked, n_rewritten = _apply_rigid_to_mpm_override(part_specs)
+        print(
+            f"🛟 rigid_to_mpm override enabled: marked_rigid_parts={n_marked} "
+            f"runtime_rewritten={n_rewritten}"
+        )
     part_pid_filter_raw = str(getattr(args, "part_pid_filter", "") or "").strip()
     prefer_existing_runtime_meshes = bool(getattr(args, "prefer_existing_runtime_meshes", False))
     if part_pid_filter_raw:
@@ -6280,7 +6340,7 @@ def simulate_in_genesis(
     force_mpm_mode = str(getattr(args, "solver_family_override", "") or "").strip().lower() in {"mpm", "mpm_all"}
     custom_object_cfgs = list(runtime_case_cfg.get("custom_objects", []) or [])
     custom_has_mpm_mesh = any(
-        str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) != "rigid_approx"
+        str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) == "mpm"
         for cfg in custom_object_cfgs
     )
 
@@ -6315,7 +6375,7 @@ def simulate_in_genesis(
             mpm_upper = (2.5, 2.0, 2.2)
         custom_mpm_objects = [
             cfg for cfg in custom_object_cfgs
-            if str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) != "rigid_approx"
+            if str(cfg.get("mesh_path", "") or "").strip() and str(cfg.get("runtime_solver", "mpm")) == "mpm"
         ]
         if custom_mpm_objects:
             lower = np.asarray(mpm_lower, dtype=np.float64)
@@ -6605,10 +6665,10 @@ def simulate_in_genesis(
             entity_pos = entity_pos + debug_pid_offsets[int(spec["pid"])]
         if _is_free_cloth_like_spec(spec):
             cloth_follow_gap = min(
-                0.020,
+                0.035,
                 max(
-                    0.006,
-                    0.015 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
+                    0.010,
+                    0.030 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
                 ),
             )
             entity_pos[2] += cloth_follow_gap
@@ -6804,7 +6864,7 @@ def simulate_in_genesis(
             runtime_solver = str(custom_cfg.get("runtime_solver", "mpm"))
             runtime_material_ctor = str(custom_cfg.get("runtime_material_ctor", custom_cfg.get("material_ctor", "gs.materials.MPM.Elastic")))
 
-            if mesh_path and Path(mesh_path).exists() and runtime_solver != "rigid_approx":
+            if mesh_path and Path(mesh_path).exists() and runtime_solver == "mpm":
                 custom_spec = {
                     "pid": -1000 - len(custom_runtime_objects),
                     "part_name": custom_id,
@@ -6839,22 +6899,6 @@ def simulate_in_genesis(
                         file_meshes_are_zup=True,
                     ),
                     surface=gs.surfaces.Default(color=color, vis_mode=custom_vis_mode),
-                )
-                clear_extent = custom_scale
-            elif mesh_path and Path(mesh_path).exists() and runtime_solver == "rigid_approx":
-                custom_ent = scene.add_entity(
-                    material=gs.materials.Rigid(
-                        rho=float(custom_cfg.get("density", 1000.0)),
-                        friction=float(custom_cfg.get("friction", 0.55)),
-                    ),
-                    morph=gs.morphs.Mesh(
-                        file=mesh_path,
-                        scale=custom_scale,
-                        pos=tuple(start_pos.tolist()),
-                        euler=custom_euler,
-                        file_meshes_are_zup=True,
-                    ),
-                    surface=gs.surfaces.Default(color=color, vis_mode="visual"),
                 )
                 clear_extent = custom_scale
             else:
@@ -7494,6 +7538,11 @@ def build_argparser() -> argparse.ArgumentParser:
 )
     parser.add_argument("--ball_posx", type=float, default=0.0, help="X position of the ball relative to the striker")
     parser.add_argument("--solver_family_override", type=str, default=None, help="Override solver family for all objects")
+    parser.add_argument(
+        "--rigid_to_mpm",
+        action="store_true",
+        help="Force every rigid part to use an MPM.Elastic runtime approximation while leaving cloth/liquid unchanged.",
+    )
     parser.add_argument("--all_parts_youngs_threshold_gpa", type=float, default=None, 
                         help="Record-only threshold for analysis/debug; it no longer rewrites per-part solver/material.")
     parser.add_argument("--anchored_overlap_scale_boost", type=float, default=1.0, help="Extra aggressiveness multiplier for anchored_soft overlap-driven shrinking")

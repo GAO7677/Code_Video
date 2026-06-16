@@ -12,6 +12,7 @@ from .datasets import GROUP_SPECS, iter_group_jsons
 from .paths import A_OUTPUT, ABC_REPORT_ROOT, DATA_ROOT
 from .records import load_payload, metric_value, resolve_video_path
 
+ABD_B_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/ABD_test/B")
 PHYSICSIQ_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/physics-iq-benchmark")
 PHYSICSIQ_OUTPUT = PHYSICSIQ_ROOT / "output"
 PHYSICSIQ_BENCHMARK = "physics-iq-benchmark"
@@ -22,6 +23,7 @@ PHYSICSIQ_METHOD_LABELS = {
     "VACE_1p3B_TI2V": "VACE 1.3B TI2V",
     "VACE_1p3B_ctx08": "VACE 1.3B ctx=8",
 }
+METHOD_LABELS_4WAY = PHYSICSIQ_METHOD_LABELS
 PHYGENBENCH_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/phygenbench")
 PHYGENBENCH_OUTPUT = PHYGENBENCH_ROOT / "output"
 PHYGENBENCH_BENCHMARK = "phygenbench"
@@ -499,99 +501,46 @@ def build_group_e() -> str:
 
 
 def build_group_b1() -> str:
-    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B1")]
-    row = _aggregate_metric_row(GROUP_SPECS["B1"].title, payloads)
-    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
-    thead = """
-    <thead>
-      <tr>
-        <th colspan="2">Group Metadata</th>
-        <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="8">Predictive Metrics</th>
-      </tr>
-      <tr>
-        <th>Group</th>
-        <th>N</th>
-        <th class="metric metric-official_pdi">Official PDI ↓</th>
-        <th class="metric metric-scale_component">Scale ↓</th>
-        <th class="metric metric-traj_component">Trajectory ↓</th>
-        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
-        <th class="metric metric-vp_component">VP ↓</th>
-        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
-        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
-        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
-        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
-        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
-        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
-        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
-        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
-      </tr>
-    </thead>
-    """
-    rows = [
-        "<tr>"
-        f"{text_td(row['method'], 'label-cell')}"
-        f"{text_td(row['count'], 'num')}"
-        f"{render_metric_cells(row, mask)}"
-        "</tr>"
-    ]
-    return (
-        section_header("B1", GROUP_SPECS["B1"].title, GROUP_SPECS["B1"].description)
-        + "<div class='group-desc'>当前展示该组所有样本的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
-        + standard_table(thead, rows)
-        + section_footer()
+    return _build_abd_b_group_section(
+        "B1",
+        "B1 / Ball-Block Physics",
+        "固定外观，只改恢复系数、摩擦和球质量。",
+        "B1 目录下按方法分层存放 GT、Wan2.2-5B TI2V、VACE 1.3B TI2V、VACE 1.3B ctx=8 的结果，因此这里统计的是方法均值，不是原始源视频。",
+        ["GT", "wan22-5B-TI2V", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08"],
     )
 
 
 def build_group_b2() -> str:
-    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B2")]
-    row = _aggregate_metric_row(GROUP_SPECS["B2"].title, payloads)
-    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
-    thead = """
-    <thead>
-      <tr>
-        <th colspan="2">Group Metadata</th>
-        <th colspan="5">Official PDI Breakdown</th>
-        <th colspan="8">Predictive Metrics</th>
-      </tr>
-      <tr>
-        <th>Group</th>
-        <th>N</th>
-        <th class="metric metric-official_pdi">Official PDI ↓</th>
-        <th class="metric metric-scale_component">Scale ↓</th>
-        <th class="metric metric-traj_component">Trajectory ↓</th>
-        <th class="metric metric-epsilon_rigidity">Rigidity ↓</th>
-        <th class="metric metric-vp_component">VP ↓</th>
-        <th class="metric metric-wmreward_surprise">WMReward Surprise ↓</th>
-        <th class="metric metric-cosmos_reason1">Cosmos ↑</th>
-        <th class="metric metric-vjepa_temporal_relation_raw_error">V-JEPA RelRaw ↓</th>
-        <th class="metric metric-vjepa_delta_relation_raw_error">V-JEPA DeltaRel ↓</th>
-        <th class="metric metric-vjepa_delta_profile_error">V-JEPA DeltaProf ↓</th>
-        <th class="metric metric-videophy2_auto_sa">VideoPhy-2 SA ↑</th>
-        <th class="metric metric-videophy2_auto_pc">VideoPhy-2 PC ↑</th>
-        <th class="metric metric-videophy2_auto_joint">VideoPhy-2 Joint ↑</th>
-      </tr>
-    </thead>
-    """
-    rows = [
-        "<tr>"
-        f"{text_td(row['method'], 'label-cell')}"
-        f"{text_td(row['count'], 'num')}"
-        f"{render_metric_cells(row, mask)}"
-        "</tr>"
-    ]
-    return (
-        section_header("B2", GROUP_SPECS["B2"].title, GROUP_SPECS["B2"].description)
-        + "<div class='group-desc'>当前展示该组所有参数组合的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
-        + standard_table(thead, rows)
-        + section_footer()
+    return _build_abd_b_group_section(
+        "B2",
+        "B2 / JEPA Sensitivity",
+        "固定外观，系统改变速度、质量、重力、碰撞与方向。",
+        "B2 目录下同样按方法分层，方法内部包含不同物理扰动子类的结果，当前展示的是每个方法在整组上的均值。",
+        ["GT", "wan22-5B-TI2V", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08"],
     )
 
 
 def build_group_b3() -> str:
-    payloads = [load_payload(json_path) for json_path in iter_group_jsons("B3")]
-    row = _aggregate_metric_row(GROUP_SPECS["B3"].title, payloads)
-    mask = best_metric_mask([row], GROUP_C_METRICS)[0]
+    return _build_abd_b_group_section(
+        "B3",
+        "B3 / Appearance Sensitivity",
+        "同一物理轨迹，只改渲染外观与光照。",
+        "B3 目录下按方法分层，方法内部覆盖 default / dark_blue / warm_bright 三类渲染版本；这里统计的是整组方法均值。",
+        ["GT", "wan22-5B-TI2V", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08"],
+    )
+
+
+def _build_abd_b_group_section(group_id: str, title: str, description: str, note: str, methods: list[str]) -> str:
+    row_data = []
+    for method in methods:
+        method_paths = sorted((ABD_B_ROOT / method).glob(f"*.json"))
+        payloads = []
+        for p in method_paths:
+            payload = load_payload(p)
+            if str(payload.get("category") or "").startswith(group_id):
+                payloads.append(payload)
+        row_data.append(_aggregate_metric_row(METHOD_LABELS_4WAY[method], payloads))
+    masks = best_metric_mask(row_data, GROUP_C_METRICS)
     thead = """
     <thead>
       <tr>
@@ -618,16 +567,18 @@ def build_group_b3() -> str:
       </tr>
     </thead>
     """
-    rows = [
-        "<tr>"
-        f"{text_td(row['method'], 'label-cell')}"
-        f"{text_td(row['count'], 'num')}"
-        f"{render_metric_cells(row, mask)}"
-        "</tr>"
-    ]
+    rows = []
+    for row, mask in zip(row_data, masks):
+        rows.append(
+            "<tr>"
+            f"{text_td(row['method'], 'label-cell')}"
+            f"{text_td(row['count'], 'num')}"
+            f"{render_metric_cells(row, mask)}"
+            "</tr>"
+        )
     return (
-        section_header("B3", GROUP_SPECS["B3"].title, GROUP_SPECS["B3"].description)
-        + "<div class='group-desc'>当前展示该组所有渲染版本的均值，不再逐个 case 展开；下方代表性样本仅用于辅助查看具体差异。</div>"
+        section_header(group_id, title, description)
+        + f"<div class='group-desc'>{note}</div>"
         + standard_table(thead, rows)
         + section_footer()
     )
@@ -950,6 +901,110 @@ def build_representative_samples() -> str:
     """
 
 
+def build_gt_sensitivity_section() -> str:
+    cases = [
+        {
+            "label": "B1 baseline",
+            "kind": "参数变化",
+            "note": "恢复系数 e=0.7, 摩擦 mu=0.5, 球质量 m=1",
+            "json_path": ABD_B_ROOT / "GT" / "004_B1_ball_block_physics_e07_mu05_m1.json",
+        },
+        {
+            "label": "B1 light ball",
+            "kind": "参数变化",
+            "note": "同一物理场景，球质量降到 m=0.1",
+            "json_path": ABD_B_ROOT / "GT" / "003_B1_ball_block_physics_e07_mu05_m01.json",
+        },
+        {
+            "label": "B2 grav_050",
+            "kind": "运动变化",
+            "note": "重力更低，运动轨迹更慢",
+            "json_path": ABD_B_ROOT / "GT" / "019_B2_gravity_grav_050.json",
+        },
+        {
+            "label": "B2 grav_098",
+            "kind": "运动变化",
+            "note": "接近地球重力",
+            "json_path": ABD_B_ROOT / "GT" / "020_B2_gravity_grav_098.json",
+        },
+        {
+            "label": "B2 grav_200",
+            "kind": "运动变化",
+            "note": "超重力，速度变化更剧烈",
+            "json_path": ABD_B_ROOT / "GT" / "021_B2_gravity_grav_200.json",
+        },
+        {
+            "label": "B3 default",
+            "kind": "外观变化",
+            "note": "默认渲染版本",
+            "json_path": ABD_B_ROOT / "GT" / "040_B3_default_render_e07_mu05_m1_v1_default.json",
+        },
+        {
+            "label": "B3 dark blue",
+            "kind": "外观变化",
+            "note": "同一轨迹，深蓝渲染",
+            "json_path": ABD_B_ROOT / "GT" / "030_B3_dark_blue_render_e07_mu01_m1_v2_dark_blue.json",
+        },
+        {
+            "label": "B3 warm bright",
+            "kind": "外观变化",
+            "note": "同一轨迹，暖色高亮渲染",
+            "json_path": ABD_B_ROOT / "GT" / "045_B3_warm_bright_render_e05_mu05_m1_v3_warm_bright.json",
+        },
+    ]
+    row_data = []
+    for case in cases:
+        payload = load_payload(case["json_path"])
+        row = {
+            "kind": case["kind"],
+            "label": case["label"],
+            "note": case["note"],
+        }
+        row.update(metric_values(payload))
+        row_data.append(row)
+    masks = best_metric_mask(row_data, REPRESENTATIVE_METRICS)
+    rows = []
+    for row, mask in zip(row_data, masks):
+        rows.append(
+            "<tr>"
+            f"{text_td(row['kind'], 'label-cell')}"
+            f"{text_td(row['label'], 'label-cell')}"
+            f"{text_td(row['note'])}"
+            + "".join(metric_td(name, row[name], is_best=mask[name]) for name in REPRESENTATIVE_METRICS)
+            + "</tr>"
+        )
+    headers = "".join(
+        f"<th class='metric metric-{name}'>{REPRESENTATIVE_METRIC_TITLES[name]}</th>"
+        for name in REPRESENTATIVE_METRICS
+    )
+    thead = f"""
+    <thead>
+      <tr>
+        <th colspan="3">GT Case Metadata</th>
+        <th colspan="{len(REPRESENTATIVE_METRICS)}">Metrics</th>
+      </tr>
+      <tr>
+        <th>Change Type</th>
+        <th>Case</th>
+        <th>Note</th>
+        {headers}
+      </tr>
+    </thead>
+    """
+    return f"""
+    <section class="samples-section">
+      <div class="group-head">
+        <div>
+          <div class="group-tag">GT Sensitivity</div>
+          <h2>GT 参数 / 运动 / 外观敏感性</h2>
+          <div class="group-desc">只看 GT 样本，直接对比参数变化、运动变化和外观变化对各指标的影响。这里不看方法排名，只看指标是否真的会跟着变化。</div>
+        </div>
+      </div>
+      {standard_table(thead, rows)}
+    </section>
+    """
+
+
 def _representative_case_card(case_spec: dict[str, Any]) -> str:
     sample_rows = [_representative_sample_row(sample_spec["label"], sample_spec["json_path"]) for sample_spec in case_spec["samples"]]
     masks = best_metric_mask(sample_rows, REPRESENTATIVE_METRICS)
@@ -1225,6 +1280,7 @@ def build_html() -> str:
     {build_group_c()}
     {build_group_d()}
     {build_group_e()}
+    {build_gt_sensitivity_section()}
     {build_representative_samples()}
   </div>
 </body>

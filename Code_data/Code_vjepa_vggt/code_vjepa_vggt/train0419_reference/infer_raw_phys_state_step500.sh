@@ -3,7 +3,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_train/tr
 /data/gaoya/miniconda3/envs/wan/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py \
   --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
-  --lora_path /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors \
+  --lora_path /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-001000/checkpoint.safetensors \
   --dataset_name physv_0613pybullet_raw \
   --height 576 \
   --width 1024 \
@@ -14,18 +14,17 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_train/tr
   --cfg_scale 5.0 \
   --seed 42 \
   --conditioning_mode context_aware \
-  --model_name step-000500 \
+  --model_name step-001000 \
   --device cuda \
   --sample_id bus \
-  --context_path /data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output/GT/Dynamic_Tracking/bus_0s_1p5s.mp4 \
-  --prompt "bus" \
-  --output_video_path /data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/500_bus.mp4 \
-
-
-
-
   --context_path /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_000335/context_video.mp4 \
   --prompt "A sphere rolls after landing on the platform and leaves the support surface, testing support switching." \
+  --output_video_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/train0419_step01000_sample000335.mp4 \
+
+
+  --context_path /data/gaoya/AAA_test_video/Output_try0526/PDI-Bench/output/GT/Dynamic_Tracking/bus_0s_1p5s.mp4 \
+  --prompt "bus" \
+
 
   --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement.", \
   --context_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAsource/physicIQ_0002_clip_2p5s_3p5s.mp4 \

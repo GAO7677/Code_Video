@@ -17,6 +17,12 @@ E_ROOT = Path("/data/gaoya/AAA_test_video/Output_try0526/phygenbench")
 
 METHODS_4WAY = ["GT", "wan22-5B-TI2V", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08"]
 METHODS_3WAY = ["wan22-5B-TI2V", "VACE_1p3B_TI2V", "VACE_1p3B_ctx08"]
+METHOD_LABELS_4WAY = {
+    "GT": "GT",
+    "wan22-5B-TI2V": "Wan2.2-5B TI2V",
+    "VACE_1p3B_TI2V": "VACE 1.3B TI2V",
+    "VACE_1p3B_ctx08": "VACE 1.3B ctx=8",
+}
 
 METRICS = [
     "official_pdi",
@@ -221,6 +227,20 @@ def load_group_from_dir(root: Path, benchmark: str, methods: list[str]) -> list[
     return rows
 
 
+def load_b_group(prefix: str) -> list[dict[str, Any]]:
+    rows = []
+    for method in METHODS_4WAY:
+        mdir = ABD_ROOT / "B" / method
+        payloads = []
+        for p in sorted(mdir.glob("*.json")):
+            payload = load_json(p)
+            category = str(payload.get("category") or "")
+            if category.startswith(prefix):
+                payloads.append(payload)
+        rows.append({"method": method, **summarize(payloads)})
+    return rows
+
+
 def load_c_group() -> list[dict[str, Any]]:
     payloads_by_method = {"original": [], "shuffled": []}
     for p in sorted(C_ROOT.glob("*.json")):
@@ -263,7 +283,9 @@ def render_case_card(title: str, desc: str, items: list[tuple[str, str, str]]) -
 
 def build_html() -> str:
     a_rows = load_group_from_dir(ABD_ROOT / "A", "GT", METHODS_4WAY)
-    b_rows = load_group_from_dir(ABD_ROOT / "B", "GT", METHODS_4WAY)
+    b1_rows = load_b_group("B1")
+    b2_rows = load_b_group("B2")
+    b3_rows = load_b_group("B3")
     d_rows = load_group_from_dir(ABD_ROOT / "D", "GT", METHODS_4WAY)
     c_rows = load_c_group()
     e_rows = load_e_group()
@@ -307,12 +329,26 @@ def build_html() -> str:
       ("VACE 1.3B TI2V", str(ABD_ROOT / 'A' / 'VACE_1p3B_TI2V' / 'Dynamic_Tracking' / 'bus.mp4'), 'video'),
       ("VACE 1.3B ctx=8", str(ABD_ROOT / 'A' / 'VACE_1p3B_ctx08' / 'Dynamic_Tracking' / 'bus.mp4'), 'video'),
   ])}
-  {render_table("B / Dataset_physV_B_benchmark", b_rows)}
-  {render_case_card("B 组代表性 case", "固定外观，只改质量/速度/重力/光照等参数，适合看指标对物理变化的响应。", [
+  {render_table("B1 / Ball-Block Physics", b1_rows)}
+  {render_case_card("B1 组代表性 case", "固定外观，只改恢复系数、摩擦和球质量；这里展示的是整组方法均值，不是单个样本。", [
       ("GT", str(ABD_ROOT / 'B' / 'GT' / '004_B1_ball_block_physics_e07_mu05_m1.mp4'), 'video'),
       ("Wan2.2-5B TI2V", str(ABD_ROOT / 'B' / 'wan22-5B-TI2V' / '004_B1_ball_block_physics_e07_mu05_m1.mp4'), 'video'),
       ("VACE 1.3B TI2V", str(ABD_ROOT / 'B' / 'VACE_1p3B_TI2V' / '004_B1_ball_block_physics_e07_mu05_m1.mp4'), 'video'),
       ("VACE 1.3B ctx=8", str(ABD_ROOT / 'B' / 'VACE_1p3B_ctx08' / '004_B1_ball_block_physics_e07_mu05_m1.mp4'), 'video'),
+  ])}
+  {render_table("B2 / JEPA Sensitivity", b2_rows)}
+  {render_case_card("B2 组代表性 case", "固定外观，只改速度、质量、重力、碰撞与方向；这里展示的是整组方法均值，不是单个样本。", [
+      ("GT", str(ABD_ROOT / 'B' / 'GT' / '019_B2_gravity_grav_050.mp4'), 'video'),
+      ("Wan2.2-5B TI2V", str(ABD_ROOT / 'B' / 'wan22-5B-TI2V' / '019_B2_gravity_grav_050.mp4'), 'video'),
+      ("VACE 1.3B TI2V", str(ABD_ROOT / 'B' / 'VACE_1p3B_TI2V' / '019_B2_gravity_grav_050.mp4'), 'video'),
+      ("VACE 1.3B ctx=8", str(ABD_ROOT / 'B' / 'VACE_1p3B_ctx08' / '019_B2_gravity_grav_050.mp4'), 'video'),
+  ])}
+  {render_table("B3 / Appearance Sensitivity", b3_rows)}
+  {render_case_card("B3 组代表性 case", "同一物理轨迹，只改渲染外观和光照；这里展示的是整组方法均值，不是单个样本。", [
+      ("GT", str(ABD_ROOT / 'B' / 'GT' / '040_B3_default_render_e07_mu05_m1_v1_default.mp4'), 'video'),
+      ("Wan2.2-5B TI2V", str(ABD_ROOT / 'B' / 'wan22-5B-TI2V' / '040_B3_default_render_e07_mu05_m1_v1_default.mp4'), 'video'),
+      ("VACE 1.3B TI2V", str(ABD_ROOT / 'B' / 'VACE_1p3B_TI2V' / '040_B3_default_render_e07_mu05_m1_v1_default.mp4'), 'video'),
+      ("VACE 1.3B ctx=8", str(ABD_ROOT / 'B' / 'VACE_1p3B_ctx08' / '040_B3_default_render_e07_mu05_m1_v1_default.mp4'), 'video'),
   ])}
   {render_table("D / Physics-IQ", d_rows)}
   {render_case_card("D 组代表性 case", "真实物理现象基准，覆盖流体、力学和光学等类别，适合观察推断类指标的稳定性。", [
@@ -337,20 +373,6 @@ def build_html() -> str:
 </body>
 </html>"""
     return html
-
-
-def render_table_rows(label: str, rows: list[dict[str, Any]]) -> list[str]:
-    masks = best_masks(rows)
-    out = []
-    for row, mask in zip(rows, masks):
-        out.append(
-            "<tr>"
-            f"<td class='label-cell'>{label} / {row['method']}</td>"
-            f"<td class='num'>{row['count']}</td>"
-            + "".join(f"<td class='num {'best' if mask[m] else ''}'>{fv(row[m])}</td>" for m in METRICS)
-            + "</tr>"
-        )
-    return out
 
 
 def render_table_rows(label: str, rows: list[dict[str, Any]]) -> list[str]:
