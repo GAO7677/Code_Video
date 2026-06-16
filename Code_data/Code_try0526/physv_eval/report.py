@@ -50,6 +50,16 @@ METRIC_LABELS = {
     "videophy2_auto_joint": "VideoPhy-2 Joint",
 }
 
+BACKBONE_LABELS = {
+    "wan": "Wan backbone",
+    "vace": "VACE backbone",
+}
+
+BACKBONE_METHODS = {
+    "wan": ["wan22-5B-TI2V"],
+    "vace": ["VACE_1p3B_TI2V", "VACE_1p3B_ctx08"],
+}
+
 LOWER_IS_BETTER = {
     "official_pdi",
     "scale_component",
@@ -763,6 +773,88 @@ def _aggregate_metric_row(method: str, payloads: list[dict[str, Any]]) -> dict[s
     }
 
 
+def _load_group_backbone_rows(group_id: str) -> list[dict[str, Any]]:
+    rows = []
+    for backbone, methods in BACKBONE_METHODS.items():
+        payloads: list[dict[str, Any]] = []
+        for method in methods:
+            method_paths = sorted((ABD_B_ROOT / method).glob("*.json"))
+            for p in method_paths:
+                payload = load_payload(p)
+                if str(payload.get("category") or "").startswith(group_id):
+                    payloads.append(payload)
+        rows.append(_aggregate_metric_row(BACKBONE_LABELS[backbone], payloads))
+    return rows
+
+
+def _load_group_c_rows() -> list[dict[str, Any]]:
+    shuffle_payloads: list[dict[str, Any]] = []
+    noshuffle_payloads: list[dict[str, Any]] = []
+    originals_in_c = {json_path.stem: json_path for json_path in iter_group_jsons("C") if json_path.stem.endswith("_original")}
+    for json_path in iter_group_jsons("C"):
+        if json_path.stem.endswith("_shuffled"):
+            shuffle_payloads.append(load_payload(json_path))
+            noshuffle_payloads.append(load_payload(_resolve_group_c_original_path(json_path, originals_in_c)))
+        elif json_path.stem.endswith("_original"):
+            continue
+    return [
+        _aggregate_metric_row("original", noshuffle_payloads),
+        _aggregate_metric_row("shuffled", shuffle_payloads),
+    ]
+
+
+def build_backbone_summary_section() -> str:
+    sections = []
+    for group_id, title, desc in [
+        ("B1", "B1 / Backbone Averages", "固定外观，只改恢复系数 / 摩擦 / 球质量。这里把 Wan 与 VACE backbone 的结果分别汇总，不再按单个 method 拆开。"),
+        ("B2", "B2 / Backbone Averages", "固定外观，只改速度 / 质量 / 重力 / 方向等动力学参数。这里把 Wan 与 VACE backbone 的结果分别汇总，不再按单个 method 拆开。"),
+        ("B3", "B3 / Backbone Averages", "同一物理轨迹，只改渲染版本、颜色、背景和光照。这里把 Wan 与 VACE backbone 的结果分别汇总，不再按单个 method 拆开。"),
+    ]:
+        rows = _load_group_backbone_rows(group_id)
+        sections.append(_render_metric_table(title, rows))
+    c_rows = _load_group_c_rows()
+    sections.append(_render_metric_table("C / Shuffle Averages", c_rows))
+    return f"""
+    <section class="block">
+      <h2>B / C Backbone Averages</h2>
+      <div class="case-desc">B1/B2/B3 按 backbone 汇总到 Wan / VACE 两行；C 组没有 backbone 维度，因此保留 original / shuffled 的平均指标对比。</div>
+      {''.join(sections)}
+    </section>
+    """
+
+
+def _render_metric_table(title: str, rows: list[dict[str, Any]]) -> str:
+    metric_names = GROUP_C_METRICS
+    masks = best_metric_mask(rows, metric_names)
+    body = []
+    for row, mask in zip(rows, masks):
+        body.append(
+            "<tr>"
+            f"<td class='label-cell'>{row['method']}</td>"
+            f"<td class='num'>{row['count']}</td>"
+            + "".join(
+                f"<td class='num {'best' if mask[m] else ''}'>{fv(row[m])}</td>"
+                for m in metric_names
+            )
+            + "</tr>"
+        )
+    thead = f"""
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>N</th>
+        {''.join(f'<th>{REPRESENTATIVE_METRIC_TITLES.get(m, m)}</th>' for m in metric_names)}
+      </tr>
+    </thead>
+    """
+    return f"""
+    <section class="block">
+      <h3>{title}</h3>
+      {standard_table(thead, body)}
+    </section>
+    """
+
+
 def _resolve_group_c_original_path(shuffled_path: Path, originals_in_c: dict[str, Path]) -> Path:
     stem = shuffled_path.stem
     if not stem.endswith("_shuffled"):
@@ -1273,6 +1365,7 @@ def build_html() -> str:
       其中 WMReward 直接采用官方 <code>surprise / loss</code> 口径，越低越好；Cosmos Reason1 复用 cookbook 中 Reason1 physical-plausibility prompt 的 1-5 分，越高越好；V-JEPA 去掉手工加权总分和 margin 截断，直接展示 <code>predictive_alignment / temporal_relation_raw_error / delta_relation_raw_error / delta_profile_error</code>，其中前三项里的后三者是主误差项，<code>predictive_alignment</code> 只保留为辅助诊断；VideoPhy-2 的 SA / PC 是 1-5 离散评分，越高越好；Joint 表示 <code>SA&gt;=4 且 PC&gt;=4</code> 的通过率。PhyGround 当前不进主表，原因是 released <code>phyjudge-9B/infer.py</code> 在本批视频上经常生成超长自由文本而不稳定落出结构化分数，无法保证官方 case 和批处理 case 都稳定同分。
     </div>
     {build_metric_legend()}
+    {build_backbone_summary_section()}
     {build_group_a()}
     {build_group_b1()}
     {build_group_b2()}

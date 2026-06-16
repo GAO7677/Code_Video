@@ -6272,7 +6272,13 @@ def simulate_in_genesis(
             rigid_collision_mesh_paths.append(path)
 
     for spec in part_specs:
-        existing_runtime = _find_existing_runtime_mesh(spec=spec, runtime_mesh_dir=runtime_mesh_dir) if prefer_existing_runtime_meshes else None
+        prefer_existing_for_spec = bool(prefer_existing_runtime_meshes)
+        if _is_free_cloth_like_spec(spec):
+            # Cloth is the most sensitive to initial interpenetration, so always rebuild its
+            # runtime mesh instead of reusing a stale eroded cache.
+            prefer_existing_for_spec = False
+
+        existing_runtime = _find_existing_runtime_mesh(spec=spec, runtime_mesh_dir=runtime_mesh_dir) if prefer_existing_for_spec else None
         if existing_runtime is not None:
             runtime_mesh_path = str(existing_runtime)
             erosion_info = {

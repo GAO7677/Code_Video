@@ -28,13 +28,15 @@ for LORA_PATH in $LORAS; do
       method_name="0613lora_${method_dir_name}"
       ;;
   esac
+  context_base=$(basename "$CONTEXT_PATH")
+  output_base=${context_base##*_}
 
   CUDA_VISIBLE_DEVICES="${GPU_ID}" PYTHONPATH="${BASE_PYTHONPATH}" \
     "${PYTHON_BIN}" "${SCRIPT}" \
       --context_path "${CONTEXT_PATH}" \
       --prompt "${PROMPT}" \
       --lora_path "${LORA_PATH}" \
-      --output_video_path "${OUTPUT_ROOT}/${method_name}/train0419_step010000_0002p5s3p5.mp4" \
+      --output_video_path "${OUTPUT_ROOT}/${method_name}/${output_base}" \
       --no_metadata \
       --num_frames "${NUM_FRAMES}" \
       --overwrite
