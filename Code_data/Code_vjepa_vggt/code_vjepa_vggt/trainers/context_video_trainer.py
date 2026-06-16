@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,10 @@ class TrainerState:
 class ContextVideoTrainer(nn.Module):
     def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True, device: str | torch.device | None = None) -> None:
         super().__init__()
+        debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
+        def _debug_log(message: str) -> None:
+            if debug_init:
+                print(f"[trainer_init] {message}", flush=True)
         self.cfg = cfg
         if device is not None:
             self.device_obj = torch.device(device)
@@ -70,6 +75,7 @@ class ContextVideoTrainer(nn.Module):
         model_cfg = cfg["model"]
         data_cfg = cfg["data"]
 
+        _debug_log("build WanContextVideoModel")
         self.bundle = WanContextVideoModel(
             ckpt_dir=model_cfg["wan_ckpt_dir"],
             task=model_cfg["wan_task"],
@@ -80,6 +86,7 @@ class ContextVideoTrainer(nn.Module):
             lora_dropout=float(model_cfg.get("wan_lora_dropout", 0.0)),
             lora_init=str(model_cfg.get("wan_lora_init", "gaussian")),
         )
+        _debug_log("freeze Wan parts")
         self.bundle.freeze_parts(
             freeze_vae=bool(model_cfg["freeze_vae"]),
             freeze_text_encoder=bool(model_cfg["freeze_text_encoder"]),
@@ -93,6 +100,7 @@ class ContextVideoTrainer(nn.Module):
         if hasattr(self.bundle.config, "text_dim") and cond_dim != int(self.bundle.config.text_dim):
             raise ValueError(f"cond_proj_dim must match Wan text_dim={self.bundle.config.text_dim}, got {cond_dim}")
 
+        _debug_log("build JEPA adapter")
         self.jepa_adapter = JEPAPatchAdapter(
             ckpt_path=str(Path(model_cfg["je_pa_ckpt_dir"]) / "original" / "model.pth"),
             device=str(self.device_obj),
@@ -103,6 +111,7 @@ class ContextVideoTrainer(nn.Module):
             use_activation_checkpointing=bool(model_cfg.get("jepa_activation_checkpointing", False)),
             trainable=bool(model_cfg.get("train_jepa", False)),
         ).to(self.device_obj)
+        _debug_log("build VGGT adapter")
         self.vggt_adapter = VGGTTrackAdapter(
             model_path=model_cfg.get("vggt_model_path"),
             num_queries=int(model_cfg["object_num_queries"]),
@@ -115,6 +124,7 @@ class ContextVideoTrainer(nn.Module):
             raise ValueError(f"unsupported track_source: {self.track_source}")
         self.cotracker_adapter = None
         if self.track_source == "cotracker":
+            _debug_log("build CoTracker adapter")
             self.cotracker_adapter = CoTrackerAdapter(
                 checkpoint_path=model_cfg.get("cotracker_checkpoint"),
                 num_queries=int(model_cfg["object_num_queries"]),
@@ -125,6 +135,7 @@ class ContextVideoTrainer(nn.Module):
         latent_dim = int(getattr(self.bundle.config, "in_dim", 16))
         latent_dim = int(model_cfg.get("object_pooler_latent_dim", latent_dim))
         self.object_pooler_latent_dim = latent_dim
+        _debug_log("build object pooler")
         self.object_pooler = ObjectTubeProjector(
             jepa_dim=self.jepa_adapter.encoder.backbone.embed_dim,
             latent_dim=latent_dim,
@@ -134,6 +145,7 @@ class ContextVideoTrainer(nn.Module):
         ).to(self.device_obj)
         if bool(model_cfg.get("freeze_object_pooler", False)):
             self.object_pooler.eval().requires_grad_(False)
+        _debug_log("build context fuser")
         self.context_fuser = ContextTokenFuser(
             text_dim=cond_dim,
             max_context_len=self.bundle.config.text_len,
@@ -142,8 +154,10 @@ class ContextVideoTrainer(nn.Module):
         self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
         self.init_wan_lora_from_checkpoint = model_cfg.get("init_wan_lora_from_checkpoint")
         if self.init_wan_lora_from_checkpoint is not None:
+            _debug_log("load initial Wan LoRA checkpoint")
             self.bundle.load_lora_checkpoint(self.init_wan_lora_from_checkpoint)
         if hasattr(self.object_pooler, "_ensure_jepa_proj"):
+            _debug_log("ensure JEPA projection")
             self.object_pooler._ensure_jepa_proj(
                 int(self.jepa_adapter.encoder.backbone.embed_dim),
                 self.device_obj,
@@ -154,6 +168,7 @@ class ContextVideoTrainer(nn.Module):
         self.sam2_tracker = None
         self.text_detector = None
         if self.enable_sam2_priors:
+            _debug_log("build SAM2 priors")
             self.sam2_tracker = SAM2MotionTracker(
                 device=str(self.device_obj),
                 segment_len=int(model_cfg.get("sam2_segment_len", 8)),
@@ -166,6 +181,7 @@ class ContextVideoTrainer(nn.Module):
                 )
 
         self.dataset = self._build_dataset()
+        _debug_log("dataset built")
         self.state = TrainerState()
         self.last_train_metrics: dict[str, float] = {}
 

@@ -12,10 +12,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import imageio.v2 as imageio
 import numpy as np
+import pybullet as p
+import pybullet_data
+from PIL import Image
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PB_NEAR = 0.05
+PB_FAR = 20.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,8 +39,8 @@ def parse_args() -> argparse.Namespace:
         default=Path("/data/gaoya/AAA_test_video/Dataset_physV/_viz/0613pybullet_multimodal"),
     )
     parser.add_argument("--max-cases", type=int, default=5)
-    parser.add_argument("--panel-width", type=int, default=256)
-    parser.add_argument("--panel-height", type=int, default=144)
+    parser.add_argument("--panel-width", type=int, default=None, help="Optional resize width for exports; default uses original video width.")
+    parser.add_argument("--panel-height", type=int, default=None, help="Optional resize height for exports; default uses original video height.")
     parser.add_argument("--fps", type=int, default=6)
     parser.add_argument("--port", type=int, default=18888)
     parser.add_argument("--clean", action="store_true")
@@ -48,6 +54,8 @@ class CaseData:
     meta: dict
     states: dict[str, np.ndarray]
     frames: np.ndarray
+    frame_width: int
+    frame_height: int
 
 
 def clean_dir(path: Path) -> None:
@@ -60,32 +68,39 @@ def clean_dir(path: Path) -> None:
                 child.unlink()
 
 
-def read_video_frames(video_path: Path, width: int, height: int) -> np.ndarray:
+def read_video_frames(video_path: Path, width: int | None = None, height: int | None = None) -> tuple[np.ndarray, int, int]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"failed to open video: {video_path}")
+    source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out_width = int(width or source_width)
+    out_height = int(height or source_height)
     frames: list[np.ndarray] = []
     try:
         while True:
             ok, frame_bgr = cap.read()
             if not ok:
                 break
-            frame_bgr = cv2.resize(frame_bgr, (width, height), interpolation=cv2.INTER_AREA)
+            if out_width != source_width or out_height != source_height:
+                frame_bgr = cv2.resize(frame_bgr, (out_width, out_height), interpolation=cv2.INTER_AREA)
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             frames.append(frame_rgb.astype(np.float32) / 255.0)
     finally:
         cap.release()
     if not frames:
         raise RuntimeError(f"no frames decoded from {video_path}")
-    return np.stack(frames, axis=0)
+    return np.stack(frames, axis=0), out_width, out_height
 
 
 def load_case(sample_dir: Path, panel_width: int, panel_height: int) -> CaseData:
     meta = json.loads((sample_dir / "meta.json").read_text(encoding="utf-8"))
     states_npz = np.load(sample_dir / "states.npz")
     states = {key: states_npz[key] for key in states_npz.files}
-    frames = read_video_frames(sample_dir / "video.mp4", panel_width, panel_height)
-    return CaseData(sample_dir=sample_dir, meta=meta, states=states, frames=frames)
+    resize_width = panel_width if panel_width and panel_width > 0 else None
+    resize_height = panel_height if panel_height and panel_height > 0 else None
+    frames, frame_width, frame_height = read_video_frames(sample_dir / "video.mp4", resize_width, resize_height)
+    return CaseData(sample_dir=sample_dir, meta=meta, states=states, frames=frames, frame_width=frame_width, frame_height=frame_height)
 
 
 def family_priority(family_dir: Path) -> tuple[int, str]:
@@ -179,6 +194,201 @@ def project_point(point_world: np.ndarray, camera: dict[str, np.ndarray | float]
     return np.asarray([u, v], dtype=np.float32), z_cam
 
 
+def compute_pybullet_view_projection(meta: dict, width: int, height: int) -> tuple[list[float], list[float]]:
+    camera = meta["camera"]
+    eye = camera["eye"]
+    target = camera["target"]
+    up = camera["up"]
+    yfov_deg = float(camera.get("yfov_deg", 50.0))
+    aspect = float(width) / float(height)
+    view = p.computeViewMatrix(cameraEyePosition=eye, cameraTargetPosition=target, cameraUpVector=up)
+    projection = p.computeProjectionMatrixFOV(fov=yfov_deg, aspect=aspect, nearVal=PB_NEAR, farVal=PB_FAR)
+    return view, projection
+
+
+def zbuffer_to_metric_depth(depth_buffer: np.ndarray, near: float, far: float) -> np.ndarray:
+    depth = far * near / np.clip(far - (far - near) * depth_buffer, 1e-8, None)
+    return depth.astype(np.float32)
+
+
+def create_collision_shape(obj: dict, client_id: int) -> int:
+    size = obj["size"]
+    shape = obj["shape"]
+    if shape == "sphere":
+        return p.createCollisionShape(p.GEOM_SPHERE, radius=float(size["radius"]), physicsClientId=client_id)
+    if shape == "box":
+        return p.createCollisionShape(
+            p.GEOM_BOX,
+            halfExtents=[float(size["hx"]), float(size["hy"]), float(size["hz"])],
+            physicsClientId=client_id,
+        )
+    if shape in {"cylinder", "puck"}:
+        return p.createCollisionShape(
+            p.GEOM_CYLINDER,
+            radius=float(size["radius"]),
+            height=float(size["height"]),
+            physicsClientId=client_id,
+        )
+    if shape == "capsule":
+        return p.createCollisionShape(
+            p.GEOM_CAPSULE,
+            radius=float(size["radius"]),
+            height=float(size["height"]),
+            physicsClientId=client_id,
+        )
+    raise ValueError(f"unsupported pybullet replay shape: {shape}")
+
+
+def create_visual_shape(obj: dict, client_id: int) -> int:
+    size = obj["size"]
+    rgba = list(np.asarray(obj.get("color", [0.7, 0.7, 0.7]), dtype=np.float32)) + [1.0]
+    shape = obj["shape"]
+    if shape == "sphere":
+        return p.createVisualShape(p.GEOM_SPHERE, radius=float(size["radius"]), rgbaColor=rgba, physicsClientId=client_id)
+    if shape == "box":
+        return p.createVisualShape(
+            p.GEOM_BOX,
+            halfExtents=[float(size["hx"]), float(size["hy"]), float(size["hz"])],
+            rgbaColor=rgba,
+            physicsClientId=client_id,
+        )
+    if shape in {"cylinder", "puck"}:
+        return p.createVisualShape(
+            p.GEOM_CYLINDER,
+            radius=float(size["radius"]),
+            length=float(size["height"]),
+            rgbaColor=rgba,
+            physicsClientId=client_id,
+        )
+    if shape == "capsule":
+        return p.createVisualShape(
+            p.GEOM_CAPSULE,
+            radius=float(size["radius"]),
+            length=float(size["height"]),
+            rgbaColor=rgba,
+            physicsClientId=client_id,
+        )
+    raise ValueError(f"unsupported pybullet replay visual shape: {shape}")
+
+
+def render_pybullet_groundtruth(case: CaseData, width: int, height: int, out_dir: Path) -> dict[str, np.ndarray | float]:
+    client_id = p.connect(p.DIRECT)
+    body_ids: list[int] = []
+    object_body_ids: list[int] = []
+    try:
+        p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client_id)
+        p.resetSimulation(physicsClientId=client_id)
+        plane_id = p.loadURDF("plane.urdf", physicsClientId=client_id)
+        body_ids.append(plane_id)
+        p.changeDynamics(plane_id, -1, lateralFriction=float(case.meta.get("floor_friction", 0.7)), restitution=0.02, physicsClientId=client_id)
+
+        wall_collision = p.createCollisionShape(
+            p.GEOM_BOX,
+            halfExtents=[7.0, 0.015, 1.8],
+            physicsClientId=client_id,
+        )
+        wall_visual = p.createVisualShape(
+            p.GEOM_BOX,
+            halfExtents=[7.0, 0.015, 1.8],
+            rgbaColor=[0.52, 0.51, 0.48, 1.0],
+            physicsClientId=client_id,
+        )
+        wall_id = p.createMultiBody(
+            baseMass=0.0,
+            baseCollisionShapeIndex=wall_collision,
+            baseVisualShapeIndex=wall_visual,
+            basePosition=[0.0, 5.0, 1.8],
+            baseOrientation=[0.0, 0.0, 0.0, 1.0],
+            physicsClientId=client_id,
+        )
+        body_ids.append(wall_id)
+
+        for obj in case.meta["objects"]:
+            collision = create_collision_shape(obj, client_id)
+            visual = create_visual_shape(obj, client_id)
+            quat = p.getQuaternionFromEuler([math.radians(v) for v in obj.get("orientation_euler_deg", [0.0, 0.0, 0.0])])
+            body_id = p.createMultiBody(
+                baseMass=0.0,
+                baseCollisionShapeIndex=collision,
+                baseVisualShapeIndex=visual,
+                basePosition=obj["position"],
+                baseOrientation=quat,
+                physicsClientId=client_id,
+            )
+            body_ids.append(body_id)
+            object_body_ids.append(body_id)
+
+        view, projection = compute_pybullet_view_projection(case.meta, width, height)
+        positions = case.states["positions"][: case.frames.shape[0]]
+        quats = case.states["quats"][: case.frames.shape[0]]
+        num_frames = positions.shape[0]
+
+        depth_meters = np.zeros((num_frames, height, width), dtype=np.float32)
+        depth_zbuffer = np.zeros((num_frames, height, width), dtype=np.float32)
+        segmentation_raw = np.zeros((num_frames, height, width), dtype=np.int32)
+        segmentation_object_idx = np.full((num_frames, height, width), -1, dtype=np.int16)
+        valid_mask = np.zeros((num_frames, height, width), dtype=bool)
+
+        for frame_idx in range(num_frames):
+            for obj_idx, body_id in enumerate(object_body_ids):
+                p.resetBasePositionAndOrientation(
+                    body_id,
+                    positions[frame_idx, obj_idx].tolist(),
+                    quats[frame_idx, obj_idx].tolist(),
+                    physicsClientId=client_id,
+                )
+
+            camera_out = p.getCameraImage(
+                width=width,
+                height=height,
+                viewMatrix=view,
+                projectionMatrix=projection,
+                renderer=p.ER_TINY_RENDERER,
+                flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+                physicsClientId=client_id,
+            )
+            depth_buffer = np.asarray(camera_out[3], dtype=np.float32).reshape(height, width)
+            segmentation = np.asarray(camera_out[4], dtype=np.int32).reshape(height, width)
+            metric_depth = zbuffer_to_metric_depth(depth_buffer, PB_NEAR, PB_FAR)
+
+            depth_meters[frame_idx] = metric_depth
+            depth_zbuffer[frame_idx] = depth_buffer
+            segmentation_raw[frame_idx] = segmentation
+            valid_mask[frame_idx] = depth_buffer < (1.0 - 1e-6)
+            for obj_idx, body_id in enumerate(object_body_ids):
+                segmentation_object_idx[frame_idx][segmentation == body_id] = obj_idx
+    finally:
+        if p.isConnected(client_id):
+            p.disconnect(physicsClientId=client_id)
+
+    valid_depths = depth_meters[valid_mask]
+    depth_near = float(np.min(valid_depths)) if valid_depths.size else 0.0
+    depth_far = float(np.max(valid_depths)) if valid_depths.size else 1.0
+    if abs(depth_far - depth_near) < 1e-6:
+        depth_far = depth_near + 1.0
+
+    np.savez_compressed(
+        out_dir / "pybullet_depth_gt.npz",
+        depth_meters=depth_meters,
+        depth_zbuffer=depth_zbuffer,
+        segmentation_raw=segmentation_raw,
+        segmentation_object_idx=segmentation_object_idx,
+        valid_mask=valid_mask.astype(np.uint8),
+        near=np.asarray([depth_near], dtype=np.float32),
+        far=np.asarray([depth_far], dtype=np.float32),
+        camera_near=np.asarray([PB_NEAR], dtype=np.float32),
+        camera_far=np.asarray([PB_FAR], dtype=np.float32),
+    )
+    return {
+        "depth_meters": depth_meters,
+        "depth_zbuffer": depth_zbuffer,
+        "segmentation_object_idx": segmentation_object_idx,
+        "valid_mask": valid_mask,
+        "depth_near": depth_near,
+        "depth_far": depth_far,
+    }
+
+
 def object_local_corners(obj: dict) -> np.ndarray:
     shape = obj["shape"]
     size = obj["size"]
@@ -256,18 +466,18 @@ def draw_text_box(canvas: np.ndarray, lines: list[str], origin: tuple[int, int] 
         cv2.putText(canvas, line, (x, yy), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (18, 18, 18), 1, cv2.LINE_AA)
 
 
-def rgb_to_gray_color(gray01: np.ndarray) -> np.ndarray:
+def depth_to_grayscale(gray01: np.ndarray) -> np.ndarray:
     gray_uint8 = np.clip(gray01 * 255.0, 0, 255).astype(np.uint8)
-    return cv2.applyColorMap(gray_uint8, cv2.COLORMAP_TURBO)
+    return np.repeat(gray_uint8[..., None], 3, axis=2)
 
 
-def flow_color(dx: float, dy: float, ref_mag: float) -> tuple[int, int, int]:
+def flow_hsv_color(dx: float, dy: float, ref_mag: float) -> tuple[int, int, int]:
     mag = math.sqrt(dx * dx + dy * dy)
     if mag < 1e-8:
-        return 80, 80, 80
+        return 255, 255, 255
     hue = (math.atan2(-dy, dx) + math.pi) / (2.0 * math.pi)
-    sat = 1.0
-    val = max(0.25, min(1.0, mag / max(ref_mag, 1e-6)))
+    sat = max(0.15, min(1.0, mag / max(ref_mag, 1e-6)))
+    val = 1.0
     hsv = np.asarray([[[int(hue * 179.0), int(sat * 255.0), int(val * 255.0)]]], dtype=np.uint8)
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0]
     return int(bgr[2]), int(bgr[1]), int(bgr[0])
@@ -279,7 +489,24 @@ def blank_panel(width: int, height: int, color: tuple[int, int, int] = (18, 18, 
     return panel
 
 
-def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: int, fps: int) -> dict:
+def save_animated_gif(path: Path, frames_rgb: list[np.ndarray], fps: int) -> None:
+    if not frames_rgb:
+        raise ValueError("cannot save empty animation")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    images = [Image.fromarray(frame.astype(np.uint8), mode="RGB") for frame in frames_rgb]
+    duration_ms = max(int(round(1000.0 / max(fps, 1))), 1)
+    images[0].save(
+        path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False,
+        disposal=2,
+    )
+
+
+def render_case(case: CaseData, out_dir: Path, panel_width: int | None, panel_height: int | None, fps: int) -> dict:
     objects = case.meta["objects"]
     object_lookup = {obj["name"]: obj for obj in objects}
     object_names = [str(name) for name in case.states["object_names"]]
@@ -300,7 +527,10 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
     angular_velocities = case.states["angular_velocities"][:num_frames]
     masses = np.asarray([float(obj.get("mass", 1.0)) for obj in ordered_objects], dtype=np.float32)
 
+    panel_width = panel_width if panel_width and panel_width > 0 else case.frame_width
+    panel_height = panel_height if panel_height and panel_height > 0 else case.frame_height
     camera = make_camera(case.meta, panel_width, panel_height)
+    pybullet_gt = render_pybullet_groundtruth(case, panel_width, panel_height, out_dir)
     all_depths: list[float] = []
     all_flow_mags: list[float] = []
     all_momentum_mags: list[float] = []
@@ -385,61 +615,48 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
     for path in modality_dirs.values():
         path.mkdir(parents=True, exist_ok=True)
 
-    def make_writer(path: Path, frame_size: tuple[int, int]) -> cv2.VideoWriter:
-        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, frame_size)
-        if not writer.isOpened():
-            raise RuntimeError(f"failed to open video writer: {path}")
-        return writer
+    def make_writer(path: Path) -> imageio.core.format.Writer:
+        return imageio.get_writer(
+            str(path),
+            fps=fps,
+            codec="libx264",
+            format="FFMPEG",
+            pixelformat="yuv420p",
+            macro_block_size=1,
+            ffmpeg_params=["-movflags", "+faststart"],
+        )
 
     writers = {
-        name: make_writer(path / f"{name}.mp4", (panel_width, panel_height))
+        name: make_writer(path / f"{name}.mp4")
         for name, path in modality_dirs.items()
         if name != "montage"
     }
     montage_w = panel_width * 3
     montage_h = panel_height * 2
-    writers["montage"] = make_writer(modality_dirs["montage"] / "montage.mp4", (montage_w, montage_h))
+    writers["montage"] = make_writer(modality_dirs["montage"] / "montage.mp4")
+    montage_frames_rgb: list[np.ndarray] = []
 
     try:
         for frame_idx in range(num_frames):
             rgb = np.clip(case.frames[frame_idx] * 255.0, 0, 255).astype(np.uint8)
-            depth_map = np.full((panel_height, panel_width), far_depth, dtype=np.float32)
-            mask_idx = np.full((panel_height, panel_width), -1, dtype=np.int32)
-            flow_panel = blank_panel(panel_width, panel_height, (15, 16, 18))
+            depth_map = np.asarray(pybullet_gt["depth_meters"][frame_idx], dtype=np.float32)
+            valid_depth_mask = np.asarray(pybullet_gt["valid_mask"][frame_idx], dtype=bool)
+            mask_idx = np.asarray(pybullet_gt["segmentation_object_idx"][frame_idx], dtype=np.int32)
+            flow_panel = blank_panel(panel_width, panel_height, (255, 255, 255))
             momentum_panel = blank_panel(panel_width, panel_height, (15, 16, 18))
 
-            # Build visibility-aware depth and masks from coarse projected shapes.
+            # Use PyBullet-rendered per-pixel segmentation as the support for dense modality overlays.
             for obj in sorted(frame_cache[frame_idx]["objects"], key=lambda item: float(item["depth"]), reverse=True):
                 obj_idx = int(obj["obj_idx"])
-                color = palette[obj_idx % len(palette)]
-                if obj["depth"] > far_depth + 1.0 or obj["depth"] < near_depth - 1.0:
+                update = mask_idx == obj_idx
+                if not np.any(update):
                     continue
-
-                hull, ellipse_axes = obj["mask_repr"]
-                if obj["center_px"] is None:
-                    continue
-                temp = np.zeros((panel_height, panel_width), dtype=np.uint8)
-                if ellipse_axes is not None:
-                    center = tuple(int(round(value)) for value in obj["center_px"])
-                    axes = (int(ellipse_axes[0]), int(ellipse_axes[1]))
-                    cv2.ellipse(temp, center, axes, 0, 0, 360, 255, -1, cv2.LINE_AA)
-                elif hull is not None:
-                    cv2.fillPoly(temp, [hull.astype(np.int32)], 255, cv2.LINE_AA)
-                else:
-                    continue
-
-                update = temp > 0
-                closer = update & (obj["depth"] <= depth_map)
-                if np.any(closer):
-                    depth_map[closer] = float(obj["depth"])
-                    mask_idx[closer] = obj_idx
-
                 flow_vec = obj["flow_vec"]
-                flow_color_rgb = flow_color(float(flow_vec[0]), float(flow_vec[1]), max_flow_mag)
+                flow_color_rgb = flow_hsv_color(float(flow_vec[0]), float(flow_vec[1]), max_flow_mag)
                 flow_panel[update] = np.asarray(flow_color_rgb, dtype=np.uint8)
 
                 momentum_mag = float(obj["momentum_mag"])
-                momentum_rgb = flow_color(float(flow_vec[0]), float(flow_vec[1]), max_momentum_mag)
+                momentum_rgb = flow_hsv_color(float(flow_vec[0]), float(flow_vec[1]), max_momentum_mag)
                 momentum_panel[update] = np.asarray(momentum_rgb, dtype=np.uint8)
 
             # Draw arrows and labels on top of the dense panels.
@@ -474,8 +691,12 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
                 cv2.putText(momentum_panel, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (18, 18, 18), 1, cv2.LINE_AA)
 
             # Build depth and mask panels.
-            depth_norm = (depth_map - near_depth) / max(far_depth - near_depth, 1e-6)
-            depth_vis = rgb_to_gray_color(1.0 - np.clip(depth_norm, 0.0, 1.0))
+            gt_near = float(pybullet_gt["depth_near"])
+            gt_far = float(pybullet_gt["depth_far"])
+            depth_norm = (depth_map - gt_near) / max(gt_far - gt_near, 1e-6)
+            depth_norm = np.clip(depth_norm, 0.0, 1.0)
+            depth_vis = depth_to_grayscale(1.0 - depth_norm)
+            depth_vis[~valid_depth_mask] = np.asarray([255, 255, 255], dtype=np.uint8)
             depth_panel = depth_vis.copy()
 
             mask_panel = blank_panel(panel_width, panel_height, (8, 8, 8))
@@ -483,8 +704,6 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
                 color = palette[obj_idx % len(palette)]
                 mask_panel[mask_idx == obj_idx] = color
             # Add a thin object outline by blending a light border on top of each color region.
-            mask_panel = cv2.GaussianBlur(mask_panel, (0, 0), 0.0)
-
             rgb_panel = rgb.copy()
             draw_text_box(
                 rgb_panel,
@@ -493,7 +712,7 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
                     f"sample={case.sample_dir.name}",
                 ],
             )
-            draw_text_box(depth_panel, [f"DEPTH  near={near_depth:.2f} far={far_depth:.2f}"])
+            draw_text_box(depth_panel, [f"DEPTH(gt)  near={gt_near:.2f} far={gt_far:.2f}"])
             draw_text_box(mask_panel, [f"MASK  instances={num_objects}"])
             draw_text_box(flow_panel, [f"FLOW  max={max_flow_mag:.2f}px/frame"])
             draw_text_box(momentum_panel, [f"MOMENTUM  max={max_momentum_mag:.2f}"])
@@ -518,17 +737,19 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
             montage_top = np.concatenate([rgb_panel, depth_panel, mask_panel], axis=1)
             montage_bottom = np.concatenate([flow_panel, momentum_panel, stats_panel], axis=1)
             montage = np.concatenate([montage_top, montage_bottom], axis=0)
+            montage_frames_rgb.append(montage.copy())
 
-            writers["rgb"].write(cv2.cvtColor(rgb_panel, cv2.COLOR_RGB2BGR))
-            writers["depth"].write(cv2.cvtColor(depth_panel, cv2.COLOR_RGB2BGR))
-            writers["mask"].write(cv2.cvtColor(mask_panel, cv2.COLOR_RGB2BGR))
-            writers["flow"].write(cv2.cvtColor(flow_panel, cv2.COLOR_RGB2BGR))
-            writers["momentum"].write(cv2.cvtColor(momentum_panel, cv2.COLOR_RGB2BGR))
-            writers["montage"].write(cv2.cvtColor(montage, cv2.COLOR_RGB2BGR))
+            writers["rgb"].append_data(rgb_panel)
+            writers["depth"].append_data(depth_panel)
+            writers["mask"].append_data(mask_panel)
+            writers["flow"].append_data(flow_panel)
+            writers["momentum"].append_data(momentum_panel)
+            writers["montage"].append_data(montage)
 
     finally:
         for writer in writers.values():
-            writer.release()
+            writer.close()
+    save_animated_gif(modality_dirs["montage"] / "montage.gif", montage_frames_rgb, fps)
 
     summary = {
         "sample_dir": str(case.sample_dir),
@@ -538,8 +759,11 @@ def render_case(case: CaseData, out_dir: Path, panel_width: int, panel_height: i
         "family_slug": case.meta.get("family_slug"),
         "split": case.meta.get("split"),
         "num_frames": num_frames,
+        "frame_size": [case.frame_width, case.frame_height],
         "panel_size": [panel_width, panel_height],
+        "depth_source": "pybullet_zbuffer_groundtruth",
         "files": {name: f"{name}/{name}.mp4" for name in writers.keys()},
+        "preview": "montage/montage.gif",
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
@@ -564,8 +788,9 @@ def render_html(report: dict) -> str:
               </div>
               <p class="title">{html.escape(case["title"] or case["sample_id"])}</p>
               <p class="desc">{html.escape(case["description"] or "")}</p>
-              <video controls preload="metadata" src="{html.escape(case["files"]["montage"])}"></video>
+              <img class="preview" src="{html.escape(case["preview"])}" alt="{html.escape(case["sample_id"])} preview">
               <div class="links">
+                <a href="{html.escape(case["preview"])}">montage.gif</a>
                 <a href="{html.escape(case["files"]["montage"])}">montage.mp4</a>
                 {links}
                 <a href="{html.escape(case["sample_rel_meta"])}">meta.json</a>
@@ -617,7 +842,7 @@ def render_html(report: dict) -> str:
     .chip {{ padding:8px 12px; border-radius:999px; background:rgba(255,255,255,0.05); border:1px solid var(--line); color:var(--muted); }}
     .title {{ margin:12px 0 8px; font-weight:700; }}
     .desc {{ color:var(--muted); line-height:1.6; min-height:42px; }}
-    video {{ width:100%; display:block; margin-top:12px; border-radius:14px; background:#000; }}
+    .preview {{ width:100%; display:block; margin-top:12px; border-radius:14px; background:#000; }}
     .links {{ display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; }}
     .links a {{ color:var(--accent); text-decoration:none; font-weight:600; }}
     @media (max-width: 1100px) {{

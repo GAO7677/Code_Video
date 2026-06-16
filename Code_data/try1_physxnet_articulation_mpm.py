@@ -1449,7 +1449,7 @@ class PartPhysical:
     json_exact_parameters: Dict[str, Any]
 
 
-CLASSIFICATION_POLICY_VERSION = "v6_runtime_ctor_anchored_cloth_to_mpm"
+CLASSIFICATION_POLICY_VERSION = "v7_runtime_ctor_free_cloth_to_mpm"
 
 
 def _choice_to_solver_tuple(choice: Dict[str, str]) -> Tuple[str, str, str]:
@@ -1623,7 +1623,7 @@ def _runtime_material_ctor_from_spec(part_meta: dict, material_ctor: str, assemb
     """
     原始 material_ctor 只由 material 决定。
     运行时允许做一层最小改写：
-      anchored_soft + PBD.Cloth -> MPM.Elastic
+      anchored_soft/free_soft + PBD.Cloth -> MPM.Elastic
     其他情况保持不变。
     """
     ctor = str(material_ctor or "gs.materials.Rigid")
@@ -1631,7 +1631,7 @@ def _runtime_material_ctor_from_spec(part_meta: dict, material_ctor: str, assemb
 
     if role == "rigid_skeleton" and ctor == "gs.materials.Rigid":
         return "gs.materials.MPM.Elastic"
-    if role == "anchored_soft" and ctor == "gs.materials.PBD.Cloth":
+    if role in {"anchored_soft", "free_soft"} and ctor == "gs.materials.PBD.Cloth":
         return "gs.materials.MPM.Elastic"
 
     return ctor
@@ -3609,8 +3609,11 @@ def _is_seat_surface_spec(spec: Dict[str, Any]) -> bool:
 
 def _is_free_cloth_like_spec(spec: Dict[str, Any]) -> bool:
     role = str(spec.get("assembly_role", "free_soft"))
-    ctor = str(spec.get("material_ctor_runtime", spec.get("material_ctor", "")))
-    return role == "free_soft" and ctor == "gs.materials.PBD.Cloth"
+    ctor_runtime = str(spec.get("material_ctor_runtime", spec.get("material_ctor", "")))
+    ctor_orig = str(spec.get("material_ctor", ""))
+    return role == "free_soft" and (
+        ctor_runtime == "gs.materials.PBD.Cloth" or ctor_orig == "gs.materials.PBD.Cloth"
+    )
 
 
 def _make_part_material(gs, spec, default_friction: float = 0.55):
@@ -3634,6 +3637,7 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
     role = str(spec.get("assembly_role", "free_soft"))
     pid = int(spec.get("pid", -1))
     is_pillow = _is_pillow_spec(spec)
+    is_free_cloth = _is_free_cloth_like_spec(spec)
 
     runtime_bounds_min = spec.get("runtime_bounds_min", spec.get("bounds_min"))
     runtime_bounds_max = spec.get("runtime_bounds_max", spec.get("bounds_max"))
@@ -3725,6 +3729,13 @@ def _make_part_material(gs, spec, default_friction: float = 0.55):
 
     youngs_runtime, poisson_runtime = _stabilize_runtime_mpm_params_by_role(ctor, youngs, poisson, role)
     common_kwargs = {"E": youngs_runtime, "nu": poisson_runtime, "rho": density, "sampler": "pbs"}
+    if is_free_cloth and ctor in ("gs.materials.MPM.Elastic", "gs.materials.MPM.ElastoPlastic"):
+        # Free tablecloth-like sheets are the most failure-prone parts in preview.
+        # Keep them very soft and less volume-preserving so first contact does not blow them apart.
+        common_kwargs["E"] = min(common_kwargs["E"], 8.0e4)
+        common_kwargs["nu"] = min(common_kwargs["nu"], 0.08)
+        common_kwargs["rho"] = min(float(common_kwargs["rho"]), 120.0)
+        common_kwargs["sampler"] = "pbs"
     if is_pillow and ctor in ("gs.materials.MPM.Elastic", "gs.materials.MPM.ElastoPlastic"):
         # Free pillows are the first parts to numerically explode in the sofa scenes.
         # Clamp them into a much softer preview regime by default.
@@ -4991,7 +5002,7 @@ def _prepare_eroded_soft_mesh(
             return best_shift
 
         center = 0.5 * (bounds[0] + bounds[1])
-        base_margin = min(0.010, 0.04 * min_obj_extent)
+        base_margin = min(0.020, 0.08 * min_obj_extent)
         axis_margin = np.minimum(np.full(3, base_margin, dtype=np.float64), 0.12 * size)
         scales = np.clip((size - 2.0 * axis_margin) / size, 0.75, 1.0)
         if np.all(scales > 0.999):
@@ -5008,7 +5019,7 @@ def _prepare_eroded_soft_mesh(
             shift = _compute_free_soft_exit_shift(
                 mesh_bounds=current_bounds,
                 boxes=rigid_boxes,
-                max_shift=min(0.025, 0.12 * min_obj_extent),
+                max_shift=min(0.060, 0.22 * min_obj_extent),
             )
             if shift is None or float(np.linalg.norm(shift)) <= 1e-8:
                 break
@@ -5030,8 +5041,8 @@ def _prepare_eroded_soft_mesh(
         )
         return str(out_path), info
 
-    clearance = min(0.014, max(0.005, 0.012 * min_obj_extent))
-    pitch = min(0.012, max(0.006, 0.02 * min_obj_extent))
+    clearance = min(0.020, max(0.008, 0.016 * min_obj_extent))
+    pitch = min(0.014, max(0.008, 0.025 * min_obj_extent))
     overlap_bounds_min = bounds[0] - clearance
     overlap_bounds_max = bounds[1] + clearance
     is_small_anchored_piece = bool(float(np.max(size)) < 0.35 and float(np.prod(size)) < 0.01)
@@ -5274,11 +5285,11 @@ def _prepare_eroded_soft_mesh(
             secondary_axis = int(np.argsort(size)[1])
             if secondary_axis != preserve_axis:
                 axis_margin[secondary_axis] = min(0.22 * size[secondary_axis], anchored_overlap_scale_boost * (0.9 * overlap_margin[secondary_axis] + 0.7 * clearance))
-            min_scale = 0.74
+            min_scale = 0.68
         else:
-            margin_multiplier = 1.3 * anchored_overlap_scale_boost
-            margin_cap = min(0.28, 0.16 * anchored_overlap_scale_boost)
-            min_scale = 0.74
+            margin_multiplier = 1.5 * anchored_overlap_scale_boost
+            margin_cap = min(0.34, 0.20 * anchored_overlap_scale_boost)
+            min_scale = 0.68
             axis_margin = np.minimum(
                 margin_multiplier * overlap_margin + clearance,
                 margin_cap * size,
@@ -6671,10 +6682,10 @@ def simulate_in_genesis(
             entity_pos = entity_pos + debug_pid_offsets[int(spec["pid"])]
         if _is_free_cloth_like_spec(spec):
             cloth_follow_gap = min(
-                0.035,
+                0.060,
                 max(
-                    0.010,
-                    0.030 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
+                    0.020,
+                    0.045 * float(np.min(np.maximum(np.asarray(spec.get("bounds_size", [0.05, 0.05, 0.05]), dtype=np.float64), 1e-6))),
                 ),
             )
             entity_pos[2] += cloth_follow_gap
