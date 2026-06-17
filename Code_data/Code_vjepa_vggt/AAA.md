@@ -1,28 +1,11 @@
-cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
-
-/data/gaoya/miniconda3/envs/vphy/bin/python -m code_vjepa_vggt.serve_phys_state_dataset \
-    --root /data/gaoya/AAA_test_video/Dataset_physV/phys_state_0601/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6 \
-    --split train \
-    --index 0 \
-    --output-dir /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/phys_state_dataset_viewer \
-    --port 8777
+1. context_video -> SAM2 产生 prompt/mask/box -> 从 SAM2 采样 query priors -> resize 到 
+VGGT 输入分辨率 -> 分别送入 VGGT / CoTracker -> 输出 track
 
 
 
-cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
-CUDA_VISIBLE_DEVICES=7 \
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python -m code_vjepa_vggt.eval_vggt_sam_multi_object_viewer \
-  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/inspect_phys_state_vjepa_vggt.yaml \
-  --ball-block-root /data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block \
-  --num-single 0 \
-  --num-multi 1 \
-  --num-queries 8 \
-  --min-queries-per-object 2 \
-  --prompt-frame-mode first \
-  --gdino-device cpu \
-  --sam2-device cpu \
-  --ball-num-frames 16 \
-  --ball-num-context-frames 16 \
-  --output-dir /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/vggt_sam_multi_case \
-  --port 8814
+```
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_vggt_query_points_overlay.py --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/inspect_phys_state_vjepa_vggt.yaml --split train --start-index 0 --num-cases 8 --output-dir /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/track_pipeline_5rows --no-serve
+
+
+python3 -m http.server 8790 --directory /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/track_pipeline_5rows
+```

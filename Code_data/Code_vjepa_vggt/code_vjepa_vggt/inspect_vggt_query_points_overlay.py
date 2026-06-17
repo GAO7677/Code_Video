@@ -23,6 +23,7 @@ from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.object_priors import build_vggt_query_prior
+from code_vjepa_vggt.utils.object_priors import _extract_mask_components
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
 
 
@@ -57,6 +58,18 @@ def scale_points_xy(points_k2: np.ndarray, *, src_hw: tuple[int, int], dst_hw: t
     scale_y = float(dst_hw[0]) / max(float(src_hw[0]), 1.0)
     out[..., 0] *= scale_x
     out[..., 1] *= scale_y
+    return out
+
+
+def scale_tracks_xy_tensor(
+    tracks_xy: torch.Tensor,
+    *,
+    src_hw: tuple[int, int],
+    dst_hw: tuple[int, int],
+) -> torch.Tensor:
+    out = tracks_xy.clone()
+    out[..., 0] *= float(dst_hw[1]) / max(float(src_hw[1]), 1.0)
+    out[..., 1] *= float(dst_hw[0]) / max(float(src_hw[0]), 1.0)
     return out
 
 
@@ -183,6 +196,17 @@ def draw_sam_mask(draw: ImageDraw.ImageDraw, sam_mask_hw: np.ndarray) -> None:
             draw.point((float(x), float(y)), fill=SAM_TRACK_COLOR)
 
 
+def draw_component_boxes(draw: ImageDraw.ImageDraw, components: list[dict[str, object]]) -> None:
+    for idx, component in enumerate(components):
+        box = np.asarray(component["box"], dtype=np.float32)
+        if box.shape != (4,):
+            continue
+        x0, y0, x1, y1 = [float(v) for v in box.tolist()]
+        color = GT_PALETTE[idx % len(GT_PALETTE)]
+        draw.rectangle([x0, y0, x1, y1], outline=color, width=3)
+        draw.text((x0 + 2, max(y0 + 2, 2)), f"comp{idx}", fill=color)
+
+
 def draw_overlay_frame(
     frame_chw: torch.Tensor,
     gt_boxes_k4: torch.Tensor,
@@ -201,6 +225,7 @@ def draw_overlay_frame(
     show_sam_prompt: bool = False,
     show_sam_track: bool = False,
     show_sam_mask: bool = False,
+    component_boxes: list[dict[str, object]] | None = None,
     track_label_prefix: str = "q",
     track_palette: list[str] | None = None,
 ) -> Image.Image:
@@ -230,6 +255,8 @@ def draw_overlay_frame(
         draw_sam_track_box(draw, sam_track_box_xyxy)
     if show_sam_mask and sam_mask_hw is not None:
         draw_sam_mask(draw, sam_mask_hw)
+    if component_boxes is not None:
+        draw_component_boxes(draw, component_boxes)
 
     return out
 
@@ -301,26 +328,49 @@ def write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
 
 def build_report(results: list[dict], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    blocks = []
-    for idx, result in enumerate(results):
-        video_cards = []
-        for video in result["videos"]:
-            video_cards.append(
+    stage_order = [
+        ("stage1_context", "1. Context Video", "原始 context_video，保持 native 分辨率。"),
+        ("stage2_sam2", "2. SAM2 Frame0 Sampling Basis", "展示第0帧 connected components、整张 mask 和 box，这三者就是 query priors 的采样依据。"),
+        ("stage3_query_priors", "3. Query Priors From SAM2", "从 SAM2 mask / box 采样 query priors，仍画在 native 分辨率视频上。"),
+        ("stage4_model_inputs", "4. Resized Inputs For VGGT / CoTracker", "分别缩放到 VGGT 和 CoTracker 的实际输入分辨率，再把 priors overlay 上去。"),
+        ("stage5_tracks", "5. Output Tracks", "分别在 VGGT / CoTracker 的实际执行分辨率下展示最终 track。"),
+    ]
+
+    row_blocks = []
+    for stage_key, stage_title, stage_desc in stage_order:
+        case_cards = []
+        for idx, result in enumerate(results):
+            entries = result["stage_rows"].get(stage_key, [])
+            if not entries:
+                continue
+            entry_cards = []
+            for entry in entries:
+                entry_cards.append(
+                    f"""
+        <figure class="stage-video-card">
+          <video controls preload="none" playsinline src="{entry['path']}"></video>
+          <figcaption><b>{entry['title']}</b><br>{entry['source']}</figcaption>
+        </figure>
+"""
+                )
+            case_cards.append(
                 f"""
-    <figure class="video-card">
-      <video controls preload="none" playsinline src="{video['path']}"></video>
-      <figcaption><b>{video['title']}</b><br>来源: {video['source']}</figcaption>
-    </figure>
+    <article class="case-card">
+      <h3>Case {idx}</h3>
+      <p><b>Caption:</b> {result['caption']}</p>
+      <div class="stage-video-stack">
+        {''.join(entry_cards)}
+      </div>
+    </article>
 """
             )
-        blocks.append(
+        row_blocks.append(
             f"""
-  <section class="case">
-    <h2>Case {idx}</h2>
-    <p><b>Caption:</b> {result['caption']}</p>
-    <p><b>Pipeline:</b> 从 context video 开始，依次看 SAM2 的 prompt / mask / track box，随后看 native query priors、VGGT 输入分辨率下的 priors overlay，最后对比 VGGT 和 CoTracker 的 track 输出。</p>
-    <div class="video-grid">
-      {''.join(video_cards)}
+  <section class="stage-row">
+    <h2>{stage_title}</h2>
+    <p>{stage_desc}</p>
+    <div class="case-grid">
+      {''.join(case_cards)}
     </div>
   </section>
 """
@@ -333,18 +383,21 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   <title>Track Pipeline Viewer</title>
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
-    .case {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
-    .video-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }}
-    .video-card {{ margin: 0; background: #fff; border: 1px solid #ddd; padding: 12px; }}
+    .stage-row {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
+    .case-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }}
+    .case-card {{ background: #fff; border: 1px solid #ddd; padding: 12px; }}
+    .case-card h3 {{ margin: 0 0 8px 0; }}
+    .case-card p {{ font-size: 13px; color: #444; }}
+    .stage-video-stack {{ display: grid; gap: 12px; }}
+    .stage-video-card {{ margin: 0; border: 1px solid #e5e1d8; padding: 8px; background: #fcfbf8; }}
     video {{ width: 100%; border: 1px solid #ccc; background: #000; }}
     figcaption {{ font-size: 12px; color: #444; margin-top: 4px; }}
-    pre {{ background: #fff; border: 1px solid #ddd; padding: 16px; white-space: pre-wrap; }}
   </style>
 </head>
 <body>
   <h1>Track Pipeline Viewer</h1>
-  <p>每个 case 都使用同一段 context video 和同一批由 SAM2 采样得到的 query priors。页面按流程展示从视频输入到最终得到 track 的中间产物，并在最后并排给出 VGGT 和 CoTracker 两种 track_source 的结果。</p>
-  {''.join(blocks)}
+  <p>页面按 5 个阶段横向展示多个 case。每个阶段里的 overlay 都画在该模块真实执行时使用的分辨率视频上：native 阶段画在 native 视频上，VGGT 阶段画在 `vggt_input_hw` 上，CoTracker 阶段画在 `cotracker_input_hw` 上。</p>
+  {''.join(row_blocks)}
 </body>
 </html>
 """
@@ -376,6 +429,7 @@ def evaluate_sample(
         prompt_box_xyxy=motion_prompt_box_xyxy,
         caption=sample["caption"],
     )
+    frame0_components = _extract_mask_components(sam_out.masks_thw[0])
     query_points_prior_px, sam_prior_source = build_vggt_query_prior(
         sam_out.masks_thw,
         sam_out.boxes_t4,
@@ -446,18 +500,21 @@ def evaluate_sample(
         else:
             cotracker_mean_center_l1_px = 0.0
         cotracker_valid_track_points = int(cot_valid_mask.sum().item())
+    cotracker_input_hw = tuple(cotracker_out.input_hw) if cotracker_out is not None else None
+    cotracker_query_points_input_px = (
+        scale_points_xy(query_points_prior_px, src_hw=native_hw, dst_hw=cotracker_input_hw) if cotracker_input_hw is not None else None
+    )
 
     video_buffers: dict[str, list[np.ndarray]] = {
         "raw_context": [],
-        "gt_only": [],
-        "vggt_query_only": [],
+        "query_priors_native": [],
         "vggt_tracks_only": [],
         "cotracker_tracks_only": [],
-        "sam_prompt_only": [],
-        "sam_mask_only": [],
-        "sam_track_only": [],
-        "raw_context_vggt_input": [],
+        "sam2_frame0_components": [],
+        "sam2_frame0_mask": [],
+        "sam2_frame0_box": [],
         "sam2_priors_vggt_input": [],
+        "sam2_priors_cotracker_input": [],
     }
     context_frames = sample["context_video"].permute(1, 0, 2, 3)
     for t in range(context_frames.shape[0]):
@@ -465,16 +522,7 @@ def evaluate_sample(
         video_buffers["raw_context"].append(np.array(raw_img))
 
         resized_frame = resize_frame_chw(context_frames[t], track_image_hw)
-        resized_raw_img = Image.fromarray(tensor_frame_to_uint8_hwc(resized_frame))
-        video_buffers["raw_context_vggt_input"].append(np.array(resized_raw_img))
-
-        gt_img = draw_overlay_frame(
-            frame_chw=context_frames[t],
-            gt_boxes_k4=sample["context_boxes"][t],
-            image_hw=track_image_hw,
-            show_gt=True,
-        )
-        video_buffers["gt_only"].append(np.array(gt_img))
+        cotracker_resized_frame = resize_frame_chw(context_frames[t], cotracker_input_hw) if cotracker_input_hw is not None else None
 
         query_img = draw_overlay_frame(
             frame_chw=context_frames[t],
@@ -483,7 +531,35 @@ def evaluate_sample(
             image_hw=native_hw,
             show_query=(t == 0),
         )
-        video_buffers["vggt_query_only"].append(np.array(query_img))
+        video_buffers["query_priors_native"].append(np.array(query_img))
+
+        comp_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            image_hw=native_hw,
+            sam_mask_hw=sam_out.masks_thw[0] if t == 0 else None,
+            show_sam_mask=(t == 0),
+            component_boxes=frame0_components if t == 0 else None,
+        )
+        video_buffers["sam2_frame0_components"].append(np.array(comp_img))
+
+        mask_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            image_hw=native_hw,
+            sam_mask_hw=sam_out.masks_thw[0] if t == 0 else None,
+            show_sam_mask=(t == 0),
+        )
+        video_buffers["sam2_frame0_mask"].append(np.array(mask_img))
+
+        box_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            image_hw=native_hw,
+            sam_track_box_xyxy=sam_out.boxes_t4[0] if t == 0 else None,
+            show_sam_track=(t == 0),
+        )
+        video_buffers["sam2_frame0_box"].append(np.array(box_img))
 
         query_vggt_input_img = draw_overlay_frame(
             frame_chw=resized_frame,
@@ -500,10 +576,29 @@ def evaluate_sample(
         )
         video_buffers["sam2_priors_vggt_input"].append(np.array(query_vggt_input_img))
 
+        if cotracker_resized_frame is not None and cotracker_input_hw is not None and cotracker_query_points_input_px is not None:
+            cot_prompt = scale_box_xyxy(sam_out.prompt_box_xyxy, src_hw=native_hw, dst_hw=cotracker_input_hw) if t == prompt_frame_idx else None
+            cot_track_box = scale_box_xyxy(sam_out.boxes_t4[t], src_hw=native_hw, dst_hw=cotracker_input_hw)
+            cot_mask = resize_mask_hw(sam_out.masks_thw[t], cotracker_input_hw)
+            query_cot_input_img = draw_overlay_frame(
+                frame_chw=cotracker_resized_frame,
+                gt_boxes_k4=sample["context_boxes"][t],
+                query_points_k2=cotracker_query_points_input_px if t == 0 else None,
+                image_hw=cotracker_input_hw,
+                sam_prompt_box_xyxy=cot_prompt,
+                sam_track_box_xyxy=cot_track_box,
+                sam_mask_hw=cot_mask,
+                show_query=(t == 0),
+                show_sam_prompt=(t == prompt_frame_idx),
+                show_sam_track=True,
+                show_sam_mask=True,
+            )
+            video_buffers["sam2_priors_cotracker_input"].append(np.array(query_cot_input_img))
+
         track_img = draw_overlay_frame(
-            frame_chw=context_frames[t],
+            frame_chw=resized_frame,
             gt_boxes_k4=sample["context_boxes"][t],
-            tracks_xy_k2=tracks_native[0, t].detach().cpu(),
+            tracks_xy_k2=tracks[0, t].detach().cpu(),
             vis_k=vggt_out.visibility[0, t].detach().cpu(),
             matched_gt_idx_k=alignment.matched_gt_indices[0].detach().cpu(),
             image_hw=track_image_hw,
@@ -513,116 +608,80 @@ def evaluate_sample(
         )
         video_buffers["vggt_tracks_only"].append(np.array(track_img))
 
-        if cotracker_out is not None and cotracker_alignment is not None:
+        if cotracker_out is not None and cotracker_alignment is not None and cotracker_resized_frame is not None and cotracker_input_hw is not None:
+            cotracker_tracks_input = scale_tracks_xy_tensor(
+                cotracker_out.tracks[0, t].detach().cpu(),
+                src_hw=native_hw,
+                dst_hw=cotracker_input_hw,
+            )
             cotrack_img = draw_overlay_frame(
-                frame_chw=context_frames[t],
+                frame_chw=cotracker_resized_frame,
                 gt_boxes_k4=sample["context_boxes"][t],
-                tracks_xy_k2=cotracker_out.tracks[0, t].detach().cpu(),
+                tracks_xy_k2=cotracker_tracks_input,
                 vis_k=cotracker_out.visibility[0, t].detach().cpu(),
                 matched_gt_idx_k=cotracker_alignment.matched_gt_indices[0].detach().cpu(),
-                image_hw=native_hw,
+                image_hw=cotracker_input_hw,
                 show_tracks=True,
                 track_label_prefix="c",
                 track_palette=COTRACKER_PALETTE,
             )
             video_buffers["cotracker_tracks_only"].append(np.array(cotrack_img))
 
-        sam_prompt_img = draw_overlay_frame(
-            frame_chw=context_frames[t],
-            gt_boxes_k4=sample["context_boxes"][t],
-            sam_prompt_box_xyxy=sam_out.prompt_box_xyxy if t == prompt_frame_idx else None,
-            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
-            show_sam_prompt=(t == prompt_frame_idx),
-        )
-        video_buffers["sam_prompt_only"].append(np.array(sam_prompt_img))
-
-        sam_mask_img = draw_overlay_frame(
-            frame_chw=context_frames[t],
-            gt_boxes_k4=sample["context_boxes"][t],
-            sam_mask_hw=sam_out.masks_thw[t],
-            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
-            show_sam_mask=True,
-        )
-        video_buffers["sam_mask_only"].append(np.array(sam_mask_img))
-
-        sam_track_img = draw_overlay_frame(
-            frame_chw=context_frames[t],
-            gt_boxes_k4=sample["context_boxes"][t],
-            sam_track_box_xyxy=sam_out.boxes_t4[t],
-            image_hw=(context_frames.shape[-2], context_frames.shape[-1]),
-            show_sam_track=True,
-        )
-        video_buffers["sam_track_only"].append(np.array(sam_track_img))
-
-    video_specs = [
-        ("raw_context", "1. Raw Context Video", "原始 context video"),
-        ("sam_prompt_only", "2. SAM2 Prompt Box", "SAM2 的 prompt box"),
-        ("sam_mask_only", "3. SAM2 Mask", "SAM2 传播得到的 mask"),
-        ("sam_track_only", "4. SAM2 Track Box", "SAM2 传播得到的 track box"),
-        ("vggt_query_only", "5. Native Query Points", "native 分辨率下采样得到的 query priors"),
-        ("raw_context_vggt_input", "6. Raw Context Video (VGGT Input)", "缩放到 VGGT 实际输入分辨率的 context"),
-        ("sam2_priors_vggt_input", "7. SAM2 Priors Overlay (VGGT Input)", "VGGT 输入分辨率下的 priors overlay"),
-        ("vggt_tracks_only", "8. VGGT Tracked Points", "track_source=vggt"),
-        ("cotracker_tracks_only", "9. CoTracker Tracked Points", "track_source=cotracker"),
-    ]
-    browser_videos = []
-    for key, title, source in video_specs:
+    video_specs = {
+        "raw_context": ("Context Video", "native"),
+        "sam2_frame0_components": ("Frame0 Connected Components", "native"),
+        "sam2_frame0_mask": ("Frame0 Full Mask", "native"),
+        "sam2_frame0_box": ("Frame0 Box", "native"),
+        "query_priors_native": ("Query Priors", "native"),
+        "sam2_priors_vggt_input": ("VGGT Input Overlay", f"VGGT @ {track_image_hw[0]}x{track_image_hw[1]}"),
+        "sam2_priors_cotracker_input": (
+            "CoTracker Input Overlay",
+            f"CoTracker @ {cotracker_input_hw[0]}x{cotracker_input_hw[1]}" if cotracker_input_hw is not None else "CoTracker",
+        ),
+        "vggt_tracks_only": ("VGGT Tracks", f"VGGT @ {track_image_hw[0]}x{track_image_hw[1]}"),
+        "cotracker_tracks_only": (
+            "CoTracker Tracks",
+            f"CoTracker @ {cotracker_input_hw[0]}x{cotracker_input_hw[1]}" if cotracker_input_hw is not None else "CoTracker",
+        ),
+    }
+    browser_videos = {}
+    for key, (title, source) in video_specs.items():
         if len(video_buffers[key]) == 0:
             continue
         raw_path = output_dir / f"{Path(sample['video_path']).stem}__{key}.mp4"
         write_mp4(raw_path, np.stack(video_buffers[key], axis=0), fps=int(sample.get("_fps", 8)))
         browser_path = ensure_browser_video(raw_path)
-        browser_videos.append(
-            {
-                "key": key,
-                "title": title,
-                "source": source,
-                "path": str(browser_path.relative_to(output_dir.parent)),
-            }
-        )
+        browser_videos[key] = {
+            "key": key,
+            "title": title,
+            "source": source,
+            "path": str(browser_path.relative_to(output_dir.parent)),
+        }
+
+    stage_rows = {
+        "stage1_context": [browser_videos["raw_context"]] if "raw_context" in browser_videos else [],
+        "stage2_sam2": [
+            browser_videos[key]
+            for key in ("sam2_frame0_components", "sam2_frame0_mask", "sam2_frame0_box")
+            if key in browser_videos
+        ],
+        "stage3_query_priors": [browser_videos["query_priors_native"]] if "query_priors_native" in browser_videos else [],
+        "stage4_model_inputs": [
+            browser_videos[key]
+            for key in ("sam2_priors_vggt_input", "sam2_priors_cotracker_input")
+            if key in browser_videos
+        ],
+        "stage5_tracks": [
+            browser_videos[key]
+            for key in ("vggt_tracks_only", "cotracker_tracks_only")
+            if key in browser_videos
+        ],
+    }
 
     return {
         "caption": sample["caption"],
         "video_path": sample["video_path"],
-        "context_frame_indices": sample["context_frame_indices"].tolist(),
-        "matched_gt_indices": matched_gt_indices,
-        "unmatched_gt_indices": unmatched_gt_indices,
-        "coord_trace": {
-            "summary": "SAM2 先在 native context 上生成 mask/track box，再从 frame0 的 SAM2 mask/box 采样 query points。VGGT 接收到的是这些 prior 缩放到固定 vggt_input_hw 后的像素坐标，输出轨迹也在这个坐标系里，最后再缩回 native 像素做对齐和评估。",
-            "native_hw": list(native_hw),
-            "vggt_input_hw": [int(track_image_hw[0]), int(track_image_hw[1])],
-            "sam_prior_source": sam_prior_source,
-            "query_points_prior_px": point_stats(query_points_prior_px),
-            "query_points_vggt_input_px": point_stats(query_points_vggt_input_px),
-            "query_points_roundtrip_px": point_stats(query_points_roundtrip_px),
-            "query_roundtrip_max_abs_err_px": query_roundtrip_max_abs_err_px,
-            "query_roundtrip_mean_abs_err_px": query_roundtrip_mean_abs_err_px,
-            "tracks_native_scale": [scale_x, scale_y],
-            "tracks_vggt_input_px": point_stats(tracks[0].detach().cpu().numpy().astype(np.float32).reshape(-1, 2)),
-            "tracks_native_px": point_stats(tracks_native_px.reshape(-1, 2)),
-            "cotracker_input_hw": list(cotracker_out.input_hw) if cotracker_out is not None else None,
-            "cotracker_tracks_native_px": point_stats(cotracker_tracks_native_px.reshape(-1, 2)) if cotracker_tracks_native_px.size > 0 else point_stats(cotracker_tracks_native_px),
-            "cotracker_mean_center_l1_px": cotracker_mean_center_l1_px,
-            "cotracker_valid_track_points": cotracker_valid_track_points,
-        },
-        "shapes": {
-            "context_video": list(context_video.shape),
-            "context_boxes": list(context_boxes.shape),
-            "sam_prompt_box_xyxy": list(np.asarray(sam_out.prompt_box_xyxy).shape),
-            "sam_masks_thw": list(np.asarray(sam_out.masks_thw).shape),
-            "sam_boxes_t4": list(np.asarray(sam_out.boxes_t4).shape),
-            "sam_motion_box_xyxy": list(np.asarray(motion_prompt_box_xyxy).shape),
-            "sam_query_points": list(query_points_prior_px.shape),
-            "vggt_query_points": list(vggt_out.query_points.shape),
-            "vggt_tracks": list(vggt_out.tracks.shape),
-            "vggt_visibility": list(vggt_out.visibility.shape),
-            "vggt_confidence": list(vggt_out.confidence.shape),
-            "cotracker_query_points": list(cotracker_out.query_points.shape) if cotracker_out is not None else None,
-            "cotracker_tracks": list(cotracker_out.tracks.shape) if cotracker_out is not None else None,
-            "cotracker_visibility": list(cotracker_out.visibility.shape) if cotracker_out is not None else None,
-            "cotracker_confidence": list(cotracker_out.confidence.shape) if cotracker_out is not None else None,
-        },
-        "videos": browser_videos,
+        "stage_rows": stage_rows,
     }
 
 
