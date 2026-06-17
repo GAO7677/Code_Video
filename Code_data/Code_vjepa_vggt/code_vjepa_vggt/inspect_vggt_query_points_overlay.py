@@ -17,6 +17,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
+from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.sam2_motion import SAM2MotionTracker, build_motion_prompt_box
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
@@ -27,6 +28,7 @@ from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
 
 GT_PALETTE = ["#d62828", "#f77f00", "#fcbf49", "#2a9d8f", "#277da1", "#6a4c93"]
 QUERY_PALETTE = ["#00b4d8", "#0077b6", "#8338ec", "#3a86ff", "#ff006e", "#fb5607", "#2ec4b6", "#8ac926"]
+COTRACKER_PALETTE = ["#2b8a3e", "#40916c", "#52b788", "#74c69d", "#1b4332", "#95d5b2", "#007f5f", "#55a630"]
 SAM_PROMPT_COLOR = "#ff8c00"
 SAM_TRACK_COLOR = "#2ca25f"
 
@@ -141,16 +143,19 @@ def draw_track_points(
     width: int,
     height: int,
     image_hw: tuple[int, int],
+    label_prefix: str = "q",
+    palette: list[str] | None = None,
 ) -> None:
+    colors = palette if palette is not None else QUERY_PALETTE
     scale_x = width / max(float(image_hw[1]), 1.0)
     scale_y = height / max(float(image_hw[0]), 1.0)
     for query_idx, point in enumerate(tracks_xy_k2.tolist()):
         x, y = float(point[0]) * scale_x, float(point[1]) * scale_y
-        color = QUERY_PALETTE[query_idx % len(QUERY_PALETTE)]
+        color = colors[query_idx % len(colors)]
         r = 5
         draw.ellipse([x - r, y - r, x + r, y + r], outline=color, width=3)
         gt_idx = int(matched_gt_idx_k[query_idx].item())
-        label = f"q{query_idx}->gt{gt_idx}"
+        label = f"{label_prefix}{query_idx}->gt{gt_idx}"
         if float(vis_k[query_idx].item()) < 0.5:
             label += "(inv)"
         draw.text((x + 6, y - 6), label, fill=color)
@@ -196,6 +201,8 @@ def draw_overlay_frame(
     show_sam_prompt: bool = False,
     show_sam_track: bool = False,
     show_sam_mask: bool = False,
+    track_label_prefix: str = "q",
+    track_palette: list[str] | None = None,
 ) -> Image.Image:
     out, draw = init_canvas(frame_chw)
     draw = ImageDraw.Draw(out)
@@ -214,6 +221,8 @@ def draw_overlay_frame(
             width=width,
             height=height,
             image_hw=image_hw,
+            label_prefix=track_label_prefix,
+            palette=track_palette,
         )
     if show_sam_prompt and sam_prompt_box_xyxy is not None:
         draw_sam_prompt_box(draw, sam_prompt_box_xyxy)
@@ -341,7 +350,7 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
 </head>
 <body>
   <h1>VGGT Query Points Overlay</h1>
-  <p>同一个 case 现在按来源拆成多个独立视频。黑色圆点是实际喂给 VGGT 的 query points，彩色圆点是 VGGT 跟踪结果，橙色框是 SAM2 prompt，绿色框和绿色点阵分别是 SAM2 track box / mask。带 vggt_input 字样的视频会先把 context_video 缩放到 VGGT 实际输入分辨率，再叠加这些先验。</p>
+  <p>同一个 case 现在按来源拆成多个独立视频。黑色圆点是实际喂给 VGGT / CoTracker 的 query points，蓝紫色轨迹是 VGGT 跟踪结果，绿色轨迹是 CoTracker 跟踪结果，橙色框是 SAM2 prompt，绿色框和绿色点阵分别是 SAM2 track box / mask。带 vggt_input 字样的视频会先把 context_video 缩放到 VGGT 实际输入分辨率，再叠加这些先验。</p>
   {''.join(blocks)}
 </body>
 </html>
@@ -352,7 +361,13 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     return html_path
 
 
-def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.device, output_dir: Path) -> dict:
+def evaluate_sample(
+    sample: dict,
+    adapter: VGGTTrackAdapter,
+    cotracker_adapter: CoTrackerAdapter | None,
+    device: torch.device,
+    output_dir: Path,
+) -> dict:
     context_video = sample["context_video"].unsqueeze(0).to(device)
     context_boxes = sample["context_boxes"].unsqueeze(0).to(device)
 
@@ -413,11 +428,38 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
     valid_gt_indices = [int(i) for i in torch.nonzero(valid_gt_mask, as_tuple=False).flatten().tolist()]
     unmatched_gt_indices = [i for i in valid_gt_indices if i not in set(matched_gt_indices)]
 
+    cotracker_out = None
+    cotracker_alignment = None
+    cotracker_tracks_native_px = np.zeros((0, 2), dtype=np.float32)
+    cotracker_mean_center_l1_px = None
+    cotracker_valid_track_points = None
+    if cotracker_adapter is not None:
+        with torch.no_grad():
+            cotracker_out = cotracker_adapter(
+                frames_bthwc,
+                query_points_prior=query_points_prior,
+                query_image_hw=native_hw,
+            )
+        cotracker_alignment = align_tracks_to_boxes(
+            tracks=cotracker_out.tracks,
+            gt_boxes=context_boxes,
+            image_hw=native_hw,
+        )
+        cotracker_tracks_native_px = cotracker_out.tracks[0].detach().cpu().numpy().astype(np.float32)
+        cot_valid_mask = cotracker_alignment.matched_gt_valid > 0.5
+        if cot_valid_mask.any():
+            cot_l1 = (cotracker_out.tracks - cotracker_alignment.matched_gt_centers).abs().sum(dim=-1)
+            cotracker_mean_center_l1_px = float(cot_l1[cot_valid_mask].mean().item())
+        else:
+            cotracker_mean_center_l1_px = 0.0
+        cotracker_valid_track_points = int(cot_valid_mask.sum().item())
+
     video_buffers: dict[str, list[np.ndarray]] = {
         "raw_context": [],
         "gt_only": [],
         "vggt_query_only": [],
         "vggt_tracks_only": [],
+        "cotracker_tracks_only": [],
         "sam_prompt_only": [],
         "sam_mask_only": [],
         "sam_track_only": [],
@@ -473,8 +515,24 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
             matched_gt_idx_k=alignment.matched_gt_indices[0].detach().cpu(),
             image_hw=track_image_hw,
             show_tracks=True,
+            track_label_prefix="v",
+            track_palette=QUERY_PALETTE,
         )
         video_buffers["vggt_tracks_only"].append(np.array(track_img))
+
+        if cotracker_out is not None and cotracker_alignment is not None:
+            cotrack_img = draw_overlay_frame(
+                frame_chw=context_frames[t],
+                gt_boxes_k4=sample["context_boxes"][t],
+                tracks_xy_k2=cotracker_out.tracks[0, t].detach().cpu(),
+                vis_k=cotracker_out.visibility[0, t].detach().cpu(),
+                matched_gt_idx_k=cotracker_alignment.matched_gt_indices[0].detach().cpu(),
+                image_hw=native_hw,
+                show_tracks=True,
+                track_label_prefix="c",
+                track_palette=COTRACKER_PALETTE,
+            )
+            video_buffers["cotracker_tracks_only"].append(np.array(cotrack_img))
 
         sam_prompt_img = draw_overlay_frame(
             frame_chw=context_frames[t],
@@ -508,6 +566,7 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
         ("gt_only", "GT Boxes", "数据集 GT boxes"),
         ("vggt_query_only", "VGGT Query Points", "VGGT 输入 query points"),
         ("vggt_tracks_only", "VGGT Tracked Points", "VGGT 输出 tracked points"),
+        ("cotracker_tracks_only", "CoTracker Tracked Points", "同一批 query points 送入 CoTracker 的轨迹结果"),
         ("sam_prompt_only", "SAM2 Prompt Box", "SAM2 motion prompt box"),
         ("sam_mask_only", "SAM2 Mask", "SAM2 输出 mask"),
         ("sam_track_only", "SAM2 Track Box", "SAM2 输出 tracked box"),
@@ -516,6 +575,8 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
     ]
     browser_videos = []
     for key, title, source in video_specs:
+        if len(video_buffers[key]) == 0:
+            continue
         raw_path = output_dir / f"{Path(sample['video_path']).stem}__{key}.mp4"
         write_mp4(raw_path, np.stack(video_buffers[key], axis=0), fps=int(sample.get("_fps", 8)))
         browser_path = ensure_browser_video(raw_path)
@@ -547,6 +608,10 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
             "tracks_native_scale": [scale_x, scale_y],
             "tracks_vggt_input_px": point_stats(tracks[0].detach().cpu().numpy().astype(np.float32).reshape(-1, 2)),
             "tracks_native_px": point_stats(tracks_native_px.reshape(-1, 2)),
+            "cotracker_input_hw": list(cotracker_out.input_hw) if cotracker_out is not None else None,
+            "cotracker_tracks_native_px": point_stats(cotracker_tracks_native_px.reshape(-1, 2)) if cotracker_tracks_native_px.size > 0 else point_stats(cotracker_tracks_native_px),
+            "cotracker_mean_center_l1_px": cotracker_mean_center_l1_px,
+            "cotracker_valid_track_points": cotracker_valid_track_points,
         },
         "shapes": {
             "context_video": list(context_video.shape),
@@ -560,6 +625,10 @@ def evaluate_sample(sample: dict, adapter: VGGTTrackAdapter, device: torch.devic
             "vggt_tracks": list(vggt_out.tracks.shape),
             "vggt_visibility": list(vggt_out.visibility.shape),
             "vggt_confidence": list(vggt_out.confidence.shape),
+            "cotracker_query_points": list(cotracker_out.query_points.shape) if cotracker_out is not None else None,
+            "cotracker_tracks": list(cotracker_out.tracks.shape) if cotracker_out is not None else None,
+            "cotracker_visibility": list(cotracker_out.visibility.shape) if cotracker_out is not None else None,
+            "cotracker_confidence": list(cotracker_out.confidence.shape) if cotracker_out is not None else None,
         },
         "videos": browser_videos,
     }
@@ -580,6 +649,7 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=8777)
     parser.add_argument("--no-serve", action="store_true")
+    parser.add_argument("--disable-cotracker", action="store_true")
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
@@ -602,6 +672,16 @@ def main() -> None:
         device=str(device),
         input_hw=tuple(model_cfg["vggt_input_hw"]),
     ).to(device)
+    cotracker_checkpoint = model_cfg.get("cotracker_checkpoint", "/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth")
+    cotracker_adapter = None
+    if not args.disable_cotracker and cotracker_checkpoint and Path(cotracker_checkpoint).exists():
+        cotracker_adapter = CoTrackerAdapter(
+            checkpoint_path=str(cotracker_checkpoint),
+            num_queries=int(model_cfg["object_num_queries"]),
+            device=str(device),
+            input_hw=tuple(model_cfg.get("cotracker_input_hw", [384, 512])),
+            window_len=int(model_cfg.get("cotracker_window_len", 60)),
+        ).to(device)
 
     output_dir = Path(args.output_dir)
     results = []
@@ -610,7 +690,7 @@ def main() -> None:
         sample["_output_dir"] = str(output_dir / "assets")
         sample["_case_name"] = f"case_{idx:03d}"
         sample["_fps"] = int(data_cfg.get("fps", 8))
-        results.append(evaluate_sample(sample, adapter, device, output_dir / "assets"))
+        results.append(evaluate_sample(sample, adapter, cotracker_adapter, device, output_dir / "assets"))
 
     html_path = build_report(results, output_dir)
     print(f"eval report: {html_path}")
