@@ -318,14 +318,7 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   <section class="case">
     <h2>Case {idx}</h2>
     <p><b>Caption:</b> {result['caption']}</p>
-    <p><b>Context frames:</b> {result['context_frame_indices']}</p>
-    <p><b>Matched GT indices:</b> {result['matched_gt_indices']}</p>
-    <p><b>Unmatched GT indices:</b> {result['unmatched_gt_indices']}</p>
-    <p><b>Coordinate trace:</b> {result['coord_trace']['summary']}</p>
-    <p><b>Shapes:</b></p>
-    <pre>{json.dumps(result['shapes'], indent=2, ensure_ascii=False)}</pre>
-    <p><b>Coordinate stats:</b></p>
-    <pre>{json.dumps(result['coord_trace'], indent=2, ensure_ascii=False)}</pre>
+    <p><b>Pipeline:</b> 从 context video 开始，依次看 SAM2 的 prompt / mask / track box，随后看 native query priors、VGGT 输入分辨率下的 priors overlay，最后对比 VGGT 和 CoTracker 的 track 输出。</p>
     <div class="video-grid">
       {''.join(video_cards)}
     </div>
@@ -337,7 +330,7 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>VGGT Query Points Overlay</title>
+  <title>Track Pipeline Viewer</title>
   <style>
     body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
     .case {{ margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }}
@@ -349,8 +342,8 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
   </style>
 </head>
 <body>
-  <h1>VGGT Query Points Overlay</h1>
-  <p>同一个 case 现在按来源拆成多个独立视频。黑色圆点是实际喂给 VGGT / CoTracker 的 query points，蓝紫色轨迹是 VGGT 跟踪结果，绿色轨迹是 CoTracker 跟踪结果，橙色框是 SAM2 prompt，绿色框和绿色点阵分别是 SAM2 track box / mask。带 vggt_input 字样的视频会先把 context_video 缩放到 VGGT 实际输入分辨率，再叠加这些先验。</p>
+  <h1>Track Pipeline Viewer</h1>
+  <p>每个 case 都使用同一段 context video 和同一批由 SAM2 采样得到的 query priors。页面按流程展示从视频输入到最终得到 track 的中间产物，并在最后并排给出 VGGT 和 CoTracker 两种 track_source 的结果。</p>
   {''.join(blocks)}
 </body>
 </html>
@@ -562,16 +555,15 @@ def evaluate_sample(
         video_buffers["sam_track_only"].append(np.array(sam_track_img))
 
     video_specs = [
-        ("raw_context", "Raw Context Video", "原始 context 帧"),
-        ("gt_only", "GT Boxes", "数据集 GT boxes"),
-        ("vggt_query_only", "VGGT Query Points", "VGGT 输入 query points"),
-        ("vggt_tracks_only", "VGGT Tracked Points", "VGGT 输出 tracked points"),
-        ("cotracker_tracks_only", "CoTracker Tracked Points", "同一批 query points 送入 CoTracker 的轨迹结果"),
-        ("sam_prompt_only", "SAM2 Prompt Box", "SAM2 motion prompt box"),
-        ("sam_mask_only", "SAM2 Mask", "SAM2 输出 mask"),
-        ("sam_track_only", "SAM2 Track Box", "SAM2 输出 tracked box"),
-        ("raw_context_vggt_input", "Raw Context Video (VGGT Input)", "按 VGGT 输入分辨率缩放后的 context 帧"),
-        ("sam2_priors_vggt_input", "SAM2 Priors Overlay (VGGT Input)", "按 VGGT 输入分辨率展示的 SAM2 prompt/mask/track box 和实际 VGGT query priors"),
+        ("raw_context", "1. Raw Context Video", "原始 context video"),
+        ("sam_prompt_only", "2. SAM2 Prompt Box", "SAM2 的 prompt box"),
+        ("sam_mask_only", "3. SAM2 Mask", "SAM2 传播得到的 mask"),
+        ("sam_track_only", "4. SAM2 Track Box", "SAM2 传播得到的 track box"),
+        ("vggt_query_only", "5. Native Query Points", "native 分辨率下采样得到的 query priors"),
+        ("raw_context_vggt_input", "6. Raw Context Video (VGGT Input)", "缩放到 VGGT 实际输入分辨率的 context"),
+        ("sam2_priors_vggt_input", "7. SAM2 Priors Overlay (VGGT Input)", "VGGT 输入分辨率下的 priors overlay"),
+        ("vggt_tracks_only", "8. VGGT Tracked Points", "track_source=vggt"),
+        ("cotracker_tracks_only", "9. CoTracker Tracked Points", "track_source=cotracker"),
     ]
     browser_videos = []
     for key, title, source in video_specs:
