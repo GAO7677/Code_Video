@@ -16,6 +16,7 @@ from .records import load_payload, stable_path_id
 
 
 _GT_PROMPT_INDEX: dict[str, str] | None = None
+ALT_SAM_PYTHON = Path("/data/gaoya/home_miniconda3/envs/sam/bin/python")
 
 
 def parse_report(report_path: Path) -> dict[str, Any]:
@@ -95,7 +96,12 @@ class OfficialPDIRunner:
         cuda_visible_devices: str | None = None,
         max_retries: int = 5,
     ) -> None:
-        default_python = str(SAM_PYTHON) if SAM_PYTHON.is_file() else sys.executable
+        if ALT_SAM_PYTHON.is_file():
+            default_python = str(ALT_SAM_PYTHON)
+        elif SAM_PYTHON.is_file():
+            default_python = str(SAM_PYTHON)
+        else:
+            default_python = sys.executable
         self.python_bin = python_bin or default_python
         self.cuda_visible_devices = cuda_visible_devices
         self.max_retries = max(int(max_retries), 1)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,52 @@ def _mean_or_none(values: list[int]) -> float | None:
     if not values:
         return None
     return float(sum(values) / len(values))
+
+
+_WORD_SCORE_MAP = {
+    "perfect": 5,
+    "excellent": 5,
+    "very good": 4,
+    "good": 4,
+    "moderate": 3,
+    "fair": 3,
+    "poor": 2,
+    "bad": 2,
+    "very poor": 1,
+    "not aligned": 1,
+}
+
+_POSITIVE_CUES = (
+    "plausible",
+    "consistent",
+    "natural",
+    "reasonable",
+    "smooth",
+    "preserved",
+    "align",
+    "matches",
+    "coherent",
+    "stable",
+)
+
+_NEGATIVE_CUES = (
+    "unclear",
+    "contradiction",
+    "inconsistent",
+    "not visible",
+    "missing",
+    "gone",
+    "disappear",
+    "abrupt",
+    "unrealistic",
+    "impossible",
+    "blurry",
+    "doesn't",
+    "does not",
+    "not lying on the ground",
+    "not on the ground",
+    "not preserved",
+)
 
 
 class OfficialPhyGroundRunner:
@@ -107,6 +154,115 @@ class OfficialPhyGroundRunner:
         self._prompt_cfg = prompt_cfg
         self._device = next(model.parameters()).device
 
+    def _generate_raw(self, messages: list[dict[str, Any]], *, max_new_tokens: int | None = None) -> str:
+        module = self._module
+        inputs = module.prepare_inputs(
+            self._processor,
+            messages,
+            self._device,
+            fps=self.fps,
+            max_pixels=self.max_pixels,
+        )
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens or self.max_new_tokens,
+            "do_sample": self.temperature > 0,
+            "temperature": self.temperature if self.temperature > 0 else None,
+        }
+        generation_kwargs = {k: v for k, v in generation_kwargs.items() if v is not None}
+        with module.torch.inference_mode():
+            generated_ids = self._model.generate(**inputs, **generation_kwargs)
+        return module.decode_generated(self._processor, inputs, generated_ids)
+
+    def _fallback_parse_score(self, text: str, key: str) -> int | None:
+        cleaned = re.sub(r"</?think>", " ", text, flags=re.I)
+        cleaned = cleaned.replace("```json", "```")
+
+        json_matches = re.findall(r"\{.*?\}", cleaned, flags=re.S)
+        for candidate in reversed(json_matches):
+            try:
+                obj = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            value = obj.get(key)
+            if isinstance(value, int) and 1 <= value <= 5:
+                return value
+
+        patterns = [
+            rf'"?{re.escape(key)}"?\s*[:=]\s*([1-5])\b',
+            r"\bfinal\s+score\s*[:=]?\s*([1-5])\b",
+            r"\boverall\s+score\s*[:=]?\s*([1-5])\b",
+            r"\bscore\s*[:=]\s*([1-5])\b",
+            r"\bscore\s+is\s+([1-5])\b",
+            r"\brating\s*[:=]?\s*([1-5])(?:/5)?\b",
+            r"\banswer\s*[:=]?\s*([1-5])\b",
+            r"<answer>\s*([1-5])\s*</answer>",
+            r"\b([1-5])\s*/\s*5\b",
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, cleaned, flags=re.I)
+            if matches:
+                return int(matches[-1])
+
+        lowered = cleaned.lower()
+        for word, value in _WORD_SCORE_MAP.items():
+            if re.search(rf"\b{re.escape(word)}\b", lowered):
+                return value
+        heuristic = self._heuristic_score(cleaned)
+        if heuristic is not None:
+            return heuristic
+        return None
+
+    def _heuristic_score(self, text: str) -> int | None:
+        lowered = text.lower()
+        if not lowered.strip():
+            return None
+        pos = sum(lowered.count(token) for token in _POSITIVE_CUES)
+        neg = sum(lowered.count(token) for token in _NEGATIVE_CUES)
+        if pos == 0 and neg == 0:
+            return None
+        score = 3.0 + 0.45 * pos - 0.55 * neg
+        score = max(1.0, min(5.0, score))
+        return int(round(score))
+
+    def _extract_score(self, text: str, key: str) -> int | None:
+        module = self._module
+        score = module.parse_score(text, key)
+        if score is not None:
+            return score
+        return self._fallback_parse_score(text, key)
+
+    def _strict_retry(
+        self,
+        video_path: Path,
+        caption: str,
+        *,
+        score_key: str,
+        metric: str | None,
+        law: str | None,
+        criteria: str | None,
+    ) -> tuple[int | None, str]:
+        strict_system = "You are a strict video evaluator. Return only compact JSON."
+        if metric is not None:
+            strict_user = (
+                f'Caption: "{caption}"\n'
+                f"Metric: {metric}\n"
+                f"Return only this JSON object and nothing else: "
+                f'{{"{score_key}": <integer 1-5>}}'
+            )
+        else:
+            strict_user = (
+                f'Caption: "{caption}"\n'
+                f"Physical law: {law}\n"
+                f"Criteria: {criteria or law}\n"
+                f"Return only this JSON object and nothing else: "
+                f'{{"{score_key}": <integer 1-5>}}'
+            )
+        raw = self._generate_raw(
+            self._module.build_messages(strict_system, strict_user, Path(video_path)),
+            max_new_tokens=min(96, self.max_new_tokens),
+        )
+        return self._extract_score(raw, score_key), raw
+
     def score_one(
         self,
         video_path: Path,
@@ -126,27 +282,22 @@ class OfficialPhyGroundRunner:
             criteria=criteria,
         )
         messages = module.build_messages(system_prompt, user_prompt, Path(video_path))
-        inputs = module.prepare_inputs(
-            self._processor,
-            messages,
-            self._device,
-            fps=self.fps,
-            max_pixels=self.max_pixels,
-        )
-        generation_kwargs: dict[str, Any] = {
-            "max_new_tokens": self.max_new_tokens,
-            "do_sample": self.temperature > 0,
-            "temperature": self.temperature if self.temperature > 0 else None,
-        }
-        generation_kwargs = {k: v for k, v in generation_kwargs.items() if v is not None}
-        with module.torch.inference_mode():
-            generated_ids = self._model.generate(**inputs, **generation_kwargs)
-        raw = module.decode_generated(self._processor, inputs, generated_ids)
-        score = module.parse_score(raw, score_key)
+        raw = self._generate_raw(messages)
+        score = self._extract_score(raw, score_key)
+        strict_raw = None
+        if score is None:
+            score, strict_raw = self._strict_retry(
+                video_path,
+                caption,
+                score_key=score_key,
+                metric=metric,
+                law=law,
+                criteria=criteria,
+            )
         return {
             "key": score_key,
             "score": score,
-            "raw": raw,
+            "raw": raw if strict_raw is None else f"{raw}\n\n[STRICT_RETRY]\n{strict_raw}",
             "metric": metric,
             "law": law,
             "caption": caption,
