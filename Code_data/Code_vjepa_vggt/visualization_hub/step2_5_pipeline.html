@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Step 2-5 Pipeline</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: #fffdf8;
+      --ink: #1f2933;
+      --muted: #5b6873;
+      --line: #d8d0c2;
+      --accent: #9b3d2f;
+      --accent-soft: #f3ddd6;
+      --ok: #2f6d4f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      background:
+        radial-gradient(circle at top left, #efe6d8 0, transparent 28rem),
+        linear-gradient(180deg, #f7f4ec 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    .wrap {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    h1, h2, h3 { margin: 0; font-weight: 700; }
+    h1 {
+      font-size: 36px;
+      letter-spacing: 0.02em;
+    }
+    h2 {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+    p {
+      margin: 0;
+      line-height: 1.65;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+    }
+    .hero,
+    .section,
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 12px 40px rgba(53, 42, 33, 0.08);
+    }
+    .hero {
+      padding: 28px;
+      margin-bottom: 24px;
+      background: linear-gradient(135deg, #fffaf1 0%, #f6ece0 100%);
+    }
+    .hero p {
+      margin-top: 10px;
+      max-width: 980px;
+      color: var(--muted);
+    }
+    .chain {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .chip {
+      padding: 8px 12px;
+      background: var(--accent-soft);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .arrow {
+      color: #9f8d78;
+      font-weight: 400;
+    }
+    .section {
+      padding: 22px;
+      margin-top: 24px;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      margin-bottom: 14px;
+    }
+    .tag {
+      display: inline-block;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #efe7da;
+      color: #634d3b;
+    }
+    .tag.live {
+      background: #dff1e7;
+      color: var(--ok);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin: 14px 0 16px;
+    }
+    .link {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .link:hover { text-decoration: underline; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+    .card {
+      padding: 16px;
+      background: #fffdfa;
+    }
+    iframe {
+      width: 100%;
+      min-height: 780px;
+      border: 1px solid #e5dccf;
+      border-radius: 12px;
+      background: #fff;
+    }
+    ul {
+      margin: 12px 0 0;
+      padding-left: 18px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+    .note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    @media (max-width: 980px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Step 2-5 Pipeline</h1>
+      <p>这里只保留训练链路里最关键的一段可视化: 选出最终 <code>active tracks</code> 并送入 <code>object pooler</code> 之前的轨迹结果。`track_source_compare` 本身已经把前面的 query prior 和 tracking 过程串起来了，所以主页面不再重复展示前置步骤；额外补一块 GT 监督视图，用来直接看轨迹和标注框的关系。</p>
+      <div class="chain">
+        <span class="chip">query priors</span>
+        <span class="arrow">-&gt;</span>
+        <span class="chip">VGGT / CoTracker tracks</span>
+        <span class="arrow">-&gt;</span>
+        <span class="chip">active tracks</span>
+        <span class="arrow">-&gt;</span>
+        <span class="chip">GT 对照</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Active Tracks 与 GT 对照</h2>
+      <p>训练代码里，VGGT 和 CoTracker 共享同一批 query priors，随后按 <code>track_source</code> 选出最终 active tracks。下面左侧保留完整的轨迹链路可视化，右侧补 GT box 对照，方便直接检查“最终送入 object pooler 之前的轨迹”是否贴合标注。</p>
+      <div class="meta">
+        <span class="tag">Step 4</span>
+        <span class="tag">Step 5</span>
+        <span class="tag live">已挂载</span>
+      </div>
+      <div class="actions">
+        <a class="link" href="/outputs/track_source_compare/index.html">单独打开 Active Tracks 页面</a>
+        <a class="link" href="/outputs/vggt_box_eval_viewer/index.html">单独打开 GT 对照页面</a>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <h3>最终 Active Tracks</h3>
+          <p>这页已经包含从 context video、SAM2 prior、query priors 到 VGGT / CoTracker 两条 tracking 分支的完整过程。主看点是最后两列，它们对应训练里进入 <code>object_pooler</code> 之前可选的最终轨迹源。</p>
+          <ul>
+            <li>如果 <code>track_source=vggt</code>，后续 object pooler 使用 VGGT tracks。</li>
+            <li>如果 <code>track_source=cotracker</code>，后续 object pooler 使用 CoTracker tracks。</li>
+            <li>前面的 query prior 和输入缩放流程也已经在这页里保留，不需要再拆成单独块重复展示。</li>
+          </ul>
+          <iframe src="/outputs/track_source_compare/index.html" title="Track Source Compare"></iframe>
+        </article>
+        <article class="card">
+          <h3>GT Box 对照</h3>
+          <p>这里补 GT 可视化。白框是 GT box，彩色点是轨迹点，作用是直接检查 active tracks 和监督标注的空间关系。</p>
+          <ul>
+            <li>现有静态页展示的是 VGGT tracks 对 GT 的对齐结果。</li>
+            <li>训练代码里如果切到 <code>track_source=cotracker</code>，同样会对当前 active tracks 做 box 对齐和辅助损失计算。</li>
+            <li>这一块只作为最终轨迹的标注参照，不再单独定义一条新的流程。</li>
+          </ul>
+          <iframe src="/outputs/vggt_box_eval_viewer/index.html" title="VGGT GT Box Supervision"></iframe>
+        </article>
+      </div>
+      <p class="note">Object tokens / fused context 当前没有挂成静态页，所以这里以“进入 object pooler 前的最终轨迹 + GT 对照”作为训练可视化终点。</p>
+    </section>
+  </div>
+</body>
+</html>

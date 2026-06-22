@@ -124,6 +124,12 @@
       font-weight: 700;
     }
     .link:hover { text-decoration: underline; }
+    .link.disabled {
+      color: #8b7f72;
+      text-decoration: none;
+      cursor: default;
+      pointer-events: none;
+    }
     code, pre {
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
       font-size: 13px;
@@ -154,19 +160,11 @@
   <div class="wrap">
     <section class="hero">
       <h1>Visualization Hub</h1>
-      <p>这个入口页把对象级条件提取相关的可视化服务串成一条固定链路。它本身只提供导航，不替代下游服务；点击链接前，需要对应服务已经启动。</p>
+      <p>这个入口页只保留一套最小可用流程: 先看训练输入，再进入合并后的 Step 2-5 总览页。所有页面都直接挂在当前 `8810` 端口下。</p>
       <div class="chain">
         <span class="chip">context_video</span>
         <span class="arrow">-&gt;</span>
-        <span class="chip">对象先验</span>
-        <span class="arrow">-&gt;</span>
-        <span class="chip">query points</span>
-        <span class="arrow">-&gt;</span>
-        <span class="chip">tracks</span>
-        <span class="arrow">-&gt;</span>
-        <span class="chip">geometry</span>
-        <span class="arrow">-&gt;</span>
-        <span class="chip">object tokens / fused context</span>
+        <span class="chip">Step 2-5 总览</span>
       </div>
     </section>
 
@@ -177,115 +175,37 @@
           <div class="meta">
             <span class="tag">Step 1</span>
             <span class="tag">输入</span>
+            <span class="tag live">已挂载</span>
           </div>
           <h3>PhysState 训练输入</h3>
           <p>先确认 full video 和 context video 是否符合训练输入预期。</p>
-          <a class="link" href="http://127.0.0.1:8767/index.html">打开 8767</a>
+          <a class="link" href="/hub_data/train_input_viewer_mp4/index.html">在 8810 内打开</a>
         </article>
 
         <article class="card">
           <div class="meta">
-            <span class="tag">Step 2</span>
-            <span class="tag">对象先验</span>
+            <span class="tag">Step 2-5</span>
+            <span class="tag">对象链路</span>
+            <span class="tag live">已挂载</span>
           </div>
-          <h3>SAM2 Motion Prompt JSON</h3>
-          <p>看 motion prompt、SAM2 mask 和 prompt 叠加结果。</p>
-          <a class="link" href="http://127.0.0.1:8797/index.html">打开 8797</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 2+</span>
-            <span class="tag">多目标</span>
-          </div>
-          <h3>Grounded-SAM 到 CoTracker</h3>
-          <p>看 GroundingDINO、SAM2 和 query points 的多目标链路。</p>
-          <a class="link" href="http://127.0.0.1:8803/index.html">打开 8803</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 3</span>
-            <span class="tag">query / tracks</span>
-          </div>
-          <h3>Query Points Overlay</h3>
-          <p>看 query points、SAM prior、VGGT tracks 和可选 CoTracker 叠加。</p>
-          <a class="link" href="http://127.0.0.1:8777/index.html">打开 8777</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 3+</span>
-            <span class="tag">监督</span>
-          </div>
-          <h3>VGGT 对比 Box 监督</h3>
-          <p>看 VGGT tracks 和 GT box 的贴合程度。</p>
-          <a class="link" href="http://127.0.0.1:8766/index.html">打开 8766</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 4</span>
-            <span class="tag">prior 效果</span>
-          </div>
-          <h3>VGGT + SAM Prior</h3>
-          <p>看加入 SAM prior 后，VGGT tracking 是否更稳。</p>
-          <a class="link" href="http://127.0.0.1:8771/index.html">打开 8771</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 5</span>
-            <span class="tag">多目标 query</span>
-          </div>
-          <h3>VGGT 多目标 SAM</h3>
-          <p>看多目标检测、query 分配和 VGGT 轨迹。</p>
-          <a class="link" href="http://127.0.0.1:8783/index.html">打开 8783</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 6</span>
-            <span class="tag">轨迹源对比</span>
-          </div>
-          <h3>VGGT 与 CoTracker 对比</h3>
-          <p>看 VGGT 和 CoTracker 的 tracks 差异。</p>
-          <a class="link" href="http://127.0.0.1:8805/index.html">打开 8805</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 7</span>
-            <span class="tag">geometry</span>
-          </div>
-          <h3>CoTracker 采样 VGGT 几何</h3>
-          <p>看 tracks 采样出来的 depth 和 world points 是否稳定。</p>
-          <a class="link" href="http://127.0.0.1:8807/index.html">打开 8807</a>
-        </article>
-
-        <article class="card">
-          <div class="meta">
-            <span class="tag">Step 8</span>
-            <span class="tag">结构输出</span>
-          </div>
-          <h3>Object Pipeline 报告</h3>
-          <p>最后看 tracks、object tokens 和 fused context 的结构化输出。</p>
-          <a class="link" href="http://127.0.0.1:8765/index.html">打开 8765</a>
+          <h3>对象级条件提取总览</h3>
+          <p>把对象先验、query points、监督检查和轨迹源对比整理到一个页面里，按固定流程顺序展示。</p>
+          <a class="link" href="/visualization_hub/step2_5_pipeline.html">在 8810 内打开</a>
         </article>
       </div>
     </section>
 
     <section class="section">
       <h2>总服务启动命令</h2>
-      <pre>python3 -m http.server 8810 --directory /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/visualization_hub</pre>
-      <p class="note">总入口链接: <a href="http://127.0.0.1:8810/index.html">http://127.0.0.1:8810/index.html</a></p>
+      <pre>python3 -m http.server 8810 --directory /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt</pre>
+      <p class="note">总入口链接: <a href="http://localhost:8810/">http://localhost:8810/</a></p>
     </section>
 
     <section class="section">
       <h2>说明</h2>
       <ul>
-        <li>这个总服务只提供导航页，本身不会替你启动 8765 / 8766 / 8767 / 8771 / 8777 / 8783 / 8797 / 8803 / 8805 / 8807 上的下游 viewer。</li>
-        <li>下游 viewer 没启动时，点击对应链接会打不开，这是预期行为。</li>
+        <li>总入口现在只保留 `Step 1` 和合并后的 `Step 2-5` 单页流程。</li>
+        <li>像 `Grounded-SAM -> CoTracker`、`Object Pipeline`、`PhysState 数据集采样` 这类不在这套最小流程里的页面，已经从入口移除。</li>
         <li>详细启动命令和补充说明仍以 <code>VISUALIZATION_SERVICES.md</code> 为准。</li>
       </ul>
     </section>

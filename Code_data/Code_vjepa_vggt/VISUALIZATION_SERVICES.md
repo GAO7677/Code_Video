@@ -17,9 +17,9 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 
 ## 推荐可视化链路
 
-这条链路对应训练里“从 `context_video` 提取对象级条件”的主流程：
+这条链路对应总入口 `http://localhost:8810/` 当前保留的最小页面集：
 
-`context_video -> 对象先验 -> query points -> tracks -> geometry -> object tokens / fused context`
+`Step 1 训练输入 -> Step 2-5 对象级条件提取总览`
 
 ### Step 1. 看训练实际使用的 context_video
 
@@ -35,145 +35,13 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 - 链接: `http://127.0.0.1:8767/index.html`
 - 说明: 先确认 `full video` 和 `context video` 是否符合训练输入预期。
 
-### Step 2. 看对象先验是怎么来的
+### Step 2-5. 看对象级条件提取总览
 
-- 主服务: `inspect_sam2_motion_prompt_jsons.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_sam2_motion_prompt_jsons.py
-```
-
-- 链接: `http://127.0.0.1:8797/index.html`
-- 说明: 看 motion prompt、SAM2 mask 和 prompt 叠加结果。
-
-- 多目标补充: `inspect_groundedsam_vggt_cotracker.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_groundedsam_vggt_cotracker.py
-```
-
-- 链接: `http://127.0.0.1:8803/index.html`
-- 说明: 看 `GroundingDINO -> SAM2 -> query points` 的多目标版本。
-
-### Step 3. 看 query points 和 tracks
-
-- 主服务: `inspect_vggt_query_points_overlay.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_vggt_query_points_overlay.py
-```
-
-- 链接: `http://127.0.0.1:8777/index.html`
-- 说明: 看 query points、SAM prior、VGGT tracks 和可选 CoTracker 叠加。
-
-- 监督检查: `eval_vggt_box_supervision.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/eval_vggt_box_supervision.py
-```
-
-- 链接: `http://127.0.0.1:8766/index.html`
-- 说明: 看 VGGT tracks 和 GT box 的贴合程度。
-
-### Step 4. 看 prior 是否改善 tracking
-
-- 服务: `eval_vggt_sam_prior.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/eval_vggt_sam_prior.py
-```
-
-- 链接: `http://127.0.0.1:8771/index.html`
-- 说明: 看加入 SAM prior 后，VGGT tracking 是否更稳。
-
-### Step 5. 看多目标 query 分配
-
-- 服务: `eval_vggt_sam_multi_object_viewer.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/eval_vggt_sam_multi_object_viewer.py
-```
-
-- 链接: `http://127.0.0.1:8783/index.html`
-- 说明: 看多目标检测、query 分配和 VGGT 轨迹。
-
-### Step 6. 看 CoTracker 替代轨迹源
-
-- 对比服务: `inspect_vggt_vs_cotracker_compare.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_vggt_vs_cotracker_compare.py \
-  --device cuda:0
-```
-
-- 链接: `http://127.0.0.1:8805/index.html`
-- 说明: 看 VGGT 和 CoTracker 的 tracks 差异。
-
-### Step 7. 看 geometry 采样结果
-
-- 服务: `inspect_cotracker_vggt_geometry.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_cotracker_vggt_geometry.py
-```
-
-- 链接: `http://127.0.0.1:8807/index.html`
-- 说明: 看 tracks 采样出来的 `depth / world points` 是否稳定。
-
-### Step 8. 看 object tokens 和 fused context 的最终结构
-
-- 服务: `inspect_object_pipeline.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_object_pipeline.py \
-  --serve
-```
-
-- 链接: `http://127.0.0.1:8765/index.html`
-- 说明: 最后看 `tracks -> object_tokens -> fused_context` 的结构化输出。
+- 入口页: `visualization_hub/step2_5_pipeline.html`
+- 链接: `http://localhost:8810/visualization_hub/step2_5_pipeline.html`
+- 说明: 只保留“进入 object pooler 前的最终 active tracks”主视图，主页面用 `track_source_compare` 展示完整轨迹链路，并在同页补 `vggt_box_eval_viewer` 作为 GT 对照。
 
 ## 1. 数据与输入
-
-### PhysState 数据集采样
-
-- 脚本: `code_vjepa_vggt/serve_phys_state_dataset.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/serve_phys_state_dataset.py
-```
-
-- 链接: `http://127.0.0.1:8765/index.html`
-- 说明: 查看 context 抽帧、box 和样本元数据。
 
 ### PhysState 训练输入
 
@@ -234,20 +102,6 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 - 链接: `http://127.0.0.1:8767/index.html`
 - 说明: 看 SAM2 motion prompt 轨迹和 box 监督的一致性。
 
-### VGGT + SAM Prior
-
-- 脚本: `code_vjepa_vggt/eval_vggt_sam_prior.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/eval_vggt_sam_prior.py
-```
-
-- 链接: `http://127.0.0.1:8771/index.html`
-- 说明: 看加入 SAM query prior 后的 VGGT tracking 表现。
-
 ### SAM2 Motion Prompt JSON
 
 - 脚本: `code_vjepa_vggt/inspect_sam2_motion_prompt_jsons.py`
@@ -277,20 +131,6 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 
 - 链接: `http://127.0.0.1:8777/index.html`
 - 说明: 看 query points、SAM prior、VGGT tracks 和可选 CoTracker 叠加。
-
-### VGGT 多目标 SAM
-
-- 脚本: `code_vjepa_vggt/eval_vggt_sam_multi_object_viewer.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/eval_vggt_sam_multi_object_viewer.py
-```
-
-- 链接: `http://127.0.0.1:8783/index.html`
-- 说明: 看多目标检测、query 分配和 VGGT 轨迹。
 
 ### Grounded-SAM 到 CoTracker
 
@@ -322,20 +162,6 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 
 - 链接: `http://127.0.0.1:8805/index.html`
 - 说明: 并排对比 VGGT 与 CoTracker 的 tracks 和覆盖效果。
-
-### CoTracker 采样 VGGT 几何
-
-- 脚本: `code_vjepa_vggt/inspect_cotracker_vggt_geometry.py`
-- 启动命令:
-
-```bash
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-/data/gaoya/miniconda3/envs/wan/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_cotracker_vggt_geometry.py
-```
-
-- 链接: `http://127.0.0.1:8807/index.html`
-- 说明: 用 CoTracker 轨迹采样 VGGT depth / world points，检查几何稳定性。
 
 ## 端口冲突
 
