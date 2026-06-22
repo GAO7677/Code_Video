@@ -8,6 +8,16 @@ from typing import Any
 from .paths import VPHY_PYTHON, WMREWARD_ROOT, WMREWARD_VJEPA2_ROOT
 
 
+FALLBACK_WMREWARD_ROOTS = [
+    Path("/home/gaoya/Code_Video/WMReward-main"),
+    WMREWARD_ROOT,
+]
+FALLBACK_VJEPA2_ROOTS = [
+    WMREWARD_VJEPA2_ROOT,
+    Path("/home/gaoya/Code_Video/vjepa2-main"),
+]
+
+
 class WMRewardRunner:
     """Batch-friendly runner numerically aligned with official compute_wmreward.py defaults.
 
@@ -24,7 +34,7 @@ class WMRewardRunner:
         self,
         *,
         cuda_visible_devices: str | None = None,
-        model_name: str = "vitg",
+        model_name: str = "vitg384",
         window_size: int = 16,
         context_frames: int = 8,
         stride: int = 8,
@@ -41,8 +51,33 @@ class WMRewardRunner:
         self._load_vjepa_models = None
         self._load_video_as_tensor = None
         self._compute_loss = None
+        self._load_vjepa_models_local = None
         self._models: tuple[Any, Any, Any, int] | None = None
         self._device = None
+        self._wmreward_root = None
+        self._vjepa2_root = None
+
+    def _resolve_roots(self) -> tuple[Path, Path]:
+        if self._wmreward_root is not None and self._vjepa2_root is not None:
+            return self._wmreward_root, self._vjepa2_root
+
+        wmreward_root = next(
+            (root for root in FALLBACK_WMREWARD_ROOTS if (root / "compute_wmreward.py").is_file() and (root / "utils.py").is_file()),
+            None,
+        )
+        if wmreward_root is None:
+            raise FileNotFoundError("WMReward root not found")
+
+        vjepa2_root = next(
+            (root for root in FALLBACK_VJEPA2_ROOTS if (root / "src").is_dir()),
+            None,
+        )
+        if vjepa2_root is None:
+            raise FileNotFoundError("VJEPA2 root for WMReward not found")
+
+        self._wmreward_root = wmreward_root
+        self._vjepa2_root = vjepa2_root
+        return wmreward_root, vjepa2_root
 
     def _lazy_imports(self) -> None:
         if self._torch is not None:
@@ -65,16 +100,18 @@ class WMRewardRunner:
                     sys.path.append(site_path)
             import decord  # noqa: F401
 
-        vjepa2_root = str(WMREWARD_VJEPA2_ROOT)
-        vjepa2_src = str(WMREWARD_VJEPA2_ROOT / "src")
-        for path in [str(WMREWARD_ROOT), vjepa2_root, vjepa2_src]:
+        wmreward_root, vjepa2_root = self._resolve_roots()
+        vjepa2_root_str = str(vjepa2_root)
+        vjepa2_src = str(vjepa2_root / "src")
+        for path in [str(wmreward_root), vjepa2_root_str, vjepa2_src]:
             if path not in sys.path:
                 sys.path.insert(0, path)
 
-        from compute_wmreward import load_vjepa_models, load_video_as_tensor
-        from utils import compute_vjepa_loss_sliding_window
+        from compute_wmreward import load_video_as_tensor
+        from utils import compute_vjepa_loss_sliding_window, load_vjepa_model_source
 
-        self._load_vjepa_models = load_vjepa_models
+        self._load_vjepa_models = None
+        self._load_vjepa_models_local = load_vjepa_model_source
         self._load_video_as_tensor = load_video_as_tensor
         self._compute_loss = compute_vjepa_loss_sliding_window
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -84,7 +121,7 @@ class WMRewardRunner:
             return self._models
 
         self._lazy_imports()
-        encoder, target_encoder, predictor, img_size = self._load_vjepa_models(self.model_name)
+        encoder, target_encoder, predictor, img_size = self._load_vjepa_models_local(self.model_name)
         encoder = encoder.to(self._device).eval()
         target_encoder = target_encoder.to(self._device).eval()
         predictor = predictor.to(self._device).eval()

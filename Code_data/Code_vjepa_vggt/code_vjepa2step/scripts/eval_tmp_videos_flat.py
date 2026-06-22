@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import gc
 import json
 import os
@@ -13,6 +14,7 @@ from typing import Any
 TMP_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa2step/tmp")
 OUTPUT_DIR = TMP_ROOT / "eval_json_flat"
 CODE_TRY_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_try0526")
+DEFAULT_METRICS = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos"]
 
 
 def find_videos() -> list[Path]:
@@ -88,23 +90,36 @@ def write_record(record: dict[str, Any]) -> None:
     output_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def load_record(video_path: Path) -> dict[str, Any]:
+    output_path = OUTPUT_DIR / f"{video_path.stem}.json"
+    if output_path.is_file():
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    record = base_record(video_path, extract_prompt(video_path))
+    write_record(record)
+    return record
+
+
 def flatten_pdi(record: dict[str, Any], result: dict[str, Any]) -> None:
     record["official_pdi"] = result.get("pdi_score")
     record["scale_component"] = result.get("scale_component")
     record["traj_component"] = result.get("traj_component")
     record["epsilon_rigidity"] = result.get("epsilon_rigidity")
     record["vp_component"] = result.get("vp_component")
+    record["official_pdi_error"] = None
 
 
 def flatten_wmreward(record: dict[str, Any], result: dict[str, Any]) -> None:
     record["wmreward_surprise"] = result.get("surprise")
     record["wmreward_similarity"] = result.get("similarity")
+    record["wmreward_error"] = None
 
 
 def flatten_proxy(record: dict[str, Any], result: dict[str, Any]) -> None:
     score = result.get("score")
     record["vjepa_proxy"] = score
     record["jepa_score"] = score
+    record["vjepa_proxy_error"] = None
+    record["jepa_error"] = None
 
 
 def maybe_cleanup_torch() -> None:
@@ -156,11 +171,12 @@ def run_wmreward(records: dict[Path, dict[str, Any]], gpu: str) -> None:
 def run_proxy(records: dict[Path, dict[str, Any]], gpu: str) -> None:
     import sys
 
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     if str(CODE_TRY_ROOT) not in sys.path:
         sys.path.insert(0, str(CODE_TRY_ROOT))
     from physv_eval.proxy_runner import ProxyRunner
 
-    runner = ProxyRunner(device=f"cuda:{gpu}" if gpu.isdigit() else "cuda")
+    runner = ProxyRunner(device="cuda:0")
     for video_path, record in records.items():
         try:
             result = runner.score(video_path)
@@ -239,6 +255,7 @@ def run_cosmos_reason1(records: dict[Path, dict[str, Any]], gpu: str) -> None:
         try:
             result = runner.score(video_path)
             record["cosmos_reason1"] = result.get("score")
+            record["cosmos_reason1_error"] = None
         except Exception as exc:
             record["cosmos_reason1_error"] = sanitize_error(exc)
         write_record(record)
@@ -247,23 +264,46 @@ def run_cosmos_reason1(records: dict[Path, dict[str, Any]], gpu: str) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=DEFAULT_METRICS,
+        help="Run only selected metrics.",
+    )
+    parser.add_argument(
+        "--keep-existing",
+        action="store_true",
+        help="Keep existing per-video JSON files and update them in place.",
+    )
+    args = parser.parse_args()
+
     videos = find_videos()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for stale_json in OUTPUT_DIR.glob("*.json"):
-        stale_json.unlink()
+    if not args.keep_existing:
+        for stale_json in OUTPUT_DIR.glob("*.json"):
+            stale_json.unlink()
     records: dict[Path, dict[str, Any]] = {}
     for video_path in videos:
-        record = base_record(video_path, extract_prompt(video_path))
+        record = load_record(video_path) if args.keep_existing else base_record(video_path, extract_prompt(video_path))
         records[video_path] = record
         write_record(record)
 
+    selected_metrics = args.only or DEFAULT_METRICS
+
     # Use mostly idle GPUs to avoid interfering with existing workloads on 0/1.
-    run_pdi(records, gpu="2")
-    run_wmreward(records, gpu="2")
-    run_proxy(records, gpu="3")
-    run_videophy2(records, gpu="4")
-    run_phyground(records, gpu="5")
-    run_cosmos_reason1(records, gpu="6")
+    if "pdi" in selected_metrics:
+        run_pdi(records, gpu="2")
+    if "wmreward" in selected_metrics:
+        run_wmreward(records, gpu="2")
+    if "proxy" in selected_metrics:
+        run_proxy(records, gpu="3")
+    if "videophy2" in selected_metrics:
+        run_videophy2(records, gpu="4")
+    if "phyground" in selected_metrics:
+        run_phyground(records, gpu="5")
+    if "cosmos" in selected_metrics:
+        run_cosmos_reason1(records, gpu="6")
 
     manifest = {
         "video_count": len(videos),
