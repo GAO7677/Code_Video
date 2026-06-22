@@ -39,7 +39,21 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 
 - 入口页: `visualization_hub/step2_5_pipeline.html`
 - 链接: `http://localhost:8810/visualization_hub/step2_5_pipeline.html`
-- 说明: 只保留“进入 object pooler 前的最终 active tracks”主视图，主页面用 `track_source_compare` 展示完整轨迹链路，并在同页补 `vggt_box_eval_viewer` 作为 GT 对照。
+- 说明: 只保留“进入 object pooler 前的最终 active tracks”主视图。左侧 `track_source_compare` 现在使用训练集多运动样本生成，右侧 `vggt_box_eval_viewer` 作为 GT 对照且默认折叠。
+- 静态页刷新命令:
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+/data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_vggt_query_points_overlay.py \
+  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/inspect_phys_state_vjepa_vggt.yaml \
+  --split train \
+  --num-cases 8 \
+  --sample-mode diverse \
+  --report-style track_source_compare \
+  --output-dir /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/track_source_compare \
+  --no-serve
+```
 
 ## 1. 数据与输入
 
@@ -130,7 +144,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 ```
 
 - 链接: `http://127.0.0.1:8777/index.html`
-- 说明: 看 query points、SAM prior、VGGT tracks 和可选 CoTracker 叠加。
+- 说明: 这是统一的轨迹链路生成脚本。默认可起临时服务，也可以用 `--report-style track_source_compare --sample-mode diverse --no-serve` 直接刷新总入口左侧静态页。
 
 ### Grounded-SAM 到 CoTracker
 

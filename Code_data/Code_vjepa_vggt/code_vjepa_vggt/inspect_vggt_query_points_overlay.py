@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import http.server
 import io
 import json
@@ -9,6 +10,7 @@ import math
 import shutil
 import socketserver
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 
 import cv2
@@ -32,6 +34,8 @@ QUERY_PALETTE = ["#00b4d8", "#0077b6", "#8338ec", "#3a86ff", "#ff006e", "#fb5607
 COTRACKER_PALETTE = ["#2b8a3e", "#40916c", "#52b788", "#74c69d", "#1b4332", "#95d5b2", "#007f5f", "#55a630"]
 SAM_PROMPT_COLOR = "#ff8c00"
 SAM_TRACK_COLOR = "#2ca25f"
+MOTION_BUCKET_ORDER = ["horizontal", "vertical", "diagonal-mixed", "scale-change", "low-motion"]
+OBJECT_TOKENS = ("sphere", "capsule", "cube", "cylinder", "cone", "torus", "pyramid", "box", "object")
 
 
 def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
@@ -106,6 +110,227 @@ def point_stats(points_k2: np.ndarray) -> dict[str, object]:
         "max_xy": [float(pts[:, 0].max()), float(pts[:, 1].max())],
         "mean_xy": [float(pts[:, 0].mean()), float(pts[:, 1].mean())],
     }
+
+
+def extract_object_token(caption: str) -> str:
+    lower = caption.lower()
+    for token in OBJECT_TOKENS:
+        if token in lower:
+            return token
+    words = [word for word in lower.replace("-", " ").split() if word]
+    return words[-1] if words else "object"
+
+
+def summarize_motion_from_boxes(
+    context_boxes: torch.Tensor | np.ndarray,
+    *,
+    caption: str,
+    metadata: dict[str, object] | None = None,
+    dataset_index: int | None = None,
+) -> dict[str, object]:
+    boxes = np.asarray(context_boxes, dtype=np.float32)
+    if boxes.ndim != 3 or boxes.shape[-1] != 4:
+        raise ValueError(f"expected boxes with shape [T, K, 4], got {boxes.shape}")
+
+    widths = np.clip(boxes[..., 2] - boxes[..., 0], 0.0, None)
+    heights = np.clip(boxes[..., 3] - boxes[..., 1], 0.0, None)
+    valid = (widths > 1e-6) & (heights > 1e-6)
+    centers = np.stack(((boxes[..., 0] + boxes[..., 2]) * 0.5, (boxes[..., 1] + boxes[..., 3]) * 0.5), axis=-1)
+    areas = widths * heights
+
+    object_summaries = []
+    for obj_idx in range(boxes.shape[1]):
+        valid_idx = np.nonzero(valid[:, obj_idx])[0]
+        if valid_idx.size < 2:
+            continue
+        obj_centers = centers[valid_idx, obj_idx]
+        obj_areas = areas[valid_idx, obj_idx]
+        deltas = np.diff(obj_centers, axis=0)
+        mean_step_motion = float(np.linalg.norm(deltas, axis=-1).mean()) if deltas.size > 0 else 0.0
+        total_dx = float(obj_centers[-1, 0] - obj_centers[0, 0])
+        total_dy = float(obj_centers[-1, 1] - obj_centers[0, 1])
+        total_disp = float(math.hypot(total_dx, total_dy))
+        size_change = float(np.mean(np.abs(np.diff(obj_areas)))) if obj_areas.size > 1 else 0.0
+        area_span = float(obj_areas.max() - obj_areas.min()) if obj_areas.size > 0 else 0.0
+        aspect = widths[valid_idx, obj_idx] / np.clip(heights[valid_idx, obj_idx], 1e-6, None)
+        aspect_change = float(np.mean(np.abs(np.diff(aspect)))) if aspect.size > 1 else 0.0
+        object_summaries.append(
+            {
+                "obj_idx": int(obj_idx),
+                "mean_step_motion": mean_step_motion,
+                "total_dx": total_dx,
+                "total_dy": total_dy,
+                "total_disp": total_disp,
+                "size_change": size_change,
+                "area_span": area_span,
+                "aspect_change": aspect_change,
+            }
+        )
+
+    if not object_summaries:
+        primary = {
+            "obj_idx": -1,
+            "mean_step_motion": 0.0,
+            "total_dx": 0.0,
+            "total_dy": 0.0,
+            "total_disp": 0.0,
+            "size_change": 0.0,
+            "area_span": 0.0,
+            "aspect_change": 0.0,
+        }
+    else:
+        primary = max(object_summaries, key=lambda item: (item["total_disp"] + item["area_span"] * 0.5, item["mean_step_motion"]))
+
+    metadata = metadata or {}
+    return {
+        "dataset_index": int(dataset_index) if dataset_index is not None else None,
+        "caption": caption,
+        "object_token": extract_object_token(caption),
+        "sample_id": str(metadata.get("sample_id") or Path(str(metadata.get("sample_dir") or "")).name or "unknown"),
+        "window_index": int(metadata.get("window_index", -1)),
+        "template_key": str(metadata.get("template_key", "")),
+        "primary_object_index": int(primary["obj_idx"]),
+        "motion_score": float(primary["mean_step_motion"]),
+        "total_disp": float(primary["total_disp"]),
+        "total_dx": float(primary["total_dx"]),
+        "total_dy": float(primary["total_dy"]),
+        "size_change": float(primary["size_change"]),
+        "area_span": float(primary["area_span"]),
+        "aspect_change": float(primary["aspect_change"]),
+        "motion_bucket": "unclassified",
+    }
+
+
+def classify_motion_bucket(
+    summary: dict[str, object],
+    *,
+    motion_q25: float,
+    motion_q75: float,
+    size_q75: float,
+) -> str:
+    motion_score = float(summary["motion_score"])
+    total_dx = float(summary["total_dx"])
+    total_dy = float(summary["total_dy"])
+    size_change = float(summary["size_change"])
+    disp_abs_x = abs(total_dx)
+    disp_abs_y = abs(total_dy)
+
+    low_motion_cutoff = max(motion_q25, 1e-4)
+    scale_cutoff = max(size_q75, 1e-4)
+    moving_cutoff = max(motion_q75 * 0.5, low_motion_cutoff * 1.5)
+    direction_ratio = 1.6
+
+    if motion_score <= low_motion_cutoff and size_change <= scale_cutoff * 0.6:
+        return "low-motion"
+    if size_change >= scale_cutoff and size_change >= motion_score * 0.75:
+        return "scale-change"
+    if motion_score >= moving_cutoff and disp_abs_x >= disp_abs_y * direction_ratio:
+        return "horizontal"
+    if motion_score >= moving_cutoff and disp_abs_y >= disp_abs_x * direction_ratio:
+        return "vertical"
+    return "diagonal-mixed"
+
+
+def load_motion_candidate_summary(dataset: PhysStateEpisodeDataset, idx: int) -> dict[str, object]:
+    meta_path = dataset.samples[idx]
+    npz_path = meta_path.with_suffix(".npz")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    with np.load(npz_path) as data:
+        context_boxes = data["context_boxes"].astype(np.float32)
+        future_boxes = data["future_boxes"].astype(np.float32)
+    all_boxes = np.concatenate([context_boxes, future_boxes], axis=0)
+    total_frames = int(all_boxes.shape[0])
+    context_indices = dataset._select_context_indices(total_frames, idx).cpu().numpy()
+    selected_context_boxes = all_boxes[context_indices]
+    return summarize_motion_from_boxes(
+        selected_context_boxes,
+        caption=str(meta["prompt"]),
+        metadata=meta,
+        dataset_index=idx,
+    )
+
+
+def select_case_summaries(
+    dataset: PhysStateEpisodeDataset,
+    *,
+    start_index: int,
+    num_cases: int,
+    sample_mode: str,
+) -> list[dict[str, object]]:
+    if sample_mode == "sequential":
+        return [{"dataset_index": idx} for idx in range(start_index, min(len(dataset), start_index + num_cases))]
+
+    candidate_summaries = [load_motion_candidate_summary(dataset, idx) for idx in range(start_index, len(dataset))]
+    if not candidate_summaries:
+        return []
+
+    motion_scores = np.asarray([float(item["motion_score"]) for item in candidate_summaries], dtype=np.float32)
+    size_changes = np.asarray([float(item["size_change"]) for item in candidate_summaries], dtype=np.float32)
+    motion_q25 = float(np.quantile(motion_scores, 0.25))
+    motion_q75 = float(np.quantile(motion_scores, 0.75))
+    size_q75 = float(np.quantile(size_changes, 0.75))
+    for item in candidate_summaries:
+        item["motion_bucket"] = classify_motion_bucket(
+            item,
+            motion_q25=motion_q25,
+            motion_q75=motion_q75,
+            size_q75=size_q75,
+        )
+
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for item in sorted(
+        candidate_summaries,
+        key=lambda entry: (
+            MOTION_BUCKET_ORDER.index(entry["motion_bucket"]) if entry["motion_bucket"] in MOTION_BUCKET_ORDER else len(MOTION_BUCKET_ORDER),
+            str(entry["object_token"]),
+            -float(entry["motion_score"]),
+            -float(entry["size_change"]),
+            int(entry["dataset_index"]),
+        ),
+    ):
+        grouped[(str(item["motion_bucket"]), str(item["object_token"]))].append(item)
+
+    ordered_keys = sorted(
+        grouped.keys(),
+        key=lambda key: (
+            MOTION_BUCKET_ORDER.index(key[0]) if key[0] in MOTION_BUCKET_ORDER else len(MOTION_BUCKET_ORDER),
+            key[1],
+        ),
+    )
+
+    selected: list[dict[str, object]] = []
+    used_sample_ids: set[str] = set()
+    while len(selected) < num_cases:
+        made_progress = False
+        for key in ordered_keys:
+            queue = grouped[key]
+            while queue:
+                candidate = queue.pop(0)
+                sample_id = str(candidate.get("sample_id", ""))
+                if sample_id and sample_id in used_sample_ids:
+                    continue
+                selected.append(candidate)
+                if sample_id:
+                    used_sample_ids.add(sample_id)
+                made_progress = True
+                break
+            if len(selected) >= num_cases:
+                break
+        if not made_progress:
+            break
+
+    if len(selected) < num_cases:
+        leftovers = sorted(
+            (item for queue in grouped.values() for item in queue),
+            key=lambda entry: (-float(entry["motion_score"]), -float(entry["size_change"]), int(entry["dataset_index"])),
+        )
+        for candidate in leftovers:
+            selected.append(candidate)
+            if len(selected) >= num_cases:
+                break
+
+    return sorted(selected[:num_cases], key=lambda item: int(item["dataset_index"]))
 
 
 def pil_to_data_url(image: Image.Image) -> str:
@@ -326,7 +551,7 @@ def write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
         writer.release()
 
 
-def build_report(results: list[dict], output_dir: Path) -> Path:
+def build_stage_rows_report(results: list[dict], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     stage_order = [
         ("stage1_context", "1. Context Video", "原始 context_video，保持 native 分辨率。"),
@@ -357,7 +582,8 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
                 f"""
     <article class="case-card">
       <h3>Case {idx}</h3>
-      <p><b>Caption:</b> {result['caption']}</p>
+      <p><b>Caption:</b> {html.escape(result['caption'])}</p>
+      <p><b>Motion:</b> {html.escape(result['motion_bucket'])} | <b>Shape:</b> {html.escape(result['object_token'])} | <b>Sample:</b> {html.escape(result['sample_id'])} / window {result['window_index']}</p>
       <div class="stage-video-stack">
         {''.join(entry_cards)}
       </div>
@@ -405,6 +631,162 @@ def build_report(results: list[dict], output_dir: Path) -> Path:
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     return html_path
+
+
+def build_track_source_compare_report(results: list[dict], output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ordered_keys = [
+        "raw_context",
+        "sam_prompt_only",
+        "sam_mask_only",
+        "sam_track_only",
+        "query_priors_native",
+        "raw_context_vggt_input",
+        "sam2_priors_vggt_input",
+        "vggt_tracks_only",
+        "cotracker_tracks_only",
+    ]
+    card_titles = {
+        "raw_context": ("1. Raw Context Video", "来源: 原始 context video"),
+        "sam_prompt_only": ("2. SAM2 Prompt Box", "来源: SAM2 motion prompt box"),
+        "sam_mask_only": ("3. SAM2 Mask Track", "来源: SAM2 传播得到的 mask"),
+        "sam_track_only": ("4. SAM2 Track Box", "来源: SAM2 传播得到的 track box"),
+        "query_priors_native": ("5. Native Query Points", "来源: native 分辨率下采样得到的 query priors"),
+        "raw_context_vggt_input": ("6. Raw Context Video (VGGT Input)", "来源: 缩放到 VGGT 实际输入分辨率的 context"),
+        "sam2_priors_vggt_input": ("7. SAM2 Priors Overlay (VGGT Input)", "来源: VGGT 输入分辨率下的 priors overlay"),
+        "vggt_tracks_only": ("8. VGGT Tracked Points", "来源: track_source=vggt"),
+        "cotracker_tracks_only": ("9. CoTracker Tracked Points", "来源: track_source=cotracker"),
+    }
+
+    case_blocks = []
+    for idx, result in enumerate(results):
+        video_lookup = {entry["key"]: entry for entry in result["videos"]}
+        cards = []
+        for key in ordered_keys:
+            entry = video_lookup.get(key)
+            if entry is None:
+                continue
+            title, source = card_titles[key]
+            cards.append(
+                f"""
+    <figure class="video-card">
+      <video autoplay muted loop playsinline preload="metadata" src="{entry['path']}" onclick="this.paused ? this.play() : this.pause();" title="点击播放或暂停"></video>
+      <figcaption><b>{title}</b><br>{source}</figcaption>
+    </figure>
+"""
+            )
+        case_blocks.append(
+            f"""
+  <section class="case">
+    <div class="case-head">
+      <div>
+        <h2>Case {idx}</h2>
+        <p><b>Caption:</b> {html.escape(result['caption'])}</p>
+      </div>
+      <div class="chips">
+        <span class="chip">{html.escape(result['motion_bucket'])}</span>
+        <span class="chip">{html.escape(result['object_token'])}</span>
+        <span class="chip">sample {html.escape(result['sample_id'])}</span>
+        <span class="chip">window {result['window_index']}</span>
+      </div>
+    </div>
+    <p class="metrics">mean_step_motion={result['motion_score']:.4f} | total_disp={result['total_disp']:.4f} | size_change={result['size_change']:.4f}</p>
+    <div class="video-grid">
+      {''.join(cards)}
+    </div>
+  </section>
+"""
+        )
+
+    html_text = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Track Source Compare</title>
+  <style>
+    :root {{
+      --bg: #f6f4ee;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #5b6873;
+      --line: #ddd6c8;
+      --chip: #efe7da;
+      --accent: #8c4a2f;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: sans-serif; margin: 20px; background: var(--bg); color: var(--ink); }}
+    h1, h2, p {{ margin: 0; }}
+    .hero {{ background: var(--panel); border: 1px solid var(--line); padding: 18px; margin-bottom: 18px; }}
+    .hero p {{ margin-top: 10px; color: var(--muted); line-height: 1.6; }}
+    .case {{ margin-bottom: 28px; padding: 16px; background: var(--panel); border: 1px solid var(--line); }}
+    .case-head {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }}
+    .case-head p {{ margin-top: 8px; color: var(--muted); line-height: 1.5; }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .chip {{ background: var(--chip); color: var(--accent); padding: 6px 10px; font-size: 12px; border-radius: 999px; white-space: nowrap; }}
+    .metrics {{ margin-top: 10px; color: var(--muted); font-size: 13px; }}
+    .video-grid {{
+      display: grid;
+      grid-template-columns: repeat(9, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+      align-items: start;
+    }}
+    .video-card {{
+      margin: 0;
+      background: #fffdf9;
+      border: 1px solid var(--line);
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(31, 41, 51, 0.05);
+    }}
+    video {{
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      object-fit: contain;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #000;
+      cursor: pointer;
+    }}
+    figcaption {{ font-size: 12px; color: #444; margin-top: 6px; line-height: 1.5; }}
+    .hint {{ margin-top: 12px; color: var(--muted); font-size: 13px; }}
+    @media (max-width: 1800px) {{
+      .video-grid {{ grid-template-columns: repeat(5, minmax(220px, 1fr)); }}
+    }}
+    @media (max-width: 1320px) {{
+      .video-grid {{ grid-template-columns: repeat(3, minmax(220px, 1fr)); }}
+    }}
+    @media (max-width: 860px) {{
+      .video-grid {{ grid-template-columns: repeat(2, minmax(220px, 1fr)); }}
+    }}
+    @media (max-width: 560px) {{
+      .video-grid {{ grid-template-columns: 1fr; }}
+    }}
+    @media (max-width: 900px) {{
+      .case-head {{ flex-direction: column; }}
+    }}
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <h1>Track Source Compare</h1>
+    <p>这里把训练集中不同运动模式的 case 放在同一页。每个 case 共用同一段 context video 和同一批 query priors，按训练里的实际处理顺序展示从 SAM2 motion prior 到最终 active tracks 的链路，最后并排对比 <code>track_source=vggt</code> 和 <code>track_source=cotracker</code>。</p>
+    <p class="hint">每个 case 内部改为横向卡片布局；视频默认静音循环播放，点击单个视频可播放/暂停，不再显示原生进度滑块。</p>
+  </section>
+  {''.join(case_blocks)}
+</body>
+</html>
+"""
+    html_path = output_dir / "index.html"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html_text)
+    return html_path
+
+
+def build_report(results: list[dict], output_dir: Path, *, report_style: str) -> Path:
+    if report_style == "track_source_compare":
+        return build_track_source_compare_report(results, output_dir)
+    return build_stage_rows_report(results, output_dir)
 
 
 def evaluate_sample(
@@ -507,12 +889,14 @@ def evaluate_sample(
 
     video_buffers: dict[str, list[np.ndarray]] = {
         "raw_context": [],
+        "raw_context_vggt_input": [],
+        "sam_prompt_only": [],
+        "sam_mask_only": [],
+        "sam_track_only": [],
         "query_priors_native": [],
         "vggt_tracks_only": [],
         "cotracker_tracks_only": [],
         "sam2_frame0_components": [],
-        "sam2_frame0_mask": [],
-        "sam2_frame0_box": [],
         "sam2_priors_vggt_input": [],
         "sam2_priors_cotracker_input": [],
     }
@@ -522,7 +906,18 @@ def evaluate_sample(
         video_buffers["raw_context"].append(np.array(raw_img))
 
         resized_frame = resize_frame_chw(context_frames[t], track_image_hw)
+        resized_raw_img = Image.fromarray(tensor_frame_to_uint8_hwc(resized_frame))
+        video_buffers["raw_context_vggt_input"].append(np.array(resized_raw_img))
         cotracker_resized_frame = resize_frame_chw(context_frames[t], cotracker_input_hw) if cotracker_input_hw is not None else None
+
+        prompt_img = draw_overlay_frame(
+            frame_chw=context_frames[t],
+            gt_boxes_k4=sample["context_boxes"][t],
+            image_hw=native_hw,
+            sam_prompt_box_xyxy=sam_out.prompt_box_xyxy if t == prompt_frame_idx else None,
+            show_sam_prompt=(t == prompt_frame_idx),
+        )
+        video_buffers["sam_prompt_only"].append(np.array(prompt_img))
 
         query_img = draw_overlay_frame(
             frame_chw=context_frames[t],
@@ -547,19 +942,19 @@ def evaluate_sample(
             frame_chw=context_frames[t],
             gt_boxes_k4=sample["context_boxes"][t],
             image_hw=native_hw,
-            sam_mask_hw=sam_out.masks_thw[0] if t == 0 else None,
-            show_sam_mask=(t == 0),
+            sam_mask_hw=sam_out.masks_thw[t],
+            show_sam_mask=True,
         )
-        video_buffers["sam2_frame0_mask"].append(np.array(mask_img))
+        video_buffers["sam_mask_only"].append(np.array(mask_img))
 
         box_img = draw_overlay_frame(
             frame_chw=context_frames[t],
             gt_boxes_k4=sample["context_boxes"][t],
             image_hw=native_hw,
-            sam_track_box_xyxy=sam_out.boxes_t4[0] if t == 0 else None,
-            show_sam_track=(t == 0),
+            sam_track_box_xyxy=sam_out.boxes_t4[t],
+            show_sam_track=True,
         )
-        video_buffers["sam2_frame0_box"].append(np.array(box_img))
+        video_buffers["sam_track_only"].append(np.array(box_img))
 
         query_vggt_input_img = draw_overlay_frame(
             frame_chw=resized_frame,
@@ -629,9 +1024,11 @@ def evaluate_sample(
 
     video_specs = {
         "raw_context": ("Context Video", "native"),
+        "raw_context_vggt_input": ("Raw Context Video (VGGT Input)", f"VGGT @ {track_image_hw[0]}x{track_image_hw[1]}"),
+        "sam_prompt_only": ("SAM2 Prompt Box", "native"),
+        "sam_mask_only": ("SAM2 Mask Track", "native"),
+        "sam_track_only": ("SAM2 Track Box", "native"),
         "sam2_frame0_components": ("Frame0 Connected Components", "native"),
-        "sam2_frame0_mask": ("Frame0 Full Mask", "native"),
-        "sam2_frame0_box": ("Frame0 Box", "native"),
         "query_priors_native": ("Query Priors", "native"),
         "sam2_priors_vggt_input": ("VGGT Input Overlay", f"VGGT @ {track_image_hw[0]}x{track_image_hw[1]}"),
         "sam2_priors_cotracker_input": (
@@ -662,13 +1059,13 @@ def evaluate_sample(
         "stage1_context": [browser_videos["raw_context"]] if "raw_context" in browser_videos else [],
         "stage2_sam2": [
             browser_videos[key]
-            for key in ("sam2_frame0_components", "sam2_frame0_mask", "sam2_frame0_box")
+            for key in ("sam_prompt_only", "sam2_frame0_components", "sam_mask_only", "sam_track_only")
             if key in browser_videos
         ],
         "stage3_query_priors": [browser_videos["query_priors_native"]] if "query_priors_native" in browser_videos else [],
         "stage4_model_inputs": [
             browser_videos[key]
-            for key in ("sam2_priors_vggt_input", "sam2_priors_cotracker_input")
+            for key in ("raw_context_vggt_input", "sam2_priors_vggt_input", "sam2_priors_cotracker_input")
             if key in browser_videos
         ],
         "stage5_tracks": [
@@ -682,6 +1079,14 @@ def evaluate_sample(
         "caption": sample["caption"],
         "video_path": sample["video_path"],
         "stage_rows": stage_rows,
+        "videos": list(browser_videos.values()),
+        "motion_bucket": str(sample["_selection_summary"]["motion_bucket"]),
+        "object_token": str(sample["_selection_summary"]["object_token"]),
+        "sample_id": str(sample["_selection_summary"]["sample_id"]),
+        "window_index": int(sample["_selection_summary"]["window_index"]),
+        "motion_score": float(sample["_selection_summary"]["motion_score"]),
+        "total_disp": float(sample["_selection_summary"]["total_disp"]),
+        "size_change": float(sample["_selection_summary"]["size_change"]),
     }
 
 
@@ -694,6 +1099,8 @@ def main() -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--num-cases", type=int, default=4)
+    parser.add_argument("--sample-mode", choices=["sequential", "diverse"], default="sequential")
+    parser.add_argument("--report-style", choices=["stage_rows", "track_source_compare"], default="stage_rows")
     parser.add_argument(
         "--output-dir",
         default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/outputs/vggt_query_points_overlay",
@@ -736,14 +1143,31 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     results = []
-    for idx in range(args.start_index, min(len(dataset), args.start_index + args.num_cases)):
+    selected_summaries = select_case_summaries(
+        dataset,
+        start_index=args.start_index,
+        num_cases=args.num_cases,
+        sample_mode=args.sample_mode,
+    )
+    for selected in selected_summaries:
+        idx = int(selected["dataset_index"])
         sample = dataset[idx]
         sample["_output_dir"] = str(output_dir / "assets")
         sample["_case_name"] = f"case_{idx:03d}"
         sample["_fps"] = int(data_cfg.get("fps", 8))
+        sample["_selection_summary"] = (
+            selected
+            if "motion_bucket" in selected
+            else summarize_motion_from_boxes(
+                sample["context_boxes"],
+                caption=sample["caption"],
+                metadata=sample.get("metadata", {}),
+                dataset_index=idx,
+            )
+        )
         results.append(evaluate_sample(sample, adapter, cotracker_adapter, device, output_dir / "assets"))
 
-    html_path = build_report(results, output_dir)
+    html_path = build_report(results, output_dir, report_style=args.report_style)
     print(f"eval report: {html_path}")
     if args.no_serve:
         return
