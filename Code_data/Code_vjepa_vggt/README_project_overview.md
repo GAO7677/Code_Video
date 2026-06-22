@@ -34,6 +34,8 @@
   - [Code_Video/Code_data/Code_vjepa_vggt](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt)
 - 主代码目录：
   - [code_vjepa_vggt](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt)
+- 可视化服务目录：
+  - [VISUALIZATION_SERVICES.md](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/VISUALIZATION_SERVICES.md)
 
 关键代码文件如下：
 
