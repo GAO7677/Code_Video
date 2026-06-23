@@ -117,7 +117,18 @@ def _patch_wan_attention_fallback() -> None:
             x_out = self.o(x_out.to(self.o.weight.dtype))
             return x_out
 
-        def safe_block_forward(self, x, e, seq_lens, grid_sizes, freqs, context, context_lens):
+        def safe_block_forward(
+            self,
+            x,
+            e,
+            seq_lens,
+            grid_sizes,
+            freqs,
+            context,
+            context_lens,
+            object_context=None,
+            object_context_lens=None,
+        ):
             assert e.dtype == torch.float32
             with torch.amp.autocast("cuda", dtype=torch.float32):
                 e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
@@ -132,6 +143,14 @@ def _patch_wan_attention_fallback() -> None:
 
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 x = x + self.cross_attn(self.norm3(x), context, context_lens)
+                if object_context is not None:
+                    object_delta = self.object_cross_attn(
+                        self.norm4(x),
+                        object_context,
+                        object_context_lens,
+                    )
+                    with torch.amp.autocast("cuda", dtype=torch.float32):
+                        x = x + object_delta * torch.tanh(self.object_gate)
                 ffn_in = self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2)
                 ffn_in = ffn_in.to(self.ffn[0].weight.dtype)
                 y = self.ffn(ffn_in)
@@ -146,9 +165,20 @@ def _patch_wan_attention_fallback() -> None:
             head_in = head_in.to(self.head.weight.dtype)
             return self.head(head_in)
 
-        def safe_model_forward(self, x, t, context, seq_len, y=None):
+        def safe_model_forward(
+            self,
+            x,
+            t,
+            context=None,
+            seq_len=None,
+            y=None,
+            text_context=None,
+            object_context=None,
+        ):
             if self.model_type == "i2v":
                 assert y is not None
+            if seq_len is None:
+                raise ValueError("WanModel.forward requires seq_len")
             device = self.patch_embedding.weight.device
             if self.freqs.device != device:
                 self.freqs = self.freqs.to(device)
@@ -178,14 +208,46 @@ def _patch_wan_attention_fallback() -> None:
                 )
                 e0 = self.time_projection(e).unflatten(2, (6, self.dim))
 
-            context_lens = None
-            context = self.text_embedding(
-                torch.stack(
-                    [
-                        torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                        for u in context
-                    ]
-                ).to(self.text_embedding[0].weight.dtype)
+            if text_context is None:
+                text_context = context
+            if text_context is None:
+                raise ValueError("WanModel.forward requires either context or text_context")
+
+            def _embed_context(context_list, embedding, fixed_len=None):
+                if context_list is None:
+                    return None, None
+                if len(context_list) == 0:
+                    raise ValueError("context list must not be empty")
+                lengths = torch.tensor(
+                    [int(u.size(0)) for u in context_list],
+                    dtype=torch.long,
+                    device=device,
+                )
+                max_len = int(lengths.max().item()) if fixed_len is None else int(fixed_len)
+                padded = []
+                for u in context_list:
+                    if int(u.size(0)) > max_len:
+                        padded.append(u[:max_len])
+                    else:
+                        padded.append(
+                            torch.cat([u, u.new_zeros(max_len - u.size(0), u.size(1))], dim=0)
+                        )
+                stacked = torch.stack(padded)
+                embedded = embedding(stacked.to(embedding[0].weight.dtype))
+                lens = lengths.clamp_max(max_len)
+                if fixed_len is not None and bool(torch.all(lens == max_len)):
+                    lens = None
+                return embedded, lens
+
+            context, context_lens = _embed_context(
+                text_context,
+                self.text_embedding,
+                fixed_len=self.text_len,
+            )
+            object_context, object_context_lens = _embed_context(
+                object_context,
+                self.object_embedding,
+                fixed_len=None,
             )
 
             kwargs = dict(
@@ -195,6 +257,8 @@ def _patch_wan_attention_fallback() -> None:
                 freqs=self.freqs,
                 context=context,
                 context_lens=context_lens,
+                object_context=object_context,
+                object_context_lens=object_context_lens,
             )
 
             force_checkpoint = bool(getattr(self, "_codex_force_checkpointing", False))

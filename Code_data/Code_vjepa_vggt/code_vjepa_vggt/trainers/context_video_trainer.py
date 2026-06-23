@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,9 +62,11 @@ class ContextVideoTrainer(nn.Module):
     def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True, device: str | torch.device | None = None) -> None:
         super().__init__()
         debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
+        init_t0 = time.perf_counter()
         def _debug_log(message: str) -> None:
             if debug_init:
-                print(f"[trainer_init] {message}", flush=True)
+                elapsed = time.perf_counter() - init_t0
+                print(f"[trainer_init +{elapsed:.2f}s] {message}", flush=True)
         self.cfg = cfg
         if device is not None:
             self.device_obj = torch.device(device)
@@ -211,6 +214,7 @@ class ContextVideoTrainer(nn.Module):
                 context_fraction=float(data_cfg.get("context_fraction", 0.5)),
                 random_context_frames=bool(data_cfg.get("random_context_frames", True)),
                 seed=int(self.cfg.get("experiment", {}).get("seed", 42)),
+                init_scan_limit=data_cfg.get("init_scan_limit"),
             )
         raise ValueError(f"unsupported dataset_type: {dataset_type}")
 

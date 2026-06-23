@@ -36,28 +36,15 @@ def _infer_stage1_object_pooler_latent_dim(state_dict: dict[str, torch.Tensor], 
 
 def _load_stage1_adapter_state_into_model(model: torch.nn.Module, checkpoint_path: Path) -> dict[str, object]:
     state_dict = _load_trainable_state(checkpoint_path)
+    adapter_prefixes = ("object_pooler.", "object_adapter.", "object_aux_heads.", "context_fuser.")
     adapter_state = {
         key: value
         for key, value in state_dict.items()
-        if key.startswith("context_fuser.") or key.startswith("object_pooler.")
+        if key.startswith(adapter_prefixes)
     }
     if not adapter_state:
         raise RuntimeError(
-            f"stage1 adapter checkpoint does not contain context_fuser/object_pooler weights: {checkpoint_path}"
-        )
-
-    expected_names = {
-        name
-        for name, param in model.named_parameters()
-        if param.requires_grad and (name.startswith("context_fuser.") or name.startswith("object_pooler."))
-    }
-    checkpoint_names = set(adapter_state.keys())
-    missing = sorted(expected_names - checkpoint_names)
-    unexpected = sorted(checkpoint_names - expected_names)
-    if missing:
-        raise RuntimeError(
-            "stage1 adapter checkpoint is missing expected adapter weights; "
-            f"missing={missing}, unexpected={unexpected}"
+            f"stage1 adapter checkpoint does not contain object adapter weights: {checkpoint_path}"
         )
 
     missing_info = model.load_state_dict(adapter_state, strict=False)
@@ -128,7 +115,7 @@ def main() -> None:
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
 
-    fused_context, context_latents, prep_debug = _build_cond_context(
+    text_context, object_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
         config=config,
         context_video=context_video.to(device_obj),
@@ -139,7 +126,8 @@ def main() -> None:
     with torch.inference_mode():
         pred, sample_debug = _run_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(video.shape[1]),
             num_context_frames=int(num_context_frames.item()),
@@ -159,7 +147,8 @@ def main() -> None:
         "sample_debug": sample_debug,
         "load_info": load_info,
         "trainable_tensor_stats": {
-            "fused_context": _tensor_stats("fused_context", fused_context),
+            "text_context": _tensor_stats("text_context", text_context),
+            "object_context": _tensor_stats("object_context", object_context),
             "context_latents": _tensor_stats("context_latents", context_latents),
         },
     }

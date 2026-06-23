@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import os
+import time
 
 import torch
 import torch.nn as nn
@@ -35,6 +37,12 @@ class WanContextVideoModel(nn.Module):
         lora_init: str = "gaussian",
     ) -> None:
         super().__init__()
+        debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
+        t0 = time.perf_counter()
+        def _debug_log(message: str) -> None:
+            if debug_init:
+                elapsed = time.perf_counter() - t0
+                print(f"[wan_bundle_init +{elapsed:.2f}s] {message}", flush=True)
         self.config = load_wan_config(task)
         self.device_obj = torch.device(device)
         self.ckpt_dir = ckpt_dir
@@ -43,9 +51,11 @@ class WanContextVideoModel(nn.Module):
         self.lora_alpha = int(lora_alpha if lora_alpha > 0 else lora_rank)
         self.lora_dropout = float(lora_dropout)
         self.lora_init = str(lora_init)
+        _debug_log("load wan helper classes")
         T5EncoderModel = load_wan_t5_encoder()
         Wan2_2_VAE = load_wan_vae()
 
+        _debug_log("build text_encoder start")
         self.text_encoder = T5EncoderModel(
             text_len=self.config.text_len,
             dtype=self.config.t5_dtype,
@@ -54,13 +64,18 @@ class WanContextVideoModel(nn.Module):
             tokenizer_path=f"{ckpt_dir}/{self.config.t5_tokenizer}",
             shard_fn=None,
         )
+        _debug_log("build text_encoder done")
+        _debug_log("build vae start")
         self.vae = Wan2_2_VAE(
             vae_pth=f"{ckpt_dir}/{self.config.vae_checkpoint}",
             device=self.device_obj,
         )
+        _debug_log("build vae done")
         self.dit = None
         if load_dit:
+            _debug_log("ensure_dit_loaded start")
             self.ensure_dit_loaded()
+            _debug_log("ensure_dit_loaded done")
 
     @staticmethod
     def _wan_lora_target_modules(model: nn.Module) -> list[str]:
@@ -94,18 +109,34 @@ class WanContextVideoModel(nn.Module):
     def ensure_dit_loaded(self) -> None:
         if self.dit is not None:
             return
+        debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
+        t0 = time.perf_counter()
+        def _debug_log(message: str) -> None:
+            if debug_init:
+                elapsed = time.perf_counter() - t0
+                print(f"[wan_dit_load +{elapsed:.2f}s] {message}", flush=True)
         WanModel = load_wan_model()
         target_dtype = getattr(self.config, "param_dtype", None)
-        pretrained_kwargs: dict[str, Any] = {"low_cpu_mem_usage": True}
+        # The WAN backbone now includes extra object-conditioning layers that do
+        # not exist in the upstream checkpoint. Loading with low_cpu_mem_usage
+        # can leave those newly added parameters on the meta device, which then
+        # breaks the subsequent .to(...) move during training/inference startup.
+        pretrained_kwargs: dict[str, Any] = {"low_cpu_mem_usage": False}
         if target_dtype is not None:
             pretrained_kwargs["torch_dtype"] = target_dtype
+        _debug_log(f"from_pretrained start ckpt_dir={self.ckpt_dir}")
         dit = WanModel.from_pretrained(self.ckpt_dir, **pretrained_kwargs)
+        _debug_log("from_pretrained done")
         dit = self._apply_lora(dit)
+        _debug_log(f"lora_applied rank={self.lora_rank}")
         self.dit = dit
         if target_dtype is not None:
+            _debug_log(f"dit.to start device={self.device_obj} dtype={target_dtype}")
             self.dit.to(device=self.device_obj, dtype=target_dtype)
         else:
+            _debug_log(f"dit.to start device={self.device_obj}")
             self.dit.to(self.device_obj)
+        _debug_log("dit.to done")
 
     def load_lora_checkpoint(self, checkpoint_path: str | Path | None) -> dict[str, int] | None:
         if checkpoint_path is None:

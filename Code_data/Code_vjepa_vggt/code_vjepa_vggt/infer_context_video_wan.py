@@ -84,6 +84,14 @@ def _tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     return x.numpy()
 
 
+def _video_bcthw_to_uint8_thwc(video_bcthw: torch.Tensor) -> np.ndarray:
+    video = video_bcthw.detach().cpu().clamp(-1.0, 1.0)
+    video = ((video + 1.0) * 127.5).to(torch.uint8)
+    if video.ndim == 5 and video.shape[0] == 1:
+        video = video[0]
+    return video.permute(1, 2, 3, 0).contiguous().numpy()
+
+
 def _write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width = int(frames_thwc_uint8.shape[1]), int(frames_thwc_uint8.shape[2])
@@ -429,7 +437,7 @@ def _build_cond_context(
     captions: list[str],
     num_context_frames: torch.Tensor,
     device_obj: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, dict[str, object]]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, object]]:
     model_cfg = config["model"]
     data_cfg = config["data"]
     bundle = trainer.bundle
@@ -458,14 +466,16 @@ def _build_cond_context(
     debug = prepared["debug"]
     debug["cond_proj_dim"] = cond_dim
     _print_tensor_stats("context_latents", prepared["context_latents"][0])
-    _print_tensor_stats("fused_context", prepared["fused_context"][0])
-    return prepared["fused_context"][0], prepared["context_latents"][0], debug
+    _print_tensor_stats("text_context", prepared["text_context"][0])
+    _print_tensor_stats("object_context", prepared["object_context"][0])
+    return prepared["text_context"][0], prepared["object_context"][0], prepared["context_latents"][0], debug
 
 
 def _run_sampling(
     *,
     bundle: WanContextVideoModel,
-    fused_context: torch.Tensor,
+    text_context: torch.Tensor,
+    object_context: torch.Tensor,
     context_latents: torch.Tensor,
     total_frames: int,
     num_context_frames: int,
@@ -520,12 +530,21 @@ def _run_sampling(
     _print_tensor_stats("x_t_init", x_t)
 
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
-    fused_context = fused_context.to(device=dit_device, dtype=dit_dtype)
+    text_context = text_context.to(device=dit_device, dtype=dit_dtype)
+    object_context = object_context.to(device=dit_device, dtype=dit_dtype)
     trajectory_stats = []
     for step_idx, timestep in enumerate(timesteps):
         timestep_f = timestep.to(device=dit_device, dtype=dit_dtype)
         t_tokens = torch.full((1, seq_len), float(timestep_f.item()), device=dit_device, dtype=dit_dtype)
-        pred = bundle.dit([x_t], t=t_tokens, context=[fused_context], seq_len=seq_len, y=None)[0]
+        pred = bundle.dit(
+            [x_t],
+            t=t_tokens,
+            context=None,
+            text_context=[text_context],
+            object_context=[object_context],
+            seq_len=seq_len,
+            y=None,
+        )[0]
         _print_tensor_stats(f"pred_step_{step_idx}", pred)
         x_t = scheduler.step(
             pred,
@@ -626,7 +645,7 @@ def main() -> None:
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
 
-    fused_context, context_latents, prep_debug = _build_cond_context(
+    text_context, object_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
         config=config,
         context_video=context_video.to(device_obj),
@@ -637,7 +656,8 @@ def main() -> None:
     with torch.inference_mode():
         pred, sample_debug = _run_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(video.shape[1]),
             num_context_frames=int(num_context_frames.item()),

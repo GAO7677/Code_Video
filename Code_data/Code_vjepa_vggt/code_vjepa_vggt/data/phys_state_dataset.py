@@ -21,6 +21,7 @@ class PhysStateEpisodeDataset(Dataset):
         context_fraction: float = 0.5,
         random_context_frames: bool = True,
         seed: int = 42,
+        init_scan_limit: int | None = None,
     ) -> None:
         self.root = Path(root) / split
         self.split = split
@@ -29,9 +30,12 @@ class PhysStateEpisodeDataset(Dataset):
         self.context_fraction = context_fraction
         self.random_context_frames = random_context_frames
         self.seed = seed
+        self.init_scan_limit = None if init_scan_limit is None else max(int(init_scan_limit), 1)
         self.samples = sorted(self.root.glob("*.json"))
         if not self.samples:
             raise RuntimeError(f"no json metadata found under {self.root}")
+        if self.init_scan_limit is not None:
+            self.samples = self.samples[: self.init_scan_limit]
         self.samples = self._filter_samples_with_enough_context(self.samples)
         if not self.samples:
             raise RuntimeError(

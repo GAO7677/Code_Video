@@ -128,7 +128,7 @@ def main() -> None:
         trainer.bundle.dit.eval()
 
     print("[stage2_infer] build conditioning context", flush=True)
-    fused_context, context_latents, prep_debug = _build_cond_context(
+    text_context, object_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
         config=config,
         context_video=context_video.to(device_obj),
@@ -140,7 +140,8 @@ def main() -> None:
     with torch.inference_mode():
         pred, sample_debug = _run_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(video.shape[1]),
             num_context_frames=int(num_context_frames.item()),
@@ -175,7 +176,8 @@ def main() -> None:
             "used_num_context_frames": int(num_context_frames.item()),
         },
         "trainable_tensor_stats": {
-            "fused_context": _tensor_stats("fused_context", fused_context),
+            "text_context": _tensor_stats("text_context", text_context),
+            "object_context": _tensor_stats("object_context", object_context),
             "context_latents": _tensor_stats("context_latents", context_latents),
         },
     }

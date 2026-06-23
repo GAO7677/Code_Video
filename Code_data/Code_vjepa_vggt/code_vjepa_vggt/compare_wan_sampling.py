@@ -24,7 +24,8 @@ from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
 def _run_old_sampling(
     *,
     bundle: WanContextVideoModel,
-    fused_context: torch.Tensor,
+    text_context: torch.Tensor,
+    object_context: torch.Tensor,
     context_latents: torch.Tensor,
     total_frames: int,
     num_context_frames: int,
@@ -73,11 +74,20 @@ def _run_old_sampling(
     context_clean_full = expand_context_latents_to_full(context_latents, latent_clean)
     x_t = context_mask * context_clean_full + (1.0 - context_mask) * x_t
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
-    fused_context = fused_context.to(device=dit_device, dtype=dit_dtype)
+    text_context = text_context.to(device=dit_device, dtype=dit_dtype)
+    object_context = object_context.to(device=dit_device, dtype=dit_dtype)
     for step_idx, sigma in enumerate(scheduler.sigmas):
         timestep = scheduler.timesteps[step_idx].to(device=dit_device, dtype=dit_dtype)
         t_tokens = torch.full((1, seq_len), float(timestep.item()), device=dit_device, dtype=dit_dtype)
-        pred = bundle.dit([x_t], t=t_tokens, context=[fused_context], seq_len=seq_len, y=None)[0]
+        pred = bundle.dit(
+            [x_t],
+            t=t_tokens,
+            context=None,
+            text_context=[text_context],
+            object_context=[object_context],
+            seq_len=seq_len,
+            y=None,
+        )[0]
         next_sigma = scheduler.sigmas[step_idx + 1] if step_idx + 1 < len(scheduler.sigmas) else torch.tensor(0.0)
         next_sigma = next_sigma.to(device=dit_device, dtype=dit_dtype)
         sigma = sigma.to(device=dit_device, dtype=dit_dtype)
@@ -136,7 +146,7 @@ def main() -> None:
     )
     num_context_frames = torch.tensor([int(context_video.shape[2])], dtype=torch.long, device=device_obj)
 
-    fused_context, context_latents, prep_debug = _build_cond_context(
+    text_context, object_context, context_latents, prep_debug = _build_cond_context(
         trainer=trainer,
         config=config,
         context_video=context_video.to(device_obj),
@@ -153,7 +163,8 @@ def main() -> None:
     with torch.inference_mode():
         new_pred, new_debug = _run_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(video.shape[1]),
             num_context_frames=int(num_context_frames.item()),
@@ -161,7 +172,8 @@ def main() -> None:
         )
         old_pred, old_debug = _run_old_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(video.shape[1]),
             num_context_frames=int(num_context_frames.item()),

@@ -204,7 +204,7 @@ def main() -> None:
         _write_mp4(source_video_path, _video_bcthw_to_uint8_thwc(source_video.unsqueeze(0)), fps=int(args.fps))
         _write_mp4(input_video_path, _video_bcthw_to_uint8_thwc(input_context_video.unsqueeze(0)), fps=int(args.fps))
 
-        fused_context, context_latents, prep_debug = _build_cond_context(
+        text_context, object_context, context_latents, prep_debug = _build_cond_context(
             trainer=trainer,
             config=config,
             context_video=input_context_video.unsqueeze(0).to(device_obj),
@@ -214,7 +214,8 @@ def main() -> None:
         )
         pred_latent, sample_debug = _run_sampling(
             bundle=trainer.bundle,
-            fused_context=fused_context,
+            text_context=text_context,
+            object_context=object_context,
             context_latents=context_latents,
             total_frames=int(source_video.shape[1]),
             num_context_frames=int(num_context_frames.item()),

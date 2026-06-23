@@ -84,7 +84,7 @@ class TrainingArtifacts:
     active_confidence: torch.Tensor
     active_track_image_hw: tuple[int, int]
     object_out: ObjectTokenOutput
-    fused_context: list[torch.Tensor]
+    object_context: torch.Tensor
     track_alignment: TrackBoxAlignment | None
     track_box_loss: torch.Tensor | None
     track_iou_loss: torch.Tensor | None
@@ -431,7 +431,7 @@ class TrainingFlowInspector:
             vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=frame_valid_mask,
         )
-        fused_context = self.trainer.context_fuser(text_ctx, object_out.object_tokens)
+        object_context = self.trainer.object_adapter(object_out.object_latent_tokens)
 
         track_alignment = None
         track_box_loss = None
@@ -491,7 +491,7 @@ class TrainingFlowInspector:
             active_confidence=active_confidence,
             active_track_image_hw=active_track_image_hw,
             object_out=object_out,
-            fused_context=fused_context,
+            object_context=object_context,
             track_alignment=track_alignment,
             track_box_loss=track_box_loss,
             track_iou_loss=track_iou_loss,
@@ -683,29 +683,35 @@ class TrainingFlowInspector:
     def plot_step5_fused_context(self, max_tokens: int = 96) -> plt.Figure:
         artifacts = self.collect_artifacts()
         text_ctx = artifacts.text_ctx[0].detach().cpu()
-        object_tokens = artifacts.object_out.object_tokens[0].detach().cpu()
-        fused = artifacts.fused_context[0].detach().cpu()
-        keep = min(max_tokens, int(fused.shape[0]))
+        object_context = artifacts.object_context[0].detach().cpu()
+        object_latent = artifacts.object_out.object_latent_tokens[0].detach().cpu()
+        keep_text = min(max_tokens, int(text_ctx.shape[0]))
+        keep_object = min(max_tokens, int(object_context.shape[0]))
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 4.8))
-        fused_heat = fused[:keep].abs().mean(dim=-1, keepdim=True).T.numpy()
-        axes[0].imshow(fused_heat, aspect="auto", cmap="rocket")
-        axes[0].set_title("fused_context token energy")
-        axes[0].set_xlabel("token index")
+        fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+        text_heat = text_ctx[:keep_text].abs().mean(dim=-1, keepdim=True).T.numpy()
+        axes[0].imshow(text_heat, aspect="auto", cmap="rocket")
+        axes[0].set_title("text_context token energy")
+        axes[0].set_xlabel("text token index")
         axes[0].set_yticks([])
+
+        object_heat = object_context[:keep_object].abs().mean(dim=-1, keepdim=True).T.numpy()
+        axes[1].imshow(object_heat, aspect="auto", cmap="viridis")
+        axes[1].set_title("object_context token energy")
+        axes[1].set_xlabel("object token index")
+        axes[1].set_yticks([])
 
         summary_lines = [
             f"text tokens: {int(text_ctx.shape[0])}",
-            f"object tokens before fuse: {int(object_tokens.shape[0])}",
-            f"fused tokens: {int(fused.shape[0])}",
-            f"max context len: {int(self.trainer.context_fuser.max_context_len)}",
-            f"min text tokens: {int(self.trainer.context_fuser.min_text_tokens)}",
-            f"object gate: {float(self.trainer.context_fuser.object_gate.detach().cpu().item()):.4f}",
+            f"object latent shape: {list(object_latent.shape)}",
+            f"object context tokens: {int(object_context.shape[0])}",
+            f"flattened from T_lat={int(object_latent.shape[0])}, K={int(object_latent.shape[1])}",
+            "Wan cross-attn: text branch + gated object branch",
         ]
-        axes[1].axis("off")
-        axes[1].text(0.0, 0.95, "\n".join(summary_lines), va="top", fontsize=12, family="monospace")
+        axes[2].axis("off")
+        axes[2].text(0.0, 0.95, "\n".join(summary_lines), va="top", fontsize=12, family="monospace")
 
-        fig.suptitle("Step 5. Context Fuser: text tokens + object tokens -> fused context", fontsize=15)
+        fig.suptitle("Step 5. Dual Context: text tokens + latent-time object tokens", fontsize=15)
         fig.tight_layout()
         return fig
 
@@ -777,6 +783,8 @@ class TrainingFlowInspector:
             f"pred_abs_max={metrics['train/pred_abs_max']:.4f}",
             f"x_t_abs_max={metrics['train/x_t_abs_max']:.4f}",
             f"object_tokens_abs_max={metrics['train/object_tokens_abs_max']:.4f}",
+            f"text_context_abs_max={metrics['train/text_context_abs_max']:.4f}",
+            f"object_context_abs_max={metrics['train/object_context_abs_max']:.4f}",
             f"fused_context_abs_max={metrics['train/fused_context_abs_max']:.4f}",
             f"context_latent_shape={list(context_latent.shape)}",
             f"full_latent_shape={list(latent_clean.shape)}",
