@@ -36,7 +36,8 @@ class PhysStateEpisodeDataset(Dataset):
             raise RuntimeError(f"no json metadata found under {self.root}")
         if self.init_scan_limit is not None:
             self.samples = self.samples[: self.init_scan_limit]
-        self.samples = self._filter_samples_with_enough_context(self.samples)
+        if not self._can_skip_context_filter(self.samples):
+            self.samples = self._filter_samples_with_enough_context(self.samples)
         if not self.samples:
             raise RuntimeError(
                 f"no samples under {self.root} can provide fixed num_context_frames={self.num_context_frames} "
@@ -61,6 +62,24 @@ class PhysStateEpisodeDataset(Dataset):
             if self._max_context_len(total_frames) >= self.num_context_frames:
                 filtered.append(meta_path)
         return filtered
+
+    def _can_skip_context_filter(self, samples: list[Path]) -> bool:
+        if not samples:
+            return False
+        probe_count = min(len(samples), 8)
+        total_frames_ref: int | None = None
+        for meta_path in samples[:probe_count]:
+            npz_path = meta_path.with_suffix(".npz")
+            tensors = load_npz_tensor_dict(npz_path)
+            total_frames = int(tensors["context_frames"].shape[0] + tensors["future_frames"].shape[0])
+            if self._max_context_len(total_frames) < self.num_context_frames:
+                return False
+            if total_frames_ref is None:
+                total_frames_ref = total_frames
+                continue
+            if total_frames != total_frames_ref:
+                return False
+        return True
 
     def _select_context_indices(self, total_frames: int, idx: int) -> torch.Tensor:
         max_context_len = self._max_context_len(total_frames)

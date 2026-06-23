@@ -1014,8 +1014,11 @@ class ContextVideoTrainer(nn.Module):
         launch_training_task(
             accelerator,
             self,
+            optimizer_type=str(opt_cfg.get("optimizer_type", "adamw")),
             learning_rate=float(opt_cfg["lr"]),
             weight_decay=float(opt_cfg["weight_decay"]),
+            betas=tuple(float(value) for value in opt_cfg.get("betas", [0.9, 0.999])),
+            eps=float(opt_cfg.get("eps", 1.0e-8)),
             num_workers=int(self.cfg["data"]["num_workers"]),
             save_every=int(self.cfg["logging"]["save_every"]),
             max_steps=int(opt_cfg["max_steps"]),

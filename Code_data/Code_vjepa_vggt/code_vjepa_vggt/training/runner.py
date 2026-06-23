@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import torch
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs
 from tqdm import tqdm
 
 
@@ -47,12 +48,56 @@ def _max_abs_named_tensor(named_tensors: list[tuple[str, torch.Tensor]]) -> floa
     return max_abs
 
 
+def _build_optimizer(
+    optimizer_name: str,
+    parameters,
+    *,
+    learning_rate: float,
+    weight_decay: float,
+    betas: tuple[float, float],
+    eps: float,
+):
+    name = optimizer_name.strip().lower()
+    if name in {"adamw", "torch_adamw", "torch"}:
+        return torch.optim.AdamW(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    if name in {"adamw8bit", "8bit_adamw"}:
+        import bitsandbytes as bnb
+
+        return bnb.optim.AdamW8bit(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    if name in {"paged_adamw8bit", "pagedadamw8bit"}:
+        import bitsandbytes as bnb
+
+        return bnb.optim.PagedAdamW8bit(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    raise ValueError(f"unsupported optimizer_type: {optimizer_name}")
+
+
 def launch_training_task(
     accelerator: Accelerator,
     model: torch.nn.Module,
     *,
+    optimizer_type: str,
     learning_rate: float,
     weight_decay: float,
+    betas: tuple[float, float],
+    eps: float,
     num_workers: int,
     save_every: int,
     max_steps: int,
@@ -60,12 +105,36 @@ def launch_training_task(
     max_grad_norm: float | None,
     resume_checkpoint: str | Path | None = None,
 ) -> None:
+    debug_runner = os.environ.get("CODEX_DEBUG_RUNNER_INIT", "").strip() not in {"", "0", "false", "False"}
+    runner_t0 = time.perf_counter()
+
+    def _debug_log(message: str) -> None:
+        if debug_runner:
+            elapsed = time.perf_counter() - runner_t0
+            rank = int(os.environ.get("RANK", "0"))
+            print(f"[runner +{elapsed:.2f}s rank={rank}] {message}", flush=True)
+
     base_model = accelerator.unwrap_model(model)
     cfg = base_model.cfg
-    optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=learning_rate, weight_decay=weight_decay)
+    _debug_log("build optimizer start")
+    optimizer = _build_optimizer(
+        optimizer_type,
+        model.trainable_parameters(),
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        betas=betas,
+        eps=eps,
+    )
+    _debug_log("build optimizer done")
+    _debug_log("build dataloader start")
     dataloader = model.build_dataloader(num_workers=num_workers)
+    _debug_log("build dataloader done")
+    _debug_log(f"model.to start device={accelerator.device}")
     model.to(device=accelerator.device)
+    _debug_log("model.to done")
+    _debug_log("accelerator.prepare start")
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
+    _debug_log("accelerator.prepare done")
 
     step = 0
     if resume_checkpoint is not None:
@@ -90,7 +159,9 @@ def launch_training_task(
             )
         step = int(state.get("step", 0))
     ckpt_dir = Path(cfg["experiment"]["output_dir"])
+    _debug_log(f"mkdir checkpoint dir start path={ckpt_dir}")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    _debug_log("mkdir checkpoint dir done")
     log_cfg = cfg.get("logging", {})
     log_every = int(log_cfg.get("log_every", 10))
     save_every = int(log_cfg.get("save_every", save_every))
@@ -102,6 +173,7 @@ def launch_training_task(
         import wandb
 
         wandb_dir = Path(log_cfg.get("wandb_dir", ckpt_dir.parent / "wandb"))
+        _debug_log(f"wandb init start dir={wandb_dir}")
         wandb_dir.mkdir(parents=True, exist_ok=True)
         wandb_run = wandb.init(
             project=str(log_cfg.get("wandb_project", "vjepa-vggt-wan")),
@@ -111,19 +183,32 @@ def launch_training_task(
             config=json.loads(json.dumps(cfg)),
             resume="allow",
         )
+        _debug_log("wandb init done")
 
     progress = tqdm(total=max_steps, disable=not accelerator.is_local_main_process)
     optimizer.zero_grad(set_to_none=True)
+    saw_first_batch = False
     while step < max_steps:
         for batch in dataloader:
+            if not saw_first_batch:
+                _debug_log("first batch fetched")
+                saw_first_batch = True
             with accelerator.accumulate(model):
+                if step == 0:
+                    _debug_log("first forward start")
                 loss = model(batch)
+                if step == 0:
+                    _debug_log("first forward done")
                 if not torch.isfinite(loss):
                     raise RuntimeError(
                         f"non-finite loss detected at step={step + 1}: "
                         f"{float(loss.detach().cpu().item())}"
                     )
+                if step == 0:
+                    _debug_log("first backward start")
                 accelerator.backward(loss)
+                if step == 0:
+                    _debug_log("first backward done")
                 if accelerator.sync_gradients:
                     unwrapped = accelerator.unwrap_model(model)
                     trainable_named_params = [
@@ -146,6 +231,8 @@ def launch_training_task(
                     if max_grad_norm is not None and max_grad_norm > 0:
                         accelerator.clip_grad_norm_(unwrapped.trainable_parameters(), max_grad_norm)
                     optimizer.step()
+                    if step == 0:
+                        _debug_log("first optimizer.step done")
                     if nonfinite_probe and step % max(1, nonfinite_probe_every) == 0:
                         param_info = _first_nonfinite_named_tensor(trainable_named_params)
                         if param_info is not None:
