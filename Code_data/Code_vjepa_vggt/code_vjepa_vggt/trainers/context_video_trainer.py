@@ -21,7 +21,8 @@ from code_vjepa_vggt.adapters.sam2_motion import (
 )
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
-from code_vjepa_vggt.models.context_fuser import ContextTokenFuser
+from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeadOutput, ObjectAuxHeads
+from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
 from code_vjepa_vggt.models.wan_context_model import WanContextVideoModel
 from code_vjepa_vggt.training.flow_match import WanFlowMatchScheduler
@@ -145,11 +146,16 @@ class ContextVideoTrainer(nn.Module):
         ).to(self.device_obj)
         if bool(model_cfg.get("freeze_object_pooler", False)):
             self.object_pooler.eval().requires_grad_(False)
-        _debug_log("build context fuser")
-        self.context_fuser = ContextTokenFuser(
-            text_dim=cond_dim,
-            max_context_len=self.bundle.config.text_len,
-            min_text_tokens=int(model_cfg.get("min_text_tokens", 64)),
+        _debug_log("build object aux heads")
+        self.object_aux_heads = ObjectAuxHeads(
+            dim=cond_dim,
+            track_delta_scale=float(model_cfg.get("track_head_delta_scale", 0.25)),
+        ).to(self.device_obj)
+        _debug_log("build object condition adapter")
+        self.object_adapter = ObjectConditionAdapter(
+            dim=cond_dim,
+            num_slots=int(model_cfg["object_num_queries"]),
+            max_time_steps=int(model_cfg.get("max_object_time_steps", 64)),
         ).to(self.device_obj)
         self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
         self.init_wan_lora_from_checkpoint = model_cfg.get("init_wan_lora_from_checkpoint")
@@ -223,8 +229,9 @@ class ContextVideoTrainer(nn.Module):
     def trainable_parameters(self):
         self.bundle.ensure_dit_loaded()
         params = list(self.bundle.dit.parameters())
-        params += list(self.context_fuser.parameters())
         params += list(self.object_pooler.parameters())
+        params += list(self.object_aux_heads.parameters())
+        params += list(self.object_adapter.parameters())
         if getattr(self.jepa_adapter, "trainable", False):
             params += list(self.jepa_adapter.parameters())
         if getattr(self.vggt_adapter, "trainable", False):
@@ -276,6 +283,54 @@ class ContextVideoTrainer(nn.Module):
     def _frame_valid_mask(max_context_frames: int, num_context_frames: torch.Tensor, device: torch.device) -> torch.Tensor:
         frame_ids = torch.arange(max_context_frames, device=device).view(1, -1)
         return frame_ids < num_context_frames.view(-1, 1)
+
+    @staticmethod
+    def _latent_window_size(num_frames: int, latent_frames: int) -> int:
+        if int(num_frames) % max(int(latent_frames), 1) != 0:
+            raise RuntimeError(
+                f"num_frames={num_frames} must be divisible by latent_frames={latent_frames} "
+                "for latent-time object conditioning"
+            )
+        return int(num_frames) // max(int(latent_frames), 1)
+
+    @classmethod
+    def _group_last(cls, values: torch.Tensor, latent_frames: int) -> torch.Tensor:
+        group = cls._latent_window_size(int(values.shape[1]), int(latent_frames))
+        new_shape = (values.shape[0], int(latent_frames), group) + tuple(values.shape[2:])
+        return values.view(new_shape)[:, :, -1]
+
+    @classmethod
+    def _group_track_summary(
+        cls,
+        centers_xy: torch.Tensor,
+        valid_mask: torch.Tensor,
+        *,
+        image_hw: tuple[int, int],
+        latent_frames: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        group = cls._latent_window_size(int(centers_xy.shape[1]), int(latent_frames))
+        height, width = int(image_hw[0]), int(image_hw[1])
+        centers_xy = centers_xy.view(centers_xy.shape[0], int(latent_frames), group, centers_xy.shape[2], 2)
+        valid_mask = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2])
+        first_xy = centers_xy[:, :, 0]
+        last_xy = centers_xy[:, :, -1]
+        last_xy_norm = torch.stack(
+            [
+                last_xy[..., 0] / max(float(width - 1), 1.0),
+                last_xy[..., 1] / max(float(height - 1), 1.0),
+            ],
+            dim=-1,
+        ).clamp(0.0, 1.0)
+        delta_xy_norm = torch.stack(
+            [
+                (last_xy[..., 0] - first_xy[..., 0]) / max(float(width - 1), 1.0),
+                (last_xy[..., 1] - first_xy[..., 1]) / max(float(height - 1), 1.0),
+            ],
+            dim=-1,
+        )
+        out = torch.cat([last_xy_norm, delta_xy_norm], dim=-1)
+        out_valid = valid_mask.any(dim=2)
+        return out, out_valid
 
     def _maybe_build_query_priors(
         self,
