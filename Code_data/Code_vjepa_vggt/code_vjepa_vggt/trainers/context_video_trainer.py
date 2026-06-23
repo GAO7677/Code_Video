@@ -154,6 +154,13 @@ class ContextVideoTrainer(nn.Module):
             dim=cond_dim,
             track_delta_scale=float(model_cfg.get("track_head_delta_scale", 0.25)),
         ).to(self.device_obj)
+        depth_lambda = float(self.cfg.get("loss", {}).get("lambda_depth_aux", 0.0))
+        depth_target_index = self.cfg.get("loss", {}).get(
+            "depth_target_state_index",
+            model_cfg.get("depth_target_state_index"),
+        )
+        if depth_lambda <= 0.0 or depth_target_index is None:
+            self.object_aux_heads.depth_head.eval().requires_grad_(False)
         _debug_log("build object condition adapter")
         self.object_adapter = ObjectConditionAdapter(
             dim=cond_dim,

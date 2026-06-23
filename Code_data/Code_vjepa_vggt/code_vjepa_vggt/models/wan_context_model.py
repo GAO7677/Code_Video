@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 import os
 import time
+import math
 
 import torch
 import torch.nn as nn
@@ -35,6 +36,7 @@ class WanContextVideoModel(nn.Module):
         lora_alpha: int = 0,
         lora_dropout: float = 0.0,
         lora_init: str = "gaussian",
+        object_gate_init: float = 0.1,
     ) -> None:
         super().__init__()
         debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
@@ -51,6 +53,7 @@ class WanContextVideoModel(nn.Module):
         self.lora_alpha = int(lora_alpha if lora_alpha > 0 else lora_rank)
         self.lora_dropout = float(lora_dropout)
         self.lora_init = str(lora_init)
+        self.object_gate_init = float(object_gate_init)
         _debug_log("load wan helper classes")
         T5EncoderModel = load_wan_t5_encoder()
         Wan2_2_VAE = load_wan_vae()
@@ -91,6 +94,58 @@ class WanContextVideoModel(nn.Module):
             raise RuntimeError("no Wan transformer linear modules found for LoRA injection")
         return targets
 
+    @staticmethod
+    def _reinit_linear(module: nn.Module, *, std: float | None = None) -> None:
+        weight = getattr(module, "weight", None)
+        bias = getattr(module, "bias", None)
+        if weight is None:
+            return
+        if std is None:
+            nn.init.xavier_uniform_(weight)
+        else:
+            nn.init.normal_(weight, std=std)
+        if bias is not None:
+            nn.init.zeros_(bias)
+
+    def _reinitialize_missing_object_branch(self, model: nn.Module) -> None:
+        # The upstream Wan checkpoint has no object branch. Some missing tensors
+        # end up effectively zeroed after loading, which collapses object
+        # conditioning. Reinitialize those add-on layers explicitly.
+        object_embedding = getattr(model, "object_embedding", None)
+        if isinstance(object_embedding, nn.Sequential):
+            for module in object_embedding.modules():
+                if isinstance(module, nn.Linear):
+                    self._reinit_linear(module, std=0.02)
+
+        for block in getattr(model, "blocks", []):
+            norm4 = getattr(block, "norm4", None)
+            if isinstance(norm4, nn.LayerNorm):
+                if norm4.weight is not None:
+                    nn.init.ones_(norm4.weight)
+                if norm4.bias is not None:
+                    nn.init.zeros_(norm4.bias)
+
+            object_gate = getattr(block, "object_gate", None)
+            if isinstance(object_gate, torch.nn.Parameter):
+                object_gate.data.fill_(self.object_gate_init)
+
+            object_cross_attn = getattr(block, "object_cross_attn", None)
+            if object_cross_attn is None:
+                continue
+            for attr in ("q", "k", "v", "o"):
+                module = getattr(object_cross_attn, attr, None)
+                if module is None:
+                    continue
+                if hasattr(module, "base_layer"):
+                    self._reinit_linear(module.base_layer)
+                elif isinstance(module, nn.Linear):
+                    self._reinit_linear(module)
+            for attr in ("norm_q", "norm_k"):
+                module = getattr(object_cross_attn, attr, None)
+                weight = getattr(module, "weight", None)
+                if weight is not None:
+                    nn.init.ones_(weight)
+
     def _apply_lora(self, model: nn.Module) -> nn.Module:
         if self.lora_rank <= 0:
             return model
@@ -128,6 +183,8 @@ class WanContextVideoModel(nn.Module):
         dit = WanModel.from_pretrained(self.ckpt_dir, **pretrained_kwargs)
         _debug_log("from_pretrained done")
         dit = self._apply_lora(dit)
+        base_dit = dit.get_base_model() if hasattr(dit, "get_base_model") else dit
+        self._reinitialize_missing_object_branch(base_dit)
         _debug_log(f"lora_applied rank={self.lora_rank}")
         self.dit = dit
         if target_dtype is not None:
@@ -231,9 +288,16 @@ class WanContextVideoModel(nn.Module):
                 self.dit.eval()
                 for name, param in self.dit.named_parameters():
                     is_lora_param = "lora_" in name
-                    param.requires_grad = is_lora_param and not freeze_lora
-                    if is_lora_param and not freeze_lora:
-                        # Trainable LoRA weights must stay in fp32, otherwise AMP/GradScaler
+                    is_object_param = (
+                        ".object_cross_attn." in name
+                        or ".object_gate" in name
+                        or ".norm4." in name
+                        or "object_embedding." in name
+                    )
+                    should_train = (is_lora_param and not freeze_lora) or is_object_param
+                    param.requires_grad = should_train
+                    if should_train:
+                        # Trainable add-on weights must stay in fp32, otherwise AMP/GradScaler
                         # can hit bfloat16 unscale paths and abort during backward.
                         param.data = param.data.float()
             else:

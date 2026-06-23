@@ -51,6 +51,7 @@ class CoTrackerAdapter(nn.Module):
                 v2=False,
                 window_len=self.window_len,
             ).to(self.device_obj)
+            self.model.eval().requires_grad_(False)
 
     def _make_uniform_queries(self, batch_size: int, image_hw: tuple[int, int], device: torch.device) -> torch.Tensor:
         height, width = image_hw
