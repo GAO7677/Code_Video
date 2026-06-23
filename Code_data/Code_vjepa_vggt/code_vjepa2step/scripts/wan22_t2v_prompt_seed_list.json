@@ -1,7 +1,7 @@
 [
   {
     "id": "ball_block_left_hit",
-    "prompt": "A ball flew in from the left, knocking a wooden block that was stationary on the ground far away.",
+    "input_prompt": "A ball flew in from the left, knocking a wooden block that was stationary on the ground far away.",
     "seed": 20250622
   }
 ]

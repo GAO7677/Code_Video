@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Batch t2v sweep for:
-# - wan2.2 TI2V-5B in text-to-video mode
-# - LoRA step-000500
-# - LoRA step-001000
+# Guidance sweep for:
+# - wan22 base t2v
+# - lora step000500 t2v
+# - lora step001000 t2v
 #
-# Inputs come from a JSON list of dicts:
+# Uses the same JSON prompt/seed list format:
 #   [{"id": "...", "input_prompt": "...", "seed": 20250622}, ...]
-#
-# Outputs:
-#   /data/gaoya/AAA_test_video/tmp/0623wan22_t2v_base_lora_step_sweep/
-#     wan22_base/
-#     lora_step000500/
-#     lora_step001000/
 
 GPU_IDS="${GPU_IDS:-5 6 7}"
 PROMPT_SEED_JSON="${PROMPT_SEED_JSON:-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa2step/scripts/wan22_t2v_prompt_seed_list.json}"
 STEPS_LIST="${STEPS_LIST:-5 15 25 50}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/AAA_test_video/0623/test/t2v}"
+GUIDANCE_LIST="${GUIDANCE_LIST:-3.0 5.0 7.0}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/AAA_test_video/0623/test/t2v_guidance_sweep}"
 
 WAN22_REPO="${WAN22_REPO:-/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main}"
 WAN22_CKPT="${WAN22_CKPT:-/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B}"
@@ -31,7 +26,6 @@ HEIGHT="${HEIGHT:-704}"
 WIDTH="${WIDTH:-1280}"
 NUM_FRAMES="${NUM_FRAMES:-121}"
 FPS="${FPS:-24}"
-GUIDANCE_SCALE="${GUIDANCE_SCALE:-5.0}"
 MODE="${MODE:-t2v}"
 TMUX_LAUNCH_NOTE="${TMUX_LAUNCH_NOTE:-}"
 
@@ -89,17 +83,23 @@ for record in records:
 PY
 }
 
+guidance_tag() {
+  local guidance="$1"
+  printf '%s\n' "${guidance}" | tr '.' 'p'
+}
+
 write_result_json() {
   local json_path="$1"
   local prompt_id="$2"
   local prompt="$3"
   local seed="$4"
   local steps="$5"
-  local output_path="$6"
-  local model_name="$7"
-  local lora_path="$8"
+  local guidance="$6"
+  local output_path="$7"
+  local model_name="$8"
+  local lora_path="$9"
 
-  "${PYTHON_BIN}" - <<'PY' "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${GUIDANCE_SCALE}" "${output_path}" "${model_name}" "${MODE}" "${lora_path}"
+  "${PYTHON_BIN}" - <<'PY' "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${guidance}" "${output_path}" "${model_name}" "${MODE}" "${lora_path}"
 import json
 import sys
 from pathlib import Path
@@ -127,15 +127,18 @@ run_base_t2v() {
   local prompt="$2"
   local seed="$3"
   local steps="$4"
-  local gpu_id="$5"
+  local guidance="$5"
+  local gpu_id="$6"
   local model_name="wan22_base"
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
-  local base_name="${prompt_id}_${model_name}_step${steps}_seed${seed}"
+  local gtag
+  gtag="$(guidance_tag "${guidance}")"
+  local base_name="${prompt_id}_${model_name}_step${steps}_guidance${gtag}_seed${seed}"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 
   mkdir -p "${model_dir}"
-  echo "[run] model=${model_name} id=${prompt_id} steps=${steps} seed=${seed} gpu=${gpu_id}"
+  echo "[run] model=${model_name} id=${prompt_id} steps=${steps} guidance=${guidance} seed=${seed} gpu=${gpu_id}"
   echo "[run] output=${output_path}"
 
   (
@@ -149,13 +152,13 @@ run_base_t2v() {
         --convert_model_dtype \
         --t5_cpu \
         --sample_steps "${steps}" \
-        --sample_guide_scale "${GUIDANCE_SCALE}" \
+        --sample_guide_scale "${guidance}" \
         --base_seed "${seed}" \
         --prompt "${prompt}" \
         --save_file "${output_path}"
   )
 
-  write_result_json "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${output_path}" "${model_name}" ""
+  write_result_json "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${guidance}" "${output_path}" "${model_name}" ""
 }
 
 run_lora_t2v() {
@@ -163,16 +166,19 @@ run_lora_t2v() {
   local prompt="$2"
   local seed="$3"
   local steps="$4"
-  local model_name="$5"
-  local lora_path="$6"
-  local gpu_id="$7"
+  local guidance="$5"
+  local model_name="$6"
+  local lora_path="$7"
+  local gpu_id="$8"
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
-  local base_name="${prompt_id}_${model_name}_step${steps}_seed${seed}"
+  local gtag
+  gtag="$(guidance_tag "${guidance}")"
+  local base_name="${prompt_id}_${model_name}_step${steps}_guidance${gtag}_seed${seed}"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 
   mkdir -p "${model_dir}"
-  echo "[run] model=${model_name} id=${prompt_id} steps=${steps} seed=${seed} gpu=${gpu_id}"
+  echo "[run] model=${model_name} id=${prompt_id} steps=${steps} guidance=${guidance} seed=${seed} gpu=${gpu_id}"
   echo "[run] output=${output_path}"
 
   CUDA_VISIBLE_DEVICES="${gpu_id}" \
@@ -188,10 +194,10 @@ run_lora_t2v() {
       --num_frames "${NUM_FRAMES}" \
       --fps "${FPS}" \
       --num_inference_steps "${steps}" \
-      --cfg_scale "${GUIDANCE_SCALE}" \
+      --cfg_scale "${guidance}" \
       --overwrite
 
-  write_result_json "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${output_path}" "${model_name}" "${lora_path}"
+  write_result_json "${json_path}" "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${guidance}" "${output_path}" "${model_name}" "${lora_path}"
 }
 
 main() {
@@ -219,21 +225,24 @@ main() {
   echo "[info] prompt_seed_json=${PROMPT_SEED_JSON}"
   echo "[info] output_root=${OUTPUT_ROOT}"
   echo "[info] steps=${STEPS_LIST}"
+  echo "[info] guidance_list=${GUIDANCE_LIST}"
   echo "[info] mode=${MODE}"
   if [ -n "${TMUX_LAUNCH_NOTE}" ]; then
     echo "[info] tmux_launch_note=${TMUX_LAUNCH_NOTE}"
   fi
 
   while IFS=$'\t' read -r prompt_id prompt seed; do
-    for steps in ${STEPS_LIST}; do
-      run_base_t2v "${prompt_id}" "${prompt}" "${seed}" "${steps}" "$(next_gpu_id)"
-      for model_name in $(printf '%s\n' "${!LORA_PATHS[@]}" | sort); do
-        run_lora_t2v "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${model_name}" "${LORA_PATHS[${model_name}]}" "$(next_gpu_id)"
+    for guidance in ${GUIDANCE_LIST}; do
+      for steps in ${STEPS_LIST}; do
+        run_base_t2v "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${guidance}" "$(next_gpu_id)"
+        for model_name in $(printf '%s\n' "${!LORA_PATHS[@]}" | sort); do
+          run_lora_t2v "${prompt_id}" "${prompt}" "${seed}" "${steps}" "${guidance}" "${model_name}" "${LORA_PATHS[${model_name}]}" "$(next_gpu_id)"
+        done
       done
     done
   done < <(iter_prompt_seed_records)
 
-  echo "[done] completed wan2.2 base+lora t2v json-driven sweep"
+  echo "[done] completed wan2.2 base+lora t2v guidance sweep"
 }
 
 main "$@"
