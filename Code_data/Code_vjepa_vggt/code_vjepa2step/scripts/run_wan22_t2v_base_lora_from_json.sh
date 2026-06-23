@@ -130,7 +130,7 @@ run_base_t2v() {
   local gpu_id="$5"
   local model_name="wan22_base"
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
-  local base_name="${prompt_id}_${model_name}_step${steps}_seed${seed}"
+  local base_name="${model_name}_seed${seed}_step${steps}_guidance5p0"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 
@@ -167,7 +167,7 @@ run_lora_t2v() {
   local lora_path="$6"
   local gpu_id="$7"
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
-  local base_name="${prompt_id}_${model_name}_step${steps}_seed${seed}"
+  local base_name="${model_name}_seed${seed}_step${steps}_guidance5p0"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 

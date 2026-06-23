@@ -106,7 +106,7 @@ main() {
   for guidance in ${GUIDANCE_LIST}; do
     local gtag base_name output_path json_path
     gtag="$(guidance_tag "${guidance}")"
-    base_name="${prompt_id}_wan22_base_step${STEP_COUNT}_guidance${gtag}_seed${SEED_OVERRIDE}"
+    base_name="wan22_base_seed${SEED_OVERRIDE}_step${STEP_COUNT}_guidance${gtag}"
     output_path="${OUTPUT_ROOT}/wan22_base/${base_name}.mp4"
     json_path="${OUTPUT_ROOT}/wan22_base/${base_name}.json"
 

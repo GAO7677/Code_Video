@@ -133,7 +133,7 @@ run_base_t2v() {
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
   local gtag
   gtag="$(guidance_tag "${guidance}")"
-  local base_name="${prompt_id}_${model_name}_step${steps}_guidance${gtag}_seed${seed}"
+  local base_name="${model_name}_seed${seed}_step${steps}_guidance${gtag}"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 
@@ -173,7 +173,7 @@ run_lora_t2v() {
   local model_dir="${OUTPUT_ROOT}/${MODEL_DIRS[${model_name}]}"
   local gtag
   gtag="$(guidance_tag "${guidance}")"
-  local base_name="${prompt_id}_${model_name}_step${steps}_guidance${gtag}_seed${seed}"
+  local base_name="${model_name}_seed${seed}_step${steps}_guidance${gtag}"
   local output_path="${model_dir}/${base_name}.mp4"
   local json_path="${model_dir}/${base_name}.json"
 

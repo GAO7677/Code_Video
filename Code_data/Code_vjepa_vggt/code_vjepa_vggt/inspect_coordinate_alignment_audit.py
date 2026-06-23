@@ -11,6 +11,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
+from PIL import Image
 
 from code_vjepa_vggt.train0419_reference.AAAinfer.training_flow_notebook_helper import TrainingFlowInspector
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
@@ -49,7 +50,7 @@ class ModuleCard:
     mapping_note: str
     verdict: str
     metrics: list[str]
-    video_relpath: str
+    media_relpath: str
 
 
 def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
@@ -131,6 +132,21 @@ def write_mp4(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     finally:
         writer.release()
+
+
+def write_gif(path: Path, frames_thwc_uint8: np.ndarray, fps: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pil_frames = [Image.fromarray(np.asarray(frame, dtype=np.uint8), mode="RGB") for frame in frames_thwc_uint8]
+    duration_ms = max(int(round(1000.0 / max(float(fps), 1.0))), 40)
+    pil_frames[0].save(
+        path,
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=False,
+        disposal=2,
+    )
 
 
 def ensure_browser_video(source_path: Path) -> Path:
@@ -224,6 +240,32 @@ def best_gt_iou(box_xyxy: np.ndarray, gt_boxes_px_k4: np.ndarray) -> float:
     if gt_boxes_px_k4.size == 0:
         return 0.0
     return max(box_iou_xyxy(box_xyxy, gt_box) for gt_box in gt_boxes_px_k4)
+
+
+def point_region_metrics(
+    points_k2: np.ndarray,
+    gt_boxes_px_k4: np.ndarray,
+    *,
+    sam_boxes_px_m4: np.ndarray | None = None,
+) -> dict[str, float]:
+    gt_valid = [box for box in gt_boxes_px_k4 if box_valid(box)]
+    gt_centers = [box_center_xy(box) for box in gt_valid]
+    inside_any_gt = 0
+    inside_sam = 0
+    min_center_dists: list[float] = []
+    for point in np.asarray(points_k2, dtype=np.float32):
+        if any(point_inside_box(point, box) for box in gt_valid):
+            inside_any_gt += 1
+        if sam_boxes_px_m4 is not None and any(point_inside_box(point, box) for box in sam_boxes_px_m4 if box_valid(box)):
+            inside_sam += 1
+        if gt_centers:
+            min_center_dists.append(min(float(np.linalg.norm(point - center)) for center in gt_centers))
+    count = max(int(points_k2.shape[0]), 1)
+    return {
+        "inside_any_gt_rate": float(inside_any_gt / count),
+        "inside_sam_box_rate": float(inside_sam / count) if sam_boxes_px_m4 is not None else float("nan"),
+        "mean_min_gt_center_dist_px": float(np.mean(min_center_dists)) if min_center_dists else float("nan"),
+    }
 
 
 def track_alignment_metrics(
@@ -429,8 +471,9 @@ def render_gt_vs_tracks_video(
 def save_video_asset(asset_dir: Path, name: str, frames: np.ndarray, fps: int) -> str:
     raw_path = asset_dir / f"{name}.mp4"
     write_mp4(raw_path, frames, fps=fps)
-    browser_path = ensure_browser_video(raw_path)
-    return str(browser_path.relative_to(asset_dir.parent))
+    gif_path = asset_dir / f"{name}.gif"
+    write_gif(gif_path, frames, fps=fps)
+    return str(gif_path.relative_to(asset_dir.parent))
 
 
 def build_report(
@@ -451,7 +494,7 @@ def build_report(
         <p class="coord"><b>映射回 native:</b> {html.escape(card.mapping_note)}</p>
         <p class="verdict"><b>结论:</b> {html.escape(card.verdict)}</p>
         <ul>{metrics_html}</ul>
-        <video controls preload="metadata" playsinline src="{html.escape(card.video_relpath)}"></video>
+        <img src="{html.escape(card.media_relpath)}" alt="{html.escape(card.title)}">
       </article>
 """
         )
@@ -555,11 +598,12 @@ def build_report(
       padding-left: 18px;
       color: var(--muted);
     }}
-    .card video {{
+    .card img {{
       width: 100%;
       border: 1px solid var(--line);
       background: #000;
       aspect-ratio: 7 / 4;
+      object-fit: contain;
     }}
     @media (max-width: 1180px) {{
       .summary {{ grid-template-columns: 1fr; }}
@@ -750,22 +794,9 @@ def main() -> None:
 
     prompt_metrics = prompt_box_metrics(prompt_boxes, gt_boxes_tk4[prompt_frame_idx])
     sam_metrics = sam_track_box_metrics(sam_boxes_tmk4, gt_boxes_tk4)
-    query_gt_hits = []
-    query_center_dists = []
-    for q_idx, point_xy in enumerate(query_points_native):
-        gt_idx = int(active_gt_match[q_idx])
-        gt_box = gt_boxes_tk4[0, gt_idx]
-        query_gt_hits.append(float(point_inside_box(point_xy, gt_box)))
-        query_center_dists.append(float(np.linalg.norm(point_xy - box_center_xy(gt_box))))
-    query_inside_rate = float(np.mean(query_gt_hits)) if query_gt_hits else float("nan")
-    query_mean_center_dist = float(np.mean(query_center_dists)) if query_center_dists else float("nan")
+    query_metrics = point_region_metrics(query_points_native, gt_boxes_tk4[0], sam_boxes_px_m4=sam_boxes_tmk4[0])
     vggt_query_diff = np.linalg.norm(vggt_query_native - query_points_native, axis=-1)
-    vggt_query_inside_hits = []
-    for q_idx, point_xy in enumerate(vggt_query_native):
-        gt_idx = int(active_gt_match[q_idx])
-        gt_box = gt_boxes_tk4[0, gt_idx]
-        vggt_query_inside_hits.append(float(point_inside_box(point_xy, gt_box)))
-    vggt_query_inside_rate = float(np.mean(vggt_query_inside_hits)) if vggt_query_inside_hits else float("nan")
+    vggt_query_metrics = point_region_metrics(vggt_query_native, gt_boxes_tk4[0], sam_boxes_px_m4=sam_boxes_tmk4[0])
 
     active_track_metrics = track_alignment_metrics(active_tracks_native, gt_boxes_tk4, active_gt_match)
     vggt_track_metrics = track_alignment_metrics(vggt_tracks_native, gt_boxes_tk4, vggt_gt_match)
@@ -782,7 +813,7 @@ def main() -> None:
                 f"context frames = {context_video.shape[1]}",
                 f"caption = {caption}",
             ],
-            video_relpath=raw_rel,
+            media_relpath=raw_rel,
         ),
         ModuleCard(
             slug="sam-prompt",
@@ -799,7 +830,7 @@ def main() -> None:
                 f"mean best IoU vs GT@prompt = {fmt_float(prompt_metrics['mean_best_iou'])}",
                 f"max best IoU vs GT@prompt = {fmt_float(prompt_metrics['max_best_iou'])}",
             ],
-            video_relpath=prompt_rel,
+            media_relpath=prompt_rel,
         ),
         ModuleCard(
             slug="sam-track",
@@ -816,20 +847,25 @@ def main() -> None:
                 f"mean best IoU vs GT = {fmt_float(sam_metrics['mean_best_iou'])}",
                 f"max best IoU vs GT = {fmt_float(sam_metrics['max_best_iou'])}",
             ],
-            video_relpath=sam_rel,
+            media_relpath=sam_rel,
         ),
         ModuleCard(
             slug="query-priors",
             title="4. Native Query Priors",
             coord_note="query priors 存的是 native 像素点，顺序是 (x, y)。",
             mapping_note="无需 remap；这些点就是送进 VGGT / CoTracker 之前的公共对象条件。",
-            verdict=verdict_from_inside_rate(query_inside_rate, query_mean_center_dist, strong_px=24.0, weak_px=42.0),
+            verdict=(
+                "采样点和 SAM2 目标区域一致；是否覆盖 GT 取决于 SAM2 本身框住的目标。"
+                if query_metrics["inside_sam_box_rate"] == query_metrics["inside_sam_box_rate"] and query_metrics["inside_sam_box_rate"] >= 0.95
+                else "采样点和 SAM2 目标区域都不够一致，需要先检查 query prior 来源。"
+            ),
             metrics=[
                 f"query count = {query_points_native.shape[0]}",
-                f"inside matched GT@frame0 = {fmt_float(query_inside_rate * 100.0, '%')}",
-                f"mean dist to matched GT center@frame0 = {fmt_float(query_mean_center_dist, ' px')}",
+                f"inside SAM box@frame0 = {fmt_float(query_metrics['inside_sam_box_rate'] * 100.0, '%')}",
+                f"inside any GT box@frame0 = {fmt_float(query_metrics['inside_any_gt_rate'] * 100.0, '%')}",
+                f"mean min dist to any GT center@frame0 = {fmt_float(query_metrics['mean_min_gt_center_dist_px'], ' px')}",
             ],
-            video_relpath=query_rel,
+            media_relpath=query_rel,
         ),
         ModuleCard(
             slug="vggt-query",
@@ -844,9 +880,10 @@ def main() -> None:
             metrics=[
                 f"mean native-vs-back diff = {fmt_float(float(vggt_query_diff.mean()), ' px')}",
                 f"max native-vs-back diff = {fmt_float(float(vggt_query_diff.max()), ' px')}",
-                f"inside matched GT@frame0 = {fmt_float(vggt_query_inside_rate * 100.0, '%')}",
+                f"inside SAM box@frame0 = {fmt_float(vggt_query_metrics['inside_sam_box_rate'] * 100.0, '%')}",
+                f"inside any GT box@frame0 = {fmt_float(vggt_query_metrics['inside_any_gt_rate'] * 100.0, '%')}",
             ],
-            video_relpath=vggt_query_rel,
+            media_relpath=vggt_query_rel,
         ),
         ModuleCard(
             slug="vggt-tracks",
@@ -862,7 +899,7 @@ def main() -> None:
                 f"mean dist to matched GT center = {fmt_float(vggt_track_metrics['mean_center_dist_px'], ' px')}",
                 f"max dist to matched GT center = {fmt_float(vggt_track_metrics['max_center_dist_px'], ' px')}",
             ],
-            video_relpath=vggt_tracks_rel,
+            media_relpath=vggt_tracks_rel,
         ),
         ModuleCard(
             slug="active-tracks",
@@ -878,7 +915,7 @@ def main() -> None:
                 f"mean dist to matched GT center = {fmt_float(active_track_metrics['mean_center_dist_px'], ' px')}",
                 f"max dist to matched GT center = {fmt_float(active_track_metrics['max_center_dist_px'], ' px')}",
             ],
-            video_relpath=active_tracks_rel,
+            media_relpath=active_tracks_rel,
         ),
         ModuleCard(
             slug="gt-vs-active",
@@ -896,7 +933,7 @@ def main() -> None:
                 f"track_box_l1_loss = {fmt_float(float(forward_metrics['train/track_box_loss']))}",
                 f"track_iou_loss = {fmt_float(float(forward_metrics['train/track_iou_loss']))}",
             ],
-            video_relpath=active_gt_rel,
+            media_relpath=active_gt_rel,
         ),
         ModuleCard(
             slug="gt-vs-vggt",
@@ -913,7 +950,7 @@ def main() -> None:
                 f"mean VGGT-vs-active track dist = {fmt_float(float(vggt_active_dist.mean()), ' px')}",
                 f"max VGGT-vs-active track dist = {fmt_float(float(vggt_active_dist.max()), ' px')}",
             ],
-            video_relpath=vggt_gt_rel,
+            media_relpath=vggt_gt_rel,
         ),
     ]
 
