@@ -119,7 +119,7 @@ class ContextVideoTrainer(nn.Module):
             input_hw=tuple(model_cfg["vggt_input_hw"]),
             trainable=bool(model_cfg.get("train_vggt", False)),
         ).to(self.device_obj)
-        self.track_source = str(model_cfg.get("track_source", "vggt")).strip().lower()
+        self.track_source = str(model_cfg.get("track_source", "cotracker")).strip().lower()
         if self.track_source not in {"vggt", "cotracker"}:
             raise ValueError(f"unsupported track_source: {self.track_source}")
         self.cotracker_adapter = None

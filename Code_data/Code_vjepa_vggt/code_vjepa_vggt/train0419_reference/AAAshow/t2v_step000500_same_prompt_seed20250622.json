@@ -1,0 +1,16 @@
+{
+  "video_path": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/AAAshow/t2v_step000500_same_prompt_seed20250622.mp4",
+  "prompt": "A ball flew in from the left, knocking a wooden block that was stationary on the ground far away.",
+  "negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+  "seed": 20250622,
+  "height": 704,
+  "width": 1280,
+  "num_frames": 121,
+  "fps": 24,
+  "num_inference_steps": 50,
+  "cfg_scale": 5.0,
+  "wan_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+  "lora_path": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+  "device": "cuda",
+  "mode": "text2video"
+}
