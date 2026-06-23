@@ -41,8 +41,13 @@ class ObjectAuxHeads(nn.Module):
         object_latent_tokens: torch.Tensor,
         active_track_summary: torch.Tensor,
     ) -> ObjectAuxHeadOutput:
+        if int(active_track_summary.shape[-1]) < 4:
+            raise ValueError(
+                f"active_track_summary must have at least 4 channels, got {list(active_track_summary.shape)}"
+            )
+        track_base = active_track_summary[..., :4]
         track_delta = self.track_delta_scale * torch.tanh(self.track_head(object_latent_tokens))
-        pred_track_summary = active_track_summary + track_delta
+        pred_track_summary = track_base + track_delta
         pred_box_wh = torch.sigmoid(self.box_head(object_latent_tokens))
         center_xy = pred_track_summary[..., :2]
         half_wh = 0.5 * pred_box_wh

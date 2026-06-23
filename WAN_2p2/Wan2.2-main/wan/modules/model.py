@@ -208,8 +208,14 @@ class WanAttentionBlock(nn.Module):
         self.norm3 = WanLayerNorm(
             dim, eps,
             elementwise_affine=True) if cross_attn_norm else nn.Identity()
+        self.norm4 = WanLayerNorm(
+            dim, eps,
+            elementwise_affine=True) if cross_attn_norm else nn.Identity()
         self.cross_attn = WanCrossAttention(dim, num_heads, (-1, -1), qk_norm,
                                             eps)
+        self.object_cross_attn = WanCrossAttention(dim, num_heads, (-1, -1),
+                                                   qk_norm, eps)
+        self.object_gate = nn.Parameter(torch.zeros(1, 1, dim))
         self.norm2 = WanLayerNorm(dim, eps)
         self.ffn = nn.Sequential(
             nn.Linear(dim, ffn_dim), nn.GELU(approximate='tanh'),
@@ -227,6 +233,8 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        object_context=None,
+        object_context_lens=None,
     ):
         r"""
         Args:
@@ -251,6 +259,11 @@ class WanAttentionBlock(nn.Module):
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
+            if object_context is not None:
+                object_delta = self.object_cross_attn(
+                    self.norm4(x), object_context, object_context_lens)
+                with torch.amp.autocast('cuda', dtype=torch.float32):
+                    x = x + object_delta * torch.tanh(self.object_gate)
             y = self.ffn(
                 self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
@@ -382,6 +395,9 @@ class WanModel(ModelMixin, ConfigMixin):
         self.text_embedding = nn.Sequential(
             nn.Linear(text_dim, dim), nn.GELU(approximate='tanh'),
             nn.Linear(dim, dim))
+        self.object_embedding = nn.Sequential(
+            nn.Linear(text_dim, dim), nn.GELU(approximate='tanh'),
+            nn.Linear(dim, dim))
 
         self.time_embedding = nn.Sequential(
             nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
@@ -413,9 +429,11 @@ class WanModel(ModelMixin, ConfigMixin):
         self,
         x,
         t,
-        context,
-        seq_len,
+        context=None,
+        seq_len=None,
         y=None,
+        text_context=None,
+        object_context=None,
     ):
         r"""
         Forward pass through the diffusion model
@@ -425,12 +443,16 @@ class WanModel(ModelMixin, ConfigMixin):
                 List of input video tensors, each with shape [C_in, F, H, W]
             t (Tensor):
                 Diffusion timesteps tensor of shape [B]
-            context (List[Tensor]):
-                List of text embeddings each with shape [L, C]
+            context (List[Tensor], *optional*):
+                Legacy text/object fused embeddings, kept for backward compatibility
             seq_len (`int`):
                 Maximum sequence length for positional encoding
             y (List[Tensor], *optional*):
                 Conditional video inputs for image-to-video mode, same shape as x
+            text_context (List[Tensor], *optional*):
+                Text embeddings each with shape [L, C]
+            object_context (List[Tensor], *optional*):
+                Object embeddings each with shape [L_obj, C]
 
         Returns:
             List[Tensor]:
@@ -438,6 +460,8 @@ class WanModel(ModelMixin, ConfigMixin):
         """
         if self.model_type == 'i2v':
             assert y is not None
+        if seq_len is None:
+            raise ValueError("WanModel.forward requires seq_len")
         # params
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
@@ -471,13 +495,47 @@ class WanModel(ModelMixin, ConfigMixin):
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
-        context_lens = None
-        context = self.text_embedding(
-            torch.stack([
-                torch.cat(
-                    [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
-                for u in context
-            ]))
+        if text_context is None:
+            text_context = context
+        if text_context is None:
+            raise ValueError("WanModel.forward requires either context or text_context")
+
+        def _embed_context(context_list, embedding, fixed_len=None):
+            if context_list is None:
+                return None, None
+            if len(context_list) == 0:
+                raise ValueError("context list must not be empty")
+            lengths = torch.tensor(
+                [int(u.size(0)) for u in context_list],
+                dtype=torch.long,
+                device=device,
+            )
+            max_len = int(lengths.max().item()) if fixed_len is None else int(fixed_len)
+            padded = []
+            for u in context_list:
+                if int(u.size(0)) > max_len:
+                    padded.append(u[:max_len])
+                else:
+                    padded.append(
+                        torch.cat([u, u.new_zeros(max_len - u.size(0), u.size(1))], dim=0)
+                    )
+            stacked = torch.stack(padded)
+            embedded = embedding(stacked)
+            lens = lengths.clamp_max(max_len)
+            if fixed_len is not None and bool(torch.all(lens == max_len)):
+                lens = None
+            return embedded, lens
+
+        context, context_lens = _embed_context(
+            text_context,
+            self.text_embedding,
+            fixed_len=self.text_len,
+        )
+        object_context, object_context_lens = _embed_context(
+            object_context,
+            self.object_embedding,
+            fixed_len=None,
+        )
 
         # arguments
         kwargs = dict(
@@ -486,7 +544,9 @@ class WanModel(ModelMixin, ConfigMixin):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens)
+            context_lens=context_lens,
+            object_context=object_context,
+            object_context_lens=object_context_lens)
 
         for block in self.blocks:
             x = block(x, **kwargs)
@@ -538,6 +598,9 @@ class WanModel(ModelMixin, ConfigMixin):
         # init embeddings
         nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
         for m in self.text_embedding.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=.02)
+        for m in self.object_embedding.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=.02)
         for m in self.time_embedding.modules():

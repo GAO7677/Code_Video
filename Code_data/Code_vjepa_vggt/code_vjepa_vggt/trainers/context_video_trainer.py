@@ -332,6 +332,32 @@ class ContextVideoTrainer(nn.Module):
         out_valid = valid_mask.any(dim=2)
         return out, out_valid
 
+    @staticmethod
+    def _gather_matched_gt_features(values: torch.Tensor, matched_gt_indices: torch.Tensor) -> torch.Tensor:
+        if values.ndim != 4:
+            raise ValueError(f"expected values with shape [B,T,G,D], got {list(values.shape)}")
+        gather_idx = matched_gt_indices[:, None, :, None].expand(-1, values.shape[1], -1, values.shape[-1])
+        return torch.gather(values, 2, gather_idx)
+
+    @staticmethod
+    def _gather_matched_gt_mask(values: torch.Tensor, matched_gt_indices: torch.Tensor) -> torch.Tensor:
+        if values.ndim != 3:
+            raise ValueError(f"expected values with shape [B,T,G], got {list(values.shape)}")
+        gather_idx = matched_gt_indices[:, None, :].expand(-1, values.shape[1], -1)
+        return torch.gather(values, 2, gather_idx)
+
+    @classmethod
+    def _group_box_targets(
+        cls,
+        boxes_xyxy: torch.Tensor,
+        valid_mask: torch.Tensor,
+        latent_frames: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        group = cls._latent_window_size(int(boxes_xyxy.shape[1]), int(latent_frames))
+        grouped_boxes = boxes_xyxy.view(boxes_xyxy.shape[0], int(latent_frames), group, boxes_xyxy.shape[2], 4)[:, :, -1]
+        grouped_valid = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2]).any(dim=2)
+        return grouped_boxes, grouped_valid
+
     def _maybe_build_query_priors(
         self,
         context_videos: torch.Tensor,
@@ -548,12 +574,26 @@ class ContextVideoTrainer(nn.Module):
             vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=frame_valid_mask,
         )
-        fused_context = self.context_fuser(text_ctx, object_out.object_tokens)
+        object_aux_out = self.object_aux_heads(
+            object_out.object_latent_tokens,
+            object_out.active_track_summary,
+        )
+        object_context = self.object_adapter(object_out.object_latent_tokens)
 
         track_alignment = None
         track_box_loss = None
         track_iou_loss = None
         tracks_native = None
+        gt_track_summary = None
+        gt_track_valid = None
+        gt_box_xyxy = None
+        gt_box_valid = None
+        gt_depth = None
+        gt_depth_valid = None
+        depth_target_index = self.cfg.get("loss", {}).get(
+            "depth_target_state_index",
+            self.cfg["model"].get("depth_target_state_index"),
+        )
         if "context_boxes" in batch:
             context_boxes = batch["context_boxes"].to(self.device_obj)
             scale_x = float(context_videos.shape[-1]) / float(track_image_hw[1])
@@ -578,6 +618,42 @@ class ContextVideoTrainer(nn.Module):
                 image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
                 radius_px=float(self.cfg.get("loss", {}).get("track_iou_radius_px", 12.0)),
             )
+            latent_frames = int(object_out.object_latent_tokens.shape[1])
+            gt_valid_full = (track_alignment.matched_gt_valid > 0.5) & frame_valid_mask.unsqueeze(-1)
+            gt_track_summary, gt_track_valid = self._group_track_summary(
+                track_alignment.matched_gt_centers,
+                gt_valid_full,
+                image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
+                latent_frames=latent_frames,
+            )
+            matched_gt_boxes = self._gather_matched_gt_features(
+                context_boxes,
+                track_alignment.matched_gt_indices,
+            )
+            matched_gt_box_valid = (
+                ((matched_gt_boxes[..., 2] - matched_gt_boxes[..., 0]) > 1.0e-6)
+                & ((matched_gt_boxes[..., 3] - matched_gt_boxes[..., 1]) > 1.0e-6)
+                & frame_valid_mask.unsqueeze(-1)
+            )
+            gt_box_xyxy, gt_box_valid = self._group_box_targets(
+                matched_gt_boxes,
+                matched_gt_box_valid,
+                latent_frames,
+            )
+            if depth_target_index is not None and "context_states" in batch:
+                context_states = batch["context_states"].to(self.device_obj)
+                depth_target_index = int(depth_target_index)
+                if depth_target_index < 0 or depth_target_index >= int(context_states.shape[-1]):
+                    raise ValueError(
+                        f"depth_target_state_index={depth_target_index} is out of range for "
+                        f"context_states shape {list(context_states.shape)}"
+                    )
+                matched_gt_depth = self._gather_matched_gt_features(
+                    context_states[..., depth_target_index : depth_target_index + 1],
+                    track_alignment.matched_gt_indices,
+                )
+                gt_depth = self._group_last(matched_gt_depth, latent_frames)
+                gt_depth_valid = gt_box_valid
 
         debug = {
             "说明": {
@@ -588,8 +664,9 @@ class ContextVideoTrainer(nn.Module):
                 "vggt_tracks": "VGGT 根据 query priors 或默认 queries 预测的 query-point tracks [B,Tctx,K,2]。",
                 "cotracker_tracks": "如果 track_source=cotracker，则同一批 query points 会额外送入 CoTracker，object pooling 和 box 辅助约束都改用 CoTracker 轨迹。",
                 "vggt_dense_geometry": "VGGT 还能输出 pose / depth / world_points；当前版本已把 world_points + depth 沿轨迹采样后并入 object geometry token。",
-                "object_tokens": "沿着轨迹从 JEPA 局部 tube、VAE latent、轨迹几何特征、以及 VGGT dense geometry 中池化并投影得到的 object state tokens [B,K,D]。",
-                "fused_context": "送入 Wan DiT cross-attention 的条件 token，等于 text tokens + 选出的 object tokens。",
+                "object_latent_tokens": "主条件改成 latent-time object token [B,T_lat,K,D]，先与文本分开，后续由 Wan block 的独立 object cross-attn 消化。",
+                "object_context": "object_latent_tokens 加入 time/slot adapter 后展平成 [B,T_lat*K,D]，送入 Wan gated object cross-attn。",
+                "object_aux_heads": "训练期额外从 object_latent_tokens 预测 track summary / box / depth，用于监督，不作为推理必须输出。",
             },
             "video": list(videos.shape),
             "context_video": list(context_videos.shape),
@@ -615,10 +692,13 @@ class ContextVideoTrainer(nn.Module):
             "active_track_image_hw": list(track_image_hw),
             "object_tokens": list(object_out.object_tokens.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
-            "object_latent_tokens": list(object_out.latent_tokens.shape),
+            "object_latent_tokens": list(object_out.object_latent_tokens.shape),
             "object_geom_tokens": list(object_out.geom_tokens.shape),
             "object_vggt_geom_tokens": list(object_out.vggt_geom_tokens.shape) if object_out.vggt_geom_tokens is not None else None,
-            "fused_context": self._shape_list(fused_context),
+            "object_context": list(object_context.shape),
+            "object_aux_pred_track_summary": list(object_aux_out.pred_track_summary.shape),
+            "object_aux_pred_box_xyxy": list(object_aux_out.pred_box_xyxy.shape),
+            "object_aux_pred_depth": list(object_aux_out.pred_depth.shape),
             "vggt_used_model": bool(vggt_out.used_model),
             "vggt_track_image_hw": list(vggt_out.image_hw),
             "video_path": batch["video_path"][0] if isinstance(batch["video_path"], list) else batch["video_path"],
@@ -653,6 +733,16 @@ class ContextVideoTrainer(nn.Module):
                 debug["track_box_l1_loss"] = float(track_box_loss.item())
                 debug["track_box_iou_loss"] = float(track_iou_loss.item())
                 debug["tracks_native_xy"] = list(tracks_native.shape)
+            if gt_track_summary is not None and gt_track_valid is not None:
+                debug["gt_track_summary"] = list(gt_track_summary.shape)
+                debug["gt_track_valid"] = list(gt_track_valid.shape)
+            if gt_box_xyxy is not None and gt_box_valid is not None:
+                debug["gt_box_xyxy"] = list(gt_box_xyxy.shape)
+                debug["gt_box_valid"] = list(gt_box_valid.shape)
+            if gt_depth is not None and gt_depth_valid is not None:
+                debug["gt_depth"] = list(gt_depth.shape)
+                debug["gt_depth_valid"] = list(gt_depth_valid.shape)
+                debug["depth_target_state_index"] = int(depth_target_index)
 
         return {
             "videos": videos,
@@ -661,10 +751,19 @@ class ContextVideoTrainer(nn.Module):
             "num_context_frames": num_context_frames,
             "full_latents": full_latents,
             "context_latents": context_latents,
-            "fused_context": fused_context,
+            "text_context": text_ctx,
+            "object_context": object_context,
+            "object_latent_tokens": object_out.object_latent_tokens,
+            "object_aux_out": object_aux_out,
             "object_tokens": object_out.object_tokens,
             "track_box_loss": track_box_loss,
             "track_iou_loss": track_iou_loss,
+            "gt_track_summary": gt_track_summary,
+            "gt_track_valid": gt_track_valid,
+            "gt_box_xyxy": gt_box_xyxy,
+            "gt_box_valid": gt_box_valid,
+            "gt_depth": gt_depth,
+            "gt_depth_valid": gt_depth_valid,
             "debug": debug,
         }
 
@@ -675,15 +774,27 @@ class ContextVideoTrainer(nn.Module):
         num_context_frames = prepared["num_context_frames"]
         full_latents = prepared["full_latents"]
         context_latents = prepared["context_latents"]
-        fused_context = prepared["fused_context"]
+        text_context = prepared["text_context"]
+        object_context = prepared["object_context"]
+        object_latent_tokens = prepared["object_latent_tokens"]
+        object_aux_out: ObjectAuxHeadOutput = prepared["object_aux_out"]
         object_tokens = prepared["object_tokens"]
         track_box_loss = prepared["track_box_loss"]
         track_iou_loss = prepared["track_iou_loss"]
+        gt_track_summary = prepared["gt_track_summary"]
+        gt_track_valid = prepared["gt_track_valid"]
+        gt_box_xyxy = prepared["gt_box_xyxy"]
+        gt_box_valid = prepared["gt_box_valid"]
+        gt_depth = prepared["gt_depth"]
+        gt_depth_valid = prepared["gt_depth_valid"]
         dit_param = next(self.bundle.dit.parameters())
         dit_dtype = dit_param.dtype
         dit_device = dit_param.device
-        fused_context_abs_max = max(float(ctx.detach().abs().max().item()) for ctx in fused_context)
+        text_context_abs_max = max(float(ctx.detach().abs().max().item()) for ctx in text_context)
+        object_context_abs_max = float(object_context.detach().abs().max().item())
+        fused_context_abs_max = max(text_context_abs_max, object_context_abs_max)
         object_tokens_abs_max = float(object_tokens.detach().abs().max().item())
+        object_latent_tokens_abs_max = float(object_latent_tokens.detach().abs().max().item())
 
         losses = []
         pred_abs_max_values: list[float] = []
@@ -714,11 +825,14 @@ class ContextVideoTrainer(nn.Module):
                 self.bundle.config.patch_size[1] * self.bundle.config.patch_size[2]
             )
             t_tokens = torch.full((1, seq_len), float(timestep.item()), device=dit_device, dtype=dit_dtype)
-            cond_context = fused_context[sample_idx].to(device=dit_device, dtype=dit_dtype)
+            text_ctx_sample = text_context[sample_idx].to(device=dit_device, dtype=dit_dtype)
+            object_ctx_sample = object_context[sample_idx].to(device=dit_device, dtype=dit_dtype)
             pred = self.bundle.dit(
                 [x_t],
                 t=t_tokens,
-                context=[cond_context],
+                context=None,
+                text_context=[text_ctx_sample],
+                object_context=[object_ctx_sample],
                 seq_len=seq_len,
                 y=None,
             )[0]
@@ -750,21 +864,61 @@ class ContextVideoTrainer(nn.Module):
                 )
             losses.append(loss_main)
 
-        loss = torch.stack(losses).mean()
+        loss_main = torch.stack(losses).mean()
         if track_box_loss is not None:
             track_box_loss = torch.nan_to_num(track_box_loss, nan=0.0, posinf=0.0, neginf=0.0)
         if track_iou_loss is not None:
             track_iou_loss = torch.nan_to_num(track_iou_loss, nan=0.0, posinf=0.0, neginf=0.0)
+        track_aux_loss = loss_main.new_zeros(())
+        box_aux_loss = loss_main.new_zeros(())
+        depth_aux_loss = loss_main.new_zeros(())
+        if gt_track_summary is not None and gt_track_valid is not None:
+            pred_track_summary = torch.nan_to_num(object_aux_out.pred_track_summary, nan=0.0, posinf=0.0, neginf=0.0)
+            weights = gt_track_valid.unsqueeze(-1).to(dtype=pred_track_summary.dtype, device=pred_track_summary.device)
+            denom = weights.sum().clamp_min(1.0) * pred_track_summary.shape[-1]
+            track_aux_loss = ((pred_track_summary - gt_track_summary).abs() * weights).sum() / denom
+        if gt_box_xyxy is not None and gt_box_valid is not None:
+            pred_box_xyxy = torch.nan_to_num(object_aux_out.pred_box_xyxy, nan=0.0, posinf=0.0, neginf=0.0)
+            weights = gt_box_valid.unsqueeze(-1).to(dtype=pred_box_xyxy.dtype, device=pred_box_xyxy.device)
+            denom = weights.sum().clamp_min(1.0) * pred_box_xyxy.shape[-1]
+            box_aux_loss = ((pred_box_xyxy - gt_box_xyxy).abs() * weights).sum() / denom
+        if gt_depth is not None and gt_depth_valid is not None:
+            pred_depth = torch.nan_to_num(object_aux_out.pred_depth, nan=0.0, posinf=0.0, neginf=0.0)
+            weights = gt_depth_valid.unsqueeze(-1).to(dtype=pred_depth.dtype, device=pred_depth.device)
+            denom = weights.sum().clamp_min(1.0) * pred_depth.shape[-1]
+            depth_aux_loss = ((pred_depth - gt_depth).abs() * weights).sum() / denom
+
+        loss_cfg = self.cfg.get("loss", {})
+        lambda_main = float(loss_cfg.get("lambda_main", 1.0))
+        lambda_track_aux = float(loss_cfg.get("lambda_track_aux", 0.1))
+        lambda_box_aux = float(loss_cfg.get("lambda_box_aux", 0.1))
+        lambda_depth_aux = float(loss_cfg.get("lambda_depth_aux", 0.0))
+        loss = (
+            lambda_main * loss_main
+            + lambda_track_aux * track_aux_loss
+            + lambda_box_aux * box_aux_loss
+            + lambda_depth_aux * depth_aux_loss
+        )
         if not torch.isfinite(loss).all():
             raise RuntimeError(
                 "non-finite total loss detected; "
-                f"loss_main_mean={float(torch.stack(losses).mean().item())}, "
+                f"loss_main_mean={float(loss_main.item())}, "
+                f"track_aux_loss={float(track_aux_loss.item())}, "
+                f"box_aux_loss={float(box_aux_loss.item())}, "
+                f"depth_aux_loss={float(depth_aux_loss.item())}, "
                 f"track_box_loss={None if track_box_loss is None else float(track_box_loss.item())}, "
                 f"track_iou_loss={None if track_iou_loss is None else float(track_iou_loss.item())}"
             )
         self.last_train_metrics = {
-            "train/loss_main": float(torch.stack(losses).mean().item()),
+            "train/loss_main": float(loss_main.item()),
+            "train/loss_total": float(loss.item()),
+            "train/loss_track_aux": float(track_aux_loss.item()),
+            "train/loss_box_aux": float(box_aux_loss.item()),
+            "train/loss_depth_aux": float(depth_aux_loss.item()),
             "train/object_tokens_abs_max": float(object_tokens_abs_max),
+            "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs_max),
+            "train/text_context_abs_max": float(text_context_abs_max),
+            "train/object_context_abs_max": float(object_context_abs_max),
             "train/fused_context_abs_max": float(fused_context_abs_max),
             "train/pred_abs_max": float(max(pred_abs_max_values) if pred_abs_max_values else 0.0),
             "train/x_t_abs_max": float(max(latent_abs_max_values) if latent_abs_max_values else 0.0),
