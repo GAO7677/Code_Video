@@ -200,6 +200,7 @@ class ContextVideoTrainer(nn.Module):
         _debug_log("dataset built")
         self.state = TrainerState()
         self.last_train_metrics: dict[str, float] = {}
+        self.last_loss_breakdown: dict[str, torch.Tensor] = {}
 
     def _build_dataset(self):
         data_cfg = self.cfg["data"]
@@ -910,6 +911,17 @@ class ContextVideoTrainer(nn.Module):
             + lambda_box_aux * box_aux_loss
             + lambda_depth_aux * depth_aux_loss
         )
+        self.last_loss_breakdown = {
+            "loss_main": loss_main,
+            "track_aux_loss": track_aux_loss,
+            "box_aux_loss": box_aux_loss,
+            "depth_aux_loss": depth_aux_loss,
+            "loss_total": loss,
+            "lambda_main": loss_main.new_tensor(lambda_main),
+            "lambda_track_aux": loss_main.new_tensor(lambda_track_aux),
+            "lambda_box_aux": loss_main.new_tensor(lambda_box_aux),
+            "lambda_depth_aux": loss_main.new_tensor(lambda_depth_aux),
+        }
         if not torch.isfinite(loss).all():
             raise RuntimeError(
                 "non-finite total loss detected; "
