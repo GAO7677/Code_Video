@@ -32,6 +32,12 @@ class PhysStateEpisodeDataset(Dataset):
         self.samples = sorted(self.root.glob("*.json"))
         if not self.samples:
             raise RuntimeError(f"no json metadata found under {self.root}")
+        self.samples = self._filter_samples_with_enough_context(self.samples)
+        if not self.samples:
+            raise RuntimeError(
+                f"no samples under {self.root} can provide fixed num_context_frames={self.num_context_frames} "
+                f"within context_fraction={self.context_fraction}"
+            )
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -39,19 +45,35 @@ class PhysStateEpisodeDataset(Dataset):
     def _resize_video(self, frames_tchw: torch.Tensor) -> torch.Tensor:
         return F.interpolate(frames_tchw, size=self.resolution, mode="bilinear", align_corners=False)
 
+    def _max_context_len(self, total_frames: int) -> int:
+        return max(1, min(total_frames, int(total_frames * self.context_fraction)))
+
+    def _filter_samples_with_enough_context(self, samples: list[Path]) -> list[Path]:
+        filtered: list[Path] = []
+        for meta_path in samples:
+            npz_path = meta_path.with_suffix(".npz")
+            tensors = load_npz_tensor_dict(npz_path)
+            total_frames = int(tensors["context_frames"].shape[0] + tensors["future_frames"].shape[0])
+            if self._max_context_len(total_frames) >= self.num_context_frames:
+                filtered.append(meta_path)
+        return filtered
+
     def _select_context_indices(self, total_frames: int, idx: int) -> torch.Tensor:
-        max_context_len = max(1, min(total_frames, int(total_frames * self.context_fraction)))
+        max_context_len = self._max_context_len(total_frames)
+        if max_context_len < self.num_context_frames:
+            raise RuntimeError(
+                f"sample idx={idx} only has max_context_len={max_context_len}, "
+                f"smaller than required num_context_frames={self.num_context_frames}"
+            )
+
         if not self.random_context_frames:
-            context_len = min(self.num_context_frames, max_context_len)
-            return torch.arange(context_len, dtype=torch.long)
+            return torch.arange(self.num_context_frames, dtype=torch.long)
 
-        if max_context_len <= 1:
-            return torch.arange(1, dtype=torch.long)
-
+        max_start = max_context_len - self.num_context_frames
         generator = torch.Generator()
         generator.manual_seed(self.seed + idx)
-        context_len = int(torch.randint(1, max_context_len + 1, (1,), generator=generator).item())
-        return torch.arange(context_len, dtype=torch.long)
+        start = int(torch.randint(0, max_start + 1, (1,), generator=generator).item()) if max_start > 0 else 0
+        return torch.arange(start, start + self.num_context_frames, dtype=torch.long)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         meta_path = self.samples[idx]

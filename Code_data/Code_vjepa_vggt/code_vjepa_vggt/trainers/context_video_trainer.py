@@ -437,20 +437,11 @@ class ContextVideoTrainer(nn.Module):
         captions = list(batch["caption"])
         num_context_frames = batch["num_context_frames"].to(self.device_obj).long()
         target_context_frames = int(self.cfg["data"]["num_context_frames"])
-        if context_videos.shape[2] < target_context_frames:
-            pad_t = target_context_frames - context_videos.shape[2]
-            pad = context_videos[:, :, -1:].expand(-1, -1, pad_t, -1, -1).contiguous()
-            context_videos = torch.cat([context_videos, pad], dim=2)
-            if "context_boxes" in batch:
-                batch["context_boxes"] = torch.stack(
-                    [self._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in batch["context_boxes"]],
-                    dim=0,
-                )
-            if "context_states" in batch:
-                batch["context_states"] = torch.stack(
-                    [self._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in batch["context_states"]],
-                    dim=0,
-                )
+        if int(context_videos.shape[2]) != target_context_frames:
+            raise RuntimeError(
+                f"context_videos must be fixed-length before training; "
+                f"got T={int(context_videos.shape[2])}, expected {target_context_frames}"
+            )
         frame_valid_mask = self._frame_valid_mask(context_videos.shape[2], num_context_frames, self.device_obj)
 
         text_ctx = self._encode_text(captions)
@@ -499,6 +490,7 @@ class ContextVideoTrainer(nn.Module):
             vggt_world_points_conf=vggt_out.world_points_conf,
             vggt_depth=vggt_out.depth,
             vggt_depth_conf=vggt_out.depth_conf,
+            vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=frame_valid_mask,
         )
         fused_context = self.context_fuser(text_ctx, object_out.object_tokens)

@@ -78,6 +78,29 @@ class ObjectTubeProjector(nn.Module):
         y = y.clamp(0.0, 1.0)
         return torch.stack([x, y, visibility, confidence], dim=-1)
 
+    @staticmethod
+    def _resize_tracks_xy(
+        tracks: torch.Tensor,
+        *,
+        src_hw: tuple[int, int],
+        dst_hw: tuple[int, int],
+        align_corners: bool,
+    ) -> torch.Tensor:
+        if tuple(int(v) for v in src_hw) == tuple(int(v) for v in dst_hw):
+            return tracks
+        out = tracks.clone()
+        src_h, src_w = int(src_hw[0]), int(src_hw[1])
+        dst_h, dst_w = int(dst_hw[0]), int(dst_hw[1])
+        if align_corners:
+            scale_x = float(max(dst_w - 1, 1)) / max(float(src_w - 1), 1.0)
+            scale_y = float(max(dst_h - 1, 1)) / max(float(src_h - 1), 1.0)
+            out[..., 0] *= scale_x
+            out[..., 1] *= scale_y
+            return out
+        out[..., 0] = ((out[..., 0] + 0.5) * float(dst_w) / max(float(src_w), 1.0)) - 0.5
+        out[..., 1] = ((out[..., 1] + 0.5) * float(dst_h) / max(float(src_h), 1.0)) - 0.5
+        return out
+
     def _pool_feature_grid(
         self,
         features: torch.Tensor,
@@ -132,6 +155,7 @@ class ObjectTubeProjector(nn.Module):
         vggt_world_points_conf: torch.Tensor | None = None,
         vggt_depth: torch.Tensor | None = None,
         vggt_depth_conf: torch.Tensor | None = None,
+        vggt_geometry_image_hw: tuple[int, int] | None = None,
         frame_valid_mask: torch.Tensor | None = None,
     ) -> ObjectTokenOutput:
         # Keep the object-token path in fp32 so bf16/autocast cannot inject
@@ -195,17 +219,32 @@ class ObjectTubeProjector(nn.Module):
             geom_tokens = (geom_feat * geom_weights).sum(dim=1) / geom_denom
             vggt_geom_tokens = None
             if vggt_world_points is not None and vggt_depth is not None:
+                geometry_image_hw = (
+                    tuple(int(v) for v in vggt_geometry_image_hw)
+                    if vggt_geometry_image_hw is not None
+                    else tuple(int(v) for v in track_image_hw)
+                )
+                # VGGT dense geometry is predicted on the resized VGGT input image.
+                # When active tracks come from CoTracker/native resolution, remap
+                # them into that VGGT image space with pixel-center aligned scaling,
+                # matching the align_corners=False resize used by the VGGT adapter.
+                geometry_tracks = self._resize_tracks_xy(
+                    tracks,
+                    src_hw=track_image_hw,
+                    dst_hw=geometry_image_hw,
+                    align_corners=False,
+                )
                 world_local = self._pool_feature_grid(
                     vggt_world_points,
-                    tracks,
-                    image_hw=track_image_hw,
+                    geometry_tracks,
+                    image_hw=geometry_image_hw,
                     window_radius=0,
                     frame_valid_mask=frame_valid_mask,
                 )
                 depth_local = self._pool_feature_grid(
                     vggt_depth,
-                    tracks,
-                    image_hw=track_image_hw,
+                    geometry_tracks,
+                    image_hw=geometry_image_hw,
                     window_radius=0,
                     frame_valid_mask=frame_valid_mask,
                 )
@@ -220,16 +259,16 @@ class ObjectTubeProjector(nn.Module):
                 if vggt_world_points_conf is not None:
                     world_conf_local = self._pool_feature_grid(
                         vggt_world_points_conf,
-                        tracks,
-                        image_hw=track_image_hw,
+                        geometry_tracks,
+                        image_hw=geometry_image_hw,
                         window_radius=0,
                         frame_valid_mask=frame_valid_mask,
                     )
                 if vggt_depth_conf is not None:
                     depth_conf_local = self._pool_feature_grid(
                         vggt_depth_conf.unsqueeze(-1),
-                        tracks,
-                        image_hw=track_image_hw,
+                        geometry_tracks,
+                        image_hw=geometry_image_hw,
                         window_radius=0,
                         frame_valid_mask=frame_valid_mask,
                     )

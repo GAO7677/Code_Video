@@ -17,7 +17,7 @@ from code_vjepa_vggt.adapters.sam2_motion import (
     build_motion_prompt_box,
     build_motion_prompt_boxes,
 )
-from code_vjepa_vggt.models.object_tokens import ObjectTokenOutput
+from code_vjepa_vggt.models.object_tokens import ObjectTokenOutput, ObjectTubeProjector
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer, _build_multi_object_prompt
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.masks import (
@@ -373,21 +373,11 @@ class TrainingFlowInspector:
         num_context_frames = batch["num_context_frames"].to(self.trainer.device_obj).long()
         target_context_frames = int(self.cfg["data"]["num_context_frames"])
         mutable_batch = dict(batch)
-
-        if context_videos.shape[2] < target_context_frames:
-            pad_t = target_context_frames - context_videos.shape[2]
-            pad = context_videos[:, :, -1:].expand(-1, -1, pad_t, -1, -1).contiguous()
-            context_videos = torch.cat([context_videos, pad], dim=2)
-            if "context_boxes" in mutable_batch:
-                mutable_batch["context_boxes"] = torch.stack(
-                    [self.trainer._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in mutable_batch["context_boxes"]],
-                    dim=0,
-                )
-            if "context_states" in mutable_batch:
-                mutable_batch["context_states"] = torch.stack(
-                    [self.trainer._pad_time_axis(value, target_context_frames, fill_mode="zeros") for value in mutable_batch["context_states"]],
-                    dim=0,
-                )
+        if int(context_videos.shape[2]) != target_context_frames:
+            raise RuntimeError(
+                f"context_videos must be fixed-length before inspection; "
+                f"got T={int(context_videos.shape[2])}, expected {target_context_frames}"
+            )
 
         frame_valid_mask = self.trainer._frame_valid_mask(context_videos.shape[2], num_context_frames, self.trainer.device_obj)
         text_ctx = self.trainer._encode_text(captions)
@@ -438,6 +428,7 @@ class TrainingFlowInspector:
             vggt_world_points_conf=vggt_out.world_points_conf,
             vggt_depth=vggt_out.depth,
             vggt_depth_conf=vggt_out.depth_conf,
+            vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=frame_valid_mask,
         )
         fused_context = self.trainer.context_fuser(text_ctx, object_out.object_tokens)
@@ -795,6 +786,72 @@ class TrainingFlowInspector:
         axes[2].text(0.0, 0.95, "\n".join(summary), va="top", fontsize=11, family="monospace")
 
         fig.suptitle("Step 7. Wan 训练前向: latent mask / noise / loss dry-run", fontsize=15)
+        fig.tight_layout()
+        return fig
+
+    def plot_cotracker_vggt_geometry_alignment_compare(self, frame_idx: int | None = None) -> plt.Figure:
+        artifacts = self.collect_artifacts()
+        if artifacts.cotracker_out is None:
+            raise RuntimeError("当前样本没有走 CoTracker active tracks，无法做该对比。")
+        if artifacts.vggt_out.depth is None or artifacts.vggt_out.world_points is None:
+            raise RuntimeError("VGGT 几何输出不存在，无法做该对比。")
+
+        valid_frames = int(artifacts.num_context_frames[0].item())
+        if frame_idx is None:
+            frame_idx = max(valid_frames - 1, 0)
+
+        native_hw = tuple(int(v) for v in artifacts.active_track_image_hw)
+        geometry_hw = tuple(int(v) for v in artifacts.vggt_out.image_hw)
+        tracks_native = artifacts.active_tracks[0, frame_idx].detach().cpu()
+        old_tracks = ObjectTubeProjector._resize_tracks_xy(
+            tracks_native.unsqueeze(0),
+            src_hw=native_hw,
+            dst_hw=geometry_hw,
+            align_corners=True,
+        )[0].detach().cpu().numpy()
+        new_tracks = ObjectTubeProjector._resize_tracks_xy(
+            tracks_native.unsqueeze(0),
+            src_hw=native_hw,
+            dst_hw=geometry_hw,
+            align_corners=False,
+        )[0].detach().cpu().numpy()
+        delta = np.linalg.norm(new_tracks - old_tracks, axis=-1)
+
+        depth = artifacts.vggt_out.depth[0, frame_idx].detach().cpu()
+        if depth.ndim == 3:
+            depth = depth[..., 0]
+        depth_img = depth.numpy()
+        world = artifacts.vggt_out.world_points[0, frame_idx].detach().cpu()
+        if world.ndim == 3 and world.shape[-1] == 3:
+            world_img = torch.linalg.norm(world, dim=-1).numpy()
+        else:
+            world_img = np.asarray(world)
+
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.4))
+        panels = [
+            (depth_img, "VGGT depth"),
+            (world_img, "VGGT world norm"),
+        ]
+        for ax, (panel, title) in zip(axes, panels):
+            ax.imshow(panel, cmap="magma" if title == "VGGT depth" else "viridis")
+            ax.scatter(old_tracks[:, 0], old_tracks[:, 1], s=46, c="#d62828", label="before", zorder=3)
+            ax.scatter(new_tracks[:, 0], new_tracks[:, 1], s=30, c="#2a9d8f", label="after", zorder=4)
+            for idx in range(old_tracks.shape[0]):
+                ax.annotate(
+                    "",
+                    xy=(new_tracks[idx, 0], new_tracks[idx, 1]),
+                    xytext=(old_tracks[idx, 0], old_tracks[idx, 1]),
+                    arrowprops=dict(arrowstyle="->", color="#111111", lw=1.0),
+                )
+            ax.set_title(title)
+            ax.axis("off")
+        axes[0].legend(loc="lower right")
+        fig.suptitle(
+            "CoTracker active tracks -> VGGT geometry sampling\n"
+            f"before=corner-aligned assumption, after=pixel-center aligned to VGGT resize | "
+            f"mean shift={float(delta.mean()):.4f}px, max shift={float(delta.max()):.4f}px",
+            fontsize=14,
+        )
         fig.tight_layout()
         return fig
 
