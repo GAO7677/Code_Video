@@ -413,6 +413,172 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 - `optimizer.step()` 的显存 OOM：已修复
 - 双卡真实 pilot：已成功跑通并保存 checkpoint
 - inference 加载训练 checkpoint：已验证通过
+
+## 阶段 9：正式长训启动与实时监控
+
+### 正式训练命令
+
+```bash
+CUDA_VISIBLE_DEVICES=6,7 CODEX_DEBUG_TRAINER_INIT=1 CODEX_DEBUG_RUNNER_INIT=1 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate launch \
+  --multi_gpu --num_processes 2 --gpu_ids 6,7 --mixed_precision bf16 \
+  --main_process_port 29525 \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_context_video_wan.py \
+  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml
+```
+
+### 启动时配置确认
+
+- 使用配置：
+  - `train_0624pybullet_wan_lora_monitor_gpu67.yaml`
+- 关键参数：
+  - `mixed_precision: bf16`
+  - `grad_accum_steps: 1`
+  - `optimizer_type: paged_adamw8bit`
+  - `save_every: 20`
+  - `max_steps: 20000`
+
+### 正式训练实时观测
+
+- 新 W&B run:
+  - `flslwgvw`
+- 启动日志确认：
+  - `accelerator.prepare done`
+  - `first batch fetched`
+  - `first forward done`
+  - `first backward done`
+  - `first optimizer.step done`
+- 说明正式训练已经越过 pilot 中曾经失败过的两个关键点：
+  - 不再出现 `fp16` 下第 1 步梯度 NaN
+  - 不再出现 `torch AdamW` 第 1 次 `optimizer.step()` OOM
+
+### 早期训练行为
+
+- 训练在监控期间连续推进到至少 `step 20`
+- 期间进度条持续更新，loss 不是常数，说明主损失和条件分支并没有“表面跑动、实际不更新”
+- 监控中观测到的 loss 序列样本包括：
+  - `0.0812`
+  - `0.6298`
+  - `0.1222`
+  - `0.4469`
+  - `0.5522`
+  - `1.0167`
+  - `0.4789`
+  - `1.2983`
+  - `1.1436`
+  - `0.1985`
+  - `2.7593`
+  - `3.3281`
+- 这些波动说明训练在真实数据上正常前进，而不是 loss 静态卡死或非数值异常后被静默吞掉
+
+### 正式 checkpoint 保存证据
+
+- checkpoint 目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67`
+- 已确认保存：
+  - `step_0000020.pt`
+- 文件大小约：
+  - `5.2G`
+
+### 当前判断
+
+- 截至 `step 20`，正式训练满足以下条件：
+  - 启动成功
+  - 双卡同步正常
+  - loss 持续变化
+  - 权重在更新，否则不会进入稳定的多步训练和 checkpoint 保存
+  - checkpoint 保存链路正常
+- 下一步继续抽检 `step_0000020.pt` 的 inference 兼容性，确保“正式训练 checkpoint”也能被推理脚本直接使用
+
+### 抽检过程中的附加问题
+
+- 第一次对 `step_0000020.pt` 做 inference 抽检时，误把推理任务也放到了训练正在占用的 GPU 上
+- 结果在 `ContextVideoTrainer` 初始化 `WAN VAE` 时直接触发 CUDA OOM
+- 这不是 checkpoint 不兼容，也不是训练权重损坏
+- 根因是：
+  - 正式训练已经独占 `gpu6,7`
+  - 推理脚本又尝试在同一张卡上初始化完整 WAN/VAE/T5
+  - 导致资源冲突
+
+### 处理
+
+- 不打断正式训练
+- 将 inference 抽检改到空闲 GPU 上单独执行
+- 这样可以同时满足：
+  - 训练持续跑
+  - 正式 checkpoint 仍然可以独立验证推理兼容性
+
+### 正式 checkpoint 抽检结果
+
+- 抽检文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000020.pt`
+- 抽检输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step20`
+- 抽检结果：
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `sampling finished`
+- 说明：
+  - 正式长训产出的 checkpoint 可以被当前 `infer_context_video_wan.py` 正常加载
+  - trainable state 和 inference 侧期望的 trainable key 集合是一致的
+  - 日志中的大量 `missing_keys` 仍然只是“冻结底座权重不保存在 step checkpoint 中”的预期现象，不是 checkpoint 损坏
+
+### 当前阶段性结论
+
+- 正式训练已经在 `gpu6,7` 上稳定启动并持续推进
+- 训练期间 loss 持续变化、checkpoint 正常保存、推理兼容性抽检通过
+- 到这一阶段，可以认为：
+  - 主损失梯度链路已经有效形成
+  - 训练和推理两端的 trainable checkpoint 交接链路已经打通
+
+## 阶段 10：验证正式训练不是“假更新”
+
+### 新证据
+
+- 正式训练继续推进后，已经生成：
+  - `step_0000040.pt`
+- checkpoint 目录当前包含：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+
+### 权重更新核查方法
+
+- 直接加载：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+- 对它们的 `model` trainable state 做逐 tensor 差分，而不是只看 loss 曲线
+
+### 核查结果
+
+- `keys20 = 1272`
+- `keys40 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 197705.3647`
+- 最大单元素变化：
+  - `max_abs_diff = 0.0026037730`
+  - `max_abs_key = bundle.dit.base_model.model.object_embedding.2.weight`
+
+### 变化样例
+
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_B.default.weight`
+
+### 结论
+
+- 这说明正式训练中的 trainable parameters 确实在持续更新
+- 不是只有 loss 在打印，也不是只有 optimizer step 在形式上执行
+- object branch 相关参数也在变化：
+  - 最大变化张量就是 `object_embedding.2.weight`
+- 因此“有效主损失梯度已经形成并驱动参数更新”这一点，在正式训练阶段也有了直接权重证据
 - 训练真实进入第 1 步 optimizer 累积过程
 - 但在下一次前向过程中触发显存 OOM：
   - GPU 约 `47.37 GiB` 已占满
@@ -442,3 +608,586 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 改为：
 
 - `grad_accum_steps: 1`
+
+## 阶段 11：正式训练持续监控补充（2026-06-23 19:45 UTC）
+
+### 本轮监控目标
+
+- 确认正式训练在完成早期稳定性验证后，是否仍然持续向前推进
+- 排除“进程还活着但实际不再训练”的假活跃状态
+- 观察在尚未到下一个 checkpoint 保存点前，loss、step、W&B 本地日志是否仍同步更新
+
+### 监控结果
+
+- 前台训练会话持续输出，没有出现新的 Python 异常、CUDA OOM、NCCL 异常或显式卡死
+- 已经观察到 step 从此前确认过的 `54` 继续推进到：
+  - `55`
+  - `56`
+  - `57`
+- 对应进度输出样例：
+  - `55/20000 ... loss=0.3443`
+  - `56/20000 ... loss=1.7659`
+  - `57/20000 ... loss=0.3609`
+- loss 仍在变化，不是固定值重复打印
+
+### 对“是否真的还在训练”的交叉验证
+
+- 训练主进程和两个 worker 仍然存活，两个 worker 维持高 CPU 占用
+- GPU 侧仍由 `gpu6` 和 `gpu7` 占用大显存：
+  - `gpu6`: `46757 MiB`
+  - `gpu7`: `48197 MiB`
+- W&B 本地 run 目录继续刷新：
+  - `debug-internal.log` 更新时间到 `2026-06-23 19:45:02 UTC`
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 19:45:05 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 19:45:10 UTC`
+
+### 关于为什么此时还没有新 checkpoint
+
+- 当前 checkpoint 目录仍只有：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+- 这与当前已观测 step `57` 并不矛盾
+- 原因很直接：
+  - checkpoint 保存间隔是按固定 step 间隔触发
+  - 既然已有 `step_0000040.pt`，那么下一次正常保存应在更后的保存点
+  - 当前监控时刻尚未推进到下一个保存点，因此“没有新 checkpoint”不能解释为训练停滞
+
+### 当前结论
+
+- 正式训练在修复：
+  - fp16 数值不稳定
+  - AdamW optimizer-state OOM
+  - grad accumulation 峰值显存问题
+ 之后，仍然在继续稳定推进
+- 到 `2026-06-23 19:45 UTC` 为止，没有观察到新的中断信号
+- 目前最合理判断是：
+  - 训练仍健康运行
+  - 只是单 step 耗时较长，且尚未到下一个 checkpoint 保存点
+- 下一轮应继续等待更高 step 或新的 checkpoint（如 `step_0000060.pt`）出现，再做下一次权重变化或推理兼容性抽检
+
+## 阶段 12：step_0000060.pt 验证（2026-06-23 19:50 UTC）
+
+### 新进展
+
+- 正式训练继续向前推进，并已生成新的 checkpoint：
+  - `step_0000060.pt`
+- 前台训练输出已明确出现：
+  - `60/20000 ... loss=0.8774`
+- 说明训练不仅越过了此前的 `step 57`，而且已经抵达下一个 checkpoint 保存点
+
+### 1. 权重继续更新核查：`step40 -> step60`
+
+- 本轮继续直接比较：
+  - `step_0000040.pt`
+  - `step_0000060.pt`
+- 仍然只比较 trainable `model` state，而不是依赖 loss 曲线做间接判断
+
+### 差分结果
+
+- `keys40 = 1272`
+- `keys60 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 224303.6667`
+- `max_abs_diff = 0.0022221070`
+- `max_abs_key = bundle.dit.base_model.model.blocks.27.object_cross_attn.o.lora_B.default.weight`
+
+### 变化样例
+
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_B.default.weight`
+
+### 对权重差分的解释
+
+- 与此前 `step20 -> step40` 一样，这一轮仍然是 `1270/1272` 个 trainable tensor 发生变化
+- 而且本轮最大变化张量已经落在：
+  - `object_cross_attn.o.lora_B.default.weight`
+- 这进一步加强了判断：
+  - object 条件分支相关参数并不是“挂着不用”
+  - 它们在正式训练中持续被主损失驱动更新
+
+### 2. `step_0000060.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮推理抽检放在 `gpu0` 上执行
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step60`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step60/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+- `result.json` 中记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+
+### 关于 `missing=3306` 的说明
+
+- 这一现象与此前 `step20`、`step40` 的推理验证完全一致
+- 原因不是 checkpoint 损坏，而是：
+  - `step_*.pt` 只保存 trainable state
+  - 基座模型和冻结模块的参数不在 trainable checkpoint 内
+- 因此真正的兼容性判断标准仍然是：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+- 本轮 `step_0000060.pt` 完全满足这个标准
+
+### 3. 本轮结论
+
+- 正式训练已经持续推进到并越过新的保存点
+- `step_0000060.pt` 成功保存
+- `step40 -> step60` 间 trainable 权重继续大范围变化
+- 最大变化项已经直接落在 object cross-attn 参数上
+- `step_0000060.pt` 也已被推理脚本成功加载并完成采样
+
+### 当前总体判断
+
+- 到 `2026-06-23 19:50 UTC` 为止，已有连续证据证明：
+  - 主损失梯度链路有效
+  - 正式训练持续正常进行
+  - 权重持续真实更新
+  - 新保存的 checkpoint 能够被推理脚本正确接收并生成采样结果
+- 下一步继续监控更后续的 step 和 checkpoint；如果中途再出现异常，再继续定位和修正
+
+## 阶段 13：正式训练持续推进监控补充（2026-06-23 19:52 UTC）
+
+### 本轮监控重点
+
+- 在 `step_0000060.pt` 已完成推理验证之后，继续确认正式训练是否仍然稳定推进
+- 重点排除两类假象：
+  - 进程仍在但 step 不再增长
+  - W&B 或日志仍刷新，但实际训练线程已经停住
+
+### 本轮观察结果
+
+- 前台训练会话继续正常输出，没有出现新的：
+  - Python traceback
+  - CUDA OOM
+  - NCCL/accelerate 异常
+  - 显式卡死
+- 已继续观察到 step 从 `70` 之后推进到：
+  - `71`
+  - `72`
+  - `73`
+  - `74`
+- 对应 loss 仍在变化：
+  - `71/20000 ... loss=0.1493`
+  - `72/20000 ... loss=0.9847`
+  - `73/20000 ... loss=0.3522`
+  - `74/20000 ... loss=0.1869`
+
+### 交叉验证
+
+- GPU 仍由正式训练主占用：
+  - `gpu6`: `46757 MiB`
+  - `gpu7`: `48197 MiB`
+- W&B 本地 run 文件继续刷新到本轮时刻附近：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 19:50:53 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 19:51:27 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 19:51:33 UTC`
+
+### 关于为什么还没有新 checkpoint
+
+- 截止本轮监控时，checkpoint 目录仍为：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+  - `step_0000060.pt`
+- 这与当前已经推进到 `step 74` 并不冲突
+- 原因仍然是：
+  - checkpoint 保存是固定 step 间隔触发
+  - 当前只是还没有到下一个保存点
+- 因此“暂时没有新 checkpoint”在本轮不能解释为训练异常
+
+### 本轮结论
+
+- 到 `2026-06-23 19:52 UTC` 为止，正式训练仍在继续健康推进
+- loss 持续变化，step 持续增长，W&B 本地落盘持续刷新
+- 目前没有新的故障信号
+- 下一轮继续等待新的 checkpoint 出现后，再补一轮：
+  - 权重差分验证
+  - 推理兼容性抽检
+
+## 阶段 14：step_0000080.pt 验证（2026-06-23 19:57 UTC）
+
+### 新进展
+
+- 正式训练继续推进并生成新的 checkpoint：
+  - `step_0000080.pt`
+- 前台训练输出已明确出现：
+  - `79/20000 ... loss=1.8112`
+  - `80/20000 ... loss=0.2624`
+- 说明训练已经稳定推进到下一个保存点并完成保存
+
+### 1. 权重继续更新核查：`step60 -> step80`
+
+- 本轮直接比较：
+  - `step_0000060.pt`
+  - `step_0000080.pt`
+- 继续只比较 trainable `model` state
+
+### 差分结果
+
+- `keys60 = 1272`
+- `keys80 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 206325.8813`
+- `max_abs_diff = 0.0018013896`
+- `max_abs_key = bundle.dit.base_model.model.blocks.29.object_cross_attn.o.lora_B.default.weight`
+
+### 变化样例
+
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80` 都呈现出同样模式：
+  - `1270/1272` 个 trainable tensor 在持续变化
+- 本轮最大变化项再次落在：
+  - `object_cross_attn.o.lora_B.default.weight`
+- 这说明 object 条件分支不是偶然更新一次，而是在正式训练中持续获得主损失驱动
+
+### 2. `step_0000080.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮依旧在 `gpu0` 上完成推理抽检
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step80`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step80/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+- `result.json` 中记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+
+### 关于 `missing=3306` 的说明
+
+- 与 `step20`、`step40`、`step60` 的抽检结果一致
+- 这仍然是“checkpoint 只保存 trainable state”的预期现象
+- 因此兼容性判断标准仍然是：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+- `step_0000080.pt` 完全满足这一标准
+
+### 3. 本轮结论
+
+- 正式训练已继续推进到新的 checkpoint 保存点
+- `step_0000080.pt` 成功保存
+- `step60 -> step80` 之间 trainable 权重继续显著更新
+- object cross-attn 相关权重再次成为最大变化项
+- `step_0000080.pt` 已被推理脚本成功加载并完成采样
+
+### 当前总体判断
+
+- 到 `2026-06-23 19:57 UTC` 为止，已经形成连续多轮闭环证据：
+  - 正式训练稳定推进
+  - loss 持续变化
+  - 权重持续真实更新
+  - object 条件分支持续参与更新
+  - 每个新 checkpoint 都能被推理脚本接住并完成采样
+- 下一步继续保持监控；如果后续出现新异常，再继续定位并修复
+
+### 补充监控：`step80` 验证后训练继续推进
+
+- `step_0000080.pt` 验证完成后，正式训练没有停在保存点
+- 前台继续观测到 step 向前推进到：
+  - `81`
+  - `82`
+  - `83`
+  - `86`
+  - `87`
+  - `88`
+  - `89`
+- 对应 loss 仍持续变化，例如：
+  - `81/20000 ... loss=0.2794`
+  - `82/20000 ... loss=0.3538`
+  - `83/20000 ... loss=1.4464`
+  - `86/20000 ... loss=0.7142`
+  - `87/20000 ... loss=1.2498`
+  - `88/20000 ... loss=1.5316`
+  - `89/20000 ...`
+
+### 补充结论
+
+- 这进一步说明：
+  - checkpoint 保存和推理抽检不会破坏正式训练主流程
+  - 正式训练在 `step80` 之后仍持续健康推进
+
+## 阶段 15：step_0000100.pt 验证（2026-06-23 20:06 UTC）
+
+### 新进展
+
+- 正式训练继续推进并生成新的 checkpoint：
+  - `step_0000100.pt`
+- 前台训练输出已明确出现：
+  - `98/20000 ... loss=1.5453`
+  - `99/20000 ... loss=1.0880`
+  - `100/20000 ... loss=1.8301`
+
+### 1. 权重继续更新核查：`step80 -> step100`
+
+- 本轮直接比较：
+  - `step_0000080.pt`
+  - `step_0000100.pt`
+- 继续只比较 trainable `model` state
+
+### 差分结果
+
+- `keys80 = 1272`
+- `keys100 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 128441.4915`
+- `max_abs_diff = 0.0029494218`
+- `max_abs_key = bundle.dit.base_model.model.blocks.0.ffn.0.lora_B.default.weight`
+
+### 变化样例
+
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.k.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.o.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.q.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.cross_attn.v.lora_B.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_A.default.weight`
+- `bundle.dit.base_model.model.blocks.0.ffn.0.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项落在 `ffn.0.lora_B.default.weight`
+- 同时，object cross-attn 相关权重仍持续出现在变化样例中
+- 这说明训练不是只更新局部少量参数，而是整个 trainable 子空间都在持续被主损失驱动
+
+### 2. `step_0000100.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮依旧在 `gpu0` 上完成推理抽检
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step100`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step100/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+- `result.json` 中记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+
+### 关于 `missing=3306` 的说明
+
+- 与此前 `step20`、`step40`、`step60`、`step80` 的结果完全一致
+- 仍然是“checkpoint 只保存 trainable state”的预期现象
+- 因此兼容性判断标准仍然是：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+- `step_0000100.pt` 完全满足这一标准
+
+### 3. 本轮结论
+
+- 正式训练已继续推进到新的 checkpoint 保存点
+- `step_0000100.pt` 成功保存
+- `step80 -> step100` 之间 trainable 权重继续大范围真实更新
+- `step_0000100.pt` 已被推理脚本成功加载并完成采样
+
+### 当前总体判断
+
+- 到 `2026-06-23 20:06 UTC` 为止，已经形成更长链条的连续证据：
+  - 训练稳定推进到 `step 100`
+  - loss 持续变化
+  - 权重持续真实更新
+  - object 条件分支持续参与更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 补充监控：`step100` 验证后训练继续推进
+
+- `step_0000100.pt` 验证完成后，正式训练没有停在保存点
+- 前台继续观测到 step 向前推进到：
+  - `101`
+  - `102`
+  - `106`
+  - `107`
+  - `108`
+  - `109`
+- 对应 loss 仍持续变化，例如：
+  - `101/20000 ... loss=0.4393`
+  - `102/20000 ... loss=1.7394`
+  - `106/20000 ... loss=0.4599`
+  - `107/20000 ... loss=1.9186`
+  - `108/20000 ... loss=1.7418`
+  - `109/20000 ... loss=1.2166`
+
+### 补充结论
+
+- 这进一步说明：
+  - `step_0000100.pt` 的保存与推理抽检没有干扰正式训练主流程
+  - 训练在超过 `step 100` 后仍持续健康推进
+
+### 继续监控补充（2026-06-23 20:08 UTC）
+
+- 在 `step_0000100.pt` 验证完成后，正式训练继续推进到：
+  - `110`
+  - `111`
+- 对应 loss 仍在变化：
+  - `110/20000 ... loss=1.7574`
+  - `111/20000 ... loss=0.4366`
+- W&B 本地 run 文件仍持续刷新到本轮时刻附近：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 20:08:11 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 20:08:32 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 20:08:36 UTC`
+
+### 本轮结论
+
+- 到 `2026-06-23 20:08 UTC` 为止，训练在 `step100` 验证之后仍保持健康推进
+- 当前没有新的错误、停滞或 checkpoint 兼容性回归信号
+
+### 继续监控补充（2026-06-23 20:12 UTC）
+
+- 正式训练继续推进并生成新的 checkpoint：
+  - `step_0000120.pt`
+- 在 `step_0000100.pt` 验证完成后，前台继续明确观测到：
+  - `112`
+  - `118`
+  - `119`
+  - `120`
+- 对应 loss 仍持续变化，例如：
+  - `119/20000 ... loss=0.3406`
+  - `120/20000 ... loss=0.1996`
+- W&B 本地 run 文件继续刷新到本轮时刻附近：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 20:12:02 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 20:12:45 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 20:12:47 UTC`
+
+## 阶段 16：step_0000120.pt 验证（2026-06-23 20:16 UTC）
+
+### 新进展
+
+- 正式训练继续推进并稳定越过新的保存点
+- 在本轮核查过程中，前台训练输出继续推进到：
+  - `121`
+  - `122`
+  - `123`
+  - `124`
+  - `126`
+  - `127`
+  - `128`
+  - `129`
+- 对应 loss 仍持续变化，例如：
+  - `121/20000 ... loss=0.2423`
+  - `122/20000 ... loss=0.0333`
+  - `123/20000 ... loss=0.8597`
+  - `124/20000 ... loss=0.2422`
+  - `126/20000 ... loss=1.2978`
+  - `127/20000 ... loss=1.5864`
+  - `128/20000 ... loss=0.8677`
+  - `129/20000 ... loss=1.7380`
+
+### 1. 权重继续更新核查：`step100 -> step120`
+
+- 本轮直接比较：
+  - `step_0000100.pt`
+  - `step_0000120.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys100 = 1272`
+- `keys120 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 32878.2380`
+- `max_abs_diff = 0.0027459145`
+- `max_abs_key = bundle.dit.base_model.model.blocks.0.ffn.0.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 这说明在 `step_0000120.pt` 保存之前，训练权重仍在持续真实更新
+- 最大变化项依旧落在 LoRA 可训练子空间内部，没有出现“只保存 checkpoint 但参数不再动”的回归迹象
+
+### 2. `step_0000120.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮依旧在 `gpu0` 上完成推理抽检
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step120`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step120/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+- `result.json` 中记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+
+### 关于 `missing=3306` 的说明
+
+- 与此前 `step20`、`step40`、`step60`、`step80`、`step100` 的结果完全一致
+- 仍然是“checkpoint 只保存 trainable state”的预期现象
+- 因此兼容性判断标准仍然是：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+- `step_0000120.pt` 完全满足这一标准
+
+### 3. 本轮结论
+
+- 正式训练已继续推进到新的 checkpoint 保存点
+- `step_0000120.pt` 成功保存
+- `step100 -> step120` 之间 trainable 权重继续大范围真实更新
+- `step_0000120.pt` 已被推理脚本成功加载并完成采样
+
+### 当前总体判断
+
+- 到 `2026-06-23 20:16 UTC` 为止，连续闭环证据已进一步延长到 `step 120+`：
+  - 正式训练稳定推进
+  - loss 持续变化
+  - 权重持续真实更新
+  - object 条件分支持续参与更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+- W&B 本地 run 文件也继续刷新到本轮时刻附近：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 20:15:17 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 20:16:02 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 20:16:06 UTC`
+
+### 本轮补充结论
+
+- `step_0000120.pt` 的保存与推理抽检同样没有干扰正式训练主流程
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常或 checkpoint 兼容性回归信号
