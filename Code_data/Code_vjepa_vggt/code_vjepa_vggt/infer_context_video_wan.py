@@ -671,7 +671,7 @@ def main() -> None:
     context_video = context_video_single.unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
-    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
+    trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
     print("trainer constructed", flush=True)
     if args.skip_trainable_checkpoint:
         state_info = {
