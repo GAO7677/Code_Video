@@ -32,10 +32,12 @@ class ObjectTubeProjector(nn.Module):
         out_dim: int,
         jepa_window_radius: int = 1,
         latent_window_radius: int = 1,
+        min_box_px: float = 16.0,
     ) -> None:
         super().__init__()
         self.jepa_window_radius = int(jepa_window_radius)
         self.latent_window_radius = int(latent_window_radius)
+        self.min_box_px = float(min_box_px)
         self.out_dim = int(out_dim)
         self.jepa_proj = nn.Linear(int(jepa_dim), self.out_dim)
         self.latent_proj = nn.Linear(int(latent_dim), self.out_dim)
@@ -269,7 +271,25 @@ class ObjectTubeProjector(nn.Module):
         if not bool(valid.any().item()):
             valid = torch.ones_like(valid)
         point_weights = valid.to(dtype=xy.dtype).unsqueeze(-1)
-        mean_xy = (xy * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
+        trimmed_xy = torch.where(valid.unsqueeze(-1), xy, torch.nan)
+        if int(xy.shape[2]) >= 4:
+            sorted_x = torch.nan_to_num(trimmed_xy[..., 0], nan=1.0).sort(dim=2).values
+            sorted_y = torch.nan_to_num(trimmed_xy[..., 1], nan=1.0).sort(dim=2).values
+            valid_count = valid.sum(dim=2)
+            trim = torch.clamp((valid_count - 4) // 2, min=0, max=max(int(xy.shape[2] // 2), 0))
+            min_idx = trim.unsqueeze(-1).clamp(max=int(xy.shape[2]) - 1)
+            max_idx = (valid_count - 1 - trim).clamp(min=0, max=int(xy.shape[2]) - 1).unsqueeze(-1)
+            center_x = 0.5 * (
+                torch.gather(sorted_x, dim=2, index=min_idx).squeeze(-1)
+                + torch.gather(sorted_x, dim=2, index=max_idx).squeeze(-1)
+            )
+            center_y = 0.5 * (
+                torch.gather(sorted_y, dim=2, index=min_idx).squeeze(-1)
+                + torch.gather(sorted_y, dim=2, index=max_idx).squeeze(-1)
+            )
+            mean_xy = torch.stack([center_x, center_y], dim=-1)
+        else:
+            mean_xy = (xy * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
 
         valid_group = valid.permute(0, 1, 3, 2)  # [B,T,O,G]
         first_idx = valid_group.float().argmax(dim=-1)
@@ -320,7 +340,8 @@ class ObjectTubeProjector(nn.Module):
         image_hw: tuple[int, int],
         target_frames: int | None = None,
         box_prior_xyxy: torch.Tensor | None = None,
-        expand_ratio: float = 1.0 / 3.0,
+        expand_ratio: float = 0.15,
+        min_box_px: float = 16.0,
     ) -> torch.Tensor:
         if target_frames is not None and int(tracks.shape[1]) != int(target_frames):
             if int(tracks.shape[1]) % int(target_frames) != 0:
@@ -336,22 +357,52 @@ class ObjectTubeProjector(nn.Module):
         y = tracks[..., 1] / max(float(height - 1), 1.0)
         valid = (visibility * confidence).clamp_min(0.0) > 1.0e-6
         valid_any = valid.any(dim=3)
-        pos_inf = torch.tensor(float("inf"), device=tracks.device, dtype=tracks.dtype)
-        neg_inf = torch.tensor(float("-inf"), device=tracks.device, dtype=tracks.dtype)
-        x_min = torch.where(valid, x, pos_inf).amin(dim=3)
-        y_min = torch.where(valid, y, pos_inf).amin(dim=3)
-        x_max = torch.where(valid, x, neg_inf).amax(dim=3)
-        y_max = torch.where(valid, y, neg_inf).amax(dim=3)
+        if not bool(valid_any.any().item()):
+            if box_prior_xyxy is None:
+                center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
+                half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
+                return torch.cat(
+                    [
+                        (center_xy - half_wh).clamp(0.0, 1.0),
+                        (center_xy + half_wh).clamp(0.0, 1.0),
+                    ],
+                    dim=-1,
+                )
+            prior = torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+            if prior.ndim == 3:
+                return prior[:, None].expand(-1, tracks.shape[1], -1, -1)
+            if prior.ndim == 4:
+                return prior
+            raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
+        sort_x = torch.where(valid, x, torch.full_like(x, float("inf"))).sort(dim=3).values
+        sort_y = torch.where(valid, y, torch.full_like(y, float("inf"))).sort(dim=3).values
+        valid_count = valid.sum(dim=3)
+        trim = torch.clamp((valid_count - 2) // 2, min=0, max=max(int(tracks.shape[3] // 2), 0))
+        min_idx = trim.clamp(max=int(tracks.shape[3]) - 1).unsqueeze(-1)
+        max_idx = (valid_count - 1 - trim).clamp(min=0, max=int(tracks.shape[3]) - 1).unsqueeze(-1)
+        x_min = torch.gather(sort_x, dim=3, index=min_idx).squeeze(-1)
+        y_min = torch.gather(sort_y, dim=3, index=min_idx).squeeze(-1)
+        x_max = torch.gather(sort_x, dim=3, index=max_idx).squeeze(-1)
+        y_max = torch.gather(sort_y, dim=3, index=max_idx).squeeze(-1)
         span_x = (x_max - x_min).clamp_min(1.0e-4)
         span_y = (y_max - y_min).clamp_min(1.0e-4)
         pad_x = span_x * float(expand_ratio)
         pad_y = span_y * float(expand_ratio)
+        min_box_wh = x.new_tensor(
+            [
+                float(min_box_px) / max(float(width - 1), 1.0),
+                float(min_box_px) / max(float(height - 1), 1.0),
+            ]
+        )
+        half_wh = 0.5 * torch.stack([span_x + 2.0 * pad_x, span_y + 2.0 * pad_y], dim=-1)
+        half_wh = torch.maximum(half_wh, 0.5 * min_box_wh.view(1, 1, 1, 2))
+        center_xy = torch.stack([0.5 * (x_min + x_max), 0.5 * (y_min + y_max)], dim=-1)
         active_box_xyxy = torch.stack(
             [
-                (x_min - pad_x).clamp(0.0, 1.0),
-                (y_min - pad_y).clamp(0.0, 1.0),
-                (x_max + pad_x).clamp(0.0, 1.0),
-                (y_max + pad_y).clamp(0.0, 1.0),
+                (center_xy[..., 0] - half_wh[..., 0]).clamp(0.0, 1.0),
+                (center_xy[..., 1] - half_wh[..., 1]).clamp(0.0, 1.0),
+                (center_xy[..., 0] + half_wh[..., 0]).clamp(0.0, 1.0),
+                (center_xy[..., 1] + half_wh[..., 1]).clamp(0.0, 1.0),
             ],
             dim=-1,
         )
@@ -522,6 +573,7 @@ class ObjectTubeProjector(nn.Module):
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
                 box_prior_xyxy=box_prior_xyxy,
+                min_box_px=16.0,
             )
             track_geom_latent_tokens = self.track_geom_proj(active_track_summary)
 

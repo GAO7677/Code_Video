@@ -33,8 +33,8 @@ class ObjectAuxHeads(nn.Module):
         self,
         dim: int = 4096,
         track_delta_scale: float = 0.25,
-        box_delta_scale: float = 0.15,
-        box_wh_log_scale: float = 1.50,
+        box_delta_scale: float = 0.25,
+        box_wh_log_scale: float = 2.25,
     ) -> None:
         super().__init__()
         self.track_delta_scale = float(track_delta_scale)
@@ -43,6 +43,20 @@ class ObjectAuxHeads(nn.Module):
         self.track_head = _ResidualMLP(dim, 4)
         self.box_head = _ResidualMLP(dim, 4)
         self.depth_head = _ResidualMLP(dim, 1)
+
+    def set_scales(
+        self,
+        *,
+        track_delta_scale: float | None = None,
+        box_delta_scale: float | None = None,
+        box_wh_log_scale: float | None = None,
+    ) -> None:
+        if track_delta_scale is not None:
+            self.track_delta_scale = float(track_delta_scale)
+        if box_delta_scale is not None:
+            self.box_delta_scale = float(box_delta_scale)
+        if box_wh_log_scale is not None:
+            self.box_wh_log_scale = float(box_wh_log_scale)
 
     def forward(
         self,
@@ -59,7 +73,7 @@ class ObjectAuxHeads(nn.Module):
         pred_track_summary = track_base + track_delta
         if active_box_xyxy is None:
             center_xy = pred_track_summary[..., :2]
-            base_half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
+            base_half_wh = center_xy.new_tensor([0.03, 0.03]).view(1, 1, 1, 2)
             base_box_xyxy = torch.cat(
                 [
                     (center_xy - base_half_wh).clamp(0.0, 1.0),
@@ -74,7 +88,7 @@ class ObjectAuxHeads(nn.Module):
         base_wh = (base_box_xyxy[..., 2:] - base_box_xyxy[..., :2]).clamp_min(1.0e-4)
         center_delta = self.box_delta_scale * torch.tanh(box_delta[..., :2]) * base_wh
         wh_log_scale = self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
-        wh_scale = torch.exp(wh_log_scale).clamp(0.25, 4.0)
+        wh_scale = torch.exp(wh_log_scale).clamp(0.25, 12.0)
 
         pred_center_xy = (base_center_xy + center_delta).clamp(0.0, 1.0)
         pred_box_wh = (base_wh * wh_scale).clamp(1.0e-4, 1.0)

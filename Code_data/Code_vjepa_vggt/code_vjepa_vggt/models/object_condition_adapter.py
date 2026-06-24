@@ -18,6 +18,7 @@ class ObjectConditionAdapter(nn.Module):
             nn.GELU(),
             nn.Linear(self.dim, self.dim),
         )
+        self.out_norm = nn.LayerNorm(self.dim)
 
     def forward(
         self,
@@ -38,6 +39,7 @@ class ObjectConditionAdapter(nn.Module):
         x = x + slot_bias + time_bias
         x = self.norm(x)
         x = x + self.mlp(x)
+        x = self.out_norm(x)
         if object_valid_mask is not None:
             slot_mask = object_valid_mask[:, None, :, None].to(dtype=x.dtype, device=x.device)
             x = x * slot_mask

@@ -169,9 +169,15 @@ class WanTrainingModule(DiffusionTrainingModule):
         cond_proj_dim=4096,
         jepa_window_radius=1,
         latent_window_radius=1,
+        object_track_delta_scale=0.25,
+        object_box_delta_scale=0.25,
+        object_box_wh_log_scale=2.25,
+        object_min_box_px=16.0,
         lambda_track_aux=0.1,
         lambda_box_aux=0.1,
         lambda_depth_aux=0.0,
+        lambda_track_box_aux=0.0,
+        lambda_track_iou_aux=0.0,
         depth_target_state_index=None,
         object_gate_init=0.1,
     ):
@@ -228,6 +234,12 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.lambda_track_aux = float(lambda_track_aux)
         self.lambda_box_aux = float(lambda_box_aux)
         self.lambda_depth_aux = float(lambda_depth_aux)
+        self.lambda_track_box_aux = float(lambda_track_box_aux)
+        self.lambda_track_iou_aux = float(lambda_track_iou_aux)
+        self.object_track_delta_scale = float(object_track_delta_scale)
+        self.object_box_delta_scale = float(object_box_delta_scale)
+        self.object_box_wh_log_scale = float(object_box_wh_log_scale)
+        self.object_min_box_px = float(object_min_box_px)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
@@ -261,8 +273,14 @@ class WanTrainingModule(DiffusionTrainingModule):
                 out_dim=cond_dim,
                 jepa_window_radius=int(jepa_window_radius),
                 latent_window_radius=int(latent_window_radius),
+                min_box_px=float(object_min_box_px),
             )
-            self.object_aux_heads = ObjectAuxHeads(dim=cond_dim)
+            self.object_aux_heads = ObjectAuxHeads(
+                dim=cond_dim,
+                track_delta_scale=float(object_track_delta_scale),
+                box_delta_scale=float(object_box_delta_scale),
+                box_wh_log_scale=float(object_box_wh_log_scale),
+            )
             self.object_adapter = ObjectConditionAdapter(
                 dim=cond_dim,
                 num_slots=self.aux_max_objects,
@@ -659,8 +677,15 @@ class WanTrainingModule(DiffusionTrainingModule):
             latent_frames,
         )
 
-        track_aux_loss = (((object_aux_out.pred_track_summary - gt_track_summary).abs()) * gt_track_valid.unsqueeze(-1)).sum()
-        track_aux_loss = track_aux_loss / (gt_track_valid.unsqueeze(-1).sum().clamp_min(1.0) * object_aux_out.pred_track_summary.shape[-1])
+        track_valid_weights = gt_track_valid.unsqueeze(-1).to(dtype=object_aux_out.pred_track_summary.dtype)
+        track_denom = track_valid_weights.sum().clamp_min(1.0)
+        track_center_l1 = (((object_aux_out.pred_track_summary[..., :2] - gt_track_summary[..., :2]).abs()) * track_valid_weights[..., :2]).sum() / (
+            track_denom * 2.0
+        )
+        track_delta_l1 = (((object_aux_out.pred_track_summary[..., 2:4] - gt_track_summary[..., 2:4]).abs()) * track_valid_weights[..., :2]).sum() / (
+            track_denom * 2.0
+        )
+        track_aux_loss = track_center_l1 + 0.25 * track_delta_l1
         box_aux_loss = self._box_aux_loss(
             object_aux_out.pred_box_xyxy,
             gt_box_xyxy,
@@ -694,6 +719,8 @@ class WanTrainingModule(DiffusionTrainingModule):
             "train/loss_track_aux": float(track_aux_loss.detach().item()),
             "train/loss_box_aux": float(box_aux_loss.detach().item()),
             "train/loss_depth_aux": float(depth_aux_loss.detach().item()),
+            "train/loss_track_center_aux": float(track_center_l1.detach().item()),
+            "train/loss_track_delta_aux": float(track_delta_l1.detach().item()),
             "train/track_box_loss": float(track_box_loss.detach().item()),
             "train/track_iou_loss": float(track_iou_loss.detach().item()),
             "train/object_context_abs_max": float(object_context.detach().abs().max().item()),
@@ -1193,9 +1220,15 @@ def wan_parser():
     parser.add_argument("--cond_proj_dim", type=int, default=4096)
     parser.add_argument("--jepa_window_radius", type=int, default=1)
     parser.add_argument("--latent_window_radius", type=int, default=1)
+    parser.add_argument("--object_track_delta_scale", type=float, default=0.25)
+    parser.add_argument("--object_box_delta_scale", type=float, default=0.25)
+    parser.add_argument("--object_box_wh_log_scale", type=float, default=2.25)
+    parser.add_argument("--object_min_box_px", type=float, default=16.0)
     parser.add_argument("--lambda_track_aux", type=float, default=0.1)
     parser.add_argument("--lambda_box_aux", type=float, default=0.1)
     parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
+    parser.add_argument("--lambda_track_box_aux", type=float, default=0.0)
+    parser.add_argument("--lambda_track_iou_aux", type=float, default=0.0)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
     return parser
 
@@ -1441,9 +1474,15 @@ def build_model(args, accelerator):
         cond_proj_dim=args.cond_proj_dim,
         jepa_window_radius=args.jepa_window_radius,
         latent_window_radius=args.latent_window_radius,
+        object_track_delta_scale=args.object_track_delta_scale,
+        object_box_delta_scale=args.object_box_delta_scale,
+        object_box_wh_log_scale=args.object_box_wh_log_scale,
+        object_min_box_px=args.object_min_box_px,
         lambda_track_aux=args.lambda_track_aux,
         lambda_box_aux=args.lambda_box_aux,
         lambda_depth_aux=args.lambda_depth_aux,
+        lambda_track_box_aux=args.lambda_track_box_aux,
+        lambda_track_iou_aux=args.lambda_track_iou_aux,
         depth_target_state_index=args.depth_target_state_index,
     )
 
