@@ -54,3 +54,22 @@
             - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000060.pt`
         - `step40 -> step60` 权重差异统计：
             - 432 个 trainable tensors 中有 430 个继续发生变化
+- 正式续训切换（2026-06-24 04:18 UTC）
+    - 继续沿用当前 run，不新开目录：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67`
+    - 已将保存间隔改为：
+        - `logging.save_every: 200`
+    - 已从最近完整 checkpoint 恢复：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000100.pt`
+    - 已恢复到同一个 W&B run：
+        - run id: `xkws0bla`
+        - 链接: `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/xkws0bla`
+    - 当前启动脚本：
+        - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_train_0624_freeze_lora_other_modules_gpu67.sh`
+    - 前台启动命令：
+        - `cd /home/gaoya && bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_train_0624_freeze_lora_other_modules_gpu67.sh`
+    - 启动参数已确认包含：
+        - `--resume-checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000100.pt`
+    - 恢复日志已确认：
+        - `resumed model weights from .../step_0000100.pt`
+        - `wandb: Resuming run pybullet0624_freeze_lora_other_modules_gpu67`
