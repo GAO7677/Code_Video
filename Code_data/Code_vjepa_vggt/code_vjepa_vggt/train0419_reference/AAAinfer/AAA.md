@@ -73,3 +73,56 @@
     - 恢复日志已确认：
         - `resumed model weights from .../step_0000100.pt`
         - `wandb: Resuming run pybullet0624_freeze_lora_other_modules_gpu67`
+
+3. （0624 old DiffSynth backbone + object branch 的 v_newtrain 正式训练）
+- 目的
+    - 底层 backbone 回到 `run_train.sh` 对应的 old DiffSynth Wan 训练框架
+    - 在这套 backbone 上接入完整 object 分支
+    - 用 object-conditioned cross-attn 和 phys-state auxiliary supervision 一起训练
+- 训练脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py`
+- 启动脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_gpu67.sh`
+- 前台启动命令
+    - `bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_gpu67.sh`
+- 输出目录
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67`
+- checkpoint 结构
+    - 不是旧的 `step_0000600.pt`
+    - 而是目录式：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000200/checkpoint.safetensors`
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000400/checkpoint.safetensors`
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000600/checkpoint.safetensors`
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000800/checkpoint.safetensors`
+- W&B
+    - project: `vjepa_vggt_wan`
+    - run name: `pybullet0624_diffsynth_object_v_newtrain_gpu67`
+    - run id: `t5fknjnk`
+- 当前状态（2026-06-24）
+    - 训练进程仍在运行
+    - 本地 W&B run 目录：
+        - `/home/gaoya/wandb/run-20260624_120432-t5fknjnk`
+    - `output.log` 已记录到：
+        - `global_step 876`
+- 已完成验证
+    - 单 batch GPU smoke 真实通过：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_v_newtrain_rerun/smoke_report.json`
+    - `loss = 0.20211482048034668`
+    - `grad_summary.num_trainable = 1038`
+    - `grad_summary.with_grad = 1024`
+    - `param_delta.changed_count = 604`
+    - `step-000200` 和 `step-000400` 已通过 `v_newtrain` 专用推理脚本真实生成视频
+    - `step-000200 -> step-000400` 权重差异统计：
+        - `changed_count = 902`
+- v_newtrain 专用推理脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py`
+- 单 checkpoint 推理命令
+    - `PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main CUDA_VISIBLE_DEVICES=5 /home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000400 --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --prompt "industrial rigid body simulation sphere" --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400 --output-video /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400/prediction.mp4`
+- 自动批量推理脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_infer_checkpoints.py`
+    - 已兼容 `step-xxxx/checkpoint.safetensors`
+- 自动 watcher 脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_checkpoint_infer.py`
+    - 已兼容：
+        - 旧格式 `step_*.pt`
+        - 新格式 `step-xxxx/checkpoint.safetensors`

@@ -932,6 +932,7 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
         wantodance_fps: Optional[float] = 30,
         wantodance_keyframes: Optional[list[Image.Image]] = None,
         wantodance_keyframes_mask: Optional[list[int]] = None,
+        object_context: Optional[torch.Tensor] = None,
         framewise_decoding: bool = False,
         progress_bar_cmd=tqdm,
         output_type: Optional[Literal["quantized", "floatpoint"]] = "quantized",
@@ -1005,6 +1006,7 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
             "wantodance_fps": wantodance_fps,
             "wantodance_keyframes": wantodance_keyframes,
             "wantodance_keyframes_mask": wantodance_keyframes_mask,
+            "object_context": object_context,
             "framewise_decoding": framewise_decoding,
         }
         for unit in self.units:

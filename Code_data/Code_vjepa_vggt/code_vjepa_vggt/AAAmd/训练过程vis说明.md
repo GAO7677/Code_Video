@@ -87,3 +87,16 @@ CUDA_VISIBLE_DEVICES=0 \
 - 当 `depth_aux` 接近 0 或页面没有 depth panel 时，通常表示
   - 当前配置没有有效 depth supervision
   - 或当前样本对应目标 depth 无有效 GT
+
+## 5. v_newtrain 相关推理与监控
+
+- 当前 `old DiffSynth backbone + object branch` 的正式训练分支，不再输出旧格式 `step_0000600.pt`
+- 新格式是：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000600/checkpoint.safetensors`
+- 对应推理脚本：
+  - [infer_v_newtrain_context_video_wan.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py)
+- 对应批量推理脚本：
+  - [batch_infer_checkpoints.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_infer_checkpoints.py)
+- 对应持续监听脚本：
+  - [watch_checkpoint_infer.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_checkpoint_infer.py)
+- 三者现在都兼容目录式 checkpoint

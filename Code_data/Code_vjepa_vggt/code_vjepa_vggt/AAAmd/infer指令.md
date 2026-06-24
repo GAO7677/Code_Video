@@ -58,3 +58,82 @@ CUDA_VISIBLE_DEVICES=5 \
     --seed 42
     ```
 2. 
+
+## 0624 v_newtrain old DiffSynth backbone + object branch
+
+### 1. 单个 checkpoint 推理
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=5 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py \
+  --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000400 \
+  --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 \
+  --prompt "industrial rigid body simulation sphere" \
+  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400 \
+  --output-video /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400/prediction.mp4
+```
+
+- 说明
+  - `--checkpoint` 可以直接传 `step-000400` 目录
+  - 脚本会自动解析其中的 `checkpoint.safetensors`
+  - 输入是固定 `8` 帧 context video
+  - 输出是 `24` 帧、`512x896`、`fps=30` 的生成视频
+
+### 2. 批量跑当前所有 checkpoint
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=5 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_infer_checkpoints.py \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints \
+  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_freeze_lora_other_modules_gpu67.yaml \
+  --infer-script /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py \
+  --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 \
+  --prompt "industrial rigid body simulation sphere" \
+  --output-root /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch \
+  --gpu 5 \
+  --num-frames 24 \
+  --sampling-mode prefix \
+  --sampling-steps 40 \
+  --fps 30
+```
+
+- 输出结构
+  - 例如 `step-000400` 会生成：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/checkpoints/step-000400.mp4`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/checkpoints/step-000400.json`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/checkpoints/step-000400/result.json`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/checkpoints/step-000400/infer.log`
+
+### 3. 持续监听新 checkpoint 自动推理
+
+前台启动命令：
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=5 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_checkpoint_infer.py \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints \
+  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_freeze_lora_other_modules_gpu67.yaml \
+  --infer-script /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py \
+  --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 \
+  --prompt "industrial rigid body simulation sphere" \
+  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_watch \
+  --gpu 5 \
+  --num-frames 24 \
+  --sampling-mode prefix \
+  --sampling-steps 40 \
+  --fps 30 \
+  --process-existing
+```
+
+- 说明
+  - 这个 watcher 现在同时支持两种 checkpoint 格式：
+    - `step_0000600.pt`
+    - `step-000600/checkpoint.safetensors`
+  - `--process-existing` 会先把当前目录里已经存在的 checkpoint 也补跑一遍
+  - 如果只想监听后续新 checkpoint，不加 `--process-existing`

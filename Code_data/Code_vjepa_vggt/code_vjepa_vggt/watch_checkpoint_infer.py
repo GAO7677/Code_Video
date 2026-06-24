@@ -18,20 +18,43 @@ def _utc_now() -> str:
 
 
 def _parse_step(path: Path) -> int:
-    stem = path.stem
-    if not stem.startswith("step_"):
-        return -1
-    try:
-        return int(stem.split("_", 1)[1])
-    except ValueError:
-        return -1
+    candidates: list[str] = []
+    if path.is_dir():
+        candidates.append(path.name)
+    else:
+        candidates.append(path.stem)
+        if path.name == "checkpoint.safetensors":
+            candidates.append(path.parent.name)
+    for candidate in candidates:
+        if candidate.startswith("step_"):
+            suffix = candidate.split("_", 1)[1]
+        elif candidate.startswith("step-"):
+            suffix = candidate.split("-", 1)[1]
+        else:
+            continue
+        try:
+            return int(suffix)
+        except ValueError:
+            continue
+    return -1
 
 
 def _list_checkpoints(checkpoint_dir: Path) -> list[Path]:
-    return sorted(
-        [path for path in checkpoint_dir.glob("step_*.pt") if path.is_file()],
-        key=lambda path: (_parse_step(path), path.name),
-    )
+    legacy_files = [path for path in checkpoint_dir.glob("step_*.pt") if path.is_file()]
+    safetensor_dirs = [
+        path
+        for path in checkpoint_dir.glob("step-*")
+        if path.is_dir() and (path / "checkpoint.safetensors").is_file()
+    ]
+    return sorted(legacy_files + safetensor_dirs, key=lambda path: (_parse_step(path), path.name))
+
+
+def _checkpoint_name(checkpoint_path: Path) -> str:
+    if checkpoint_path.is_dir():
+        return checkpoint_path.name
+    if checkpoint_path.name == "checkpoint.safetensors":
+        return checkpoint_path.parent.name
+    return checkpoint_path.stem
 
 
 def _load_state(state_file: Path) -> dict[str, object]:
@@ -58,15 +81,14 @@ def _save_state(state_file: Path, state: dict[str, object]) -> None:
 def _is_complete(step_output_dir: Path) -> bool:
     result_path = step_output_dir / "result.json"
     prediction_path = step_output_dir / "prediction.mp4"
-    browser_path = step_output_dir / "prediction.browser.mp4"
-    return result_path.is_file() and prediction_path.is_file() and browser_path.is_file()
+    return result_path.is_file() and prediction_path.is_file()
 
 
 @dataclass
 class WatchConfig:
     checkpoint_dir: Path
     infer_script: Path
-    config_path: Path
+    config_path: Path | None
     context_video: Path
     output_dir: Path
     prompt: str
@@ -83,13 +105,11 @@ class WatchConfig:
 
 
 def _build_command(cfg: WatchConfig, checkpoint_path: Path, step_output_dir: Path) -> list[str]:
-    return [
+    cmd = [
         cfg.python_bin,
         str(cfg.infer_script),
         "--checkpoint",
         str(checkpoint_path),
-        "--config",
-        str(cfg.config_path),
         "--context-video",
         str(cfg.context_video),
         "--prompt",
@@ -107,10 +127,14 @@ def _build_command(cfg: WatchConfig, checkpoint_path: Path, step_output_dir: Pat
         "--fps",
         str(cfg.fps),
     ]
+    if cfg.config_path is not None:
+        cmd.extend(["--config", str(cfg.config_path)])
+    return cmd
 
 
 def _run_infer(cfg: WatchConfig, checkpoint_path: Path, state: dict[str, object]) -> int:
-    step_output_dir = cfg.output_dir / checkpoint_path.stem
+    checkpoint_name = _checkpoint_name(checkpoint_path)
+    step_output_dir = cfg.output_dir / checkpoint_name
     step_output_dir.mkdir(parents=True, exist_ok=True)
     log_path = step_output_dir / "infer.log"
     cmd = _build_command(cfg, checkpoint_path, step_output_dir)
@@ -143,7 +167,7 @@ def _run_infer(cfg: WatchConfig, checkpoint_path: Path, state: dict[str, object]
 
     processed = state.setdefault("processed", {})
     assert isinstance(processed, dict)
-    processed[checkpoint_path.name] = {
+    processed[checkpoint_name] = {
         "checkpoint": str(checkpoint_path),
         "step": _parse_step(checkpoint_path),
         "output_dir": str(step_output_dir),
@@ -164,12 +188,16 @@ def _run_infer(cfg: WatchConfig, checkpoint_path: Path, state: dict[str, object]
 
 
 def _build_watch_config(args: argparse.Namespace) -> WatchConfig:
-    config = load_yaml_config(args.config)
+    config_path = None
+    config = {}
+    if args.config:
+        config_path = Path(args.config).expanduser().resolve()
+        config = load_yaml_config(str(config_path))
     fps = int(args.fps if args.fps is not None else config.get("data", {}).get("fps", 30))
     return WatchConfig(
         checkpoint_dir=Path(args.checkpoint_dir).expanduser().resolve(),
         infer_script=Path(args.infer_script).expanduser().resolve(),
-        config_path=Path(args.config).expanduser().resolve(),
+        config_path=config_path,
         context_video=Path(args.context_video).expanduser().resolve(),
         output_dir=Path(args.output_dir).expanduser().resolve(),
         prompt=str(args.prompt),
@@ -241,14 +269,15 @@ def main() -> None:
         startup_existing = set(state.get("startup_existing", [])) if not cfg.process_existing else set()
         for checkpoint_path in checkpoints:
             seen_any = True
-            step_output_dir = cfg.output_dir / checkpoint_path.stem
-            entry = processed.get(checkpoint_path.name)
-            if checkpoint_path.name in startup_existing and entry is None:
+            checkpoint_name = _checkpoint_name(checkpoint_path)
+            step_output_dir = cfg.output_dir / checkpoint_name
+            entry = processed.get(checkpoint_name)
+            if checkpoint_name in startup_existing and entry is None:
                 continue
             if _is_complete(step_output_dir) and isinstance(entry, dict) and entry.get("status") == "ok":
                 continue
             if _is_complete(step_output_dir) and entry is None:
-                processed[checkpoint_path.name] = {
+                processed[checkpoint_name] = {
                     "checkpoint": str(checkpoint_path),
                     "step": _parse_step(checkpoint_path),
                     "output_dir": str(step_output_dir),

@@ -9,20 +9,43 @@ from pathlib import Path
 
 
 def _parse_step(path: Path) -> int:
-    stem = path.stem
-    if not stem.startswith("step_"):
-        return -1
-    try:
-        return int(stem.split("_", 1)[1])
-    except ValueError:
-        return -1
+    candidates: list[str] = []
+    if path.is_dir():
+        candidates.append(path.name)
+    else:
+        candidates.append(path.stem)
+        if path.name == "checkpoint.safetensors":
+            candidates.append(path.parent.name)
+    for candidate in candidates:
+        if candidate.startswith("step_"):
+            suffix = candidate.split("_", 1)[1]
+        elif candidate.startswith("step-"):
+            suffix = candidate.split("-", 1)[1]
+        else:
+            continue
+        try:
+            return int(suffix)
+        except ValueError:
+            continue
+    return -1
 
 
 def _list_checkpoints(checkpoint_dir: Path) -> list[Path]:
-    return sorted(
-        [path for path in checkpoint_dir.glob("step_*.pt") if path.is_file()],
-        key=lambda path: (_parse_step(path), path.name),
-    )
+    legacy_files = [path for path in checkpoint_dir.glob("step_*.pt") if path.is_file()]
+    safetensor_dirs = [
+        path
+        for path in checkpoint_dir.glob("step-*")
+        if path.is_dir() and (path / "checkpoint.safetensors").is_file()
+    ]
+    return sorted(legacy_files + safetensor_dirs, key=lambda path: (_parse_step(path), path.name))
+
+
+def _checkpoint_name(checkpoint_path: Path) -> str:
+    if checkpoint_path.is_dir():
+        return checkpoint_path.name
+    if checkpoint_path.name == "checkpoint.safetensors":
+        return checkpoint_path.parent.name
+    return checkpoint_path.stem
 
 
 def _build_command(
@@ -39,15 +62,13 @@ def _build_command(
     sampling_steps: int,
     fps: int,
     seed: int,
-    wan_lora_only: bool,
+        wan_lora_only: bool,
 ) -> list[str]:
     cmd = [
         python_bin,
         str(infer_script),
         "--checkpoint",
         str(checkpoint_path),
-        "--config",
-        str(config_path),
         "--context-video",
         str(context_video),
         "--prompt",
@@ -67,6 +88,8 @@ def _build_command(
         "--seed",
         str(seed),
     ]
+    if config_path is not None:
+        cmd.extend(["--config", str(config_path)])
     if wan_lora_only:
         cmd.append("--wan-lora-only")
     return cmd
@@ -75,7 +98,7 @@ def _build_command(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run inference for every step_*.pt under a checkpoint directory.")
     parser.add_argument("--checkpoint-dir", required=True)
-    parser.add_argument("--config", required=True)
+    parser.add_argument("--config", default=None)
     parser.add_argument("--infer-script", required=True)
     parser.add_argument("--context-video", required=True)
     parser.add_argument("--prompt", required=True)
@@ -96,7 +119,7 @@ def main() -> None:
     args = parser.parse_args()
 
     checkpoint_dir = Path(args.checkpoint_dir).expanduser().resolve()
-    config_path = Path(args.config).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve() if args.config else None
     infer_script = Path(args.infer_script).expanduser().resolve()
     context_video = Path(args.context_video).expanduser().resolve()
     output_root = Path(args.output_root).expanduser().resolve()
@@ -108,7 +131,7 @@ def main() -> None:
 
     checkpoints = _list_checkpoints(checkpoint_dir)
     if not checkpoints:
-        raise FileNotFoundError(f"no step_*.pt found under {checkpoint_dir}")
+        raise FileNotFoundError(f"no supported checkpoints found under {checkpoint_dir}")
 
     summary: dict[str, object] = {
         "checkpoint_dir": str(checkpoint_dir),
@@ -127,7 +150,7 @@ def main() -> None:
     env["PYTHONPATH"] = repo_root if not existing_pythonpath else f"{repo_root}:{existing_pythonpath}"
 
     for checkpoint_path in checkpoints:
-        ckpt_name = checkpoint_path.stem
+        ckpt_name = _checkpoint_name(checkpoint_path)
         step_output_dir = run_output_dir / ckpt_name
         step_output_dir.mkdir(parents=True, exist_ok=True)
         output_video = run_output_dir / f"{ckpt_name}.mp4"
