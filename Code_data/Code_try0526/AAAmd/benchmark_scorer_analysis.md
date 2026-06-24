@@ -21,12 +21,19 @@
 | Scorer | 代码口径 | 方向 | 特性 |
 |---|---|---|---|
 | Official PDI | `metric_results.official_pdi` | 越低越好 | 几何审计分数，主要依赖分割、跟踪、深度和投影关系。当前结果里 `traj_component` 贡献很小，`scale / rigidity / vp` 更像主驱动。它不是纯物理分数，更像“几何前端稳定性 + 局部结构一致性”。 |
-| WMReward Surprise | `metric_results.wmreward_jepa.surprise` | 越低越好 | 对齐官方 `compute_wmreward.py` 默认口径，本质是 V-JEPA 的滑窗未来预测误差。它能看出时间预测难度，但区分度普遍偏弱。 |
+| WMReward Surprise | `metric_results.wmreward_jepa.surprise` | 越低越好 | 对齐官方 `compute_wmreward.py` 默认口径，本质是 V-JEPA 的滑窗未来预测误差。它能看出时间预测难度，但区分度普遍偏弱。`wmreward_similarity` 只是 `1 - surprise` 的派生量，不是独立 scorer。 |
 | V-JEPA Proxy | `RelRaw / DeltaRel / DeltaProf` | 越低越好 | 项目内自定义诊断，不是官方 benchmark。当前更应该拆开看三项误差，而不是看任何一个合成总分。 |
 | Cosmos Reason1 | `metric_results.cosmos_reason1.score` | 越高越好 | Cosmos cookbook 里的 LLM judge，按固定 prompt 输出 1 到 5 分。可解释性强，但离散、粗粒度，也会受视觉呈现影响。 |
 | VideoPhy-2 | `SA / PC / Joint` | 越高越好 | `SA` 是 caption match，`PC` 是物理 commonsense，`Joint = 1[SA>=4 且 PC>=4]`。它很适合看明显违和，但不适合细粒度排序。 |
+| PhyGround | `phyground_general_avg` | 越高越好 | 对齐官方 `PhyGround/phyjudge` 的 general metrics，当前常用的是 `SA / PTV / persistence` 三项 1 到 5 分的 VLM judge，再取平均得到 `general_avg`。它擅长看语义对齐、时间变化合理性和物体持续存在性，但本质仍是 judge-style 评分。 |
+| FID | `fid` | 越低越好 | 官方实现是 frame-level Fréchet Inception Distance，用 Inception 特征比较生成帧与 GT 帧分布。它主要衡量单帧外观质量与分布接近度，不是物理指标。 |
+| FVD | `fvd` | 越低越好 | 官方实现是 video-level Fréchet Video Distance，用 I3D 特征联合看外观与时序动态。它比 FID 更有时间信息，但仍然是通用视频生成质量指标，不等于物理正确性。 |
+| CSE / TSE | `cse / tse` | 越低越好 | 官方 Sampson family 用来测多视角几何一致性：`TSE` 看单视角随时间的几何稳定性，`CSE` 看同一时刻跨视角的一致性。要注意，当前 flat 脚本对单视角视频只用了 ORB + Fundamental Matrix 的简化 proxy，不是官方 `run_cse_tse.py` 那套完整多视角流程。 |
+| Accuracy / Pearson | `accuracy / pearson_correlation` | `Accuracy` 越高越好；`Pearson` 越接近 1 越好 | 这两个字段在官方仓库里通常是“有标注分数时的汇总统计”。但当前 flat 脚本里的实现不是官方 benchmark 标签，而是把样本先按 `Official PDI` 排序后构造 pseudo label，再拿 `VideoPhy-2 PC` 去算 exact-match accuracy 和 Pearson correlation，所以只能当仓库内诊断量。 |
 
-从实现上看，VideoPhy-2 的 `SA` 和 `PC` 都是 1 到 5 的离散 judge；Cosmos Reason1 也是 1 到 5；WMReward 和 V-JEPA Proxy 才更接近连续预测误差。也就是说，前两者更像“粗粒度裁判”，后两者更像“预测一致性诊断”。
+从实现上看，VideoPhy-2 的 `SA` 和 `PC` 都是 1 到 5 的离散 judge；Cosmos Reason1 和 PhyGround general 也属于 1 到 5 的 judge-style 评分；WMReward 和 V-JEPA Proxy 才更接近连续预测误差。也就是说，前一类更像“粗粒度裁判”，后一类更像“预测一致性诊断”。
+
+补充一点：`FID / FVD` 更偏生成质量分布，`CSE / TSE` 更偏几何一致性，`Accuracy / Pearson` 在当前 flat 流程里只是派生统计。所以它们可以补足视角，但不应该和 `Official PDI / WMReward / Cosmos / VideoPhy-2 / PhyGround` 混成同一种“官方物理主分数”。
 
 ## Analysis
 

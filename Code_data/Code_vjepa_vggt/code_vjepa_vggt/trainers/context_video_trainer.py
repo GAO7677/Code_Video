@@ -103,6 +103,9 @@ class ContextVideoTrainer(nn.Module):
         cond_dim = int(model_cfg.get("cond_proj_dim", self.bundle.config.text_dim if hasattr(self.bundle.config, "text_dim") else 4096))
         if hasattr(self.bundle.config, "text_dim") and cond_dim != int(self.bundle.config.text_dim):
             raise ValueError(f"cond_proj_dim must match Wan text_dim={self.bundle.config.text_dim}, got {cond_dim}")
+        self.max_objects = int(model_cfg.get("sam2_max_objects", 4))
+        self.points_per_object = int(model_cfg.get("object_num_queries", 8))
+        self.total_object_queries = int(self.max_objects * self.points_per_object)
 
         _debug_log("build JEPA adapter")
         self.jepa_adapter = JEPAPatchAdapter(
@@ -118,7 +121,7 @@ class ContextVideoTrainer(nn.Module):
         _debug_log("build VGGT adapter")
         self.vggt_adapter = VGGTTrackAdapter(
             model_path=model_cfg.get("vggt_model_path"),
-            num_queries=int(model_cfg["object_num_queries"]),
+            num_queries=self.total_object_queries,
             device=str(self.device_obj),
             input_hw=tuple(model_cfg["vggt_input_hw"]),
             trainable=bool(model_cfg.get("train_vggt", False)),
@@ -131,7 +134,7 @@ class ContextVideoTrainer(nn.Module):
             _debug_log("build CoTracker adapter")
             self.cotracker_adapter = CoTrackerAdapter(
                 checkpoint_path=model_cfg.get("cotracker_checkpoint"),
-                num_queries=int(model_cfg["object_num_queries"]),
+                num_queries=self.total_object_queries,
                 device=str(self.device_obj),
                 input_hw=tuple(model_cfg.get("cotracker_input_hw", [384, 512])),
                 window_len=int(model_cfg.get("cotracker_window_len", 60)),
@@ -164,7 +167,7 @@ class ContextVideoTrainer(nn.Module):
         _debug_log("build object condition adapter")
         self.object_adapter = ObjectConditionAdapter(
             dim=cond_dim,
-            num_slots=int(model_cfg["object_num_queries"]),
+            num_slots=self.max_objects,
             max_time_steps=int(model_cfg.get("max_object_time_steps", 64)),
         ).to(self.device_obj)
         self.scheduler = WanFlowMatchScheduler(num_train_timesteps=int(self.bundle.config.num_train_timesteps))
@@ -349,6 +352,42 @@ class ContextVideoTrainer(nn.Module):
         return out, out_valid
 
     @staticmethod
+    def _group_tracks_to_objects(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+        *,
+        max_objects: int,
+        points_per_object: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        expected_queries = int(max_objects) * int(points_per_object)
+        if int(tracks.shape[2]) != expected_queries:
+            raise ValueError(
+                f"flat query count mismatch: got {int(tracks.shape[2])}, expected {expected_queries} "
+                f"(max_objects={max_objects}, points_per_object={points_per_object})"
+            )
+        tracks_grouped = tracks.view(tracks.shape[0], tracks.shape[1], int(max_objects), int(points_per_object), 2)
+        visibility_grouped = visibility.view(visibility.shape[0], visibility.shape[1], int(max_objects), int(points_per_object))
+        confidence_grouped = confidence.view(confidence.shape[0], confidence.shape[1], int(max_objects), int(points_per_object))
+        return tracks_grouped, visibility_grouped, confidence_grouped
+
+    @staticmethod
+    def _object_center_tracks_from_grouped(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+        object_valid_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        weights = (visibility * confidence).clamp_min(0.0)
+        denom = weights.sum(dim=3, keepdim=True).clamp_min(1.0e-6)
+        centers = (tracks * weights.unsqueeze(-1)).sum(dim=3) / denom
+        valid = weights.sum(dim=3) > 1.0e-6
+        if object_valid_mask is not None:
+            slot_valid = object_valid_mask[:, None, :].to(dtype=valid.dtype, device=valid.device) > 0.5
+            valid = valid & slot_valid
+        return centers, valid
+
+    @staticmethod
     def _gather_matched_gt_features(values: torch.Tensor, matched_gt_indices: torch.Tensor) -> torch.Tensor:
         if values.ndim != 4:
             raise ValueError(f"expected values with shape [B,T,G,D], got {list(values.shape)}")
@@ -379,7 +418,7 @@ class ContextVideoTrainer(nn.Module):
         context_videos: torch.Tensor,
         num_context_frames: torch.Tensor,
         captions: list[str],
-    ) -> tuple[torch.Tensor | None, list[str], list[str], list[dict[str, Any]]]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, list[str], list[str], list[dict[str, Any]]]:
         if not self.enable_sam2_priors or self.sam2_tracker is None:
             batch_size = int(context_videos.shape[0])
             prior_debugs = [
@@ -390,11 +429,12 @@ class ContextVideoTrainer(nn.Module):
                 }
                 for _ in range(batch_size)
             ]
-            return None, ["uniform_queries"] * batch_size, ["disabled"] * batch_size, prior_debugs
+            return None, None, ["uniform_queries"] * batch_size, ["disabled"] * batch_size, prior_debugs
         if self.sam2_tracker is None:
             raise RuntimeError("SAM2 tracker is required to build query priors")
 
         priors = []
+        object_valid_masks = []
         prior_sources: list[str] = []
         prompt_modes: list[str] = []
         prior_debugs: list[dict[str, Any]] = []
@@ -402,12 +442,13 @@ class ContextVideoTrainer(nn.Module):
             valid_frames = int(num_context_frames[batch_idx].item())
             frames_tchw_01 = ((context_videos[batch_idx, :, :valid_frames].permute(1, 0, 2, 3).float() + 1.0) / 2.0).detach().cpu().numpy()
             prompt_frame_idx = max(valid_frames - 1, 0)
-            query_points_px, prior_source, prompt_mode, prior_debug = self._build_query_prior_for_sample(
+            query_points_px, object_valid_mask, prior_source, prompt_mode, prior_debug = self._build_query_prior_for_sample(
                 frames_tchw_01=frames_tchw_01,
                 prompt_frame_idx=prompt_frame_idx,
                 caption=captions[batch_idx],
             )
             priors.append(torch.from_numpy(query_points_px))
+            object_valid_masks.append(torch.from_numpy(object_valid_mask))
             prior_sources.append(prior_source)
             prompt_modes.append(prompt_mode)
             prior_debugs.append(
@@ -418,7 +459,8 @@ class ContextVideoTrainer(nn.Module):
                 }
             )
         stacked = torch.stack(priors, dim=0).to(device=self.device_obj, dtype=context_videos.dtype)
-        return stacked, prior_sources, prompt_modes, prior_debugs
+        object_valid = torch.stack(object_valid_masks, dim=0).to(device=self.device_obj, dtype=context_videos.dtype)
+        return stacked, object_valid, prior_sources, prompt_modes, prior_debugs
 
     def _build_query_prior_for_sample(
         self,
@@ -426,7 +468,7 @@ class ContextVideoTrainer(nn.Module):
         frames_tchw_01: Any,
         prompt_frame_idx: int,
         caption: str,
-    ) -> tuple[Any, str, str, dict[str, Any]]:
+    ) -> tuple[Any, Any, str, str, dict[str, Any]]:
         if self.sam2_prior_strategy in {"grounded_text_multi", "text_multi", "grounded_text"}:
             return self._build_multi_object_query_prior(
                 frames_tchw_01=frames_tchw_01,
@@ -444,9 +486,12 @@ class ContextVideoTrainer(nn.Module):
         query_points_px, prior_source = build_vggt_query_prior(
             sam_out.masks_thw,
             sam_out.boxes_t4,
-            num_queries=self.vggt_adapter.num_queries,
+            num_queries=self.points_per_object,
         )
-        return query_points_px, prior_source, sam_out.prompt_mode, {
+        grouped = np.repeat(query_points_px[None, :, :], self.max_objects, axis=0).astype(np.float32)
+        valid_mask = np.zeros((self.max_objects,), dtype=np.float32)
+        valid_mask[0] = 1.0
+        return grouped, valid_mask, prior_source, sam_out.prompt_mode, {
             "strategy": self.sam2_prior_strategy,
             "prompt_text": sam_out.prompt_text,
             "object_count": 1,
@@ -459,8 +504,8 @@ class ContextVideoTrainer(nn.Module):
         frames_tchw_01: np.ndarray,
         prompt_frame_idx: int,
         caption: str,
-    ) -> tuple[np.ndarray, str, str, dict[str, Any]]:
-        max_objects = int(self.cfg["model"].get("sam2_max_objects", 4))
+    ) -> tuple[np.ndarray, np.ndarray, str, str, dict[str, Any]]:
+        max_objects = self.max_objects
         text_prompt = _build_multi_object_prompt(caption)
         detected_boxes = None
         prompt_mode = "caption_gdino_multi"
@@ -487,11 +532,10 @@ class ContextVideoTrainer(nn.Module):
                     f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
                 )
 
-        per_object_queries = []
-        object_count = min(int(detected_boxes.shape[0]), int(self.vggt_adapter.num_queries))
+        object_count = min(int(detected_boxes.shape[0]), int(max_objects))
         detected_boxes = detected_boxes[:object_count]
-        base = self.vggt_adapter.num_queries // max(object_count, 1)
-        remainder = max(0, self.vggt_adapter.num_queries - base * object_count)
+        grouped_queries = np.zeros((max_objects, self.points_per_object, 2), dtype=np.float32)
+        object_valid_mask = np.zeros((max_objects,), dtype=np.float32)
         for obj_idx, box_xyxy in enumerate(detected_boxes):
             sam_out = self.sam2_tracker.track(
                 frames_tchw_01,
@@ -499,28 +543,25 @@ class ContextVideoTrainer(nn.Module):
                 prompt_box_xyxy=box_xyxy.astype(np.float32),
                 caption="",
             )
-            alloc = base + (1 if obj_idx < remainder else 0)
-            if alloc <= 0:
-                continue
             query_points_px, _ = build_vggt_query_prior(
                 sam_out.masks_thw,
                 sam_out.boxes_t4,
-                num_queries=alloc,
+                num_queries=self.points_per_object,
             )
-            if query_points_px.shape[0] > 0:
-                per_object_queries.append(query_points_px)
-        if not per_object_queries:
+            if query_points_px.shape[0] == 0:
+                continue
+            if query_points_px.shape[0] < self.points_per_object:
+                extra = query_points_px[-1:].repeat(self.points_per_object - query_points_px.shape[0], axis=0)
+                query_points_px = np.concatenate([query_points_px, extra], axis=0)
+            grouped_queries[obj_idx] = query_points_px[: self.points_per_object].astype(np.float32)
+            object_valid_mask[obj_idx] = 1.0
+        if float(object_valid_mask.sum()) <= 0.0:
             raise RuntimeError(
                 "SAM2 failed to produce any query priors after GroundingDINO detections; "
                 f"prompt_frame_idx={prompt_frame_idx}, text_prompt={text_prompt!r}, detector_error={detector_error}"
             )
-
-        query_points = np.concatenate(per_object_queries, axis=0)[: self.vggt_adapter.num_queries].astype(np.float32)
-        if query_points.shape[0] < self.vggt_adapter.num_queries:
-            extra = query_points[-1:].repeat(self.vggt_adapter.num_queries - query_points.shape[0], axis=0)
-            query_points = np.concatenate([query_points, extra], axis=0)
         prior_source = f"grounded_sam_objects{object_count}"
-        return query_points.astype(np.float32), prior_source, f"{prompt_mode}_objects{object_count}", {
+        return grouped_queries.astype(np.float32), object_valid_mask.astype(np.float32), prior_source, f"{prompt_mode}_objects{object_count}", {
             "strategy": self.sam2_prior_strategy,
             "prompt_text": text_prompt,
             "object_count": object_count,
@@ -549,11 +590,18 @@ class ContextVideoTrainer(nn.Module):
         jepa_out = self.jepa_adapter(context_videos)
         frames_bthwc = context_videos.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        query_points_prior, sam_prior_sources, sam_prompt_modes, sam_prior_debug = self._maybe_build_query_priors(
+        query_points_grouped, object_valid_mask, sam_prior_sources, sam_prompt_modes, sam_prior_debug = self._maybe_build_query_priors(
             context_videos=context_videos,
             num_context_frames=num_context_frames,
             captions=captions,
         )
+        query_points_prior = None
+        if query_points_grouped is not None:
+            query_points_prior = query_points_grouped.view(
+                query_points_grouped.shape[0],
+                self.total_object_queries,
+                2,
+            )
         vggt_out = self.vggt_adapter(
             frames_bthwc,
             query_points_prior=query_points_prior,
@@ -576,13 +624,21 @@ class ContextVideoTrainer(nn.Module):
             visibility = vggt_out.visibility
             confidence = vggt_out.confidence
             track_image_hw = vggt_out.image_hw
+        tracks_grouped, visibility_grouped, confidence_grouped = self._group_tracks_to_objects(
+            tracks,
+            visibility,
+            confidence,
+            max_objects=self.max_objects,
+            points_per_object=self.points_per_object,
+        )
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latent_batch,
-            tracks=tracks,
-            visibility=visibility,
-            confidence=confidence,
+            tracks=tracks_grouped,
+            visibility=visibility_grouped,
+            confidence=confidence_grouped,
             track_image_hw=track_image_hw,
+            object_valid_mask=object_valid_mask,
             vggt_world_points=vggt_out.world_points,
             vggt_world_points_conf=vggt_out.world_points_conf,
             vggt_depth=vggt_out.depth,
@@ -600,6 +656,7 @@ class ContextVideoTrainer(nn.Module):
         track_box_loss = None
         track_iou_loss = None
         tracks_native = None
+        center_tracks_native = None
         gt_track_summary = None
         gt_track_valid = None
         gt_box_xyxy = None
@@ -614,28 +671,34 @@ class ContextVideoTrainer(nn.Module):
             context_boxes = batch["context_boxes"].to(self.device_obj)
             scale_x = float(context_videos.shape[-1]) / float(track_image_hw[1])
             scale_y = float(context_videos.shape[-2]) / float(track_image_hw[0])
-            tracks_native = tracks.clone()
+            tracks_native = tracks_grouped.clone()
             tracks_native[..., 0] *= scale_x
             tracks_native[..., 1] *= scale_y
+            center_tracks_native, center_track_valid = self._object_center_tracks_from_grouped(
+                tracks_native,
+                visibility_grouped,
+                confidence_grouped,
+                object_valid_mask=object_valid_mask,
+            )
             track_alignment = align_tracks_to_boxes(
-                tracks=tracks_native,
+                tracks=center_tracks_native,
                 gt_boxes=context_boxes,
                 image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
             )
             track_box_loss = track_box_l1_loss(
-                tracks=tracks_native,
+                tracks=center_tracks_native,
                 matched_gt_centers=track_alignment.matched_gt_centers,
-                matched_gt_valid=track_alignment.matched_gt_valid,
+                matched_gt_valid=track_alignment.matched_gt_valid * center_track_valid.to(dtype=track_alignment.matched_gt_valid.dtype),
             )
             track_iou_loss = track_box_iou_loss(
-                tracks=tracks_native,
+                tracks=center_tracks_native,
                 gt_boxes=context_boxes,
                 matched_gt_indices=track_alignment.matched_gt_indices,
                 image_hw=(context_videos.shape[-2], context_videos.shape[-1]),
                 radius_px=float(self.cfg.get("loss", {}).get("track_iou_radius_px", 12.0)),
             )
             latent_frames = int(object_out.object_latent_tokens.shape[1])
-            gt_valid_full = (track_alignment.matched_gt_valid > 0.5) & frame_valid_mask.unsqueeze(-1)
+            gt_valid_full = (track_alignment.matched_gt_valid > 0.5) & frame_valid_mask.unsqueeze(-1) & center_track_valid
             gt_track_summary, gt_track_valid = self._group_track_summary(
                 track_alignment.matched_gt_centers,
                 gt_valid_full,
@@ -702,9 +765,12 @@ class ContextVideoTrainer(nn.Module):
             "vggt_world_points": list(vggt_out.world_points.shape) if vggt_out.world_points is not None else None,
             "vggt_world_points_conf": list(vggt_out.world_points_conf.shape) if vggt_out.world_points_conf is not None else None,
             "track_source": self.track_source,
-            "active_tracks": list(tracks.shape),
-            "active_visibility": list(visibility.shape),
-            "active_confidence": list(confidence.shape),
+            "active_tracks_flat": list(tracks.shape),
+            "active_tracks_grouped": list(tracks_grouped.shape),
+            "active_visibility_flat": list(visibility.shape),
+            "active_visibility_grouped": list(visibility_grouped.shape),
+            "active_confidence_flat": list(confidence.shape),
+            "active_confidence_grouped": list(confidence_grouped.shape),
             "active_track_image_hw": list(track_image_hw),
             "object_tokens": list(object_out.object_tokens.shape),
             "object_jepa_tokens": list(object_out.jepa_tokens.shape),
@@ -724,9 +790,15 @@ class ContextVideoTrainer(nn.Module):
             "sam_prior_sources": sam_prior_sources,
             "sam_prompt_modes": sam_prompt_modes,
             "sam_prior_debug": sam_prior_debug,
+            "max_objects": self.max_objects,
+            "points_per_object": self.points_per_object,
         }
+        if query_points_grouped is not None:
+            debug["sam_query_points_grouped"] = list(query_points_grouped.shape)
         if query_points_prior is not None:
-            debug["sam_query_points"] = list(query_points_prior.shape)
+            debug["sam_query_points_flat"] = list(query_points_prior.shape)
+        if object_valid_mask is not None:
+            debug["object_valid_mask"] = list(object_valid_mask.shape)
         if cotracker_out is not None:
             debug["cotracker_query_points"] = list(cotracker_out.query_points.shape)
             debug["cotracker_tracks"] = list(cotracker_out.tracks.shape)
@@ -748,7 +820,9 @@ class ContextVideoTrainer(nn.Module):
                 debug["track_pair_cost"] = list(track_alignment.pair_cost.shape)
                 debug["track_box_l1_loss"] = float(track_box_loss.item())
                 debug["track_box_iou_loss"] = float(track_iou_loss.item())
-                debug["tracks_native_xy"] = list(tracks_native.shape)
+                debug["tracks_native_xy_grouped"] = list(tracks_native.shape)
+            if center_tracks_native is not None:
+                debug["center_tracks_native_xy"] = list(center_tracks_native.shape)
             if gt_track_summary is not None and gt_track_valid is not None:
                 debug["gt_track_summary"] = list(gt_track_summary.shape)
                 debug["gt_track_valid"] = list(gt_track_valid.shape)

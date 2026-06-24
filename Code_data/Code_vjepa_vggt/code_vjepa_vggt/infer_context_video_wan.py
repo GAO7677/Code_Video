@@ -494,11 +494,67 @@ def _build_cond_context(
     return prepared["text_context"][0], prepared["object_context"][0], prepared["context_latents"][0], debug
 
 
+def _build_wan_lora_only_context(
+    *,
+    config: dict[str, object],
+    context_video: torch.Tensor,
+    captions: list[str],
+    device_obj: torch.device,
+) -> tuple[WanContextVideoModel, torch.Tensor, torch.Tensor, dict[str, object]]:
+    model_cfg = config["model"]
+    bundle = WanContextVideoModel(
+        ckpt_dir=model_cfg["wan_ckpt_dir"],
+        task=model_cfg["wan_task"],
+        device=str(device_obj),
+        load_dit=True,
+        lora_rank=int(model_cfg.get("wan_lora_rank", 0)),
+        lora_alpha=int(model_cfg.get("wan_lora_alpha", 0)),
+        lora_dropout=float(model_cfg.get("wan_lora_dropout", 0.0)),
+        lora_init=str(model_cfg.get("wan_lora_init", "gaussian")),
+        reinitialize_object_branch=False,
+    )
+    bundle.freeze_parts(
+        freeze_vae=bool(model_cfg.get("freeze_vae", True)),
+        freeze_text_encoder=bool(model_cfg.get("freeze_text_encoder", True)),
+        freeze_dit=bool(model_cfg.get("freeze_wan_dit", True)),
+        freeze_lora=bool(model_cfg.get("freeze_wan_lora", True)),
+    )
+    init_lora_path = model_cfg.get("init_wan_lora_from_checkpoint")
+    if init_lora_path is not None:
+        bundle.load_lora_checkpoint(
+            init_lora_path,
+            strict=bool(model_cfg.get("init_wan_lora_strict", True)),
+            zero_missing=bool(model_cfg.get("init_wan_lora_zero_missing", False)),
+        )
+    bundle.dit.eval()
+
+    videos = context_video.to(device_obj)
+    with torch.no_grad():
+        text_context_list = [
+            u.to(device_obj) for u in bundle.text_encoder(list(captions), bundle.text_encoder.device)
+        ]
+        context_latents_list = bundle.vae.encode([u.to(device_obj) for u in videos])
+
+    text_context = text_context_list[0]
+    context_latents = context_latents_list[0]
+    debug = {
+        "mode": "wan_lora_only",
+        "text_context": [list(t.shape) for t in text_context_list],
+        "context_latents": [list(t.shape) for t in context_latents_list],
+        "context_video": list(videos.shape),
+        "wan_lora_checkpoint": str(init_lora_path) if init_lora_path is not None else None,
+        "object_branch_initialized": False,
+    }
+    _print_tensor_stats("context_latents", context_latents)
+    _print_tensor_stats("text_context", text_context)
+    return bundle, text_context, context_latents, debug
+
+
 def _run_sampling(
     *,
     bundle: WanContextVideoModel,
     text_context: torch.Tensor,
-    object_context: torch.Tensor,
+    object_context: torch.Tensor | None,
     context_latents: torch.Tensor,
     total_frames: int,
     num_context_frames: int,
@@ -555,8 +611,11 @@ def _run_sampling(
 
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
     text_context = text_context.to(device=dit_device, dtype=dit_dtype)
-    object_context = object_context.to(device=dit_device, dtype=dit_dtype)
-    object_context_input = None if disable_object_context else [object_context]
+    if object_context is None:
+        object_context_input = None
+    else:
+        object_context = object_context.to(device=dit_device, dtype=dit_dtype)
+        object_context_input = None if disable_object_context else [object_context]
     trajectory_stats = []
     for step_idx, timestep in enumerate(timesteps):
         timestep_f = timestep.to(device=dit_device, dtype=dit_dtype)
@@ -645,6 +704,11 @@ def main() -> None:
         action="store_true",
         help="Do not load step_*.pt trainable weights; keep trainable modules randomly initialized.",
     )
+    parser.add_argument(
+        "--wan-lora-only",
+        action="store_true",
+        help="Do not initialize JEPA/CoTracker/VGGT/object branches or load step_*.pt; run inference with Wan backbone + configured LoRA only.",
+    )
     args = parser.parse_args()
 
     config = load_yaml_config(args.config)
@@ -671,34 +735,54 @@ def main() -> None:
     context_video = context_video_single.unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
-    trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
-    print("trainer constructed", flush=True)
-    if args.skip_trainable_checkpoint:
+    if args.wan_lora_only:
+        if args.skip_trainable_checkpoint:
+            print("wan_lora_only enabled; skip_trainable_checkpoint is implied", flush=True)
+        bundle, text_context, context_latents, prep_debug = _build_wan_lora_only_context(
+            config=config,
+            context_video=context_video.to(device_obj),
+            captions=[args.prompt],
+            device_obj=device_obj,
+        )
+        object_context = None
         state_info = {
             "skipped": True,
+            "reason": "wan_lora_only",
             "missing_keys": [],
             "unexpected_keys": [],
             "model_state_key_count": 0,
             "checkpoint_key_count": 0,
         }
-        print("skipping trainable checkpoint load; keeping randomly initialized trainable modules", flush=True)
     else:
-        state_info = _load_trainable_state_into_model(trainer, checkpoint_path)
-        print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
-    if trainer.bundle.dit is not None:
-        trainer.bundle.dit.eval()
+        trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
+        print("trainer constructed", flush=True)
+        if args.skip_trainable_checkpoint:
+            state_info = {
+                "skipped": True,
+                "missing_keys": [],
+                "unexpected_keys": [],
+                "model_state_key_count": 0,
+                "checkpoint_key_count": 0,
+            }
+            print("skipping trainable checkpoint load; keeping randomly initialized trainable modules", flush=True)
+        else:
+            state_info = _load_trainable_state_into_model(trainer, checkpoint_path)
+            print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
+        if trainer.bundle.dit is not None:
+            trainer.bundle.dit.eval()
 
-    text_context, object_context, context_latents, prep_debug = _build_cond_context(
-        trainer=trainer,
-        config=config,
-        context_video=context_video.to(device_obj),
-        captions=[args.prompt],
-        num_context_frames=num_context_frames,
-        device_obj=device_obj,
-    )
+        bundle = trainer.bundle
+        text_context, object_context, context_latents, prep_debug = _build_cond_context(
+            trainer=trainer,
+            config=config,
+            context_video=context_video.to(device_obj),
+            captions=[args.prompt],
+            num_context_frames=num_context_frames,
+            device_obj=device_obj,
+        )
     with torch.inference_mode():
         pred, sample_debug = _run_sampling(
-            bundle=trainer.bundle,
+            bundle=bundle,
             text_context=text_context,
             object_context=object_context,
             context_latents=context_latents,
@@ -729,16 +813,16 @@ def main() -> None:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
     if should_save_video:
-        if trainer.bundle.dit is not None:
-            del trainer.bundle.dit
-            trainer.bundle.dit = None
+        if bundle.dit is not None:
+            del bundle.dit
+            bundle.dit = None
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         with torch.no_grad():
-            decode_input = pred.to(next(trainer.bundle.vae.model.parameters()).device if hasattr(trainer.bundle.vae, "model") else device_obj)
+            decode_input = pred.to(next(bundle.vae.model.parameters()).device if hasattr(bundle.vae, "model") else device_obj)
             _print_tensor_stats("vae_decode_input", decode_input)
-            decoded = trainer.bundle.vae.decode([decode_input])
+            decoded = bundle.vae.decode([decode_input])
         if isinstance(decoded, list):
             decoded = decoded[0]
         _print_tensor_stats("vae_decoded_output", decoded)

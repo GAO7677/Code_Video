@@ -39,8 +39,9 @@ def _build_command(
     sampling_steps: int,
     fps: int,
     seed: int,
+    wan_lora_only: bool,
 ) -> list[str]:
-    return [
+    cmd = [
         python_bin,
         str(infer_script),
         "--checkpoint",
@@ -66,6 +67,9 @@ def _build_command(
         "--seed",
         str(seed),
     ]
+    if wan_lora_only:
+        cmd.append("--wan-lora-only")
+    return cmd
 
 
 def main() -> None:
@@ -83,6 +87,11 @@ def main() -> None:
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--sampling-steps", type=int, default=40)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--wan-lora-only",
+        action="store_true",
+        help="Run Wan backbone + configured LoRA only, without initializing object branches or loading step_*.pt trainable modules.",
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -92,6 +101,8 @@ def main() -> None:
     context_video = Path(args.context_video).expanduser().resolve()
     output_root = Path(args.output_root).expanduser().resolve()
     run_name = checkpoint_dir.name
+    if bool(args.wan_lora_only):
+        run_name = f"{run_name}_wan_lora_only"
     run_output_dir = output_root / run_name
     run_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -148,6 +159,7 @@ def main() -> None:
             sampling_steps=int(args.sampling_steps),
             fps=int(args.fps),
             seed=int(args.seed),
+            wan_lora_only=bool(args.wan_lora_only),
         )
 
         print(f"running: {checkpoint_path.name}", flush=True)

@@ -37,6 +37,8 @@ class WanContextVideoModel(nn.Module):
         lora_dropout: float = 0.0,
         lora_init: str = "gaussian",
         object_gate_init: float = 0.1,
+        reinitialize_object_branch: bool = True,
+        disable_object_branch: bool = False,
     ) -> None:
         super().__init__()
         debug_init = os.environ.get("CODEX_DEBUG_TRAINER_INIT", "").strip() not in {"", "0", "false", "False"}
@@ -54,6 +56,8 @@ class WanContextVideoModel(nn.Module):
         self.lora_dropout = float(lora_dropout)
         self.lora_init = str(lora_init)
         self.object_gate_init = float(object_gate_init)
+        self.reinitialize_object_branch = bool(reinitialize_object_branch)
+        self.disable_object_branch = bool(disable_object_branch)
         _debug_log("load wan helper classes")
         T5EncoderModel = load_wan_t5_encoder()
         Wan2_2_VAE = load_wan_vae()
@@ -161,6 +165,18 @@ class WanContextVideoModel(nn.Module):
         model = get_peft_model(model, lora_config)
         return model
 
+    @staticmethod
+    def _strip_object_branch(model: nn.Module) -> None:
+        if hasattr(model, "object_embedding"):
+            setattr(model, "object_embedding", None)
+        for block in getattr(model, "blocks", []):
+            if hasattr(block, "object_cross_attn"):
+                setattr(block, "object_cross_attn", None)
+            if hasattr(block, "norm4"):
+                setattr(block, "norm4", None)
+            if hasattr(block, "object_gate"):
+                setattr(block, "object_gate", None)
+
     def ensure_dit_loaded(self) -> None:
         if self.dit is not None:
             return
@@ -182,9 +198,12 @@ class WanContextVideoModel(nn.Module):
         _debug_log(f"from_pretrained start ckpt_dir={self.ckpt_dir}")
         dit = WanModel.from_pretrained(self.ckpt_dir, **pretrained_kwargs)
         _debug_log("from_pretrained done")
+        if self.disable_object_branch:
+            self._strip_object_branch(dit)
         dit = self._apply_lora(dit)
         base_dit = dit.get_base_model() if hasattr(dit, "get_base_model") else dit
-        self._reinitialize_missing_object_branch(base_dit)
+        if self.reinitialize_object_branch and not self.disable_object_branch:
+            self._reinitialize_missing_object_branch(base_dit)
         _debug_log(f"lora_applied rank={self.lora_rank}")
         self.dit = dit
         if target_dtype is not None:
