@@ -155,6 +155,7 @@ def _render_box_overlay(
     gt_box_xyxy: np.ndarray,
     gt_box_valid: np.ndarray,
     pred_box_xyxy: np.ndarray,
+    pred_box_valid: np.ndarray,
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
@@ -172,12 +173,13 @@ def _render_box_overlay(
                     BOX_GT_COLOR,
                     f"gt{obj_idx}",
                 )
-            draw_box_rgb(
-                frame,
-                _norm_box_to_px(pred_box_xyxy[latent_idx, obj_idx], image_hw),
-                BOX_PRED_COLOR,
-                f"pred{obj_idx}",
-            )
+            if bool(pred_box_valid[latent_idx, obj_idx]):
+                draw_box_rgb(
+                    frame,
+                    _norm_box_to_px(pred_box_xyxy[latent_idx, obj_idx], image_hw),
+                    BOX_PRED_COLOR,
+                    f"pred{obj_idx}",
+                )
         frames.append(frame)
     return np.stack(frames, axis=0)
 
@@ -187,6 +189,7 @@ def _render_track_overlay(
     gt_track_summary: np.ndarray,
     gt_track_valid: np.ndarray,
     pred_track_summary: np.ndarray,
+    pred_track_valid: np.ndarray,
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
@@ -197,9 +200,10 @@ def _render_track_overlay(
         src_idx = int(latent_to_source[latent_idx])
         frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
         for obj_idx in range(gt_track_summary.shape[1]):
-            pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
-            draw_point_rgb(frame, pred_center, TRACK_PRED_COLOR, f"pred{obj_idx}", radius=5)
-            draw_point_rgb(frame, pred_start, TRACK_PRED_COLOR, f"s{obj_idx}", radius=3)
+            if bool(pred_track_valid[latent_idx, obj_idx]):
+                pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
+                draw_point_rgb(frame, pred_center, TRACK_PRED_COLOR, f"pred{obj_idx}", radius=5)
+                draw_point_rgb(frame, pred_start, TRACK_PRED_COLOR, f"s{obj_idx}", radius=3)
             if bool(gt_track_valid[latent_idx, obj_idx]):
                 gt_center, gt_start = _summary_to_px(gt_track_summary[latent_idx, obj_idx], image_hw)
                 draw_point_rgb(frame, gt_center, TRACK_GT_COLOR, f"gt{obj_idx}", radius=5)
@@ -264,9 +268,11 @@ def _prepare_case(
     pred_depth = object_aux_out.pred_depth[0, ..., 0].detach().cpu().numpy()
     object_valid_mask = prepared.get("object_valid_mask")
     if object_valid_mask is None:
-        pred_box_valid_mask = np.ones((pred_box_xyxy.shape[0], pred_box_xyxy.shape[1]), dtype=bool)
+        pred_slot_valid = np.ones((pred_box_xyxy.shape[1],), dtype=bool)
     else:
-        pred_box_valid_mask = object_valid_mask[0].detach().cpu().numpy() > 0.5
+        pred_slot_valid = object_valid_mask[0].detach().cpu().numpy() > 0.5
+    pred_box_valid_mask = np.broadcast_to(pred_slot_valid[None, :], (pred_box_xyxy.shape[0], pred_box_xyxy.shape[1]))
+    pred_track_valid_mask = np.broadcast_to(pred_slot_valid[None, :], (pred_track_summary.shape[0], pred_track_summary.shape[1]))
 
     gt_depth = None
     gt_depth_valid = None
@@ -279,12 +285,12 @@ def _prepare_case(
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    box_video = _render_box_overlay(context_video, gt_box_xyxy, gt_box_valid, pred_box_xyxy, image_hw)
+    box_video = _render_box_overlay(context_video, gt_box_xyxy, gt_box_valid, pred_box_xyxy, pred_box_valid_mask, image_hw)
     box_raw = assets_dir / f"{case_stem}__box_overlay.mp4"
     write_mp4(box_raw, box_video, fps=fps)
     box_browser = ensure_browser_video(box_raw)
 
-    track_video = _render_track_overlay(context_video, gt_track_summary, gt_track_valid, pred_track_summary, image_hw)
+    track_video = _render_track_overlay(context_video, gt_track_summary, gt_track_valid, pred_track_summary, pred_track_valid_mask, image_hw)
     track_raw = assets_dir / f"{case_stem}__track_overlay.mp4"
     write_mp4(track_raw, track_video, fps=fps)
     track_browser = ensure_browser_video(track_raw)
