@@ -397,6 +397,41 @@ def _compute_aux_metrics(
     }
 
 
+def _compute_box_decomposition_metrics(
+    *,
+    active_box_xyxy: torch.Tensor,
+    pred_box_xyxy: torch.Tensor,
+    gt_box_xyxy: torch.Tensor,
+    gt_box_valid: torch.Tensor,
+) -> dict[str, float]:
+    weights = gt_box_valid.unsqueeze(-1).to(dtype=pred_box_xyxy.dtype, device=pred_box_xyxy.device)
+    denom = gt_box_valid.sum().clamp_min(1.0)
+
+    active_center = 0.5 * (active_box_xyxy[..., :2] + active_box_xyxy[..., 2:])
+    pred_center = 0.5 * (pred_box_xyxy[..., :2] + pred_box_xyxy[..., 2:])
+    gt_center = 0.5 * (gt_box_xyxy[..., :2] + gt_box_xyxy[..., 2:])
+
+    active_wh = (active_box_xyxy[..., 2:] - active_box_xyxy[..., :2]).clamp_min(1.0e-4)
+    pred_wh = (pred_box_xyxy[..., 2:] - pred_box_xyxy[..., :2]).clamp_min(1.0e-4)
+    gt_wh = (gt_box_xyxy[..., 2:] - gt_box_xyxy[..., :2]).clamp_min(1.0e-4)
+
+    active_center_l1 = (((active_center - gt_center).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+    active_wh_l1 = (((active_wh - gt_wh).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+    pred_center_l1 = (((pred_center - gt_center).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+    pred_wh_l1 = (((pred_wh - gt_wh).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+    pred_vs_active_center_l1 = (((pred_center - active_center).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+    pred_vs_active_wh_l1 = (((pred_wh - active_wh).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+
+    return {
+        "train/active_box_center_l1": float(active_center_l1.detach().item()),
+        "train/active_box_wh_l1": float(active_wh_l1.detach().item()),
+        "train/pred_box_center_l1": float(pred_center_l1.detach().item()),
+        "train/pred_box_wh_l1": float(pred_wh_l1.detach().item()),
+        "train/pred_vs_active_box_center_l1": float(pred_vs_active_center_l1.detach().item()),
+        "train/pred_vs_active_box_wh_l1": float(pred_vs_active_wh_l1.detach().item()),
+    }
+
+
 def _run_case_for_checkpoint(
     *,
     model,
@@ -543,7 +578,7 @@ def _run_case_for_checkpoint(
     gt_box_valid_np = gt_box_valid[0].detach().cpu().numpy() > 0.5
     pred_track_summary_np = object_aux_out.pred_track_summary[0].detach().float().cpu().numpy()
     pred_box_xyxy_np = object_aux_out.pred_box_xyxy[0].detach().float().cpu().numpy()
-    pred_valid_np = object_valid_mask[0].detach().cpu().numpy() > 0.5
+    pred_valid_np = object_valid_mask[0].detach().float().cpu().numpy() > 0.5
     pred_track_valid_np = np.broadcast_to(pred_valid_np[None, :], (pred_track_summary_np.shape[0], pred_track_summary_np.shape[1]))
     pred_box_valid_np = np.broadcast_to(pred_valid_np[None, :], (pred_box_xyxy_np.shape[0], pred_box_xyxy_np.shape[1]))
     gt_track_native_np = track_alignment.matched_gt_centers[0].detach().float().cpu().numpy()
@@ -656,6 +691,14 @@ def _run_case_for_checkpoint(
         track_box_loss=track_box_loss,
         track_iou_loss=track_iou_loss,
     )
+    metrics.update(
+        _compute_box_decomposition_metrics(
+            active_box_xyxy=object_out.active_box_xyxy,
+            pred_box_xyxy=object_aux_out.pred_box_xyxy,
+            gt_box_xyxy=gt_box_xyxy,
+            gt_box_valid=gt_box_valid,
+        )
+    )
     return {
         "sample_index": int(sample_index),
         "video_path": sample["video_path"],
@@ -690,6 +733,7 @@ def _run_case_for_checkpoint(
             "object_tokens": list(object_out.object_latent_tokens.shape),
         },
         "object_context_abs_max": float(object_context.detach().abs().max().item()),
+        "active_box_xyxy": object_out.active_box_xyxy[0].detach().float().cpu().numpy().tolist(),
     }
 
 
@@ -750,11 +794,11 @@ def _build_report(
           <div class="video-grid">
             <figure>
               <video controls preload="none" playsinline src="{item['track_overlay_video']}"></video>
-              <figcaption>Track aux summary view: final 2-step GT summary vs Pred summary</figcaption>
+              <figcaption>Track aux summary view: final 2-step GT summary vs Pred summary. Only 2 frames here by design.</figcaption>
             </figure>
             <figure>
               <video controls preload="none" playsinline src="{item['box_overlay_video']}"></video>
-              <figcaption>Box aux summary view: final 2-step GT box(red) vs Pred box(teal)</figcaption>
+              <figcaption>Box aux summary view: final 2-step GT box(red) vs Pred box(teal). Only 2 frames here by design.</figcaption>
             </figure>
             <figure class="sheet">
               <img loading="lazy" src="{item['track_overlay_sheet']}" alt="track sheet">
@@ -766,11 +810,11 @@ def _build_report(
             </figure>
             <figure>
               <video controls preload="none" playsinline src="{item['native_track_overlay_video']}"></video>
-              <figcaption>Native 8-frame track view: matched GT centers vs CoTracker object centers</figcaption>
+              <figcaption>Native 8-frame track view: matched GT centers vs CoTracker object centers. Use this for true frame-by-frame inspection.</figcaption>
             </figure>
             <figure>
               <video controls preload="none" playsinline src="{item['native_box_overlay_video']}"></video>
-              <figcaption>Native 8-frame box view: matched GT boxes vs track-derived pred boxes</figcaption>
+              <figcaption>Native 8-frame box view: matched GT boxes vs track-derived pred boxes. Use this for true frame-by-frame inspection.</figcaption>
             </figure>
             <figure class="sheet">
               <img loading="lazy" src="{item['native_track_overlay_sheet']}" alt="native track sheet">
@@ -825,7 +869,7 @@ def _build_report(
 </head>
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
-  <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 2-step summary 量；第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。</p>
+  <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 2-step summary 量，所以 summary view 只显示 2 帧是设计如此；第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>

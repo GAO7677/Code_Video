@@ -76,10 +76,10 @@ class ObjectAuxHeads(nn.Module):
         track_base = active_track_summary[..., :4]
         track_delta = self.track_delta_scale * torch.tanh(self.track_head(object_latent_tokens))
         pred_track_summary = track_base + track_delta
-        # Anchor the box center to the current track summary so the box can
-        # follow motion, while still letting the prior box control the scale.
-        base_center_xy = pred_track_summary[..., :2]
         if active_box_xyxy is None:
+            # Fall back to a tiny box around the track center only when there is
+            # no explicit prior box available.
+            base_center_xy = pred_track_summary[..., :2]
             base_half_wh = base_center_xy.new_tensor([0.03, 0.03]).view(1, 1, 1, 2)
             base_box_xyxy = torch.cat(
                 [
@@ -89,14 +89,10 @@ class ObjectAuxHeads(nn.Module):
                 dim=-1,
             )
         else:
-            base_wh = (active_box_xyxy[..., 2:] - active_box_xyxy[..., :2]).clamp_min(1.0e-4)
-            base_box_xyxy = torch.cat(
-                [
-                    (base_center_xy - 0.5 * base_wh).clamp(0.0, 1.0),
-                    (base_center_xy + 0.5 * base_wh).clamp(0.0, 1.0),
-                ],
-                dim=-1,
-            )
+            # Keep the active box as the geometry anchor. Track residuals still
+            # influence the object latent token, but the box head no longer uses
+            # the track summary center as its direct base.
+            base_box_xyxy = torch.nan_to_num(active_box_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
         box_delta = self.box_head(object_latent_tokens)
         base_center_xy = 0.5 * (base_box_xyxy[..., :2] + base_box_xyxy[..., 2:])
         base_wh = (base_box_xyxy[..., 2:] - base_box_xyxy[..., :2]).clamp_min(1.0e-4)

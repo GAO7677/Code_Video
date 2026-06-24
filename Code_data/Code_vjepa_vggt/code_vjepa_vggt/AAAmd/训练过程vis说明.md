@@ -163,6 +163,8 @@ CUDA_VISIBLE_DEVICES=2 \
   - 如果你看到只有 `2` 帧
     - 先确认自己看的是否是 `summary view`
     - 这是最终 loss 对应的聚合结果，不是原始 8-frame 逐帧结果
+    - 当前实现里，`8` 帧 context 会先按 `latent_frames=2` 聚合成 `2-step summary`
+    - 页面会分别取这两个 latent group 的代表帧做 overlay，所以只看到 `2` 帧是设计如此，不是视频少读了
   - 如果你要检查 “为什么左上角有黄点 / 蓝点” 或 “为什么 pred box 比 GT 大很多”
     - 优先看 `native 8-frame view`
     - 它更接近问题真正发生的原始时序位置
