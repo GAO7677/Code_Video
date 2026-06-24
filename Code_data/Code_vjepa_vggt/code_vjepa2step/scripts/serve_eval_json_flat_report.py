@@ -15,10 +15,6 @@ JSON_ROOT = TMP_ROOT / "eval_json_flat"
 REPORT_ROOT = TMP_ROOT / "eval_json_flat_report"
 REPORT_PATH = REPORT_ROOT / "index.html"
 
-VIDEO_FIELDS = [
-    "prompt",
-]
-
 PRIMARY_METRICS = [
     ("official_pdi", "Official PDI", "down"),
     ("scale_component", "Scale", "down"),
@@ -78,54 +74,35 @@ def resolve_video_path(record: dict[str, Any]) -> Path:
     return path
 
 
-def metric_table(record: dict[str, Any]) -> str:
-    rows = []
-    for key, label, direction in PRIMARY_METRICS:
-        arrow = "↓" if direction == "down" else "↑"
-        rows.append(
-            "<tr>"
-            f"<td class='metric-label'>{html.escape(label)} {arrow}</td>"
-            f"<td class='metric-value'>{fv(record.get(key))}</td>"
-            "</tr>"
-        )
-    return f"<table class='metrics'><tbody>{''.join(rows)}</tbody></table>"
-
-
-def build_card(record: dict[str, Any]) -> str:
+def build_video_panel(record: dict[str, Any], combo_label: str) -> str:
     video_path = resolve_video_path(record)
     video_rel = rel_to_report(video_path)
-    meta_lines = []
-    for key in VIDEO_FIELDS:
-        value = record.get(key)
-        if value is None:
-            continue
-        meta_lines.append(
-            f"<div><span class='meta-key'>{html.escape(key)}</span>: <span class='meta-val'>{fv(value)}</span></div>"
-        )
-    stat_value = record.get("wmreward_surprise")
-    stat_text = f"WMReward {stat_value:.4f}" if isinstance(stat_value, float) else "WMReward -"
+    prompt = record.get("prompt")
+    prompt_html = (
+        f"<div class='video-prompt'>{html.escape(str(prompt))}</div>"
+        if isinstance(prompt, str) and prompt.strip()
+        else ""
+    )
     return f"""
-    <article class="cell-card">
+    <article class="video-panel">
+      <div class="video-panel-head">{html.escape(combo_label)}</div>
       <div class="video-wrap">
         <video controls preload="metadata" src="{html.escape(video_rel)}"></video>
       </div>
-      <div class="cell-body">
-        <div class="cell-head">
-          <h3>{html.escape(record.get("video_stem", "unknown"))}</h3>
-          <div class="statbar">{html.escape(stat_text)}</div>
-        </div>
-        <div class="meta">{''.join(meta_lines)}</div>
-        {metric_table(record)}
+      <div class="video-meta">
+        <div class="video-name">{html.escape(record.get("video_stem", "unknown"))}</div>
+        {prompt_html}
       </div>
     </article>
     """
 
 
-def parse_record_identity(record: dict[str, Any]) -> tuple[str, str, int]:
+def parse_record_identity(record: dict[str, Any]) -> tuple[str, str, int, str]:
     stem = str(record.get("video_stem") or "")
     seed = "unknown"
     method = stem
     step = 50
+    guidance = "default"
 
     if "_seed" in stem:
         method = stem.rsplit("_seed", 1)[0]
@@ -140,8 +117,9 @@ def parse_record_identity(record: dict[str, Any]) -> tuple[str, str, int]:
     elif method.endswith("_same_prompt"):
         method = method[: -len("_same_prompt")]
         step = 50
+        guidance = "same_prompt"
 
-    return seed, method, step
+    return seed, method, step, guidance
 
 
 def method_sort_key(method: str) -> tuple[int, str]:
@@ -156,6 +134,15 @@ def method_sort_key(method: str) -> tuple[int, str]:
 def step_sort_key(step: int) -> tuple[int, int]:
     preferred = {5: 0, 15: 1, 25: 2, 50: 3}
     return preferred.get(step, 99), step
+
+
+def combo_sort_key(combo: tuple[int, str]) -> tuple[tuple[int, int], int, str]:
+    step, guidance = combo
+    guidance_order = {
+        "default": 0,
+        "same_prompt": 1,
+    }
+    return step_sort_key(step), guidance_order.get(guidance, 99), guidance
 
 
 def human_method_name(method: str) -> str:
@@ -173,54 +160,89 @@ def step_label(step: int) -> str:
     return f"step {step}"
 
 
-def group_records(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[int, dict[str, Any]]]]:
-    grouped: dict[str, dict[str, dict[int, dict[str, Any]]]] = {}
+def combo_label(step: int, guidance: str) -> str:
+    base = step_label(step)
+    if guidance == "same_prompt":
+        return f"{base} / same_prompt"
+    if guidance == "default":
+        return base
+    return f"{base} / {guidance}"
+
+
+def group_records(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[tuple[int, str], dict[str, Any]]]]:
+    grouped: dict[str, dict[str, dict[tuple[int, str], dict[str, Any]]]] = {}
     for record in records:
-        seed, method, step = parse_record_identity(record)
-        grouped.setdefault(seed, {}).setdefault(method, {})[step] = record
+        seed, method, step, guidance = parse_record_identity(record)
+        grouped.setdefault(seed, {}).setdefault(method, {})[(step, guidance)] = record
     return grouped
 
 
-def build_seed_section(seed: str, seed_rows: dict[str, dict[int, dict[str, Any]]]) -> str:
-    methods = sorted(seed_rows.keys(), key=method_sort_key)
-    step_values = sorted({step for method in methods for step in seed_rows[method].keys()}, key=step_sort_key)
-    header_cells = "".join(f"<th>{html.escape(step_label(step))}</th>" for step in step_values)
-
+def build_metric_table(method_rows: dict[tuple[int, str], dict[str, Any]], combos: list[tuple[int, str]]) -> str:
+    header_cells = "".join(
+        f"<th>{html.escape(combo_label(step, guidance))}</th>"
+        for step, guidance in combos
+    )
     body_rows = []
-    for method in methods:
-        cells = []
-        for step in step_values:
-            record = seed_rows[method].get(step)
-            if record is None:
-                cells.append("<td class='matrix-cell empty-cell'><div class='empty-note'>No result</div></td>")
-            else:
-                cells.append(f"<td class='matrix-cell'>{build_card(record)}</td>")
+    for key, label, direction in PRIMARY_METRICS:
+        arrow = "↓" if direction == "down" else "↑"
+        value_cells = []
+        for combo in combos:
+            record = method_rows.get(combo)
+            value_cells.append(
+                f"<td class='metric-score'>{fv(record.get(key) if record else None)}</td>"
+            )
         body_rows.append(
             "<tr>"
-            f"<th class='method-cell'>{html.escape(human_method_name(method))}</th>"
-            + "".join(cells)
+            f"<th class='metric-name'>{html.escape(label)} {arrow}</th>"
+            + "".join(value_cells)
             + "</tr>"
         )
+    return f"""
+    <div class="metric-table-wrap">
+      <table class="metric-table">
+        <thead>
+          <tr>
+            <th class="metric-head">Metric</th>
+            {header_cells}
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(body_rows)}
+        </tbody>
+      </table>
+    </div>
+    """
 
+
+def build_method_section(method: str, method_rows: dict[tuple[int, str], dict[str, Any]]) -> str:
+    combos = sorted(method_rows.keys(), key=combo_sort_key)
+    video_panels = []
+    for step, guidance in combos:
+        record = method_rows[(step, guidance)]
+        video_panels.append(build_video_panel(record, combo_label(step, guidance)))
+    return f"""
+    <section class="method-block">
+      <div class="method-head">
+        <h3>{html.escape(human_method_name(method))}</h3>
+      </div>
+      <div class="video-grid">
+        {''.join(video_panels)}
+      </div>
+      {build_metric_table(method_rows, combos)}
+    </section>
+    """
+
+
+def build_seed_section(seed: str, seed_rows: dict[str, dict[tuple[int, str], dict[str, Any]]]) -> str:
+    methods = sorted(seed_rows.keys(), key=method_sort_key)
+    method_sections = "".join(build_method_section(method, seed_rows[method]) for method in methods)
     return f"""
     <section class="seed-block">
       <div class="seed-head">
         <h2>Seed {html.escape(seed)}</h2>
-        <div class="seed-sub">每行一个方法，每列一个 step。</div>
+        <div class="seed-sub">每个方法单独成块；先展示各个 <code>step/guidance</code> 组合的视频，再给出统一指标表。表格每行一个指标，每列一个 <code>step/guidance</code> 组合。</div>
       </div>
-      <div class="matrix-wrap">
-        <table class="matrix-table">
-          <thead>
-            <tr>
-              <th class="method-head">Method</th>
-              {header_cells}
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(body_rows)}
-          </tbody>
-        </table>
-      </div>
+      {method_sections}
     </section>
     """
 
@@ -315,84 +337,49 @@ def build_html(records: list[dict[str, Any]]) -> str:
       color: var(--muted);
       font-size: 13px;
     }}
-    .matrix-wrap {{
-      overflow-x: auto;
+    .method-block {{
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 12px;
+      padding: 16px;
+      margin-top: 14px;
     }}
-    .matrix-table {{
-      width: 100%;
-      min-width: 1200px;
-      border-collapse: separate;
-      border-spacing: 0;
+    .method-head {{
+      margin-bottom: 12px;
     }}
-    .matrix-table thead th {{
-      position: sticky;
-      top: 0;
-      background: #f8fafc;
-      z-index: 2;
+    .method-head h3 {{
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.3;
     }}
-    .matrix-table th,
-    .matrix-table td {{
-      border-bottom: 1px solid var(--line);
-      border-right: 1px solid var(--line);
-      vertical-align: top;
+    .video-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
     }}
-    .matrix-table tr:last-child th,
-    .matrix-table tr:last-child td {{
-      border-bottom: none;
-    }}
-    .matrix-table th:last-child,
-    .matrix-table td:last-child {{
-      border-right: none;
-    }}
-    .method-head,
-    .method-cell {{
-      width: 180px;
-      min-width: 180px;
-      padding: 12px;
-      text-align: left;
-      background: #f8fafc;
-      font-size: 14px;
-      font-weight: 700;
-    }}
-    .matrix-table thead th:not(.method-head) {{
-      min-width: 320px;
-      padding: 12px;
-      font-size: 14px;
-      text-align: left;
-    }}
-    .matrix-cell {{
-      min-width: 320px;
-      padding: 12px;
-      background: var(--panel);
-    }}
-    .empty-cell {{
-      background: #fafafa;
-    }}
-    .empty-note {{
-      color: var(--muted);
-      font-size: 13px;
-      padding: 16px 4px;
-    }}
-    .cell-card {{
+    .video-panel {{
       display: flex;
       flex-direction: column;
       border: 1px solid var(--line);
       border-radius: 12px;
-      padding: 12px;
       background: #fff;
+      overflow: hidden;
+    }}
+    .video-panel-head {{
+      padding: 10px 12px;
+      background: #f8fafc;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 700;
     }}
     .video-wrap {{
       background: #111827;
-      border-radius: 10px;
       overflow: hidden;
       aspect-ratio: 16 / 9;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 12px;
     }}
     video {{
       width: 100%;
@@ -401,54 +388,67 @@ def build_html(records: list[dict[str, Any]]) -> str:
       display: block;
       background: #000;
     }}
-    .cell-head {{
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
+    .video-meta {{
+      padding: 10px 12px 12px;
     }}
-    .cell-body h3 {{
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.35;
-      font-weight: 700;
-      word-break: break-word;
-    }}
-    .meta {{
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.55;
-      margin-bottom: 12px;
-      word-break: break-word;
-    }}
-    .meta-key {{
+    .video-name {{
       color: var(--ink);
-      font-weight: 700;
-    }}
-    .metrics {{
-      width: 100%;
-      border-collapse: collapse;
-      background: #fbfbfc;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      overflow: hidden;
-    }}
-    .metrics td {{
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
       font-size: 13px;
-      vertical-align: top;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-bottom: 6px;
+      word-break: break-word;
     }}
-    .metrics tr:last-child td {{
+    .video-prompt {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      word-break: break-word;
+    }}
+    .metric-table-wrap {{
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }}
+    .metric-table {{
+      width: 100%;
+      min-width: 820px;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: #fff;
+    }}
+    .metric-table thead th {{
+      background: #f8fafc;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }}
+    .metric-table th,
+    .metric-table td {{
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      font-size: 13px;
+    }}
+    .metric-table tr:last-child th,
+    .metric-table tr:last-child td {{
       border-bottom: none;
     }}
-    .metric-label {{
+    .metric-table th:last-child,
+    .metric-table td:last-child {{
+      border-right: none;
+    }}
+    .metric-head,
+    .metric-name {{
+      min-width: 180px;
+      text-align: left;
+      background: #f8fafc;
+    }}
+    .metric-name {{
       color: var(--ink);
       font-weight: 700;
-      width: 48%;
     }}
-    .metric-value {{
+    .metric-score {{
       text-align: right;
       font-variant-numeric: tabular-nums;
       word-break: break-word;
@@ -460,25 +460,12 @@ def build_html(records: list[dict[str, Any]]) -> str:
       padding: 2px 5px;
       border-radius: 4px;
     }}
-    .statbar {{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 8px;
-      border-radius: 999px;
-      background: var(--accent-soft);
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-    }}
     @media (max-width: 720px) {{
       .page {{
         padding: 16px 12px 28px;
       }}
-      .cell-head {{
-        flex-direction: column;
-        align-items: flex-start;
+      .method-block {{
+        padding: 12px;
       }}
     }}
   </style>
@@ -486,7 +473,7 @@ def build_html(records: list[dict[str, Any]]) -> str:
 <body>
   <div class="page">
     <h1>Eval JSON Flat Report</h1>
-    <div class="lead">页面数据来自 <code>{html.escape(str(JSON_ROOT))}</code>。按 <code>seed</code> 分板块；每行一个方法；每列一个 step。每个单元格只展示视频和一个指标表格。指标名后的箭头表示越高越好 <code>↑</code> / 越低越好 <code>↓</code>。当前这 12 个结果文件里，页面展示的指标都已经有值，没有缺测项。</div>
+    <div class="lead">页面数据来自 <code>{html.escape(str(JSON_ROOT))}</code>。按 <code>seed</code> 分板块；每个方法单独成块；块内列按 <code>step/guidance</code> 组合组织。视频直接展示在页面里，下面的指标表统一按“每行一个指标、每列一个 <code>step/guidance</code> 组合”排版。指标名后的箭头表示越高越好 <code>↑</code> / 越低越好 <code>↓</code>。当前这 12 个结果文件里，页面展示的指标都已经有值，没有缺测项。</div>
     {build_wmreward_explainer()}
     {seed_sections}
   </div>

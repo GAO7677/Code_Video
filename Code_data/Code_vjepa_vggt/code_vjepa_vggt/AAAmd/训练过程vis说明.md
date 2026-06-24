@@ -58,7 +58,7 @@
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-CUDA_VISIBLE_DEVICES=3 \
+CUDA_VISIBLE_DEVICES=0 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses.py \
   --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_freeze_lora_other_modules_gpu67.yaml \
