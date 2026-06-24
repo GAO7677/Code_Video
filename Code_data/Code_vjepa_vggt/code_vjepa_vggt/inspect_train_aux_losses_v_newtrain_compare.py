@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.infer_v_newtrain_context_video_wan import (
@@ -44,6 +45,45 @@ def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     x = frame_chw.detach().cpu().clamp(-1.0, 1.0)
     x = ((x + 1.0) * 127.5).to(torch.uint8).permute(1, 2, 0).contiguous()
     return x.numpy()
+
+
+def _build_contact_sheet(
+    frames_thwc_uint8: np.ndarray,
+    *,
+    title: str,
+    cols: int = 4,
+    pad: int = 10,
+) -> Image.Image:
+    frames = np.asarray(frames_thwc_uint8, dtype=np.uint8)
+    if frames.ndim != 4:
+        raise ValueError(f"expected [T,H,W,C], got {frames.shape}")
+    total, height, width, _ = frames.shape
+    cols = max(1, min(int(cols), int(total)))
+    rows = int(np.ceil(float(total) / float(cols)))
+    title_h = 34
+    label_h = 24
+    canvas_w = cols * width + (cols + 1) * pad
+    canvas_h = title_h + rows * (height + label_h) + (rows + 1) * pad
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color=(246, 244, 238))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((pad, 8), title, fill=(25, 25, 25))
+    for frame_idx in range(total):
+        row = frame_idx // cols
+        col = frame_idx % cols
+        x0 = pad + col * (width + pad)
+        y0 = title_h + pad + row * (height + label_h)
+        frame = Image.fromarray(frames[frame_idx])
+        canvas.paste(frame, (x0, y0))
+        draw.rectangle((x0, y0, x0 + width, y0 + height), outline=(180, 180, 180), width=1)
+        draw.text((x0, y0 + height + 4), f"frame {frame_idx}", fill=(40, 40, 40))
+    return canvas
+
+
+def _write_contact_sheet(path: Path, frames_thwc_uint8: np.ndarray, *, title: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = _build_contact_sheet(frames_thwc_uint8, title=title)
+    image.save(path, format="PNG")
+    return path
 
 
 def _resolve_checkpoints(args: argparse.Namespace) -> list[Path]:
@@ -385,6 +425,11 @@ def _run_case_for_checkpoint(
     box_raw = assets_dir / f"{case_stem}__box_overlay.mp4"
     write_mp4(box_raw, box_video, fps=fps)
     box_browser = ensure_browser_video(box_raw)
+    box_sheet = _write_contact_sheet(
+        assets_dir / f"{case_stem}__box_overlay_sheet.png",
+        box_video,
+        title=f"{checkpoint_label} case {sample_index} box overlay",
+    )
 
     track_video = _render_track_overlay(
         sample["context_video"],
@@ -396,8 +441,14 @@ def _run_case_for_checkpoint(
     track_raw = assets_dir / f"{case_stem}__track_overlay.mp4"
     write_mp4(track_raw, track_video, fps=fps)
     track_browser = ensure_browser_video(track_raw)
+    track_sheet = _write_contact_sheet(
+        assets_dir / f"{case_stem}__track_overlay_sheet.png",
+        track_video,
+        title=f"{checkpoint_label} case {sample_index} track overlay",
+    )
 
     depth_video_rel = None
+    depth_sheet_rel = None
     if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
         gt_depth_np = gt_depth[0, ..., 0].detach().float().cpu().numpy()
         pred_depth_np = pred_depth[0, ..., 0].detach().float().cpu().numpy()
@@ -407,6 +458,12 @@ def _run_case_for_checkpoint(
         write_mp4(depth_raw, depth_video, fps=max(1, min(fps, 8)))
         depth_browser = ensure_browser_video(depth_raw)
         depth_video_rel = str(depth_browser.relative_to(output_dir))
+        depth_sheet = _write_contact_sheet(
+            assets_dir / f"{case_stem}__depth_panel_sheet.png",
+            depth_video,
+            title=f"{checkpoint_label} case {sample_index} depth panel",
+        )
+        depth_sheet_rel = str(depth_sheet.relative_to(output_dir))
 
     metrics = _compute_aux_metrics(
         pred_track_summary=object_aux_out.pred_track_summary,
@@ -430,7 +487,10 @@ def _run_case_for_checkpoint(
         "checkpoint_label": checkpoint_label,
         "box_overlay_video": str(box_browser.relative_to(output_dir)),
         "track_overlay_video": str(track_browser.relative_to(output_dir)),
+        "box_overlay_sheet": str(box_sheet.relative_to(output_dir)),
+        "track_overlay_sheet": str(track_sheet.relative_to(output_dir)),
         "depth_panel_video": depth_video_rel,
+        "depth_panel_sheet": depth_sheet_rel,
         "metrics": metrics,
         "shapes": {
             "gt_track_summary": list(gt_track_summary.shape),
@@ -487,6 +547,10 @@ def _build_report(
             <video controls preload="none" playsinline src="{item['depth_panel_video']}"></video>
             <figcaption>Depth aux: GT depth vs Pred depth</figcaption>
           </figure>
+          <figure class="sheet">
+            <img loading="lazy" src="{item['depth_panel_sheet']}" alt="depth sheet">
+            <figcaption>Depth aux 逐帧静态图</figcaption>
+          </figure>
 """
             checkpoint_cards.append(
                 f"""
@@ -503,6 +567,14 @@ def _build_report(
             <figure>
               <video controls preload="none" playsinline src="{item['box_overlay_video']}"></video>
               <figcaption>Box aux: GT box(red) vs Pred box(green)</figcaption>
+            </figure>
+            <figure class="sheet">
+              <img loading="lazy" src="{item['track_overlay_sheet']}" alt="track sheet">
+              <figcaption>Track aux 逐帧静态图</figcaption>
+            </figure>
+            <figure class="sheet">
+              <img loading="lazy" src="{item['box_overlay_sheet']}" alt="box sheet">
+              <figcaption>Box aux 逐帧静态图</figcaption>
             </figure>
             {depth_block}
           </div>
@@ -539,6 +611,8 @@ def _build_report(
     .checkpoint-card {{ background: #fff; border: 1px solid #ddd; padding: 14px; }}
     .video-grid {{ display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 12px; align-items: start; }}
     .video-grid video {{ width: 100%; border: 1px solid #ccc; background: #000; }}
+    .video-grid img {{ width: 100%; border: 1px solid #ccc; background: #fff; }}
+    .sheet {{ grid-column: span 2; }}
     .ckpt-path {{ font-size: 12px; color: #555; word-break: break-all; }}
     figure {{ margin: 0; }}
     figcaption {{ font-size: 12px; color: #444; margin-top: 4px; }}
