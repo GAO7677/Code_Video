@@ -103,3 +103,35 @@ CUDA_VISIBLE_DEVICES=0 \
 - 对 `v_newtrain` 更推荐长期使用：
   - [watch_v_newtrain_batch_infer.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_v_newtrain_batch_infer.py)
   - 原因是它直接复用已经验证稳定的 [batch_infer_checkpoints.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_infer_checkpoints.py)
+
+## 6. v_newtrain 对比版 loss 可视化
+
+- 脚本  
+  - [inspect_train_aux_losses_v_newtrain_compare.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses_v_newtrain_compare.py)
+- 目的  
+  - 对比多个 `v_newtrain` checkpoint 的辅助 loss 可视化
+  - 同一批 case 横向展示，不再混用旧 `ContextVideoTrainer` 入口
+  - 额外导出逐帧静态图，方便按帧核查 `track / box` 是否圈到同一物体
+- 当前启动命令
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses_v_newtrain_compare.py \
+  --checkpoints \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000200 \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001000 \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001600 \
+  --indices 0 1 \
+  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare \
+  --port 8814 \
+  --fps 30
+```
+
+- 本地访问链接
+  - `http://localhost:8814/`
+- 页面入口文件
+  - [index.html](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/index.html)
+- 汇总数据
+  - [metrics.json](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/metrics.json)
