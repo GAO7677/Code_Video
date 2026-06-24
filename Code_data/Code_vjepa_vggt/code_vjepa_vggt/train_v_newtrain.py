@@ -33,10 +33,22 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import accelerate
 import torch
+import torch.nn as nn
+from PIL import Image
 from tqdm import tqdm
 
-from dataset import WanTI2VDataset
-from context_wan import ContextAwareWanVideoPipeline, flow_match_context_sft_loss
+from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
+from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
+from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
+from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
+from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
+from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_iou_loss, track_box_l1_loss
+from code_vjepa_vggt.context_wan_v_newtrain import (
+    ContextAwareWanVideoPipeline,
+    enable_object_condition_branch,
+    flow_match_context_sft_loss,
+)
 from diffsynth.diffusion import (
     DiffusionTrainingModule,
     DirectDistillLoss,
@@ -63,6 +75,27 @@ DEFAULT_CHECKPOINT_SUBDIR = "checkpoints"
 DEFAULT_TEST_SUBDIR = "test"
 DEFAULT_BENCHMARK_WAIT_TIMEOUT_SECONDS = 12 * 60 * 60
 DEFAULT_CONTEXT_REFERENCE_PREFIXES = (1, 4, 8, 12, 16)
+
+
+def _tensor_video_to_pil_list(video_cthw: torch.Tensor) -> list[Image.Image]:
+    frames = video_cthw.detach().cpu().permute(1, 2, 3, 0)
+    frames = ((frames + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).numpy()
+    return [Image.fromarray(frame) for frame in frames]
+
+
+def _sample_points_from_box(box_xyxy: torch.Tensor, points_per_object: int) -> torch.Tensor:
+    x0, y0, x1, y1 = [float(v) for v in box_xyxy.tolist()]
+    if x1 <= x0 or y1 <= y0:
+        cx = 0.5 * (x0 + x1)
+        cy = 0.5 * (y0 + y1)
+        return torch.tensor([[cx, cy]] * points_per_object, dtype=torch.float32)
+    cols = max(1, int(math.ceil(math.sqrt(float(points_per_object)))))
+    rows = max(1, int(math.ceil(float(points_per_object) / float(cols))))
+    xs = torch.linspace(x0 + 0.2 * (x1 - x0), x0 + 0.8 * (x1 - x0), cols)
+    ys = torch.linspace(y0 + 0.2 * (y1 - y0), y0 + 0.8 * (y1 - y0), rows)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+    points = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)
+    return points[:points_per_object].contiguous()
 
 
 class TrainingInterrupted(KeyboardInterrupt):
@@ -120,6 +153,27 @@ class WanTrainingModule(DiffusionTrainingModule):
         sparse_context_ratio=0.15,
         random_context_ratio=0.05,
         no_context_ratio=0.05,
+        fixed_num_context_frames=8,
+        enable_object_branch=False,
+        object_num_queries=8,
+        aux_max_objects=4,
+        jepa_ckpt_path=None,
+        jepa_input_size=384,
+        jepa_patch_size=16,
+        jepa_tubelet_size=2,
+        cotracker_checkpoint=None,
+        cotracker_input_h=384,
+        cotracker_input_w=512,
+        cotracker_window_len=60,
+        object_pooler_latent_dim=16,
+        cond_proj_dim=4096,
+        jepa_window_radius=1,
+        latent_window_radius=1,
+        lambda_track_aux=0.1,
+        lambda_box_aux=0.1,
+        lambda_depth_aux=0.0,
+        depth_target_state_index=None,
+        object_gate_init=0.1,
     ):
         super().__init__()
         if not use_gradient_checkpointing:
@@ -166,6 +220,60 @@ class WanTrainingModule(DiffusionTrainingModule):
             preset_lora_model,
             task=task,
         )
+        self.enable_object_branch = bool(enable_object_branch)
+        self.fixed_num_context_frames = int(fixed_num_context_frames)
+        self.aux_max_objects = int(aux_max_objects)
+        self.object_num_queries = int(object_num_queries)
+        self.total_object_queries = int(self.aux_max_objects * self.object_num_queries)
+        self.lambda_track_aux = float(lambda_track_aux)
+        self.lambda_box_aux = float(lambda_box_aux)
+        self.lambda_depth_aux = float(lambda_depth_aux)
+        self.depth_target_state_index = (
+            None if depth_target_state_index is None else int(depth_target_state_index)
+        )
+
+        if self.enable_object_branch:
+            self.pipe.dit = enable_object_condition_branch(
+                self.pipe.dit,
+                object_gate_init=float(object_gate_init),
+                reinitialize_object_branch=True,
+            )
+            cond_dim = int(cond_proj_dim)
+            self.jepa_adapter = JEPAPatchAdapter(
+                ckpt_path=str(jepa_ckpt_path),
+                device=str(device),
+                crop_size=int(jepa_input_size),
+                num_frames=max(1, self.fixed_num_context_frames),
+                patch_size=int(jepa_patch_size),
+                tubelet_size=int(jepa_tubelet_size),
+                trainable=False,
+            )
+            self.cotracker_adapter = CoTrackerAdapter(
+                checkpoint_path=cotracker_checkpoint,
+                num_queries=self.total_object_queries,
+                device=str(device),
+                input_hw=(int(cotracker_input_h), int(cotracker_input_w)),
+                window_len=int(cotracker_window_len),
+            )
+            self.object_pooler = ObjectTubeProjector(
+                jepa_dim=int(self.jepa_adapter.encoder.backbone.embed_dim),
+                latent_dim=int(object_pooler_latent_dim),
+                out_dim=cond_dim,
+                jepa_window_radius=int(jepa_window_radius),
+                latent_window_radius=int(latent_window_radius),
+            )
+            self.object_aux_heads = ObjectAuxHeads(dim=cond_dim)
+            self.object_adapter = ObjectConditionAdapter(
+                dim=cond_dim,
+                num_slots=self.aux_max_objects,
+                max_time_steps=64,
+            )
+        else:
+            self.jepa_adapter = None
+            self.cotracker_adapter = None
+            self.object_pooler = None
+            self.object_aux_heads = None
+            self.object_adapter = None
 
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_gradient_checkpointing_offload = use_gradient_checkpointing_offload
@@ -202,6 +310,74 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.sparse_context_ratio = float(sparse_context_ratio)
         self.random_context_ratio = float(random_context_ratio)
         self.no_context_ratio = no_context_ratio
+        self.last_train_metrics = {}
+
+    def trainable_modules(self):
+        params = []
+        if self.enable_object_branch:
+            params.extend(list(self.object_pooler.parameters()))
+            params.extend(list(self.object_aux_heads.parameters()))
+            params.extend(list(self.object_adapter.parameters()))
+            params.extend(
+                [
+                    param
+                    for name, param in self.pipe.dit.named_parameters()
+                    if (
+                        "object_embedding" in name
+                        or ".object_cross_attn." in name
+                        or ".object_gate" in name
+                        or ".norm4." in name
+                    )
+                ]
+            )
+        else:
+            params.extend(list(super().trainable_modules()))
+        pipe_params = [
+            param
+            for name, param in self.pipe.dit.named_parameters()
+            if param.requires_grad and all(
+                token not in name for token in ("object_embedding", ".object_cross_attn.", ".object_gate", ".norm4.")
+            )
+        ]
+        params.extend(pipe_params)
+        unique = []
+        seen = set()
+        for param in params:
+            if not param.requires_grad:
+                continue
+            key = id(param)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(param)
+        return unique
+
+    def export_trainable_state_dict(self, state_dict, remove_prefix=None):
+        trainable_param_names = {
+            name
+            for name, param in self.named_parameters()
+            if param.requires_grad
+        }
+        trainable_param_names.update(
+            {
+                f"pipe.dit.{name}"
+                for name, param in self.pipe.dit.named_parameters()
+                if param.requires_grad
+            }
+        )
+        out = {
+            name: param
+            for name, param in state_dict.items()
+            if name in trainable_param_names
+        }
+        if remove_prefix is not None:
+            stripped = {}
+            for name, param in out.items():
+                if name.startswith(remove_prefix):
+                    name = name[len(remove_prefix) :]
+                stripped[name] = param
+            out = stripped
+        return out
 
     @staticmethod
     def _parse_context_reference_prefixes(raw_value):
@@ -218,14 +394,266 @@ class WanTrainingModule(DiffusionTrainingModule):
             raise ValueError("context_reference_prefixes must contain at least one positive integer.")
         return prefixes
 
+    @staticmethod
+    def _group_tracks_to_objects(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+        *,
+        max_objects: int,
+        points_per_object: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        expected_queries = int(max_objects) * int(points_per_object)
+        if int(tracks.shape[2]) != expected_queries:
+            raise ValueError(
+                f"flat query count mismatch: got {int(tracks.shape[2])}, expected {expected_queries}"
+            )
+        return (
+            tracks.view(tracks.shape[0], tracks.shape[1], int(max_objects), int(points_per_object), 2),
+            visibility.view(visibility.shape[0], visibility.shape[1], int(max_objects), int(points_per_object)),
+            confidence.view(confidence.shape[0], confidence.shape[1], int(max_objects), int(points_per_object)),
+        )
+
+    @staticmethod
+    def _object_center_tracks_from_grouped(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+        object_valid_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        weights = (visibility * confidence).clamp_min(0.0)
+        denom = weights.sum(dim=3, keepdim=True).clamp_min(1.0e-6)
+        centers = (tracks * weights.unsqueeze(-1)).sum(dim=3) / denom
+        valid = weights.sum(dim=3) > 1.0e-6
+        if object_valid_mask is not None:
+            valid = valid & (object_valid_mask[:, None, :] > 0.5)
+        return centers, valid
+
+    @staticmethod
+    def _gather_matched_gt_features(values: torch.Tensor, matched_gt_indices: torch.Tensor) -> torch.Tensor:
+        gather_idx = matched_gt_indices[:, None, :, None].expand(-1, values.shape[1], -1, values.shape[-1])
+        return torch.gather(values, 2, gather_idx)
+
+    @staticmethod
+    def _group_track_summary(
+        centers_xy: torch.Tensor,
+        valid_mask: torch.Tensor,
+        *,
+        image_hw: tuple[int, int],
+        latent_frames: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        group = int(centers_xy.shape[1]) // int(latent_frames)
+        if int(centers_xy.shape[1]) % int(latent_frames) != 0:
+            raise ValueError(
+                f"context track frames {int(centers_xy.shape[1])} not divisible by latent_frames={latent_frames}"
+            )
+        height, width = image_hw
+        centers_xy = centers_xy.view(centers_xy.shape[0], int(latent_frames), group, centers_xy.shape[2], 2)
+        valid_mask = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2])
+        first_xy = centers_xy[:, :, 0]
+        last_xy = centers_xy[:, :, -1]
+        last_xy_norm = torch.stack(
+            [
+                last_xy[..., 0] / max(float(width - 1), 1.0),
+                last_xy[..., 1] / max(float(height - 1), 1.0),
+            ],
+            dim=-1,
+        ).clamp(0.0, 1.0)
+        delta_xy_norm = torch.stack(
+            [
+                (last_xy[..., 0] - first_xy[..., 0]) / max(float(width - 1), 1.0),
+                (last_xy[..., 1] - first_xy[..., 1]) / max(float(height - 1), 1.0),
+            ],
+            dim=-1,
+        )
+        return torch.cat([last_xy_norm, delta_xy_norm], dim=-1), valid_mask.any(dim=2)
+
+    @staticmethod
+    def _group_box_targets(
+        boxes_xyxy: torch.Tensor,
+        valid_mask: torch.Tensor,
+        latent_frames: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        group = int(boxes_xyxy.shape[1]) // int(latent_frames)
+        if int(boxes_xyxy.shape[1]) % int(latent_frames) != 0:
+            raise ValueError(
+                f"context box frames {int(boxes_xyxy.shape[1])} not divisible by latent_frames={latent_frames}"
+            )
+        boxes = boxes_xyxy.view(boxes_xyxy.shape[0], int(latent_frames), group, boxes_xyxy.shape[2], 4)[:, :, -1]
+        valid = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2]).any(dim=2)
+        return boxes, valid
+
+    @staticmethod
+    def _group_last(values: torch.Tensor, latent_frames: int) -> torch.Tensor:
+        group = int(values.shape[1]) // int(latent_frames)
+        if int(values.shape[1]) % int(latent_frames) != 0:
+            raise ValueError(
+                f"context value frames {int(values.shape[1])} not divisible by latent_frames={latent_frames}"
+            )
+        return values.view(values.shape[0], int(latent_frames), group, values.shape[2], values.shape[3])[:, :, -1]
+
+    def _build_object_query_priors(
+        self,
+        sample: dict,
+        *,
+        image_hw: tuple[int, int],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        context_boxes = sample["context_boxes"]
+        last_boxes = context_boxes[int(sample["num_context_frames"]) - 1]
+        height, width = image_hw
+        grouped_points = []
+        valid_mask = []
+        for object_idx in range(self.aux_max_objects):
+            box = last_boxes[object_idx]
+            box_valid = bool((box[2] - box[0] > 1.0e-6) and (box[3] - box[1] > 1.0e-6))
+            valid_mask.append(1.0 if box_valid else 0.0)
+            if box_valid:
+                points = _sample_points_from_box(box, self.object_num_queries)
+                points[:, 0] *= float(width)
+                points[:, 1] *= float(height)
+            else:
+                cx = 0.5 * float(width)
+                cy = 0.5 * float(height)
+                points = torch.tensor([[cx, cy]] * self.object_num_queries, dtype=torch.float32)
+            grouped_points.append(points)
+        grouped = torch.stack(grouped_points, dim=0)
+        flat = grouped.view(1, self.total_object_queries, 2)
+        return flat, torch.tensor(valid_mask, dtype=torch.float32).view(1, self.aux_max_objects)
+
+    def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
+        if not self.enable_object_branch:
+            return flow_match_context_sft_loss(pipe, **inputs_shared, **inputs_posi), {}
+        sample = inputs_shared["raw_sample"]
+        context_video = sample["context_video"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
+        image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
+        query_points_prior, object_valid_mask = self._build_object_query_priors(sample, image_hw=image_hw)
+        query_points_prior = query_points_prior.to(device=pipe.device, dtype=pipe.torch_dtype)
+        object_valid_mask = object_valid_mask.to(device=pipe.device, dtype=pipe.torch_dtype)
+        frames_bthwc_01 = ((context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
+        cotracker_out = self.cotracker_adapter(
+            frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            query_image_hw=image_hw,
+        )
+        tracks_grouped, visibility_grouped, confidence_grouped = self._group_tracks_to_objects(
+            cotracker_out.tracks,
+            cotracker_out.visibility,
+            cotracker_out.confidence,
+            max_objects=self.aux_max_objects,
+            points_per_object=self.object_num_queries,
+        )
+        jepa_dtype = next(self.jepa_adapter.parameters()).dtype
+        jepa_out = self.jepa_adapter(context_video.to(dtype=jepa_dtype))
+        context_latents = inputs_shared["clean_prefix_latents"]
+        object_out = self.object_pooler(
+            jepa_patch_tokens=jepa_out.patch_tokens,
+            context_latents=context_latents,
+            tracks=tracks_grouped,
+            visibility=visibility_grouped,
+            confidence=confidence_grouped,
+            track_image_hw=image_hw,
+            object_valid_mask=object_valid_mask,
+            frame_valid_mask=None,
+        )
+        object_aux_out = self.object_aux_heads(
+            object_out.object_latent_tokens,
+            object_out.active_track_summary,
+        )
+        object_context = self.object_adapter(object_out.object_latent_tokens)
+
+        gt_boxes = sample["context_boxes"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
+        center_tracks_native, center_track_valid = self._object_center_tracks_from_grouped(
+            tracks_grouped,
+            visibility_grouped,
+            confidence_grouped,
+            object_valid_mask=object_valid_mask,
+        )
+        track_alignment = align_tracks_to_boxes(
+            tracks=center_tracks_native,
+            gt_boxes=gt_boxes,
+            image_hw=image_hw,
+        )
+        track_box_loss = track_box_l1_loss(
+            tracks=center_tracks_native,
+            matched_gt_centers=track_alignment.matched_gt_centers,
+            matched_gt_valid=track_alignment.matched_gt_valid * center_track_valid.to(dtype=track_alignment.matched_gt_valid.dtype),
+        )
+        track_iou_loss = track_box_iou_loss(
+            tracks=center_tracks_native,
+            gt_boxes=gt_boxes,
+            matched_gt_indices=track_alignment.matched_gt_indices,
+            image_hw=image_hw,
+            radius_px=12.0,
+        )
+        latent_frames = int(object_out.object_latent_tokens.shape[1])
+        gt_valid_full = (track_alignment.matched_gt_valid > 0.5) & center_track_valid
+        gt_track_summary, gt_track_valid = self._group_track_summary(
+            track_alignment.matched_gt_centers,
+            gt_valid_full,
+            image_hw=image_hw,
+            latent_frames=latent_frames,
+        )
+        matched_gt_boxes = self._gather_matched_gt_features(gt_boxes, track_alignment.matched_gt_indices)
+        matched_gt_box_valid = ((matched_gt_boxes[..., 2] - matched_gt_boxes[..., 0]) > 1.0e-6) & (
+            (matched_gt_boxes[..., 3] - matched_gt_boxes[..., 1]) > 1.0e-6
+        )
+        gt_box_xyxy, gt_box_valid = self._group_box_targets(
+            matched_gt_boxes,
+            matched_gt_box_valid,
+            latent_frames,
+        )
+
+        track_aux_loss = (((object_aux_out.pred_track_summary - gt_track_summary).abs()) * gt_track_valid.unsqueeze(-1)).sum()
+        track_aux_loss = track_aux_loss / (gt_track_valid.unsqueeze(-1).sum().clamp_min(1.0) * object_aux_out.pred_track_summary.shape[-1])
+        box_aux_loss = (((object_aux_out.pred_box_xyxy - gt_box_xyxy).abs()) * gt_box_valid.unsqueeze(-1)).sum()
+        box_aux_loss = box_aux_loss / (gt_box_valid.unsqueeze(-1).sum().clamp_min(1.0) * object_aux_out.pred_box_xyxy.shape[-1])
+        depth_aux_loss = track_aux_loss.new_zeros(())
+        if self.depth_target_state_index is not None and self.lambda_depth_aux > 0.0:
+            gt_states = sample["context_states"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
+            matched_gt_depth = self._gather_matched_gt_features(
+                gt_states[..., self.depth_target_state_index : self.depth_target_state_index + 1],
+                track_alignment.matched_gt_indices,
+            )
+            gt_depth = self._group_last(matched_gt_depth, latent_frames)
+            pred_depth = object_aux_out.pred_depth
+            depth_aux_loss = (pred_depth - gt_depth).abs().mean()
+
+        loss_main = flow_match_context_sft_loss(
+            pipe,
+            **inputs_shared,
+            **inputs_posi,
+            object_context=object_context,
+        )
+        total = (
+            loss_main
+            + self.lambda_track_aux * track_aux_loss
+            + self.lambda_box_aux * box_aux_loss
+            + self.lambda_depth_aux * depth_aux_loss
+        )
+        metrics = {
+            "train/loss_main": float(loss_main.detach().item()),
+            "train/loss_track_aux": float(track_aux_loss.detach().item()),
+            "train/loss_box_aux": float(box_aux_loss.detach().item()),
+            "train/loss_depth_aux": float(depth_aux_loss.detach().item()),
+            "train/track_box_loss": float(track_box_loss.detach().item()),
+            "train/track_iou_loss": float(track_iou_loss.detach().item()),
+            "train/object_context_abs_max": float(object_context.detach().abs().max().item()),
+        }
+        return total, metrics
+
     def parse_extra_inputs(self, data, extra_inputs, inputs_shared, enable_condition_inputs):
+        video_frames = data["video"]
+        if isinstance(video_frames, torch.Tensor):
+            video_frames = _tensor_video_to_pil_list(data["video"])
+        elif len(video_frames) > 0 and not isinstance(video_frames[0], Image.Image):
+            video_frames = _tensor_video_to_pil_list(data["video"])
         for extra_input in extra_inputs:
             if extra_input == "input_image":
                 if enable_condition_inputs:
-                    inputs_shared["input_image"] = data["video"][0]
+                    inputs_shared["input_image"] = video_frames[0]
             elif extra_input == "end_image":
                 if enable_condition_inputs:
-                    inputs_shared["end_image"] = data["video"][-1]
+                    inputs_shared["end_image"] = video_frames[-1]
             elif extra_input in ("reference_image", "vace_reference_image"):
                 if enable_condition_inputs:
                     inputs_shared[extra_input] = data[extra_input][0]
@@ -336,20 +764,28 @@ class WanTrainingModule(DiffusionTrainingModule):
         return self._legacy_sample_context(video)
 
     def get_pipeline_inputs(self, data):
-        inputs_posi = {"prompt": data["prompt"]}
+        if "prompt" in data:
+            prompt = data["prompt"]
+            video = data["video"]
+            raw_sample = None
+        else:
+            prompt = data["caption"]
+            video = _tensor_video_to_pil_list(data["video"])
+            raw_sample = data
+        inputs_posi = {"prompt": prompt}
         inputs_nega = {}
-        context_spec = self.sample_context_spec(data["video"])
+        context_spec = self.sample_context_spec(video)
         context_frame_indices = context_spec["frame_indices"]
         enable_condition_inputs = len(context_frame_indices) > 0
         inputs_shared = {
-            "input_video": data["video"],
+            "input_video": video,
             "context_video": None,
             "context_frame_indices": context_frame_indices,
             "sampled_context_frames": len(context_frame_indices),
             "context_sampling_mode": context_spec["mode"],
-            "height": data["video"][0].size[1],
-            "width": data["video"][0].size[0],
-            "num_frames": len(data["video"]),
+            "height": video[0].size[1],
+            "width": video[0].size[0],
+            "num_frames": len(video),
             "cfg_scale": 1,
             "tiled": False,
             "rand_device": self.pipe.device,
@@ -360,6 +796,10 @@ class WanTrainingModule(DiffusionTrainingModule):
             "max_timestep_boundary": self.max_timestep_boundary,
             "min_timestep_boundary": self.min_timestep_boundary,
         }
+        if raw_sample is not None:
+            inputs_shared["raw_sample"] = raw_sample
+            inputs_shared["context_video"] = _tensor_video_to_pil_list(raw_sample["context_video"])
+            inputs_shared["context_frame_indices"] = raw_sample["context_frame_indices"].tolist()
         inputs_shared = self.parse_extra_inputs(
             data,
             self.extra_inputs,
@@ -376,7 +816,17 @@ class WanTrainingModule(DiffusionTrainingModule):
         )
         for unit in self.pipe.units:
             inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
-        return self.task_to_loss[self.task](self.pipe, *inputs)
+        if self.enable_object_branch and "raw_sample" in inputs[0]:
+            loss, metrics = self._compute_object_losses(self.pipe, inputs[0], inputs[1])
+            self.last_train_metrics = metrics
+            self.last_train_metrics["train/loss_total"] = float(loss.detach().item())
+            return loss
+        loss = self.task_to_loss[self.task](self.pipe, *inputs)
+        self.last_train_metrics = {
+            "train/loss_main": float(loss.detach().item()),
+            "train/loss_total": float(loss.detach().item()),
+        }
+        return loss
 
 
 def find_tokenizer_path(wan_root):
@@ -414,6 +864,12 @@ def wan_parser():
         allow_abbrev=False,
     )
     parser = add_general_config(parser)
+    for action in parser._actions:
+        if action.dest == "dataset_base_path":
+            action.required = False
+            if action.default is None:
+                action.default = ""
+            break
     parser = add_video_size_config(parser)
     parser.add_argument(
         "--diffsynth_root",
@@ -654,6 +1110,34 @@ def wan_parser():
         default=None,
         help="Resume full training state from a .state.pt file, a .safetensors checkpoint with matching state file, or a checkpoint directory.",
     )
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="wan_ti2v",
+        choices=["wan_ti2v", "phys_state_episode"],
+    )
+    parser.add_argument("--phys_state_root", type=str, default=None)
+    parser.add_argument("--phys_state_split", type=str, default="train")
+    parser.add_argument("--fixed_num_context_frames", type=int, default=8)
+    parser.add_argument("--enable_object_branch", action="store_true", default=False)
+    parser.add_argument("--object_num_queries", type=int, default=8)
+    parser.add_argument("--aux_max_objects", type=int, default=4)
+    parser.add_argument("--jepa_ckpt_path", type=str, default=None)
+    parser.add_argument("--jepa_input_size", type=int, default=384)
+    parser.add_argument("--jepa_patch_size", type=int, default=16)
+    parser.add_argument("--jepa_tubelet_size", type=int, default=2)
+    parser.add_argument("--cotracker_checkpoint", type=str, default=None)
+    parser.add_argument("--cotracker_input_h", type=int, default=384)
+    parser.add_argument("--cotracker_input_w", type=int, default=512)
+    parser.add_argument("--cotracker_window_len", type=int, default=60)
+    parser.add_argument("--object_pooler_latent_dim", type=int, default=16)
+    parser.add_argument("--cond_proj_dim", type=int, default=4096)
+    parser.add_argument("--jepa_window_radius", type=int, default=1)
+    parser.add_argument("--latent_window_radius", type=int, default=1)
+    parser.add_argument("--lambda_track_aux", type=float, default=0.1)
+    parser.add_argument("--lambda_box_aux", type=float, default=0.1)
+    parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
+    parser.add_argument("--depth_target_state_index", type=int, default=None)
     return parser
 
 
@@ -825,6 +1309,18 @@ def init_trackers(accelerator, args):
 
 
 def build_dataset(args):
+    if args.dataset_type == "phys_state_episode":
+        if not args.phys_state_root:
+            raise ValueError("--phys_state_root is required when dataset_type=phys_state_episode")
+        return PhysStateEpisodeDataset(
+            root=args.phys_state_root,
+            split=args.phys_state_split,
+            resolution=(args.height, args.width),
+            num_context_frames=args.fixed_num_context_frames,
+            context_fraction=0.5,
+            random_context_frames=False,
+            seed=42,
+        )
     return WanTI2VDataset(
         dataset_base_path=args.dataset_base_path,
         dataset_metadata_path=args.dataset_metadata_path or None,
@@ -870,6 +1366,26 @@ def build_model(args, accelerator):
         sparse_context_ratio=args.sparse_context_ratio,
         random_context_ratio=args.random_context_ratio,
         no_context_ratio=args.no_context_ratio,
+        fixed_num_context_frames=args.fixed_num_context_frames,
+        enable_object_branch=args.enable_object_branch,
+        object_num_queries=args.object_num_queries,
+        aux_max_objects=args.aux_max_objects,
+        jepa_ckpt_path=args.jepa_ckpt_path,
+        jepa_input_size=args.jepa_input_size,
+        jepa_patch_size=args.jepa_patch_size,
+        jepa_tubelet_size=args.jepa_tubelet_size,
+        cotracker_checkpoint=args.cotracker_checkpoint,
+        cotracker_input_h=args.cotracker_input_h,
+        cotracker_input_w=args.cotracker_input_w,
+        cotracker_window_len=args.cotracker_window_len,
+        object_pooler_latent_dim=args.object_pooler_latent_dim,
+        cond_proj_dim=args.cond_proj_dim,
+        jepa_window_radius=args.jepa_window_radius,
+        latent_window_radius=args.latent_window_radius,
+        lambda_track_aux=args.lambda_track_aux,
+        lambda_box_aux=args.lambda_box_aux,
+        lambda_depth_aux=args.lambda_depth_aux,
+        depth_target_state_index=args.depth_target_state_index,
     )
 
 
@@ -1636,6 +2152,7 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
         runtime_state["optimizer"] = optimizer
         runtime_state["scheduler"] = scheduler
     optimizer.zero_grad(set_to_none=True)
+    dataset_load_from_cache = bool(getattr(dataset, "load_from_cache", False))
 
     start_epoch = 0
     resume_batch_in_epoch = 0
@@ -1657,7 +2174,7 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
             f"global_step={global_step}, epoch_id={start_epoch}, batch_in_epoch={resume_batch_in_epoch}, "
             f"model_logger_num_steps={model_logger.num_steps}"
         )
-        if resume_batch_in_epoch > 0 and not dataset.load_from_cache:
+        if resume_batch_in_epoch > 0 and not dataset_load_from_cache:
             accelerator.print(
                 "Resume fast-path enabled for non-cached dataset loading: "
                 f"ignoring batch_in_epoch={resume_batch_in_epoch} to avoid replaying and re-decoding "
@@ -1693,7 +2210,7 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
                     progress_bar.update(1)
                 continue
             with accelerator.accumulate(model):
-                loss = model({}, inputs=data) if dataset.load_from_cache else model(data)
+                loss = model({}, inputs=data) if dataset_load_from_cache else model(data)
                 accelerator.backward(loss)
                 optimizer.step()
                 scheduler.step()
@@ -1702,14 +2219,14 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
                 if accelerator.sync_gradients:
                     global_step += 1
                     model_logger.num_steps = global_step
-                    accelerator.log(
-                        {
-                            "train/loss": loss.detach().float().item(),
-                            "train/lr": scheduler.get_last_lr()[0],
-                            "train/epoch": epoch_id,
-                        },
-                        step=global_step,
-                    )
+                    metrics = {
+                        "train/loss": loss.detach().float().item(),
+                        "train/lr": scheduler.get_last_lr()[0],
+                        "train/epoch": epoch_id,
+                    }
+                    extra_metrics = getattr(accelerator.unwrap_model(model), "last_train_metrics", {})
+                    metrics.update(extra_metrics)
+                    accelerator.log(metrics, step=global_step)
 
                 progress["global_step"] = global_step
                 progress["epoch_id"] = epoch_id

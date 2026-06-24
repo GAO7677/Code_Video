@@ -1,7 +1,9 @@
 """该模块用于给 Wan 视频管线补充多帧上下文条件训练与推理逻辑；输入为 Wan 管线、上下文/噪声 latent 与条件张量，输出为上下文感知的损失计算和生成所需的中间结果。"""
+import types
 from typing import Optional, Union
 
 import torch
+import torch.nn as nn
 from einops import rearrange
 from PIL import Image
 from tqdm import tqdm
@@ -11,7 +13,7 @@ from diffsynth.core import ModelConfig, gradient_checkpoint_forward
 from diffsynth.core.device.npu_compatible_device import get_device_type
 from diffsynth.diffusion.base_pipeline import PipelineUnit
 from diffsynth.models.longcat_video_dit import LongCatVideoTransformer3DModel
-from diffsynth.models.wan_video_dit import WanModel, sinusoidal_embedding_1d
+from diffsynth.models.wan_video_dit import CrossAttention, WanModel, modulate, sinusoidal_embedding_1d
 from diffsynth.pipelines.wan_video import (
     TeaCache,
     TemporalTiler_BCTHW,
@@ -20,6 +22,106 @@ from diffsynth.pipelines.wan_video import (
     model_fn_wans2v,
     wantodance_get_single_freqs,
 )
+
+
+def _reinit_linear(module: nn.Module, std: float = 0.02) -> None:
+    if not isinstance(module, nn.Linear):
+        return
+    nn.init.normal_(module.weight, std=std)
+    if module.bias is not None:
+        nn.init.zeros_(module.bias)
+
+
+def enable_object_condition_branch(
+    dit: WanModel,
+    *,
+    object_gate_init: float = 0.1,
+    reinitialize_object_branch: bool = True,
+) -> WanModel:
+    if getattr(dit, "_codex_object_branch_enabled", False):
+        return dit
+
+    if not hasattr(dit, "text_embedding"):
+        raise RuntimeError("Expected Wan DIT with text_embedding before enabling object branch.")
+
+    text_embedding = getattr(dit, "text_embedding")
+    if not isinstance(text_embedding, nn.Sequential):
+        raise RuntimeError("Expected dit.text_embedding to be nn.Sequential.")
+    first_linear = None
+    for module in text_embedding.modules():
+        if isinstance(module, nn.Linear):
+            first_linear = module
+            break
+    if first_linear is None:
+        raise RuntimeError("Failed to infer object embedding input dim from dit.text_embedding.")
+    text_dim = int(first_linear.in_features)
+    dim = int(dit.dim)
+    num_heads = int(dit.blocks[0].num_heads)
+
+    dit.object_embedding = nn.Sequential(
+        nn.Linear(text_dim, dim),
+        nn.GELU(approximate="tanh"),
+        nn.Linear(dim, dim),
+    ).to(device=dit.patch_embedding.weight.device, dtype=dit.patch_embedding.weight.dtype)
+    if reinitialize_object_branch:
+        for module in dit.object_embedding.modules():
+            _reinit_linear(module)
+
+    for block in dit.blocks:
+        block.norm4 = nn.LayerNorm(dim, eps=1e-6).to(
+            device=dit.patch_embedding.weight.device,
+            dtype=dit.patch_embedding.weight.dtype,
+        )
+        block.object_cross_attn = CrossAttention(dim, num_heads, eps=1e-6).to(
+            device=dit.patch_embedding.weight.device,
+            dtype=dit.patch_embedding.weight.dtype,
+        )
+        block.object_gate = nn.Parameter(
+            torch.full(
+                (1, 1, dim),
+                float(object_gate_init),
+                device=dit.patch_embedding.weight.device,
+                dtype=dit.patch_embedding.weight.dtype,
+            )
+        )
+        if reinitialize_object_branch:
+            for attr in ("q", "k", "v", "o"):
+                _reinit_linear(getattr(block.object_cross_attn, attr, None))
+            if block.norm4.weight is not None:
+                nn.init.ones_(block.norm4.weight)
+            if block.norm4.bias is not None:
+                nn.init.zeros_(block.norm4.bias)
+
+    def block_forward(self, x, context, t_mod, freqs, object_context=None):
+        has_seq = len(t_mod.shape) == 4
+        chunk_dim = 2 if has_seq else 1
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+            self.modulation.to(dtype=t_mod.dtype, device=t_mod.device) + t_mod
+        ).chunk(6, dim=chunk_dim)
+        if has_seq:
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                shift_msa.squeeze(2),
+                scale_msa.squeeze(2),
+                gate_msa.squeeze(2),
+                shift_mlp.squeeze(2),
+                scale_mlp.squeeze(2),
+                gate_mlp.squeeze(2),
+            )
+        input_x = modulate(self.norm1(x), shift_msa, scale_msa)
+        x = self.gate(x, gate_msa, self.self_attn(input_x, freqs))
+        x = x + self.cross_attn(self.norm3(x), context)
+        if object_context is not None and getattr(self, "object_cross_attn", None) is not None:
+            object_delta = self.object_cross_attn(self.norm4(x), object_context)
+            x = x + torch.tanh(self.object_gate) * object_delta
+        input_x = modulate(self.norm2(x), shift_mlp, scale_mlp)
+        x = self.gate(x, gate_mlp, self.ffn(input_x))
+        return x
+
+    for block in dit.blocks:
+        block.forward = types.MethodType(block_forward, block)
+
+    dit._codex_object_branch_enabled = True
+    return dit
 
 
 def resolve_num_clean_prefix_latents(
@@ -302,6 +404,7 @@ def model_fn_wan_video_with_context(
     skip_9th_layer: bool = False,
     clean_prefix_latents: Optional[torch.Tensor] = None,
     num_clean_prefix_latents: Optional[int] = None,
+    object_context: Optional[torch.Tensor] = None,
     **kwargs,
 ):
     if sliding_window_size is not None and sliding_window_stride is not None:
@@ -325,6 +428,7 @@ def model_fn_wan_video_with_context(
             control_camera_latents_input=control_camera_latents_input,
             clean_prefix_latents=clean_prefix_latents,
             num_clean_prefix_latents=num_clean_prefix_latents,
+            object_context=object_context,
         )
         return TemporalTiler_BCTHW().run(
             model_fn_wan_video_with_context,
@@ -594,6 +698,12 @@ def model_fn_wan_video_with_context(
     if tea_cache_update:
         x = tea_cache.update(x)
     else:
+        if object_context is not None:
+            object_context = object_context.to(device=x.device, dtype=context.dtype)
+            if getattr(dit, "object_embedding", None) is not None:
+                object_context = dit.object_embedding(object_context.to(dit.object_embedding[0].weight.dtype))
+                object_context = object_context.to(dtype=context.dtype, device=x.device)
+
         def create_custom_forward_vap(block, vap_module):
             def custom_forward(*inputs):
                 return vap_module(block, *inputs)
@@ -655,6 +765,7 @@ def model_fn_wan_video_with_context(
                     context,
                     t_mod,
                     freqs,
+                    object_context=object_context,
                 )
 
             if vace_context is not None and block_id in vace.vace_layers_mapping:
