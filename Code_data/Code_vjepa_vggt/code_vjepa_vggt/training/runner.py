@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import time
 from pathlib import Path
 
 import torch
 from accelerate import Accelerator
 from tqdm import tqdm
+
+
+_STEP_CHECKPOINT_RE = re.compile(r"^step_(\d{7})\.pt$")
 
 
 def _first_nonfinite_named_tensor(named_tensors: list[tuple[str, torch.Tensor]]) -> dict[str, object] | None:
@@ -46,6 +51,79 @@ def _max_abs_named_tensor(named_tensors: list[tuple[str, torch.Tensor]]) -> floa
         if value > max_abs:
             max_abs = value
     return max_abs
+
+
+def _list_step_checkpoints(ckpt_dir: Path) -> list[tuple[int, Path]]:
+    checkpoints: list[tuple[int, Path]] = []
+    for path in ckpt_dir.glob("step_*.pt"):
+        match = _STEP_CHECKPOINT_RE.fullmatch(path.name)
+        if match is None:
+            continue
+        checkpoints.append((int(match.group(1)), path))
+    checkpoints.sort(key=lambda item: item[0])
+    return checkpoints
+
+
+def _prune_step_checkpoints(
+    ckpt_dir: Path,
+    *,
+    keep_last: int,
+    pending_target: Path | None = None,
+) -> list[Path]:
+    if keep_last <= 0:
+        return []
+    checkpoints = _list_step_checkpoints(ckpt_dir)
+    filtered = [item for item in checkpoints if pending_target is None or item[1] != pending_target]
+    target_existing = pending_target is not None and pending_target.exists()
+    incoming = 0 if target_existing else 1
+    max_existing = max(0, keep_last - incoming)
+    excess = max(0, len(filtered) - max_existing)
+    removed: list[Path] = []
+    for _, path in filtered[:excess]:
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
+def _save_checkpoint_atomic(state: dict[str, object], target_path: Path) -> None:
+    tmp_path = target_path.with_name(f".{target_path.name}.tmp-{os.getpid()}-{time.time_ns()}")
+    try:
+        torch.save(state, tmp_path)
+        os.replace(tmp_path, target_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+def _save_trainable_checkpoint(
+    state: dict[str, object],
+    *,
+    ckpt_dir: Path,
+    target_path: Path,
+    keep_last: int,
+    min_free_gb: float,
+    debug_log,
+) -> None:
+    removed = _prune_step_checkpoints(
+        ckpt_dir,
+        keep_last=keep_last,
+        pending_target=target_path,
+    )
+    if removed:
+        debug_log(
+            "pruned old checkpoints before save: "
+            + ", ".join(path.name for path in removed)
+        )
+    free_bytes = shutil.disk_usage(ckpt_dir).free
+    min_free_bytes = int(max(0.0, min_free_gb) * (1024 ** 3))
+    if min_free_bytes > 0 and free_bytes < min_free_bytes:
+        raise RuntimeError(
+            "insufficient free disk space before checkpoint save; "
+            f"path={ckpt_dir} free_gb={free_bytes / (1024 ** 3):.2f} "
+            f"required_gb={min_free_bytes / (1024 ** 3):.2f}"
+        )
+    _save_checkpoint_atomic(state, target_path)
 
 
 def _build_optimizer(
@@ -165,6 +243,8 @@ def launch_training_task(
     log_cfg = cfg.get("logging", {})
     log_every = int(log_cfg.get("log_every", 10))
     save_every = int(log_cfg.get("save_every", save_every))
+    max_checkpoints = int(log_cfg.get("max_checkpoints", 0))
+    min_checkpoint_free_gb = float(log_cfg.get("min_checkpoint_free_gb", 0.0))
     use_wandb = bool(log_cfg.get("use_wandb", False))
     nonfinite_probe = bool(log_cfg.get("nonfinite_probe", False))
     nonfinite_probe_every = int(log_cfg.get("nonfinite_probe_every", 1))
@@ -241,7 +321,7 @@ def launch_training_task(
                                     "step": step + 1,
                                     "model": unwrapped.export_trainable_state_dict(),
                                 }
-                                torch.save(state, ckpt_dir / f"step_{step + 1:07d}_nonfinite.pt")
+                                _save_checkpoint_atomic(state, ckpt_dir / f"step_{step + 1:07d}_nonfinite.pt")
                             raise RuntimeError(
                                 "non-finite trainable parameter detected after optimizer.step; "
                                 f"step={step + 1}, param={param_info['name']}, "
@@ -286,7 +366,14 @@ def launch_training_task(
                         "step": step,
                         "model": unwrapped.export_trainable_state_dict(),
                     }
-                    torch.save(state, ckpt_dir / f"step_{step:07d}.pt")
+                    _save_trainable_checkpoint(
+                        state,
+                        ckpt_dir=ckpt_dir,
+                        target_path=ckpt_dir / f"step_{step:07d}.pt",
+                        keep_last=max_checkpoints,
+                        min_free_gb=min_checkpoint_free_gb,
+                        debug_log=_debug_log,
+                    )
                 if step >= max_steps:
                     break
     progress.close()

@@ -4,10 +4,11 @@
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 /data/gaoya/miniconda3/envs/wan/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py \
-  --checkpoint-dir /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67 \
+  --checkpoint /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/pybullet0613_wan_lora_gpu67/step_0000940.pt \
   --prompt "your prompt here" \
-  --context-video /path/to/context.mp4 \
-  --save-raw
+  --context-video /path/to/context_8frames.mp4 \
+  --num-frames 24 \
+  --output-video /tmp/prediction.mp4
 '''
 from __future__ import annotations
 
@@ -240,9 +241,13 @@ def _load_trainable_state(checkpoint_path: Path) -> dict[str, torch.Tensor]:
 
 
 def _infer_object_pooler_latent_dim(state_dict: dict[str, torch.Tensor], default_dim: int) -> int:
-    key = "bundle.object_pooler.latent_proj.weight"
-    if key in state_dict and hasattr(state_dict[key], "shape") and len(state_dict[key].shape) == 2:
-        return int(state_dict[key].shape[1])
+    candidate_keys = [
+        "object_pooler.latent_proj.weight",
+        "bundle.object_pooler.latent_proj.weight",
+    ]
+    for key in candidate_keys:
+        if key in state_dict and hasattr(state_dict[key], "shape") and len(state_dict[key].shape) == 2:
+            return int(state_dict[key].shape[1])
     return int(default_dim)
 
 
@@ -324,6 +329,24 @@ def _select_video_from_path(video_path: Path, num_frames: int, sampling_mode: st
     if sampling_mode == "prefix":
         return read_video_prefix(video_path, num_frames)
     return read_video_uniform(video_path, num_frames)
+
+
+def _load_context_video(
+    *,
+    video_path: Path,
+    target_context_frames: int,
+    sampling_mode: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    frames, frame_indices = _select_video_from_path(video_path, target_context_frames, sampling_mode)
+    if int(frames.shape[0]) < int(target_context_frames):
+        raise RuntimeError(
+            f"context video {video_path} only provides {int(frames.shape[0])} frames, "
+            f"smaller than required num_context_frames={int(target_context_frames)}"
+        )
+    if int(frames.shape[0]) > int(target_context_frames):
+        frames = frames[:target_context_frames]
+        frame_indices = frame_indices[:target_context_frames]
+    return frames, frame_indices
 
 
 def _build_query_prior_for_sample(
@@ -586,15 +609,22 @@ def _run_sampling(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--checkpoint",
         "--checkpoint-dir",
+        dest="checkpoint",
         required=True,
-        help="checkpoint folder containing step_*.pt or a direct step_XXXXXXX.pt file",
+        help="checkpoint folder containing step_*.pt, or a direct step_XXXXXXX.pt / .safetensors file",
     )
     parser.add_argument("--prompt", required=True, help="text prompt for the video")
-    parser.add_argument("--context-video", required=True, help="path to input context video")
+    parser.add_argument("--context-video", required=True, help="path to the context-only input video; the script reads exactly num_context_frames from it")
     parser.add_argument("--config", default="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0613pybullet_wan_lora_gpu67.yaml")
     parser.add_argument("--output-dir", default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/tmp/infer_context_video_wan")
-    parser.add_argument("--num-frames", type=int, default=24)
+    parser.add_argument(
+        "--output-video",
+        default=None,
+        help="optional explicit mp4 output path; if provided, decoding and video export are enabled automatically",
+    )
+    parser.add_argument("--num-frames", type=int, default=24, help="target total generated video length in frames")
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--context-fraction", type=float, default=0.5)
     parser.add_argument("--random-context-frames", action="store_true")
@@ -610,21 +640,27 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_yaml_config(args.config)
-    config["experiment"]["output_dir"] = str(Path(args.checkpoint_dir))
+    checkpoint_path = Path(args.checkpoint)
+    config["experiment"]["output_dir"] = str(checkpoint_path)
     device = _resolve_launch_device()
     device_obj = torch.device(device)
+    target_total_frames = int(args.num_frames)
+    target_context_frames = int(config["data"]["num_context_frames"])
+    if target_total_frames < target_context_frames:
+        raise ValueError(
+            f"--num-frames must be >= configured num_context_frames={target_context_frames}, "
+            f"got {target_total_frames}"
+        )
 
     video_path = Path(args.context_video)
-    frames, frame_indices = _select_video_from_path(video_path, args.num_frames, args.sampling_mode)
-    video = preprocess_video_rgb_uint8(frames, tuple(config["data"]["resolution"]))
-    context_indices = _infer_context_indices(
-        total_frames=video.shape[1],
-        num_context_frames=int(config["data"]["num_context_frames"]),
-        context_fraction=float(args.context_fraction),
-        random_context_frames=bool(args.random_context_frames),
-        seed=int(args.seed),
+    frames, frame_indices = _load_context_video(
+        video_path=video_path,
+        target_context_frames=target_context_frames,
+        sampling_mode=args.sampling_mode,
     )
-    context_video = video[:, context_indices].contiguous().unsqueeze(0)
+    context_video_single = preprocess_video_rgb_uint8(frames, tuple(config["data"]["resolution"]))
+    context_indices = torch.arange(target_context_frames, dtype=torch.long)
+    context_video = context_video_single.unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
     trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
@@ -640,7 +676,7 @@ def main() -> None:
         }
         print("skipping trainable checkpoint load; keeping randomly initialized trainable modules", flush=True)
     else:
-        state_info = _load_trainable_state_into_model(trainer, Path(args.checkpoint_dir))
+        state_info = _load_trainable_state_into_model(trainer, checkpoint_path)
         print(f"checkpoint loaded: missing={len(state_info['missing_keys'])} unexpected={len(state_info['unexpected_keys'])}", flush=True)
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
@@ -659,7 +695,7 @@ def main() -> None:
             text_context=text_context,
             object_context=object_context,
             context_latents=context_latents,
-            total_frames=int(video.shape[1]),
+            total_frames=target_total_frames,
             num_context_frames=int(num_context_frames.item()),
             num_inference_steps=int(args.sampling_steps),
         )
@@ -667,12 +703,16 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_video_path = Path(args.output_video) if args.output_video else None
+    should_save_video = bool(args.save_raw or output_video_path is not None)
     result = {
-        "checkpoint_dir": str(args.checkpoint_dir),
+        "checkpoint": str(checkpoint_path),
         "context_video": str(args.context_video),
         "prompt": str(args.prompt),
-        "frame_indices": frame_indices.tolist(),
+        "context_frame_indices_from_input": frame_indices.tolist(),
         "context_indices": context_indices.tolist(),
+        "target_num_frames": int(target_total_frames),
+        "configured_num_context_frames": int(target_context_frames),
         "prep_debug": prep_debug,
         "sample_debug": sample_debug,
         "load_state_missing": state_info,
@@ -680,7 +720,7 @@ def main() -> None:
     with open(output_dir / "result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
-    if args.save_raw:
+    if should_save_video:
         if trainer.bundle.dit is not None:
             del trainer.bundle.dit
             trainer.bundle.dit = None
@@ -697,9 +737,11 @@ def main() -> None:
         video_out = decoded.detach().cpu()
         video_out = video_out.permute(1, 0, 2, 3).contiguous()
         video_out = ((video_out.clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8).permute(0, 2, 3, 1).numpy()
-        raw_path = output_dir / "prediction.mp4"
+        raw_path = output_video_path if output_video_path is not None else (output_dir / "prediction.mp4")
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
         _write_mp4(raw_path, video_out, fps=int(args.fps))
         browser_path = _ensure_browser_video(raw_path)
+        result["prediction_video_raw"] = str(raw_path)
         result["prediction_video"] = str(browser_path)
         with open(output_dir / "result.json", "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)

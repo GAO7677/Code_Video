@@ -1,6 +1,6 @@
 experiment:
-  name: pybullet0624_wan_lora_monitor_gpu67
-  output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67
+  name: pybullet0624_freeze_lora_other_modules_gpu67
+  output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67
   seed: 42
 
 model:
@@ -9,6 +9,9 @@ model:
   freeze_vae: true
   freeze_text_encoder: true
   freeze_wan_dit: true
+  freeze_wan_lora: true
+  freeze_object_pooler: false
+  init_wan_lora_from_checkpoint: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
   wan_lora_rank: 32
   wan_lora_alpha: 32
   wan_lora_dropout: 0.0
@@ -76,5 +79,5 @@ logging:
   nonfinite_probe_every: 1
   use_wandb: true
   wandb_project: vjepa_vggt_wan
-  wandb_run_name: pybullet0624_wan_lora_monitor_gpu67
+  wandb_run_name: pybullet0624_freeze_lora_other_modules_gpu67
   wandb_dir: /data/gaoya/AAA_test_video/0623/train/train0624/logs/wandb

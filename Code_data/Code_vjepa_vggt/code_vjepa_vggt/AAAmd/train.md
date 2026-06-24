@@ -6828,3 +6828,213 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 - 更稳妥的恢复空间建议是：
   - 预留 `10G+`
   - 避免训练刚恢复又在下一次落盘点再次写满
+
+### 8. 针对重复故障的代码级修复
+
+- 本轮已经对训练保存逻辑做了最小且直接的修复，位置：
+  - `code_vjepa_vggt/training/runner.py`
+  - `code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml`
+- 修复点 1：checkpoint 改为原子写入
+  - 先写入临时文件
+  - 成功后再 `os.replace(...)` 覆盖成正式 `step_XXXXXXX.pt`
+  - 如果写失败，会清理临时文件，避免留下新的“半拉子 checkpoint”
+- 修复点 2：增加 checkpoint 轮转保留策略
+  - 新配置：
+    - `logging.max_checkpoints: 8`
+  - 训练在保存新 checkpoint 前，会自动删除最旧的完整 `step_*.pt`
+  - 从而把占用控制在最近 8 个完整 checkpoint 左右，而不是无限累计
+- 修复点 3：增加保存前剩余空间阈值
+  - 新配置：
+    - `logging.min_checkpoint_free_gb: 12`
+  - 若保存前剩余空间低于阈值，会在写 checkpoint 之前显式报错
+  - 这样能避免继续写出损坏的部分文件
+
+### 9. 修复后的轻量级自测
+
+- `runner.py` 与 `train_context_video_wan.py` 已通过：
+  - `python -m py_compile`
+- checkpoint 轮转逻辑已单独验证：
+  - 在临时目录连续保存 `step20/40/60`
+  - `keep_last=2` 时会自动删除最早的 `step_0000020.pt`
+  - 最终只保留：
+    - `step_0000040.pt`
+    - `step_0000060.pt`
+- 剩余空间阈值逻辑也已单独验证：
+  - 人为设置极高 `min_free_gb`
+  - 保存前会直接报：
+    - `insufficient free disk space before checkpoint save`
+
+### 10. 当前最稳恢复点与恢复命令
+
+- 当前最后一个完整、已验证可推理的 checkpoint 仍然是：
+  - `step_0000940.pt`
+- 恢复训练时，应当从它继续，而不是使用损坏的：
+  - `step_0000960.pt`
+- 恢复命令应使用：
+
+```bash
+CUDA_VISIBLE_DEVICES=6,7 CODEX_DEBUG_TRAINER_INIT=1 CODEX_DEBUG_RUNNER_INIT=1 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate launch \
+  --multi_gpu --num_processes 2 --gpu_ids 6,7 --mixed_precision bf16 \
+  --main_process_port 29525 \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_context_video_wan.py \
+  --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml \
+  --resume-checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000940.pt
+```
+
+### 11. 现在还差什么
+
+- 当前仍然不能立即重启正式训练，因为 `/data` 还是：
+  - `Avail 0`
+- 但与上一阶段相比，恢复路径已经明确为：
+  - 先释放足够空间
+  - 删除损坏的 `step_0000960.pt`
+  - 从 `step_0000940.pt` 恢复
+  - 之后由新的 checkpoint 轮转和空间阈值机制接管，避免再次无限堆积到磁盘打满
+
+### 12. 为恢复动作补充的工具脚本
+
+- 为避免后续手工敲高风险命令，本轮新增了两个恢复工具：
+  - `code_vjepa_vggt/manage_train0624_checkpoints.py`
+  - `code_vjepa_vggt/restart_train0624_from_step940.sh`
+- 其中：
+  - `manage_train0624_checkpoints.py` 支持：
+    - `list`
+    - `move`
+    - `delete`
+    - `--dry-run`
+  - `restart_train0624_from_step940.sh` 固定封装了：
+    - `gpu6,7`
+    - `accelerate launch`
+    - `train_0624pybullet_wan_lora_monitor_gpu67.yaml`
+    - `--resume-checkpoint step_0000940.pt`
+
+### 13. 工具脚本的轻量验证
+
+- `manage_train0624_checkpoints.py` 已通过：
+  - `python -m py_compile`
+- 对计划中的“迁移最老 4 个 checkpoint”做过 dry-run：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+  - `step_0000060.pt`
+  - `step_0000080.pt`
+- dry-run 汇总结果为：
+  - `total_selected_gib = 20.62`
+- `restart_train0624_from_step940.sh` 已通过：
+  - `bash -n`
+
+### 14. 当前推荐恢复动作
+
+- 不再建议继续保留“无限 checkpoint 累积”的旧策略
+- 当前最稳妥的恢复顺序应为：
+  - 用 `manage_train0624_checkpoints.py` 先迁移或删除最老一批 checkpoint
+  - 删除损坏的 `step_0000960.pt`
+  - 确认 `/data` 恢复出至少 `12G` 以上剩余空间
+  - 执行 `restart_train0624_from_step940.sh`
+  - 训练恢复后继续沿用前面的监控闭环：
+    - loss
+    - 权重差分
+    - W&B 刷新
+    - 新 checkpoint 推理兼容性
+
+## 2026-06-24 02:30 UTC: phase 60, 首次恢复训练失败，根因定位到 object pooler latent dim 推断 key 写错
+
+### 0. 本轮现象
+
+- 在清理空间并从 `step_0000940.pt` 重新启动正式训练后，进程没有进入真正的训练循环
+- 恢复日志在 `load_state_dict` 阶段直接报错：
+  - `size mismatch for object_pooler.latent_proj.weight`
+  - checkpoint 中权重 shape：
+    - `[4096, 48]`
+  - 当前新建模型中的权重 shape：
+    - `[4096, 16]`
+
+### 1. 为什么这不是 checkpoint 损坏
+
+- `step_0000940.pt` 本身仍可正常 `torch.load`
+- checkpoint 内记录：
+  - `step = 940`
+  - `model_keys = 1272`
+- 单独读取 checkpoint 中相关参数，确认实际 key 与 shape 为：
+  - `object_pooler.latent_proj.weight`
+  - `(4096, 48)`
+- 因此问题不是 checkpoint 坏了，而是恢复时构造出来的新模型维度不匹配
+
+### 2. 根因
+
+- 恢复前，训练入口会调用：
+  - `_load_trainable_state(...)`
+  - `_infer_object_pooler_latent_dim(...)`
+- 但原始实现只检查了：
+  - `bundle.object_pooler.latent_proj.weight`
+- 而当前 `step_0000940.pt` 中真实存在的 key 是：
+  - `object_pooler.latent_proj.weight`
+- 结果是：
+  - latent dim 推断失败
+  - 回退到了默认值 `16`
+  - 新建 `ObjectTubeProjector.latent_proj` 仍是 `Linear(16, 4096)`
+  - 最终在恢复 `load_state_dict` 时因 `[4096, 48] -> [4096, 16]` 不匹配而退出
+
+### 3. 证据
+
+- 修复前单独验证 `_infer_object_pooler_latent_dim(...)` 对 `step_0000940.pt` 的结果：
+  - `inferred_dim = 16`
+- 同时打印 checkpoint 中真实相关 key：
+  - `['object_pooler.latent_proj.weight']`
+- 这两条证据合在一起，直接证明：
+  - 不是 checkpoint 中没有这个权重
+  - 而是推断函数盯错了 key 名
+
+### 4. 修复
+
+- 已修改：
+  - `code_vjepa_vggt/infer_context_video_wan.py`
+- 当前 `_infer_object_pooler_latent_dim(...)` 同时支持：
+  - `object_pooler.latent_proj.weight`
+  - `bundle.object_pooler.latent_proj.weight`
+- 修复后再次单独验证：
+  - `inferred_dim = 48`
+
+### 5. 对主损失梯度问题的影响判断
+
+- 这次恢复失败仍然不是“主损失梯度无效”的新证据
+- 当前新增问题属于：
+  - resume 构图前的 checkpoint 兼容性 bug
+- 训练在恢复前向循环之前就退出了，因此：
+  - 还没有产生新的 loss / 梯度 / 权重更新证据
+
+### 6. 当前下一步
+
+- 现在可以基于修复后的 latent dim 推断逻辑，再次从：
+  - `step_0000940.pt`
+- 重试正式训练恢复
+- 若恢复成功，继续回到原先的监控闭环：
+  - W&B 刷新
+  - step 继续推进
+  - 新 checkpoint 落盘
+  - 推理兼容性验证
+
+### 12. 当前最小风险空间恢复方案
+
+- 目前已经量化出的最小风险释放方案是：
+  - 将以下最老的 4 个 checkpoint 从 `/data` 迁移到 `/home` 归档目录，而不是直接删除：
+    - `step_0000020.pt`
+    - `step_0000040.pt`
+    - `step_0000060.pt`
+    - `step_0000080.pt`
+- 这 4 个文件合计大小约为：
+  - `22135812836 bytes`
+  - `20.62G`
+- 归档目标目录已准备好：
+  - `/home/gaoya/AAA_train0624_checkpoint_archive`
+- 该目录所在磁盘当前可用空间约为：
+  - `92.36G`
+- 因此这一方案的特点是：
+  - 能明显缓解 `/data` 空间压力
+  - 不丢失早期 checkpoint 资产
+  - 为删除损坏的 `step_0000960.pt` 和从 `step_0000940.pt` 恢复训练创造足够空间条件
+- 若执行这一方案，随后应继续做：
+  - 删除损坏的 `step_0000960.pt`
+  - 再次确认 `/data` 可用空间
+  - 用 `--resume-checkpoint step_0000940.pt` 在 `gpu6,7` 上恢复正式训练
