@@ -172,6 +172,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         object_track_delta_scale=0.25,
         object_box_delta_scale=0.25,
         object_box_wh_log_scale=2.25,
+        object_box_wh_max_scale=2.0,
         object_min_box_px=16.0,
         lambda_track_aux=0.1,
         lambda_box_aux=0.1,
@@ -239,6 +240,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.object_track_delta_scale = float(object_track_delta_scale)
         self.object_box_delta_scale = float(object_box_delta_scale)
         self.object_box_wh_log_scale = float(object_box_wh_log_scale)
+        self.object_box_wh_max_scale = float(object_box_wh_max_scale)
         self.object_min_box_px = float(object_min_box_px)
         self.object_gate_init = float(object_gate_init)
         self.depth_target_state_index = (
@@ -281,6 +283,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 track_delta_scale=float(object_track_delta_scale),
                 box_delta_scale=float(object_box_delta_scale),
                 box_wh_log_scale=float(object_box_wh_log_scale),
+                box_wh_max_scale=float(object_box_wh_max_scale),
             )
             self.object_adapter = ObjectConditionAdapter(
                 dim=cond_dim,
@@ -660,6 +663,8 @@ class WanTrainingModule(DiffusionTrainingModule):
             image_hw=image_hw,
             radius_px=12.0,
         )
+        image_diag_px = math.sqrt(float(image_hw[0] ** 2 + image_hw[1] ** 2))
+        track_box_loss_norm = track_box_loss / max(image_diag_px, 1.0)
         latent_frames = int(object_out.object_latent_tokens.shape[1])
         gt_valid_full = (track_alignment.matched_gt_valid > 0.5) & center_track_valid
         gt_track_summary, gt_track_valid = self._group_track_summary(
@@ -709,13 +714,15 @@ class WanTrainingModule(DiffusionTrainingModule):
             **inputs_posi,
             object_context=object_context,
         )
+        # `track_box_loss` / `track_iou_loss` are measured on the frozen
+        # CoTracker-derived center tracks before the trainable aux heads.
+        # They are useful diagnostics for track quality, but they do not
+        # provide gradient to the trainable object modules in this setup.
         total = (
             loss_main
             + self.lambda_track_aux * track_aux_loss
             + self.lambda_box_aux * box_aux_loss
             + self.lambda_depth_aux * depth_aux_loss
-            + self.lambda_track_box_aux * track_box_loss
-            + self.lambda_track_iou_aux * track_iou_loss
         )
         object_context_abs = object_context.detach().abs()
         object_latent_tokens_abs = object_out.object_latent_tokens.detach().abs()
@@ -724,11 +731,12 @@ class WanTrainingModule(DiffusionTrainingModule):
             "train/loss_track_aux": float(track_aux_loss.detach().item()),
             "train/loss_box_aux": float(box_aux_loss.detach().item()),
             "train/loss_depth_aux": float(depth_aux_loss.detach().item()),
-            "train/loss_track_box_aux": float(track_box_loss.detach().item()),
+            "train/loss_track_box_aux": float(track_box_loss_norm.detach().item()),
             "train/loss_track_iou_aux": float(track_iou_loss.detach().item()),
             "train/loss_track_center_aux": float(track_center_l1.detach().item()),
             "train/loss_track_delta_aux": float(track_delta_l1.detach().item()),
             "train/track_box_loss": float(track_box_loss.detach().item()),
+            "train/track_box_loss_norm": float(track_box_loss_norm.detach().item()),
             "train/track_iou_loss": float(track_iou_loss.detach().item()),
             "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
             "train/object_context_abs_max": float(object_context_abs.max().item()),
@@ -1232,6 +1240,7 @@ def wan_parser():
     parser.add_argument("--object_track_delta_scale", type=float, default=0.25)
     parser.add_argument("--object_box_delta_scale", type=float, default=0.25)
     parser.add_argument("--object_box_wh_log_scale", type=float, default=2.25)
+    parser.add_argument("--object_box_wh_max_scale", type=float, default=2.0)
     parser.add_argument("--object_min_box_px", type=float, default=16.0)
     parser.add_argument("--object_gate_init", type=float, default=0.1)
     parser.add_argument("--lambda_track_aux", type=float, default=0.1)
@@ -1487,6 +1496,7 @@ def build_model(args, accelerator):
         object_track_delta_scale=args.object_track_delta_scale,
         object_box_delta_scale=args.object_box_delta_scale,
         object_box_wh_log_scale=args.object_box_wh_log_scale,
+        object_box_wh_max_scale=args.object_box_wh_max_scale,
         object_min_box_px=args.object_min_box_px,
         object_gate_init=args.object_gate_init,
         lambda_track_aux=args.lambda_track_aux,

@@ -35,11 +35,13 @@ class ObjectAuxHeads(nn.Module):
         track_delta_scale: float = 0.06,
         box_delta_scale: float = 0.06,
         box_wh_log_scale: float = 1.25,
+        box_wh_max_scale: float = 2.0,
     ) -> None:
         super().__init__()
         self.track_delta_scale = float(track_delta_scale)
         self.box_delta_scale = float(box_delta_scale)
         self.box_wh_log_scale = float(box_wh_log_scale)
+        self.box_wh_max_scale = float(box_wh_max_scale)
         self.track_head = _ResidualMLP(dim, 4)
         self.box_head = _ResidualMLP(dim, 4)
         self.depth_head = _ResidualMLP(dim, 1)
@@ -50,6 +52,7 @@ class ObjectAuxHeads(nn.Module):
         track_delta_scale: float | None = None,
         box_delta_scale: float | None = None,
         box_wh_log_scale: float | None = None,
+        box_wh_max_scale: float | None = None,
     ) -> None:
         if track_delta_scale is not None:
             self.track_delta_scale = float(track_delta_scale)
@@ -57,6 +60,8 @@ class ObjectAuxHeads(nn.Module):
             self.box_delta_scale = float(box_delta_scale)
         if box_wh_log_scale is not None:
             self.box_wh_log_scale = float(box_wh_log_scale)
+        if box_wh_max_scale is not None:
+            self.box_wh_max_scale = float(box_wh_max_scale)
 
     def forward(
         self,
@@ -97,7 +102,7 @@ class ObjectAuxHeads(nn.Module):
         base_wh = (base_box_xyxy[..., 2:] - base_box_xyxy[..., :2]).clamp_min(1.0e-4)
         center_delta = self.box_delta_scale * torch.tanh(box_delta[..., :2]) * base_wh
         wh_log_scale = self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
-        wh_scale = torch.exp(wh_log_scale).clamp(0.75, 2.0)
+        wh_scale = torch.exp(wh_log_scale).clamp(0.75, self.box_wh_max_scale)
 
         pred_center_xy = (base_center_xy + center_delta).clamp(0.0, 1.0)
         pred_box_wh = (base_wh * wh_scale).clamp(1.0e-4, 1.0)

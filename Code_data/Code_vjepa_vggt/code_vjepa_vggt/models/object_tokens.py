@@ -415,9 +415,10 @@ class ObjectTubeProjector(nn.Module):
             prior = prior[:, None].expand(-1, tracks.shape[1], -1, -1)
         elif prior.ndim != 4:
             raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
-        # Use the prior box as the anchor whenever an object slot has valid tracks.
-        # The track-derived box remains the fallback for empty/invalid slots only.
-        return torch.where(valid_any.unsqueeze(-1), prior, active_box_xyxy)
+        # For slots with valid tracks, keep the dynamic track-derived box so the
+        # anchor follows motion through time. Fall back to the static prior only
+        # for empty or invalid slots.
+        return torch.where(valid_any.unsqueeze(-1), active_box_xyxy, prior)
 
     @staticmethod
     def _confidence_group_mean(
@@ -469,6 +470,18 @@ class ObjectTubeProjector(nn.Module):
             frame_valid_mask=frame_valid_mask,
         )
         return self._aggregate_points(point_summary, point_weights)
+
+    @staticmethod
+    def _center_tracks_from_grouped(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        weights = (visibility * confidence).clamp_min(0.0)
+        denom = weights.sum(dim=3, keepdim=True).clamp_min(1.0e-6)
+        centers = (tracks * weights.unsqueeze(-1)).sum(dim=3) / denom
+        valid = weights.sum(dim=3) > 1.0e-6
+        return centers, valid
 
     def forward(
         self,
@@ -562,10 +575,15 @@ class ObjectTubeProjector(nn.Module):
             self._ensure_latent_proj(int(latent_local.shape[-1]), latent_local.device)
             latent_latent_tokens = self.latent_proj(latent_local)
 
-            active_track_summary = self._track_summary_grouped(
+            center_tracks, center_track_valid = self._center_tracks_from_grouped(
                 tracks,
                 visibility,
                 confidence,
+            )
+            active_track_summary = self._track_summary(
+                center_tracks,
+                center_track_valid.to(dtype=center_tracks.dtype),
+                center_track_valid.to(dtype=center_tracks.dtype),
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
                 frame_valid_mask=frame_valid_mask,

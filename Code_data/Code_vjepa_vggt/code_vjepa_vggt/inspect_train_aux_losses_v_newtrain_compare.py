@@ -164,6 +164,7 @@ def _render_box_overlay(
     gt_box_xyxy: np.ndarray,
     gt_box_valid: np.ndarray,
     pred_box_xyxy: np.ndarray,
+    pred_box_valid: np.ndarray,
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
@@ -185,12 +186,13 @@ def _render_box_overlay(
                     BOX_GT_COLOR,
                     f"gt{obj_idx}",
                 )
-            draw_box_rgb(
-                frame,
-                _norm_box_to_px(pred_box_xyxy[latent_idx, obj_idx], image_hw),
-                BOX_PRED_COLOR,
-                f"pred{obj_idx}",
-            )
+            if bool(pred_box_valid[latent_idx, obj_idx]):
+                draw_box_rgb(
+                    frame,
+                    _norm_box_to_px(pred_box_xyxy[latent_idx, obj_idx], image_hw),
+                    BOX_PRED_COLOR,
+                    f"pred{obj_idx}",
+                )
         frames.append(frame)
     return np.stack(frames, axis=0)
 
@@ -200,6 +202,7 @@ def _render_track_overlay(
     gt_track_summary: np.ndarray,
     gt_track_valid: np.ndarray,
     pred_track_summary: np.ndarray,
+    pred_track_valid: np.ndarray,
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
@@ -214,9 +217,10 @@ def _render_track_overlay(
         src_idx = int(latent_to_source[latent_idx])
         frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
         for obj_idx in range(gt_track_summary.shape[1]):
-            pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
-            draw_point_rgb(frame, pred_center, TRACK_PRED_COLOR, f"pred{obj_idx}", radius=5)
-            draw_point_rgb(frame, pred_start, TRACK_PRED_COLOR, f"s{obj_idx}", radius=3)
+            if bool(pred_track_valid[latent_idx, obj_idx]):
+                pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
+                draw_point_rgb(frame, pred_center, TRACK_PRED_COLOR, f"pred{obj_idx}", radius=5)
+                draw_point_rgb(frame, pred_start, TRACK_PRED_COLOR, f"s{obj_idx}", radius=3)
             if bool(gt_track_valid[latent_idx, obj_idx]):
                 gt_center, gt_start = _summary_to_px(gt_track_summary[latent_idx, obj_idx], image_hw)
                 draw_point_rgb(frame, gt_center, TRACK_GT_COLOR, f"gt{obj_idx}", radius=5)
@@ -449,14 +453,15 @@ def _run_case_for_checkpoint(
     pred_track_summary_np = object_aux_out.pred_track_summary[0].detach().float().cpu().numpy()
     pred_box_xyxy_np = object_aux_out.pred_box_xyxy[0].detach().float().cpu().numpy()
     pred_valid_np = object_valid_mask[0].detach().cpu().numpy() > 0.5
-    pred_track_summary_np = np.where(pred_valid_np[None, :, None], pred_track_summary_np, np.nan)
-    pred_box_xyxy_np = np.where(pred_valid_np[None, :, None], pred_box_xyxy_np, np.nan)
+    pred_track_valid_np = np.broadcast_to(pred_valid_np[None, :], (pred_track_summary_np.shape[0], pred_track_summary_np.shape[1]))
+    pred_box_valid_np = np.broadcast_to(pred_valid_np[None, :], (pred_box_xyxy_np.shape[0], pred_box_xyxy_np.shape[1]))
 
     box_video = _render_box_overlay(
         sample["context_video"],
         gt_box_xyxy_np,
         gt_box_valid_np,
         pred_box_xyxy_np,
+        pred_box_valid_np,
         image_hw,
     )
     box_raw = assets_dir / f"{case_stem}__box_overlay.mp4"
@@ -473,6 +478,7 @@ def _run_case_for_checkpoint(
         gt_track_summary_np,
         gt_track_valid_np,
         pred_track_summary_np,
+        pred_track_valid_np,
         image_hw,
     )
     track_raw = assets_dir / f"{case_stem}__track_overlay.mp4"
