@@ -452,10 +452,12 @@ class WanTrainingModule(DiffusionTrainingModule):
         valid_mask = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2])
         first_xy = centers_xy[:, :, 0]
         last_xy = centers_xy[:, :, -1]
-        last_xy_norm = torch.stack(
+        valid_weights = valid_mask.to(dtype=centers_xy.dtype).unsqueeze(-1)
+        mean_xy = (centers_xy * valid_weights).sum(dim=2) / valid_weights.sum(dim=2).clamp_min(1.0)
+        mean_xy_norm = torch.stack(
             [
-                last_xy[..., 0] / max(float(width - 1), 1.0),
-                last_xy[..., 1] / max(float(height - 1), 1.0),
+                mean_xy[..., 0] / max(float(width - 1), 1.0),
+                mean_xy[..., 1] / max(float(height - 1), 1.0),
             ],
             dim=-1,
         ).clamp(0.0, 1.0)
@@ -466,7 +468,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             ],
             dim=-1,
         )
-        return torch.cat([last_xy_norm, delta_xy_norm], dim=-1), valid_mask.any(dim=2)
+        return torch.cat([mean_xy_norm, delta_xy_norm], dim=-1), valid_mask.any(dim=2)
 
     @staticmethod
     def _group_box_targets(
@@ -528,28 +530,43 @@ class WanTrainingModule(DiffusionTrainingModule):
         sample: dict,
         *,
         image_hw: tuple[int, int],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         context_boxes = sample["context_boxes"]
-        last_boxes = context_boxes[int(sample["num_context_frames"]) - 1]
+        num_context_frames = int(sample["num_context_frames"])
         height, width = image_hw
+        box_device = context_boxes.device if isinstance(context_boxes, torch.Tensor) else torch.device("cpu")
         grouped_points = []
+        query_frame_ids = []
         valid_mask = []
+        box_priors = []
         for object_idx in range(self.aux_max_objects):
-            box = last_boxes[object_idx]
-            box_valid = bool((box[2] - box[0] > 1.0e-6) and (box[3] - box[1] > 1.0e-6))
+            first_valid_frame = None
+            box = None
+            for frame_idx in range(num_context_frames):
+                candidate = context_boxes[frame_idx, object_idx]
+                if bool((candidate[2] - candidate[0] > 1.0e-6) and (candidate[3] - candidate[1] > 1.0e-6)):
+                    first_valid_frame = frame_idx
+                    box = candidate
+                    break
+            box_valid = box is not None
             valid_mask.append(1.0 if box_valid else 0.0)
+            query_frame_ids.extend([float(first_valid_frame if first_valid_frame is not None else 0)] * self.object_num_queries)
             if box_valid:
                 points = _sample_points_from_box(box, self.object_num_queries)
                 points[:, 0] *= float(width)
                 points[:, 1] *= float(height)
+                box_priors.append(box.to(device=box_device, dtype=torch.float32))
             else:
                 cx = 0.5 * float(width)
                 cy = 0.5 * float(height)
                 points = torch.tensor([[cx, cy]] * self.object_num_queries, dtype=torch.float32)
+                box_priors.append(torch.tensor([0.45, 0.45, 0.55, 0.55], dtype=torch.float32, device=box_device))
             grouped_points.append(points)
         grouped = torch.stack(grouped_points, dim=0)
         flat = grouped.view(1, self.total_object_queries, 2)
-        return flat, torch.tensor(valid_mask, dtype=torch.float32).view(1, self.aux_max_objects)
+        frame_ids = torch.tensor(query_frame_ids, dtype=torch.float32).view(1, self.total_object_queries, 1)
+        box_prior_xyxy = torch.stack(box_priors, dim=0).view(1, self.aux_max_objects, 4)
+        return flat, frame_ids, torch.tensor(valid_mask, dtype=torch.float32).view(1, self.aux_max_objects), box_prior_xyxy
 
     def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
         if not self.enable_object_branch:
@@ -557,13 +574,16 @@ class WanTrainingModule(DiffusionTrainingModule):
         sample = inputs_shared["raw_sample"]
         context_video = sample["context_video"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
         image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
-        query_points_prior, object_valid_mask = self._build_object_query_priors(sample, image_hw=image_hw)
+        query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = self._build_object_query_priors(sample, image_hw=image_hw)
         query_points_prior = query_points_prior.to(device=pipe.device, dtype=pipe.torch_dtype)
+        query_frame_ids = query_frame_ids.to(device=pipe.device, dtype=pipe.torch_dtype)
         object_valid_mask = object_valid_mask.to(device=pipe.device, dtype=pipe.torch_dtype)
+        box_prior_xyxy = box_prior_xyxy.to(device=pipe.device, dtype=pipe.torch_dtype)
         frames_bthwc_01 = ((context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
         cotracker_out = self.cotracker_adapter(
             frames_bthwc_01,
             query_points_prior=query_points_prior,
+            query_frame_ids=query_frame_ids,
             query_image_hw=image_hw,
         )
         tracks_grouped, visibility_grouped, confidence_grouped = self._group_tracks_to_objects(
@@ -584,6 +604,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             confidence=confidence_grouped,
             track_image_hw=image_hw,
             object_valid_mask=object_valid_mask,
+            box_prior_xyxy=box_prior_xyxy,
             frame_valid_mask=None,
         )
         object_aux_out = self.object_aux_heads(
@@ -591,7 +612,10 @@ class WanTrainingModule(DiffusionTrainingModule):
             object_out.active_track_summary,
             object_out.active_box_xyxy,
         )
-        object_context = self.object_adapter(object_out.object_latent_tokens)
+        object_context = self.object_adapter(
+            object_out.object_latent_tokens,
+            object_valid_mask=object_valid_mask,
+        )
 
         gt_boxes = sample["context_boxes"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
         center_tracks_native, center_track_valid = self._object_center_tracks_from_grouped(

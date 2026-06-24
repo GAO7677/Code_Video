@@ -324,8 +324,10 @@ def _run_case_for_checkpoint(
     device = torch.device(pipe.device)
     context_video_single = sample["context_video"].to(device=device, dtype=pipe.torch_dtype)
     image_hw = (int(context_video_single.shape[-2]), int(context_video_single.shape[-1]))
-    query_points_prior, object_valid_mask = model._build_object_query_priors(sample, image_hw=image_hw)
+    query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = model._build_object_query_priors(sample, image_hw=image_hw)
     query_points_prior = query_points_prior.to(device=device, dtype=pipe.torch_dtype)
+    query_frame_ids = query_frame_ids.to(device=device, dtype=pipe.torch_dtype)
+    box_prior_xyxy = box_prior_xyxy.to(device=device, dtype=pipe.torch_dtype)
     object_valid_mask = object_valid_mask.to(device=device, dtype=pipe.torch_dtype)
 
     frames_bthwc_01 = ((context_video_single.unsqueeze(0).permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
@@ -333,6 +335,7 @@ def _run_case_for_checkpoint(
         cotracker_out = model.cotracker_adapter(
             frames_bthwc_01,
             query_points_prior=query_points_prior,
+            query_frame_ids=query_frame_ids,
             query_image_hw=image_hw,
         )
         tracks_grouped, visibility_grouped, confidence_grouped = model._group_tracks_to_objects(
@@ -357,15 +360,20 @@ def _run_case_for_checkpoint(
             context_latents=clean_prefix_latents,
             tracks=tracks_grouped,
             visibility=visibility_grouped,
-            confidence=confidence_grouped,
-            track_image_hw=image_hw,
-            object_valid_mask=object_valid_mask,
-            frame_valid_mask=None,
-        )
+        confidence=confidence_grouped,
+        track_image_hw=image_hw,
+        object_valid_mask=object_valid_mask,
+        box_prior_xyxy=box_prior_xyxy,
+        frame_valid_mask=None,
+    )
         object_aux_out = model.object_aux_heads(
             object_out.object_latent_tokens,
             object_out.active_track_summary,
             object_out.active_box_xyxy,
+        )
+        object_context = model.object_adapter(
+            object_out.object_latent_tokens,
+            object_valid_mask=object_valid_mask,
         )
 
         gt_boxes = sample["context_boxes"].unsqueeze(0).to(device=device, dtype=pipe.torch_dtype)
@@ -529,6 +537,7 @@ def _run_case_for_checkpoint(
             "tracks_grouped": list(tracks_grouped.shape),
             "object_tokens": list(object_out.object_latent_tokens.shape),
         },
+        "object_context_abs_max": float(object_context.detach().abs().max().item()),
     }
 
 

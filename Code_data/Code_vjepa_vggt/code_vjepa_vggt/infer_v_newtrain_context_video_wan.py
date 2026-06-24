@@ -231,9 +231,17 @@ def _build_object_context(
         confidence=confidence_grouped,
         track_image_hw=image_hw,
         object_valid_mask=object_valid_mask,
+        box_prior_xyxy=torch.tensor(
+            [[0.25, 0.25, 0.75, 0.75]] * model.aux_max_objects,
+            dtype=pipe.torch_dtype,
+            device=device,
+        ).unsqueeze(0),
         frame_valid_mask=None,
     )
-    object_context = model.object_adapter(object_out.object_latent_tokens)
+    object_context = model.object_adapter(
+        object_out.object_latent_tokens,
+        object_valid_mask=object_valid_mask,
+    )
     debug = {
         "enabled": True,
         "query_points_shape": list(query_points_prior.shape),

@@ -19,7 +19,12 @@ class ObjectConditionAdapter(nn.Module):
             nn.Linear(self.dim, self.dim),
         )
 
-    def forward(self, object_latent_tokens: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        object_latent_tokens: torch.Tensor,
+        *,
+        object_valid_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         batch, time_steps, slots, dim = object_latent_tokens.shape
         if int(slots) > self.num_slots:
             raise ValueError(f"slots={slots} exceeds configured num_slots={self.num_slots}")
@@ -29,7 +34,11 @@ class ObjectConditionAdapter(nn.Module):
         time_ids = torch.arange(time_steps, device=object_latent_tokens.device)
         slot_bias = self.slot_embed(slot_ids).view(1, 1, slots, dim)
         time_bias = self.time_embed(time_ids).view(1, time_steps, 1, dim)
-        x = object_latent_tokens + slot_bias + time_bias
+        x = torch.nan_to_num(object_latent_tokens, nan=0.0, posinf=0.0, neginf=0.0)
+        x = x + slot_bias + time_bias
         x = self.norm(x)
         x = x + self.mlp(x)
+        if object_valid_mask is not None:
+            slot_mask = object_valid_mask[:, None, :, None].to(dtype=x.dtype, device=x.device)
+            x = x * slot_mask
         return x.view(batch, time_steps * slots, dim)

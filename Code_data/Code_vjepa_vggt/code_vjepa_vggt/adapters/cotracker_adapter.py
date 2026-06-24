@@ -101,6 +101,7 @@ class CoTrackerAdapter(nn.Module):
         frames_bthwc_01: torch.Tensor,
         *,
         query_points_prior: torch.Tensor | None = None,
+        query_frame_ids: torch.Tensor | int | None = None,
         query_image_hw: tuple[int, int] | None = None,
     ) -> CoTrackerOutput:
         batch_size, frames, height, width, _ = frames_bthwc_01.shape
@@ -116,13 +117,40 @@ class CoTrackerAdapter(nn.Module):
         src_hw = query_image_hw if query_image_hw is not None else native_hw
         query_points_cot = self._resize_query_points(query_points_native, src_hw=src_hw, dst_hw=self.input_hw)
         cotracker_video = self._resize_video_bthwc(frames_bthwc_01, self.input_hw).permute(0, 1, 4, 2, 3)
-        query_frame_ids = torch.zeros(
-            batch_size,
-            query_points_cot.shape[1],
-            1,
-            device=query_points_cot.device,
-            dtype=query_points_cot.dtype,
-        )
+        if query_frame_ids is None:
+            query_frame_ids = torch.zeros(
+                batch_size,
+                query_points_cot.shape[1],
+                1,
+                device=query_points_cot.device,
+                dtype=query_points_cot.dtype,
+            )
+        else:
+            query_frame_ids = torch.as_tensor(query_frame_ids, device=query_points_cot.device)
+            if query_frame_ids.ndim == 0:
+                query_frame_ids = query_frame_ids.view(1, 1, 1).expand(batch_size, query_points_cot.shape[1], 1)
+            elif query_frame_ids.ndim == 1:
+                if int(query_frame_ids.shape[0]) != int(query_points_cot.shape[1]):
+                    raise ValueError(
+                        f"query_frame_ids length {int(query_frame_ids.shape[0])} does not match num_queries {int(query_points_cot.shape[1])}"
+                    )
+                query_frame_ids = query_frame_ids.view(1, -1, 1).expand(batch_size, -1, -1)
+            elif query_frame_ids.ndim == 2:
+                if tuple(int(v) for v in query_frame_ids.shape) != (batch_size, query_points_cot.shape[1]):
+                    raise ValueError(
+                        f"query_frame_ids shape {list(query_frame_ids.shape)} does not match batch/num_queries "
+                        f"({batch_size}, {int(query_points_cot.shape[1])})"
+                    )
+                query_frame_ids = query_frame_ids.unsqueeze(-1)
+            elif query_frame_ids.ndim == 3:
+                if tuple(int(v) for v in query_frame_ids.shape) != (batch_size, query_points_cot.shape[1], 1):
+                    raise ValueError(
+                        f"query_frame_ids shape {list(query_frame_ids.shape)} does not match "
+                        f"({batch_size}, {int(query_points_cot.shape[1])}, 1)"
+                    )
+            else:
+                raise ValueError(f"unsupported query_frame_ids shape: {list(query_frame_ids.shape)}")
+            query_frame_ids = query_frame_ids.to(dtype=query_points_cot.dtype)
         queries = torch.cat([query_frame_ids, query_points_cot], dim=-1)
 
         with torch.no_grad():

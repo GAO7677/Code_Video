@@ -262,17 +262,31 @@ class ObjectTubeProjector(nn.Module):
         xy = xy.view(batch, int(target_frames), group, objects, 2)
         vis = visibility.view(batch, int(target_frames), group, objects, 1)
         conf = confidence.view(batch, int(target_frames), group, objects, 1)
-        if frame_valid_mask is None:
-            weights = torch.ones(batch, int(target_frames), group, objects, 1, device=xy.device, dtype=xy.dtype)
-        else:
-            weights = frame_valid_mask.view(batch, int(target_frames), group, 1, 1).to(dtype=xy.dtype, device=xy.device)
-            weights = weights.expand(-1, -1, -1, objects, -1)
-        mean_xy = (xy * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
-        last_xy = xy[:, :, -1]
-        delta_xy = xy[:, :, -1] - xy[:, :, 0]
-        mean_vis = (vis * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
-        mean_conf = (conf * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
-        return torch.cat([last_xy, delta_xy, mean_vis, mean_conf], dim=-1)
+        weights = (vis * conf).clamp_min(0.0)
+        if frame_valid_mask is not None:
+            weights = weights * frame_valid_mask.view(batch, int(target_frames), group, 1, 1).to(dtype=xy.dtype, device=xy.device)
+        valid = weights.squeeze(-1) > 1.0e-6
+        if not bool(valid.any().item()):
+            valid = torch.ones_like(valid)
+        point_weights = valid.to(dtype=xy.dtype).unsqueeze(-1)
+        mean_xy = (xy * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
+
+        valid_group = valid.permute(0, 1, 3, 2)  # [B,T,O,G]
+        first_idx = valid_group.float().argmax(dim=-1)
+        last_idx = group - 1 - valid_group.flip(dims=[-1]).float().argmax(dim=-1)
+        no_valid = valid_group.any(dim=-1) == 0
+        first_idx = torch.where(no_valid, torch.zeros_like(first_idx), first_idx)
+        last_idx = torch.where(no_valid, torch.zeros_like(last_idx), last_idx)
+
+        xy_perm = xy.permute(0, 1, 3, 2, 4)  # [B,T,O,G,2]
+        gather_first = first_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 2).long()
+        gather_last = last_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 2).long()
+        first_xy = torch.gather(xy_perm, dim=3, index=gather_first).squeeze(3)
+        last_xy = torch.gather(xy_perm, dim=3, index=gather_last).squeeze(3)
+        delta_xy = last_xy - first_xy
+        mean_vis = (vis * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
+        mean_conf = (conf * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
+        return torch.cat([mean_xy, delta_xy, mean_vis, mean_conf], dim=-1)
 
     @staticmethod
     def _boxes_from_summary(
@@ -280,7 +294,10 @@ class ObjectTubeProjector(nn.Module):
         *,
         image_hw: tuple[int, int],
         radius_px: float = 12.0,
+        box_prior_xyxy: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        if box_prior_xyxy is not None:
+            return torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
         height, width = int(image_hw[0]), int(image_hw[1])
         center_xy = active_track_summary[..., :2]
         radius_x = float(radius_px) / max(float(width - 1), 1.0)
@@ -293,6 +310,59 @@ class ObjectTubeProjector(nn.Module):
             ],
             dim=-1,
         )
+
+    @staticmethod
+    def _boxes_from_tracks(
+        tracks: torch.Tensor,
+        visibility: torch.Tensor,
+        confidence: torch.Tensor,
+        *,
+        image_hw: tuple[int, int],
+        target_frames: int | None = None,
+        box_prior_xyxy: torch.Tensor | None = None,
+        expand_ratio: float = 1.0 / 3.0,
+    ) -> torch.Tensor:
+        if target_frames is not None and int(tracks.shape[1]) != int(target_frames):
+            if int(tracks.shape[1]) % int(target_frames) != 0:
+                raise ValueError(
+                    f"track frames ({int(tracks.shape[1])}) must be divisible by target_frames ({int(target_frames)})"
+                )
+            group = int(tracks.shape[1]) // int(target_frames)
+            tracks = tracks.view(tracks.shape[0], int(target_frames), group, tracks.shape[2], tracks.shape[3], tracks.shape[4]).mean(dim=2)
+            visibility = visibility.view(visibility.shape[0], int(target_frames), group, visibility.shape[2], visibility.shape[3]).mean(dim=2)
+            confidence = confidence.view(confidence.shape[0], int(target_frames), group, confidence.shape[2], confidence.shape[3]).mean(dim=2)
+        height, width = int(image_hw[0]), int(image_hw[1])
+        x = tracks[..., 0] / max(float(width - 1), 1.0)
+        y = tracks[..., 1] / max(float(height - 1), 1.0)
+        valid = (visibility * confidence).clamp_min(0.0) > 1.0e-6
+        valid_any = valid.any(dim=3)
+        pos_inf = torch.tensor(float("inf"), device=tracks.device, dtype=tracks.dtype)
+        neg_inf = torch.tensor(float("-inf"), device=tracks.device, dtype=tracks.dtype)
+        x_min = torch.where(valid, x, pos_inf).amin(dim=3)
+        y_min = torch.where(valid, y, pos_inf).amin(dim=3)
+        x_max = torch.where(valid, x, neg_inf).amax(dim=3)
+        y_max = torch.where(valid, y, neg_inf).amax(dim=3)
+        span_x = (x_max - x_min).clamp_min(1.0e-4)
+        span_y = (y_max - y_min).clamp_min(1.0e-4)
+        pad_x = span_x * float(expand_ratio)
+        pad_y = span_y * float(expand_ratio)
+        active_box_xyxy = torch.stack(
+            [
+                (x_min - pad_x).clamp(0.0, 1.0),
+                (y_min - pad_y).clamp(0.0, 1.0),
+                (x_max + pad_x).clamp(0.0, 1.0),
+                (y_max + pad_y).clamp(0.0, 1.0),
+            ],
+            dim=-1,
+        )
+        if box_prior_xyxy is None:
+            return active_box_xyxy
+        prior = torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+        if prior.ndim == 3:
+            prior = prior[:, None].expand(-1, tracks.shape[1], -1, -1)
+        elif prior.ndim != 4:
+            raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
+        return torch.where(valid_any.unsqueeze(-1), active_box_xyxy, prior)
 
     @staticmethod
     def _confidence_group_mean(
@@ -354,6 +424,7 @@ class ObjectTubeProjector(nn.Module):
         confidence: torch.Tensor,
         track_image_hw: tuple[int, int],
         object_valid_mask: torch.Tensor | None = None,
+        box_prior_xyxy: torch.Tensor | None = None,
         vggt_world_points: torch.Tensor | None = None,
         vggt_world_points_conf: torch.Tensor | None = None,
         vggt_depth: torch.Tensor | None = None,
@@ -444,9 +515,13 @@ class ObjectTubeProjector(nn.Module):
                 target_frames=latent_frames,
                 frame_valid_mask=frame_valid_mask,
             )
-            active_box_xyxy = self._boxes_from_summary(
-                active_track_summary,
+            active_box_xyxy = self._boxes_from_tracks(
+                tracks,
+                visibility,
+                confidence,
                 image_hw=track_image_hw,
+                target_frames=latent_frames,
+                box_prior_xyxy=box_prior_xyxy,
             )
             track_geom_latent_tokens = self.track_geom_proj(active_track_summary)
 

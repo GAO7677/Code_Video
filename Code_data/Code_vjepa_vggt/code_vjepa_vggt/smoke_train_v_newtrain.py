@@ -39,10 +39,13 @@ def _grad_report(model: torch.nn.Module) -> dict[str, Any]:
     }
 
 
-def _mean_box_stats(box_xyxy: torch.Tensor, valid: torch.Tensor) -> dict[str, float]:
-    if box_xyxy is None or valid is None:
+def _mean_box_stats(box_xyxy: torch.Tensor, valid: torch.Tensor | None = None) -> dict[str, float]:
+    if box_xyxy is None:
         return {}
-    valid_mask = valid > 0.5
+    if valid is not None and tuple(valid.shape) == tuple(box_xyxy.shape[:-1]):
+        valid_mask = valid > 0.5
+    else:
+        valid_mask = (box_xyxy[..., 2] > box_xyxy[..., 0]) & (box_xyxy[..., 3] > box_xyxy[..., 1])
     if not bool(valid_mask.any().item()):
         return {}
     boxes = box_xyxy[valid_mask]
@@ -112,13 +115,16 @@ def main() -> None:
         try:
             context_video = sample["context_video"].unsqueeze(0).to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
             image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
-            query_points_prior, object_valid_mask = model_unwrapped._build_object_query_priors(sample, image_hw=image_hw)
+            query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = model_unwrapped._build_object_query_priors(sample, image_hw=image_hw)
             query_points_prior = query_points_prior.to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
+            query_frame_ids = query_frame_ids.to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
             object_valid_mask = object_valid_mask.to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
+            box_prior_xyxy = box_prior_xyxy.to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
             frames_bthwc_01 = ((context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
             cotracker_out = model_unwrapped.cotracker_adapter(
                 frames_bthwc_01,
                 query_points_prior=query_points_prior,
+                query_frame_ids=query_frame_ids,
                 query_image_hw=image_hw,
             )
             tracks_grouped, visibility_grouped, confidence_grouped = model_unwrapped._group_tracks_to_objects(
@@ -148,12 +154,17 @@ def main() -> None:
                 confidence=confidence_grouped,
                 track_image_hw=image_hw,
                 object_valid_mask=object_valid_mask,
+                box_prior_xyxy=box_prior_xyxy,
                 frame_valid_mask=None,
             )
             object_aux_out = model_unwrapped.object_aux_heads(
                 object_out.object_latent_tokens,
                 object_out.active_track_summary,
                 object_out.active_box_xyxy,
+            )
+            object_context = model_unwrapped.object_adapter(
+                object_out.object_latent_tokens,
+                object_valid_mask=object_valid_mask,
             )
             gt_boxes = sample["context_boxes"].unsqueeze(0).to(device=model_unwrapped.pipe.device, dtype=model_unwrapped.pipe.torch_dtype)
             center_tracks_native, center_track_valid = model_unwrapped._object_center_tracks_from_grouped(
@@ -182,21 +193,27 @@ def main() -> None:
                 matched_gt_box_valid,
                 latent_frames,
             )
+            pred_box_valid = object_valid_mask[:, None, :].expand_as(object_aux_out.pred_box_xyxy[..., 0])
+            pred_track = object_aux_out.pred_track_summary.detach().float().cpu()
+            gt_track = gt_track_summary.detach().float().cpu()
+            pred_track_valid = object_valid_mask[:, None, :].expand_as(object_aux_out.pred_track_summary[..., 0]).detach().cpu() > 0.5
+            gt_track_valid_mask = gt_track_valid.detach().cpu()
             report["box_stats"] = {
-                "pred": _mean_box_stats(object_aux_out.pred_box_xyxy.detach().float().cpu(), gt_box_valid.detach().cpu()),
+                "pred": _mean_box_stats(object_aux_out.pred_box_xyxy.detach().float().cpu(), pred_box_valid.detach().cpu()),
                 "gt": _mean_box_stats(gt_box_xyxy.detach().float().cpu(), gt_box_valid.detach().cpu()),
-                "active_prior": _mean_box_stats(object_out.active_box_xyxy.detach().float().cpu(), gt_box_valid.detach().cpu()),
+                "active_prior": _mean_box_stats(object_out.active_box_xyxy.detach().float().cpu(), pred_box_valid.detach().cpu()),
             }
             report["track_stats"] = {
                 "pred_center_mean": [
-                    float(object_aux_out.pred_track_summary[..., 0][gt_track_valid].mean().item()) if bool(gt_track_valid.any().item()) else 0.0,
-                    float(object_aux_out.pred_track_summary[..., 1][gt_track_valid].mean().item()) if bool(gt_track_valid.any().item()) else 0.0,
+                    float(pred_track[..., 0][pred_track_valid].mean().item()) if bool(pred_track_valid.any().item()) else 0.0,
+                    float(pred_track[..., 1][pred_track_valid].mean().item()) if bool(pred_track_valid.any().item()) else 0.0,
                 ],
                 "gt_center_mean": [
-                    float(gt_track_summary[..., 0][gt_track_valid].mean().item()) if bool(gt_track_valid.any().item()) else 0.0,
-                    float(gt_track_summary[..., 1][gt_track_valid].mean().item()) if bool(gt_track_valid.any().item()) else 0.0,
+                    float(gt_track[..., 0][gt_track_valid_mask].mean().item()) if bool(gt_track_valid_mask.any().item()) else 0.0,
+                    float(gt_track[..., 1][gt_track_valid_mask].mean().item()) if bool(gt_track_valid_mask.any().item()) else 0.0,
                 ],
             }
+            report["object_context_abs_max"] = float(object_context.detach().abs().max().item())
         except Exception as exc:  # pragma: no cover
             report["debug_stats_error"] = repr(exc)
 
