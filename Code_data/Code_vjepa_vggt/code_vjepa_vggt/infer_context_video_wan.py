@@ -503,6 +503,7 @@ def _run_sampling(
     total_frames: int,
     num_context_frames: int,
     num_inference_steps: int,
+    disable_object_context: bool = False,
 ) -> tuple[torch.Tensor, dict[str, object]]:
     assert bundle.dit is not None
     bundle.dit.eval()
@@ -555,6 +556,7 @@ def _run_sampling(
     seq_len = x_t.shape[1] * x_t.shape[2] * x_t.shape[3] // (bundle.config.patch_size[1] * bundle.config.patch_size[2])
     text_context = text_context.to(device=dit_device, dtype=dit_dtype)
     object_context = object_context.to(device=dit_device, dtype=dit_dtype)
+    object_context_input = None if disable_object_context else [object_context]
     trajectory_stats = []
     for step_idx, timestep in enumerate(timesteps):
         timestep_f = timestep.to(device=dit_device, dtype=dit_dtype)
@@ -564,7 +566,7 @@ def _run_sampling(
             t=t_tokens,
             context=None,
             text_context=[text_context],
-            object_context=[object_context],
+            object_context=object_context_input,
             seq_len=seq_len,
             y=None,
         )[0]
@@ -601,6 +603,7 @@ def _run_sampling(
         "seq_len": int(seq_len),
         "sampling_shift": float(sampling_shift),
         "scheduler": type(scheduler).__name__,
+        "disable_object_context": bool(disable_object_context),
         "trajectory": trajectory_stats[:5],
     }
     return x_t.detach(), debug
@@ -633,6 +636,11 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--save-raw", action="store_true")
     parser.add_argument(
+        "--disable-object-context",
+        action="store_true",
+        help="Disable object-conditioned cross-attention during sampling for ablation/debug.",
+    )
+    parser.add_argument(
         "--skip-trainable-checkpoint",
         action="store_true",
         help="Do not load step_*.pt trainable weights; keep trainable modules randomly initialized.",
@@ -663,8 +671,7 @@ def main() -> None:
     context_video = context_video_single.unsqueeze(0)
     num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long)
 
-    trainer = ContextVideoTrainer(config, build_optimizer=True, device=device)
-    trainer.build_optimizer = False
+    trainer = ContextVideoTrainer(config, build_optimizer=False, device=device)
     print("trainer constructed", flush=True)
     if args.skip_trainable_checkpoint:
         state_info = {
@@ -698,6 +705,7 @@ def main() -> None:
             total_frames=target_total_frames,
             num_context_frames=int(num_context_frames.item()),
             num_inference_steps=int(args.sampling_steps),
+            disable_object_context=bool(args.disable_object_context),
         )
     print("sampling finished", flush=True)
 
