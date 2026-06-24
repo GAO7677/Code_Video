@@ -195,7 +195,13 @@ class WanContextVideoModel(nn.Module):
             self.dit.to(self.device_obj)
         _debug_log("dit.to done")
 
-    def load_lora_checkpoint(self, checkpoint_path: str | Path | None) -> dict[str, int] | None:
+    def load_lora_checkpoint(
+        self,
+        checkpoint_path: str | Path | None,
+        *,
+        strict: bool = True,
+        zero_missing: bool = False,
+    ) -> dict[str, int | list[str]] | None:
         if checkpoint_path is None:
             return None
         if self.dit is None:
@@ -247,6 +253,8 @@ class WanContextVideoModel(nn.Module):
             state_key = checkpoint_by_normalized.get(norm_name)
             if state_key is None:
                 missing.append(name)
+                if zero_missing:
+                    param.data.zero_()
                 continue
             tensor = state[state_key]
             if tuple(tensor.shape) != tuple(param.shape):
@@ -257,7 +265,7 @@ class WanContextVideoModel(nn.Module):
             param.data.copy_(tensor.to(device=param.device, dtype=param.dtype))
             loaded += 1
 
-        if missing:
+        if strict and missing:
             raise RuntimeError(
                 f"LoRA checkpoint {path} is missing {len(missing)} trainable tensors; "
                 f"first_missing={missing[0]}"
@@ -265,6 +273,8 @@ class WanContextVideoModel(nn.Module):
         return {
             "loaded_lora_tensors": loaded,
             "checkpoint_lora_tensors": len(checkpoint_by_normalized),
+            "missing_lora_tensors": len(missing),
+            "missing_lora_names_head": missing[:20],
         }
 
     def freeze_parts(
@@ -294,7 +304,7 @@ class WanContextVideoModel(nn.Module):
                         or ".norm4." in name
                         or "object_embedding." in name
                     )
-                    should_train = (is_lora_param and not freeze_lora) or is_object_param
+                    should_train = ((not is_lora_param) and is_object_param) or (is_lora_param and not freeze_lora)
                     param.requires_grad = should_train
                     if should_train:
                         # Trainable add-on weights must stay in fp32, otherwise AMP/GradScaler

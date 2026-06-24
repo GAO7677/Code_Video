@@ -34,3 +34,23 @@
     - `freeze_wan_lora: true`
     - `freeze_wan_dit: true`
     - 含义是：Wan 主干冻结、LoRA 冻结，但 object 条件相关分支和外部条件模块继续训练
+- 当前状态（2026-06-24 03:46 UTC）
+    - `tmux` 会话
+        - `train0624_freeze_lora`
+    - W&B
+        - run id: `xkws0bla`
+        - 链接: `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/xkws0bla`
+    - 已完成验证
+        - 首个 `forward/backward/optimizer.step` 正常
+        - 已保存 checkpoint：
+            - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000020.pt`
+            - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000040.pt`
+        - `step_0000020.pt` 已通过当前推理脚本生成视频：
+            - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step20/prediction.mp4`
+            - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step20/prediction.browser.mp4`
+        - `step20 -> step40` 权重差异统计：
+            - 432 个 trainable tensors 中有 430 个发生变化
+        - 后续 checkpoint：
+            - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000060.pt`
+        - `step40 -> step60` 权重差异统计：
+            - 432 个 trainable tensors 中有 430 个继续发生变化

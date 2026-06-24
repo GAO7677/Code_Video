@@ -7038,3 +7038,152 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
   - 删除损坏的 `step_0000960.pt`
   - 再次确认 `/data` 可用空间
   - 用 `--resume-checkpoint step_0000940.pt` 在 `gpu6,7` 上恢复正式训练
+
+## 2026-06-24 03:46 UTC: phase 61, freeze-LoRA 新 run 已稳定训练并完成首个推理闭环
+
+### 0. 当前 run 标识
+
+- `tmux` 会话：
+  - `train0624_freeze_lora`
+- 配置：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_freeze_lora_other_modules_gpu67.yaml`
+- 启动脚本：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_train_0624_freeze_lora_other_modules_gpu67.sh`
+- 日志：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/logs/freeze_lora/train0624_freeze_lora_20260624_032723.log`
+- W&B：
+  - project: `vjepa_vggt_wan`
+  - run: `pybullet0624_freeze_lora_other_modules_gpu67`
+  - run id: `xkws0bla`
+
+### 1. 已验证训练正常进入正式循环
+
+- rank0 / rank1 都已经走到：
+  - `first batch fetched`
+  - `first forward start`
+  - `first forward done`
+  - `first backward start`
+  - `first backward done`
+  - `first optimizer.step done`
+- 首个 step 的日志证据：
+  - rank0:
+    - `first forward done` at runner `+36.73s`
+    - `first backward done` at runner `+44.75s`
+    - `first optimizer.step done` at runner `+45.20s`
+  - rank1:
+    - `first forward done` at runner `+42.21s`
+    - `first backward done` at runner `+43.39s`
+    - `first optimizer.step done` at runner `+43.83s`
+
+### 2. 已验证 loss / W&B / checkpoint 正常
+
+- W&B 已正常登录并同步：
+  - 本地目录：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/logs/wandb/wandb/run-20260624_033004-xkws0bla`
+  - 页面：
+    - `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/xkws0bla`
+- 训练过程中已有连续 loss：
+  - step 1:
+    - `loss=0.1119`
+  - step 2:
+    - `loss=0.8549`
+  - 后续日志继续推进到：
+    - `step 47`
+    - 最近一条可见进度：
+      - `loss=0.4984`
+- checkpoint 已正常落盘：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+- 当前 checkpoint 目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67`
+
+### 3. 已验证 trainable checkpoint 结构正确
+
+- `step_0000020.pt` 可正常 `torch.load`
+- 顶层 key：
+  - `['model', 'step']`
+- `step` 值：
+  - `20`
+- trainable tensor 数量：
+  - `432`
+- 说明：
+  - 当前保存格式是“只导出 trainable modules 的状态”，不是整模型 full-state checkpoint
+  - 因此用于推理时会看到大量 `missing_keys` 指向冻结的上游 backbone / adapter 权重，这属于预期行为，不代表 checkpoint 损坏
+
+### 4. 已验证权重在持续更新，不是空转
+
+- 对比：
+  - `step_0000020.pt`
+  - `step_0000040.pt`
+- 差异统计结果：
+  - `key_sets_equal = True`
+  - `num_common = 432`
+  - `changed_tensors = 430`
+  - `unchanged_tensors = 2`
+  - `sum_abs_diff = 187676.77407554176`
+  - `max_abs_diff = 0.0008077044039964676`
+  - `max_abs_diff_name = object_pooler.depth_proj.2.weight`
+- 结论：
+  - trainable 权重不是只在第一步发生一次更新
+  - 至少从 step20 到 step40 期间，绝大多数 trainable tensors 持续发生了参数变化
+
+### 5. 已验证 checkpoint 能用当前推理脚本生成视频
+
+- 推理命令使用：
+  - checkpoint:
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_freeze_lora_other_modules_gpu67/step_0000020.pt`
+  - config:
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_freeze_lora_other_modules_gpu67.yaml`
+  - context video:
+    - `/data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4`
+  - prompt:
+    - `industrial rigid body simulation sphere`
+- 推理输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step20`
+- 实际产物：
+  - `prediction.mp4`
+  - `prediction.browser.mp4`
+  - `result.json`
+- `result.json` 中已记录：
+  - `prediction_video_raw`
+  - `prediction_video`
+  - `target_num_frames = 24`
+  - `configured_num_context_frames = 8`
+- 结论：
+  - `step_0000020.pt` 已经能被当前 `infer_context_video_wan.py` 正常加载并生成视频
+
+### 6. 当前仍需继续监控的点
+
+- 训练虽然已经证明：
+  - 能正常启动
+  - 有有效 backward
+  - 有 optimizer step
+  - 权重持续更新
+  - checkpoint 可推理
+- 但仍需继续长期盯住：
+  - 更高 step 的 loss 是否稳定
+  - checkpoint 数量与磁盘空间是否继续可控
+  - 更高 step checkpoint 的推理结果是否继续可用
+
+### 7. 追加监控结果：训练继续推进到 step60，权重仍持续更新
+
+- 后续新 checkpoint 已继续落盘：
+  - `step_0000060.pt`
+- 训练进度日志已继续推进到：
+  - `step 56`
+  - 可见最近一条 loss：
+    - `loss=1.5115`
+- 再次对比：
+  - `step_0000040.pt`
+  - `step_0000060.pt`
+- 差异统计结果：
+  - `key_sets_equal = True`
+  - `num_common = 432`
+  - `changed_tensors = 430`
+  - `unchanged_tensors = 2`
+  - `sum_abs_diff = 158091.30594216613`
+  - `max_abs_diff = 0.000709090381860733`
+  - `max_abs_diff_name = bundle.dit.base_model.model.blocks.20.object_cross_attn.o.base_layer.weight`
+- 结论：
+  - 从 `step20 -> step40` 到 `step40 -> step60`，trainable 权重都在持续变化
+  - 当前没有出现“只在最初几步更新、后面冻结不动”的迹象

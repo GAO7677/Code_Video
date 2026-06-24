@@ -171,7 +171,11 @@ class ContextVideoTrainer(nn.Module):
         self.init_wan_lora_from_checkpoint = model_cfg.get("init_wan_lora_from_checkpoint")
         if self.init_wan_lora_from_checkpoint is not None:
             _debug_log("load initial Wan LoRA checkpoint")
-            self.bundle.load_lora_checkpoint(self.init_wan_lora_from_checkpoint)
+            self.bundle.load_lora_checkpoint(
+                self.init_wan_lora_from_checkpoint,
+                strict=bool(model_cfg.get("init_wan_lora_strict", True)),
+                zero_missing=bool(model_cfg.get("init_wan_lora_zero_missing", False)),
+            )
         if hasattr(self.object_pooler, "_ensure_jepa_proj"):
             _debug_log("ensure JEPA projection")
             self.object_pooler._ensure_jepa_proj(

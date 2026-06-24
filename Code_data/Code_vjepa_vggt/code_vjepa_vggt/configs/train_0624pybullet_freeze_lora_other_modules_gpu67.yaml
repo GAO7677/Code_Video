@@ -12,6 +12,8 @@ model:
   freeze_wan_lora: true
   freeze_object_pooler: false
   init_wan_lora_from_checkpoint: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
+  init_wan_lora_strict: false
+  init_wan_lora_zero_missing: true
   wan_lora_rank: 32
   wan_lora_alpha: 32
   wan_lora_dropout: 0.0
@@ -72,7 +74,7 @@ loss:
 
 logging:
   log_every: 1
-  save_every: 20
+  save_every: 200
   max_checkpoints: 8
   min_checkpoint_free_gb: 12
   nonfinite_probe: true
