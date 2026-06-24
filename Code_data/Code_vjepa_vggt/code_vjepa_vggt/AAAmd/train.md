@@ -4048,3 +4048,809 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 
 - 到 `2026-06-23 23:15 UTC` 为止，连续闭环证据已进一步延长到 `step 540+`
 - 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-23 23:24 UTC: phase 39, `step_0000560.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000560.pt`
+- `step_0000560.pt` 文件时间与大小稳定为：
+  - `2026-06-23 23:20:30 UTC`
+  - `5533953209 bytes`
+- 本轮持续观察中，训练先推进到：
+  - `551/20000 ... loss=0.1112`
+  - `558/20000 ... loss=1.9503`
+- `step_0000560.pt` 生成后，训练继续推进到：
+  - `561/20000 ... loss=1.5698`
+- 这说明在 `step_0000560.pt` 产生前后，正式训练都在稳定前进，没有因为 checkpoint 保存或侧路验证而卡住
+
+### 1. 权重继续更新核查：`step540 -> step560`
+
+- 本轮直接比较：
+  - `step_0000540.pt`
+  - `step_0000560.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys540 = 1272`
+- `keys560 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 159017.85407623055`
+- `max_abs_diff = 0.001536418916657567`
+- `max_abs_key = bundle.dit.base_model.model.object_embedding.2.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 与上一轮相比，这次最大变化项进一步落在：
+  - `bundle.dit.base_model.model.object_embedding.2.weight`
+- 这比“object cross-attn 的 LoRA 在更新”更进一步，说明 object 条件入口投影本身也在持续被主损失优化
+- 因而从参数更新角度看，当前正式训练链路已经同时覆盖：
+  - object 条件入口 `object_embedding`
+  - object-conditioned attention 分支 `object_cross_attn`
+  - 主干 LoRA 子空间
+
+### 2. `step_0000560.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000560.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step560 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step560`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step560/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step560`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step540` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 84322.578125`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 与 `step540` 相比，本轮 `object_context` 的统计范围继续变化：
+  - `min = -7.2808`
+  - `max = 6.4834`
+  - `std = 1.8020`
+- 这再次说明 object 条件通道不是静态常量分支，而是在随训练更新
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍出现在 inference/no-grad 采样路径中，不代表正式训练图的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000560.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 23:24:00 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 23:24:17 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 23:24:22 UTC`
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+- W&B `output.log` 尾部在本轮读取时被新的 propagate/frame loading 日志覆盖，没有直接显示最新 step 行；但前一轮已明确看到：
+  - `561/20000 ... loss=1.5698`
+- 同时 W&B 文件时间仍在持续刷新，因此训练活性仍被直接证实
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000560.pt`
+- `step540 -> step560` 之间 trainable 权重继续大范围真实更新
+- 且本轮最大变化项直接落在 `object_embedding.2.weight`，进一步支持：
+  - object 条件入口本身参与了有效优化
+  - 主损失梯度不仅到达 object-conditioned attention，也到达 object token 的入口映射
+- `step_0000560.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA 与 object embedding 入口都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-23 23:24 UTC` 为止，连续闭环证据已进一步延长到 `step 560+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-23 23:33 UTC: phase 40, `step_0000580.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000580.pt`
+- `step_0000580.pt` 文件时间与大小稳定为：
+  - `2026-06-23 23:29:14 UTC`
+  - `5533953209 bytes`
+- 本轮监控期间，训练先推进到：
+  - `573/20000 ... loss=0.4624`
+  - `579/20000 ... loss=0.2330`
+- `step_0000580.pt` 生成后，训练继续推进到：
+  - `582/20000 ... loss=1.5429`
+  - `589/20000 ... loss=0.3014`
+- 这说明 `step_0000580.pt` 产生前后，正式训练都在稳定前进，没有在保存点附近停住
+
+### 1. 权重继续更新核查：`step560 -> step580`
+
+- 本轮直接比较：
+  - `step_0000560.pt`
+  - `step_0000580.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys560 = 1272`
+- `keys580 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 130124.10849526734`
+- `max_abs_diff = 0.0015374226495623589`
+- `max_abs_key = bundle.dit.base_model.model.object_embedding.2.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560`、`step560 -> step580` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项再次落在：
+  - `bundle.dit.base_model.model.object_embedding.2.weight`
+- 这和上一轮 `step540 -> step560` 的结果一致，说明 object 条件入口映射持续被主损失稳定优化，不是偶然跳变
+- 因而“主损失没有真正穿过 object 条件入口”这一假设，在当前正式训练链路上进一步缺乏支持
+
+### 2. `step_0000580.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000580.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step580 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step580`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step580/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step580`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step560` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 101894.34375`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 本轮 `object_context` 统计仍然呈现非静态更新：
+  - `min = -7.3117`
+  - `max = 6.2418`
+  - `std = 1.6849`
+- 这和前几轮一样，继续支持 object 条件通道处于活跃更新状态
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍属于 inference/no-grad 采样路径提示，不代表正式训练图上的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000580.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 23:32:47 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 23:33:11 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 23:33:17 UTC`
+- 最新 step 记录已明确推进到：
+  - `589/20000 ... loss=0.3014`
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000580.pt`
+- `step560 -> step580` 之间 trainable 权重继续大范围真实更新
+- 且本轮最大变化项再次落在 `object_embedding.2.weight`，进一步支持：
+  - object 条件入口本身正在被主损失持续、稳定地优化
+  - 当前主损失梯度不是只到达 LoRA 主干或 object cross-attn，而是持续穿过 object token 的入口映射
+- `step_0000580.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA、object cross-attn 与 object embedding 入口都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-23 23:33 UTC` 为止，连续闭环证据已进一步延长到 `step 580+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-23 23:41 UTC: phase 41, `step_0000600.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000600.pt`
+- `step_0000600.pt` 文件时间与大小稳定为：
+  - `2026-06-23 23:37:58 UTC`
+  - `5533953209 bytes`
+- 本轮起始时已确认训练推进到：
+  - `593/20000 ... loss=1.5820`
+- 在等待 `step_0000600.pt` 生成期间，W&B 文件持续刷新，`gpu6,7` 利用率从短暂空档恢复到：
+  - `gpu6 = 61%`
+  - `gpu7 = 61%`
+- 完成本轮侧路推理抽检后，再次从日志确认训练继续推进到：
+  - `609/20000 ... loss=0.0492`
+- 这说明 `step_0000600.pt` 产生前后，正式训练都在持续推进，没有因为 checkpoint 保存或侧路验证而中断
+
+### 1. 权重继续更新核查：`step580 -> step600`
+
+- 本轮直接比较：
+  - `step_0000580.pt`
+  - `step_0000600.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys580 = 1272`
+- `keys600 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 154782.4956314942`
+- `max_abs_diff = 0.0016044415533542633`
+- `max_abs_key = bundle.dit.base_model.model.blocks.17.self_attn.k.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560`、`step560 -> step580`、`step580 -> step600` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项回到：
+  - `bundle.dit.base_model.model.blocks.17.self_attn.k.lora_B.default.weight`
+- 这说明当前优化并不是只停留在 object 条件入口或 object cross-attn，主干 self-attn 的 LoRA 子空间同样在持续被有效更新
+- 结合前两轮 `step540 -> step560`、`step560 -> step580` 最大变化项都落在 `object_embedding.2.weight` 的事实，可以更完整地判断：
+  - 主损失更新已经覆盖 object 条件入口
+  - 主损失更新也覆盖 object-conditioned 分支
+  - 主损失更新同时覆盖 DiT 主干 LoRA 子空间
+
+### 2. `step_0000600.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000600.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step600 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step600`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step600/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step600`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step580` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 114108.21875`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 本轮 `object_context` 统计进一步扩大：
+  - `min = -9.4517`
+  - `max = 7.9093`
+  - `std = 2.2462`
+- 这继续支持 object 条件通道处于活跃更新状态，而非固定常量分支
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍属于 inference/no-grad 采样路径提示，不代表正式训练图上的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000600.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 23:41:39 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 23:41:48 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 23:41:49 UTC`
+- 最新 step 记录已明确推进到：
+  - `609/20000 ... loss=0.0492`
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000600.pt`
+- `step580 -> step600` 之间 trainable 权重继续大范围真实更新
+- 本轮最大变化项回到主干 self-attn LoRA 权重，与前两轮 object embedding 最大变化项结合，进一步支持：
+  - 当前主损失梯度覆盖的是一条完整的多路径训练链路，而不是局限在某个局部支路
+  - object 条件入口、object-conditioned 分支、DiT 主干 LoRA 均处在持续真实优化中
+- `step_0000600.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA、object cross-attn、object embedding 入口与主干 LoRA 都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-23 23:41 UTC` 为止，连续闭环证据已进一步延长到 `step 600+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-23 23:50 UTC: phase 42, `step_0000620.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000620.pt`
+- `step_0000620.pt` 文件时间与大小稳定为：
+  - `2026-06-23 23:46:23 UTC`
+  - `5533953209 bytes`
+- 本轮开始时，训练日志中已明确看到：
+  - `613/20000 ... loss=1.6616`
+- 等待 `step_0000620.pt` 落盘期间，W&B 本地文件持续刷新，没有中断
+- 本轮结束时，`rg` 抽取 step 行被新的中间日志冲掉，只留下最早的 `1/20000` 记录；但新的 `step_0000620.pt` 已经生成，且 W&B 文件仍在持续刷新，因此训练已经越过 `620` 并继续活跃，这一点由 checkpoint 生成与 W&B 心跳直接证明
+
+### 1. 权重继续更新核查：`step600 -> step620`
+
+- 本轮直接比较：
+  - `step_0000600.pt`
+  - `step_0000620.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys600 = 1272`
+- `keys620 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 119363.96914979548`
+- `max_abs_diff = 0.001849571242928505`
+- `max_abs_key = bundle.dit.base_model.model.blocks.0.self_attn.q.lora_A.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560`、`step560 -> step580`、`step580 -> step600`、`step600 -> step620` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项落在：
+  - `bundle.dit.base_model.model.blocks.0.self_attn.q.lora_A.default.weight`
+- 这比前一轮最大变化落在较深层 `blocks.17.self_attn.k.lora_B` 更进一步，说明主损失更新不仅覆盖深层主干，也覆盖到更前层的 DiT 主干可训练子空间
+- 结合前几轮 object embedding 与 object cross-attn 的证据，可以更完整地判断：
+  - 主损失更新已经覆盖 object 条件入口
+  - 主损失更新覆盖 object-conditioned 分支
+  - 主损失更新覆盖 DiT 主干从前层到后层的 LoRA 子空间
+
+### 2. `step_0000620.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000620.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step620 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step620`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step620/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step620`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step600` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 86977.5546875`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 本轮 `object_context` 统计进一步扩大：
+  - `min = -10.2262`
+  - `max = 8.8659`
+  - `std = 2.5354`
+- 这继续支持 object 条件通道处于活跃更新状态，而非固定常量分支
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍属于 inference/no-grad 采样路径提示，不代表正式训练图上的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000620.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-23 23:49:21 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-23 23:50:02 UTC`
+  - `files/output.log` 更新时间到 `2026-06-23 23:50:11 UTC`
+- 虽然 `rg` 在这一轮没有直接抽出新的 step 行，但：
+  - `step_0000620.pt` 已成功生成
+  - W&B 三类文件仍持续刷新
+- 因而训练活性仍被直接证实，且活性证据强于单条 step 文本匹配
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000620.pt`
+- `step600 -> step620` 之间 trainable 权重继续大范围真实更新
+- 本轮最大变化项落在 `blocks.0.self_attn.q.lora_A.default.weight`，进一步支持：
+  - 当前主损失梯度不仅到达 object 支路和深层主干，也到达更前层主干可训练权重
+  - 当前优化路径是广覆盖、非局部、非偶然的
+- `step_0000620.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA、object cross-attn、object embedding 入口与主干前后层 LoRA 都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-23 23:50 UTC` 为止，连续闭环证据已进一步延长到 `step 620+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-24 00:00 UTC: phase 43, `step_0000640.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000640.pt`
+- `step_0000640.pt` 文件时间与大小稳定为：
+  - `2026-06-23 23:55:03 UTC`
+  - `5533953209 bytes`
+- 本轮开始时，训练日志中已明确看到：
+  - `633/20000 ... loss=1.0794`
+- 等待 `step_0000640.pt` 落盘期间，W&B 本地文件持续刷新，没有中断
+- 本轮结束时，`rg` 再次没有抽出新的有效 step 行，只剩最早的 `1/20000`；但新的 `step_0000640.pt` 已经生成，且 W&B 文件继续刷新到 `2026-06-24 00:00 UTC`，因此训练已经越过 `640` 并继续活跃，这一点由 checkpoint 与 W&B 心跳直接证明
+
+### 1. 权重继续更新核查：`step620 -> step640`
+
+- 本轮直接比较：
+  - `step_0000620.pt`
+  - `step_0000640.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys620 = 1272`
+- `keys640 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 80459.35117940593`
+- `max_abs_diff = 0.002235744148492813`
+- `max_abs_key = bundle.dit.base_model.model.blocks.22.self_attn.q.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560`、`step560 -> step580`、`step580 -> step600`、`step600 -> step620`、`step620 -> step640` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项落在：
+  - `bundle.dit.base_model.model.blocks.22.self_attn.q.lora_B.default.weight`
+- 这说明在 `step600 -> step620` 看到前层主干 LoRA 明显更新之后，本轮又观察到中后层主干 LoRA 明显更新
+- 与更早几轮 object embedding / object cross-attn 的证据结合，进一步说明：
+  - 当前主损失更新路径覆盖 object 条件入口
+  - 覆盖 object-conditioned 分支
+  - 覆盖主干前层与中后层 LoRA 子空间
+
+### 2. `step_0000640.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000640.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step640 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step640`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step640/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step640`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step620` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 127944.0625`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 本轮 `object_context` 统计继续扩大：
+  - `min = -10.6557`
+  - `max = 9.3829`
+  - `std = 2.7584`
+- 这继续支持 object 条件通道处于活跃更新状态，而非固定常量分支
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍属于 inference/no-grad 采样路径提示，不代表正式训练图上的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000640.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-24 00:00:17 UTC`
+  - `files/output.log` 更新时间到 `2026-06-24 00:00:29 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-24 00:00:32 UTC`
+- 虽然 `rg` 在这一轮没有直接抽出新的 step 行，但：
+  - `step_0000640.pt` 已成功生成
+  - W&B 三类文件仍持续刷新
+- 因而训练活性仍被直接证实，且活性证据强于单条 step 文本匹配
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000640.pt`
+- `step620 -> step640` 之间 trainable 权重继续大范围真实更新
+- 本轮最大变化项落在 `blocks.22.self_attn.q.lora_B.default.weight`，进一步支持：
+  - 当前主损失梯度在主干中后层仍保持有效
+  - 结合前几轮前层主干、object embedding、object cross-attn 的证据，当前优化路径是广覆盖、稳定、持续的
+- `step_0000640.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA、object cross-attn、object embedding 入口与主干前后层 LoRA 都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-24 00:00 UTC` 为止，连续闭环证据已进一步延长到 `step 640+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
+
+## 2026-06-24 00:08 UTC: phase 44, `step_0000660.pt` 已生成并完成推理兼容性核查
+
+### 0. 本轮先验现象
+
+- checkpoint 目录已经新增：
+  - `step_0000660.pt`
+- `step_0000660.pt` 文件时间与大小稳定为：
+  - `2026-06-24 00:03:35 UTC`
+  - `5533953209 bytes`
+- 本轮开始时，训练日志中已明确看到：
+  - `657/20000 ... loss=1.8768`
+- 在短窗口等待后，已直接确认训练继续推进到：
+  - `662/20000 ... loss=0.1223`
+- 完成本轮侧路推理抽检后，再次确认训练继续推进到：
+  - `670/20000 ... loss=0.8972`
+- 这说明 `step_0000660.pt` 产生前后，正式训练都在持续推进，没有在保存点或推理抽检期间中断
+
+### 1. 权重继续更新核查：`step640 -> step660`
+
+- 本轮直接比较：
+  - `step_0000640.pt`
+  - `step_0000660.pt`
+- 继续只比较 checkpoint 中 trainable `model` state
+
+### 差分结果
+
+- `keys640 = 1272`
+- `keys660 = 1272`
+- `common = 1272`
+- `changed_tensors = 1270`
+- `total_abs_diff = 47896.29369144235`
+- `max_abs_diff = 0.0029779693577438593`
+- `max_abs_key = bundle.dit.base_model.model.blocks.12.self_attn.q.lora_B.default.weight`
+
+### 对差分结果的解释
+
+- 到这一轮为止，`step20 -> step40`、`step40 -> step60`、`step60 -> step80`、`step80 -> step100`、`step100 -> step120`、`step120 -> step140`、`step140 -> step160`、`step160 -> step180`、`step180 -> step200`、`step200 -> step220`、`step220 -> step240`、`step240 -> step260`、`step260 -> step280`、`step280 -> step300`、`step300 -> step320`、`step320 -> step340`、`step340 -> step360`、`step360 -> step380`、`step380 -> step400`、`step400 -> step420`、`step420 -> step440`、`step440 -> step460`、`step460 -> step480`、`step480 -> step500`、`step500 -> step520`、`step520 -> step540`、`step540 -> step560`、`step560 -> step580`、`step580 -> step600`、`step600 -> step620`、`step620 -> step640`、`step640 -> step660` 均显示：
+  - `1270/1272` 个 trainable tensor 持续发生变化
+- 本轮最大变化项落在：
+  - `bundle.dit.base_model.model.blocks.12.self_attn.q.lora_B.default.weight`
+- 这与前面 `blocks.0`、`blocks.17`、`blocks.22` 的结果一起，形成了从前层、中层到后层主干 LoRA 全部被持续更新的连续证据
+- 再结合更早几轮 object embedding / object cross-attn 的结果，可以更强地判断：
+  - 主损失更新覆盖 object 条件入口
+  - 覆盖 object-conditioned 分支
+  - 覆盖主干前中后层 LoRA 子空间
+
+### 2. `step_0000660.pt` 推理兼容性验证
+
+- 为避免干扰 `gpu6,7` 的正式训练，本轮继续在 `gpu0` 上完成推理抽检
+- 使用命令：
+  - `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt /home/gaoya/miniconda3/envs/wan-cu128/bin/python -u /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_context_video_wan.py --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_wan_lora_monitor_gpu67/step_0000660.pt --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/train_0624pybullet_wan_lora_monitor_gpu67.yaml --prompt 'industrial rigid body simulation sphere' --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step660 --sampling-steps 2 --num-frames 24 --sampling-mode prefix`
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step660`
+- 结果文件：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step660/result.json`
+
+### 关键结果
+
+- 推理日志明确出现：
+  - `trainer constructed`
+  - `checkpoint loaded: missing=3306 unexpected=0`
+  - `sampling finished`
+  - `output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/infer_verify_step660`
+- `result.json` 中 `load_state_missing` 记录：
+  - `model_state_key_count = 1272`
+  - `checkpoint_key_count = 1272`
+  - `unexpected_keys = 0`
+  - `missing_keys = 3306`
+- 这与前面 `step20` 到 `step640` 的兼容性模式完全一致，说明 trainable-only checkpoint 仍可被当前推理脚本稳定接收
+
+### 3. 本轮附带观察到的推理侧结构信息
+
+- `result.json` 中 `prep_debug.track_source = cotracker`
+- `prep_debug.object_latent_tokens = [1, 2, 8, 4096]`
+- `prep_debug.object_context = [1, 16, 4096]`
+- `result.json` 中 `sample_debug.loss = 102366.796875`
+- 推理采样时打印出的张量摘要继续符合预期：
+  - `context_latents = [48, 2, 32, 56]`
+  - `object_context = [16, 4096]`
+  - `pred_step_0 = [48, 3, 32, 56]`
+  - `pred_step_1 = [48, 3, 32, 56]`
+- 本轮 `object_context` 统计保持在较高动态范围：
+  - `min = -10.6172`
+  - `max = 9.3327`
+  - `std = 2.7243`
+- 这继续支持 object 条件通道处于活跃更新状态，而非固定常量分支
+
+### 4. 本轮观察到的告警与兼容性判断
+
+- 推理过程仍出现了几类非阻塞告警：
+  - `timm.models.layers` 的 FutureWarning
+  - `torch.cuda.amp.autocast` 的 FutureWarning
+  - SDPA / Flash attention fallback 到较慢 kernel 的提示
+  - `torch.meshgrid` 与 checkpoint API 的兼容性提示
+  - object cross-attn 相关基础 Wan 权重 “newly initialized” 提示
+  - `torch.utils.checkpoint` 关于 `use_reentrant` 的 FutureWarning
+  - `None of the inputs have requires_grad=True. Gradients will be None`
+- 最后一条仍属于 inference/no-grad 采样路径提示，不代表正式训练图上的主损失梯度中断
+- 兼容性判断标准维持不变：
+  - `checkpoint_key_count == model_state_key_count == 1272`
+  - `unexpected_keys == 0`
+  - `sampling finished`
+- `step_0000660.pt` 完全满足这一标准，没有出现新的结构不匹配回归
+
+### 5. W&B 与训练活性状态
+
+- 本轮核查时，W&B 本地 run 文件继续刷新到：
+  - `run-flslwgvw.wandb` 更新时间到 `2026-06-24 00:07:17 UTC`
+  - `files/output.log` 更新时间到 `2026-06-24 00:07:57 UTC`
+  - `logs/debug-internal.log` 更新时间到 `2026-06-24 00:08:02 UTC`
+- 最新 step 记录已明确推进到：
+  - `670/20000 ... loss=0.8972`
+- 当前没有看到新的 OOM、NCCL、进程退出或 W&B 中断信号
+
+### 6. 本轮结论
+
+- 正式训练已稳定推进并保存出：
+  - `step_0000660.pt`
+- `step640 -> step660` 之间 trainable 权重继续大范围真实更新
+- 本轮最大变化项落在 `blocks.12.self_attn.q.lora_B.default.weight`，与前几轮不同深度的主干 LoRA 最大变化项一起，进一步支持：
+  - 当前主损失梯度在主干前中后层都保持有效
+  - 结合 object embedding 与 object cross-attn 的证据，当前优化路径是广覆盖、稳定、持续的
+- `step_0000660.pt` 已被推理脚本成功加载并完成采样
+- 当前训练链路继续满足之前已经建立的闭环判断：
+  - loss 持续变化
+  - 主损失有效梯度已被独立 backward 诊断直接证实
+  - trainable 权重持续真实更新
+  - object-conditioned LoRA、object cross-attn、object embedding 入口与主干前中后层 LoRA 都在持续真实更新
+  - 新 checkpoint 持续可被推理脚本正确接收并生成采样结果
+
+### 当前总体判断
+
+- 到 `2026-06-24 00:08 UTC` 为止，连续闭环证据已进一步延长到 `step 660+`
+- 到当前观测点为止，没有新的报错、停滞、OOM、NCCL 异常、checkpoint 兼容性回归或 W&B 中断信号
