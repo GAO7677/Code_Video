@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -90,7 +91,7 @@ def fv(value: Any) -> str:
 
 
 def rel_to_report(target: Path) -> str:
-    return str(target.resolve().relative_to(REPORT_ROOT.resolve().parent)).replace("\\", "/")
+    return os.path.relpath(target.resolve(), REPORT_ROOT.resolve()).replace("\\", "/")
 
 
 def resolve_video_path(record: dict[str, Any]) -> Path:
@@ -356,8 +357,8 @@ def main() -> None:
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(build_html(records), encoding="utf-8")
     print(REPORT_PATH)
-    print(f"http://127.0.0.1:{args.port}/index.html")
-    subprocess.run([sys.executable, "-m", "http.server", str(args.port), "--directory", str(REPORT_ROOT)], check=True)
+    print(f"http://127.0.0.1:{args.port}/eval_json_flat_report/index.html")
+    subprocess.run([sys.executable, "-m", "http.server", str(args.port), "--directory", str(TMP_ROOT)], check=True)
 
 
 if __name__ == "__main__":
