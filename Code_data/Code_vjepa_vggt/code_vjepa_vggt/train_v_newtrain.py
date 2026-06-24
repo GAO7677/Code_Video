@@ -5,6 +5,7 @@ import math
 import os
 import random
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -1100,6 +1101,12 @@ def wan_parser():
         help="Subdirectory inside output_path for persistent training checkpoints.",
     )
     parser.add_argument(
+        "--max_checkpoints_keep",
+        type=int,
+        default=None,
+        help="If set, keep only the most recent N step-* checkpoint directories under checkpoint_output_subdir.",
+    )
+    parser.add_argument(
         "--test_output_subdir",
         type=str,
         default=DEFAULT_TEST_SUBDIR,
@@ -1743,6 +1750,48 @@ def save_training_state(
     accelerator.wait_for_everyone()
 
 
+def save_training_checkpoint_bundle(
+    *,
+    accelerator,
+    model,
+    model_logger,
+    optimizer,
+    scheduler,
+    global_step,
+    epoch_id,
+    batch_in_epoch,
+    checkpoint_root,
+    checkpoint_tag,
+    max_checkpoints_keep,
+):
+    model_logger.save_model(
+        accelerator,
+        model,
+        str(training_checkpoint_file(checkpoint_root, checkpoint_tag)),
+    )
+    save_training_state(
+        accelerator=accelerator,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        global_step=global_step,
+        epoch_id=epoch_id,
+        batch_in_epoch=batch_in_epoch,
+        model_logger=model_logger,
+        state_path=training_state_file(
+            checkpoint_root,
+            checkpoint_tag,
+        ),
+    )
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        prune_old_checkpoints(
+            checkpoint_root,
+            max_keep=max_checkpoints_keep,
+            accelerator=accelerator,
+        )
+    accelerator.wait_for_everyone()
+
+
 def load_training_state(state_path):
     print(f"💚 Loading training state from: {state_path}")
     return torch.load(state_path, map_location="cpu", weights_only=False)
@@ -1776,6 +1825,33 @@ def write_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _list_step_checkpoint_dirs(checkpoint_root):
+    checkpoint_root = Path(checkpoint_root)
+    if not checkpoint_root.is_dir():
+        return []
+    return sorted(
+        [
+            path
+            for path in checkpoint_root.iterdir()
+            if path.is_dir() and path.name.startswith("step-")
+        ],
+        key=checkpoint_sort_key,
+    )
+
+
+def prune_old_checkpoints(checkpoint_root, *, max_keep, accelerator=None):
+    if max_keep is None or int(max_keep) <= 0:
+        return
+    checkpoint_dirs = _list_step_checkpoint_dirs(checkpoint_root)
+    if len(checkpoint_dirs) <= int(max_keep):
+        return
+    stale_dirs = checkpoint_dirs[: len(checkpoint_dirs) - int(max_keep)]
+    for checkpoint_dir in stale_dirs:
+        shutil.rmtree(checkpoint_dir)
+        if accelerator is not None and getattr(accelerator, "is_main_process", False):
+            accelerator.print(f"Pruned old checkpoint: {checkpoint_dir}")
 
 
 def _move_tensor_tree_to_device(value, device):
@@ -2367,28 +2443,18 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
                     and model_logger.num_steps % args.save_steps == 0
                 ):
                     checkpoint_tag = format_step_tag(model_logger.num_steps)
-                    model_logger.save_model(
-                        accelerator,
-                        model,
-                        str(
-                            training_checkpoint_file(
-                                get_checkpoint_dir(args),
-                                checkpoint_tag,
-                            )
-                        ),
-                    )
-                    save_training_state(
+                    save_training_checkpoint_bundle(
                         accelerator=accelerator,
+                        model=model,
+                        model_logger=model_logger,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         global_step=global_step,
                         epoch_id=epoch_id,
                         batch_in_epoch=batch_index + 1,
-                        model_logger=model_logger,
-                        state_path=training_state_file(
-                            get_checkpoint_dir(args),
-                            checkpoint_tag,
-                        ),
+                        checkpoint_root=get_checkpoint_dir(args),
+                        checkpoint_tag=checkpoint_tag,
+                        max_checkpoints_keep=args.max_checkpoints_keep,
                     )
 
                 if accelerator.sync_gradients and should_run_benchmark(args, global_step):
@@ -2442,28 +2508,18 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
 
     if args.save_steps is not None and model_logger.num_steps % args.save_steps != 0:
         checkpoint_tag = format_step_tag(model_logger.num_steps)
-        model_logger.save_model(
-            accelerator,
-            model,
-            str(
-                training_checkpoint_file(
-                    get_checkpoint_dir(args),
-                    checkpoint_tag,
-                )
-            ),
-        )
-        save_training_state(
+        save_training_checkpoint_bundle(
             accelerator=accelerator,
+            model=model,
+            model_logger=model_logger,
             optimizer=optimizer,
             scheduler=scheduler,
             global_step=global_step,
             epoch_id=progress["epoch_id"],
             batch_in_epoch=progress["batch_in_epoch"],
-            model_logger=model_logger,
-            state_path=training_state_file(
-                get_checkpoint_dir(args),
-                checkpoint_tag,
-            ),
+            checkpoint_root=get_checkpoint_dir(args),
+            checkpoint_tag=checkpoint_tag,
+            max_checkpoints_keep=args.max_checkpoints_keep,
         )
     return progress
 

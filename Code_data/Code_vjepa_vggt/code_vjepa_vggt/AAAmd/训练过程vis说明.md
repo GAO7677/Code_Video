@@ -112,6 +112,30 @@ CUDA_VISIBLE_DEVICES=0 \
   - 对比多个 `v_newtrain` checkpoint 的辅助 loss 可视化
   - 同一批 case 横向展示，不再混用旧 `ContextVideoTrainer` 入口
   - 额外导出逐帧静态图，方便按帧核查 `track / box` 是否圈到同一物体
+  - 现在页面同时包含两层视图：
+    - `summary view`
+      - 严格对应训练里真正参与 `train/loss_track_aux` 和 `train/loss_box_aux` 的最终 `2-step` 张量
+      - 这也是为什么有时视频只有 `2` 帧，不是 bug，而是 `8` 帧 context 在当前训练里被聚合成了 `2` 个 latent/object time step
+    - `native 8-frame view`
+      - 回到原始 `8` 帧 context
+      - 直接画 matched `GT center / GT box` 和 CoTracker / track-derived `pred center / pred box`
+      - 用来检查原始时序上是否已经出现偏移、左上角漂移、box 尺寸异常
+- 颜色说明
+  - 黄橙色点
+    - `GT track center`
+  - 蓝色点
+    - `Pred track center`
+  - 红色框
+    - `GT box`
+  - 青绿色框
+    - `Pred box`
+- 两类 track 点的区别
+  - 在 `summary view` 里
+    - 会同时显示 center 和由 `center - delta` 反解出来的 start 点
+    - 因为这里展示的是 `track summary = [center_x, center_y, delta_x, delta_y, ...]`
+  - 在 `native 8-frame view` 里
+    - 只显示每一帧真正的 object center
+    - 更适合排查 “pred 和 GT 到底有没有圈到同一块区域”
 - 当前启动命令
 
 ```bash
@@ -135,3 +159,10 @@ CUDA_VISIBLE_DEVICES=2 \
   - [index.html](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/index.html)
 - 汇总数据
   - [metrics.json](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/metrics.json)
+- 读图建议
+  - 如果你看到只有 `2` 帧
+    - 先确认自己看的是否是 `summary view`
+    - 这是最终 loss 对应的聚合结果，不是原始 8-frame 逐帧结果
+  - 如果你要检查 “为什么左上角有黄点 / 蓝点” 或 “为什么 pred box 比 GT 大很多”
+    - 优先看 `native 8-frame view`
+    - 它更接近问题真正发生的原始时序位置

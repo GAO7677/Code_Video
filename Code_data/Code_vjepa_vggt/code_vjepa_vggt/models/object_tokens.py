@@ -359,23 +359,23 @@ class ObjectTubeProjector(nn.Module):
         y = tracks[..., 1] / max(float(height - 1), 1.0)
         valid = (visibility * confidence).clamp_min(0.0) > 1.0e-6
         valid_any = valid.any(dim=3)
-        if not bool(valid_any.any().item()):
-            if box_prior_xyxy is None:
-                center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
-                half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
-                return torch.cat(
-                    [
-                        (center_xy - half_wh).clamp(0.0, 1.0),
-                        (center_xy + half_wh).clamp(0.0, 1.0),
-                    ],
-                    dim=-1,
-                )
+        if box_prior_xyxy is not None:
             prior = torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
             if prior.ndim == 3:
                 return prior[:, None].expand(-1, tracks.shape[1], -1, -1)
             if prior.ndim == 4:
                 return prior
             raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
+        if not bool(valid_any.any().item()):
+            center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
+            half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
+            return torch.cat(
+                [
+                    (center_xy - half_wh).clamp(0.0, 1.0),
+                    (center_xy + half_wh).clamp(0.0, 1.0),
+                ],
+                dim=-1,
+            )
         sort_x = torch.where(valid, x, torch.full_like(x, float("inf"))).sort(dim=3).values
         sort_y = torch.where(valid, y, torch.full_like(y, float("inf"))).sort(dim=3).values
         valid_count = valid.sum(dim=3)
@@ -408,17 +408,7 @@ class ObjectTubeProjector(nn.Module):
             ],
             dim=-1,
         )
-        if box_prior_xyxy is None:
-            return active_box_xyxy
-        prior = torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
-        if prior.ndim == 3:
-            prior = prior[:, None].expand(-1, tracks.shape[1], -1, -1)
-        elif prior.ndim != 4:
-            raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
-        # For slots with valid tracks, keep the dynamic track-derived box so the
-        # anchor follows motion through time. Fall back to the static prior only
-        # for empty or invalid slots.
-        return torch.where(valid_any.unsqueeze(-1), active_box_xyxy, prior)
+        return active_box_xyxy
 
     @staticmethod
     def _confidence_group_mean(
