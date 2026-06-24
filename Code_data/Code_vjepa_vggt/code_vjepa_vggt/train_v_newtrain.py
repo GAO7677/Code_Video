@@ -484,6 +484,37 @@ class WanTrainingModule(DiffusionTrainingModule):
         return boxes, valid
 
     @staticmethod
+    def _box_aux_loss(
+        pred_box_xyxy: torch.Tensor,
+        gt_box_xyxy: torch.Tensor,
+        gt_box_valid: torch.Tensor,
+    ) -> torch.Tensor:
+        weights = gt_box_valid.unsqueeze(-1).to(dtype=pred_box_xyxy.dtype, device=pred_box_xyxy.device)
+        denom = gt_box_valid.sum().clamp_min(1.0)
+
+        pred_center = 0.5 * (pred_box_xyxy[..., :2] + pred_box_xyxy[..., 2:])
+        gt_center = 0.5 * (gt_box_xyxy[..., :2] + gt_box_xyxy[..., 2:])
+        pred_wh = (pred_box_xyxy[..., 2:] - pred_box_xyxy[..., :2]).clamp_min(1.0e-4)
+        gt_wh = (gt_box_xyxy[..., 2:] - gt_box_xyxy[..., :2]).clamp_min(1.0e-4)
+
+        center_l1 = (((pred_center - gt_center).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+        wh_l1 = (((pred_wh - gt_wh).abs()) * weights[..., :2]).sum() / (denom * 2.0)
+
+        inter_x0 = torch.maximum(pred_box_xyxy[..., 0], gt_box_xyxy[..., 0])
+        inter_y0 = torch.maximum(pred_box_xyxy[..., 1], gt_box_xyxy[..., 1])
+        inter_x1 = torch.minimum(pred_box_xyxy[..., 2], gt_box_xyxy[..., 2])
+        inter_y1 = torch.minimum(pred_box_xyxy[..., 3], gt_box_xyxy[..., 3])
+        inter_w = (inter_x1 - inter_x0).clamp_min(0.0)
+        inter_h = (inter_y1 - inter_y0).clamp_min(0.0)
+        inter = inter_w * inter_h
+        pred_area = pred_wh[..., 0] * pred_wh[..., 1]
+        gt_area = gt_wh[..., 0] * gt_wh[..., 1]
+        union = (pred_area + gt_area - inter).clamp_min(1.0e-6)
+        iou = inter / union
+        iou_loss = ((1.0 - iou) * gt_box_valid.to(dtype=iou.dtype, device=iou.device)).sum() / denom
+        return center_l1 + 0.5 * wh_l1 + 0.5 * iou_loss
+
+    @staticmethod
     def _group_last(values: torch.Tensor, latent_frames: int) -> torch.Tensor:
         group = int(values.shape[1]) // int(latent_frames)
         if int(values.shape[1]) % int(latent_frames) != 0:
@@ -558,6 +589,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         object_aux_out = self.object_aux_heads(
             object_out.object_latent_tokens,
             object_out.active_track_summary,
+            object_out.active_box_xyxy,
         )
         object_context = self.object_adapter(object_out.object_latent_tokens)
 
@@ -605,8 +637,11 @@ class WanTrainingModule(DiffusionTrainingModule):
 
         track_aux_loss = (((object_aux_out.pred_track_summary - gt_track_summary).abs()) * gt_track_valid.unsqueeze(-1)).sum()
         track_aux_loss = track_aux_loss / (gt_track_valid.unsqueeze(-1).sum().clamp_min(1.0) * object_aux_out.pred_track_summary.shape[-1])
-        box_aux_loss = (((object_aux_out.pred_box_xyxy - gt_box_xyxy).abs()) * gt_box_valid.unsqueeze(-1)).sum()
-        box_aux_loss = box_aux_loss / (gt_box_valid.unsqueeze(-1).sum().clamp_min(1.0) * object_aux_out.pred_box_xyxy.shape[-1])
+        box_aux_loss = self._box_aux_loss(
+            object_aux_out.pred_box_xyxy,
+            gt_box_xyxy,
+            gt_box_valid,
+        )
         depth_aux_loss = track_aux_loss.new_zeros(())
         if self.depth_target_state_index is not None and self.lambda_depth_aux > 0.0:
             gt_states = sample["context_states"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)

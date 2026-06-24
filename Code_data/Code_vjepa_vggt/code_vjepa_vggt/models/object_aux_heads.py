@@ -29,17 +29,26 @@ class _ResidualMLP(nn.Module):
 
 
 class ObjectAuxHeads(nn.Module):
-    def __init__(self, dim: int = 4096, track_delta_scale: float = 0.25) -> None:
+    def __init__(
+        self,
+        dim: int = 4096,
+        track_delta_scale: float = 0.25,
+        box_delta_scale: float = 0.10,
+        box_wh_delta_scale: float = 0.20,
+    ) -> None:
         super().__init__()
         self.track_delta_scale = float(track_delta_scale)
+        self.box_delta_scale = float(box_delta_scale)
+        self.box_wh_delta_scale = float(box_wh_delta_scale)
         self.track_head = _ResidualMLP(dim, 4)
-        self.box_head = _ResidualMLP(dim, 2)
+        self.box_head = _ResidualMLP(dim, 4)
         self.depth_head = _ResidualMLP(dim, 1)
 
     def forward(
         self,
         object_latent_tokens: torch.Tensor,
         active_track_summary: torch.Tensor,
+        active_box_xyxy: torch.Tensor | None = None,
     ) -> ObjectAuxHeadOutput:
         if int(active_track_summary.shape[-1]) < 4:
             raise ValueError(
@@ -48,13 +57,31 @@ class ObjectAuxHeads(nn.Module):
         track_base = active_track_summary[..., :4]
         track_delta = self.track_delta_scale * torch.tanh(self.track_head(object_latent_tokens))
         pred_track_summary = track_base + track_delta
-        pred_box_wh = torch.sigmoid(self.box_head(object_latent_tokens))
-        center_xy = pred_track_summary[..., :2]
+        if active_box_xyxy is None:
+            center_xy = pred_track_summary[..., :2]
+            base_half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
+            base_box_xyxy = torch.cat(
+                [
+                    (center_xy - base_half_wh).clamp(0.0, 1.0),
+                    (center_xy + base_half_wh).clamp(0.0, 1.0),
+                ],
+                dim=-1,
+            )
+        else:
+            base_box_xyxy = active_box_xyxy
+        box_delta = self.box_head(object_latent_tokens)
+        center_delta = self.box_delta_scale * torch.tanh(box_delta[..., :2])
+        wh_delta = 1.0 + self.box_wh_delta_scale * torch.tanh(box_delta[..., 2:])
+
+        base_center_xy = 0.5 * (base_box_xyxy[..., :2] + base_box_xyxy[..., 2:])
+        base_wh = (base_box_xyxy[..., 2:] - base_box_xyxy[..., :2]).clamp_min(1.0e-4)
+        pred_center_xy = (pred_track_summary[..., :2] + center_delta).clamp(0.0, 1.0)
+        pred_box_wh = (base_wh * wh_delta.clamp_min(0.25)).clamp(1.0e-4, 1.0)
         half_wh = 0.5 * pred_box_wh
         pred_box_xyxy = torch.cat(
             [
-                (center_xy - half_wh).clamp(0.0, 1.0),
-                (center_xy + half_wh).clamp(0.0, 1.0),
+                (pred_center_xy - half_wh).clamp(0.0, 1.0),
+                (pred_center_xy + half_wh).clamp(0.0, 1.0),
             ],
             dim=-1,
         )

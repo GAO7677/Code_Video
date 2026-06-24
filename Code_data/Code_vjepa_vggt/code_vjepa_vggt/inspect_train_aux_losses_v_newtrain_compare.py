@@ -169,7 +169,11 @@ def _render_box_overlay(
     frames: list[np.ndarray] = []
     latent_frames = int(gt_box_xyxy.shape[0])
     source_frames = int(context_video.shape[1])
-    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    if latent_frames > 0 and source_frames % latent_frames == 0:
+        group = source_frames // latent_frames
+        latent_to_source = np.arange(group - 1, source_frames, group, dtype=np.int64)
+    else:
+        latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
     for latent_idx in range(latent_frames):
         src_idx = int(latent_to_source[latent_idx])
         frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
@@ -201,7 +205,11 @@ def _render_track_overlay(
     frames: list[np.ndarray] = []
     latent_frames = int(gt_track_summary.shape[0])
     source_frames = int(context_video.shape[1])
-    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    if latent_frames > 0 and source_frames % latent_frames == 0:
+        group = source_frames // latent_frames
+        latent_to_source = np.arange(group - 1, source_frames, group, dtype=np.int64)
+    else:
+        latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
     for latent_idx in range(latent_frames):
         src_idx = int(latent_to_source[latent_idx])
         frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
@@ -266,10 +274,27 @@ def _compute_aux_metrics(
     track_aux_loss = track_aux_loss / (
         gt_track_valid.unsqueeze(-1).sum().clamp_min(1.0) * pred_track_summary.shape[-1]
     )
-    box_aux_loss = (((pred_box_xyxy - gt_box_xyxy).abs()) * gt_box_valid.unsqueeze(-1)).sum()
-    box_aux_loss = box_aux_loss / (
-        gt_box_valid.unsqueeze(-1).sum().clamp_min(1.0) * pred_box_xyxy.shape[-1]
-    )
+    box_weights = gt_box_valid.unsqueeze(-1).to(dtype=pred_box_xyxy.dtype, device=pred_box_xyxy.device)
+    box_denom = gt_box_valid.sum().clamp_min(1.0)
+    pred_center = 0.5 * (pred_box_xyxy[..., :2] + pred_box_xyxy[..., 2:])
+    gt_center = 0.5 * (gt_box_xyxy[..., :2] + gt_box_xyxy[..., 2:])
+    pred_wh = (pred_box_xyxy[..., 2:] - pred_box_xyxy[..., :2]).clamp_min(1.0e-4)
+    gt_wh = (gt_box_xyxy[..., 2:] - gt_box_xyxy[..., :2]).clamp_min(1.0e-4)
+    center_l1 = (((pred_center - gt_center).abs()) * box_weights[..., :2]).sum() / (box_denom * 2.0)
+    wh_l1 = (((pred_wh - gt_wh).abs()) * box_weights[..., :2]).sum() / (box_denom * 2.0)
+    inter_x0 = torch.maximum(pred_box_xyxy[..., 0], gt_box_xyxy[..., 0])
+    inter_y0 = torch.maximum(pred_box_xyxy[..., 1], gt_box_xyxy[..., 1])
+    inter_x1 = torch.minimum(pred_box_xyxy[..., 2], gt_box_xyxy[..., 2])
+    inter_y1 = torch.minimum(pred_box_xyxy[..., 3], gt_box_xyxy[..., 3])
+    inter_w = (inter_x1 - inter_x0).clamp_min(0.0)
+    inter_h = (inter_y1 - inter_y0).clamp_min(0.0)
+    inter = inter_w * inter_h
+    pred_area = pred_wh[..., 0] * pred_wh[..., 1]
+    gt_area = gt_wh[..., 0] * gt_wh[..., 1]
+    union = (pred_area + gt_area - inter).clamp_min(1.0e-6)
+    iou = inter / union
+    iou_loss = ((1.0 - iou) * gt_box_valid.to(dtype=iou.dtype, device=iou.device)).sum() / box_denom
+    box_aux_loss = center_l1 + 0.5 * wh_l1 + 0.5 * iou_loss
     depth_aux_loss = pred_track_summary.new_zeros(())
     if pred_depth is not None and gt_depth is not None and gt_depth_valid is not None:
         depth_aux_loss = (((pred_depth - gt_depth).abs()) * gt_depth_valid.unsqueeze(-1)).sum()
@@ -340,6 +365,7 @@ def _run_case_for_checkpoint(
         object_aux_out = model.object_aux_heads(
             object_out.object_latent_tokens,
             object_out.active_track_summary,
+            object_out.active_box_xyxy,
         )
 
         gt_boxes = sample["context_boxes"].unsqueeze(0).to(device=device, dtype=pipe.torch_dtype)

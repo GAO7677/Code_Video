@@ -21,6 +21,7 @@ class ObjectTokenOutput:
     depth_latent_tokens: torch.Tensor | None = None
     world_latent_tokens: torch.Tensor | None = None
     active_track_summary: torch.Tensor | None = None
+    active_box_xyxy: torch.Tensor | None = None
 
 
 class ObjectTubeProjector(nn.Module):
@@ -267,10 +268,31 @@ class ObjectTubeProjector(nn.Module):
             weights = frame_valid_mask.view(batch, int(target_frames), group, 1, 1).to(dtype=xy.dtype, device=xy.device)
             weights = weights.expand(-1, -1, -1, objects, -1)
         mean_xy = (xy * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
+        last_xy = xy[:, :, -1]
         delta_xy = xy[:, :, -1] - xy[:, :, 0]
         mean_vis = (vis * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
         mean_conf = (conf * weights).sum(dim=2) / weights.sum(dim=2).clamp_min(1.0)
-        return torch.cat([mean_xy, delta_xy, mean_vis, mean_conf], dim=-1)
+        return torch.cat([last_xy, delta_xy, mean_vis, mean_conf], dim=-1)
+
+    @staticmethod
+    def _boxes_from_summary(
+        active_track_summary: torch.Tensor,
+        *,
+        image_hw: tuple[int, int],
+        radius_px: float = 12.0,
+    ) -> torch.Tensor:
+        height, width = int(image_hw[0]), int(image_hw[1])
+        center_xy = active_track_summary[..., :2]
+        radius_x = float(radius_px) / max(float(width - 1), 1.0)
+        radius_y = float(radius_px) / max(float(height - 1), 1.0)
+        half_wh = center_xy.new_tensor([radius_x, radius_y]).view(1, 1, 1, 2)
+        return torch.cat(
+            [
+                (center_xy - half_wh).clamp(0.0, 1.0),
+                (center_xy + half_wh).clamp(0.0, 1.0),
+            ],
+            dim=-1,
+        )
 
     @staticmethod
     def _confidence_group_mean(
@@ -422,6 +444,10 @@ class ObjectTubeProjector(nn.Module):
                 target_frames=latent_frames,
                 frame_valid_mask=frame_valid_mask,
             )
+            active_box_xyxy = self._boxes_from_summary(
+                active_track_summary,
+                image_hw=track_image_hw,
+            )
             track_geom_latent_tokens = self.track_geom_proj(active_track_summary)
 
             depth_latent_tokens = None
@@ -500,6 +526,7 @@ class ObjectTubeProjector(nn.Module):
                 latent_latent_tokens = latent_latent_tokens * slot_mask
                 track_geom_latent_tokens = track_geom_latent_tokens * slot_mask
                 active_track_summary = active_track_summary * slot_mask
+                active_box_xyxy = active_box_xyxy * slot_mask
                 if depth_latent_tokens is not None:
                     depth_latent_tokens = depth_latent_tokens * slot_mask
                 if world_latent_tokens is not None:
@@ -529,6 +556,7 @@ class ObjectTubeProjector(nn.Module):
                 depth_latent_tokens=None if depth_latent_tokens is None else depth_latent_tokens.to(dtype=jepa_patch_tokens.dtype),
                 world_latent_tokens=None if world_latent_tokens is None else world_latent_tokens.to(dtype=jepa_patch_tokens.dtype),
                 active_track_summary=active_track_summary.to(dtype=jepa_patch_tokens.dtype),
+                active_box_xyxy=active_box_xyxy.to(dtype=jepa_patch_tokens.dtype),
             )
 
 
