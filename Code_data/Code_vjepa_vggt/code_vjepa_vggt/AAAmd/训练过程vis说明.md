@@ -100,3 +100,6 @@ CUDA_VISIBLE_DEVICES=0 \
 - 对应持续监听脚本：
   - [watch_checkpoint_infer.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_checkpoint_infer.py)
 - 三者现在都兼容目录式 checkpoint
+- 对 `v_newtrain` 更推荐长期使用：
+  - [watch_v_newtrain_batch_infer.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_v_newtrain_batch_infer.py)
+  - 原因是它直接复用已经验证稳定的 [batch_infer_checkpoints.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_infer_checkpoints.py)

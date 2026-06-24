@@ -69,10 +69,10 @@ CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py \
   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000400 \
-  --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 \
-  --prompt "industrial rigid body simulation sphere" \
-  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400 \
-  --output-video /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_step400/prediction.mp4
+  --context-video /data/gaoya/dataset/physics-iq-benchmark/full-videos/take-1/30FPS/0002_full-videos_30FPS_perspective-center_take-1_trimmed-ball-and-block-fall.mp4 \
+  --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/ \
+  --output-video /data/gaoya/AAA_test_video/0623/train/train0624//prediction.mp4
 ```
 
 - 说明
@@ -114,6 +114,34 @@ CUDA_VISIBLE_DEVICES=5 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_v_newtrain_batch_infer.py \
+  --checkpoint-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints \
+  --output-root /data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch \
+  --infer-script /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py \
+  --context-video /data/gaoya/AAA_test_video/0529/vjepa_vggt/test/sample_000339_w000_input_context.mp4 \
+  --prompt "industrial rigid body simulation sphere" \
+  --gpu 2 \
+  --num-frames 24 \
+  --sampling-mode prefix \
+  --sampling-steps 40 \
+  --fps 30
+```
+
+- 推荐原因
+  - 这个脚本内部复用 `batch_infer_checkpoints.py`
+  - 当前已经真实验证 `batch_infer_checkpoints.py` 可稳定跑通 `step-000200 / 000400 / 000600 / 000800 / 001000`
+  - 更适合 `v_newtrain` 这条 old DiffSynth backbone 训练线长期维护
+  - 运行状态会写到：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/watch_v_newtrain_status.json`
+
+### 4. 旧 watcher 说明
+
+前台启动命令：
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_checkpoint_infer.py \
@@ -137,3 +165,4 @@ CUDA_VISIBLE_DEVICES=5 \
     - `step-000600/checkpoint.safetensors`
   - `--process-existing` 会先把当前目录里已经存在的 checkpoint 也补跑一遍
   - 如果只想监听后续新 checkpoint，不加 `--process-existing`
+  - 但对于 `v_newtrain`，当前实测存在 CUDA OOM / illegal memory access 风险，不建议作为主链路

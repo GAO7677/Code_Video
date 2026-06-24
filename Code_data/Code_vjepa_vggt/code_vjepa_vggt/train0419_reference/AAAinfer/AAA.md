@@ -94,6 +94,7 @@
         - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000400/checkpoint.safetensors`
         - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000600/checkpoint.safetensors`
         - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000800/checkpoint.safetensors`
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001000/checkpoint.safetensors`
 - W&B
     - project: `vjepa_vggt_wan`
     - run name: `pybullet0624_diffsynth_object_v_newtrain_gpu67`
@@ -103,7 +104,7 @@
     - 本地 W&B run 目录：
         - `/home/gaoya/wandb/run-20260624_120432-t5fknjnk`
     - `output.log` 已记录到：
-        - `global_step 876`
+        - `global_step 1136`
 - 已完成验证
     - 单 batch GPU smoke 真实通过：
         - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_v_newtrain_rerun/smoke_report.json`
@@ -112,7 +113,11 @@
     - `grad_summary.with_grad = 1024`
     - `param_delta.changed_count = 604`
     - `step-000200` 和 `step-000400` 已通过 `v_newtrain` 专用推理脚本真实生成视频
+    - `step-000200 / 000400 / 000600 / 000800 / 001000` 都已通过 `v_newtrain` 推理脚本真实生成视频或进入自动批量推理目录
     - `step-000200 -> step-000400` 权重差异统计：
+        - `changed_count = 902`
+    - `step-000800 -> step-001000` 权重差异统计：
+        - `shared_tensors = 1038`
         - `changed_count = 902`
 - v_newtrain 专用推理脚本
     - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py`
@@ -126,3 +131,13 @@
     - 已兼容：
         - 旧格式 `step_*.pt`
         - 新格式 `step-xxxx/checkpoint.safetensors`
+    - 但对 `v_newtrain + DiffSynth Wan loader` 的长时间循环拉起场景不够稳定
+- 推荐的 v_newtrain 自动补推理脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/watch_v_newtrain_batch_infer.py`
+    - 原理：
+        - 不直接循环拉起 `infer_v_newtrain_context_video_wan.py`
+        - 而是轮询 checkpoint 目录后，复用已经验证稳定的 `batch_infer_checkpoints.py`
+    - 当前状态文件：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/infer_v_newtrain_batch/watch_v_newtrain_status.json`
+    - 最近一次核查结果：
+        - `missing_steps = []`
