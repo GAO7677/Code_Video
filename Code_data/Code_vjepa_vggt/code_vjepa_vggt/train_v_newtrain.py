@@ -240,6 +240,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.object_box_delta_scale = float(object_box_delta_scale)
         self.object_box_wh_log_scale = float(object_box_wh_log_scale)
         self.object_min_box_px = float(object_min_box_px)
+        self.object_gate_init = float(object_gate_init)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
@@ -247,7 +248,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         if self.enable_object_branch:
             self.pipe.dit = enable_object_condition_branch(
                 self.pipe.dit,
-                object_gate_init=float(object_gate_init),
+                object_gate_init=float(self.object_gate_init),
                 reinitialize_object_branch=True,
             )
             cond_dim = int(cond_proj_dim)
@@ -713,17 +714,25 @@ class WanTrainingModule(DiffusionTrainingModule):
             + self.lambda_track_aux * track_aux_loss
             + self.lambda_box_aux * box_aux_loss
             + self.lambda_depth_aux * depth_aux_loss
+            + self.lambda_track_box_aux * track_box_loss
+            + self.lambda_track_iou_aux * track_iou_loss
         )
+        object_context_abs = object_context.detach().abs()
+        object_latent_tokens_abs = object_out.object_latent_tokens.detach().abs()
         metrics = {
             "train/loss_main": float(loss_main.detach().item()),
             "train/loss_track_aux": float(track_aux_loss.detach().item()),
             "train/loss_box_aux": float(box_aux_loss.detach().item()),
             "train/loss_depth_aux": float(depth_aux_loss.detach().item()),
+            "train/loss_track_box_aux": float(track_box_loss.detach().item()),
+            "train/loss_track_iou_aux": float(track_iou_loss.detach().item()),
             "train/loss_track_center_aux": float(track_center_l1.detach().item()),
             "train/loss_track_delta_aux": float(track_delta_l1.detach().item()),
             "train/track_box_loss": float(track_box_loss.detach().item()),
             "train/track_iou_loss": float(track_iou_loss.detach().item()),
-            "train/object_context_abs_max": float(object_context.detach().abs().max().item()),
+            "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
+            "train/object_context_abs_max": float(object_context_abs.max().item()),
+            "train/object_context_abs_mean": float(object_context_abs.mean().item()),
         }
         return total, metrics
 
@@ -1224,6 +1233,7 @@ def wan_parser():
     parser.add_argument("--object_box_delta_scale", type=float, default=0.25)
     parser.add_argument("--object_box_wh_log_scale", type=float, default=2.25)
     parser.add_argument("--object_min_box_px", type=float, default=16.0)
+    parser.add_argument("--object_gate_init", type=float, default=0.1)
     parser.add_argument("--lambda_track_aux", type=float, default=0.1)
     parser.add_argument("--lambda_box_aux", type=float, default=0.1)
     parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
@@ -1478,6 +1488,7 @@ def build_model(args, accelerator):
         object_box_delta_scale=args.object_box_delta_scale,
         object_box_wh_log_scale=args.object_box_wh_log_scale,
         object_min_box_px=args.object_min_box_px,
+        object_gate_init=args.object_gate_init,
         lambda_track_aux=args.lambda_track_aux,
         lambda_box_aux=args.lambda_box_aux,
         lambda_depth_aux=args.lambda_depth_aux,

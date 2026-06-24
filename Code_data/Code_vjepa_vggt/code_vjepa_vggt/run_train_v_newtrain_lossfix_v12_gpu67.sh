@@ -3,7 +3,7 @@ set -euo pipefail
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
-OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v9
+OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v12
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -47,17 +47,17 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --cond_proj_dim 4096 \
   --jepa_window_radius 1 \
   --latent_window_radius 1 \
-  --object_track_delta_scale 0.25 \
-  --object_box_delta_scale 0.25 \
-  --object_box_wh_log_scale 2.25 \
+  --object_track_delta_scale 0.06 \
+  --object_box_delta_scale 0.06 \
+  --object_box_wh_log_scale 1.25 \
   --object_min_box_px 16.0 \
   --object_gate_init 0.05 \
   --lambda_track_aux 0.25 \
   --lambda_box_aux 0.15 \
   --lambda_depth_aux 0.0 \
-  --lambda_track_box_aux 0.0 \
-  --lambda_track_iou_aux 0.0 \
+  --lambda_track_box_aux 0.02 \
+  --lambda_track_iou_aux 0.02 \
   --report_to wandb \
   --wandb_project vjepa_vggt_wan \
-  --wandb_name pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v9 \
+  --wandb_name pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v12 \
   --wandb_mode online

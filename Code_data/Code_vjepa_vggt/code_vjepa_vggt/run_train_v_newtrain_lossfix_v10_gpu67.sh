@@ -3,7 +3,7 @@ set -euo pipefail
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
-OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v9
+OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v10
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -59,5 +59,5 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --lambda_track_iou_aux 0.0 \
   --report_to wandb \
   --wandb_project vjepa_vggt_wan \
-  --wandb_name pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v9 \
+  --wandb_name pybullet0624_diffsynth_object_v_newtrain_gpu67_lossfix_v10 \
   --wandb_mode online

@@ -262,6 +262,11 @@ def _prepare_case(
     pred_track_summary = object_aux_out.pred_track_summary[0].detach().cpu().numpy()
     pred_box_xyxy = object_aux_out.pred_box_xyxy[0].detach().cpu().numpy()
     pred_depth = object_aux_out.pred_depth[0, ..., 0].detach().cpu().numpy()
+    object_valid_mask = prepared.get("object_valid_mask")
+    if object_valid_mask is None:
+        pred_box_valid_mask = np.ones((pred_box_xyxy.shape[0], pred_box_xyxy.shape[1]), dtype=bool)
+    else:
+        pred_box_valid_mask = object_valid_mask[0].detach().cpu().numpy() > 0.5
 
     gt_depth = None
     gt_depth_valid = None
@@ -315,6 +320,7 @@ def _prepare_case(
             "pred_track_summary": list(object_aux_out.pred_track_summary.shape),
             "pred_box_xyxy": list(object_aux_out.pred_box_xyxy.shape),
             "pred_depth": list(object_aux_out.pred_depth.shape),
+            "object_valid_mask": list(object_valid_mask.shape) if object_valid_mask is not None else None,
         },
     }
     return result

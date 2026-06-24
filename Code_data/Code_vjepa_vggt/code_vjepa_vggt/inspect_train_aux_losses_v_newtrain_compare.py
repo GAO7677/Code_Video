@@ -448,6 +448,9 @@ def _run_case_for_checkpoint(
     gt_box_valid_np = gt_box_valid[0].detach().cpu().numpy() > 0.5
     pred_track_summary_np = object_aux_out.pred_track_summary[0].detach().float().cpu().numpy()
     pred_box_xyxy_np = object_aux_out.pred_box_xyxy[0].detach().float().cpu().numpy()
+    pred_valid_np = object_valid_mask[0].detach().cpu().numpy() > 0.5
+    pred_track_summary_np = np.where(pred_valid_np[None, :, None], pred_track_summary_np, np.nan)
+    pred_box_xyxy_np = np.where(pred_valid_np[None, :, None], pred_box_xyxy_np, np.nan)
 
     box_video = _render_box_overlay(
         sample["context_video"],

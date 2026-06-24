@@ -95,8 +95,10 @@ class ObjectTubeProjector(nn.Module):
             out[..., 0] *= scale_x
             out[..., 1] *= scale_y
             return out
-        out[..., 0] = ((out[..., 0] + 0.5) * float(dst_w) / max(float(src_w), 1.0)) - 0.5
-        out[..., 1] = ((out[..., 1] + 0.5) * float(dst_h) / max(float(src_h), 1.0)) - 0.5
+        scale_x = float(max(dst_w - 1, 1)) / max(float(src_w - 1), 1.0)
+        scale_y = float(max(dst_h - 1, 1)) / max(float(src_h - 1), 1.0)
+        out[..., 0] *= scale_x
+        out[..., 1] *= scale_y
         return out
 
     @staticmethod
@@ -413,7 +415,9 @@ class ObjectTubeProjector(nn.Module):
             prior = prior[:, None].expand(-1, tracks.shape[1], -1, -1)
         elif prior.ndim != 4:
             raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
-        return torch.where(valid_any.unsqueeze(-1), active_box_xyxy, prior)
+        # Use the prior box as the anchor whenever an object slot has valid tracks.
+        # The track-derived box remains the fallback for empty/invalid slots only.
+        return torch.where(valid_any.unsqueeze(-1), prior, active_box_xyxy)
 
     @staticmethod
     def _confidence_group_mean(

@@ -92,8 +92,13 @@ class CoTrackerAdapter(nn.Module):
         dst_hw: tuple[int, int],
     ) -> torch.Tensor:
         out = tracks.clone()
-        out[..., 0] *= float(dst_hw[1]) / max(float(src_hw[1]), 1.0)
-        out[..., 1] *= float(dst_hw[0]) / max(float(src_hw[0]), 1.0)
+        # CoTracker uses pixel-center style coordinates on the resized input.
+        # Match the same corner-aligned resize convention used by the analysis
+        # utilities so the roundtrip back to native pixels is consistent.
+        scale_x = float(max(dst_hw[1] - 1, 1)) / max(float(src_hw[1] - 1), 1.0)
+        scale_y = float(max(dst_hw[0] - 1, 1)) / max(float(src_hw[0] - 1), 1.0)
+        out[..., 0] *= scale_x
+        out[..., 1] *= scale_y
         return out
 
     def forward(
