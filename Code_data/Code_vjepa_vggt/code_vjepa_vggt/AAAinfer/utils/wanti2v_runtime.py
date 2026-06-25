@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,6 @@ from typing import Any
 import imageio.v3 as iio
 import numpy as np
 import torch
-from diffusers import WanImageToVideoPipeline
 from PIL import Image
 
 
@@ -20,6 +20,8 @@ DEFAULT_NEGATIVE_PROMPT = (
     "poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, "
     "messy background, three legs, many people in the background, walking backwards"
 )
+DEFAULT_OFFICIAL_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+OFFICIAL_WAN_REPO = Path("/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main")
 
 
 @dataclass
@@ -39,6 +41,18 @@ class WanTI2VArgs:
     t5_cpu: bool
     convert_model_dtype: bool
     force: bool
+
+
+def _ensure_official_wan_imports():
+    repo_root = OFFICIAL_WAN_REPO.resolve()
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+    import wan  # type: ignore
+    from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, WAN_CONFIGS  # type: ignore
+
+    return wan, WAN_CONFIGS, SIZE_CONFIGS, MAX_AREA_CONFIGS
 
 
 def read_list_file(list_path: Path) -> list[Path]:
@@ -120,31 +134,82 @@ def _parse_size(size: str) -> tuple[int, int]:
     return height, width
 
 
+def resolve_official_wan_root(wan_root: Path) -> Path:
+    candidate = wan_root.expanduser()
+    if not candidate.is_absolute():
+        candidate = candidate.resolve()
+    else:
+        candidate = candidate.resolve()
+
+    if candidate.is_dir() and (candidate / "Wan2.2_VAE.pth").exists():
+        return candidate
+
+    if candidate.name.endswith("-Diffusers"):
+        sibling = candidate.with_name(candidate.name.removesuffix("-Diffusers"))
+        if sibling.is_dir() and (sibling / "Wan2.2_VAE.pth").exists():
+            return sibling.resolve()
+
+    if DEFAULT_OFFICIAL_WAN_ROOT.is_dir() and (DEFAULT_OFFICIAL_WAN_ROOT / "Wan2.2_VAE.pth").exists():
+        return DEFAULT_OFFICIAL_WAN_ROOT.resolve()
+
+    raise FileNotFoundError(
+        "unable to resolve official Wan2.2 TI2V checkpoint directory from "
+        f"{wan_root}; expected a directory containing Wan2.2_VAE.pth"
+    )
+
+
 def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, Any]:
     height, width = _parse_size(args.size)
+    resolved_wan_root = resolve_official_wan_root(args.wan_root)
     return {
-        "model_type": "wan_ti2v_5b_diffusers",
+        "model_type": "wan_ti2v_5b_official",
         "input_list": str(args.input_list),
         "num_items": len(json_paths),
         "wan_root": str(args.wan_root),
+        "resolved_wan_root": str(resolved_wan_root),
         "height": int(height),
         "width": int(width),
         "frame_num": int(args.frame_num),
         "fps": int(args.fps),
         "seed": int(args.seed),
         "sampling_steps": int(args.sampling_steps),
+        "sample_shift": float(args.sample_shift),
         "cfg_scale": float(args.cfg_scale),
         "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
         "input_field": "input_video",
         "image_field": "input_image",
         "single_process": True,
-        "backend": "diffusers.WanImageToVideoPipeline",
+        "backend": "official_wan.WanTI2V",
     }
 
 
+def convert_official_video_to_thwc(video: Any) -> np.ndarray:
+    if isinstance(video, torch.Tensor):
+        tensor = video.detach().cpu()
+    else:
+        tensor = torch.as_tensor(video).cpu()
+
+    if tensor.ndim != 4:
+        raise ValueError(f"unexpected official Wan output shape: {tuple(tensor.shape)}")
+
+    if tensor.shape[0] == 3:
+        tensor = tensor.permute(1, 2, 3, 0)
+    elif tensor.shape[-1] == 3:
+        pass
+    else:
+        raise ValueError(f"cannot infer channel dimension from official Wan output shape: {tuple(tensor.shape)}")
+
+    frames = tensor.numpy()
+    if frames.dtype != np.uint8:
+        frames = np.clip(((frames + 1.0) / 2.0) * 255.0, 0, 255).astype(np.uint8)
+    return frames
+
+
 class OfficialWanTI2VWrapper:
-    def __init__(self, pipe: WanImageToVideoPipeline):
-        self.pipe = pipe
+    def __init__(self, model: Any, resolved_wan_root: Path, max_area: int):
+        self.model = model
+        self.resolved_wan_root = resolved_wan_root
+        self.max_area = int(max_area)
 
     def __call__(
         self,
@@ -158,40 +223,45 @@ class OfficialWanTI2VWrapper:
         num_frames: int,
         cfg_scale: float,
         num_inference_steps: int,
+        sample_shift: float,
+        sample_solver: str,
+        offload_model: bool,
     ) -> np.ndarray:
-        generator = torch.Generator(device="cuda")
-        generator.manual_seed(int(seed))
-        output = self.pipe(
-            image=input_image,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=int(height),
-            width=int(width),
-            num_frames=int(num_frames),
-            num_inference_steps=int(num_inference_steps),
-            guidance_scale=float(cfg_scale),
-            generator=generator,
-            output_type="np",
-            return_dict=True,
+        video = self.model.generate(
+            input_prompt=prompt,
+            img=input_image,
+            size=(int(width), int(height)),
+            max_area=self.max_area,
+            frame_num=int(num_frames),
+            shift=float(sample_shift),
+            sample_solver=str(sample_solver),
+            sampling_steps=int(num_inference_steps),
+            guide_scale=float(cfg_scale),
+            n_prompt=str(negative_prompt),
+            seed=int(seed),
+            offload_model=bool(offload_model),
         )
-        frames = output.frames
-        if isinstance(frames, torch.Tensor):
-            frames = frames.detach().cpu().numpy()
-        frames = np.asarray(frames)
-        if frames.ndim != 5:
-            raise ValueError(f"unexpected official Wan output shape: {frames.shape}")
-        return frames[0]
+        return convert_official_video_to_thwc(video)
 
 
 def build_wan_ti2v_pipeline(args: WanTI2VArgs):
-    pipe = WanImageToVideoPipeline.from_pretrained(
-        str(args.wan_root),
-        torch_dtype=torch.bfloat16,
+    wan, WAN_CONFIGS, _, MAX_AREA_CONFIGS = _ensure_official_wan_imports()
+    resolved_wan_root = resolve_official_wan_root(args.wan_root)
+    cfg = WAN_CONFIGS["ti2v-5B"]
+    max_area = int(MAX_AREA_CONFIGS[args.size])
+
+    model = wan.WanTI2V(
+        config=cfg,
+        checkpoint_dir=str(resolved_wan_root),
+        device_id=0,
+        rank=0,
+        t5_fsdp=False,
+        dit_fsdp=False,
+        use_sp=False,
+        t5_cpu=bool(args.t5_cpu),
+        convert_model_dtype=bool(args.convert_model_dtype),
     )
-    pipe.to("cuda")
-    if hasattr(pipe, "enable_model_cpu_offload") and args.offload_model:
-        pipe.enable_model_cpu_offload()
-    return OfficialWanTI2VWrapper(pipe)
+    return OfficialWanTI2VWrapper(model=model, resolved_wan_root=resolved_wan_root, max_area=max_area)
 
 
 def save_video_np(frames: np.ndarray, save_path: Path, fps: int) -> None:
@@ -226,6 +296,7 @@ def run_single_case(
         f"[case] input_image={firstframe_path}",
         f"[case] input_caption={input_caption}",
         f"[case] wan_root={args.wan_root}",
+        f"[case] resolved_wan_root={pipe.resolved_wan_root}",
     ]
 
     with torch.no_grad():
@@ -239,6 +310,9 @@ def run_single_case(
             num_frames=int(args.frame_num),
             cfg_scale=float(args.cfg_scale),
             num_inference_steps=int(args.sampling_steps),
+            sample_shift=float(args.sample_shift),
+            sample_solver=str(args.sample_solver),
+            offload_model=bool(args.offload_model),
         )
 
     save_video_np(video, output_video, fps=int(args.fps))
@@ -251,14 +325,16 @@ def run_single_case(
         "seed": int(args.seed),
         "step": int(args.sampling_steps),
         "guidance": float(args.cfg_scale),
-        "ckpt": str(args.wan_root),
+        "sample_shift": float(args.sample_shift),
+        "sample_solver": str(args.sample_solver),
+        "ckpt": str(pipe.resolved_wan_root),
     }
     return result, logs
 
 
 def cleanup_pipeline(pipe) -> None:
-    if hasattr(pipe, "pipe"):
-        del pipe.pipe
+    if hasattr(pipe, "model"):
+        del pipe.model
     del pipe
     gc.collect()
     if torch.cuda.is_available():
