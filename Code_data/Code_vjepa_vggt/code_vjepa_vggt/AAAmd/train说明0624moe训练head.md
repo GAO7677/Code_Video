@@ -418,6 +418,36 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
       - `step-001200`
     - retention 继续正常，磁盘可用空间仍约 `5.1G`
     - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:17:02 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1371`
+    - stdout 最新可见进度已推进到 `global_step 1372`
+    - 最新 summary：
+      - `train/loss_total = 0.04626`
+      - `train/loss_track_aux = 0.09137`
+      - `train/loss_box_aux = 0.35330`
+      - `train/loss_depth_aux = 0.01797`
+      - `train/object_context_abs_max = 0.41322`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:17:52 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1386`
+    - stdout 最新可见进度已推进到 `global_step 1389`
+    - 最新 summary：
+      - `train/loss_total = 0.02134`
+      - `train/loss_track_aux = 0.05567`
+      - `train/loss_box_aux = 0.12520`
+      - `train/loss_depth_aux = 0.03254`
+      - `train/object_context_abs_max = 0.41088`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
 - 如果后续训练报错，优先排查：
   - 缓存是否缺文件
   - `vggt_input_hw` 是否和缓存生成时一致
