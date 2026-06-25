@@ -12,6 +12,7 @@ from .datasets import GROUP_SPECS, iter_group_jsons
 from .official_pdi import resolve_text_query as resolve_pdi_text_query
 from .paths import VIDEOPHY_ROOT, VIDEOPHY2_CKPT
 from .paths import DATA_ROOT
+from .case_inputs import EvalCase, coerce_eval_case
 from .records import (
     load_payload,
     resolve_video_path,
@@ -36,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video", type=Path, default=None)
     parser.add_argument("--caption", default=None)
     parser.add_argument("--rule", default=None)
+    parser.add_argument("--context-video", type=Path, default=None)
     parser.add_argument("--input-csv", type=Path, default=None)
     parser.add_argument("--output-csv", type=Path, default=None)
     parser.add_argument("--json-path", action="append", type=Path, default=None)
@@ -262,6 +264,39 @@ class VideoPhy2Runner:
             "checkpoint": str(self.checkpoint),
         }
 
+    def score_case(
+        self,
+        case: EvalCase | Path | str | dict[str, Any],
+        *,
+        task: str = "pc",
+        caption: str | None = None,
+        rule: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = coerce_eval_case(case, caption=caption, rule=rule)
+        resolved_caption = normalized.caption
+        resolved_rule = normalized.rule
+        if task == "sa" and not resolved_caption:
+            payload = normalized.metadata or {}
+            resolved_caption = resolve_videophy2_sa_query(normalized.video_path, payload)
+        return self.score_video(
+            normalized.video_path,
+            task=task,
+            caption=resolved_caption,
+            rule=resolved_rule,
+        )
+
+
+def score_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    task: str = "pc",
+    caption: str | None = None,
+    rule: str | None = None,
+    runner: VideoPhy2Runner | None = None,
+) -> dict[str, Any]:
+    active_runner = runner or VideoPhy2Runner()
+    return active_runner.score_case(case, task=task, caption=caption, rule=rule)
+
 
 def _iter_selected_jsons(groups: list[str] | None, json_paths: list[Path] | None) -> list[Path]:
     selected: list[Path] = []
@@ -284,6 +319,19 @@ def _run_single_video(args: argparse.Namespace, runner: VideoPhy2Runner) -> None
     if args.video is None:
         return
     result = runner.score_video(args.video, task=args.task, caption=args.caption, rule=args.rule)
+    print(json.dumps({"video": str(args.video), **result}, ensure_ascii=False, indent=2))
+
+
+def _run_single_case(args: argparse.Namespace, runner: VideoPhy2Runner) -> None:
+    if args.video is None:
+        return
+    case = EvalCase(
+        video_path=args.video,
+        caption=args.caption,
+        rule=args.rule,
+        context_video_path=args.context_video,
+    )
+    result = runner.score_case(case, task=args.task)
     print(json.dumps({"video": str(args.video), **result}, ensure_ascii=False, indent=2))
 
 
@@ -351,7 +399,7 @@ def main() -> None:
         num_frames=args.num_frames,
     )
     if args.video is not None:
-        _run_single_video(args, runner)
+        _run_single_case(args, runner)
         return
     if args.input_csv is not None:
         _run_csv(args, runner)

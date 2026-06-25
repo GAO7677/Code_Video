@@ -13,6 +13,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from physv_eval.official_pdi import run_single_case as run_pdi_single_case
+from physv_eval.proxy_runner import score_single_case as score_proxy_single_case
+from physv_eval.wmreward_official import score_single_case as score_wmreward_single_case
+
 DATA_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
 VIDEO_DIR = DATA_DIR / "videos" / "ball_block"
 PDI_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_benchmark/PDI-Bench-main")
@@ -119,6 +123,14 @@ def run_jepa(video_path: Path) -> dict | None:
     ))
     score, details = scorer.score(context_video_path=ctx_p, candidate_video_path=fut_p)
     return {"jepa_score": float(score)}
+
+
+def run_single_case(video_path: Path, caption: str, *, output_dir: Path | None = None) -> dict[str, object]:
+    return {
+        "pdi": run_pdi(video_path, output_dir or (TMP_DIR / "pdi" / video_path.stem)),
+        "jepa": run_jepa(video_path),
+        "caption": caption,
+    }
 
 
 def gen_html(results: list[dict]) -> Path:

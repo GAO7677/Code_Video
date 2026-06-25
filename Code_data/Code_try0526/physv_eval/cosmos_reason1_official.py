@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .case_inputs import EvalCase, coerce_eval_case
 from .paths import COSMOS_REASON1_MODEL, COSMOS_REASON1_ROOT, VPHY_PYTHON
 
 
@@ -192,3 +193,16 @@ class OfficialCosmosReason1Runner:
             "seed": self.seed,
             "attempt_count": len(attempts),
         }
+
+    def score_case(self, case: EvalCase | Path | str | dict[str, Any]) -> dict[str, Any]:
+        normalized = coerce_eval_case(case)
+        return self.score(normalized.video_path)
+
+
+def score_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    runner: OfficialCosmosReason1Runner | None = None,
+) -> dict[str, Any]:
+    active_runner = runner or OfficialCosmosReason1Runner()
+    return active_runner.score_case(case)

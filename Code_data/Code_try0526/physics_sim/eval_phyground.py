@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from physv_eval.phyground_batch import main
+from physv_eval.single_case.phyground import main, score_case
 
 
 if __name__ == "__main__":

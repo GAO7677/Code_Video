@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .case_inputs import EvalCase, coerce_eval_case
 from .paths import PHYJUDGE_ADAPTER, PHYJUDGE_INFER
 
 
@@ -360,6 +361,44 @@ class OfficialPhyGroundRunner:
             "fps": self.fps,
             "max_pixels": self.max_pixels,
         }
+
+    def score_case(
+        self,
+        case: EvalCase | Path | str | dict[str, Any],
+        *,
+        caption: str | None = None,
+        metrics: list[str] | None = None,
+        laws: list[str] | None = None,
+        criteria_overrides: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        normalized = coerce_eval_case(case, caption=caption)
+        resolved_caption = normalized.caption or resolve_phyground_caption(normalized.metadata or {}, normalized.video_path.stem)
+        return self.score_bundle(
+            normalized.video_path,
+            resolved_caption,
+            metrics=metrics,
+            laws=laws,
+            criteria_overrides=criteria_overrides,
+        )
+
+
+def score_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    caption: str | None = None,
+    metrics: list[str] | None = None,
+    laws: list[str] | None = None,
+    criteria_overrides: dict[str, str] | None = None,
+    runner: OfficialPhyGroundRunner | None = None,
+) -> dict[str, Any]:
+    active_runner = runner or OfficialPhyGroundRunner()
+    return active_runner.score_case(
+        case,
+        caption=caption,
+        metrics=metrics,
+        laws=laws,
+        criteria_overrides=criteria_overrides,
+    )
 
 
 def resolve_phyground_caption(payload: dict[str, Any], fallback: str) -> str:

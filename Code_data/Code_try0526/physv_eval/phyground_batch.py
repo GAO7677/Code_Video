@@ -4,13 +4,9 @@ import argparse
 from pathlib import Path
 
 from .datasets import GROUP_SPECS, iter_group_jsons
-from .phyground_official import (
-    GENERAL_METRICS,
-    OfficialPhyGroundRunner,
-    infer_phyground_laws,
-    resolve_phyground_caption,
-)
+from .phyground_official import GENERAL_METRICS
 from .records import get_phyground, load_payload, resolve_video_path, save_payload, set_phyground
+from .single_case.phyground import score_case
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,13 +34,6 @@ def should_run(payload: dict, refresh: bool) -> bool:
 
 def main() -> None:
     args = parse_args()
-    runner = OfficialPhyGroundRunner(
-        cuda_visible_devices=args.cuda_visible_devices,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        fps=args.fps,
-        max_pixels=args.max_pixels,
-    )
     for group_id in args.groups:
         rows = iter_group_jsons(group_id)
         print(f"[phyground:{group_id}] {len(rows)} files", flush=True)
@@ -54,12 +43,12 @@ def main() -> None:
                 print(f"  [{index}/{len(rows)}] skip {json_path.name}", flush=True)
                 continue
             video_path = resolve_video_path(json_path, payload)
-            caption = resolve_phyground_caption(payload, video_path.stem)
-            laws = [] if args.general_only else infer_phyground_laws(payload, group_id=group_id, video_stem=video_path.stem)
+            caption = payload.get("caption") or payload.get("description") or payload.get("prompt") or video_path.stem
+            laws = [] if args.general_only else None
             print(f"  [{index}/{len(rows)}] {json_path.name}", flush=True)
-            result = runner.score_bundle(
-                Path(video_path),
-                caption,
+            result = score_case(
+                video_path,
+                caption=str(caption),
                 metrics=list(GENERAL_METRICS),
                 laws=laws,
             )

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from physv_eval.cosmos_reason1_batch import main
+from physv_eval.single_case.cosmos_reason1 import main, score_case
 
 
 if __name__ == "__main__":

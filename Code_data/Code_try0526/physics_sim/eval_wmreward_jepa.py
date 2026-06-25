@@ -10,6 +10,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from physv_eval.paths import DATA_ROOT
 from physv_eval.records import save_payload, set_wmreward
+from physv_eval.single_case.wmreward import score_case
 from physv_eval.wmreward_official import WMRewardRunner
 
 
@@ -32,7 +33,7 @@ def main() -> None:
                 continue
             print(f"  {video_path.stem}...", end=" ", flush=True)
             payload = json.loads(json_path.read_text(encoding="utf-8"))
-            result = runner.score(video_path)
+            result = score_case(video_path, runner=runner)
             set_wmreward(payload, result)
             save_payload(json_path, payload)
             print(

@@ -45,6 +45,7 @@ from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.utils.vggt_cache import VGGTDenseCache, load_vggt_cache
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_iou_loss, track_box_l1_loss
 from code_vjepa_vggt.context_wan_v_newtrain import (
     ContextAwareWanVideoPipeline,
@@ -186,6 +187,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         vggt_model_path=None,
         vggt_input_h=420,
         vggt_input_w=728,
+        vggt_cache_root=None,
         train_vggt=False,
         object_pooler_latent_dim=16,
         cond_proj_dim=4096,
@@ -286,6 +288,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.train_object_dit_branch = bool(train_object_dit_branch)
         self.freeze_non_object_trainables = bool(freeze_non_object_trainables)
         self.train_vggt = bool(train_vggt)
+        self.vggt_cache_root = None if vggt_cache_root is None else str(vggt_cache_root)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
@@ -324,6 +327,8 @@ class WanTrainingModule(DiffusionTrainingModule):
                 input_hw=(int(vggt_input_h), int(vggt_input_w)),
                 trainable=bool(self.train_vggt),
             )
+            if self.vggt_cache_root is not None and str(self.vggt_cache_root).strip():
+                self.vggt_cache_root = str(Path(self.vggt_cache_root).expanduser().resolve())
             self.object_pooler = ObjectTubeProjector(
                 jepa_dim=int(self.jepa_adapter.encoder.backbone.embed_dim),
                 latent_dim=int(object_pooler_latent_dim),
@@ -695,11 +700,17 @@ class WanTrainingModule(DiffusionTrainingModule):
             query_frame_ids=query_frame_ids,
             query_image_hw=image_hw,
         )
-        vggt_out = self.vggt_adapter(
-            frames_bthwc_01,
-            query_points_prior=query_points_prior,
-            query_image_hw=image_hw,
-        )
+        vggt_out: VGGTTrackAdapter | VGGTDenseCache | None = None
+        if self.vggt_cache_root:
+            cache = load_vggt_cache(sample, self.vggt_cache_root, allow_missing=True)
+            if cache is not None:
+                vggt_out = cache
+        if vggt_out is None:
+            vggt_out = self.vggt_adapter(
+                frames_bthwc_01,
+                query_points_prior=query_points_prior,
+                query_image_hw=image_hw,
+            )
         tracks_grouped, visibility_grouped, confidence_grouped = self._group_tracks_to_objects(
             cotracker_out.tracks,
             cotracker_out.visibility,
@@ -719,13 +730,13 @@ class WanTrainingModule(DiffusionTrainingModule):
             track_image_hw=image_hw,
             object_valid_mask=object_valid_mask,
             box_prior_xyxy=box_prior_xyxy,
-            vggt_world_points=vggt_out.world_points,
-            vggt_world_points_conf=vggt_out.world_points_conf,
-            vggt_depth=vggt_out.depth,
-            vggt_depth_conf=vggt_out.depth_conf,
-            vggt_dense_patch_tokens=vggt_out.dense_patch_tokens,
-            vggt_patch_grid_hw=vggt_out.patch_grid_hw,
-            vggt_geometry_image_hw=vggt_out.image_hw,
+            vggt_world_points=getattr(vggt_out, "world_points", None),
+            vggt_world_points_conf=getattr(vggt_out, "world_points_conf", None),
+            vggt_depth=getattr(vggt_out, "depth", None),
+            vggt_depth_conf=getattr(vggt_out, "depth_conf", None),
+            vggt_dense_patch_tokens=getattr(vggt_out, "dense_patch_tokens", None),
+            vggt_patch_grid_hw=getattr(vggt_out, "patch_grid_hw", None),
+            vggt_geometry_image_hw=getattr(vggt_out, "image_hw", None),
             frame_valid_mask=None,
         )
         object_aux_out = self.object_aux_heads(
@@ -1356,6 +1367,7 @@ def wan_parser():
     parser.add_argument("--vggt_model_path", type=str, default="/data/gaoya/ckpt/facebook-VGGT-1B")
     parser.add_argument("--vggt_input_h", type=int, default=420)
     parser.add_argument("--vggt_input_w", type=int, default=728)
+    parser.add_argument("--vggt_cache_root", type=str, default=None)
     parser.add_argument("--train_vggt", action="store_true", default=False)
     parser.add_argument("--object_pooler_latent_dim", type=int, default=16)
     parser.add_argument("--cond_proj_dim", type=int, default=4096)
@@ -1626,6 +1638,7 @@ def build_model(args, accelerator):
         vggt_model_path=args.vggt_model_path,
         vggt_input_h=args.vggt_input_h,
         vggt_input_w=args.vggt_input_w,
+        vggt_cache_root=args.vggt_cache_root,
         train_vggt=args.train_vggt,
         object_pooler_latent_dim=args.object_pooler_latent_dim,
         cond_proj_dim=args.cond_proj_dim,

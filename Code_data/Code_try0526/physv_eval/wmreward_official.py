@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .paths import VPHY_PYTHON, WMREWARD_ROOT, WMREWARD_VJEPA2_ROOT
+from .case_inputs import EvalCase, coerce_eval_case
 
 
 FALLBACK_WMREWARD_ROOTS = [
@@ -162,3 +163,16 @@ class WMRewardRunner:
             "stride": self.stride,
             "seed": self.seed,
         }
+
+    def score_case(self, case: EvalCase | Path | str | dict[str, Any]) -> dict[str, Any]:
+        normalized = coerce_eval_case(case)
+        return self.score(normalized.video_path)
+
+
+def score_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    runner: WMRewardRunner | None = None,
+) -> dict[str, Any]:
+    active_runner = runner or WMRewardRunner()
+    return active_runner.score_case(case)

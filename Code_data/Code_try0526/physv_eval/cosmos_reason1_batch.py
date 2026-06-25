@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 
-from .cosmos_reason1_official import OfficialCosmosReason1Runner
 from .datasets import GROUP_SPECS, iter_group_jsons
 from .records import (
     get_cosmos_reason1,
@@ -11,6 +10,7 @@ from .records import (
     save_payload,
     set_cosmos_reason1,
 )
+from .single_case.cosmos_reason1 import score_case
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,7 +29,6 @@ def should_run(payload: dict, refresh: bool) -> bool:
 
 def main() -> None:
     args = parse_args()
-    runner = OfficialCosmosReason1Runner()
     for group_id in args.groups:
         rows = iter_group_jsons(group_id)
         print(f"[cosmos:{group_id}] {len(rows)} files", flush=True)
@@ -40,7 +39,7 @@ def main() -> None:
                 continue
             video_path = resolve_video_path(json_path, payload)
             print(f"  [{index}/{len(rows)}] {json_path.name}", flush=True)
-            result = runner.score(video_path)
+            result = score_case(video_path)
             set_cosmos_reason1(payload, result)
             save_payload(json_path, payload)
 

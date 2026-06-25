@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from .case_inputs import EvalCase, coerce_eval_case
 from .paths import A_OUTPUT, PDI_FLORENCE_MODEL, PDI_ROOT, RUN_ROOT, SAM_PYTHON
 from .records import load_payload, stable_path_id
 
@@ -159,3 +160,28 @@ class OfficialPDIRunner:
             time.sleep(2.0 * attempt)
 
         raise RuntimeError(f"Official PDI failed for {video_path.name}\n{last_error}")
+
+    def run_case(
+        self,
+        case: EvalCase | Path | str | dict[str, Any],
+        *,
+        text_query: str | None = None,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        normalized = coerce_eval_case(case)
+        query = text_query
+        if query is None:
+            payload = normalized.metadata or {}
+            query = resolve_text_query(normalized.video_path, payload)
+        return self.run(normalized.video_path, query, refresh=refresh)
+
+
+def run_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    text_query: str | None = None,
+    refresh: bool = False,
+    runner: OfficialPDIRunner | None = None,
+) -> dict[str, Any]:
+    active_runner = runner or OfficialPDIRunner()
+    return active_runner.run_case(case, text_query=text_query, refresh=refresh)

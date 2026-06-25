@@ -6,6 +6,7 @@ from typing import Any
 
 import cv2
 
+from .case_inputs import EvalCase, coerce_eval_case
 from .paths import PROXY_CKPT, PROXY_REPO, REPO_ROOT, TMP_ROOT
 from .records import stable_path_id
 
@@ -92,3 +93,22 @@ class ProxyRunner:
             "context_video": str(context_source_path),
             "details": details,
         }
+
+    def score_case(
+        self,
+        case: EvalCase | Path | str | dict[str, Any],
+        *,
+        context_video_path: Path | str | None = None,
+    ) -> dict[str, Any] | None:
+        normalized = coerce_eval_case(case, context_video_path=context_video_path)
+        return self.score(normalized.video_path, context_video_path=normalized.context_video_path)
+
+
+def score_single_case(
+    case: EvalCase | Path | str | dict[str, Any],
+    *,
+    context_video_path: Path | str | None = None,
+    runner: ProxyRunner | None = None,
+) -> dict[str, Any] | None:
+    active_runner = runner or ProxyRunner()
+    return active_runner.score_case(case, context_video_path=context_video_path)
