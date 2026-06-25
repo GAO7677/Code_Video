@@ -99,6 +99,13 @@ def _sample_points_from_box(box_xyxy: torch.Tensor, points_per_object: int) -> t
     return points[:points_per_object].contiguous()
 
 
+def _set_module_requires_grad(module: nn.Module | None, requires_grad: bool) -> None:
+    if module is None:
+        return
+    for param in module.parameters():
+        param.requires_grad = bool(requires_grad)
+
+
 class TrainingInterrupted(KeyboardInterrupt):
     """Raised when the training process receives an interrupt signal."""
 
@@ -184,8 +191,14 @@ class WanTrainingModule(DiffusionTrainingModule):
         lambda_object_context_reg=0.0,
         lambda_track_anchor_reg=0.0,
         lambda_box_anchor_reg=0.0,
+        lambda_main=1.0,
         depth_target_state_index=None,
         object_gate_init=0.1,
+        train_object_pooler=True,
+        train_object_aux_heads=True,
+        train_object_adapter=True,
+        train_object_dit_branch=True,
+        freeze_non_object_trainables=False,
     ):
         super().__init__()
         if not use_gradient_checkpointing:
@@ -245,6 +258,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.lambda_object_context_reg = float(lambda_object_context_reg)
         self.lambda_track_anchor_reg = float(lambda_track_anchor_reg)
         self.lambda_box_anchor_reg = float(lambda_box_anchor_reg)
+        self.lambda_main = float(lambda_main)
         self.object_track_delta_scale = float(object_track_delta_scale)
         self.object_track_gate_init = float(object_track_gate_init)
         self.object_box_delta_scale = float(object_box_delta_scale)
@@ -252,9 +266,18 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.object_box_wh_max_scale = float(object_box_wh_max_scale)
         self.object_min_box_px = float(object_min_box_px)
         self.object_gate_init = float(object_gate_init)
+        self.train_object_pooler = bool(train_object_pooler)
+        self.train_object_aux_heads = bool(train_object_aux_heads)
+        self.train_object_adapter = bool(train_object_adapter)
+        self.train_object_dit_branch = bool(train_object_dit_branch)
+        self.freeze_non_object_trainables = bool(freeze_non_object_trainables)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
+
+        if self.freeze_non_object_trainables:
+            for _, param in self.pipe.dit.named_parameters():
+                param.requires_grad = False
 
         if self.enable_object_branch:
             self.pipe.dit = enable_object_condition_branch(
@@ -300,6 +323,17 @@ class WanTrainingModule(DiffusionTrainingModule):
                 num_slots=self.aux_max_objects,
                 max_time_steps=64,
             )
+            _set_module_requires_grad(self.object_pooler, self.train_object_pooler)
+            _set_module_requires_grad(self.object_aux_heads, self.train_object_aux_heads)
+            _set_module_requires_grad(self.object_adapter, self.train_object_adapter)
+            for name, param in self.pipe.dit.named_parameters():
+                if (
+                    "object_embedding" in name
+                    or ".object_cross_attn." in name
+                    or ".object_gate" in name
+                    or ".norm4." in name
+                ):
+                    param.requires_grad = bool(self.train_object_dit_branch)
         else:
             self.jepa_adapter = None
             self.cotracker_adapter = None
@@ -735,19 +769,22 @@ class WanTrainingModule(DiffusionTrainingModule):
             pred_depth = object_aux_out.pred_depth
             depth_aux_loss = (pred_depth - gt_depth).abs().mean()
 
-        loss_main = flow_match_context_sft_loss(
-            pipe,
-            **inputs_shared,
-            **inputs_posi,
-            object_context=object_context,
-        )
+        if self.lambda_main > 0.0:
+            loss_main = flow_match_context_sft_loss(
+                pipe,
+                **inputs_shared,
+                **inputs_posi,
+                object_context=object_context,
+            )
+        else:
+            loss_main = track_aux_loss.new_zeros(())
         object_context_reg = object_context.square().mean()
         # `track_box_loss` / `track_iou_loss` are measured on the frozen
         # CoTracker-derived center tracks before the trainable aux heads.
         # They are useful diagnostics for track quality, but they do not
         # provide gradient to the trainable object modules in this setup.
         total = (
-            loss_main
+            self.lambda_main * loss_main
             + self.lambda_track_aux * track_aux_loss
             + self.lambda_box_aux * box_aux_loss
             + self.lambda_depth_aux * depth_aux_loss
@@ -1287,6 +1324,7 @@ def wan_parser():
     parser.add_argument("--object_box_wh_max_scale", type=float, default=2.0)
     parser.add_argument("--object_min_box_px", type=float, default=16.0)
     parser.add_argument("--object_gate_init", type=float, default=0.1)
+    parser.add_argument("--lambda_main", type=float, default=1.0)
     parser.add_argument("--lambda_track_aux", type=float, default=0.1)
     parser.add_argument("--lambda_box_aux", type=float, default=0.1)
     parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
@@ -1295,6 +1333,11 @@ def wan_parser():
     parser.add_argument("--lambda_track_anchor_reg", type=float, default=0.0)
     parser.add_argument("--lambda_box_anchor_reg", type=float, default=0.0)
     parser.add_argument("--lambda_object_context_reg", type=float, default=0.0)
+    parser.add_argument("--train_object_pooler", action="store_true", default=False)
+    parser.add_argument("--train_object_aux_heads", action="store_true", default=False)
+    parser.add_argument("--train_object_adapter", action="store_true", default=False)
+    parser.add_argument("--train_object_dit_branch", action="store_true", default=False)
+    parser.add_argument("--freeze_non_object_trainables", action="store_true", default=False)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
     return parser
 
@@ -1547,6 +1590,7 @@ def build_model(args, accelerator):
         object_box_wh_max_scale=args.object_box_wh_max_scale,
         object_min_box_px=args.object_min_box_px,
         object_gate_init=args.object_gate_init,
+        lambda_main=args.lambda_main,
         lambda_track_aux=args.lambda_track_aux,
         lambda_box_aux=args.lambda_box_aux,
         lambda_depth_aux=args.lambda_depth_aux,
@@ -1556,6 +1600,11 @@ def build_model(args, accelerator):
         lambda_box_anchor_reg=args.lambda_box_anchor_reg,
         lambda_object_context_reg=args.lambda_object_context_reg,
         depth_target_state_index=args.depth_target_state_index,
+        train_object_pooler=args.train_object_pooler,
+        train_object_aux_heads=args.train_object_aux_heads,
+        train_object_adapter=args.train_object_adapter,
+        train_object_dit_branch=args.train_object_dit_branch,
+        freeze_non_object_trainables=args.freeze_non_object_trainables,
     )
 
 

@@ -20,6 +20,7 @@ if str(WAN_REPO_ROOT) not in sys.path:
 
 import wan  # type: ignore  # noqa: E402
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, WAN_CONFIGS  # type: ignore  # noqa: E402
+from wan.modules.model import WanModel  # type: ignore  # noqa: E402
 from wan.utils.utils import save_video  # type: ignore  # noqa: E402
 
 
@@ -96,7 +97,7 @@ def ensure_firstframe_image(json_path: Path, payload: dict[str, Any]) -> tuple[d
     source_video = Path(ensure_str_field(payload, "source_video", json_path)).expanduser().resolve()
     input_video = Path(ensure_str_field(payload, "input_video", json_path)).expanduser().resolve()
 
-    firstframe_key = "input_firstframe"
+    firstframe_key = "input_image"
     existing = payload.get(firstframe_key)
     if isinstance(existing, str) and existing.strip():
         firstframe_path = Path(existing).expanduser().resolve()
@@ -126,13 +127,21 @@ def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, A
         "sample_shift": float(args.sample_shift),
         "cfg_scale": float(args.cfg_scale),
         "input_field": "input_video",
-        "image_field": "input_firstframe",
+        "image_field": "input_image",
         "single_process": True,
     }
 
 
 def build_wan_ti2v_pipeline(args: WanTI2VArgs):
     cfg = WAN_CONFIGS["ti2v-5B"]
+    original_from_pretrained = WanModel.from_pretrained
+
+    def _patched_from_pretrained(pretrained_model_name_or_path, **kwargs):
+        kwargs.setdefault("low_cpu_mem_usage", False)
+        kwargs.setdefault("device_map", None)
+        return original_from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+    WanModel.from_pretrained = _patched_from_pretrained
     pipe = wan.WanTI2V(
         config=cfg,
         checkpoint_dir=str(args.wan_root),
@@ -144,6 +153,7 @@ def build_wan_ti2v_pipeline(args: WanTI2VArgs):
         t5_cpu=bool(args.t5_cpu),
         convert_model_dtype=bool(args.convert_model_dtype),
     )
+    WanModel.from_pretrained = original_from_pretrained
     return pipe
 
 
@@ -172,9 +182,8 @@ def run_single_case(
 
     logs = [
         f"[case] input_json={input_json_path}",
-        f"[case] input_video={input_video}",
+        f"[case] input_image={firstframe_path}",
         f"[case] input_caption={input_caption}",
-        f"[case] input_firstframe={firstframe_path}",
         f"[case] wan_root={args.wan_root}",
     ]
 
@@ -198,7 +207,7 @@ def run_single_case(
 
     result = {
         "input_json": str(input_json_path),
-        "input_video": str(input_video),
+        "input_image": str(firstframe_path),
         "input_caption": str(input_caption),
         "output_video": str(output_video),
         "seed": int(args.seed),
@@ -219,7 +228,7 @@ def cleanup_pipeline(pipe) -> None:
 def resolve_default_frame_num(frame_num: int | None) -> int:
     if frame_num is not None:
         return int(frame_num)
-    return int(WAN_CONFIGS["ti2v-5B"].frame_num)
+    return 24
 
 
 def resolve_default_sample_shift(sample_shift: float | None) -> float:

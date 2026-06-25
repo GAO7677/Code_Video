@@ -1,6 +1,6 @@
-'''
+"""
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main \
-CUDA_VISIBLE_DEVICES=2 \
+CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py \
     --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES=2 \
     --cfg-scale 5.0 \
     --fps 30 \
     --seed 42
-'''
+"""
 from __future__ import annotations
 
 import argparse
@@ -35,7 +35,6 @@ from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
     resolve_default_sampling_steps,
     run_single_case,
     write_json,
-    write_text_lines,
 )
 
 
@@ -47,9 +46,9 @@ def parse_args() -> argparse.Namespace:
         default="/data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B",
         help="output directory for mp4/json/log files",
     )
-    parser.add_argument("--wan-root", default="/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+    parser.add_argument("--wan-root", required=True, help="Wan2.2 TI2V-5B checkpoint root")
     parser.add_argument("--size", default="704*1280", choices=["704*1280", "1280*704"])
-    parser.add_argument("--frame-num", type=int, default=None)
+    parser.add_argument("--frame-num", type=int, default=24)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sample-solver", default="unipc", choices=["unipc", "dpm++"])
@@ -115,11 +114,9 @@ def main() -> None:
 
     try:
         for input_json_path, payload, firstframe_path in prepared_cases:
-            
             sample_stem = input_json_path.stem
             output_video = step_dir / f"{sample_stem}.mp4"
             output_json = step_dir / f"{sample_stem}.json"
-            output_log = step_dir / f"{sample_stem}.log"
 
             if output_video.exists() and output_json.exists() and not args.force:
                 print(f"[skip] {sample_stem}")
@@ -135,12 +132,9 @@ def main() -> None:
                     output_video=output_video,
                 )
             except Exception as exc:
-                error_lines = root_log_lines + [f"[error] {sample_stem}: {exc}"]
-                write_text_lines(output_log, error_lines)
                 print(f"[error] {sample_stem}: {exc}")
                 continue
 
-            write_text_lines(output_log, root_log_lines + case_logs + [f"[done] {sample_stem}"])
             write_json(output_json, result)
             print(f"[done] {sample_stem}")
     finally:
