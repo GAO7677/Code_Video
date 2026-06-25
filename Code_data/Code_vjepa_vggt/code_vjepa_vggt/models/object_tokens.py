@@ -615,7 +615,8 @@ class ObjectTubeProjector(nn.Module):
                 confidence,
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
-                min_box_px=16.0,
+                box_prior_xyxy=box_prior_xyxy,
+                min_box_px=self.min_box_px,
             )
             track_geom_latent_tokens = self.track_geom_proj(active_track_summary)
 

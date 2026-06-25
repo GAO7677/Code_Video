@@ -12,6 +12,9 @@ class ObjectAuxHeadOutput:
     pred_box_wh: torch.Tensor
     pred_box_xyxy: torch.Tensor
     pred_depth: torch.Tensor
+    track_delta: torch.Tensor
+    box_center_delta: torch.Tensor
+    box_log_scale: torch.Tensor
 
 
 class _ResidualMLP(nn.Module):
@@ -36,6 +39,7 @@ class ObjectAuxHeads(nn.Module):
         box_delta_scale: float = 0.06,
         box_wh_log_scale: float = 1.25,
         box_wh_max_scale: float = 2.0,
+        track_gate_init: float = 0.05,
         box_center_gate_init: float = 0.05,
         box_size_gate_init: float = 0.05,
     ) -> None:
@@ -47,8 +51,10 @@ class ObjectAuxHeads(nn.Module):
         self.track_head = _ResidualMLP(dim, 4)
         self.box_head = _ResidualMLP(dim, 4)
         self.depth_head = _ResidualMLP(dim, 1)
+        track_init = torch.tensor(float(track_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
         center_init = torch.tensor(float(box_center_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
         size_init = torch.tensor(float(box_size_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
+        self.track_gate_logit = nn.Parameter(torch.logit(track_init))
         self.box_center_gate_logit = nn.Parameter(torch.logit(center_init))
         self.box_size_gate_logit = nn.Parameter(torch.logit(size_init))
 
@@ -80,7 +86,8 @@ class ObjectAuxHeads(nn.Module):
                 f"active_track_summary must have at least 4 channels, got {list(active_track_summary.shape)}"
             )
         track_base = active_track_summary[..., :4]
-        track_delta = self.track_delta_scale * torch.tanh(self.track_head(object_latent_tokens))
+        track_gate = torch.sigmoid(self.track_gate_logit).to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
+        track_delta = track_gate * self.track_delta_scale * torch.tanh(self.track_head(object_latent_tokens))
         pred_track_summary = track_base + track_delta
         if active_box_xyxy is None:
             # Fall back to a tiny box around the track center only when there is
@@ -105,8 +112,8 @@ class ObjectAuxHeads(nn.Module):
         center_gate = torch.sigmoid(self.box_center_gate_logit).to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
         size_gate = torch.sigmoid(self.box_size_gate_logit).to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
         center_delta = center_gate * self.box_delta_scale * torch.tanh(box_delta[..., :2]) * base_wh
-        wh_log_scale = size_gate * self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
-        wh_scale = torch.exp(wh_log_scale).clamp(0.75, self.box_wh_max_scale)
+        box_log_scale = size_gate * self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
+        wh_scale = torch.exp(box_log_scale).clamp(0.75, self.box_wh_max_scale)
 
         pred_center_xy = (base_center_xy + center_delta).clamp(0.0, 1.0)
         pred_box_wh = (base_wh * wh_scale).clamp(1.0e-4, 1.0)
@@ -124,4 +131,7 @@ class ObjectAuxHeads(nn.Module):
             pred_box_wh=pred_box_wh,
             pred_box_xyxy=pred_box_xyxy,
             pred_depth=pred_depth,
+            track_delta=track_delta,
+            box_center_delta=center_delta,
+            box_log_scale=box_log_scale,
         )

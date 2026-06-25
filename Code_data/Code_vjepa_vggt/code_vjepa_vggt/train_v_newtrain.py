@@ -171,6 +171,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         jepa_window_radius=1,
         latent_window_radius=1,
         object_track_delta_scale=0.25,
+        object_track_gate_init=0.05,
         object_box_delta_scale=0.25,
         object_box_wh_log_scale=2.25,
         object_box_wh_max_scale=2.0,
@@ -181,6 +182,8 @@ class WanTrainingModule(DiffusionTrainingModule):
         lambda_track_box_aux=0.0,
         lambda_track_iou_aux=0.0,
         lambda_object_context_reg=0.0,
+        lambda_track_anchor_reg=0.0,
+        lambda_box_anchor_reg=0.0,
         depth_target_state_index=None,
         object_gate_init=0.1,
     ):
@@ -240,7 +243,10 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.lambda_track_box_aux = float(lambda_track_box_aux)
         self.lambda_track_iou_aux = float(lambda_track_iou_aux)
         self.lambda_object_context_reg = float(lambda_object_context_reg)
+        self.lambda_track_anchor_reg = float(lambda_track_anchor_reg)
+        self.lambda_box_anchor_reg = float(lambda_box_anchor_reg)
         self.object_track_delta_scale = float(object_track_delta_scale)
+        self.object_track_gate_init = float(object_track_gate_init)
         self.object_box_delta_scale = float(object_box_delta_scale)
         self.object_box_wh_log_scale = float(object_box_wh_log_scale)
         self.object_box_wh_max_scale = float(object_box_wh_max_scale)
@@ -284,6 +290,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             self.object_aux_heads = ObjectAuxHeads(
                 dim=cond_dim,
                 track_delta_scale=float(object_track_delta_scale),
+                track_gate_init=float(object_track_gate_init),
                 box_delta_scale=float(object_box_delta_scale),
                 box_wh_log_scale=float(object_box_wh_log_scale),
                 box_wh_max_scale=float(object_box_wh_max_scale),
@@ -486,12 +493,10 @@ class WanTrainingModule(DiffusionTrainingModule):
         gather_last = last_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 2).long()
         first_xy = torch.gather(centers_perm, dim=3, index=gather_first).squeeze(3)
         last_xy = torch.gather(centers_perm, dim=3, index=gather_last).squeeze(3)
-        valid_weights = valid_mask.to(dtype=centers_xy.dtype).unsqueeze(-1)
-        mean_xy = (centers_xy * valid_weights).sum(dim=2) / valid_weights.sum(dim=2).clamp_min(1.0)
-        mean_xy_norm = torch.stack(
+        last_xy_norm = torch.stack(
             [
-                mean_xy[..., 0] / max(float(width - 1), 1.0),
-                mean_xy[..., 1] / max(float(height - 1), 1.0),
+                last_xy[..., 0] / max(float(width - 1), 1.0),
+                last_xy[..., 1] / max(float(height - 1), 1.0),
             ],
             dim=-1,
         ).clamp(0.0, 1.0)
@@ -502,7 +507,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             ],
             dim=-1,
         )
-        return torch.cat([mean_xy_norm, delta_xy_norm], dim=-1), valid_mask.any(dim=2)
+        return torch.cat([last_xy_norm, delta_xy_norm], dim=-1), valid_mask.any(dim=2)
 
     @staticmethod
     def _group_box_targets(
@@ -717,6 +722,8 @@ class WanTrainingModule(DiffusionTrainingModule):
             gt_box_xyxy,
             gt_box_valid,
         )
+        track_anchor_reg = object_aux_out.track_delta.abs().mean()
+        box_anchor_reg = object_aux_out.box_center_delta.abs().mean() + object_aux_out.box_log_scale.abs().mean()
         depth_aux_loss = track_aux_loss.new_zeros(())
         if self.depth_target_state_index is not None and self.lambda_depth_aux > 0.0:
             gt_states = sample["context_states"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
@@ -745,6 +752,8 @@ class WanTrainingModule(DiffusionTrainingModule):
             + self.lambda_box_aux * box_aux_loss
             + self.lambda_depth_aux * depth_aux_loss
             + self.lambda_object_context_reg * object_context_reg
+            + self.lambda_track_anchor_reg * track_anchor_reg
+            + self.lambda_box_anchor_reg * box_anchor_reg
         )
         object_context_abs = object_context.detach().abs()
         object_latent_tokens_abs = object_out.object_latent_tokens.detach().abs()
@@ -758,12 +767,17 @@ class WanTrainingModule(DiffusionTrainingModule):
             "train/loss_track_center_aux": float(track_center_l1.detach().item()),
             "train/loss_track_delta_aux": float(track_delta_l1.detach().item()),
             "train/loss_object_context_reg": float(object_context_reg.detach().item()),
+            "train/loss_track_anchor_reg": float(track_anchor_reg.detach().item()),
+            "train/loss_box_anchor_reg": float(box_anchor_reg.detach().item()),
             "train/track_box_loss": float(track_box_loss.detach().item()),
             "train/track_box_loss_norm": float(track_box_loss_norm.detach().item()),
             "train/track_iou_loss": float(track_iou_loss.detach().item()),
             "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
             "train/object_context_abs_max": float(object_context_abs.max().item()),
             "train/object_context_abs_mean": float(object_context_abs.mean().item()),
+            "train/track_delta_abs_mean": float(object_aux_out.track_delta.detach().abs().mean().item()),
+            "train/box_center_delta_abs_mean": float(object_aux_out.box_center_delta.detach().abs().mean().item()),
+            "train/box_log_scale_abs_mean": float(object_aux_out.box_log_scale.detach().abs().mean().item()),
         }
         return total, metrics
 
@@ -1267,6 +1281,7 @@ def wan_parser():
     parser.add_argument("--jepa_window_radius", type=int, default=1)
     parser.add_argument("--latent_window_radius", type=int, default=1)
     parser.add_argument("--object_track_delta_scale", type=float, default=0.25)
+    parser.add_argument("--object_track_gate_init", type=float, default=0.05)
     parser.add_argument("--object_box_delta_scale", type=float, default=0.25)
     parser.add_argument("--object_box_wh_log_scale", type=float, default=2.25)
     parser.add_argument("--object_box_wh_max_scale", type=float, default=2.0)
@@ -1277,6 +1292,8 @@ def wan_parser():
     parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
     parser.add_argument("--lambda_track_box_aux", type=float, default=0.0)
     parser.add_argument("--lambda_track_iou_aux", type=float, default=0.0)
+    parser.add_argument("--lambda_track_anchor_reg", type=float, default=0.0)
+    parser.add_argument("--lambda_box_anchor_reg", type=float, default=0.0)
     parser.add_argument("--lambda_object_context_reg", type=float, default=0.0)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
     return parser
@@ -1524,6 +1541,7 @@ def build_model(args, accelerator):
         jepa_window_radius=args.jepa_window_radius,
         latent_window_radius=args.latent_window_radius,
         object_track_delta_scale=args.object_track_delta_scale,
+        object_track_gate_init=args.object_track_gate_init,
         object_box_delta_scale=args.object_box_delta_scale,
         object_box_wh_log_scale=args.object_box_wh_log_scale,
         object_box_wh_max_scale=args.object_box_wh_max_scale,
@@ -1534,6 +1552,8 @@ def build_model(args, accelerator):
         lambda_depth_aux=args.lambda_depth_aux,
         lambda_track_box_aux=args.lambda_track_box_aux,
         lambda_track_iou_aux=args.lambda_track_iou_aux,
+        lambda_track_anchor_reg=args.lambda_track_anchor_reg,
+        lambda_box_anchor_reg=args.lambda_box_anchor_reg,
         lambda_object_context_reg=args.lambda_object_context_reg,
         depth_target_state_index=args.depth_target_state_index,
     )
