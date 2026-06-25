@@ -192,12 +192,232 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
   - 当前已保存 checkpoint：
     - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000200`
     - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000400`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000600`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000800`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-001000`
   - `interrupted-latest` 目录也在同步维护：
     - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/interrupted-latest`
-  - 后续 stdout 最新可见进度已推进到 `global_step 401`
+  - 后续 stdout 最新可见进度已推进到 `global_step 1015`
+  - 额外排查结论：
+    - `step-000200/400/600/training_state.pt` 的 `global_step` 分别为 `200/400/600`，和 checkpoint 目录一致
+    - `interrupted-latest/training_state.pt` 仍停在 `global_step 125`
+    - 这是正常现象，不代表当前训练没更新；代码里 `interrupted-latest` 只会在 `KeyboardInterrupt` 或 `TrainingInterrupted` 分支里重写
+    - 该文件时间戳是 `2026-06-25 19:46:06 UTC`，对应一次更早的中断态快照，不是当前 run 的实时状态镜像
+  - `2026-06-25 20:44 UTC` 左右出现一次真实中断，原因不是训练逻辑错误，而是 checkpoint 落盘时磁盘空间耗尽：
+    - 报错位置：创建 `step-001000` 目录时抛出 `OSError: [Errno 28] No space left on device`
+    - 当时 `/data` 分区 `Avail=0`
+    - 当前 run 的每个 `step-*` checkpoint 大约占 `1.7G`
+  - 恢复动作：
+    - 删除旧的 `interrupted-latest`、`step-000200`、`step-000400`
+    - 释放后 `/data` 可用空间恢复到约 `5.1G`
+    - 启动脚本已补上：
+      - `--resume_from .../checkpoints/step-000800`
+      - `--max_checkpoints_keep 2`
+    - 新恢复 run 的 W&B run id: `wy4ru3qv`
+    - 恢复日志已确认：
+      - `Restored training state: global_step=800`
+      - 训练循环重新从 `global_step 801` 开始推进
+  - 恢复后已确认成功跨过原先失败点：
+      - `step-001000` 已成功落盘
+      - `--max_checkpoints_keep 2` 已生效，旧的 `step-000600` 已被自动删除
+      - 当前 checkpoint 目录只保留：
+        - `step-000800`
+        - `step-001000`
+      - 训练日志已明确打印：
+        - `Pruned old checkpoint: .../step-000600`
+  - `2026-06-25 21:05:50 UTC` 再次检查当前恢复 run：
+    - 训练进程仍健康存活，实际仍运行在 `CUDA_VISIBLE_DEVICES=6,7`
+    - stdout 最新可见进度已推进到 `global_step 1097`
+    - W&B `wy4ru3qv` 最近 history 已推进到 `_step=1140`
+    - 当前 checkpoint 目录仍只保留两份：
+      - `step-000800`
+      - `step-001000`
+    - `/data` 当前可用空间约 `5.1G`
+  - `2026-06-25 21:05 UTC` 的最近 loss / 数值观察：
+    - `train/loss_total` 最近几步大致在 `0.015 ~ 0.072`
+    - `train/loss_track_aux` 最近几步大致在 `0.026 ~ 0.098`
+    - `train/loss_box_aux` 最近几步大致在 `0.105 ~ 0.646`
+    - `train/loss_depth_aux` 最近几步大致在 `0.0012 ~ 0.094`
+    - `train/object_context_abs_max` 最近稳定在 `0.411 ~ 0.413`
+    - `train/object_latent_tokens_abs_max` 最近稳定在 `3.86 ~ 3.90`
+    - 目前没有看到 `nan/inf`、也没有看到 `object_context_abs_max` 持续上冲，说明 object 分支数值暂时是稳定的
+    - 但 `track_box_loss` 的 batch 间波动仍然比较大，最近样本里可见从 `4.65` 到 `43.08` 的抖动，这更像样本难度/匹配差异，不像整体发散
 - 当前训练已显式启用 validation:
   - `validation_every_steps=2000`
   - `validation_script_path=run_validation_vbench.py`
+  - 额外发现的下一风险点：
+    - `run_validation_vbench.py` 会在每次 validation 时基于 `100` 个 meta case 和 `0,1,2,4,6,8` 六组 context 配置生成完整验证产物
+    - 这意味着一次 `step 2000` validation 会落很多视频、JSON 和 VBench 结果文件
+    - 当前 `/data` 只剩约 `5.1G`，磁盘风险比训练数值风险更高，下一次真正可能中断训练的点更可能是 validation 落盘而不是 loss 爆炸
+    - 当前启动脚本已经补上 `--benchmark_cuda_visible_devices 5`，这样后续重启时 validation / benchmark 会固定走 `gpu5`，避免再和主训练 `gpu6,7` 抢卡；这次正在运行的进程不会自动吃到这个修改，只有重启后才会生效
+  - `2026-06-25 21:08:04 UTC` 的进一步检查：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1175`
+    - stdout 最新可见进度已推进到 `global_step 1176`
+    - 最新 summary：
+      - `train/loss_total = 0.02865`
+      - `train/loss_track_aux = 0.04427`
+      - `train/loss_box_aux = 0.21910`
+      - `train/loss_depth_aux = 0.02313`
+      - `train/object_context_abs_max = 0.41124`
+    - 到目前为止仍无 validation 产物生成，说明 `step 2000` 还没触发
+    - 当前 checkpoint 目录仍然只有：
+      - `step-000800`
+      - `step-001000`
+    - `/data` 依然只有约 `5.1G` 可用，validation 磁盘风险仍是第一优先级
+  - 已追加一个针对 validation 磁盘风险的代码保护：
+    - 修改文件：
+      - `train0419_reference/run_validation_vbench.py`
+    - 修改内容：
+      - 每个 context 配置跑完生成、future-GT metrics、VBench 后，立即删除该 context 对应的 `generation_output_root`
+      - 保留 `runtime_root` 下的 `summary.json`、GT metrics、manifest、VBench eval json 等轻量结果
+    - 作用：
+      - 避免 validation 把 6 组 context 的大体积生成视频都长期留在 `/data`
+      - 下一次需要重启训练时，这个补丁会直接降低 `step 2000` validation 再次打满磁盘的概率
+    - 限制：
+      - `run_validation_vbench.py` 是训练过程中后续启动的外部子进程，因此当前这条训练在 `step 2000` 触发 validation 时，会直接用到这版新的“评估后删视频输出”逻辑
+      - 但 `benchmark_cuda_visible_devices` 属于训练主进程启动参数，当前这条已经运行中的训练进程命令行里没有该覆盖项，所以它未来触发 validation 时仍会沿用旧默认值 `5,6,7`
+      - 也就是说：
+        - validation 清理补丁：当前 run 会生效
+        - validation 固定只走 `gpu5`：只有后续重启后的 run 才会生效
+  - `2026-06-25 21:09:24 UTC` 的最新检查：
+    - stdout 最新可见进度已推进到 `global_step 1211`
+    - 已成功产出新 checkpoint：
+      - `step-001200`
+    - retention 继续正常：
+      - 旧的 `step-000800` 已被自动删除
+      - 当前 checkpoint 目录只保留：
+        - `step-001000`
+        - `step-001200`
+    - `/data` 可用空间仍约 `5.1G`，说明 checkpoint 保留策略暂时稳住了磁盘
+    - 最近 12 个采样点观察：
+      - `train/object_context_abs_max` 一直稳定在 `0.407 ~ 0.417`
+      - `train/loss_depth_aux` 确实偶发性出现较高 batch（例如 `_step=1021` 的 `0.563`、`_step=1058` 的 `0.624`、`_step=1208` summary 的 `0.514`）
+      - 但相邻很多 step 又会回落到 `0.008 ~ 0.063`
+      - 因此目前更像是数据 batch 差异引起的尖峰，而不是持续性抬升或整体发散
+      - `train/track_box_loss` 同样仍有明显 batch 级波动，最大可见到 `46.93`，但并未带动 `object_context_abs_max` 一起失控
+  - `2026-06-25 21:10 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1238`
+    - stdout 最新可见进度已推进到 `global_step 1243`
+    - 当前 summary：
+      - `train/loss_total = 0.04740`
+      - `train/loss_track_aux = 0.05075`
+      - `train/loss_box_aux = 0.40233`
+      - `train/loss_depth_aux = 0.02088`
+      - `train/object_context_abs_max = 0.41266`
+    - 当前 checkpoint 目录仍只保留两份：
+      - `step-001000`
+      - `step-001200`
+    - retention 仍正常，没有再出现 checkpoint 落盘失败
+    - 当前还没有任何 `validation100_vbench` 相关目录、`summary.json`、`failed.json` 或 `done.json` 产物，说明 validation 尚未触发，当前离 `step 2000` 还有约 `750+` step
+    - `/data` 依旧约 `5.1G` 可用，因此当前第一风险仍然是未来 validation 阶段的落盘和显存竞争，而不是训练主循环本身
+  - `2026-06-25 21:11 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1258`
+    - stdout 最新可见进度已推进到 `global_step 1258`
+    - 最新 summary：
+      - `train/loss_total = 0.05063`
+      - `train/loss_track_aux = 0.02788`
+      - `train/loss_box_aux = 0.44242`
+      - `train/loss_depth_aux = 0.03595`
+      - `train/object_context_abs_max = 0.41172`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - 到目前为止仍然没有任何 `validation100_vbench` 目录、`summary.json`、`done.json`、`failed.json` 或 validation stdout/stderr 产物，说明 validation 还完全没有开始
+    - 最近抽样的 history 继续支持“loss 有 batch 波动，但整体稳定”的判断：
+      - `train/object_context_abs_max` 稳定在 `0.409 ~ 0.415`
+      - `train/loss_depth_aux` 仍会偶发冲高到 `0.51 ~ 0.59`
+      - `train/loss_box_aux` 也会偶发冲高到 `0.77`
+      - 但这些尖峰后续都会回落，没有形成单调抬升趋势
+  - `2026-06-25 21:12 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1274`
+    - stdout 最新可见进度已推进到 `global_step 1275`
+    - 最新 summary：
+      - `train/loss_total = 0.03274`
+      - `train/loss_track_aux = 0.04565`
+      - `train/loss_box_aux = 0.22687`
+      - `train/loss_depth_aux = 0.05484`
+      - `train/object_context_abs_max = 0.41062`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 到当前时刻仍没有任何 validation 相关目录或日志文件出现，说明 validation 还完全没有触发
+  - `2026-06-25 21:13 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1289`
+    - stdout 最新可见进度已推进到 `global_step 1290`
+    - 最新 summary：
+      - `train/loss_total = 0.04732`
+      - `train/loss_track_aux = 0.01677`
+      - `train/loss_box_aux = 0.43463`
+      - `train/loss_depth_aux = 0.02184`
+      - `train/object_context_abs_max = 0.40546`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:14 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1304`
+    - stdout 最新可见进度已推进到 `global_step 1306`
+    - 最新 summary：
+      - `train/loss_total = 0.04200`
+      - `train/loss_track_aux = 0.00957`
+      - `train/loss_box_aux = 0.38641`
+      - `train/loss_depth_aux = 0.02400`
+      - `train/object_context_abs_max = 0.40440`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:14:36 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1320`
+    - stdout 最新可见进度已推进到 `global_step 1323`
+    - 最新 summary：
+      - `train/loss_total = 0.05494`
+      - `train/loss_track_aux = 0.12612`
+      - `train/loss_box_aux = 0.33420`
+      - `train/loss_depth_aux = 0.08905`
+      - `train/object_context_abs_max = 0.41097`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:15:24 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1335`
+    - stdout 最新可见进度已推进到 `global_step 1339`
+    - 最新 summary：
+      - `train/loss_total = 0.02269`
+      - `train/loss_track_aux = 0.04523`
+      - `train/loss_box_aux = 0.16488`
+      - `train/loss_depth_aux = 0.01681`
+      - `train/object_context_abs_max = 0.40845`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:16:09 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1350`
+    - stdout 最新可见进度已推进到 `global_step 1354`
+    - 最新 summary：
+      - `train/loss_total = 0.04340`
+      - `train/loss_track_aux = 0.02557`
+      - `train/loss_box_aux = 0.37059`
+      - `train/loss_depth_aux = 0.03781`
+      - `train/object_context_abs_max = 0.41266`
+    - 当前仍未产出 `step-001400`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001000`
+      - `step-001200`
+    - retention 继续正常，磁盘可用空间仍约 `5.1G`
+    - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
 - 如果后续训练报错，优先排查：
   - 缓存是否缺文件
   - `vggt_input_hw` 是否和缓存生成时一致

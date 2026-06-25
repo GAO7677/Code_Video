@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -622,6 +623,12 @@ def load_generation_entries(runtime_root: Path, model_name: str) -> list[dict[st
     return load_jsonl(merged_jsonl)
 
 
+def cleanup_generation_outputs(output_root: Path) -> None:
+    if not output_root.exists():
+        return
+    shutil.rmtree(output_root)
+
+
 def summarize_context_results(results_by_context: dict[int, dict[str, Any]]) -> dict[str, Any]:
     metrics_by_name: dict[str, list[tuple[int, float]]] = {}
     for context_frames, payload in sorted(results_by_context.items()):
@@ -763,6 +770,7 @@ def main() -> None:
             "curve_metrics": curve_metrics,
             "manifest_path": str(manifest_path),
         }
+        cleanup_generation_outputs(generation_output_root)
 
     summary = summarize_context_results(results_by_context)
     payload = {

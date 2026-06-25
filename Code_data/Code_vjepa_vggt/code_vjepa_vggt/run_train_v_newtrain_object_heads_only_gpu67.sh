@@ -4,6 +4,7 @@ set -euo pipefail
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67
+RESUME_FROM="${OUTPUT_DIR}/checkpoints/step-000800"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -28,6 +29,8 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --save_steps 200 \
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
+  --resume_from "${RESUME_FROM}" \
+  --max_checkpoints_keep 2 \
   --lora_base_model dit \
   --lora_target_modules q,k,v,o,ffn.0,ffn.2 \
   --lora_rank 32 \
@@ -61,6 +64,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --validation_context_frames_list 0,1,2,4,6,8 \
   --validation_output_subdir validation100_vbench \
   --validation_vbench_config_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/vbench_paths.yaml \
+  --benchmark_cuda_visible_devices 5 \
   --report_to wandb \
   --wandb_project vjepa_vggt_wan \
   --wandb_name pybullet0625_diffsynth_object_heads_only_gpu67 \
