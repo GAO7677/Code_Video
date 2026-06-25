@@ -1,14 +1,14 @@
 """
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py \
     --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
     --output-root /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B \
-    --wan-root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
+    --wan-root Wan-AI/Wan2.2-TI2V-5B-Diffusers \
     --size 704*1280 \
+    --frame-num 25 \
     --sampling-steps 40 \
-    --sample-shift 5.0 \
     --cfg-scale 5.0 \
     --fps 30 \
     --seed 42
@@ -39,25 +39,27 @@ from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Batch-run Wan TI2V 5B on input jsons listed in a text file.")
+    parser = argparse.ArgumentParser(
+        description="Batch-run official diffusers Wan2.2 TI2V-5B on input jsons listed in a text file."
+    )
     parser.add_argument("--input-list", required=True, help="text file containing one input json path per line")
     parser.add_argument(
         "--output-root",
         default="/data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B",
-        help="output directory for mp4/json/log files",
+        help="output directory for mp4/json files",
     )
-    parser.add_argument("--wan-root", required=True, help="Wan2.2 TI2V-5B checkpoint root")
+    parser.add_argument(
+        "--wan-root",
+        required=True,
+        help="official diffusers model id or local diffusers model directory, e.g. Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+    )
     parser.add_argument("--size", default="704*1280", choices=["704*1280", "1280*704"])
-    parser.add_argument("--frame-num", type=int, default=24)
+    parser.add_argument("--frame-num", type=int, default=25)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--sample-solver", default="unipc", choices=["unipc", "dpm++"])
     parser.add_argument("--sampling-steps", type=int, default=40)
-    parser.add_argument("--sample-shift", type=float, default=5.0)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
     parser.add_argument("--offload-model", action="store_true")
-    parser.add_argument("--t5-cpu", action="store_true")
-    parser.add_argument("--convert-model-dtype", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -69,18 +71,18 @@ def main() -> None:
     args = WanTI2VArgs(
         input_list=Path(cli_args.input_list).expanduser().resolve(),
         output_root=Path(cli_args.output_root).expanduser().resolve(),
-        wan_root=Path(cli_args.wan_root).expanduser().resolve(),
+        wan_root=Path(cli_args.wan_root),
         size=str(cli_args.size),
         frame_num=resolve_default_frame_num(cli_args.frame_num),
         fps=int(cli_args.fps),
         seed=int(cli_args.seed),
-        sample_solver=str(cli_args.sample_solver),
+        sample_solver="official_diffusers",
         sampling_steps=resolve_default_sampling_steps(cli_args.sampling_steps),
-        sample_shift=resolve_default_sample_shift(cli_args.sample_shift),
+        sample_shift=resolve_default_sample_shift(None),
         cfg_scale=resolve_default_cfg_scale(cli_args.cfg_scale),
         offload_model=bool(cli_args.offload_model),
-        t5_cpu=bool(cli_args.t5_cpu),
-        convert_model_dtype=bool(cli_args.convert_model_dtype),
+        t5_cpu=False,
+        convert_model_dtype=False,
         force=bool(cli_args.force),
     )
 
@@ -109,8 +111,6 @@ def main() -> None:
     step_result_json = step_dir / "result.json"
     if step_result_json.exists():
         step_result_json.unlink()
-
-    root_log_lines = [f"[checkpoint] {args.wan_root}", f"[size] {args.size}"]
 
     try:
         for input_json_path, payload, firstframe_path in prepared_cases:

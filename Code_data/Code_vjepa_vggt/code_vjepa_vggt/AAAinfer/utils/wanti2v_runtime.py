@@ -3,7 +3,6 @@ from __future__ import annotations
 import gc
 import json
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,17 +10,16 @@ from typing import Any
 import imageio.v3 as iio
 import numpy as np
 import torch
+from diffusers import WanImageToVideoPipeline
 from PIL import Image
 
 
-WAN_REPO_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main").resolve()
-if str(WAN_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(WAN_REPO_ROOT))
-
-import wan  # type: ignore  # noqa: E402
-from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, WAN_CONFIGS  # type: ignore  # noqa: E402
-from wan.modules.model import WanModel  # type: ignore  # noqa: E402
-from wan.utils.utils import save_video  # type: ignore  # noqa: E402
+DEFAULT_NEGATIVE_PROMPT = (
+    "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, "
+    "static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, "
+    "poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, "
+    "messy background, three legs, many people in the background, walking backwards"
+)
 
 
 @dataclass
@@ -112,58 +110,101 @@ def ensure_firstframe_image(json_path: Path, payload: dict[str, Any]) -> tuple[d
     return payload, firstframe_path
 
 
+def _parse_size(size: str) -> tuple[int, int]:
+    try:
+        height_str, width_str = size.split("*", maxsplit=1)
+        height = int(height_str)
+        width = int(width_str)
+    except Exception as exc:
+        raise ValueError(f"invalid size string: {size}") from exc
+    return height, width
+
+
 def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, Any]:
+    height, width = _parse_size(args.size)
     return {
-        "model_type": "wan_ti2v_5b",
+        "model_type": "wan_ti2v_5b_diffusers",
         "input_list": str(args.input_list),
         "num_items": len(json_paths),
         "wan_root": str(args.wan_root),
-        "size": str(args.size),
+        "height": int(height),
+        "width": int(width),
         "frame_num": int(args.frame_num),
         "fps": int(args.fps),
         "seed": int(args.seed),
-        "sample_solver": str(args.sample_solver),
         "sampling_steps": int(args.sampling_steps),
-        "sample_shift": float(args.sample_shift),
         "cfg_scale": float(args.cfg_scale),
+        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
         "input_field": "input_video",
         "image_field": "input_image",
         "single_process": True,
+        "backend": "diffusers.WanImageToVideoPipeline",
     }
 
 
+class OfficialWanTI2VWrapper:
+    def __init__(self, pipe: WanImageToVideoPipeline):
+        self.pipe = pipe
+
+    def __call__(
+        self,
+        *,
+        prompt: str,
+        negative_prompt: str,
+        seed: int,
+        input_image: Image.Image,
+        height: int,
+        width: int,
+        num_frames: int,
+        cfg_scale: float,
+        num_inference_steps: int,
+    ) -> np.ndarray:
+        generator = torch.Generator(device="cuda")
+        generator.manual_seed(int(seed))
+        output = self.pipe(
+            image=input_image,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=int(height),
+            width=int(width),
+            num_frames=int(num_frames),
+            num_inference_steps=int(num_inference_steps),
+            guidance_scale=float(cfg_scale),
+            generator=generator,
+            output_type="np",
+            return_dict=True,
+        )
+        frames = output.frames
+        if isinstance(frames, torch.Tensor):
+            frames = frames.detach().cpu().numpy()
+        frames = np.asarray(frames)
+        if frames.ndim != 5:
+            raise ValueError(f"unexpected official Wan output shape: {frames.shape}")
+        return frames[0]
+
+
 def build_wan_ti2v_pipeline(args: WanTI2VArgs):
-    cfg = WAN_CONFIGS["ti2v-5B"]
-    original_from_pretrained = WanModel.from_pretrained
-
-    def _patched_from_pretrained(pretrained_model_name_or_path, **kwargs):
-        kwargs.setdefault("low_cpu_mem_usage", False)
-        kwargs.setdefault("device_map", None)
-        return original_from_pretrained(pretrained_model_name_or_path, **kwargs)
-
-    WanModel.from_pretrained = _patched_from_pretrained
-    pipe = wan.WanTI2V(
-        config=cfg,
-        checkpoint_dir=str(args.wan_root),
-        device_id=torch.cuda.current_device() if torch.cuda.is_available() else 0,
-        rank=0,
-        t5_fsdp=False,
-        dit_fsdp=False,
-        use_sp=False,
-        t5_cpu=bool(args.t5_cpu),
-        convert_model_dtype=bool(args.convert_model_dtype),
+    pipe = WanImageToVideoPipeline.from_pretrained(
+        str(args.wan_root),
+        torch_dtype=torch.bfloat16,
     )
-    WanModel.from_pretrained = original_from_pretrained
-    return pipe
+    pipe.to("cuda")
+    if hasattr(pipe, "enable_model_cpu_offload") and args.offload_model:
+        pipe.enable_model_cpu_offload()
+    return OfficialWanTI2VWrapper(pipe)
 
 
-def write_text_lines(path: Path, lines: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for line in lines:
-            handle.write(line)
-            if not line.endswith("\n"):
-                handle.write("\n")
+def save_video_np(frames: np.ndarray, save_path: Path, fps: int) -> None:
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    frames = np.asarray(frames)
+    if frames.ndim != 4:
+        raise ValueError(f"expected video array [T,H,W,C], got {frames.shape}")
+    if frames.dtype != np.uint8:
+        if frames.max() <= 1.0:
+            frames = np.clip(frames * 255.0, 0, 255).astype(np.uint8)
+        else:
+            frames = np.clip(frames, 0, 255).astype(np.uint8)
+    iio.imwrite(save_path, frames, fps=int(fps), codec="libx264")
 
 
 def run_single_case(
@@ -175,10 +216,10 @@ def run_single_case(
     firstframe_path: Path,
     output_video: Path,
 ) -> tuple[dict[str, Any], list[str]]:
-    input_video = ensure_str_field(payload, "input_video", input_json_path)
     input_caption = ensure_str_field(payload, "input_caption", input_json_path)
+    height, width = _parse_size(args.size)
 
-    image = Image.open(firstframe_path).convert("RGB")
+    image = Image.open(firstframe_path).convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
 
     logs = [
         f"[case] input_json={input_json_path}",
@@ -188,24 +229,19 @@ def run_single_case(
     ]
 
     with torch.no_grad():
-        video = pipe.generate(
-            input_prompt=input_caption,
-            img=image,
-            size=SIZE_CONFIGS[str(args.size)],
-            max_area=MAX_AREA_CONFIGS[str(args.size)],
-            frame_num=int(args.frame_num),
-            shift=float(args.sample_shift),
-            sample_solver=str(args.sample_solver),
-            sampling_steps=int(args.sampling_steps),
-            guide_scale=float(args.cfg_scale),
+        video = pipe(
+            prompt=input_caption,
+            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
             seed=int(args.seed),
-            offload_model=bool(args.offload_model),
+            input_image=image,
+            height=int(height),
+            width=int(width),
+            num_frames=int(args.frame_num),
+            cfg_scale=float(args.cfg_scale),
+            num_inference_steps=int(args.sampling_steps),
         )
 
-    output_video.parent.mkdir(parents=True, exist_ok=True)
-    if not isinstance(video, torch.Tensor) or video.ndim != 4:
-        raise ValueError(f"unexpected WanTI2V output shape: {getattr(video, 'shape', None)}")
-    save_video(video[None], str(output_video), fps=int(args.fps), nrow=1)
+    save_video_np(video, output_video, fps=int(args.fps))
 
     result = {
         "input_json": str(input_json_path),
@@ -221,6 +257,8 @@ def run_single_case(
 
 
 def cleanup_pipeline(pipe) -> None:
+    if hasattr(pipe, "pipe"):
+        del pipe.pipe
     del pipe
     gc.collect()
     if torch.cuda.is_available():
@@ -236,19 +274,19 @@ def resolve_default_frame_num(frame_num: int | None) -> int:
 def resolve_default_sample_shift(sample_shift: float | None) -> float:
     if sample_shift is not None:
         return float(sample_shift)
-    return float(WAN_CONFIGS["ti2v-5B"].sample_shift)
+    return 5.0
 
 
 def resolve_default_sampling_steps(sampling_steps: int | None) -> int:
     if sampling_steps is not None:
         return int(sampling_steps)
-    return int(WAN_CONFIGS["ti2v-5B"].sample_steps)
+    return 40
 
 
 def resolve_default_cfg_scale(cfg_scale: float | None) -> float:
     if cfg_scale is not None:
         return float(cfg_scale)
-    return float(WAN_CONFIGS["ti2v-5B"].sample_guide_scale)
+    return 5.0
 
 
 def ensure_cuda_env() -> None:
