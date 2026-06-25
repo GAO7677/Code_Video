@@ -1,5 +1,14 @@
 # 0624 训练链路排查记录
 换了一个训练架构
+
+## 2026-06-25 补充
+
+- 当前 `train_v_newtrain.py` 的 object-heads-only strict 方案里，`object_pooler.depth_proj.*` 和 `object_pooler.world_proj.*` 已显式冻结。
+- 原因不是这两组参数有 bug，而是当前训练前向没有向 `ObjectTubeProjector.forward()` 传入 `vggt_depth / vggt_world_points`，所以这条 VGGT 几何分支根本不会被执行。
+- 现在的文档口径统一为：
+  - `object_pooler` 里真正参与当前 strict 训练的是 `jepa_proj / latent_proj / track_geom_proj / out_norm`
+  - `depth_proj / world_proj` 属于“结构上存在、当前方案未接线”的子模块，不再计入有效 trainable 集合
+
 ## 当前目标
 
 - 让 object 条件分支真正参与主去噪损失回传，而不是只靠 `object_aux_heads`

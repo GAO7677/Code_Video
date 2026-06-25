@@ -203,7 +203,9 @@ def run_single_case(
         )
 
     output_video.parent.mkdir(parents=True, exist_ok=True)
-    save_video(video, str(output_video), fps=int(args.fps))
+    if not isinstance(video, torch.Tensor) or video.ndim != 4:
+        raise ValueError(f"unexpected WanTI2V output shape: {getattr(video, 'shape', None)}")
+    save_video(video[None], str(output_video), fps=int(args.fps), nrow=1)
 
     result = {
         "input_json": str(input_json_path),
@@ -228,7 +230,7 @@ def cleanup_pipeline(pipe) -> None:
 def resolve_default_frame_num(frame_num: int | None) -> int:
     if frame_num is not None:
         return int(frame_num)
-    return 24
+    return 25
 
 
 def resolve_default_sample_shift(sample_shift: float | None) -> float:

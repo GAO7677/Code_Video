@@ -154,7 +154,7 @@
 - 目的
     - 在第 4 条基础上进一步收紧
     - 直接冻结所有非 object trainable 参数
-    - 严格只保留 `object_pooler + object_aux_heads` 为 `requires_grad=True`
+    - 严格只保留当前真正参与前向的 `object_pooler + object_aux_heads` 为 `requires_grad=True`
 - 启动脚本
     - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_strict_gpu67.sh`
 - 前台启动命令
@@ -166,7 +166,31 @@
     - `--train_object_pooler`
     - `--train_object_aux_heads`
     - `--freeze_non_object_trainables`
-        - `changed_count = 902`
+- 当前代码口径
+    - `train_v_newtrain.py` 已显式冻结：
+        - `object_pooler.depth_proj.*`
+        - `object_pooler.world_proj.*`
+    - 原因
+        - 当前 `v_newtrain` 训练前向没有给 `object_pooler` 传 `vggt_depth` / `vggt_world_points`
+        - 所以这两组 VGGT 几何投影层虽然属于 `object_pooler`，但实际不会进入 forward，也不会有梯度
+    - 因此这版 strict run 里实际参与更新的是：
+        - `object_pooler.jepa_proj`
+        - `object_pooler.latent_proj`
+        - `object_pooler.track_geom_proj`
+        - `object_pooler.out_norm`
+        - `object_aux_heads.track_head`
+        - `object_aux_heads.box_head`
+        - `object_aux_heads.depth_head`
+        - `object_aux_heads` 的几个 gate / logit 参数
+- 最新 smoke 验证（2026-06-25）
+    - 输出目录：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_object_heads_only_strict_postfreeze`
+    - 结果：
+        - `num_trainable = 31`
+        - `with_grad = 31`
+        - `without_grad = 0`
+        - `changed_count = 31`
+        - `unchanged_count = 0`
 - v_newtrain 专用推理脚本
     - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py`
 - 单 checkpoint 推理命令
