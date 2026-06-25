@@ -43,6 +43,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --cotracker_input_h 384 \
   --cotracker_input_w 512 \
   --cotracker_window_len 60 \
+  --vggt_cache_root /data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache \
   --object_pooler_latent_dim 16 \
   --cond_proj_dim 4096 \
   --jepa_window_radius 1 \

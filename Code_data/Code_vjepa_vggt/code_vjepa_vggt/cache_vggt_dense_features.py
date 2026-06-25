@@ -7,9 +7,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.backends.cudnn as cudnn
 from decord import VideoReader, cpu
 
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
+from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, read_video_prefix, read_video_uniform
 
@@ -108,7 +110,7 @@ def _resolve_model_config(args: argparse.Namespace) -> None:
 
 def _prepare_vggt_input(frames_thwc_uint8: np.ndarray, input_hw: tuple[int, int]) -> torch.Tensor:
     video_cthw_01 = preprocess_video_rgb_uint8(frames_thwc_uint8, input_hw, value_range="zero_to_one")
-    return video_cthw_01.permute(1, 2, 3, 0).contiguous().unsqueeze(0)
+    return video_cthw_01.permute(1, 0, 2, 3).contiguous().unsqueeze(0)
 
 
 def _cache_one_video(
@@ -137,6 +139,7 @@ def _cache_one_video(
             frames=int(frames_bthwc_01.shape[1]),
         )
 
+    dense_patch_tokens_cpu = dense_patch_tokens.squeeze(0).detach().cpu().to(torch.float16).contiguous()
     payload = {
         "source_video": str(video_path),
         "output_file": str(output_path),
@@ -145,16 +148,78 @@ def _cache_one_video(
         "input_hw": [int(adapter.input_hw[0]), int(adapter.input_hw[1])],
         "patch_size": int(adapter.patch_size),
         "patch_grid_hw": [int(patch_grid_hw[0]), int(patch_grid_hw[1])],
-        "dense_patch_tokens": dense_patch_tokens.squeeze(0).detach().cpu().contiguous(),
-        "dense_patch_tokens_shape": list(dense_patch_tokens.squeeze(0).shape),
+        "dense_patch_tokens": dense_patch_tokens_cpu,
+        "dense_patch_tokens_shape": list(dense_patch_tokens_cpu.shape),
         "aggregated_last_shape": list(aggregated_tokens_list[-1].shape),
         "patch_start_idx": int(patch_start_idx),
-        "dtype": str(dtype),
+        "dtype": "torch.float16",
         "model_path": str(adapter.model_path),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, output_path)
     return payload
+
+
+def _cache_one_dataset_sample(
+    adapter: VGGTTrackAdapter,
+    sample: dict[str, object],
+    output_path: Path,
+) -> dict[str, object]:
+    context_video = sample.get("context_video")
+    if not isinstance(context_video, torch.Tensor):
+        raise TypeError(f"sample['context_video'] must be a tensor, got {type(context_video)}")
+    if context_video.ndim != 4:
+        raise ValueError(f"context_video must have shape [C,T,H,W], got {list(context_video.shape)}")
+    context_video_thwc = context_video.permute(1, 2, 3, 0).contiguous().cpu().numpy()
+    frames_bthwc_01 = _prepare_vggt_input(context_video_thwc, adapter.input_hw).to(
+        device=next(adapter.model.parameters()).device,  # type: ignore[union-attr]
+        dtype=next(adapter.model.parameters()).dtype,  # type: ignore[union-attr]
+    )
+    with torch.no_grad():
+        aggregated_tokens_list, patch_start_idx = adapter.model.shortcut_forward(frames_bthwc_01)  # type: ignore[union-attr]
+        dense_patch_tokens, patch_grid_hw = adapter._dense_patch_tokens_from_aggregated(
+            aggregated_tokens_list,
+            patch_start_idx,
+            batch_size=1,
+            frames=int(frames_bthwc_01.shape[1]),
+        )
+    source_video = str(sample.get("video_path", ""))
+    dense_patch_tokens_cpu = dense_patch_tokens.squeeze(0).detach().cpu().to(torch.float16).contiguous()
+    payload = {
+        "source_video": source_video,
+        "output_file": str(output_path),
+        "frame_indices": sample.get("context_frame_indices", torch.arange(frames_bthwc_01.shape[1])).tolist()
+        if isinstance(sample.get("context_frame_indices"), torch.Tensor)
+        else list(range(int(frames_bthwc_01.shape[1]))),
+        "num_frames": int(frames_bthwc_01.shape[1]),
+        "input_hw": [int(adapter.input_hw[0]), int(adapter.input_hw[1])],
+        "patch_size": int(adapter.patch_size),
+        "patch_grid_hw": [int(patch_grid_hw[0]), int(patch_grid_hw[1])],
+        "dense_patch_tokens": dense_patch_tokens_cpu,
+        "dense_patch_tokens_shape": list(dense_patch_tokens_cpu.shape),
+        "aggregated_last_shape": list(aggregated_tokens_list[-1].shape),
+        "patch_start_idx": int(patch_start_idx),
+        "dtype": "torch.float16",
+        "model_path": str(adapter.model_path),
+        "sample_name": Path(source_video).stem if source_video else None,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, output_path)
+    return payload
+
+
+def _json_safe(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().tolist()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def main() -> None:
@@ -164,6 +229,11 @@ def main() -> None:
     parser.add_argument("--vggt-input-h", type=int, default=420)
     parser.add_argument("--vggt-input-w", type=int, default=728)
     parser.add_argument("--device", default="auto", help="cuda:0 / cpu / auto")
+    parser.add_argument("--dataset-root", default=None, help="phys_state dataset root")
+    parser.add_argument("--dataset-split", default="train")
+    parser.add_argument("--dataset-limit", type=int, default=None)
+    parser.add_argument("--dataset-start", type=int, default=0)
+    parser.add_argument("--dataset-end", type=int, default=None)
     parser.add_argument("--input-video", default=None, help="single video path")
     parser.add_argument("--input-list", default=None, help="text file with one video path per line")
     parser.add_argument("--input-dir", default=None, help="directory to scan for video files")
@@ -172,6 +242,9 @@ def main() -> None:
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    cudnn.enabled = False
+    cudnn.benchmark = False
+    cudnn.deterministic = False
 
     args._parser_defaults = {  # type: ignore[attr-defined]
         "vggt_model_path": parser.get_default("vggt_model_path"),
@@ -198,49 +271,88 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "manifest.jsonl"
 
-    video_paths = _iter_input_videos(args)
     results: list[dict[str, object]] = []
-    for video_path in video_paths:
-        stem = video_path.stem
-        output_path = output_dir / f"{stem}.vggt.pt"
-        if output_path.exists() and not args.overwrite:
-            results.append(
-                {
-                    "source_video": str(video_path),
-                    "output_file": str(output_path),
-                    "skipped": True,
-                }
+    if args.dataset_root is not None:
+        dataset = PhysStateEpisodeDataset(
+            root=args.dataset_root,
+            split=str(args.dataset_split),
+            resolution=(512, 896),
+            num_context_frames=int(args.num_frames) if args.num_frames is not None else 8,
+            context_fraction=0.5,
+            random_context_frames=False,
+            seed=42,
+        )
+        start_idx = max(0, int(args.dataset_start))
+        end_idx = len(dataset) if args.dataset_end is None else min(len(dataset), int(args.dataset_end))
+        if start_idx >= end_idx:
+            raise ValueError(f"invalid dataset range [{start_idx}, {end_idx}) for dataset size {len(dataset)}")
+        limit = end_idx if args.dataset_limit is None else min(end_idx, start_idx + int(args.dataset_limit))
+        for idx in range(start_idx, limit):
+            sample = dataset[idx]
+            video_path = str(sample.get("video_path", f"sample_{idx:06d}"))
+            stem = Path(video_path).stem
+            output_path = output_dir / f"{stem}.vggt.pt"
+            if output_path.exists() and not args.overwrite:
+                results.append({"source_video": video_path, "output_file": str(output_path), "skipped": True})
+                continue
+            payload = _cache_one_dataset_sample(adapter, sample, output_path)
+            results.append(payload)
+            print(
+                json.dumps(
+                    {
+                        "source_video": payload["source_video"],
+                        "output_file": payload["output_file"],
+                        "num_frames": payload["num_frames"],
+                        "patch_grid_hw": payload["patch_grid_hw"],
+                        "dense_patch_tokens_shape": payload["dense_patch_tokens_shape"],
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
             )
-            continue
-        payload = _cache_one_video(
-            adapter,
-            video_path,
-            output_path,
-            num_frames=args.num_frames,
-            sampling_mode=args.sampling_mode,
-        )
-        results.append(payload)
-        print(
-            json.dumps(
-                {
-                    "source_video": payload["source_video"],
-                    "output_file": payload["output_file"],
-                    "num_frames": payload["num_frames"],
-                    "patch_grid_hw": payload["patch_grid_hw"],
-                    "dense_patch_tokens_shape": payload["dense_patch_tokens_shape"],
-                },
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
+    else:
+        video_paths = _iter_input_videos(args)
+        for video_path in video_paths:
+            stem = video_path.stem
+            output_path = output_dir / f"{stem}.vggt.pt"
+            if output_path.exists() and not args.overwrite:
+                results.append(
+                    {
+                        "source_video": str(video_path),
+                        "output_file": str(output_path),
+                        "skipped": True,
+                    }
+                )
+                continue
+            payload = _cache_one_video(
+                adapter,
+                video_path,
+                output_path,
+                num_frames=args.num_frames,
+                sampling_mode=args.sampling_mode,
+            )
+            results.append(payload)
+            print(
+                json.dumps(
+                    {
+                        "source_video": payload["source_video"],
+                        "output_file": payload["output_file"],
+                        "num_frames": payload["num_frames"],
+                        "patch_grid_hw": payload["patch_grid_hw"],
+                        "dense_patch_tokens_shape": payload["dense_patch_tokens_shape"],
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
 
     with manifest_path.open("w", encoding="utf-8") as handle:
         for item in results:
-            handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(_json_safe(item), ensure_ascii=False) + "\n")
 
     summary = {
         "device": device,
-        "num_videos": len(video_paths),
+        "num_items": len(results),
         "output_dir": str(output_dir),
         "manifest": str(manifest_path),
     }

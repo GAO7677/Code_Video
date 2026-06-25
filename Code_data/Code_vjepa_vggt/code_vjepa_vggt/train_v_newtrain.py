@@ -702,10 +702,13 @@ class WanTrainingModule(DiffusionTrainingModule):
         )
         vggt_out: VGGTTrackAdapter | VGGTDenseCache | None = None
         if self.vggt_cache_root:
-            cache = load_vggt_cache(sample, self.vggt_cache_root, allow_missing=True)
-            if cache is not None:
-                vggt_out = cache
+            cache = load_vggt_cache(sample, self.vggt_cache_root, allow_missing=False)
+            vggt_out = cache
         if vggt_out is None:
+            if self.vggt_cache_root:
+                raise RuntimeError(
+                    f"VGGT cache root is set but no cache found for sample {sample.get('video_path', '<unknown>')}"
+                )
             vggt_out = self.vggt_adapter(
                 frames_bthwc_01,
                 query_points_prior=query_points_prior,

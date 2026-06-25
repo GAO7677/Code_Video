@@ -180,9 +180,9 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
 
 VGGT 侧输出：
 
-- `dense_patch_tokens`: `[1, T, 30, 52, 2048]`
+- `dense_patch_tokens`: `[1, T, 20, 36, 2048]`
 - `depth`: 对应原图或等价几何网格上的 depth 特征
-- `patch_grid_hw = (30, 52)`
+- `patch_grid_hw = (20, 36)`
 
 object pooler 把 CoTracker 点映射到 VGGT 特征图上，采样得到：
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""对 ball_block 视频跑 PDI + JEPA 评分，回填 JSON，可视化
+"""Batch report for ball_block videos.
+
+Single-case scoring now lives in `physv_eval.single_case.ball_block`.
+This script keeps only the dataset loop, metadata persistence, HTML report
+generation, and optional local HTTP serving.
 
 用法: conda run -n wan python eval_ball_block.py [--skip-pdi] [--skip-jepa] [--port 18703]
 """
@@ -8,129 +12,15 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
-from physv_eval.official_pdi import run_single_case as run_pdi_single_case
-from physv_eval.proxy_runner import score_single_case as score_proxy_single_case
-from physv_eval.wmreward_official import score_single_case as score_wmreward_single_case
+from physv_eval.single_case.ball_block import score_case as score_ball_block_case
 
 DATA_DIR = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp")
 VIDEO_DIR = DATA_DIR / "videos" / "ball_block"
-PDI_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_benchmark/PDI-Bench-main")
-TMP_DIR = DATA_DIR / "tmp_eval"
 REPORT_DIR = DATA_DIR / "eval_report"
-
-
-def run_pdi(video_path: Path, output_dir: Path) -> dict | None:
-    stem = video_path.stem
-    output_dir.mkdir(parents=True, exist_ok=True)
-    # PDI-Bench creates a subdir named after the video stem inside output_dir
-    report_dir = output_dir / stem
-    report_path = report_dir / f"{stem}_pdi_report.txt"
-
-    if not report_path.exists():
-        wrapper = TMP_DIR / "_pdi_wrapper.py"
-        wrapper.parent.mkdir(parents=True, exist_ok=True)
-        wrapper.write_text(
-            "import sys, os\n"
-            "# Pre-import flash_attn when available; some envs do not ship it.\n"
-            "try:\n"
-            "    import flash_attn\n"
-            "    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input\n"
-            "    from flash_attn.layers.rotary import apply_rotary_emb\n"
-            "    from flash_attn.flash_attn_interface import flash_attn_func\n"
-            "except Exception:\n"
-            "    pass\n"
-            "sys.argv = [sys.argv[0], '--input', sys.argv[1], '--text', sys.argv[2], '--output_dir', sys.argv[3]]\n"
-            "import runpy\n"
-            "runpy.run_path('evaluation/main.py', run_name='__main__')\n"
-        )
-        cmd = [
-            sys.executable, "-u", str(wrapper),
-            str(video_path), "ball", str(output_dir),
-        ]
-        # Ensure tracker checkpoint doesn't block torch.hub fallback
-        tracker_ckpt = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth"
-        tracker_bak = PDI_ROOT / "checkpoints/tracker/scaled_offline.pth.bak"
-        renamed_tracker_ckpt = False
-        if tracker_ckpt.exists() and not tracker_bak.exists():
-            tracker_ckpt.rename(tracker_bak)
-            renamed_tracker_ckpt = True
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(PDI_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
-        env["PDI_FLORENCE_MODEL_ID"] = "/data/gaoya/ckpt/microsoft-Florence-2-base"
-        try:
-            r = subprocess.run(cmd, cwd=PDI_ROOT, env=env, capture_output=True, text=True)
-        finally:
-            if renamed_tracker_ckpt and tracker_bak.exists() and not tracker_ckpt.exists():
-                tracker_bak.rename(tracker_ckpt)
-        if r.returncode != 0:
-            print(f"    FAILED: {r.stderr[-200:]}")
-            return None
-
-    text = report_path.read_text()
-
-    def ex(pat, cast=None):
-        m = re.search(pat, text)
-        return cast(m.group(1)) if (m and cast) else (m.group(1) if m else None)
-
-    return {
-        "pdi_score": ex(r"FINAL PDI SCORE:\s*([0-9.]+)", float),
-        "grade": ex(r"OVERALL GRADE:\s*([A-Z+-]+)"),
-        "scale_error": ex(r"Scale Component .*?:\s*([0-9.]+)", float),
-        "traj_error": ex(r"Trajectory Component .*?:\s*([0-9.]+)", float),
-        "rigidity_error": ex(r"Epsilon Rigidity:\s*([0-9.]+)", float),
-        "vp_error": ex(r"VP Component .*?:\s*([0-9.]+)", float),
-    }
-
-
-def run_jepa(video_path: Path) -> dict | None:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from rerank_video.scorers import JEPAPredictiveScorer
-    from rerank_video.schemas import JEPAScoreConfig
-    from rerank_video.video_utils import load_video_frames, uniform_subsample_frames, ensure_dir
-    import cv2, numpy as np
-
-    frames = load_video_frames(video_path)
-    total = len(frames)
-    if total < 30:
-        return None
-    split = min(60, total // 2)
-    ctx = uniform_subsample_frames(frames[:split], 8)
-    fut = uniform_subsample_frames(frames[split:], 16)
-
-    tmp = ensure_dir(TMP_DIR / "jepa" / video_path.stem)
-    ctx_p = tmp / "context.mp4"
-    fut_p = tmp / "future.mp4"
-
-    def wv(p, frs):
-        h, w = frs[0].shape[:2]
-        out = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 16, (w, h))
-        for f in frs: out.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
-        out.release()
-    wv(ctx_p, ctx)
-    wv(fut_p, fut)
-
-    scorer = JEPAPredictiveScorer(JEPAScoreConfig(
-        backend="vjepa2", device="cuda", max_frames=32,
-        context_frames=8, future_frames=16, context_repeat_frames=8, crop_size=384,
-        vjepa_checkpoint=Path("/data/gaoya/ckpt/VJEPA2/vjepa2_1_vitl_dist_vitG_384.pt"),
-        vjepa_repo_root=Path("/home/gaoya/Code_Video/vjepa2-main"),
-        vjepa_model_name="vjepa2_1_vit_large_384",
-    ))
-    score, details = scorer.score(context_video_path=ctx_p, candidate_video_path=fut_p)
-    return {"jepa_score": float(score)}
-
-
-def run_single_case(video_path: Path, caption: str, *, output_dir: Path | None = None) -> dict[str, object]:
-    return {
-        "pdi": run_pdi(video_path, output_dir or (TMP_DIR / "pdi" / video_path.stem)),
-        "jepa": run_jepa(video_path),
-        "caption": caption,
-    }
 
 
 def gen_html(results: list[dict]) -> Path:
@@ -194,26 +84,29 @@ def main():
         meta = json.loads(jp.read_text()) if jp.exists() else {}
         print(f"[{name}]")
 
-        if not args.skip_pdi:
-            print("  PDI...", end=" ", flush=True)
-            pdi = run_pdi(vp, TMP_DIR / "pdi" / name)
-            if pdi:
-                meta["pdi"] = pdi
-                print(f"PDI={pdi['pdi_score']:.4f} grade={pdi['grade']}")
-            else:
-                print("FAILED")
-
-        if not args.skip_jepa:
-            print("  JEPA...", end=" ", flush=True)
-            try:
-                jepa = run_jepa(vp)
+        if not args.skip_pdi or not args.skip_jepa:
+            result = score_ball_block_case(
+                vp,
+                caption="ball",
+                skip_pdi=args.skip_pdi,
+                skip_jepa=args.skip_jepa,
+            )
+            if not args.skip_pdi:
+                print("  PDI...", end=" ", flush=True)
+                pdi = result.get("pdi")
+                if pdi:
+                    meta["pdi"] = pdi
+                    print(f"PDI={pdi['pdi_score']:.4f} grade={pdi['grade']}")
+                else:
+                    print("FAILED")
+            if not args.skip_jepa:
+                print("  JEPA...", end=" ", flush=True)
+                jepa = result.get("jepa")
                 if jepa:
                     meta["jepa"] = jepa
                     print(f"JEPA={jepa['jepa_score']:.4f}")
                 else:
                     print("FAILED")
-            except Exception as e:
-                print(f"FAILED: {e}")
 
         meta["name"] = name
         jp.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
