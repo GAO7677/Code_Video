@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import http.server
 import json
-import socketserver
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +20,6 @@ from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
     colorize_scalar_video,
     draw_box_rgb,
     draw_point_rgb,
-    ensure_browser_video,
-    write_mp4,
 )
 
 
@@ -83,6 +79,52 @@ def _write_contact_sheet(path: Path, frames_thwc_uint8: np.ndarray, *, title: st
     path.parent.mkdir(parents=True, exist_ok=True)
     image = _build_contact_sheet(frames_thwc_uint8, title=title)
     image.save(path, format="PNG")
+    return path
+
+
+def _write_scalar_panel(
+    path: Path,
+    values: np.ndarray,
+    *,
+    title: str,
+    cell_w: int = 220,
+    row_h: int = 56,
+    pad: int = 16,
+) -> Path:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    if arr.ndim != 2:
+        raise ValueError(f"expected [T,N], got {arr.shape}")
+    rows, cols = arr.shape
+    valid = np.isfinite(arr)
+    if np.any(valid):
+        lo = float(np.min(arr[valid]))
+        hi = float(np.max(arr[valid]))
+    else:
+        lo, hi = 0.0, 1.0
+    if hi - lo < 1.0e-6:
+        hi = lo + 1.0
+    title_h = 42
+    label_w = 86
+    canvas_w = label_w + cols * cell_w + (cols + 1) * pad
+    canvas_h = title_h + rows * row_h + (rows + 1) * pad
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color=(246, 244, 238))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((pad, 10), title, fill=(20, 20, 20))
+    for r in range(rows):
+        y0 = title_h + pad + r * row_h
+        draw.text((pad, y0 + 16), f"frame {r}", fill=(40, 40, 40))
+        for c in range(cols):
+            x0 = label_w + pad + c * cell_w
+            v = float(arr[r, c])
+            norm = max(0.0, min(1.0, (v - lo) / (hi - lo)))
+            color = tuple(int(x) for x in colorize_scalar_video(np.array([[[norm]]], dtype=np.float32))[0, 0, 0])
+            draw.rounded_rectangle((x0, y0, x0 + cell_w - 12, y0 + row_h - 10), radius=8, fill=color, outline=(180, 180, 180))
+            text_fill = (255, 255, 255) if norm > 0.45 else (20, 20, 20)
+            draw.text((x0 + 10, y0 + 16), f"{v:.6f}", fill=text_fill)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(path, format="PNG")
     return path
 
 
@@ -170,8 +212,28 @@ def _xy_to_px(xy: np.ndarray, image_hw: tuple[int, int]) -> np.ndarray:
     )
 
 
+def _decode_summary_background_frames(
+    pipe,
+    clean_prefix_latents: torch.Tensor,
+) -> np.ndarray:
+    with torch.no_grad():
+        pipe.load_models_to_device(["vae"])
+        decoded = pipe.vae.decode_framewise(
+            clean_prefix_latents.to(device=pipe.device, dtype=pipe.torch_dtype),
+            device=pipe.device,
+        )
+        pipe.load_models_to_device([])
+    return np.stack(
+        [
+            tensor_frame_to_uint8_hwc(decoded[0, :, frame_idx])
+            for frame_idx in range(int(decoded.shape[2]))
+        ],
+        axis=0,
+    )
+
+
 def _render_box_overlay(
-    context_video: torch.Tensor,
+    background_frames: np.ndarray,
     gt_box_xyxy: np.ndarray,
     gt_box_valid: np.ndarray,
     pred_box_xyxy: np.ndarray,
@@ -179,16 +241,9 @@ def _render_box_overlay(
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
-    latent_frames = int(gt_box_xyxy.shape[0])
-    source_frames = int(context_video.shape[1])
-    if latent_frames > 0 and source_frames % latent_frames == 0:
-        group = source_frames // latent_frames
-        latent_to_source = np.arange(group - 1, source_frames, group, dtype=np.int64)
-    else:
-        latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    latent_frames = min(int(background_frames.shape[0]), int(gt_box_xyxy.shape[0]), int(pred_box_xyxy.shape[0]))
     for latent_idx in range(latent_frames):
-        src_idx = int(latent_to_source[latent_idx])
-        frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        frame = np.asarray(background_frames[latent_idx], dtype=np.uint8).copy()
         for obj_idx in range(gt_box_xyxy.shape[1]):
             if bool(gt_box_valid[latent_idx, obj_idx]):
                 draw_box_rgb(
@@ -259,7 +314,7 @@ def _tracks_to_radius_boxes(
 
 
 def _render_track_overlay(
-    context_video: torch.Tensor,
+    background_frames: np.ndarray,
     gt_track_summary: np.ndarray,
     gt_track_valid: np.ndarray,
     pred_track_summary: np.ndarray,
@@ -267,16 +322,9 @@ def _render_track_overlay(
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
-    latent_frames = int(gt_track_summary.shape[0])
-    source_frames = int(context_video.shape[1])
-    if latent_frames > 0 and source_frames % latent_frames == 0:
-        group = source_frames // latent_frames
-        latent_to_source = np.arange(group - 1, source_frames, group, dtype=np.int64)
-    else:
-        latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    latent_frames = min(int(background_frames.shape[0]), int(gt_track_summary.shape[0]), int(pred_track_summary.shape[0]))
     for latent_idx in range(latent_frames):
-        src_idx = int(latent_to_source[latent_idx])
-        frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        frame = np.asarray(background_frames[latent_idx], dtype=np.uint8).copy()
         for obj_idx in range(gt_track_summary.shape[1]):
             if bool(pred_track_valid[latent_idx, obj_idx]):
                 pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
@@ -492,6 +540,57 @@ def _render_depth_panel(
         panel = np.concatenate([left, pad, right], axis=1)
         frames.append(panel)
     return np.stack(frames, axis=0)
+
+
+def _render_depth_overlay(
+    background_frames: np.ndarray,
+    gt_box_xyxy: np.ndarray,
+    gt_box_valid: np.ndarray,
+    pred_box_xyxy: np.ndarray,
+    pred_box_valid: np.ndarray,
+    gt_depth: np.ndarray,
+    gt_depth_valid: np.ndarray,
+    pred_depth: np.ndarray,
+    image_hw: tuple[int, int],
+) -> np.ndarray:
+    frames: list[np.ndarray] = []
+    total_frames = min(
+        int(background_frames.shape[0]),
+        int(gt_box_xyxy.shape[0]),
+        int(pred_box_xyxy.shape[0]),
+        int(gt_depth.shape[0]),
+        int(pred_depth.shape[0]),
+    )
+    for frame_idx in range(total_frames):
+        frame = np.asarray(background_frames[frame_idx], dtype=np.uint8).copy()
+        for obj_idx in range(gt_box_xyxy.shape[1]):
+            if bool(gt_box_valid[frame_idx, obj_idx]):
+                gt_box_px = _norm_box_to_px(gt_box_xyxy[frame_idx, obj_idx], image_hw)
+                draw_box_rgb(frame, gt_box_px, BOX_GT_COLOR, f"gt{obj_idx}")
+            if bool(pred_box_valid[frame_idx, obj_idx]):
+                pred_box_px = _norm_box_to_px(pred_box_xyxy[frame_idx, obj_idx], image_hw)
+                draw_box_rgb(frame, pred_box_px, BOX_PRED_COLOR, f"pred{obj_idx}")
+            if bool(gt_depth_valid[frame_idx, obj_idx]):
+                label_xy = _norm_box_to_px(gt_box_xyxy[frame_idx, obj_idx], image_hw)[:2]
+                draw_point_rgb(frame, label_xy, TRACK_GT_COLOR, f"dgt={float(gt_depth[frame_idx, obj_idx]):.3f}", radius=3)
+                if bool(pred_box_valid[frame_idx, obj_idx]):
+                    pred_xy = _norm_box_to_px(pred_box_xyxy[frame_idx, obj_idx], image_hw)[:2]
+                    draw_point_rgb(frame, pred_xy, TRACK_PRED_COLOR, f"dp={float(pred_depth[frame_idx, obj_idx]):.3f}", radius=3)
+        frames.append(frame)
+    return np.stack(frames, axis=0)
+
+
+def _overlay_metric_lines(
+    frames: np.ndarray,
+    *,
+    title: str,
+    per_frame_metrics: list[list[str]],
+) -> np.ndarray:
+    return _annotate_video_with_lines(
+        frames,
+        title=title,
+        lines_per_frame=per_frame_metrics,
+    )
 
 
 def _compute_aux_metrics(
@@ -720,7 +819,6 @@ def _run_case_for_checkpoint(
     checkpoint_label: str,
     sample_index: int,
     fps: int,
-    image_only: bool,
 ) -> dict[str, Any]:
     pipe = model.pipe
     device = torch.device(pipe.device)
@@ -847,30 +945,24 @@ def _run_case_for_checkpoint(
             gt_depth = model._group_last(matched_gt_depth, latent_frames)
             pred_depth = object_aux_out.pred_depth
             gt_depth_valid = gt_box_valid.unsqueeze(-1)
+        summary_background = _decode_summary_background_frames(pipe, clean_prefix_latents)
 
     case_stem = f"case_{sample_index:05d}__{checkpoint_label}"
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    def _export_media(
+    def _export_sheet(
         frames: np.ndarray,
         *,
         stem: str,
         title: str,
-        fps_value: int,
-    ) -> tuple[str | None, str]:
-        raw_path = assets_dir / f"{case_stem}__{stem}.mp4"
+    ) -> str:
         sheet_path = _write_contact_sheet(
             assets_dir / f"{case_stem}__{stem}_sheet.png",
             frames,
             title=title,
         )
-        video_rel: str | None = None
-        if not image_only:
-            write_mp4(raw_path, frames, fps=fps_value)
-            browser_path = ensure_browser_video(raw_path)
-            video_rel = str(browser_path.relative_to(output_dir))
-        return video_rel, str(sheet_path.relative_to(output_dir))
+        return str(sheet_path.relative_to(output_dir))
 
     gt_track_summary_np = gt_track_summary[0].detach().float().cpu().numpy()
     gt_track_valid_np = gt_track_valid[0].detach().cpu().numpy() > 0.5
@@ -893,33 +985,21 @@ def _run_case_for_checkpoint(
     ) & pred_valid_np[None, :]
 
     box_video = _render_box_overlay(
-        sample["context_video"],
+        summary_background,
         gt_box_xyxy_np,
         gt_box_valid_np,
         pred_box_xyxy_np,
         pred_box_valid_np,
         image_hw,
     )
-    box_browser, box_sheet = _export_media(
-        box_video,
-        stem="box_overlay",
-        title=f"{checkpoint_label} case {sample_index} box overlay",
-        fps_value=fps,
-    )
 
     track_video = _render_track_overlay(
-        sample["context_video"],
+        summary_background,
         gt_track_summary_np,
         gt_track_valid_np,
         pred_track_summary_np,
         pred_track_valid_np,
         image_hw,
-    )
-    track_browser, track_sheet = _export_media(
-        track_video,
-        stem="track_overlay",
-        title=f"{checkpoint_label} case {sample_index} track overlay",
-        fps_value=fps,
     )
 
     native_box_video = _render_native_box_overlay(
@@ -930,11 +1010,10 @@ def _run_case_for_checkpoint(
         pred_box_native_valid_np,
         image_hw,
     )
-    native_box_browser, native_box_sheet = _export_media(
+    native_box_sheet = _export_sheet(
         native_box_video,
         stem="native_box_overlay",
         title=f"{checkpoint_label} case {sample_index} native frame box overlay",
-        fps_value=fps,
     )
 
     native_track_video = _render_native_track_overlay(
@@ -945,27 +1024,35 @@ def _run_case_for_checkpoint(
         pred_track_native_valid_np,
         image_hw,
     )
-    native_track_browser, native_track_sheet = _export_media(
+    native_track_sheet = _export_sheet(
         native_track_video,
         stem="native_track_overlay",
         title=f"{checkpoint_label} case {sample_index} native frame track overlay",
-        fps_value=fps,
     )
 
-    depth_video_rel = None
     depth_sheet_rel = None
+    depth_overlay_sheet_rel = None
     if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
         gt_depth_np = gt_depth[0, ..., 0].detach().float().cpu().numpy()
         pred_depth_np = pred_depth[0, ..., 0].detach().float().cpu().numpy()
         gt_depth_valid_np = gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5
         depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
-        depth_browser, depth_sheet_rel = _export_media(
+        depth_sheet_rel = _export_sheet(
             depth_video,
             stem="depth_panel",
             title=f"{checkpoint_label} case {sample_index} depth panel",
-            fps_value=max(1, min(fps, 8)),
         )
-        depth_video_rel = depth_browser
+        depth_overlay_video = _render_depth_overlay(
+            summary_background,
+            gt_box_xyxy_np,
+            gt_box_valid_np,
+            pred_box_xyxy_np,
+            pred_box_valid_np,
+            gt_depth_np,
+            gt_depth_valid_np,
+            pred_depth_np,
+            image_hw,
+        )
 
     track_center_frame_l1, track_delta_frame_l1, track_total_frame_l1 = _compute_framewise_track_summary_losses(
         pred_track_summary=pred_track_summary_np,
@@ -992,6 +1079,70 @@ def _run_case_for_checkpoint(
             gt_depth=gt_depth[0, ..., 0].detach().float().cpu().numpy(),
             gt_depth_valid=gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5,
         )
+
+    track_overlay_metrics = [
+        [
+            f"track_total={float(track_total_frame_l1[t, 0]):.6f}",
+            f"track_center={float(track_center_frame_l1[t, 0]):.6f}",
+            f"track_delta={float(track_delta_frame_l1[t, 0]):.6f}",
+        ]
+        for t in range(track_total_frame_l1.shape[0])
+    ]
+    box_overlay_metrics = [
+        [
+            f"box_total={float(box_total_frame_l1[t, 0]):.6f}",
+            f"box_center={float(box_center_frame_l1[t, 0]):.6f}",
+            f"box_wh={float(box_wh_frame_l1[t, 0]):.6f}",
+            f"box_iou={float(box_iou_frame_l1[t, 0]):.6f}",
+        ]
+        for t in range(box_total_frame_l1.shape[0])
+    ]
+    track_video = _overlay_metric_lines(
+        track_video,
+        title="track aux on decoded summary latent",
+        per_frame_metrics=track_overlay_metrics,
+    )
+    box_video = _overlay_metric_lines(
+        box_video,
+        title="box aux on decoded summary latent",
+        per_frame_metrics=box_overlay_metrics,
+    )
+    if depth_frame_l1 is not None and depth_overlay_sheet_rel is not None:
+        depth_overlay_video = _render_depth_overlay(
+            summary_background,
+            gt_box_xyxy_np,
+            gt_box_valid_np,
+            pred_box_xyxy_np,
+            pred_box_valid_np,
+            gt_depth_np,
+            gt_depth_valid_np,
+            pred_depth_np,
+            image_hw,
+        )
+        depth_overlay_video = _overlay_metric_lines(
+            depth_overlay_video,
+            title="depth aux on decoded summary latent",
+            per_frame_metrics=[
+                [f"depth_l1={float(depth_frame_l1[t, 0]):.6f}"]
+                for t in range(depth_frame_l1.shape[0])
+            ],
+        )
+        depth_overlay_sheet_rel = _export_sheet(
+            depth_overlay_video,
+            stem="depth_overlay",
+            title=f"{checkpoint_label} case {sample_index} depth overlay",
+        )
+
+    box_sheet = _export_sheet(
+        box_video,
+        stem="box_overlay",
+        title=f"{checkpoint_label} case {sample_index} box overlay",
+    )
+    track_sheet = _export_sheet(
+        track_video,
+        stem="track_overlay",
+        title=f"{checkpoint_label} case {sample_index} track overlay",
+    )
 
     track_summary_scalar = _render_scalar_strip(
         track_total_frame_l1,
@@ -1031,60 +1182,57 @@ def _run_case_for_checkpoint(
             labels=[str(i) for i in range(depth_frame_l1.shape[1])],
         )
 
-    scalar_dir = assets_dir / "scalar"
-    scalar_dir.mkdir(parents=True, exist_ok=True)
-    track_summary_scalar_raw = scalar_dir / f"{case_stem}__track_summary_loss.mp4"
-    box_summary_scalar_raw = scalar_dir / f"{case_stem}__box_summary_loss.mp4"
-    track_native_scalar_raw = scalar_dir / f"{case_stem}__native_track_loss.mp4"
-    track_native_iou_raw = scalar_dir / f"{case_stem}__native_track_iou_loss.mp4"
-    box_center_scalar_raw = scalar_dir / f"{case_stem}__box_center_loss.mp4"
-    box_iou_scalar_raw = scalar_dir / f"{case_stem}__box_iou_loss.mp4"
-    track_summary_scalar_browser, _ = _export_media(
-        track_summary_scalar,
-        stem="track_summary_loss",
-        title=f"{checkpoint_label} case {sample_index} track summary loss",
-        fps_value=fps,
+    track_summary_scalar_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__track_summary_loss_sheet.png",
+            track_total_frame_l1,
+            title=f"{checkpoint_label} case {sample_index} track summary loss",
+        ).relative_to(output_dir)
     )
-    box_summary_scalar_browser, _ = _export_media(
-        box_summary_scalar,
-        stem="box_summary_loss",
-        title=f"{checkpoint_label} case {sample_index} box summary loss",
-        fps_value=fps,
+    box_summary_scalar_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__box_summary_loss_sheet.png",
+            box_total_frame_l1,
+            title=f"{checkpoint_label} case {sample_index} box summary loss",
+        ).relative_to(output_dir)
     )
-    track_native_scalar_browser, _ = _export_media(
-        track_native_scalar,
-        stem="native_track_loss",
-        title=f"{checkpoint_label} case {sample_index} native track loss",
-        fps_value=fps,
+    track_native_scalar_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__native_track_loss_sheet.png",
+            track_native_l1,
+            title=f"{checkpoint_label} case {sample_index} native track loss",
+        ).relative_to(output_dir)
     )
-    track_native_iou_browser, _ = _export_media(
-        track_native_iou_scalar,
-        stem="native_track_iou_loss",
-        title=f"{checkpoint_label} case {sample_index} native track IoU loss",
-        fps_value=fps,
+    track_native_iou_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__native_track_iou_loss_sheet.png",
+            track_native_iou,
+            title=f"{checkpoint_label} case {sample_index} native track IoU loss",
+        ).relative_to(output_dir)
     )
-    box_center_scalar_browser, _ = _export_media(
-        box_center_scalar,
-        stem="box_center_loss",
-        title=f"{checkpoint_label} case {sample_index} box center loss",
-        fps_value=fps,
+    box_center_scalar_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__box_center_loss_sheet.png",
+            box_center_frame_l1,
+            title=f"{checkpoint_label} case {sample_index} box center loss",
+        ).relative_to(output_dir)
     )
-    box_iou_scalar_browser, _ = _export_media(
-        box_iou_scalar,
-        stem="box_iou_loss",
-        title=f"{checkpoint_label} case {sample_index} box IoU loss",
-        fps_value=fps,
+    box_iou_scalar_sheet = str(
+        _write_scalar_panel(
+            assets_dir / f"{case_stem}__box_iou_loss_sheet.png",
+            box_iou_frame_l1,
+            title=f"{checkpoint_label} case {sample_index} box IoU loss",
+        ).relative_to(output_dir)
     )
     depth_scalar_rel = None
-    depth_scalar_browser = None
     if depth_scalar is not None:
-        depth_scalar_browser, _ = _export_media(
-            depth_scalar,
-            stem="depth_loss",
-            title=f"{checkpoint_label} case {sample_index} depth loss",
-            fps_value=fps,
+        depth_scalar_rel = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__depth_loss_sheet.png",
+                depth_frame_l1,
+                title=f"{checkpoint_label} case {sample_index} depth loss",
+            ).relative_to(output_dir)
         )
-        depth_scalar_rel = depth_scalar_browser
 
     metrics = _compute_aux_metrics(
         pred_track_summary=object_aux_out.pred_track_summary,
@@ -1129,23 +1277,19 @@ def _run_case_for_checkpoint(
         "context_frame_indices": sample["context_frame_indices"].tolist(),
         "checkpoint": str(_resolve_checkpoint_file(checkpoint_path)),
         "checkpoint_label": checkpoint_label,
-        "box_overlay_video": box_browser,
-        "track_overlay_video": track_browser,
         "box_overlay_sheet": box_sheet,
         "track_overlay_sheet": track_sheet,
-        "native_box_overlay_video": native_box_browser,
-        "native_track_overlay_video": native_track_browser,
         "native_box_overlay_sheet": native_box_sheet,
         "native_track_overlay_sheet": native_track_sheet,
-        "track_summary_loss_video": track_summary_scalar_browser,
-        "box_summary_loss_video": box_summary_scalar_browser,
-        "native_track_loss_video": track_native_scalar_browser,
-        "native_track_iou_loss_video": track_native_iou_browser,
-        "box_center_loss_video": box_center_scalar_browser,
-        "box_iou_loss_video": box_iou_scalar_browser,
-        "depth_panel_video": depth_video_rel,
+        "track_summary_loss_sheet": track_summary_scalar_sheet,
+        "box_summary_loss_sheet": box_summary_scalar_sheet,
+        "native_track_loss_sheet": track_native_scalar_sheet,
+        "native_track_iou_loss_sheet": track_native_iou_sheet,
+        "box_center_loss_sheet": box_center_scalar_sheet,
+        "box_iou_loss_sheet": box_iou_scalar_sheet,
         "depth_panel_sheet": depth_sheet_rel,
-        "depth_loss_video": depth_scalar_rel,
+        "depth_overlay_sheet": depth_overlay_sheet_rel,
+        "depth_loss_sheet": depth_scalar_rel,
         "metrics": metrics,
         "shapes": {
             "gt_track_summary": list(gt_track_summary.shape),
@@ -1188,22 +1332,8 @@ def _build_report(
     }
     summary_path.write_text(json.dumps(summary_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    def _media_or_image_block(
-        *,
-        video_src: str | None,
-        image_src: str | None,
-        image_alt: str,
-        caption: str,
-        sheet: bool = False,
-    ) -> str:
+    def _image_block(*, image_src: str | None, image_alt: str, caption: str, sheet: bool = False) -> str:
         klass = ' class="sheet"' if sheet else ""
-        if video_src is not None:
-            return f"""
-          <figure{klass}>
-            <video controls preload="none" playsinline src="{video_src}"></video>
-            <figcaption>{caption}</figcaption>
-          </figure>
-"""
         if image_src is not None:
             return f"""
           <figure{klass}>
@@ -1233,24 +1363,21 @@ def _build_report(
     for case_result in results_by_case:
         checkpoint_cards = []
         for item in case_result["checkpoints"]:
-            depth_block = _media_or_image_block(
-                video_src=item["depth_panel_video"],
-                image_src=item["depth_panel_sheet"],
-                image_alt="depth sheet",
-                caption="Depth aux: GT depth vs Pred depth",
+            depth_block = _image_block(
+                image_src=item["depth_overlay_sheet"],
+                image_alt="depth overlay sheet",
+                caption="Depth aux on decoded summary latent",
             )
             depth_sheet_block = ""
             if item["depth_panel_sheet"] is not None:
-                depth_sheet_block = _media_or_image_block(
-                    video_src=None,
+                depth_sheet_block = _image_block(
                     image_src=item["depth_panel_sheet"],
                     image_alt="depth sheet",
                     caption="Depth aux 逐帧静态图",
                     sheet=True,
                 )
-            depth_loss_block = _media_or_image_block(
-                video_src=item.get("depth_loss_video"),
-                image_src=None,
+            depth_loss_block = _image_block(
+                image_src=item.get("depth_loss_sheet"),
                 image_alt="depth loss",
                 caption="Depth loss framewise panel",
             )
@@ -1264,20 +1391,16 @@ def _build_report(
           <p><b>Track/box diagnostics:</b> track_box={item['metrics']['train/track_box_loss']:.6f}, track_iou={item['metrics']['train/track_iou_loss']:.6f}, track_center_aux={item['metrics']['train/loss_track_center_aux']:.6f}, track_delta_aux={item['metrics']['train/loss_track_delta_aux']:.6f}</p>
           <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
           <div class="video-grid">
-            {_media_or_image_block(video_src=item['track_overlay_video'], image_src=item['track_overlay_sheet'], image_alt='track sheet', caption='Track aux summary view: final 2-step GT summary vs Pred summary. Only 2 frames here by design.')}
-            {_media_or_image_block(video_src=item['box_overlay_video'], image_src=item['box_overlay_sheet'], image_alt='box sheet', caption='Box aux summary view: final 2-step GT box(red) vs Pred box(teal). Only 2 frames here by design.')}
-            {_media_or_image_block(video_src=None, image_src=item['track_overlay_sheet'], image_alt='track sheet', caption='Track aux summary 逐步静态图', sheet=True)}
-            {_media_or_image_block(video_src=None, image_src=item['box_overlay_sheet'], image_alt='box sheet', caption='Box aux summary 逐步静态图', sheet=True)}
-            {_media_or_image_block(video_src=item['native_track_overlay_video'], image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Native 8-frame track view: matched GT centers vs CoTracker object centers. Use this for true frame-by-frame inspection.')}
-            {_media_or_image_block(video_src=item['native_box_overlay_video'], image_src=item['native_box_overlay_sheet'], image_alt='native box sheet', caption='Native 8-frame box view: matched GT boxes vs track-derived pred boxes. Use this for true frame-by-frame inspection.')}
-            {_media_or_image_block(video_src=None, image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Native 8-frame track 逐帧静态图', sheet=True)}
-            {_media_or_image_block(video_src=None, image_src=item['native_box_overlay_sheet'], image_alt='native box sheet', caption='Native 8-frame box 逐帧静态图', sheet=True)}
-            {_media_or_image_block(video_src=item['track_summary_loss_video'], image_src=None, image_alt='track summary loss', caption='Track summary loss framewise panel')}
-            {_media_or_image_block(video_src=item['box_summary_loss_video'], image_src=None, image_alt='box summary loss', caption='Box summary loss framewise panel')}
-            {_media_or_image_block(video_src=item['native_track_loss_video'], image_src=None, image_alt='native track loss', caption='Native track L1 framewise panel')}
-            {_media_or_image_block(video_src=item['native_track_iou_loss_video'], image_src=None, image_alt='native track iou loss', caption='Native track IoU framewise panel')}
-            {_media_or_image_block(video_src=item['box_center_loss_video'], image_src=None, image_alt='box center loss', caption='Box center loss framewise panel')}
-            {_media_or_image_block(video_src=item['box_iou_loss_video'], image_src=None, image_alt='box iou loss', caption='Box IoU loss framewise panel')}
+            {_image_block(image_src=item['track_overlay_sheet'], image_alt='track sheet', caption='Track aux on decoded summary latent', sheet=True)}
+            {_image_block(image_src=item['box_overlay_sheet'], image_alt='box sheet', caption='Box aux on decoded summary latent', sheet=True)}
+            {_image_block(image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Native 8-frame track 逐帧静态图', sheet=True)}
+            {_image_block(image_src=item['native_box_overlay_sheet'], image_alt='native box sheet', caption='Native 8-frame box 逐帧静态图', sheet=True)}
+            {_image_block(image_src=item['track_summary_loss_sheet'], image_alt='track summary loss', caption='Track summary loss panel', sheet=True)}
+            {_image_block(image_src=item['box_summary_loss_sheet'], image_alt='box summary loss', caption='Box summary loss panel', sheet=True)}
+            {_image_block(image_src=item['native_track_loss_sheet'], image_alt='native track loss', caption='Native track L1 panel', sheet=True)}
+            {_image_block(image_src=item['native_track_iou_loss_sheet'], image_alt='native track iou loss', caption='Native track IoU panel', sheet=True)}
+            {_image_block(image_src=item['box_center_loss_sheet'], image_alt='box center loss', caption='Box center loss panel', sheet=True)}
+            {_image_block(image_src=item['box_iou_loss_sheet'], image_alt='box iou loss', caption='Box IoU loss panel', sheet=True)}
             {depth_loss_block}
             {depth_block}
             {depth_sheet_block}
@@ -1325,8 +1448,8 @@ def _build_report(
 </head>
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
-  <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 2-step summary 量，所以 summary view 只显示 2 帧是设计如此；第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。</p>
-  <p>额外增加的 framewise loss 面板用于按帧查看这一 case 下每个几何相关 loss 的大小；其中 `loss_main` 和各类正则项只作为数值面板展示，不强行伪装成图像空间 overlay。</p>
+  <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 summary latent。这里的背景不是原始 context 帧，而是把 `clean_prefix_latents` 按 latent step 用 Wan VAE `decode_framewise` 解回图像后的结果，所以 summary view 只显示真实参与该 loss 的 latent 时间步。</p>
+  <p>第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。额外增加的 framewise loss 面板用于按帧查看这一 case 下每个几何相关 loss 的大小；其中 `loss_main` 和各类正则项只作为数值面板展示，不强行伪装成图像空间 overlay。</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>
@@ -1362,7 +1485,6 @@ def main() -> None:
     parser.add_argument("--split", default="train")
     parser.add_argument("--indices", type=int, nargs="+", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--port", type=int, default=8812)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--wan-root", default=DEFAULT_WAN_ROOT)
@@ -1388,11 +1510,6 @@ def main() -> None:
         "--image-only",
         action="store_true",
         help="Only export contact-sheet images and the HTML report; skip mp4 video generation.",
-    )
-    parser.add_argument(
-        "--no-serve",
-        action="store_true",
-        help="Only write the static report files and exit without starting an HTTP server.",
     )
     args = parser.parse_args()
 
@@ -1439,7 +1556,6 @@ def main() -> None:
                 sample_index=int(sample_index),
                 output_dir=output_dir,
                 fps=int(args.fps),
-                image_only=bool(args.image_only),
             )
             item["load_info"] = load_info
             per_case_records[int(sample_index)]["checkpoints"].append(item)
@@ -1465,19 +1581,6 @@ def main() -> None:
         output_dir=output_dir,
     )
     print(f"aux loss comparison report: {html_path}")
-    if args.no_serve:
-        return
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *handler_args, **handler_kwargs):
-            super().__init__(*handler_args, directory=str(output_dir), **handler_kwargs)
-
-    class ReusableTCPServer(socketserver.TCPServer):
-        allow_reuse_address = True
-
-    with ReusableTCPServer(("0.0.0.0", int(args.port)), Handler) as httpd:
-        print(f"serving report at http://0.0.0.0:{int(args.port)}/index.html")
-        httpd.serve_forever()
 
 
 if __name__ == "__main__":

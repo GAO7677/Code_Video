@@ -29,6 +29,7 @@ DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/DiffSynth-Studio-main")
 TRAIN0419_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_train/train_0419")
 MODEL_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 DEFAULT_META_LIST_PATH = TRAIN0419_ROOT / "benchmark_meta_json_paths_full.txt"
+DEFAULT_INPUT_JSON_LIST_PATH = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_100.txt")
 DATASET_MARKERS = {
     "vLAR-PhysInOne": "vLAR-PhysInOne",
     "physics-iq-benchmark": "physics-iq-benchmark",
@@ -56,12 +57,12 @@ DEFAULT_SINGLE_CASE_LORA_PATH = Path(
 DEFAULT_SINGLE_CASE_MODEL_NAME = "step-010000"
 DEFAULT_SINGLE_CASE_DATASET_NAME = "single_case"
 DEFAULT_SINGLE_CASE_SAMPLE_ID = "single_case"
-DEFAULT_SINGLE_CASE_HEIGHT = 704
-DEFAULT_SINGLE_CASE_WIDTH = 1280
-DEFAULT_SINGLE_CASE_NUM_FRAMES = 40
-DEFAULT_SINGLE_CASE_CONTEXT_FRAMES = 7
+DEFAULT_SINGLE_CASE_HEIGHT = 512
+DEFAULT_SINGLE_CASE_WIDTH = 896
+DEFAULT_SINGLE_CASE_NUM_FRAMES = 24
+DEFAULT_SINGLE_CASE_CONTEXT_FRAMES = 8
 DEFAULT_SINGLE_CASE_FPS = 30
-DEFAULT_SINGLE_CASE_NUM_INFERENCE_STEPS = 50
+DEFAULT_SINGLE_CASE_NUM_INFERENCE_STEPS = 40
 DEFAULT_SINGLE_CASE_CFG_SCALE = 5.0
 DEFAULT_SINGLE_CASE_SEED = 42
 DEFAULT_SINGLE_CASE_CONDITIONING_MODE = "context_aware"
@@ -93,6 +94,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime_root", type=Path, default=None)
     parser.add_argument("--lora_path", type=Path, default=DEFAULT_SINGLE_CASE_LORA_PATH)
     parser.add_argument("--meta_list_path", type=Path, default=None)
+    parser.add_argument("--input_json_list_path", type=Path, default=None)
     parser.add_argument("--meta_json_path", type=Path, default=None)
     parser.add_argument("--context_path", type=Path, default=None)
     parser.add_argument("--output_video_path", type=Path, default=None)
@@ -173,16 +175,18 @@ def validate_args(args: argparse.Namespace) -> None:
     if not (0 <= args.shard_id < args.num_shards):
         raise ValueError(f"Invalid shard setting: shard_id={args.shard_id}, num_shards={args.num_shards}")
     has_list_mode = args.meta_list_path is not None
+    has_input_json_list_mode = args.input_json_list_path is not None
     has_meta_json_mode = args.meta_json_path is not None
     has_single_mode = args.context_path is not None or args.output_video_path is not None or args.prompt is not None
-    mode_count = sum(bool(flag) for flag in (has_list_mode, has_meta_json_mode, has_single_mode))
+    mode_count = sum(bool(flag) for flag in (has_list_mode, has_input_json_list_mode, has_meta_json_mode, has_single_mode))
     if mode_count != 1:
         raise ValueError(
             "Choose exactly one input mode: "
-            "--meta_list_path, --meta_json_path, or single-case (--context_path/--output_video_path/--prompt)."
+            "--meta_list_path, --input_json_list_path, --meta_json_path, or single-case "
+            "(--context_path/--output_video_path/--prompt)."
         )
-    if has_list_mode and args.output_root is None:
-        raise ValueError("--output_root is required when using --meta_list_path.")
+    if (has_list_mode or has_input_json_list_mode) and args.output_root is None:
+        raise ValueError("--output_root is required when using --meta_list_path or --input_json_list_path.")
     if has_meta_json_mode and args.output_root is None and args.output_video_path is None:
         raise ValueError("Provide --output_root or --output_video_path when using --meta_json_path.")
     if has_single_mode:
@@ -708,6 +712,74 @@ def collect_cases(meta_paths: list[Path], limit: int | None) -> list[dict[str, A
     return cases
 
 
+def load_input_json_paths(input_json_list_path: Path) -> list[Path]:
+    json_paths: list[Path] = []
+    seen: set[str] = set()
+    for raw_line in input_json_list_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        candidate = Path(line).expanduser()
+        if not candidate.is_absolute():
+            candidate = (input_json_list_path.parent / candidate).resolve()
+        normalized = str(candidate)
+        if normalized in seen:
+            continue
+        if not candidate.is_file():
+            raise FileNotFoundError(f"input json not found from input_json_list_path: {candidate}")
+        seen.add(normalized)
+        json_paths.append(candidate)
+    if not json_paths:
+        raise ValueError(f"No input json paths found in input_json_list_path: {input_json_list_path}")
+    return json_paths
+
+
+def collect_cases_from_input_json_list(input_json_paths: list[Path], limit: int | None) -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for input_json_path in input_json_paths:
+        payload = json.loads(input_json_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise TypeError(f"input json must be an object: {input_json_path}")
+        input_video = payload.get("input_video")
+        input_caption = payload.get("input_caption")
+        source_video = payload.get("source_video")
+        if not isinstance(input_video, str) or not input_video.strip():
+            continue
+        if not isinstance(input_caption, str) or not input_caption.strip():
+            continue
+
+        normalized_paths: dict[str, Any] = {
+            "meta_json_path": str(input_json_path),
+            "context_video_path": str(Path(input_video).expanduser().resolve()),
+        }
+        if isinstance(source_video, str) and source_video.strip():
+            normalized_paths["full_video_path"] = str(Path(source_video).expanduser().resolve())
+
+        sample_id = input_json_path.stem
+        dataset_name = "input_json_list"
+        cases.append(
+            {
+                "dataset": dataset_name,
+                "sample_id": sample_id,
+                "caption": input_caption.strip(),
+                "context_path": normalized_paths["context_video_path"],
+                "future_gt_path": None,
+                "full_video_path": normalized_paths.get("full_video_path"),
+                "meta_path": str(input_json_path),
+                "source_paths": normalized_paths,
+                "output_name": f"{sample_id}.mp4",
+                "context_resize_mode": "crop",
+                "scenario": None,
+                "scenario_slug": None,
+                "raw_meta": payload,
+                "simple_input_json_mode": True,
+            }
+        )
+    if limit is not None:
+        cases = cases[:limit]
+    return cases
+
+
 def build_single_case(args: argparse.Namespace) -> dict[str, Any]:
     dataset_name = str(args.dataset_name).strip() or "single_case"
     context_path = Path(args.context_path).expanduser().resolve()
@@ -748,11 +820,42 @@ def build_single_case(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def collect_cases_from_args(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if args.input_json_list_path is not None:
+        return collect_cases_from_input_json_list(load_input_json_paths(args.input_json_list_path), args.limit)
     if args.meta_json_path is not None:
         return collect_cases([args.meta_json_path], limit=args.limit)
     if args.context_path is not None or args.output_video_path is not None or args.prompt is not None:
         return [build_single_case(args)]
     return collect_cases(load_meta_paths(args.meta_list_path), args.limit)
+
+
+def build_simple_result_payload(
+    *,
+    input_json_path: Path,
+    input_video: str,
+    input_caption: str,
+    output_video: Path,
+    seed: int,
+    step: int,
+    guidance: float,
+    ckpt: Path | None,
+    status: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "input_json": str(input_json_path),
+        "input_video": str(input_video),
+        "input_caption": str(input_caption),
+        "output_video": str(output_video),
+        "seed": int(seed),
+        "step": int(step),
+        "guidance": float(guidance),
+        "ckpt": str(ckpt) if ckpt is not None else None,
+        "status": status,
+    }
+    if error is not None:
+        payload["error"] = error
+    return payload
 
 
 def generate_one_video(
@@ -951,15 +1054,28 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
 
         if output_path.exists() and not args.overwrite:
             print(f"[skip][shard {args.shard_id}] {row['output_name']} | seed={args.seed}")
-            case_payload = build_case_metadata(
-                args=args,
-                row=row,
-                index=index,
-                seed=args.seed,
-                output_path=output_path,
-                used_context_frames=1 if args.conditioning_mode == "input_image_only" else args.context_frames,
-                status="skipped_existing",
-            )
+            if row.get("simple_input_json_mode"):
+                case_payload = build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="skipped_existing",
+                )
+            else:
+                case_payload = build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=1 if args.conditioning_mode == "input_image_only" else args.context_frames,
+                    status="skipped_existing",
+                )
             write_json(sidecar_path, case_payload)
             entries_by_index[index] = case_payload
             continue
@@ -992,27 +1108,54 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                 conditioning_mode=args.conditioning_mode,
             )
             save_video(video, str(output_path), fps=args.fps, quality=args.quality)
-            case_payload = build_case_metadata(
-                args=args,
-                row=row,
-                index=index,
-                seed=args.seed,
-                output_path=output_path,
-                used_context_frames=used_context_frames,
-                status="generated",
-            )
+            if row.get("simple_input_json_mode"):
+                case_payload = build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="generated",
+                )
+            else:
+                case_payload = build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=used_context_frames,
+                    status="generated",
+                )
         except Exception as exc:
             print(f"[error][shard {args.shard_id}] {row['output_name']} | {exc}")
-            case_payload = build_case_metadata(
-                args=args,
-                row=row,
-                index=index,
-                seed=args.seed,
-                output_path=output_path,
-                used_context_frames=0,
-                status="failed",
-                error=repr(exc),
-            )
+            if row.get("simple_input_json_mode"):
+                case_payload = build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="failed",
+                    error=repr(exc),
+                )
+            else:
+                case_payload = build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=0,
+                    status="failed",
+                    error=repr(exc),
+                )
         write_json(sidecar_path, case_payload)
         entries_by_index[index] = case_payload
     write_jsonl(
@@ -1334,6 +1477,8 @@ def main() -> None:
         assert_exists(args.lora_path, "LoRA checkpoint")
     if args.meta_json_path is not None:
         assert_exists(args.meta_json_path, "Meta json path")
+    elif args.input_json_list_path is not None:
+        assert_exists(args.input_json_list_path, "Input json list path")
     elif args.meta_list_path is not None:
         assert_exists(args.meta_list_path, "Meta list path")
     if args.context_path is not None:
@@ -1428,6 +1573,7 @@ def main() -> None:
         "metadata_dir": str(metadata_dir),
         "runtime_root": str(args.runtime_root),
         "meta_list_path": str(args.meta_list_path),
+        "input_json_list_path": str(args.input_json_list_path),
         "eval_csv": str(eval_csv_path) if eval_csv_path is not None else None,
         "num_entries_with_metrics": num_entries_with_metrics,
         "summary": build_summary(summary_entries),
