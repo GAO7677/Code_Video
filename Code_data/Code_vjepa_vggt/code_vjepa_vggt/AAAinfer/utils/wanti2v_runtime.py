@@ -55,6 +55,23 @@ def _ensure_official_wan_imports():
     return wan, WAN_CONFIGS, SIZE_CONFIGS, MAX_AREA_CONFIGS
 
 
+def patch_wanmodel_from_pretrained_defaults() -> None:
+    _ensure_official_wan_imports()
+    from wan.modules.model import WanModel  # type: ignore
+
+    if getattr(WanModel, "_codex_low_cpu_patch", False):
+        return
+
+    original = WanModel.from_pretrained.__func__
+
+    def patched(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        kwargs.setdefault("low_cpu_mem_usage", False)
+        return original(cls, pretrained_model_name_or_path, *model_args, **kwargs)
+
+    WanModel.from_pretrained = classmethod(patched)
+    WanModel._codex_low_cpu_patch = True
+
+
 def read_list_file(list_path: Path) -> list[Path]:
     items: list[Path] = []
     with list_path.open("r", encoding="utf-8") as handle:
@@ -134,6 +151,15 @@ def _parse_size(size: str) -> tuple[int, int]:
     return height, width
 
 
+def normalize_sample_solver(sample_solver: str) -> str:
+    solver = str(sample_solver).strip().lower()
+    if solver in {"official_diffusers", "unipc", "official", "default"}:
+        return "unipc"
+    if solver in {"dpm++", "dpmpp", "dpm-solver", "dpm_solver"}:
+        return "dpm++"
+    return solver
+
+
 def resolve_official_wan_root(wan_root: Path) -> Path:
     candidate = wan_root.expanduser()
     if not candidate.is_absolute():
@@ -210,6 +236,7 @@ class OfficialWanTI2VWrapper:
         self.model = model
         self.resolved_wan_root = resolved_wan_root
         self.max_area = int(max_area)
+        self.sample_solver = "unipc"
 
     def __call__(
         self,
@@ -227,6 +254,7 @@ class OfficialWanTI2VWrapper:
         sample_solver: str,
         offload_model: bool,
     ) -> np.ndarray:
+        solver = normalize_sample_solver(sample_solver or self.sample_solver)
         video = self.model.generate(
             input_prompt=prompt,
             img=input_image,
@@ -234,7 +262,7 @@ class OfficialWanTI2VWrapper:
             max_area=self.max_area,
             frame_num=int(num_frames),
             shift=float(sample_shift),
-            sample_solver=str(sample_solver),
+            sample_solver=solver,
             sampling_steps=int(num_inference_steps),
             guide_scale=float(cfg_scale),
             n_prompt=str(negative_prompt),
@@ -246,6 +274,7 @@ class OfficialWanTI2VWrapper:
 
 def build_wan_ti2v_pipeline(args: WanTI2VArgs):
     wan, WAN_CONFIGS, _, MAX_AREA_CONFIGS = _ensure_official_wan_imports()
+    patch_wanmodel_from_pretrained_defaults()
     resolved_wan_root = resolve_official_wan_root(args.wan_root)
     cfg = WAN_CONFIGS["ti2v-5B"]
     max_area = int(MAX_AREA_CONFIGS[args.size])
@@ -277,6 +306,38 @@ def save_video_np(frames: np.ndarray, save_path: Path, fps: int) -> None:
     iio.imwrite(save_path, frames, fps=int(fps), codec="libx264")
 
 
+def _run_pipe_once(
+    *,
+    pipe,
+    prompt: str,
+    seed: int,
+    input_image: Image.Image,
+    height: int,
+    width: int,
+    num_frames: int,
+    cfg_scale: float,
+    num_inference_steps: int,
+    sample_shift: float,
+    sample_solver: str,
+    offload_model: bool,
+) -> np.ndarray:
+    with torch.no_grad():
+        return pipe(
+            prompt=prompt,
+            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+            seed=int(seed),
+            input_image=input_image,
+            height=int(height),
+            width=int(width),
+            num_frames=int(num_frames),
+            cfg_scale=float(cfg_scale),
+            num_inference_steps=int(num_inference_steps),
+            sample_shift=float(sample_shift),
+            sample_solver=normalize_sample_solver(sample_solver),
+            offload_model=bool(offload_model),
+        )
+
+
 def run_single_case(
     *,
     pipe,
@@ -297,12 +358,14 @@ def run_single_case(
         f"[case] input_caption={input_caption}",
         f"[case] wan_root={args.wan_root}",
         f"[case] resolved_wan_root={pipe.resolved_wan_root}",
+        f"[case] sample_solver={normalize_sample_solver(args.sample_solver)}",
     ]
 
-    with torch.no_grad():
-        video = pipe(
+    used_offload = bool(args.offload_model)
+    try:
+        video = _run_pipe_once(
+            pipe=pipe,
             prompt=input_caption,
-            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
             seed=int(args.seed),
             input_image=image,
             height=int(height),
@@ -312,8 +375,30 @@ def run_single_case(
             num_inference_steps=int(args.sampling_steps),
             sample_shift=float(args.sample_shift),
             sample_solver=str(args.sample_solver),
-            offload_model=bool(args.offload_model),
+            offload_model=used_offload,
         )
+    except RuntimeError as exc:
+        if used_offload or "out of memory" not in str(exc).lower():
+            raise
+        logs.append("[case] retry=oom_with_offload_model")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        video = _run_pipe_once(
+            pipe=pipe,
+            prompt=input_caption,
+            seed=int(args.seed),
+            input_image=image,
+            height=int(height),
+            width=int(width),
+            num_frames=int(args.frame_num),
+            cfg_scale=float(args.cfg_scale),
+            num_inference_steps=int(args.sampling_steps),
+            sample_shift=float(args.sample_shift),
+            sample_solver=str(args.sample_solver),
+            offload_model=True,
+        )
+        used_offload = True
 
     save_video_np(video, output_video, fps=int(args.fps))
 
@@ -326,7 +411,8 @@ def run_single_case(
         "step": int(args.sampling_steps),
         "guidance": float(args.cfg_scale),
         "sample_shift": float(args.sample_shift),
-        "sample_solver": str(args.sample_solver),
+        "sample_solver": normalize_sample_solver(args.sample_solver),
+        "offload_model": bool(used_offload),
         "ckpt": str(pipe.resolved_wan_root),
     }
     return result, logs
