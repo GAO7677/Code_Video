@@ -92,15 +92,30 @@ def _load_v_newtrain_state_into_model(model: WanTrainingModule, checkpoint_path:
     if not overlapping:
         raise RuntimeError("no overlapping keys between current v_newtrain model and checkpoint")
 
-    filtered_state = {
-        normalized_model_keys[norm_key]: state_dict[normalized_checkpoint_keys[norm_key]]
-        for norm_key in overlapping
-    }
+    filtered_state = {}
+    skipped_shape_mismatch = []
+    for norm_key in overlapping:
+        model_key = normalized_model_keys[norm_key]
+        ckpt_key = normalized_checkpoint_keys[norm_key]
+        model_value = model_state[model_key]
+        ckpt_value = state_dict[ckpt_key]
+        if tuple(model_value.shape) != tuple(ckpt_value.shape):
+            skipped_shape_mismatch.append(
+                {
+                    "model_key": model_key,
+                    "checkpoint_key": ckpt_key,
+                    "model_shape": list(model_value.shape),
+                    "checkpoint_shape": list(ckpt_value.shape),
+                }
+            )
+            continue
+        filtered_state[model_key] = ckpt_value
     missing = model.load_state_dict(filtered_state, strict=False)
     return {
         "loaded_count": len(filtered_state),
         "missing_keys": list(missing.missing_keys),
         "unexpected_keys": list(missing.unexpected_keys),
+        "skipped_shape_mismatch": skipped_shape_mismatch,
     }
 
 

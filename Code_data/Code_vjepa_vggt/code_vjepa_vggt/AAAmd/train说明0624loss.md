@@ -258,6 +258,28 @@
   - 因此这版还不适合直接开正式训练 run
 - 当前判断
   - 根因仍然更像是 object-level query / slot / track 聚合本身还存在偏移
+
+## 3.15. 最后一层语义对齐修正
+
+- 进一步复核后确认，当前 object 侧还有一层更直接的语义不一致：
+  - `gt_track_summary` 的中心语义已经按“最后有效点”对齐
+  - 但 `ObjectTubeProjector._track_summary(...)` 里 `active_track_summary` 仍可能保留“均值中心”的旧语义
+  - 这会让 `ObjectAuxHeads.pred_track_summary` 在训练时围绕一个和 GT 不同的中心基座去回归
+- 已做修正
+  - `active_track_summary[..., :2]` 现在也改成最后有效观测的中心，而不是纯均值中心
+  - 当存在 `box_prior_xyxy` 时，`active_box_xyxy` 直接优先使用显式 box prior 作为 box anchor
+- 修正目的
+  - 让 track summary、box prior、GT 聚合三者使用同一套语义
+  - 减少 `pred box` 继承 track 极值框后继续向左上漂移的机会
+  - 让后续 loss 重点学习真实残差，而不是先修正一个不一致的基座
+
+## 3.16. 下一轮 smoke 的观察重点
+
+- 先看 `pred_track_summary[..., :2]` 是否还明显偏左上
+- 再看 `pred_box_xyxy` 是否仍然比 GT 大很多
+- 再看 `train/object_context_abs_max`
+  - 如果它还在抖大，说明 object context 还在吸收错误几何
+  - 如果它稳定了，但 track/box 仍偏，说明问题更集中在 query/slot 对齐
   - 仅靠在末端追加几何 loss，暂时还不足以解决“中心整体偏左上”的问题
 
 ## 3.15. 最新复核后的简化结论

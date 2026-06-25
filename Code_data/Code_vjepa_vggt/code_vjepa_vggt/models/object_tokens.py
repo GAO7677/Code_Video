@@ -289,9 +289,9 @@ class ObjectTubeProjector(nn.Module):
                 torch.gather(sorted_y, dim=2, index=min_idx).squeeze(-1)
                 + torch.gather(sorted_y, dim=2, index=max_idx).squeeze(-1)
             )
-            mean_xy = torch.stack([center_x, center_y], dim=-1)
+            center_xy = torch.stack([center_x, center_y], dim=-1)
         else:
-            mean_xy = (xy * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
+            center_xy = (xy * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
 
         valid_group = valid.permute(0, 1, 3, 2)  # [B,T,O,G]
         first_idx = valid_group.float().argmax(dim=-1)
@@ -308,7 +308,9 @@ class ObjectTubeProjector(nn.Module):
         delta_xy = last_xy - first_xy
         mean_vis = (vis * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
         mean_conf = (conf * point_weights).sum(dim=2) / point_weights.sum(dim=2).clamp_min(1.0e-6)
-        return torch.cat([mean_xy, delta_xy, mean_vis, mean_conf], dim=-1)
+        # Keep the summary center aligned with the last valid observation so it
+        # matches the training-side GT grouping semantics.
+        return torch.cat([center_xy, delta_xy, mean_vis, mean_conf], dim=-1)
 
     @staticmethod
     def _boxes_from_summary(
@@ -368,9 +370,12 @@ class ObjectTubeProjector(nn.Module):
                 prior = prior
             else:
                 raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
+        if prior is not None:
+            # Prefer the explicit box prior as the anchor when it exists. Track
+            # geometry still contributes through the latent tokens and residual
+            # heads, but the box base itself stays tied to the sampled object box.
+            return prior
         if not bool(valid_any.any().item()):
-            if prior is not None:
-                return prior
             center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
             half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
             return torch.cat(

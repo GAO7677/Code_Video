@@ -33,6 +33,16 @@ def _ensure_str_field(payload: dict[str, object], key: str, json_path: Path) -> 
     return value.strip()
 
 
+def _resolve_input_video(payload: dict[str, object], json_path: Path) -> tuple[str, str]:
+    for key in ("input_video8f", "input_video_randomf", "input_video"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return key, value.strip()
+    raise ValueError(
+        f"missing input video field in {json_path}; expected one of input_video8f, input_video_randomf, input_video"
+    )
+
+
 def _run_single_case(
     *,
     python_exe: Path,
@@ -141,7 +151,7 @@ def main() -> None:
 
         for input_json_path in json_paths:
             payload = _load_input_json(input_json_path)
-            input_video = _ensure_str_field(payload, "input_video", input_json_path)
+            input_video_key, input_video = _resolve_input_video(payload, input_json_path)
             input_caption = _ensure_str_field(payload, "input_caption", input_json_path)
             sample_stem = input_json_path.stem
             output_video = step_output_dir / f"{sample_stem}.mp4"
@@ -189,6 +199,7 @@ def main() -> None:
 
             sidecar = {
                 "input_json": str(input_json_path),
+                "input_video_key": str(input_video_key),
                 "input_video": str(input_video),
                 "input_caption": str(input_caption),
                 "output_video": str(output_video),

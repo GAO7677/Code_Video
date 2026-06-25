@@ -144,21 +144,21 @@ CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses_v_newtrain_compare.py \
   --checkpoints \
-    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000200 \
-    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001000 \
-    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001600 \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-000600 \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-001800 \
+    /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0624_diffsynth_object_v_newtrain_gpu67/checkpoints/step-003600 \
   --indices 0 1 \
-  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare \
-  --port 8814 \
+  --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare_600_1800_3600 \
+  --port 8816 \
   --fps 30
 ```
 
 - 本地访问链接
-  - `http://localhost:8814/`
+  - `http://localhost:8816/`
 - 页面入口文件
-  - [index.html](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/index.html)
+  - [index.html](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare_600_1800_3600/index.html)
 - 汇总数据
-  - [metrics.json](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare/metrics.json)
+  - [metrics.json](/data/gaoya/AAA_test_video/0623/train/train0624/aux_loss_vis_v_newtrain_compare_600_1800_3600/metrics.json)
 - 读图建议
   - 如果你看到只有 `2` 帧
     - 先确认自己看的是否是 `summary view`
