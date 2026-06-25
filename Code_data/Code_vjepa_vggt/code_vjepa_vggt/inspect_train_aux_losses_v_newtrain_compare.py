@@ -243,6 +243,21 @@ def _render_native_box_overlay(
     return np.stack(frames, axis=0)
 
 
+def _tracks_to_radius_boxes(
+    tracks_xy: np.ndarray,
+    *,
+    image_hw: tuple[int, int],
+    radius_px: float = 12.0,
+) -> np.ndarray:
+    height, width = image_hw
+    boxes = np.zeros((tracks_xy.shape[0], tracks_xy.shape[1], 4), dtype=np.float32)
+    boxes[..., 0] = (tracks_xy[..., 0] - float(radius_px)) / max(float(width), 1.0)
+    boxes[..., 1] = (tracks_xy[..., 1] - float(radius_px)) / max(float(height), 1.0)
+    boxes[..., 2] = (tracks_xy[..., 0] + float(radius_px)) / max(float(width), 1.0)
+    boxes[..., 3] = (tracks_xy[..., 1] + float(radius_px)) / max(float(height), 1.0)
+    return np.clip(boxes, 0.0, 1.0)
+
+
 def _render_track_overlay(
     context_video: torch.Tensor,
     gt_track_summary: np.ndarray,
@@ -310,6 +325,142 @@ def _render_native_track_overlay(
                 )
         frames.append(frame)
     return np.stack(frames, axis=0)
+
+
+def _render_object_context_heatmap(
+    object_context: torch.Tensor,
+    object_valid_mask: np.ndarray,
+    *,
+    latent_frames: int,
+    num_slots: int,
+    width_repeat: int = 24,
+) -> np.ndarray:
+    if object_context.ndim != 3:
+        raise ValueError(f"object_context must have shape [B, T*O, D], got {list(object_context.shape)}")
+    tokens = object_context[0].detach().float().cpu()
+    if int(tokens.shape[0]) != int(latent_frames) * int(num_slots):
+        raise ValueError(
+            f"object_context token count mismatch: got {int(tokens.shape[0])}, expected {int(latent_frames) * int(num_slots)}"
+        )
+    values = tokens.abs().mean(dim=-1).view(int(latent_frames), int(num_slots)).numpy()
+    if object_valid_mask.shape[-1] == num_slots:
+        values = values * object_valid_mask.astype(np.float32)[None, :]
+    values = np.repeat(values[..., None], max(1, int(width_repeat)), axis=2)
+    heat = colorize_scalar_video(values.astype(np.float32))
+    return heat
+
+
+def _render_matrix_heatmap(
+    values_2d: np.ndarray,
+    *,
+    title: str,
+    width_repeat: int = 24,
+) -> np.ndarray:
+    values = np.asarray(values_2d, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError(f"expected [T,N], got {values.shape}")
+    repeated = np.repeat(values[..., None], max(1, int(width_repeat)), axis=2)
+    heat = colorize_scalar_video(repeated.astype(np.float32))
+    return heat
+
+
+def _annotate_video_with_lines(
+    frames: np.ndarray,
+    *,
+    title: str,
+    lines_per_frame: list[list[str]],
+) -> np.ndarray:
+    if len(frames) != len(lines_per_frame):
+        raise ValueError(f"frame count mismatch: frames={len(frames)}, lines={len(lines_per_frame)}")
+    out: list[np.ndarray] = []
+    for idx, frame in enumerate(frames):
+        image = Image.fromarray(np.asarray(frame, dtype=np.uint8).copy())
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        panel_h = max(20, 16 * (len(lines_per_frame[idx]) + 1))
+        draw.rectangle((4, 4, min(width - 4, 520), min(height - 4, 4 + panel_h)), fill=(0, 0, 0))
+        draw.text((10, 8), title, fill=(255, 255, 255))
+        for line_idx, line in enumerate(lines_per_frame[idx]):
+            draw.text((10, 24 + 14 * line_idx), line, fill=(255, 255, 255))
+        out.append(np.array(image))
+    return np.stack(out, axis=0)
+
+
+def _compute_framewise_box_losses(
+    *,
+    pred_box_xyxy: np.ndarray,
+    gt_box_xyxy: np.ndarray,
+    gt_box_valid: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if pred_box_xyxy.shape != gt_box_xyxy.shape:
+        raise ValueError(f"box shape mismatch: pred={pred_box_xyxy.shape}, gt={gt_box_xyxy.shape}")
+    T, O = pred_box_xyxy.shape[:2]
+    center_l1 = np.zeros((T, 1), dtype=np.float32)
+    wh_l1 = np.zeros((T, 1), dtype=np.float32)
+    iou_loss = np.zeros((T, 1), dtype=np.float32)
+    for t in range(T):
+        valid = gt_box_valid[t]
+        if not np.any(valid):
+            continue
+        pred = pred_box_xyxy[t, valid]
+        gt = gt_box_xyxy[t, valid]
+        pred_center = 0.5 * (pred[..., :2] + pred[..., 2:])
+        gt_center = 0.5 * (gt[..., :2] + gt[..., 2:])
+        pred_wh = np.clip(pred[..., 2:] - pred[..., :2], 1.0e-4, None)
+        gt_wh = np.clip(gt[..., 2:] - gt[..., :2], 1.0e-4, None)
+        center_l1[t, 0] = float(np.abs(pred_center - gt_center).mean())
+        wh_l1[t, 0] = float(np.abs(pred_wh - gt_wh).mean())
+        inter_x0 = np.maximum(pred[..., 0], gt[..., 0])
+        inter_y0 = np.maximum(pred[..., 1], gt[..., 1])
+        inter_x1 = np.minimum(pred[..., 2], gt[..., 2])
+        inter_y1 = np.minimum(pred[..., 3], gt[..., 3])
+        inter_w = np.clip(inter_x1 - inter_x0, 0.0, None)
+        inter_h = np.clip(inter_y1 - inter_y0, 0.0, None)
+        inter = inter_w * inter_h
+        pred_area = pred_wh[..., 0] * pred_wh[..., 1]
+        gt_area = gt_wh[..., 0] * gt_wh[..., 1]
+        union = np.clip(pred_area + gt_area - inter, 1.0e-6, None)
+        iou_loss[t, 0] = float((1.0 - inter / union).mean())
+    return center_l1, wh_l1, iou_loss
+
+
+def _compute_framewise_track_losses(
+    *,
+    pred_tracks_native: np.ndarray,
+    gt_tracks_native: np.ndarray,
+    gt_tracks_valid: np.ndarray,
+    gt_boxes_native: np.ndarray,
+    gt_boxes_valid: np.ndarray,
+    image_hw: tuple[int, int],
+    radius_px: float = 12.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    if pred_tracks_native.shape != gt_tracks_native.shape:
+        raise ValueError(f"track shape mismatch: pred={pred_tracks_native.shape}, gt={gt_tracks_native.shape}")
+    pred_boxes = _tracks_to_radius_boxes(pred_tracks_native, image_hw=image_hw, radius_px=radius_px)
+    track_l1 = np.zeros((pred_tracks_native.shape[0], 1), dtype=np.float32)
+    track_iou = np.zeros((pred_tracks_native.shape[0], 1), dtype=np.float32)
+    for t in range(pred_tracks_native.shape[0]):
+        valid = gt_tracks_valid[t] & gt_boxes_valid[t]
+        if valid.any():
+            track_l1[t, 0] = float(np.abs(pred_tracks_native[t] - gt_tracks_native[t])[valid].mean())
+            pred_box = pred_boxes[t, valid]
+            gt_box = gt_boxes_native[t, valid]
+            inter_x0 = np.maximum(pred_box[..., 0], gt_box[..., 0])
+            inter_y0 = np.maximum(pred_box[..., 1], gt_box[..., 1])
+            inter_x1 = np.minimum(pred_box[..., 2], gt_box[..., 2])
+            inter_y1 = np.minimum(pred_box[..., 3], gt_box[..., 3])
+            inter_w = np.clip(inter_x1 - inter_x0, 0.0, None)
+            inter_h = np.clip(inter_y1 - inter_y0, 0.0, None)
+            inter = inter_w * inter_h
+            pred_area = np.clip(pred_box[..., 2] - pred_box[..., 0], 0.0, None) * np.clip(
+                pred_box[..., 3] - pred_box[..., 1], 0.0, None
+            )
+            gt_area = np.clip(gt_box[..., 2] - gt_box[..., 0], 0.0, None) * np.clip(
+                gt_box[..., 3] - gt_box[..., 1], 0.0, None
+            )
+            union = np.clip(pred_area + gt_area - inter, 1.0e-6, None)
+            track_iou[t, 0] = float((1.0 - (inter / union)).mean())
+    return track_l1, track_iou
 
 
 def _render_depth_panel(
@@ -389,12 +540,140 @@ def _compute_aux_metrics(
             gt_depth_valid.unsqueeze(-1).sum().clamp_min(1.0) * pred_depth.shape[-1]
         )
     return {
+        "train/loss_main": float("nan"),
         "train/loss_track_aux": float(track_aux_loss.detach().item()),
         "train/loss_box_aux": float(box_aux_loss.detach().item()),
         "train/loss_depth_aux": float(depth_aux_loss.detach().item()),
         "train/track_box_loss": float(track_box_loss.detach().item()),
         "train/track_iou_loss": float(track_iou_loss.detach().item()),
     }
+
+
+def _compute_regularizer_metrics(
+    *,
+    object_context: torch.Tensor,
+    object_latent_tokens: torch.Tensor,
+    track_delta: torch.Tensor,
+    box_center_delta: torch.Tensor,
+    box_log_scale: torch.Tensor,
+) -> dict[str, float]:
+    return {
+        "train/loss_object_context_reg": float(object_context.detach().square().mean().item()),
+        "train/loss_track_anchor_reg": float(track_delta.detach().abs().mean().item()),
+        "train/loss_box_anchor_reg": float((box_center_delta.detach().abs().mean() + box_log_scale.detach().abs().mean()).item()),
+        "train/object_context_abs_max": float(object_context.detach().abs().max().item()),
+        "train/object_context_abs_mean": float(object_context.detach().abs().mean().item()),
+        "train/object_latent_tokens_abs_max": float(object_latent_tokens.detach().abs().max().item()),
+    }
+
+
+def _render_scalar_strip(
+    values: np.ndarray,
+    *,
+    title: str,
+    labels: list[str] | None = None,
+) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f"scalar strip expects [T,N], got {arr.shape}")
+    frames = colorize_scalar_video(arr)
+    out: list[np.ndarray] = []
+    for idx, frame in enumerate(frames):
+        canvas_img = Image.fromarray(frame.copy())
+        draw = ImageDraw.Draw(canvas_img)
+        draw.text((8, 8), title, fill=(255, 255, 255))
+        draw.text((8, 24), f"frame {idx}", fill=(255, 255, 255))
+        if labels is not None:
+            for col_idx, label in enumerate(labels):
+                if col_idx >= arr.shape[1]:
+                    break
+                draw.text((8 + col_idx * 120, canvas_img.size[1] - 18), str(label), fill=(255, 255, 255))
+        out.append(np.array(canvas_img))
+    return np.stack(out, axis=0)
+
+
+def _compute_framewise_track_summary_losses(
+    *,
+    pred_track_summary: np.ndarray,
+    gt_track_summary: np.ndarray,
+    gt_track_valid: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if pred_track_summary.shape != gt_track_summary.shape:
+        raise ValueError(
+            f"track summary shape mismatch: pred={pred_track_summary.shape}, gt={gt_track_summary.shape}"
+        )
+    T = pred_track_summary.shape[0]
+    center_l1 = np.zeros((T, 1), dtype=np.float32)
+    delta_l1 = np.zeros((T, 1), dtype=np.float32)
+    total = np.zeros((T, 1), dtype=np.float32)
+    for t in range(T):
+        valid = gt_track_valid[t]
+        if not np.any(valid):
+            continue
+        pred = pred_track_summary[t, valid]
+        gt = gt_track_summary[t, valid]
+        center_l1[t, 0] = float(np.abs(pred[..., :2] - gt[..., :2]).mean())
+        delta_l1[t, 0] = float(np.abs(pred[..., 2:4] - gt[..., 2:4]).mean())
+        total[t, 0] = float(center_l1[t, 0] + 0.25 * delta_l1[t, 0])
+    return center_l1, delta_l1, total
+
+
+def _compute_framewise_box_summary_losses(
+    *,
+    pred_box_xyxy: np.ndarray,
+    gt_box_xyxy: np.ndarray,
+    gt_box_valid: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if pred_box_xyxy.shape != gt_box_xyxy.shape:
+        raise ValueError(f"box shape mismatch: pred={pred_box_xyxy.shape}, gt={gt_box_xyxy.shape}")
+    T = pred_box_xyxy.shape[0]
+    center_l1 = np.zeros((T, 1), dtype=np.float32)
+    wh_l1 = np.zeros((T, 1), dtype=np.float32)
+    iou_loss = np.zeros((T, 1), dtype=np.float32)
+    total = np.zeros((T, 1), dtype=np.float32)
+    for t in range(T):
+        valid = gt_box_valid[t]
+        if not np.any(valid):
+            continue
+        pred = pred_box_xyxy[t, valid]
+        gt = gt_box_xyxy[t, valid]
+        pred_center = 0.5 * (pred[..., :2] + pred[..., 2:])
+        gt_center = 0.5 * (gt[..., :2] + gt[..., 2:])
+        pred_wh = np.clip(pred[..., 2:] - pred[..., :2], 1.0e-4, None)
+        gt_wh = np.clip(gt[..., 2:] - gt[..., :2], 1.0e-4, None)
+        center_l1[t, 0] = float(np.abs(pred_center - gt_center).mean())
+        wh_l1[t, 0] = float(np.abs(pred_wh - gt_wh).mean())
+        inter_x0 = np.maximum(pred[..., 0], gt[..., 0])
+        inter_y0 = np.maximum(pred[..., 1], gt[..., 1])
+        inter_x1 = np.minimum(pred[..., 2], gt[..., 2])
+        inter_y1 = np.minimum(pred[..., 3], gt[..., 3])
+        inter_w = np.clip(inter_x1 - inter_x0, 0.0, None)
+        inter_h = np.clip(inter_y1 - inter_y0, 0.0, None)
+        inter = inter_w * inter_h
+        pred_area = pred_wh[..., 0] * pred_wh[..., 1]
+        gt_area = gt_wh[..., 0] * gt_wh[..., 1]
+        union = np.clip(pred_area + gt_area - inter, 1.0e-6, None)
+        iou_loss[t, 0] = float((1.0 - inter / union).mean())
+        total[t, 0] = float(center_l1[t, 0] + 0.5 * wh_l1[t, 0] + 0.5 * iou_loss[t, 0])
+    return center_l1, wh_l1, iou_loss, total
+
+
+def _compute_framewise_depth_losses(
+    *,
+    pred_depth: np.ndarray,
+    gt_depth: np.ndarray,
+    gt_depth_valid: np.ndarray,
+) -> np.ndarray:
+    if pred_depth.shape != gt_depth.shape:
+        raise ValueError(f"depth shape mismatch: pred={pred_depth.shape}, gt={gt_depth.shape}")
+    T = pred_depth.shape[0]
+    depth_l1 = np.zeros((T, 1), dtype=np.float32)
+    for t in range(T):
+        valid = gt_depth_valid[t]
+        if not np.any(valid):
+            continue
+        depth_l1[t, 0] = float(np.abs(pred_depth[t] - gt_depth[t])[valid].mean())
+    return depth_l1
 
 
 def _compute_box_decomposition_metrics(
@@ -678,6 +957,98 @@ def _run_case_for_checkpoint(
         )
         depth_sheet_rel = str(depth_sheet.relative_to(output_dir))
 
+    track_center_frame_l1, track_delta_frame_l1, track_total_frame_l1 = _compute_framewise_track_summary_losses(
+        pred_track_summary=pred_track_summary_np,
+        gt_track_summary=gt_track_summary_np,
+        gt_track_valid=gt_track_valid_np,
+    )
+    box_center_frame_l1, box_wh_frame_l1, box_iou_frame_l1, box_total_frame_l1 = _compute_framewise_box_summary_losses(
+        pred_box_xyxy=pred_box_xyxy_np,
+        gt_box_xyxy=gt_box_xyxy_np,
+        gt_box_valid=gt_box_valid_np,
+    )
+    track_native_l1, track_native_iou = _compute_framewise_track_losses(
+        pred_tracks_native=pred_track_native_np,
+        gt_tracks_native=gt_track_native_np,
+        gt_tracks_valid=gt_track_native_valid_np,
+        gt_boxes_native=gt_box_native_np,
+        gt_boxes_valid=gt_box_native_valid_np,
+        image_hw=image_hw,
+    )
+    depth_frame_l1 = None
+    if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
+        depth_frame_l1 = _compute_framewise_depth_losses(
+            pred_depth=pred_depth[0, ..., 0].detach().float().cpu().numpy(),
+            gt_depth=gt_depth[0, ..., 0].detach().float().cpu().numpy(),
+            gt_depth_valid=gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5,
+        )
+
+    track_summary_scalar = _render_scalar_strip(
+        track_total_frame_l1,
+        title=f"{checkpoint_label} case {sample_index} track summary loss",
+        labels=[str(i) for i in range(track_total_frame_l1.shape[1])],
+    )
+    box_summary_scalar = _render_scalar_strip(
+        box_total_frame_l1,
+        title=f"{checkpoint_label} case {sample_index} box summary loss",
+        labels=[str(i) for i in range(box_total_frame_l1.shape[1])],
+    )
+    track_native_scalar = _render_scalar_strip(
+        track_native_l1,
+        title=f"{checkpoint_label} case {sample_index} native track loss",
+        labels=[str(i) for i in range(track_native_l1.shape[1])],
+    )
+    track_native_iou_scalar = _render_scalar_strip(
+        track_native_iou,
+        title=f"{checkpoint_label} case {sample_index} native track IoU loss",
+        labels=[str(i) for i in range(track_native_iou.shape[1])],
+    )
+    box_center_scalar = _render_scalar_strip(
+        box_center_frame_l1,
+        title=f"{checkpoint_label} case {sample_index} box center loss",
+        labels=[str(i) for i in range(box_center_frame_l1.shape[1])],
+    )
+    box_iou_scalar = _render_scalar_strip(
+        box_iou_frame_l1,
+        title=f"{checkpoint_label} case {sample_index} box IoU loss",
+        labels=[str(i) for i in range(box_iou_frame_l1.shape[1])],
+    )
+    depth_scalar = None
+    if depth_frame_l1 is not None:
+        depth_scalar = _render_scalar_strip(
+            depth_frame_l1,
+            title=f"{checkpoint_label} case {sample_index} depth loss",
+            labels=[str(i) for i in range(depth_frame_l1.shape[1])],
+        )
+
+    scalar_dir = assets_dir / "scalar"
+    scalar_dir.mkdir(parents=True, exist_ok=True)
+    track_summary_scalar_raw = scalar_dir / f"{case_stem}__track_summary_loss.mp4"
+    box_summary_scalar_raw = scalar_dir / f"{case_stem}__box_summary_loss.mp4"
+    track_native_scalar_raw = scalar_dir / f"{case_stem}__native_track_loss.mp4"
+    track_native_iou_raw = scalar_dir / f"{case_stem}__native_track_iou_loss.mp4"
+    box_center_scalar_raw = scalar_dir / f"{case_stem}__box_center_loss.mp4"
+    box_iou_scalar_raw = scalar_dir / f"{case_stem}__box_iou_loss.mp4"
+    write_mp4(track_summary_scalar_raw, track_summary_scalar, fps=fps)
+    write_mp4(box_summary_scalar_raw, box_summary_scalar, fps=fps)
+    write_mp4(track_native_scalar_raw, track_native_scalar, fps=fps)
+    write_mp4(track_native_iou_raw, track_native_iou_scalar, fps=fps)
+    write_mp4(box_center_scalar_raw, box_center_scalar, fps=fps)
+    write_mp4(box_iou_scalar_raw, box_iou_scalar, fps=fps)
+    track_summary_scalar_browser = ensure_browser_video(track_summary_scalar_raw)
+    box_summary_scalar_browser = ensure_browser_video(box_summary_scalar_raw)
+    track_native_scalar_browser = ensure_browser_video(track_native_scalar_raw)
+    track_native_iou_browser = ensure_browser_video(track_native_iou_raw)
+    box_center_scalar_browser = ensure_browser_video(box_center_scalar_raw)
+    box_iou_scalar_browser = ensure_browser_video(box_iou_scalar_raw)
+    depth_scalar_rel = None
+    depth_scalar_browser = None
+    if depth_scalar is not None:
+        depth_scalar_raw = scalar_dir / f"{case_stem}__depth_loss.mp4"
+        write_mp4(depth_scalar_raw, depth_scalar, fps=fps)
+        depth_scalar_browser = ensure_browser_video(depth_scalar_raw)
+        depth_scalar_rel = str(depth_scalar_browser.relative_to(output_dir))
+
     metrics = _compute_aux_metrics(
         pred_track_summary=object_aux_out.pred_track_summary,
         gt_track_summary=gt_track_summary,
@@ -714,8 +1085,15 @@ def _run_case_for_checkpoint(
         "native_track_overlay_video": str(native_track_browser.relative_to(output_dir)),
         "native_box_overlay_sheet": str(native_box_sheet.relative_to(output_dir)),
         "native_track_overlay_sheet": str(native_track_sheet.relative_to(output_dir)),
+        "track_summary_loss_video": str(track_summary_scalar_browser.relative_to(output_dir)),
+        "box_summary_loss_video": str(box_summary_scalar_browser.relative_to(output_dir)),
+        "native_track_loss_video": str(track_native_scalar_browser.relative_to(output_dir)),
+        "native_track_iou_loss_video": str(track_native_iou_browser.relative_to(output_dir)),
+        "box_center_loss_video": str(box_center_scalar_browser.relative_to(output_dir)),
+        "box_iou_loss_video": str(box_iou_scalar_browser.relative_to(output_dir)),
         "depth_panel_video": depth_video_rel,
         "depth_panel_sheet": depth_sheet_rel,
+        "depth_loss_video": depth_scalar_rel,
         "metrics": metrics,
         "shapes": {
             "gt_track_summary": list(gt_track_summary.shape),
@@ -731,6 +1109,13 @@ def _run_case_for_checkpoint(
             "query_points_prior": list(query_points_prior.shape),
             "tracks_grouped": list(tracks_grouped.shape),
             "object_tokens": list(object_out.object_latent_tokens.shape),
+            "track_summary_loss": list(track_total_frame_l1.shape),
+            "box_summary_loss": list(box_total_frame_l1.shape),
+            "native_track_loss": list(track_native_l1.shape),
+            "native_track_iou_loss": list(track_native_iou.shape),
+            "box_center_loss": list(box_center_frame_l1.shape),
+            "box_iou_loss": list(box_iou_frame_l1.shape),
+            "depth_loss": None if depth_frame_l1 is None else list(depth_frame_l1.shape),
         },
         "object_context_abs_max": float(object_context.detach().abs().max().item()),
         "active_box_xyxy": object_out.active_box_xyxy[0].detach().float().cpu().numpy().tolist(),
@@ -783,13 +1168,22 @@ def _build_report(
             <figcaption>Depth aux 逐帧静态图</figcaption>
           </figure>
 """
+            depth_loss_block = ""
+            if item.get("depth_loss_video") is not None:
+                depth_loss_block = f"""
+          <figure>
+            <video controls preload="none" playsinline src="{item['depth_loss_video']}"></video>
+            <figcaption>Depth loss framewise panel</figcaption>
+          </figure>
+"""
             checkpoint_cards.append(
                 f"""
         <article class="checkpoint-card">
           <h3>{item['checkpoint_label']}</h3>
           <p class="ckpt-path">{item['checkpoint']}</p>
-          <p><b>Losses:</b> track_aux={item['metrics']['train/loss_track_aux']:.6f}, box_aux={item['metrics']['train/loss_box_aux']:.6f}, depth_aux={item['metrics']['train/loss_depth_aux']:.6f}</p>
-          <p><b>Track alignment:</b> l1={item['metrics']['train/track_box_loss']:.6f}, iou={item['metrics']['train/track_iou_loss']:.6f}</p>
+          <p><b>Losses:</b> main={item['metrics']['train/loss_main']:.6f}, track_aux={item['metrics']['train/loss_track_aux']:.6f}, box_aux={item['metrics']['train/loss_box_aux']:.6f}, depth_aux={item['metrics']['train/loss_depth_aux']:.6f}</p>
+          <p><b>Regularizers:</b> object_context={item['metrics']['train/loss_object_context_reg']:.6f}, track_anchor={item['metrics']['train/loss_track_anchor_reg']:.6f}, box_anchor={item['metrics']['train/loss_box_anchor_reg']:.6f}</p>
+          <p><b>Track/box diagnostics:</b> track_box={item['metrics']['train/track_box_loss']:.6f}, track_iou={item['metrics']['train/track_iou_loss']:.6f}, track_center_aux={item['metrics']['train/loss_track_center_aux']:.6f}, track_delta_aux={item['metrics']['train/loss_track_delta_aux']:.6f}</p>
           <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
           <div class="video-grid">
             <figure>
@@ -824,6 +1218,31 @@ def _build_report(
               <img loading="lazy" src="{item['native_box_overlay_sheet']}" alt="native box sheet">
               <figcaption>Native 8-frame box 逐帧静态图</figcaption>
             </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['track_summary_loss_video']}"></video>
+              <figcaption>Track summary loss framewise panel</figcaption>
+            </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['box_summary_loss_video']}"></video>
+              <figcaption>Box summary loss framewise panel</figcaption>
+            </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['native_track_loss_video']}"></video>
+              <figcaption>Native track L1 framewise panel</figcaption>
+            </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['native_track_iou_loss_video']}"></video>
+              <figcaption>Native track IoU framewise panel</figcaption>
+            </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['box_center_loss_video']}"></video>
+              <figcaption>Box center loss framewise panel</figcaption>
+            </figure>
+            <figure>
+              <video controls preload="none" playsinline src="{item['box_iou_loss_video']}"></video>
+              <figcaption>Box IoU loss framewise panel</figcaption>
+            </figure>
+            {depth_loss_block}
             {depth_block}
           </div>
           <pre>{json.dumps({'metrics': item['metrics'], 'shapes': item['shapes']}, indent=2, ensure_ascii=False)}</pre>
@@ -870,6 +1289,7 @@ def _build_report(
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
   <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 2-step summary 量，所以 summary view 只显示 2 帧是设计如此；第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。</p>
+  <p>额外增加的 framewise loss 面板用于按帧查看这一 case 下每个几何相关 loss 的大小；其中 `loss_main` 和各类正则项只作为数值面板展示，不强行伪装成图像空间 overlay。</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>

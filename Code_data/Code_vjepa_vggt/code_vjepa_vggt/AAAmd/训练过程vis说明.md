@@ -140,7 +140,7 @@ CUDA_VISIBLE_DEVICES=0 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=2 \
+CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses_v_newtrain_compare.py \
   --checkpoints \
@@ -168,3 +168,25 @@ CUDA_VISIBLE_DEVICES=2 \
   - 如果你要检查 “为什么左上角有黄点 / 蓝点” 或 “为什么 pred box 比 GT 大很多”
     - 优先看 `native 8-frame view`
     - 它更接近问题真正发生的原始时序位置
+
+## 7. 全 loss 项逐帧可视化
+
+- 脚本
+  - [inspect_train_aux_losses_v_newtrain_compare.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/inspect_train_aux_losses_v_newtrain_compare.py)
+- 新增内容
+  - 每个 case 下面额外加入逐帧 loss 面板，覆盖：
+    - `track summary loss`
+    - `box summary loss`
+    - `native track L1`
+    - `native track IoU`
+    - `box center loss`
+    - `box IoU loss`
+    - `depth loss`（如果当前样本和配置里有有效 depth supervision）
+  - 空间相关项继续采用 `GT / pred overlay` 的形式画在原图上
+  - 非空间正则项只保留数值面板，不伪装成图像空间框或点
+- 说明
+  - `loss_main` 是训练总去噪损失，不对应单一空间几何量，这一版只在数值区展示，不强行做原图 overlay
+  - `train/loss_object_context_reg`、`train/loss_track_anchor_reg`、`train/loss_box_anchor_reg` 也只做数值展示
+- 使用方式
+  - 仍然沿用上面的同一个启动命令
+  - 页面会在同一个 case 下同时给出 summary view、native view 和逐帧 loss panel，方便直接对照
