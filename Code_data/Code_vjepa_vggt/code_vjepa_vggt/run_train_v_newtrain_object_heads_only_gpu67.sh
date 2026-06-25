@@ -4,9 +4,47 @@ set -euo pipefail
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67
-RESUME_FROM="${OUTPUT_DIR}/checkpoints/step-000800"
+CHECKPOINT_ROOT="${OUTPUT_DIR}/checkpoints"
 
 mkdir -p "${OUTPUT_DIR}"
+
+latest_checkpoint_dir() {
+  /home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY' "${CHECKPOINT_ROOT}"
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+best_step = None
+best_path = None
+pattern = re.compile(r"step-(\d+)$")
+for path in root.iterdir() if root.exists() else []:
+    if not path.is_dir():
+        continue
+    match = pattern.match(path.name)
+    if not match:
+        continue
+    step = int(match.group(1))
+    if best_step is None or step > best_step:
+        best_step = step
+        best_path = path
+if best_path is not None:
+    print(best_path)
+PY
+}
+
+RESUME_FROM="$(latest_checkpoint_dir)"
+
+if [[ -n "${RESUME_FROM}" ]]; then
+  echo "Resuming from latest checkpoint: ${RESUME_FROM}"
+else
+  echo "No existing step-* checkpoint found under ${CHECKPOINT_ROOT}; starting fresh."
+fi
+
+RESUME_ARGS=()
+if [[ -n "${RESUME_FROM}" ]]; then
+  RESUME_ARGS=(--resume_from "${RESUME_FROM}")
+fi
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
@@ -29,7 +67,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --save_steps 200 \
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
-  --resume_from "${RESUME_FROM}" \
+  "${RESUME_ARGS[@]}" \
   --max_checkpoints_keep 2 \
   --lora_base_model dit \
   --lora_target_modules q,k,v,o,ffn.0,ffn.2 \

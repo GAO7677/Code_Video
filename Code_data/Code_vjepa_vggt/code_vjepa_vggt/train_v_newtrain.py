@@ -117,6 +117,28 @@ def _freeze_unused_object_pooler_geometry_projs(object_pooler: nn.Module | None)
             _set_module_requires_grad(submodule, False)
 
 
+def _collect_trainable_grad_stats(module: nn.Module) -> dict[str, float]:
+    total_sq_norm = 0.0
+    grad_abs_max = 0.0
+    grad_param_count = 0
+    grad_elem_count = 0
+    for param in module.parameters():
+        if not param.requires_grad or param.grad is None:
+            continue
+        grad = param.grad.detach()
+        grad_norm = float(grad.float().norm(2).item())
+        total_sq_norm += grad_norm * grad_norm
+        grad_abs_max = max(grad_abs_max, float(grad.abs().max().item()))
+        grad_param_count += 1
+        grad_elem_count += int(grad.numel())
+    return {
+        "train/grad_norm": math.sqrt(total_sq_norm) if total_sq_norm > 0.0 else 0.0,
+        "train/grad_abs_max": grad_abs_max,
+        "train/grad_param_count": float(grad_param_count),
+        "train/grad_elem_count": float(grad_elem_count),
+    }
+
+
 class TrainingInterrupted(KeyboardInterrupt):
     """Raised when the training process receives an interrupt signal."""
 
@@ -2566,6 +2588,9 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
             with accelerator.accumulate(model):
                 loss = model({}, inputs=data) if dataset_load_from_cache else model(data)
                 accelerator.backward(loss)
+                grad_stats = {}
+                if accelerator.sync_gradients:
+                    grad_stats = _collect_trainable_grad_stats(accelerator.unwrap_model(model))
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -2580,6 +2605,7 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
                     }
                     extra_metrics = getattr(accelerator.unwrap_model(model), "last_train_metrics", {})
                     metrics.update(extra_metrics)
+                    metrics.update(grad_stats)
                     accelerator.log(metrics, step=global_step)
 
                 progress["global_step"] = global_step

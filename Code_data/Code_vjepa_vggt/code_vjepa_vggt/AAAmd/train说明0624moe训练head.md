@@ -186,6 +186,13 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
 
 - `vggt_cache` 已经全量完成，训练集 1200 个样本的 `w000/w001/w002` 三个窗口文件都已生成
 - 正式训练脚本仍使用 `CUDA_VISIBLE_DEVICES=6,7`
+- 当前活跃的恢复 run:
+  - W&B run id: `3utgz1bh`
+  - run name: `pybullet0625_diffsynth_object_heads_only_gpu67`
+  - 当前训练命令仍来自：
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+  - validation / benchmark 固定绑定：
+    - `gpu5`
 - 当前重启后的训练 run id: `fiqxml81`
 - 当前训练进度：
   - 已经稳定跑起来，stdout 最新可见进度到 `global_step 343`
@@ -258,6 +265,697 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
       - `train/loss_track_aux = 0.04427`
       - `train/loss_box_aux = 0.21910`
       - `train/loss_depth_aux = 0.02313`
+  - `2026-06-25 21:29 UTC` 的继续监控：
+    - 训练主进程仍正常存活在 `gpu6,7`
+    - stdout 最新可见进度已经推进到 `global_step 1607`
+    - `step-001600` 已成功落盘，当前 checkpoint 目录为：
+      - `step-001400`
+      - `step-001600`
+    - retention 继续正常，日志已打印自动清理：
+      - `Pruned old checkpoint: .../step-001200`
+    - 当前 W&B `wy4ru3qv` 最新：
+      - `lastHistoryStep = 1612`
+      - `train/loss_total = 0.10717`
+      - `train/loss_track_aux = 0.05543`
+      - `train/loss_box_aux = 0.42616`
+      - `train/loss_depth_aux = 0.59015`
+      - `train/object_context_abs_max = 0.41206`
+    - 解释：
+      - `object_context_abs_max` 仍维持在约 `0.41` 的稳定带，没有出现上下文 token 数值爆炸
+      - `loss_depth_aux` 这一时刻比前一个监控点抬高很多，更像 batch 级抖动，不像整体发散；需要继续盯后续几十到几百 step 是否能自然回落
+    - 当前仍没有任何 `validation100_vbench` 目录、`summary.json`、`done.json`、`failed.json` 或 validation stdout/stderr 痕迹，说明 `step 2000` validation 还没有开始
+    - `/data` 可用空间仍约 `5.1G`，所以当前首要风险依然不是训练 loss，而是即将到来的 validation 落盘体积
+  - `2026-06-25 21:31 UTC` 的追加检查：
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1637`
+    - 最新 summary：
+      - `train/loss_total = 0.03885`
+      - `train/loss_track_aux = 0.06725`
+      - `train/loss_box_aux = 0.25363`
+      - `train/loss_depth_aux = 0.06758`
+      - `train/object_context_abs_max = 0.41176`
+      - `train/object_latent_tokens_abs_max = 3.77130`
+    - 解释：
+      - 前一个监控点里 `loss_depth_aux = 0.59015` 没有延续，当前已经回落到 `0.06758`
+      - 这更像单个 batch 的难样本抖动，而不是 depth head 或 object token 数值已经进入持续发散
+      - `object_context_abs_max` 和 `object_latent_tokens_abs_max` 依旧稳定，没有看到上下文注入幅值异常放大
+  - `2026-06-25 21:33 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1703`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1704`
+    - 最新 summary：
+      - `train/loss_total = 0.04488`
+      - `train/loss_track_aux = 0.07046`
+      - `train/loss_box_aux = 0.34618`
+      - `train/loss_depth_aux = 0.03216`
+      - `train/object_context_abs_max = 0.39661`
+    - 解释：
+      - `loss_depth_aux` 继续保持低位，没有延续前面的尖峰
+      - `object_context_abs_max` 进一步回落到 `0.39x`，说明 object context 注入幅值仍处在很安全的范围
+      - 到目前为止，训练主循环仍然比 validation 更稳定，当前真正需要警惕的还是 `step 2000` 时的验证磁盘/抢卡风险
+  - `2026-06-25 21:34 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1725`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1725`
+    - 最新 summary：
+      - `train/loss_total = 0.03686`
+      - `train/loss_track_aux = 0.09745`
+      - `train/loss_box_aux = 0.21276`
+      - `train/loss_depth_aux = 0.05843`
+      - `train/object_context_abs_max = 0.41659`
+      - `train/object_latent_tokens_abs_max = 3.79498`
+    - 解释：
+      - 这几个 loss 都仍然在前面已经出现过的稳定波动带内，没有新的发散迹象
+      - `object_context_abs_max` 虽然从 `0.396` 回到 `0.416`，但仍然处在此前反复观察到的安全带内，不构成异常
+      - 当前仍未出现任何 validation 子进程、validation 目录或结果文件，说明还没有碰到真正高风险的 `step 2000` 验证阶段
+  - `2026-06-25 21:38 UTC` 的关键节点检查：
+    - stdout 最新可见进度已推进到 `global_step 1806`
+    - `step-001800` 已成功落盘
+    - 当前 checkpoint 目录为：
+      - `step-001600`
+      - `step-001800`
+    - retention 继续正常，日志已打印自动清理：
+      - `Pruned old checkpoint: .../step-001400`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1810`
+    - 最新 summary：
+      - `train/loss_total = 0.05023`
+      - `train/loss_track_aux = 0.07867`
+      - `train/loss_box_aux = 0.36189`
+      - `train/loss_depth_aux = 0.06170`
+      - `train/object_context_abs_max = 0.40449`
+      - `train/object_latent_tokens_abs_max = 3.87282`
+    - 解释：
+      - `step-001800` 成功保存说明 cache 读盘、前向、反传、优化器和 checkpoint 链路都还在稳定工作
+      - 数值仍然在稳定带，没有出现临近 validation 前的异常抬升
+      - 当前依旧没有任何 `validation100_vbench`、`summary.json`、`done.json`、`failed.json`、`stdout.log` 或 `stderr.log`，说明 validation 还没开始
+      - `/data` 可用空间仍约 `5.1G`，所以接下来真正高风险点还是 `step 2000` 时 validation 的产物落盘
+  - `2026-06-25 21:39 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1834`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1834`
+    - 最新 summary：
+      - `train/loss_total = 0.04287`
+      - `train/loss_track_aux = 0.08389`
+      - `train/loss_box_aux = 0.32192`
+      - `train/loss_depth_aux = 0.02289`
+      - `train/object_context_abs_max = 0.41011`
+      - `train/object_latent_tokens_abs_max = 3.78715`
+    - 解释：
+      - `1834` 这一段依旧没有看到任何持续异常，`loss_depth_aux` 甚至进一步回落
+      - `object_context_abs_max` 和 `object_latent_tokens_abs_max` 仍在此前稳定带内，没有出现 validation 前夕的数值失控
+      - 到当前时刻仍没有任何 validation 子进程或落盘结果，训练还处在 validation 触发前的最后一个区间
+  - `2026-06-25 21:41 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1859`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1859`
+    - 最新 summary：
+      - `train/loss_total = 0.05397`
+      - `train/loss_track_aux = 0.13375`
+      - `train/loss_box_aux = 0.36748`
+      - `train/loss_depth_aux = 0.03848`
+      - `train/object_context_abs_max = 0.39999`
+      - `train/object_latent_tokens_abs_max = 3.63531`
+    - 解释：
+      - `loss_track_aux` 这一刻相对前一轮更高，但 `loss_total / box / depth` 和 object token 幅值仍然稳定，因此更像 batch 间正常抖动
+      - `object_context_abs_max` 维持在约 `0.40`，没有出现任何注入幅值异常
+      - 当前依旧没有任何 validation 子进程或验证结果文件，说明 `step 2000` 还未到达
+  - `2026-06-25 21:42 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1882`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1884`
+    - 最新 summary：
+      - `train/loss_total = 0.05008`
+      - `train/loss_track_aux = 0.07097`
+      - `train/loss_box_aux = 0.29921`
+      - `train/loss_depth_aux = 0.13066`
+      - `train/object_context_abs_max = 0.41830`
+      - `train/object_latent_tokens_abs_max = 3.82515`
+    - 解释：
+      - `loss_depth_aux` 较前一刻抬高，但仍然是单项 loss 的正常区间抖动；`loss_total / track / box` 没有同步失控
+      - `object_context_abs_max` 和 `object_latent_tokens_abs_max` 仍然处在此前稳定带，没有看到 object 分支数值开始发散
+      - 到当前仍没有任何 validation 子进程或验证结果产物，说明第一次 validation 还没有开始
+  - `2026-06-25 21:43 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1908`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1913`
+    - 最新 summary：
+      - `train/loss_total = 0.05779`
+      - `train/loss_track_aux = 0.07014`
+      - `train/loss_box_aux = 0.39712`
+      - `train/loss_depth_aux = 0.11065`
+      - `train/object_context_abs_max = 0.41409`
+      - `train/object_latent_tokens_abs_max = 3.82051`
+    - 解释：
+      - `1900+` 这一段依旧没有出现新的持续异常，所有主监控指标都仍在既有波动带内
+      - object 分支的两项幅值指标继续稳定，当前没有看到 validation 触发前夕的数值不稳定征兆
+      - 直到当前时刻仍没有任何 validation 子进程、日志或结果文件，说明第一次 validation 还未触发
+  - `2026-06-25 21:44 UTC` 的继续监控：
+    - stdout 最新可见进度已推进到 `global_step 1931`
+    - W&B `wy4ru3qv` 最新 `lastHistoryStep = 1933`
+    - 最新 summary：
+      - `train/loss_total = 0.04454`
+      - `train/loss_track_aux = 0.10019`
+      - `train/loss_box_aux = 0.30267`
+      - `train/loss_depth_aux = 0.04253`
+      - `train/object_context_abs_max = 0.41314`
+      - `train/object_latent_tokens_abs_max = 3.81417`
+    - 解释：
+      - `1930+` 这一段继续没有出现新的持续异常，loss 与 object token 幅值都维持在稳定带
+      - 当前依旧没有任何 validation 子进程、验证日志或结果文件，说明第一次 validation 还未真正开始
+  - `2026-06-25 21:49 UTC` 的关键节点：
+    - `step-002000` 已成功落盘：
+      - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-002000`
+    - 训练在 `step 2000` 后确实触发了 validation
+    - 但 validation 首次运行失败，运行时文件已生成：
+      - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/test/_benchmark_runtime/validation100_vbench/step-002000/benchmark.failed.json`
+      - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/test/_benchmark_runtime/validation100_vbench/step-002000/benchmark.stdout.log`
+      - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/test/_benchmark_runtime/validation100_vbench/step-002000/benchmark.stderr.log`
+    - 根因不是磁盘，也不是训练数值发散，而是 validation 脚本的 Python 依赖缺失：
+      - `benchmark.stderr.log` 报错：
+        - `ModuleNotFoundError: No module named 'skimage'`
+    - 已处理：
+      - 在 `wan-cu128` 环境里补装了 `scikit-image` 和 `torchmetrics`
+      - 之后重新从 `step-002000` 恢复训练，新的活跃 run 切到 `3utgz1bh`
+  - `2026-06-25 22:06 UTC` 的当前状态刷新：
+    - 当前训练进程仍健康存活，实际运行在 `gpu6,7`
+    - `nvidia-smi` 观察：
+      - `gpu6` 显存约 `42743 MiB / 49140 MiB`
+      - `gpu7` 显存约 `42729 MiB / 49140 MiB`
+    - stdout 最新可见进度：
+      - `global_step 2267`
+    - 当前 checkpoint 目录：
+      - `step-002000`
+      - `step-002200`
+    - checkpoint 内部状态核对：
+      - `step-002000/training_state.pt -> global_step=2000`
+      - `step-002200/training_state.pt -> global_step=2200`
+    - retention 继续正常，stdout 已打印：
+      - `Pruned old checkpoint: .../step-001800`
+    - 当前 W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2265`
+      - `train/loss_total = 0.04265`
+      - `train/loss_track_aux = 0.11697`
+      - `train/loss_box_aux = 0.24478`
+      - `train/loss_depth_aux = 0.06480`
+      - `train/object_context_abs_max = 0.41328`
+      - `train/object_latent_tokens_abs_max = 3.93634`
+    - 从 W&B 最近 10 个点看，当前主要数值带大致为：
+      - `train/loss_total`: `0.025 ~ 0.122`
+      - `train/loss_track_aux`: `0.019 ~ 0.128`
+      - `train/loss_box_aux`: `0.195 ~ 0.600`
+      - `train/loss_depth_aux`: `0.010 ~ 0.572`
+      - `train/object_context_abs_max`: `0.395 ~ 0.414`
+      - `train/object_latent_tokens_abs_max`: `3.78 ~ 3.95`
+    - 解释：
+      - `loss_box_aux / loss_depth_aux` 仍然有明显 batch 级尖峰，但没有看到持续单调上升
+      - `object_context_abs_max` 继续稳定在 `0.40` 左右，暂时没有 object token 幅值发散迹象
+      - 当前更像“样本难度导致的批间波动”，不像训练逻辑错误导致的系统性失稳
+    - validation 当前状态：
+      - 仍只有旧的 `step-002000` 失败记录：
+        - `test/_benchmark_runtime/validation100_vbench/step-002000/benchmark.failed.json`
+      - 还没有新的 `step-004000` validation 产物，这是正常的，因为当前全局步数还在 `2200+`
+    - 磁盘状态：
+      - `/data` 当前可用空间仍约 `5.1G`
+      - 这仍然是当前最主要的运行风险
+
+## 4. 当前梯度 / loss 监控口径
+
+当前 run 已经能直接监控这些 loss / 数值量：
+
+- `train/loss_total`
+- `train/loss_track_aux`
+- `train/loss_box_aux`
+- `train/loss_depth_aux`
+- `train/object_context_abs_max`
+- `train/object_latent_tokens_abs_max`
+- `train/track_box_loss`
+- `train/track_iou_loss`
+
+另外已在代码里补上了显式梯度监控，位置在：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py`
+
+新增指标：
+
+- `train/grad_norm`
+- `train/grad_abs_max`
+- `train/grad_param_count`
+- `train/grad_elem_count`
+
+说明：
+
+- 这次补丁没有中断当前健康运行的进程
+- 因此这几个梯度指标会在“下一次重启 / 恢复训练后”开始出现在 W&B
+- 当前这轮 `3utgz1bh` 仍只能通过 loss 带、object token 幅值和 checkpoint 连续产出来间接判断反传是否稳定
+
+## 5. 2026-06-25 22:09 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2320`
+- 当前 checkpoint 目录暂时仍是：
+  - `step-002000`
+  - `step-002200`
+- 解释：
+  - 这说明训练还处在 `2200 -> 2400` 的推进区间内
+  - 下一份预期新 checkpoint 仍然是 `step-002400`
+- 当前 validation 运行时目录没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+  - 还没有 `step-004000` 对应的新 validation 结果，这符合当前全局步数
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+  - 依旧是当前最主要的运行风险
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2326`
+  - `train/loss_total = 0.02332`
+  - `train/loss_track_aux = 0.04544`
+  - `train/loss_box_aux = 0.17868`
+  - `train/loss_depth_aux = 0.00910`
+  - `train/object_context_abs_max = 0.41419`
+  - `train/object_latent_tokens_abs_max = 3.94974`
+- 最近一段 history 观察：
+  - `2016 -> 2326` 区间内依旧能看到 batch 级波动，尤其是：
+    - `loss_box_aux` 偶尔冲到 `0.4 ~ 0.7`
+    - `loss_depth_aux` 偶尔冲到 `0.1 ~ 0.58`
+  - 但这些尖峰没有持续保持，后续又会自然回落
+  - `object_context_abs_max` 始终维持在大约 `0.39 ~ 0.42`
+  - `object_latent_tokens_abs_max` 目前维持在大约 `3.26 ~ 3.98`
+- 当前判断：
+  - 训练仍表现为“正常批间抖动”，没有看到持续单调上升、`nan/inf` 或 object context 幅值失控
+  - 这一阶段没有新的代码错误，也没有新的 validation 失败
+- 关于梯度指标：
+  - 当前 W&B 上 `train/grad_norm / grad_abs_max / grad_param_count / grad_elem_count` 仍然是 `None`
+  - 这不是补丁失效，而是因为当前活跃 run `3utgz1bh` 是在补丁落地之前启动的
+  - 需要下一次真正重启 / resume 到新代码后，这些梯度指标才会开始写入 W&B
+
+## 6. 2026-06-25 22:11 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2347`
+- 当前 checkpoint 目录仍然是：
+  - `step-002000`
+  - `step-002200`
+- 解释：
+  - 当前仍处在 `2200 -> 2400` 区间内推进
+  - 下一份预期 checkpoint 仍是 `step-002400`
+- validation 当前没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+  - 还没有新的 `step-004000` validation 结果，这是符合当前步数的
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+  - 依旧是最主要的运行风险
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2347`
+  - `train/loss_total = 0.03090`
+  - `train/loss_track_aux = 0.05627`
+  - `train/loss_box_aux = 0.20825`
+  - `train/loss_depth_aux = 0.04452`
+  - `train/object_context_abs_max = 0.41470`
+  - `train/object_latent_tokens_abs_max = 3.97446`
+- 最近一小段 history 观察：
+  - 能看到个别 batch 出现比较高的 `depth` 尖峰，例如：
+    - `_step 2006 -> train/loss_depth_aux = 1.41533`
+    - `_step 2119 -> train/loss_depth_aux = 0.65558`
+  - 但这些点后续都能快速回落，最近 summary 又回到：
+    - `train/loss_depth_aux = 0.04452`
+  - `loss_box_aux` 也仍然会有 `0.5+` 的批间抖动，但没有形成持续爬升
+  - `object_context_abs_max` 继续稳定在大约 `0.39 ~ 0.415`
+  - `object_latent_tokens_abs_max` 继续稳定在大约 `3.3 ~ 3.97`
+- 当前判断：
+  - 训练仍表现为“正常批间波动”，没有看到持续发散、`nan/inf` 或 object context 幅值失控
+  - 单次 `depth` 尖峰目前更像难 batch，而不是 depth head 训练逻辑错误
+  - 当前没有新的代码报错，也没有新的 validation 故障
+- 关于梯度监控的策略判断：
+  - 现在这条 run 是健康的，不建议为了让 `grad_norm` 立刻出现在 W&B 而主动中断重启
+  - 更合理的做法是继续让它先产出 `step-002400` 及后续权重
+  - 等下一次因为自然原因需要 resume，或者到更关键的阶段再吃到梯度监控补丁
+
+## 7. 2026-06-25 22:12 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2371`
+- 当前 checkpoint 目录仍然是：
+  - `step-002000`
+  - `step-002200`
+- 解释：
+  - 当前还没跨过 `2400`，因此暂时没有新 checkpoint 是符合预期的
+  - 下一份预期 checkpoint 仍是 `step-002400`
+- validation 当前没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+  - 还没有新的 `step-004000` validation 结果
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2367`
+  - `train/loss_total = 0.05523`
+  - `train/loss_track_aux = 0.04070`
+  - `train/loss_box_aux = 0.47345`
+  - `train/loss_depth_aux = 0.03818`
+  - `train/object_context_abs_max = 0.40036`
+  - `train/object_latent_tokens_abs_max = 4.03600`
+- 最近一小段 history 观察：
+  - 仍然能看到个别 batch 的 `depth` 大尖峰，例如：
+    - `_step 2004 -> train/loss_depth_aux = 3.52395`
+  - 也能看到 `box_aux` 的高点，例如：
+    - `_step 2099 -> train/loss_box_aux = 0.72523`
+  - 但这些尖峰都没有持续保持，后续 summary 又会回落
+- 当前判断：
+  - `object_latent_tokens_abs_max` 从之前约 `3.95` 继续上浮到 `4.036`
+  - 但 `object_context_abs_max` 仍然稳定在约 `0.40`
+  - 同时 `loss_total / loss_track_aux / loss_depth_aux` 都没有联动失控
+  - 所以目前更像 object latent token 幅值的轻微正常漂移，不像已经进入发散
+  - 需要继续盯后续几十到几百 step，确认它是否继续单调上升；如果只是在 `4.0` 左右窄幅波动，暂时不构成异常
+- 关于梯度指标：
+  - 当前 W&B 上 `train/grad_norm / train/grad_abs_max` 仍然是 `None`
+  - 原因不变：当前活跃 run 没有吃到补丁后的训练代码
+
+## 8. 2026-06-25 22:13 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2395`
+- 当前 checkpoint 目录仍然是：
+  - `step-002000`
+  - `step-002200`
+- 解释：
+  - 当前已经非常接近下一次保存点，但还没真正跨过 `2400`
+  - 因此还没有新的 `step-002400` 目录是符合预期的
+- validation 当前没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2393`
+  - `train/loss_total = 0.04717`
+  - `train/loss_track_aux = 0.02649`
+  - `train/loss_box_aux = 0.40062`
+  - `train/loss_depth_aux = 0.04463`
+  - `train/object_context_abs_max = 0.40191`
+  - `train/object_latent_tokens_abs_max = 4.06538`
+- 最近一小段 history 观察：
+  - `_step 2377` 可见一次比较高的 batch 波动：
+    - `train/loss_total = 0.13166`
+    - `train/loss_box_aux = 0.78415`
+    - `train/loss_depth_aux = 0.51454`
+    - `train/object_latent_tokens_abs_max = 4.05306`
+  - 但当前最新 summary 又已经回到：
+    - `train/loss_total = 0.04717`
+    - `train/loss_depth_aux = 0.04463`
+  - 说明这仍然更像单 batch 尖峰，而不是已经形成持续失稳
+- 当前判断：
+  - `object_latent_tokens_abs_max` 继续从 `4.036` 轻微抬升到 `4.065`
+  - 但 `object_context_abs_max` 仍然稳定在约 `0.40`
+  - `loss_total` 和 `loss_depth_aux` 也没有同步进入持续升高
+  - 因此目前仍判断为轻微正常漂移，需要继续跟踪，但还不构成必须干预的异常
+
+## 9. 2026-06-25 22:14 UTC 关键节点快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2411`
+- `step-002400` 已成功落盘
+- 当前 checkpoint 目录已更新为：
+  - `step-002200`
+  - `step-002400`
+- retention 继续正常，stdout 已打印：
+  - `Pruned old checkpoint: .../step-002000`
+- 解释：
+  - 这说明从 `2200 -> 2400` 这段训练、反传、优化器更新、checkpoint 保存、旧 checkpoint 清理都仍然工作正常
+  - 目前已经拿到新的预期权重文件产出：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-002400`
+- validation 当前仍没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+  - 还没到下一次 validation 触发点
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2412`
+  - `train/loss_total = 0.07579`
+  - `train/loss_track_aux = 0.09080`
+  - `train/loss_box_aux = 0.64631`
+  - `train/loss_depth_aux = 0.02080`
+  - `train/object_context_abs_max = 0.40315`
+  - `train/object_latent_tokens_abs_max = 4.04863`
+- 当前判断：
+  - `step-002400` 正常落盘，说明当前 run 仍然是健康的
+  - `box_aux` 在最新点偏高，但 `depth_aux` 和 `object_context_abs_max` 仍然稳定
+  - `object_latent_tokens_abs_max` 比前一轮略回落到 `4.0486`，没有继续单调上冲
+  - 这进一步支持“当前主要是批间波动，而不是已经开始发散”的判断
+
+## 10. 2026-06-25 22:15 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2430`
+- 当前 checkpoint 目录仍为：
+  - `step-002200`
+  - `step-002400`
+- retention 维持正常，没有额外异常
+- validation 当前没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2428`
+  - `train/loss_total = 0.04539`
+  - `train/loss_track_aux = 0.10161`
+  - `train/loss_box_aux = 0.32251`
+  - `train/loss_depth_aux = 0.02975`
+  - `train/object_context_abs_max = 0.41261`
+  - `train/object_latent_tokens_abs_max = 4.10030`
+- 当前判断：
+  - `2400+` 这一段依旧没有看到新的训练/保存异常
+  - `loss_total / box / depth` 仍处在此前已经出现过的波动带内
+  - `object_context_abs_max` 继续稳定在约 `0.41`
+  - `object_latent_tokens_abs_max` 继续小幅上浮到 `4.10`
+  - 这说明它仍然是当前最值得重点盯的单项指标
+  - 但由于：
+    - `loss_total` 没有联动抬升
+    - `depth_aux` 当前反而较低
+    - `object_context_abs_max` 没有同步失控
+  - 所以当前还不能判定为发散，更像 latent token 幅值的缓慢漂移
+  - 后续需要继续观察它是否会持续单调上升到更明显的异常区间
+
+## 11. 2026-06-25 22:16 UTC 继续监控快照
+
+- 当前训练主进程仍健康存活，实际运行在 `gpu6,7`
+- stdout 最新可见进度：
+  - `global_step 2448`
+- 当前 checkpoint 目录仍为：
+  - `step-002200`
+  - `step-002400`
+- validation 当前没有新增产物：
+  - 仍只有旧的 `step-002000` 失败记录
+- `/data` 磁盘状态：
+  - 可用空间仍约 `5.1G`
+- 当前 W&B `3utgz1bh` 最新：
+  - `lastHistoryStep = 2448`
+  - `train/loss_total = 0.03749`
+  - `train/loss_track_aux = 0.12964`
+  - `train/loss_box_aux = 0.21021`
+  - `train/loss_depth_aux = 0.03503`
+  - `train/object_context_abs_max = 0.41193`
+  - `train/object_latent_tokens_abs_max = 4.11219`
+- 最近一小段 history 观察：
+  - `_step 2444`:
+    - `train/loss_total = 0.03853`
+    - `train/loss_box_aux = 0.24695`
+    - `train/loss_depth_aux = 0.07178`
+    - `train/object_latent_tokens_abs_max = 4.07734`
+  - 当前最新 summary：
+    - `train/loss_total = 0.03749`
+    - `train/loss_depth_aux = 0.03503`
+    - `train/object_latent_tokens_abs_max = 4.11219`
+- 当前判断：
+  - `object_latent_tokens_abs_max` 仍在缓慢上浮，目前到 `4.112`
+  - 但 `loss_total / box / depth` 仍然没有同步进入异常区间
+  - `object_context_abs_max` 继续稳定在约 `0.412`
+  - 所以当前仍判断为“需要继续重点观察的慢漂移”，而不是必须立即中断训练的异常
+        - `ModuleNotFoundError: No module named 'skimage'`
+      - 失败位置：
+        - `train0419_reference/run_validation_vbench.py`
+        - `from skimage.metrics import peak_signal_noise_ratio, structural_similarity`
+    - 影响：
+      - 训练主进程在 `Validation failed at step 2000` 后退出，需要手动恢复
+      - 但 `step-002000` checkpoint 已经完整保存，所以可以直接从 `step-002000` 继续
+    - 修复动作：
+      - 在 `wan-cu128` 环境内安装缺失依赖：
+        - `scikit-image`
+        - `torchmetrics`
+      - 安装后已验证 import 正常：
+        - `skimage_ok 0.25.2`
+        - `LearnedPerceptualImagePatchSimilarity` 可导入
+      - 启动脚本 `run_train_v_newtrain_object_heads_only_gpu67.sh` 已改成：
+        - 自动扫描 `output/checkpoints/step-*`
+        - 默认从最新 step 恢复，而不是硬编码回 `step-000800`
+    - 恢复状态：
+      - 已用修复后的环境和脚本重新启动训练
+      - 新恢复 run 的 W&B run id:
+        - `3utgz1bh`
+      - W&B 链接：
+        - `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/3utgz1bh`
+      - 启动日志已确认：
+        - `Resuming from latest checkpoint: .../step-002000`
+        - `Loading training state from: .../step-002000/training_state.pt`
+      - 当前恢复后的主训练进程已重新存活在 `gpu6,7`
+      - 这次恢复后的训练命令也已经显式带上：
+        - `--benchmark_cuda_visible_devices 5`
+      - 这意味着下一次 validation 若再触发，将不再和主训练 `gpu6,7` 抢卡
+  - `2026-06-25 21:54 UTC` 的恢复后首个监控点：
+    - 新恢复 run `3utgz1bh` 已经成功继续推进
+    - stdout 最新可见进度：
+      - `global_step 2006`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2003`
+      - `train/loss_total = 0.08386`
+      - `train/loss_track_aux = 0.08909`
+      - `train/loss_box_aux = 0.35208`
+      - `train/loss_depth_aux = 0.39740`
+      - `train/object_context_abs_max = 0.37182`
+      - `train/object_latent_tokens_abs_max = 4.42124`
+    - 解释：
+      - 这说明从 `step-002000` 恢复后的前几个 step 已经真实跑起来，不是只停留在加载状态
+      - `object_context_abs_max` 仍然稳定，没有看到 object context 注入爆炸
+      - `object_latent_tokens_abs_max` 比恢复前抬高到 `4.42`，需要后续继续盯是否只是恢复初期 batch 抖动，还是会持续抬升
+      - 当前 checkpoint 目录仍保留：
+        - `step-001800`
+        - `step-002000`
+      - `/data` 可用空间仍约 `5.1G`
+  - `2026-06-25 21:55 UTC` 的追加检查：
+    - 恢复后的训练已经继续推进到：
+      - `global_step 2032`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2029`
+      - `train/loss_total = 0.05646`
+      - `train/loss_track_aux = 0.03546`
+      - `train/loss_box_aux = 0.52126`
+      - `train/loss_depth_aux = 0.00792`
+      - `train/object_context_abs_max = 0.38552`
+      - `train/object_latent_tokens_abs_max = 3.39228`
+    - 解释：
+      - `object_latent_tokens_abs_max` 已经从恢复初期观察到的 `4.42` 回落到 `3.39`
+      - 这说明之前更像恢复初期 batch 抖动，而不是 object latent token 持续上冲
+      - 当前恢复后的训练数值整体仍然稳定，可以继续往下观察下一个 checkpoint 和下一次 validation
+  - `2026-06-25 21:56 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2058`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2055`
+      - `train/loss_total = 0.03951`
+      - `train/loss_track_aux = 0.02438`
+      - `train/loss_box_aux = 0.34254`
+      - `train/loss_depth_aux = 0.02815`
+      - `train/object_context_abs_max = 0.39419`
+      - `train/object_latent_tokens_abs_max = 3.52210`
+    - 解释：
+      - 恢复后的 run 继续健康推进，当前没有新的报错或中断迹象
+      - 几个 loss 均回到较平稳区间
+      - `object_latent_tokens_abs_max` 维持在 `3.5` 左右，没有再次出现恢复初期的短时抬升
+  - `2026-06-25 21:58 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2083`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2081`
+      - `train/loss_total = 0.06633`
+      - `train/loss_track_aux = 0.04713`
+      - `train/loss_box_aux = 0.55621`
+      - `train/loss_depth_aux = 0.05993`
+      - `train/object_context_abs_max = 0.39355`
+      - `train/object_latent_tokens_abs_max = 3.56113`
+    - 解释：
+      - 当前恢复后的 run 仍在稳定推进，没有新的错误或 validation 相关失败
+      - 虽然尚未到新的 `save_steps=2200`，所以 checkpoint 目录还只有 `step-001800` 和 `step-002000`
+      - 但从 loss 和 token 幅值来看，目前没有看到坏趋势
+  - `2026-06-25 21:59 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2102`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2102`
+      - `train/loss_total = 0.03979`
+      - `train/loss_track_aux = 0.12495`
+      - `train/loss_box_aux = 0.22231`
+      - `train/loss_depth_aux = 0.05068`
+      - `train/object_context_abs_max = 0.41690`
+      - `train/object_latent_tokens_abs_max = 3.60660`
+    - 解释：
+      - 当前 run 继续稳定推进，没有新的中断或 validation 相关错误
+      - `object_context_abs_max` 和 `object_latent_tokens_abs_max` 仍然处在可接受的稳定带
+      - 虽然 `loss_track_aux` 这一刻相对前一轮更高，但 `loss_total / box / depth` 没有同步恶化，更像 batch 间正常抖动
+  - `2026-06-25 22:00 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2125`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2122`
+      - `train/loss_total = 0.06605`
+      - `train/loss_track_aux = 0.17756`
+      - `train/loss_box_aux = 0.36729`
+      - `train/loss_depth_aux = 0.11568`
+      - `train/object_context_abs_max = 0.41455`
+      - `train/object_latent_tokens_abs_max = 3.64284`
+    - 解释：
+      - 当前 run 继续健康推进，还未到新的 `save_steps=2200`，所以 checkpoint 目录未变化是正常现象
+      - `loss_track_aux` 和 `loss_depth_aux` 这一刻相对更高，但其余监控项没有同步恶化，更像 batch 级正常抖动
+      - `object_context_abs_max` / `object_latent_tokens_abs_max` 仍在稳定带，没有看到数值开始失控
+  - `2026-06-25 22:01 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2146`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2143`
+      - `train/loss_total = 0.06488`
+      - `train/loss_track_aux = 0.05052`
+      - `train/loss_box_aux = 0.58448`
+      - `train/loss_depth_aux = 0.01379`
+      - `train/object_context_abs_max = 0.39534`
+      - `train/object_latent_tokens_abs_max = 3.81924`
+    - 解释：
+      - 当前 run 继续稳定推进，仍未到新的 `save_steps=2200`
+      - `loss_box_aux` 这一刻偏高，但 `loss_total / track / depth` 与两项幅值指标没有同步异常，更像 batch 间正常抖动
+      - 目前仍没有新的 validation 相关错误或主训练中断
+  - `2026-06-25 22:02 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2168`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2169`
+      - `train/loss_total = 0.04679`
+      - `train/loss_track_aux = 0.06847`
+      - `train/loss_box_aux = 0.33845`
+      - `train/loss_depth_aux = 0.06097`
+      - `train/object_context_abs_max = 0.41283`
+      - `train/object_latent_tokens_abs_max = 3.89896`
+    - 解释：
+      - 当前 run 继续健康推进，还未到新的 `save_steps=2200`
+      - 各项 loss 和 token 幅值仍然在稳定带，没有看到新的持续恶化趋势
+      - 目前仍没有新的 validation 相关错误或主训练中断
+  - `2026-06-25 22:03 UTC` 的继续监控：
+    - 恢复后的训练已进一步推进到：
+      - `global_step 2190`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2189`
+      - `train/loss_total = 0.04668`
+      - `train/loss_track_aux = 0.07689`
+      - `train/loss_box_aux = 0.36723`
+      - `train/loss_depth_aux = 0.02265`
+      - `train/object_context_abs_max = 0.41282`
+      - `train/object_latent_tokens_abs_max = 3.92190`
+    - 解释：
+      - 当前 run 继续稳定推进，离新的 `save_steps=2200` 只差很近
+      - 数值仍在稳定带，没有新的持续恶化趋势
+      - 当前目录里仍只有上一次失败 validation `step-002000` 的运行时产物，没有出现新的 validation 相关错误
+  - `2026-06-25 22:04 UTC` 的关键节点：
+    - `step-002200` 已成功落盘：
+      - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-002200`
+    - retention 继续正常，日志已打印自动清理：
+      - `Pruned old checkpoint: .../step-001800`
+    - 当前 checkpoint 目录更新为：
+      - `step-002000`
+      - `step-002200`
+    - W&B `3utgz1bh` 最新：
+      - `lastHistoryStep = 2209`
+      - `train/loss_total = 0.04664`
+      - `train/loss_track_aux = 0.10271`
+      - `train/loss_box_aux = 0.31990`
+      - `train/loss_depth_aux = 0.04382`
+      - `train/object_context_abs_max = 0.41262`
+      - `train/object_latent_tokens_abs_max = 3.93003`
+    - 解释：
+      - 这说明从 `step-002000` 恢复后的训练不但主循环稳定，checkpoint 保存链路也已经再次验证通过
+      - 当前几项 loss 和两项 token 幅值指标仍处在稳定带，没有看到恢复后逐步恶化的趋势
+      - 当前没有新的 validation 相关目录或失败记录出现；下一次 validation 风险点将顺延到后续新的 `validation_every_steps` 触发点
       - `train/object_context_abs_max = 0.41124`
     - 到目前为止仍无 validation 产物生成，说明 `step 2000` 还没触发
     - 当前 checkpoint 目录仍然只有：
@@ -448,6 +1146,89 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
       - `step-001200`
     - retention 继续正常，磁盘可用空间仍约 `5.1G`
     - 当前依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还完全没有开始
+  - `2026-06-25 21:18:40 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1405`
+    - stdout 最新可见进度已推进到 `global_step 1405`
+    - 已成功产出新 checkpoint：
+      - `step-001400`
+    - retention 继续正常：
+      - 旧的 `step-001000` 已被自动删除
+      - 当前 checkpoint 目录只保留：
+        - `step-001200`
+        - `step-001400`
+    - 最新 summary：
+      - `train/loss_total = 0.04874`
+      - `train/loss_track_aux = 0.04236`
+      - `train/loss_box_aux = 0.42213`
+      - `train/loss_depth_aux = 0.02291`
+      - `train/object_context_abs_max = 0.41806`
+    - 虽然这一步 `object_context_abs_max` 比前几次略高，但仍处在之前长期观测到的稳定波动带内，当前还看不出发散趋势
+    - `/data` 可用空间仍约 `5.1G`
+    - 到当前时刻依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还没有开始
+  - `2026-06-25 21:21:15 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1456`
+    - stdout 最新可见进度已推进到 `global_step 1458`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001200`
+      - `step-001400`
+    - retention 继续正常，没有新的落盘失败
+    - 最新 summary：
+      - `train/loss_total = 0.04252`
+      - `train/loss_track_aux = 0.10424`
+      - `train/loss_box_aux = 0.31365`
+      - `train/loss_depth_aux = 0.00727`
+      - `train/object_context_abs_max = 0.41569`
+    - 当前 `track_aux` 略高，但 `object_context_abs_max` 仍处于已观测到的稳定区间内，暂未看到数值发散证据
+    - `/data` 可用空间仍约 `5.1G`
+    - 到当前时刻依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还没有开始
+  - `2026-06-25 21:22:17 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1477`
+    - stdout 最新可见进度已推进到 `global_step 1478`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001200`
+      - `step-001400`
+    - retention 继续正常，没有新的落盘失败
+    - 最新 summary：
+      - `train/loss_total = 0.04615`
+      - `train/loss_track_aux = 0.07926`
+      - `train/loss_box_aux = 0.31722`
+      - `train/loss_depth_aux = 0.06502`
+      - `train/object_context_abs_max = 0.41147`
+    - 当前 `track_aux`、`depth_aux` 有正常 batch 级波动，但 `object_context_abs_max` 仍处于已观测到的稳定区间内，暂未看到数值发散证据
+    - `/data` 可用空间仍约 `5.1G`
+    - 到当前时刻依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还没有开始
+  - `2026-06-25 21:23:11 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1497`
+    - stdout 最新可见进度已推进到 `global_step 1497`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001200`
+      - `step-001400`
+    - retention 继续正常，没有新的落盘失败
+    - 最新 summary：
+      - `train/loss_total = 0.06025`
+      - `train/loss_track_aux = 0.02880`
+      - `train/loss_box_aux = 0.48087`
+      - `train/loss_depth_aux = 0.09281`
+      - `train/object_context_abs_max = 0.40973`
+    - 当前 `box_aux`、`depth_aux` 有正常 batch 级波动，但 `object_context_abs_max` 仍处于已观测到的稳定区间内，暂未看到数值发散证据
+    - `/data` 可用空间仍约 `5.1G`
+    - 到当前时刻依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还没有开始
+  - `2026-06-25 21:24:03 UTC` 的继续跟踪：
+    - 当前恢复 run 仍健康，W&B `wy4ru3qv` 最新 `lastHistoryStep=1512`
+    - stdout 最新可见进度已推进到 `global_step 1514`
+    - 当前 checkpoint 目录仍只保留：
+      - `step-001200`
+      - `step-001400`
+    - retention 继续正常，没有新的落盘失败
+    - 最新 summary：
+      - `train/loss_total = 0.04943`
+      - `train/loss_track_aux = 0.10120`
+      - `train/loss_box_aux = 0.31647`
+      - `train/loss_depth_aux = 0.07665`
+      - `train/object_context_abs_max = 0.41137`
+    - 当前 `track_aux`、`depth_aux` 有正常 batch 级波动，但 `object_context_abs_max` 仍处于已观测到的稳定区间内，暂未看到数值发散证据
+    - `/data` 可用空间仍约 `5.1G`
+    - 到当前时刻依旧没有任何 validation 相关目录、`summary.json`、`done.json`、`failed.json` 或 stdout/stderr 日志出现，说明 validation 还没有开始
 - 如果后续训练报错，优先排查：
   - 缓存是否缺文件
   - `vggt_input_hw` 是否和缓存生成时一致
