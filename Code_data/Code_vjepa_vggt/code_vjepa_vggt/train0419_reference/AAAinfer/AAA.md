@@ -167,16 +167,26 @@
     - `--train_object_aux_heads`
     - `--freeze_non_object_trainables`
 - 当前代码口径
-    - `train_v_newtrain.py` 已显式冻结：
+    - `train_v_newtrain.py` 当前已显式冻结旧的未使用 summary 分支：
         - `object_pooler.depth_proj.*`
         - `object_pooler.world_proj.*`
+        - `object_pooler.track_geom_proj.*`
     - 原因
-        - 当前 `v_newtrain` 训练前向没有给 `object_pooler` 传 `vggt_depth` / `vggt_world_points`
-        - 所以这两组 VGGT 几何投影层虽然属于 `object_pooler`，但实际不会进入 forward，也不会有梯度
+        - 当前 object pooler 已升级成：
+            - `CoTracker points -> VGGT dense patch tokens / depth / world_points -> GeometryTubeExpert`
+            - 同时保留 `motion / JEPA / latent` 三路 expert
+            - 再通过 modality router 做 gated fusion
+        - 因此旧的 summary 风格几何投影已经不再作为主干使用
     - 因此这版 strict run 里实际参与更新的是：
         - `object_pooler.jepa_proj`
         - `object_pooler.latent_proj`
-        - `object_pooler.track_geom_proj`
+        - `object_pooler.vggt_geom_point_proj`
+        - `object_pooler.motion_point_proj`
+        - `object_pooler.motion_router_score`
+        - `object_pooler.geom_router_score`
+        - `object_pooler.jepa_router_score`
+        - `object_pooler.latent_router_score`
+        - `object_pooler.modal_refine`
         - `object_pooler.out_norm`
         - `object_aux_heads.track_head`
         - `object_aux_heads.box_head`
@@ -190,6 +200,57 @@
         - `with_grad = 31`
         - `without_grad = 0`
         - `changed_count = 31`
+        - `unchanged_count = 0`
+    - 新版 VGGT + MoE strict smoke：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_object_heads_only_vggt_moe_postfreeze`
+        - `num_trainable = 47`
+        - `with_grad = 47`
+        - `without_grad = 0`
+        - `changed_count = 47`
+        - `unchanged_count = 0`
+
+6. （0625 v_newtrain object heads only VGGT+MoE strict）
+- 目的
+    - 保留 `object_heads_only strict` 的训练目标不变
+    - 把 object pooler 主干替换成：
+        - `CoTracker points -> VGGT dense patch tokens/depth/world_points -> GeometryTubeExpert`
+        - `motion / JEPA / latent` 三路 expert
+        - modality router gated fusion
+    - 仍然只训练 object 相关模块，不训练主去噪路径
+- 训练脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py`
+- 启动脚本
+    - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_vggt_moe_strict_gpu67.sh`
+- 前台启动命令
+    - `bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_vggt_moe_strict_gpu67.sh`
+- 输出目录
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_vggt_moe_strict_gpu67`
+- W&B
+    - project: `vjepa_vggt_wan`
+    - run name: `pybullet0625_diffsynth_object_heads_only_vggt_moe_strict_gpu67`
+- 当前有效 trainable 集合
+    - `object_pooler.jepa_proj`
+    - `object_pooler.latent_proj`
+    - `object_pooler.vggt_geom_point_proj`
+    - `object_pooler.motion_point_proj`
+    - `object_pooler.motion_router_score`
+    - `object_pooler.geom_router_score`
+    - `object_pooler.jepa_router_score`
+    - `object_pooler.latent_router_score`
+    - `object_pooler.modal_refine`
+    - `object_pooler.out_norm`
+    - `object_aux_heads.track_head`
+    - `object_aux_heads.box_head`
+    - `object_aux_heads.depth_head`
+    - `object_aux_heads` gate / logit 参数
+- 已验证
+    - strict smoke：
+        - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_object_heads_only_vggt_moe_postfreeze`
+    - 结果：
+        - `num_trainable = 47`
+        - `with_grad = 47`
+        - `without_grad = 0`
+        - `changed_count = 47`
         - `unchanged_count = 0`
 - v_newtrain 专用推理脚本
     - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/infer_v_newtrain_context_video_wan.py`

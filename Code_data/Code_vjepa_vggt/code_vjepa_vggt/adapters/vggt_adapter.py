@@ -27,6 +27,8 @@ class VGGTTrackOutput:
     depth_conf: torch.Tensor | None = None
     world_points: torch.Tensor | None = None
     world_points_conf: torch.Tensor | None = None
+    dense_patch_tokens: torch.Tensor | None = None
+    patch_grid_hw: tuple[int, int] | None = None
 
 
 class VGGTTrackAdapter(nn.Module):
@@ -45,12 +47,37 @@ class VGGTTrackAdapter(nn.Module):
         self.input_hw = input_hw
         self.trainable = bool(trainable)
         self.model = None
+        self.patch_size = 14
+        self.patch_token_dim = 2048
         if model_path and Path(model_path).exists():
             model = VGGT.from_pretrained(model_path)
+            self.patch_size = int(getattr(model.aggregator, "patch_size", self.patch_size))
+            self.patch_token_dim = int(getattr(model.depth_head.norm, "normalized_shape", [self.patch_token_dim])[0])
             if self.trainable:
                 self.model = model.train().to(self.device_obj)
             else:
                 self.model = model.eval().requires_grad_(False).to(self.device_obj)
+
+    def _dense_patch_tokens_from_aggregated(
+        self,
+        aggregated_tokens_list: list[torch.Tensor],
+        patch_start_idx: int,
+        *,
+        batch_size: int,
+        frames: int,
+    ) -> tuple[torch.Tensor, tuple[int, int]]:
+        if len(aggregated_tokens_list) == 0:
+            raise ValueError("aggregated_tokens_list cannot be empty")
+        dense_tokens = aggregated_tokens_list[-1][:, :, patch_start_idx:]
+        patch_h = int(self.input_hw[0]) // int(self.patch_size)
+        patch_w = int(self.input_hw[1]) // int(self.patch_size)
+        expected_patches = patch_h * patch_w
+        if int(dense_tokens.shape[2]) != expected_patches:
+            raise ValueError(
+                f"VGGT patch token count mismatch: expected {expected_patches}, got {int(dense_tokens.shape[2])}"
+            )
+        dense_tokens = dense_tokens.view(batch_size, frames, patch_h, patch_w, dense_tokens.shape[-1]).contiguous()
+        return dense_tokens, (patch_h, patch_w)
 
     def _make_uniform_queries(self, batch_size: int, image_hw: tuple[int, int], device: torch.device) -> torch.Tensor:
         height, width = image_hw
@@ -107,6 +134,12 @@ class VGGTTrackAdapter(nn.Module):
         with torch.set_grad_enabled(self.trainable and torch.is_grad_enabled()):
             model_dtype = next(self.model.parameters()).dtype
             aggregated_tokens_list, patch_start_idx = self.model.shortcut_forward(resized.to(dtype=model_dtype))
+            dense_patch_tokens, patch_grid_hw = self._dense_patch_tokens_from_aggregated(
+                aggregated_tokens_list,
+                patch_start_idx,
+                batch_size=batch_size,
+                frames=frames,
+            )
             predictions = self.model.token_list_to_predictions(
                 aggregated_tokens_list,
                 images=resized.to(dtype=model_dtype),
@@ -129,4 +162,6 @@ class VGGTTrackAdapter(nn.Module):
             depth_conf=predictions.get("depth_conf"),
             world_points=predictions.get("world_points"),
             world_points_conf=predictions.get("world_points_conf"),
+            dense_patch_tokens=dense_patch_tokens.to(dtype=model_dtype),
+            patch_grid_hw=patch_grid_hw,
         )

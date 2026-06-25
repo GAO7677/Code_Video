@@ -22,6 +22,7 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 DEFAULT_OFFICIAL_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 OFFICIAL_WAN_REPO = Path("/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main")
+LEGACY_WAN_REPO = Path("/home/gaoya/Code_Video/Code_data/Code_try0526")
 
 
 @dataclass
@@ -29,6 +30,7 @@ class WanTI2VArgs:
     input_list: Path
     output_root: Path
     wan_root: Path
+    backend: str
     size: str
     frame_num: int
     fps: int
@@ -37,6 +39,7 @@ class WanTI2VArgs:
     sampling_steps: int
     sample_shift: float
     cfg_scale: float
+    negative_prompt: str
     offload_model: bool
     t5_cpu: bool
     convert_model_dtype: bool
@@ -53,6 +56,17 @@ def _ensure_official_wan_imports():
     from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, WAN_CONFIGS  # type: ignore
 
     return wan, WAN_CONFIGS, SIZE_CONFIGS, MAX_AREA_CONFIGS
+
+
+def _ensure_legacy_wan_imports():
+    repo_root = LEGACY_WAN_REPO.resolve()
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+    from rerank_video.pdi_proxy_eval import WanTI2VRunner  # type: ignore
+
+    return WanTI2VRunner
 
 
 def patch_wanmodel_from_pretrained_defaults() -> None:
@@ -188,11 +202,12 @@ def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, A
     height, width = _parse_size(args.size)
     resolved_wan_root = resolve_official_wan_root(args.wan_root)
     return {
-        "model_type": "wan_ti2v_5b_official",
+        "model_type": f"wan_ti2v_5b_{args.backend}",
         "input_list": str(args.input_list),
         "num_items": len(json_paths),
         "wan_root": str(args.wan_root),
         "resolved_wan_root": str(resolved_wan_root),
+        "backend": str(args.backend),
         "height": int(height),
         "width": int(width),
         "frame_num": int(args.frame_num),
@@ -201,11 +216,11 @@ def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, A
         "sampling_steps": int(args.sampling_steps),
         "sample_shift": float(args.sample_shift),
         "cfg_scale": float(args.cfg_scale),
-        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+        "negative_prompt": str(args.negative_prompt),
         "input_field": "input_video",
         "image_field": "input_image",
         "single_process": True,
-        "backend": "official_wan.WanTI2V",
+        "backend_impl": "official_wan.WanTI2V" if args.backend == "official" else "legacy_diffsynth.WanVideoPipeline",
     }
 
 
@@ -272,10 +287,53 @@ class OfficialWanTI2VWrapper:
         return convert_official_video_to_thwc(video)
 
 
+class LegacyWanTI2VWrapper:
+    def __init__(self, pipe: Any, resolved_wan_root: Path):
+        self.pipe = pipe
+        self.resolved_wan_root = resolved_wan_root
+
+    def __call__(
+        self,
+        *,
+        prompt: str,
+        negative_prompt: str,
+        seed: int,
+        input_image: Image.Image,
+        height: int,
+        width: int,
+        num_frames: int,
+        cfg_scale: float,
+        num_inference_steps: int,
+        sample_shift: float,
+        sample_solver: str,
+        offload_model: bool,
+    ) -> np.ndarray:
+        del sample_shift, sample_solver, offload_model
+        with torch.no_grad():
+            video = self.pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                seed=int(seed),
+                input_image=input_image,
+                height=int(height),
+                width=int(width),
+                num_frames=int(num_frames),
+                cfg_scale=float(cfg_scale),
+                num_inference_steps=int(num_inference_steps),
+            )
+        frames = [np.asarray(frame.convert("RGB"), dtype=np.uint8) for frame in video[: int(num_frames)]]
+        return np.stack(frames, axis=0)
+
+
 def build_wan_ti2v_pipeline(args: WanTI2VArgs):
+    resolved_wan_root = resolve_official_wan_root(args.wan_root)
+    if args.backend == "legacy":
+        WanTI2VRunner = _ensure_legacy_wan_imports()
+        runner = WanTI2VRunner(model_root=resolved_wan_root, device="cuda")
+        return LegacyWanTI2VWrapper(pipe=runner.pipe, resolved_wan_root=resolved_wan_root)
+
     wan, WAN_CONFIGS, _, MAX_AREA_CONFIGS = _ensure_official_wan_imports()
     patch_wanmodel_from_pretrained_defaults()
-    resolved_wan_root = resolve_official_wan_root(args.wan_root)
     cfg = WAN_CONFIGS["ti2v-5B"]
     max_area = int(MAX_AREA_CONFIGS[args.size])
 
@@ -310,6 +368,7 @@ def _run_pipe_once(
     *,
     pipe,
     prompt: str,
+    negative_prompt: str,
     seed: int,
     input_image: Image.Image,
     height: int,
@@ -324,7 +383,7 @@ def _run_pipe_once(
     with torch.no_grad():
         return pipe(
             prompt=prompt,
-            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+            negative_prompt=str(negative_prompt),
             seed=int(seed),
             input_image=input_image,
             height=int(height),
@@ -358,7 +417,9 @@ def run_single_case(
         f"[case] input_caption={input_caption}",
         f"[case] wan_root={args.wan_root}",
         f"[case] resolved_wan_root={pipe.resolved_wan_root}",
+        f"[case] backend={args.backend}",
         f"[case] sample_solver={normalize_sample_solver(args.sample_solver)}",
+        f"[case] negative_prompt={args.negative_prompt}",
     ]
 
     used_offload = bool(args.offload_model)
@@ -366,6 +427,7 @@ def run_single_case(
         video = _run_pipe_once(
             pipe=pipe,
             prompt=input_caption,
+            negative_prompt=str(args.negative_prompt),
             seed=int(args.seed),
             input_image=image,
             height=int(height),
@@ -387,6 +449,7 @@ def run_single_case(
         video = _run_pipe_once(
             pipe=pipe,
             prompt=input_caption,
+            negative_prompt=str(args.negative_prompt),
             seed=int(args.seed),
             input_image=image,
             height=int(height),
@@ -412,6 +475,8 @@ def run_single_case(
         "guidance": float(args.cfg_scale),
         "sample_shift": float(args.sample_shift),
         "sample_solver": normalize_sample_solver(args.sample_solver),
+        "backend": str(args.backend),
+        "negative_prompt": str(args.negative_prompt),
         "offload_model": bool(used_offload),
         "ckpt": str(pipe.resolved_wan_root),
     }
@@ -419,6 +484,8 @@ def run_single_case(
 
 
 def cleanup_pipeline(pipe) -> None:
+    if hasattr(pipe, "pipe"):
+        del pipe.pipe
     if hasattr(pipe, "model"):
         del pipe.model
     del pipe

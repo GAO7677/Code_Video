@@ -40,6 +40,7 @@ from tqdm import tqdm
 
 from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
+from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
@@ -109,7 +110,7 @@ def _set_module_requires_grad(module: nn.Module | None, requires_grad: bool) -> 
 def _freeze_unused_object_pooler_geometry_projs(object_pooler: nn.Module | None) -> None:
     if object_pooler is None:
         return
-    for name in ("depth_proj", "world_proj"):
+    for name in ("depth_proj", "world_proj", "track_geom_proj"):
         submodule = getattr(object_pooler, name, None)
         if submodule is not None:
             _set_module_requires_grad(submodule, False)
@@ -182,6 +183,10 @@ class WanTrainingModule(DiffusionTrainingModule):
         cotracker_input_h=384,
         cotracker_input_w=512,
         cotracker_window_len=60,
+        vggt_model_path=None,
+        vggt_input_h=420,
+        vggt_input_w=728,
+        train_vggt=False,
         object_pooler_latent_dim=16,
         cond_proj_dim=4096,
         jepa_window_radius=1,
@@ -280,6 +285,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.train_object_adapter = bool(train_object_adapter)
         self.train_object_dit_branch = bool(train_object_dit_branch)
         self.freeze_non_object_trainables = bool(freeze_non_object_trainables)
+        self.train_vggt = bool(train_vggt)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
@@ -311,10 +317,18 @@ class WanTrainingModule(DiffusionTrainingModule):
                 input_hw=(int(cotracker_input_h), int(cotracker_input_w)),
                 window_len=int(cotracker_window_len),
             )
+            self.vggt_adapter = VGGTTrackAdapter(
+                model_path=vggt_model_path,
+                num_queries=self.total_object_queries,
+                device=str(device),
+                input_hw=(int(vggt_input_h), int(vggt_input_w)),
+                trainable=bool(self.train_vggt),
+            )
             self.object_pooler = ObjectTubeProjector(
                 jepa_dim=int(self.jepa_adapter.encoder.backbone.embed_dim),
                 latent_dim=int(object_pooler_latent_dim),
                 out_dim=cond_dim,
+                vggt_dense_dim=int(self.vggt_adapter.patch_token_dim),
                 jepa_window_radius=int(jepa_window_radius),
                 latent_window_radius=int(latent_window_radius),
                 min_box_px=float(object_min_box_px),
@@ -339,6 +353,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             _freeze_unused_object_pooler_geometry_projs(self.object_pooler)
             _set_module_requires_grad(self.object_aux_heads, self.train_object_aux_heads)
             _set_module_requires_grad(self.object_adapter, self.train_object_adapter)
+            _set_module_requires_grad(self.vggt_adapter, self.train_vggt)
             for name, param in self.pipe.dit.named_parameters():
                 if (
                     "object_embedding" in name
@@ -350,6 +365,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         else:
             self.jepa_adapter = None
             self.cotracker_adapter = None
+            self.vggt_adapter = None
             self.object_pooler = None
             self.object_aux_heads = None
             self.object_adapter = None
@@ -680,6 +696,11 @@ class WanTrainingModule(DiffusionTrainingModule):
             query_frame_ids=query_frame_ids,
             query_image_hw=image_hw,
         )
+        vggt_out = self.vggt_adapter(
+            frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            query_image_hw=image_hw,
+        )
         tracks_grouped, visibility_grouped, confidence_grouped = self._group_tracks_to_objects(
             cotracker_out.tracks,
             cotracker_out.visibility,
@@ -699,6 +720,13 @@ class WanTrainingModule(DiffusionTrainingModule):
             track_image_hw=image_hw,
             object_valid_mask=object_valid_mask,
             box_prior_xyxy=box_prior_xyxy,
+            vggt_world_points=vggt_out.world_points,
+            vggt_world_points_conf=vggt_out.world_points_conf,
+            vggt_depth=vggt_out.depth,
+            vggt_depth_conf=vggt_out.depth_conf,
+            vggt_dense_patch_tokens=vggt_out.dense_patch_tokens,
+            vggt_patch_grid_hw=vggt_out.patch_grid_hw,
+            vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=None,
         )
         object_aux_out = self.object_aux_heads(
@@ -1326,6 +1354,10 @@ def wan_parser():
     parser.add_argument("--cotracker_input_h", type=int, default=384)
     parser.add_argument("--cotracker_input_w", type=int, default=512)
     parser.add_argument("--cotracker_window_len", type=int, default=60)
+    parser.add_argument("--vggt_model_path", type=str, default="/data/gaoya/ckpt/facebook-VGGT-1B")
+    parser.add_argument("--vggt_input_h", type=int, default=420)
+    parser.add_argument("--vggt_input_w", type=int, default=728)
+    parser.add_argument("--train_vggt", action="store_true", default=False)
     parser.add_argument("--object_pooler_latent_dim", type=int, default=16)
     parser.add_argument("--cond_proj_dim", type=int, default=4096)
     parser.add_argument("--jepa_window_radius", type=int, default=1)
@@ -1592,6 +1624,10 @@ def build_model(args, accelerator):
         cotracker_input_h=args.cotracker_input_h,
         cotracker_input_w=args.cotracker_input_w,
         cotracker_window_len=args.cotracker_window_len,
+        vggt_model_path=args.vggt_model_path,
+        vggt_input_h=args.vggt_input_h,
+        vggt_input_w=args.vggt_input_w,
+        train_vggt=args.train_vggt,
         object_pooler_latent_dim=args.object_pooler_latent_dim,
         cond_proj_dim=args.cond_proj_dim,
         jepa_window_radius=args.jepa_window_radius,
