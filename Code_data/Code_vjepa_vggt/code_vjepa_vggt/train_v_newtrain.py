@@ -739,7 +739,9 @@ class WanTrainingModule(DiffusionTrainingModule):
             vggt_depth_conf=getattr(vggt_out, "depth_conf", None),
             vggt_dense_patch_tokens=getattr(vggt_out, "dense_patch_tokens", None),
             vggt_patch_grid_hw=getattr(vggt_out, "patch_grid_hw", None),
-            vggt_geometry_image_hw=getattr(vggt_out, "image_hw", None),
+            vggt_geometry_image_hw=getattr(vggt_out, "input_hw", None)
+            if getattr(vggt_out, "input_hw", None) is not None
+            else getattr(vggt_out, "image_hw", None),
             frame_valid_mask=None,
         )
         object_aux_out = self.object_aux_heads(

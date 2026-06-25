@@ -624,20 +624,31 @@ class ObjectTubeProjector(nn.Module):
             visibility = torch.nan_to_num(visibility.float(), nan=0.0, posinf=0.0, neginf=0.0)
             confidence = torch.nan_to_num(confidence.float(), nan=0.0, posinf=0.0, neginf=0.0)
             tracks, visibility, confidence = self._ensure_grouped_tracks(tracks, visibility, confidence)
+            feature_device = tracks.device
             if object_valid_mask is not None:
-                object_valid_mask = torch.nan_to_num(object_valid_mask.float(), nan=0.0, posinf=0.0, neginf=0.0)
+                object_valid_mask = torch.nan_to_num(
+                    object_valid_mask.float(), nan=0.0, posinf=0.0, neginf=0.0
+                ).to(device=feature_device)
             if vggt_world_points is not None:
-                vggt_world_points = torch.nan_to_num(vggt_world_points.float(), nan=0.0, posinf=0.0, neginf=0.0)
+                vggt_world_points = torch.nan_to_num(
+                    vggt_world_points.float(), nan=0.0, posinf=0.0, neginf=0.0
+                ).to(device=feature_device)
             if vggt_world_points_conf is not None:
-                vggt_world_points_conf = torch.nan_to_num(vggt_world_points_conf.float(), nan=0.0, posinf=0.0, neginf=0.0)
+                vggt_world_points_conf = torch.nan_to_num(
+                    vggt_world_points_conf.float(), nan=0.0, posinf=0.0, neginf=0.0
+                ).to(device=feature_device)
             if vggt_depth is not None:
-                vggt_depth = torch.nan_to_num(vggt_depth.float(), nan=0.0, posinf=0.0, neginf=0.0)
+                vggt_depth = torch.nan_to_num(vggt_depth.float(), nan=0.0, posinf=0.0, neginf=0.0).to(
+                    device=feature_device
+                )
             if vggt_depth_conf is not None:
-                vggt_depth_conf = torch.nan_to_num(vggt_depth_conf.float(), nan=0.0, posinf=0.0, neginf=0.0)
+                vggt_depth_conf = torch.nan_to_num(
+                    vggt_depth_conf.float(), nan=0.0, posinf=0.0, neginf=0.0
+                ).to(device=feature_device)
             if vggt_dense_patch_tokens is not None:
                 vggt_dense_patch_tokens = torch.nan_to_num(
                     vggt_dense_patch_tokens.float(), nan=0.0, posinf=0.0, neginf=0.0
-                )
+                ).to(device=feature_device)
 
             batch, src_frames, objects, points, _ = tracks.shape
             latent_frames = int(context_latents.shape[2])

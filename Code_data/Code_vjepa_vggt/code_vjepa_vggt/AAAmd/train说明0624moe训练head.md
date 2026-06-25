@@ -170,7 +170,42 @@ Wan VAE 的 context latent 作为另一条 appearance 路径输入：
 - 在线模式：训练时直接调用 `VGGTTrackAdapter`
 - 离线模式：训练时优先读取 `/data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache` 下的缓存文件
 
+当前这套缓存分片和训练启动都已经避开 `gpu4`：
+
+- shard0: `CUDA_VISIBLE_DEVICES=2`
+- shard1: `CUDA_VISIBLE_DEVICES=3`
+- shard2: `CUDA_VISIBLE_DEVICES=0`
+- shard3: `CUDA_VISIBLE_DEVICES=5`
+- 正式训练: `CUDA_VISIBLE_DEVICES=6,7`
+
+后续如果要继续重跑缓存或正式训练，不要再把 `gpu4` 放回启动脚本里。
+
 离线缓存脚本会把每个视频的 VGGT dense patch feature 存成 `*.vggt.pt`，训练时按样本 `video_path` 的文件名自动匹配。
+
+当前状态记录：
+
+- `vggt_cache` 已经全量完成，训练集 1200 个样本的 `w000/w001/w002` 三个窗口文件都已生成
+- 正式训练脚本仍使用 `CUDA_VISIBLE_DEVICES=6,7`
+- 当前重启后的训练 run id: `fiqxml81`
+- 当前训练进度：
+  - 已经稳定跑起来，stdout 最新可见进度到 `global_step 343`
+  - 当前已保存 checkpoint：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000200`
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-000400`
+  - `interrupted-latest` 目录也在同步维护：
+    - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/interrupted-latest`
+  - 后续 stdout 最新可见进度已推进到 `global_step 401`
+- 当前训练已显式启用 validation:
+  - `validation_every_steps=2000`
+  - `validation_script_path=run_validation_vbench.py`
+- 如果后续训练报错，优先排查：
+  - 缓存是否缺文件
+  - `vggt_input_hw` 是否和缓存生成时一致
+  - object branch / loss 是否存在非 finite 值
+  - 离线 cache 读取时，几何坐标系现在优先使用 cache payload 中的 `input_hw`
+  - 正式训练脚本已补上 `validation_every_steps=2000`，会定期跑 validation + VBench
+
+这次把 cache 改成 `fp16`，同时把 VGGT 输入从 `420x728` 下调到 `280x504`，原因是原始 dense cache 体积过大，`/data` 分区在全量缓存训练集时会写满并在 `torch.save` 处失败。这个改法不改变 object branch 的读取方式，只是把离线几何特征压缩到能完整落盘的规模。
 
 当前启动脚本 `run_train_v_newtrain_object_heads_only_gpu67.sh` 已经默认加上：
 

@@ -55,6 +55,12 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --train_object_pooler \
   --train_object_aux_heads \
   --depth_target_state_index 2 \
+  --validation_every_steps 2000 \
+  --validation_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_validation_vbench.py \
+  --validation_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation100.txt \
+  --validation_context_frames_list 0,1,2,4,6,8 \
+  --validation_output_subdir validation100_vbench \
+  --validation_vbench_config_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/vbench_paths.yaml \
   --report_to wandb \
   --wandb_project vjepa_vggt_wan \
   --wandb_name pybullet0625_diffsynth_object_heads_only_gpu67 \
