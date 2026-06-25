@@ -310,16 +310,20 @@ class LegacyWanTI2VWrapper:
     ) -> np.ndarray:
         del sample_shift, sample_solver, offload_model
         with torch.no_grad():
+            generation_kwargs = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "height": int(height),
+                "width": int(width),
+                "num_frames": int(num_frames),
+                "seed": int(seed),
+                "cfg_scale": float(cfg_scale),
+                "num_inference_steps": int(num_inference_steps),
+                "tiled": True,
+                "input_image": input_image,
+            }
             video = self.pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                seed=int(seed),
-                input_image=input_image,
-                height=int(height),
-                width=int(width),
-                num_frames=int(num_frames),
-                cfg_scale=float(cfg_scale),
-                num_inference_steps=int(num_inference_steps),
+                **generation_kwargs,
             )
         frames = [np.asarray(frame.convert("RGB"), dtype=np.uint8) for frame in video[: int(num_frames)]]
         return np.stack(frames, axis=0)

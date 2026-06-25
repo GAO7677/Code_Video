@@ -110,7 +110,7 @@ def _set_module_requires_grad(module: nn.Module | None, requires_grad: bool) -> 
 def _freeze_unused_object_pooler_geometry_projs(object_pooler: nn.Module | None) -> None:
     if object_pooler is None:
         return
-    for name in ("depth_proj", "world_proj", "track_geom_proj"):
+    for name in ("world_proj", "track_geom_proj"):
         submodule = getattr(object_pooler, name, None)
         if submodule is not None:
             _set_module_requires_grad(submodule, False)
@@ -347,9 +347,8 @@ class WanTrainingModule(DiffusionTrainingModule):
                 max_time_steps=64,
             )
             _set_module_requires_grad(self.object_pooler, self.train_object_pooler)
-            # The current v_newtrain object path never feeds VGGT depth/world tensors into
-            # ObjectTubeProjector.forward(), so these geometry projections stay dormant.
-            # Freeze them explicitly to keep the trainable set aligned with actual usage.
+            # Freeze only dormant geometry projections so the trainable set matches
+            # the simplified object branch. `depth_proj` is still active.
             _freeze_unused_object_pooler_geometry_projs(self.object_pooler)
             _set_module_requires_grad(self.object_aux_heads, self.train_object_aux_heads)
             _set_module_requires_grad(self.object_adapter, self.train_object_adapter)

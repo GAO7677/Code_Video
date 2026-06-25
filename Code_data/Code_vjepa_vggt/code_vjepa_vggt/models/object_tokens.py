@@ -49,7 +49,7 @@ class ObjectTubeProjector(nn.Module):
             nn.Linear(self.out_dim, self.out_dim),
         )
         self.vggt_geom_point_proj = nn.Sequential(
-            nn.Linear(int(vggt_dense_dim) + 1 + 3 + 6, self.out_dim),
+            nn.Linear(int(vggt_dense_dim) + 1 + 6, self.out_dim),
             nn.GELU(),
             nn.Linear(self.out_dim, self.out_dim),
         )
@@ -62,6 +62,8 @@ class ObjectTubeProjector(nn.Module):
         self.geom_router_score = nn.Linear(self.out_dim, 1)
         self.jepa_router_score = nn.Linear(self.out_dim, 1)
         self.latent_router_score = nn.Linear(self.out_dim, 1)
+        self.track_geometry_router_score = nn.Linear(self.out_dim, 1)
+        self.appearance_router_score = nn.Linear(self.out_dim, 1)
         self.modal_refine = nn.Sequential(
             nn.Linear(self.out_dim, self.out_dim),
             nn.GELU(),
@@ -254,28 +256,43 @@ class ObjectTubeProjector(nn.Module):
 
     def _modality_fuse(
         self,
-        motion_tokens: torch.Tensor,
-        geom_tokens: torch.Tensor,
-        jepa_tokens: torch.Tensor,
-        latent_tokens: torch.Tensor,
+        track_geometry_tokens: torch.Tensor,
+        appearance_tokens: torch.Tensor,
     ) -> torch.Tensor:
         gate_logits = torch.cat(
             [
-                self.motion_router_score(motion_tokens),
-                self.geom_router_score(geom_tokens),
-                self.jepa_router_score(jepa_tokens),
-                self.latent_router_score(latent_tokens),
+                self.track_geometry_router_score(track_geometry_tokens),
+                self.appearance_router_score(appearance_tokens),
             ],
             dim=-1,
         )
         gate_weights = torch.softmax(gate_logits, dim=-1)
         fused = (
-            gate_weights[..., 0:1] * motion_tokens
-            + gate_weights[..., 1:2] * geom_tokens
-            + gate_weights[..., 2:3] * jepa_tokens
-            + gate_weights[..., 3:4] * latent_tokens
+            gate_weights[..., 0:1] * track_geometry_tokens
+            + gate_weights[..., 1:2] * appearance_tokens
         )
         return self.out_norm(fused + self.modal_refine(fused))
+
+    @staticmethod
+    def _pair_fuse(
+        tokens_a: torch.Tensor,
+        tokens_b: torch.Tensor,
+        score_a: nn.Module,
+        score_b: nn.Module,
+    ) -> torch.Tensor:
+        gate_logits = torch.cat(
+            [
+                score_a(tokens_a),
+                score_b(tokens_b),
+            ],
+            dim=-1,
+        )
+        gate_weights = torch.softmax(gate_logits, dim=-1)
+        fused = (
+            gate_weights[..., 0:1] * tokens_a
+            + gate_weights[..., 1:2] * tokens_b
+        )
+        return fused
 
     @staticmethod
     def _temporal_group_mean_grouped(
@@ -788,22 +805,6 @@ class ObjectTubeProjector(nn.Module):
                     )
                 else:
                     depth_local = geom_local.new_zeros(*geom_local.shape[:-1], 1)
-                world_local = None
-                if vggt_world_points is not None:
-                    world_local = self._pool_feature_grid(
-                        vggt_world_points,
-                        flat_geometry_tracks,
-                        image_hw=vggt_geometry_image_hw if vggt_geometry_image_hw is not None else track_image_hw,
-                        window_radius=0,
-                    ).clamp(-self.vggt_world_clip, self.vggt_world_clip)
-                    world_local = self._restore_point_axis(world_local, objects, points)
-                    world_local = self._temporal_group_mean_grouped(
-                        world_local,
-                        latent_frames,
-                        frame_valid_mask=frame_valid_mask,
-                    )
-                else:
-                    world_local = geom_local.new_zeros(*geom_local.shape[:-1], 3)
                 motion_local_lat = motion_local
                 if int(motion_local_lat.shape[1]) != int(latent_frames):
                     motion_local_lat = self._temporal_group_mean_grouped(
@@ -812,7 +813,7 @@ class ObjectTubeProjector(nn.Module):
                         frame_valid_mask=frame_valid_mask,
                     )
                 geom_point_features = torch.cat(
-                    [geom_local, depth_local, world_local, motion_local_lat],
+                    [geom_local, depth_local, motion_local_lat],
                     dim=-1,
                 )
                 geom_point_tokens = self.vggt_geom_point_proj(geom_point_features)
@@ -823,7 +824,19 @@ class ObjectTubeProjector(nn.Module):
                 )
                 vggt_geom_tokens = geom_latent_tokens.mean(dim=1)
 
-            if vggt_world_points is not None and vggt_depth is not None:
+            track_geom_latent_tokens = self._pair_fuse(
+                motion_latent_tokens,
+                geom_latent_tokens,
+                self.motion_router_score,
+                self.geom_router_score,
+            )
+            appearance_latent_tokens = self._pair_fuse(
+                jepa_latent_tokens,
+                latent_latent_tokens,
+                self.jepa_router_score,
+                self.latent_router_score,
+            )
+            if vggt_depth is not None:
                 geometry_image_hw = (
                     tuple(int(v) for v in vggt_geometry_image_hw)
                     if vggt_geometry_image_hw is not None
@@ -837,22 +850,13 @@ class ObjectTubeProjector(nn.Module):
                 )
                 geometry_tracks = geometry_tracks.view(batch, src_frames, objects, points, 2)
                 flat_geometry_tracks, _, _ = self._flatten_point_axis(geometry_tracks)
-                world_local = self._pool_feature_grid(
-                    vggt_world_points,
-                    flat_geometry_tracks,
-                    image_hw=geometry_image_hw,
-                    window_radius=0,
-                ).clamp(-self.vggt_world_clip, self.vggt_world_clip)
                 depth_local = self._pool_feature_grid(
                     vggt_depth,
                     flat_geometry_tracks,
                     image_hw=geometry_image_hw,
                     window_radius=0,
                 ).clamp(-self.vggt_depth_clip, self.vggt_depth_clip)
-                world_local = self._restore_point_axis(world_local, objects, points)
                 depth_local = self._restore_point_axis(depth_local, objects, points)
-                depth_conf_local = None
-                world_conf_local = None
                 if vggt_depth_conf is not None:
                     depth_conf_local = self._pool_feature_grid(
                         vggt_depth_conf.unsqueeze(-1),
@@ -861,34 +865,25 @@ class ObjectTubeProjector(nn.Module):
                         window_radius=0,
                     ).clamp(0.0, 1.0)
                     depth_conf_local = self._restore_point_axis(depth_conf_local, objects, points)
-                if vggt_world_points_conf is not None:
-                    world_conf_local = self._pool_feature_grid(
-                        vggt_world_points_conf,
-                        flat_geometry_tracks,
-                        image_hw=geometry_image_hw,
-                        window_radius=0,
-                    ).clamp(0.0, 1.0)
-                    world_conf_local = self._restore_point_axis(world_conf_local, objects, points)
-                if depth_conf_local is None:
+                else:
                     depth_conf_local = torch.ones_like(depth_local)
-                if world_conf_local is None:
-                    world_conf_local = torch.ones_like(depth_local)
-                depth_local = self._temporal_group_mean_grouped(depth_local, latent_frames, frame_valid_mask=frame_valid_mask)
-                depth_conf_local = self._temporal_group_mean_grouped(depth_conf_local, latent_frames, frame_valid_mask=frame_valid_mask)
-                world_local = self._temporal_group_mean_grouped(world_local, latent_frames, frame_valid_mask=frame_valid_mask)
-                world_conf_local = self._temporal_group_mean_grouped(world_conf_local, latent_frames, frame_valid_mask=frame_valid_mask)
+                depth_local = self._temporal_group_mean_grouped(
+                    depth_local,
+                    latent_frames,
+                    frame_valid_mask=frame_valid_mask,
+                )
+                depth_conf_local = self._temporal_group_mean_grouped(
+                    depth_conf_local,
+                    latent_frames,
+                    frame_valid_mask=frame_valid_mask,
+                )
                 depth_local = self._aggregate_points(depth_local, point_weights_lat)
                 depth_conf_local = self._aggregate_points(depth_conf_local, point_weights_lat)
-                world_local = self._aggregate_points(world_local, point_weights_lat)
-                world_conf_local = self._aggregate_points(world_conf_local, point_weights_lat)
                 depth_latent_tokens = self.depth_proj(torch.cat([depth_local, depth_conf_local], dim=-1))
-                world_latent_tokens = self.world_proj(torch.cat([world_local, world_conf_local], dim=-1))
 
             object_latent_tokens = self._modality_fuse(
-                motion_latent_tokens,
-                geom_latent_tokens,
-                jepa_latent_tokens,
-                latent_latent_tokens,
+                track_geom_latent_tokens,
+                appearance_latent_tokens,
             )
             if object_valid_mask is not None:
                 slot_mask = object_valid_mask[:, None, :, None].to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
@@ -902,8 +897,6 @@ class ObjectTubeProjector(nn.Module):
                 active_box_xyxy = active_box_xyxy * slot_mask
                 if depth_latent_tokens is not None:
                     depth_latent_tokens = depth_latent_tokens * slot_mask
-                if world_latent_tokens is not None:
-                    world_latent_tokens = world_latent_tokens * slot_mask
             object_tokens = object_latent_tokens.mean(dim=1)
             jepa_tokens = jepa_latent_tokens.mean(dim=1)
             latent_tokens = latent_latent_tokens.mean(dim=1)

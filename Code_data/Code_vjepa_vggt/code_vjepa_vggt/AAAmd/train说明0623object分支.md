@@ -3,11 +3,19 @@
 
 ## 2026-06-25 补充
 
-- 当前 `train_v_newtrain.py` 的 object-heads-only strict 方案里，`object_pooler.depth_proj.*` 和 `object_pooler.world_proj.*` 已显式冻结。
-- 原因不是这两组参数有 bug，而是当前训练前向没有向 `ObjectTubeProjector.forward()` 传入 `vggt_depth / vggt_world_points`，所以这条 VGGT 几何分支根本不会被执行。
+- 当前 `train_v_newtrain.py` 的 object-heads-only strict 方案已经切到精简版 object pooler。
+- 当前主链路是：
+  - `CoTracker points -> motion expert`
+  - `CoTracker points -> VGGT dense patch tokens + depth -> geometry expert`
+  - `JEPA tokens + Wan context latents -> appearance expert`
+  - 最后做 `track_geometry / appearance` 两路 gated fusion
+- 其中：
+  - `depth_proj.*` 仍然在主链路里，会参与训练
+  - `world_points` 已从主训练链路移除
+  - `world_proj.*` 和旧的 `track_geom_proj.*` 只保留结构兼容，不参与当前 strict 训练
 - 现在的文档口径统一为：
-  - `object_pooler` 里真正参与当前 strict 训练的是 `jepa_proj / latent_proj / track_geom_proj / out_norm`
-  - `depth_proj / world_proj` 属于“结构上存在、当前方案未接线”的子模块，不再计入有效 trainable 集合
+  - `object_pooler` 真正参与当前 strict 训练的是 `jepa_proj / latent_proj / motion_point_proj / vggt_geom_point_proj / depth_proj / 各级 router / modal_refine / out_norm`
+  - `world_proj` 和旧的 `track_geom_proj` 不再计入有效 trainable 集合
 
 ## 当前目标
 

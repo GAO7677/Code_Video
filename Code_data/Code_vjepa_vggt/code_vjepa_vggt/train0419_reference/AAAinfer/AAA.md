@@ -237,12 +237,25 @@
     - `object_pooler.geom_router_score`
     - `object_pooler.jepa_router_score`
     - `object_pooler.latent_router_score`
+    - `object_pooler.track_geometry_router_score`
+    - `object_pooler.appearance_router_score`
     - `object_pooler.modal_refine`
+    - `object_pooler.depth_proj`
     - `object_pooler.out_norm`
     - `object_aux_heads.track_head`
     - `object_aux_heads.box_head`
     - `object_aux_heads.depth_head`
     - `object_aux_heads` gate / logit 参数
+- 当前 object pooler 主链路
+    - `CoTracker points -> motion expert`
+    - `CoTracker points -> VGGT dense patch tokens + depth -> geometry expert`
+    - `JEPA tokens + Wan context latents -> appearance expert`
+    - 最终不是旧的 4 路融合，而是两级结构：
+        - 先做 `track+geometry`
+        - 再做 `JEPA+latent`
+        - 最后做 `track_geometry / appearance` 两路 gated fusion
+    - `world_points` 已从当前主训练链路移除
+    - `world_proj` 和旧的 `track_geom_proj` 仅保留结构兼容，不参与当前 strict 训练
 - 已验证
     - strict smoke：
         - `/data/gaoya/AAA_test_video/0623/train/train0624/smoke_object_heads_only_vggt_moe_postfreeze`
