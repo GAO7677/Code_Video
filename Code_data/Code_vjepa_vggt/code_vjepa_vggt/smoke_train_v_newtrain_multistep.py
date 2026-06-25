@@ -155,6 +155,7 @@ def _collect_object_debug(model_unwrapped: torch.nn.Module, sample: dict[str, An
             "pred": _mean_box_stats(object_aux_out.pred_box_xyxy.detach().float().cpu(), pred_box_valid.detach().cpu()),
             "gt": _mean_box_stats(gt_box_xyxy.detach().float().cpu(), gt_box_valid.detach().cpu()),
             "active_prior": _mean_box_stats(object_out.active_box_xyxy.detach().float().cpu(), pred_box_valid.detach().cpu()),
+            "box_prior": _mean_box_stats(box_prior_xyxy.detach().float().cpu(), object_valid_mask.detach().cpu()),
         },
         "track_stats": {
             "pred_center_mean": [
@@ -172,6 +173,7 @@ def _collect_object_debug(model_unwrapped: torch.nn.Module, sample: dict[str, An
         },
         "object_context_abs_max": float(object_context.detach().abs().max().item()),
         "object_context_abs_mean": float(object_context.detach().abs().mean().item()),
+        "box_prior_xyxy": box_prior_xyxy.detach().float().cpu().tolist(),
     }
 
 

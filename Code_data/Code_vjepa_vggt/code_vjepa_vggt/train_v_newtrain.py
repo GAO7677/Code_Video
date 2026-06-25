@@ -180,6 +180,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         lambda_depth_aux=0.0,
         lambda_track_box_aux=0.0,
         lambda_track_iou_aux=0.0,
+        lambda_object_context_reg=0.0,
         depth_target_state_index=None,
         object_gate_init=0.1,
     ):
@@ -238,6 +239,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.lambda_depth_aux = float(lambda_depth_aux)
         self.lambda_track_box_aux = float(lambda_track_box_aux)
         self.lambda_track_iou_aux = float(lambda_track_iou_aux)
+        self.lambda_object_context_reg = float(lambda_object_context_reg)
         self.object_track_delta_scale = float(object_track_delta_scale)
         self.object_box_delta_scale = float(object_box_delta_scale)
         self.object_box_wh_log_scale = float(object_box_wh_log_scale)
@@ -473,8 +475,17 @@ class WanTrainingModule(DiffusionTrainingModule):
         height, width = image_hw
         centers_xy = centers_xy.view(centers_xy.shape[0], int(latent_frames), group, centers_xy.shape[2], 2)
         valid_mask = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2])
-        first_xy = centers_xy[:, :, 0]
-        last_xy = centers_xy[:, :, -1]
+        valid_group = valid_mask.bool().permute(0, 1, 3, 2)
+        any_valid = valid_group.any(dim=-1)
+        first_idx = valid_group.float().argmax(dim=-1)
+        last_idx = group - 1 - valid_group.flip(dims=[-1]).float().argmax(dim=-1)
+        first_idx = torch.where(any_valid, first_idx, torch.zeros_like(first_idx))
+        last_idx = torch.where(any_valid, last_idx, torch.zeros_like(last_idx))
+        centers_perm = centers_xy.permute(0, 1, 3, 2, 4)
+        gather_first = first_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 2).long()
+        gather_last = last_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 2).long()
+        first_xy = torch.gather(centers_perm, dim=3, index=gather_first).squeeze(3)
+        last_xy = torch.gather(centers_perm, dim=3, index=gather_last).squeeze(3)
         valid_weights = valid_mask.to(dtype=centers_xy.dtype).unsqueeze(-1)
         mean_xy = (centers_xy * valid_weights).sum(dim=2) / valid_weights.sum(dim=2).clamp_min(1.0)
         mean_xy_norm = torch.stack(
@@ -504,8 +515,16 @@ class WanTrainingModule(DiffusionTrainingModule):
             raise ValueError(
                 f"context box frames {int(boxes_xyxy.shape[1])} not divisible by latent_frames={latent_frames}"
             )
-        boxes = boxes_xyxy.view(boxes_xyxy.shape[0], int(latent_frames), group, boxes_xyxy.shape[2], 4)[:, :, -1]
-        valid = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2]).any(dim=2)
+        boxes_grouped = boxes_xyxy.view(boxes_xyxy.shape[0], int(latent_frames), group, boxes_xyxy.shape[2], 4)
+        valid_grouped = valid_mask.view(valid_mask.shape[0], int(latent_frames), group, valid_mask.shape[2])
+        valid_perm = valid_grouped.bool().permute(0, 1, 3, 2)
+        any_valid = valid_perm.any(dim=-1)
+        last_idx = group - 1 - valid_perm.flip(dims=[-1]).float().argmax(dim=-1)
+        last_idx = torch.where(any_valid, last_idx, torch.zeros_like(last_idx))
+        boxes_perm = boxes_grouped.permute(0, 1, 3, 2, 4)
+        gather_last = last_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, 1, 4).long()
+        boxes = torch.gather(boxes_perm, dim=3, index=gather_last).squeeze(3)
+        valid = valid_grouped.any(dim=2)
         return boxes, valid
 
     @staticmethod
@@ -715,6 +734,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             **inputs_posi,
             object_context=object_context,
         )
+        object_context_reg = object_context.square().mean()
         # `track_box_loss` / `track_iou_loss` are measured on the frozen
         # CoTracker-derived center tracks before the trainable aux heads.
         # They are useful diagnostics for track quality, but they do not
@@ -724,6 +744,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             + self.lambda_track_aux * track_aux_loss
             + self.lambda_box_aux * box_aux_loss
             + self.lambda_depth_aux * depth_aux_loss
+            + self.lambda_object_context_reg * object_context_reg
         )
         object_context_abs = object_context.detach().abs()
         object_latent_tokens_abs = object_out.object_latent_tokens.detach().abs()
@@ -736,6 +757,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             "train/loss_track_iou_aux": float(track_iou_loss.detach().item()),
             "train/loss_track_center_aux": float(track_center_l1.detach().item()),
             "train/loss_track_delta_aux": float(track_delta_l1.detach().item()),
+            "train/loss_object_context_reg": float(object_context_reg.detach().item()),
             "train/track_box_loss": float(track_box_loss.detach().item()),
             "train/track_box_loss_norm": float(track_box_loss_norm.detach().item()),
             "train/track_iou_loss": float(track_iou_loss.detach().item()),
@@ -1255,6 +1277,7 @@ def wan_parser():
     parser.add_argument("--lambda_depth_aux", type=float, default=0.0)
     parser.add_argument("--lambda_track_box_aux", type=float, default=0.0)
     parser.add_argument("--lambda_track_iou_aux", type=float, default=0.0)
+    parser.add_argument("--lambda_object_context_reg", type=float, default=0.0)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
     return parser
 
@@ -1511,6 +1534,7 @@ def build_model(args, accelerator):
         lambda_depth_aux=args.lambda_depth_aux,
         lambda_track_box_aux=args.lambda_track_box_aux,
         lambda_track_iou_aux=args.lambda_track_iou_aux,
+        lambda_object_context_reg=args.lambda_object_context_reg,
         depth_target_state_index=args.depth_target_state_index,
     )
 

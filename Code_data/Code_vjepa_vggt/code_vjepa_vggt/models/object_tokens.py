@@ -345,6 +345,7 @@ class ObjectTubeProjector(nn.Module):
         expand_ratio: float = 0.15,
         min_box_px: float = 16.0,
     ) -> torch.Tensor:
+        prior = None
         if target_frames is not None and int(tracks.shape[1]) != int(target_frames):
             if int(tracks.shape[1]) % int(target_frames) != 0:
                 raise ValueError(
@@ -362,11 +363,14 @@ class ObjectTubeProjector(nn.Module):
         if box_prior_xyxy is not None:
             prior = torch.nan_to_num(box_prior_xyxy.float(), nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
             if prior.ndim == 3:
-                return prior[:, None].expand(-1, tracks.shape[1], -1, -1)
-            if prior.ndim == 4:
-                return prior
-            raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
+                prior = prior[:, None].expand(-1, tracks.shape[1], -1, -1)
+            elif prior.ndim == 4:
+                prior = prior
+            else:
+                raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
         if not bool(valid_any.any().item()):
+            if prior is not None:
+                return prior
             center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
             half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
             return torch.cat(
@@ -396,8 +400,14 @@ class ObjectTubeProjector(nn.Module):
                 float(min_box_px) / max(float(height - 1), 1.0),
             ]
         )
-        half_wh = 0.5 * torch.stack([span_x + 2.0 * pad_x, span_y + 2.0 * pad_y], dim=-1)
-        half_wh = torch.maximum(half_wh, 0.5 * min_box_wh.view(1, 1, 1, 2))
+        dynamic_wh = torch.stack([span_x + 2.0 * pad_x, span_y + 2.0 * pad_y], dim=-1)
+        dynamic_wh = torch.maximum(dynamic_wh, min_box_wh.view(1, 1, 1, 2))
+        if prior is not None:
+            prior_wh = (prior[..., 2:] - prior[..., :2]).clamp_min(1.0e-4)
+            box_wh = torch.maximum(dynamic_wh, prior_wh)
+        else:
+            box_wh = dynamic_wh
+        half_wh = 0.5 * box_wh
         center_xy = torch.stack([0.5 * (x_min + x_max), 0.5 * (y_min + y_max)], dim=-1)
         active_box_xyxy = torch.stack(
             [
@@ -472,6 +482,27 @@ class ObjectTubeProjector(nn.Module):
         centers = (tracks * weights.unsqueeze(-1)).sum(dim=3) / denom
         valid = weights.sum(dim=3) > 1.0e-6
         return centers, valid
+
+    @staticmethod
+    def _select_first_last_valid(
+        values: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        group = int(values.shape[2])
+        valid_group = valid_mask.bool()
+        any_valid = valid_group.any(dim=2)
+        first_idx = valid_group.float().argmax(dim=2)
+        last_idx = group - 1 - valid_group.flip(dims=[2]).float().argmax(dim=2)
+        first_idx = torch.where(any_valid, first_idx, torch.zeros_like(first_idx))
+        last_idx = torch.where(any_valid, last_idx, torch.zeros_like(last_idx))
+
+        gather_shape = [*values.shape[:2], values.shape[3], 1, values.shape[-1]]
+        values_perm = values.permute(0, 1, 3, 2, 4)
+        first_gather = first_idx.unsqueeze(2).unsqueeze(-1).expand(*gather_shape).long()
+        last_gather = last_idx.unsqueeze(2).unsqueeze(-1).expand(*gather_shape).long()
+        first_values = torch.gather(values_perm, dim=3, index=first_gather).squeeze(3).permute(0, 1, 2, 3)
+        last_values = torch.gather(values_perm, dim=3, index=last_gather).squeeze(3).permute(0, 1, 2, 3)
+        return first_values, last_values
 
     def forward(
         self,
@@ -584,7 +615,6 @@ class ObjectTubeProjector(nn.Module):
                 confidence,
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
-                box_prior_xyxy=box_prior_xyxy,
                 min_box_px=16.0,
             )
             track_geom_latent_tokens = self.track_geom_proj(active_track_summary)

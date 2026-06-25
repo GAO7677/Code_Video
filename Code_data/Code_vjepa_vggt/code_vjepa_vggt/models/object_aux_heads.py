@@ -36,6 +36,8 @@ class ObjectAuxHeads(nn.Module):
         box_delta_scale: float = 0.06,
         box_wh_log_scale: float = 1.25,
         box_wh_max_scale: float = 2.0,
+        box_center_gate_init: float = 0.05,
+        box_size_gate_init: float = 0.05,
     ) -> None:
         super().__init__()
         self.track_delta_scale = float(track_delta_scale)
@@ -45,6 +47,10 @@ class ObjectAuxHeads(nn.Module):
         self.track_head = _ResidualMLP(dim, 4)
         self.box_head = _ResidualMLP(dim, 4)
         self.depth_head = _ResidualMLP(dim, 1)
+        center_init = torch.tensor(float(box_center_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
+        size_init = torch.tensor(float(box_size_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
+        self.box_center_gate_logit = nn.Parameter(torch.logit(center_init))
+        self.box_size_gate_logit = nn.Parameter(torch.logit(size_init))
 
     def set_scales(
         self,
@@ -96,8 +102,10 @@ class ObjectAuxHeads(nn.Module):
         box_delta = self.box_head(object_latent_tokens)
         base_center_xy = 0.5 * (base_box_xyxy[..., :2] + base_box_xyxy[..., 2:])
         base_wh = (base_box_xyxy[..., 2:] - base_box_xyxy[..., :2]).clamp_min(1.0e-4)
-        center_delta = self.box_delta_scale * torch.tanh(box_delta[..., :2]) * base_wh
-        wh_log_scale = self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
+        center_gate = torch.sigmoid(self.box_center_gate_logit).to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
+        size_gate = torch.sigmoid(self.box_size_gate_logit).to(dtype=object_latent_tokens.dtype, device=object_latent_tokens.device)
+        center_delta = center_gate * self.box_delta_scale * torch.tanh(box_delta[..., :2]) * base_wh
+        wh_log_scale = size_gate * self.box_wh_log_scale * torch.tanh(box_delta[..., 2:])
         wh_scale = torch.exp(wh_log_scale).clamp(0.75, self.box_wh_max_scale)
 
         pred_center_xy = (base_center_xy + center_delta).clamp(0.0, 1.0)

@@ -5,7 +5,13 @@ import torch.nn as nn
 
 
 class ObjectConditionAdapter(nn.Module):
-    def __init__(self, dim: int = 4096, num_slots: int = 8, max_time_steps: int = 64) -> None:
+    def __init__(
+        self,
+        dim: int = 4096,
+        num_slots: int = 8,
+        max_time_steps: int = 64,
+        output_gate_init: float = 0.1,
+    ) -> None:
         super().__init__()
         self.dim = int(dim)
         self.num_slots = int(num_slots)
@@ -19,6 +25,8 @@ class ObjectConditionAdapter(nn.Module):
             nn.Linear(self.dim, self.dim),
         )
         self.out_norm = nn.LayerNorm(self.dim)
+        gate_init = torch.tensor(float(output_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
+        self.output_gate_logit = nn.Parameter(torch.logit(gate_init))
 
     def forward(
         self,
@@ -40,6 +48,7 @@ class ObjectConditionAdapter(nn.Module):
         x = self.norm(x)
         x = x + self.mlp(x)
         x = self.out_norm(x)
+        x = x * torch.sigmoid(self.output_gate_logit).to(dtype=x.dtype, device=x.device)
         if object_valid_mask is not None:
             slot_mask = object_valid_mask[:, None, :, None].to(dtype=x.dtype, device=x.device)
             x = x * slot_mask
