@@ -15,7 +15,6 @@
 - `python -m physv_eval.single_case.videophy2`
 - `python -m physv_eval.single_case.phyground`
 - `python -m physv_eval.single_case.cosmos_reason1`
-- `python -m physv_eval.single_case.ball_block`
 
 这些入口都支持最少一个视频路径；其中一部分还支持 caption、rule、context video 等额外输入。  
 对需要批量跑目录或整套 benchmark 的脚本，可以继续保留在各自仓库目录里，但建议把真正的单样本打分逻辑统一收敛到上面的 `score_case(...)`。
@@ -284,41 +283,7 @@ python -m physv_eval.single_case.cosmos_reason1 \
 补充说明：
 - 这个分数更适合判断“整体像不像真的”，对明显不合理运动和碰撞更敏感。
 
-## 7. JEPA 分数 / ball_block
-
-- 推荐入口：`python -m physv_eval.single_case.ball_block`
-- 典型用途：对单个视频跑 ball-block 相关诊断，其中包括 PDI 子流程和 JEPA 子流程
-- 输入格式：
-  - `--video /path/to/video.mp4`
-  - 或 `--input-json case.json`
-  - 可选 `--caption "ball"`，默认就是 `ball`
-  - 可选 `--skip-pdi`、`--skip-jepa`
-- 输出格式：标准输出 JSON，常见字段包含 `pdi` 和 `jepa` 两部分
-
-命令示例：
-
-```bash
-cd /home/gaoya/Code_Video/Code_data/Code_try0526
-python -m physv_eval.single_case.ball_block \
-  --video /path/to/video.mp4 \
-  --caption ball \
-  --output-json /tmp/ball_block_single_case.json
-```
-
-只跑其中一个子项时：
-
-```bash
-cd /home/gaoya/Code_Video/Code_data/Code_try0526
-python -m physv_eval.single_case.ball_block \
-  --video /path/to/video.mp4 \
-  --skip-pdi \
-  --output-json /tmp/ball_block_jepa_only.json
-```
-
-补充说明：
-- 这不是一个独立 benchmark 主分数，更适合作为受控实验下的局部预测合理性信号。
-
-## 8. FID
+## 7. FID
 
 - 脚本：`cosmos-cookbook/scripts/metrics/qualitative/fvd_fid/compute_fid_single_view.py`
 - 典型用途：比较预测视频和 GT 视频的单帧图像分布距离
@@ -343,7 +308,7 @@ python cosmos-cookbook/scripts/metrics/qualitative/fvd_fid/compute_fid_single_vi
 补充说明：
 - FID 只看 frame-level 外观分布，不直接衡量物理合理性。
 
-## 9. FVD
+## 8. FVD
 
 - 脚本：`cosmos-cookbook/scripts/metrics/qualitative/fvd_fid/compute_fvd_single_view.py`
 - 典型用途：比较预测视频和 GT 视频的视频分布距离
@@ -370,7 +335,7 @@ python cosmos-cookbook/scripts/metrics/qualitative/fvd_fid/compute_fvd_single_vi
 补充说明：
 - FVD 比 FID 更适合视频，但仍然是通用质量指标，不等于物理正确性。
 
-## 10. CSE / TSE
+## 9. CSE / TSE
 
 - 脚本：`cosmos-cookbook/scripts/metrics/geometrical_consistency/sampson/run_cse_tse.py`
 - 典型用途：对单个视频或一个目录做 cross-view / temporal Sampson error 评测
@@ -406,11 +371,11 @@ python cosmos-cookbook/scripts/metrics/geometrical_consistency/sampson/run_cse_t
 - `CSE` 更偏跨视角一致性。
 - 如果数据本身不是多视角，这两个量只能当 proxy 看。
 
-## 11. Accuracy / Correlation
+## 10. Accuracy / Correlation
 
 这两个脚本不是同一种输入格式，不能混用。
 
-### 11.1 `compute_metrics.py`
+### 10.1 `compute_metrics.py`
 
 - 脚本：`cosmos-cookbook/scripts/examples/reason2/physical-plausibility-check/video_critic/compute_metrics.py`
 - 典型用途：从一批 JSON 文件里读 `ground_truth` 和 `pred_score`，计算 accuracy 和 Pearson correlation
@@ -430,7 +395,7 @@ python cosmos-cookbook/scripts/examples/reason2/physical-plausibility-check/vide
   /path/to/output_dir
 ```
 
-### 11.2 `calculate_accuracy.py`
+### 10.2 `calculate_accuracy.py`
 
 - 脚本：`cosmos-reason1/examples/benchmark/tools/eval/calculate_accuracy.py`
 - 典型用途：从一个结果目录里递归扫描 JSON 文件，统计 `is_correct`
@@ -458,4 +423,3 @@ python cosmos-reason1/examples/benchmark/tools/eval/calculate_accuracy.py \
 - 想跑预测视频 vs GT 的分布距离：用 FID / FVD
 - 想看几何或时序一致性：用 CSE / TSE
 - 想看汇总统计：再用 Accuracy / Correlation
-

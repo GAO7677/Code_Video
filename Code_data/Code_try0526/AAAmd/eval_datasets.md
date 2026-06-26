@@ -35,13 +35,14 @@ python eval_benchmark_dir_metrics.py \
   - JEPA
   - WMReward
 - 常用脚本：
-  - `/home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim/eval_ball_block.py`
   - `/home/gaoya/Code_Video/Code_data/Code_try0526/physv_eval/wmreward_batch.py`
   - `/home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim/eval_physv_groups.py`
 - 命令示例：
 ```bash
-cd /home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim
-python eval_ball_block.py --gpu 0 --port 18703
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python physics_sim/eval_physv_groups.py \
+  --groups B1 \
+  --metrics pdi wmreward proxy
 ```
 
 ## 3. B2 组：JEPA 运动敏感性集

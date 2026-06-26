@@ -127,6 +127,14 @@ def _freeze_unused_object_pooler_geometry_projs(object_pooler: nn.Module | None)
             _set_module_requires_grad(submodule, False)
 
 
+def _should_skip_live_vggt_init(vggt_cache_root: str | None, train_vggt: bool) -> bool:
+    if bool(train_vggt):
+        return False
+    if vggt_cache_root is None:
+        return False
+    return bool(str(vggt_cache_root).strip())
+
+
 def _collect_trainable_grad_stats(module: nn.Module) -> dict[str, float]:
     total_sq_norm = 0.0
     grad_abs_max = 0.0
@@ -352,20 +360,29 @@ class WanTrainingModule(DiffusionTrainingModule):
                 input_hw=(int(cotracker_input_h), int(cotracker_input_w)),
                 window_len=int(cotracker_window_len),
             )
-            self.vggt_adapter = VGGTTrackAdapter(
-                model_path=vggt_model_path,
-                num_queries=self.total_object_queries,
-                device=str(device),
-                input_hw=(int(vggt_input_h), int(vggt_input_w)),
-                trainable=bool(self.train_vggt),
-            )
             if self.vggt_cache_root is not None and str(self.vggt_cache_root).strip():
                 self.vggt_cache_root = str(Path(self.vggt_cache_root).expanduser().resolve())
+            skip_live_vggt_init = _should_skip_live_vggt_init(
+                self.vggt_cache_root,
+                self.train_vggt,
+            )
+            if skip_live_vggt_init:
+                self.vggt_adapter = None
+                vggt_dense_dim = 2048
+            else:
+                self.vggt_adapter = VGGTTrackAdapter(
+                    model_path=vggt_model_path,
+                    num_queries=self.total_object_queries,
+                    device=str(device),
+                    input_hw=(int(vggt_input_h), int(vggt_input_w)),
+                    trainable=bool(self.train_vggt),
+                )
+                vggt_dense_dim = int(self.vggt_adapter.patch_token_dim)
             self.object_pooler = ObjectTubeProjector(
                 jepa_dim=int(self.jepa_adapter.encoder.backbone.embed_dim),
                 latent_dim=int(object_pooler_latent_dim),
                 out_dim=cond_dim,
-                vggt_dense_dim=int(self.vggt_adapter.patch_token_dim),
+                vggt_dense_dim=vggt_dense_dim,
                 jepa_window_radius=int(jepa_window_radius),
                 latent_window_radius=int(latent_window_radius),
                 min_box_px=float(object_min_box_px),

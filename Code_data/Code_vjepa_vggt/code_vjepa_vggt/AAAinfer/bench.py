@@ -43,8 +43,6 @@ from physv_eval.proxy_runner import ProxyRunner
 from physv_eval.videophy2_auto import VideoPhy2Runner
 from physv_eval.phyground_official import OfficialPhyGroundRunner
 from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
-from physv_eval.single_case.ball_block import score_case as score_ball_block_case
-from physv_eval.single_case.ball_block import TMP_DIR as BALL_BLOCK_TMP_DIR
 from physv_eval.single_case.cosmos_reason1 import score_case as score_cosmos_reason1_case
 from physv_eval.single_case.pdi import score_case as score_pdi_case
 from physv_eval.single_case.phyground import score_case as score_phyground_case
@@ -83,7 +81,7 @@ def parse_args() -> argparse.Namespace:
             "loading one metric model per process and backfilling immediately."
         )
     )
-    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "ball_block"]
+    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1"]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument("--input-root", type=Path, default=DEFAULT_INPUT_ROOT)
     parser.add_argument("--output-summary", type=Path, default=None)
@@ -312,17 +310,6 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
 
         return run
 
-    def build_ball_block(_: argparse.Namespace) -> MetricFunc:
-        def run(record: CaseRecord) -> dict[str, Any] | None:
-            case = build_case_payload(record)
-            caption = case.get("input_caption") or case.get("caption") or args.pdi_caption
-            result = score_ball_block_case(case, caption=caption)
-            shutil.rmtree(BALL_BLOCK_TMP_DIR / "pdi" / record.candidate_video_path.stem, ignore_errors=True)
-            shutil.rmtree(BALL_BLOCK_TMP_DIR / "jepa" / record.candidate_video_path.stem, ignore_errors=True)
-            return result
-
-        return run
-
     builders: dict[str, Callable[[argparse.Namespace], MetricFunc]] = {
         "pdi": build_pdi,
         "wmreward": build_wmreward,
@@ -330,7 +317,6 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         "videophy2": build_videophy2,
         "phyground": build_phyground,
         "cosmos_reason1": build_cosmos_reason1,
-        "ball_block": build_ball_block,
     }
     return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 
