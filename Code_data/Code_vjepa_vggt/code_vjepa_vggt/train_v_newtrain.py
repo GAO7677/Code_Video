@@ -42,6 +42,13 @@ from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
+from code_vjepa_vggt.headonly_val_loss import (
+    build_headonly_val_config,
+    build_headonly_val_dataloader,
+    build_headonly_val_dataset,
+    run_headonly_val_loss,
+    should_run_headonly_val_loss,
+)
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
@@ -1425,6 +1432,24 @@ def wan_parser():
     parser.add_argument("--train_object_dit_branch", action="store_true", default=False)
     parser.add_argument("--freeze_non_object_trainables", action="store_true", default=False)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
+    parser.add_argument(
+        "--headonly_val_loss_every_steps",
+        type=int,
+        default=None,
+        help="If set, run a lightweight head-only validation loss sweep every N optimizer steps.",
+    )
+    parser.add_argument(
+        "--headonly_val_loss_split",
+        type=str,
+        default="val",
+        help="Dataset split used for lightweight head-only validation loss.",
+    )
+    parser.add_argument(
+        "--headonly_val_loss_num_batches",
+        type=int,
+        default=8,
+        help="How many validation batches to average for the lightweight head-only validation loss.",
+    )
     return parser
 
 
@@ -1517,6 +1542,17 @@ def prepare_args(args):
     ):
         raise FileNotFoundError(
             f"validation_vbench_config_path not found: {args.validation_vbench_config_path}"
+        )
+    if (
+        args.headonly_val_loss_every_steps is not None
+        and args.headonly_val_loss_every_steps <= 0
+    ):
+        raise ValueError(
+            f"headonly_val_loss_every_steps must be positive when set, got {args.headonly_val_loss_every_steps}."
+        )
+    if args.headonly_val_loss_num_batches <= 0:
+        raise ValueError(
+            f"headonly_val_loss_num_batches must be positive, got {args.headonly_val_loss_num_batches}."
         )
     validation_contexts = [
         int(item.strip())
@@ -2493,7 +2529,16 @@ def run_validation_suite(
     restore_training_state_after_eval(accelerator, model, optimizer)
 
 
-def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=None):
+def train_loop(
+    accelerator,
+    dataset,
+    model,
+    model_logger,
+    args,
+    runtime_state=None,
+    headonly_val_dataloader=None,
+    headonly_val_config=None,
+):
     optimizer = torch.optim.AdamW(
         model.trainable_modules(),
         lr=args.learning_rate,
@@ -2669,6 +2714,18 @@ def train_loop(accelerator, dataset, model, model_logger, args, runtime_state=No
                         epoch_id,
                         batch_index + 1,
                     )
+                if (
+                    accelerator.sync_gradients
+                    and headonly_val_config is not None
+                    and should_run_headonly_val_loss(headonly_val_config, global_step)
+                ):
+                    run_headonly_val_loss(
+                        accelerator=accelerator,
+                        model=model,
+                        val_dataloader=headonly_val_dataloader,
+                        global_step=global_step,
+                        num_batches=headonly_val_config.num_batches,
+                    )
             progress_bar.update(1)
             if args.max_train_steps is not None and global_step >= args.max_train_steps:
                 break
@@ -2728,6 +2785,9 @@ def main():
             )
 
     dataset = build_dataset(args)
+    headonly_val_config = build_headonly_val_config(args)
+    headonly_val_dataset = build_headonly_val_dataset(args, headonly_val_config)
+    headonly_val_dataloader = build_headonly_val_dataloader(headonly_val_dataset, args)
     model = build_model(args, accelerator)
     model_logger = ModelLogger(
         get_checkpoint_dir(args),
@@ -2746,6 +2806,8 @@ def main():
                 model_logger,
                 args,
                 runtime_state=runtime_state,
+                headonly_val_dataloader=headonly_val_dataloader,
+                headonly_val_config=headonly_val_config,
             )
     except (KeyboardInterrupt, TrainingInterrupted) as exc:
         interrupted_step = model_logger.num_steps

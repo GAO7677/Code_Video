@@ -7,7 +7,7 @@ CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py \
     --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
-    --output-root /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B \
+    --output-root /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_negcap_null \
     --size 704*1280 \
     --frame-num 25 \
     --sampling-steps 40 \

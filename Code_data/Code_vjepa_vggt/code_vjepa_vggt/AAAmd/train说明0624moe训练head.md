@@ -8387,6 +8387,114 @@ W&B latest summary（run `qberfq1r`）推进到：
 - `train/object_context_abs_max = 0.39837`
 - `train/object_latent_tokens_abs_max = 5.15315`
 
+## 14. 2026-06-26 新一轮 fresh run 前的配置核查
+
+### 14.1 train / val 是否是单独数据集
+
+已经核查 `PhysStateEpisodeDataset` 的实现：
+
+- 代码位置：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/data/phys_state_dataset.py`
+- 数据集实例化时直接读取：
+  - `self.root = Path(root) / split`
+  - `self.samples = sorted(self.root.glob("*.json"))`
+
+这说明 `train` 和 `val` 不是同一目录里再做随机切分，而是物理上分开的两个子目录。
+
+进一步对磁盘上的当前 phys-state root 做了实际核查：
+
+- root:
+  - `/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500`
+- `train` JSON 数量：
+  - `3600`
+- `val` JSON 数量：
+  - `450`
+- `train` / `val` 文件名交集：
+  - `0`
+- `train` 头几个文件：
+  - `sample_000001_w000.json`
+  - `sample_000001_w001.json`
+  - `sample_000001_w002.json`
+- `val` 头几个文件：
+  - `sample_000301_w000.json`
+  - `sample_000301_w001.json`
+  - `sample_000301_w002.json`
+
+结论：
+
+- 当前 `train` 和 `val` 是两套独立样本
+- 因此 head-only `val_loss` 可以安全地直接从 `split=val` 单独构建 dataloader，而不需要动现有 benchmark validation 链路
+
+### 14.2 head-only val loss 轻量链路
+
+已经把 head-only `val_loss` 独立抽到：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/headonly_val_loss.py`
+
+并在：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py`
+
+里通过 import 接入。
+
+这条链路的设计是：
+
+- 只在训练主循环内额外跑少量 `val` batch
+- 只统计 object-heads-only 当前已有的 loss / metric
+- 以 `val/...` 形式写入 W&B
+- 不替换、不修改现有 `run_validation_vbench.py` 外部 benchmark validation 子进程
+
+当前可用的新增参数：
+
+- `--headonly_val_loss_every_steps`
+- `--headonly_val_loss_split`
+- `--headonly_val_loss_num_batches`
+
+### 14.3 fresh run 启动脚本
+
+已经新增单独的 fresh-run 脚本：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67_fresh_500_val.sh`
+
+这份脚本的关键点：
+
+- 训练卡固定：
+  - `CUDA_VISIBLE_DEVICES=6,7`
+- benchmark / validation 子进程继续固定：
+  - `--benchmark_cuda_visible_devices 5`
+- 严格避免使用 `gpu4`
+- 不带 `--resume_from`
+- 从头新开 run
+- checkpoint 频率改为：
+  - `--save_steps 500`
+- 轻量 head-only val loss 频率改为：
+  - `--headonly_val_loss_every_steps 500`
+- val split 固定：
+  - `--headonly_val_loss_split val`
+- 当前每次 val loss 平均 batch 数：
+  - `--headonly_val_loss_num_batches 8`
+- W&B name:
+  - `pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val`
+
+### 14.4 当前启动前风险
+
+虽然 `gpu6,7` 当前是空闲的，能够承接新的训练进程，但启动前还有两个客观风险：
+
+- `/data` 剩余空间只有约 `4.8G`
+- 旧目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67`
+  当前仍占约 `3.4G`
+
+这意味着：
+
+- 新 run 即使只保留两份 checkpoint，也仍然可能在 `step-500 / 1000` 附近再次遇到磁盘紧张
+- 到 `step-2000` 时如果 benchmark validation 产物开始大量落盘，磁盘风险会更高
+
+另外，当前 `gpu5` 已经有一个 `wan-cu128` 进程在占用约 `30.9G` 显存：
+
+- 这不会影响主训练用 `gpu6,7`
+- 但会影响后续 `step-2000` 的 benchmark / validation 子进程是否能按预期在 `gpu5` 成功启动
+
 和 `_step = 7364` 相比，这一步最重要的变化是：
 
 - `object_latent_tokens_abs_max` 从 `5.29770` 回落到 `5.15315`
