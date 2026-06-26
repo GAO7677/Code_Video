@@ -29,12 +29,33 @@ Suggested layout for outputs:
 Current scripts:
 
 - `baseline_plan.py`
-  Writes the prompt/seed experiment manifest and output layout.
+  Writes a TI2V experiment manifest including prompts, seeds, image paths,
+  output paths, and shared Wan inference arguments.
+- `generate_wan_baseline.py`
+  Loads WanTI2V once and generates baseline videos for all cases in a manifest.
 - `extract_vjepa_features.py`
   Extracts per-video multi-layer V-JEPA features and simple derived signals.
+- `run_manifest_extract.py`
+  Runs feature extraction over every generated video listed in a manifest.
 - `analyze_signals.py`
   Aggregates extracted features and optional evaluation signals into a compact
   summary report.
+
+Typical execution order:
+
+1. Create a manifest with `baseline_plan.py`
+2. Generate baseline videos with `generate_wan_baseline.py`
+3. Extract V-JEPA features with `run_manifest_extract.py`
+4. Aggregate reports with `analyze_signals.py`
+
+Environment notes:
+
+- Wan generation should run in the `wan` environment.
+- V-JEPA extraction should run in the `vjepa2` environment.
+- The current scripts assume the local Wan repo at
+  `/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main_copy`
+  and the local V-JEPA repo at
+  `/home/gaoya/Code_Video/vjepa2-main`.
 
 Notes:
 
