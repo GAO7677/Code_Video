@@ -825,6 +825,7 @@ def _run_case_for_checkpoint(
     sample_index: int,
     fps: int,
     export_aux_visuals: bool = True,
+    export_native_visuals: bool = True,
 ) -> dict[str, Any]:
     pipe = model.pipe
     device = torch.device(pipe.device)
@@ -1008,33 +1009,36 @@ def _run_case_for_checkpoint(
         image_hw,
     )
 
-    native_box_video = _render_native_box_overlay(
-        sample["context_video"],
-        gt_box_native_np,
-        gt_box_native_valid_np,
-        pred_box_native_np,
-        pred_box_native_valid_np,
-        image_hw,
-    )
-    native_box_sheet = _export_sheet(
-        native_box_video,
-        stem="native_box_overlay",
-        title=f"{checkpoint_label} case {sample_index} native frame box overlay",
-    )
+    native_box_sheet = None
+    native_track_sheet = None
+    if export_native_visuals:
+        native_box_video = _render_native_box_overlay(
+            sample["context_video"],
+            gt_box_native_np,
+            gt_box_native_valid_np,
+            pred_box_native_np,
+            pred_box_native_valid_np,
+            image_hw,
+        )
+        native_box_sheet = _export_sheet(
+            native_box_video,
+            stem="native_box_overlay",
+            title=f"{checkpoint_label} case {sample_index} native frame box overlay",
+        )
 
-    native_track_video = _render_native_track_overlay(
-        sample["context_video"],
-        gt_track_native_np,
-        gt_track_native_valid_np,
-        pred_track_native_np,
-        pred_track_native_valid_np,
-        image_hw,
-    )
-    native_track_sheet = _export_sheet(
-        native_track_video,
-        stem="native_track_overlay",
-        title=f"{checkpoint_label} case {sample_index} native frame track overlay",
-    )
+        native_track_video = _render_native_track_overlay(
+            sample["context_video"],
+            gt_track_native_np,
+            gt_track_native_valid_np,
+            pred_track_native_np,
+            pred_track_native_valid_np,
+            image_hw,
+        )
+        native_track_sheet = _export_sheet(
+            native_track_video,
+            stem="native_track_overlay",
+            title=f"{checkpoint_label} case {sample_index} native frame track overlay",
+        )
 
     depth_sheet_rel = None
     depth_overlay_sheet_rel = None
@@ -1060,14 +1064,17 @@ def _run_case_for_checkpoint(
         gt_box_xyxy=gt_box_xyxy_np,
         gt_box_valid=gt_box_valid_np,
     )
-    track_native_l1, track_native_iou = _compute_framewise_track_losses(
-        pred_tracks_native=pred_track_native_np,
-        gt_tracks_native=gt_track_native_np,
-        gt_tracks_valid=gt_track_native_valid_np,
-        gt_boxes_native=gt_box_native_np,
-        gt_boxes_valid=gt_box_native_valid_np,
-        image_hw=image_hw,
-    )
+    track_native_l1 = None
+    track_native_iou = None
+    if export_native_visuals:
+        track_native_l1, track_native_iou = _compute_framewise_track_losses(
+            pred_tracks_native=pred_track_native_np,
+            gt_tracks_native=gt_track_native_np,
+            gt_tracks_valid=gt_track_native_valid_np,
+            gt_boxes_native=gt_box_native_np,
+            gt_boxes_valid=gt_box_native_valid_np,
+            image_hw=image_hw,
+        )
     depth_frame_l1 = None
     if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
         depth_frame_l1 = _compute_framewise_depth_losses(
@@ -1164,20 +1171,21 @@ def _run_case_for_checkpoint(
                 title=f"{checkpoint_label} case {sample_index} box summary loss",
             ).relative_to(output_dir)
         )
-        track_native_scalar_sheet = str(
-            _write_scalar_panel(
-                assets_dir / f"{case_stem}__native_track_loss_sheet.png",
-                track_native_l1,
-                title=f"{checkpoint_label} case {sample_index} native track loss",
-            ).relative_to(output_dir)
-        )
-        track_native_iou_sheet = str(
-            _write_scalar_panel(
-                assets_dir / f"{case_stem}__native_track_iou_loss_sheet.png",
-                track_native_iou,
-                title=f"{checkpoint_label} case {sample_index} native track IoU loss",
-            ).relative_to(output_dir)
-        )
+        if export_native_visuals and track_native_l1 is not None and track_native_iou is not None:
+            track_native_scalar_sheet = str(
+                _write_scalar_panel(
+                    assets_dir / f"{case_stem}__native_track_loss_sheet.png",
+                    track_native_l1,
+                    title=f"{checkpoint_label} case {sample_index} native track loss",
+                ).relative_to(output_dir)
+            )
+            track_native_iou_sheet = str(
+                _write_scalar_panel(
+                    assets_dir / f"{case_stem}__native_track_iou_loss_sheet.png",
+                    track_native_iou,
+                    title=f"{checkpoint_label} case {sample_index} native track IoU loss",
+                ).relative_to(output_dir)
+            )
         box_center_scalar_sheet = str(
             _write_scalar_panel(
                 assets_dir / f"{case_stem}__box_center_loss_sheet.png",
@@ -1274,8 +1282,8 @@ def _run_case_for_checkpoint(
             "object_tokens": list(object_out.object_latent_tokens.shape),
             "track_summary_loss": list(track_total_frame_l1.shape),
             "box_summary_loss": list(box_total_frame_l1.shape),
-            "native_track_loss": list(track_native_l1.shape),
-            "native_track_iou_loss": list(track_native_iou.shape),
+            "native_track_loss": None if track_native_l1 is None else list(track_native_l1.shape),
+            "native_track_iou_loss": None if track_native_iou is None else list(track_native_iou.shape),
             "box_center_loss": list(box_center_frame_l1.shape),
             "box_iou_loss": list(box_iou_frame_l1.shape),
             "depth_loss": None if depth_frame_l1 is None else list(depth_frame_l1.shape),

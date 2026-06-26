@@ -388,6 +388,7 @@ def main() -> None:
                     output_dir=output_dir,
                     fps=int(args.fps),
                     export_aux_visuals=not bool(args.native_only_report),
+                    export_native_visuals=not bool(args.latent_only_report),
                 )
                 item["load_info"] = load_info
                 item["val_mean_metrics"] = mean_metrics
