@@ -14,7 +14,8 @@ CUDA_VISIBLE_DEVICES=5 \
     --cfg-scale 5.0 \
     --fps 30 \
     --seed 42 \
-    --offload-model
+    --offload-model \
+    --negative-prompt   "" 
 """
 from __future__ import annotations
 

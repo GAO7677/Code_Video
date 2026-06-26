@@ -7603,3 +7603,1746 @@ interpretation：
 - 下一阶段优先关注：
   - `step-007000` 是否正常落盘
   - `step-008000` validation 是否开始并在 `gpu5` 上跑通
+
+### 2026-06-26 02:26 UTC：latest summary 推进到 `_step = 6909`，离 `step-008000` 还差约 1090 step
+
+当前状态：
+
+- checkpoint 目录仍是：
+  - `step-006600`
+  - `step-006800`
+- validation runtime 目录仍无新的 `step-008000` 文件
+- 当前离 validation 触发点仍有一段距离，但已经可以开始重点盯磁盘和 benchmark 运行目录
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6909`
+- `train/loss_total = 0.02698`
+- `train/loss_track_aux = 0.05188`
+- `train/loss_box_aux = 0.17739`
+- `train/loss_depth_aux = 0.04051`
+- `train/grad_norm = 1.04525`
+- `train/grad_abs_max = 0.26055`
+- `train/object_context_abs_max = 0.39236`
+- `train/object_latent_tokens_abs_max = 4.88165`
+
+最近一段 history 里比较关键的点：
+
+- `_step = 6878`
+  - `loss_total = 0.12423`
+  - `loss_box_aux = 0.73081`
+  - `loss_depth_aux = 0.47037`
+  - 典型 `box + depth` spike
+- `_step = 6881`
+  - `loss_total = 0.13530`
+  - `loss_box_aux = 0.72935`
+  - `loss_depth_aux = 0.57744`
+  - spike 继续了一小段
+- `_step = 6888`
+  - `loss_total = 0.03155`
+  - `loss_box_aux = 0.21486`
+  - `loss_depth_aux = 0.03665`
+  - 已明显回落
+- `_step = 6899`
+  - `loss_total = 0.06126`
+  - `loss_box_aux = 0.58252`
+  - `loss_depth_aux = 0.00188`
+  - 更偏 `box_aux` 单项抬升
+- `_step = 6902`
+  - `loss_total = 0.05649`
+  - `loss_track_aux = 0.10912`
+  - `loss_box_aux = 0.32756`
+  - `loss_depth_aux = 0.12827`
+- `_step = 6907`
+  - `loss_total = 0.05660`
+  - `loss_box_aux = 0.52448`
+  - `loss_depth_aux = 0.01157`
+- `_step = 6909`
+  - `loss_total = 0.02698`
+  - `loss_box_aux = 0.17739`
+  - `loss_depth_aux = 0.04051`
+  - 已再次回落
+
+interpretation：
+
+- `6878/6881` 确实出现了一小段连续的 `box + depth` 高位
+- 但后面仍然可以回落到低位，没有扩展成长期高位平台
+- `object_context_abs_max` 继续稳定
+- `object_latent_tokens_abs_max` 一度接近 `4.99`，当前回落到 `4.88`
+
+当前判断：
+
+- 训练仍然健康推进
+- 目前依然更像“重复出现、但可恢复的 supervision spike”
+- 离 `step-008000` 越来越近，接下来优先盯：
+  - `step-007000` checkpoint
+  - `step-008000` validation 实际触发
+  - validation 是否在 `gpu5` 启动成功
+  - validation 落盘是否把 `/data` 空间压垮
+
+### 2026-06-26 02:29 UTC：latest summary 推进到 `_step = 6949`，尚未到 `step-007000`
+
+当前状态：
+
+- checkpoint 目录仍是：
+  - `step-006600`
+  - `step-006800`
+- 说明还没走到下一份 `step-007000`
+- validation runtime 目录仍然没有新的 `step-008000` 文件
+- 训练距离 validation 触发点还差约 `1050` step
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6949`
+- `train/loss_total = 0.04859`
+- `train/loss_track_aux = 0.07436`
+- `train/loss_box_aux = 0.34943`
+- `train/loss_depth_aux = 0.06210`
+- `train/grad_norm = 0.60160`
+- `train/grad_abs_max = 0.08887`
+- `train/object_context_abs_max = 0.39795`
+- `train/object_latent_tokens_abs_max = 4.94149`
+
+这一段比较值得记录的点：
+
+- `_step = 6923`
+  - `loss_total = 0.13770`
+  - `loss_track_aux = 0.18157`
+  - `loss_box_aux = 0.71787`
+  - `loss_depth_aux = 0.47750`
+  - 属于一次较强的 `track + box + depth` 联合抬升
+- `_step = 6924`
+  - `loss_total = 0.01923`
+  - `loss_box_aux = 0.10916`
+  - `loss_depth_aux = 0.03791`
+  - 立即回落
+- `_step = 6942`
+  - `grad_norm = 2.00586`
+  - `grad_abs_max = 0.54924`
+  - 是目前这段里最大的梯度尖峰之一
+- `_step = 6944`
+  - `loss_box_aux = 0.59698`
+  - `object_latent_tokens_abs_max = 5.02022`
+- `_step = 6948`
+  - `loss_box_aux = 0.34076`
+  - `object_latent_tokens_abs_max = 5.05005`
+  - 是目前看到的局部新高
+- `_step = 6949`
+  - 各项回到中低位
+
+interpretation：
+
+- 训练主趋势仍然是“spike 后可恢复”
+- 但这次需要额外记下一个新的数值信号：
+  - `object_latent_tokens_abs_max` 最近几次已摸到 `5.0+`
+- 目前它还没有和持续性高 loss / 高 grad 平台绑定在一起，所以还不能判为异常
+- 但如果后续继续单调上升，或者和 `box/depth` 高位段同时持续出现，就需要把它升级为重点排查对象
+
+当前判断：
+
+- 训练仍在推进
+- 还没有证据表明需要立刻改代码
+- 继续重点盯：
+  - `step-007000` 是否正常落盘
+  - `object_latent_tokens_abs_max` 是否继续走高
+  - `step-008000` validation 是否真正开始并在 `gpu5` 上跑通
+
+### 2026-06-26 02:32 UTC：`step-007000` 已成功落盘，latest summary 推进到 `_step = 7009`
+
+当前核对结果：
+
+- checkpoint 已推进到：
+  - `step-006800`
+  - `step-007000`
+- `step-007000/training_state.pt` 已核对：
+  - `global_step = 7000`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1000`
+- checkpoint 轮转依旧正常
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 7009`
+- `train/loss_total = 0.02399`
+- `train/loss_track_aux = 0.05595`
+- `train/loss_box_aux = 0.17179`
+- `train/loss_depth_aux = 0.01215`
+- `train/grad_norm = 0.60393`
+- `train/grad_abs_max = 0.09302`
+- `train/object_context_abs_max = 0.39608`
+- `train/object_latent_tokens_abs_max = 5.00443`
+
+interpretation：
+
+- `step-007000` 已经证明训练仍在按计划产出权重
+- latest summary 回到了较低区间，说明最近的局部 spike 仍然能回落
+- `object_latent_tokens_abs_max` 仍在 `5.0` 附近徘徊：
+  - 这仍是一个需要盯住的数值信号
+  - 但目前还没有和持续性异常绑定
+
+当前判断：
+
+- 训练继续健康推进
+- 下一个真正关键点仍然是：
+  - `step-008000` validation 是否真正触发
+  - validation 是否在 `gpu5` 上启动成功
+  - validation 落盘是否触发新的磁盘空间问题
+
+### 2026-06-26 02:35 UTC：latest summary 推进到 `_step = 7060`，`object_latent_tokens_abs_max` 进入需要重点盯的区间
+
+当前状态：
+
+- checkpoint 目录仍是：
+  - `step-006800`
+  - `step-007000`
+- validation runtime 目录仍未出现新的 `step-008000` 文件
+- 当前距离 validation 触发点还差约 `940` step
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 7060`
+- `train/loss_total = 0.05932`
+- `train/loss_track_aux = 0.05911`
+- `train/loss_box_aux = 0.53069`
+- `train/loss_depth_aux = 0.00340`
+- `train/grad_norm = 0.60086`
+- `train/grad_abs_max = 0.09179`
+- `train/object_context_abs_max = 0.38725`
+- `train/object_latent_tokens_abs_max = 4.90108`
+
+这一段里最值得升级关注的是 `object_latent_tokens_abs_max`：
+
+- `_step = 7053`
+  - `object_latent_tokens_abs_max = 5.09934`
+- `_step = 7054`
+  - `object_latent_tokens_abs_max = 5.06346`
+- `_step = 7056`
+  - `object_latent_tokens_abs_max = 5.07902`
+- `_step = 7058`
+  - `object_latent_tokens_abs_max = 5.07757`
+
+另外，这一段里也还有典型的 supervision spike：
+
+- `_step = 7013`
+  - `loss_total = 0.11011`
+  - `loss_box_aux = 0.43444`
+  - `loss_depth_aux = 0.62964`
+- `_step = 7054`
+  - `loss_total = 0.12561`
+  - `loss_track_aux = 0.23946`
+  - `loss_box_aux = 0.42382`
+  - `loss_depth_aux = 0.59278`
+
+但这些 spike 目前仍然满足两个特征：
+
+- 后续还能回落
+- 没有直接演化成持续高位平台
+
+新的 interpretation：
+
+- `object_latent_tokens_abs_max` 现在不只是“偶发摸到 5.0”
+- 它开始在连续多个 summary 里落在 `5.0 ~ 5.10` 区间
+- 这还不足以证明异常，但已经应该从“顺手观察”升级为“重点盯防”
+
+当前判断：
+
+- 训练仍在推进
+- 还没有到必须立刻改代码的程度
+- 但后续如果出现以下任一情况，就建议进入代码/数据级排查：
+  - `object_latent_tokens_abs_max` 持续进一步上升
+  - 与 `box/depth` 高位段连续绑定
+  - 同时出现更频繁的高 `grad_norm / grad_abs_max`
+
+接下来继续重点盯：
+
+- `step-007200` checkpoint
+- `step-008000` validation 实际触发
+- `object_latent_tokens_abs_max` 是否继续维持在 `5.0+`
+
+### 2026-06-26 02:38 UTC：latest summary 推进到 `_step = 7100`，`object_latent_tokens_abs_max` 出现 `5.12` 新高
+
+当前状态：
+
+- checkpoint 目录仍是：
+  - `step-006800`
+  - `step-007000`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- 当前距离 validation 触发点约还差 `900` step
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 7100`
+- `train/loss_total = 0.04269`
+- `train/loss_track_aux = 0.11160`
+- `train/loss_box_aux = 0.23615`
+- `train/loss_depth_aux = 0.07915`
+- `train/grad_norm = 0.60544`
+- `train/grad_abs_max = 0.09378`
+- `train/object_context_abs_max = 0.39111`
+- `train/object_latent_tokens_abs_max = 5.01208`
+
+这段里最重要的新变化：
+
+- `_step = 7066`
+  - `object_latent_tokens_abs_max = 5.12243`
+- `_step = 7086`
+  - `object_latent_tokens_abs_max = 5.08621`
+- `_step = 7089`
+  - `object_latent_tokens_abs_max = 5.10202`
+- `_step = 7097`
+  - `object_latent_tokens_abs_max = 5.09962`
+- `_step = 7098`
+  - `object_latent_tokens_abs_max = 5.08864`
+
+同时，这段里仍然会出现局部 supervision spike：
+
+- `_step = 7062`
+  - `loss_total = 0.10869`
+  - `loss_box_aux = 0.41639`
+  - `loss_depth_aux = 0.59139`
+- `_step = 7094`
+  - `loss_total = 0.10527`
+  - `loss_box_aux = 0.43489`
+  - `loss_depth_aux = 0.57985`
+
+但到 latest summary：
+
+- 并没有停留在高位
+- `grad_norm / grad_abs_max` 也没有同步爆掉
+- `object_context_abs_max` 仍然稳定
+
+新的 interpretation：
+
+- `object_latent_tokens_abs_max` 现在已经不只是“偶尔碰到 5”
+- 它在最近一个窗口里多次稳定出现在 `5.0+`，并且已经摸到 `5.12`
+- 这说明它确实在朝着需要更严肃监控的方向发展
+
+当前判断：
+
+- 训练仍然在推进，尚未出现必须立刻停训改代码的证据
+- 但 `object_latent_tokens_abs_max` 的风险等级再次上升
+- 如果后续继续看到：
+  - 新高不断刷新
+  - 同时伴随更频繁的 `box/depth` 高位段
+  - 或 `grad_norm / grad_abs_max` 抬升开始更密集
+  那就应该尽快转入针对 object branch 的数值排查
+
+接下来继续重点盯：
+
+- `step-007200` checkpoint
+- `object_latent_tokens_abs_max` 是否继续刷新新高
+- `step-008000` validation 实际触发与磁盘占用
+
+### 2026-06-26 02:31-02:33 UTC：继续监控，训练进程健康，仍严格避开 `gpu4`
+
+当前进程状态：
+
+- 训练 launcher 仍在：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+- `accelerate launch` 仍在正常运行
+- 两个 `train_v_newtrain.py` worker 都在正常推进
+
+当前 GPU 状态：
+
+- `gpu6`：训练占用，约 `42725 / 49140 MiB`
+- `gpu7`：训练占用，约 `42707 / 49140 MiB`
+- `gpu5`：空闲，保留给后续 validation / benchmark
+- `gpu4`：未使用
+
+这次检查再次确认：
+
+- 当前训练和验证配置都没有把 `gpu4` 放回去
+- 训练主进程仍然只使用 `gpu6,7`
+- 启动参数里的 `--benchmark_cuda_visible_devices 5` 仍然保持不变
+
+checkpoint / validation 状态：
+
+- checkpoint 目录当前仍只有：
+  - `step-006800`
+  - `step-007000`
+- 说明自 `step-007000` 之后暂时还没落下新的 200-step checkpoint
+- validation runtime 目录里仍然只有修复前遗留的失败记录：
+  - `step-002000/benchmark.failed.json`
+  - `step-004000/benchmark.failed.json`
+  - `step-006000/benchmark.failed.json`
+- 目前还没有新的 `step-008000` validation 产物，符合当前还没到触发点的状态
+
+W&B 当前 latest summary（run `qberfq1r`）：
+
+- `_step = 7176`
+- `train/loss_total = 0.13182`
+- `train/loss_track_aux = 0.05773`
+- `train/loss_box_aux = 0.71301`
+- `train/loss_depth_aux = 0.54746`
+- `train/grad_norm = 0.80492`
+- `train/grad_abs_max = 0.17979`
+- `train/object_context_abs_max = 0.38938`
+- `train/object_latent_tokens_abs_max = 5.11309`
+
+这一时刻的 interpretation：
+
+- 这是一次比较典型的 `box_aux + depth_aux` 联动 spike
+- 但从 summary 看，`grad_norm` 还没有进入失控状态
+- `object_context_abs_max` 仍然稳定在约 `0.39`
+- 因此目前更像是局部 batch supervision spike，而不是全局数值爆炸
+
+需要继续重点盯的量：
+
+- `object_latent_tokens_abs_max`
+
+到这次检查为止，它仍然是当前最需要盯的数值信号：
+
+- 已经不只是偶发触到 `5.0`
+- 现在会反复出现在 `5.0+`
+- 但还没有证据证明它已经导致训练发散
+
+当前 operational risk 仍然主要是磁盘空间：
+
+- `df -h /data` 仍显示只剩约 `5.1G`
+- 这对 `step-008000` 附近的 checkpoint + validation 组合仍然偏紧
+- 后续一旦 validation 产物开始写盘，需要优先确认没有再次触发 `No space left on device`
+
+### 2026-06-26 02:33-02:34 UTC：`step-007200` 已成功落盘，latent token 风险继续抬升
+
+最新状态：
+
+- checkpoint 目录已经从：
+  - `step-006800`
+  - `step-007000`
+  推进到：
+  - `step-007000`
+  - `step-007200`
+- `step-007200/training_state.pt` 已确认：
+  - `global_step = 7200`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1200`
+
+这说明：
+
+- 当前 checkpoint 落盘机制正常
+- `--max_checkpoints_keep 2` 仍在生效
+- 当前训练还没有在 `7200` 这一段出现卡死或写盘失败
+
+validation 状态仍未变化：
+
+- validation runtime 目录仍只有修复前的：
+  - `step-002000`
+  - `step-004000`
+  - `step-006000`
+- 目前还没有新的 `step-008000` runtime 文件
+- `gpu5` 仍保持空闲，可用于后续 validation / benchmark
+
+W&B latest summary（run `qberfq1r`）已推进到：
+
+- `_step = 7216`
+- `train/loss_total = 0.05025`
+- `train/loss_track_aux = 0.07516`
+- `train/loss_box_aux = 0.36299`
+- `train/loss_depth_aux = 0.06433`
+- `train/grad_norm = 0.50888`
+- `train/grad_abs_max = 0.03750`
+- `train/object_context_abs_max = 0.40026`
+- `train/object_latent_tokens_abs_max = 5.17867`
+
+这里最重要的新信息是：
+
+- `object_latent_tokens_abs_max` 再次刷新新高，已经到 `5.17867`
+
+但同一时刻也要注意两点：
+
+- `loss_total` 并不高
+- `grad_norm / grad_abs_max` 反而相对平稳
+
+因此当前 interpretation 更新为：
+
+- `object_latent_tokens_abs_max` 的风险等级继续上升
+- 但它现在仍然更像“潜在数值风险信号”
+- 还没有和一次明确的全局梯度爆炸或 loss 失控绑定起来
+
+也就是说，现阶段还不能仅凭这个新高就判断需要停训改代码；更合理的做法仍然是继续盯下面三件事是否开始同时出现：
+
+- `object_latent_tokens_abs_max` 持续继续创新高
+- `box_aux / depth_aux` 更频繁进入高位并停留更久
+- `grad_norm / grad_abs_max` 也开始同步变密、变高
+
+当前优先监控目标保持不变：
+
+- 下一个 checkpoint：`step-007400`
+- validation 触发点：`step-008000`
+- `/data` 剩余空间：仍约 `5.1G`
+
+### 2026-06-26 02:34-02:35 UTC：训练继续推进，`object_latent_tokens_abs_max` 再刷新到 `5.19627`
+
+这一轮检查里，基础运行状态没有新异常：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 产物
+- 当前仍未看到 `run_validation_vbench.py` 或 `batch_eval_lora.py` 新进程
+- `gpu5` 继续空闲，等待后续 validation / benchmark
+- `gpu4` 仍未使用
+- `/data` 仍然只剩约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）进一步推进到：
+
+- `_step = 7236`
+- `train/loss_total = 0.10754`
+- `train/loss_track_aux = 0.02783`
+- `train/loss_box_aux = 0.50152`
+- `train/loss_depth_aux = 0.54604`
+- `train/grad_norm = 0.60415`
+- `train/grad_abs_max = 0.09412`
+- `train/object_context_abs_max = 0.39980`
+- `train/object_latent_tokens_abs_max = 5.19627`
+
+这一步的特征是：
+
+- `box_aux + depth_aux` 再次一起抬高
+- 但 `grad_norm / grad_abs_max` 仍然没有同步进入危险区
+- `object_context_abs_max` 依然稳定在约 `0.40`
+
+因此当前判断保持为：
+
+- `object_latent_tokens_abs_max` 正在持续刷新新高，已经成为最优先监控的数值信号
+- 但到 `_step = 7236` 为止，它仍未和明确的全局梯度失控绑定
+- 目前更像“风险持续抬升但尚未证实发散”
+
+后续如果在接近 `step-008000` 的区间里继续出现下面这种组合，就需要更积极地考虑进入 object-branch 数值排查：
+
+- `object_latent_tokens_abs_max` 继续上冲
+- `box_aux / depth_aux` 高位变得更频繁
+- `grad_norm / grad_abs_max` 也开始一起变密、抬高
+
+### 2026-06-26 02:35-02:36 UTC：`object_latent_tokens_abs_max` 已到 `5.24342`，但仍未与整体 loss / grad 失控绑定
+
+这一轮状态检查仍然没有看到基础设施层面的新问题：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- 说明还没推进到下一个 200-step 落盘点
+- validation runtime 目录依旧没有新的 `step-008000` 文件
+- `run_validation_vbench.py` / `batch_eval_lora.py` 新进程仍未出现
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7257`
+- `train/loss_total = 0.01496`
+- `train/loss_track_aux = 0.03198`
+- `train/loss_box_aux = 0.09386`
+- `train/loss_depth_aux = 0.02380`
+- `train/grad_norm = 0.81520`
+- `train/grad_abs_max = 0.18591`
+- `train/object_context_abs_max = 0.40232`
+- `train/object_latent_tokens_abs_max = 5.24342`
+
+这一步的关键点比较特殊：
+
+- `object_latent_tokens_abs_max` 再次刷新新高，已经到 `5.24342`
+- 但同一时刻：
+  - `loss_total` 很低
+  - `box_aux / depth_aux` 也不高
+  - `grad_norm / grad_abs_max` 没有进入异常高位
+
+这使当前 interpretation 更明确了一点：
+
+- `object_latent_tokens_abs_max` 现在更像一个“单独抬升的内部幅值信号”
+- 它确实越来越值得警惕
+- 但到 `_step = 7257` 为止，还不能把它直接解释成训练已经在发散
+
+当前更合理的监控策略仍然是：
+
+- 不因为这个单一指标的新高立刻停训
+- 继续观察它是否开始和更坏的外部症状绑定：
+  - 更频繁的 `box_aux / depth_aux` 高位
+  - 更密集的 `grad_norm / grad_abs_max` 上冲
+  - 或接近 `step-008000` 时 validation 质量/运行稳定性出现异常
+
+### 2026-06-26 02:36-02:37 UTC：latest summary 回落，暂未看到从内部幅值信号演化为外部失稳
+
+这一轮检查的基础状态仍然没有变化：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍只有旧的：
+  - `step-002000`
+  - `step-004000`
+  - `step-006000`
+- 还没有新的 validation 进程出现
+- `gpu5` 仍空闲，留给 `step-008000` 附近的 validation / benchmark
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7272`
+- `train/loss_total = 0.01472`
+- `train/loss_track_aux = 0.04275`
+- `train/loss_box_aux = 0.09318`
+- `train/loss_depth_aux = 0.01127`
+- `train/grad_norm = 0.83008`
+- `train/grad_abs_max = 0.19093`
+- `train/object_context_abs_max = 0.40684`
+- `train/object_latent_tokens_abs_max = 5.16229`
+
+这一步最有价值的信息不是新高，而是：
+
+- `object_latent_tokens_abs_max` 相比前一轮 `5.24342` 出现了回落
+- 同时外部可见训练量仍然保持在较低水平：
+  - `loss_total` 低
+  - `box_aux / depth_aux` 低
+  - `grad_norm / grad_abs_max` 没有失控
+
+因此当前判断进一步收敛为：
+
+- 到 `_step = 7272` 为止，`object_latent_tokens_abs_max` 更像“会波动、但总体偏高的内部风险信号”
+- 目前还没有证据表明它已经稳定演化成训练发散
+- 后续仍然要重点看它是否在接近 `step-008000` 时重新持续创新高，并开始和更坏的外部症状绑定
+
+### 2026-06-26 02:37-02:38 UTC：出现一次 `box_aux` 局部抬高，但整体仍像可恢复尖峰
+
+这一轮基础运行状态仍未变化：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- 还没有新的 validation / benchmark 子进程
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7298`
+- `train/loss_total = 0.06460`
+- `train/loss_track_aux = 0.02789`
+- `train/loss_box_aux = 0.52066`
+- `train/loss_depth_aux = 0.09746`
+- `train/grad_norm = 0.60503`
+- `train/grad_abs_max = 0.09315`
+- `train/object_context_abs_max = 0.39120`
+- `train/object_latent_tokens_abs_max = 5.05059`
+
+这一时刻的组合特征是：
+
+- `box_aux` 出现一次比较明显的局部抬高
+- 但：
+  - `grad_norm / grad_abs_max` 仍然低
+  - `depth_aux` 只是轻度抬高
+  - `object_latent_tokens_abs_max` 反而回落到 `5.05` 左右
+
+因此当前 interpretation 保持不变：
+
+- 目前更像“可恢复的 supervision spike”
+- 还不是持续恶化趋势
+- 到这一步为止，最需要等待的仍然是：
+  - `step-007400` checkpoint 是否正常落盘
+  - `step-008000` validation 是否正常触发到 `gpu5`
+
+### 2026-06-26 02:38-02:39 UTC：latest summary 维持低 loss，等待 `step-007400`
+
+这一轮基础状态仍未变化：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- 仍未看到新的 validation / benchmark 子进程
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7313`
+- `train/loss_total = 0.01453`
+- `train/loss_track_aux = 0.01856`
+- `train/loss_box_aux = 0.09513`
+- `train/loss_depth_aux = 0.03163`
+- `train/grad_norm = 1.08227`
+- `train/grad_abs_max = 0.27949`
+- `train/object_context_abs_max = 0.39910`
+- `train/object_latent_tokens_abs_max = 5.07914`
+
+这一时刻更接近“正常低损失批次”：
+
+- `loss_total` 低
+- `box_aux / depth_aux` 都不高
+- `object_latent_tokens_abs_max` 没有重新冲向前面的局部高点，而是维持在 `5.08` 左右
+
+当前判断保持为：
+
+- 训练暂未出现新的恶化信号
+- 继续等待 `step-007400` checkpoint 落盘
+- 接近 `step-008000` 时优先检查 validation 是否按预期在 `gpu5` 触发
+
+### 2026-06-26 02:39-02:40 UTC：latest summary 继续稳定，仍未出现 `step-007400`
+
+这一轮基础状态仍然没有变化：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `run_validation_vbench.py` / `batch_eval_lora.py` 仍未出现
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7338`
+- `train/loss_total = 0.01480`
+- `train/loss_track_aux = 0.01951`
+- `train/loss_box_aux = 0.09483`
+- `train/loss_depth_aux = 0.03365`
+- `train/grad_norm = 0.51063`
+- `train/grad_abs_max = 0.05000`
+- `train/object_context_abs_max = 0.40004`
+- `train/object_latent_tokens_abs_max = 5.16130`
+
+这一步继续落在“正常低损失批次”范围内：
+
+- loss 仍低
+- 梯度不高
+- `object_latent_tokens_abs_max` 维持在 `5.16` 左右，没有明显恶化
+
+当前判断不变：
+
+- 训练仍在稳定推进
+- 眼下最重要的仍然是等 `step-007400` 正常落盘
+- 然后继续盯 `step-008000` validation 是否会按预期在 `gpu5` 上触发
+
+### 2026-06-26 02:40-02:41 UTC：`object_latent_tokens_abs_max` 再创新高，风险重新升温
+
+基础运行状态在这一轮依然没变：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- 仍未看到新的 validation / benchmark 子进程
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7364`
+- `train/loss_total = 0.04665`
+- `train/loss_track_aux = 0.14952`
+- `train/loss_box_aux = 0.23635`
+- `train/loss_depth_aux = 0.08066`
+- `train/grad_norm = 1.39685`
+- `train/grad_abs_max = 0.38218`
+- `train/object_context_abs_max = 0.40131`
+- `train/object_latent_tokens_abs_max = 5.29770`
+
+这一时刻和前面“正常低损失批次”相比，有两点变化：
+
+- `object_latent_tokens_abs_max` 再次刷新新高，已经到 `5.29770`
+- `track / box / depth` 三项和梯度都一起抬了一截
+
+但当前还不能直接判成失控，原因是：
+
+- `loss_total` 仍不算高
+- `grad_norm / grad_abs_max` 虽然抬升，但还没有进入明显爆炸区
+- `object_context_abs_max` 仍然稳定在约 `0.40`
+
+因此当前判断更新为：
+
+- 风险信号重新升温
+- 但证据仍更接近“局部抬升”而不是“已经发散”
+- 接下来优先看两件事：
+  - `step-007400` checkpoint 是否正常落盘
+  - 在 `7364` 之后，这组抬升是否会持续，而不是再次回落
+
+### 2026-06-26 02:41-02:42 UTC：`7364` 后已出现回落，暂未看到风险继续扩散
+
+这一轮基础状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007000`
+  - `step-007200`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7384`
+- `train/loss_total = 0.04679`
+- `train/loss_track_aux = 0.09494`
+- `train/loss_box_aux = 0.34625`
+- `train/loss_depth_aux = 0.02667`
+- `train/grad_norm = 0.51101`
+- `train/grad_abs_max = 0.05000`
+- `train/object_context_abs_max = 0.39837`
+- `train/object_latent_tokens_abs_max = 5.15315`
+
+和 `_step = 7364` 相比，这一步最重要的变化是：
+
+- `object_latent_tokens_abs_max` 从 `5.29770` 回落到 `5.15315`
+- `grad_norm` 从 `1.39685` 回落到 `0.51101`
+- `grad_abs_max` 也回落到 `0.05`
+
+这说明：
+
+- `7364` 那次更像一次短时抬升
+- 到 `_step = 7384` 为止，还没有证据表明它正在继续扩散成持续失稳
+
+当前判断进一步收敛为：
+
+- 训练仍然处于“有风险波动，但可以自行回落”的阶段
+- 眼下最重要的仍然是确认：
+  - `step-007400` checkpoint 是否正常落盘
+  - `step-008000` validation 是否能在 `gpu5` 正常触发
+
+### 2026-06-26 02:42-02:43 UTC：`step-007400` 已成功落盘，训练重新回到较低风险区间
+
+这一轮的重要进展：
+
+- checkpoint 目录已经推进到：
+  - `step-007200`
+  - `step-007400`
+- `step-007400/training_state.pt` 已确认：
+  - `global_step = 7400`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1400`
+
+这说明：
+
+- checkpoint 落盘链路继续正常
+- `--max_checkpoints_keep 2` 仍在生效
+- 在 `7364` 那次局部抬升之后，训练并没有卡在 checkpoint 写盘上
+
+validation 侧当前仍无变化：
+
+- validation runtime 目录还没有新的 `step-008000` 文件
+- `gpu5` 仍然空闲，等待后续 validation / benchmark
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7403`
+- `train/loss_total = 0.01961`
+- `train/loss_track_aux = 0.01360`
+- `train/loss_box_aux = 0.17152`
+- `train/loss_depth_aux = 0.01099`
+- `train/grad_norm = 0.60130`
+- `train/grad_abs_max = 0.09220`
+- `train/object_context_abs_max = 0.39844`
+- `train/object_latent_tokens_abs_max = 5.18060`
+
+当前 interpretation：
+
+- `step-007400` 已经证明训练可以稳定跨过前面那次局部抬升
+- latest summary 也重新回到了较低风险区间
+- `object_latent_tokens_abs_max` 仍然偏高，但没有继续沿着 `7364` 的方向加速上冲
+
+接下来最关键的里程碑已经切换为：
+
+- `step-008000` checkpoint
+- `step-008000` validation 是否真正触发
+- validation 是否确实跑在 `gpu5`
+- validation 是否不再产生新的 `benchmark.failed.json`
+
+### 2026-06-26 02:43-02:44 UTC：出现一波中等回弹，但尚未破前高
+
+这一轮外部运行状态没有新变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7429`
+- `train/loss_total = 0.04098`
+- `train/loss_track_aux = 0.11500`
+- `train/loss_box_aux = 0.23254`
+- `train/loss_depth_aux = 0.06221`
+- `train/grad_norm = 0.59956`
+- `train/grad_abs_max = 0.09232`
+- `train/object_context_abs_max = 0.39898`
+- `train/object_latent_tokens_abs_max = 5.23899`
+
+这一时刻的特征是：
+
+- `track / box / depth` 都有一波中等抬升
+- 但：
+  - `grad_norm` 仍在约 `0.60`
+  - `grad_abs_max` 也不高
+  - `object_latent_tokens_abs_max` 虽然回到 `5.239` 左右，但还没有超过前面的局部高点 `5.29770`
+
+因此当前判断更新为：
+
+- 训练中仍然存在反复波动
+- 但到 `_step = 7429` 为止，还没有出现比 `7364` 更坏的新阶段
+- 当前更像一次“中等回弹但未破前高”
+
+接下来继续重点盯：
+
+- `step-007600`
+- `step-007800`
+- `step-008000` validation 是否真正落到 `gpu5`
+
+### 2026-06-26 02:44-02:45 UTC：supervision 侧再次抬升，但 `object_latent_tokens_abs_max` 回到 `5.0` 以下
+
+这一轮外部状态仍没有新变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7450`
+- `train/loss_total = 0.06704`
+- `train/loss_track_aux = 0.18592`
+- `train/loss_box_aux = 0.36317`
+- `train/loss_depth_aux = 0.12135`
+- `train/grad_norm = 1.11732`
+- `train/grad_abs_max = 0.29105`
+- `train/object_context_abs_max = 0.39805`
+- `train/object_latent_tokens_abs_max = 4.98859`
+
+这一时刻的关键信息是：
+
+- `track / box / depth` 和梯度又有一波抬升
+- 但 `object_latent_tokens_abs_max` 没有继续在 `5.2+` 区间上冲，反而回落到了 `4.99`
+
+这使当前 interpretation 更偏向：
+
+- 这次更像 supervision 侧的局部抬升
+- 而不是 object latent token 幅值继续恶化
+
+当前判断更新为：
+
+- 训练仍然存在批次级波动
+- 但到 `_step = 7450` 为止，没有出现“supervision 抬升 + latent token 幅值继续创新高”同时发生的更坏组合
+- 继续等待 `step-007600`，并保持对 `step-008000` validation 的重点监控
+
+### 2026-06-26 02:46-02:47 UTC：中等波动继续，但 `object_latent_tokens_abs_max` 仍未破前高
+
+这一轮外部运行状态仍未变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7475`
+- `train/loss_total = 0.04691`
+- `train/loss_track_aux = 0.07783`
+- `train/loss_box_aux = 0.32933`
+- `train/loss_depth_aux = 0.06192`
+- `train/grad_norm = 0.59620`
+- `train/grad_abs_max = 0.08986`
+- `train/object_context_abs_max = 0.40085`
+- `train/object_latent_tokens_abs_max = 5.22305`
+
+这一时刻依然属于“中等波动”：
+
+- `track / box / depth` 有一波中等抬升
+- 但：
+  - `grad_norm` 仍约 `0.60`
+  - `grad_abs_max` 仍不高
+  - `object_latent_tokens_abs_max` 回到 `5.223`，但仍没有超过前面的局部高点 `5.29770`
+
+当前判断维持为：
+
+- 训练有反复波动，但暂未进入更坏的新阶段
+- 到 `_step = 7475` 为止，最关键的观察结论仍是“未破前高”
+- 接下来继续等 `step-007600` 是否正常落盘，再继续守 `step-008000` validation
+
+### 2026-06-26 02:47-02:48 UTC：latest summary 与前一轮同型，仍未突破 `5.29770`
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7500`
+- `train/loss_total = 0.03659`
+- `train/loss_track_aux = 0.12151`
+- `train/loss_box_aux = 0.19861`
+- `train/loss_depth_aux = 0.04575`
+- `train/grad_norm = 1.10763`
+- `train/grad_abs_max = 0.28485`
+- `train/object_context_abs_max = 0.39591`
+- `train/object_latent_tokens_abs_max = 5.23373`
+
+这一时刻和 `_step = 7475` 很接近：
+
+- `track / box / depth` 仍是中等抬升
+- `grad_norm` 再次来到约 `1.11`
+- 但 `object_latent_tokens_abs_max` 仍然只是在 `5.23` 左右，没有突破前面的局部高点 `5.29770`
+
+当前判断继续保持：
+
+- 训练仍处于“有波动，但未升级成更坏阶段”的状态
+- 截至 `_step = 7500`，仍然没有出现新的更坏高点
+- 接下来继续等待 `step-007600` checkpoint 和 `step-008000` validation
+
+### 2026-06-26 02:48-02:49 UTC：出现一次低 loss 下的梯度尖峰，先按单次事件观察
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7526`
+- `train/loss_total = 0.01587`
+- `train/loss_track_aux = 0.02542`
+- `train/loss_box_aux = 0.09272`
+- `train/loss_depth_aux = 0.04059`
+- `train/grad_norm = 1.77312`
+- `train/grad_abs_max = 0.49363`
+- `train/object_context_abs_max = 0.40371`
+- `train/object_latent_tokens_abs_max = 5.15694`
+
+这一时刻的组合比较特殊：
+
+- `loss_total` 仍然很低
+- `track / box / depth` 也不高
+- 但 `grad_norm` 和 `grad_abs_max` 比前一轮明显抬高
+
+同时也要注意：
+
+- `object_latent_tokens_abs_max` 只是约 `5.16`
+- 并没有伴随新的 latent-token 幅值高点
+
+因此当前 interpretation 是：
+
+- 这更像一次“低 loss 下的梯度尖峰”
+- 目前先按单次事件观察
+- 只有当后续连续出现类似的高梯度 summary，才值得升级为更严肃的梯度稳定性排查
+
+### 2026-06-26 02:49-02:50 UTC：高梯度尖峰已回落，暂不支持“连续梯度异常”判断
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7546`
+- `train/loss_total = 0.02453`
+- `train/loss_track_aux = 0.05444`
+- `train/loss_box_aux = 0.17449`
+- `train/loss_depth_aux = 0.01635`
+- `train/grad_norm = 0.86955`
+- `train/grad_abs_max = 0.20701`
+- `train/object_context_abs_max = 0.40437`
+- `train/object_latent_tokens_abs_max = 5.18171`
+
+和 `_step = 7526` 相比：
+
+- `grad_norm` 从 `1.77312` 回落到 `0.86955`
+- `grad_abs_max` 从 `0.49363` 回落到 `0.20701`
+
+这说明：
+
+- 上一轮的高梯度更像一次单次尖峰
+- 到 `_step = 7546` 为止，还不支持“连续梯度异常”的判断
+
+当前判断更新为：
+
+- 训练仍然在波动，但当前还没有足够证据说明梯度稳定性开始系统性恶化
+- 接下来继续等待 `step-007600` checkpoint，同时继续盯 `step-008000` validation
+
+### 2026-06-26 02:51-02:52 UTC：外部 loss/grad 再次回低，但 `object_latent_tokens_abs_max` 刷新到 `5.37796`
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007200`
+  - `step-007400`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7577`
+- `train/loss_total = 0.01340`
+- `train/loss_track_aux = 0.02061`
+- `train/loss_box_aux = 0.09439`
+- `train/loss_depth_aux = 0.01903`
+- `train/grad_norm = 0.50987`
+- `train/grad_abs_max = 0.05000`
+- `train/object_context_abs_max = 0.40248`
+- `train/object_latent_tokens_abs_max = 5.37796`
+
+这一时刻最值得注意的组合是：
+
+- 外部可见训练量重新回到低位：
+  - `loss_total` 低
+  - `track / box / depth` 都低
+  - `grad_norm / grad_abs_max` 也低
+- 但 `object_latent_tokens_abs_max` 单独刷新了新的高点 `5.37796`
+
+因此当前 interpretation 需要再细化一步：
+
+- 目前最突出的风险信号已经更明确地集中在 `object_latent_tokens_abs_max`
+- 但到 `_step = 7577` 为止，它仍然更像“内部幅值单独抬升”
+- 还没有与外部 loss / 梯度恶化、checkpoint 异常、或 validation 失败形成直接绑定
+
+接下来最关键的观察点变成：
+
+- `step-007600` checkpoint 是否正常落盘
+- 接近 `step-008000` 时，这个新的 `5.37796` 高点是否开始和更坏的外部症状绑定
+
+### 2026-06-26 02:52-02:53 UTC：`step-007600` 已成功落盘，当前表现为局部 `box_aux` spike
+
+这一轮的重要进展：
+
+- checkpoint 目录已经推进到：
+  - `step-007400`
+  - `step-007600`
+- `step-007600/training_state.pt` 已确认：
+  - `global_step = 7600`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1600`
+
+这说明：
+
+- checkpoint 落盘继续正常
+- 到 `7600` 为止，训练和保存链路都没有出现异常
+
+validation 侧当前仍无变化：
+
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 仍然空闲，等待后续 validation / benchmark
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7601`
+- `train/loss_total = 0.06503`
+- `train/loss_track_aux = 0.02508`
+- `train/loss_box_aux = 0.60516`
+- `train/loss_depth_aux = 0.02009`
+- `train/grad_norm = 0.83574`
+- `train/grad_abs_max = 0.19521`
+- `train/object_context_abs_max = 0.39998`
+- `train/object_latent_tokens_abs_max = 5.24101`
+
+这一时刻的特征比较清楚：
+
+- `box_aux` 单独抬高得更明显
+- 但：
+  - `track_aux` 不高
+  - `depth_aux` 不高
+  - `grad_norm / grad_abs_max` 没有同步进入异常高位
+  - `object_latent_tokens_abs_max` 也没有继续逼近前面的 `5.37796`
+
+因此当前判断更新为：
+
+- `step-007600` 已经证明训练可以继续稳定推进
+- 当前更像一次局部 `box_aux` spike
+- 还没有看到它与更坏的整体失稳绑定
+
+接下来最关键的里程碑继续保持为：
+
+- `step-007800`
+- `step-008000`
+- `step-008000` validation 是否真正触发到 `gpu5`
+- validation 是否还会产生新的 `benchmark.failed.json`
+
+### 2026-06-26 02:53-02:54 UTC：`7601` 的 `box_aux` spike 已回落，训练重新回到低损失区
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007400`
+  - `step-007600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7632`
+- `train/loss_total = 0.01506`
+- `train/loss_track_aux = 0.02246`
+- `train/loss_box_aux = 0.09616`
+- `train/loss_depth_aux = 0.03195`
+- `train/grad_norm = 1.07295`
+- `train/grad_abs_max = 0.28223`
+- `train/object_context_abs_max = 0.40041`
+- `train/object_latent_tokens_abs_max = 5.24203`
+
+和 `_step = 7601` 相比：
+
+- `box_aux` 从 `0.60516` 明显回落到 `0.09616`
+- `loss_total` 也回到较低区间
+
+这说明：
+
+- `7601` 那次更像一次局部 `box_aux` spike
+- 到 `_step = 7632` 为止，它并没有继续扩散成持续性异常
+
+当前判断继续保持为：
+
+- 训练仍然有波动，但能自行回落
+- 接下来继续重点盯：
+  - `step-007800`
+  - `step-008000`
+  - `step-008000` validation 是否会真正落到 `gpu5`
+
+### 2026-06-26 02:55-02:56 UTC：`object_latent_tokens_abs_max` 再刷新到 `5.38170`，但仍未和整体失稳绑定
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007400`
+  - `step-007600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7657`
+- `train/loss_total = 0.04729`
+- `train/loss_track_aux = 0.08682`
+- `train/loss_box_aux = 0.36048`
+- `train/loss_depth_aux = 0.02555`
+- `train/grad_norm = 0.61561`
+- `train/grad_abs_max = 0.10165`
+- `train/object_context_abs_max = 0.40240`
+- `train/object_latent_tokens_abs_max = 5.38170`
+
+这一时刻需要区分开的点是：
+
+- `object_latent_tokens_abs_max` 再次刷新前高，已经到 `5.38170`
+- 但与此同时：
+  - `grad_norm` 只有约 `0.62`
+  - `grad_abs_max` 也不高
+  - `box_aux` 虽然抬升，但仍属于中等范围
+  - `depth_aux` 不高
+
+因此当前判断更新为：
+
+- 内部幅值风险信号仍在继续刷新高点
+- 但到 `_step = 7657` 为止，它仍然没有与“整体失稳”形成明确绑定
+- 接下来接近 `step-008000` 时，需要特别留意这类内部幅值新高是否开始与：
+  - 更高、更持续的 `box/track/depth` 抬升
+  - 更明显的 `grad_norm / grad_abs_max` 抬升
+  - 或 validation 失败
+  同时出现
+
+### 2026-06-26 02:56-02:57 UTC：外部训练量再次回低，但 `object_latent_tokens_abs_max` 继续刷新到 `5.40501`
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007400`
+  - `step-007600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7682`
+- `train/loss_total = 0.01391`
+- `train/loss_track_aux = 0.02724`
+- `train/loss_box_aux = 0.09250`
+- `train/loss_depth_aux = 0.01938`
+- `train/grad_norm = 0.60943`
+- `train/grad_abs_max = 0.09872`
+- `train/object_context_abs_max = 0.40608`
+- `train/object_latent_tokens_abs_max = 5.40501`
+
+这一时刻的组合进一步强化了前面的判断：
+
+- 外部可见训练量再次回到低位：
+  - `loss_total` 低
+  - `track / box / depth` 低
+  - `grad_norm / grad_abs_max` 也不高
+- 但 `object_latent_tokens_abs_max` 单独继续刷新新高，到 `5.40501`
+
+因此当前判断继续收敛为：
+
+- 当前最需要盯防的风险信号，已经高度集中在 `object_latent_tokens_abs_max`
+- 但截至 `_step = 7682`，它仍然主要表现为“内部幅值单独抬升”
+- 还没有和外部训练失稳、checkpoint 异常或 validation 失败形成直接绑定
+
+接下来临近 `step-008000` 时，需要优先确认两件事：
+
+- `step-007800` checkpoint 是否正常落盘
+- `step-008000` validation 是否会把这种内部幅值新高转化成实际 failure signal
+
+### 2026-06-26 02:57-02:58 UTC：`object_latent_tokens_abs_max` 继续小幅刷新，但外部训练量仍未同步恶化
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007400`
+  - `step-007600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7702`
+- `train/loss_total = 0.02468`
+- `train/loss_track_aux = 0.05761`
+- `train/loss_box_aux = 0.17079`
+- `train/loss_depth_aux = 0.01843`
+- `train/grad_norm = 0.84335`
+- `train/grad_abs_max = 0.20016`
+- `train/object_context_abs_max = 0.41693`
+- `train/object_latent_tokens_abs_max = 5.41086`
+
+这一时刻的核心判断与前一轮一致，但证据更强了一点：
+
+- `object_latent_tokens_abs_max` 又小幅刷新，从 `5.40501` 到 `5.41086`
+- 但：
+  - `loss_total` 仍低
+  - `track / box / depth` 仍不高
+  - `grad_norm / grad_abs_max` 也没有同步进入异常高位
+
+因此当前判断继续保持为：
+
+- 风险信号仍主要集中在 `object_latent_tokens_abs_max`
+- 到 `_step = 7702` 为止，它依然没有和外部训练恶化形成直接绑定
+- 接下来最关键的仍然是：
+  - `step-007800` checkpoint 是否正常落盘
+  - `step-008000` validation 是否会第一次把这个内部风险转化成外部 failure
+
+### 2026-06-26 02:58-02:59 UTC：出现一波中等回弹，但 `object_latent_tokens_abs_max` 反而从前高回落
+
+这一轮外部状态仍无变化：
+
+- checkpoint 目录仍是：
+  - `step-007400`
+  - `step-007600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- `gpu5` 继续空闲
+- `gpu4` 仍未使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary（run `qberfq1r`）推进到：
+
+- `_step = 7728`
+- `train/loss_total = 0.05790`
+- `train/loss_track_aux = 0.12709`
+- `train/loss_box_aux = 0.35389`
+- `train/loss_depth_aux = 0.09802`
+- `train/grad_norm = 0.61088`
+- `train/grad_abs_max = 0.09901`
+- `train/object_context_abs_max = 0.40322`
+- `train/object_latent_tokens_abs_max = 5.35829`
+
+这一时刻更像一次中等回弹：
+
+- `track / box / depth` 和 `loss_total` 都有一波中等抬升
+- 但：
+  - `grad_norm` 仍然只有约 `0.61`
+  - `grad_abs_max` 不高
+  - `object_latent_tokens_abs_max` 反而从前一轮的 `5.41086` 回落到 `5.35829`
+
+因此当前判断更新为：
+
+- 到 `_step = 7728` 为止，仍然更像“中等回弹”而不是系统性恶化
+- 目前还没有出现“内部幅值继续冲高 + 外部 loss/grad 同步恶化”的更坏组合
+- 接下来继续重点守：
+  - `step-007800`
+  - `step-008000`
+  - `step-008000` validation 是否会真正开始暴露 failure signal
+
+### 2026-06-26 03:01 UTC：继续确认 GPU 绑定无误，训练仍在推进到 `step-008000` 前夜
+
+这一轮先重新核对了运行时 GPU 绑定，结果和预期一致：
+
+- 训练主进程仍是：
+  - `accelerate launch ... train_v_newtrain.py`
+  - 参数里继续固定：
+    - 训练：`CUDA_VISIBLE_DEVICES=6,7`
+    - 验证：`--benchmark_cuda_visible_devices 5`
+- 当前 GPU 占用：
+  - `gpu6 = 42725 / 49140 MiB`
+  - `gpu7 = 42707 / 49140 MiB`
+  - `gpu5 = 1 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+- 这说明：
+  - 训练仍稳定跑在 `gpu6,7`
+  - `gpu5` 仍预留给 validation
+  - 坏卡 `gpu4` 没有被用到
+
+checkpoint / validation 侧仍然还没出现新的外部里程碑：
+
+- checkpoint 目录仍只有：
+  - `step-007400`
+  - `step-007600`
+- 对应 `training_state.pt` 仍是：
+  - `step-007400`: `global_step=7400`, `epoch_id=2`, `batch_in_epoch=1400`
+  - `step-007600`: `global_step=7600`, `epoch_id=2`, `batch_in_epoch=1600`
+- validation runtime 目录仍只有旧失败记录：
+  - `step-002000`
+  - `step-004000`
+  - `step-006000`
+- 还没有新的：
+  - `step-007800`
+  - `step-008000`
+  - `run_validation_vbench.py`
+  - `batch_eval_lora.py`
+
+磁盘压力仍然是当前最现实的外部风险：
+
+- `/data` 可用空间仍约 `5.1G`
+- 下一次 `checkpoint + validation` 同步落盘时，仍要重点防止因为磁盘紧张导致新的外部 failure
+
+W&B latest summary（run `qberfq1r`）这一轮已经推进到 `_step = 7743`，最近几条关键点如下：
+
+- `_step = 7680`
+  - `loss_total = 0.10618`
+  - `track_aux = 0.03714`
+  - `box_aux = 0.42912`
+  - `depth_aux = 0.59555`
+  - `grad_norm = 1.15932`
+  - `object_latent_tokens_abs_max = 5.35991`
+- `_step = 7689`
+  - `loss_total = 0.12935`
+  - `track_aux = 0.27991`
+  - `box_aux = 0.42486`
+  - `depth_aux = 0.58869`
+  - `grad_norm = 1.44077`
+  - `object_latent_tokens_abs_max = 5.37060`
+- `_step = 7695`
+  - `loss_total = 0.02303`
+  - `track_aux = 0.05409`
+  - `box_aux = 0.15999`
+  - `depth_aux = 0.01619`
+  - `grad_norm = 0.83921`
+  - `object_latent_tokens_abs_max = 5.43711`
+- `_step = 7741`
+  - `loss_total = 0.03974`
+  - `track_aux = 0.15184`
+  - `box_aux = 0.18804`
+  - `depth_aux = 0.05752`
+  - `grad_norm = 0.83588`
+  - `object_latent_tokens_abs_max = 5.44224`
+- `_step = 7743`
+  - `loss_total = 0.04781`
+  - `track_aux = 0.05087`
+  - `box_aux = 0.40432`
+  - `depth_aux = 0.02289`
+  - `grad_norm = 0.50865`
+  - `grad_abs_max = 0.05000`
+  - `object_latent_tokens_abs_max = 5.44839`
+
+这一轮判断继续收敛为：
+
+- `object_latent_tokens_abs_max` 仍在缓慢创新高
+- 但到 `_step = 7743` 为止：
+  - 还没有和持续高 `grad_norm`
+  - 持续高 `loss_total`
+  - 或 validation failure
+  形成稳定绑定
+- 目前最合理的表述仍然是：
+  - 内部幅值风险信号在上升
+  - 但尚未被外部训练失稳证实
+
+接下来继续重点盯：
+
+- `step-007800` 是否正常落盘
+- `step-008000` 是否第一次触发新的 validation
+- validation 是否严格使用 `gpu5`
+- `step-008000` 是否出现新的 `benchmark.failed.json`
+
+### 2026-06-26 03:03 UTC：`step-007800` 已确认落盘，训练继续健康推进到 `step-008000` 前
+
+这一轮先确认了 cache / 训练 / checkpoint 三件事：
+
+- VGGT cache 已存在并持续可用：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache/sample_000584_w001.vggt.pt`
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache/sample_000401_w000.vggt.pt`
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache/sample_000208_w002.vggt.pt`
+  - 可见 cache 根目录下已有大量 `*.vggt.pt`
+- 训练进程仍正常：
+  - `accelerate launch ... train_v_newtrain.py`
+  - 两个 worker 仍在跑
+- GPU 绑定仍正确：
+  - 训练：`gpu6,7`
+  - validation 预留：`gpu5`
+  - 坏卡 `gpu4` 仍未使用
+
+GPU 实际占用这一轮为：
+
+- `gpu6 = 42725 / 49140 MiB`
+- `gpu7 = 42707 / 49140 MiB`
+- `gpu5 = 1 / 49140 MiB`
+- `gpu4 = 1 / 49140 MiB`
+
+checkpoint 侧出现了新的正向进展：
+
+- checkpoint 目录现在是：
+  - `step-007600`
+  - `step-007800`
+- 对应 `training_state.pt`：
+  - `step-007600`: `global_step=7600`, `epoch_id=2`, `batch_in_epoch=1600`
+  - `step-007800`: `global_step=7800`, `epoch_id=2`, `batch_in_epoch=1800`
+
+这说明：
+
+- `step-007800` 已经正常保存
+- `max_checkpoints_keep=2` 仍在生效
+- 训练本体没有因为 cache 接入或 object branch 训练而卡住
+
+validation 这一轮仍未开始新的外部执行：
+
+- validation runtime 目录仍只有旧失败：
+  - `step-002000`
+  - `step-004000`
+  - `step-006000`
+- 还没有新的：
+  - `step-008000`
+  - `run_validation_vbench.py`
+  - `batch_eval_lora.py`
+
+所以当前最关键的下一跳仍是：
+
+- `step-008000` checkpoint 落盘
+- `step-008000` validation 首次触发
+
+W&B latest summary（run `qberfq1r`）已经推进到 `_step = 7820`，最近一段更有代表性的点如下：
+
+- `_step = 7769`
+  - `loss_total = 0.07202`
+  - `track_aux = 0.05648`
+  - `box_aux = 0.65252`
+  - `depth_aux = 0.01117`
+  - `grad_norm = 1.14845`
+  - `grad_abs_max = 0.30674`
+  - `object_latent_tokens_abs_max = 5.39778`
+- `_step = 7774`
+  - `loss_total = 0.04310`
+  - `track_aux = 0.09060`
+  - `box_aux = 0.25046`
+  - `depth_aux = 0.08990`
+  - `grad_norm = 1.73016`
+  - `grad_abs_max = 0.49604`
+  - `object_latent_tokens_abs_max = 5.44789`
+- `_step = 7790`
+  - `loss_total = 0.03474`
+  - `track_aux = 0.09824`
+  - `box_aux = 0.20899`
+  - `depth_aux = 0.04013`
+  - `grad_norm = 1.09267`
+  - `grad_abs_max = 0.28882`
+  - `object_latent_tokens_abs_max = 5.46029`
+- `_step = 7806`
+  - `loss_total = 0.13316`
+  - `track_aux = 0.12840`
+  - `box_aux = 0.70964`
+  - `depth_aux = 0.49361`
+  - `grad_norm = 0.62580`
+  - `grad_abs_max = 0.10817`
+  - `object_latent_tokens_abs_max = 5.39935`
+- `_step = 7814`
+  - `loss_total = 0.01422`
+  - `track_aux = 0.01637`
+  - `box_aux = 0.09179`
+  - `depth_aux = 0.03405`
+  - `grad_norm = 0.50981`
+  - `grad_abs_max = 0.05000`
+  - `object_latent_tokens_abs_max = 5.46156`
+- `_step = 7820`
+  - `loss_total = 0.11040`
+  - `track_aux = 0.07898`
+  - `box_aux = 0.41299`
+  - `depth_aux = 0.61204`
+  - `grad_norm = 0.87664`
+  - `grad_abs_max = 0.21266`
+  - `object_latent_tokens_abs_max = 5.46312`
+
+这一轮的判断是：
+
+- `box_aux / depth_aux` 仍会出现明显的 batch-level spike
+- 但这些 spike 目前仍然更像“单批次监督难样本扰动”，因为：
+  - spike 后能很快回落
+  - `grad_norm` 没有同步持续抬高
+  - `grad_abs_max` 也没有持续失控
+- `object_latent_tokens_abs_max` 继续缓慢创新高，到 `_step = 7820` 已到 `5.46312`
+- 但截至目前，它依旧没有和外部 failure 形成稳定绑定
+
+当前结论继续维持：
+
+- 训练仍在健康推进
+- 还没有看到需要立刻改代码的 runtime 级错误
+- 现在最值得防的两件事：
+  - `step-008000` validation 触发时再次出现脚本级错误
+  - `/data` 只剩约 `5.1G`，checkpoint + validation 同时写盘时可能触发外部失败
+
+### 2026-06-26 03:11 UTC：当前 run 实际已经停止，训练最高推进到 `7898` 左右，但最后可恢复 checkpoint 仍是 `step-007800`
+
+本轮重新核对后，当前运行状态和上一轮相比已经发生变化：
+
+- 训练进程已经全部退出：
+  - `accelerate launch` 不在
+  - `train_v_newtrain.py` worker 不在
+- GPU 当前全空：
+  - `gpu6 = 1 / 49140 MiB`
+  - `gpu7 = 1 / 49140 MiB`
+  - `gpu5 = 1 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+
+因此当前不是“还在接近 `step-008000` 继续推进”，而是：
+
+- 这次 run 已经停了
+- 还没跑到 `step-008000`
+
+本地 checkpoint 当前仍只有：
+
+- `step-007600`
+- `step-007800`
+
+并已核对：
+
+- `step-007600/training_state.pt`
+  - `global_step = 7600`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1600`
+- `step-007800/training_state.pt`
+  - `global_step = 7800`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1800`
+
+但 W&B 本地 `output.log` 说明，这次训练实际并不只停在 `7800`：
+
+- 日志里已确认：
+  - `epoch 2 | global_step 7800: 100%`
+- 随后又进入下一轮：
+  - `epoch 3 | global_step 7898: 5%`
+
+所以当前更准确的训练进度应表述为：
+
+- 最新实际训练步数：
+  - 约 `7897 ~ 7898`
+- 最新安全可恢复权重：
+  - `step-007800`
+- 尚未达到：
+  - `step-008000`
+- 因此也尚未出现新的：
+  - `step-008000` validation runtime 文件
+  - `run_validation_vbench.py`
+  - `batch_eval_lora.py`
+
+W&B 当前状态（run `qberfq1r`）：
+
+- state:
+  - `failed`
+- url:
+  - `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/qberfq1r`
+
+尾段 loss / 梯度 / 幅值信号的总体特征：
+
+- `loss_total`
+  - 大多数仍在 `0.01 ~ 0.06`
+  - 但间歇性 spike 到 `0.11 ~ 0.16`
+- `loss_track_aux`
+  - 常见在 `0.02 ~ 0.15`
+- `loss_box_aux`
+  - 仍是波动最大的一项
+  - 尾段可见局部高点：
+    - `0.73`
+    - `0.97`
+- `loss_depth_aux`
+  - 常见在 `0.01 ~ 0.09`
+  - 尾段多次 spike 到：
+    - `0.47 ~ 0.62`
+- `grad_norm`
+  - 常见在 `0.5 ~ 1.2`
+  - 尾段几次明显抬升到：
+    - `1.50`
+    - `1.79`
+    - `1.86`
+- `object_context_abs_max`
+  - 仍基本稳定在：
+    - `0.40 ~ 0.42`
+- `object_latent_tokens_abs_max`
+  - 继续成为最值得警惕的内部信号
+  - 尾段进一步抬到：
+    - `5.46`
+    - `5.49`
+    - `5.54`
+    - `5.57`
+
+当前 interpretation 更新为：
+
+- 这次 run 停掉前，并没有表现成“整体 loss 持续爆炸”
+- 更像：
+  - `box_aux / depth_aux` 重复出现 batch-level spike
+  - 同时 `object_latent_tokens_abs_max` 继续缓慢上漂
+- 其中最重要的风险信号仍然是：
+  - `object_latent_tokens_abs_max`
+- 因为到尾段为止，它已经不只是偶发触到 `5.0`
+  - 而是稳定进入 `5.3 ~ 5.57` 区间
+
+但也需要如实强调：
+
+- 到停掉前，这个内部幅值信号仍没有和“明确不可恢复的外部发散”完全绑定
+- 因为尾段仍然能看到：
+  - 很低的 `loss_total`
+  - 很低的 `box_aux / depth_aux`
+  - 与较高 `object_latent_tokens_abs_max` 同时出现
+
+当前 operational 结论：
+
+- 训练目前已经停了
+- 还没跑到 `step-008000`
+- 所以还没有进入我们最关键的下一观察点：
+  - `step-008000` validation 是否会在 `gpu5` 上真正触发并跑通
