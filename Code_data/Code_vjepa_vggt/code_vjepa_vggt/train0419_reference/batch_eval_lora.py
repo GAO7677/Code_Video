@@ -17,6 +17,7 @@ import platform
 import re
 import subprocess
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -628,6 +629,7 @@ def normalize_resize_mode(dataset_name: str, requested_mode: str) -> str:
 def load_meta_paths(meta_list_path: Path) -> list[Path]:
     meta_paths: list[Path] = []
     seen: set[str] = set()
+    missing_paths: list[str] = []
     for raw_line in meta_list_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -639,11 +641,19 @@ def load_meta_paths(meta_list_path: Path) -> list[Path]:
         if normalized in seen:
             continue
         if not candidate.is_file():
-            raise FileNotFoundError(f"meta.json not found from meta_list_path: {candidate}")
+            missing_paths.append(str(candidate))
+            continue
         seen.add(normalized)
         meta_paths.append(candidate)
     if not meta_paths:
         raise ValueError(f"No meta.json paths found in meta_list_path: {meta_list_path}")
+    if missing_paths:
+        preview = ", ".join(missing_paths[:3])
+        suffix = "" if len(missing_paths) <= 3 else f" ... (+{len(missing_paths) - 3} more)"
+        warnings.warn(
+            f"Skipped {len(missing_paths)} missing meta.json paths from {meta_list_path}: {preview}{suffix}",
+            stacklevel=2,
+        )
     return meta_paths
 
 

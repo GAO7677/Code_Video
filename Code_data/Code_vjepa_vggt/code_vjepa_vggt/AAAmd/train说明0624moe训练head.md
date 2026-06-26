@@ -2727,3 +2727,1487 @@ validation / 磁盘本轮仍无变化：
   - `object_latent_tokens_abs_max > 5.0`
   - 且 `box_aux / depth_aux` 再次连续高位
 - 就可以直接按这套预案准备下一次重启，而不是从头重新判断
+
+## 26. 2026-06-25 23:59 UTC 高位交替继续出现
+
+这一轮继续观察到，训练仍然在健康推进，但还没有到 `step-003800`：
+
+- W&B `lastHistoryStep`:
+  - `3676`
+- stdout 最新可见进度：
+  - `global_step 3677`
+
+因此当前 checkpoint 目录仍保持：
+
+- `step-003400`
+- `step-003600`
+
+本轮最新指标：
+
+- `train/loss_total = 0.05942`
+- `train/loss_track_aux = 0.02636`
+- `train/loss_box_aux = 0.56402`
+- `train/loss_depth_aux = 0.00380`
+- `train/object_context_abs_max = 0.43219`
+- `train/object_latent_tokens_abs_max = 4.85871`
+
+和前几轮对比后，这一轮再次说明当前模式不是单一变量单调发散，而是：
+
+- 有时 `object_latent_tokens_abs_max` 站上 `5.0+`
+- 有时 `object_context_abs_max` 站上 `0.43`
+- 有时 `box_aux` 抬高
+- 但它们并不总是同一时刻一起最坏
+
+这说明当前 object 分支更像处在一个“高幅值、交替波动”的工作区间，而不是立刻崩掉的工作区间。
+
+截至这一轮：
+
+- 当前 run 仍然可以继续跑
+- 但“下次重启时收缩 object 分支尺度”已经不是可选项，而是明确建议
+
+### 下次重启的更具体参数建议
+
+如果后续决定基于最新 checkpoint 重启训练，建议按下面顺序做最小干预：
+
+方案 A：最小收缩，优先尝试
+
+- 保持数据、batch、主损失权重不变
+- 只加一个很小的 object context 正则：
+  - `--lambda_object_context_reg 1e-4`
+- 同时减小 object 残差步幅：
+  - `--object_track_delta_scale 0.15`
+  - `--object_box_delta_scale 0.15`
+  - `--object_box_wh_log_scale 0.8`
+
+方案 B：如果 A 还不够稳，再进一步减小 gate 初值
+
+- 在方案 A 基础上再调：
+  - `--object_track_gate_init 0.02`
+- 如果代码后续暴露了 box gate init 参数，也建议同步调低到同量级
+
+方案 C：如果仍高位摆动，再降低 object 分支有效学习强度
+
+- 不先动全局训练框架
+- 优先考虑：
+  - object residual 尺度进一步减小
+  - 或单独降低 object 相关模块学习率
+
+当前不建议现在立刻打断这次 run 去切方案 A/B/C，原因仍然是：
+
+- 训练主循环稳定
+- checkpoint 仍持续产出
+- loss 没有形成持续不可回落的坏趋势
+
+## 27. 2026-06-26 00:05 UTC 接近 step-003800 的复核
+
+这一轮继续观察到，训练已经推进到接近 `step-003800`：
+
+- W&B `lastHistoryStep`:
+  - `3731`
+- stdout 最新可见进度：
+  - `global_step 3733`
+
+当前仍未看到 `step-003800` 新目录，这仍然正常，因为还没真正跨过保存步点。
+
+本轮最新指标：
+
+- `train/loss_total = 0.02142`
+- `train/loss_track_aux = 0.02261`
+- `train/loss_box_aux = 0.16410`
+- `train/loss_depth_aux = 0.02753`
+- `train/object_context_abs_max = 0.43348`
+- `train/object_latent_tokens_abs_max = 4.84047`
+
+这一轮的意义在于进一步确认了当前模式：
+
+- `object_latent_tokens_abs_max` 可以从 `5.0+` 回落到 `4.84`
+- 但 `object_context_abs_max` 仍然维持在 `0.433+`
+- 同时 loss 端又整体偏低
+
+这再次说明：
+
+- 当前不是简单的“越高越坏”的单调失稳
+- 更像 object 分支某些内部量在高位摆动，而主训练目标暂时还压得住
+
+截至这一轮，工作判断保持不变：
+
+- 当前 run 继续跑
+- 但如果后续需要重启，不应原样继续
+
+### 下次重启的命令级模板
+
+如果后续要基于最新 checkpoint 做一次更稳的重启，可以在当前启动脚本参数基础上优先改成：
+
+```bash
+--lambda_object_context_reg 1e-4 \
+--object_track_delta_scale 0.15 \
+--object_box_delta_scale 0.15 \
+--object_box_wh_log_scale 0.8 \
+--object_track_gate_init 0.02
+```
+
+如果后续代码把 box gate init 参数暴露出来，建议同步降低到和 `object_track_gate_init` 同量级，再作为方案 B。
+
+## 28. 2026-06-26 00:12 UTC step-003800 落盘
+
+这一轮已经确认新的 checkpoint 继续正常产出：
+
+- 新 checkpoint 已成功落盘：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/checkpoints/step-003800`
+- W&B `lastHistoryStep`:
+  - `3796`
+- stdout 最新可见进度：
+  - `global_step 3799`
+
+当前真实保留集已经前滚为：
+
+- `step-003600`
+- `step-003800`
+
+本轮最新指标：
+
+- `train/loss_total = 0.03974`
+- `train/loss_track_aux = 0.01206`
+- `train/loss_box_aux = 0.37521`
+- `train/loss_depth_aux = 0.01016`
+- `train/object_context_abs_max = 0.43560`
+- `train/object_latent_tokens_abs_max = 4.75561`
+
+这轮继续印证当前的整体模式：
+
+- `object_context_abs_max` 仍在 `0.43+`
+- `object_latent_tokens_abs_max` 这一拍回落到 `4.76`
+- loss 没有形成持续性崩坏
+
+因此到 `step-003800` 为止，判断仍然是：
+
+- 当前 run 可以继续跑
+- 但“下次重启不能原样继续”的结论不变
+
+### 额外的新风险：磁盘空间又进一步下降
+
+本轮检查到：
+
+- `/data` 可用空间已经从前面的约 `5.1G` 下降到约 `4.8G`
+
+这意味着：
+
+- 虽然 `max_checkpoints_keep=2` 还在工作
+- 但磁盘风险再次变得更现实
+
+所以后续除了继续盯数值，还需要继续盯：
+
+- 新 checkpoint 是否还能稳定落盘
+- validation 是否突然产生新产物并进一步压缩磁盘空间
+
+## 29. 2026-06-26 00:18 UTC step-003800 后继续推进
+
+这一轮继续监控时，有一个很关键的新事实：
+
+- 训练不只是正常落盘到了 `step-003800`
+- 而且已经顺利跨进了下一轮 epoch
+
+对应证据：
+
+- W&B `lastHistoryStep`:
+  - `3858`
+- stdout 最新可见进度：
+  - `epoch 1 | global_step 3860`
+
+这说明从训练循环、数据加载、优化器状态恢复与继续推进的角度看，当前 run 是非常健康的。
+
+本轮最新指标：
+
+- `train/loss_total = 0.06555`
+- `train/loss_track_aux = 0.03853`
+- `train/loss_box_aux = 0.60616`
+- `train/loss_depth_aux = 0.01077`
+- `train/object_context_abs_max = 0.43353`
+- `train/object_latent_tokens_abs_max = 5.17737`
+
+这轮的意义在于再次确认了“高位交替”不只是偶发一次：
+
+- `object_latent_tokens_abs_max` 又重新回到 `5.0+`
+- `loss_box_aux` 也再次抬到更高位
+- 但 `loss_depth_aux` 这轮又保持很低
+
+因此当前更准确的状态描述是：
+
+- 训练循环稳定性很好
+- object 分支高位摆动也在持续存在
+- 它更像是一个“可以继续训练但建议准备下一次收缩重启”的状态，而不是“当前这次训练已经坏掉”的状态
+
+截至这一轮，工作建议不变：
+
+- 当前 run 继续跑
+- 但若后续要从最新 checkpoint 重启，优先使用前面已经给出的缩放/正则收缩方案
+
+## 30. 2026-06-25 23:30 UTC 继续监控：接近 step-004000，但还未落盘
+
+这一轮主要核对了四件事：
+
+- 训练进程是否还活着
+- `step-004000` 是否已经生成
+- validation 是否在 `4000` 前后重新触发
+- `/data` 磁盘空间是否继续恶化
+
+### 运行状态
+
+训练主进程仍然正常运行：
+
+- launcher:
+  - `run_train_v_newtrain_object_heads_only_gpu67.sh`
+- 两个训练 worker:
+  - `train_v_newtrain.py` on `gpu6,7`
+- validation 仍然配置为：
+  - `benchmark_cuda_visible_devices=5`
+
+并且本轮再次确认：
+
+- 没有使用 `gpu4`
+
+### 本地日志与 W&B 的最新推进位置
+
+本地 `output.log` 最新可见推进到：
+
+- `epoch 1 | global_step 3948`
+
+W&B 最新可见状态：
+
+- run id:
+  - `3utgz1bh`
+- state:
+  - `running`
+- `lastHistoryStep`:
+  - `3946`
+
+本轮最新指标：
+
+- `train/loss_total = 0.04472`
+- `train/loss_track_aux = 0.11408`
+- `train/loss_box_aux = 0.28283`
+- `train/loss_depth_aux = 0.05024`
+- `train/object_context_abs_max = 0.42374`
+- `train/object_latent_tokens_abs_max = 5.24247`
+
+### 对这轮数值的判断
+
+这轮仍然不是“整体 loss 直接炸掉”的模式，而是继续符合前面已经反复观察到的模式：
+
+- `loss_total` 仍处在可接受区间
+- `loss_box_aux` 与 `loss_depth_aux` 会抖动，但没有同时持续上冲
+- `object_context_abs_max` 仍在 `0.42+` 区间
+- `object_latent_tokens_abs_max` 再次回到 `5.24` 的高位
+
+因此这轮更准确的结论仍然是：
+
+- 当前 run 还能继续跑
+- 但 object 分支内部幅值偏高的问题没有自然消失
+- 如果后续因为别的原因需要重启，不应该原样照搬当前超参
+
+### checkpoint 与 validation 状态
+
+截至本轮检查，checkpoint 目录里仍然只有：
+
+- `step-003600`
+- `step-003800`
+
+也就是说：
+
+- `step-004000` 还没有落盘
+
+validation 目录也仍然只有旧的失败记录：
+
+- `step-002000/benchmark.failed.json`
+- `step-002000/benchmark.stdout.log`
+- `step-002000/benchmark.stderr.log`
+
+目前还没有看到：
+
+- `step-004000` 对应的新 validation 运行目录
+
+这说明在本轮检查时点：
+
+- 训练还在正常向 `4000` 推进
+- 但 `4000` 的 checkpoint 与后续 validation 都还没真正发生
+
+### 磁盘状态
+
+本轮 `/data` 空间为：
+
+- `Avail = 5.1G`
+
+判断：
+
+- 仍然偏危险
+- 但比前一轮观测到的 `4.8G` 略有回升
+
+后续仍需要重点盯：
+
+- `step-004000` 落盘是否成功
+- validation 一旦重新触发，是否会再次吃掉更多磁盘空间
+
+### 当前操作建议
+
+本轮不建议中断训练。
+
+优先级最高的下一步观察点仍然是：
+
+- 是否生成 `step-004000`
+- `step-004000` 后 validation 是否重新触发
+- 触发后是成功、失败，还是因为磁盘/资源问题再次中断
+
+## 31. 2026-06-25 23:39 UTC step-004000 已落盘，validation 失败原因继续收敛
+
+这一轮有三条已经确认的事实：
+
+- `step-004000` checkpoint 已成功落盘
+- 训练主进程随后退出，当前 `gpu6,7` 上已经没有活跃训练进程
+- `step-004000` 的 validation 再次失败，但失败原因已经从“环境缺包”进一步收敛到“验证清单本身失效”
+
+### 当前最新运行状态
+
+当前 checkpoint 目录：
+
+- `step-003800`
+- `step-004000`
+
+`step-004000` 目录中已确认存在：
+
+- `checkpoint.safetensors`
+- `training_state.pt`
+
+W&B 当前状态：
+
+- run id:
+  - `3utgz1bh`
+- state:
+  - `running`
+- `lastHistoryStep`:
+  - `3999`
+- summary `_step`:
+  - `3999`
+
+但本地进程已退出，W&B service 的 `debug-core.log` 也明确记录了：
+
+- `2026-06-25T23:34:17Z processOutgoingData: finished`
+- `2026-06-25T23:34:19Z parent process exited`
+
+因此当前更准确的判断是：
+
+- 这次 run 在 `step-004000` 之后已经停掉
+- 不是还在后台继续训练
+
+### validation 失败原因的排查路径
+
+这次 `step-004000` validation 失败不是单一原因，而是按顺序暴露了两层问题：
+
+1. 第一层问题：
+   - `run_validation_vbench.py` 在初始化 `ValidationMetricSuite()` 时强依赖本地 DINO checkpoint
+   - 缺失文件：
+     - `/home/gaoya/.cache/torch/hub/checkpoints/dinov2_vitb14_pretrain.pth`
+   - 这会导致 validation 子进程直接退出
+
+2. 第二层问题：
+   - 修掉 DINO 强依赖后，validation 继续往下跑
+   - 但 `batch_eval_lora.py` 读取的老 validation 清单：
+     - `/home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation100.txt`
+   - 其中所有样本路径都已经失效
+
+### 已做的代码修复
+
+已经完成的修复：
+
+- [run_validation_vbench.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_validation_vbench.py)
+  - 把 DINO 指标改成“可选”
+  - 当本地缺少 `dinov2_vitb14_pretrain.pth` 时：
+    - 只 warning
+    - 跳过 `future_dino`
+    - 保留 `PSNR / SSIM / LPIPS / VBench`
+
+- [batch_eval_lora.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py)
+  - `load_meta_paths()` 已改成：
+    - 跳过不存在的 `meta.json`
+    - 输出 warning
+  - 但这只能解决“部分样本失效”
+  - 无法解决“整份 list 100 个路径全部失效”
+
+### 老 validation100 清单为什么不能再用
+
+我做了两层验证：
+
+1. 直接检查旧 list 里的路径：
+   - `OpenVid / MOVI-D / Genesis` 三类样本在当前盘上都已经不在原位置
+
+2. 用历史 `step-010000/ctx00` 的 100 个 per-case JSON 反查当前数据盘：
+   - 旧 validation100 的 `100` 个 `sample_id`
+   - 在当前盘上可匹配到的真实 `meta.json` 数量：
+     - `0 / 100`
+
+结论：
+
+- 老的 `benchmark_meta_json_paths_validation100.txt` 已经整体过期
+- 不是“修一两个路径”能恢复
+- 必须切换到新的、当前真实存在的验证清单
+
+### 当前可用的替代 validation 清单
+
+目前盘上可以直接使用的一组样本来自：
+
+- `/data/gaoya/AAA_test_video/Benchmark/stage0_V2V/tools/visualization/benchmark_compare_portal/assets/samples`
+
+但这里的样本也不是全部有效：
+
+- 目录里共有 `300` 个 `meta.json` 软链接
+- 实际当前可读可用的只有 `23` 个
+- 当前有效数据集分布是：
+  - `physics-iq-benchmark`: `19`
+  - `vLAR-PhysInOne`: `4`
+
+基于这批真实可读样本，已生成新的 validation 清单：
+
+- `/home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation23_current_assets.txt`
+
+### 已更新的训练启动配置
+
+已修改启动脚本：
+
+- [run_train_v_newtrain_object_heads_only_gpu67.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh)
+
+修改内容：
+
+- `--validation_meta_list_path`
+  - 从：
+    - `benchmark_meta_json_paths_validation100.txt`
+  - 改为：
+    - `benchmark_meta_json_paths_validation23_current_assets.txt`
+
+这样后续重启训练时：
+
+- validation 不会再去读已经整体失效的 `validation100` 列表
+- 会改成只评估当前盘上真实存在的 23 个 benchmark 样本
+
+### 当前建议
+
+下一步不应该再从 `step-002000` 回退重启。
+
+应该做的是：
+
+- 从 `step-004000/training_state.pt` 继续恢复
+- 使用新的 validation23 清单
+- 保持：
+  - 主训练：`gpu6,7`
+  - validation：`gpu5`
+  - 不使用 `gpu4`
+
+## 32. 2026-06-25 23:47 UTC 已按新 validation 清单重新续跑
+
+这一步已经执行的动作：
+
+1. 先用新的 validation 清单做 smoke
+2. 确认 validation 不再在 metadata 读取阶段因为旧坏路径立即退出
+3. 然后正式从 `step-004000` 继续恢复训练
+
+### validation smoke 结果
+
+本轮 smoke 使用：
+
+- `gpu5`
+- meta list:
+  - `/home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation23_current_assets.txt`
+- context:
+  - `ctx08`
+
+已确认现象：
+
+- runtime 目录已经正常创建：
+  - `.../validation_smoke_assets23_runtime/ctx08/metadata/step-004000_assets23_smoke_ctx08`
+- output 目录已经正常创建：
+  - `.../validation_smoke_assets23_outputs/ctx08`
+- 前台日志只出现：
+  - `DINO metrics disabled because the checkpoint is unavailable`
+
+这说明：
+
+- 新 validation 清单至少已经通过了样本解析和 generation 启动阶段
+- 不再像旧 `validation100` 清单那样在 metadata 读取阶段立刻失败
+
+### 正式续跑状态
+
+已重新启动训练：
+
+- 启动脚本：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+- 主训练 GPU：
+  - `gpu6,7`
+- validation / benchmark 预留：
+  - `gpu5`
+
+本次启动已经确认：
+
+- `Resuming from latest checkpoint: .../step-004000`
+- 实际传入训练脚本的 `--resume_from`：
+  - `.../checkpoints/step-004000`
+- 实际传入训练脚本的 `--validation_meta_list_path`：
+  - `benchmark_meta_json_paths_validation23_current_assets.txt`
+
+当前新的 W&B run：
+
+- run id:
+  - `yaxj219k`
+- run name:
+  - `pybullet0625_diffsynth_object_heads_only_gpu67`
+
+因此当前状态已经从上一轮的：
+
+- “训练停在 `step-004000`”
+
+切换到：
+
+- “训练已重新从 `step-004000` 恢复，且 validation 配置已替换成当前有效清单”
+
+### 当前仍在观察的点
+
+续跑刚刚启动，当前最重要的三个观察点是：
+
+- 是否顺利跨过初始化并进入新的 optimizer step
+- 新 run `yaxj219k` 的 `loss / grad` 是否开始正常写入 W&B
+- 后续真正到达下一次 validation 触发点时，是否能基于 23-case 新清单继续跑通
+
+### 恢复后的首批训练指标
+
+当前已经确认新的恢复 run 不是只停在初始化：
+
+- 前台训练日志已经推进到：
+  - `global_step 4001`
+- W&B `yaxj219k` 已经写入到：
+  - `lastHistoryStep = 4002`
+
+首批已观测到的训练指标：
+
+- `train/loss_total = 0.60446`
+- `train/loss_track_aux = 0.03431`
+- `train/loss_box_aux = 0.05670`
+- `train/loss_depth_aux = 5.95363`
+- `train/object_context_abs_max = 0.38162`
+- `train/object_latent_tokens_abs_max = 3.56240`
+- `train/grad_norm = 4.82971`
+- `train/grad_abs_max = 0.20147`
+
+这组值说明两件事：
+
+1. 梯度已经正常回传
+   - `grad_norm` 和 `grad_abs_max` 都是正常有限值
+   - 没有出现 `nan/inf`
+
+2. `depth_aux` 在恢复后的头几步出现了明显尖峰
+   - 当前最需要盯的是：
+     - `train/loss_depth_aux = 5.95`
+   - 但与此同时：
+     - `object_context_abs_max` 和 `object_latent_tokens_abs_max` 反而没有冲高
+   - 所以这一步暂时更像：
+     - 单个 batch 的 depth supervision 尖峰
+     - 还不能直接判成整体发散
+
+当前判断：
+
+- 训练恢复本身是成功的
+- 但接下来必须短周期连续观察 `loss_depth_aux`
+- 如果它连续多步都维持在异常高位，再转入代码或数据排查
+
+### 恢复后继续观察：depth 尖峰已回落
+
+进一步连续观察恢复 run `yaxj219k` 后，训练并没有停在最初几步，而是已经稳定推进到：
+
+- 前台可见：
+  - `global_step 4057`
+- W&B 最新 summary：
+  - `_step = 4054`
+
+这轮更有代表性的指标已经变成：
+
+- `train/loss_total = 0.04080`
+- `train/loss_track_aux = 0.02708`
+- `train/loss_box_aux = 0.36702`
+- `train/loss_depth_aux = 0.01388`
+- `train/object_context_abs_max = 0.36222`
+- `train/object_latent_tokens_abs_max = 3.40371`
+- `train/grad_norm = 0.35257`
+- `train/grad_abs_max = 0.07945`
+
+和恢复第一拍相比，最关键的变化是：
+
+- `loss_depth_aux`
+  - 从 `5.95`
+  - 回落到 `0.0139`
+
+因此目前更合理的判断是：
+
+- 之前那次 `depth_aux` 高值更像恢复早期的单步 batch 尖峰
+- 不是持续性的 depth 分支发散
+
+同时可以确认：
+
+- 梯度仍然是正常有限值
+- `object_context_abs_max` 和 `object_latent_tokens_abs_max` 还在较低且稳定的区间
+- 当前 run 已经从“恢复成功”进入“继续稳定推进”阶段
+
+### 2026-06-25 23:53 UTC 继续推进：训练与 validation smoke 同时正常
+
+进一步监控到的状态：
+
+- 训练前台已经继续推进到：
+  - `global_step 4080+`
+- W&B `yaxj219k` 最新 summary：
+  - `_step = 4080`
+
+当前这拍指标：
+
+- `train/loss_total = 0.02360`
+- `train/loss_track_aux = 0.05051`
+- `train/loss_box_aux = 0.17271`
+- `train/loss_depth_aux = 0.01276`
+- `train/object_context_abs_max = 0.37882`
+- `train/object_latent_tokens_abs_max = 3.51690`
+- `train/grad_norm = 0.34071`
+- `train/grad_abs_max = 0.07495`
+
+这再次印证：
+
+- `depth_aux` 已经稳定回到低位
+- `grad_norm / grad_abs_max` 没有异常放大
+- object 分支内部幅值仍然处在温和区间
+
+### validation smoke 的最新结论
+
+这次 smoke 已经不只是“成功启动”，而是已经实际开始生成视频与 sidecar JSON：
+
+- 输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/test/validation_smoke_assets23_outputs/ctx08`
+- 已生成的样例包括：
+  - `0005_perspective-center_trimmed-ball-behind-rotating-paper.mp4/.json`
+  - `0020_perspective-center_trimmed-ball-ramp.mp4/.json`
+  - `0029_perspective-center_trimmed-ball-train.mp4/.json`
+  - `0032_perspective-center_trimmed-balls-collide.mp4/.json`
+  - `0038_perspective-center_trimmed-blow-balloon.mp4/.json`
+  - `0047_perspective-center_trimmed-domino-in-juice.mp4/.json`
+  - `0059_perspective-center_trimmed-duck-falls-in-box.mp4/.json`
+
+这说明：
+
+- 新的 `validation23_current_assets` 清单不仅能被读取
+- 而且实际 generation 链路已经跑通并开始产出视频
+
+因此当前整体判断进一步更新为：
+
+- 主训练链路：正常
+- object 分支 loss / grad：当前稳定
+- 新 validation 数据清单：可用
+- validation generation 链路：可用
+
+### 2026-06-25 23:54 UTC 继续监控：训练仍稳，等待 step-004200
+
+进一步一轮 W&B 指标：
+
+- `lastHistoryStep = 4111`
+- `_step = 4111`
+
+当前这拍指标：
+
+- `train/loss_total = 0.04783`
+- `train/loss_track_aux = 0.08397`
+- `train/loss_box_aux = 0.32127`
+- `train/loss_depth_aux = 0.07309`
+- `train/object_context_abs_max = 0.36374`
+- `train/object_latent_tokens_abs_max = 3.54063`
+- `train/grad_norm = 0.92389`
+- `train/grad_abs_max = 0.20339`
+
+判断：
+
+- `depth_aux` 虽然有小幅回升，但仍远低于恢复首拍的 `5.95`
+- 当前更像正常 batch 间波动，而不是再次出现异常尖峰
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍稳定
+- 当前最需要继续观察的是：
+  - 是否顺利落下下一份 checkpoint `step-004200`
+
+### 2026-06-25 23:55 UTC 持续跟踪：训练仍稳定，validation smoke 继续扩展
+
+继续一轮 W&B summary：
+
+- `lastHistoryStep = 4132`
+- `_step = 4132`
+
+当前这拍指标：
+
+- `train/loss_total = 0.05009`
+- `train/loss_track_aux = 0.02469`
+- `train/loss_box_aux = 0.39342`
+- `train/loss_depth_aux = 0.08275`
+- `train/object_context_abs_max = 0.36306`
+- `train/object_latent_tokens_abs_max = 3.62739`
+- `train/grad_norm = 0.33291`
+- `train/grad_abs_max = 0.07500`
+
+更新判断：
+
+- `loss_depth_aux` 继续在低位小幅波动
+- `grad_norm` 仍稳定，没有放大趋势
+- 当前没有新的数值异常证据
+
+### validation smoke 进一步进展
+
+`ctx08` 下已继续新增生成样例：
+
+- `0104_perspective-center_trimmed-marble-run-x.mp4/.json`
+- `0107_perspective-center_trimmed-marble-run-y.mp4/.json`
+
+这说明：
+
+- validation smoke 不是卡在前几个样例
+- 新 validation 清单上的更多 case 也在持续成功生成
+
+### 2026-06-25 23:56 UTC 新一拍波动：depth 回升，但仍未见发散证据
+
+继续一轮 W&B summary：
+
+- `lastHistoryStep = 4147`
+- `_step = 4147`
+
+当前这拍指标：
+
+- `train/loss_total = 0.10734`
+- `train/loss_track_aux = 0.07496`
+- `train/loss_box_aux = 0.42568`
+- `train/loss_depth_aux = 0.57273`
+- `train/object_context_abs_max = 0.38473`
+- `train/object_latent_tokens_abs_max = 3.69094`
+- `train/grad_norm = 0.63075`
+- `train/grad_abs_max = 0.14551`
+
+判断更新：
+
+- `loss_depth_aux` 这拍有明显回升
+- 但仍明显低于恢复首拍的 `5.95`
+- 同时：
+  - `grad_norm` 没有失控
+  - `object_context_abs_max` / `object_latent_tokens_abs_max` 也没有同步冲高
+
+因此当前更合理的解释仍然是：
+
+- depth supervision 的 batch 级波动
+- 还不是持续发散或梯度异常
+
+当前仍继续重点观察：
+
+- `step-004200` 是否按时落盘
+- `loss_depth_aux` 后续几拍是否继续向上累积
+
+### GPU 使用约束
+
+- `gpu4` 是坏卡，当前方案不要使用
+- 主训练固定使用 `gpu6,7`
+- validation / benchmark / smoke 固定使用 `gpu5`
+- 如果后续需要重跑 cache，可复用 `gpu0/2/3/5/6/7`，但不要把 `gpu4` 放回任何启动命令
+
+### 2026-06-25 23:59 UTC 持续巡检：`step-004200` 已成功产出，当前 run 仍健康
+
+本轮检查结果：
+
+- 活跃训练进程仍在：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+  - 两个 worker 仍在跑 `train_v_newtrain.py`
+- 活跃 validation smoke 仍在：
+  - `run_validation_vbench.py`
+  - `batch_eval_lora.py`
+- GPU 占用符合预期：
+  - `gpu5` 满载跑 validation smoke
+  - `gpu6,7` 被主训练占用
+  - `gpu4` 仍未使用
+
+checkpoint 状态：
+
+- 当前 checkpoint 目录已变为：
+  - `step-004000`
+  - `step-004200`
+- 已额外核对：
+  - `step-004000/training_state.pt -> global_step = 4000`
+  - `step-004200/training_state.pt -> global_step = 4200`
+
+这说明：
+
+- 训练不只是 W&B 前端数字推进
+- 实际权重和训练状态文件都已经稳定跨过 `4200`
+- `--max_checkpoints_keep 2` 仍然正常生效
+
+### 当前 W&B 运行态
+
+当前 project 下同名 run 有多次历史重启，最新正在运行的是：
+
+- run id: `yaxj219k`
+- state: `running`
+- display_name: `pybullet0625_diffsynth_object_heads_only_gpu67`
+
+当前 latest summary：
+
+- `_step = 4245`
+- `train/loss_total = 0.04827`
+- `train/loss_track_aux = 0.07772`
+- `train/loss_box_aux = 0.25555`
+- `train/loss_depth_aux = 0.14946`
+- `train/object_context_abs_max = 0.38993`
+- `train/object_latent_tokens_abs_max = 3.88070`
+- `train/grad_norm = 1.47919`
+- `train/grad_abs_max = 0.34240`
+
+当前判断：
+
+- 训练仍在继续推进，至少已经超过 `step 4245`
+- `loss_depth_aux` 比 `3999` 附近的低点有回升，但还处在可接受波动区间
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 没有同步异常放大
+- `grad_norm` 有抬升，但目前仍是有限值，尚未看到 `nan/inf` 或明显爆炸证据
+
+所以当前结论仍然是：
+
+- 这是可继续观察的 batch 级波动
+- 还不是明确的训练发散
+
+### validation smoke 当前进度
+
+当前 smoke 仍在跑 `ctx08`：
+
+- 已产出 `22` 个 `.mp4`
+- 已产出 `22` 个 `.json`
+
+最新新增样例包括：
+
+- `0170_perspective-center_trimmed-solid-ball-peakaboo`
+- `0173_perspective-center_trimmed-stable-blocks`
+- `0185_perspective-center_trimmed-water-in-juice`
+
+说明：
+
+- validation smoke 仍在持续前进
+- 不是卡死在前半段 case
+
+额外从 runtime manifest 确认到：
+
+- `requested_output_frames = 24`
+- 实际推理参数里 `num_frames = 25`
+
+这和前面排查过的 Wan / DiffSynth 推理帧数约束一致，属于推理实现的 frame packing 行为，不是本轮训练新引入的问题。
+
+### 当前最大风险仍然是磁盘
+
+此刻 `/data`：
+
+- `Avail = 5.1G`
+
+由于当前同时存在：
+
+- 主训练 checkpoint 落盘
+- validation smoke 输出视频 / JSON
+
+因此最近期最需要警惕的仍不是 loss，而是：
+
+- 后续 checkpoint 或 validation 产物继续写盘时再次触发 `No space left on device`
+
+### 2026-06-26 00:02 UTC 持续巡检：训练继续推进，validation smoke 已完整收尾
+
+本轮继续核对发现：
+
+- 主训练进程仍存活，两个 `train_v_newtrain.py` worker 仍在高负载运行
+- `accelerate launch` 进程本身处于正常等待 / 管理态
+- `run_validation_vbench.py` 也仍存活，并在本轮检查时刚好完成本次 smoke 收尾
+
+一开始 `nvidia-smi` 抓到：
+
+- `gpu6,7` 显存仍被占用，但瞬时利用率显示 `0%`
+- `gpu5` 也短暂空闲
+
+进一步结合 `ps` 判断后可确认：
+
+- 这不是训练卡死
+- 两个训练 worker 实际 CPU 使用率都接近 `100%`
+- 很可能只是采样瞬间没有打到 GPU kernel，或者正处于 dataloader / 同步 / host 侧计算阶段
+
+所以当前无需因为那一拍 `0% util` 误判训练停住。
+
+### 当前 W&B 最新状态
+
+继续查询当前 running run：
+
+- run id: `yaxj219k`
+- state: `running`
+
+最新 summary 已从 `_step 4245` 推进到：
+
+- `_step = 4280`
+
+对应指标：
+
+- `train/loss_total = 0.06957`
+- `train/loss_track_aux = 0.04432`
+- `train/loss_box_aux = 0.61284`
+- `train/loss_depth_aux = 0.03853`
+- `train/object_context_abs_max = 0.36412`
+- `train/object_latent_tokens_abs_max = 3.89174`
+- `train/grad_norm = 0.92606`
+- `train/grad_abs_max = 0.21587`
+
+和上一拍相比：
+
+- `loss_depth_aux` 明显回落
+- `grad_norm` 也从 `1.479` 回到 `0.926`
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 继续稳定
+
+当前结论：
+
+- 没有看到新的数值异常
+- 当前训练状态比 `4245` 那拍更稳一些
+
+### validation smoke 收尾结果
+
+本次 `ctx08` smoke 现已确认完成：
+
+- 生成 `.mp4` 数量：`23`
+- 生成 `.json` 数量：`23`
+
+runtime summary:
+
+- `num_cases = 23`
+- `num_generated = 23`
+- `num_failed = 0`
+- `success_rate = 1.0`
+
+对应文件：
+
+- `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0625_diffsynth_object_heads_only_gpu67/test/validation_smoke_assets23_runtime/ctx08/summary.json`
+
+这说明前面替换后的当前资产清单是有效的：
+
+- 不再像旧 validation100 清单那样因为 meta path 失效而中途报错
+- 当前 smoke 至少在单个 `ctx08` 配置下已经可以稳定全量跑完
+
+### checkpoint 现状
+
+当前 checkpoint 目录仍只有两份：
+
+- `step-004000`
+- `step-004200`
+
+说明：
+
+- 训练还没推进到下一次保存点 `step-004400`
+- `--max_checkpoints_keep 2` 仍保持正常策略
+
+### 当前最重要的后续观察点
+
+- 下一份 checkpoint `step-004400` 是否顺利落盘
+- 磁盘空间是否在下一次 checkpoint / 后续 validation 时再次触发 `No space left on device`
+
+截至本轮：
+
+- 训练数值本身没有暴露出需要立刻改代码或改损失配置的问题
+- 真正更接近当前瓶颈的仍是 `/data` 只剩约 `5.1G` 的磁盘风险
+
+### 2026-06-26 00:04 UTC 持续巡检：训练继续向 `step-004400` 推进，当前没有新异常
+
+本轮检查结果：
+
+- checkpoint 目录暂时仍只有：
+  - `step-004000`
+  - `step-004200`
+- 说明训练尚未走到下一次保存点 `step-004400`
+- 但训练进程依然正常推进：
+  - `gpu6` 利用率约 `71%`
+  - `gpu7` 利用率约 `100%`
+  - 两个 worker 进程仍保持高负载
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4316`
+- `train/loss_total = 0.05321`
+- `train/loss_track_aux = 0.01274`
+- `train/loss_box_aux = 0.49179`
+- `train/loss_depth_aux = 0.02761`
+- `train/object_context_abs_max = 0.36356`
+- `train/object_latent_tokens_abs_max = 3.97536`
+- `train/grad_norm = 0.62036`
+- `train/grad_abs_max = 0.14522`
+
+和上一拍 `_step = 4280` 对比：
+
+- `loss_depth_aux` 继续回落
+- `grad_norm` 继续回落
+- `object_context_abs_max` 继续稳定
+- `object_latent_tokens_abs_max` 仍在正常波动范围内
+
+当前判断：
+
+- 训练还在稳定前进
+- 没有看到新的梯度尖峰或数值发散迹象
+- 当前最合理的操作仍然是继续观察，等待 `step-004400` 落盘
+
+磁盘状态没有改善：
+
+- `/data` 仍只有约 `5.1G` 可用
+
+因此当前第一风险顺位仍然是：
+
+- 下一次 checkpoint 落盘时再次撞到磁盘上限
+
+### 2026-06-26 00:07 UTC 持续巡检：已推进到 `step 4341`，仍未见数值异常
+
+本轮继续检查：
+
+- checkpoint 目录仍只有：
+  - `step-004000`
+  - `step-004200`
+- 说明还没到 `step-004400` 的实际落盘时刻
+
+但训练负载依旧明确正常：
+
+- `gpu6` 利用率约 `96%`
+- `gpu7` 利用率约 `100%`
+- 两个训练 worker CPU 使用率继续接近 `100%`
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4341`
+- `train/loss_total = 0.01586`
+- `train/loss_track_aux = 0.02147`
+- `train/loss_box_aux = 0.10178`
+- `train/loss_depth_aux = 0.03535`
+- `train/object_context_abs_max = 0.37446`
+- `train/object_latent_tokens_abs_max = 4.00618`
+- `train/grad_norm = 0.31626`
+- `train/grad_abs_max = 0.07112`
+
+和上一拍 `_step = 4316` 对比：
+
+- `loss_total` 进一步下降
+- `loss_box_aux` 明显下降
+- `grad_norm` 明显下降
+- `depth_aux` 小幅回升但仍处于低位
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍然稳定
+
+当前判断：
+
+- 训练在接近 `step-004400` 的阶段仍然没有出现新异常
+- 当前数值状态甚至比前几拍更平稳
+- 目前没有证据支持修改 loss、学习率或 object 分支实现
+
+截至这一轮，最大风险排序仍然不变：
+
+1. `/data` 剩余空间只有约 `5.1G`
+2. 下一次 checkpoint 落盘可能再次触发 `No space left on device`
+3. 训练数值风险当前反而处于较低优先级
+
+### 2026-06-26 00:09 UTC 持续巡检：已推进到 `step 4366`，仍是正常 batch 波动
+
+本轮检查结果：
+
+- checkpoint 目录仍未出现 `step-004400`
+- 当前仍只保留：
+  - `step-004000`
+  - `step-004200`
+
+进程和负载状态：
+
+- `accelerate` 主进程仍存活
+- 两个训练 worker 继续高负载运行
+- `gpu6,7` 仍在工作，只是瞬时利用率会有采样波动
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4366`
+- `train/loss_total = 0.04870`
+- `train/loss_track_aux = 0.13566`
+- `train/loss_box_aux = 0.24561`
+- `train/loss_depth_aux = 0.10569`
+- `train/object_context_abs_max = 0.39376`
+- `train/object_latent_tokens_abs_max = 4.01483`
+- `train/grad_norm = 0.61683`
+- `train/grad_abs_max = 0.14486`
+
+和上一拍 `_step = 4341` 对比：
+
+- `track/box/depth` 都有回升
+- 但 `grad_norm` 仍然处于低位
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍稳定，没有同步放大
+
+因此当前判断仍然是：
+
+- 正常 batch 级波动
+- 不是新的发散征兆
+
+当前风险排序仍不变：
+
+1. 等待 `step-004400` 实际落盘
+2. `/data` 约 `5.1G` 的空间可能在下次写 checkpoint 时再次成为首要中断原因
+3. 当前 loss / grad 风险仍低于磁盘风险
+
+### 2026-06-26 00:11 UTC 关键里程碑：`step-004400` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-004400`
+- 落盘时间：
+  - `2026-06-26 00:08:02 UTC` 左右写出 `checkpoint.safetensors`
+  - `2026-06-26 00:08:03 UTC` 左右写出 `training_state.pt`
+
+已进一步核对：
+
+- `step-004200/training_state.pt -> global_step = 4200`
+- `step-004400/training_state.pt -> global_step = 4400`
+
+这说明：
+
+- checkpoint 真正完整写出
+- 训练状态与目录命名严格一致
+
+### checkpoint 保留策略验证
+
+当前 checkpoint 目录只剩：
+
+- `step-004200`
+- `step-004400`
+
+这说明 `--max_checkpoints_keep 2` 已继续正常工作：
+
+- 旧的 `step-004000` 已被自动淘汰
+- 没有因为 checkpoint 轮换逻辑出错而堆积更多目录
+
+### 当前 W&B 最新状态
+
+当前 running run 仍是：
+
+- run id: `yaxj219k`
+
+latest summary 已进一步推进到：
+
+- `_step = 4417`
+
+当前指标：
+
+- `train/loss_total = 0.03073`
+- `train/loss_track_aux = 0.04489`
+- `train/loss_box_aux = 0.22114`
+- `train/loss_depth_aux = 0.04123`
+- `train/object_context_abs_max = 0.39278`
+- `train/object_latent_tokens_abs_max = 4.07760`
+- `train/grad_norm = 1.18549`
+- `train/grad_abs_max = 0.27950`
+
+判断：
+
+- `step-004400` 落盘之后训练没有中断
+- 已继续推进到 `4417`
+- `grad_norm` 相比前一拍有所回升，但仍是有限值
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 没有异常放大
+
+因此当前更合理的解释仍然是：
+
+- 正常 batch 波动
+- 不是 checkpoint 落盘后引发的训练异常
+
+### 当前结论更新
+
+到目前为止：
+
+- cache 已完成
+- 主训练在 `gpu6,7` 上持续正常推进
+- validation smoke 已完成且 `23/23` 成功
+- `step-004400` 已成功产出
+- 当前没有出现需要立即改代码或改训练方案的数值问题
+
+当前最主要剩余风险仍是：
+
+- `/data` 空间仍只在 `5.1G` 左右
+- 下一份 checkpoint `step-004600` 将成为新的磁盘压力点
+
+### 2026-06-26 00:13 UTC 持续巡检：`step-004400` 后继续稳定推进到 `4437`
+
+本轮继续核对：
+
+- checkpoint 目录目前仍只有：
+  - `step-004200`
+  - `step-004400`
+- 说明下一份 `step-004600` 还未实际落盘
+
+训练进程与设备状态：
+
+- `accelerate` 主进程仍正常存活
+- 两个训练 worker 继续高负载运行
+- `gpu6` 利用率约 `100%`
+- `gpu7` 利用率约 `84%`
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4437`
+- `train/loss_total = 0.02942`
+- `train/loss_track_aux = 0.04773`
+- `train/loss_box_aux = 0.21882`
+- `train/loss_depth_aux = 0.02762`
+- `train/object_context_abs_max = 0.39332`
+- `train/object_latent_tokens_abs_max = 4.10287`
+- `train/grad_norm = 0.60514`
+- `train/grad_abs_max = 0.14242`
+
+和上一拍 `_step = 4417` 对比：
+
+- `loss_total` 小幅下降
+- `loss_box_aux` 小幅下降
+- `loss_depth_aux` 小幅下降
+- `grad_norm` 从 `1.185` 回落到 `0.605`
+- `object_context_abs_max` 仍稳定
+
+当前判断：
+
+- `step-004400` 落盘后训练继续正常推进
+- 没有出现落盘后才发生的数值异常
+- 当前 loss / grad 状态依旧稳定
+
+下一关键观察点保持不变：
+
+- `step-004600` 是否顺利落盘
+- `/data` 空间是否会在下一次 checkpoint 写入时再次成为首要中断原因
+
+### 2026-06-26 00:15 UTC 持续巡检：已推进到 `step 4458`，尚未到 `step-004600`
+
+本轮检查结果：
+
+- checkpoint 目录仍只有：
+  - `step-004200`
+  - `step-004400`
+- 说明 `step-004600` 还未落盘
+
+当前训练状态：
+
+- `accelerate` 主进程仍存活
+- 两个训练 worker 继续运行
+- `nvidia-smi` 这拍抓到的 `gpu6,7` 利用率较低，但这和前面多次观察一致，更像瞬时采样落在 host 侧 / 同步侧阶段，不代表训练停住
+
+最关键的是 W&B 仍在继续增长：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4458`
+
+当前指标：
+
+- `train/loss_total = 0.05067`
+- `train/loss_track_aux = 0.02788`
+- `train/loss_box_aux = 0.44244`
+- `train/loss_depth_aux = 0.03632`
+- `train/object_context_abs_max = 0.36442`
+- `train/object_latent_tokens_abs_max = 4.04849`
+- `train/grad_norm = 1.19230`
+- `train/grad_abs_max = 0.28244`
+
+和上一拍 `_step = 4437` 对比：
+
+- `loss_box_aux` 与 `grad_norm` 有回升
+- 但 `loss_depth_aux` 仍低
+- `object_context_abs_max` 反而更低
+- `object_latent_tokens_abs_max` 仍稳定
+
+因此当前判断仍然是：
+
+- 正常 batch 级波动
+- 还没有出现需要介入的数值异常
+
+当前优先级不变：
+
+1. 继续等待 `step-004600` 落盘
+2. 持续警惕 `/data` 约 `5.1G` 可用空间带来的下一次 checkpoint 写盘风险
+
+### 2026-06-26 00:17 UTC 持续巡检：已推进到 `step 4478`，数值再次回稳
+
+本轮继续核对：
+
+- checkpoint 目录仍只有：
+  - `step-004200`
+  - `step-004400`
+- `step-004600` 仍未落盘
+
+运行状态方面：
+
+- `accelerate` 主进程仍存活
+- 两个训练 worker 继续高 CPU 运行
+- `nvidia-smi` 依旧可能抓到瞬时 `0%` 利用率采样，但结合 W&B step 持续增长，可以继续判断训练没有停住
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4478`
+- `train/loss_total = 0.01832`
+- `train/loss_track_aux = 0.05339`
+- `train/loss_box_aux = 0.09931`
+- `train/loss_depth_aux = 0.03053`
+- `train/object_context_abs_max = 0.39571`
+- `train/object_latent_tokens_abs_max = 4.16685`
+- `train/grad_norm = 0.60138`
+- `train/grad_abs_max = 0.14071`
+
+和上一拍 `_step = 4458` 对比：
+
+- `loss_total` 明显下降
+- `loss_box_aux` 明显下降
+- `grad_norm` 明显回落
+- `loss_depth_aux` 仍保持低位
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍处于稳定范围
+
+当前判断：
+
+- 训练仍在稳定推进
+- 当前这一拍比上一拍更平稳
+- 目前没有证据支持修改代码、调学习率或调整 loss 设计
+
+下一观察点继续保持：
+
+- `step-004600` 是否顺利落盘
+- `/data` 剩余空间是否会在下一次 checkpoint 写入时再次先于训练数值成为首要风险
+
+### 2026-06-26 00:18 UTC 持续巡检：已推进到 `step 4509`，离 `step-004600` 更近
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004200`
+  - `step-004400`
+- `step-004600` 还未实际写出
+
+训练运行状态：
+
+- 两个训练 worker 继续高负载运行
+- `gpu6` / `gpu7` 利用率重新回到明显工作状态
+- 说明前几轮偶发的 `0% util` 采样依旧只是瞬时观测，不代表训练停顿
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4509`
+- `train/loss_total = 0.04217`
+- `train/loss_track_aux = 0.01362`
+- `train/loss_box_aux = 0.40048`
+- `train/loss_depth_aux = 0.00756`
+- `train/object_context_abs_max = 0.36373`
+- `train/object_latent_tokens_abs_max = 4.22004`
+- `train/grad_norm = 0.31109`
+- `train/grad_abs_max = 0.07134`
+
+和上一拍 `_step = 4478` 对比：
+
+- `loss_track_aux` 明显回落
+- `loss_depth_aux` 进一步回落到很低
+- `grad_norm` 明显回落
+- `loss_box_aux` 有正常 batch 级回升
+- `object_context_abs_max` 保持稳定
+
+当前判断：
+
+- 训练仍在健康推进
+- 当前没有看到接近 `step-004600` 时的特殊异常
+- 当前数值风险继续低于磁盘风险
+
+### 2026-06-26 00:20 UTC 持续巡检：已推进到 `step 4535`
+
+本轮继续确认：
+
+- checkpoint 目录仍未出现 `step-004600`
+- 当前仍只保留：
+  - `step-004200`
+  - `step-004400`
+
+训练侧状态：
+
+- 两个训练 worker 继续高负载运行
+- `gpu6` / `gpu7` 继续保持工作状态
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4535`
+- `train/loss_total = 0.02413`
+- `train/loss_track_aux = 0.04523`
+- `train/loss_box_aux = 0.16472`
+- `train/loss_depth_aux = 0.03136`
+- `train/object_context_abs_max = 0.39083`
+- `train/object_latent_tokens_abs_max = 4.21725`
+- `train/grad_norm = 1.24645`
+- `train/grad_abs_max = 0.29672`
+
+和上一拍 `_step = 4509` 对比：
+
+- `loss_total` 继续下降
+- `loss_box_aux` 继续下降
+- `grad_norm` 有回升
+- 但 `object_context_abs_max` 没有同步上冲
+- `loss_depth_aux` 仍在低位
+
+因此当前仍更符合：
+
+- 正常 batch 级波动
+- 而不是明确的数值发散
+
+当前优先级仍不变：
+
+1. 继续等待 `step-004600` 落盘
+2. 继续警惕 `/data` 仅约 `5.1G` 的剩余空间
+
+### 2026-06-26 00:21 UTC 持续巡检：已推进到 `step 4555`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004200`
+  - `step-004400`
+- `step-004600` 还未落盘
+
+训练运行状态：
+
+- 两个训练 worker 继续高负载运行
+- `gpu6,7` 的瞬时利用率采样仍可能波动
+- 但结合 W&B step 持续增长，可以继续确认训练没有停住
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4555`
+- `train/loss_total = 0.01537`
+- `train/loss_track_aux = 0.02259`
+- `train/loss_box_aux = 0.10407`
+- `train/loss_depth_aux = 0.02702`
+- `train/object_context_abs_max = 0.39356`
+- `train/object_latent_tokens_abs_max = 4.25116`
+- `train/grad_norm = 0.61587`
+- `train/grad_abs_max = 0.14508`
+
+和上一拍 `_step = 4535` 对比：
+
+- `loss_total` 继续下降
+- `loss_box_aux` 明显下降
+- `grad_norm` 继续回落
+- `loss_depth_aux` 仍保持低位
+- `object_context_abs_max` 继续稳定
+
+当前判断：
+
+- 训练仍在健康推进
+- 当前这一拍比上一拍更平稳
+- 目前仍没有证据表明需要改代码或调整训练方案

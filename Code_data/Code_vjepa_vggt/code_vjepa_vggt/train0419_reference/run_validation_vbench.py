@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -145,7 +146,14 @@ class ValidationMetricSuite:
             net_type="alex",
             normalize=True,
         ).to(self.device).eval()
-        self.dino = self._load_dino_model().to(self.device).eval()
+        self.dino: torch.nn.Module | None = None
+        try:
+            self.dino = self._load_dino_model().to(self.device).eval()
+        except FileNotFoundError as exc:
+            warnings.warn(
+                f"DINO metrics disabled because the checkpoint is unavailable: {exc}",
+                stacklevel=2,
+            )
         self.dino_mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
         self.dino_std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
 
@@ -168,7 +176,9 @@ class ValidationMetricSuite:
         tensor = torch.from_numpy(frame).permute(2, 0, 1).float().unsqueeze(0) / 255.0
         return tensor.to(self.device)
 
-    def dino_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+    def dino_similarity(self, a: np.ndarray, b: np.ndarray) -> float | None:
+        if self.dino is None:
+            return None
         ta = self._frame_tensor(a)
         tb = self._frame_tensor(b)
         ta = F.interpolate(ta, size=(224, 224), mode="bilinear", align_corners=False)
@@ -259,7 +269,9 @@ def compute_future_gt_metrics(
                 float(structural_similarity(gt_float, generated_float, channel_axis=2, data_range=1.0))
             )
             lpips_values.append(metric_suite.lpips_distance(generated, gt))
-            dino_values.append(metric_suite.dino_similarity(generated, gt))
+            dino_score = metric_suite.dino_similarity(generated, gt)
+            if dino_score is not None:
+                dino_values.append(float(dino_score))
 
         result = {
             "sample_id": entry.get("sample_id"),
@@ -268,8 +280,9 @@ def compute_future_gt_metrics(
             "future_psnr": float(np.mean(psnr_values)),
             "future_ssim": float(np.mean(ssim_values)),
             "future_lpips": float(np.mean(lpips_values)),
-            "future_dino": float(np.mean(dino_values)),
         }
+        if dino_values:
+            result["future_dino"] = float(np.mean(dino_values))
         per_sample.append(result)
         for key, value in result.items():
             if key in {"sample_id", "dataset"}:

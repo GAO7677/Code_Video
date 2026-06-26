@@ -47,6 +47,7 @@ if [[ -n "${RESUME_FROM}" ]]; then
 fi
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+# gpu4 is known-bad on this machine; keep training on gpu6,7 and validation on gpu5.
 CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
   --diffsynth_root /home/gaoya/Code_Video/DiffSynth-Studio-main \
   --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
@@ -98,7 +99,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --depth_target_state_index 2 \
   --validation_every_steps 2000 \
   --validation_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_validation_vbench.py \
-  --validation_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation100.txt \
+  --validation_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation23_current_assets.txt \
   --validation_context_frames_list 0,1,2,4,6,8 \
   --validation_output_subdir validation100_vbench \
   --validation_vbench_config_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/vbench_paths.yaml \
