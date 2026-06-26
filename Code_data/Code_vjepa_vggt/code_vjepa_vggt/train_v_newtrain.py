@@ -978,6 +978,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         object_context_abs = object_context.detach().abs()
         object_latent_tokens_abs = object_out.object_latent_tokens.detach().abs()
         metrics = {
+            "train/loss_total": float(total.detach().item()),
             "train/loss_main": float(loss_main.detach().item()),
             "train/loss_track_aux": float(track_aux_loss.detach().item()),
             "train/loss_box_aux": float(box_aux_loss.detach().item()),
@@ -1179,7 +1180,6 @@ class WanTrainingModule(DiffusionTrainingModule):
         if self.enable_object_branch and "raw_sample" in inputs[0]:
             loss, metrics = self._compute_object_losses(self.pipe, inputs[0], inputs[1])
             self.last_train_metrics = metrics
-            self.last_train_metrics["train/loss_total"] = float(loss.detach().item())
             return loss
         loss = self.task_to_loss[self.task](self.pipe, *inputs)
         self.last_train_metrics = {
@@ -2686,8 +2686,33 @@ def train_loop(
     global_step = 0
     if args.resume_from is not None:
         resume_payload = load_training_state(args.resume_from)
-        optimizer.load_state_dict(resume_payload["optimizer"])
-        scheduler.load_state_dict(resume_payload["scheduler"])
+        optimizer_state_restored = True
+        scheduler_state_restored = True
+        try:
+            optimizer.load_state_dict(resume_payload["optimizer"])
+        except ValueError as exc:
+            optimizer_state_restored = False
+            accelerator.print(
+                "Skipping optimizer state restore from resume checkpoint because "
+                "the current trainable parameter groups do not match the saved optimizer state. "
+                "This is expected when resuming from a checkpoint but changing which modules are "
+                "trainable, for example freezing object heads and only training adapter/DiT object "
+                f"branches. Optimizer error: {exc}"
+            )
+        if optimizer_state_restored:
+            try:
+                scheduler.load_state_dict(resume_payload["scheduler"])
+            except Exception as exc:
+                scheduler_state_restored = False
+                accelerator.print(
+                    "Failed to restore scheduler state from resume checkpoint; keeping a fresh "
+                    f"scheduler instead. Scheduler error: {exc}"
+                )
+        else:
+            scheduler_state_restored = False
+            accelerator.print(
+                "Skipping scheduler state restore because optimizer state was not restored."
+            )
         global_step = resume_payload.get("global_step", 0)
         start_epoch = resume_payload.get("epoch_id", 0)
         resume_batch_in_epoch = resume_payload.get("batch_in_epoch", 0)
@@ -2699,7 +2724,9 @@ def train_loop(
         accelerator.print(
             "Restored training state: "
             f"global_step={global_step}, epoch_id={start_epoch}, batch_in_epoch={resume_batch_in_epoch}, "
-            f"model_logger_num_steps={model_logger.num_steps}"
+            f"model_logger_num_steps={model_logger.num_steps}, "
+            f"optimizer_state_restored={optimizer_state_restored}, "
+            f"scheduler_state_restored={scheduler_state_restored}"
         )
         if resume_batch_in_epoch > 0 and not dataset_load_from_cache:
             accelerator.print(
