@@ -9454,3 +9454,98 @@ W&B 当前状态（run `qberfq1r`）：
 - 还没跑到 `step-008000`
 - 所以还没有进入我们最关键的下一观察点：
   - `step-008000` validation 是否会在 `gpu5` 上真正触发并跑通
+
+### 2026-06-26 04:33 UTC：新的 fresh run 在 `step-000500` 后首次 head-only `val_loss` 触发时退出，根因是 `val` split 缺 VGGT cache
+
+新开的 fresh run：
+
+- W&B run id:
+  - `m13k8mf2`
+- run name:
+  - `pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val`
+
+这轮 fresh run 本体训练先是正常推进，并已成功产生第一份 checkpoint：
+
+- checkpoint:
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-000500`
+- `training_state.pt` 已确认：
+  - `global_step = 500`
+
+真正导致进程退出的不是训练主 loop 本身，而是 `step 500` 之后第一次触发轻量 head-only `val_loss` 时，读取 `val` split 样本的 VGGT cache 失败：
+
+- traceback 根因：
+  - `FileNotFoundError: VGGT cache not found under /data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache`
+- 首个报错缺失文件：
+  - `sample_000301_w000.vggt.pt`
+
+解释：
+
+- 当前 `train` 与 `val` 是独立数据集
+- 之前 `vggt_cache` 目录里只有 `train` 对应的 `3600` 份 cache
+- 但新增的 `headonly_val_loss_split=val` 会在 `step 500` 真正读取 `val` 样本
+- 因为 `val` 对应的 `450` 份 VGGT cache 当时还没准备，所以第一次 `val_loss` sweep 直接触发严格模式缺文件退出
+
+### 2026-06-26 04:55 UTC：`val` split 的 `450` 份 VGGT cache 已全部补齐，并从 `step-000500` 成功恢复
+
+为避免再次重写原始 `cache_vggt_dense_features.py` 里那份异常巨大的：
+
+- `/data/gaoya/AAA_test_video/0623/train/train0624/vggt_cache/manifest.jsonl`
+
+这次单独新增了一个只负责回填 `val` split `.vggt.pt` 文件的轻量脚本：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/cache_vggt_val_split.py`
+
+执行方式：
+
+- 使用 GPU：
+  - `gpu2`
+  - `gpu3`
+- 严格避开：
+  - `gpu4`
+- 分片：
+  - `val [0, 225)`
+  - `val [225, 450)`
+
+回填完成后的覆盖率核查：
+
+- `val_json_count = 450`
+- `missing_count = 0`
+
+说明当前 `val` split 所有样本都已经具备训练时需要的同名 VGGT cache 文件。
+
+随后新增恢复脚本：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67_resume_500_val.sh`
+
+从：
+
+- `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-000500`
+
+继续恢复训练。
+
+恢复 run：
+
+- W&B run id:
+  - `lffzw16q`
+- run name:
+  - `pybullet0626_diffsynth_object_heads_only_gpu67_resume500_val`
+
+恢复日志已明确确认：
+
+- `Loading training state from .../step-000500/training_state.pt`
+- `Restored training state: global_step=500, epoch_id=0, batch_in_epoch=500, model_logger_num_steps=500`
+
+随后训练已重新进入主循环并确认继续推进：
+
+- `global_step 501`
+- `global_step 502`
+- ...
+- 已明确看到推进到：
+  - `global_step 513`
+
+这说明：
+
+- 之前在 `step 500` 停掉的直接原因已经修复
+- 补齐 `val` split VGGT cache 后，head-only `val_loss` 链路不再因为首次触发时缺 cache 而立即退出
+- 当前恢复 run 已重新健康运行在：
+  - `gpu6,7`

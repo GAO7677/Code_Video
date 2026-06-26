@@ -150,14 +150,6 @@ def resolve_context_video_path(payload: dict[str, Any], fallback: Path) -> Path:
     return fallback
 
 
-def resolve_text_query(payload: dict[str, Any]) -> str:
-    for key in ["prompt", "caption", "text_prompt", "description", "target_object", "scenario", "experiment"]:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return "ball"
-
-
 def should_run_pdi(payload: dict[str, Any], refresh: bool) -> bool:
     return refresh or get_official_pdi(payload) is None or metric_value(payload, "official_pdi") is None
 
@@ -230,12 +222,14 @@ def main() -> None:
 
     if "pdi" in enabled_metrics:
         from physv_eval.official_pdi import OfficialPDIRunner
+        from physv_eval.single_case.pdi import score_case as score_pdi_case
 
         pdi_runner = OfficialPDIRunner(
             python_bin=args.pdi_python,
             cuda_visible_devices=args.cuda_visible_devices,
         )
     if "wmreward" in enabled_metrics:
+        from physv_eval.single_case.wmreward import score_case as score_wmreward_case
         from physv_eval.wmreward_official import WMRewardRunner
 
         wmreward_runner = WMRewardRunner(
@@ -243,9 +237,11 @@ def main() -> None:
         )
     if "proxy" in enabled_metrics:
         from physv_eval.proxy_runner import ProxyRunner
+        from physv_eval.single_case.proxy import score_case as score_proxy_case
 
         proxy_runner = ProxyRunner(device=args.proxy_device or args.device)
     if "videophy2" in enabled_metrics:
+        from physv_eval.single_case.videophy2 import score_case as score_videophy2_case
         from physv_eval.videophy2_auto import VideoPhy2Runner, resolve_videophy2_sa_query as _resolve_videophy2_sa_query
 
         videophy_runner = VideoPhy2Runner(
@@ -255,6 +251,7 @@ def main() -> None:
         resolve_videophy2_sa_query = _resolve_videophy2_sa_query
     if "cosmos" in enabled_metrics:
         from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
+        from physv_eval.single_case.cosmos_reason1 import score_case as score_cosmos_case
 
         cosmos_runner = OfficialCosmosReason1Runner()
 
@@ -279,36 +276,36 @@ def main() -> None:
         print(f"[{index}/{len(selected_jsons)}] {method} :: {json_path.name}", flush=True)
         try:
             if pdi_runner is not None and should_run_pdi(payload, args.refresh_pdi):
-                result = pdi_runner.run(video_path, resolve_text_query(payload), refresh=args.refresh_pdi)
+                result = score_pdi_case(payload, refresh=args.refresh_pdi, runner=pdi_runner)
                 set_official_pdi(payload, result)
                 changed = True
 
             if wmreward_runner is not None and should_run_wmreward(payload, args.refresh_wmreward):
-                result = wmreward_runner.score(video_path)
+                result = score_wmreward_case(video_path, runner=wmreward_runner)
                 set_wmreward(payload, result)
                 changed = True
 
             if proxy_runner is not None and should_run_proxy(payload, args.refresh_proxy):
-                result = proxy_runner.score(video_path, context_video_path=context_video_path)
+                result = score_proxy_case(payload, context_video_path=context_video_path, runner=proxy_runner)
                 if result is not None:
                     set_proxy(payload, result)
                     changed = True
 
             if videophy_runner is not None:
                 if should_run_videophy2_pc(payload, args.refresh_videophy2):
-                    result = videophy_runner.score_video(video_path, task="pc")
+                    result = score_videophy2_case(video_path, task="pc", runner=videophy_runner)
                     set_videophy2_auto(payload, result)
                     changed = True
                 if should_run_videophy2_sa(payload, args.refresh_videophy2):
                     if resolve_videophy2_sa_query is None:
                         raise RuntimeError("resolve_videophy2_sa_query is unavailable while videophy2 metric is enabled")
                     caption = resolve_videophy2_sa_query(video_path, payload)
-                    result = videophy_runner.score_video(video_path, task="sa", caption=caption)
+                    result = score_videophy2_case(video_path, task="sa", caption=caption, runner=videophy_runner)
                     set_videophy2_auto(payload, result)
                     changed = True
 
             if cosmos_runner is not None and should_run_cosmos(payload, args.refresh_cosmos):
-                result = cosmos_runner.score(video_path)
+                result = score_cosmos_case(video_path, runner=cosmos_runner)
                 set_cosmos_reason1(payload, result)
                 changed = True
 

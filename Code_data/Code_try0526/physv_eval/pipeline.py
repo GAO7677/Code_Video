@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .datasets import GROUP_SPECS, iter_group_jsons
-from .official_pdi import OfficialPDIRunner, resolve_text_query
+from .official_pdi import OfficialPDIRunner
 from .paths import A_OUTPUT, REPO_ROOT, VPHY_PYTHON
 from .paths import FLUX_PYTHON
 from .proxy_runner import ProxyRunner
@@ -30,6 +30,9 @@ from .records import (
     set_proxy,
     set_wmreward,
 )
+from .single_case.pdi import score_case as score_pdi_case
+from .single_case.proxy import score_case as score_proxy_case
+from .single_case.wmreward import score_case as score_wmreward_case
 from .wmreward_official import WMRewardRunner
 
 
@@ -132,19 +135,20 @@ def update_payload(
         needs_save = True
 
     if pdi_runner is not None and should_run_pdi(payload, refresh_pdi):
-        result = pdi_runner.run(video_path, resolve_text_query(video_path, payload), refresh=refresh_pdi)
+        result = score_pdi_case(payload, refresh=refresh_pdi, runner=pdi_runner)
         set_official_pdi(payload, result)
         changed["pdi"] = True
 
     if wmreward_runner is not None and should_run_wmreward(payload, refresh_wmreward):
-        result = wmreward_runner.score(video_path)
+        result = score_wmreward_case(video_path, runner=wmreward_runner)
         set_wmreward(payload, result)
         changed["wmreward"] = True
 
     if proxy_runner is not None and should_run_proxy(payload, refresh_proxy):
-        result = proxy_runner.score(
-            video_path,
+        result = score_proxy_case(
+            payload,
             context_video_path=resolve_proxy_context_video(json_path, video_path),
+            runner=proxy_runner,
         )
         if result is not None:
             set_proxy(payload, result)
@@ -175,33 +179,9 @@ def summarize_group(group_id: str) -> dict[str, int]:
     return stats
 
 
-def run_videophy2_batch(
+def run_module_batch(
     *,
-    groups: list[str],
-    refresh: bool,
-    python_bin: str,
-    cuda_visible_devices: str | None,
-) -> None:
-    cmd = [
-        python_bin,
-        str(REPO_ROOT / "physics_sim" / "eval_videophy2_auto.py"),
-        "--task",
-        "pc",
-        "--groups",
-        *groups,
-    ]
-    if refresh:
-        cmd.append("--refresh")
-    env = os.environ.copy()
-    env["PYTHONNOUSERSITE"] = "1"
-    if cuda_visible_devices is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
-    subprocess.run(cmd, check=True, env=env)
-
-
-def run_flux_batch(
-    *,
-    script_name: str,
+    module_name: str,
     groups: list[str],
     refresh: bool,
     python_bin: str,
@@ -210,7 +190,8 @@ def run_flux_batch(
 ) -> None:
     cmd = [
         python_bin,
-        str(REPO_ROOT / "physics_sim" / script_name),
+        "-m",
+        module_name,
         "--groups",
         *groups,
     ]
@@ -222,7 +203,7 @@ def run_flux_batch(
     env["PYTHONNOUSERSITE"] = "1"
     if cuda_visible_devices is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
-    subprocess.run(cmd, check=True, env=env)
+    subprocess.run(cmd, check=True, env=env, cwd=REPO_ROOT)
 
 
 def main() -> None:
@@ -267,19 +248,21 @@ def main() -> None:
 
     if "videophy2" in enabled_metrics:
         print("[videophy2] running official VideoPhy-2 AutoEval in vphy env", flush=True)
-        run_videophy2_batch(
+        run_module_batch(
+            module_name="physv_eval.videophy2_auto",
             groups=args.groups,
             refresh=args.refresh_videophy2,
             python_bin=args.videophy_python,
             cuda_visible_devices=args.videophy_cuda_visible_devices,
+            extra_args=["--task", "pc"],
         )
         for group_id in args.groups:
             summary[group_id] = summarize_group(group_id)
 
     if "phyground" in enabled_metrics:
         print("[phyground] running official-compatible PhyGround batch in flux env", flush=True)
-        run_flux_batch(
-            script_name="eval_phyground.py",
+        run_module_batch(
+            module_name="physv_eval.phyground_batch",
             groups=args.groups,
             refresh=args.refresh_phyground,
             python_bin=args.flux_python,
@@ -291,8 +274,8 @@ def main() -> None:
 
     if "cosmos" in enabled_metrics:
         print("[cosmos] running official-compatible Cosmos Reason1 batch in flux env", flush=True)
-        run_flux_batch(
-            script_name="eval_cosmos_reason1.py",
+        run_module_batch(
+            module_name="physv_eval.cosmos_reason1_batch",
             groups=args.groups,
             refresh=args.refresh_cosmos,
             python_bin=args.flux_python,

@@ -112,6 +112,10 @@ def write_json(json_path: Path, payload: dict[str, Any]) -> None:
         handle.write("\n")
 
 
+def derive_method_name(output_video: Path) -> str:
+    return output_video.parent.name
+
+
 def ensure_str_field(payload: dict[str, Any], key: str, json_path: Path) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -474,6 +478,7 @@ def run_single_case(
         "input_image": str(firstframe_path),
         "input_caption": str(input_caption),
         "output_video": str(output_video),
+        "method": derive_method_name(output_video),
         "seed": int(args.seed),
         "step": int(args.sampling_steps),
         "guidance": float(args.cfg_scale),

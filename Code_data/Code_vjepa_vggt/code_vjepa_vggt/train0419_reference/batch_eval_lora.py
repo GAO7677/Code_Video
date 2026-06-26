@@ -845,6 +845,7 @@ def build_simple_result_payload(
     input_video: str,
     input_caption: str,
     output_video: Path,
+    method: str,
     seed: int,
     step: int,
     guidance: float,
@@ -857,6 +858,7 @@ def build_simple_result_payload(
         "input_video": str(input_video),
         "input_caption": str(input_caption),
         "output_video": str(output_video),
+        "method": str(method),
         "seed": int(seed),
         "step": int(step),
         "guidance": float(guidance),
@@ -1033,6 +1035,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
     generated_dir.mkdir(parents=True, exist_ok=True)
     metadata_dir.mkdir(parents=True, exist_ok=True)
     write_run_manifest(args, metadata_dir)
+    method_name = build_method_name(args.lora_path)
 
     per_case_jsonl = per_case_jsonl_path(metadata_dir, args.model_name, args.num_shards, args.shard_id)
     if args.overwrite and per_case_jsonl.exists():
@@ -1070,6 +1073,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                     input_video=str(row["context_path"]),
                     input_caption=str(row["caption"]),
                     output_video=output_path,
+                    method=method_name,
                     seed=args.seed,
                     step=args.num_inference_steps,
                     guidance=args.cfg_scale,
@@ -1124,6 +1128,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                     input_video=str(row["context_path"]),
                     input_caption=str(row["caption"]),
                     output_video=output_path,
+                    method=method_name,
                     seed=args.seed,
                     step=args.num_inference_steps,
                     guidance=args.cfg_scale,
@@ -1148,6 +1153,7 @@ def run_generation(args: argparse.Namespace, generated_dir: Path, metadata_dir: 
                     input_video=str(row["context_path"]),
                     input_caption=str(row["caption"]),
                     output_video=output_path,
+                    method=method_name,
                     seed=args.seed,
                     step=args.num_inference_steps,
                     guidance=args.cfg_scale,

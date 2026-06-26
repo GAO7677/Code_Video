@@ -36,7 +36,7 @@ python eval_benchmark_dir_metrics.py \
   - WMReward
 - 常用脚本：
   - `/home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim/eval_ball_block.py`
-  - `/home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim/eval_wmreward_jepa.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_try0526/physv_eval/wmreward_batch.py`
   - `/home/gaoya/Code_Video/Code_data/Code_try0526/physics_sim/eval_physv_groups.py`
 - 命令示例：
 ```bash

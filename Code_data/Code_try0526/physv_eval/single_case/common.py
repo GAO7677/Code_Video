@@ -50,4 +50,4 @@ def emit_result(record: dict[str, Any], *, output_json: Path | None = None) -> N
     if output_json is not None:
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(record, ensure_ascii=False, indent=2))
+    print(record)

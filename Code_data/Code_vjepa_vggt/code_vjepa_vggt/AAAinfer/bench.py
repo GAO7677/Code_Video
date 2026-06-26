@@ -1,9 +1,30 @@
+'''
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
+  --metric pdi \
+  --result-root /data/gaoya/AAA_test_video/0623/test/v2v \
+  --input-root /data/gaoya/AAA_test_video/0623/testjsons
+
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
+  --metric wmreward \
+  --result-root /data/gaoya/AAA_test_video/0623/test/v2v \
+  --input-root /data/gaoya/AAA_test_video/0623/testjsons
+
+
+'''
 from __future__ import annotations
 
 import argparse
+import copy
+import fcntl
 import json
+import os
 import sys
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -16,14 +37,20 @@ for path in [ROOT, TRY0526_ROOT]:
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from physv_eval.proxy_runner import ProxyRunner
 from physv_eval.official_pdi import OfficialPDIRunner
 from physv_eval.wmreward_official import WMRewardRunner
+from physv_eval.proxy_runner import ProxyRunner
 from physv_eval.videophy2_auto import VideoPhy2Runner
 from physv_eval.phyground_official import OfficialPhyGroundRunner
 from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
-from physv_eval.single_case.ball_block import score_case as score_ball_block
+from physv_eval.single_case.ball_block import score_case as score_ball_block_case
 from physv_eval.single_case.ball_block import TMP_DIR as BALL_BLOCK_TMP_DIR
+from physv_eval.single_case.cosmos_reason1 import score_case as score_cosmos_reason1_case
+from physv_eval.single_case.pdi import score_case as score_pdi_case
+from physv_eval.single_case.phyground import score_case as score_phyground_case
+from physv_eval.single_case.proxy import score_case as score_proxy_case
+from physv_eval.single_case.videophy2 import score_case as score_videophy2_case
+from physv_eval.single_case.wmreward import score_case as score_wmreward_case
 
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
@@ -52,19 +79,15 @@ class MetricSpec:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Batch-evaluate generated videos with metric-first scheduling: "
-            "load one metric model, score all jsons, and backfill immediately."
+            "Batch-evaluate one metric over all result jsons under result-root, "
+            "loading one metric model per process and backfilling immediately."
         )
     )
+    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "ball_block"]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument("--input-root", type=Path, default=DEFAULT_INPUT_ROOT)
     parser.add_argument("--output-summary", type=Path, default=None)
-    parser.add_argument(
-        "--metrics",
-        nargs="*",
-        default=["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "ball_block"],
-        choices=["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "ball_block"],
-    )
+    parser.add_argument("--metric", required=True, choices=metric_choices)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--videophy2-task", default="pc", choices=["sa", "pc", "rule"])
@@ -83,7 +106,21 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp_path, path)
+
+
+@contextmanager
+def locked_result_json(path: Path):
+    lock_path = path.with_name(f"{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def round_floats(value: Any, ndigits: int = 4) -> Any:
@@ -200,21 +237,24 @@ def cleanup_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def apply_result_defaults(record: CaseRecord) -> None:
-    method = derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
-    if method is not None:
-        record.result_payload["method"] = method
-    cleanup_result_payload(record.result_payload)
+def apply_payload_defaults(payload: dict[str, Any], *, candidate_video_path: Path) -> dict[str, Any]:
+    existing_method = payload.get("method")
+    if not isinstance(existing_method, str) or not existing_method.strip():
+        method = derive_method_name(payload, fallback_video_path=candidate_video_path)
+        if method is not None:
+            payload["method"] = method
+    cleanup_result_payload(payload)
+    return payload
 
 
-def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
+def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
     def build_pdi(_: argparse.Namespace) -> MetricFunc:
         runner = OfficialPDIRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
             case = build_case_payload(record)
             caption = case.get("input_caption") or case.get("caption") or args.pdi_caption
-            return runner.run_case(case, text_query=caption)
+            return score_pdi_case(case, text_query=caption, runner=runner)
 
         return run
 
@@ -222,7 +262,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
         runner = WMRewardRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
-            return runner.score_case(build_case_payload(record))
+            return score_wmreward_case(build_case_payload(record), runner=runner)
 
         return run
 
@@ -231,7 +271,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
             case = build_case_payload(record)
-            return runner.score_case(case, context_video_path=record.gt_video_path)
+            return score_proxy_case(case, context_video_path=record.gt_video_path, runner=runner)
 
         return run
 
@@ -242,7 +282,13 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
             case = build_case_payload(record)
             caption = case.get("input_caption") or case.get("caption") or args.videophy2_caption
             rule = case.get("rule") or case.get("physical_law") or case.get("law")
-            return runner.score_case(case, task=args.videophy2_task, caption=caption, rule=rule)
+            return score_videophy2_case(
+                case,
+                task=args.videophy2_task,
+                caption=caption,
+                rule=rule,
+                runner=runner,
+            )
 
         return run
 
@@ -254,7 +300,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
             caption = case.get("input_caption") or case.get("caption")
             metrics = None
             laws = [] if args.phyground_general_only else None
-            return runner.score_case(case, caption=caption, metrics=metrics, laws=laws)
+            return score_phyground_case(case, caption=caption, metrics=metrics, laws=laws, runner=runner)
 
         return run
 
@@ -262,7 +308,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
         runner = OfficialCosmosReason1Runner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
-            return runner.score_case(build_case_payload(record))
+            return score_cosmos_reason1_case(build_case_payload(record), runner=runner)
 
         return run
 
@@ -270,7 +316,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
         def run(record: CaseRecord) -> dict[str, Any] | None:
             case = build_case_payload(record)
             caption = case.get("input_caption") or case.get("caption") or args.pdi_caption
-            result = score_ball_block(case, caption=caption)
+            result = score_ball_block_case(case, caption=caption)
             shutil.rmtree(BALL_BLOCK_TMP_DIR / "pdi" / record.candidate_video_path.stem, ignore_errors=True)
             shutil.rmtree(BALL_BLOCK_TMP_DIR / "jepa" / record.candidate_video_path.stem, ignore_errors=True)
             return result
@@ -286,7 +332,7 @@ def build_metric_specs(args: argparse.Namespace) -> list[MetricSpec]:
         "cosmos_reason1": build_cosmos_reason1,
         "ball_block": build_ball_block,
     }
-    return [MetricSpec(name=name, field=name, builder=builders[name]) for name in args.metrics]
+    return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 
 
 def prepare_cases(result_root: Path, input_root: Path) -> tuple[list[CaseRecord], list[dict[str, Any]]]:
@@ -325,9 +371,9 @@ def write_summary(
     *,
     result_root: Path,
     input_root: Path,
-    metric_specs: list[MetricSpec],
+    metric_spec: MetricSpec,
     cases: list[CaseRecord],
-    metric_status: dict[str, dict[str, Any]],
+    metric_status: dict[str, Any],
     errors: list[dict[str, Any]],
     dry_run: bool,
 ) -> None:
@@ -335,7 +381,7 @@ def write_summary(
         "result_root": str(result_root),
         "input_root": str(input_root),
         "num_result_jsons": len(cases),
-        "metrics": [spec.name for spec in metric_specs],
+        "metric": metric_spec.name,
         "metric_status": round_floats(metric_status),
         "errors": errors,
     }
@@ -343,73 +389,108 @@ def write_summary(
         write_json(summary_path, summary_payload)
     print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
 
-
-def preclean_cases(cases: list[CaseRecord], *, dry_run: bool) -> None:
-    for record in cases:
-        apply_result_defaults(record)
-        if not dry_run:
-            write_json(record.result_json_path, record.result_payload)
-
-
 def main() -> None:
     args = parse_args()
     result_root = args.result_root.expanduser().resolve()
     input_root = args.input_root.expanduser().resolve()
-    summary_path = args.output_summary.expanduser().resolve() if args.output_summary is not None else result_root / "eval_summary.json"
-    metric_specs = build_metric_specs(args)
+    summary_path = (
+        args.output_summary.expanduser().resolve()
+        if args.output_summary is not None
+        else result_root / f"eval_summary_{args.metric}.json"
+    )
+    metric_spec = build_metric_spec(args)
 
     cases, errors = prepare_cases(result_root, input_root)
-    preclean_cases(cases, dry_run=args.dry_run)
-    metric_status: dict[str, dict[str, Any]] = {}
+    metric_status: dict[str, Any] = {}
     if not args.dry_run:
         write_json(summary_path, {})
 
-    for spec in metric_specs:
-        print(f"[metric:start] {spec.name} cases={len(cases)}")
-        runner = spec.builder(args)
-        num_success = 0
-        num_failed = 0
-        for index, record in enumerate(cases, start=1):
-            try:
-                if not args.overwrite and spec.field in record.result_payload:
-                    print(f"[metric:skip] {spec.name} {index}/{len(cases)} {record.result_json_path.name}")
-                    num_success += 1
-                    continue
-                metric_value = sanitize_metric_value(spec.name, runner(record))
-                record.result_payload[spec.field] = metric_value
-                apply_result_defaults(record)
-                if not args.dry_run:
-                    write_json(record.result_json_path, record.result_payload)
-                num_success += 1
-                print(f"[metric:done] {spec.name} {index}/{len(cases)} {record.result_json_path.name}")
-            except Exception as exc:
-                num_failed += 1
-                errors.append(
-                    {
-                        "metric": spec.name,
-                        "result_json": str(record.result_json_path),
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(limit=3),
-                    }
+    print(f"[metric:start] {metric_spec.name} cases={len(cases)}")
+    runner = metric_spec.builder(args)
+    num_success = 0
+    num_failed = 0
+    for index, record in enumerate(cases, start=1):
+        try:
+            with locked_result_json(record.result_json_path):
+                current_payload = load_json(record.result_json_path)
+                current_payload = apply_payload_defaults(
+                    copy.deepcopy(current_payload),
+                    candidate_video_path=record.candidate_video_path,
                 )
-                print(f"[metric:error] {spec.name} {index}/{len(cases)} {record.result_json_path.name}: {exc}")
-            metric_status[spec.name] = {
-                "num_cases": len(cases),
-                "num_success": num_success,
-                "num_failed": num_failed,
-                "completed": index,
-            }
-            write_summary(
-                summary_path,
-                result_root=result_root,
-                input_root=input_root,
-                metric_specs=metric_specs,
-                cases=cases,
-                metric_status=metric_status,
-                errors=errors,
-                dry_run=args.dry_run,
+                if not args.overwrite and metric_spec.field in current_payload:
+                    if not args.dry_run:
+                        write_json(record.result_json_path, current_payload)
+                    print(f"[metric:skip] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}")
+                    num_success += 1
+                    metric_status = {
+                        "num_cases": len(cases),
+                        "num_success": num_success,
+                        "num_failed": num_failed,
+                        "completed": index,
+                    }
+                    write_summary(
+                        summary_path,
+                        result_root=result_root,
+                        input_root=input_root,
+                        metric_spec=metric_spec,
+                        cases=cases,
+                        metric_status=metric_status,
+                        errors=errors,
+                        dry_run=args.dry_run,
+                    )
+                    continue
+
+            metric_value = sanitize_metric_value(metric_spec.name, runner(record))
+
+            with locked_result_json(record.result_json_path):
+                latest_payload = load_json(record.result_json_path)
+                latest_payload = apply_payload_defaults(
+                    copy.deepcopy(latest_payload),
+                    candidate_video_path=record.candidate_video_path,
+                )
+                if not args.overwrite and metric_spec.field in latest_payload:
+                    if not args.dry_run:
+                        write_json(record.result_json_path, latest_payload)
+                    print(f"[metric:skip-race] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}")
+                    num_success += 1
+                else:
+                    latest_payload[metric_spec.field] = metric_value
+                    latest_payload = apply_payload_defaults(
+                        latest_payload,
+                        candidate_video_path=record.candidate_video_path,
+                    )
+                    if not args.dry_run:
+                        write_json(record.result_json_path, latest_payload)
+                    num_success += 1
+                    print(f"[metric:done] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}")
+        except Exception as exc:
+            num_failed += 1
+            errors.append(
+                {
+                    "metric": metric_spec.name,
+                    "result_json": str(record.result_json_path),
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(limit=3),
+                }
             )
-        print(f"[metric:finish] {spec.name} success={num_success} failed={num_failed}")
+            print(f"[metric:error] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}: {exc}")
+        metric_status = {
+            "num_cases": len(cases),
+            "num_success": num_success,
+            "num_failed": num_failed,
+            "completed": index,
+        }
+        write_summary(
+            summary_path,
+            result_root=result_root,
+            input_root=input_root,
+            metric_spec=metric_spec,
+            cases=cases,
+            metric_status=metric_status,
+            errors=errors,
+            dry_run=args.dry_run,
+        )
+    print(f"[metric:finish] {metric_spec.name} success={num_success} failed={num_failed}")
 
 
 if __name__ == "__main__":
