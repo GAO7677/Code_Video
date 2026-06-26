@@ -634,9 +634,14 @@ def _compute_aux_metrics(
     box_aux_loss = center_l1 + 0.5 * wh_l1 + 0.5 * iou_loss
     depth_aux_loss = pred_track_summary.new_zeros(())
     if pred_depth is not None and gt_depth is not None and gt_depth_valid is not None:
-        depth_aux_loss = (((pred_depth - gt_depth).abs()) * gt_depth_valid.unsqueeze(-1)).sum()
+        depth_pred = pred_depth
+        depth_gt = gt_depth
+        depth_valid = gt_depth_valid
+        if depth_valid.ndim == depth_pred.ndim - 1:
+            depth_valid = depth_valid.unsqueeze(-1)
+        depth_aux_loss = (((depth_pred - depth_gt).abs()) * depth_valid).sum()
         depth_aux_loss = depth_aux_loss / (
-            gt_depth_valid.unsqueeze(-1).sum().clamp_min(1.0) * pred_depth.shape[-1]
+            depth_valid.sum().clamp_min(1.0) * max(int(depth_pred.shape[-1]), 1)
         )
     return {
         "train/loss_main": float("nan"),
