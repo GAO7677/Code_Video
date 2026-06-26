@@ -6026,3 +6026,1580 @@ interpretation：
 - 训练仍在推进，没有 runtime error 迹象
 - 暂不需要修改代码
 - 继续监控 checkpoint 与 validation 落盘情况
+
+### 2026-06-26 01:16 UTC：`_step = 5791`
+
+本轮检查时：
+
+- 训练进程仍完整存活：
+  - `run_train_v_newtrain_object_heads_only_gpu67.sh`
+  - `accelerate launch`
+  - 2 个 `train_v_newtrain.py` worker
+- GPU 使用仍正确：
+  - `gpu6 = 42725 / 49140 MiB`
+  - `gpu7 = 42725 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+- `gpu4` 依旧没有被训练使用
+- checkpoint 目录此时仍只有：
+  - `step-005400`
+  - `step-005600`
+- validation 目录仍没有新增结果，最新仍停留在更早前 `step-004000` 对应的 smoke 验证输出
+- `/data` 剩余空间仍约 `5.1G`
+
+W&B latest summary：
+
+- `_step = 5791`
+
+当前数值：
+
+- `train/loss_total = 0.07403`
+- `train/loss_track_aux = 0.07806`
+- `train/loss_box_aux = 0.65295`
+- `train/loss_depth_aux = 0.00933`
+- `train/object_context_abs_max = 0.43239`
+- `train/object_latent_tokens_abs_max = 5.49015`
+- `train/grad_norm = 0.33208`
+- `train/grad_abs_max = 0.07923`
+
+相对上一轮 `_step = 5771`：
+
+- `loss_total` 明显回升
+- `loss_track_aux` 小幅回升
+- `loss_box_aux` 出现一次较明显 spike
+- `loss_depth_aux` 反而回落到较低水平
+- `grad_norm` / `grad_abs_max` 没有同步爆炸
+
+interpretation：
+
+- 当前更像是 box 分支在单个 batch 上的波动，不像整体训练发散
+- 由于 `_step` 还没到 `5800`，checkpoint 尚未新增暂时是正常现象，不是落盘异常
+- 仍需继续盯：
+  - `step-005800` 是否准时落盘
+  - `step-006000` 是否准时落盘并触发 validation
+  - `/data` 剩余空间是否在保存时成为瓶颈
+
+当前判断：
+
+- 训练继续推进
+- 暂无 runtime error
+- 继续短轮询 `5800` checkpoint
+
+### 2026-06-26 01:18 UTC：`step-005800` 已正常落盘
+
+本轮检查结果：
+
+- checkpoint 目录已滚动为：
+  - `step-005600`
+  - `step-005800`
+- `max_checkpoints_keep = 2` 继续正常工作
+- `step-005800` 文件时间：
+  - `checkpoint.safetensors`: `2026-06-26 01:17:04 UTC`
+  - `training_state.pt`: `2026-06-26 01:17:06 UTC`
+- `training_state.pt` 已确认：
+  - `global_step = 5800`
+
+同时的 W&B latest summary：
+
+- `_step = 5820`
+
+当前数值：
+
+- `train/loss_total = 0.10855`
+- `train/loss_track_aux = 0.07898`
+- `train/loss_box_aux = 0.41568`
+- `train/loss_depth_aux = 0.59080`
+- `train/object_context_abs_max = 0.47127`
+- `train/object_latent_tokens_abs_max = 5.62501`
+- `train/grad_norm = 0.62873`
+- `train/grad_abs_max = 0.15899`
+
+相对上一轮 `_step = 5791`：
+
+- `loss_total` 继续上升
+- `loss_track_aux` 变化不大
+- `loss_box_aux` 从更高 spike 回落了一些
+- `loss_depth_aux` 出现一次明显 spike
+- `grad_norm` / `grad_abs_max` 仍未表现出失控迹象
+
+interpretation：
+
+- 当前 checkpoint 保存链路是正常的，不存在“到 step 了但写不出来”的问题
+- 这轮异常主要体现在 `depth_aux` 的 batch-level spike，需要继续观察后续是否快速回落
+- 目前没有证据表明训练发散，也没有 runtime/code error
+
+下一关键点：
+
+- 继续盯 `step-006000`
+- 重点确认：
+  - `step-006000` 是否准时落盘
+  - validation 是否按 `validation_every_steps = 2000` 正常触发
+
+### 2026-06-26 01:20 UTC：`_step = 5845`
+
+本轮检查时：
+
+- 训练进程仍正常存活，`gpu6/7` 占用稳定
+- `gpu4` 仍未被使用
+- checkpoint 当前仍是：
+  - `step-005600`
+  - `step-005800`
+- validation 目录仍没有新输出，符合“尚未到 `step-006000`”的预期
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary：
+
+- `_step = 5845`
+
+当前数值：
+
+- `train/loss_total = 0.05757`
+- `train/loss_track_aux = 0.03707`
+- `train/loss_box_aux = 0.53372`
+- `train/loss_depth_aux = 0.00492`
+- `train/object_context_abs_max = 0.43472`
+- `train/object_latent_tokens_abs_max = 5.44884`
+- `train/grad_norm = 0.31446`
+- `train/grad_abs_max = 0.07805`
+
+相对上一轮 `_step = 5820`：
+
+- `loss_total` 回落
+- `loss_track_aux` 明显回落
+- `loss_box_aux` 仍偏高，但比极端 spike 更可控
+- `loss_depth_aux` 从 `0.59080` 快速回落到很低值
+- `grad_norm` / `grad_abs_max` 继续保持温和
+
+interpretation：
+
+- 上一轮 `depth_aux` 的异常更像单个 batch 波动，而不是持续性发散
+- 当前整体重新回到更稳定的区间
+- 仍需继续重点盯 `6000` 这个 validation 触发点
+
+### 2026-06-26 01:30 UTC：定位 `step-006000` 后训练退出原因
+
+关键事实：
+
+- `step-006000` 已正常落盘：
+  - `checkpoint.safetensors`: `2026-06-26 01:27:03 UTC`
+  - `training_state.pt`: `2026-06-26 01:27:04 UTC`
+  - `training_state.pt` 中 `global_step = 6000`
+- 当时训练主进程已经退出，`gpu6/7` 也空闲
+- validation 不是“没触发”，而是已经触发并失败
+
+证据：
+
+- 失败标记存在：
+  - `test/_benchmark_runtime/validation100_vbench/step-006000/benchmark.failed.json`
+- 同类失败在更早前已经出现过：
+  - `step-002000`
+  - `step-004000`
+  - `step-006000`
+
+`step-006000` 的直接报错：
+
+- `run_validation_vbench.py` 启动 generation 子进程时，调用了：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/batch_eval_lora.py`
+- 但这个路径不存在
+- 实际存在的脚本是：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py`
+
+结论：
+
+- 训练退出的根因不是模型训练发散、不是显存、不是 checkpoint 保存失败
+- 根因是 validation 子进程脚本路径配置错误，导致每次 validation 触发都会返回非零退出码
+
+代码修复：
+
+- 修改 `train_v_newtrain.py`
+  - 将 `DEFAULT_BENCHMARK_SCRIPT` 从错误的仓库根目录路径
+    - `code_vjepa_vggt/batch_eval_lora.py`
+  - 改为正确的：
+    - `code_vjepa_vggt/train0419_reference/batch_eval_lora.py`
+- 同时修改启动脚本 `run_train_v_newtrain_object_heads_only_gpu67.sh`
+  - 显式增加：
+    - `--benchmark_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py`
+
+恢复动作：
+
+- 已从最新 checkpoint 重新启动训练：
+  - `resume_from = step-006000`
+- 重新启动后确认：
+  - `accelerate launch` 正常
+  - 两个 `train_v_newtrain.py` worker 正常
+  - `gpu6/7` 已重新占用
+  - `gpu4` 未使用
+  - W&B run 状态仍为 `running`
+
+当前判断：
+
+- 问题已定位并修复
+- 接下来继续观察恢复后的新 step、loss/梯度走势，以及下一轮 validation 是否真正恢复正常
+
+### 2026-06-26 01:33 UTC：修复后恢复训练状态确认
+
+恢复训练后第一轮检查结果：
+
+- 训练进程已稳定恢复：
+  - launcher bash 存活
+  - `accelerate launch` 存活
+  - 2 个 `train_v_newtrain.py` worker 存活
+- 两个 worker CPU 占用重新拉高，说明不是空转壳进程
+- GPU 使用恢复到训练态：
+  - `gpu6 = 40899 / 49140 MiB`
+  - `gpu7 = 40881 / 49140 MiB`
+  - `gpu5 = 1 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+- 说明：
+  - 训练再次只跑在 `gpu6/7`
+  - `gpu4` 仍未使用
+  - validation 目前还没有再次启动，占用 `gpu5` 也还没出现，这符合“刚从 `step-006000` 恢复”的预期
+
+checkpoint 当前仍是：
+
+- `step-005800`
+- `step-006000`
+
+W&B：
+
+- run 状态仍是 `running`
+- summary 暂时还停在恢复前最后一次上报：
+  - `_step = 5999`
+  - `train/loss_total = 0.05931`
+  - `train/loss_track_aux = 0.05853`
+  - `train/loss_box_aux = 0.53289`
+  - `train/loss_depth_aux = 0.00170`
+  - `train/object_context_abs_max = 0.45309`
+  - `train/object_latent_tokens_abs_max = 5.70206`
+  - `train/grad_norm = 0.32157`
+  - `train/grad_abs_max = 0.07853`
+
+interpretation：
+
+- 目前更像是 W&B summary 刷新滞后，而不是训练再次卡死
+- 因为进程、CPU、GPU 都已经显示训练真正恢复
+- 下一步继续等 W&B 跨过 `6000`，并盯后续 checkpoint / validation
+
+### 2026-06-26 01:36 UTC：确认恢复后是新的 W&B run
+
+后续排查发现：
+
+- 恢复训练时并不是继续沿用旧 run `yaxj219k`
+- 实际新启动了一个新的 W&B run：
+  - run id: `qberfq1r`
+  - run name: `pybullet0625_diffsynth_object_heads_only_gpu67`
+- 旧 run `yaxj219k` 因此前一次 validation 崩溃被标记为 `crashed`
+
+证据：
+
+- launcher 输出中明确出现：
+  - `wandb: setting up run qberfq1r`
+  - `View run at https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/qberfq1r`
+- 当前训练进程日志里已经继续推进：
+  - `global_step 6001 ... 6060`
+
+因此：
+
+- 恢复后监控必须切换到新的 W&B run `qberfq1r`
+- 不能再用旧 run `yaxj219k` 判断当前训练是否存活
+
+当前新 run 最新摘要：
+
+- `_step = 6060`
+- `train/loss_total = 0.13358`
+- `train/loss_track_aux = 0.13726`
+- `train/loss_box_aux = 0.70569`
+- `train/loss_depth_aux = 0.49285`
+- `train/object_context_abs_max = 0.40088`
+- `train/object_latent_tokens_abs_max = 4.15254`
+- `train/grad_norm = 1.05652`
+- `train/grad_abs_max = 0.26648`
+
+初步判断：
+
+- 恢复后的训练链路已经重新打通，至少推进到了 `6060`
+- 这一轮 `box/depth` 与总 loss 偏高，需要继续看后续 summary 是否回落
+- 暂时还不能判断为发散，更像刚恢复后的一段波动窗口
+
+### 2026-06-26 01:38 UTC：恢复后第二轮 summary 已回落
+
+继续监控新 run `qberfq1r`：
+
+- 训练进程仍稳定存活：
+  - `accelerate launch` 存活
+  - 2 个 `train_v_newtrain.py` worker 持续高 CPU 占用
+- 当前训练已经继续推进到：
+  - `_step = 6107`
+- checkpoint 目录此时仍是：
+  - `step-005800`
+  - `step-006000`
+- 还没到下一次保存点 `6200`，因此没有新 checkpoint 是正常现象
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6107`
+- `train/loss_total = 0.03980`
+- `train/loss_track_aux = 0.14785`
+- `train/loss_box_aux = 0.18612`
+- `train/loss_depth_aux = 0.06400`
+- `train/object_context_abs_max = 0.39982`
+- `train/object_latent_tokens_abs_max = 4.33306`
+- `train/grad_norm = 0.69935`
+- `train/grad_abs_max = 0.16934`
+
+相对上一轮 `_step = 6060`：
+
+- `loss_total` 明显回落
+- `loss_box_aux` 从 `0.70569` 明显回落到 `0.18612`
+- `loss_depth_aux` 从 `0.49285` 明显回落到 `0.06400`
+- `grad_norm` / `grad_abs_max` 也同步回落
+- `loss_track_aux` 仍偏高，但暂未继续恶化
+
+interpretation：
+
+- 这更支持“恢复后最初几步是过渡波动”的判断
+- 当前没有看到持续发散证据
+- 目前最需要继续盯的是：
+  - `step-006200` 是否正常落盘
+  - 后续几次 summary 中 `loss_track_aux` 是否也回到更低区间
+  - 下一次 validation 触发时是否不再因为脚本路径问题失败
+
+### 2026-06-26 01:39 UTC：新 run 继续回稳
+
+当前训练状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 维持高显存占用：
+  - `gpu6 = 42725 / 49140 MiB`
+  - `gpu7 = 42707 / 49140 MiB`
+- `gpu4` 依旧未使用
+- `/data` 可用空间仍约 `5.1G`
+
+checkpoint：
+
+- 当前仍是：
+  - `step-005800`
+  - `step-006000`
+- 还没到 `step-006200` 的保存点，因此此时没有新 checkpoint 仍属正常
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6133`
+- `train/loss_total = 0.04547`
+- `train/loss_track_aux = 0.10049`
+- `train/loss_box_aux = 0.34437`
+- `train/loss_depth_aux = 0.00982`
+- `train/object_context_abs_max = 0.40090`
+- `train/object_latent_tokens_abs_max = 4.44604`
+- `train/grad_norm = 0.44582`
+- `train/grad_abs_max = 0.08644`
+
+相对上一轮 `_step = 6107`：
+
+- `loss_total` 小幅回升但仍处低位
+- `loss_track_aux` 从 `0.14785` 回落到 `0.10049`
+- `loss_box_aux` 有回升，但仍明显低于 `6060` 时的高点
+- `loss_depth_aux` 再次回到很低水平
+- `grad_norm` / `grad_abs_max` 继续回落
+
+interpretation：
+
+- 当前恢复后的训练整体仍在往稳定区间收敛
+- `track_aux` 也开始回落，这是一个积极信号
+- 暂时没有新的代码错误或发散证据
+- 继续盯 `step-006200` checkpoint，以及后续 validation 触发点
+
+### 2026-06-26 01:41 UTC：`track_aux` 继续回落
+
+当前训练状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 当前利用率已到 `100%`
+- 当前 checkpoint 仍是：
+  - `step-005800`
+  - `step-006000`
+- 距离下一次保存点 `6200` 仍差一点，因此无新 checkpoint 依然正常
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6159`
+- `train/loss_total = 0.04303`
+- `train/loss_track_aux = 0.06998`
+- `train/loss_box_aux = 0.34290`
+- `train/loss_depth_aux = 0.01739`
+- `train/object_context_abs_max = 0.40451`
+- `train/object_latent_tokens_abs_max = 4.46357`
+- `train/grad_norm = 0.69853`
+- `train/grad_abs_max = 0.17150`
+
+相对上一轮 `_step = 6133`：
+
+- `loss_total` 小幅回落
+- `loss_track_aux` 从 `0.10049` 继续回落到 `0.06998`
+- `loss_box_aux` 基本持平，仍在中等波动区间
+- `loss_depth_aux` 仍保持在很低水平
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 变化平稳
+
+interpretation：
+
+- 恢复后的训练稳定性继续得到支持
+- 当前最活跃的波动项主要还是 `box_aux`
+- 但 `track_aux`、`depth_aux` 和总 loss 都没有恶化
+- 继续盯 `step-006200` 落盘和后续 summary
+
+### 2026-06-26 01:42 UTC：`loss_total / track_aux / box_aux` 继续回落
+
+当前训练状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 持续高利用率：
+  - `gpu6` 利用率 `100%`
+  - `gpu7` 利用率 `83%`
+- checkpoint 仍是：
+  - `step-005800`
+  - `step-006000`
+- 还没到 `6200` 落盘点，因此此时没有新 checkpoint 依然正常
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6180`
+- `train/loss_total = 0.02895`
+- `train/loss_track_aux = 0.04988`
+- `train/loss_box_aux = 0.16259`
+- `train/loss_depth_aux = 0.07701`
+- `train/object_context_abs_max = 0.39831`
+- `train/object_latent_tokens_abs_max = 4.48743`
+- `train/grad_norm = 0.73146`
+- `train/grad_abs_max = 0.17723`
+
+相对上一轮 `_step = 6159`：
+
+- `loss_total` 继续回落
+- `loss_track_aux` 从 `0.06998` 继续回落到 `0.04988`
+- `loss_box_aux` 从 `0.34290` 明显回落到 `0.16259`
+- `loss_depth_aux` 有小幅回升，但仍处于可接受区间
+- `object_context_abs_max` 基本稳定
+- `object_latent_tokens_abs_max` 变化平稳
+
+interpretation：
+
+- 恢复后的训练继续朝更稳定的区间收敛
+- 当前最需要继续确认的是：
+  - `step-006200` 是否正常落盘
+  - 下一轮 summary 是否维持这条回落趋势
+
+### 2026-06-26 01:43 UTC：`step-006200` 已正常落盘
+
+checkpoint 检查结果：
+
+- checkpoint 目录已滚动为：
+  - `step-006000`
+  - `step-006200`
+- `max_checkpoints_keep = 2` 继续正常工作
+- `step-006200` 文件时间：
+  - `checkpoint.safetensors`: `2026-06-26 01:42:57 UTC`
+  - `training_state.pt`: `2026-06-26 01:42:58 UTC`
+- `training_state.pt` 已确认：
+  - `global_step = 6200`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 200`
+
+同时的 W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6200`
+- `train/loss_total = 0.05349`
+- `train/loss_track_aux = 0.18137`
+- `train/loss_box_aux = 0.20895`
+- `train/loss_depth_aux = 0.14462`
+- `train/object_context_abs_max = 0.40491`
+- `train/object_latent_tokens_abs_max = 4.51407`
+- `train/grad_norm = 1.36410`
+- `train/grad_abs_max = 0.36118`
+
+相对上一轮 `_step = 6180`：
+
+- `loss_total` 有一波回升
+- `loss_track_aux` 明显抬升
+- `loss_box_aux` 小幅回升
+- `loss_depth_aux` 也有明显回升
+- `grad_norm` / `grad_abs_max` 同步抬升
+
+interpretation：
+
+- 这更像一次 batch-level 反弹，而不是训练链路故障
+- 证据是：
+  - checkpoint 落盘完全正常
+  - 训练进程仍稳定存活
+  - `gpu6/7` 仍持续高利用率
+- 但这一轮值得继续跟紧，重点看：
+  - `6200` 之后的 1-2 个 summary 是否快速回落
+  - 如果 `track_aux` / `depth_aux` 连续维持高位，再考虑进一步排查 batch 特征或 loss 权重
+
+### 2026-06-26 01:45 UTC：`6200` 后反弹已快速回落
+
+继续监控新 run `qberfq1r`：
+
+- 训练进程继续稳定存活
+- 两个 worker 持续高 CPU 占用
+- checkpoint 目录仍为：
+  - `step-006000`
+  - `step-006200`
+- `6200` 之后尚未到下一次保存点，因此无新 checkpoint 正常
+
+W&B latest summary：
+
+- `_step = 6246`
+- `train/loss_total = 0.02806`
+- `train/loss_track_aux = 0.02879`
+- `train/loss_box_aux = 0.22609`
+- `train/loss_depth_aux = 0.02568`
+- `train/object_context_abs_max = 0.39465`
+- `train/object_latent_tokens_abs_max = 4.48359`
+- `train/grad_norm = 0.72095`
+- `train/grad_abs_max = 0.17659`
+
+相对上一轮 `_step = 6200`：
+
+- `loss_total` 明显回落
+- `loss_track_aux` 从 `0.18137` 快速回落到 `0.02879`
+- `loss_box_aux` 小幅回升到 `0.22609`，但仍处于可接受波动范围
+- `loss_depth_aux` 从 `0.14462` 快速回落到 `0.02568`
+- `grad_norm` / `grad_abs_max` 也同步回落
+
+interpretation：
+
+- 这进一步支持“`6200` 处看到的是 batch-level 反弹，不是持续发散”
+- 当前恢复后的训练轨迹仍然健康
+- 继续按原计划观察后续 checkpoint 与下一次 validation 触发
+
+### 2026-06-26 01:46 UTC：`6246 -> 6261` 出现温和回弹
+
+当前状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 仍保持高占用
+- checkpoint 目录当前仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 运行目录没有新增文件，当前仍只有更早前：
+  - `step-002000/benchmark.failed.json`
+  - `step-004000/benchmark.failed.json`
+  - `step-006000/benchmark.failed.json`
+- 这符合“修复后训练尚未推进到下一次 validation 触发点”的预期
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6261`
+- `train/loss_total = 0.03907`
+- `train/loss_track_aux = 0.12059`
+- `train/loss_box_aux = 0.20990`
+- `train/loss_depth_aux = 0.06021`
+- `train/object_context_abs_max = 0.40423`
+- `train/object_latent_tokens_abs_max = 4.59714`
+- `train/grad_norm = 0.99660`
+- `train/grad_abs_max = 0.26037`
+
+相对上一轮 `_step = 6246`：
+
+- `loss_total` 有温和回升
+- `loss_track_aux` 从 `0.02879` 回升到 `0.12059`
+- `loss_box_aux` 仍在中等波动区间，变化不大
+- `loss_depth_aux` 从 `0.02568` 回升到 `0.06021`
+- `grad_norm` / `grad_abs_max` 也有同步回升
+
+interpretation：
+
+- 当前仍更像 batch-level 波动，而不是新的系统性异常
+- 依据是：
+  - 训练进程和 GPU 状态正常
+  - 没有新的 runtime error
+  - checkpoint 链路正常
+- 继续重点观察：
+  - 下一轮 summary 是否再次回落
+  - 下一次 validation 触发时是否真正不再报路径错误
+
+### 2026-06-26 01:47 UTC：`6261 -> 6286` 再次回到低位
+
+当前状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 仍保持高占用
+- checkpoint 当前仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 运行目录仍没有新增文件，说明尚未到新的 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6286`
+- `train/loss_total = 0.02788`
+- `train/loss_track_aux = 0.03106`
+- `train/loss_box_aux = 0.22863`
+- `train/loss_depth_aux = 0.01906`
+- `train/object_context_abs_max = 0.39433`
+- `train/object_latent_tokens_abs_max = 4.61276`
+- `train/grad_norm = 0.43361`
+- `train/grad_abs_max = 0.08371`
+
+相对上一轮 `_step = 6261`：
+
+- `loss_total` 明显回落
+- `loss_track_aux` 从 `0.12059` 快速回落到 `0.03106`
+- `loss_box_aux` 小幅回升到 `0.22863`，但仍处于中等波动范围
+- `loss_depth_aux` 从 `0.06021` 回落到 `0.01906`
+- `grad_norm` / `grad_abs_max` 也同步回落
+
+interpretation：
+
+- 这进一步支持最近看到的是短时 batch-level 波动，不是持续性异常
+- 当前恢复后的训练轨迹仍保持健康
+- 继续按原计划盯：
+  - 下一次 checkpoint 落盘
+  - 下一次 validation 触发是否真正跑通
+
+### 2026-06-26 01:48 UTC：`6306` 处出现一次 `depth_aux / box_aux` 抬升
+
+当前状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 仍保持占用
+- checkpoint 目录当前仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 目录仍没有新增 step，说明还没到下一次 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6306`
+- `train/loss_total = 0.09157`
+- `train/loss_track_aux = 0.02752`
+- `train/loss_box_aux = 0.41812`
+- `train/loss_depth_aux = 0.47009`
+- `train/object_context_abs_max = 0.39949`
+- `train/object_latent_tokens_abs_max = 4.63728`
+- `train/grad_norm = 0.45209`
+- `train/grad_abs_max = 0.08990`
+
+相对上一轮 `_step = 6286`：
+
+- `loss_total` 明显回升
+- `loss_track_aux` 继续保持低位，甚至略有回落
+- `loss_box_aux` 出现明显抬升
+- `loss_depth_aux` 出现一次较大的 spike
+- `grad_norm` / `grad_abs_max` 没有同步出现异常爆炸
+
+interpretation：
+
+- 当前更像是 `box/depth` 相关 supervision 在单个 batch 上的波动
+- 之所以暂时不判断为系统性异常，主要因为：
+  - `track_aux` 没有同步恶化
+  - 梯度统计没有爆炸
+  - 训练进程、GPU、checkpoint 链路都正常
+- 下一步继续紧盯后续 1-2 个 summary：
+  - 如果快速回落，则仍按 batch-level 波动处理
+  - 如果 `depth_aux` / `box_aux` 连续维持高位，再进一步排查具体 batch 或 loss 权重
+
+### 2026-06-26 01:49 UTC：`6306` 的 `depth_aux` spike 已回落
+
+当前状态：
+
+- 训练进程继续稳定运行
+- checkpoint 目录仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 运行目录当前仍没有新 step 文件，说明还没推进到下一次 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6331`
+- `train/loss_total = 0.04471`
+- `train/loss_track_aux = 0.04650`
+- `train/loss_box_aux = 0.37835`
+- `train/loss_depth_aux = 0.02227`
+- `train/object_context_abs_max = 0.40514`
+- `train/object_latent_tokens_abs_max = 4.76440`
+- `train/grad_norm = 0.44085`
+- `train/grad_abs_max = 0.08697`
+
+相对上一轮 `_step = 6306`：
+
+- `loss_total` 明显回落
+- `loss_track_aux` 从 `0.02752` 小幅回升，但仍处低位
+- `loss_box_aux` 从 `0.41812` 回落到 `0.37835`
+- `loss_depth_aux` 从 `0.47009` 快速回落到 `0.02227`
+- `grad_norm` / `grad_abs_max` 继续维持低位
+
+interpretation：
+
+- 这进一步支持 `6306` 看到的是一次短时 `depth_aux` / `box_aux` 波动，而不是系统性异常
+- 当前最需要继续盯的是：
+  - 下一个 checkpoint 落盘
+  - 下一次 validation 触发时是否真正不再失败
+
+### 2026-06-26 01:50 UTC：loss 进一步降低，但梯度出现一次抬升
+
+当前状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 仍保持高占用
+- checkpoint 当前仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 运行目录仍没有新增 step 文件，说明尚未到新的 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6357`
+- `train/loss_total = 0.01700`
+- `train/loss_track_aux = 0.03174`
+- `train/loss_box_aux = 0.10273`
+- `train/loss_depth_aux = 0.03553`
+- `train/object_context_abs_max = 0.39600`
+- `train/object_latent_tokens_abs_max = 4.68871`
+- `train/grad_norm = 1.55033`
+- `train/grad_abs_max = 0.42479`
+
+相对上一轮 `_step = 6331`：
+
+- `loss_total` 继续明显回落
+- `loss_track_aux` 仍保持低位
+- `loss_box_aux` 从 `0.37835` 明显回落到 `0.10273`
+- `loss_depth_aux` 仍在较低区间
+- 但 `grad_norm` / `grad_abs_max` 出现一次明显抬升
+
+interpretation：
+
+- 当前现象更像“loss 很低，但某个 batch/参数子集上出现了局部梯度尖峰”
+- 之所以暂时不判断为系统性异常，主要因为：
+  - 总 loss 反而更低
+  - `track/box/depth` 三个主要 loss 项没有同步恶化
+  - 训练进程、GPU、checkpoint 链路都正常
+- 下一步继续重点看：
+  - 后续 1-2 个 summary 中 `grad_norm` / `grad_abs_max` 是否回落
+  - 如果梯度连续高位，而 loss 仍低，再考虑排查是否有少数参数或稀有 batch 导致的尖峰
+
+### 2026-06-26 01:52 UTC：`box_aux` 与梯度再次出现一轮抬升
+
+当前状态：
+
+- 训练进程继续稳定运行
+- `gpu6/7` 仍保持占用
+- checkpoint 目录当前仍为：
+  - `step-006000`
+  - `step-006200`
+- validation 目录仍没有新增 step 结果，说明尚未到新的 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6382`
+- `train/loss_total = 0.05414`
+- `train/loss_track_aux = 0.01375`
+- `train/loss_box_aux = 0.49380`
+- `train/loss_depth_aux = 0.03387`
+- `train/object_context_abs_max = 0.40697`
+- `train/object_latent_tokens_abs_max = 4.79206`
+- `train/grad_norm = 1.31052`
+- `train/grad_abs_max = 0.35687`
+
+相对上一轮 `_step = 6357`：
+
+- `loss_total` 有回升
+- `loss_track_aux` 继续保持低位
+- `loss_box_aux` 从 `0.10273` 明显抬升到 `0.49380`
+- `loss_depth_aux` 仍在较低区间
+- `grad_norm` / `grad_abs_max` 从上一轮的尖峰后再次抬升
+
+interpretation：
+
+- 当前更像 `box_aux` 主导的一次 batch-level 波动
+- 暂时不判断为系统性异常，原因是：
+  - `track_aux` 仍然很低
+  - `depth_aux` 没有同步恶化
+  - 训练进程、GPU、checkpoint、validation 链路都正常
+- 下一步继续看：
+  - 后续 1-2 个 summary 中 `box_aux` 与梯度是否再次回落
+  - 如果 `box_aux` 持续高位，再考虑进一步排查 box supervision 对应 batch
+
+### 2026-06-26 01:53 UTC：`step-006400` 已正常落盘，box 波动仍局部存在
+
+checkpoint 检查结果：
+
+- checkpoint 目录已滚动为：
+  - `step-006200`
+  - `step-006400`
+- `max_checkpoints_keep = 2` 继续正常
+- `step-006400` 文件时间：
+  - `checkpoint.safetensors`: `2026-06-26 01:52:52 UTC`
+  - `training_state.pt`: `2026-06-26 01:52:54 UTC`
+- `training_state.pt` 已确认：
+  - `global_step = 6400`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 400`
+
+同时的 W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6406`
+- `train/loss_total = 0.04889`
+- `train/loss_track_aux = 0.02709`
+- `train/loss_box_aux = 0.45118`
+- `train/loss_depth_aux = 0.01060`
+- `train/object_context_abs_max = 0.41148`
+- `train/object_latent_tokens_abs_max = 4.80630`
+- `train/grad_norm = 0.32813`
+- `train/grad_abs_max = 0.07500`
+
+相对上一轮 `_step = 6382`：
+
+- `loss_total` 略有回落
+- `loss_track_aux` 继续低位
+- `loss_box_aux` 仍维持在较高波动区间
+- `loss_depth_aux` 已回到很低水平
+- `grad_norm` / `grad_abs_max` 明显回落
+
+interpretation：
+
+- 当前 box 分支的波动仍然存在，但它没有拖着整体梯度或其他 loss 一起失控
+- 这更支持“主要是局部 box supervision batch 波动，而不是系统性训练异常”
+- 继续按原计划盯：
+  - 后续 summary 中 `box_aux` 是否再次回落
+  - 下一次 validation 触发是否真正跑通
+
+### 2026-06-26 01:55 UTC：`box_aux` 再次回落
+
+当前状态：
+
+- 训练进程继续稳定运行
+- checkpoint 当前仍为：
+  - `step-006200`
+  - `step-006400`
+- validation 运行目录仍没有新增 step 结果，说明还没到下一次 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6442`
+- `train/loss_total = 0.03841`
+- `train/loss_track_aux = 0.09125`
+- `train/loss_box_aux = 0.28407`
+- `train/loss_depth_aux = 0.00881`
+- `train/object_context_abs_max = 0.40891`
+- `train/object_latent_tokens_abs_max = 4.80586`
+- `train/grad_norm = 0.43800`
+- `train/grad_abs_max = 0.08717`
+
+相对上一轮 `_step = 6406`：
+
+- `loss_total` 回落
+- `loss_track_aux` 有回升，但仍处于可接受区间
+- `loss_box_aux` 从 `0.45118` 回落到 `0.28407`
+- `loss_depth_aux` 继续保持很低
+- `grad_norm` / `grad_abs_max` 仍然保持低位
+
+interpretation：
+
+- 这进一步支持当前主要是 box 分支的 batch-level 波动，而不是整体训练异常
+- 目前最需要继续盯的是：
+  - 下一次 checkpoint 落盘
+  - 下一次 validation 触发时是否真正跑通
+
+### 2026-06-26 01:56 UTC：`6468` 出现一次 `depth_aux + box_aux` 联合抬升
+
+当前状态：
+
+- 训练进程继续稳定运行
+- checkpoint 当前仍为：
+  - `step-006200`
+  - `step-006400`
+- validation 目录仍没有新增 step 文件，说明还没推进到新的 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6468`
+- `train/loss_total = 0.10559`
+- `train/loss_track_aux = 0.04192`
+- `train/loss_box_aux = 0.43343`
+- `train/loss_depth_aux = 0.58057`
+- `train/object_context_abs_max = 0.40474`
+- `train/object_latent_tokens_abs_max = 4.79340`
+- `train/grad_norm = 0.97318`
+- `train/grad_abs_max = 0.25753`
+
+相对上一轮 `_step = 6442`：
+
+- `loss_total` 明显回升
+- `loss_track_aux` 仍处低位
+- `loss_box_aux` 从 `0.28407` 回升到 `0.43343`
+- `loss_depth_aux` 从很低位置抬升到 `0.58057`
+- `grad_norm` / `grad_abs_max` 也有同步回升
+
+interpretation：
+
+- 当前更像一次 `box + depth` 共同参与的 batch-level 反弹
+- 暂时仍不判断为系统性异常，原因是：
+  - `track_aux` 仍然较低
+  - 训练进程、GPU、checkpoint 链路都正常
+  - 过去几次类似抬升都在后续 summary 里快速回落
+- 但这轮值得更紧盯：
+  - 如果后续 1-2 个 summary 不回落，就需要进一步排查对应 batch / depth & box supervision
+
+### 2026-06-26 01:57 UTC：`6468` 的 `box + depth` 抬升已回落
+
+当前状态：
+
+- 训练进程继续稳定运行
+- checkpoint 当前仍为：
+  - `step-006200`
+  - `step-006400`
+- validation 目录仍没有新增 step 文件，说明还没推进到新的 validation 触发点
+
+W&B latest summary（新 run `qberfq1r`）：
+
+- `_step = 6493`
+- `train/loss_total = 0.02702`
+- `train/loss_track_aux = 0.05301`
+- `train/loss_box_aux = 0.16863`
+- `train/loss_depth_aux = 0.04856`
+- `train/object_context_abs_max = 0.39215`
+- `train/object_latent_tokens_abs_max = 4.66564`
+- `train/grad_norm = 1.04839`
+- `train/grad_abs_max = 0.25194`
+
+相对上一轮 `_step = 6468`：
+
+- `loss_total` 明显回落
+- `loss_track_aux` 小幅回升，但仍处于低位
+- `loss_box_aux` 从 `0.43343` 明显回落到 `0.16863`
+- `loss_depth_aux` 从 `0.58057` 明显回落到 `0.04856`
+- `grad_norm` / `grad_abs_max` 也回落
+
+interpretation：
+
+- 这进一步支持 `6468` 看到的是一次短时 `box + depth` 波动，而不是系统性异常
+- 当前训练轨迹仍然健康
+- 继续按原计划盯：
+  - 下一个 checkpoint 落盘
+  - 下一次 validation 触发是否真正跑通
+
+### 2026-06-26 02:03 UTC：确认坏卡 `gpu4` 继续禁用
+
+当前核对结果：
+
+- 当前活跃训练进程仍是：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+- 实际训练命令仍固定：
+  - `CUDA_VISIBLE_DEVICES=6,7`
+- validation / benchmark 仍固定：
+  - `--benchmark_cuda_visible_devices 5`
+- `nvidia-smi` 当前显存占用显示：
+  - `gpu6 = 42725 / 49140 MiB`
+  - `gpu7 = 42707 / 49140 MiB`
+  - `gpu5 = 1 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+
+结论：
+
+- 当前训练实际只跑在 `gpu6,7`
+- validation 仍预期跑在 `gpu5`
+- 没有任何迹象表明当前 run 使用了坏卡 `gpu4`
+- 后续继续保持这个约束：
+  - 不使用 `gpu4`
+  - 训练只用 `gpu6,7`
+  - validation 只用 `gpu5`
+
+额外状态：
+
+- checkpoint 目前仍只有：
+  - `step-006200`
+  - `step-006400`
+- validation runtime 目录目前还没有新的 `step-008000` 相关文件
+- `/data` 当前剩余空间约 `5.1G`，磁盘空间仍是当前最大的运行风险
+
+### 2026-06-26 02:05 UTC：`step-006600` 已成功落盘，训练继续健康推进
+
+当前核对结果：
+
+- checkpoint 目录已经推进到：
+  - `step-006400`
+  - `step-006600`
+- `step-006600/training_state.pt` 已核对：
+  - `global_step = 6600`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 600`
+- 旧的 `step-006200` 已经不在 checkpoint 目录中
+
+这说明：
+
+- `--save_steps 200` 仍正常生效
+- `--max_checkpoints_keep 2` 也仍正常生效
+- checkpoint 轮转链路目前是健康的
+
+W&B 当前 latest summary（run `qberfq1r`）：
+
+- `_step = 6614`
+- `train/loss_total = 0.04405`
+- `train/loss_track_aux = 0.10337`
+- `train/loss_box_aux = 0.24117`
+- `train/loss_depth_aux = 0.09601`
+- `train/grad_norm = 0.51208`
+- `train/grad_abs_max = 0.05000`
+- `train/object_context_abs_max = 0.38902`
+- `train/object_latent_tokens_abs_max = 4.67589`
+
+补充看最近一段 history：
+
+- `_step = 6584`
+  - `loss_total = 0.02562`
+  - `loss_track_aux = 0.05677`
+  - `loss_box_aux = 0.13458`
+  - `loss_depth_aux = 0.06484`
+  - `grad_norm = 1.01489`
+- `_step = 6610`
+  - `loss_total = 0.05847`
+  - `loss_track_aux = 0.02725`
+  - `loss_box_aux = 0.55348`
+  - `loss_depth_aux = 0.00400`
+  - `grad_norm = 0.59089`
+
+interpretation：
+
+- `6600` 前后仍能看到 `box_aux` 的 batch-level 波动
+- 但这次波动没有伴随：
+  - `track_aux` 同步失控
+  - `depth_aux` 同步抬升
+  - `grad_norm / grad_abs_max` 明显爆掉
+- `object_context_abs_max` 仍维持在 `0.39` 左右，`object_latent_tokens_abs_max` 也仍在之前可接受区间内
+
+当前判断：
+
+- 训练继续健康推进
+- 暂时没有看到需要改代码或改 loss 配比的直接证据
+- 目前最需要继续盯的仍然是两件事：
+  - 下一次 checkpoint `step-006800`
+  - 下一次 validation 触发点 `step-008000` 是否真正开始在 `gpu5` 上跑通
+
+额外风险提示：
+
+- `/data` 仍只剩约 `5.1G`
+- 虽然当前只保留 2 份 checkpoint，训练本身还能继续
+- 但到 `step-008000` 时如果 validation 生成大量产物，磁盘仍可能再次成为第一风险点
+
+### 2026-06-26 02:08 UTC：`6626/6628` 附近出现一次短时高波动，但已快速回落
+
+当前运行状态：
+
+- 训练进程仍健康存活
+- GPU 仍是：
+  - 训练：`gpu6,7`
+  - validation 预留：`gpu5`
+  - 坏卡 `gpu4` 未使用
+- checkpoint 目录此刻仍是：
+  - `step-006400`
+  - `step-006600`
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6645`
+- `train/loss_total = 0.04424`
+- `train/loss_track_aux = 0.15490`
+- `train/loss_box_aux = 0.20925`
+- `train/loss_depth_aux = 0.07827`
+- `train/grad_norm = 0.59683`
+- `train/grad_abs_max = 0.08583`
+- `train/object_context_abs_max = 0.39153`
+- `train/object_latent_tokens_abs_max = 4.76228`
+
+最近一段 history 里最值得记的一小段是：
+
+- `_step = 6619`
+  - `loss_total = 0.04353`
+  - `loss_track_aux = 0.06563`
+  - `loss_box_aux = 0.34870`
+  - `loss_depth_aux = 0.02096`
+  - `grad_norm = 1.29736`
+- `_step = 6626`
+  - `loss_total = 0.13456`
+  - `loss_track_aux = 0.07048`
+  - `loss_box_aux = 0.72803`
+  - `loss_depth_aux = 0.54713`
+  - `grad_norm = 0.50653`
+  - `grad_abs_max = 0.01250`
+- `_step = 6628`
+  - `loss_total = 0.13646`
+  - `loss_track_aux = 0.36139`
+  - `loss_box_aux = 0.42424`
+  - `loss_depth_aux = 0.57895`
+  - `grad_norm = 0.50834`
+- `_step = 6644`
+  - `loss_total = 0.03138`
+  - `loss_track_aux = 0.05482`
+  - `loss_box_aux = 0.21008`
+  - `loss_depth_aux = 0.04889`
+  - `grad_norm = 0.59162`
+
+interpretation：
+
+- `6626/6628` 这段确实出现了一次明显的多项 loss 联合抬升：
+  - `box_aux`
+  - `depth_aux`
+  - 在 `6628` 上 `track_aux` 也被带起来了
+- 但它不是典型的梯度爆炸形态，因为：
+  - `grad_norm` 没有同步爆掉
+  - `grad_abs_max` 反而很低
+  - `object_context_abs_max` / `object_latent_tokens_abs_max` 也没有异常飙升
+- 更像是：
+  - 某个或某几个 batch 的 supervision 难度较高
+  - 导致 loss 短时抬升
+  - 但参数更新幅度本身仍受控
+
+当前判断：
+
+- 这次波动更接近 batch-level supervision spike，而不是训练发散
+- 因为到 `_step = 6644/6645` 已经明显回落
+- 暂时仍不需要为了这次波动改代码或改 loss 权重
+
+接下来继续重点观察：
+
+- 下一份 checkpoint：`step-006800`
+- 下一次 validation 触发点：`step-008000`
+- 如果后续再次出现类似 `box + depth + track` 联合抬升，并且连续多个 summary 不回落，再进入代码级排查
+
+### 2026-06-26 02:11 UTC：确认没有 stall，训练已继续推进到 `_step = 6686`
+
+这轮额外排查的原因：
+
+- 某一时刻 `nvidia-smi` 里 `gpu6/7` 利用率都短暂掉到 `0`
+- checkpoint 目录也还停留在：
+  - `step-006400`
+  - `step-006600`
+
+进一步核对后确认：
+
+- 训练进程本身没有退出
+- W&B 仍在继续前进，当前 latest summary 已到：
+  - `_step = 6686`
+- 所以这不是训练卡死，更像是：
+  - 一次短暂的 batch 间空窗
+  - 或数据 / 同步 / 采样带来的瞬时 GPU 利用率下探
+
+当前 latest summary（run `qberfq1r`）：
+
+- `_step = 6686`
+- `train/loss_total = 0.02869`
+- `train/loss_track_aux = 0.02365`
+- `train/loss_box_aux = 0.21145`
+- `train/loss_depth_aux = 0.05180`
+- `train/grad_norm = 0.51060`
+- `train/grad_abs_max = 0.05000`
+- `train/object_context_abs_max = 0.39623`
+- `train/object_latent_tokens_abs_max = 4.75002`
+
+最近一段 history 补充观察：
+
+- `_step = 6665`
+  - `loss_total = 0.06330`
+  - `loss_box_aux = 0.55166`
+  - `loss_depth_aux = 0.05316`
+- `_step = 6677`
+  - `loss_total = 0.04979`
+  - `loss_track_aux = 0.07926`
+  - `loss_box_aux = 0.32490`
+  - `loss_depth_aux = 0.09373`
+  - `grad_norm = 1.35785`
+  - `grad_abs_max = 0.35314`
+- `_step = 6686`
+  - `loss_total = 0.02869`
+  - `loss_track_aux = 0.02365`
+  - `loss_box_aux = 0.21145`
+  - `loss_depth_aux = 0.05180`
+  - `grad_norm = 0.51060`
+
+interpretation：
+
+- `6665` 和 `6677` 一带仍能看到 `box_aux` 主导的波动
+- `6677` 的 `grad_norm / grad_abs_max` 也有一次局部抬升
+- 但到 `6686` 又明显回落
+- 因此目前仍然更像：
+  - batch-level fluctuation
+  - 而不是持续性不稳定或 silent hang
+
+当前判断：
+
+- 训练仍然健康推进
+- 还没到下一份 checkpoint `step-006800`
+- 当前没有新证据需要改代码
+- 继续重点盯：
+  - `step-006800` 是否正常落盘
+  - `step-008000` validation 是否真正开始并在 `gpu5` 上跑通
+
+### 2026-06-26 02:13 UTC：训练已推进到 `_step = 6716`，仍未见持续异常
+
+补充核对结果：
+
+- checkpoint 目录仍是：
+  - `step-006400`
+  - `step-006600`
+- 说明这时还没到下一份 `step-006800`
+- validation runtime 目录也还没有新的 `step-008000` 相关产物
+
+W&B latest summary（run `qberfq1r`）已经推进到：
+
+- `_step = 6716`
+- `train/loss_total = 0.01955`
+- `train/loss_track_aux = 0.05073`
+- `train/loss_box_aux = 0.12800`
+- `train/loss_depth_aux = 0.01678`
+- `train/grad_norm = 1.06071`
+- `train/grad_abs_max = 0.26078`
+- `train/object_context_abs_max = 0.39370`
+- `train/object_latent_tokens_abs_max = 4.73892`
+
+最近一段 history 里比较关键的点：
+
+- `_step = 6698`
+  - `loss_total = 0.06588`
+  - `loss_track_aux = 0.06509`
+  - `loss_box_aux = 0.51382`
+  - `loss_depth_aux = 0.07989`
+  - `grad_norm = 1.29173`
+- `_step = 6709`
+  - `loss_total = 0.04400`
+  - `loss_track_aux = 0.08882`
+  - `loss_box_aux = 0.24963`
+  - `loss_depth_aux = 0.10151`
+  - `grad_norm = 1.29700`
+- `_step = 6710`
+  - `loss_total = 0.01548`
+  - `loss_track_aux = 0.02080`
+  - `loss_box_aux = 0.09838`
+  - `loss_depth_aux = 0.03560`
+  - `grad_norm = 0.58968`
+
+interpretation：
+
+- `6698/6709` 一带仍能看到波动，主要还是：
+  - `box_aux`
+  - 伴随少量 `depth_aux`
+- 但后面很快回落到 `6710/6716` 的较低区间
+- `object_context_abs_max` 和 `object_latent_tokens_abs_max` 仍然没有异常漂移
+
+当前判断：
+
+- 训练还在健康推进
+- 当前没有出现持续 3 个以上 summary 都高位不回落的异常段
+- 暂时仍不需要改代码或调 loss 设计
+- 继续重点盯：
+  - `step-006800` 落盘
+  - `step-008000` validation 触发
+
+### 2026-06-26 02:15 UTC：latest summary 推进到 `_step = 6752`，再次出现短时 `box + depth` 联合抬升
+
+当前运行状态：
+
+- 训练进程仍健康存活
+- checkpoint 目录此刻仍是：
+  - `step-006400`
+  - `step-006600`
+- validation runtime 目录仍没有新的 `step-008000` 文件
+- 说明当前还没有到：
+  - 下一份 checkpoint `step-006800`
+  - 下一次 validation 触发点 `step-008000`
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6752`
+- `train/loss_total = 0.12316`
+- `train/loss_track_aux = 0.06166`
+- `train/loss_box_aux = 0.57975`
+- `train/loss_depth_aux = 0.59018`
+- `train/grad_norm = 0.58303`
+- `train/grad_abs_max = 0.08138`
+- `train/object_context_abs_max = 0.39277`
+- `train/object_latent_tokens_abs_max = 4.90452`
+
+最近一段 history 里最关键的波动点：
+
+- `_step = 6703`
+  - `loss_total = 0.12692`
+  - `loss_track_aux = 0.04944`
+  - `loss_box_aux = 0.72997`
+  - `loss_depth_aux = 0.48983`
+  - `grad_norm = 0.59180`
+- `_step = 6706`
+  - `loss_total = 0.04527`
+  - `loss_track_aux = 0.07321`
+  - `loss_box_aux = 0.34165`
+  - `loss_depth_aux = 0.03782`
+  - `grad_norm = 1.64232`
+  - `grad_abs_max = 0.43896`
+- `_step = 6729`
+  - `loss_total = 0.04363`
+  - `loss_track_aux = 0.12438`
+  - `loss_box_aux = 0.23807`
+  - `loss_depth_aux = 0.07384`
+  - `grad_norm = 1.29094`
+- `_step = 6739`
+  - `loss_total = 0.06431`
+  - `loss_track_aux = 0.17118`
+  - `loss_box_aux = 0.35875`
+  - `loss_depth_aux = 0.11313`
+  - `grad_norm = 0.51110`
+
+interpretation：
+
+- `6752` 的 latest summary 又回到了典型的：
+  - `box_aux`
+  - `depth_aux`
+ 共同抬升的形态
+- 但这次仍然没有看到典型梯度爆炸证据：
+  - `grad_norm` 没有同步冲高
+  - `grad_abs_max` 也仍处于受控区间
+  - `object_context_abs_max` 没有异常漂移
+- `object_latent_tokens_abs_max = 4.90` 比之前略高，但仍未形成持续单调上冲，需要继续观察而不是立即判异常
+
+当前判断：
+
+- 目前更像重复出现的 batch-level supervision spike
+- 还不能据此判断训练发散
+- 但需要继续紧盯后续 1-3 个 summary：
+  - 如果很快回落，维持现方案
+  - 如果连续高位不回落，再进入更细的 batch / supervision 级排查
+
+接下来继续重点盯：
+
+- `step-006800` 是否正常落盘
+- `step-008000` validation 是否开始并在 `gpu5` 上跑通
+
+### 2026-06-26 02:17 UTC：`6752` 已回落，但 `6765` 又出现一次同型 `box + depth` spike
+
+补充核对结果：
+
+- W&B latest summary 已推进到：
+  - `_step = 6787`
+- checkpoint 目录此刻仍是：
+  - `step-006400`
+  - `step-006600`
+- 说明这时还没有走到下一份 `step-006800`
+
+当前 latest summary（run `qberfq1r`）：
+
+- `_step = 6787`
+- `train/loss_total = 0.06416`
+- `train/loss_track_aux = 0.15831`
+- `train/loss_box_aux = 0.38417`
+- `train/loss_depth_aux = 0.09909`
+- `train/grad_norm = 0.59785`
+- `train/grad_abs_max = 0.08765`
+- `train/object_context_abs_max = 0.39251`
+- `train/object_latent_tokens_abs_max = 4.61771`
+
+`6752` 之后的关键轨迹：
+
+- `_step = 6752`
+  - `loss_total = 0.12316`
+  - `loss_box_aux = 0.57975`
+  - `loss_depth_aux = 0.59018`
+  - 属于一次明显 `box + depth` 联合抬升
+- `_step = 6754`
+  - `loss_total = 0.04180`
+  - `loss_box_aux = 0.24222`
+  - `loss_depth_aux = 0.11652`
+  - 已明显回落
+- `_step = 6756`
+  - `loss_total = 0.01557`
+  - `loss_box_aux = 0.11045`
+  - `loss_depth_aux = 0.01185`
+  - 回到低位
+- `_step = 6765`
+  - `loss_total = 0.10644`
+  - `loss_track_aux = 0.05637`
+  - `loss_box_aux = 0.43046`
+  - `loss_depth_aux = 0.57754`
+  - `grad_norm = 0.79551`
+  - 又出现一次类似的 `box + depth` spike
+- `_step = 6773`
+  - `loss_total = 0.03012`
+  - `loss_box_aux = 0.24393`
+  - `loss_depth_aux = 0.00955`
+  - 再次回落
+- `_step = 6786`
+  - `loss_total = 0.02790`
+  - `loss_box_aux = 0.21425`
+  - `loss_depth_aux = 0.01474`
+  - `grad_norm = 1.63866`
+  - `grad_abs_max = 0.44054`
+
+interpretation：
+
+- `6752` 不是持续高位，它后面已经快速回落
+- 但 `6765` 又重复出现了相同模式，说明：
+  - 当前训练里确实反复存在某类 batch / supervision 触发的 `box + depth` 局部抬升
+- 好的一面是：
+  - 每次 spike 后都能在后续 1-3 个 summary 内回落
+  - `object_context_abs_max` 没有异常上漂
+  - `object_latent_tokens_abs_max` 反而回落到 `4.62` 左右
+
+当前判断：
+
+- 目前依然更像“重复出现但可恢复的 batch-level supervision spike”
+- 还没有形成持续发散
+- 暂时仍不需要改代码
+- 但如果后面继续重复这类模式，可以考虑下一步做：
+  - 记录对应 batch 的 case id
+  - 单独回放并检查其 GT track / box / depth supervision 质量
+
+### 2026-06-26 02:20 UTC：`step-006800` 已成功落盘，`6787` 之后仍表现为可恢复波动
+
+当前核对结果：
+
+- checkpoint 已推进到：
+  - `step-006600`
+  - `step-006800`
+- `step-006800/training_state.pt` 已核对：
+  - `global_step = 6800`
+  - `epoch_id = 2`
+  - `batch_in_epoch = 1000`
+- checkpoint 轮转仍正常，只保留两份
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6827`
+- `train/loss_total = 0.05509`
+- `train/loss_track_aux = 0.02515`
+- `train/loss_box_aux = 0.46761`
+- `train/loss_depth_aux = 0.05809`
+- `train/grad_norm = 1.27262`
+- `train/grad_abs_max = 0.33547`
+- `train/object_context_abs_max = 0.39536`
+- `train/object_latent_tokens_abs_max = 4.74157`
+
+`6787` 之后的关键轨迹：
+
+- `_step = 6803`
+  - `loss_total = 0.03396`
+  - `loss_box_aux = 0.21499`
+  - `loss_depth_aux = 0.03962`
+- `_step = 6804`
+  - `loss_total = 0.04401`
+  - `loss_track_aux = 0.09854`
+  - `loss_box_aux = 0.31301`
+  - `loss_depth_aux = 0.02854`
+  - `grad_norm = 1.87011`
+  - `grad_abs_max = 0.51096`
+- `_step = 6805`
+  - `loss_total = 0.06532`
+  - `loss_track_aux = 0.17910`
+  - `loss_box_aux = 0.36344`
+  - `loss_depth_aux = 0.11062`
+- `_step = 6817`
+  - `loss_total = 0.01402`
+  - `loss_box_aux = 0.09067`
+  - `loss_depth_aux = 0.01920`
+  - 明显回落
+- `_step = 6818`
+  - `loss_total = 0.04789`
+  - `loss_box_aux = 0.40935`
+  - `loss_depth_aux = 0.03846`
+- `_step = 6819`
+  - `loss_total = 0.01333`
+  - `loss_box_aux = 0.09734`
+  - `loss_depth_aux = 0.00552`
+  - 再次回落
+
+interpretation：
+
+- `6787` 之后没有发展成持续高位异常
+- 仍然是：
+  - 某些 step 出现局部 `box_aux` 或 `track+box` 抬升
+  - 然后很快回到低位
+- `6804` 的 `grad_norm / grad_abs_max` 抬升值得记，但没有和持续的高 loss 段绑定在一起
+- `object_context_abs_max` 和 `object_latent_tokens_abs_max` 仍稳定，没有支持“数值发散”的证据
+
+当前判断：
+
+- 训练继续健康推进
+- `step-006800` 已证明 checkpoint 产出链路正常
+- 目前最大的下一个关键点仍然是：
+  - `step-008000` validation 是否真正开始并在 `gpu5` 上跑通
+
+额外风险：
+
+- `/data` 仍然只剩约 `5.1G`
+- 离 `step-008000` 越近，越需要警惕 validation 产物落盘导致的新一轮磁盘中断
+
+### 2026-06-26 02:23 UTC：latest summary 推进到 `_step = 6873`，`6800` 后仍未见持续异常
+
+当前状态：
+
+- checkpoint 目录仍是：
+  - `step-006600`
+  - `step-006800`
+- 说明当前还没到下一份 `step-007000`
+- validation runtime 目录仍未出现新的 `step-008000` 相关文件
+
+W&B latest summary（run `qberfq1r`）：
+
+- `_step = 6873`
+- `train/loss_total = 0.01536`
+- `train/loss_track_aux = 0.02093`
+- `train/loss_box_aux = 0.09762`
+- `train/loss_depth_aux = 0.03510`
+- `train/grad_norm = 0.59204`
+- `train/grad_abs_max = 0.08608`
+- `train/object_context_abs_max = 0.40197`
+- `train/object_latent_tokens_abs_max = 4.94860`
+
+`6800` 之后这一段的关键轨迹：
+
+- `_step = 6812`
+  - `loss_total = 0.10527`
+  - `loss_box_aux = 0.42275`
+  - `loss_depth_aux = 0.57447`
+  - 属于一次明显 `box + depth` 抬升
+- `_step = 6814`
+  - `loss_total = 0.06007`
+  - `loss_box_aux = 0.54432`
+  - `loss_depth_aux = 0.01856`
+  - 转成更偏 `box_aux` 主导
+- `_step = 6820`
+  - `loss_total = 0.04741`
+  - `loss_box_aux = 0.44308`
+  - `loss_depth_aux = 0.00455`
+- `_step = 6822`
+  - `loss_total = 0.04763`
+  - `loss_track_aux = 0.09221`
+  - `loss_box_aux = 0.35155`
+  - `grad_norm = 1.65559`
+  - `grad_abs_max = 0.44616`
+- `_step = 6844`
+  - `loss_total = 0.05893`
+  - `loss_box_aux = 0.55519`
+  - `loss_depth_aux = 0.00941`
+  - `grad_norm = 1.35270`
+- `_step = 6857`
+  - `loss_total = 0.06165`
+  - `loss_box_aux = 0.54495`
+  - `loss_depth_aux = 0.04154`
+- `_step = 6870`
+  - `loss_total = 0.03286`
+  - `loss_box_aux = 0.23264`
+  - `loss_depth_aux = 0.03320`
+- `_step = 6873`
+  - `loss_total = 0.01536`
+  - `loss_box_aux = 0.09762`
+  - `loss_depth_aux = 0.03510`
+  - 已回落到低位
+
+interpretation：
+
+- `6800` 后依然能看到反复出现的：
+  - `box_aux` 主导波动
+  - 偶尔伴随 `depth_aux` 抬升
+- 但这些波动后面仍然可以回落到较低区间
+- `object_context_abs_max` 仍稳定在 `0.39 ~ 0.40` 一带
+- `object_latent_tokens_abs_max` 到了 `4.95`，这次比之前略高，值得继续盯，但目前仍缺少持续单调上冲证据
+
+当前判断：
+
+- 训练仍在健康推进
+- 目前还没有形成“连续多个 summary 高位不回落”的发散模式
+- 下一阶段优先关注：
+  - `step-007000` 是否正常落盘
+  - `step-008000` validation 是否开始并在 `gpu5` 上跑通

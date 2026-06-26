@@ -66,12 +66,15 @@ from diffsynth.pipelines.wan_video import ModelConfig
 
 DEFAULT_WAN_ROOT = "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"
 WAN_SPATIAL_DIVISIBILITY = 32
+TRAIN_SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
+TRAIN0419_REFERENCE_ROOT = os.path.join(TRAIN_SCRIPT_ROOT, "train0419_reference")
+
 DEFAULT_BENCHMARK_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
+    TRAIN0419_REFERENCE_ROOT,
     "batch_eval_lora.py",
 )
 DEFAULT_VALIDATION_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
+    TRAIN0419_REFERENCE_ROOT,
     "run_validation_vbench.py",
 )
 DEFAULT_CHECKPOINT_SUBDIR = "checkpoints"
