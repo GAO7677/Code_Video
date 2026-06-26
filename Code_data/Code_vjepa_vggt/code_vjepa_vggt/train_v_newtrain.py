@@ -90,6 +90,34 @@ DEFAULT_BENCHMARK_WAIT_TIMEOUT_SECONDS = 12 * 60 * 60
 DEFAULT_CONTEXT_REFERENCE_PREFIXES = (1, 4, 8, 12, 16)
 
 
+class FrozenAuxRunner:
+    def __init__(self, module: nn.Module | None, device: str | torch.device | None = None) -> None:
+        self.module = module
+        self.device = None if device is None else torch.device(device)
+        if self.module is not None and self.device is not None:
+            self.module = self.module.to(self.device)
+            if hasattr(self.module, "device_obj"):
+                self.module.device_obj = self.device
+
+    def parameters(self):
+        if self.module is None:
+            return iter(())
+        return self.module.parameters()
+
+    def to(self, device: str | torch.device):
+        self.device = torch.device(device)
+        if self.module is not None:
+            self.module = self.module.to(self.device)
+            if hasattr(self.module, "device_obj"):
+                self.module.device_obj = self.device
+        return self
+
+    def __call__(self, *args, **kwargs):
+        if self.module is None:
+            raise RuntimeError("FrozenAuxRunner has no module bound")
+        return self.module(*args, **kwargs)
+
+
 def _tensor_video_to_pil_list(video_cthw: torch.Tensor) -> list[Image.Image]:
     frames = video_cthw.detach().cpu().permute(1, 2, 3, 0)
     frames = ((frames + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).numpy()
@@ -133,6 +161,12 @@ def _should_skip_live_vggt_init(vggt_cache_root: str | None, train_vggt: bool) -
     if vggt_cache_root is None:
         return False
     return bool(str(vggt_cache_root).strip())
+
+
+def _parse_aux_devices(raw_value: str | None) -> list[str]:
+    if raw_value is None:
+        return []
+    return [item.strip() for item in str(raw_value).split(",") if item.strip()]
 
 
 def _collect_trainable_grad_stats(module: nn.Module) -> dict[str, float]:
@@ -228,6 +262,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         vggt_input_h=420,
         vggt_input_w=728,
         vggt_cache_root=None,
+        object_aux_devices=None,
         train_vggt=False,
         object_pooler_latent_dim=16,
         cond_proj_dim=4096,
@@ -329,9 +364,12 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.freeze_non_object_trainables = bool(freeze_non_object_trainables)
         self.train_vggt = bool(train_vggt)
         self.vggt_cache_root = None if vggt_cache_root is None else str(vggt_cache_root)
+        self.object_aux_devices = _parse_aux_devices(object_aux_devices)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
+        self.jepa_runner = None
+        self.cotracker_runner = None
 
         if self.freeze_non_object_trainables:
             for _, param in self.pipe.dit.named_parameters():
@@ -353,6 +391,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 tubelet_size=int(jepa_tubelet_size),
                 trainable=False,
             )
+            jepa_dim = int(self.jepa_adapter.encoder.backbone.embed_dim)
             self.cotracker_adapter = CoTrackerAdapter(
                 checkpoint_path=cotracker_checkpoint,
                 num_queries=self.total_object_queries,
@@ -360,6 +399,13 @@ class WanTrainingModule(DiffusionTrainingModule):
                 input_hw=(int(cotracker_input_h), int(cotracker_input_w)),
                 window_len=int(cotracker_window_len),
             )
+            if self.object_aux_devices:
+                aux_rank = torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else 0
+                aux_device = self.object_aux_devices[aux_rank % len(self.object_aux_devices)]
+                self.jepa_runner = FrozenAuxRunner(self.jepa_adapter, aux_device)
+                self.cotracker_runner = FrozenAuxRunner(self.cotracker_adapter, aux_device)
+                self.jepa_adapter = None
+                self.cotracker_adapter = None
             if self.vggt_cache_root is not None and str(self.vggt_cache_root).strip():
                 self.vggt_cache_root = str(Path(self.vggt_cache_root).expanduser().resolve())
             skip_live_vggt_init = _should_skip_live_vggt_init(
@@ -379,7 +425,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 )
                 vggt_dense_dim = int(self.vggt_adapter.patch_token_dim)
             self.object_pooler = ObjectTubeProjector(
-                jepa_dim=int(self.jepa_adapter.encoder.backbone.embed_dim),
+                jepa_dim=jepa_dim,
                 latent_dim=int(object_pooler_latent_dim),
                 out_dim=cond_dim,
                 vggt_dense_dim=vggt_dense_dim,
@@ -418,6 +464,8 @@ class WanTrainingModule(DiffusionTrainingModule):
         else:
             self.jepa_adapter = None
             self.cotracker_adapter = None
+            self.jepa_runner = None
+            self.cotracker_runner = None
             self.vggt_adapter = None
             self.object_pooler = None
             self.object_aux_heads = None
@@ -499,6 +547,37 @@ class WanTrainingModule(DiffusionTrainingModule):
             seen.add(key)
             unique.append(param)
         return unique
+
+    def _run_cotracker(self, frames_bthwc_01, *, query_points_prior, query_frame_ids, query_image_hw):
+        if self.cotracker_runner is not None:
+            runner_device = self.cotracker_runner.device
+            cotracker_out = self.cotracker_runner(
+                frames_bthwc_01.to(runner_device),
+                query_points_prior=query_points_prior.to(runner_device),
+                query_frame_ids=query_frame_ids.to(runner_device),
+                query_image_hw=query_image_hw,
+            )
+            cotracker_out.query_points = cotracker_out.query_points.to(query_points_prior.device)
+            cotracker_out.tracks = cotracker_out.tracks.to(query_points_prior.device)
+            cotracker_out.visibility = cotracker_out.visibility.to(query_points_prior.device)
+            cotracker_out.confidence = cotracker_out.confidence.to(query_points_prior.device)
+            return cotracker_out
+        return self.cotracker_adapter(
+            frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            query_frame_ids=query_frame_ids,
+            query_image_hw=query_image_hw,
+        )
+
+    def _run_jepa(self, context_video):
+        if self.jepa_runner is not None:
+            runner_device = self.jepa_runner.device
+            jepa_dtype = next(self.jepa_runner.parameters()).dtype
+            jepa_out = self.jepa_runner(context_video.to(device=runner_device, dtype=jepa_dtype))
+            jepa_out.patch_tokens = jepa_out.patch_tokens.to(context_video.device)
+            return jepa_out
+        jepa_dtype = next(self.jepa_adapter.parameters()).dtype
+        return self.jepa_adapter(context_video.to(dtype=jepa_dtype))
 
     def export_trainable_state_dict(self, state_dict, remove_prefix=None):
         trainable_param_names = {
@@ -743,7 +822,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         object_valid_mask = object_valid_mask.to(device=pipe.device, dtype=pipe.torch_dtype)
         box_prior_xyxy = box_prior_xyxy.to(device=pipe.device, dtype=pipe.torch_dtype)
         frames_bthwc_01 = ((context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
-        cotracker_out = self.cotracker_adapter(
+        cotracker_out = self._run_cotracker(
             frames_bthwc_01,
             query_points_prior=query_points_prior,
             query_frame_ids=query_frame_ids,
@@ -770,8 +849,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             max_objects=self.aux_max_objects,
             points_per_object=self.object_num_queries,
         )
-        jepa_dtype = next(self.jepa_adapter.parameters()).dtype
-        jepa_out = self.jepa_adapter(context_video.to(dtype=jepa_dtype))
+        jepa_out = self._run_jepa(context_video)
         context_latents = inputs_shared["clean_prefix_latents"]
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
@@ -1422,6 +1500,13 @@ def wan_parser():
     parser.add_argument("--vggt_input_h", type=int, default=420)
     parser.add_argument("--vggt_input_w", type=int, default=728)
     parser.add_argument("--vggt_cache_root", type=str, default=None)
+    parser.add_argument(
+        "--object_aux_devices",
+        type=str,
+        default=None,
+        help="Comma-separated auxiliary CUDA devices used for frozen object-side runners such as JEPA/CoTracker. "
+        "Mapped per training rank in round-robin order.",
+    )
     parser.add_argument("--train_vggt", action="store_true", default=False)
     parser.add_argument("--object_pooler_latent_dim", type=int, default=16)
     parser.add_argument("--cond_proj_dim", type=int, default=4096)
@@ -1722,6 +1807,7 @@ def build_model(args, accelerator):
         vggt_input_h=args.vggt_input_h,
         vggt_input_w=args.vggt_input_w,
         vggt_cache_root=args.vggt_cache_root,
+        object_aux_devices=args.object_aux_devices,
         train_vggt=args.train_vggt,
         object_pooler_latent_dim=args.object_pooler_latent_dim,
         cond_proj_dim=args.cond_proj_dim,
