@@ -51,6 +51,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cases-per-family", type=int, default=0)
     parser.add_argument("--families", nargs="+", default=["F1", "F2", "F3", "F4", "F5"])
     parser.add_argument("--native-only-report", action="store_true")
+    parser.add_argument("--latent-only-report", action="store_true")
     parser.add_argument("--max-val-samples", type=int, default=None)
     parser.add_argument("--fps", type=int, default=8)
     parser.add_argument("--device", default="cuda:0")
@@ -404,6 +405,7 @@ def main() -> None:
             summary_by_checkpoint=summary_by_checkpoint,
             output_dir=output_dir,
             native_only=bool(args.native_only_report),
+            latent_only=bool(args.latent_only_report),
         )
 
     payload = {

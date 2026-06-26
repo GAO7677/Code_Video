@@ -1291,6 +1291,7 @@ def _build_report(
     summary_by_checkpoint: list[dict[str, Any]],
     output_dir: Path,
     native_only: bool = False,
+    latent_only: bool = False,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "metrics.json"
@@ -1361,7 +1362,15 @@ def _build_report(
             </tbody>
           </table>
 """
-            if native_only:
+            if latent_only:
+                visual_grid = f"""
+          <div class="video-grid">
+            {_image_block(image_src=item['track_overlay_sheet'], image_alt='track sheet', caption='Track aux on latent time axis', sheet=True)}
+            {_image_block(image_src=item['box_overlay_sheet'], image_alt='box sheet', caption='Box aux on latent time axis', sheet=True)}
+            {_image_block(image_src=item['depth_overlay_sheet'], image_alt='depth overlay sheet', caption='Depth aux on latent time axis', sheet=True)}
+          </div>
+"""
+            elif native_only:
                 visual_grid = f"""
           <div class="video-grid">
             {_image_block(image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Track overlay on original context frames', sheet=True)}
@@ -1440,7 +1449,7 @@ def _build_report(
 </head>
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
-  <p>这页默认聚焦原始 context frame 上的 overlay，对没有直接画回原图的可视化面板不再展示。相关 loss / regularizer 统一以四位小数数值表给出，方便直接横向比较。</p>
+  <p>这页只保留真正参与 aux loss 计算的时间轴结果。也就是说，展示的是 latent time axis 上的 `pred_track_summary / pred_box_xyxy / pred_depth` 与对应 GT，而不是 native 8-frame 上不参与最终 head loss 的中间量。</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>
