@@ -4,7 +4,7 @@ set -euo pipefail
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
 BASE_OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu0235_auxexp
-RESUME_FROM=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-002000
+RESUME_FROM=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-003500
 
 mkdir -p "${BASE_OUTPUT_DIR}"
 
@@ -19,7 +19,7 @@ CUDA_VISIBLE_DEVICES=0,2,3,5 "${ACCELERATE_BIN}" launch --multi_gpu --num_proces
   --width 896 \
   --num_frames 24 \
   --fixed_num_context_frames 8 \
-  --max_train_steps 2020 \
+  --max_train_steps 3520 \
   --dataset_num_workers 0 \
   --learning_rate 1e-4 \
   --weight_decay 0.01 \
