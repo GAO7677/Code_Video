@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default="val")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--wan-root", default=DEFAULT_WAN_ROOT)
-    parser.add_argument("--overlay-indices", type=int, nargs="+", default=[0, 1, 2, 3])
+    parser.add_argument("--overlay-indices", type=int, nargs="+", default=None)
+    parser.add_argument("--cases-per-family", type=int, default=0)
+    parser.add_argument("--families", nargs="+", default=["F1", "F2", "F3", "F4", "F5"])
+    parser.add_argument("--native-only-report", action="store_true")
     parser.add_argument("--max-val-samples", type=int, default=None)
     parser.add_argument("--fps", type=int, default=8)
     parser.add_argument("--device", default="cuda:0")
@@ -181,6 +185,59 @@ def _iter_dataset_indices(dataset_len: int, max_val_samples: int | None) -> list
     return list(range(min(dataset_len, int(max_val_samples))))
 
 
+def _extract_family(sample: dict[str, Any]) -> str | None:
+    metadata = sample.get("metadata", {}) or {}
+    sample_dir = str(metadata.get("sample_dir", ""))
+    match = re.search(r"/(F[1-5])_", sample_dir)
+    if match:
+        return match.group(1)
+    prompt = str(sample.get("caption", ""))
+    match = re.search(r"\b(f[1-5])\b", prompt, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
+def _select_overlay_indices(
+    dataset: PhysStateEpisodeDataset,
+    *,
+    explicit_indices: list[int] | None,
+    families: list[str],
+    cases_per_family: int,
+) -> list[int]:
+    if explicit_indices:
+        return [index for index in explicit_indices if 0 <= int(index) < len(dataset)]
+    if int(cases_per_family) <= 0:
+        return []
+    requested = {str(f).upper() for f in families}
+    selected: list[int] = []
+    counts = {family: 0 for family in requested}
+    seen_sample_ids: dict[str, set[str]] = {family: set() for family in requested}
+    for idx in range(len(dataset)):
+        sample = dataset[idx]
+        family = _extract_family(sample)
+        if family is None or family.upper() not in requested:
+            continue
+        family = family.upper()
+        if counts[family] >= int(cases_per_family):
+            continue
+        sample_id = str(sample.get("metadata", {}).get("sample_id", f"idx-{idx}"))
+        if sample_id in seen_sample_ids[family]:
+            continue
+        selected.append(int(idx))
+        counts[family] += 1
+        seen_sample_ids[family].add(sample_id)
+        if all(counts[f] >= int(cases_per_family) for f in requested):
+            break
+    missing = [family for family, count in counts.items() if count < int(cases_per_family)]
+    if missing:
+        raise RuntimeError(
+            "failed to collect enough samples for families: "
+            + ", ".join(f"{family} ({counts[family]}/{int(cases_per_family)})" for family in missing)
+        )
+    return selected
+
+
 def _aggregate_metric_rows(rows: list[dict[str, float]]) -> dict[str, float]:
     sums: dict[str, float] = {}
     counts: dict[str, int] = {}
@@ -255,7 +312,12 @@ def main() -> None:
         seed=int(args.seed),
     )
     val_sample_indices = _iter_dataset_indices(len(dataset), args.max_val_samples)
-    overlay_indices = [index for index in args.overlay_indices if 0 <= int(index) < len(dataset)]
+    overlay_indices = _select_overlay_indices(
+        dataset,
+        explicit_indices=None if args.overlay_indices is None else list(args.overlay_indices),
+        families=[str(f) for f in args.families],
+        cases_per_family=int(args.cases_per_family),
+    )
     overlay_samples = {int(index): dataset[int(index)] for index in overlay_indices} if overlay_indices else {}
 
     model = _build_model(args)
@@ -272,6 +334,8 @@ def main() -> None:
                 "caption": overlay_samples[int(sample_index)]["caption"],
                 "video_path": overlay_samples[int(sample_index)]["video_path"],
                 "context_frame_indices": overlay_samples[int(sample_index)]["context_frame_indices"].tolist(),
+                "sample_id": str(overlay_samples[int(sample_index)].get("metadata", {}).get("sample_id", "")),
+                "case_group": str(_extract_family(overlay_samples[int(sample_index)]) or "unknown"),
                 "checkpoints": [],
             }
             for sample_index in overlay_indices
@@ -322,6 +386,7 @@ def main() -> None:
                     sample_index=int(sample_index),
                     output_dir=output_dir,
                     fps=int(args.fps),
+                    export_aux_visuals=not bool(args.native_only_report),
                 )
                 item["load_info"] = load_info
                 item["val_mean_metrics"] = mean_metrics
@@ -338,6 +403,7 @@ def main() -> None:
             results_by_case=results_by_case,
             summary_by_checkpoint=summary_by_checkpoint,
             output_dir=output_dir,
+            native_only=bool(args.native_only_report),
         )
 
     payload = {

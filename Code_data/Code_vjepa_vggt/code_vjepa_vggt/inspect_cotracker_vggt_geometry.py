@@ -108,17 +108,18 @@ def draw_box_rgb(image: np.ndarray, box_xyxy_px: np.ndarray, color_rgb: tuple[in
     x0, y0, x1, y1 = [int(round(v)) for v in box_xyxy_px.tolist()]
     if x1 <= x0 or y1 <= y0:
         return
-    color_bgr = (int(color_rgb[2]), int(color_rgb[1]), int(color_rgb[0]))
-    cv2.rectangle(image, (x0, y0), (x1, y1), color_bgr, 2)
-    cv2.putText(image, label, (x0 + 2, max(y0 + 14, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 1, cv2.LINE_AA)
+    # These overlays are drawn onto RGB numpy frames, so keep the tuple in RGB order.
+    color = tuple(int(v) for v in color_rgb)
+    cv2.rectangle(image, (x0, y0), (x1, y1), color, 2)
+    cv2.putText(image, label, (x0 + 2, max(y0 + 14, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
 
 def draw_point_rgb(image: np.ndarray, point_xy: np.ndarray, color_rgb: tuple[int, int, int], label: str, radius: int = 5) -> None:
     x, y = [int(round(v)) for v in point_xy.tolist()]
-    color_bgr = (int(color_rgb[2]), int(color_rgb[1]), int(color_rgb[0]))
-    cv2.circle(image, (x, y), radius, color_bgr, 2)
+    color = tuple(int(v) for v in color_rgb)
+    cv2.circle(image, (x, y), radius, color, 2)
     if label:
-        cv2.putText(image, label, (x + 6, max(y - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color_bgr, 1, cv2.LINE_AA)
+        cv2.putText(image, label, (x + 6, max(y - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
 
 
 def build_multi_object_prompt(caption: str) -> str:

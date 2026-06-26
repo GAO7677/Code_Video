@@ -824,6 +824,7 @@ def _run_case_for_checkpoint(
     checkpoint_label: str,
     sample_index: int,
     fps: int,
+    export_aux_visuals: bool = True,
 ) -> dict[str, Any]:
     pipe = model.pipe
     device = torch.device(pipe.device)
@@ -1041,23 +1042,13 @@ def _run_case_for_checkpoint(
         gt_depth_np = gt_depth[0, ..., 0].detach().float().cpu().numpy()
         pred_depth_np = pred_depth[0, ..., 0].detach().float().cpu().numpy()
         gt_depth_valid_np = gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5
-        depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
-        depth_sheet_rel = _export_sheet(
-            depth_video,
-            stem="depth_panel",
-            title=f"{checkpoint_label} case {sample_index} depth panel",
-        )
-        depth_overlay_video = _render_depth_overlay(
-            summary_background,
-            gt_box_xyxy_np,
-            gt_box_valid_np,
-            pred_box_xyxy_np,
-            pred_box_valid_np,
-            gt_depth_np,
-            gt_depth_valid_np,
-            pred_depth_np,
-            image_hw,
-        )
+        if export_aux_visuals:
+            depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
+            depth_sheet_rel = _export_sheet(
+                depth_video,
+                stem="depth_panel",
+                title=f"{checkpoint_label} case {sample_index} depth panel",
+            )
 
     track_center_frame_l1, track_delta_frame_l1, track_total_frame_l1 = _compute_framewise_track_summary_losses(
         pred_track_summary=pred_track_summary_np,
@@ -1102,142 +1093,113 @@ def _run_case_for_checkpoint(
         ]
         for t in range(box_total_frame_l1.shape[0])
     ]
-    track_video = _overlay_metric_lines(
-        track_video,
-        title="track aux on decoded summary latent",
-        per_frame_metrics=track_overlay_metrics,
-    )
-    box_video = _overlay_metric_lines(
-        box_video,
-        title="box aux on decoded summary latent",
-        per_frame_metrics=box_overlay_metrics,
-    )
-    if depth_frame_l1 is not None and depth_overlay_sheet_rel is not None:
-        depth_overlay_video = _render_depth_overlay(
-            summary_background,
-            gt_box_xyxy_np,
-            gt_box_valid_np,
-            pred_box_xyxy_np,
-            pred_box_valid_np,
-            gt_depth_np,
-            gt_depth_valid_np,
-            pred_depth_np,
-            image_hw,
-        )
-        depth_overlay_video = _overlay_metric_lines(
-            depth_overlay_video,
-            title="depth aux on decoded summary latent",
-            per_frame_metrics=[
-                [f"depth_l1={float(depth_frame_l1[t, 0]):.6f}"]
-                for t in range(depth_frame_l1.shape[0])
-            ],
-        )
-        depth_overlay_sheet_rel = _export_sheet(
-            depth_overlay_video,
-            stem="depth_overlay",
-            title=f"{checkpoint_label} case {sample_index} depth overlay",
-        )
-
-    box_sheet = _export_sheet(
-        box_video,
-        stem="box_overlay",
-        title=f"{checkpoint_label} case {sample_index} box overlay",
-    )
-    track_sheet = _export_sheet(
-        track_video,
-        stem="track_overlay",
-        title=f"{checkpoint_label} case {sample_index} track overlay",
-    )
-
-    track_summary_scalar = _render_scalar_strip(
-        track_total_frame_l1,
-        title=f"{checkpoint_label} case {sample_index} track summary loss",
-        labels=[str(i) for i in range(track_total_frame_l1.shape[1])],
-    )
-    box_summary_scalar = _render_scalar_strip(
-        box_total_frame_l1,
-        title=f"{checkpoint_label} case {sample_index} box summary loss",
-        labels=[str(i) for i in range(box_total_frame_l1.shape[1])],
-    )
-    track_native_scalar = _render_scalar_strip(
-        track_native_l1,
-        title=f"{checkpoint_label} case {sample_index} native track loss",
-        labels=[str(i) for i in range(track_native_l1.shape[1])],
-    )
-    track_native_iou_scalar = _render_scalar_strip(
-        track_native_iou,
-        title=f"{checkpoint_label} case {sample_index} native track IoU loss",
-        labels=[str(i) for i in range(track_native_iou.shape[1])],
-    )
-    box_center_scalar = _render_scalar_strip(
-        box_center_frame_l1,
-        title=f"{checkpoint_label} case {sample_index} box center loss",
-        labels=[str(i) for i in range(box_center_frame_l1.shape[1])],
-    )
-    box_iou_scalar = _render_scalar_strip(
-        box_iou_frame_l1,
-        title=f"{checkpoint_label} case {sample_index} box IoU loss",
-        labels=[str(i) for i in range(box_iou_frame_l1.shape[1])],
-    )
-    depth_scalar = None
-    if depth_frame_l1 is not None:
-        depth_scalar = _render_scalar_strip(
-            depth_frame_l1,
-            title=f"{checkpoint_label} case {sample_index} depth loss",
-            labels=[str(i) for i in range(depth_frame_l1.shape[1])],
-        )
-
-    track_summary_scalar_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__track_summary_loss_sheet.png",
-            track_total_frame_l1,
-            title=f"{checkpoint_label} case {sample_index} track summary loss",
-        ).relative_to(output_dir)
-    )
-    box_summary_scalar_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__box_summary_loss_sheet.png",
-            box_total_frame_l1,
-            title=f"{checkpoint_label} case {sample_index} box summary loss",
-        ).relative_to(output_dir)
-    )
-    track_native_scalar_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__native_track_loss_sheet.png",
-            track_native_l1,
-            title=f"{checkpoint_label} case {sample_index} native track loss",
-        ).relative_to(output_dir)
-    )
-    track_native_iou_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__native_track_iou_loss_sheet.png",
-            track_native_iou,
-            title=f"{checkpoint_label} case {sample_index} native track IoU loss",
-        ).relative_to(output_dir)
-    )
-    box_center_scalar_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__box_center_loss_sheet.png",
-            box_center_frame_l1,
-            title=f"{checkpoint_label} case {sample_index} box center loss",
-        ).relative_to(output_dir)
-    )
-    box_iou_scalar_sheet = str(
-        _write_scalar_panel(
-            assets_dir / f"{case_stem}__box_iou_loss_sheet.png",
-            box_iou_frame_l1,
-            title=f"{checkpoint_label} case {sample_index} box IoU loss",
-        ).relative_to(output_dir)
-    )
+    box_sheet = None
+    track_sheet = None
+    track_summary_scalar_sheet = None
+    box_summary_scalar_sheet = None
+    track_native_scalar_sheet = None
+    track_native_iou_sheet = None
+    box_center_scalar_sheet = None
+    box_iou_scalar_sheet = None
     depth_scalar_rel = None
-    if depth_scalar is not None:
-        depth_scalar_rel = str(
+    if export_aux_visuals:
+        track_video = _overlay_metric_lines(
+            track_video,
+            title="track aux on decoded summary latent",
+            per_frame_metrics=track_overlay_metrics,
+        )
+        box_video = _overlay_metric_lines(
+            box_video,
+            title="box aux on decoded summary latent",
+            per_frame_metrics=box_overlay_metrics,
+        )
+        if depth_frame_l1 is not None:
+            depth_overlay_video = _render_depth_overlay(
+                summary_background,
+                gt_box_xyxy_np,
+                gt_box_valid_np,
+                pred_box_xyxy_np,
+                pred_box_valid_np,
+                gt_depth_np,
+                gt_depth_valid_np,
+                pred_depth_np,
+                image_hw,
+            )
+            depth_overlay_video = _overlay_metric_lines(
+                depth_overlay_video,
+                title="depth aux on decoded summary latent",
+                per_frame_metrics=[
+                    [f"depth_l1={float(depth_frame_l1[t, 0]):.6f}"]
+                    for t in range(depth_frame_l1.shape[0])
+                ],
+            )
+            depth_overlay_sheet_rel = _export_sheet(
+                depth_overlay_video,
+                stem="depth_overlay",
+                title=f"{checkpoint_label} case {sample_index} depth overlay",
+            )
+
+        box_sheet = _export_sheet(
+            box_video,
+            stem="box_overlay",
+            title=f"{checkpoint_label} case {sample_index} box overlay",
+        )
+        track_sheet = _export_sheet(
+            track_video,
+            stem="track_overlay",
+            title=f"{checkpoint_label} case {sample_index} track overlay",
+        )
+
+        track_summary_scalar_sheet = str(
             _write_scalar_panel(
-                assets_dir / f"{case_stem}__depth_loss_sheet.png",
-                depth_frame_l1,
-                title=f"{checkpoint_label} case {sample_index} depth loss",
+                assets_dir / f"{case_stem}__track_summary_loss_sheet.png",
+                track_total_frame_l1,
+                title=f"{checkpoint_label} case {sample_index} track summary loss",
             ).relative_to(output_dir)
         )
+        box_summary_scalar_sheet = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__box_summary_loss_sheet.png",
+                box_total_frame_l1,
+                title=f"{checkpoint_label} case {sample_index} box summary loss",
+            ).relative_to(output_dir)
+        )
+        track_native_scalar_sheet = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__native_track_loss_sheet.png",
+                track_native_l1,
+                title=f"{checkpoint_label} case {sample_index} native track loss",
+            ).relative_to(output_dir)
+        )
+        track_native_iou_sheet = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__native_track_iou_loss_sheet.png",
+                track_native_iou,
+                title=f"{checkpoint_label} case {sample_index} native track IoU loss",
+            ).relative_to(output_dir)
+        )
+        box_center_scalar_sheet = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__box_center_loss_sheet.png",
+                box_center_frame_l1,
+                title=f"{checkpoint_label} case {sample_index} box center loss",
+            ).relative_to(output_dir)
+        )
+        box_iou_scalar_sheet = str(
+            _write_scalar_panel(
+                assets_dir / f"{case_stem}__box_iou_loss_sheet.png",
+                box_iou_frame_l1,
+                title=f"{checkpoint_label} case {sample_index} box IoU loss",
+            ).relative_to(output_dir)
+        )
+        if depth_frame_l1 is not None:
+            depth_scalar_rel = str(
+                _write_scalar_panel(
+                    assets_dir / f"{case_stem}__depth_loss_sheet.png",
+                    depth_frame_l1,
+                    title=f"{checkpoint_label} case {sample_index} depth loss",
+                ).relative_to(output_dir)
+            )
 
     metrics = _compute_aux_metrics(
         pred_track_summary=object_aux_out.pred_track_summary,
@@ -1328,6 +1290,7 @@ def _build_report(
     results_by_case: list[dict[str, Any]],
     summary_by_checkpoint: list[dict[str, Any]],
     output_dir: Path,
+    native_only: bool = False,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "metrics.json"
@@ -1348,6 +1311,16 @@ def _build_report(
 """
         return ""
 
+    def _metric_row(label: str, value: Any) -> str:
+        if value is None:
+            shown = "-"
+        else:
+            try:
+                shown = f"{float(value):.4f}"
+            except Exception:
+                shown = str(value)
+        return f"<tr><th>{label}</th><td>{shown}</td></tr>"
+
     summary_rows = []
     for item in summary_by_checkpoint:
         summary_rows.append(
@@ -1355,6 +1328,7 @@ def _build_report(
       <tr>
         <td>{item['checkpoint_label']}</td>
         <td>{item['checkpoint']}</td>
+        <td>{item['mean_loss_total']:.4f}</td>
         <td>{item['mean_track_aux']:.6f}</td>
         <td>{item['mean_box_aux']:.6f}</td>
         <td>{item['mean_depth_aux']:.6f}</td>
@@ -1368,33 +1342,34 @@ def _build_report(
     for case_result in results_by_case:
         checkpoint_cards = []
         for item in case_result["checkpoints"]:
-            depth_block = _image_block(
-                image_src=item["depth_overlay_sheet"],
-                image_alt="depth overlay sheet",
-                caption="Depth aux on decoded summary latent",
-            )
-            depth_sheet_block = ""
-            if item["depth_panel_sheet"] is not None:
-                depth_sheet_block = _image_block(
-                    image_src=item["depth_panel_sheet"],
-                    image_alt="depth sheet",
-                    caption="Depth aux 逐帧静态图",
-                    sheet=True,
-                )
-            depth_loss_block = _image_block(
-                image_src=item.get("depth_loss_sheet"),
-                image_alt="depth loss",
-                caption="Depth loss framewise panel",
-            )
-            checkpoint_cards.append(
-                f"""
-        <article class="checkpoint-card">
-          <h3>{item['checkpoint_label']}</h3>
-          <p class="ckpt-path">{item['checkpoint']}</p>
-          <p><b>Losses:</b> main={item['metrics']['train/loss_main']:.6f}, track_aux={item['metrics']['train/loss_track_aux']:.6f}, box_aux={item['metrics']['train/loss_box_aux']:.6f}, depth_aux={item['metrics']['train/loss_depth_aux']:.6f}</p>
-          <p><b>Regularizers:</b> object_context={item['metrics']['train/loss_object_context_reg']:.6f}, track_anchor={item['metrics']['train/loss_track_anchor_reg']:.6f}, box_anchor={item['metrics']['train/loss_box_anchor_reg']:.6f}</p>
-          <p><b>Track/box diagnostics:</b> track_box={item['metrics']['train/track_box_loss']:.6f}, track_iou={item['metrics']['train/track_iou_loss']:.6f}, track_center_aux={item['metrics']['train/loss_track_center_aux']:.6f}, track_delta_aux={item['metrics']['train/loss_track_delta_aux']:.6f}</p>
-          <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
+            metrics = item["metrics"]
+            metric_table = f"""
+          <table class="metric-table">
+            <tbody>
+              {_metric_row("loss_track_aux", metrics.get("train/loss_track_aux"))}
+              {_metric_row("loss_box_aux", metrics.get("train/loss_box_aux"))}
+              {_metric_row("loss_depth_aux", metrics.get("train/loss_depth_aux"))}
+              {_metric_row("track_box_loss", metrics.get("train/track_box_loss"))}
+              {_metric_row("track_iou_loss", metrics.get("train/track_iou_loss"))}
+              {_metric_row("loss_track_center_aux", metrics.get("train/loss_track_center_aux"))}
+              {_metric_row("loss_track_delta_aux", metrics.get("train/loss_track_delta_aux"))}
+              {_metric_row("loss_object_context_reg", metrics.get("train/loss_object_context_reg"))}
+              {_metric_row("loss_track_anchor_reg", metrics.get("train/loss_track_anchor_reg"))}
+              {_metric_row("loss_box_anchor_reg", metrics.get("train/loss_box_anchor_reg"))}
+              {_metric_row("object_context_abs_max", metrics.get("train/object_context_abs_max"))}
+              {_metric_row("object_latent_tokens_abs_max", metrics.get("train/object_latent_tokens_abs_max"))}
+            </tbody>
+          </table>
+"""
+            if native_only:
+                visual_grid = f"""
+          <div class="video-grid">
+            {_image_block(image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Track overlay on original context frames', sheet=True)}
+            {_image_block(image_src=item['native_box_overlay_sheet'], image_alt='native box sheet', caption='Box overlay on original context frames', sheet=True)}
+          </div>
+"""
+            else:
+                visual_grid = f"""
           <div class="video-grid">
             {_image_block(image_src=item['track_overlay_sheet'], image_alt='track sheet', caption='Track aux on decoded summary latent', sheet=True)}
             {_image_block(image_src=item['box_overlay_sheet'], image_alt='box sheet', caption='Box aux on decoded summary latent', sheet=True)}
@@ -1406,19 +1381,29 @@ def _build_report(
             {_image_block(image_src=item['native_track_iou_loss_sheet'], image_alt='native track iou loss', caption='Native track IoU panel', sheet=True)}
             {_image_block(image_src=item['box_center_loss_sheet'], image_alt='box center loss', caption='Box center loss panel', sheet=True)}
             {_image_block(image_src=item['box_iou_loss_sheet'], image_alt='box iou loss', caption='Box IoU loss panel', sheet=True)}
-            {depth_loss_block}
-            {depth_block}
-            {depth_sheet_block}
+            {_image_block(image_src=item.get('depth_loss_sheet'), image_alt='depth loss', caption='Depth loss framewise panel')}
+            {_image_block(image_src=item['depth_overlay_sheet'], image_alt='depth overlay sheet', caption='Depth aux on decoded summary latent')}
+            {_image_block(image_src=item['depth_panel_sheet'], image_alt='depth sheet', caption='Depth aux 逐帧静态图', sheet=True)}
           </div>
-          <pre>{json.dumps({'metrics': item['metrics'], 'shapes': item['shapes']}, indent=2, ensure_ascii=False)}</pre>
+"""
+            checkpoint_cards.append(
+                f"""
+        <article class="checkpoint-card">
+          <h3>{item['checkpoint_label']}</h3>
+          <p class="ckpt-path">{item['checkpoint']}</p>
+          <p><b>Losses:</b> main={item['metrics']['train/loss_main']:.4f}, track_aux={item['metrics']['train/loss_track_aux']:.4f}, box_aux={item['metrics']['train/loss_box_aux']:.4f}, depth_aux={item['metrics']['train/loss_depth_aux']:.4f}</p>
+          <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
+          {visual_grid}
+          {metric_table}
         </article>
 """
             )
         case_blocks.append(
             f"""
   <section class="case">
-    <h2>Case {case_result['sample_index']}</h2>
+    <h2>{case_result.get('case_group', 'Case')} / index {case_result['sample_index']}</h2>
     <p><b>Caption:</b> {case_result['caption']}</p>
+    <p><b>Sample ID:</b> {case_result.get('sample_id', '-')}</p>
     <p><b>Context frames:</b> {case_result['context_frame_indices']}</p>
     <p><b>Video:</b> {case_result['video_path']}</p>
     <div class="checkpoint-grid">
@@ -1448,13 +1433,14 @@ def _build_report(
     .ckpt-path {{ font-size: 12px; color: #555; word-break: break-all; }}
     figure {{ margin: 0; }}
     figcaption {{ font-size: 12px; color: #444; margin-top: 4px; }}
-    pre {{ background: #fafafa; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; }}
+    .metric-table {{ margin-top: 12px; width: 100%; }}
+    .metric-table th {{ width: 40%; background: #faf7ef; }}
+    .metric-table td, .metric-table th {{ padding: 6px 8px; }}
   </style>
 </head>
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
-  <p>这页分成两层视图：第一层是当前 `v_newtrain` 训练里真实参与 `train/loss_track_aux`、`train/loss_box_aux`、`train/loss_depth_aux` 计算的 summary latent。这里的背景不是原始 context 帧，而是把 `clean_prefix_latents` 按 latent step 用 Wan VAE `decode_framewise` 解回图像后的结果，所以 summary view 只显示真实参与该 loss 的 latent 时间步。</p>
-  <p>第二层是回到原始 8-frame context 的 native frame 对齐视图，用来直接检查 GT / pred 的时空偏移。额外增加的 framewise loss 面板用于按帧查看这一 case 下每个几何相关 loss 的大小；其中 `loss_main` 和各类正则项只作为数值面板展示，不强行伪装成图像空间 overlay。</p>
+  <p>这页默认聚焦原始 context frame 上的 overlay，对没有直接画回原图的可视化面板不再展示。相关 loss / regularizer 统一以四位小数数值表给出，方便直接横向比较。</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>
@@ -1462,6 +1448,7 @@ def _build_report(
       <tr>
         <th>checkpoint</th>
         <th>path</th>
+        <th>mean total</th>
         <th>mean track_aux</th>
         <th>mean box_aux</th>
         <th>mean depth_aux</th>
