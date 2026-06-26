@@ -4211,3 +4211,1818 @@ latest summary 已进一步推进到：
 - 训练仍在健康推进
 - 当前这一拍比上一拍更平稳
 - 目前仍没有证据表明需要改代码或调整训练方案
+
+### 2026-06-26 00:22 UTC 持续巡检：已推进到 `step 4576`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004200`
+  - `step-004400`
+- `step-004600` 还未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4576`
+- `train/loss_total = 0.02645`
+- `train/loss_track_aux = 0.04443`
+- `train/loss_box_aux = 0.16929`
+- `train/loss_depth_aux = 0.05078`
+- `train/object_context_abs_max = 0.39962`
+- `train/object_latent_tokens_abs_max = 4.26723`
+- `train/grad_norm = 0.07681`
+- `train/grad_abs_max = 0.02500`
+
+和上一拍 `_step = 4555` 对比：
+
+- `loss_total` 小幅回升，但仍低
+- `loss_box_aux` 小幅回升，但仍处于正常范围
+- `grad_norm` 明显变小
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍稳定
+
+当前判断：
+
+- 这一拍更像一个“容易 batch”导致的低梯度，而不是训练异常
+- 当前没有看到 `nan/inf`
+- 也没有看到 object token 幅值异常放大
+
+因此目前仍然维持原判断：
+
+- 训练继续正常推进
+- 主要风险仍然不是数值，而是下一次 checkpoint 写盘的磁盘空间
+
+### 2026-06-26 00:24 UTC 关键里程碑：`step-004600` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-004600`
+- 落盘时间：
+  - `2026-06-26 00:17:49 UTC` 左右写出 `checkpoint.safetensors`
+  - `2026-06-26 00:17:50 UTC` 左右写出 `training_state.pt`
+
+已进一步核对：
+
+- `step-004400/training_state.pt -> global_step = 4400`
+- `step-004600/training_state.pt -> global_step = 4600`
+
+说明：
+
+- checkpoint 已完整写出
+- 训练状态与 checkpoint 目录编号保持一致
+
+### checkpoint 保留策略继续生效
+
+当前 checkpoint 目录只剩：
+
+- `step-004400`
+- `step-004600`
+
+这说明：
+
+- `--max_checkpoints_keep 2` 继续正常工作
+- 旧的 `step-004200` 已经被自动淘汰
+
+### 当前 W&B 最新状态
+
+当前 running run 仍是：
+
+- run id: `yaxj219k`
+
+latest summary 已继续推进到：
+
+- `_step = 4596`
+
+当前指标：
+
+- `train/loss_total = 0.03514`
+- `train/loss_track_aux = 0.09260`
+- `train/loss_box_aux = 0.21382`
+- `train/loss_depth_aux = 0.04497`
+- `train/object_context_abs_max = 0.40027`
+- `train/object_latent_tokens_abs_max = 4.28085`
+- `train/grad_norm = 0.59035`
+- `train/grad_abs_max = 0.14029`
+
+判断：
+
+- `step-004600` 落盘后训练没有中断
+- 当前数值仍在正常 batch 波动范围内
+- 没有看到 checkpoint 落盘后才触发的异常
+
+### 风险等级更新
+
+相比上一轮，当前最关键的新变化不是 loss，而是磁盘：
+
+- `/data` 可用空间已从约 `5.1G` 下降到约 `3.9G`
+
+这意味着：
+
+- 虽然 `step-004600` 已经成功产出
+- 但下一份 `step-004800` 的磁盘风险更高了
+
+当前剩余的首要风险已经进一步集中到：
+
+- `/data` 空间可能在下一次 checkpoint 写入时再次触发 `No space left on device`
+
+### 2026-06-26 00:26 UTC 持续巡检：`step-004600` 后继续推进到 `4646`
+
+本轮继续确认：
+
+- checkpoint 目录当前仍只有：
+  - `step-004400`
+  - `step-004600`
+- 说明 `step-004800` 还未实际落盘
+
+同时注意到一个关键变化：
+
+- `/data` 可用空间当前又回升到了约 `5.1G`
+
+这说明：
+
+- checkpoint 轮换后空间已经部分释放
+- `--max_checkpoints_keep 2` 仍在有效缓解磁盘压力
+
+### 当前 W&B 最新状态
+
+当前 running run 仍是：
+
+- run id: `yaxj219k`
+
+summary 最新可见到：
+
+- `_step = 4625`
+
+进一步检查最近 history，可以确认训练已经继续推进到：
+
+- `_step = 4646`
+
+最近几拍的代表性数值：
+
+- `_step = 4589`
+  - `loss_total = 0.05429`
+  - `loss_box_aux = 0.40540`
+  - `loss_depth_aux = 0.08051`
+  - `grad_norm = 1.25600`
+- `_step = 4596`
+  - `loss_total = 0.03514`
+  - `loss_box_aux = 0.21382`
+  - `loss_depth_aux = 0.04497`
+  - `grad_norm = 0.59035`
+- `_step = 4634`
+  - `loss_total = 0.04845`
+  - `loss_track_aux = 0.17016`
+  - `loss_depth_aux = 0.10710`
+  - `grad_norm = 0.30675`
+- `_step = 4639`
+  - `loss_total = 0.04782`
+  - `loss_box_aux = 0.41931`
+  - `loss_depth_aux = 0.03309`
+  - `grad_norm = 0.11520`
+- `_step = 4646`
+  - `loss_total = 0.04360`
+  - `loss_box_aux = 0.35205`
+  - `loss_depth_aux = 0.02971`
+  - `grad_norm = 0.32094`
+
+### 对这几拍波动的判断
+
+最近几十步里可以看到：
+
+- 个别拍会出现 `loss_depth_aux` 或 `loss_box_aux` 的单拍抬升
+- 个别拍 `grad_norm` 会抬到 `1.2` 左右
+
+但更关键的是：
+
+- 这些尖峰没有连续累积
+- 后续几拍通常会明显回落
+- `object_context_abs_max` 一直大致稳定在 `0.36 ~ 0.40`
+- `object_latent_tokens_abs_max` 一直大致稳定在 `4.14 ~ 4.41`
+- 没有看到 `nan/inf`
+
+因此当前更合理的结论仍然是：
+
+- 正常的 batch 级波动
+- 不是持续发散
+- 当前仍不需要因为这些波动去修改代码或训练超参
+
+### 当前后续观察点
+
+- 继续等待 `step-004800` 是否顺利落盘
+- 继续盯 `/data` 可用空间是否再次明显下探
+
+### 2026-06-26 00:29 UTC 持续巡检：已推进到 `step 4687`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前磁盘状态：
+
+- `/data` 可用空间仍约 `5.1G`
+
+这说明当前在 `step-004600` 轮换之后，空间还没有再次快速恶化。
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4687`
+- `train/loss_total = 0.04494`
+- `train/loss_track_aux = 0.06945`
+- `train/loss_box_aux = 0.35318`
+- `train/loss_depth_aux = 0.02679`
+- `train/object_context_abs_max = 0.40947`
+- `train/object_latent_tokens_abs_max = 4.46227`
+- `train/grad_norm = 0.30632`
+- `train/grad_abs_max = 0.07158`
+
+和前几拍对比：
+
+- `loss_track_aux` / `loss_box_aux` 有正常回升
+- 但 `loss_depth_aux` 仍低
+- `grad_norm` 仍然不高
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 虽有小幅抬升，但还在近期正常范围内
+
+当前判断仍然是：
+
+- 正常 batch 级波动
+- 训练继续稳定推进
+- 当前没有出现需要修改代码或调整方案的异常信号
+
+### 2026-06-26 00:31 UTC 持续巡检：已推进到 `step 4708`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4708`
+- `train/loss_total = 0.03465`
+- `train/loss_track_aux = 0.06551`
+- `train/loss_box_aux = 0.22019`
+- `train/loss_depth_aux = 0.06076`
+- `train/object_context_abs_max = 0.41109`
+- `train/object_latent_tokens_abs_max = 4.48375`
+- `train/grad_norm = 0.59993`
+- `train/grad_abs_max = 0.14402`
+
+和上一轮对比：
+
+- `loss_track_aux` / `loss_box_aux` / `loss_depth_aux` 有正常回升
+- `grad_norm` 仍然不高
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 只是小幅抬升
+
+当前判断：
+
+- 这仍然更像正常 batch 级波动
+- 还没有达到需要介入处理的异常区间
+- 当前最值得继续盯的仍然是 `step-004800` 落盘和磁盘空间变化
+
+### 2026-06-26 00:33 UTC 持续巡检：已推进到 `step 4728`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4728`
+- `train/loss_total = 0.05859`
+- `train/loss_track_aux = 0.13440`
+- `train/loss_box_aux = 0.34265`
+- `train/loss_depth_aux = 0.10888`
+- `train/object_context_abs_max = 0.40913`
+- `train/object_latent_tokens_abs_max = 4.44520`
+- `train/grad_norm = 0.60646`
+- `train/grad_abs_max = 0.14535`
+
+和上一轮对比：
+
+- `track_aux` / `box_aux` / `depth_aux` 都有回升
+- 但 `grad_norm` 仍然不高
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 没有同步失控
+
+当前判断：
+
+- 这拍波动比上一拍大一些
+- 但目前仍然更像正常 batch 级波动
+- 还没有形成需要介入的持续异常趋势
+
+### 2026-06-26 00:34 UTC 持续巡检：已推进到 `step 4753`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4753`
+- `train/loss_total = 0.04545`
+- `train/loss_track_aux = 0.02242`
+- `train/loss_box_aux = 0.38236`
+- `train/loss_depth_aux = 0.04969`
+- `train/object_context_abs_max = 0.36723`
+- `train/object_latent_tokens_abs_max = 4.37915`
+- `train/grad_norm = 0.59713`
+- `train/grad_abs_max = 0.14256`
+
+和上一轮对比：
+
+- `loss_track_aux` 回落
+- `loss_box_aux` 有回升
+- `loss_depth_aux` 回到中低位
+- `grad_norm` 仍然中等
+- `object_context_abs_max` 反而回落
+
+当前判断：
+
+- 训练仍然稳定推进
+- 当前数值仍处于正常 batch 波动区间
+- 还没有出现需要介入处理的异常趋势
+
+### 2026-06-26 00:36 UTC 持续巡检：已推进到 `step 4773`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4773`
+- `train/loss_total = 0.03102`
+- `train/loss_track_aux = 0.04772`
+- `train/loss_box_aux = 0.25233`
+- `train/loss_depth_aux = 0.01014`
+- `train/object_context_abs_max = 0.41214`
+- `train/object_latent_tokens_abs_max = 4.49457`
+- `train/grad_norm = 0.10305`
+- `train/grad_abs_max = 0.06250`
+
+和上一轮对比：
+
+- `loss_total` 回落
+- `loss_box_aux` 回落
+- `loss_depth_aux` 明显回落到很低
+- `grad_norm` 也明显回落
+
+当前判断：
+
+- 这一拍更像容易 batch
+- 当前仍然没有看到接近 `step-004800` 时的异常迹象
+
+### 2026-06-26 00:37 UTC 持续巡检：已推进到 `step 4794`
+
+本轮继续确认：
+
+- checkpoint 目录仍只有：
+  - `step-004400`
+  - `step-004600`
+- `step-004800` 仍未落盘
+
+当前 W&B latest summary：
+
+- run id: `yaxj219k`
+- state: `running`
+- `_step = 4794`
+- `train/loss_total = 0.05995`
+- `train/loss_track_aux = 0.02133`
+- `train/loss_box_aux = 0.54404`
+- `train/loss_depth_aux = 0.03414`
+- `train/object_context_abs_max = 0.36974`
+- `train/object_latent_tokens_abs_max = 4.44015`
+- `train/grad_norm = 0.32445`
+- `train/grad_abs_max = 0.08750`
+
+和上一轮对比：
+
+- `loss_box_aux` 有明显回升
+- 但 `grad_norm` 仍然较低
+- `loss_depth_aux` 仍在低位
+- `object_context_abs_max` 反而回落
+
+当前判断：
+
+- 这更像单个 batch 的 box supervision 波动
+- 目前仍没有证据表明训练失控
+- 下一关键点仍然是 `step-004800` 实际落盘
+
+### 2026-06-26 00:42 UTC 关键里程碑：`step-004800` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-004800`
+- 落盘时间：
+  - `2026-06-26 00:27:41 UTC` 左右写出 `checkpoint.safetensors`
+  - `2026-06-26 00:27:43 UTC` 左右写出 `training_state.pt`
+
+当前 checkpoint 目录只剩：
+
+- `step-004600`
+- `step-004800`
+
+这说明：
+
+- `--max_checkpoints_keep 2` 继续正常生效
+- 旧的 `step-004400` 已被自动淘汰
+
+### 当前 W&B 最新状态
+
+当前 running run 仍是：
+
+- run id: `yaxj219k`
+
+latest summary 已推进到：
+
+- `_step = 4818`
+
+当前指标：
+
+- `train/loss_total = 0.04618`
+- `train/loss_track_aux = 0.03105`
+- `train/loss_box_aux = 0.39561`
+- `train/loss_depth_aux = 0.03515`
+- `train/object_context_abs_max = 0.37030`
+- `train/object_latent_tokens_abs_max = 4.41620`
+- `train/grad_norm = 0.11457`
+- `train/grad_abs_max = 0.07500`
+
+判断：
+
+- `step-004800` 落盘后训练没有中断
+- 已继续推进到 `4818`
+- 当前数值仍在正常 batch 波动范围内
+
+### 磁盘风险更新
+
+这次 checkpoint 落盘后：
+
+- `/data` 可用空间仍维持在约 `5.1G`
+
+说明：
+
+- checkpoint 轮换释放空间的节奏目前还能跟上
+- 磁盘风险仍需要继续盯，但没有像上一次那样立刻下探到 `3.9G`
+
+新的下一个关键观察点变为：
+
+- `step-005000` 是否顺利落盘
+
+### 2026-06-26 00:31 UTC 巡检更新
+
+本轮重新确认训练主进程仍在运行：
+
+- launcher:
+  - `run_train_v_newtrain_object_heads_only_gpu67.sh`
+- accelerate:
+  - `accelerate launch --multi_gpu --num_processes 2 ... train_v_newtrain.py`
+- 两个 worker:
+  - `train_v_newtrain.py` 仍然都存活
+  - `ps` 里 CPU 仍接近 `99%`
+
+GPU 占用状态：
+
+- `gpu6`:
+  - 显存约 `42725 / 49140 MiB`
+  - util 约 `60%`
+- `gpu7`:
+  - 显存约 `42725 / 49140 MiB`
+  - util 约 `60%`
+- `gpu4`:
+  - 未被使用
+
+这说明当前训练仍稳定跑在 `gpu6,7`，没有误用坏卡 `gpu4`。
+
+### 当前 checkpoint 落盘状态
+
+重新检查本地目录时，checkpoint 仍只有：
+
+- `step-004600`
+- `step-004800`
+
+并且：
+
+- `step-004800/training_state.pt` 中 `global_step = 4800`
+
+因此当前结论是：
+
+- W&B 已继续往前写
+- 但本地尚未出现新的 `step-005000`
+- 暂时还在等待下一次保存点真正落盘
+
+### 当前 W&B 最新摘要
+
+latest summary 已更新到：
+
+- `_step = 4875`
+
+当前指标：
+
+- `train/loss_total = 0.04916`
+- `train/loss_track_aux = 0.07754`
+- `train/loss_box_aux = 0.34467`
+- `train/loss_depth_aux = 0.06936`
+- `train/object_context_abs_max = 0.41952`
+- `train/object_latent_tokens_abs_max = 4.57976`
+- `train/grad_norm = 0.09256`
+- `train/grad_abs_max = 0.05000`
+
+相对上一轮 `_step = 4818`：
+
+- `loss_track_aux` 有一轮 batch 级抬升
+- `loss_box_aux` 反而回落
+- `loss_depth_aux` 有抬升但仍不算异常
+- `grad_norm` 继续处在较低位置
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 有轻微上扬
+
+当前判断：
+
+- 这依然更像正常 batch 波动，而不是发散
+- 目前没有看到 `nan/inf`
+- 也没有看到梯度爆炸迹象
+
+### 磁盘状态
+
+本轮 `/data` 空间仍为：
+
+- `5.1G available`
+
+判断：
+
+- checkpoint 轮换暂时还能维持训练继续前进
+- 当前最现实的风险仍然是磁盘，而不是数值稳定性
+
+### 2026-06-26 00:33 UTC 巡检补充：为什么还没有 `step-005000`
+
+这轮再次检查后，训练状态是：
+
+- 训练 launcher 仍存活
+- `accelerate launch` 仍存活
+- 两个 `train_v_newtrain.py` worker 仍存活
+- `gpu6,7` 仍在占用显存
+- `gpu4` 仍未被使用
+
+当前 W&B latest summary 已到：
+
+- `_step = 4900`
+
+对应数值：
+
+- `train/loss_total = 0.04340`
+- `train/loss_track_aux = 0.06921`
+- `train/loss_box_aux = 0.28730`
+- `train/loss_depth_aux = 0.07746`
+- `train/object_context_abs_max = 0.41961`
+- `train/object_latent_tokens_abs_max = 4.56450`
+- `train/grad_norm = 1.22304`
+- `train/grad_abs_max = 0.29627`
+
+本地 checkpoint 目录仍只有：
+
+- `step-004600`
+- `step-004800`
+
+因此这一轮的结论很明确：
+
+- 还没有出现 `step-005000`，不是保存逻辑坏了
+- 而是训练目前只推进到 `_step = 4900`
+- 按 `save_steps = 200`，下一次真正应该落盘的是 `step-005000`
+
+这一轮指标 interpretation：
+
+- `loss_total` 继续处在低位
+- `loss_box_aux` 进一步回落
+- `loss_depth_aux` 有所抬升，但还没有形成持续失控的证据
+- `grad_norm` 和 `grad_abs_max` 这一轮明显高于上一轮
+- 但目前仍更像 batch-level spike，而不是持续发散
+
+当前判断：
+
+- 训练仍在正常推进
+- 还没有发现需要立即 patch 代码的问题
+- 下一关键观察点依然是：
+  - `step-005000` 是否落盘
+  - 若落盘，checkpoint 轮换是否仍只保留 2 份
+  - 后续 `step-006000` 时验证是否继续正常触发
+
+### 2026-06-26 00:34 UTC 持续巡检
+
+这一轮重新确认：
+
+- 训练主进程仍存活
+- 两个 worker 仍存活
+- `gpu6,7` 继续承担训练
+- `gpu4` 仍未被使用
+- `/data` 仍约 `5.1G available`
+
+当前本地 checkpoint 依旧只有：
+
+- `step-004600`
+- `step-004800`
+
+W&B latest summary 已更新到：
+
+- `_step = 4931`
+
+当前数值：
+
+- `train/loss_total = 0.05021`
+- `train/loss_track_aux = 0.13748`
+- `train/loss_box_aux = 0.24279`
+- `train/loss_depth_aux = 0.12182`
+- `train/object_context_abs_max = 0.42296`
+- `train/object_latent_tokens_abs_max = 4.77232`
+- `train/grad_norm = 1.45357`
+- `train/grad_abs_max = 0.35545`
+
+相对上一轮 `_step = 4900`：
+
+- `loss_box_aux` 继续回落
+- `loss_track_aux` 明显抬升
+- `loss_depth_aux` 继续抬升
+- `grad_norm` / `grad_abs_max` 继续抬升
+- `object_context_abs_max` 变化不大
+- `object_latent_tokens_abs_max` 略有升高
+
+当前 interpretation：
+
+- 还没到 `step-005000`，因此没有新 checkpoint 落盘仍然正常
+- 最新几步在 `track/depth` 辅助项上出现了更明显的 batch-level 波动
+- 但当前仍没有 `nan/inf`
+- 也还没有证据显示进入持续发散
+
+验证侧状态：
+
+- test 目录里最新产物仍然是上一轮 `validation_smoke_assets23_runtime/ctx08/summary.json`
+- 当前没有新的 validation 触发痕迹
+- 这与当前尚未到新的验证触发点是一致的
+
+当前结论：
+
+- 继续训练，暂不改代码
+- 下一重点仍然是观察：
+  - `step-005000` 是否按时落盘
+  - 落盘后指标是否回落
+  - 若 `grad_norm` / `loss_depth_aux` 后续继续连续上扬，再考虑介入调整 loss 权重或排查 batch 分布
+
+### 2026-06-26 00:36 UTC 回落确认
+
+这一轮再次检查时：
+
+- 本地 checkpoint 仍只有 `step-004600` / `step-004800`
+- 训练进程仍然正常
+- `gpu6,7` 继续在跑
+- `gpu4` 仍未使用
+- validation 目录没有新的触发痕迹
+
+W&B latest summary 已推进到：
+
+- `_step = 4962`
+
+当前数值：
+
+- `train/loss_total = 0.04368`
+- `train/loss_track_aux = 0.02407`
+- `train/loss_box_aux = 0.37501`
+- `train/loss_depth_aux = 0.03767`
+- `train/object_context_abs_max = 0.38119`
+- `train/object_latent_tokens_abs_max = 4.56938`
+- `train/grad_norm = 0.31766`
+- `train/grad_abs_max = 0.07500`
+
+相对上一轮 `_step = 4931`：
+
+- `loss_track_aux` 大幅回落
+- `loss_depth_aux` 大幅回落
+- `grad_norm` / `grad_abs_max` 也明显回落
+- `loss_box_aux` 有回升，但仍属于正常 batch 波动范围
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 也回到了更稳定的带宽
+
+这说明：
+
+- 前一轮看到的 `track/depth/grad` 上扬，更像短时 batch spike
+- 当前没有形成持续发散趋势
+- 目前依然没有证据需要停训改代码
+
+补充说明：
+
+- `step-004800/training_state.pt` 中仍是 `global_step = 4800`
+- `epoch_id = 1`
+- `batch_in_epoch = 800`
+- 这只是说明最新已落盘 checkpoint 的状态，不能替代 W&B 的 live step
+
+当前判断更新为：
+
+- 数值面暂时重新回到稳定状态
+- 下一关键动作仍是等待 `step-005000` 真正落盘
+
+### 2026-06-26 00:38 UTC 关键里程碑：`step-005000` 已成功落盘
+
+这轮已确认：
+
+- 新 checkpoint：
+  - `step-005000`
+- 落盘时间：
+  - `checkpoint.safetensors` 约 `2026-06-26 00:37:31 UTC`
+  - `training_state.pt` 约 `2026-06-26 00:37:33 UTC`
+
+`step-005000/training_state.pt` 内状态为：
+
+- `global_step = 5000`
+- `epoch_id = 1`
+- `batch_in_epoch = 1000`
+
+当前 checkpoint 目录已变为：
+
+- `step-004800`
+- `step-005000`
+
+这说明：
+
+- `step-005000` 已完整写出
+- `--max_checkpoints_keep 2` 仍然正常工作
+- 旧的 `step-004600` 已被自动淘汰
+
+### 保存边界前后的 W&B 观察
+
+保存前一轮 latest summary：
+
+- `_step = 4997`
+- `train/loss_total = 0.12330`
+- `train/loss_track_aux = 0.04833`
+- `train/loss_box_aux = 0.57835`
+- `train/loss_depth_aux = 0.60630`
+- `train/object_context_abs_max = 0.42873`
+- `train/object_latent_tokens_abs_max = 4.73186`
+- `train/grad_norm = 0.90399`
+- `train/grad_abs_max = 0.22096`
+
+落盘后 latest summary：
+
+- `_step = 5006`
+- `train/loss_total = 0.04440`
+- `train/loss_track_aux = 0.02841`
+- `train/loss_box_aux = 0.38673`
+- `train/loss_depth_aux = 0.02884`
+- `train/object_context_abs_max = 0.38548`
+- `train/object_latent_tokens_abs_max = 4.63390`
+- `train/grad_norm = 1.20954`
+- `train/grad_abs_max = 0.29616`
+
+interpretation：
+
+- `4997` 处 `loss_depth_aux` 和 `loss_total` 明显偏高
+- 但 `5006` 时已经显著回落
+- 这再次支持之前的判断：
+  - 近期看到的是 batch-level 波动
+  - 不是持续发散
+
+补充判断：
+
+- `grad_norm` 在 `5006` 仍不算低，但没有伴随 `loss_total` / `loss_depth_aux` 继续走坏
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 也维持在历史稳定区间内
+- 当前不需要停训或改代码
+
+### 当前状态结论
+
+- 训练继续正常推进
+- `gpu6,7` 正常承担训练
+- `gpu4` 仍未被使用
+- validation 目录目前还没有新的触发产物
+- 下一关键观察点转为：
+  - `step-005200` / `step-005400` 附近是否继续稳定
+  - 后续更重要的是 `step-006000` 落盘及其验证触发是否正常
+
+### 2026-06-26 00:40 UTC：`step-005000` 之后的延续状态
+
+本轮再查时：
+
+- 本地 checkpoint 仍是：
+  - `step-004800`
+  - `step-005000`
+- 暂时还没有 `step-005200`
+- 训练进程仍在
+- `gpu6,7` 继续承担训练
+- `gpu4` 没有被使用
+- `/data` 可用空间仍约 `5.1G`
+- validation 目录仍没有新的触发产物
+
+W&B latest summary 已到：
+
+- `_step = 5042`
+
+当前数值：
+
+- `train/loss_total = 0.04832`
+- `train/loss_track_aux = 0.10045`
+- `train/loss_box_aux = 0.31071`
+- `train/loss_depth_aux = 0.07201`
+- `train/object_context_abs_max = 0.43210`
+- `train/object_latent_tokens_abs_max = 4.76311`
+- `train/grad_norm = 1.20705`
+- `train/grad_abs_max = 0.29524`
+
+相对 `step-005000` 前的 `_step = 4997`：
+
+- `loss_total` 明显回落并稳定
+- `loss_depth_aux` 远低于 `4997` 那次 spike
+- `loss_box_aux` 也明显回落
+- `track_aux` 有波动，但还在可接受范围
+
+相对落盘后刚过边界的 `_step = 5006`：
+
+- `loss_total` 仍保持在正常低位
+- `loss_depth_aux` 虽有回升，但没有回到异常 spike
+- `grad_norm` / `grad_abs_max` 基本持平
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 继续处于历史稳定带宽
+
+当前判断：
+
+- `step-005000` 之后训练延续正常
+- 目前没有看到新的持续性发散证据
+- 暂时不需要调整 loss 权重，也不需要 patch 代码
+
+### 2026-06-26 00:41 UTC：`_step = 5072` 继续稳定
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-004800`
+  - `step-005000`
+- 训练仍在继续推进
+- `gpu6,7` 继续承担训练
+- `gpu4` 没有被使用
+- `/data` 可用空间仍约 `5.1G`
+
+W&B latest summary 已到：
+
+- `_step = 5072`
+
+当前数值：
+
+- `train/loss_total = 0.02919`
+- `train/loss_track_aux = 0.03204`
+- `train/loss_box_aux = 0.22819`
+- `train/loss_depth_aux = 0.03170`
+- `train/object_context_abs_max = 0.43304`
+- `train/object_latent_tokens_abs_max = 4.77889`
+- `train/grad_norm = 0.30850`
+- `train/grad_abs_max = 0.07403`
+
+相对上一轮 `_step = 5042`：
+
+- `loss_total` 进一步下降
+- `loss_track_aux` 明显回落
+- `loss_box_aux` 进一步回落
+- `loss_depth_aux` 继续回落
+- `grad_norm` / `grad_abs_max` 也明显回落
+
+interpretation：
+
+- `step-005000` 后这几轮不是“勉强稳定”，而是确实在重新回到更干净的数值区间
+- 当前最强的证据仍然支持：
+  - 没有持续发散
+  - 近期看到的是正常 batch 波动
+
+当前判断更新：
+
+- 训练状态良好
+- 暂时无需代码修补
+- 下一观察点继续看：
+  - `step-005200` 是否顺利落盘
+  - 再往后 `step-005400` / `step-006000` 是否继续稳定并正常触发验证
+
+### 2026-06-26 00:42 UTC：`_step = 5103`
+
+本轮再查时：
+
+- 本地 checkpoint 仍未新增，还是：
+  - `step-004800`
+  - `step-005000`
+- 训练进程继续存活
+- `gpu6,7` 使用正常
+- `gpu4` 没有被使用
+- validation 目录仍没有新触发产物
+
+W&B latest summary 已到：
+
+- `_step = 5103`
+
+当前数值：
+
+- `train/loss_total = 0.03391`
+- `train/loss_track_aux = 0.11508`
+- `train/loss_box_aux = 0.20439`
+- `train/loss_depth_aux = 0.01966`
+- `train/object_context_abs_max = 0.43356`
+- `train/object_latent_tokens_abs_max = 4.78825`
+- `train/grad_norm = 0.59938`
+- `train/grad_abs_max = 0.14666`
+
+相对上一轮 `_step = 5072`：
+
+- `loss_total` 仍处于较低区间
+- `loss_box_aux` 继续下降
+- `loss_depth_aux` 继续下降
+- `loss_track_aux` 有一轮上扬
+- `grad_norm` / `grad_abs_max` 也随之抬升，但仍明显低于此前异常 spike 段
+
+interpretation：
+
+- 目前更像 `track_aux` 对应 batch 的普通波动
+- 因为总 loss、box、depth 没有同步恶化
+- object 相关幅值指标也依旧稳定
+
+当前判断：
+
+- 训练仍然健康
+- 暂时不需要修改代码或调整 loss 权重
+- 继续等待 `step-005200` 实际落盘
+
+### 2026-06-26 00:44 UTC：`_step = 5128`
+
+本轮检查结果：
+
+- 本地 checkpoint 仍未新增，仍为：
+  - `step-004800`
+  - `step-005000`
+- 训练进程继续运行
+- `gpu6,7` 正常工作
+- `gpu4` 未被使用
+- validation 目录仍没有新的触发结果
+
+W&B latest summary 已到：
+
+- `_step = 5128`
+
+当前数值：
+
+- `train/loss_total = 0.02525`
+- `train/loss_track_aux = 0.04148`
+- `train/loss_box_aux = 0.18977`
+- `train/loss_depth_aux = 0.02129`
+- `train/object_context_abs_max = 0.43511`
+- `train/object_latent_tokens_abs_max = 4.82510`
+- `train/grad_norm = 0.92800`
+- `train/grad_abs_max = 0.22615`
+
+相对上一轮 `_step = 5103`：
+
+- `loss_total` 继续下降
+- `loss_track_aux` 回落
+- `loss_box_aux` 继续回落
+- `loss_depth_aux` 仍维持低位
+- `grad_norm` / `grad_abs_max` 有所抬升，但并未伴随 loss 恶化
+
+interpretation：
+
+- 当前更像健康训练中的正常梯度波动
+- 因为总 loss 和主要辅助项没有同步走坏
+- `object_context_abs_max` / `object_latent_tokens_abs_max` 仍在稳定带宽
+
+当前判断更新：
+
+- 训练继续保持良好状态
+- 暂时仍无需改代码
+- 下一关键点继续等待 `step-005200` 落盘
+
+### 2026-06-26 00:46 UTC：`_step = 5164`
+
+本轮再次检查时：
+
+- 本地 checkpoint 仍未新增，仍是：
+  - `step-004800`
+  - `step-005000`
+- 这与当前 live step 尚未达到 `5200` 是一致的
+- 训练进程仍存活
+- `gpu6,7` 仍用于训练
+- `gpu4` 没有被使用
+
+W&B latest summary 已到：
+
+- `_step = 5164`
+
+当前数值：
+
+- `train/loss_total = 0.05940`
+- `train/loss_track_aux = 0.02836`
+- `train/loss_box_aux = 0.55736`
+- `train/loss_depth_aux = 0.00828`
+- `train/object_context_abs_max = 0.39834`
+- `train/object_latent_tokens_abs_max = 4.84316`
+- `train/grad_norm = 0.31168`
+- `train/grad_abs_max = 0.07500`
+
+相对上一轮 `_step = 5128`：
+
+- `loss_total` 有回升
+- `loss_box_aux` 明显抬升
+- `loss_depth_aux` 反而进一步下降到很低
+- `grad_norm` / `grad_abs_max` 也处在较低位置
+- `track_aux` 继续回落
+
+interpretation：
+
+- 当前更像 `box_aux` 单项 supervision 的 batch-level 波动
+- 因为并没有看到：
+  - `depth_aux` 同步恶化
+  - 梯度同步放大
+  - 总体上下文幅值异常
+
+当前判断：
+
+- 还没有证据表明训练失稳
+- 暂时不需要调整代码或权重
+- 继续等待 `step-005200` 真正落盘
+
+### 2026-06-26 00:47 UTC：`_step = 5194`
+
+本轮检查时：
+
+- 本地 checkpoint 仍然没有 `step-005200`
+- 这与当前 live step 还未真正达到 `5200` 是一致的
+- 训练进程仍存活
+- `gpu6,7` 仍为训练卡
+- `gpu4` 未被使用
+
+W&B latest summary 已到：
+
+- `_step = 5194`
+
+当前数值：
+
+- `train/loss_total = 0.04112`
+- `train/loss_track_aux = 0.13238`
+- `train/loss_box_aux = 0.20828`
+- `train/loss_depth_aux = 0.07052`
+- `train/object_context_abs_max = 0.43899`
+- `train/object_latent_tokens_abs_max = 4.87799`
+- `train/grad_norm = 1.20149`
+- `train/grad_abs_max = 0.29676`
+
+相对上一轮 `_step = 5164`：
+
+- `loss_total` 回落
+- `loss_box_aux` 明显回落
+- `loss_track_aux` 抬升
+- `loss_depth_aux` 也有抬升
+- `grad_norm` / `grad_abs_max` 同步抬升
+
+interpretation：
+
+- 这更像另一轮 batch-level `track/depth` 波动
+- 目前还不能判定为持续异常，因为：
+  - `loss_total` 没有同步走坏
+  - `loss_box_aux` 反而回落
+  - object 幅值指标仍在稳定区间
+
+当前判断更新：
+
+- 训练仍在可接受范围内波动
+- 继续等待 `step-005200` 实际落盘再做下一轮判断
+
+### 2026-06-26 00:49 UTC 关键里程碑：`step-005200` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-005200`
+- 落盘时间：
+  - `checkpoint.safetensors` 约 `2026-06-26 00:47:25 UTC`
+  - `training_state.pt` 约 `2026-06-26 00:47:27 UTC`
+
+`step-005200/training_state.pt` 内状态为：
+
+- `global_step = 5200`
+- `epoch_id = 1`
+- `batch_in_epoch = 1200`
+
+当前 checkpoint 目录现为：
+
+- `step-005000`
+- `step-005200`
+
+这说明：
+
+- `step-005200` 已完整写出
+- `--max_checkpoints_keep 2` 继续正常工作
+- 旧的 `step-004800` 已被自动淘汰
+
+### 保存边界前后的 W&B 对比
+
+保存前最近一轮：
+
+- `_step = 5194`
+- `train/loss_total = 0.04112`
+- `train/loss_track_aux = 0.13238`
+- `train/loss_box_aux = 0.20828`
+- `train/loss_depth_aux = 0.07052`
+- `train/object_context_abs_max = 0.43899`
+- `train/object_latent_tokens_abs_max = 4.87799`
+- `train/grad_norm = 1.20149`
+- `train/grad_abs_max = 0.29676`
+
+落盘后 latest summary：
+
+- `_step = 5224`
+- `train/loss_total = 0.04881`
+- `train/loss_track_aux = 0.09368`
+- `train/loss_box_aux = 0.36338`
+- `train/loss_depth_aux = 0.03099`
+- `train/object_context_abs_max = 0.44174`
+- `train/object_latent_tokens_abs_max = 4.92085`
+- `train/grad_norm = 0.88511`
+- `train/grad_abs_max = 0.21883`
+
+interpretation：
+
+- `5194` 时较高的 `track/depth/grad` 在 `5224` 时已经明显回落
+- `loss_box_aux` 有回升，但仍属于单项 batch 波动可以解释的范围
+- `loss_total` 仍在正常低位
+
+当前判断更新：
+
+- `step-005200` 边界再次证明训练能稳定跨过保存点
+- 目前仍没有证据需要停训或 patch 代码
+- 下一关键观察点转为：
+  - `step-005400` 是否正常落盘
+  - 更后面的 `step-006000` 是否落盘并正常触发 validation
+
+### 2026-06-26 00:51 UTC：`_step = 5265`
+
+本轮再次检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005000`
+  - `step-005200`
+- 暂时还没有 `step-005400`
+- 训练进程仍在继续
+- `gpu6,7` 继续承担训练
+- validation 目录仍未出现新的触发产物
+
+W&B latest summary 已到：
+
+- `_step = 5265`
+
+当前数值：
+
+- `train/loss_total = 0.03725`
+- `train/loss_track_aux = 0.06686`
+- `train/loss_box_aux = 0.27378`
+- `train/loss_depth_aux = 0.03185`
+- `train/object_context_abs_max = 0.44322`
+- `train/object_latent_tokens_abs_max = 4.98484`
+- `train/grad_norm = 0.88337`
+- `train/grad_abs_max = 0.21866`
+
+相对上一轮 `_step = 5224`：
+
+- `loss_total` 继续保持在低位
+- `loss_track_aux` 小幅回落
+- `loss_box_aux` 有一轮回升，但仍在正常波动范围
+- `loss_depth_aux` 基本稳定
+- `grad_norm` / `grad_abs_max` 基本持平
+
+interpretation：
+
+- `step-005200` 之后训练延续稳定
+- 当前没有看到新的异常趋势
+- object 幅值指标虽略有上行，但仍未超出此前稳定带宽
+
+当前判断：
+
+- 继续训练
+- 暂时无需改代码
+- 下一观察重点继续放在 `step-005400` 落盘，以及后续 `step-006000` validation
+
+### 2026-06-26 00:52 UTC：`_step = 5300`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005000`
+  - `step-005200`
+- 暂时还没有 `step-005400`
+- validation 目录仍没有新的触发产物
+
+W&B latest summary 已到：
+
+- `_step = 5300`
+
+当前数值：
+
+- `train/loss_total = 0.04361`
+- `train/loss_track_aux = 0.08769`
+- `train/loss_box_aux = 0.33563`
+- `train/loss_depth_aux = 0.01279`
+- `train/object_context_abs_max = 0.44492`
+- `train/object_latent_tokens_abs_max = 4.97469`
+- `train/grad_norm = 0.59540`
+- `train/grad_abs_max = 0.14670`
+
+相对上一轮 `_step = 5265`：
+
+- `loss_total` 有小幅回升，但仍在低位
+- `loss_track_aux` 轻微上扬
+- `loss_box_aux` 也有回升
+- `loss_depth_aux` 继续保持很低
+- `grad_norm` / `grad_abs_max` 反而回落
+
+interpretation：
+
+- 当前仍是正常 batch 波动
+- 没有看到“loss 上升且梯度同步失控”的组合信号
+- object 幅值指标继续在可接受区间
+
+当前判断更新：
+
+- 训练继续稳定推进
+- 暂时不需要任何代码或配置介入
+- 下一关键点继续等待 `step-005400` 落盘
+
+### 2026-06-26 00:54 UTC：`_step = 5336`
+
+本轮再查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005000`
+  - `step-005200`
+- 暂时还没有 `step-005400`
+- validation 目录仍未出现新产物
+
+W&B latest summary 已到：
+
+- `_step = 5336`
+
+当前数值：
+
+- `train/loss_total = 0.04998`
+- `train/loss_track_aux = 0.05833`
+- `train/loss_box_aux = 0.41529`
+- `train/loss_depth_aux = 0.02620`
+- `train/object_context_abs_max = 0.44947`
+- `train/object_latent_tokens_abs_max = 5.04433`
+- `train/grad_norm = 0.87646`
+- `train/grad_abs_max = 0.21818`
+
+相对上一轮 `_step = 5300`：
+
+- `loss_total` 有小幅回升
+- `loss_track_aux` 回落
+- `loss_box_aux` 进一步抬升
+- `loss_depth_aux` 仍然低位
+- `grad_norm` / `grad_abs_max` 有所抬升但并不异常
+
+interpretation：
+
+- 目前仍更像 box supervision 主导的 batch-level 波动
+- 没有看到 total loss、depth、grad 一起恶化的异常组合
+- object 幅值指标继续缓慢上升，但仍未越过当前经验稳定带宽
+
+当前判断：
+
+- 训练仍在稳定区间内
+- 暂时无需改代码
+- 继续等待 `step-005400` 实际落盘
+
+### 2026-06-26 00:56 UTC：`_step = 5366`
+
+本轮再查时：
+
+- 本地 checkpoint 仍未出现 `step-005400`
+- 这与当前 live step 仍未跨过 `5400` 是一致的
+- 训练进程仍在
+- `gpu6,7` 仍作为训练卡使用
+
+W&B latest summary 已到：
+
+- `_step = 5366`
+
+当前数值：
+
+- `train/loss_total = 0.04594`
+- `train/loss_track_aux = 0.15984`
+- `train/loss_box_aux = 0.20398`
+- `train/loss_depth_aux = 0.09559`
+- `train/object_context_abs_max = 0.44693`
+- `train/object_latent_tokens_abs_max = 5.00883`
+- `train/grad_norm = 0.07702`
+- `train/grad_abs_max = 0.02500`
+
+相对上一轮 `_step = 5336`：
+
+- `loss_track_aux` 明显抬升
+- `loss_depth_aux` 也明显抬升
+- `loss_box_aux` 反而回落
+- `grad_norm` / `grad_abs_max` 显著下降
+
+interpretation：
+
+- 这轮现象值得继续盯，因为它不是典型的“loss 升高伴随梯度放大”
+- 更像某个 batch 上监督误差偏大，但实际回传梯度被限制在较低水平
+- 目前还不能单凭这一点判断异常，因为：
+  - `loss_total` 仍没有明显失控
+  - `box_aux` 没有同步恶化
+  - object 幅值指标仍在稳定带宽
+
+当前判断更新：
+
+- 继续观察，不急于介入
+- 下一关键点仍是 `step-005400` 真正落盘后的数值表现
+
+### 2026-06-26 00:58 UTC 关键里程碑：`step-005400` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-005400`
+- 落盘时间：
+  - `checkpoint.safetensors` 约 `2026-06-26 00:57:18 UTC`
+  - `training_state.pt` 约 `2026-06-26 00:57:19 UTC`
+
+`step-005400/training_state.pt` 内状态为：
+
+- `global_step = 5400`
+- `epoch_id = 1`
+- `batch_in_epoch = 1400`
+
+当前 checkpoint 目录现为：
+
+- `step-005200`
+- `step-005400`
+
+这说明：
+
+- `step-005400` 已完整写出
+- `--max_checkpoints_keep 2` 继续正常工作
+- 旧的 `step-005000` 已被自动淘汰
+
+### 保存边界前后的 W&B 对比
+
+保存前最近一轮：
+
+- `_step = 5366`
+- `train/loss_total = 0.04594`
+- `train/loss_track_aux = 0.15984`
+- `train/loss_box_aux = 0.20398`
+- `train/loss_depth_aux = 0.09559`
+- `train/object_context_abs_max = 0.44693`
+- `train/object_latent_tokens_abs_max = 5.00883`
+- `train/grad_norm = 0.07702`
+- `train/grad_abs_max = 0.02500`
+
+落盘后 latest summary：
+
+- `_step = 5406`
+- `train/loss_total = 0.05125`
+- `train/loss_track_aux = 0.05912`
+- `train/loss_box_aux = 0.42345`
+- `train/loss_depth_aux = 0.02993`
+- `train/object_context_abs_max = 0.45089`
+- `train/object_latent_tokens_abs_max = 5.06606`
+- `train/grad_norm = 0.30890`
+- `train/grad_abs_max = 0.07394`
+
+interpretation：
+
+- `5366` 时偏高的 `track/depth` 在 `5406` 已明显回落
+- `loss_box_aux` 有回升，但仍更像单项 batch 波动
+- `loss_total` 仍在可接受低位
+- `grad_norm` / `grad_abs_max` 从极低值回到更正常区间
+
+当前判断更新：
+
+- `step-005400` 边界继续证明训练跨保存点稳定
+- 目前依然没有需要停训或 patch 代码的证据
+- 下一关键观察点转为：
+  - `step-005600` / `step-005800`
+  - 更重要的是 `step-006000` 是否落盘并触发 validation
+
+### 2026-06-26 01:00 UTC：`_step = 5447`
+
+本轮再查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005200`
+  - `step-005400`
+- 暂时还没有 `step-005600`
+- validation 目录仍未出现新产物
+
+W&B latest summary 已到：
+
+- `_step = 5447`
+
+当前数值：
+
+- `train/loss_total = 0.05872`
+- `train/loss_track_aux = 0.13579`
+- `train/loss_box_aux = 0.34588`
+- `train/loss_depth_aux = 0.10550`
+- `train/object_context_abs_max = 0.45263`
+- `train/object_latent_tokens_abs_max = 5.11363`
+- `train/grad_norm = 0.30726`
+- `train/grad_abs_max = 0.07500`
+
+相对上一轮 `_step = 5406`：
+
+- `loss_total` 有回升
+- `loss_track_aux` 明显抬升
+- `loss_depth_aux` 也明显抬升
+- `loss_box_aux` 小幅回落
+- `grad_norm` / `grad_abs_max` 维持在较低水平
+
+interpretation：
+
+- 这和之前若干次看到的模式一致：
+  - 某些辅助项会在单个 batch 上偏高
+  - 但没有伴随梯度失控
+  - 也没有把总 loss 拉到异常区间
+
+当前判断：
+
+- 仍然更像 batch-level 波动
+- 继续观察，不急于调整代码或 loss 权重
+- 下一关键点继续看 `step-005600` 和 `step-006000`
+
+### 2026-06-26 01:01 UTC：`_step = 5482`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005200`
+  - `step-005400`
+- 暂时还没有 `step-005600`
+- validation 目录仍无新触发结果
+
+W&B latest summary 已到：
+
+- `_step = 5482`
+
+当前数值：
+
+- `train/loss_total = 0.03827`
+- `train/loss_track_aux = 0.05595`
+- `train/loss_box_aux = 0.24699`
+- `train/loss_depth_aux = 0.07974`
+- `train/object_context_abs_max = 0.45042`
+- `train/object_latent_tokens_abs_max = 5.15155`
+- `train/grad_norm = 0.60486`
+- `train/grad_abs_max = 0.15103`
+
+相对上一轮 `_step = 5447`：
+
+- `loss_total` 回落
+- `loss_track_aux` 明显回落
+- `loss_box_aux` 也回落
+- `loss_depth_aux` 虽仍偏高，但较上一轮有所下降
+- `grad_norm` / `grad_abs_max` 回到更中性的区间
+
+interpretation：
+
+- 这再次支持“高点主要是 batch-level 波动”的判断
+- 当前没有证据显示训练进入持续恶化
+- object 幅值指标继续缓慢抬升，但仍在当前经验可接受区间
+
+当前判断：
+
+- 训练继续稳定推进
+- 暂时不需要任何代码或配置调整
+- 下一关键观察点仍是 `step-005600` / `step-005800` 和 `step-006000` validation
+
+### 2026-06-26 01:04 UTC：`_step = 5528`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005200`
+  - `step-005400`
+- 暂时还没有 `step-005600`
+- validation 目录仍没有新触发结果
+
+W&B latest summary 已到：
+
+- `_step = 5528`
+
+当前数值：
+
+- `train/loss_total = 0.04933`
+- `train/loss_track_aux = 0.08062`
+- `train/loss_box_aux = 0.34015`
+- `train/loss_depth_aux = 0.07250`
+- `train/object_context_abs_max = 0.45916`
+- `train/object_latent_tokens_abs_max = 5.17818`
+- `train/grad_norm = 1.27948`
+- `train/grad_abs_max = 0.31684`
+
+相对上一轮 `_step = 5482`：
+
+- `loss_total` 有回升
+- `loss_track_aux` 有回升
+- `loss_box_aux` 有回升
+- `loss_depth_aux` 也回升
+- `grad_norm` / `grad_abs_max` 明显抬升
+
+interpretation：
+
+- 这一轮需要继续盯，因为它出现了“辅助项与梯度同步上扬”
+- 但当前还没有把 `loss_total` 推到异常区间
+- object 幅值指标虽然继续上行，但仍未明显越界
+
+当前判断更新：
+
+- 训练仍未显示明确失稳
+- 但需要继续观察下一轮是否自然回落
+- 下一关键点是：
+  - `step-005600` 是否正常落盘
+  - 落盘后这些指标是否回到稳定区间
+
+### 2026-06-26 01:06 UTC：`_step = 5569`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005200`
+  - `step-005400`
+- 暂时还没有 `step-005600`
+- validation 目录仍无新产物
+
+W&B latest summary 已到：
+
+- `_step = 5569`
+
+当前数值：
+
+- `train/loss_total = 0.05963`
+- `train/loss_track_aux = 0.02851`
+- `train/loss_box_aux = 0.47574`
+- `train/loss_depth_aux = 0.09207`
+- `train/object_context_abs_max = 0.41463`
+- `train/object_latent_tokens_abs_max = 5.23210`
+- `train/grad_norm = 0.86443`
+- `train/grad_abs_max = 0.22113`
+
+相对上一轮 `_step = 5528`：
+
+- `loss_total` 有回升
+- `loss_track_aux` 明显回落
+- `loss_box_aux` 明显抬升
+- `loss_depth_aux` 仍偏高
+- `grad_norm` / `grad_abs_max` 回落
+
+interpretation：
+
+- 这更像 box/depth 主导的 batch-level 波动
+- 不像整体失控，因为梯度没有继续放大
+- `object_context_abs_max` 甚至回落了一些
+
+当前判断：
+
+- 继续观察，不急于修改代码
+- 下一关键点仍是 `step-005600` 实际落盘，以及落盘后数值是否回稳
+
+### 2026-06-26 01:08 UTC 关键里程碑：`step-005600` 已成功落盘
+
+这一轮已确认：
+
+- 新 checkpoint：
+  - `step-005600`
+- 落盘时间：
+  - `checkpoint.safetensors` 约 `2026-06-26 01:07:11 UTC`
+  - `training_state.pt` 约 `2026-06-26 01:07:12 UTC`
+
+`step-005600/training_state.pt` 内状态为：
+
+- `global_step = 5600`
+- `epoch_id = 1`
+- `batch_in_epoch = 1600`
+
+当前 checkpoint 目录现为：
+
+- `step-005400`
+- `step-005600`
+
+这说明：
+
+- `step-005600` 已完整写出
+- `--max_checkpoints_keep 2` 继续正常工作
+- 旧的 `step-005200` 已被自动淘汰
+
+### 保存边界前后的 W&B 对比
+
+保存前最近一轮：
+
+- `_step = 5569`
+- `train/loss_total = 0.05963`
+- `train/loss_track_aux = 0.02851`
+- `train/loss_box_aux = 0.47574`
+- `train/loss_depth_aux = 0.09207`
+- `train/object_context_abs_max = 0.41463`
+- `train/object_latent_tokens_abs_max = 5.23210`
+- `train/grad_norm = 0.86443`
+- `train/grad_abs_max = 0.22113`
+
+落盘后 latest summary：
+
+- `_step = 5608`
+- `train/loss_total = 0.07565`
+- `train/loss_track_aux = 0.08889`
+- `train/loss_box_aux = 0.65637`
+- `train/loss_depth_aux = 0.01126`
+- `train/object_context_abs_max = 0.42782`
+- `train/object_latent_tokens_abs_max = 5.38435`
+- `train/grad_norm = 1.21038`
+- `train/grad_abs_max = 0.30849`
+
+interpretation：
+
+- 这次 `step-005600` 边界没有出现统一方向的恶化
+- 更像是：
+  - `box_aux` 主导的单项偏高 batch
+  - `depth_aux` 同时回到很低
+  - 梯度有抬升，但仍未表现为全面失控
+
+当前判断更新：
+
+- 训练仍能稳定跨过保存点
+- 但 box-related 波动需要继续盯
+- 下一关键观察点转为：
+  - `step-005800`
+  - 更关键的 `step-006000` 落盘与 validation 触发
+
+### 2026-06-26 01:10 UTC：`_step = 5649`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005400`
+  - `step-005600`
+- 暂时还没有 `step-005800`
+- validation 目录仍无新触发结果
+
+W&B latest summary 已到：
+
+- `_step = 5649`
+
+当前数值：
+
+- `train/loss_total = 0.01797`
+- `train/loss_track_aux = 0.03552`
+- `train/loss_box_aux = 0.09713`
+- `train/loss_depth_aux = 0.04706`
+- `train/object_context_abs_max = 0.46812`
+- `train/object_latent_tokens_abs_max = 5.37048`
+- `train/grad_norm = 0.09216`
+- `train/grad_abs_max = 0.05000`
+
+相对上一轮 `_step = 5608`：
+
+- `loss_total` 明显回落
+- `loss_track_aux` 明显回落
+- `loss_box_aux` 大幅回落
+- `loss_depth_aux` 虽仍有值，但整体更平稳
+- `grad_norm` / `grad_abs_max` 也明显回落
+
+interpretation：
+
+- 这再次支持“单个 batch 上的 box/depth 偏高并不意味着训练失稳”
+- 当前从数值上看重新回到了很干净的区间
+- 目前没有证据需要修改训练代码或 loss 配置
+
+当前判断：
+
+- 训练继续健康推进
+- 下一关键点继续看 `step-005800` 是否正常落盘
+- 更重要的是 `step-006000` 与 validation 触发
+
+### 2026-06-26 01:12 UTC：`_step = 5695`
+
+本轮检查时：
+
+- 本地 checkpoint 仍是：
+  - `step-005400`
+  - `step-005600`
+- 暂时还没有 `step-005800`
+- validation 目录仍无新触发结果
+
+W&B latest summary 已到：
+
+- `_step = 5695`
+
+当前数值：
+
+- `train/loss_total = 0.02323`
+- `train/loss_track_aux = 0.05409`
+- `train/loss_box_aux = 0.15516`
+- `train/loss_depth_aux = 0.02306`
+- `train/object_context_abs_max = 0.47265`
+- `train/object_latent_tokens_abs_max = 5.43412`
+- `train/grad_norm = 0.91976`
+- `train/grad_abs_max = 0.23470`
+
+相对上一轮 `_step = 5649`：
+
+- `loss_total` 继续回落
+- `loss_track_aux` 小幅回升但仍低位
+- `loss_box_aux` 明显回落
+- `loss_depth_aux` 明显回落
+- `grad_norm` / `grad_abs_max` 有回升，但没有带来 loss 恶化
+
+interpretation：
+
+- 这进一步说明近期看到的高点主要是 batch-level 波动
+- 训练总体仍保持在稳定区间
+- 当前没有需要介入修改代码的证据
+
+当前判断：
+
+- 继续训练
+- 下一关键点继续看 `step-005800`
+- 更关键的是 `step-006000` 是否落盘并触发 validation
+
+### 2026-06-26 01:14 UTC：`_step = 5740`
+
+本轮检查时：
+
+- 训练主进程仍存活：
+  - `run_train_v_newtrain_object_heads_only_gpu67.sh`
+  - `accelerate launch`
+  - 2 个 `train_v_newtrain.py` worker
+- 两个 worker 仍在高 CPU 占用运行，未见退出迹象
+- GPU 使用仍符合预期：
+  - `gpu6 = 42725 / 49140 MiB`
+  - `gpu7 = 42725 / 49140 MiB`
+  - `gpu4 = 1 / 49140 MiB`
+- 没有任何证据表明训练误用了 `gpu4`
+- 本地 checkpoint 目录此时仍只有：
+  - `step-005400`
+  - `step-005600`
+- `step-005600` 文件时间仍为：
+  - `checkpoint.safetensors`: `2026-06-26 01:07:11 UTC`
+  - `training_state.pt`: `2026-06-26 01:07:12 UTC`
+- validation 目录暂无新一轮产物；目前最新仍是更早前 `step-004000` 对应的 smoke 验证结果
+- `/data` 剩余空间仍只有约 `5.1G`，这是当前最明显的运行风险
+
+W&B latest summary：
+
+- `_step = 5740`
+
+当前数值：
+
+- `train/loss_total = 0.04039`
+- `train/loss_track_aux = 0.05873`
+- `train/loss_box_aux = 0.28470`
+- `train/loss_depth_aux = 0.06046`
+- `train/object_context_abs_max = 0.47394`
+- `train/object_latent_tokens_abs_max = 5.45538`
+- `train/grad_norm = 0.61292`
+- `train/grad_abs_max = 0.15586`
+
+相对上一轮 `_step = 5695`：
+
+- `loss_total` 有回升
+- `loss_track_aux` 小幅回升
+- `loss_box_aux` 回升较明显
+- `loss_depth_aux` 也有回升
+- `grad_norm` / `grad_abs_max` 处于中等水平，没有出现异常爆炸
+
+interpretation：
+
+- 当前依然更像是 batch-level 波动，不是持续性发散
+- `object_context_abs_max` 与 `object_latent_tokens_abs_max` 仍在之前缓慢上升但可接受的带宽内
+- 目前最需要继续盯的是：
+  - `step-005800` 是否正常落盘
+  - `/data` 磁盘空间是否导致 checkpoint 落盘延迟或失败
+  - `step-006000` 是否触发 validation
+
+当前判断：
+
+- 训练仍在推进，没有 runtime error 迹象
+- 暂不需要修改代码
+- 继续监控 checkpoint 与 validation 落盘情况
