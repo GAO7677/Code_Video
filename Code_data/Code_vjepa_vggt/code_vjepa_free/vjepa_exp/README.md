@@ -29,10 +29,13 @@ Suggested layout for outputs:
 Current scripts:
 
 - `baseline_plan.py`
-  Writes a TI2V experiment manifest including prompts, seeds, image paths,
-  output paths, and shared Wan inference arguments.
+  Writes the original vjepa_exp TI2V manifest format:
+  prompts, seeds, image paths, output paths, and shared Wan inference args.
 - `generate_wan_baseline.py`
-  Loads WanTI2V once and generates baseline videos for all cases in a manifest.
+  Keeps the existing vjepa_exp manifest input format, but swaps the underlying
+  base model execution to the same runtime used by
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py`,
+  via `code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime`.
 - `extract_vjepa_features.py`
   Extracts per-video multi-layer V-JEPA features and simple derived signals.
 - `run_manifest_extract.py`
@@ -52,9 +55,11 @@ Environment notes:
 
 - Wan generation should run in the `wan` environment.
 - V-JEPA extraction should run in the `vjepa2` environment.
-- The current scripts assume the local Wan repo at
-  `/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main_copy`
-  and the local V-JEPA repo at
+- The baseline runner now uses the official-style runtime under
+  `/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main`
+  through `code_vjepa_vggt.AAAinfer`, while preserving the original
+  `vjepa_exp` manifest input structure.
+- V-JEPA extraction assumes the local repo at
   `/home/gaoya/Code_Video/vjepa2-main`.
 
 Notes:

@@ -36,22 +36,57 @@ class BaselineCase:
     case_id: str
     prompt: str
     seed: int
+    image_path: str
     source_video: str
-    input_video: str
-    input_image: str
-    input_caption: str
     run_dir: str
-    input_json: str
-    output_video: str
+    video_path: str
+    prompt_path: str
+    seed_path: str
+    image_path_txt: str
+
+
+def build_cases(
+    run_name: str,
+    seeds: list[int],
+    prompts: list[str],
+    image_paths: list[Path],
+    source_videos: list[Path],
+    output_root: Path,
+) -> list[BaselineCase]:
+    run_dir = output_root / run_name
+    cases: list[BaselineCase] = []
+    if not image_paths:
+        raise ValueError("At least one image path is required for TI2V baseline generation.")
+
+    for prompt_idx, prompt in enumerate(prompts):
+        image_path = image_paths[prompt_idx % len(image_paths)].expanduser().resolve()
+        source_video = source_videos[prompt_idx % len(source_videos)].expanduser().resolve()
+        for seed in seeds:
+            case_id = f"p{prompt_idx:02d}_s{seed}"
+            case_dir = run_dir / case_id
+            cases.append(
+                BaselineCase(
+                    case_id=case_id,
+                    prompt=prompt,
+                    seed=seed,
+                    image_path=str(image_path),
+                    source_video=str(source_video),
+                    run_dir=str(case_dir),
+                    video_path=str(case_dir / "video.mp4"),
+                    prompt_path=str(case_dir / "prompt.txt"),
+                    seed_path=str(case_dir / "seed.txt"),
+                    image_path_txt=str(case_dir / "image_path.txt"),
+                )
+            )
+    return cases
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create Wan TI2V baseline inputs compatible with AAAinfer/wanti2v.py.")
+    parser = argparse.ArgumentParser(description="Create a Wan TI2V baseline experiment manifest.")
     parser.add_argument("--run-name", required=True)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--manifest-name", default="manifest.json")
-    parser.add_argument("--input-list-name", default="input_list.txt")
     parser.add_argument("--image-path", dest="image_paths", action="append", type=Path, default=None)
     parser.add_argument("--image-list", type=Path, default=None)
     parser.add_argument("--source-video", dest="source_videos", action="append", type=Path, default=None)
@@ -86,42 +121,6 @@ def _resolve_paths(cli_paths: list[Path] | None, list_path: Path | None, default
     return resolved
 
 
-def build_cases(
-    *,
-    run_name: str,
-    seeds: list[int],
-    prompts: list[str],
-    image_paths: list[Path],
-    source_videos: list[Path],
-    output_root: Path,
-) -> list[BaselineCase]:
-    run_root = output_root / run_name
-    cases: list[BaselineCase] = []
-    for prompt_idx, prompt in enumerate(prompts):
-        image_path = image_paths[prompt_idx % len(image_paths)].expanduser().resolve()
-        source_video = source_videos[prompt_idx % len(source_videos)].expanduser().resolve()
-        for seed in seeds:
-            case_id = f"p{prompt_idx:02d}_s{seed}"
-            case_dir = run_root / case_id
-            input_json = case_dir / f"{case_id}.json"
-            output_video = case_dir / "video.mp4"
-            cases.append(
-                BaselineCase(
-                    case_id=case_id,
-                    prompt=prompt,
-                    seed=seed,
-                    source_video=str(source_video),
-                    input_video=str(source_video),
-                    input_image=str(image_path),
-                    input_caption=prompt,
-                    run_dir=str(case_dir),
-                    input_json=str(input_json),
-                    output_video=str(output_video),
-                )
-            )
-    return cases
-
-
 def main() -> None:
     args = parse_args()
     output_root = args.output_root.expanduser().resolve()
@@ -138,31 +137,18 @@ def main() -> None:
         source_videos=source_videos,
         output_root=output_root,
     )
-
-    input_list_path = run_root / args.input_list_name
-    with input_list_path.open("w", encoding="utf-8") as list_handle:
-        for case in cases:
-            case_dir = Path(case.run_dir)
-            case_dir.mkdir(parents=True, exist_ok=True)
-            input_json_path = Path(case.input_json)
-            payload = {
-                "source_video": case.source_video,
-                "input_video": case.input_video,
-                "input_image": case.input_image,
-                "input_caption": case.input_caption,
-                "seed": case.seed,
-                "case_id": case.case_id,
-                "expected_output_video": case.output_video,
-            }
-            input_json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-            list_handle.write(str(input_json_path) + "\n")
+    for case in cases:
+        case_dir = Path(case.run_dir)
+        case_dir.mkdir(parents=True, exist_ok=True)
+        Path(case.prompt_path).write_text(case.prompt + "\n")
+        Path(case.seed_path).write_text(str(case.seed) + "\n")
+        Path(case.image_path_txt).write_text(case.image_path + "\n")
 
     payload = {
         "run_name": args.run_name,
         "wan_root": str(args.wan_root.expanduser().resolve()),
         "backend": args.backend,
-        "input_list": str(input_list_path),
-        "output_root": str(run_root),
+        "output_root": str(output_root),
         "wan_args": {
             "size": args.size,
             "frame_num": args.frame_num,

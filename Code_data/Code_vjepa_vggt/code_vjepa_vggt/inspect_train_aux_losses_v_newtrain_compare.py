@@ -128,6 +128,69 @@ def _write_scalar_panel(
     return path
 
 
+def _depth_rows_to_html(
+    pred_depth_rows: list[list[float | None]] | None,
+    gt_depth_rows: list[list[float | None]] | None,
+    depth_loss_rows: list[list[float | None]] | None,
+) -> str:
+    if pred_depth_rows is None or gt_depth_rows is None or depth_loss_rows is None:
+        return ""
+    num_frames = min(len(pred_depth_rows), len(gt_depth_rows), len(depth_loss_rows))
+    if num_frames <= 0:
+        return ""
+
+    def _fmt(value: float | None) -> str:
+        if value is None:
+            return "-"
+        return f"{float(value):.4f}"
+
+    frame_blocks: list[str] = []
+    for frame_idx in range(num_frames):
+        pred_row = pred_depth_rows[frame_idx]
+        gt_row = gt_depth_rows[frame_idx]
+        loss_row = depth_loss_rows[frame_idx]
+        num_objects = min(len(pred_row), len(gt_row), len(loss_row))
+        row_cells = "".join(
+            f"""
+            <tr>
+              <td>obj{obj_idx}</td>
+              <td>{_fmt(gt_row[obj_idx])}</td>
+              <td>{_fmt(pred_row[obj_idx])}</td>
+              <td>{_fmt(loss_row[obj_idx])}</td>
+            </tr>
+"""
+            for obj_idx in range(num_objects)
+        )
+        frame_blocks.append(
+            f"""
+          <div class="depth-frame-card">
+            <h5>frame {frame_idx}</h5>
+            <table class="depth-table">
+              <thead>
+                <tr>
+                  <th>slot</th>
+                  <th>gt</th>
+                  <th>pred</th>
+                  <th>|diff|</th>
+                </tr>
+              </thead>
+              <tbody>
+                {row_cells}
+              </tbody>
+            </table>
+          </div>
+"""
+        )
+    return f"""
+        <section class="depth-values">
+          <h4>Depth Pred vs GT On Loss Time Axis</h4>
+          <div class="depth-frame-grid">
+            {''.join(frame_blocks)}
+          </div>
+        </section>
+"""
+
+
 def _resolve_checkpoints(args: argparse.Namespace) -> list[Path]:
     if args.checkpoints:
         return [Path(path).expanduser().resolve() for path in args.checkpoints]
@@ -1042,10 +1105,27 @@ def _run_case_for_checkpoint(
 
     depth_sheet_rel = None
     depth_overlay_sheet_rel = None
+    depth_pred_rows = None
+    depth_gt_rows = None
+    depth_loss_rows = None
     if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
         gt_depth_np = gt_depth[0, ..., 0].detach().float().cpu().numpy()
         pred_depth_np = pred_depth[0, ..., 0].detach().float().cpu().numpy()
         gt_depth_valid_np = gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5
+        depth_pred_rows = []
+        depth_gt_rows = []
+        for frame_idx in range(int(pred_depth_np.shape[0])):
+            pred_row: list[float | None] = []
+            gt_row: list[float | None] = []
+            for obj_idx in range(int(pred_depth_np.shape[1])):
+                if bool(gt_depth_valid_np[frame_idx, obj_idx]):
+                    gt_row.append(float(gt_depth_np[frame_idx, obj_idx]))
+                    pred_row.append(float(pred_depth_np[frame_idx, obj_idx]))
+                else:
+                    gt_row.append(None)
+                    pred_row.append(None)
+            depth_gt_rows.append(gt_row)
+            depth_pred_rows.append(pred_row)
         if export_aux_visuals:
             depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
             depth_sheet_rel = _export_sheet(
@@ -1082,6 +1162,15 @@ def _run_case_for_checkpoint(
             gt_depth=gt_depth[0, ..., 0].detach().float().cpu().numpy(),
             gt_depth_valid=gt_depth_valid[0, ..., 0].detach().cpu().numpy() > 0.5,
         )
+        depth_loss_rows = []
+        for frame_idx in range(int(pred_depth_np.shape[0])):
+            loss_row: list[float | None] = []
+            for obj_idx in range(int(pred_depth_np.shape[1])):
+                if bool(gt_depth_valid_np[frame_idx, obj_idx]):
+                    loss_row.append(float(abs(pred_depth_np[frame_idx, obj_idx] - gt_depth_np[frame_idx, obj_idx])))
+                else:
+                    loss_row.append(None)
+            depth_loss_rows.append(loss_row)
 
     track_overlay_metrics = [
         [
@@ -1265,6 +1354,9 @@ def _run_case_for_checkpoint(
         "depth_panel_sheet": depth_sheet_rel,
         "depth_overlay_sheet": depth_overlay_sheet_rel,
         "depth_loss_sheet": depth_scalar_rel,
+        "depth_pred_rows": depth_pred_rows,
+        "depth_gt_rows": depth_gt_rows,
+        "depth_loss_rows": depth_loss_rows,
         "metrics": metrics,
         "shapes": {
             "gt_track_summary": list(gt_track_summary.shape),
@@ -1352,6 +1444,11 @@ def _build_report(
         checkpoint_cards = []
         for item in case_result["checkpoints"]:
             metrics = item["metrics"]
+            depth_value_block = _depth_rows_to_html(
+                item.get("depth_pred_rows"),
+                item.get("depth_gt_rows"),
+                item.get("depth_loss_rows"),
+            )
             metric_table = f"""
           <table class="metric-table">
             <tbody>
@@ -1411,6 +1508,7 @@ def _build_report(
           <p><b>Losses:</b> main={item['metrics']['train/loss_main']:.4f}, track_aux={item['metrics']['train/loss_track_aux']:.4f}, box_aux={item['metrics']['train/loss_box_aux']:.4f}, depth_aux={item['metrics']['train/loss_depth_aux']:.4f}</p>
           <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
           {visual_grid}
+          {depth_value_block}
           {metric_table}
         </article>
 """
@@ -1453,6 +1551,13 @@ def _build_report(
     .metric-table {{ margin-top: 12px; width: 100%; }}
     .metric-table th {{ width: 40%; background: #faf7ef; }}
     .metric-table td, .metric-table th {{ padding: 6px 8px; }}
+    .depth-values {{ margin-top: 14px; }}
+    .depth-frame-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }}
+    .depth-frame-card {{ border: 1px solid #ddd; background: #fcfbf8; padding: 8px; }}
+    .depth-frame-card h5 {{ margin: 0 0 6px 0; font-size: 13px; }}
+    .depth-table {{ width: 100%; font-size: 12px; border-collapse: collapse; }}
+    .depth-table th, .depth-table td {{ padding: 4px 6px; border: 1px solid #e3ddd0; }}
+    .depth-table th {{ background: #f7f2e8; }}
   </style>
 </head>
 <body>
