@@ -29,14 +29,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu", default="2")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--keep-depth-video", action="store_true")
     return parser.parse_args()
 
 
 def _infer_source_video(meta: dict, raw_root: Path) -> Path:
     sample_dir = Path(str(meta["sample_dir"]))
-    split = str(meta["split"])
-    rel = sample_dir.relative_to(raw_root / split)
-    return raw_root / split / rel / "source_video" / "context_video_8f.mp4"
+    if not sample_dir.is_dir():
+        raise FileNotFoundError(f"raw sample_dir not found: {sample_dir}")
+    for candidate_name in ("video.mp4", "source_video.mp4", "context_video.mp4"):
+        candidate = sample_dir / candidate_name
+        if candidate.is_file():
+            return candidate
+    nested = sample_dir / "source_video" / "context_video_8f.mp4"
+    if nested.is_file():
+        return nested
+    raise FileNotFoundError(f"no supported source video found under {sample_dir}")
 
 
 def _read_video_gray(path: Path) -> np.ndarray:
@@ -111,6 +121,14 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     meta_paths = sorted(split_root.glob("*.json"))
+    if int(args.num_shards) < 1:
+        raise ValueError(f"--num-shards must be >= 1, got {args.num_shards}")
+    if not (0 <= int(args.shard_index) < int(args.num_shards)):
+        raise ValueError(
+            f"--shard-index must satisfy 0 <= shard_index < num_shards, "
+            f"got shard_index={args.shard_index}, num_shards={args.num_shards}"
+        )
+    meta_paths = meta_paths[int(args.shard_index) :: int(args.num_shards)]
     if args.limit is not None:
         meta_paths = meta_paths[: max(int(args.limit), 0)]
 
@@ -152,6 +170,8 @@ def main() -> None:
             },
             cache_path,
         )
+        if tmp_depth_video.is_file() and not args.keep_depth_video:
+            tmp_depth_video.unlink()
         records.append({"meta_path": str(meta_path), "cache_path": str(cache_path), "status": "written"})
 
     with open(output_dir / "manifest.json", "w", encoding="utf-8") as f:

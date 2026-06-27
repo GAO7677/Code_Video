@@ -52,6 +52,7 @@ from code_vjepa_vggt.headonly_val_loss import (
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.utils.depth_anything_box_cache import load_depth_anything_box_cache
 from code_vjepa_vggt.utils.depth_anything_cache import load_depth_anything_cache
 from code_vjepa_vggt.utils.depth_target_branch import group_last, pool_depth_from_boxes_median
 from code_vjepa_vggt.utils.vggt_cache import VGGTDenseCache, load_vggt_cache
@@ -792,6 +793,24 @@ class WanTrainingModule(DiffusionTrainingModule):
                 raise RuntimeError(
                     "depth_target_source is set to Depth Anything, but depth_anything_cache_root is not configured"
                 )
+            box_cache = load_depth_anything_box_cache(sample, self.depth_anything_cache_root, allow_missing=True)
+            if box_cache is not None:
+                cached_framewise = box_cache.depth_boxes_framewise.unsqueeze(0).to(device=device, dtype=dtype)
+                if int(cached_framewise.shape[1]) != int(matched_gt_boxes.shape[1]):
+                    raise ValueError(
+                        f"Depth Anything box cache frame count {int(cached_framewise.shape[1])} does not match "
+                        f"context box frames {int(matched_gt_boxes.shape[1])} for sample {sample.get('video_path', '<unknown>')}"
+                    )
+                needed_objects = int(matched_gt_indices.max().item()) + 1
+                if int(cached_framewise.shape[2]) < needed_objects:
+                    raise ValueError(
+                        f"Depth Anything box cache object count {int(cached_framewise.shape[2])} is smaller than "
+                        f"required matched_gt_indices upper bound {needed_objects - 1} for sample "
+                        f"{sample.get('video_path', '<unknown>')}"
+                    )
+                gathered = self._gather_matched_gt_features(cached_framewise, matched_gt_indices)
+                return group_last(gathered, latent_frames)
+
             cache = load_depth_anything_cache(sample, self.depth_anything_cache_root, allow_missing=False)
             depth_frames = cache.depth_frames.unsqueeze(0).to(device=device, dtype=torch.float32)
             if int(depth_frames.shape[1]) != int(matched_gt_boxes.shape[1]):

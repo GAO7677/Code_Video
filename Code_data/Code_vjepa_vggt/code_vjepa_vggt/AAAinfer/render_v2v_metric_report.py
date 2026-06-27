@@ -31,8 +31,8 @@ class MetricDef:
 
 METRICS: tuple[MetricDef, ...] = (
     MetricDef("pdi_score", "PDI", False),
-    MetricDef("wmreward_similarity", "WMReward", True),
-    MetricDef("proxy_score", "Proxy", True),
+    MetricDef("wmreward_surprise", "WMReward Surprise", False),
+    MetricDef("proxy_score", "Proxy Score", True),
     MetricDef("videophy2_score", "VideoPhy2-PC", True),
     MetricDef("phyground_general_avg", "PhyGround", True),
     MetricDef("cosmos_reason1_score", "Cosmos-Reason1", True),
@@ -82,7 +82,7 @@ def to_float(value: Any) -> float | None:
 def extract_metric_values(payload: dict[str, Any]) -> dict[str, float | None]:
     return {
         "pdi_score": to_float(nested_get(payload, "pdi", "pdi_score")),
-        "wmreward_similarity": to_float(nested_get(payload, "wmreward", "similarity")),
+        "wmreward_surprise": to_float(nested_get(payload, "wmreward", "surprise")),
         "proxy_score": to_float(nested_get(payload, "proxy", "score")),
         "videophy2_score": to_float(nested_get(payload, "videophy2", "score")),
         "phyground_general_avg": to_float(nested_get(payload, "phyground", "general_avg")),
@@ -133,6 +133,14 @@ def fmt_ratio(numerator: int, denominator: int) -> str:
     if denominator <= 0:
         return "0/0"
     return f"{numerator}/{denominator}"
+
+
+def metric_direction_arrow(metric: MetricDef) -> str:
+    return "↑" if metric.higher_is_better else "↓"
+
+
+def metric_display_label(metric: MetricDef) -> str:
+    return f"{metric.label} {metric_direction_arrow(metric)}"
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -254,7 +262,7 @@ def render_line_charts(output_dir: Path, method_rows: list[dict[str, Any]]) -> l
                 fontsize=8,
             )
 
-        plt.title(f"{metric.label} by Method")
+        plt.title(f"{metric_display_label(metric)} by Method")
         plt.xlabel("Method")
         plt.ylabel(metric.label)
         plt.xticks(xs, labels, rotation=35, ha="right")
@@ -263,7 +271,7 @@ def render_line_charts(output_dir: Path, method_rows: list[dict[str, Any]]) -> l
         chart_path = charts_dir / f"{metric.key}.png"
         plt.savefig(chart_path, dpi=180)
         plt.close()
-        chart_rows.append({"metric": metric.label, "path": str(chart_path)})
+        chart_rows.append({"metric": metric_display_label(metric), "path": str(chart_path)})
 
     return chart_rows
 
@@ -295,7 +303,8 @@ def render_html(
         )
 
     metric_headers = "".join(
-        f"<th>{html.escape(metric.label)} Mean</th><th>{html.escape(metric.label)} Count</th>"
+        f"<th>{html.escape(metric_display_label(metric))} Mean</th>"
+        f"<th>{html.escape(metric_display_label(metric))} Count</th>"
         for metric in METRICS
     )
     method_table_rows = []
@@ -428,6 +437,7 @@ def render_html(
       <h1>V2V Metric Report</h1>
       <p>Result root: <span class="mono">{html.escape(str(result_root))}</span></p>
       <p>Output dir: <span class="mono">{html.escape(str(output_dir))}</span></p>
+      <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy Score is the compatibility score <span class="mono">exp(-error) ↑</span>.</p>
     </section>
 
     <section class="panel">

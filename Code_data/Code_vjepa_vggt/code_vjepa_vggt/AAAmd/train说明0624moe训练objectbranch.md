@@ -10083,3 +10083,111 @@ stdout 最新可见进度：
 
 - `--depth_target_source state`
 - `--depth_target_state_index 2`
+### 2026-06-27：Depth Anything depth GT 默认切到 compact box cache，停止使用 full-frame cache
+
+这次为了给新的 head-only fresh run 切换默认 depth supervision，先做了一个中间版本：
+
+- 训练默认 `depth_target_source=depth_anything_box`
+- 原本第一版 cache 思路是：
+  - 先对视频跑 Depth Anything
+  - 再把整帧 `depth_frames: [T,H,W]` 保存到 `*.depth_anything.pt`
+  - 训练时临时按 `context_boxes` 做 median pooling
+
+但实测后确认，这条链路不适合正式训练，原因有两个：
+
+- 空间完全不可接受
+  - 现网样本统计里，单个 full-frame `*.depth_anything.pt` 大约 `138MB`
+  - 对应全量 `train 3600 + val 450 = 4050` 个窗口，粗估会到 `~704GB`
+  - 这和当前 `/data` 空间约束不兼容
+- 对齐方式也不够干净
+  - raw `video.mp4` 往往是 `90` 帧
+  - 训练实际使用的是 `episodes_v1/*.npz` 里的窗口序列：
+    - `context_frames`: `8`
+    - `future_frames`: `16`
+  - 当前训练配置 `random_context_frames=False`
+  - 所以训练真正消费的是窗口前 `8` 帧 `context_frames`，而不是 raw 全视频时间轴
+
+因此已经把默认训练链路改成新的 compact cache 方案：
+
+- 新 cache 脚本：
+  - [cache_depth_anything_box_from_npz.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/cache_depth_anything_box_from_npz.py)
+- 新 cache 读取模块：
+  - [depth_anything_box_cache.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/utils/depth_anything_box_cache.py)
+- 训练侧：
+  - [train_v_newtrain.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py)
+  - 现在会优先读取 `*.depth_anything_box.pt`
+  - 只有在 compact cache 缺失时，才回退到旧的 `*.depth_anything.pt`
+
+新的 compact cache 具体做法：
+
+- 直接读取 `episodes_v1/*.npz`
+- 用 `context_frames: [8,3,144,256]` 写一个临时 `8` 帧视频
+- 对这个 `8` 帧 context 视频跑 Depth Anything
+- 对 `context_boxes: [8,N_obj,4]` 逐帧做 box 内 median pooling
+- 最终只保存训练真正需要的监督量：
+  - `depth_boxes_framewise: [8, N_obj, 1]`
+- 文件名：
+  - `sample_xxxxxx_wyyy.depth_anything_box.pt`
+
+实测结果：
+
+- smoke case：
+  - `sample_000001_w000.depth_anything_box.pt`
+  - 文件大小约 `2.5KB`
+  - shape 为 `(8, 6, 1)`
+- 按当前平均文件大小估算：
+  - 全量 `4050` 个窗口总大小约 `9.9MB`
+
+所以当前明确结论是：
+
+- 正式训练必须使用 compact `depth_anything_box` cache
+- 旧的 full-frame `*.depth_anything.pt` 不能再作为全量训练 cache 方案继续扩展
+
+### 2026-06-27：compact cache 当前运行状态
+
+当前已经清理掉旧的 full-frame cache，并在 `tmux train` 里启动了新的 compact cache 并行任务，严格避开 `gpu4`：
+
+- `train:da_box_train0`
+  - `gpu0`
+  - `train` split
+  - `num_shards=3`
+  - `shard_index=0`
+- `train:da_box_train1`
+  - `gpu2`
+  - `train` split
+  - `num_shards=3`
+  - `shard_index=1`
+- `train:da_box_train2`
+  - `gpu6`
+  - `train` split
+  - `num_shards=3`
+  - `shard_index=2`
+- `train:da_box_val`
+  - `gpu3`
+  - `val` split
+  - `num_shards=1`
+  - `shard_index=0`
+
+对应启动脚本：
+
+- [run_cache_depth_anything_box_train_gpu0.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_cache_depth_anything_box_train_gpu0.sh)
+- [run_cache_depth_anything_box_train_gpu2.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_cache_depth_anything_box_train_gpu2.sh)
+- [run_cache_depth_anything_box_train_gpu6.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_cache_depth_anything_box_train_gpu6.sh)
+- [run_cache_depth_anything_box_val_gpu3.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_cache_depth_anything_box_val_gpu3.sh)
+
+当前观察：
+
+- cache 正在持续增长
+- 当前已落盘的 `*.depth_anything_box.pt` 数量已经开始增加
+- `/data` 可用空间在清理旧 full-frame cache 后恢复到约 `55G`
+
+当前 operational decision：
+
+- 先继续补 compact cache
+- cache 足够后，再从新的 fresh run 脚本启动 head-only 训练：
+  - [run_train_v_newtrain_object_heads_only_depthanything_gpu67_fresh_500_val.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_depthanything_gpu67_fresh_500_val.sh)
+- 新 run 仍然使用：
+  - `gpu6,7`
+  - `save_steps=500`
+  - `headonly_val_loss_every_steps=500`
+  - `W&B name = pybullet0627_diffsynth_object_heads_only_depthanything_gpu67_fresh500_val`

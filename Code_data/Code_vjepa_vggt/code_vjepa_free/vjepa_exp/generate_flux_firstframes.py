@@ -39,8 +39,7 @@ DEFAULT_MODEL_ROOT = Path("/data/luoyang/ckpt/pretrained/models--black-forest-la
 DEFAULT_JSON_ROOT = Path("/data/gaoya/AAA_test_video/0626vjepa_free/testjsons")
 DEFAULT_NEGATIVE_PROMPT = ""
 WIDE_FRAME_SUFFIX = (
-    " Wide shot from a medium distance. Show the full scene context and keep all key objects fully visible "
-    "inside the frame. Leave some surrounding space around the subjects. Avoid close-up or zoomed-in composition."
+    " Wide shot. Full scene context. All key objects fully visible. Not a close-up."
 )
 
 
