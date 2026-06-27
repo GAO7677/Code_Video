@@ -13,7 +13,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v \
   --input-root /data/gaoya/AAA_test_video/0623/testjsons
 
-
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 '''
 from __future__ import annotations
 
@@ -85,6 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pdi-caption", default="ball")
     parser.add_argument("--flux-python", type=Path, default=FLUX_PYTHON, help=argparse.SUPPRESS)
     parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--flux-worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -274,8 +275,12 @@ def apply_payload_defaults(payload: dict[str, Any], *, candidate_video_path: Pat
     return payload
 
 
-def maybe_delegate_cosmos_reason1(args: argparse.Namespace) -> bool:
-    if args.metric != "cosmos_reason1" or args.cosmos_worker:
+def maybe_delegate_flux_metric(args: argparse.Namespace) -> bool:
+    if args.metric not in {"phyground", "cosmos_reason1"}:
+        return False
+    if args.flux_worker:
+        return False
+    if args.metric == "cosmos_reason1" and args.cosmos_worker:
         return False
 
     flux_python = args.flux_python.expanduser().resolve()
@@ -283,19 +288,23 @@ def maybe_delegate_cosmos_reason1(args: argparse.Namespace) -> bool:
         str(flux_python),
         str(Path(__file__).resolve()),
         "--metric",
-        "cosmos_reason1",
+        args.metric,
         "--result-root",
         str(args.result_root.expanduser().resolve()),
         "--input-root",
         str(args.input_root.expanduser().resolve()),
-        "--cosmos-worker",
+        "--flux-worker",
     ]
+    if args.metric == "cosmos_reason1":
+        cmd.append("--cosmos-worker")
     if args.output_summary is not None:
         cmd.extend(["--output-summary", str(args.output_summary.expanduser().resolve())])
     if args.overwrite:
         cmd.append("--overwrite")
     if args.dry_run:
         cmd.append("--dry-run")
+    if args.metric == "phyground" and args.phyground_general_only:
+        cmd.append("--phyground-general-only")
 
     env = os.environ.copy()
     pythonpath_entries = [str(ROOT), str(TRY0526_ROOT)]
@@ -305,7 +314,7 @@ def maybe_delegate_cosmos_reason1(args: argparse.Namespace) -> bool:
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["PYTHONNOUSERSITE"] = "1"
 
-    print(f"[cosmos:delegate] python={flux_python}")
+    print(f"[{args.metric}:delegate] python={flux_python}")
     subprocess.run(cmd, check=True, env=env, cwd=str(ROOT))
     return True
 
@@ -460,7 +469,7 @@ def write_summary(
 
 def main() -> None:
     args = parse_args()
-    if maybe_delegate_cosmos_reason1(args):
+    if maybe_delegate_flux_metric(args):
         return
     result_root = args.result_root.expanduser().resolve()
     input_root = args.input_root.expanduser().resolve()

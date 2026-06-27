@@ -9985,3 +9985,101 @@ stdout 最新可见进度：
 - 这条信息更像现有加载日志口径与 checkpoint 内容类型之间的不一致
 - 目前还没有证据表明这阻断了真实恢复或训练推进
 - 先继续让训练向 `step-004500` 推进，必要时再单独定位这条 LoRA key 统计日志
+
+### 2026-06-27：depth GT 默认切换为 `Depth Anything pooled GT`
+
+当前 `train_v_newtrain.py` 已新增一条独立的 depth target 分支：
+
+- `depth_target_source=depth_anything_box`
+
+这条分支不会覆盖旧的 `state GT` 代码，而是与旧逻辑并存：
+
+- `depth_target_source=depth_anything_box`
+  - 默认值
+  - 训练时优先从离线 cache 读取 `Depth Anything` 的 dense depth
+  - 再按当前训练已有的 matched GT box 做 box-median pooling
+  - 最后仍按原先 `latent_frames` 规则做 `group_last(...)`
+  - 得到与旧口径完全兼容的监督 shape：
+    - `[B, T_lat, O, 1]`
+- `depth_target_source=state`
+  - 保留旧逻辑
+  - 仍然从：
+    - `context_states[..., depth_target_state_index]`
+    构造 GT
+
+也就是说：
+
+- `depth_head` 的输出 shape 没变
+- `depth_aux_loss = L1(pred_depth, gt_depth)` 没变
+- 只是 `gt_depth` 的默认来源从 `state` 切到了 `Depth Anything pooled GT`
+
+新增代码位置：
+
+- 训练侧 cache loader：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/utils/depth_anything_cache.py`
+- 训练侧 pooled GT helper：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/utils/depth_target_branch.py`
+- 训练主逻辑接入：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py`
+
+当前默认新增参数：
+
+- `--depth_target_source depth_anything_box`
+- `--depth_anything_cache_root /data/gaoya/AAA_test_video/0623/train/train0624/depth_anything_cache`
+
+重要说明：
+
+- 这次默认切换不是“在线跑 Depth Anything”
+- 训练不会在每个 step 内动态跑 depth model
+- 必须先准备好离线 cache，否则训练会显式报错
+
+离线 cache 生成脚本已新增：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/cache_depth_anything_from_phys_state.py`
+
+当前 cache 文件命名规则：
+
+- `sample_xxx_wyyy.depth_anything.pt`
+
+当前 cache payload 至少包含：
+
+- `depth_frames`
+  - shape: `[T_ctx, H, W]`
+  - 当前实现中是归一化到 `[0,1]` 的灰度 depth
+- `frame_indices`
+- `source_video`
+- `q_low`
+- `q_high`
+
+训练端行为：
+
+- 读取 cache 后，用当前 matched GT boxes 做：
+  - `pool_depth_from_boxes_median(...)`
+- 然后做：
+  - `group_last(...)`
+- 得到最终 `gt_depth`
+
+当前已经同步改过的启动脚本：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67.sh`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_heads_only_gpu67_fresh_500_val.sh`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_v_newtrain_object_stage2_freeze_heads_gpu67_freshrun.sh`
+
+这些脚本现在都已显式传：
+
+- `--depth_target_source depth_anything_box`
+- `--depth_anything_cache_root /data/gaoya/AAA_test_video/0623/train/train0624/depth_anything_cache`
+
+当前风险和限制：
+
+- `Depth Anything` 是相对深度，不是物理绝对深度
+- 因此切换后的 `depth_aux` 数值尺度不应再直接按旧 `state GT` 的绝对大小理解
+- 更适合关注：
+  - 是否更稳定
+  - 是否更符合视觉近远关系
+  - 是否改善最终生成质量
+
+如果要恢复旧逻辑，可直接显式传：
+
+- `--depth_target_source state`
+- `--depth_target_state_index 2`

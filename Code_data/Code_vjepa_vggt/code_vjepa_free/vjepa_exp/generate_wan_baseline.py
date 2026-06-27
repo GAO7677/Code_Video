@@ -319,8 +319,13 @@ def run_single_case(
     output_video: Path,
 ) -> tuple[dict[str, Any], list[str]]:
     case_id = str(case["case_id"])
-    prompt = str(case["prompt"])
-    image_path = Path(str(case["image_path"])).expanduser().resolve()
+    prompt = str(case.get("input_video_prompt") or case.get("prompt") or "")
+    if not prompt:
+        raise ValueError(f"missing input_video_prompt/prompt for case {case_id}")
+    image_path_value = case.get("input_image") or case.get("image_path")
+    if not image_path_value:
+        raise ValueError(f"missing input_image/image_path for case {case_id}")
+    image_path = Path(str(image_path_value)).expanduser().resolve()
     seed = int(case.get("seed", args.seed))
     height, width = _parse_size(args.size)
 
@@ -329,7 +334,7 @@ def run_single_case(
     logs = [
         f"[case] case_id={case_id}",
         f"[case] input_image={image_path}",
-        f"[case] input_caption={prompt}",
+        f"[case] input_video_prompt={prompt}",
         f"[case] wan_root={args.wan_root}",
         f"[case] resolved_wan_root={pipe.resolved_wan_root}",
         f"[case] backend={args.backend}",
@@ -383,7 +388,7 @@ def run_single_case(
     result = {
         "case_id": case_id,
         "input_image": str(image_path),
-        "input_caption": prompt,
+        "input_video_prompt": prompt,
         "output_video": str(output_video),
         "method": output_video.parent.name,
         "seed": seed,

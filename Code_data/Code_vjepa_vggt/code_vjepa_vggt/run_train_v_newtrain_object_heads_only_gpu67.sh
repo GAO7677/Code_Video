@@ -97,6 +97,8 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --train_object_pooler \
   --train_object_aux_heads \
   --depth_target_state_index 2 \
+  --depth_target_source depth_anything_box \
+  --depth_anything_cache_root /data/gaoya/AAA_test_video/0623/train/train0624/depth_anything_cache \
   --validation_every_steps 2000 \
   --benchmark_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py \
   --validation_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_validation_vbench.py \

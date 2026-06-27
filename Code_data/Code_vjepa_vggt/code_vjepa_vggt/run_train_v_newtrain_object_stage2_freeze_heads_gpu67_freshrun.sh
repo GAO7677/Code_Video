@@ -61,6 +61,8 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --train_object_dit_branch \
   --freeze_non_object_trainables \
   --depth_target_state_index 2 \
+  --depth_target_source depth_anything_box \
+  --depth_anything_cache_root /data/gaoya/AAA_test_video/0623/train/train0624/depth_anything_cache \
   --headonly_val_loss_every_steps 500 \
   --headonly_val_loss_split val \
   --headonly_val_loss_num_batches 8 \

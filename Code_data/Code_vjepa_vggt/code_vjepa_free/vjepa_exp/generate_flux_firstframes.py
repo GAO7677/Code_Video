@@ -11,7 +11,7 @@ from diffusers import FluxKontextPipeline, FluxPipeline
 """
 Examples
 
-Generate first-frame images from `firstframe_caption`:
+Generate first-frame images from `input_image_prompt` / legacy `input_image_caption` / `firstframe_caption`:
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/flux/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_exp/generate_flux_firstframes.py \
@@ -19,27 +19,38 @@ CUDA_VISIBLE_DEVICES=5 \
     --output-root /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42_flux_firstframes \
     --cuda-visible-devices 5
 
-Generate and also write a new manifest with updated `image_path`:
+Generate and also write a new manifest with updated `input_image` fields:
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/flux/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_exp/generate_flux_firstframes.py \
     --manifest /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42/manifest.json \
     --output-root /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42_flux_firstframes \
+    --json-root /data/gaoya/AAA_test_video/0626vjepa_free/testjsons \
     --write-manifest /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42_flux_firstframes/manifest_with_firstframes.json \
     --cuda-visible-devices 5
+
+This script does not fix the random seed for image generation. It also writes one
+metadata json per sample under `--json-root`. The per-sample json schema uses:
+`input_image`, `input_image_prompt`, `input_image_model`,
+`input_image_negative_prompt`, and `input_video_prompt`.
 """
 
 DEFAULT_MODEL_ROOT = Path("/data/luoyang/ckpt/pretrained/models--black-forest-labs--FLUX.1-Kontext-dev")
-DEFAULT_NEGATIVE_PROMPT = (
-    "blurry, low quality, worst quality, noisy, distorted geometry, extra objects, "
-    "text, watermark, logo, cluttered background, oversaturated, deformed"
+DEFAULT_JSON_ROOT = Path("/data/gaoya/AAA_test_video/0626vjepa_free/testjsons")
+DEFAULT_NEGATIVE_PROMPT = ""
+WIDE_FRAME_SUFFIX = (
+    " Wide shot from a medium distance. Show the full scene context and keep all key objects fully visible "
+    "inside the frame. Leave some surrounding space around the subjects. Avoid close-up or zoomed-in composition."
 )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate first-frame images from manifest firstframe_caption using local FLUX T2I.")
+    parser = argparse.ArgumentParser(
+        description="Generate first-frame images from manifest input_image_prompt/firstframe_caption using local FLUX T2I."
+    )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--json-root", type=Path, default=DEFAULT_JSON_ROOT)
     parser.add_argument("--model-root", type=Path, default=DEFAULT_MODEL_ROOT)
     parser.add_argument("--cuda-visible-devices", default="0")
     parser.add_argument("--limit", type=int, default=None)
@@ -78,11 +89,50 @@ def resolve_output_image_path(output_root: Path, case_id: str) -> Path:
     return output_root / case_id / "firstframe_flux.png"
 
 
+def resolve_output_json_path(json_root: Path, case_id: str) -> Path:
+    return json_root / f"{case_id}.json"
+
+
+def get_case_prompt(case: dict) -> str:
+    prompt = case.get("input_image_prompt")
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt
+    prompt = case.get("input_image_caption")
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt
+    prompt = case.get("firstframe_caption")
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt
+    raise ValueError(
+        f"missing input_image_prompt/input_image_caption/firstframe_caption for case {case.get('case_id')}"
+    )
+
+
+def adapt_prompt_for_wide_framing(prompt: str) -> str:
+    text = str(prompt).strip()
+    if not text:
+        return text
+    lowered = text.lower()
+    if "avoid close-up" in lowered or "zoomed-in composition" in lowered:
+        return text
+    return text + WIDE_FRAME_SUFFIX
+
+
+def get_video_prompt(case: dict) -> str:
+    for key in ("input_video_prompt", "video_prompt", "prompt"):
+        value = case.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def main() -> None:
     args = parse_args()
     manifest_path = args.manifest.expanduser().resolve()
     output_root = args.output_root.expanduser().resolve()
+    json_root = args.json_root.expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    json_root.mkdir(parents=True, exist_ok=True)
 
     manifest = load_manifest(manifest_path)
     cases = manifest["cases"]
@@ -100,19 +150,23 @@ def main() -> None:
 
     for case in cases:
         case_id = str(case["case_id"])
-        prompt = case.get("firstframe_caption")
-        if not isinstance(prompt, str) or not prompt.strip():
-            raise ValueError(f"missing firstframe_caption for case {case_id}")
+        prompt = adapt_prompt_for_wide_framing(get_case_prompt(case))
+        video_prompt = get_video_prompt(case)
 
         output_path = resolve_output_image_path(output_root, case_id)
+        json_path = resolve_output_json_path(json_root, case_id)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.exists() and not args.force:
             print(f"[skip] {case_id}")
-            case_lookup[case_id]["image_path"] = str(output_path)
+            case_lookup[case_id]["input_image"] = str(output_path)
+            case_lookup[case_id]["input_image_prompt"] = str(prompt)
+            case_lookup[case_id]["input_image_model"] = str(args.model_root.expanduser().resolve())
+            case_lookup[case_id]["input_image_negative_prompt"] = str(args.negative_prompt)
+            case_lookup[case_id]["input_video_prompt"] = str(video_prompt)
+            case_lookup[case_id]["firstframe_json"] = str(json_path)
             continue
 
         print(f"[case] {case_id} -> {output_path}")
-        generator = torch.Generator(device="cuda").manual_seed(int(case.get("seed", 42)))
         image = pipe(
             prompt=prompt,
             negative_prompt=args.negative_prompt,
@@ -120,10 +174,26 @@ def main() -> None:
             height=int(args.height),
             guidance_scale=float(args.guidance_scale),
             num_inference_steps=int(args.steps),
-            generator=generator,
         ).images[0]
         image.save(output_path)
-        case_lookup[case_id]["image_path"] = str(output_path)
+        case_lookup[case_id]["input_image"] = str(output_path)
+        case_lookup[case_id]["input_image_prompt"] = str(prompt)
+        case_lookup[case_id]["input_image_model"] = str(args.model_root.expanduser().resolve())
+        case_lookup[case_id]["input_image_negative_prompt"] = str(args.negative_prompt)
+        case_lookup[case_id]["input_video_prompt"] = str(video_prompt)
+        case_lookup[case_id]["firstframe_json"] = str(json_path)
+
+        sample_json = {
+            "case_id": case_id,
+            "source_video": str(case.get("source_video", "")),
+            "input_video_prompt": str(video_prompt),
+            "input_image_prompt": str(prompt),
+            "input_image_model": str(args.model_root.expanduser().resolve()),
+            "input_image_negative_prompt": str(args.negative_prompt),
+            "input_image": str(output_path),
+            "run_dir": str(case.get("run_dir", "")),
+        }
+        save_manifest(json_path, sample_json)
         print(f"[done] {case_id} -> {output_path}")
 
     if args.write_manifest is not None:

@@ -52,6 +52,8 @@ from code_vjepa_vggt.headonly_val_loss import (
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
+from code_vjepa_vggt.utils.depth_anything_cache import load_depth_anything_cache
+from code_vjepa_vggt.utils.depth_target_branch import group_last, pool_depth_from_boxes_median
 from code_vjepa_vggt.utils.vggt_cache import VGGTDenseCache, load_vggt_cache
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_iou_loss, track_box_l1_loss
 from code_vjepa_vggt.context_wan_v_newtrain import (
@@ -284,6 +286,8 @@ class WanTrainingModule(DiffusionTrainingModule):
         lambda_box_anchor_reg=0.0,
         lambda_main=1.0,
         depth_target_state_index=None,
+        depth_target_source="depth_anything_box",
+        depth_anything_cache_root=None,
         object_gate_init=0.1,
         train_object_pooler=True,
         train_object_aux_heads=True,
@@ -364,10 +368,12 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.freeze_non_object_trainables = bool(freeze_non_object_trainables)
         self.train_vggt = bool(train_vggt)
         self.vggt_cache_root = None if vggt_cache_root is None else str(vggt_cache_root)
+        self.depth_anything_cache_root = None if depth_anything_cache_root is None else str(depth_anything_cache_root)
         self.object_aux_devices = _parse_aux_devices(object_aux_devices)
         self.depth_target_state_index = (
             None if depth_target_state_index is None else int(depth_target_state_index)
         )
+        self.depth_target_source = str(depth_target_source).strip().lower()
         self.jepa_runner = None
         self.cotracker_runner = None
 
@@ -408,6 +414,8 @@ class WanTrainingModule(DiffusionTrainingModule):
                 self.cotracker_adapter = None
             if self.vggt_cache_root is not None and str(self.vggt_cache_root).strip():
                 self.vggt_cache_root = str(Path(self.vggt_cache_root).expanduser().resolve())
+            if self.depth_anything_cache_root is not None and str(self.depth_anything_cache_root).strip():
+                self.depth_anything_cache_root = str(Path(self.depth_anything_cache_root).expanduser().resolve())
             skip_live_vggt_init = _should_skip_live_vggt_init(
                 self.vggt_cache_root,
                 self.train_vggt,
@@ -767,6 +775,47 @@ class WanTrainingModule(DiffusionTrainingModule):
             )
         return values.view(values.shape[0], int(latent_frames), group, values.shape[2], values.shape[3])[:, :, -1]
 
+    def _build_depth_targets(
+        self,
+        *,
+        sample: dict,
+        matched_gt_indices: torch.Tensor,
+        matched_gt_boxes: torch.Tensor,
+        matched_gt_box_valid: torch.Tensor,
+        latent_frames: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        source = str(self.depth_target_source).strip().lower()
+        if source in {"depth_anything", "depth_anything_box"}:
+            if not self.depth_anything_cache_root:
+                raise RuntimeError(
+                    "depth_target_source is set to Depth Anything, but depth_anything_cache_root is not configured"
+                )
+            cache = load_depth_anything_cache(sample, self.depth_anything_cache_root, allow_missing=False)
+            depth_frames = cache.depth_frames.unsqueeze(0).to(device=device, dtype=torch.float32)
+            if int(depth_frames.shape[1]) != int(matched_gt_boxes.shape[1]):
+                raise ValueError(
+                    f"Depth Anything cache frame count {int(depth_frames.shape[1])} does not match "
+                    f"context box frames {int(matched_gt_boxes.shape[1])} for sample {sample.get('video_path', '<unknown>')}"
+                )
+            pooled = pool_depth_from_boxes_median(
+                depth_frames,
+                matched_gt_boxes.float(),
+                matched_gt_box_valid.bool(),
+            ).to(device=device, dtype=dtype)
+            return group_last(pooled, latent_frames)
+        if self.depth_target_state_index is None:
+            raise RuntimeError(
+                "depth_target_source='state' requires depth_target_state_index to be set"
+            )
+        gt_states = sample["context_states"].unsqueeze(0).to(device=device, dtype=dtype)
+        matched_gt_depth = self._gather_matched_gt_features(
+            gt_states[..., self.depth_target_state_index : self.depth_target_state_index + 1],
+            matched_gt_indices,
+        )
+        return self._group_last(matched_gt_depth, latent_frames)
+
     def _build_object_query_priors(
         self,
         sample: dict,
@@ -942,13 +991,16 @@ class WanTrainingModule(DiffusionTrainingModule):
         track_anchor_reg = object_aux_out.track_delta.abs().mean()
         box_anchor_reg = object_aux_out.box_center_delta.abs().mean() + object_aux_out.box_log_scale.abs().mean()
         depth_aux_loss = track_aux_loss.new_zeros(())
-        if self.depth_target_state_index is not None and self.lambda_depth_aux > 0.0:
-            gt_states = sample["context_states"].unsqueeze(0).to(device=pipe.device, dtype=pipe.torch_dtype)
-            matched_gt_depth = self._gather_matched_gt_features(
-                gt_states[..., self.depth_target_state_index : self.depth_target_state_index + 1],
-                track_alignment.matched_gt_indices,
+        if self.lambda_depth_aux > 0.0:
+            gt_depth = self._build_depth_targets(
+                sample=sample,
+                matched_gt_indices=track_alignment.matched_gt_indices,
+                matched_gt_boxes=matched_gt_boxes,
+                matched_gt_box_valid=matched_gt_box_valid,
+                latent_frames=latent_frames,
+                device=pipe.device,
+                dtype=pipe.torch_dtype,
             )
-            gt_depth = self._group_last(matched_gt_depth, latent_frames)
             pred_depth = object_aux_out.pred_depth
             depth_aux_loss = (pred_depth - gt_depth).abs().mean()
 
@@ -1535,6 +1587,19 @@ def wan_parser():
     parser.add_argument("--freeze_non_object_trainables", action="store_true", default=False)
     parser.add_argument("--depth_target_state_index", type=int, default=None)
     parser.add_argument(
+        "--depth_target_source",
+        type=str,
+        default="depth_anything_box",
+        choices=["depth_anything_box", "state"],
+        help="Depth supervision source. Default uses pooled Depth Anything cache targets.",
+    )
+    parser.add_argument(
+        "--depth_anything_cache_root",
+        type=str,
+        default="/data/gaoya/AAA_test_video/0623/train/train0624/depth_anything_cache",
+        help="Cache root for per-sample normalized Depth Anything dense maps.",
+    )
+    parser.add_argument(
         "--headonly_val_loss_every_steps",
         type=int,
         default=None,
@@ -1830,6 +1895,8 @@ def build_model(args, accelerator):
         lambda_box_anchor_reg=args.lambda_box_anchor_reg,
         lambda_object_context_reg=args.lambda_object_context_reg,
         depth_target_state_index=args.depth_target_state_index,
+        depth_target_source=args.depth_target_source,
+        depth_anything_cache_root=args.depth_anything_cache_root,
         train_object_pooler=args.train_object_pooler,
         train_object_aux_heads=args.train_object_aux_heads,
         train_object_adapter=args.train_object_adapter,
