@@ -4,6 +4,7 @@ import argparse
 import gc
 import json
 from pathlib import Path
+import re
 
 import numpy as np
 import torch
@@ -17,7 +18,8 @@ CUDA_VISIBLE_DEVICES=0 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_vnewtrain_0613pybullet_stage2_v2v.py \
   --checkpoint-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun/checkpoints \
-  --steps step-006500
+  --steps step-006500 \
+  --num-frames 81
 """
 
 DEFAULT_INPUT_JSON_LIST_PATH = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
@@ -34,6 +36,23 @@ DEFAULT_CONFIG_PATH = Path(
     "train_0624pybullet_freeze_lora_other_modules_gpu67.yaml"
 )
 DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+
+
+def _normalize_ckpt_method_name(name: str) -> str:
+    normalized = re.sub(r"^[A-Za-z]+\d+_", "", name, count=1)
+    return normalized or name
+
+
+def _build_method_name_from_checkpoint_dir(checkpoint_dir: Path) -> str:
+    step_name = checkpoint_dir.name
+    checkpoint_parent = checkpoint_dir.parent
+    if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
+        method_root = _normalize_ckpt_method_name(checkpoint_parent.parent.name)
+        return f"{method_root}_{step_name}"
+    if checkpoint_parent.name:
+        method_root = _normalize_ckpt_method_name(checkpoint_parent.name)
+        return f"{method_root}_{step_name}"
+    return step_name
 
 
 def _list_step_dirs(checkpoint_root: Path) -> list[Path]:
@@ -180,6 +199,7 @@ def main() -> None:
 
         step_output_dir = output_root / step_name
         step_output_dir.mkdir(parents=True, exist_ok=True)
+        method_name = _build_method_name_from_checkpoint_dir(checkpoint_dir)
 
         model = core.build_model(model_args)
         model.to(torch.device(cli_args.device))
@@ -245,6 +265,7 @@ def main() -> None:
 
             success_lines = step_log_lines + case_logs + [f"[done] {step_name} {sample_stem}"]
             core._write_text_lines(output_log, success_lines)
+            result["method"] = method_name
             with output_json.open("w", encoding="utf-8") as handle:
                 json.dump(result, handle, indent=2, ensure_ascii=False)
                 handle.write("\n")

@@ -396,14 +396,37 @@ def sanitize_filename(text: str) -> str:
     return safe or "sample"
 
 
+def normalize_ckpt_method_name(name: str) -> str:
+    normalized = re.sub(r"^[A-Za-z]+\d+_", "", name, count=1)
+    return normalized or name
+
+
+def build_method_name_from_checkpoint_path(checkpoint_path: Path | None) -> str | None:
+    if checkpoint_path is None:
+        return None
+    candidate_path = checkpoint_path.expanduser()
+    if candidate_path.is_file() or candidate_path.suffix:
+        step_dir = candidate_path.parent
+        if not step_dir.name.startswith("step-"):
+            return None
+        checkpoint_parent = step_dir.parent
+        step_name = step_dir.name
+    else:
+        step_name = candidate_path.name
+        checkpoint_parent = candidate_path.parent
+    if not step_name:
+        return None
+    if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
+        method_root = normalize_ckpt_method_name(checkpoint_parent.parent.name)
+        return f"{method_root}_{step_name}"
+    if checkpoint_parent.name:
+        method_root = normalize_ckpt_method_name(checkpoint_parent.name)
+        return f"{method_root}_{step_name}"
+    return None
+
+
 def build_method_name(lora_path: Path | None) -> str:
-    if lora_path is None:
-        return "unknown_method"
-    base_name = lora_path.parent.name
-    path_text = str(lora_path).lower()
-    if OPENVID_LORA_MARKER in path_text:
-        return f"openvid_{base_name}"
-    return f"0613lora_{base_name}"
+    return build_method_name_from_checkpoint_path(lora_path) or "unknown_method"
 
 
 def build_default_output_name(context_path: Path, prompt: str) -> str:

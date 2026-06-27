@@ -12,6 +12,7 @@ import torch
 from tqdm import tqdm
 
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
+from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.infer_v_newtrain_context_video_wan import (
     _load_v_newtrain_state_into_model,
     _resolve_checkpoint_file,
@@ -104,7 +105,7 @@ def _discover_checkpoints(run_dirs: list[str], explicit_checkpoints: list[str] |
 def _build_model(args: argparse.Namespace) -> WanTrainingModule:
     model_paths = build_wan22_ti2v5b_model_paths(args.wan_root)
     tokenizer_path = find_tokenizer_path(args.wan_root)
-    return WanTrainingModule(
+    model = WanTrainingModule(
         model_paths=model_paths,
         tokenizer_path=tokenizer_path,
         trainable_models=None,
@@ -178,6 +179,15 @@ def _build_model(args: argparse.Namespace) -> WanTrainingModule:
         train_object_dit_branch=False,
         freeze_non_object_trainables=False,
     )
+    if getattr(model, "vggt_adapter", None) is None:
+        model.vggt_adapter = VGGTTrackAdapter(
+            model_path=args.vggt_model_path,
+            num_queries=int(args.object_num_queries) * int(args.aux_max_objects),
+            device=args.device,
+            input_hw=(int(args.vggt_input_h), int(args.vggt_input_w)),
+            trainable=False,
+        )
+    return model
 
 
 def _iter_dataset_indices(dataset_len: int, max_val_samples: int | None) -> list[int]:

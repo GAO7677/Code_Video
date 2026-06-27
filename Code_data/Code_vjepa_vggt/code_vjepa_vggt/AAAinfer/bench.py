@@ -22,6 +22,7 @@ import copy
 import fcntl
 import json
 import os
+import re
 import sys
 import traceback
 from contextlib import contextmanager
@@ -185,6 +186,37 @@ def resolve_candidate_video_path(result_json_path: Path, result_payload: dict[st
 
 
 def derive_method_name(result_payload: dict[str, Any], fallback_video_path: Path | None = None) -> str | None:
+    def normalize_ckpt_method_name(name: str) -> str:
+        normalized = re.sub(r"^[A-Za-z]+\d+_", "", name, count=1)
+        return normalized or name
+
+    def derive_method_name_from_ckpt_path(ckpt_path: Path) -> str | None:
+        candidate_path = ckpt_path.expanduser()
+        if candidate_path.is_file() or candidate_path.suffix:
+            step_dir = candidate_path.parent
+            if not step_dir.name.startswith("step-"):
+                return None
+            checkpoint_parent = step_dir.parent
+            step_name = step_dir.name
+        else:
+            step_name = candidate_path.name
+            checkpoint_parent = candidate_path.parent
+        if not step_name:
+            return None
+        if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
+            method_root = normalize_ckpt_method_name(checkpoint_parent.parent.name)
+            return f"{method_root}_{step_name}"
+        if checkpoint_parent.name:
+            method_root = normalize_ckpt_method_name(checkpoint_parent.name)
+            return f"{method_root}_{step_name}"
+        return None
+
+    ckpt = result_payload.get("ckpt")
+    if isinstance(ckpt, str) and ckpt.strip():
+        derived_from_ckpt = derive_method_name_from_ckpt_path(Path(ckpt))
+        if derived_from_ckpt is not None:
+            return derived_from_ckpt
+
     output_video = result_payload.get("output_video")
     if isinstance(output_video, str) and output_video.strip():
         output_video_path = Path(output_video).expanduser()
@@ -237,9 +269,14 @@ def cleanup_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def apply_payload_defaults(payload: dict[str, Any], *, candidate_video_path: Path) -> dict[str, Any]:
     existing_method = payload.get("method")
-    if not isinstance(existing_method, str) or not existing_method.strip():
-        method = derive_method_name(payload, fallback_video_path=candidate_video_path)
-        if method is not None:
+    method = derive_method_name(payload, fallback_video_path=candidate_video_path)
+    if method is not None:
+        should_replace = not isinstance(existing_method, str) or not existing_method.strip()
+        if isinstance(existing_method, str):
+            stripped_method = existing_method.strip()
+            if re.fullmatch(r"step-\d+", stripped_method):
+                should_replace = True
+        if should_replace:
             payload["method"] = method
     cleanup_result_payload(payload)
     return payload

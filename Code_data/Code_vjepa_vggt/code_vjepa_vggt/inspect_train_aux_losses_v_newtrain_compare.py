@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -21,6 +22,7 @@ from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
     draw_box_rgb,
     draw_point_rgb,
 )
+from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache
 
 
 BOX_GT_COLOR = (214, 40, 40)
@@ -191,6 +193,71 @@ def _depth_rows_to_html(
 """
 
 
+def _paired_depth_rows_to_html(
+    *,
+    title: str,
+    left_label: str,
+    right_label: str,
+    left_rows: list[list[float | None]] | None,
+    right_rows: list[list[float | None]] | None,
+) -> str:
+    if left_rows is None or right_rows is None:
+        return ""
+    num_frames = min(len(left_rows), len(right_rows))
+    if num_frames <= 0:
+        return ""
+
+    def _fmt(value: float | None) -> str:
+        if value is None:
+            return "-"
+        return f"{float(value):.4f}"
+
+    frame_blocks: list[str] = []
+    for frame_idx in range(num_frames):
+        left_row = left_rows[frame_idx]
+        right_row = right_rows[frame_idx]
+        num_objects = min(len(left_row), len(right_row))
+        row_cells = "".join(
+            f"""
+            <tr>
+              <td>obj{obj_idx}</td>
+              <td>{_fmt(left_row[obj_idx])}</td>
+              <td>{_fmt(right_row[obj_idx])}</td>
+              <td>{_fmt(None if left_row[obj_idx] is None or right_row[obj_idx] is None else abs(float(left_row[obj_idx]) - float(right_row[obj_idx])))}</td>
+            </tr>
+"""
+            for obj_idx in range(num_objects)
+        )
+        frame_blocks.append(
+            f"""
+          <div class="depth-frame-card">
+            <h5>frame {frame_idx}</h5>
+            <table class="depth-table">
+              <thead>
+                <tr>
+                  <th>slot</th>
+                  <th>{left_label}</th>
+                  <th>{right_label}</th>
+                  <th>|diff|</th>
+                </tr>
+              </thead>
+              <tbody>
+                {row_cells}
+              </tbody>
+            </table>
+          </div>
+"""
+        )
+    return f"""
+        <section class="depth-values">
+          <h4>{title}</h4>
+          <div class="depth-frame-grid">
+            {''.join(frame_blocks)}
+          </div>
+        </section>
+"""
+
+
 def _resolve_checkpoints(args: argparse.Namespace) -> list[Path]:
     if args.checkpoints:
         return [Path(path).expanduser().resolve() for path in args.checkpoints]
@@ -201,6 +268,71 @@ def _resolve_checkpoints(args: argparse.Namespace) -> list[Path]:
     if not step_dirs:
         raise FileNotFoundError(f"no step-* directories found under {checkpoint_dir}")
     return step_dirs
+
+
+def _resolve_vggt_features_for_report(
+    *,
+    model: Any,
+    sample: dict[str, Any],
+    frames_bthwc_01: torch.Tensor,
+    query_points_prior: torch.Tensor,
+    image_hw: tuple[int, int],
+) -> Any:
+    vggt_out = None
+    cache = None
+    if getattr(model, "vggt_cache_root", None):
+        cache = load_vggt_cache(sample, model.vggt_cache_root, allow_missing=False)
+        vggt_out = cache
+    adapter_out = None
+    need_online = (
+        vggt_out is None
+        or getattr(vggt_out, "depth", None) is None
+        or getattr(vggt_out, "world_points", None) is None
+    )
+    if need_online:
+        if getattr(model, "vggt_adapter", None) is None:
+            if vggt_out is None:
+                raise RuntimeError("VGGT adapter is unavailable and no VGGT cache was found for this sample")
+            return vggt_out
+        adapter_out = model.vggt_adapter(
+            frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            query_image_hw=image_hw,
+        )
+    if cache is None:
+        return adapter_out
+    if adapter_out is None:
+        return cache
+    merged = {}
+    for key in [
+        "query_points",
+        "tracks",
+        "visibility",
+        "confidence",
+        "dense_patch_tokens",
+        "patch_grid_hw",
+        "input_hw",
+        "patch_size",
+        "frame_indices",
+        "source_video",
+        "output_file",
+        "aggregated_last_shape",
+        "patch_start_idx",
+        "dtype",
+        "used_model",
+        "pose_enc",
+        "depth",
+        "depth_conf",
+        "world_points",
+        "world_points_conf",
+        "image_hw",
+    ]:
+        cache_value = getattr(cache, key, None)
+        adapter_value = getattr(adapter_out, key, None)
+        merged[key] = cache_value if cache_value is not None else adapter_value
+    if merged.get("image_hw") is None and merged.get("input_hw") is not None:
+        merged["image_hw"] = merged["input_hw"]
+    return SimpleNamespace(**merged)
 
 
 def _checkpoint_label(checkpoint_path: Path) -> str:
@@ -593,16 +725,65 @@ def _render_depth_panel(
         lo, hi = 0.0, 1.0
     gt_map = np.where(gt_depth_valid, gt_depth, lo)
     pred_map = np.where(gt_depth_valid, pred_depth, lo)
-    gt_vis = colorize_scalar_video(((gt_map - lo) / (hi - lo + 1.0e-6)).astype(np.float32))
-    pred_vis = colorize_scalar_video(((pred_map - lo) / (hi - lo + 1.0e-6)).astype(np.float32))
+    gt_norm = np.clip(((gt_map - lo) / (hi - lo + 1.0e-6)).astype(np.float32), 0.0, 1.0)
+    pred_norm = np.clip(((pred_map - lo) / (hi - lo + 1.0e-6)).astype(np.float32), 0.0, 1.0)
+    gt_gray = (gt_norm * 255.0).round().astype(np.uint8)
+    pred_gray = (pred_norm * 255.0).round().astype(np.uint8)
     frames: list[np.ndarray] = []
-    for t in range(gt_vis.shape[0]):
-        left = gt_vis[t]
-        right = pred_vis[t]
-        pad = np.full((left.shape[0], 24, 3), 245, dtype=np.uint8)
+    cell_h = 36
+    cell_w = 64
+    pad_w = 24
+    for t in range(gt_gray.shape[0]):
+        left_gray = np.repeat(np.repeat(gt_gray[t][:, None], cell_w, axis=1), cell_h, axis=0)
+        right_gray = np.repeat(np.repeat(pred_gray[t][:, None], cell_w, axis=1), cell_h, axis=0)
+        left = np.repeat(left_gray[..., None], 3, axis=-1)
+        right = np.repeat(right_gray[..., None], 3, axis=-1)
+        pad = np.full((left.shape[0], pad_w, 3), 245, dtype=np.uint8)
         panel = np.concatenate([left, pad, right], axis=1)
         frames.append(panel)
     return np.stack(frames, axis=0)
+
+
+def _render_single_depth_panel(
+    depth_values: np.ndarray,
+    depth_valid: np.ndarray,
+) -> np.ndarray:
+    valid_values = np.asarray(depth_values, dtype=np.float32)[np.asarray(depth_valid, dtype=bool)]
+    if valid_values.size > 0:
+        lo = float(np.min(valid_values))
+        hi = float(np.max(valid_values))
+        if hi - lo < 1.0e-6:
+            hi = lo + 1.0
+    else:
+        lo, hi = 0.0, 1.0
+    depth_map = np.where(depth_valid, depth_values, lo)
+    depth_norm = np.clip(((depth_map - lo) / (hi - lo + 1.0e-6)).astype(np.float32), 0.0, 1.0)
+    depth_gray = (depth_norm * 255.0).round().astype(np.uint8)
+    frames: list[np.ndarray] = []
+    cell_h = 36
+    cell_w = 64
+    for t in range(depth_gray.shape[0]):
+        gray = np.repeat(np.repeat(depth_gray[t][:, None], cell_w, axis=1), cell_h, axis=0)
+        frames.append(np.repeat(gray[..., None], 3, axis=-1))
+    return np.stack(frames, axis=0)
+
+
+def _render_dense_depth_sheet(
+    depth_thw: np.ndarray,
+) -> np.ndarray:
+    depth = np.asarray(depth_thw, dtype=np.float32)
+    valid = np.isfinite(depth)
+    if np.any(valid):
+        lo = float(np.nanpercentile(depth[valid], 5.0))
+        hi = float(np.nanpercentile(depth[valid], 95.0))
+        if hi - lo < 1.0e-6:
+            hi = lo + 1.0
+    else:
+        lo, hi = 0.0, 1.0
+    depth = np.where(valid, depth, lo)
+    depth_norm = np.clip((depth - lo) / (hi - lo + 1.0e-6), 0.0, 1.0)
+    gray = (depth_norm * 255.0).round().astype(np.uint8)
+    return np.repeat(gray[..., None], 3, axis=-1)
 
 
 def _render_depth_overlay(
@@ -908,6 +1089,13 @@ def _run_case_for_checkpoint(
             query_frame_ids=query_frame_ids,
             query_image_hw=image_hw,
         )
+        vggt_out = _resolve_vggt_features_for_report(
+            model=model,
+            sample=sample,
+            frames_bthwc_01=frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            image_hw=image_hw,
+        )
         tracks_grouped, visibility_grouped, confidence_grouped = model._group_tracks_to_objects(
             cotracker_out.tracks,
             cotracker_out.visibility,
@@ -930,12 +1118,21 @@ def _run_case_for_checkpoint(
             context_latents=clean_prefix_latents,
             tracks=tracks_grouped,
             visibility=visibility_grouped,
-        confidence=confidence_grouped,
-        track_image_hw=image_hw,
-        object_valid_mask=object_valid_mask,
-        box_prior_xyxy=box_prior_xyxy,
-        frame_valid_mask=None,
-    )
+            confidence=confidence_grouped,
+            track_image_hw=image_hw,
+            object_valid_mask=object_valid_mask,
+            box_prior_xyxy=box_prior_xyxy,
+            vggt_world_points=getattr(vggt_out, "world_points", None),
+            vggt_world_points_conf=getattr(vggt_out, "world_points_conf", None),
+            vggt_depth=getattr(vggt_out, "depth", None),
+            vggt_depth_conf=getattr(vggt_out, "depth_conf", None),
+            vggt_dense_patch_tokens=getattr(vggt_out, "dense_patch_tokens", None),
+            vggt_patch_grid_hw=getattr(vggt_out, "patch_grid_hw", None),
+            vggt_geometry_image_hw=getattr(vggt_out, "input_hw", None)
+            if getattr(vggt_out, "input_hw", None) is not None
+            else getattr(vggt_out, "image_hw", None),
+            frame_valid_mask=None,
+        )
         object_aux_out = model.object_aux_heads(
             object_out.object_latent_tokens,
             object_out.active_track_summary,
@@ -1104,10 +1301,15 @@ def _run_case_for_checkpoint(
         )
 
     depth_sheet_rel = None
+    gt_depth_only_sheet_rel = None
     depth_overlay_sheet_rel = None
+    vggt_depth_dense_sheet_rel = None
+    vggt_sampled_depth_sheet_rel = None
     depth_pred_rows = None
     depth_gt_rows = None
     depth_loss_rows = None
+    vggt_depth_rows = None
+    vggt_depth_dense_shape = None
     if gt_depth is not None and pred_depth is not None and gt_depth_valid is not None:
         gt_depth_np = gt_depth[0, ..., 0].detach().float().cpu().numpy()
         pred_depth_np = pred_depth[0, ..., 0].detach().float().cpu().numpy()
@@ -1126,13 +1328,92 @@ def _run_case_for_checkpoint(
                     pred_row.append(None)
             depth_gt_rows.append(gt_row)
             depth_pred_rows.append(pred_row)
-        if export_aux_visuals:
-            depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
-            depth_sheet_rel = _export_sheet(
-                depth_video,
-                stem="depth_panel",
-                title=f"{checkpoint_label} case {sample_index} depth panel",
+        depth_video = _render_depth_panel(gt_depth_np, gt_depth_valid_np, pred_depth_np)
+        depth_sheet_rel = _export_sheet(
+            depth_video,
+            stem="depth_panel",
+            title=f"{checkpoint_label} case {sample_index} depth panel",
+        )
+        gt_depth_only_video = _render_single_depth_panel(gt_depth_np, gt_depth_valid_np)
+        gt_depth_only_sheet_rel = _export_sheet(
+            gt_depth_only_video,
+            stem="depth_gt_only_panel",
+            title=f"{checkpoint_label} case {sample_index} dataset gt depth panel",
+        )
+
+    if getattr(vggt_out, "depth", None) is not None:
+        vggt_depth_full = vggt_out.depth
+        if not isinstance(vggt_depth_full, torch.Tensor):
+            vggt_depth_full = torch.as_tensor(vggt_depth_full)
+        if vggt_depth_full.ndim == 4:
+            vggt_depth_full = vggt_depth_full.unsqueeze(-1)
+        if vggt_depth_full.ndim == 5 and int(vggt_depth_full.shape[0]) == 1:
+            vggt_depth_np = vggt_depth_full[0, ..., 0].detach().float().cpu().numpy()
+            vggt_depth_dense_shape = list(vggt_depth_full.shape)
+            vggt_depth_dense_video = _render_dense_depth_sheet(vggt_depth_np)
+            vggt_depth_dense_sheet_rel = _export_sheet(
+                vggt_depth_dense_video,
+                stem="vggt_depth_dense",
+                title=f"{checkpoint_label} case {sample_index} vggt dense depth",
             )
+            if gt_depth is not None and gt_depth_valid is not None:
+                geometry_image_hw = (
+                    tuple(int(v) for v in getattr(vggt_out, "input_hw", image_hw))
+                    if getattr(vggt_out, "input_hw", None) is not None
+                    else tuple(int(v) for v in getattr(vggt_out, "image_hw", image_hw))
+                    if getattr(vggt_out, "image_hw", None) is not None
+                    else image_hw
+                )
+                geometry_tracks = model.object_pooler._resize_tracks_xy(
+                    tracks_grouped.reshape(1, tracks_grouped.shape[1], tracks_grouped.shape[2] * tracks_grouped.shape[3], 2),
+                    src_hw=image_hw,
+                    dst_hw=geometry_image_hw,
+                    align_corners=False,
+                ).view(1, tracks_grouped.shape[1], tracks_grouped.shape[2], tracks_grouped.shape[3], 2)
+                flat_geometry_tracks, _, _ = model.object_pooler._flatten_point_axis(geometry_tracks)
+                sampled_vggt_depth = model.object_pooler._pool_feature_grid(
+                    vggt_depth_full.to(device=device, dtype=pipe.torch_dtype),
+                    flat_geometry_tracks.to(device=device, dtype=pipe.torch_dtype),
+                    image_hw=geometry_image_hw,
+                    window_radius=0,
+                )
+                sampled_vggt_depth = model.object_pooler._restore_point_axis(
+                    sampled_vggt_depth,
+                    int(tracks_grouped.shape[2]),
+                    int(tracks_grouped.shape[3]),
+                )
+                sampled_vggt_depth = model.object_pooler._temporal_group_mean_grouped(
+                    sampled_vggt_depth,
+                    latent_frames,
+                    frame_valid_mask=None,
+                )
+                point_weights_lat = model.object_pooler._point_weights(
+                    visibility_grouped,
+                    confidence_grouped,
+                    target_frames=latent_frames,
+                    frame_valid_mask=None,
+                )
+                sampled_vggt_depth = model.object_pooler._aggregate_points(sampled_vggt_depth, point_weights_lat)
+                sampled_vggt_depth_np = sampled_vggt_depth[0, ..., 0].detach().float().cpu().numpy()
+                vggt_depth_rows = []
+                for frame_idx in range(int(sampled_vggt_depth_np.shape[0])):
+                    row: list[float | None] = []
+                    for obj_idx in range(int(sampled_vggt_depth_np.shape[1])):
+                        if gt_depth_valid is not None and bool(gt_depth_valid_np[frame_idx, obj_idx]):
+                            row.append(float(sampled_vggt_depth_np[frame_idx, obj_idx]))
+                        else:
+                            row.append(None)
+                    vggt_depth_rows.append(row)
+                vggt_sampled_video = _render_depth_panel(
+                    gt_depth_np,
+                    gt_depth_valid_np,
+                    sampled_vggt_depth_np,
+                )
+                vggt_sampled_depth_sheet_rel = _export_sheet(
+                    vggt_sampled_video,
+                    stem="vggt_depth_sampled",
+                    title=f"{checkpoint_label} case {sample_index} dataset gt vs sampled vggt depth",
+                )
 
     track_center_frame_l1, track_delta_frame_l1, track_total_frame_l1 = _compute_framewise_track_summary_losses(
         pred_track_summary=pred_track_summary_np,
@@ -1352,11 +1633,15 @@ def _run_case_for_checkpoint(
         "box_center_loss_sheet": box_center_scalar_sheet,
         "box_iou_loss_sheet": box_iou_scalar_sheet,
         "depth_panel_sheet": depth_sheet_rel,
+        "depth_gt_only_sheet": gt_depth_only_sheet_rel,
         "depth_overlay_sheet": depth_overlay_sheet_rel,
         "depth_loss_sheet": depth_scalar_rel,
         "depth_pred_rows": depth_pred_rows,
         "depth_gt_rows": depth_gt_rows,
         "depth_loss_rows": depth_loss_rows,
+        "vggt_depth_dense_sheet": vggt_depth_dense_sheet_rel,
+        "vggt_depth_sampled_sheet": vggt_sampled_depth_sheet_rel,
+        "vggt_depth_rows": vggt_depth_rows,
         "metrics": metrics,
         "shapes": {
             "gt_track_summary": list(gt_track_summary.shape),
@@ -1369,6 +1654,7 @@ def _run_case_for_checkpoint(
             "pred_track_native": list(center_tracks_native.shape),
             "pred_box_native": list(native_pred_box_xyxy.shape),
             "pred_depth": None if pred_depth is None else list(pred_depth.shape),
+            "vggt_depth_dense": vggt_depth_dense_shape,
             "query_points_prior": list(query_points_prior.shape),
             "tracks_grouped": list(tracks_grouped.shape),
             "object_tokens": list(object_out.object_latent_tokens.shape),
@@ -1449,6 +1735,13 @@ def _build_report(
                 item.get("depth_gt_rows"),
                 item.get("depth_loss_rows"),
             )
+            vggt_depth_value_block = _paired_depth_rows_to_html(
+                title="Dataset GT Depth vs Sampled VGGT Depth On Loss Time Axis",
+                left_label="dataset_gt",
+                right_label="vggt",
+                left_rows=item.get("depth_gt_rows"),
+                right_rows=item.get("vggt_depth_rows"),
+            )
             metric_table = f"""
           <table class="metric-table">
             <tbody>
@@ -1480,6 +1773,10 @@ def _build_report(
           <div class="video-grid">
             {_image_block(image_src=item['native_track_overlay_sheet'], image_alt='native track sheet', caption='Track overlay on original context frames', sheet=True)}
             {_image_block(image_src=item['native_box_overlay_sheet'], image_alt='native box sheet', caption='Box overlay on original context frames', sheet=True)}
+            {_image_block(image_src=item['depth_panel_sheet'], image_alt='depth grayscale sheet', caption='Depth GT vs pred grayscale on loss axis', sheet=True)}
+            {_image_block(image_src=item.get('depth_gt_only_sheet'), image_alt='dataset gt depth sheet', caption='Dataset GT depth grayscale on loss axis', sheet=True)}
+            {_image_block(image_src=item.get('vggt_depth_sampled_sheet'), image_alt='sampled vggt depth sheet', caption='Dataset GT vs sampled VGGT depth on loss axis', sheet=True)}
+            {_image_block(image_src=item.get('vggt_depth_dense_sheet'), image_alt='vggt dense depth sheet', caption='VGGT dense depth grayscale in VGGT image space', sheet=True)}
           </div>
 """
             else:
@@ -1509,6 +1806,7 @@ def _build_report(
           <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box</p>
           {visual_grid}
           {depth_value_block}
+          {vggt_depth_value_block}
           {metric_table}
         </article>
 """
@@ -1527,6 +1825,13 @@ def _build_report(
   </section>
 """
         )
+
+    intro_text = (
+        "这页默认聚焦原始 context frame 上的 overlay，同时额外保留 depth 的灰度对比图。"
+        " depth 图展示的是最终参与 aux loss 计算的 latent 时间轴上 GT 与 pred 的并排灰度结果。"
+        if native_only
+        else "这页只保留真正参与 aux loss 计算的时间轴结果。也就是说，展示的是 latent time axis 上的 `pred_track_summary / pred_box_xyxy / pred_depth` 与对应 GT，而不是 native 8-frame 上不参与最终 head loss 的中间量。"
+    )
 
     html = f"""<!doctype html>
 <html>
@@ -1562,7 +1867,7 @@ def _build_report(
 </head>
 <body>
   <h1>v_newtrain Train Aux Loss Comparison</h1>
-  <p>这页只保留真正参与 aux loss 计算的时间轴结果。也就是说，展示的是 latent time axis 上的 `pred_track_summary / pred_box_xyxy / pred_depth` 与对应 GT，而不是 native 8-frame 上不参与最终 head loss 的中间量。</p>
+  <p>{intro_text}</p>
   <p><b>Color legend:</b> yellow/orange = GT track center, blue = pred track center, red = GT box, teal/green = pred box。</p>
   <h2>Checkpoint Summary</h2>
   <table>
