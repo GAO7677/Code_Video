@@ -15,10 +15,25 @@ import torch
 from PIL import Image
 
 """
+Examples
+
+
+
+Override all outputs to a new root directory:
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_exp/generate_wan_baseline.py \
     --manifest /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42/manifest.json \
+    --output-root /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42_ti2v_5b \
+    --cuda-visible-devices 5 \
+    --force
+
+Run only one case:
+CUDA_VISIBLE_DEVICES=5 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_exp/generate_wan_baseline.py \
+    --manifest /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42/manifest.json \
+    --output-root /data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_s42_ti2v_5b \
     --cuda-visible-devices 5 \
     --limit 1 \
     --force
@@ -46,6 +61,7 @@ class WanTI2VArgs:
     offload_model: bool
     t5_cpu: bool
     convert_model_dtype: bool
+    output_root: Path | None
     force: bool
 
 
@@ -415,11 +431,21 @@ def parse_args() -> argparse.Namespace:
         description="Generate Wan2.2 TI2V-5B baseline videos directly from the vjepa_exp manifest format."
     )
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--cuda-visible-devices", default="0")
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--backend", default=None, choices=["legacy", "official"])
+    parser.add_argument("--backend", default="legacy", choices=["legacy", "official"])
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
+
+
+def resolve_output_video_path(case: dict[str, Any], output_root: Path | None) -> Path:
+    if output_root is None:
+        return Path(str(case["video_path"])).expanduser().resolve()
+
+    case_id = str(case["case_id"])
+    original_video_name = Path(str(case["video_path"])).name
+    return output_root.expanduser().resolve() / case_id / original_video_name
 
 
 def main() -> None:
@@ -435,7 +461,7 @@ def main() -> None:
 
     args = WanTI2VArgs(
         wan_root=Path(manifest.get("wan_root", str(DEFAULT_WAN_ROOT))).expanduser().resolve(),
-        backend=str(cli_args.backend or manifest.get("backend", "legacy")),
+        backend=str(cli_args.backend),
         size=str(wan_args_raw["size"]),
         frame_num=int(wan_args_raw["frame_num"]),
         fps=int(wan_args_raw["fps"]),
@@ -448,13 +474,14 @@ def main() -> None:
         offload_model=bool(wan_args_raw["offload_model"]),
         t5_cpu=bool(wan_args_raw["t5_cpu"]),
         convert_model_dtype=bool(wan_args_raw["convert_model_dtype"]),
+        output_root=cli_args.output_root.expanduser().resolve() if cli_args.output_root is not None else None,
         force=bool(cli_args.force),
     )
 
     pipe = build_wan_ti2v_pipeline(args)
     try:
         for case in cases:
-            output_video = Path(str(case["video_path"])).expanduser().resolve()
+            output_video = resolve_output_video_path(case, args.output_root)
             output_json = output_video.with_suffix(".json")
             if output_video.exists() and output_json.exists() and not args.force:
                 print(f"[skip] {case['case_id']}")

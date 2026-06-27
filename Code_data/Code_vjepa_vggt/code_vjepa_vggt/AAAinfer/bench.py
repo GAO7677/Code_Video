@@ -23,6 +23,7 @@ import fcntl
 import json
 import os
 import re
+import subprocess
 import sys
 import traceback
 from contextlib import contextmanager
@@ -38,18 +39,7 @@ for path in [ROOT, TRY0526_ROOT]:
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from physv_eval.official_pdi import OfficialPDIRunner
-from physv_eval.wmreward_official import WMRewardRunner
-from physv_eval.proxy_runner import ProxyRunner
-from physv_eval.videophy2_auto import VideoPhy2Runner
-from physv_eval.phyground_official import OfficialPhyGroundRunner
-from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
-from physv_eval.single_case.cosmos_reason1 import score_case as score_cosmos_reason1_case
-from physv_eval.single_case.pdi import score_case as score_pdi_case
-from physv_eval.single_case.phyground import score_case as score_phyground_case
-from physv_eval.single_case.proxy import score_case as score_proxy_case
-from physv_eval.single_case.videophy2 import score_case as score_videophy2_case
-from physv_eval.single_case.wmreward import score_case as score_wmreward_case
+from physv_eval.paths import FLUX_PYTHON
 
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
@@ -93,6 +83,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--videophy2-caption", default=None)
     parser.add_argument("--phyground-general-only", action="store_true")
     parser.add_argument("--pdi-caption", default="ball")
+    parser.add_argument("--flux-python", type=Path, default=FLUX_PYTHON, help=argparse.SUPPRESS)
+    parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -282,8 +274,47 @@ def apply_payload_defaults(payload: dict[str, Any], *, candidate_video_path: Pat
     return payload
 
 
+def maybe_delegate_cosmos_reason1(args: argparse.Namespace) -> bool:
+    if args.metric != "cosmos_reason1" or args.cosmos_worker:
+        return False
+
+    flux_python = args.flux_python.expanduser().resolve()
+    cmd = [
+        str(flux_python),
+        str(Path(__file__).resolve()),
+        "--metric",
+        "cosmos_reason1",
+        "--result-root",
+        str(args.result_root.expanduser().resolve()),
+        "--input-root",
+        str(args.input_root.expanduser().resolve()),
+        "--cosmos-worker",
+    ]
+    if args.output_summary is not None:
+        cmd.extend(["--output-summary", str(args.output_summary.expanduser().resolve())])
+    if args.overwrite:
+        cmd.append("--overwrite")
+    if args.dry_run:
+        cmd.append("--dry-run")
+
+    env = os.environ.copy()
+    pythonpath_entries = [str(ROOT), str(TRY0526_ROOT)]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env["PYTHONNOUSERSITE"] = "1"
+
+    print(f"[cosmos:delegate] python={flux_python}")
+    subprocess.run(cmd, check=True, env=env, cwd=str(ROOT))
+    return True
+
+
 def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
     def build_pdi(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.official_pdi import OfficialPDIRunner
+        from physv_eval.single_case.pdi import score_case as score_pdi_case
+
         runner = OfficialPDIRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -294,6 +325,9 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         return run
 
     def build_wmreward(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.single_case.wmreward import score_case as score_wmreward_case
+        from physv_eval.wmreward_official import WMRewardRunner
+
         runner = WMRewardRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -302,6 +336,9 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         return run
 
     def build_proxy(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.proxy_runner import ProxyRunner
+        from physv_eval.single_case.proxy import score_case as score_proxy_case
+
         runner = ProxyRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -311,6 +348,9 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         return run
 
     def build_videophy2(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.single_case.videophy2 import score_case as score_videophy2_case
+        from physv_eval.videophy2_auto import VideoPhy2Runner
+
         runner = VideoPhy2Runner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -328,6 +368,9 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         return run
 
     def build_phyground(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.phyground_official import OfficialPhyGroundRunner
+        from physv_eval.single_case.phyground import score_case as score_phyground_case
+
         runner = OfficialPhyGroundRunner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -340,6 +383,9 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         return run
 
     def build_cosmos_reason1(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
+        from physv_eval.single_case.cosmos_reason1 import score_case as score_cosmos_reason1_case
+
         runner = OfficialCosmosReason1Runner()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
@@ -414,6 +460,8 @@ def write_summary(
 
 def main() -> None:
     args = parse_args()
+    if maybe_delegate_cosmos_reason1(args):
+        return
     result_root = args.result_root.expanduser().resolve()
     input_root = args.input_root.expanduser().resolve()
     summary_path = (
