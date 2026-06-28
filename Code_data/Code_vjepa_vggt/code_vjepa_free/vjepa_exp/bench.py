@@ -36,13 +36,10 @@ if str(PHYSV_PROJECT_ROOT) not in sys.path:
 
 from physv_eval.official_pdi import OfficialPDIRunner
 from physv_eval.paths import FLUX_PYTHON, VPHY_PYTHON
-from physv_eval.phyground_official import GENERAL_METRICS
-from physv_eval.proxy_runner import ProxyRunner
 from physv_eval.records import (
     get_cosmos_reason1,
     get_official_pdi,
     get_phyground,
-    get_proxy,
     get_videophy2_auto,
     get_wmreward,
     load_payload,
@@ -51,12 +48,10 @@ from physv_eval.records import (
     set_cosmos_reason1,
     set_official_pdi,
     set_phyground,
-    set_proxy,
     set_videophy2_auto,
     set_wmreward,
 )
 from physv_eval.single_case.pdi import score_case as score_pdi_case
-from physv_eval.single_case.proxy import score_case as score_proxy_case
 from physv_eval.single_case.wmreward import score_case as score_wmreward_case
 from physv_eval.wmreward_official import WMRewardRunner
 
@@ -65,7 +60,6 @@ DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/0626vjepa_free/test/precheck_v2_
 DEFAULT_METRICS = [
     "pdi",
     "wmreward",
-    "proxy",
     "videophy2_pc",
     "videophy2_sa",
     "phyground",
@@ -82,7 +76,7 @@ def parse_args() -> argparse.Namespace:
         "--metrics",
         nargs="+",
         default=list(DEFAULT_METRICS),
-        choices=["pdi", "wmreward", "proxy", "videophy2_pc", "videophy2_sa", "phyground", "cosmos"],
+        choices=["pdi", "wmreward", "videophy2_pc", "videophy2_sa", "phyground", "cosmos"],
     )
     parser.add_argument("--case-id", action="append", default=None, help="Only evaluate selected case_id values.")
     parser.add_argument("--limit", type=int, default=None)
@@ -90,7 +84,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--summary-json", type=Path, default=None)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--proxy-device", default=None)
     parser.add_argument("--cuda-visible-devices", default=os.environ.get("CUDA_VISIBLE_DEVICES"))
     parser.add_argument("--pdi-python", default=None)
     parser.add_argument("--wmreward-cuda-visible-devices", default=None)
@@ -175,8 +168,6 @@ def should_run(metric_name: str, payload: dict[str, Any], refresh: bool) -> bool
         return get_official_pdi(payload) is None or metric_value(payload, "official_pdi") is None
     if metric_name == "wmreward":
         return get_wmreward(payload) is None or metric_value(payload, "wmreward_jepa") is None
-    if metric_name == "proxy":
-        return get_proxy(payload) is None or metric_value(payload, "vjepa_proxy") is None
     if metric_name == "videophy2_pc":
         return get_videophy2_auto(payload) is None or metric_value(payload, "videophy2_auto_pc") is None
     if metric_name == "videophy2_sa":
@@ -255,12 +246,6 @@ def main() -> None:
         if "wmreward" in args.metrics
         else None
     )
-    proxy_runner = (
-        ProxyRunner(device=args.proxy_device or args.device)
-        if "proxy" in args.metrics
-        else None
-    )
-
     summary = make_summary(root, args.metrics, case_jsons)
 
     for index, json_path in enumerate(case_jsons, start=1):
@@ -289,11 +274,6 @@ def main() -> None:
                 elif metric_name == "wmreward":
                     result = score_wmreward_case(eval_payload, runner=wmreward_runner)
                     set_wmreward(payload, result)
-                elif metric_name == "proxy":
-                    result = score_proxy_case(eval_payload, runner=proxy_runner)
-                    if result is None:
-                        raise RuntimeError("proxy scoring returned None")
-                    set_proxy(payload, result)
                 elif metric_name == "videophy2_pc":
                     result = run_subprocess_metric(
                         module_name="physv_eval.single_case.videophy2",
