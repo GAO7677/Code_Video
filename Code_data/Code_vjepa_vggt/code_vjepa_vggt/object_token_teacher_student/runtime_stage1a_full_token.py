@@ -58,7 +58,7 @@ class FullTokenTeacherTrainer(Stage1OracleMixin, ContextVideoTrainer):
     def forward(self, batch: dict[str, Any]) -> torch.Tensor:
         prepared = self._prepare_stage1a_batch(batch)
         aux = prepared.object_aux_out
-        loss_total = prepared.full_object_latent_tokens.new_zeros(())
+        loss_total = prepared.oracle_object_latent_tokens.new_zeros(())
         loss_track = loss_total.clone()
         loss_box = loss_total.clone()
         loss_depth = loss_total.clone()
@@ -109,8 +109,8 @@ class FullTokenTeacherTrainer(Stage1OracleMixin, ContextVideoTrainer):
             "train/loss_full_box": float(loss_box.detach().item()),
             "train/loss_full_depth": float(loss_depth.detach().item()),
             "train/object_tokens_abs_max": float(prepared.object_tokens.detach().abs().max().item()),
-            "train/object_latent_tokens_abs_max": float(prepared.full_object_latent_tokens.detach().abs().max().item()),
-            "train/object_context_abs_max": float(prepared.full_object_context.detach().abs().max().item()),
+            "train/object_latent_tokens_abs_max": float(prepared.oracle_object_latent_tokens.detach().abs().max().item()),
+            "train/object_context_abs_max": float(prepared.oracle_object_context.detach().abs().max().item()),
             "train/track_delta_abs_mean": float(aux.track_delta.detach().abs().mean().item()),
             "train/box_center_delta_abs_mean": float(aux.box_center_delta.detach().abs().mean().item()),
             "train/box_log_scale_abs_mean": float(aux.box_log_scale.detach().abs().mean().item()),

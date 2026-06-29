@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 
@@ -9,9 +10,27 @@ from code_vjepa_vggt.train_v_newtrain import _sample_points_from_box
 
 
 @dataclass
+class OracleSampleArtifacts:
+    """Per-sample intermediates produced by a single oracle forward.
+
+    Stage 1 reuses these for aux heads / target building so the heavy frozen
+    perception path (JEPA + VGGT + CoTracker + VAE) only runs once per sample.
+    """
+
+    object_out: Any
+    object_context: torch.Tensor
+    tracks_grouped: torch.Tensor
+    visibility_grouped: torch.Tensor
+    confidence_grouped: torch.Tensor
+    track_image_hw: tuple[int, int]
+    object_valid_mask: torch.Tensor
+
+
+@dataclass
 class OracleTokenOutput:
     object_latent_tokens: torch.Tensor
     object_context: torch.Tensor
+    samples: list[OracleSampleArtifacts] = field(default_factory=list)
 
 
 class OracleObjectTokenEncoder:
@@ -100,12 +119,83 @@ class OracleObjectTokenEncoder:
         return query_points_prior, query_frame_ids_tensor, object_valid_mask_tensor, box_prior_xyxy
 
     @torch.no_grad()
+    def _run_frozen_perception(
+        self,
+        sample_video: torch.Tensor,
+        sample_boxes: torch.Tensor,
+    ) -> dict[str, Any]:
+        """Run the frozen perception backbone for one sample under no_grad.
+
+        Covers JEPA, VGGT, optional CoTracker and the VAE latent encode. All of
+        these are frozen in every stage, so keeping them under no_grad avoids
+        building an autograd graph and keeps activation memory bounded.
+        """
+        image_hw = (int(sample_video.shape[-2]), int(sample_video.shape[-1]))
+        query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = self._build_object_query_priors(
+            sample_boxes,
+            image_hw=image_hw,
+        )
+        frames_bthwc = sample_video.permute(0, 2, 3, 4, 1).float()
+        frames_bthwc = (frames_bthwc + 1.0) / 2.0
+        jepa_adapter = self._oracle_jepa_adapter(int(sample_video.shape[2]))
+        jepa_out = jepa_adapter(sample_video)
+        context_latents = self.trainer._encode_video_latents(sample_video)[0].unsqueeze(0).to(self.trainer.device_obj)
+        vggt_out = self.trainer.vggt_adapter(
+            frames_bthwc,
+            query_points_prior=query_points_prior,
+            query_image_hw=image_hw,
+        )
+        cotracker_out = None
+        if self.trainer.cotracker_adapter is not None:
+            cotracker_out = self.trainer.cotracker_adapter(
+                frames_bthwc,
+                query_points_prior=query_points_prior,
+                query_frame_ids=query_frame_ids,
+                query_image_hw=image_hw,
+            )
+        if cotracker_out is not None:
+            tracks = cotracker_out.tracks
+            visibility = cotracker_out.visibility
+            confidence = cotracker_out.confidence
+            track_image_hw = cotracker_out.image_hw
+        else:
+            tracks = vggt_out.tracks
+            visibility = vggt_out.visibility
+            confidence = vggt_out.confidence
+            track_image_hw = vggt_out.image_hw
+        tracks_grouped, visibility_grouped, confidence_grouped = self.trainer._group_tracks_to_objects(
+            tracks,
+            visibility,
+            confidence,
+            max_objects=self.trainer.max_objects,
+            points_per_object=self.trainer.points_per_object,
+        )
+        return {
+            "jepa_out": jepa_out,
+            "context_latents": context_latents,
+            "vggt_out": vggt_out,
+            "tracks_grouped": tracks_grouped,
+            "visibility_grouped": visibility_grouped,
+            "confidence_grouped": confidence_grouped,
+            "track_image_hw": track_image_hw,
+            "object_valid_mask": object_valid_mask,
+            "box_prior_xyxy": box_prior_xyxy,
+        }
+
     def forward_from_batch(
         self,
         batch: dict,
         *,
         use_full_video_as_context: bool,
     ) -> OracleTokenOutput:
+        """Build oracle object tokens from the full video.
+
+        The frozen perception backbone runs under no_grad inside
+        `_run_frozen_perception`, while the (possibly trainable) object pooler and
+        condition adapter run here in the caller's autograd context. This lets
+        Stage1B/1C train `object_pooler` / `object_adapter` while Stage2 can still
+        wrap the whole call in no_grad for a pure-teacher forward.
+        """
         if not use_full_video_as_context:
             raise NotImplementedError("only full-video oracle token extraction is implemented in the first version")
         full_video = batch["video"].to(self.trainer.device_obj)
@@ -113,58 +203,21 @@ class OracleObjectTokenEncoder:
         batch_size = int(full_video.shape[0])
         token_outputs = []
         context_outputs = []
+        samples: list[OracleSampleArtifacts] = []
         for sample_idx in range(batch_size):
             sample_video = full_video[sample_idx : sample_idx + 1]
             sample_boxes = full_boxes[sample_idx : sample_idx + 1]
-            image_hw = (int(sample_video.shape[-2]), int(sample_video.shape[-1]))
-            query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = self._build_object_query_priors(
-                sample_boxes,
-                image_hw=image_hw,
-            )
-            frames_bthwc = sample_video.permute(0, 2, 3, 4, 1).float()
-            frames_bthwc = (frames_bthwc + 1.0) / 2.0
-            jepa_adapter = self._oracle_jepa_adapter(int(sample_video.shape[2]))
-            jepa_out = jepa_adapter(sample_video)
-            context_latents = self.trainer._encode_video_latents(sample_video)[0].unsqueeze(0).to(self.trainer.device_obj)
-            vggt_out = self.trainer.vggt_adapter(
-                frames_bthwc,
-                query_points_prior=query_points_prior,
-                query_image_hw=image_hw,
-            )
-            cotracker_out = None
-            if self.trainer.cotracker_adapter is not None:
-                cotracker_out = self.trainer.cotracker_adapter(
-                    frames_bthwc,
-                    query_points_prior=query_points_prior,
-                    query_frame_ids=query_frame_ids,
-                    query_image_hw=image_hw,
-                )
-            if cotracker_out is not None:
-                tracks = cotracker_out.tracks
-                visibility = cotracker_out.visibility
-                confidence = cotracker_out.confidence
-                track_image_hw = cotracker_out.image_hw
-            else:
-                tracks = vggt_out.tracks
-                visibility = vggt_out.visibility
-                confidence = vggt_out.confidence
-                track_image_hw = vggt_out.image_hw
-            tracks_grouped, visibility_grouped, confidence_grouped = self.trainer._group_tracks_to_objects(
-                tracks,
-                visibility,
-                confidence,
-                max_objects=self.trainer.max_objects,
-                points_per_object=self.trainer.points_per_object,
-            )
+            perception = self._run_frozen_perception(sample_video, sample_boxes)
+            vggt_out = perception["vggt_out"]
             object_out = self.trainer.object_pooler(
-                jepa_patch_tokens=jepa_out.patch_tokens,
-                context_latents=context_latents,
-                tracks=tracks_grouped,
-                visibility=visibility_grouped,
-                confidence=confidence_grouped,
-                track_image_hw=track_image_hw,
-                object_valid_mask=object_valid_mask,
-                box_prior_xyxy=box_prior_xyxy,
+                jepa_patch_tokens=perception["jepa_out"].patch_tokens,
+                context_latents=perception["context_latents"],
+                tracks=perception["tracks_grouped"],
+                visibility=perception["visibility_grouped"],
+                confidence=perception["confidence_grouped"],
+                track_image_hw=perception["track_image_hw"],
+                object_valid_mask=perception["object_valid_mask"],
+                box_prior_xyxy=perception["box_prior_xyxy"],
                 vggt_world_points=vggt_out.world_points,
                 vggt_world_points_conf=vggt_out.world_points_conf,
                 vggt_depth=vggt_out.depth,
@@ -176,11 +229,25 @@ class OracleObjectTokenEncoder:
             )
             object_context = self.trainer.object_adapter(
                 object_out.object_latent_tokens,
-                object_valid_mask=object_valid_mask,
+                object_valid_mask=perception["object_valid_mask"],
             )
             token_outputs.append(object_out.object_latent_tokens)
             context_outputs.append(object_context)
+            samples.append(
+                OracleSampleArtifacts(
+                    object_out=object_out,
+                    object_context=object_context,
+                    tracks_grouped=perception["tracks_grouped"],
+                    visibility_grouped=perception["visibility_grouped"],
+                    confidence_grouped=perception["confidence_grouped"],
+                    track_image_hw=perception["track_image_hw"],
+                    object_valid_mask=perception["object_valid_mask"],
+                )
+            )
         return OracleTokenOutput(
             object_latent_tokens=torch.cat(token_outputs, dim=0),
             object_context=torch.cat(context_outputs, dim=0),
+            samples=samples,
         )
+
+

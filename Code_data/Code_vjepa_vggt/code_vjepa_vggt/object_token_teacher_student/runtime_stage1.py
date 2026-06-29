@@ -62,7 +62,13 @@ class OracleInjectionTrainer(Stage1OracleMixin, ContextVideoTrainer):
         }
 
     def _prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
-        prepared = super()._prepare_batch(batch)
+        # Expose the batch so the mixin's _maybe_build_query_priors can derive
+        # GT-box query priors for the default context path (CoTracker/VGGT).
+        self._teacher_student_current_batch = batch
+        try:
+            prepared = super()._prepare_batch(batch)
+        finally:
+            self._teacher_student_current_batch = None
         oracle_batch = self._build_oracle_stage1_batch(batch)
         prepared["object_context"] = oracle_batch.oracle_object_context.to(
             device=self.device_obj,
@@ -77,6 +83,18 @@ class OracleInjectionTrainer(Stage1OracleMixin, ContextVideoTrainer):
             device=self.device_obj,
             dtype=prepared["object_tokens"].dtype,
         )
+        # The oracle path produces aux predictions over the full-video latent
+        # frames (T_full_lat). The default context path filled prepared["gt_*"]
+        # from the context-only latent frames (T_ctx_lat), so the base forward
+        # would otherwise compute aux loss as (pred[T_full] - gt[T_ctx]) and hit
+        # a shape mismatch. Replace the GT targets with the full-video oracle GT
+        # so predictions and targets share the same latent-frame axis.
+        prepared["gt_track_summary"] = oracle_batch.gt_track_summary
+        prepared["gt_track_valid"] = oracle_batch.gt_track_valid
+        prepared["gt_box_xyxy"] = oracle_batch.gt_box_xyxy
+        prepared["gt_box_valid"] = oracle_batch.gt_box_valid
+        prepared["gt_depth"] = oracle_batch.gt_depth
+        prepared["gt_depth_valid"] = oracle_batch.gt_depth_valid
         prepared["debug"]["teacher_student_stage1"] = {
             "mode": "oracle_full_video_object_context",
             "oracle_object_latent_tokens": list(oracle_batch.oracle_object_latent_tokens.shape),

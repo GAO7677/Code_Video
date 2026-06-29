@@ -64,10 +64,16 @@ loss:
   lambda_future_token: 1.0
   lambda_future_track: 0.1
   lambda_future_box: 0.1
-  future_track_delta_scale: 0.06
-  future_box_delta_scale: 0.06
+  # Future heads predict displacement from the last-context anchor (not the GT
+  # future box), so the residual must span a wide range: keep these scales/gates
+  # open rather than at the Stage1 refinement defaults.
+  future_track_delta_scale: 1.0
+  future_box_delta_scale: 1.0
   future_box_wh_log_scale: 1.25
   future_box_wh_max_scale: 2.0
+  future_track_gate_init: 0.5
+  future_box_center_gate_init: 0.5
+  future_box_size_gate_init: 0.5
 
 logging:
   log_every: 10

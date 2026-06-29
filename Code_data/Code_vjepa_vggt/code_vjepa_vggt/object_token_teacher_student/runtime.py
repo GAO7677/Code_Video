@@ -13,6 +13,7 @@ from .common import (
     build_future_track_summary,
     future_object_valid_mask,
     group_future_boxes,
+    last_valid_context_anchor,
     split_context_future_tokens,
 )
 from .future_heads import FutureObjectHeads
@@ -52,10 +53,13 @@ class TeacherStudentPredictorTrainer(ContextVideoTrainer):
         ).to(self.device_obj)
         self.future_heads = FutureObjectHeads(
             dim=dim,
-            track_delta_scale=float(loss_cfg.get("future_track_delta_scale", 0.06)),
-            box_delta_scale=float(loss_cfg.get("future_box_delta_scale", 0.06)),
+            track_delta_scale=float(loss_cfg.get("future_track_delta_scale", 1.0)),
+            box_delta_scale=float(loss_cfg.get("future_box_delta_scale", 1.0)),
             box_wh_log_scale=float(loss_cfg.get("future_box_wh_log_scale", 1.25)),
             box_wh_max_scale=float(loss_cfg.get("future_box_wh_max_scale", 2.0)),
+            track_gate_init=float(loss_cfg.get("future_track_gate_init", 0.5)),
+            box_center_gate_init=float(loss_cfg.get("future_box_center_gate_init", 0.5)),
+            box_size_gate_init=float(loss_cfg.get("future_box_size_gate_init", 0.5)),
         ).to(self.device_obj)
         self.oracle_encoder = OracleObjectTokenEncoder(self)
         self.lambda_future_token = float(loss_cfg.get("lambda_future_token", 1.0))
@@ -157,7 +161,10 @@ class TeacherStudentPredictorTrainer(ContextVideoTrainer):
                 context_prepared = self._prepare_batch(batch)
             finally:
                 self._teacher_student_current_batch = None
-        oracle_out = self.oracle_encoder.forward_from_batch(batch, use_full_video_as_context=True)
+            # The oracle teacher tokens are a pure distillation target: the
+            # pooler/adapter are frozen in Stage2, so build them under no_grad to
+            # avoid retaining a graph through the frozen perception path.
+            oracle_out = self.oracle_encoder.forward_from_batch(batch, use_full_video_as_context=True)
         context_tokens = context_prepared["object_latent_tokens"].detach()
         context_latent_frames = int(context_tokens.shape[1])
         slices = split_context_future_tokens(
@@ -181,8 +188,18 @@ class TeacherStudentPredictorTrainer(ContextVideoTrainer):
             future_boxes,
             future_latent_frames=future_latent_frames,
         )
-        base_track_summary = gt_future_track_summary.detach()
-        base_box_xyxy = gt_future_box_xyxy.detach()
+        # Anchor the future geometry heads on the LAST valid context box (which
+        # is available at inference time) instead of the future GT box. Using GT
+        # as the base leaks the target and means the heads never see, at train
+        # time, the regime they face at deploy. The heads then predict the
+        # displacement from the last observed object state to each future frame.
+        context_boxes = batch["context_boxes"][:, :, : int(self.max_objects)].to(self.device_obj)
+        base_box_o, base_track_o, _ = last_valid_context_anchor(
+            context_boxes,
+            image_hw=(int(batch["video"].shape[-2]), int(batch["video"].shape[-1])),
+        )
+        base_box_xyxy = base_box_o.unsqueeze(1).expand(-1, future_latent_frames, -1, -1).detach()
+        base_track_summary = base_track_o.unsqueeze(1).expand(-1, future_latent_frames, -1, -1).detach()
         future_head_out = self.future_heads(
             predictor_out.pred_future_tokens,
             base_track_summary=base_track_summary,

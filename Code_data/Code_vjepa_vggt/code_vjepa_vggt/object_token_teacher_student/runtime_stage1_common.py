@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from code_vjepa_vggt.train_v_newtrain import _sample_points_from_box
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 
 from .oracle_encoder import OracleObjectTokenEncoder
@@ -36,6 +37,75 @@ class Stage1OracleMixin:
     vggt_adapter: Any
     cotracker_adapter: Any
     cfg: dict[str, Any]
+    enable_sam2_priors: bool
+    _teacher_student_current_batch: dict[str, Any] | None = None
+
+    def _maybe_build_query_priors(
+        self,
+        context_videos: torch.Tensor,
+        num_context_frames: torch.Tensor,
+        captions: list[str],
+    ):
+        # The context path (VGGT / CoTracker) requires query-point priors. With
+        # SAM2 priors disabled we derive them from the GT context boxes, exactly
+        # as the Stage2 trainer does, so Stage1B/1C can run the default context
+        # branch without a SAM2 detector.
+        if self.enable_sam2_priors:
+            return super()._maybe_build_query_priors(context_videos, num_context_frames, captions)
+        batch = self._teacher_student_current_batch
+        if batch is None or "context_boxes" not in batch:
+            return super()._maybe_build_query_priors(context_videos, num_context_frames, captions)
+        context_boxes = batch["context_boxes"].to(context_videos.device)
+        batch_size = int(context_boxes.shape[0])
+        grouped_queries = torch.zeros(
+            batch_size,
+            int(self.max_objects),
+            int(self.points_per_object),
+            2,
+            dtype=context_videos.dtype,
+            device=context_videos.device,
+        )
+        object_valid_mask = torch.zeros(
+            batch_size,
+            int(self.max_objects),
+            dtype=context_videos.dtype,
+            device=context_videos.device,
+        )
+        prior_debugs: list[dict[str, Any]] = []
+        for batch_idx in range(batch_size):
+            valid_frames = int(num_context_frames[batch_idx].item())
+            for object_idx in range(int(self.max_objects)):
+                first_box = None
+                for frame_idx in range(valid_frames):
+                    candidate = context_boxes[batch_idx, frame_idx, object_idx]
+                    if bool((candidate[2] - candidate[0] > 1.0e-6) and (candidate[3] - candidate[1] > 1.0e-6)):
+                        first_box = candidate
+                        break
+                if first_box is None:
+                    continue
+                points = _sample_points_from_box(first_box.detach().float().cpu(), int(self.points_per_object)).to(
+                    device=context_videos.device,
+                    dtype=context_videos.dtype,
+                )
+                points[:, 0] *= float(context_videos.shape[-1])
+                points[:, 1] *= float(context_videos.shape[-2])
+                grouped_queries[batch_idx, object_idx] = points
+                object_valid_mask[batch_idx, object_idx] = 1.0
+            prior_debugs.append(
+                {
+                    "strategy": "gt_box_queries",
+                    "prior_source": "gt_box_queries",
+                    "object_count": int(object_valid_mask[batch_idx].sum().item()),
+                    "valid_frames": valid_frames,
+                }
+            )
+        return (
+            grouped_queries,
+            object_valid_mask,
+            ["gt_box_queries"] * batch_size,
+            ["gt_box_queries"] * batch_size,
+            prior_debugs,
+        )
 
     def _align_tracks_to_boxes_full(self, tracks: torch.Tensor, gt_boxes: torch.Tensor, *, image_hw: tuple[int, int]):
         from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes
@@ -124,15 +194,16 @@ class Stage1OracleMixin:
         return gt_track_summary, gt_track_valid, gt_box_xyxy, gt_box_valid, gt_depth, gt_depth_valid
 
     def _build_oracle_stage1_batch(self, batch: dict[str, Any]) -> Stage1OracleBatch:
-        with torch.no_grad():
-            oracle_out = self.oracle_encoder.forward_from_batch(
-                batch,
-                use_full_video_as_context=True,
-            )
+        # The oracle encoder runs the frozen perception backbone under no_grad
+        # internally, but keeps the (possibly trainable) object_pooler /
+        # object_adapter in the autograd graph. We therefore must NOT wrap this
+        # call in no_grad, otherwise Stage1B/1C would silently freeze those
+        # modules even though they are listed as trainable.
+        oracle_out = self.oracle_encoder.forward_from_batch(
+            batch,
+            use_full_video_as_context=True,
+        )
 
-        full_video = batch["video"].to(self.device_obj)
-        full_boxes = torch.cat([batch["context_boxes"], batch["future_boxes"]], dim=1).to(self.device_obj)
-        batch_size = int(full_video.shape[0])
         aux_outputs = []
         object_tokens = []
         tracks_grouped_all = []
@@ -140,68 +211,11 @@ class Stage1OracleMixin:
         confidence_grouped_all = []
         object_valid_masks = []
         track_image_hw_ref = None
-        for sample_idx in range(batch_size):
-            sample_video = full_video[sample_idx : sample_idx + 1]
-            sample_boxes = full_boxes[sample_idx : sample_idx + 1]
-            image_hw = (int(sample_video.shape[-2]), int(sample_video.shape[-1]))
-            query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = self.oracle_encoder._build_object_query_priors(
-                sample_boxes,
-                image_hw=image_hw,
-            )
-            frames_bthwc = sample_video.permute(0, 2, 3, 4, 1).float()
-            frames_bthwc = (frames_bthwc + 1.0) / 2.0
-            jepa_adapter = self.oracle_encoder._oracle_jepa_adapter(int(sample_video.shape[2]))
-            jepa_out = jepa_adapter(sample_video)
-            full_latents = self._encode_video_latents(sample_video)[0].unsqueeze(0).to(self.device_obj)
-            vggt_out = self.vggt_adapter(
-                frames_bthwc,
-                query_points_prior=query_points_prior,
-                query_image_hw=image_hw,
-            )
-            cotracker_out = None
-            if self.cotracker_adapter is not None:
-                cotracker_out = self.cotracker_adapter(
-                    frames_bthwc,
-                    query_points_prior=query_points_prior,
-                    query_frame_ids=query_frame_ids,
-                    query_image_hw=image_hw,
-                )
-            if cotracker_out is not None:
-                tracks = cotracker_out.tracks
-                visibility = cotracker_out.visibility
-                confidence = cotracker_out.confidence
-                track_image_hw = cotracker_out.image_hw
-            else:
-                tracks = vggt_out.tracks
-                visibility = vggt_out.visibility
-                confidence = vggt_out.confidence
-                track_image_hw = vggt_out.image_hw
-            track_image_hw_ref = track_image_hw
-            tracks_grouped, visibility_grouped, confidence_grouped = ContextVideoTrainer._group_tracks_to_objects(
-                tracks,
-                visibility,
-                confidence,
-                max_objects=self.max_objects,
-                points_per_object=self.points_per_object,
-            )
-            object_out = self.object_pooler(
-                jepa_patch_tokens=jepa_out.patch_tokens,
-                context_latents=full_latents,
-                tracks=tracks_grouped,
-                visibility=visibility_grouped,
-                confidence=confidence_grouped,
-                track_image_hw=track_image_hw,
-                object_valid_mask=object_valid_mask,
-                box_prior_xyxy=box_prior_xyxy,
-                vggt_world_points=vggt_out.world_points,
-                vggt_world_points_conf=vggt_out.world_points_conf,
-                vggt_depth=vggt_out.depth,
-                vggt_depth_conf=vggt_out.depth_conf,
-                vggt_dense_patch_tokens=vggt_out.dense_patch_tokens,
-                vggt_patch_grid_hw=vggt_out.patch_grid_hw,
-                vggt_geometry_image_hw=vggt_out.image_hw,
-                frame_valid_mask=None,
-            )
+        for sample in oracle_out.samples:
+            object_out = sample.object_out
+            # aux_heads run in the same autograd context as the pooler; they are
+            # trainable in Stage1A/1C and frozen (eval + requires_grad_(False))
+            # in Stage1B. That is controlled by the trainer, not here.
             aux_out = self.object_aux_heads(
                 object_out.object_latent_tokens,
                 object_out.active_track_summary,
@@ -209,10 +223,11 @@ class Stage1OracleMixin:
             )
             aux_outputs.append(aux_out)
             object_tokens.append(object_out.object_tokens)
-            tracks_grouped_all.append(tracks_grouped)
-            visibility_grouped_all.append(visibility_grouped)
-            confidence_grouped_all.append(confidence_grouped)
-            object_valid_masks.append(object_valid_mask)
+            tracks_grouped_all.append(sample.tracks_grouped)
+            visibility_grouped_all.append(sample.visibility_grouped)
+            confidence_grouped_all.append(sample.confidence_grouped)
+            object_valid_masks.append(sample.object_valid_mask)
+            track_image_hw_ref = sample.track_image_hw
 
         pred_track_summary = torch.cat([u.pred_track_summary for u in aux_outputs], dim=0)
         pred_box_xyxy = torch.cat([u.pred_box_xyxy for u in aux_outputs], dim=0)

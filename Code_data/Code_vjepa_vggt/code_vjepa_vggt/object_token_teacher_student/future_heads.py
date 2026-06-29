@@ -20,15 +20,19 @@ class FutureObjectHeads(nn.Module):
     def __init__(
         self,
         dim: int = 4096,
-        track_delta_scale: float = 0.06,
-        box_delta_scale: float = 0.06,
+        track_delta_scale: float = 1.0,
+        box_delta_scale: float = 1.0,
         box_wh_log_scale: float = 1.25,
         box_wh_max_scale: float = 2.0,
-        track_gate_init: float = 0.05,
-        box_center_gate_init: float = 0.05,
-        box_size_gate_init: float = 0.05,
+        track_gate_init: float = 0.5,
+        box_center_gate_init: float = 0.5,
+        box_size_gate_init: float = 0.5,
     ) -> None:
         super().__init__()
+        # Unlike the Stage1 aux heads (which refine an already-good per-frame
+        # base), the Stage2 future heads predict displacement from the *last
+        # context* anchor, so the residual must be able to span a much larger
+        # range. We therefore default to wide delta scales and open gates.
         self.heads = ObjectAuxHeads(
             dim=dim,
             track_delta_scale=track_delta_scale,
