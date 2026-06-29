@@ -10306,3 +10306,175 @@ sanity 配置：
   - `bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_teacher_student_stage2_predictor_gpu67.sh`
 - 预期输出目录：
   - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student_stage2_predictor`
+
+### 2026-06-29：teacher-student Stage 1 oracle injection 已补成真实 runtime
+
+这次补的不是默认分支，而是：
+
+- [runtime_stage1.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/runtime_stage1.py)
+- [train_stage1_oracle_injection.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1_oracle_injection.py)
+
+本次修改的核心是：
+
+- Stage 1 不再只是套 `ContextVideoTrainer` 的空入口
+- 现在会在 `_prepare_batch()` 之后，额外调用：
+  - `oracle_encoder.forward_from_batch(..., use_full_video_as_context=True)`
+- 然后显式替换：
+  - `prepared["object_context"]`
+  - `prepared["object_latent_tokens"]`
+
+也就是说，送进 Wan DiT 的 object condition 已经变成：
+
+- `full video -> oracle_object_context`
+
+而不是原先默认的：
+
+- `context video -> context_object_context`
+
+当前 Stage 1 的训练边界也被显式收窄为只训练 Wan object injection 分支：
+
+- `object_embedding`
+- `object_cross_attn`
+- `object_gate`
+- `norm4`
+
+显式冻结的模块包括：
+
+- `JEPAPatchAdapter`
+- `CoTrackerAdapter`
+- `VGGTTrackAdapter`
+- `ObjectTubeProjector`
+- `ObjectAuxHeads`
+- `ObjectConditionAdapter`
+- Wan VAE
+- text encoder
+- LoRA
+- 非 object 的 DiT 权重
+
+当前 loss 设计：
+
+- `lambda_main = 1.0`
+- `lambda_track_aux = 0.0`
+- `lambda_box_aux = 0.0`
+- `lambda_depth_aux = 0.0`
+
+也就是：
+
+- Stage 1 只回答一个问题：
+  - `full-time oracle object context` 是否能帮助 Wan 学会利用 object cross-attn 改善去噪主任务
+
+已补的启动配置模板：
+
+- [config_stage1_oracle_injection_template.yaml](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1_oracle_injection_template.yaml)
+
+当前验证结果：
+
+- `runtime_stage1.py / train_stage1_oracle_injection.py / oracle_encoder.py / runtime.py`
+  已经通过 `wan-cu128` 环境下的 `py_compile`
+- 还没做完整 Stage 1 真实训练启动
+- 下一步应在空闲 GPU 上做一次：
+  - 1-step forward/backward/optimizer smoke
+  - 再决定是否直接上 `gpu6,7`
+
+### 2026-06-29：teacher-student Stage 1A full-token teacher 已新增
+
+这次新增的是：
+
+- [runtime_stage1a_full_token.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/runtime_stage1a_full_token.py)
+- [train_stage1a_full_token.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1a_full_token.py)
+- [config_stage1a_full_token_template.yaml](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml)
+
+当前 Stage 1A 的训练目标是：
+
+- 不跑 Wan DiT 主去噪
+- 只用 full video 构造：
+  - `oracle_object_latent_tokens`
+- 再用 full-time latent 对齐后的：
+  - `track`
+  - `box`
+  - `depth`
+  supervision 去训练 token teacher
+
+当前 Stage 1A 可训练模块：
+
+- `ObjectTubeProjector`
+- `ObjectAuxHeads`
+
+当前 Stage 1A 显式冻结：
+
+- `ObjectConditionAdapter`
+- `JEPAPatchAdapter`
+- `CoTrackerAdapter`
+- `VGGTTrackAdapter`
+- Wan VAE
+- text encoder
+- Wan DiT
+- Wan LoRA
+
+当前 Stage 1A loss：
+
+- `loss_full_track`
+- `loss_full_box`
+- `loss_full_depth`
+
+实现细节：
+
+- trainer 仍复用 `ContextVideoTrainer` 的 dataset / runner 基础设施
+- 但 `forward()` 已经重写成 token-only aux loss
+- 不再进入 Wan denoise forward
+
+当前验证状态：
+
+- `runtime_stage1a_full_token.py / train_stage1a_full_token.py`
+  已经通过 `wan-cu128` 下的 `py_compile`
+- 还没做真实 GPU smoke
+- 下一步最合理的是：
+  - 在空闲单卡上先做 1-step Stage 1A smoke
+  - 确认 `ObjectTubeProjector + ObjectAuxHeads` 的梯度/参数更新
+
+### 2026-06-29：Stage 1 整套脚本已补齐到 1A / 1B / 1C
+
+当前 Stage 1 三段已经都有独立脚本和配置模板：
+
+- Stage 1A full-token teacher
+  - [train_stage1a_full_token.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1a_full_token.py)
+  - [config_stage1a_full_token_template.yaml](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml)
+- Stage 1B oracle cross-attn
+  - [train_stage1_oracle_injection.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1_oracle_injection.py)
+  - [train_stage1b_oracle_cross_attn.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1b_oracle_cross_attn.py)
+  - [config_stage1b_oracle_cross_attn_template.yaml](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1b_oracle_cross_attn_template.yaml)
+- Stage 1C joint alignment
+  - [train_stage1c_joint.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/train_stage1c_joint.py)
+  - [config_stage1c_joint_template.yaml](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1c_joint_template.yaml)
+
+另外补了一个 Stage 1 共享 helper：
+
+- [runtime_stage1_common.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/runtime_stage1_common.py)
+
+它的作用是把 full-video oracle token 构造、full-time aux head 预测、latent-time GT 目标构造统一收口，避免 1A / 1B / 1C 三份脚本各自复制一遍。
+
+当前代码级检查结果：
+
+- `runtime_stage1_common.py`
+- `runtime_stage1a_full_token.py`
+- `runtime_stage1.py`
+- `runtime_stage1c_joint.py`
+- `train_stage1a_full_token.py`
+- `train_stage1_oracle_injection.py`
+- `train_stage1b_oracle_cross_attn.py`
+- `train_stage1c_joint.py`
+- `train_stage3_bridge.py`
+
+都已经通过 `wan-cu128` 下的 `py_compile`。
+
+当前还没做的，是 Stage 1 的真实 GPU smoke：
+
+- Stage 1A：1-step token-only aux loss smoke
+- Stage 1B：1-step denoise-only oracle injection smoke
+- Stage 1C：1-step joint finetune smoke
+
+所以现在可以说：
+
+- Stage 1 脚本层面已经闭环
+- 代码级静态检查已经通过
+- 但训练链路是否在真实 GPU 上稳定，还需要下一步 smoke 来验证

@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import os
 
-from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
+
+from .runtime_stage1 import OracleInjectionTrainer
 
 
 def _resolve_launch_device() -> str:
@@ -24,7 +25,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
-    trainer = ContextVideoTrainer(cfg, device=_resolve_launch_device())
+    trainer = OracleInjectionTrainer(cfg, device=_resolve_launch_device())
     trainer.train(resume_checkpoint=args.resume_checkpoint)
 
 

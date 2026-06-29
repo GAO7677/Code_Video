@@ -19,7 +19,7 @@ def _resolve_launch_device() -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train Stage1C / bridge-style joint finetune branch.")
+    parser = argparse.ArgumentParser(description="Train Stage1C joint finetune branch.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--resume-checkpoint", default=None)
     args = parser.parse_args()

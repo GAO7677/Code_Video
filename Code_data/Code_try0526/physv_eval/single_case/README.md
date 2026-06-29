@@ -17,6 +17,7 @@
 - `videophy2`
 - `phyground`
 - `cosmos_reason1`
+- `physics_iq`
 
 ## 通用输入格式
 
@@ -38,6 +39,7 @@ python -m physv_eval.single_case.pdi --input-json /path/to/case.json
 
 - 视频路径字段：`video`、`video_path`、`output_video`、`paths.output_video_path`
 - 上下文视频字段：`context_video`、`context_video_path`、`paths.context_video_path`
+- 参考视频字段：`source_video`、`source_video_path`、`source`
 - caption 字段：`caption`、`text_prompt`、`prompt`、`description`、`scenario`、`experiment`、`target_object`、`clip_name`、`name`
 - 规则字段：`rule`、`physical_law`、`law`
 
@@ -397,3 +399,79 @@ python -m physv_eval.single_case.cosmos_reason1 \
 - 如果你是在代码里复用，优先直接 `import score_case`
 - 如果你是在做批处理调度，优先从 `physv_eval/pipeline.py`、`physv_eval/*_batch.py` 这些外层脚本进入
 - 不要把 `proxy` 这类诊断量直接当成最终 benchmark 总分
+
+## 7. Physics-IQ 单视角近似版
+
+入口：
+
+- 模块：`physv_eval.single_case.physics_iq`
+- 函数：`score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4)`
+
+指标定义：
+
+- 基于官方 Physics-IQ 底层分量做的单视角近似版
+- 只比较一条 `output_video` 和一条 `source_video`
+- 保留：
+  - `mse_mean`
+  - `spatiotemporal_iou_mean`
+  - `spatial_iou`
+  - `weighted_spatial_iou`
+- 明确去掉官方必须依赖的：
+  - 多视角聚合
+  - 第二条 real take 的 physical variance 归一化
+
+指标属性：
+
+- 类型：连续值近似分
+- 主字段：`score`
+- 范围：`0` 到 `100`
+- 注意：这不是官方 Physics-IQ 总分，不能直接和官方榜单横向对比
+
+函数返回：
+
+```python
+{
+    "score": float,
+    "physics_iq_score": float,
+    "official": bool,
+    "method": str,
+    "reference_video": str,
+    "mse_mean": float,
+    "spatiotemporal_iou_mean": float,
+    "spatial_iou": float,
+    "weighted_spatial_iou": float,
+    "raw_score": float,
+    "num_frames_compared": int,
+    "compare_duration_sec": float,
+    "compare_fps": float,
+    "output_fps": float,
+    "source_fps": float,
+    "output_duration_sec": float,
+    "source_duration_sec": float,
+    "target_size": list[int],
+    "downsample_factor": int,
+    "threshold_value": int,
+    "frame_alignment": str,
+    "score_formula": str,
+    "notes": str,
+}
+```
+
+运行示例：
+
+直接传两条视频：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.physics_iq \
+  --video /path/to/output.mp4 \
+  --source-video /path/to/source.mp4
+```
+
+传 case JSON：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.physics_iq \
+  --input-json /path/to/case.json
+```

@@ -5,7 +5,7 @@ import os
 
 from code_vjepa_vggt.utils.config import load_yaml_config
 
-from .runtime_stage1c_joint import Stage1CJointTrainer
+from .runtime_stage1 import OracleInjectionTrainer
 
 
 def _resolve_launch_device() -> str:
@@ -19,13 +19,13 @@ def _resolve_launch_device() -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train Stage1C / bridge-style joint finetune branch.")
+    parser = argparse.ArgumentParser(description="Train Stage1B oracle cross-attn branch.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--resume-checkpoint", default=None)
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
-    trainer = Stage1CJointTrainer(cfg, device=_resolve_launch_device())
+    trainer = OracleInjectionTrainer(cfg, device=_resolve_launch_device())
     trainer.train(resume_checkpoint=args.resume_checkpoint)
 
 
