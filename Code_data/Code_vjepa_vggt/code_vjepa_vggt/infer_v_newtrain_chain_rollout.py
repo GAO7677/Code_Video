@@ -81,6 +81,18 @@ def _read_video_tail(video_path: Path, tail_frames: int) -> tuple[np.ndarray, np
     return frames, frame_idx
 
 
+def _save_rgb_frames_video(
+    *,
+    frames_rgb: np.ndarray,
+    output_path: Path,
+    fps: int,
+    quality: int,
+) -> None:
+    if frames_rgb.ndim != 4 or int(frames_rgb.shape[-1]) != 3:
+        raise ValueError(f"expected frames_rgb shape [T,H,W,3], got {list(frames_rgb.shape)}")
+    save_video(frames_rgb, str(output_path), fps=int(fps), quality=int(quality))
+
+
 def _infer_segment(
     *,
     model,
@@ -193,7 +205,7 @@ def main() -> None:
     model = build_model(model_args)
     model.to(torch.device(args.device))
     model.eval()
-    load_info = _load_v_newtrain_state_into_model(model, Path(args.checkpoint))
+    _load_v_newtrain_state_into_model(model, Path(args.checkpoint))
 
     initial_frames_rgb, initial_frame_indices = _load_context_video(
         video_path=initial_context_video,
@@ -207,7 +219,16 @@ def main() -> None:
     segment1_path = output_dir / f"{case_stem}__segment1.mp4"
     segment2_path = output_dir / f"{case_stem}__segment2.mp4"
     merged_path = output_dir / f"{case_stem}__merged.mp4"
-    result_path = output_dir / f"{case_stem}__chain_rollout.json"
+    segment1_context_path = output_dir / f"{case_stem}__segment1_context.mp4"
+    segment2_context_path = output_dir / f"{case_stem}__segment2_context.mp4"
+    result_path = output_dir / f"{case_stem}.json"
+
+    _save_rgb_frames_video(
+        frames_rgb=initial_frames_rgb,
+        output_path=segment1_context_path,
+        fps=int(args.fps),
+        quality=int(args.quality),
+    )
 
     segment1_video, segment1_debug = _infer_segment(
         model=model,
@@ -223,6 +244,12 @@ def main() -> None:
     save_video(segment1_video, str(segment1_path), fps=int(args.fps), quality=int(args.quality))
 
     chained_context_frames_rgb, chained_frame_indices = _read_video_tail(segment1_path, int(args.context_frames))
+    _save_rgb_frames_video(
+        frames_rgb=chained_context_frames_rgb,
+        output_path=segment2_context_path,
+        fps=int(args.fps),
+        quality=int(args.quality),
+    )
     segment2_video, segment2_debug = _infer_segment(
         model=model,
         context_frames_rgb=chained_context_frames_rgb,
@@ -241,29 +268,41 @@ def main() -> None:
     merged_frames = np.concatenate([segment1_saved_frames, segment2_saved_frames], axis=0)
     save_video(merged_frames, str(merged_path), fps=int(args.fps), quality=int(args.quality))
 
+    output_video = merged_path
     result = {
-        "checkpoint": str(_resolve_checkpoint_file(Path(args.checkpoint))),
-        "config": str(Path(args.config).expanduser().resolve()),
         "input_json": str(input_json) if input_json is not None else None,
-        "source_payload": source_payload,
-        "prompt": prompt_text,
-        "initial_context_video": str(initial_context_video),
+        "input_caption": prompt_text,
+        "output_video": str(output_video),
+        "seed": int(args.seed),
+        "step": int(args.sampling_steps),
+        "guidance": float(args.cfg_scale),
+        "ckpt": str(_resolve_checkpoint_file(Path(args.checkpoint))),
+        "context_video": str(initial_context_video),
+        "segment1_context_video": str(segment1_context_path),
         "segment1_video": str(segment1_path),
+        "segment2_context_video": str(segment2_context_path),
         "segment2_video": str(segment2_path),
         "merged_video": str(merged_path),
-        "sampling_mode": str(args.sampling_mode),
-        "context_frames": int(args.context_frames),
-        "segment_frames": int(args.num_frames),
-        "merged_frames": int(merged_frames.shape[0]),
+        "segment1_seed": int(args.seed),
+        "segment2_seed": int(args.seed) + 1,
+        "config": str(Path(args.config).expanduser().resolve()),
         "fps": int(args.fps),
-        "seed_segment1": int(args.seed),
-        "seed_segment2": int(args.seed) + 1,
+        "num_frames": int(args.num_frames),
+        "context_frames": int(args.context_frames),
+        "sampling_mode": str(args.sampling_mode),
+        "merged_frames": int(merged_frames.shape[0]),
         "initial_frame_indices": initial_frame_indices.tolist(),
         "segment1_tail_indices_for_segment2": chained_frame_indices.tolist(),
-        "load_info": load_info,
         "segment1_object_debug": segment1_debug,
         "segment2_object_debug": segment2_debug,
     }
+    if isinstance(source_payload, dict):
+        source_video = source_payload.get("source_video")
+        if isinstance(source_video, str) and source_video:
+            result["source_video"] = source_video
+        input_image = source_payload.get("input_image")
+        if isinstance(input_image, str) and input_image:
+            result["input_image"] = input_image
     _save_json(result_path, result)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
