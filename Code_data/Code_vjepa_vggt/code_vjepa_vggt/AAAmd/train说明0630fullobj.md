@@ -57,6 +57,7 @@ step_0000500.pt: 63 张量 = object_pooler.*(42) + object_aux_heads.*(21), 全 f
 strict=False 加载进 1B/1C/2 同名子模块可匹配 → --init-from 机制已 de-risk。
 
 | 0630 巡检4 | 1A | step685 inst0.28 ema0.204 finite 0err; 4卡100%util 不OOM | 健康, geom L1 批间噪声正常, 未收敛 |
+| 0630 巡检5 | 1A | step928 inst0.095 ema0.226 finite 0err; 4卡100%util | 健康; 后续改每~1h/有事件才记 |
 
 ### GPU 编排策略
 - **当前**：只有 1A 可跑（1B/1C/2 都依赖 1A 权重）→ 4 卡全给 1A。
