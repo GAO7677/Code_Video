@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/report/v2v")
 EXCLUDED_JSON_NAMES = {"summary.json", "result.json", "batch_manifest.json"}
+SHOWCASE_BASELINE_METHOD = "raw_phys_state_wan_lora_continue_576x1024_f24_step-000500"
+SHOWCASE_CASES_PER_SIDE = 3
 
 
 @dataclass(frozen=True)
@@ -174,6 +176,12 @@ def compute_best_metric_values(method_rows: list[dict[str, Any]]) -> dict[str, f
         if best_value is not None:
             best_values[metric.key] = best_value
     return best_values
+
+
+def metric_delta_vs_baseline(metric: MetricDef, baseline_value: float, candidate_value: float) -> float:
+    if metric.higher_is_better:
+        return candidate_value - baseline_value
+    return baseline_value - candidate_value
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -330,6 +338,135 @@ def build_group_rows(method_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def available_metric_count(record: dict[str, Any]) -> int:
+    count = 0
+    for metric in METRICS:
+        if isinstance(record.get(metric.key), (int, float)):
+            count += 1
+    return count
+
+
+def build_group_case_showcases(method_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    case_buckets: dict[str, dict[str, Any]] = {}
+    for row in method_rows:
+        result_dir = Path(str(row["result_dir"]))
+        for json_path in sorted(result_dir.glob("*.json")):
+            if json_path.name in EXCLUDED_JSON_NAMES or json_path.name.startswith("eval_summary_"):
+                continue
+            payload = load_json(json_path)
+            if payload is None:
+                continue
+            input_json = payload.get("input_json")
+            if not isinstance(input_json, str) or not input_json.strip():
+                continue
+            input_json_path = resolve_path_string(input_json)
+            case_bucket = case_buckets.setdefault(
+                input_json_path,
+                {
+                    "input_json_path": input_json_path,
+                    "case_name": Path(input_json_path).name,
+                    "records": [],
+                },
+            )
+            record = {
+                "method": normalize_method(payload.get("method"), json_path),
+                "output_video": payload.get("output_video"),
+                "result_json_path": str(json_path),
+            }
+            record.update(extract_metric_values(payload))
+            case_bucket["records"].append(record)
+
+    positive_entries: list[dict[str, Any]] = []
+    negative_entries: list[dict[str, Any]] = []
+    for case_bucket in case_buckets.values():
+        baseline_candidates = [
+            record for record in case_bucket["records"] if record["method"] == SHOWCASE_BASELINE_METHOD
+        ]
+        if not baseline_candidates:
+            continue
+        baseline_record = max(baseline_candidates, key=available_metric_count)
+        best_positive: dict[str, Any] | None = None
+        best_negative: dict[str, Any] | None = None
+
+        for record in case_bucket["records"]:
+            if record is baseline_record:
+                continue
+            for metric in METRICS:
+                baseline_value = baseline_record.get(metric.key)
+                candidate_value = record.get(metric.key)
+                if not isinstance(baseline_value, (int, float)) or not isinstance(candidate_value, (int, float)):
+                    continue
+                delta = metric_delta_vs_baseline(metric, float(baseline_value), float(candidate_value))
+                detail = {
+                    "delta": delta,
+                    "metric_key": metric.key,
+                    "metric_label": metric_display_label(metric),
+                    "method": str(record["method"]),
+                    "baseline_value": float(baseline_value),
+                    "candidate_value": float(candidate_value),
+                }
+                if delta > 0 and (best_positive is None or delta > best_positive["delta"]):
+                    best_positive = detail
+                if delta < 0 and (best_negative is None or delta < best_negative["delta"]):
+                    best_negative = detail
+
+        sorted_records = sorted(
+            case_bucket["records"],
+            key=lambda record: (record["method"] != SHOWCASE_BASELINE_METHOD, str(record["method"])),
+        )
+
+        common_payload = {
+            "input_json_path": case_bucket["input_json_path"],
+            "case_name": case_bucket["case_name"],
+            "baseline_method": SHOWCASE_BASELINE_METHOD,
+            "rows": sorted_records,
+        }
+        if best_positive is not None:
+            positive_entries.append(
+                {
+                    **common_payload,
+                    "kind": "higher",
+                    "score": float(best_positive["delta"]),
+                    "reason": (
+                        f"{best_positive['method']} beats baseline on "
+                        f"{best_positive['metric_label']} by {best_positive['delta']:.4f}"
+                    ),
+                    "reason_detail": best_positive,
+                }
+            )
+        if best_negative is not None:
+            negative_entries.append(
+                {
+                    **common_payload,
+                    "kind": "lower",
+                    "score": float(-best_negative["delta"]),
+                    "reason": (
+                        f"{best_negative['method']} trails baseline on "
+                        f"{best_negative['metric_label']} by {abs(best_negative['delta']):.4f}"
+                    ),
+                    "reason_detail": best_negative,
+                }
+            )
+
+    positive_entries.sort(key=lambda item: item["score"], reverse=True)
+    negative_entries.sort(key=lambda item: item["score"], reverse=True)
+
+    selected: list[dict[str, Any]] = []
+    seen_case_keys: set[tuple[str, str]] = set()
+    for source_entries in (positive_entries[:SHOWCASE_CASES_PER_SIDE * 2], negative_entries[:SHOWCASE_CASES_PER_SIDE * 2]):
+        kept = 0
+        for entry in source_entries:
+            unique_key = (entry["kind"], entry["input_json_path"])
+            if unique_key in seen_case_keys:
+                continue
+            selected.append(entry)
+            seen_case_keys.add(unique_key)
+            kept += 1
+            if kept >= SHOWCASE_CASES_PER_SIDE:
+                break
+    return selected
+
+
 def load_progress_rows(result_root: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted(result_root.glob("eval_summary_*.json")):
@@ -449,6 +586,7 @@ def render_html(
     for group in group_rows:
         method_rows = list(group["method_rows"])
         best_metric_values = compute_best_metric_values(method_rows)
+        case_showcases = list(group.get("case_showcases", []))
         metric_headers = "".join(
             f"<th>{html.escape(metric_display_label(metric))} Mean</th>"
             f"<th>{html.escape(metric_display_label(metric))} Count</th>"
@@ -486,6 +624,67 @@ def render_html(
                 "<section class='chart-card'>"
                 f"<h3>{html.escape(chart['metric'])}</h3>"
                 f"<img src='{rel_path(output_dir, chart_path)}' alt='{html.escape(chart['metric'])}' />"
+                "</section>"
+            )
+
+        showcase_sections = []
+        for showcase in case_showcases:
+            showcase_metric_headers = "".join(
+                f"<th>{html.escape(metric_display_label(metric))}</th>" for metric in METRICS
+            )
+            showcase_rows = []
+            showcase_videos = []
+            for record in showcase["rows"]:
+                metric_cells = "".join(
+                    f"<td>{html.escape(fmt_metric(record.get(metric.key)))}</td>" for metric in METRICS
+                )
+                output_video = record.get("output_video")
+                if isinstance(output_video, str) and output_video.strip():
+                    output_video_path = Path(output_video)
+                    output_video_rel = rel_path(output_dir, output_video_path)
+                    output_video_html = (
+                        f"<a href='{output_video_rel}'>{html.escape(output_video_path.name)}</a>"
+                    )
+                    showcase_videos.append(
+                        "<section class='video-card'>"
+                        f"<h4>{html.escape(str(record['method']))}</h4>"
+                        f"<video controls preload='metadata' playsinline src='{output_video_rel}'></video>"
+                        f"<p><a href='{output_video_rel}'>{html.escape(output_video_path.name)}</a></p>"
+                        "</section>"
+                    )
+                else:
+                    output_video_html = "-"
+                showcase_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(str(record['method']))}</td>"
+                    f"<td>{output_video_html}</td>"
+                    f"{metric_cells}"
+                    "</tr>"
+                )
+
+            showcase_sections.append(
+                "<section class='panel'>"
+                f"<h3>{html.escape(showcase['case_name'])}</h3>"
+                f"<p>Case JSON: <span class='mono'>{html.escape(str(showcase['input_json_path']))}</span></p>"
+                f"<p>Why selected: {html.escape(str(showcase['reason']))}</p>"
+                "<p>Displayed columns: all current report metrics for this case, not only the selection metric.</p>"
+                "<div class='video-grid'>"
+                f"{''.join(showcase_videos) if showcase_videos else '<p>No preview videos available for this case.</p>'}"
+                "</div>"
+                "<div class='table-wrap'>"
+                "<table>"
+                "<thead>"
+                "<tr>"
+                "<th>Method</th>"
+                "<th>Output Video</th>"
+                f"{showcase_metric_headers}"
+                "</tr>"
+                "</thead>"
+                "<tbody>"
+                f"{''.join(showcase_rows)}"
+                "</tbody>"
+                "</table>"
+                "</div>"
                 "</section>"
             )
 
@@ -529,6 +728,11 @@ def render_html(
             "<div class='charts'>"
             f"{''.join(chart_sections) if chart_sections else '<p>No method charts available yet.</p>'}"
             "</div>"
+            "<section class='panel'>"
+            "<h3>Case Showcase</h3>"
+            "<p>Selected cases compare all methods against the baseline and display every current metric column.</p>"
+            f"{''.join(showcase_sections) if showcase_sections else '<p>No comparable showcase cases available yet.</p>'}"
+            "</section>"
             "</section>"
         )
 
@@ -624,6 +828,35 @@ def render_html(
       border: 1px solid #ece2d5;
       background: white;
     }}
+    .video-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin: 14px 0 16px;
+    }}
+    .video-card {{
+      background: #fffdf8;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+    }}
+    .video-card h4 {{
+      margin: 0 0 8px;
+      font-size: 14px;
+      line-height: 1.4;
+      word-break: break-word;
+    }}
+    .video-card video {{
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+      border: 1px solid #ece2d5;
+      background: #000;
+    }}
+    .video-card p {{
+      margin-top: 8px;
+      word-break: break-all;
+    }}
     .mono {{
       font-family: "SFMono-Regular", Consolas, monospace;
       color: var(--accent);
@@ -708,7 +941,9 @@ def main() -> None:
         group_output_dir = output_dir / "groups" / str(group["group_slug"])
         group_output_dir.mkdir(parents=True, exist_ok=True)
         chart_rows = render_line_charts(group_output_dir, list(group["method_rows"]))
+        case_showcases = build_group_case_showcases(list(group["method_rows"]))
         group["chart_rows"] = chart_rows
+        group["case_showcases"] = case_showcases
         group["output_dir"] = str(group_output_dir)
         group_summary_rows.append(
             {
@@ -719,6 +954,7 @@ def main() -> None:
                 "group_slug": group["group_slug"],
                 "num_methods": len(group["method_rows"]),
                 "num_charts": len(chart_rows),
+                "num_showcases": len(case_showcases),
                 "group_output_dir": str(group_output_dir),
             }
         )
@@ -734,6 +970,7 @@ def main() -> None:
                     "matched_list_path": group["matched_list_path"],
                     "method_rows": group["method_rows"],
                     "chart_rows": chart_rows,
+                    "case_showcases": case_showcases,
                 },
                 ensure_ascii=False,
                 indent=2,
