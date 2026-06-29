@@ -49,6 +49,14 @@ wandb project=vjepa_vggt_wan, 输出根=
 |------|------|------|------|
 | 0630 初 | 1A | 启动 2 卡(gpu6/7), step~48, loss 1.0→0.31 正常 | 拟迁 4 卡提速 |
 | 0630 | 1A | 迁 4 卡(gpu2/3/6/7), 100%util/~45GB each 不OOM; step34 loss0.10 ema0.21 finite | 健康 |
+| 0630 巡检2 | 1A | step325 loss0.097 ema0.233 finite 0err; 4卡util在100%↔0%间(DDP barrier正常) | 健康, 首ckpt@500未到 |
+| 0630 巡检3 | 1A | step554 loss0.051 ema0.141 finite 0err; 首ckpt step_0000500.pt 已存 | 健康, ema仍降未收敛 |
+
+### Handoff 预校验 (巡检3)
+step_0000500.pt: 63 张量 = object_pooler.*(42) + object_aux_heads.*(21), 全 full-path key,
+strict=False 加载进 1B/1C/2 同名子模块可匹配 → --init-from 机制已 de-risk。
+
+| 0630 巡检4 | 1A | step685 inst0.28 ema0.204 finite 0err; 4卡100%util 不OOM | 健康, geom L1 批间噪声正常, 未收敛 |
 
 ### GPU 编排策略
 - **当前**：只有 1A 可跑（1B/1C/2 都依赖 1A 权重）→ 4 卡全给 1A。
