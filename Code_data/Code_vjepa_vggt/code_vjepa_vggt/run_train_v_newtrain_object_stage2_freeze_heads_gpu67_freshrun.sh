@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
   --resume_from "${BASE_CHECKPOINT}" \
-  --max_checkpoints_keep 2 \
+  --max_checkpoints_keep 10 \
   --lora_base_model dit \
   --lora_target_modules q,k,v,o,ffn.0,ffn.2 \
   --lora_rank 32 \

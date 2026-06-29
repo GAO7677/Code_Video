@@ -1,10 +1,12 @@
 '''
+# 评估pdi指标
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
   --metric pdi \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 
+# 评估wmreward指标
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
@@ -12,12 +14,24 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 
   
+# 一键启动所有指标的评估
 CUDA_VISIBLE_DEVICES=3 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v
 
 
-
+# 统计并可视化指标报告
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 pyport /data/gaoya/AAA_test_video/0623/test/report/v2v 8893
+
+
+# 把test_5.txt中的json路径对应的所有方法输出视频复制到output-root中
+
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/export_v2v_case_videos.py \
+    --txt-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+    --output-root /data/gaoya/agent-data/outputs/v2v_case_export_test5
+
+
+
+
 '''
 from __future__ import annotations
 
