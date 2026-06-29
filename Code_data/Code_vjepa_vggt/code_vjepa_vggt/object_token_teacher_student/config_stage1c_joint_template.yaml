@@ -60,6 +60,10 @@ optimization:
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
+  # paged_adamw8bit keeps optimizer state small enough that a full DiT-loading
+  # process fits on a single 24/48GB card, which is what makes true 2-card DDP
+  # (one process per GPU) viable for this stack.
+  optimizer_type: paged_adamw8bit
   max_steps: 20000
   grad_accum_steps: 1
   max_grad_norm: 1.0
