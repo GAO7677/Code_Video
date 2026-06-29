@@ -3,17 +3,21 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
   --metric pdi \
-  --result-root /data/gaoya/AAA_test_video/0623/test/v2v \
-  --input-root /data/gaoya/AAA_test_video/0623/testjsons
+  --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
   --metric wmreward \
-  --result-root /data/gaoya/AAA_test_video/0623/test/v2v \
-  --input-root /data/gaoya/AAA_test_video/0623/testjsons
+  --result-root /data/gaoya/AAA_test_video/0623/test/v2v
+
+  
+CUDA_VISIBLE_DEVICES=0,2 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v
+
+
 
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py --result-root /data/gaoya/AAA_test_video/0623/test/v2v
+pyport /data/gaoya/AAA_test_video/0623/test/report/v2v 8891
 '''
 from __future__ import annotations
 
@@ -43,9 +47,6 @@ from physv_eval.paths import FLUX_PYTHON
 
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
-DEFAULT_INPUT_ROOT = Path("/data/gaoya/AAA_test_video/0623/testjsons")
-
-
 @dataclass
 class CaseRecord:
     result_json_path: Path
@@ -74,7 +75,6 @@ def parse_args() -> argparse.Namespace:
     )
     metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1"]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
-    parser.add_argument("--input-root", type=Path, default=DEFAULT_INPUT_ROOT)
     parser.add_argument("--output-summary", type=Path, default=None)
     parser.add_argument("--metric", required=True, choices=metric_choices)
     parser.add_argument("--overwrite", action="store_true")
@@ -127,32 +127,28 @@ def round_floats(value: Any, ndigits: int = 4) -> Any:
     return value
 
 
-def resolve_input_json_path(result_payload: dict[str, Any], result_json_path: Path, input_root: Path) -> Path:
+def resolve_input_json_path(result_payload: dict[str, Any], result_json_path: Path) -> Path:
     input_json = result_payload.get("input_json")
     if not isinstance(input_json, str) or not input_json.strip():
         raise ValueError(f"Missing input_json in {result_json_path}")
-    candidate = Path(input_json).expanduser()
-    if candidate.is_file():
-        return candidate.resolve()
+    candidate = Path(input_json).expanduser().resolve()
     if not candidate.is_absolute():
-        alt = (input_root / candidate).resolve()
-        if alt.is_file():
-            return alt
+        raise ValueError(f"input_json must be an absolute path in {result_json_path}: {input_json}")
+    if candidate.is_file():
+        return candidate
     raise FileNotFoundError(f"Cannot resolve input_json for {result_json_path}: {input_json}")
 
 
-def resolve_gt_video_path(input_json_path: Path, input_root: Path) -> Path:
+def resolve_gt_video_path(input_json_path: Path) -> Path:
     source_payload = load_json(input_json_path)
     source_video = source_payload.get("source_video")
     if not isinstance(source_video, str) or not source_video.strip():
         raise ValueError(f"Missing source_video in source json: {input_json_path}")
-    candidate = Path(source_video).expanduser()
-    if candidate.is_file():
-        return candidate.resolve()
+    candidate = Path(source_video).expanduser().resolve()
     if not candidate.is_absolute():
-        alt = (input_root / candidate).resolve()
-        if alt.is_file():
-            return alt
+        raise ValueError(f"source_video must be an absolute path in {input_json_path}: {source_video}")
+    if candidate.is_file():
+        return candidate
     raise FileNotFoundError(f"Cannot resolve source_video from {input_json_path}: {source_video}")
 
 
@@ -291,8 +287,6 @@ def maybe_delegate_flux_metric(args: argparse.Namespace) -> bool:
         args.metric,
         "--result-root",
         str(args.result_root.expanduser().resolve()),
-        "--input-root",
-        str(args.input_root.expanduser().resolve()),
         "--flux-worker",
     ]
     if args.metric == "cosmos_reason1":
@@ -413,7 +407,7 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
     return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 
 
-def prepare_cases(result_root: Path, input_root: Path) -> tuple[list[CaseRecord], list[dict[str, Any]]]:
+def prepare_cases(result_root: Path) -> tuple[list[CaseRecord], list[dict[str, Any]]]:
     cases: list[CaseRecord] = []
     errors: list[dict[str, Any]] = []
     for result_json_path in collect_result_jsons(result_root):
@@ -421,8 +415,8 @@ def prepare_cases(result_root: Path, input_root: Path) -> tuple[list[CaseRecord]
             result_payload = load_json(result_json_path)
             if not isinstance(result_payload.get("input_json"), str):
                 continue
-            input_json_path = resolve_input_json_path(result_payload, result_json_path, input_root)
-            gt_video_path = resolve_gt_video_path(input_json_path, input_root)
+            input_json_path = resolve_input_json_path(result_payload, result_json_path)
+            gt_video_path = resolve_gt_video_path(input_json_path)
             candidate_video_path = resolve_candidate_video_path(result_json_path, result_payload)
             cases.append(
                 CaseRecord(
@@ -448,7 +442,6 @@ def write_summary(
     summary_path: Path,
     *,
     result_root: Path,
-    input_root: Path,
     metric_spec: MetricSpec,
     cases: list[CaseRecord],
     metric_status: dict[str, Any],
@@ -457,7 +450,6 @@ def write_summary(
 ) -> None:
     summary_payload = {
         "result_root": str(result_root),
-        "input_root": str(input_root),
         "num_result_jsons": len(cases),
         "metric": metric_spec.name,
         "metric_status": round_floats(metric_status),
@@ -472,7 +464,6 @@ def main() -> None:
     if maybe_delegate_flux_metric(args):
         return
     result_root = args.result_root.expanduser().resolve()
-    input_root = args.input_root.expanduser().resolve()
     summary_path = (
         args.output_summary.expanduser().resolve()
         if args.output_summary is not None
@@ -480,7 +471,7 @@ def main() -> None:
     )
     metric_spec = build_metric_spec(args)
 
-    cases, errors = prepare_cases(result_root, input_root)
+    cases, errors = prepare_cases(result_root)
     metric_status: dict[str, Any] = {}
     if not args.dry_run:
         write_json(summary_path, {})
@@ -511,7 +502,6 @@ def main() -> None:
                     write_summary(
                         summary_path,
                         result_root=result_root,
-                        input_root=input_root,
                         metric_spec=metric_spec,
                         cases=cases,
                         metric_status=metric_status,
@@ -563,7 +553,6 @@ def main() -> None:
         write_summary(
             summary_path,
             result_root=result_root,
-            input_root=input_root,
             metric_spec=metric_spec,
             cases=cases,
             metric_status=metric_status,

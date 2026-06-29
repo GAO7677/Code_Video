@@ -230,18 +230,36 @@ def load_progress_rows(result_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def infer_complete_case_count(method_rows: list[dict[str, Any]]) -> int:
+    counts: list[int] = []
+    for row in method_rows:
+        num_cases = row.get("num_cases")
+        if isinstance(num_cases, int) and num_cases > 0:
+            counts.append(num_cases)
+    return max(counts) if counts else 0
+
+
 def render_line_charts(output_dir: Path, method_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     charts_dir = output_dir / "charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
     chart_rows: list[dict[str, str]] = []
+    complete_case_count = infer_complete_case_count(method_rows)
 
     for metric in METRICS:
         points = []
         for row in method_rows:
             mean_value = row.get(f"{metric.key}_mean")
+            metric_count = row.get(f"{metric.key}_count")
+            num_cases = row.get("num_cases")
             if mean_value is None:
                 continue
-            points.append((str(row["method"]), float(mean_value), int(row["num_cases"])))
+            if not isinstance(metric_count, int) or not isinstance(num_cases, int):
+                continue
+            if num_cases != complete_case_count:
+                continue
+            if metric_count != complete_case_count:
+                continue
+            points.append((str(row["method"]), float(mean_value), num_cases))
 
         if not points:
             plt.close()
@@ -262,7 +280,7 @@ def render_line_charts(output_dir: Path, method_rows: list[dict[str, Any]]) -> l
                 fontsize=8,
             )
 
-        plt.title(f"{metric_display_label(metric)} by Method")
+        plt.title(f"{metric_display_label(metric)} by Method (complete runs only)")
         plt.xlabel("Method")
         plt.ylabel(metric.label)
         plt.xticks(xs, labels, rotation=35, ha="right")
