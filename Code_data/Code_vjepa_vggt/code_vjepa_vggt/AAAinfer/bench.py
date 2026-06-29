@@ -13,6 +13,13 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
   --metric wmreward \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v
 
+# 评估单视角近似 Physics-IQ 指标
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py \
+  --metric physics_iq \
+  --result-root /data/gaoya/AAA_test_video/0623/test/v2v
+
   
 # 一键启动所有指标的评估
 CUDA_VISIBLE_DEVICES=3 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v
@@ -87,7 +94,7 @@ def parse_args() -> argparse.Namespace:
             "loading one metric model per process and backfilling immediately."
         )
     )
-    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1"]
+    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "physics_iq"]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument("--output-summary", type=Path, default=None)
     parser.add_argument("--metric", required=True, choices=metric_choices)
@@ -100,6 +107,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--flux-python", type=Path, default=FLUX_PYTHON, help=argparse.SUPPRESS)
     parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flux-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--physics-iq-output-root",
+        type=Path,
+        default=Path("/tmp/gaoya/physics_iq_single_case/AAAinfer_bench"),
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -234,6 +247,7 @@ def build_case_payload(record: CaseRecord) -> dict[str, Any]:
     payload = dict(record.result_payload)
     payload["video"] = str(record.candidate_video_path)
     payload["context_video"] = str(record.gt_video_path)
+    payload["source_video"] = str(record.gt_video_path)
     return payload
 
 
@@ -416,6 +430,27 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
 
         return run
 
+    def build_physics_iq(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.single_case.physics_iq import score_case as score_physics_iq_case
+
+        physics_iq_output_root = args.physics_iq_output_root.expanduser().resolve()
+
+        def run(record: CaseRecord) -> dict[str, Any] | None:
+            case = build_case_payload(record)
+            aligned_video_dir = (
+                physics_iq_output_root
+                / derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
+                if derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
+                else physics_iq_output_root / record.result_json_path.stem
+            ) / record.input_json_path.stem
+            return score_physics_iq_case(
+                case,
+                source_video_path=record.gt_video_path,
+                aligned_video_dir=aligned_video_dir,
+            )
+
+        return run
+
     builders: dict[str, Callable[[argparse.Namespace], MetricFunc]] = {
         "pdi": build_pdi,
         "wmreward": build_wmreward,
@@ -423,6 +458,7 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         "videophy2": build_videophy2,
         "phyground": build_phyground,
         "cosmos_reason1": build_cosmos_reason1,
+        "physics_iq": build_physics_iq,
     }
     return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 

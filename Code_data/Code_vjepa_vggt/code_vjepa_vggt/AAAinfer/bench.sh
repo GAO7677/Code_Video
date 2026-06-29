@@ -20,6 +20,7 @@ fi
 METRICS=(
   "pdi"
   "wmreward"
+  "physics_iq"
   "videophy2"
   "phyground"
   "cosmos_reason1"
