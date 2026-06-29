@@ -3,41 +3,44 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root, resolve_runtime_root
+from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
 
 """
+Run command example:
+
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main:/home/gaoya/Code_Video/Code_data/Code_train/train_0419 \
 CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_openvid_lorav2v.py \
-  --wan-root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
-  --lora-path /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors \
+  --weights-root /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
   --model-name wan_openvid_lorav2v_step10000
 
-自动输出到：
+Default output roots:
 - /data/gaoya/AAA_test_video/0623/test/v2v/loramodel/wan_openvid_lorav2v_step10000
 - /data/gaoya/AAA_test_video/0623/test/v2v/loramodel/wan_openvid_lorav2v_step10000_runtime
 """
 
-DEFAULT_INPUT_JSON_LIST_PATH = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_100.txt")
-DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
-DEFAULT_OUTPUT_BASE_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v/loramodel")
-DEFAULT_RUNTIME_BASE_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v/loramodel")
-DEFAULT_MODEL_NAME = "wan_openvid_lorav2v_step10000"
+
+def _resolve_lora_path(weights_root: Path) -> Path:
+    checkpoint_path = weights_root.expanduser().resolve() / "checkpoint.safetensors"
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"LoRA checkpoint not found under weights-root: {checkpoint_path}")
+    return checkpoint_path
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Batch-run the fixed OpenVid Wan LoRA checkpoint over test_100.txt. "
+            "Batch-run the fixed OpenVid Wan LoRA checkpoint over an input json list. "
             "This is a thin wrapper around train0419_reference/batch_eval_lora.py."
         )
     )
-    parser.add_argument("--input-json-list-path", type=Path, default=DEFAULT_INPUT_JSON_LIST_PATH)
-    parser.add_argument("--wan-root", type=Path, default=DEFAULT_WAN_ROOT)
-    parser.add_argument("--lora-path", type=Path, required=True)
-    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--weights-root", type=Path, required=True, help="step-* dir containing checkpoint.safetensors")
+    parser.add_argument("--input-json-list-path", type=Path, required=True)
+    parser.add_argument("--model-name", type=str, required=True)
+    parser.add_argument("--wan-root", type=Path, default=Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"))
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--runtime-root", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cuda")
@@ -66,19 +69,20 @@ def build_core_args(cli_args: argparse.Namespace) -> argparse.Namespace:
     model_name = str(cli_args.model_name).strip()
     output_root = resolve_output_root(
         explicit_output_root=cli_args.output_root,
-        base_output_root=DEFAULT_OUTPUT_BASE_ROOT,
+        base_output_root="/data/gaoya/AAA_test_video/0623/test/v2v/loramodel",
         model_name=model_name,
     )
     runtime_root = resolve_runtime_root(
         explicit_runtime_root=cli_args.runtime_root,
-        base_runtime_root=DEFAULT_RUNTIME_BASE_ROOT,
+        base_runtime_root="/data/gaoya/AAA_test_video/0623/test/v2v/loramodel",
         model_name=model_name,
     )
     return argparse.Namespace(
         wan_root=cli_args.wan_root.expanduser().resolve(),
         output_root=output_root,
         runtime_root=runtime_root,
-        lora_path=cli_args.lora_path.expanduser().resolve(),
+        weights_root=cli_args.weights_root.expanduser().resolve(),
+        lora_path=_resolve_lora_path(cli_args.weights_root),
         input_json_list_path=cli_args.input_json_list_path.expanduser().resolve(),
         meta_list_path=None,
         meta_json_path=None,
@@ -119,6 +123,7 @@ def main() -> None:
     args = build_core_args(cli_args)
 
     core.assert_exists(args.wan_root, "Wan root")
+    core.assert_exists(args.weights_root, "Weights root")
     core.assert_exists(args.lora_path, "LoRA checkpoint")
     core.assert_exists(args.input_json_list_path, "Input json list path")
     core.validate_args(args)
@@ -173,6 +178,7 @@ def main() -> None:
         core.write_jsonl(summary_entries_path, summary_entries)
     payload = {
         "model_name": args.model_name,
+        "weights_root": str(args.weights_root),
         "lora_path": str(args.lora_path),
         "generated_dir": str(generated_dir),
         "metadata_dir": str(metadata_dir),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import html
 import json
 import math
@@ -143,6 +144,16 @@ def metric_display_label(metric: MetricDef) -> str:
     return f"{metric.label} {metric_direction_arrow(metric)}"
 
 
+def slugify(text: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", text.strip())
+    slug = slug.strip("._-")
+    return slug or "unknown"
+
+
+def resolve_path_string(path_str: str) -> str:
+    return str(Path(path_str).expanduser().resolve())
+
+
 def is_better_metric(candidate: float, incumbent: float, higher_is_better: bool) -> bool:
     if higher_is_better:
         return candidate > incumbent
@@ -176,26 +187,80 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def summarize_methods(result_jsons: list[Path]) -> list[dict[str, Any]]:
+def signature_from_paths(paths: set[str]) -> str:
+    normalized = sorted(resolve_path_string(path) for path in paths)
+    digest = hashlib.sha1("\n".join(normalized).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+def read_list_file_paths(list_path: Path) -> set[str]:
+    paths: set[str] = set()
+    try:
+        lines = list_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return paths
+    for line in lines:
+        candidate = line.strip()
+        if not candidate or candidate.startswith("#"):
+            continue
+        paths.add(resolve_path_string(candidate))
+    return paths
+
+
+def discover_known_list_signatures(result_jsons: list[Path]) -> dict[str, dict[str, str]]:
+    candidate_dirs: set[Path] = set()
+    for json_path in result_jsons:
+        payload = load_json(json_path)
+        if payload is None:
+            continue
+        input_json = payload.get("input_json")
+        if not isinstance(input_json, str) or not input_json.strip():
+            continue
+        input_json_path = Path(input_json).expanduser().resolve()
+        for candidate_dir in (input_json_path.parent.parent, input_json_path.parent):
+            if candidate_dir.exists() and candidate_dir.is_dir():
+                candidate_dirs.add(candidate_dir)
+
+    signature_map: dict[str, dict[str, str]] = {}
+    for candidate_dir in sorted(candidate_dirs):
+        for list_path in sorted(candidate_dir.glob("*.txt")):
+            list_paths = read_list_file_paths(list_path)
+            if not list_paths:
+                continue
+            signature_map[signature_from_paths(list_paths)] = {
+                "matched_list_name": list_path.name,
+                "matched_list_path": str(list_path.resolve()),
+            }
+    return signature_map
+
+
+def summarize_methods(result_jsons: list[Path], known_list_signatures: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, Any]] = {}
     for json_path in result_jsons:
         payload = load_json(json_path)
         if payload is None:
             continue
+        input_json = payload.get("input_json")
+        input_json_path = resolve_path_string(input_json) if isinstance(input_json, str) and input_json.strip() else None
         method = normalize_method(payload.get("method"), json_path)
         family, step = split_method_step(method)
+        bucket_key = str(json_path.parent.resolve())
         bucket = buckets.setdefault(
-            method,
+            bucket_key,
             {
                 "method": method,
                 "family": family,
                 "step": step,
                 "num_cases": 0,
                 "json_paths": [],
+                "result_dir": str(json_path.parent.resolve()),
+                "input_json_paths": set(),
             },
         )
         bucket["num_cases"] += 1
         bucket["json_paths"].append(str(json_path))
+        if input_json_path is not None:
+            bucket["input_json_paths"].add(input_json_path)
         for metric in METRICS:
             metric_values = bucket.setdefault(f"{metric.key}_values", [])
             value = extract_metric_values(payload)[metric.key]
@@ -203,27 +268,65 @@ def summarize_methods(result_jsons: list[Path]) -> list[dict[str, Any]]:
                 metric_values.append(value)
 
     rows: list[dict[str, Any]] = []
-    for method in sorted(
+    for bucket_key in sorted(
         buckets,
         key=lambda item: (
             buckets[item]["family"],
             buckets[item]["step"] is None,
             buckets[item]["step"] if buckets[item]["step"] is not None else 10**12,
-            item,
+            buckets[item]["method"],
+            buckets[item]["result_dir"],
         ),
     ):
-        bucket = buckets[method]
+        bucket = buckets[bucket_key]
+        input_json_paths = set(bucket["input_json_paths"])
+        dataset_signature = signature_from_paths(input_json_paths)
+        matched_list = known_list_signatures.get(dataset_signature, {})
+        dataset_label = matched_list.get("matched_list_name") or f"custom_set_{len(input_json_paths)}_{dataset_signature}"
         row: dict[str, Any] = {
+            "dataset_signature": dataset_signature,
+            "dataset_label": dataset_label,
+            "matched_list_name": matched_list.get("matched_list_name"),
+            "matched_list_path": matched_list.get("matched_list_path"),
+            "dataset_size": len(input_json_paths),
             "method": bucket["method"],
             "family": bucket["family"],
             "step": bucket["step"],
             "num_cases": bucket["num_cases"],
+            "result_dir": bucket["result_dir"],
+            "input_json_paths": sorted(input_json_paths),
         }
         for metric in METRICS:
             values = list(bucket.get(f"{metric.key}_values", []))
             row[f"{metric.key}_count"] = len(values)
             row[f"{metric.key}_mean"] = mean_or_none(values)
         rows.append(row)
+    return rows
+
+
+def build_group_rows(method_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in method_rows:
+        dataset_signature = str(row.get("dataset_signature", "unknown"))
+        dataset_label = str(row.get("dataset_label", f"custom_set_unknown_{dataset_signature}"))
+        matched_list_path = row.get("matched_list_path")
+        dataset_size = row.get("dataset_size")
+        key = dataset_signature
+        group = grouped.setdefault(
+            key,
+            {
+                "dataset_signature": dataset_signature,
+                "dataset_label": dataset_label,
+                "matched_list_path": matched_list_path,
+                "dataset_size": dataset_size,
+                "group_slug": slugify(Path(dataset_label).stem if matched_list_path else dataset_label),
+                "method_rows": [],
+            },
+        )
+        group["method_rows"].append(row)
+
+    rows = list(grouped.values())
+    rows.sort(key=lambda item: (str(item["dataset_label"]), str(item["dataset_signature"])))
     return rows
 
 
@@ -324,10 +427,8 @@ def render_html(
     result_root: Path,
     output_dir: Path,
     progress_rows: list[dict[str, Any]],
-    method_rows: list[dict[str, Any]],
-    chart_rows: list[dict[str, str]],
+    group_rows: list[dict[str, Any]],
 ) -> str:
-    best_metric_values = compute_best_metric_values(method_rows)
     progress_table_rows = []
     for row in progress_rows:
         completed = row.get("completed") or 0
@@ -343,43 +444,91 @@ def render_html(
             "</tr>"
         )
 
-    metric_headers = "".join(
-        f"<th>{html.escape(metric_display_label(metric))} Mean</th>"
-        f"<th>{html.escape(metric_display_label(metric))} Count</th>"
-        for metric in METRICS
-    )
-    method_table_rows = []
-    for row in method_rows:
-        metric_cells = []
-        for metric in METRICS:
-            mean_value = row.get(f"{metric.key}_mean")
-            mean_text = html.escape(fmt_metric(mean_value))
-            best_value = best_metric_values.get(metric.key)
-            is_best = (
-                isinstance(mean_value, (int, float))
-                and best_value is not None
-                and math.isclose(float(mean_value), float(best_value), rel_tol=1e-12, abs_tol=1e-12)
+    overview_rows = []
+    group_sections = []
+    for group in group_rows:
+        method_rows = list(group["method_rows"])
+        best_metric_values = compute_best_metric_values(method_rows)
+        metric_headers = "".join(
+            f"<th>{html.escape(metric_display_label(metric))} Mean</th>"
+            f"<th>{html.escape(metric_display_label(metric))} Count</th>"
+            for metric in METRICS
+        )
+        method_table_rows = []
+        for row in method_rows:
+            metric_cells = []
+            for metric in METRICS:
+                mean_value = row.get(f"{metric.key}_mean")
+                mean_text = html.escape(fmt_metric(mean_value))
+                best_value = best_metric_values.get(metric.key)
+                is_best = (
+                    isinstance(mean_value, (int, float))
+                    and best_value is not None
+                    and math.isclose(float(mean_value), float(best_value), rel_tol=1e-12, abs_tol=1e-12)
+                )
+                if is_best:
+                    mean_text = f"<strong>{mean_text}</strong>"
+                metric_cells.append(f"<td>{mean_text}</td>")
+                metric_cells.append(f"<td>{html.escape(str(row.get(f'{metric.key}_count', 0)))}</td>")
+            method_table_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(row['method']))}</td>"
+                f"<td>{html.escape('-' if row['step'] is None else str(row['step']))}</td>"
+                f"<td>{html.escape(str(row['num_cases']))}</td>"
+                f"{''.join(metric_cells)}"
+                "</tr>"
             )
-            if is_best:
-                mean_text = f"<strong>{mean_text}</strong>"
-            metric_cells.append(f"<td>{mean_text}</td>")
-            metric_cells.append(f"<td>{html.escape(str(row.get(f'{metric.key}_count', 0)))}</td>")
-        method_table_rows.append(
+
+        chart_sections = []
+        for chart in group["chart_rows"]:
+            chart_path = Path(chart["path"])
+            chart_sections.append(
+                "<section class='chart-card'>"
+                f"<h3>{html.escape(chart['metric'])}</h3>"
+                f"<img src='{rel_path(output_dir, chart_path)}' alt='{html.escape(chart['metric'])}' />"
+                "</section>"
+            )
+
+        dataset_label = str(group["dataset_label"])
+        matched_list_path = group.get("matched_list_path")
+        dataset_signature = str(group["dataset_signature"])
+        dataset_size = group.get("dataset_size")
+        group_dir = Path(str(group["output_dir"]))
+        overview_rows.append(
             "<tr>"
-            f"<td>{html.escape(str(row['method']))}</td>"
-            f"<td>{html.escape('-' if row['step'] is None else str(row['step']))}</td>"
-            f"<td>{html.escape(str(row['num_cases']))}</td>"
-            f"{''.join(metric_cells)}"
+            f"<td>{html.escape(dataset_label)}</td>"
+            f"<td>{html.escape(str(dataset_size if dataset_size is not None else '-'))}</td>"
+            f"<td>{html.escape(dataset_signature)}</td>"
+            f"<td>{html.escape(str(matched_list_path or '-'))}</td>"
+            f"<td>{html.escape(str(len(method_rows)))}</td>"
+            f"<td><a href='{rel_path(output_dir, group_dir / 'method_summary.csv')}'>method_summary.csv</a></td>"
             "</tr>"
         )
-
-    chart_sections = []
-    for row in chart_rows:
-        chart_path = Path(row["path"])
-        chart_sections.append(
-            "<section class='chart-card'>"
-            f"<h3>{html.escape(row['metric'])}</h3>"
-            f"<img src='{rel_path(output_dir, chart_path)}' alt='{html.escape(row['metric'])}' />"
+        group_sections.append(
+            "<section class='panel'>"
+            f"<h2>Dataset Group: {html.escape(dataset_label)}</h2>"
+            f"<p>Input JSON set size: <span class='mono'>{html.escape(str(dataset_size if dataset_size is not None else '-'))}</span></p>"
+            f"<p>Dataset signature: <span class='mono'>{html.escape(dataset_signature)}</span></p>"
+            f"<p>Matched list path: <span class='mono'>{html.escape(str(matched_list_path or '-'))}</span></p>"
+            f"<p>Per-list outputs: <span class='mono'>{html.escape(str(group_dir))}</span></p>"
+            "<div class='table-wrap'>"
+            "<table>"
+            "<thead>"
+            "<tr>"
+            "<th>Method</th>"
+            "<th>Step</th>"
+            "<th>Cases</th>"
+            f"{metric_headers}"
+            "</tr>"
+            "</thead>"
+            "<tbody>"
+            f"{''.join(method_table_rows)}"
+            "</tbody>"
+            "</table>"
+            "</div>"
+            "<div class='charts'>"
+            f"{''.join(chart_sections) if chart_sections else '<p>No method charts available yet.</p>'}"
+            "</div>"
             "</section>"
         )
 
@@ -512,30 +661,26 @@ def render_html(
     </section>
 
     <section class="panel">
-      <h2>Method Summary</h2>
+      <h2>Dataset Group Overview</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Method</th>
-              <th>Step</th>
-              <th>Cases</th>
-              {metric_headers}
+              <th>Group Label</th>
+              <th>Dataset Size</th>
+              <th>Signature</th>
+              <th>Matched List Path</th>
+              <th>Methods</th>
+              <th>Per-Group CSV</th>
             </tr>
           </thead>
           <tbody>
-            {''.join(method_table_rows)}
+            {''.join(overview_rows)}
           </tbody>
         </table>
       </div>
     </section>
-
-    <section class="panel">
-      <h2>Line Charts</h2>
-      <div class="charts">
-        {''.join(chart_sections) if chart_sections else '<p>No method charts available yet.</p>'}
-      </div>
-    </section>
+    {''.join(group_sections)}
   </div>
 </body>
 </html>
@@ -553,13 +698,54 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     result_jsons = discover_result_jsons(result_root)
-    method_rows = summarize_methods(result_jsons)
+    known_list_signatures = discover_known_list_signatures(result_jsons)
+    method_rows = summarize_methods(result_jsons, known_list_signatures)
     progress_rows = load_progress_rows(result_root)
-    chart_rows = render_line_charts(output_dir, method_rows)
+    grouped_rows = build_group_rows(method_rows)
+
+    group_summary_rows: list[dict[str, Any]] = []
+    for group in grouped_rows:
+        group_output_dir = output_dir / "groups" / str(group["group_slug"])
+        group_output_dir.mkdir(parents=True, exist_ok=True)
+        chart_rows = render_line_charts(group_output_dir, list(group["method_rows"]))
+        group["chart_rows"] = chart_rows
+        group["output_dir"] = str(group_output_dir)
+        group_summary_rows.append(
+            {
+                "dataset_label": group["dataset_label"],
+                "dataset_signature": group["dataset_signature"],
+                "dataset_size": group["dataset_size"],
+                "matched_list_path": group["matched_list_path"],
+                "group_slug": group["group_slug"],
+                "num_methods": len(group["method_rows"]),
+                "num_charts": len(chart_rows),
+                "group_output_dir": str(group_output_dir),
+            }
+        )
+        group_method_summary_path = group_output_dir / "method_summary.csv"
+        group_method_json_path = group_output_dir / "method_summary.json"
+        write_csv(group_method_summary_path, list(group["method_rows"]))
+        group_method_json_path.write_text(
+            json.dumps(
+                {
+                    "dataset_label": group["dataset_label"],
+                    "dataset_signature": group["dataset_signature"],
+                    "dataset_size": group["dataset_size"],
+                    "matched_list_path": group["matched_list_path"],
+                    "method_rows": group["method_rows"],
+                    "chart_rows": chart_rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     summary_json_path = output_dir / "method_summary.json"
     summary_csv_path = output_dir / "method_summary.csv"
     progress_csv_path = output_dir / "metric_progress.csv"
+    group_summary_csv_path = output_dir / "group_summary.csv"
     html_path = output_dir / "index.html"
 
     summary_json_path.write_text(
@@ -568,8 +754,9 @@ def main() -> None:
                 "result_root": str(result_root),
                 "num_result_jsons": len(result_jsons),
                 "method_rows": method_rows,
+                "group_rows": group_summary_rows,
+                "known_list_signatures": known_list_signatures,
                 "progress_rows": progress_rows,
-                "chart_rows": chart_rows,
             },
             ensure_ascii=False,
             indent=2,
@@ -579,8 +766,9 @@ def main() -> None:
     )
     write_csv(summary_csv_path, method_rows)
     write_csv(progress_csv_path, progress_rows)
+    write_csv(group_summary_csv_path, group_summary_rows)
     html_path.write_text(
-        render_html(result_root, output_dir, progress_rows, method_rows, chart_rows),
+        render_html(result_root, output_dir, progress_rows, grouped_rows),
         encoding="utf-8",
     )
 
@@ -591,8 +779,9 @@ def main() -> None:
             "output_dir": str(output_dir),
             "html_report": str(html_path),
             "method_summary_csv": str(summary_csv_path),
+            "group_summary_csv": str(group_summary_csv_path),
             "metric_progress_csv": str(progress_csv_path),
-            "num_charts": len(chart_rows),
+            "num_groups": len(grouped_rows),
         },
         ensure_ascii=False,
         indent=2,
