@@ -21,7 +21,7 @@ class OracleInjectionTrainer(Stage1OracleMixin, ContextVideoTrainer):
         # object-conditioning injection modules against the denoising objective.
         self.object_pooler.eval().requires_grad_(False)
         self.object_aux_heads.eval().requires_grad_(False)
-        self.object_adapter.eval().requires_grad_(False)
+        self.object_adapter.train().requires_grad_(True)
         self.jepa_adapter.eval().requires_grad_(False)
         self.vggt_adapter.eval().requires_grad_(False)
         if self.cotracker_adapter is not None:
@@ -39,7 +39,7 @@ class OracleInjectionTrainer(Stage1OracleMixin, ContextVideoTrainer):
     def trainable_parameters(self):
         if self.bundle.dit is None:
             self.bundle.ensure_dit_loaded()
-        params = []
+        params = [param for param in self.object_adapter.parameters() if param.requires_grad]
         if self.bundle.dit is not None:
             for name, param in self.bundle.dit.named_parameters():
                 if not param.requires_grad:

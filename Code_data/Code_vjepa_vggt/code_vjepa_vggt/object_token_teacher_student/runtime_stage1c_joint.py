@@ -18,6 +18,8 @@ class Stage1CJointTrainer(OracleInjectionTrainer):
         train_object_aux_heads = bool(joint_cfg.get("train_object_aux_heads", True))
         train_wan_lora = bool(joint_cfg.get("train_wan_lora", False))
 
+        self.object_adapter.train().requires_grad_(True)
+
         if train_object_pooler_tail:
             for name in ("modal_refine", "out_norm", "jepa_router_score", "latent_router_score", "track_geometry_router_score", "appearance_router_score"):
                 module = getattr(self.object_pooler, name, None)

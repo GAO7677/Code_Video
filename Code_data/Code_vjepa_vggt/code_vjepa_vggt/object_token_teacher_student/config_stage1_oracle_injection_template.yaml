@@ -11,6 +11,13 @@ model:
   freeze_wan_dit: true
   freeze_wan_lora: true
   freeze_object_pooler: true
+  init_wan_lora_from_checkpoint: /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
+  init_wan_lora_strict: false
+  init_wan_lora_zero_missing: true
+  wan_lora_rank: 32
+  wan_lora_alpha: 32
+  wan_lora_dropout: 0.0
+  wan_lora_init: gaussian
   train_jepa: false
   train_vggt: false
   jepa_activation_checkpointing: true

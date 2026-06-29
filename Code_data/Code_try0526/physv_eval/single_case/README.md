@@ -406,6 +406,7 @@ python -m physv_eval.single_case.cosmos_reason1 \
 
 - 模块：`physv_eval.single_case.physics_iq`
 - 函数：`score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4)`
+- 函数：`score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4, aligned_video_dir=None)`
 
 指标定义：
 
@@ -419,6 +420,10 @@ python -m physv_eval.single_case.cosmos_reason1 \
 - 明确去掉官方必须依赖的：
   - 多视角聚合
   - 第二条 real take 的 physical variance 归一化
+- 会另存两条真正参与评分的视频：
+  - 时间轴已对齐到公共窗口
+  - 已按评分尺寸缩放
+  - 路径写回 `scored_output_video` 和 `scored_source_video`
 
 指标属性：
 
@@ -436,6 +441,8 @@ python -m physv_eval.single_case.cosmos_reason1 \
     "official": bool,
     "method": str,
     "reference_video": str,
+    "scored_output_video": str,
+    "scored_source_video": str,
     "mse_mean": float,
     "spatiotemporal_iou_mean": float,
     "spatial_iou": float,
@@ -466,6 +473,16 @@ cd /home/gaoya/Code_Video/Code_data/Code_try0526
 python -m physv_eval.single_case.physics_iq \
   --video /path/to/output.mp4 \
   --source-video /path/to/source.mp4
+```
+
+指定另存目录：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.physics_iq \
+  --video /path/to/output.mp4 \
+  --source-video /path/to/source.mp4 \
+  --aligned-video-dir /data/gaoya/agent-data/outputs/my_physics_iq_case
 ```
 
 传 case JSON：

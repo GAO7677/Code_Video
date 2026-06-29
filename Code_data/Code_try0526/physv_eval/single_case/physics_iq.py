@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Mapping
 
+import av
 import cv2
 import numpy as np
 
 from ..case_inputs import EvalCase, coerce_eval_case, first_path
-from ..records import load_payload
+from ..records import load_payload, stable_path_id
 from .common import emit_result, result_record
 
 
@@ -63,6 +65,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4,
         help="Resize reference frames by this factor before scoring, matching the official benchmark style.",
+    )
+    parser.add_argument(
+        "--aligned-video-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory used to save the exact aligned/resized video pair that participates in scoring. "
+            "Defaults to /data/gaoya/agent-data/outputs/physics_iq_single_case/<case-id>/"
+        ),
     )
     return parser.parse_args()
 
@@ -208,12 +219,51 @@ def _compute_weighted_spatial_iou(weighted_spatial_1: np.ndarray, weighted_spati
     return float(np.sum(intersection[valid_pixels]) / np.sum(union[valid_pixels]))
 
 
+def _default_aligned_video_dir(output_video_path: Path, source_video_path: Path) -> Path:
+    case_id = f"{stable_path_id(output_video_path)}__ref__{stable_path_id(source_video_path)}"
+    return Path("/data/gaoya/agent-data/outputs/physics_iq_single_case") / case_id
+
+
+def _make_even_size(width: int, height: int) -> tuple[int, int]:
+    even_width = width if width % 2 == 0 else width - 1
+    even_height = height if height % 2 == 0 else height - 1
+    return max(2, even_width), max(2, even_height)
+
+
+def _write_video(frames: list[np.ndarray], path: Path, fps: float) -> None:
+    if not frames:
+        raise ValueError("Cannot write an empty video")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    height, width = frames[0].shape[:2]
+    container = av.open(str(path), mode="w")
+    rate = Fraction(str(fps)).limit_denominator(1000)
+    stream = container.add_stream("libx264", rate=rate)
+    stream.width = width
+    stream.height = height
+    stream.pix_fmt = "yuv420p"
+    try:
+        for frame in frames:
+            if frame.dtype != np.uint8:
+                frame_u8 = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
+            else:
+                frame_u8 = frame
+            rgb_frame = cv2.cvtColor(frame_u8, cv2.COLOR_BGR2RGB)
+            video_frame = av.VideoFrame.from_ndarray(rgb_frame, format="rgb24")
+            for packet in stream.encode(video_frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    finally:
+        container.close()
+
+
 def score_case(
     case: EvalCase | Path | str | Mapping[str, Any],
     *,
     source_video_path: Path | str | None = None,
     threshold_value: int = 10,
     downsample_factor: int = 4,
+    aligned_video_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     if downsample_factor < 1:
         raise ValueError("downsample_factor must be >= 1")
@@ -249,12 +299,24 @@ def score_case(
     sampled_source_raw = [source_frames_raw[int(idx)] for idx in source_indices]
 
     source_h, source_w = sampled_source_raw[0].shape[:2]
-    target_w = max(1, source_w // downsample_factor)
-    target_h = max(1, source_h // downsample_factor)
+    target_w, target_h = _make_even_size(
+        max(1, source_w // downsample_factor),
+        max(1, source_h // downsample_factor),
+    )
     target_size = (target_w, target_h)
 
     output_frames = _resize_and_normalize(sampled_output_raw, target_size)
     source_frames = _resize_and_normalize(sampled_source_raw, target_size)
+
+    aligned_dir = (
+        Path(aligned_video_dir)
+        if aligned_video_dir is not None
+        else _default_aligned_video_dir(output_video_path, metadata_source)
+    )
+    aligned_output_path = aligned_dir / "scored_output_video.mp4"
+    aligned_source_path = aligned_dir / "scored_source_video.mp4"
+    _write_video(output_frames, aligned_output_path, compare_fps)
+    _write_video(source_frames, aligned_source_path, compare_fps)
 
     mse_per_frame = _mse_per_frame(source_frames, output_frames)
     source_masks = _build_motion_masks(source_frames, threshold_value=threshold_value)
@@ -280,6 +342,9 @@ def score_case(
         "official": False,
         "method": "physics_iq_single_view_approx",
         "reference_video": str(metadata_source),
+        "scored_output_video": str(aligned_output_path),
+        "scored_source_video": str(aligned_source_path),
+        "video_codec": "h264",
         "mse_mean": round(mse_mean, 6),
         "spatiotemporal_iou_mean": round(spatiotemporal_iou_mean, 6),
         "spatial_iou": round(float(spatial_iou), 6),
@@ -315,6 +380,7 @@ def main() -> None:
         source_video_path=source_video,
         threshold_value=args.threshold_value,
         downsample_factor=args.downsample_factor,
+        aligned_video_dir=args.aligned_video_dir,
     )
     emit_result(result_record(case, result), output_json=args.output_json)
 

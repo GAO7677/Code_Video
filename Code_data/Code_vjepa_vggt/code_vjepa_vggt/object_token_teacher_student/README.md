@@ -173,6 +173,13 @@ Stage 1C 当前第一版默认会继续冻结大部分 backbone，只打开：
 - `VGGTTrackAdapter`
 - Wan VAE / text encoder / DiT / LoRA
 
+当前 Stage 1A 默认 backbone 固定为：
+
+- Wan base:
+  - `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B`
+- frozen LoRA:
+  - `/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors`
+
 ### 当前 Stage 1B 实现说明
 
 当前 `train_stage1_oracle_injection.py` 已经不再只是空壳入口。
@@ -194,8 +201,9 @@ Stage 1C 当前第一版默认会继续冻结大部分 backbone，只打开：
 
 - `context_object_context`: `[B, T_ctx_lat * O, 4096]`
 
-当前 Stage 1 可训练模块被显式限制为 Wan object injection 分支：
+当前 Stage 1B 可训练模块被显式限制为 Wan object injection 分支加 adapter：
 
+- `ObjectConditionAdapter`
 - `object_embedding`
 - `object_cross_attn`
 - `object_gate`
@@ -208,8 +216,14 @@ Stage 1C 当前第一版默认会继续冻结大部分 backbone，只打开：
 - `VGGTTrackAdapter`
 - `ObjectTubeProjector`
 - `ObjectAuxHeads`
-- `ObjectConditionAdapter`
 - Wan VAE / text encoder / 非 object DiT / LoRA
+
+当前 Stage 1B 默认 backbone 固定为：
+
+- Wan base:
+  - `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B`
+- frozen LoRA:
+  - `/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors`
 
 ### 当前 Stage 1C 实现说明
 
@@ -230,6 +244,13 @@ Stage 1C 当前第一版默认会继续冻结大部分 backbone，只打开：
   - `appearance_router_score`
 
 可选地，也可以通过配置把 Wan LoRA 再打开，但默认仍关闭。
+
+当前 Stage 1C 默认 backbone 也固定为：
+
+- Wan base:
+  - `/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B`
+- frozen LoRA:
+  - `/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors`
 
 这版暂不做：
 
