@@ -1089,7 +1089,7 @@ class ContextVideoTrainer(nn.Module):
             f.write(html)
         return html_path
 
-    def train(self, resume_checkpoint: str | Path | None = None) -> None:
+    def train(self, resume_checkpoint: str | Path | None = None, init_from: str | Path | None = None) -> None:
         from accelerate import Accelerator
         from accelerate.utils import DistributedDataParallelKwargs
 
@@ -1115,4 +1115,5 @@ class ContextVideoTrainer(nn.Module):
             grad_accum_steps=int(opt_cfg.get("grad_accum_steps", 1)),
             max_grad_norm=float(opt_cfg.get("max_grad_norm", 0.0)),
             resume_checkpoint=resume_checkpoint,
+            init_from=init_from,
         )

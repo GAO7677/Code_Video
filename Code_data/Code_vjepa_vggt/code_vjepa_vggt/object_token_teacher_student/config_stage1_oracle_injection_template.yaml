@@ -1,6 +1,6 @@
 experiment:
   name: pybullet0629_teacher_student_stage1_oracle_injection
-  output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student_stage1_oracle_injection
+  output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1_oracle_injection
   seed: 42
 
 model:
@@ -78,7 +78,7 @@ loss:
 logging:
   log_every: 10
   save_every: 500
-  max_checkpoints: 2
+  max_checkpoints: 10
   min_checkpoint_free_gb: 5.0
   use_wandb: true
   wandb_project: vjepa_vggt_wan

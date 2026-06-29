@@ -22,11 +22,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train Stage1A full-token teacher branch.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--resume-checkpoint", default=None)
+    parser.add_argument("--init-from", default=None, help="load prior-stage trainable weights (strict=False) without restoring step")
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
     trainer = FullTokenTeacherTrainer(cfg, device=_resolve_launch_device())
-    trainer.train(resume_checkpoint=args.resume_checkpoint)
+    trainer.train(resume_checkpoint=args.resume_checkpoint, init_from=args.init_from)
 
 
 if __name__ == "__main__":

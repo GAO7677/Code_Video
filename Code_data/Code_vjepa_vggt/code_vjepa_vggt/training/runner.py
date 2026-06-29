@@ -182,6 +182,7 @@ def launch_training_task(
     grad_accum_steps: int,
     max_grad_norm: float | None,
     resume_checkpoint: str | Path | None = None,
+    init_from: str | Path | None = None,
 ) -> None:
     debug_runner = os.environ.get("CODEX_DEBUG_RUNNER_INIT", "").strip() not in {"", "0", "false", "False"}
     runner_t0 = time.perf_counter()
@@ -215,6 +216,31 @@ def launch_training_task(
     _debug_log("accelerator.prepare done")
 
     step = 0
+    if init_from is not None:
+        # Cross-stage weight init: load a prior stage's trainable weights
+        # (strict=False, partial match by full module path) WITHOUT restoring the
+        # step counter, so the new stage trains for its own full schedule. This
+        # is how Stage1A's pooler/aux feed Stage1B/1C/2.
+        init_path = Path(init_from)
+        if not init_path.is_file():
+            raise FileNotFoundError(f"init-from checkpoint not found: {init_path}")
+        init_state = torch.load(init_path, map_location="cpu")
+        if not isinstance(init_state, dict) or "model" not in init_state:
+            raise RuntimeError(f"init-from checkpoint missing 'model' key: {init_path}")
+        init_model_state = init_state["model"]
+        if not isinstance(init_model_state, dict):
+            raise RuntimeError(f"init-from checkpoint 'model' entry must be a dict: {init_path}")
+        unwrapped = accelerator.unwrap_model(model)
+        loaded = unwrapped.load_state_dict(init_model_state, strict=False)
+        matched = len(init_model_state) - len(loaded.unexpected_keys)
+        if accelerator.is_main_process:
+            print(
+                f"init-from {init_path}: loaded {matched}/{len(init_model_state)} tensors "
+                f"(missing_keys={len(loaded.missing_keys)} unexpected_keys={len(loaded.unexpected_keys)}); "
+                f"step counter NOT restored (starts at 0)",
+                flush=True,
+            )
+
     if resume_checkpoint is not None:
         resume_path = Path(resume_checkpoint)
         if not resume_path.is_file():
