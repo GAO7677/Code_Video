@@ -4,11 +4,44 @@ set -euo pipefail
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_v_newtrain.py
 
-BASE_CHECKPOINT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-004000
+HEAD_RESUME_FROM=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_heads_only_gpu67_fresh500_val/checkpoints/step-004000/checkpoint.safetensors
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun
 WANDB_NAME=pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun
 
 mkdir -p "${OUTPUT_DIR}"
+
+RESUME_MODE=none
+if [[ $# -ge 2 && "$1" == "--resume" ]]; then
+  RESUME_MODE="$2"
+  shift 2
+fi
+if [[ $# -ne 0 ]]; then
+  echo "Usage: $0 [--resume latest|none|<stage2-checkpoint-dir-or-file>]" >&2
+  exit 1
+fi
+
+STAGE2_RESUME_ARGS=()
+if [[ "${RESUME_MODE}" == "latest" ]]; then
+  LATEST_STEP_DIR=$(
+    find "${OUTPUT_DIR}/checkpoints" -maxdepth 1 -mindepth 1 -type d -name 'step-*' 2>/dev/null \
+      | sort \
+      | while read -r step_dir; do
+          if [[ -f "${step_dir}/checkpoint.safetensors" && -f "${step_dir}/training_state.pt" ]]; then
+            printf '%s\n' "${step_dir}"
+          fi
+        done \
+      | tail -n 1
+  )
+  if [[ -z "${LATEST_STEP_DIR}" ]]; then
+    echo "No complete stage2 checkpoint found under ${OUTPUT_DIR}/checkpoints" >&2
+    exit 1
+  fi
+  echo "Resuming stage2 from latest checkpoint: ${LATEST_STEP_DIR}"
+  STAGE2_RESUME_ARGS=(--stage2_resume_from "${LATEST_STEP_DIR}")
+elif [[ "${RESUME_MODE}" != "none" ]]; then
+  echo "Resuming stage2 from explicit checkpoint: ${RESUME_MODE}"
+  STAGE2_RESUME_ARGS=(--stage2_resume_from "${RESUME_MODE}")
+fi
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
@@ -31,7 +64,7 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --save_steps 500 \
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
-  --resume_from "${BASE_CHECKPOINT}" \
+  --head_resume_from "${HEAD_RESUME_FROM}" \
   --max_checkpoints_keep 10 \
   --lora_base_model dit \
   --lora_target_modules q,k,v,o,ffn.0,ffn.2 \
@@ -69,4 +102,5 @@ CUDA_VISIBLE_DEVICES=6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --report_to wandb \
   --wandb_project vjepa_vggt_wan \
   --wandb_name "${WANDB_NAME}" \
-  --wandb_mode online
+  --wandb_mode online \
+  "${STAGE2_RESUME_ARGS[@]}"

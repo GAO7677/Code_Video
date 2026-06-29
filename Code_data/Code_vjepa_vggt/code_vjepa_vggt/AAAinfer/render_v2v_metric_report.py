@@ -35,7 +35,9 @@ class MetricDef:
 METRICS: tuple[MetricDef, ...] = (
     MetricDef("pdi_score", "PDI", False),
     MetricDef("wmreward_surprise", "WMReward Surprise", False),
-    MetricDef("proxy_score", "Proxy Score", True),
+    MetricDef("proxy_relraw", "Proxy_RelRaw", False),
+    MetricDef("proxy_deltarel", "Proxy_DeltaRel", False),
+    MetricDef("proxy_deltaprof", "Proxy_DeltaProf", False),
     MetricDef("videophy2_score", "VideoPhy2-PC", True),
     MetricDef("phyground_general_avg", "PhyGround", True),
     MetricDef("cosmos_reason1_score", "Cosmos-Reason1", True),
@@ -86,7 +88,9 @@ def extract_metric_values(payload: dict[str, Any]) -> dict[str, float | None]:
     return {
         "pdi_score": to_float(nested_get(payload, "pdi", "pdi_score")),
         "wmreward_surprise": to_float(nested_get(payload, "wmreward", "surprise")),
-        "proxy_score": to_float(nested_get(payload, "proxy", "score")),
+        "proxy_relraw": to_float(nested_get(payload, "proxy", "details", "temporal_relation_raw_error")),
+        "proxy_deltarel": to_float(nested_get(payload, "proxy", "details", "delta_relation_raw_error")),
+        "proxy_deltaprof": to_float(nested_get(payload, "proxy", "details", "delta_profile_error")),
         "videophy2_score": to_float(nested_get(payload, "videophy2", "score")),
         "phyground_general_avg": to_float(nested_get(payload, "phyground", "general_avg")),
         "cosmos_reason1_score": to_float(nested_get(payload, "cosmos_reason1", "score")),
@@ -869,7 +873,7 @@ def render_html(
       <h1>V2V Metric Report</h1>
       <p>Result root: <span class="mono">{html.escape(str(result_root))}</span></p>
       <p>Output dir: <span class="mono">{html.escape(str(output_dir))}</span></p>
-      <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy Score is the compatibility score <span class="mono">exp(-error) ↑</span>.</p>
+      <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy columns report raw JEPA error terms <span class="mono">Proxy_RelRaw ↓ / Proxy_DeltaRel ↓ / Proxy_DeltaProf ↓</span>.</p>
     </section>
 
     <section class="panel">

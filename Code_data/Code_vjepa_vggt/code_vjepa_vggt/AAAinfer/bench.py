@@ -270,6 +270,12 @@ def cleanup_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def metric_already_completed(payload: dict[str, Any], field: str) -> bool:
+    if field not in payload:
+        return False
+    return payload.get(field) is not None
+
+
 def apply_payload_defaults(payload: dict[str, Any], *, candidate_video_path: Path) -> dict[str, Any]:
     existing_method = payload.get("method")
     method = derive_method_name(payload, fallback_video_path=candidate_video_path)
@@ -502,7 +508,7 @@ def main() -> None:
                     copy.deepcopy(current_payload),
                     candidate_video_path=record.candidate_video_path,
                 )
-                if not args.overwrite and metric_spec.field in current_payload:
+                if not args.overwrite and metric_already_completed(current_payload, metric_spec.field):
                     if not args.dry_run:
                         write_json(record.result_json_path, current_payload)
                     print(f"[metric:skip] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}")
@@ -532,7 +538,7 @@ def main() -> None:
                     copy.deepcopy(latest_payload),
                     candidate_video_path=record.candidate_video_path,
                 )
-                if not args.overwrite and metric_spec.field in latest_payload:
+                if not args.overwrite and metric_already_completed(latest_payload, metric_spec.field):
                     if not args.dry_run:
                         write_json(record.result_json_path, latest_payload)
                     print(f"[metric:skip-race] {metric_spec.name} {index}/{len(cases)} {record.result_json_path.name}")

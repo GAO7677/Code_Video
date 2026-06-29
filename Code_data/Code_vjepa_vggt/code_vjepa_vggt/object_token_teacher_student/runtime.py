@@ -37,7 +37,10 @@ class PredictorPreparedBatch:
 
 class TeacherStudentPredictorTrainer(ContextVideoTrainer):
     def __init__(self, cfg: dict[str, Any], build_optimizer: bool = True, device: str | torch.device | None = None) -> None:
-        super().__init__(cfg=cfg, build_optimizer=build_optimizer, device=device)
+        # Stage 2 predictor never runs Wan DiT forward and does not optimize any
+        # DiT or LoRA weights, so inheriting the default "build_optimizer=True"
+        # path would load the full DiT on every rank for no benefit.
+        super().__init__(cfg=cfg, build_optimizer=False, device=device)
         model_cfg = cfg["model"]
         loss_cfg = cfg.get("loss", {})
         dim = int(model_cfg.get("cond_proj_dim", 4096))

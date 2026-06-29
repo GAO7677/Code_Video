@@ -10191,3 +10191,118 @@ stdout 最新可见进度：
   - `save_steps=500`
   - `headonly_val_loss_every_steps=500`
   - `W&B name = pybullet0627_diffsynth_object_heads_only_depthanything_gpu67_fresh500_val`
+
+### 2026-06-29：teacher-student Stage 2 predictor 双卡启动排查与修复
+
+新分支位置：
+
+- [object_token_teacher_student](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student)
+
+这次先做了一个 `2 step` 的双卡 sanity run，目的是验证：
+
+- `accelerate` 双卡拉起
+- `forward / backward / optimizer.step`
+- `wandb` 记录
+- `step_*.pt` checkpoint 落盘
+
+sanity 配置：
+
+- 临时配置：
+  - `/data/gaoya/agent-data/cache/teacher_student_stage2/config_stage2_predictor_sanity.yaml`
+- 输出目录：
+  - `/data/gaoya/agent-data/checkpoints/teacher_student_stage2_sanity`
+- W&B run：
+  - `pybullet0629_teacher_student_stage2_predictor_sanity`
+  - run id: `79al3o1j`
+
+第一轮双卡 sanity 暴露的真实代码问题：
+
+- 报错：
+  - `RecursionError: maximum recursion depth exceeded while calling a Python object`
+- 位置：
+  - `runner.py -> model.to(device=accelerator.device)`
+- 根因：
+  - [oracle_encoder.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/oracle_encoder.py)
+    里 `OracleObjectTokenEncoder` 继承了 `nn.Module`
+  - 同时又把整个 `trainer` 作为 `self.trainer` 挂回去
+  - 这样形成了 `trainer -> oracle_encoder -> trainer` 的模块引用环
+  - `model.to()` 在递归遍历子模块时会无限递归
+- 修复：
+  - 把 `OracleObjectTokenEncoder` 改成普通 Python helper，不再继承 `nn.Module`
+
+第二轮 sanity 暴露的结构性问题：
+
+- 报错：
+  - `CUDA out of memory`
+- 位置：
+  - [wan_context_model.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/models/wan_context_model.py)
+    的 `ensure_dit_loaded()`
+- 表现：
+  - 双卡 rank 在训练真正开始前，就把每张卡拉到约 `43GB`
+- 根因：
+  - [runtime.py](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/runtime.py)
+    里的 `TeacherStudentPredictorTrainer` 虽然只训练 predictor + future heads
+  - 但仍沿用了父类默认 `build_optimizer=True` 的初始化路径
+  - 这会白白加载完整 Wan DiT 到每个 rank
+  - Stage 2 predictor 实际并不跑 DiT forward，也不训练 DiT / LoRA
+- 修复：
+  - 在 `TeacherStudentPredictorTrainer.__init__` 里固定调用：
+    - `super().__init__(..., build_optimizer=False, ...)`
+  - 这样保留：
+    - VAE
+    - text encoder
+    - JEPA
+    - VGGT
+    - CoTracker
+    - object pooler / adapter
+  - 但不再加载 Wan DiT
+
+修复后的双卡 sanity 结果：
+
+- 在空闲双卡 `gpu0,5` 上实跑通过
+- 关键日志已经确认出现：
+  - `accelerator.prepare done`
+  - `first forward done`
+  - `first backward done`
+  - `first optimizer.step done`
+- W&B 已正常创建并同步：
+  - `https://wandb.ai/875222004-gy/vjepa_vggt_wan/runs/79al3o1j`
+- checkpoint 已正常落盘：
+  - `/data/gaoya/agent-data/checkpoints/teacher_student_stage2_sanity/step_0000001.pt`
+  - `/data/gaoya/agent-data/checkpoints/teacher_student_stage2_sanity/step_0000002.pt`
+- checkpoint 内容核对：
+  - `step_0000001.pt -> step = 1, trainable_keys = 36`
+  - `step_0000002.pt -> step = 2, trainable_keys = 36`
+- 最近一次 sanity 的 W&B summary：
+  - `train/loss_total = 0.7406`
+  - `train/loss_future_token = 0.74013`
+  - `train/loss_future_track = 0.00238`
+  - `train/loss_future_box = 0.0023`
+  - `train/pred_future_tokens_abs_max = 2.20312`
+  - `train/object_latent_tokens_abs_max = 4.31653`
+
+当前判断：
+
+- `teacher-student Stage 2 predictor` 这条分支本身已经具备：
+  - 双卡拉起
+  - 正常反传
+  - 参数更新
+  - W&B 记录
+  - checkpoint 落盘
+- 当前还没直接在 `gpu6,7` 启动正式 run 的唯一原因不是代码，而是：
+  - `gpu6,7` 此刻被另一条 `train_v_newtrain.py` 正式训练占满
+
+已补充的正式启动脚本：
+
+- [run_train_teacher_student_stage2_predictor_gpu67.sh](/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_teacher_student_stage2_predictor_gpu67.sh)
+- 现在脚本里已经显式包含：
+  - `conda activate wan-cu128`
+  - `PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt`
+  - `CUDA_VISIBLE_DEVICES=6,7`
+
+后续正式启动条件：
+
+- 等 `gpu6,7` 空出来后，直接运行：
+  - `bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/run_train_teacher_student_stage2_predictor_gpu67.sh`
+- 预期输出目录：
+  - `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student_stage2_predictor`

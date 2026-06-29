@@ -59,23 +59,23 @@ class ProxyRunner:
     def score(self, video_path: Path, *, context_video_path: Path | None = None) -> dict[str, Any] | None:
         self._lazy_imports()
         candidate_frames_all = self._load_video_frames(video_path)
-        total = len(candidate_frames_all)
-        if total < 30:
-            return None
         context_source_path = context_video_path or video_path
         context_frames_all = self._load_video_frames(context_source_path)
+        context_keep = max(int(self._scorer.config.context_frames), 2)
+        future_keep = max(int(self._scorer.config.future_frames), 2)
+
         if len(context_frames_all) < 2:
             return None
+        if len(candidate_frames_all) < context_keep + 2:
+            return None
 
-        # For explicit conditioning clips such as PhyGenBench first-frame ctx08,
-        # use the whole provided context video instead of halving it again.
-        if context_video_path is not None:
-            context_split = len(context_frames_all)
-        else:
-            context_split = min(60, len(context_frames_all) // 2)
-        future_split = min(60, total // 2)
-        context_frames = self._uniform_subsample_frames(context_frames_all[:context_split], 8)
-        future_frames = self._uniform_subsample_frames(candidate_frames_all[future_split:], 16)
+        # Match the older JEPA case-eval convention:
+        # use the GT/source prefix as context, and score the candidate suffix as future.
+        context_prefix_frames = context_frames_all[:context_keep]
+        future_suffix_frames = candidate_frames_all[context_keep:]
+
+        context_frames = self._uniform_subsample_frames(context_prefix_frames, context_keep)
+        future_frames = self._uniform_subsample_frames(future_suffix_frames, future_keep)
         if len(context_frames) < 2 or len(future_frames) < 2:
             return None
 
@@ -91,6 +91,9 @@ class ProxyRunner:
             "context_frames": len(context_frames),
             "future_frames": len(future_frames),
             "context_video": str(context_source_path),
+            "context_mode": "source_prefix_video" if context_video_path is not None else "self_prefix_video",
+            "context_prefix_frames": len(context_prefix_frames),
+            "future_trim_start_frame": context_keep,
             "details": details,
         }
 

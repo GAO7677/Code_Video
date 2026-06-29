@@ -1542,10 +1542,17 @@ def wan_parser():
         help="YAML config passed to the VBench validation wrapper.",
     )
     parser.add_argument(
-        "--resume_from",
+        "--head_resume_from",
         type=str,
         default=None,
-        help="Resume full training state from a .state.pt file, a .safetensors checkpoint with matching state file, or a checkpoint directory.",
+        help="Load frozen head-stage weights from a checkpoint.safetensors file or a checkpoint directory. "
+        "Used only to initialize frozen LoRA/object_pooler/object_aux_heads weights.",
+    )
+    parser.add_argument(
+        "--stage2_resume_from",
+        type=str,
+        default=None,
+        help="Resume stage2 training state from a .state.pt file, a .safetensors checkpoint with matching state file, or a checkpoint directory.",
     )
     parser.add_argument(
         "--dataset_type",
@@ -1781,7 +1788,7 @@ def prepare_args(args):
         raise ValueError(
             f"validation_output_subdir must be relative to test_output_subdir, got {args.validation_output_subdir}."
         )
-    args.resume_from = resolve_resume_state_path(args.resume_from)
+    args.stage2_resume_from = resolve_resume_state_path(args.stage2_resume_from)
     args.validation_context_frames_list = validation_contexts
     return args
 
@@ -2037,6 +2044,131 @@ def resolve_resume_state_path(resume_from):
             f"No resume state (*.state.pt) found under: {search_root}"
         )
     return str(state_files[-1])
+
+
+def _resolve_checkpoint_file(checkpoint_path):
+    checkpoint_path = Path(checkpoint_path)
+    if checkpoint_path.is_file():
+        return checkpoint_path
+    if checkpoint_path.is_dir():
+        candidate = checkpoint_path / "checkpoint.safetensors"
+        if candidate.is_file():
+            return candidate
+        candidates = sorted(checkpoint_path.rglob("checkpoint.safetensors"))
+        if candidates:
+            return candidates[-1]
+    raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
+
+
+def _load_trainable_state(checkpoint_path):
+    resolved = _resolve_checkpoint_file(checkpoint_path)
+    if resolved.suffix == ".safetensors":
+        from safetensors.torch import load_file as load_safetensors_file
+
+        return load_safetensors_file(str(resolved), device="cpu")
+    state = torch.load(resolved, map_location="cpu", weights_only=False)
+    if isinstance(state, dict):
+        if "model" in state and isinstance(state["model"], dict):
+            return state["model"]
+        return state
+    raise RuntimeError(f"unsupported checkpoint format: {resolved}")
+
+
+def _normalize_checkpoint_key(key):
+    normalized = str(key)
+    prefixes = (
+        "module.",
+        "pipe.dit.",
+        "base_model.model.",
+        "dit.base_model.model.",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+                changed = True
+    return normalized
+
+
+def _load_filtered_checkpoint_into_model(
+    model,
+    checkpoint_path,
+    *,
+    include_prefixes=None,
+    include_substrings=None,
+):
+    state_dict = _load_trainable_state(checkpoint_path)
+    if model.enable_object_branch and model.object_pooler is not None:
+        latent_key = None
+        for candidate in ("object_pooler.latent_proj.weight", "bundle.object_pooler.latent_proj.weight"):
+            if candidate in state_dict:
+                latent_key = candidate
+                break
+        if latent_key is not None:
+            latent_dim = int(state_dict[latent_key].shape[1])
+            model.object_pooler._ensure_latent_proj(latent_dim, torch.device(model.pipe.device))
+
+    include_prefixes = tuple(include_prefixes or ())
+    include_substrings = tuple(include_substrings or ())
+    filtered_source_state = {}
+    for key, value in state_dict.items():
+        key_str = str(key)
+        if include_prefixes and any(key_str.startswith(prefix) for prefix in include_prefixes):
+            filtered_source_state[key_str] = value
+            continue
+        if include_substrings and any(token in key_str for token in include_substrings):
+            filtered_source_state[key_str] = value
+
+    if not filtered_source_state:
+        return {
+            "loaded_count": 0,
+            "missing_keys": [],
+            "unexpected_keys": [],
+            "skipped_shape_mismatch": [],
+            "selected_source_keys": 0,
+        }
+
+    model_state = model.state_dict()
+    normalized_model_keys = {_normalize_checkpoint_key(key): key for key in model_state.keys()}
+    normalized_checkpoint_keys = {_normalize_checkpoint_key(key): key for key in filtered_source_state.keys()}
+    overlapping = sorted(set(normalized_model_keys.keys()) & set(normalized_checkpoint_keys.keys()))
+    if not overlapping:
+        return {
+            "loaded_count": 0,
+            "missing_keys": [],
+            "unexpected_keys": [],
+            "skipped_shape_mismatch": [],
+            "selected_source_keys": len(filtered_source_state),
+        }
+
+    filtered_state = {}
+    skipped_shape_mismatch = []
+    for norm_key in overlapping:
+        model_key = normalized_model_keys[norm_key]
+        ckpt_key = normalized_checkpoint_keys[norm_key]
+        model_value = model_state[model_key]
+        ckpt_value = filtered_source_state[ckpt_key]
+        if tuple(model_value.shape) != tuple(ckpt_value.shape):
+            skipped_shape_mismatch.append(
+                {
+                    "model_key": model_key,
+                    "checkpoint_key": ckpt_key,
+                    "model_shape": list(model_value.shape),
+                    "checkpoint_shape": list(ckpt_value.shape),
+                }
+            )
+            continue
+        filtered_state[model_key] = ckpt_value
+    missing = model.load_state_dict(filtered_state, strict=False)
+    return {
+        "loaded_count": len(filtered_state),
+        "missing_keys": list(missing.missing_keys),
+        "unexpected_keys": list(missing.unexpected_keys),
+        "skipped_shape_mismatch": skipped_shape_mismatch,
+        "selected_source_keys": len(filtered_source_state),
+    }
 
 
 def build_eval_paths(args, global_step, output_subdir, runtime_namespace):
@@ -2770,8 +2902,8 @@ def train_loop(
     start_epoch = 0
     resume_batch_in_epoch = 0
     global_step = 0
-    if args.resume_from is not None:
-        resume_payload = load_training_state(args.resume_from)
+    if args.stage2_resume_from is not None:
+        resume_payload = load_training_state(args.stage2_resume_from)
         optimizer_state_restored = True
         scheduler_state_restored = True
         try:
@@ -2993,11 +3125,17 @@ def main():
     accelerator = build_accelerator(args)
     init_trackers(accelerator, args)
 
-    if args.resume_from is not None:
-        args.lora_checkpoint = resolve_lora_checkpoint_for_resume(args.resume_from)
+    if args.head_resume_from is not None:
+        args.lora_checkpoint = args.head_resume_from
         if accelerator.is_main_process:
             accelerator.print(
-                f"👉 Resuming training from state {args.resume_from} with checkpoint {args.lora_checkpoint}."
+                f"👉 Initializing frozen head weights from {args.head_resume_from}."
+            )
+    if args.stage2_resume_from is not None:
+        args.lora_checkpoint = resolve_lora_checkpoint_for_resume(args.stage2_resume_from)
+        if accelerator.is_main_process:
+            accelerator.print(
+                f"👉 Resuming stage2 training from state {args.stage2_resume_from} with checkpoint {args.lora_checkpoint}."
             )
 
     dataset = build_dataset(args)
@@ -3005,6 +3143,34 @@ def main():
     headonly_val_dataset = build_headonly_val_dataset(args, headonly_val_config)
     headonly_val_dataloader = build_headonly_val_dataloader(headonly_val_dataset, args)
     model = build_model(args, accelerator)
+    if args.head_resume_from is not None:
+        head_resume_info = _load_filtered_checkpoint_into_model(
+            model,
+            args.head_resume_from,
+            include_prefixes=("object_pooler.", "object_aux_heads."),
+            include_substrings=("lora_",),
+        )
+        if accelerator.is_main_process:
+            accelerator.print(
+                "Loaded frozen head initialization: "
+                f"selected_source_keys={head_resume_info['selected_source_keys']}, "
+                f"loaded_count={head_resume_info['loaded_count']}, "
+                f"shape_mismatch={len(head_resume_info['skipped_shape_mismatch'])}"
+            )
+    if args.stage2_resume_from is not None:
+        stage2_resume_info = _load_filtered_checkpoint_into_model(
+            model,
+            resolve_lora_checkpoint_for_resume(args.stage2_resume_from),
+            include_prefixes=("object_adapter.",),
+            include_substrings=("object_embedding", ".object_cross_attn.", ".object_gate", ".norm4."),
+        )
+        if accelerator.is_main_process:
+            accelerator.print(
+                "Loaded stage2 trainable initialization: "
+                f"selected_source_keys={stage2_resume_info['selected_source_keys']}, "
+                f"loaded_count={stage2_resume_info['loaded_count']}, "
+                f"shape_mismatch={len(stage2_resume_info['skipped_shape_mismatch'])}"
+            )
     model_logger = ModelLogger(
         get_checkpoint_dir(args),
         remove_prefix_in_ckpt=args.remove_prefix_in_ckpt,
