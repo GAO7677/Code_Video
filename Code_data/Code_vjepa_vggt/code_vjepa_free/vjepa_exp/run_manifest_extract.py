@@ -17,7 +17,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python-bin", default=sys.executable)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--target-frames", type=int, default=64)
-    parser.add_argument("--out-layers", nargs="+", type=int, default=[5, 11, 17, 23])
+    parser.add_argument(
+        "--cuda-visible-devices",
+        default=None,
+        help="Value forwarded to extract_vjepa_features.py so the child process uses the intended GPU mapping.",
+    )
+    parser.add_argument(
+        "--out-layers",
+        nargs="+",
+        type=int,
+        default=[5, 7, 8, 9, 11, 17, 23],
+        help="V-JEPA block indices to extract from the local V-JEPA 2.1 Large backbone copy.",
+    )
     return parser.parse_args()
 
 
@@ -48,6 +59,8 @@ def main() -> None:
             "--out-layers",
             *[str(x) for x in args.out_layers],
         ]
+        if args.cuda_visible_devices is not None:
+            cmd.extend(["--cuda-visible-devices", str(args.cuda_visible_devices)])
         print("RUN", " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True)
 

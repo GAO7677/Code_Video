@@ -6,16 +6,19 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py \
-    --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
-    --output-root /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_negcap_null1111 \
+    --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+    --model-name wan2p2_ti2v5B_negcap_null_frame49 \
     --size 704*1280 \
-    --frame-num 25 \
+    --frame-num 49 \
     --sampling-steps 40 \
     --cfg-scale 5.0 \
     --fps 30 \
     --seed 42 \
     --offload-model \
     --negative-prompt   "" 
+
+自动输出到：
+- /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_negcap_null_frame49
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ import argparse
 import json
 from pathlib import Path
 
+from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
 from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_OFFICIAL_WAN_ROOT,
@@ -43,6 +47,9 @@ from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
     write_json,
 )
 
+DEFAULT_OUTPUT_BASE_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v/basemodel")
+DEFAULT_MODEL_NAME = "wan2p2_ti2v5B"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -55,9 +62,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-root",
-        default="/data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B",
+        default=None,
         help="Output directory for mp4/json files.",
     )
+    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
         "--wan-root",
         default=str(DEFAULT_OFFICIAL_WAN_ROOT),
@@ -83,10 +91,17 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     cli_args = parse_args()
     ensure_cuda_env()
+    model_name = str(cli_args.model_name).strip()
+    output_root = resolve_output_root(
+        explicit_output_root=cli_args.output_root,
+        base_output_root=DEFAULT_OUTPUT_BASE_ROOT,
+        model_name=model_name,
+    )
 
     args = WanTI2VArgs(
         input_list=Path(cli_args.input_list).expanduser().resolve(),
-        output_root=Path(cli_args.output_root).expanduser().resolve(),
+        output_root=output_root,
+        model_name=model_name,
         wan_root=Path(cli_args.wan_root).expanduser().resolve(),
         backend=str(cli_args.backend),
         size=str(cli_args.size),

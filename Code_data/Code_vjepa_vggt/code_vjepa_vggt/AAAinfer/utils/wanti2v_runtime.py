@@ -29,6 +29,7 @@ LEGACY_WAN_REPO = Path("/home/gaoya/Code_Video/Code_data/Code_try0526")
 class WanTI2VArgs:
     input_list: Path
     output_root: Path
+    model_name: str
     wan_root: Path
     backend: str
     size: str
@@ -206,6 +207,7 @@ def build_run_manifest(args: WanTI2VArgs, json_paths: list[Path]) -> dict[str, A
     height, width = _parse_size(args.size)
     resolved_wan_root = resolve_official_wan_root(args.wan_root)
     return {
+        "model_name": str(args.model_name),
         "model_type": f"wan_ti2v_5b_{args.backend}",
         "input_list": str(args.input_list),
         "num_items": len(json_paths),

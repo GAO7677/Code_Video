@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from code_vjepa_vggt import batch_infer_v_newtrain_from_jsonl as core
+from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
 from code_vjepa_vggt.utils.config import load_yaml_config
 
 """
@@ -18,8 +19,12 @@ CUDA_VISIBLE_DEVICES=0 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_vnewtrain_0613pybullet_stage2_v2v.py \
   --checkpoint-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun/checkpoints \
+  --model-name pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun \
   --steps step-006500 \
   --num-frames 81
+
+自动输出到：
+- /data/gaoya/AAA_test_video/0623/test/v2v/pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun
 """
 
 DEFAULT_INPUT_JSON_LIST_PATH = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
@@ -27,10 +32,8 @@ DEFAULT_CHECKPOINT_ROOT = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
     "pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun/checkpoints"
 )
-DEFAULT_OUTPUT_ROOT = Path(
-    "/data/gaoya/AAA_test_video/0623/test/v2v/"
-    "pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun"
-)
+DEFAULT_OUTPUT_BASE_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
+DEFAULT_MODEL_NAME = "pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun"
 DEFAULT_CONFIG_PATH = Path(
     "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/configs/"
     "train_0624pybullet_freeze_lora_other_modules_gpu67.yaml"
@@ -90,7 +93,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--latest-only", action="store_true", help="only run the latest available step-* checkpoint")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--wan-root", type=Path, default=DEFAULT_WAN_ROOT)
-    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME)
+    parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--width", type=int, default=896)
@@ -126,7 +130,12 @@ def main() -> None:
     cli_args = parse_args()
     checkpoint_root = cli_args.checkpoint_root.expanduser().resolve()
     input_json_list_path = cli_args.input_json_list_path.expanduser().resolve()
-    output_root = cli_args.output_root.expanduser().resolve()
+    model_name = str(cli_args.model_name).strip()
+    output_root = resolve_output_root(
+        explicit_output_root=cli_args.output_root,
+        base_output_root=DEFAULT_OUTPUT_BASE_ROOT,
+        model_name=model_name,
+    )
 
     if cli_args.config is not None:
         config_path = cli_args.config.expanduser().resolve()

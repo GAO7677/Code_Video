@@ -143,6 +143,28 @@ def metric_display_label(metric: MetricDef) -> str:
     return f"{metric.label} {metric_direction_arrow(metric)}"
 
 
+def is_better_metric(candidate: float, incumbent: float, higher_is_better: bool) -> bool:
+    if higher_is_better:
+        return candidate > incumbent
+    return candidate < incumbent
+
+
+def compute_best_metric_values(method_rows: list[dict[str, Any]]) -> dict[str, float]:
+    best_values: dict[str, float] = {}
+    for metric in METRICS:
+        best_value: float | None = None
+        for row in method_rows:
+            value = row.get(f"{metric.key}_mean")
+            if not isinstance(value, (int, float)):
+                continue
+            value = float(value)
+            if best_value is None or is_better_metric(value, best_value, metric.higher_is_better):
+                best_value = value
+        if best_value is not None:
+            best_values[metric.key] = best_value
+    return best_values
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -305,6 +327,7 @@ def render_html(
     method_rows: list[dict[str, Any]],
     chart_rows: list[dict[str, str]],
 ) -> str:
+    best_metric_values = compute_best_metric_values(method_rows)
     progress_table_rows = []
     for row in progress_rows:
         completed = row.get("completed") or 0
@@ -329,12 +352,21 @@ def render_html(
     for row in method_rows:
         metric_cells = []
         for metric in METRICS:
-            metric_cells.append(f"<td>{html.escape(fmt_metric(row.get(f'{metric.key}_mean')))}</td>")
+            mean_value = row.get(f"{metric.key}_mean")
+            mean_text = html.escape(fmt_metric(mean_value))
+            best_value = best_metric_values.get(metric.key)
+            is_best = (
+                isinstance(mean_value, (int, float))
+                and best_value is not None
+                and math.isclose(float(mean_value), float(best_value), rel_tol=1e-12, abs_tol=1e-12)
+            )
+            if is_best:
+                mean_text = f"<strong>{mean_text}</strong>"
+            metric_cells.append(f"<td>{mean_text}</td>")
             metric_cells.append(f"<td>{html.escape(str(row.get(f'{metric.key}_count', 0)))}</td>")
         method_table_rows.append(
             "<tr>"
             f"<td>{html.escape(str(row['method']))}</td>"
-            f"<td>{html.escape(str(row['family']))}</td>"
             f"<td>{html.escape('-' if row['step'] is None else str(row['step']))}</td>"
             f"<td>{html.escape(str(row['num_cases']))}</td>"
             f"{''.join(metric_cells)}"
@@ -486,7 +518,6 @@ def render_html(
           <thead>
             <tr>
               <th>Method</th>
-              <th>Family</th>
               <th>Step</th>
               <th>Cases</th>
               {metric_headers}

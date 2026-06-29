@@ -51,6 +51,14 @@ Typical execution order:
 3. Extract V-JEPA features with `run_manifest_extract.py`
 4. Aggregate reports with `analyze_signals.py`
 
+Default extraction layers:
+
+- The default layer set is `[5, 7, 8, 9, 11, 17, 23]`.
+- This project now keeps a local copy of the V-JEPA 2.1 Large
+  backbone and exposes arbitrary block outputs, so intermediate
+  layers such as `7/8/9` can be extracted without modifying the
+  official `vjepa2-main` repo.
+
 Environment notes:
 
 - Wan generation should run in the `wan` environment.
