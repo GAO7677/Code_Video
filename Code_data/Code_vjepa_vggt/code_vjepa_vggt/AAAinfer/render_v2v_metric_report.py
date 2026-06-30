@@ -38,6 +38,7 @@ METRICS: tuple[MetricDef, ...] = (
     MetricDef("proxy_relraw", "Proxy_RelRaw", False),
     MetricDef("proxy_deltarel", "Proxy_DeltaRel", False),
     MetricDef("proxy_deltaprof", "Proxy_DeltaProf", False),
+    MetricDef("physics_iq_score", "Physics-IQ Approx", True),
     MetricDef("videophy2_score", "VideoPhy2-PC", True),
     MetricDef("phyground_general_avg", "PhyGround", True),
     MetricDef("cosmos_reason1_score", "Cosmos-Reason1", True),
@@ -91,6 +92,7 @@ def extract_metric_values(payload: dict[str, Any]) -> dict[str, float | None]:
         "proxy_relraw": to_float(nested_get(payload, "proxy", "details", "temporal_relation_raw_error")),
         "proxy_deltarel": to_float(nested_get(payload, "proxy", "details", "delta_relation_raw_error")),
         "proxy_deltaprof": to_float(nested_get(payload, "proxy", "details", "delta_profile_error")),
+        "physics_iq_score": to_float(nested_get(payload, "physics_iq", "score")),
         "videophy2_score": to_float(nested_get(payload, "videophy2", "score")),
         "phyground_general_avg": to_float(nested_get(payload, "phyground", "general_avg")),
         "cosmos_reason1_score": to_float(nested_get(payload, "cosmos_reason1", "score")),
@@ -873,7 +875,7 @@ def render_html(
       <h1>V2V Metric Report</h1>
       <p>Result root: <span class="mono">{html.escape(str(result_root))}</span></p>
       <p>Output dir: <span class="mono">{html.escape(str(output_dir))}</span></p>
-      <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy columns report raw JEPA error terms <span class="mono">Proxy_RelRaw ↓ / Proxy_DeltaRel ↓ / Proxy_DeltaProf ↓</span>.</p>
+      <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy columns report raw JEPA error terms <span class="mono">Proxy_RelRaw ↓ / Proxy_DeltaRel ↓ / Proxy_DeltaProf ↓</span>; Physics-IQ here is the project single-view approximate score <span class="mono">Physics-IQ Approx ↑</span>, not the official multi-view benchmark score.</p>
     </section>
 
     <section class="panel">
