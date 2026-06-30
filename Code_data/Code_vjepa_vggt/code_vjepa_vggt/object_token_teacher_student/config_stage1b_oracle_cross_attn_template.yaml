@@ -79,7 +79,7 @@ logging:
   log_every: 10
   save_every: 500
   max_checkpoints: 10
-  min_checkpoint_free_gb: 5.0
+  min_checkpoint_free_gb: 2.0
   use_wandb: true
   wandb_project: vjepa_vggt_wan
   wandb_run_name: pybullet0629_teacher_student_stage1b_oracle_cross_attn

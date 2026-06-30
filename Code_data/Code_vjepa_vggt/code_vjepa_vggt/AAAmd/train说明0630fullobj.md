@@ -233,6 +233,16 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检33 | 1A(run3) | step532 ema0.231↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; s2500落盘 |
 | 0701 巡检34 | 1A(run3) | step587 ema0.265 finite 0err; 4卡100%util ~45GB不OOM | 健康; s2500 val eval由用户启动(gpu5) |
 | 0701 巡检35 | 1A(run3) | step709 ema0.233↓ finite 0err; 4卡~99%util ~45GB不OOM | 健康3.5%; 磁盘244G |
+| 0701 巡检36 | 1A(run3) | step917 ema0.236 finite 0err; 4卡100%util ~45GB不OOM | 健康4.6%; 磁盘225G; s3000约6min |
+| 0701 巡检37 | 1A(run3) | step931 ema0.249 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康4.7%; it/s慢(val eval IO竞争); s3000约8min |
+| 0701 巡检38 | **Stage1B** | step2 loss0.282 ema0.073 finite 0err; 4卡DDP活跃 ~48GB不OOM | **1B正式启动**; init-from old run s5000 loaded 63/63; 磁盘187G |
+
+### Stage1B 启动记录
+- init-from: stage1a_full_token_old/step_0005000.pt (old run, 63/63 tensors loaded)
+- 修复: runner.py init_from 路径同样需要 lazy 层物化(与 resume 同一个 bug)
+- 可训练: object_cross_attn + norm4 + object_gate (每个 DiT block) + object_embedding
+- optimizer: paged_adamw8bit (显存友好, 4卡48GB正常)
+- 1A 已停止 (step931, 磁盘节约)
 
 #### val 曲线分析 (run2 s500 对比 run3 s500-2000)
 run3 s500-1500: box 0.0777→0.0757↓, track 0.1224→0.1182↓ 方向正确

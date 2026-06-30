@@ -231,6 +231,12 @@ def launch_training_task(
         if not isinstance(init_model_state, dict):
             raise RuntimeError(f"init-from checkpoint 'model' entry must be a dict: {init_path}")
         unwrapped = accelerator.unwrap_model(model)
+        # Materialize lazy pooler layers before loading (same fix as resume path)
+        lk = "object_pooler.latent_proj.weight"
+        if lk in init_model_state:
+            latent_dim = int(init_model_state[lk].shape[1])
+            if hasattr(unwrapped, "object_pooler") and hasattr(unwrapped.object_pooler, "_ensure_latent_proj"):
+                unwrapped.object_pooler._ensure_latent_proj(latent_dim, unwrapped.device_obj)
         loaded = unwrapped.load_state_dict(init_model_state, strict=False)
         matched = len(init_model_state) - len(loaded.unexpected_keys)
         if accelerator.is_main_process:
