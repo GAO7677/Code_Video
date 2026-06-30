@@ -17,4 +17,5 @@ accelerate launch \
   --num_processes 4 \
   --mixed_precision bf16 \
   -m code_vjepa_vggt.object_token_teacher_student.train_stage1a_full_token \
-  --config "${CONFIG}"
+  --config "${CONFIG}" \
+  "$@"

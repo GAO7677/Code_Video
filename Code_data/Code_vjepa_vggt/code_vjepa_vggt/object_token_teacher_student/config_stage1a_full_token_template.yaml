@@ -69,8 +69,7 @@ optimization:
 loss:
   lambda_track_aux: 1.0
   lambda_box_aux: 1.0
-  lambda_depth_aux: 1.0
-  depth_target_state_index: 4
+  lambda_depth_aux: 0.0
 
 logging:
   log_every: 10

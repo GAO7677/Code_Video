@@ -47,7 +47,8 @@ python3 -m code_vjepa_vggt.object_token_teacher_student.ts_eval \
     --device cuda:0 \
     --wandb-run-name valeval_stage1a_newrun_0630_0627 \
     --steps 1000-1000 \
-    --order desc 
+    --order desc  \
+    --wandb-run-id 13a22xe1
 
 
 ● 用 inspect_stage1a_frames.py（帧级精确版，坐标已修正）：
@@ -61,7 +62,7 @@ python3 -m code_vjepa_vggt.object_token_teacher_student.inspect_stage1a_frames \
     --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0001000.pt \
     --indices 0 1 2 3 \
     --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_frames_stage1a_newrun_s1000 \
-    --device cuda:0
+    --device cuda:0 
 
 """
 from __future__ import annotations
@@ -193,6 +194,7 @@ def main() -> None:
     ap.add_argument("--no-wandb", action="store_true")
     ap.add_argument("--wandb-project", default="vjepa_vggt_wan")
     ap.add_argument("--wandb-run-name", default=None)
+    ap.add_argument("--wandb-run-id", default=None, help="resume an existing wandb run by ID (e.g. 13a22xe1)")
     ap.add_argument("--steps", default=None, help="filter ckpts: range '3000-5000' or list '1000,2000'")
     ap.add_argument("--order", default="asc", choices=["asc", "desc"], help="evaluation order by step")
     args = ap.parse_args()
@@ -220,8 +222,13 @@ def main() -> None:
         import wandb
 
         run_name = args.wandb_run_name or f"valeval_stage{args.stage}_{Path(args.config).stem}"
-        wandb_run = wandb.init(project=args.wandb_project, name=run_name,
-                               dir=cfg["logging"].get("wandb_dir", "/data/gaoya/agent-data/outputs/ts_smoke"))
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            id=args.wandb_run_id or None,
+            resume="allow" if args.wandb_run_id else None,
+            dir=cfg["logging"].get("wandb_dir", "/data/gaoya/agent-data/outputs/ts_smoke"),
+        )
 
     for step, fpath in ckpts:
         matched, total, miss, unexp = load_ckpt_into(trainer, fpath)

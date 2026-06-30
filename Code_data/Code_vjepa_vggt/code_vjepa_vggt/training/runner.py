@@ -254,6 +254,15 @@ def launch_training_task(
         if not isinstance(model_state, dict):
             raise RuntimeError(f"resume checkpoint 'model' entry must be a dict: {resume_path}")
         unwrapped = accelerator.unwrap_model(model)
+        # object_pooler.latent_proj / jepa_proj are lazily rebuilt on first forward
+        # (their in_features adapt to the real VAE/JEPA dim). Run one warmup batch
+        # so they reach their true shapes before load_state_dict, otherwise a
+        # shape mismatch error fires even with strict=False.
+        lk = "object_pooler.latent_proj.weight"
+        if lk in model_state:
+            latent_dim = int(model_state[lk].shape[1])
+            if hasattr(unwrapped, "object_pooler") and hasattr(unwrapped.object_pooler, "_ensure_latent_proj"):
+                unwrapped.object_pooler._ensure_latent_proj(latent_dim, unwrapped.device_obj)
         missing = unwrapped.load_state_dict(model_state, strict=False)
         if accelerator.is_main_process:
             print(

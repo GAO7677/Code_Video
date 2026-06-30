@@ -1,9 +1,9 @@
 """
-Analyze correlation between V-JEPA and Wan DiT representations.
+Analyze correlation between V-JEPA and Wan2.2 TI2V-5B DiT representations.
 
-Loads cached .npz files from extract_vjepa_gram.py and extract_dit_repr.py,
+Loads cached .npz files from extract_vjepa_gram.py and extract_dit_repr_5b.py,
 then computes:
-  1. Linear CKA (24×30 heatmap)
+  1. Linear CKA (N_vjepa × 30 heatmap)
   2. Gram matrix Pearson correlation – spatial and temporal separately
 
 Outputs (in --out-dir):
@@ -14,9 +14,9 @@ Outputs (in --out-dir):
 
 Usage:
     python analyze_vjepa_dit_corr.py \
-        --repr-dir ./repr_cache \
-        --video-stem scored_source_video \
-        --out-dir ./corr_vis
+        --repr-dir /data/gaoya/agent-data/outputs/vjepa_wan_precheck/repr_cache \
+        --video-stem <video_stem> \
+        --out-dir /data/gaoya/agent-data/outputs/vjepa_wan_precheck/corr_vis
 """
 import argparse
 import os
@@ -97,7 +97,10 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     vjepa_path = Path(args.repr_dir) / f"{args.video_stem}_vjepa.npz"
-    dit_path   = Path(args.repr_dir) / f"{args.video_stem}_dit.npz"
+    # prefer 5B cache; fall back to legacy 1.3B cache for backwards compat
+    dit_path_5b   = Path(args.repr_dir) / f"{args.video_stem}_dit5b.npz"
+    dit_path_legacy = Path(args.repr_dir) / f"{args.video_stem}_dit.npz"
+    dit_path = dit_path_5b if dit_path_5b.exists() else dit_path_legacy
     print(f"Loading {vjepa_path}")
     vjepa = np.load(str(vjepa_path), allow_pickle=False)
     print(f"Loading {dit_path}")

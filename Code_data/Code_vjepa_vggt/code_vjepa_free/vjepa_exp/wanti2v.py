@@ -5,7 +5,7 @@ Example:
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main \
 CUDA_VISIBLE_DEVICES=0 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wanti2v.py \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_exp/wanti2v.py \
     --input-list /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
     --model-name testsssss \
     --size 704*1280 \
@@ -15,10 +15,7 @@ CUDA_VISIBLE_DEVICES=0 \
     --fps 30 \
     --seed 42 \
     --offload-model \
-    --negative-prompt   "" 
-
-自动输出到：
-- /data/gaoya/AAA_test_video/0623/test/v2v/basemodel/wan2p2_ti2v5B_negcap_null_frame49
+    --negative-prompt   ""
 """
 from __future__ import annotations
 

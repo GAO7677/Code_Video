@@ -221,6 +221,23 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检21 | 1A(新run) | step1202 ema0.223 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康6%; 最新ckpt s1000 |
 | 0701 巡检22 | 1A(新run) | step1427 ema0.190↓ finite 0err; 4卡DDP ~48GB不OOM | 健康7.1%; 最新ckpt s1000 |
 | 0701 巡检23 | 1A(新run) | step1546 ema0.212 finite 0err; 4卡DDP ~48GB不OOM | 健康7.7%; s1500落盘; val eval s1000+1500 启动(gpu5) |
+| 0701 巡检24 | 1A(新run) | step1797 ema0.260 finite 0err; 4卡100%util ~45GB不OOM | 健康9.0%; 最新s1500 |
+| 0701 巡检25 | 1A(run3,resume s1500) | step28 loss0.191 ema0.219 finite 0err; 4卡100%util ~45GB不OOM | 健康; depth head 已冻结; resume成功(miss=4545 unexp=0) |
+| 0701 巡检26 | 1A(run3) | step150 ema0.321↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 首个run3 ckpt@500约27min后 |
+
+### run3 变更说明
+- config: `lambda_depth_aux: 0.0`(depth head 冻结, 不再训练)
+- runner.py: 修复 resume 时 lazy 层 shape mismatch bug(_ensure_latent_proj 在 load 前调用)
+- 脚本: run_train_teacher_student_stage1a_gpu67.sh 加 `"$@"` 透传参数
+- resume from step_0001500.pt; step 计数从1重新开始(step offset=1500), loss 0.135 起正常
+
+#### val s1000 数据 (对比 s500)
+| step | box | track | depth | total |
+|------|-----|-------|-------|-------|
+| 500  | 0.0777 | 0.1224 | 0.0154 | 0.2155 |
+| 1000 | **0.0767↓** | **0.1203↓** | 0.0717↑ | 0.2688 |
+box/track 方向对(在降), depth 振荡(proxy 信号本身不可靠)。
+depth 监督是噪声信号(pybullet/PhyCo 两个数据集均确认 proxy 误差 40-81%), 建议下次重启时把 `lambda_depth_aux` 改为 0。
 
 #### 新 run val s500 对比旧 run s500
 | 项 | 旧run s500 | 新run s500 | 变化 |
