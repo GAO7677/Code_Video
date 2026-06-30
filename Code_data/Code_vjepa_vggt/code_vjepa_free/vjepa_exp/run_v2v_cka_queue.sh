@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 # Usage: bash run_v2v_cka_queue.sh <task_list.json> <gpu_id>
-set -e
-
 TASK_LIST=${1:?need task_list}
 GPU=${2:?need gpu_id}
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python

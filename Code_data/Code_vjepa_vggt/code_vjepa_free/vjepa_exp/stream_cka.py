@@ -227,6 +227,9 @@ class CKAAccumulator:
                precomputed_grid: np.ndarray | None = None) -> np.ndarray:
         if precomputed_grid is not None:
             grid = precomputed_grid.astype(np.float32)
+            if self.vj_layers is None:
+                self.vj_layers = VJEPA_LAYERS
+                self.dt_layers = DIT_LAYERS
         else:
             vj_layers = sorted(vj_grams)
             dt_layers = sorted(dt_grams)
@@ -297,6 +300,10 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
                vj_layers: list[int], dt_layers: list[int],
                out_dir: Path, suffix: str = "") -> None:
     datasets = [d for d in DATASET_ORDER if d in dataset_grids]
+    if not datasets:
+        datasets = list(dataset_grids.keys())
+    if not datasets:
+        return
     vmax = max(g.max() for g in dataset_grids.values())
 
     # heatmaps
@@ -423,7 +430,7 @@ def main():
         video_path = rec["video_path"]
         dataset    = rec["source"]
         prompt     = rec.get("caption", "")
-        sample_name = Path(video_path).parent.name
+        sample_name = rec.get("sample_name") or Path(video_path).parent.name
         print(f"  [{i+1}/{len(records)}] {dataset} — {sample_name}/video.mp4", flush=True)
         try:
             # skip if already computed
