@@ -223,26 +223,31 @@ class CKAAccumulator:
 
     def update(self, dataset: str,
                vj_grams: dict[int, np.ndarray],
-               dt_grams: dict[int, np.ndarray]) -> None:
-        vj_layers = sorted(vj_grams)
-        dt_layers = sorted(dt_grams)
-        if self.vj_layers is None:
-            self.vj_layers = vj_layers
-            self.dt_layers = dt_layers
+               dt_grams: dict[int, np.ndarray],
+               precomputed_grid: np.ndarray | None = None) -> np.ndarray:
+        if precomputed_grid is not None:
+            grid = precomputed_grid.astype(np.float32)
+        else:
+            vj_layers = sorted(vj_grams)
+            dt_layers = sorted(dt_grams)
+            if self.vj_layers is None:
+                self.vj_layers = vj_layers
+                self.dt_layers = dt_layers
 
-        grid = np.zeros((len(vj_layers), len(dt_layers)), dtype=np.float32)
-        for vi, vl in enumerate(vj_layers):
-            Kv = vj_grams[vl]
-            for di, dl in enumerate(dt_layers):
-                Kd = dt_grams[dl]
-                n = min(Kv.shape[0], Kd.shape[0])
-                grid[vi, di] = cka_from_grams(Kv[:n, :n], Kd[:n, :n])
+            grid = np.zeros((len(vj_layers), len(dt_layers)), dtype=np.float32)
+            for vi, vl in enumerate(vj_layers):
+                Kv = vj_grams[vl]
+                for di, dl in enumerate(dt_layers):
+                    Kd = dt_grams[dl]
+                    n = min(Kv.shape[0], Kd.shape[0])
+                    grid[vi, di] = cka_from_grams(Kv[:n, :n], Kd[:n, :n])
 
         if dataset not in self.sum:
             self.sum[dataset] = grid.copy()
         else:
             self.sum[dataset] += grid
         self.count[dataset] += 1
+        return grid
 
     def means(self) -> dict[str, np.ndarray]:
         return {ds: self.sum[ds] / self.count[ds] for ds in self.sum}
@@ -290,7 +295,7 @@ def build_wan_pipeline(device: torch.device):
 
 def save_plots(dataset_grids: dict[str, np.ndarray],
                vj_layers: list[int], dt_layers: list[int],
-               out_dir: Path) -> None:
+               out_dir: Path, suffix: str = "") -> None:
     datasets = [d for d in DATASET_ORDER if d in dataset_grids]
     vmax = max(g.max() for g in dataset_grids.values())
 
@@ -309,9 +314,9 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.suptitle("V-JEPA vs Wan DiT-5B — Linear CKA (gram, per-dataset avg)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(str(out_dir / "cka_per_dataset.png"), dpi=150)
+    fig.savefig(str(out_dir / f"cka_per_dataset{suffix}.png"), dpi=150)
     plt.close(fig)
-    print("Saved cka_per_dataset.png")
+    print(f"Saved cka_per_dataset{suffix}.png")
 
     # layer curves
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -322,9 +327,9 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
     ax.set_title("V-JEPA–DiT CKA vs V-JEPA depth — per dataset")
     ax.legend(); ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(str(out_dir / "cka_per_layer_curve.png"), dpi=150)
+    fig.savefig(str(out_dir / f"cka_per_layer_curve{suffix}.png"), dpi=150)
     plt.close(fig)
-    print("Saved cka_per_layer_curve.png")
+    print(f"Saved cka_per_layer_curve{suffix}.png")
 
     # diff heatmaps
     pairs = [("pybullet","phyco_kubric"), ("physics-iq","phyco_kubric"), ("physics-iq","pybullet")]
@@ -345,28 +350,37 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         fig.suptitle("CKA difference between datasets", fontsize=11)
         fig.tight_layout()
-        fig.savefig(str(out_dir / "cka_dataset_diff.png"), dpi=150)
+        fig.savefig(str(out_dir / f"cka_dataset_diff{suffix}.png"), dpi=150)
         plt.close(fig)
-        print("Saved cka_dataset_diff.png")
+        print(f"Saved cka_dataset_diff{suffix}.png")
 
     # save matrices
-    np.savez_compressed(str(out_dir / "cka_matrices.npz"),
+    np.savez_compressed(str(out_dir / f"cka_matrices{suffix}.npz"),
         **{ds.replace("-","_"): g for ds, g in dataset_grids.items()},
         vj_layers=np.array(vj_layers),
         dt_layers=np.array(dt_layers))
-    print("Saved cka_matrices.npz")
+    print(f"Saved cka_matrices{suffix}.npz")
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--manifest", default="/data/gaoya/agent-data/outputs/phys_compare_manifest.json")
+    p.add_argument("--manifest", default=None,
+                   help="JSON manifest with {video_path, source, caption} entries")
+    p.add_argument("--video-dir", default=None,
+                   help="Recursively find all video.mp4 under this dir (dataset name = dir name)")
+    p.add_argument("--dataset-name", default="pybullet",
+                   help="Dataset label used when --video-dir is given")
     p.add_argument("--out-dir",  default="/data/gaoya/agent-data/outputs/phys_compare/cka_stream")
     p.add_argument("--max-samples", type=int, default=None)
+    p.add_argument("--shard-id",   type=int, default=0)
+    p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--timestep", type=int, default=500)
     p.add_argument("--dit-height", type=int, default=480)
     p.add_argument("--dit-width",  type=int, default=720)
+    p.add_argument("--case-dir", default="/data/gaoya/AAA_test_video/0626vjepa_free/GT_check/0613pybullet",
+                   help="Per-case [9,30] CKA grids saved as <sample_name>.npy here")
     p.add_argument("--device", default="cuda")
     return p.parse_args()
 
@@ -375,37 +389,78 @@ def main():
     args = parse_args()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    args.case_dir = Path(args.case_dir)
+    args.case_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
 
-    manifest = json.load(open(args.manifest))
+    # build record list
+    if args.video_dir:
+        video_files = sorted(Path(args.video_dir).rglob("video.mp4"))
+        records = [{"video_path": str(f), "source": args.dataset_name, "caption": ""}
+                   for f in video_files]
+    else:
+        records = json.load(open(args.manifest))
+
     if args.max_samples:
-        manifest = manifest[:args.max_samples]
-    print(f"Processing {len(manifest)} videos (no disk cache)")
+        records = records[:args.max_samples]
+
+    # shard
+    import math
+    if args.num_shards > 1:
+        shard_size = math.ceil(len(records) / args.num_shards)
+        start = args.shard_id * shard_size
+        records = records[start: start + shard_size]
+        print(f"[shard {args.shard_id}/{args.num_shards}] {len(records)} videos", flush=True)
+
+    print(f"Processing {len(records)} videos (no disk cache)")
 
     encoder = build_vjepa_encoder(device)
     pipe    = build_wan_pipeline(device)
 
     accum = CKAAccumulator()
 
-    for i, rec in enumerate(manifest):
+    for i, rec in enumerate(records):
         video_path = rec["video_path"]
         dataset    = rec["source"]
         prompt     = rec.get("caption", "")
-        print(f"  [{i+1}/{len(manifest)}] {dataset} — {Path(video_path).name}", flush=True)
+        sample_name = Path(video_path).parent.name
+        print(f"  [{i+1}/{len(records)}] {dataset} — {sample_name}/video.mp4", flush=True)
         try:
+            # skip if already computed
+            out_file = args.case_dir / f"{sample_name}.npy"
+            if out_file.exists():
+                print(f"    skip (exists)", flush=True)
+                # still load into accum for final summary
+                grid = np.load(str(out_file))
+                accum.update(dataset, {}, {}, precomputed_grid=grid)
+                continue
+
             frames = load_video_frames(video_path, num_frames=49)
             vj = vjepa_grams(encoder, frames, device)
             dt = dit_grams(pipe, frames, prompt, device,
                            timestep=args.timestep,
                            height=args.dit_height, width=args.dit_width)
-            accum.update(dataset, vj, dt)
+            grid = accum.update(dataset, vj, dt)
+            np.save(str(out_file), grid)
         except Exception as e:
             print(f"    WARN: {e}", flush=True)
 
     dataset_grids = accum.means()
     print(f"\nDataset counts: { {ds: accum.count[ds] for ds in accum.count} }")
 
-    save_plots(dataset_grids, accum.vj_layers, accum.dt_layers, out_dir)
+    # save raw sums + counts so shards can be merged later
+    shard_tag = f"_shard{args.shard_id}" if args.num_shards > 1 else ""
+    np.savez_compressed(
+        str(out_dir / f"cka_sums{shard_tag}.npz"),
+        **{f"{ds.replace('-','_')}_sum":   accum.sum[ds]   for ds in accum.sum},
+        **{f"{ds.replace('-','_')}_count": np.array(accum.count[ds]) for ds in accum.count},
+        vj_layers=np.array(accum.vj_layers),
+        dt_layers=np.array(accum.dt_layers),
+    )
+    print(f"Saved cka_sums{shard_tag}.npz")
+
+    save_plots(dataset_grids, accum.vj_layers, accum.dt_layers,
+               out_dir, suffix=shard_tag)
 
     print("\n=== Summary: max CKA per dataset ===")
     for ds in DATASET_ORDER:
@@ -414,7 +469,8 @@ def main():
         g = dataset_grids[ds]
         vi, di = np.unravel_index(np.argmax(g), g.shape)
         print(f"  {ds:<20} max={g.max():.4f}"
-              f"  at V-JEPA L{accum.vj_layers[vi]} / DiT L{accum.dt_layers[di]}")
+              f"  at V-JEPA L{accum.vj_layers[vi]} / DiT L{accum.dt_layers[di]}"
+              f"  (n={accum.count[ds]})")
 
 
 if __name__ == "__main__":

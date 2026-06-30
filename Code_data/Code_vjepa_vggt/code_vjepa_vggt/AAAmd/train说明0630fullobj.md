@@ -238,6 +238,9 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检38 | **Stage1B** | step2 loss0.282 ema0.073 finite 0err; 4卡DDP活跃 ~48GB不OOM | **1B正式启动**; init-from old run s5000 loaded 63/63; 磁盘187G |
 | 0701 巡检39 | Stage1B | step31 loss1.231 ema0.828 finite 0err; 4卡~48GB不OOM | 健康0.16%; ~45s/it; loss振荡正常(flow-match初期); frames可视化串行进行中(gpu0) |
 | 0701 巡检40 | Stage1B | step62 loss1.582 ema1.194 finite 0err; 4卡~48GB~100%util | 健康0.31%; 38s/it; frames进度: old_s5000/new_s1000/1500/2000完成, s2500进行中 |
+| 0701 巡检41 | Stage1B | step82 ema0.512↓ finite 0err; 4卡DDP活跃 ~48GB | frames全部完成(ALL DONE); 6组PNG可对比 |
+| 0701 巡检42 | Stage1B | step133 ema0.815↓ finite 0err; 4卡DDP活跃 ~48GB | 健康0.67%; 42s/it; 首ckpt@500约5.3h后 |
+| 0701 巡检43 | Stage1B | step159 ema0.712↓ finite 0err; 4卡~48GB CPU推进中 | 健康0.8%; 32s/it加速; GPU采样窗口踩空隙(进程cpu_delta>0确认活跃) |
 
 #### 1B loss 说明
 - flow-matching loss 初期振荡很大（0.02~3.5），是正常现象——DiT cross-attn 权重随机初始化
