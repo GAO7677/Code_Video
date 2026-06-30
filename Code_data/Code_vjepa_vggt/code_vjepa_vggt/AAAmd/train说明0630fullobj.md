@@ -242,6 +242,9 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检42 | Stage1B | step133 ema0.815↓ finite 0err; 4卡DDP活跃 ~48GB | 健康0.67%; 42s/it; 首ckpt@500约5.3h后 |
 | 0701 巡检43 | Stage1B | step159 ema0.712↓ finite 0err; 4卡~48GB CPU推进中 | 健康0.8%; 32s/it加速; GPU采样窗口踩空隙(进程cpu_delta>0确认活跃) |
 | 0701 巡检44 | Stage1B | step179 ema1.350↑ finite 0err; 4卡~48GB | 健康0.9%; infer修两个bug(bundle→pipe; lora用_load_v_newtrain); infer已正常启动(gpu0,405/405loaded) |
+| 0701 巡检45 | Stage1B | step370 ema1.290↓ finite 0err; 4卡~100%util ~48GB | 健康1.85%; 30s/it; **infer完成**→17个MP4输出到pybullet0629_stage1b_old8000_cross/step_0008000/ |
+| 0701 巡检46 | Stage1B | step380 ema0.889↓ finite 0err; 4卡DDP活跃 ~48GB | 健康1.9%; 29s/it; 首ckpt@500约35min后 |
+| 0701 巡检47 | Stage1B | step405 ema0.643↓ finite 0err; 4卡DDP活跃 ~48GB | 健康2.0%; 29s/it; 首ckpt@500约25min後 |
 
 #### 1B loss 说明
 - flow-matching loss 初期振荡很大（0.02~3.5），是正常现象——DiT cross-attn 权重随机初始化
