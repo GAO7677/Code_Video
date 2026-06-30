@@ -158,3 +158,39 @@ val: s2000=0.1279 s2500=0.1262 s4500=0.1255 s5000=0.1255。
 - → box head 产生大误差却无法纠正(残差范围~0.003 补不上 anchor↔GT 差), 确认 P1。报告 :8811。
 
 | 0630 巡检12 | 1A | **已崩(SIGKILL OOM)@5816**; viz确认box=0.255不纠错; RAM已恢复417G | 待用户定 P1修复/resume |
+
+### 🔬 帧级可视化纠错 + 决定性发现 (inspect_stage1a_frames.py, gpu3)
+**先修可视化本身的坐标/帧 bug**(原 inspect 脚本有错, 用户质疑正确):
+- aux GT box/track 是从**全序列(context+future=24帧)**按 group=4 分组、取每组**最后一帧**→真实源帧索引 **[3,7,11,15,19,23]**(其中 11/15/19/23 是 future)。
+- box/track 是**全帧 [0,1] 归一化**(实测 max 0.82/1.0), 反归一化乘 video(512×896) 正确。
+- 原 inspect 脚本错在: 画布用 context_video(8帧), 且用 linspace→[0,1,3,4,6,7] 映射 → **画错帧、把 future box 画到 context 帧上**。loss 数值本身(tensor空间)是对的, 只是 overlay 误导。
+- 新脚本: 用真实 video 帧 @ 正确索引 [3,7,11,15,19,23] overlay, 输出 6 张 PNG。
+
+**决定性发现 (sample1, obj0, step5500)**:
+| src帧 | GT box x范围 | Pred box | box L1 |
+|------|------|------|------|
+| 3(ctx) | 0.61→0.69 | [0.519,0.541,0.616,0.720] | 0.049 |
+| 7(ctx) | 0.71→0.82 | 同上(不变) | 0.099 |
+| 11(fut)| 0.80→0.92 | 同上(不变) | 0.150 |
+| 15(fut)| 0.89→1.00 | 同上(不变) | 0.192 |
+| 19(fut)| 0.99→1.00 | 同上(不变) | 0.219 |
+| 23(fut)| 1.00 | 同上(不变) | - |
+- **Pred box 6帧逐位相同**! 小球向右滚(GT x 0.61→1.0), pred 冻在 ~[0.52,0.54,0.62,0.72] 不动。
+- box loss 几乎全来自 future 帧(L1 0.15→0.22), head **完全不建模时间运动**。
+- pred=anchor+微残差, 6帧相同 ⇒ **anchor 也是静态**(per-frame 框塌成一个)。
+- ⚠️ 对修复的影响: 单纯开 gate **可能不够** —— center_delta = gate·scale·tanh·**base_wh**, 位移被限制在~box宽度量级, 而物体跨整帧运动(Δx~0.4)。需要: 修 per-frame anchor 让其跟踪 + 解除 center_delta 的 ×base_wh 限制 + 开 gate, 甚至改 head 直接预测每帧绝对位置。
+- PNG: /data/gaoya/AAA_test_video/0623/train/train0624/aux_frames_stage1a/
+
+| 0630 巡检13 | 1A | 仍崩(可从5500恢复); 全GPU空闲, RAM 484G空; val曲线跑完 | 待用户定 box-head 修复方案 |
+
+### 完整 val 曲线 (10 ckpt, 两 eval 在 s3500 汇合)
+s500=0.1395 s1000=0.1330 s2000=0.1279 s3000=0.1258 s4000=0.1255 s5000=0.1255。
+box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本不动。
+结论锁定: 1A 当前配方下 box/track 不学, 仅 depth 学; 帧级 viz 证明 pred box 静态不跟踪运动。
+
+### 待决策: box-head 修复方案 (推荐组合)
+1. 解除 center_delta 的 ×base_wh 限制(改成 ×1.0 或可学步长), 让中心位移能跨整帧;
+2. box_delta_scale 0.06→~1.0, 三个 gate_init 0.05→~0.5, trainer 改读 model_cfg;
+3. 查 _boxes_from_tracks 为何 per-frame anchor 塌成静态(可能 future 帧 track 不可见→回退 prior);
+4. 备选: box head 直接回归每帧绝对 xyxy, 不用 anchor+残差。
+执行前置: 全 GPU 已空闲、RAM 已恢复, 重启前停掉 eval(已自然结束)。

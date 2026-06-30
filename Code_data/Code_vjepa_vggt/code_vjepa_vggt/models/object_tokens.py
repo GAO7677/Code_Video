@@ -459,12 +459,15 @@ class ObjectTubeProjector(nn.Module):
                 prior = prior
             else:
                 raise ValueError(f"box_prior_xyxy must have shape [B,O,4] or [B,T,O,4], got {list(prior.shape)}")
-        if prior is not None:
-            # Prefer the explicit box prior as the anchor when it exists. Track
-            # geometry still contributes through the latent tokens and residual
-            # heads, but the box base itself stays tied to the sampled object box.
-            return prior
+        # NOTE: previously this returned `prior` directly when a box prior existed,
+        # which broadcast a single (context) box to ALL latent frames -> a STATIC
+        # anchor that cannot track object motion into future frames (box aux loss
+        # then plateaus, dominated by future frames). We now fall through to the
+        # track-derived per-frame box below, which uses the dynamic track centers
+        # and fuses the prior only as a width/height floor (box_wh = max(dynamic, prior)).
         if not bool(valid_any.any().item()):
+            if prior is not None:
+                return prior
             center_xy = tracks.new_zeros(tracks.shape[0], tracks.shape[1], tracks.shape[2], 2)
             half_wh = center_xy.new_tensor([0.02, 0.02]).view(1, 1, 1, 2)
             return torch.cat(
