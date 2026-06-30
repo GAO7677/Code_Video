@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -305,6 +306,10 @@ def parse_args():
     p.add_argument("--device", default="cuda")
     p.add_argument("--vjepa-layers", nargs="+", type=int, default=VJEPA_LAYERS)
     p.add_argument("--dit-layers",   nargs="+", type=int, default=DIT_LAYERS)
+    p.add_argument("--shard-id",   type=int, default=0,
+                   help="Which shard to process (0-indexed)")
+    p.add_argument("--num-shards", type=int, default=1,
+                   help="Total number of shards (processes running in parallel)")
     return p.parse_args()
 
 
@@ -321,20 +326,32 @@ def main():
     if args.max_samples:
         manifest = manifest[:args.max_samples]
 
-    # write stem index for analysis script
-    stem_map = {make_stem(i, r): r for i, r in enumerate(manifest)}
-    json.dump(
-        {stem: {"source": r["source"], "scenario": r["scenario"],
-                "caption": r["caption"], "video_path": r["video_path"]}
-         for stem, r in stem_map.items()},
-        open(os.path.join(args.out_dir, "stem_index.json"), "w"),
-        indent=2, ensure_ascii=False,
-    )
+    # shard: each process handles a contiguous slice of the manifest
+    if args.num_shards > 1:
+        shard_size = math.ceil(len(manifest) / args.num_shards)
+        start = args.shard_id * shard_size
+        end   = min(start + shard_size, len(manifest))
+        manifest_slice = manifest[start:end]
+        print(f"[shard {args.shard_id}/{args.num_shards}] processing indices {start}–{end-1} ({len(manifest_slice)} items)")
+    else:
+        start = 0
+        manifest_slice = manifest
+
+    # only shard 0 writes the full stem index (once, before extraction)
+    if args.shard_id == 0:
+        stem_map = {make_stem(i, r): r for i, r in enumerate(manifest)}
+        json.dump(
+            {stem: {"source": r["source"], "scenario": r["scenario"],
+                    "caption": r["caption"], "video_path": r["video_path"]}
+             for stem, r in stem_map.items()},
+            open(os.path.join(args.out_dir, "stem_index.json"), "w"),
+            indent=2, ensure_ascii=False,
+        )
 
     # ── V-JEPA pass ───────────────────────────────────────────────────────────
     if not args.dit_only:
         encoder = build_vjepa_encoder(args.vjepa_layers, device)
-        for i, rec in enumerate(manifest):
+        for i, rec in enumerate(manifest_slice, start=start):
             stem = make_stem(i, rec)
             out_path = Path(args.out_dir) / f"{stem}_vjepa.npz"
             if out_path.exists():
@@ -352,7 +369,7 @@ def main():
     # ── DiT-5B pass ───────────────────────────────────────────────────────────
     if not args.vjepa_only:
         pipe = build_wan_pipeline(device)
-        for i, rec in enumerate(manifest):
+        for i, rec in enumerate(manifest_slice, start=start):
             stem = make_stem(i, rec)
             out_path = Path(args.out_dir) / f"{stem}_dit5b.npz"
             if out_path.exists():

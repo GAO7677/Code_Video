@@ -46,7 +46,7 @@ python3 -m code_vjepa_vggt.object_token_teacher_student.ts_eval \
     --max-batches 60 \
     --device cuda:0 \
     --wandb-run-name valeval_stage1a_newrun_0630_0627 \
-    --steps 1000-2000 \
+    --steps 2500-2500 \
     --order desc  \
     --wandb-run-id 13a22xe1
 

@@ -228,6 +228,16 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检28 | 1A(run3) | **崩溃@step923** | 磁盘满(3.6T/3.6T,0可用); min_checkpoint_free_gb 5.0→2.0; 删旧run ckpts 4.8GB; resume step_0002000重启 |
 | 0701 巡检29 | 1A(run3) | step18 ema0.241↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 磁盘311G可用(用户清理vggt_cache); resume s2000成功 |
 | 0701 巡检30 | 1A(run3) | step120 ema0.250↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 磁盘311G; 首ckpt@500约28min后 |
+| 0701 巡检31 | 1A(run3) | step372 ema0.231↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 首ckpt@500约8min后; 磁盘299G |
+| 0701 巡检32 | 1A(run3) | step405 ema0.241 finite 0err; 4卡~100%util ~45GB不OOM | 健康; s500约6min; eval预启动(gpu5,等ckpt) |
+| 0701 巡检33 | 1A(run3) | step532 ema0.231↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; s2500落盘 |
+| 0701 巡检34 | 1A(run3) | step587 ema0.265 finite 0err; 4卡100%util ~45GB不OOM | 健康; s2500 val eval由用户启动(gpu5) |
+| 0701 巡检35 | 1A(run3) | step709 ema0.233↓ finite 0err; 4卡~99%util ~45GB不OOM | 健康3.5%; 磁盘244G |
+
+#### val 曲线分析 (run2 s500 对比 run3 s500-2000)
+run3 s500-1500: box 0.0777→0.0757↓, track 0.1224→0.1182↓ 方向正确
+run3 s2000: matched=57(≠63, mixed-state ckpt), box/track 反弹(刚resume未稳定), depth=2.785(冻结后随机输出,不影响训练)
+→ 等 run3 depth冻结后正式训练的 ckpt val 才是真正基线(depth 冻结后首个 ckpt = 从s2000 resume的 s2500)
 
 #### 磁盘满根因分析
 - vggt_cache 224GB 是主要消耗。旧 run ckpts(s2500-s5500,7个×696MB=4.9GB)已删。
