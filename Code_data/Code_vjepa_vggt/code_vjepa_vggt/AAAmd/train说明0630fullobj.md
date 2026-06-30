@@ -236,6 +236,14 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检36 | 1A(run3) | step917 ema0.236 finite 0err; 4卡100%util ~45GB不OOM | 健康4.6%; 磁盘225G; s3000约6min |
 | 0701 巡检37 | 1A(run3) | step931 ema0.249 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康4.7%; it/s慢(val eval IO竞争); s3000约8min |
 | 0701 巡检38 | **Stage1B** | step2 loss0.282 ema0.073 finite 0err; 4卡DDP活跃 ~48GB不OOM | **1B正式启动**; init-from old run s5000 loaded 63/63; 磁盘187G |
+| 0701 巡检39 | Stage1B | step31 loss1.231 ema0.828 finite 0err; 4卡~48GB不OOM | 健康0.16%; ~45s/it; loss振荡正常(flow-match初期); frames可视化串行进行中(gpu0) |
+| 0701 巡检40 | Stage1B | step62 loss1.582 ema1.194 finite 0err; 4卡~48GB~100%util | 健康0.31%; 38s/it; frames进度: old_s5000/new_s1000/1500/2000完成, s2500进行中 |
+
+#### 1B loss 说明
+- flow-matching loss 初期振荡很大（0.02~3.5），是正常现象——DiT cross-attn 权重随机初始化
+- pmax=5.158 固定不变是因为 EMA 更新慢，实际 loss 在降
+- ~45s/it（比1A慢约7倍），因为需要跑完整 DiT forward（5B 参数 + CoTracker + JEPA + VGGT）
+- 首个ckpt@step500 约 6.25 小时后
 
 ### Stage1B 启动记录
 - init-from: stage1a_full_token_old/step_0005000.pt (old run, 63/63 tensors loaded)
