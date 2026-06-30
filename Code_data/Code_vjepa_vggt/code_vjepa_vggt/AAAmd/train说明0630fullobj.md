@@ -216,3 +216,5 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检15 | 1A(新run) | step26 ema0.65↓快速 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康, 从头训(修复后) |
 | 0701 巡检16 | 1A(新run) | step239 ema0.250↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 首ckpt@500约15min后 |
 | 0701 巡检17 | 1A(新run) | step361 ema0.211↓ finite 0err; 4卡~100%util ~45GB不OOM | 健康; 首新ckpt@500约8min后 |
+| 0701 巡检18-20 | 1A(新run) | step955 ema0.204↓ finite 0err; 4卡DDP 100%↔0%正常 ~48GB不OOM | 健康4.8%; val eval running |
+| 0701 eval | 1A newrun | wandb run=valeval_stage1a_newrun_0630_0627 (13a22xe1) 正在跑60batch; 结果待出 | gpu5 46GB util~5% 在跑 |
