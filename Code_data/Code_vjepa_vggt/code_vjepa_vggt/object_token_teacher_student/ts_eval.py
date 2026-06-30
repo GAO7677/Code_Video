@@ -46,7 +46,7 @@ python3 -m code_vjepa_vggt.object_token_teacher_student.ts_eval \
     --max-batches 60 \
     --device cuda:0 \
     --wandb-run-name valeval_stage1a_newrun_0630_0627 \
-    --steps 1000-1000 \
+    --steps 1000-2000 \
     --order desc  \
     --wandb-run-id 13a22xe1
 
@@ -59,7 +59,7 @@ CUDA_VISIBLE_DEVICES=0 \
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
 python3 -m code_vjepa_vggt.object_token_teacher_student.inspect_stage1a_frames \
     --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml \
-    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0001000.pt \
+    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0002000.pt \
     --indices 0 1 2 3 \
     --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_frames_stage1a_newrun_s1000 \
     --device cuda:0 

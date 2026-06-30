@@ -225,6 +225,15 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检25 | 1A(run3,resume s1500) | step28 loss0.191 ema0.219 finite 0err; 4卡100%util ~45GB不OOM | 健康; depth head 已冻结; resume成功(miss=4545 unexp=0) |
 | 0701 巡检26 | 1A(run3) | step150 ema0.321↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 首个run3 ckpt@500约27min后 |
 | 0701 巡检27 | 1A(run3) | step402 ema0.247↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 首ckpt@500约6min后 |
+| 0701 巡检28 | 1A(run3) | **崩溃@step923** | 磁盘满(3.6T/3.6T,0可用); min_checkpoint_free_gb 5.0→2.0; 删旧run ckpts 4.8GB; resume step_0002000重启 |
+| 0701 巡检29 | 1A(run3) | step18 ema0.241↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 磁盘311G可用(用户清理vggt_cache); resume s2000成功 |
+| 0701 巡检30 | 1A(run3) | step120 ema0.250↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 磁盘311G; 首ckpt@500约28min后 |
+
+#### 磁盘满根因分析
+- vggt_cache 224GB 是主要消耗。旧 run ckpts(s2500-s5500,7个×696MB=4.9GB)已删。
+- ⚠️ 磁盘 /data 仍 100%满, 仅 4.8GB 可用。vggt_cache 可重建但需用户确认才能删。
+- 临时方案: min_checkpoint_free_gb 5.0→2.0, 现有 4.8GB 够保存下一个 ckpt(~632MB)。
+- **建议**: 确认 vggt_cache 可删后释放 224GB; 或者把输出目录迁移到更大的盘。
 
 ### run3 变更说明
 - config: `lambda_depth_aux: 0.0`(depth head 冻结, 不再训练)
