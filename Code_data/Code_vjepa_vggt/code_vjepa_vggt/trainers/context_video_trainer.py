@@ -156,6 +156,12 @@ class ContextVideoTrainer(nn.Module):
         self.object_aux_heads = ObjectAuxHeads(
             dim=cond_dim,
             track_delta_scale=float(model_cfg.get("track_head_delta_scale", 0.25)),
+            box_delta_scale=float(model_cfg.get("box_head_delta_scale", 1.0)),
+            box_wh_log_scale=float(model_cfg.get("box_head_wh_log_scale", 1.25)),
+            box_wh_max_scale=float(model_cfg.get("box_head_wh_max_scale", 2.0)),
+            track_gate_init=float(model_cfg.get("track_head_gate_init", 0.5)),
+            box_center_gate_init=float(model_cfg.get("box_head_center_gate_init", 0.5)),
+            box_size_gate_init=float(model_cfg.get("box_head_size_gate_init", 0.5)),
         ).to(self.device_obj)
         depth_lambda = float(self.cfg.get("loss", {}).get("lambda_depth_aux", 0.0))
         depth_target_index = self.cfg.get("loss", {}).get(

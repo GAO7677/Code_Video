@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
         choices=["pdi", "wmreward", "videophy2_pc", "videophy2_sa", "phyground", "cosmos"],
     )
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--summary-json", type=Path, default=None)
@@ -73,10 +74,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def iter_gt_jsons(root: Path, groups: list[str], limit: int | None) -> list[Path]:
+def iter_gt_jsons(root: Path, groups: list[str], limit: int | None, offset: int = 0) -> list[Path]:
     rows: list[Path] = []
     for group in groups:
         rows.extend(sorted((root / group / "GT").glob("*.json")))
+    if offset:
+        rows = rows[offset:]
     if limit is not None:
         rows = rows[:limit]
     return rows
@@ -214,6 +217,7 @@ def make_summary(root: Path, groups: list[str], metrics: list[str], cases: list[
         "updated": {name: 0 for name in metrics},
         "skipped": {name: 0 for name in metrics},
         "failed": {name: 0 for name in metrics},
+        "unreadable_files": [],
         "errors": [],
     }
 
@@ -221,7 +225,7 @@ def make_summary(root: Path, groups: list[str], metrics: list[str], cases: list[
 def main() -> None:
     args = parse_args()
     root = args.root.expanduser().resolve()
-    case_jsons = iter_gt_jsons(root, args.groups, args.limit)
+    case_jsons = iter_gt_jsons(root, args.groups, args.limit, args.offset)
     if not case_jsons:
         raise FileNotFoundError(f"no GT jsons found under {root}")
 
@@ -244,7 +248,13 @@ def main() -> None:
     summary = make_summary(root, args.groups, args.metrics, case_jsons)
 
     for index, json_path in enumerate(case_jsons, start=1):
-        payload = load_json(json_path)
+        try:
+            payload = load_json(json_path)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            summary["unreadable_files"].append({"json": str(json_path), "error": f"{type(exc).__name__}: {exc}"})
+            print(f"[{index}/{len(case_jsons)}] {json_path}", flush=True)
+            print(f"  [unreadable] {type(exc).__name__}: {exc} -- skipping", flush=True)
+            continue
         source_results = dict(payload.get("source_metric_results") or {})
         changed = False
         print(f"[{index}/{len(case_jsons)}] {json_path}", flush=True)

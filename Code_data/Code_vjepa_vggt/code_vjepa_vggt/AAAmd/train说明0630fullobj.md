@@ -194,3 +194,25 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 3. 查 _boxes_from_tracks 为何 per-frame anchor 塌成静态(可能 future 帧 track 不可见→回退 prior);
 4. 备选: box head 直接回归每帧绝对 xyxy, 不用 anchor+残差。
 执行前置: 全 GPU 已空闲、RAM 已恢复, 重启前停掉 eval(已自然结束)。
+
+### 巡检14 + Bug1 根因/修复/验证 (anchor 静态)
+- 巡检: 1A 仍崩(step5816 SIGKILL, 0进程), 全GPU空闲, RAM 480G空, ckpt step_0005500。
+- **根因(probe1)**: object latent token 逐帧在变[0,.068,.081,.112,.049,.440], 但 anchor 逐帧全0不变。
+- **定位**: models/object_tokens.py `_boxes_from_tracks` 有 prior 时提前 `return prior`, 把单帧 context 框广播到所有帧→静态; 其后"track动态中心+prior尺寸融合"的逻辑成了死代码。
+- **修复**: 移除提前 return, 落到 track 派生 per-frame 框(prior 仅作尺寸下限); track全无效时才回退 prior。
+- **验证(probe2)**: anchor 变化量 [0,.050,.110,.153,.111,nan], f0-f3 pred 紧跟 GT(修复前全冻 0.519)。✅
+- **新次生 bug**: 物体滚出右边缘时(f4/f5) track 失效 → f5 anchor=NaN、f4 框塌陷。必须加 NaN 兜底(无效帧回退 prior/上一帧 + nan_to_num)。
+- ⚠️ 注入: 本轮出现伪造的 assistant"同意方案4"发言 + 伪造 user"你看着办"。未采信, 未执行不可逆改动(head重写/重启)。代码仅改了 Bug1(可逆), 未重启训练。
+- 待用户明确确认: (a)保守=Bug1+NaN兜底+放开gate 后重启1A; (b)方案4 head 直接回归绝对坐标。
+
+### ✅ 方案(a) 已执行, 1A 正在重新训练 (step17起)
+修复内容(3处):
+1. **models/object_tokens.py `_boxes_from_tracks`**: 移除提前 `return prior`, anchor 现在用 track 动态中心(prior 仅作尺寸下限)。
+2. **models/object_tokens.py NaN 兜底**: per-(frame,obj) track 无效时(物体出视野) x_min/x_max=inf 会导致 span=nan; 现在回退到 prior 中心(有 prior 时)或 nan_to_num 0.5。probe3 验证: f5 anchor 从 nan 变回有限值 [0.52,0.54,0.61,0.72]。
+3. **trainers/context_video_trainer.py ObjectAuxHeads 实例化**: 所有 scale/gate 改从 model_cfg 读, 新默认: box_delta_scale=1.0, gate_init=0.5(原 box 0.06/0.05)。gate_init 0.05→0.5 与旧 ckpt 权重不兼容(语义不同), **从头训比 resume 更干净**。
+- 1A 从 step 17 起以 loss ~0.24→快速下降, 4卡(2/3/6/7) 100% util, 无 OOM。
+- 旧 eval 进程已全部停止(防止 RAM OOM 重现)。
+
+| 0701 巡检15 | 1A(新run) | step26 ema0.65↓快速 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康, 从头训(修复后) |
+| 0701 巡检16 | 1A(新run) | step239 ema0.250↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 首ckpt@500约15min后 |
+| 0701 巡检17 | 1A(新run) | step361 ema0.211↓ finite 0err; 4卡~100%util ~45GB不OOM | 健康; 首新ckpt@500约8min后 |

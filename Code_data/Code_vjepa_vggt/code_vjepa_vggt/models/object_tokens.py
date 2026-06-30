@@ -487,6 +487,22 @@ class ObjectTubeProjector(nn.Module):
         y_min = torch.gather(sort_y, dim=3, index=min_idx).squeeze(-1)
         x_max = torch.gather(sort_x, dim=3, index=max_idx).squeeze(-1)
         y_max = torch.gather(sort_y, dim=3, index=max_idx).squeeze(-1)
+        # When a per-(frame,object) slot has no valid track points, sort filled it
+        # with inf -> x_min=inf, x_max=inf -> span=nan. Replace with prior center
+        # (if available) or a safe fallback so the anchor stays finite.
+        no_valid_slot = ~valid_any  # [B, Lf, O]
+        if prior is not None:
+            prior_cx = 0.5 * (prior[..., 0] + prior[..., 2])
+            prior_cy = 0.5 * (prior[..., 1] + prior[..., 3])
+            x_min = torch.where(no_valid_slot, prior_cx, x_min)
+            x_max = torch.where(no_valid_slot, prior_cx, x_max)
+            y_min = torch.where(no_valid_slot, prior_cy, y_min)
+            y_max = torch.where(no_valid_slot, prior_cy, y_max)
+        else:
+            x_min = torch.nan_to_num(x_min, nan=0.5, posinf=0.5)
+            x_max = torch.nan_to_num(x_max, nan=0.5, posinf=0.5)
+            y_min = torch.nan_to_num(y_min, nan=0.5, posinf=0.5)
+            y_max = torch.nan_to_num(y_max, nan=0.5, posinf=0.5)
         span_x = (x_max - x_min).clamp_min(1.0e-4)
         span_y = (y_max - y_min).clamp_min(1.0e-4)
         pad_x = span_x * float(expand_ratio)
