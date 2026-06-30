@@ -43,7 +43,7 @@ def build_trainer(stage: str, cfg: dict, device: str):
         return cls(cfg, device=device)
 
 
-def list_ckpts(ckpt_arg: str):
+def list_ckpts(ckpt_arg: str, steps: str | None = None, order: str = "asc"):
     p = Path(ckpt_arg)
     if p.is_dir():
         items = sorted(p.glob("step_*.pt"))
@@ -55,7 +55,17 @@ def list_ckpts(ckpt_arg: str):
     for f in items:
         m = re.search(r"step_(\d+)\.pt", f.name)
         out.append((int(m.group(1)) if m else 0, f))
+    if steps:
+        # "3000-5000" range, or "1000,2000,3000" explicit list
+        if "-" in steps and "," not in steps:
+            lo, hi = (int(x) for x in steps.split("-", 1))
+            out = [(s, f) for s, f in out if lo <= s <= hi]
+        else:
+            want = {int(x) for x in steps.split(",") if x.strip()}
+            out = [(s, f) for s, f in out if s in want]
+    out.sort(key=lambda t: t[0], reverse=(order == "desc"))
     return out
+
 
 
 def load_ckpt_into(trainer, ckpt_path: Path):
@@ -68,11 +78,30 @@ def load_ckpt_into(trainer, ckpt_path: Path):
     return matched, len(model_state), len(loaded.missing_keys), len(loaded.unexpected_keys)
 
 
+def warmup_forward(trainer, seed: int) -> None:
+    """Run one forward so lazily-rebuilt layers (object_pooler.latent_proj/jepa_proj,
+    which adapt their in_features to the real VAE/JEPA feature dim on first forward)
+    reach their true shapes BEFORE we load_state_dict — otherwise the still-default
+    Linear shapes mismatch the checkpoint."""
+    import torch
+
+    # NOTE: do NOT call trainer.eval() — ContextVideoTrainer overrides train() as its
+    # training-launch entrypoint, so nn.Module.eval()->self.train(False) would pass
+    # False as resume_checkpoint and crash. These heads have no dropout/BN and the
+    # backbones are frozen, so train-mode forward gives a valid loss measurement.
+    torch.manual_seed(seed)
+    loader = trainer.build_dataloader(num_workers=2)
+    with torch.no_grad():
+        for batch in loader:
+            trainer.forward(batch)
+            break
+
+
+
 def eval_one(trainer, device: str, max_batches: int, seed: int):
     import torch
 
-    trainer.eval()
-    # deterministic batch sampling + (for flow-matching) reproducible timestep noise
+    # see warmup_forward note: avoid trainer.eval(); deterministic noise via manual_seed
     torch.manual_seed(seed)
     loader = trainer.build_dataloader(num_workers=2)
     agg: dict[str, list[float]] = {}
@@ -109,6 +138,8 @@ def main() -> None:
     ap.add_argument("--no-wandb", action="store_true")
     ap.add_argument("--wandb-project", default="vjepa_vggt_wan")
     ap.add_argument("--wandb-run-name", default=None)
+    ap.add_argument("--steps", default=None, help="filter ckpts: range '3000-5000' or list '1000,2000'")
+    ap.add_argument("--order", default="asc", choices=["asc", "desc"], help="evaluation order by step")
     args = ap.parse_args()
 
     import torch  # noqa
@@ -123,8 +154,11 @@ def main() -> None:
           f"building trainer (loads full model, ~minutes)...", flush=True)
     trainer = build_trainer(args.stage, cfg, args.device)
 
-    ckpts = list_ckpts(args.ckpt)
-    print(f"[ts_eval] {len(ckpts)} checkpoint(s) to evaluate", flush=True)
+    ckpts = list_ckpts(args.ckpt, steps=args.steps, order=args.order)
+    print(f"[ts_eval] {len(ckpts)} checkpoint(s) to evaluate (steps={args.steps or 'all'}, order={args.order})", flush=True)
+
+    print("[ts_eval] warmup forward to materialize lazy pooler layers...", flush=True)
+    warmup_forward(trainer, args.seed)
 
     wandb_run = None
     if not args.no_wandb:

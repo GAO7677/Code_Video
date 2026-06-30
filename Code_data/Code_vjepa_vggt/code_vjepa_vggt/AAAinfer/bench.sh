@@ -24,6 +24,7 @@ METRICS=(
   "videophy2"
   "phyground"
   "cosmos_reason1"
+  "phys"
 )
 
 FAILED_METRICS=()

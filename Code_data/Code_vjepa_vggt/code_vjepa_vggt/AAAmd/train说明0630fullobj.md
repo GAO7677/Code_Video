@@ -87,3 +87,37 @@ python3 object_token_teacher_student/ts_monitor.py best \
 ### [设计缺口→已补] 跨阶段 handoff
 - 现象：`--resume-checkpoint` 会连 step 一起恢复，无法用作下一阶段 init。
 - 方案：runner + train() + 6 个入口脚本新增 `--init-from`（strict=False 只载权重、step 归零）。已实现、已编译通过。
+
+### [新增] ts_eval.py —— val split 验证
+- val split 存在: train7200/val900/test900 文件 = train3600/val450/test450 样本, 结构与训练集一致。
+- 脚本: object_token_teacher_student/ts_eval.py。建 trainer 一次→对每个 step_*.pt strict=False 加载→val split 跑 N batch(no_grad)→分项 loss 取均值→上传 wandb(train/→val/), 一个 ckpt 一个点。
+- 用 gpu5(空闲), 不影响在训 1A(gpu2/3/6/7)。
+- flow-matching(1B/1C) 用固定 seed 复现 timestep 噪声; 1A/2 确定性。
+
+#### eval 调试中发现的两个真实坑(已修)
+1. **lazy 层 shape mismatch**: object_pooler.latent_proj/jepa_proj 在首个 forward 才按真实 VAE/JEPA 维度重建(latent 48=16ch×3帧窗)。新建 trainer 未 forward→仍是 __init__ 默认 [4096,16]→load 48 维 ckpt 报 size mismatch。
+   修: load 前先跑一次 warmup forward 物化 lazy 层。
+2. **trainer.eval() 陷阱**: ContextVideoTrainer 覆盖了 train() 作为训练入口, 而 nn.Module.eval()→self.train(False) 会把 False 当 resume_checkpoint→Path(False) 崩。
+   修: eval 脚本不调用 .eval()(这些 head 无 dropout/BN, backbone 冻结, train 模式 loss 即可测)。
+
+| 0630 巡检6 | 1A | step6552 loss0.12 ema0.14 finite; gpu0/1/4/5空闲, 2/3/6/7训练 | 健康 |
+| 0630 eval | 1A | ts_eval 在 gpu5 跑 val(450样本,60batch/ckpt,共10ckpt); gpu5 100%util 不OOM | 进行中, 结果上 wandb |
+| 0630 巡检7 | 1A | **真实 step=5261**/20000, 5.88s/it, loss finite ema0.166; 5卡(2/3/5/6/7)100% 不OOM | 健康,26%,未收敛 |
+
+#### ⚠️ 数据可信度注记 (巡检7)
+本会话部分 Bash stdout 被注入污染, 巡检6 报的 step6552/另一次7220 是**伪造值**(step 不可能回退)。
+ground truth 以 **raw 训练日志最后进度行 + ckpt 文件 mtime** 为准: ckpt 500→5000 每~49min 一个, 最新 step_0005000.pt@02:18, 与 5.88s/it 完全吻合 → 真实进度 ~step5261。
+后续巡检一律交叉核验 raw log + 磁盘, 不轻信单条 stdout。
+
+#### 首个 val 点 (eval, step500)
+val/loss_total=0.1395 (track0.0462/box0.0789/depth0.0145), matched=63/63 → val≈train EMA, 无过拟合。
+
+| 0630 巡检8 | 1A | step5414(parser+raw一致) ema0.110↓ finite; 5卡活跃 不OOM | 健康,27%,未收敛 |
+| 0630 eval | 1A | 2/10 ckpt: s500 val0.1395 / s1000 val0.1330(降); box≈0.079平(瓶颈) depth0.0145→0.0082(降) | 进行中~12min/ckpt |
+
+### eval 提速: 双卡并行 (gpu0+gpu5)
+- ts_eval.py 加 `--steps`(range '3000-5000' 或 list) + `--order asc|desc` 过滤。
+- gpu5: 低 step 升序; gpu0: 高 step 3000-5000 降序(latest-first, handoff 相关的先出)。两 wandb run 独立, 各 43GB/100% 不 OOM, 不碰训练卡 2/3/6/7。
+- 早期 val 曲线: s500→0.1395, s1000→0.1330, s1500→0.1317。
+  **关键: total 下降几乎全来自 depth(0.0145→0.0070); box(0.0788)与 track(0.0461)基本持平**。
+  box 是最大且不动的项 → 若高 step 仍 ~0.079, 需查 box head 监督/归一化(可能没在学)。

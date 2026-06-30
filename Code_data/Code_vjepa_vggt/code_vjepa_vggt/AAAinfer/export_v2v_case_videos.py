@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -10,6 +11,7 @@ from typing import Any
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
 EXCLUDED_JSON_NAMES = {"summary.json", "result.json", "batch_manifest.json"}
+PROXY_TMP_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0526dp/tmp_eval_all/proxy")
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,9 +61,26 @@ def extract_metric_values(payload: dict[str, Any]) -> dict[str, float | None]:
         "wmreward_surprise": to_float(nested_get(payload, "wmreward", "surprise")),
         "wmreward_similarity": to_float(nested_get(payload, "wmreward", "similarity")),
         "proxy_score": to_float(nested_get(payload, "proxy", "score")),
+        "proxy_predictive_alignment": to_float(nested_get(payload, "proxy", "details", "predictive_alignment")),
+        "proxy_temporal_relation_raw_error": to_float(
+            nested_get(payload, "proxy", "details", "temporal_relation_raw_error")
+        ),
+        "proxy_delta_relation_raw_error": to_float(
+            nested_get(payload, "proxy", "details", "delta_relation_raw_error")
+        ),
+        "proxy_delta_profile_error": to_float(
+            nested_get(payload, "proxy", "details", "delta_profile_error")
+        ),
         "videophy2_score": to_float(nested_get(payload, "videophy2", "score")),
         "phyground_general_avg": to_float(nested_get(payload, "phyground", "general_avg")),
         "cosmos_reason1_score": to_float(nested_get(payload, "cosmos_reason1", "score")),
+        "physics_iq_score": to_float(nested_get(payload, "physics_iq", "score")),
+        "physics_iq_mse_mean": to_float(nested_get(payload, "physics_iq", "mse_mean")),
+        "physics_iq_spatiotemporal_iou_mean": to_float(
+            nested_get(payload, "physics_iq", "spatiotemporal_iou_mean")
+        ),
+        "physics_iq_spatial_iou": to_float(nested_get(payload, "physics_iq", "spatial_iou")),
+        "physics_iq_weighted_spatial_iou": to_float(nested_get(payload, "physics_iq", "weighted_spatial_iou")),
     }
 
 
@@ -73,6 +92,46 @@ def slugify(text: str) -> str:
 
 def resolve_path_string(path_str: str) -> str:
     return str(Path(path_str).expanduser().resolve())
+
+
+def stable_path_id(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
+    return f"{resolved.stem}_{digest}"
+
+
+def load_source_video_path(input_json_path: str) -> str | None:
+    payload = load_json(Path(input_json_path))
+    if payload is None:
+        return None
+    source_video = payload.get("source_video")
+    if not isinstance(source_video, str) or not source_video.strip():
+        return None
+    return resolve_path_string(source_video)
+
+
+def derive_proxy_clip_paths(output_video_path: str | None) -> dict[str, str | None]:
+    if not isinstance(output_video_path, str) or not output_video_path.strip():
+        return {"proxy_context_video": None, "proxy_future_video": None}
+    candidate = Path(output_video_path).expanduser().resolve()
+    case_dir = PROXY_TMP_ROOT / stable_path_id(candidate)
+    context_path = case_dir / "context.mp4"
+    future_path = case_dir / "future.mp4"
+    return {
+        "proxy_context_video": str(context_path) if context_path.is_file() else None,
+        "proxy_future_video": str(future_path) if future_path.is_file() else None,
+    }
+
+
+def copy_optional_video(src_value: str | None, dst: Path) -> str | None:
+    if not isinstance(src_value, str) or not src_value.strip():
+        return None
+    src = Path(src_value).expanduser().resolve()
+    if not src.is_file():
+        return None
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return str(dst)
 
 
 def load_input_json_targets(txt_path: Path) -> list[str]:
@@ -192,9 +251,20 @@ def main() -> None:
                 "result_json_path": str(result_json_path),
                 "output_video": str(output_video_path) if output_video_path is not None else None,
                 "metrics": extract_metric_values(payload),
+                "proxy_videos": derive_proxy_clip_paths(str(output_video_path) if output_video_path is not None else None),
+                "physics_iq_scored_output_video": (
+                    resolve_path_string(str(value))
+                    if isinstance((value := nested_get(payload, "physics_iq", "scored_output_video")), str) and value.strip()
+                    else None
+                ),
+                "physics_iq_scored_source_video": (
+                    resolve_path_string(str(value))
+                    if isinstance((value := nested_get(payload, "physics_iq", "scored_source_video")), str) and value.strip()
+                    else None
+                ),
                 "raw_metric_keys": sorted(
                     key
-                    for key in ("pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1")
+                    for key in ("pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "physics_iq")
                     if key in payload
                 ),
             }
@@ -208,6 +278,9 @@ def main() -> None:
             shutil.rmtree(case_dir)
         case_dir.mkdir(parents=True, exist_ok=True)
 
+        source_video = load_source_video_path(input_json_path)
+        copied_source_video = copy_optional_video(source_video, case_dir / "source_video.mp4")
+
         raw_rows = buckets[input_json_path]
         rows = select_best_rows(raw_rows)
         copied_rows: list[dict[str, Any]] = []
@@ -219,15 +292,42 @@ def main() -> None:
                 shutil.copy2(src, dst)
                 copied_video_path = str(dst)
 
+            proxy_context_copied = copy_optional_video(
+                row["proxy_videos"].get("proxy_context_video"),
+                case_dir / "_metric_videos" / f"{slugify(str(row['method']))}__proxy_context.mp4",
+            )
+            proxy_future_copied = copy_optional_video(
+                row["proxy_videos"].get("proxy_future_video"),
+                case_dir / "_metric_videos" / f"{slugify(str(row['method']))}__proxy_future.mp4",
+            )
+            physics_iq_scored_output_copied = copy_optional_video(
+                row.get("physics_iq_scored_output_video"),
+                case_dir / "_metric_videos" / f"{slugify(str(row['method']))}__physics_iq_output.mp4",
+            )
+            physics_iq_scored_source_copied = copy_optional_video(
+                row.get("physics_iq_scored_source_video"),
+                case_dir / "_metric_videos" / f"{slugify(str(row['method']))}__physics_iq_source.mp4",
+            )
+
             copied_rows.append(
                 {
                     "method": row["method"],
                     "input_json": input_json_path,
                     "copied_video": copied_video_path,
+                    "source_video": source_video,
+                    "copied_source_video": copied_source_video,
                     "source_output_video": row["output_video"],
                     "result_json_path": row["result_json_path"],
                     "num_method_candidates": row["num_method_candidates"],
                     "discarded_result_json_paths": row["discarded_result_json_paths"],
+                    "proxy_context_video": row["proxy_videos"].get("proxy_context_video"),
+                    "proxy_future_video": row["proxy_videos"].get("proxy_future_video"),
+                    "copied_proxy_context_video": proxy_context_copied,
+                    "copied_proxy_future_video": proxy_future_copied,
+                    "physics_iq_scored_output_video": row.get("physics_iq_scored_output_video"),
+                    "physics_iq_scored_source_video": row.get("physics_iq_scored_source_video"),
+                    "copied_physics_iq_scored_output_video": physics_iq_scored_output_copied,
+                    "copied_physics_iq_scored_source_video": physics_iq_scored_source_copied,
                     **row["metrics"],
                 }
             )
@@ -237,6 +337,8 @@ def main() -> None:
             json.dumps(
                 {
                     "input_json": input_json_path,
+                    "source_video": source_video,
+                    "copied_source_video": copied_source_video,
                     "txt_path": str(txt_path),
                     "result_root": str(result_root),
                     "num_candidate_rows": len(raw_rows),
@@ -245,6 +347,10 @@ def main() -> None:
                         "Select one row per method by highest non-null metric count, "
                         "then prefer non-frame49/non-chain result paths, then "
                         "lexicographically smallest result_json_path."
+                    ),
+                    "metric_video_policy": (
+                        "If available, export the actual proxy context/future clips and "
+                        "Physics-IQ scored output/source clips into _metric_videos/."
                     ),
                     "rows": copied_rows,
                 },
