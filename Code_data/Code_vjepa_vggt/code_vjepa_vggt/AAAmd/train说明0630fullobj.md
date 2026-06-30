@@ -224,6 +224,7 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检24 | 1A(新run) | step1797 ema0.260 finite 0err; 4卡100%util ~45GB不OOM | 健康9.0%; 最新s1500 |
 | 0701 巡检25 | 1A(run3,resume s1500) | step28 loss0.191 ema0.219 finite 0err; 4卡100%util ~45GB不OOM | 健康; depth head 已冻结; resume成功(miss=4545 unexp=0) |
 | 0701 巡检26 | 1A(run3) | step150 ema0.321↓ finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康; 首个run3 ckpt@500约27min后 |
+| 0701 巡检27 | 1A(run3) | step402 ema0.247↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 首ckpt@500约6min后 |
 
 ### run3 变更说明
 - config: `lambda_depth_aux: 0.0`(depth head 冻结, 不再训练)
