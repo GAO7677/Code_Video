@@ -121,3 +121,40 @@ val/loss_total=0.1395 (track0.0462/box0.0789/depth0.0145), matched=63/63 → val
 - 早期 val 曲线: s500→0.1395, s1000→0.1330, s1500→0.1317。
   **关键: total 下降几乎全来自 depth(0.0145→0.0070); box(0.0788)与 track(0.0461)基本持平**。
   box 是最大且不动的项 → 若高 step 仍 ~0.079, 需查 box head 监督/归一化(可能没在学)。
+
+### ⚠️ 已确认异常: box/track aux 几乎不学 (巡检10)
+全 val 曲线(gpu0+gpu5): s500/1000/1500/2000/5000
+| step | total | box | track | depth |
+|------|-------|-----|-------|-------|
+| 500  | 0.1395 | 0.0789 | 0.0462 | 0.0145 |
+| 1000 | 0.1330 | 0.0788 | 0.0461 | 0.0082 |
+| 1500 | 0.1317 | 0.0788 | 0.0459 | 0.0070 |
+| 2000 | 0.1279 | 0.0787 | 0.0457 | 0.0035 |
+| 5000 | 0.1255 | 0.0783 | 0.0450 | 0.0022 |
+- 500→5000: depth −85%(在学), **box −0.8%(几乎冻结)**, track −2.6%(几乎冻结)。
+- box 占 total 62%(0.078/0.1255)却基本不动 → total"在降"是 depth 独力贡献的假象。
+- 排查方向: box head 残差(box_center_delta/box_log_scale 是否≈0=head退化)、pred/gt box 归一化是否一致、有无 detach/gate 饱和。正在查。
+
+| 0630 巡检9 | 1A | step5554 ema0.116 finite; 6卡~100% 不OOM | 健康 |
+| 0630 巡检10 | 1A | step5669 finite 0err; 双eval出 s500-2000+s5000 | 健康28%; box不学待查 |
+| 0630 巡检11 | 1A | step5788(parser+raw一致) ema0.107 finite; 6卡100% 不OOM | 健康; **val已平台** |
+
+### ⚠️ 关键: 1A val 已平台(巡检11) —— 但是 P1 bug 导致, 非收敛
+val: s2000=0.1279 s2500=0.1262 s4500=0.1255 s5000=0.1255。
+- depth 约 step2500 触底(~0.002), 之后 total 几乎不动(2500→5000 仅 0.1262→0.1255), **平了~3300步**。
+- 平台是 box(0.078)+track(0.045) 被 gate/scale 锁死造成, **不是模型收敛**。
+- 因此 **不触发 handoff**: 现在选 best 交给 1B/2, 等于把"box token 没学过"的 teacher 传下去(box 占 62% 信号)。
+- 正确路径: P1 修 gate/scale(box_delta_scale~1.0, gate_init~0.5, trainer 改读 model_cfg) + 重启 1A。受 P0(通道污染) 制约, 待确认后执行。
+
+### 🔴 1A 崩溃 (SIGKILL / 系统RAM OOM) @ step5816
+- 现象: ChildFailedError: Signal 9 (SIGKILL) received; gpu2/3/6/7 全释放; 训练进程 0。
+- 根因: 系统 CPU 内存 OOM。4 训练进程 + 2 eval 进程(gpu0/5) 同时把 VGGT/JEPA/CoTracker+整段视频载入 RAM, 撑爆系统内存, 内核 OOM-killer 杀训练 rank → DDP 整体挂。**我加第2个eval(gpu0)是诱因**。
+- 可恢复: 最新 ckpt step_0005500.pt。
+- 教训: 并发重感知进程数要控制; 重启训练前先停 eval 释放 RAM。
+
+### P1 可视化确认 (inspect_stage1a_aux_losses.py, gpu2, step5500)
+- 适配: 用 FullTokenTeacherTrainer + _prepare_stage1a_batch(dataclass→dict wrap), 修了 query_points_prior / track_box_loss 两个兼容问题。加载 loaded=63 unexp=0。
+- case0 单样本: **box_aux=0.255**(远高于 val 均值0.078, ~25%帧宽), track=0.048, depth=0.006。
+- → box head 产生大误差却无法纠正(残差范围~0.003 补不上 anchor↔GT 差), 确认 P1。报告 :8811。
+
+| 0630 巡检12 | 1A | **已崩(SIGKILL OOM)@5816**; viz确认box=0.255不纠错; RAM已恢复417G | 待用户定 P1修复/resume |
