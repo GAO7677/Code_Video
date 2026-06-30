@@ -159,6 +159,8 @@ def _encode_appearance(frames: np.ndarray, boxes: np.ndarray,
 def extract_primary_track(frames: np.ndarray) -> ProxyTrack:
     boxes, areas, visibility, confidence = _extract_primary_boxes(frames)
     num_frames = frames.shape[0]
+    _, _, height, width = frames.shape
+    frame_area = float(max(height * width, 1))
     states = np.zeros((num_frames, 1, STATE_DIM), dtype=np.float32)
 
     visible_areas = areas[visibility > 0.5]
@@ -169,26 +171,38 @@ def extract_primary_track(frames: np.ndarray) -> ProxyTrack:
 
     prev_center = None
     prev_depth = 1.0
+    prev_log_scale = 0.0
     for idx in range(num_frames):
         box = boxes[idx]
         center = box_center(box)
-        area = max(float((box[2] - box[0]) * (box[3] - box[1])), 1e-6)
-        depth = float(np.sqrt(max(base_area, 1e-6) / area))
+        area = max(float(areas[idx]), 1e-6)
         velocity = np.zeros((2,), dtype=np.float32)
         depth_velocity = 0.0
+        states[idx, 0, StateIndex.EXISTENCE] = 1.0
+        states[idx, 0, StateIndex.CONFIDENCE] = confidence[idx]
+
+        if visibility[idx] < 0.5 or areas[idx] <= 0.5:
+            if prev_center is not None:
+                states[idx, 0, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1] = prev_center
+                states[idx, 0, StateIndex.DEPTH] = prev_depth
+                states[idx, 0, StateIndex.LOG_SCALE] = prev_log_scale
+            states[idx, 0, StateIndex.VISIBILITY] = visibility[idx]
+            continue
+
+        depth = float(np.sqrt(max(base_area, 1e-6) / area))
+        log_scale = float(np.log(max(area / frame_area, 1e-6)))
         if prev_center is not None:
             velocity = center - prev_center
             depth_velocity = depth - prev_depth
         states[idx, 0, StateIndex.CENTER_X:StateIndex.CENTER_Y + 1] = center
         states[idx, 0, StateIndex.DEPTH] = depth
-        states[idx, 0, StateIndex.LOG_SCALE] = float(np.log(area))
+        states[idx, 0, StateIndex.LOG_SCALE] = log_scale
         states[idx, 0, StateIndex.VEL_X:StateIndex.VEL_Y + 1] = velocity
         states[idx, 0, StateIndex.DEPTH_VEL] = depth_velocity
         states[idx, 0, StateIndex.VISIBILITY] = visibility[idx]
-        states[idx, 0, StateIndex.EXISTENCE] = 1.0
-        states[idx, 0, StateIndex.CONFIDENCE] = confidence[idx]
         prev_center = center
         prev_depth = depth
+        prev_log_scale = log_scale
 
     appearance = _encode_appearance(frames, boxes, visibility)
     return ProxyTrack(

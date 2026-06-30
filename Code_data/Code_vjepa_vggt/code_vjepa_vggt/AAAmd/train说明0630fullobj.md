@@ -217,4 +217,21 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检16 | 1A(新run) | step239 ema0.250↓ finite 0err; 4卡100%util ~45GB不OOM | 健康; 首ckpt@500约15min后 |
 | 0701 巡检17 | 1A(新run) | step361 ema0.211↓ finite 0err; 4卡~100%util ~45GB不OOM | 健康; 首新ckpt@500约8min后 |
 | 0701 巡检18-20 | 1A(新run) | step955 ema0.204↓ finite 0err; 4卡DDP 100%↔0%正常 ~48GB不OOM | 健康4.8%; val eval running |
-| 0701 eval | 1A newrun | wandb run=valeval_stage1a_newrun_0630_0627 (13a22xe1) 正在跑60batch; 结果待出 | gpu5 46GB util~5% 在跑 |
+| 0701 eval | 1A newrun s500 | **box=0.0777 track=0.1224 depth=0.0154 total=0.2155** | box↓(0.0789→0.0777) track↑(0.046→0.122) vs旧run |
+| 0701 巡检21 | 1A(新run) | step1202 ema0.223 finite 0err; 4卡DDP活跃 ~45GB不OOM | 健康6%; 最新ckpt s1000 |
+| 0701 巡检22 | 1A(新run) | step1427 ema0.190↓ finite 0err; 4卡DDP ~48GB不OOM | 健康7.1%; 最新ckpt s1000 |
+| 0701 巡检23 | 1A(新run) | step1546 ema0.212 finite 0err; 4卡DDP ~48GB不OOM | 健康7.7%; s1500落盘; val eval s1000+1500 启动(gpu5) |
+
+#### 新 run val s500 对比旧 run s500
+| 项 | 旧run s500 | 新run s500 | 变化 |
+|----|-----------|-----------|------|
+| box | 0.0789 | **0.0777** | −1.5% ↓ 有改善 |
+| track | 0.0462 | **0.1224** | +165% ↑ 大幅劣化 |
+| depth | 0.0145 | 0.0154 | +6% 基本持平 |
+| total | 0.1395 | 0.2155 | +54% 整体变差 |
+
+**分析**: box 轻微改善，但 track 大幅劣化（0.046→0.122）。可能原因:
+1. gate_init 从 0.05→0.5，track head 的初始残差变大，step500 时还未稳定收敛（训练才 2h，旧 run 同样是 step500 但模型参数初始化/gate 不同）。
+2. anchor 修复后 pred_box 在动，box head 和 track head 之间的几何一致性约束改变。
+3. 需等 step 3000-5000 的 val 点才能判断最终趋势（旧 run 在 step2500 后才平台）。
+- 帧级可视化(inspect_stage1a_frames)已确认 pred box 跟踪运动，修复效果可见。继续观察。

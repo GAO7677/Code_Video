@@ -19,6 +19,8 @@ import torch.nn.functional as F
 from torchvision.transforms.functional import normalize
 
 sys.path.insert(0, str(Path(__file__).parent))
+# vjepa2 repo root needed for `src.masks.utils` etc.
+sys.path.insert(0, "/home/gaoya/Code_Video/vjepa2-main")
 from local_vjepa21_backbone import build_vjepa2_1_vit_large_384_encoder
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -75,24 +77,22 @@ def preprocess_for_vjepa(frames: torch.Tensor) -> torch.Tensor:
     Returns [1, C, F, H', W'] ready for V-JEPA encoder, where H'=VJEPA_H, W'=VJEPA_W.
     Mirrors VideoREPA lora_trainer.py:168-191.
     """
-    C, F, H, W = frames.shape
+    C, nF, H, W = frames.shape
     # skip first frame then resize → [C, 48, H, W]
     frames = frames[:, 1:]          # drop first frame (VideoREPA convention)
-    F2 = frames.shape[1]
 
     # normalize to ImageNet stats (from [-1,1] → [0,1] first)
-    frames_01 = (frames + 1.0) / 2.0   # [C, F, H, W]
-    # apply per-channel normalization frame-by-frame via broadcasting
+    frames_01 = (frames + 1.0) / 2.0
     mean = torch.tensor(IMAGENET_MEAN, device=frames.device).view(3, 1, 1, 1)
     std  = torch.tensor(IMAGENET_STD,  device=frames.device).view(3, 1, 1, 1)
-    frames_norm = (frames_01 - mean) / std  # [C, F, H, W]
+    frames_norm = (frames_01 - mean) / std  # [C, nF-1, H, W]
 
-    # spatial resize to 160×240 (H//3, W//3 for 480×720) via bicubic interpolation
-    frames_flat = frames_norm.permute(1, 0, 2, 3)  # [F, C, H, W]
-    frames_flat = F.interpolate(frames_flat, (VJEPA_H, VJEPA_W), mode="bicubic", align_corners=False)
-    frames_out = frames_flat.permute(1, 0, 2, 3)   # [C, F, H', W']
+    # spatial resize to 160×240 via bicubic interpolation
+    frames_flat = frames_norm.permute(1, 0, 2, 3)  # [nF-1, C, H, W]
+    frames_flat = torch.nn.functional.interpolate(frames_flat, (VJEPA_H, VJEPA_W), mode="bicubic", align_corners=False)
+    frames_out = frames_flat.permute(1, 0, 2, 3)   # [C, nF-1, H', W']
 
-    return frames_out.unsqueeze(0)   # [1, C, F, H', W']
+    return frames_out.unsqueeze(0)   # [1, C, nF-1, H', W']
 
 
 @torch.no_grad()

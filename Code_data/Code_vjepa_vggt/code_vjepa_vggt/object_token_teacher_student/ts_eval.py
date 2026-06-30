@@ -8,6 +8,61 @@ components to wandb (one point per checkpoint step).
 Usage:
   python3 ts_eval.py --stage 1a --config <cfg.yaml> \
       --ckpt <file.pt | dir-of-step_*.pt> --max-batches 50 --device cuda:5 [--no-wandb]
+
+CUDA_VISIBLE_DEVICES=<卡号> \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+python3 -m code_vjepa_vggt.object_token_teacher_student.ts_eval \
+    --stage 1a \
+    --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml \
+    --ckpt /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/ \
+    --max-batches 60 \
+    --device cuda:0 \
+    --wandb-run-name <自定义 run 名>
+
+常用变体：
+
+指定单个文件（最精确）：
+CUDA_VISIBLE_DEVICES=5 PYTHONPATH=... python3 -m
+code_vjepa_vggt.object_token_teacher_student.ts_eval \
+--stage 1a \
+--config .../config_stage1a_full_token_template.yaml \
+--ckpt .../stage1a_full_token/step_0001000.pt \
+--max-batches 60 --device cuda:0 \
+--wandb-run-name valeval_stage1a_s1000
+
+指定目录 + 过滤 step 范围（评多个 ckpt）：
+--ckpt .../stage1a_full_token \
+--steps 1000-3000 \
+--order desc   # 从新到旧
+
+
+
+CUDA_VISIBLE_DEVICES=5 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+python3 -m code_vjepa_vggt.object_token_teacher_student.ts_eval \
+    --stage 1a \
+    --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml \
+    --ckpt /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/ \
+    --max-batches 60 \
+    --device cuda:0 \
+    --wandb-run-name valeval_stage1a_newrun_0630_0627 \
+    --steps 1000-1000 \
+    --order desc 
+
+
+● 用 inspect_stage1a_frames.py（帧级精确版，坐标已修正）：
+
+  完整示例（用当前新 run step1000，gpu0）：
+
+CUDA_VISIBLE_DEVICES=0 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+python3 -m code_vjepa_vggt.object_token_teacher_student.inspect_stage1a_frames \
+    --config /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/object_token_teacher_student/config_stage1a_full_token_template.yaml \
+    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0001000.pt \
+    --indices 0 1 2 3 \
+    --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/aux_frames_stage1a_newrun_s1000 \
+    --device cuda:0
+
 """
 from __future__ import annotations
 

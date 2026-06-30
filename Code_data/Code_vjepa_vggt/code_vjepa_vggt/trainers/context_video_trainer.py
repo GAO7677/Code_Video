@@ -22,6 +22,7 @@ from code_vjepa_vggt.adapters.sam2_motion import (
 )
 from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackAdapter
 from code_vjepa_vggt.data import BallBlockVideoDataset, PhysStateEpisodeDataset
+from code_vjepa_vggt.data.phyco_dataset import PhyCoEpisodeDataset
 from code_vjepa_vggt.models.object_aux_heads import ObjectAuxHeadOutput, ObjectAuxHeads
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_tokens import ObjectTubeProjector
@@ -235,6 +236,20 @@ class ContextVideoTrainer(nn.Module):
                 context_fraction=float(data_cfg.get("context_fraction", 0.5)),
                 random_context_frames=bool(data_cfg.get("random_context_frames", True)),
                 seed=int(self.cfg.get("experiment", {}).get("seed", 42)),
+                init_scan_limit=data_cfg.get("init_scan_limit"),
+            )
+        if dataset_type == "phyco_episode":
+            return PhyCoEpisodeDataset(
+                root=data_cfg["root"],
+                split=data_cfg["split"],
+                resolution=tuple(data_cfg["resolution"]),
+                num_context_frames=int(data_cfg["num_context_frames"]),
+                num_future_frames=int(data_cfg.get("num_future_frames", 16)),
+                max_objects=int(data_cfg.get("max_objects", 6)),
+                context_fraction=float(data_cfg.get("context_fraction", 0.5)),
+                random_context_frames=bool(data_cfg.get("random_context_frames", True)),
+                seed=int(self.cfg.get("experiment", {}).get("seed", 42)),
+                cache_root=data_cfg.get("cache_root", "/data/gaoya/agent-data/cache/phyco_vjepa_dataset"),
                 init_scan_limit=data_cfg.get("init_scan_limit"),
             )
         raise ValueError(f"unsupported dataset_type: {dataset_type}")
