@@ -30,11 +30,19 @@ GT_DIR = Path(_args.gt_dir)
 
 # ── load GT ──────────────────────────────────────────────────────────────────
 def load_mean_grid(npy_dir: Path) -> np.ndarray | None:
-    """Load all (9,30) npy in dir and return mean grid."""
-    npys = list(npy_dir.glob('*.npy'))
+    """Load all (9,30) or (9,30,T) npy in dir and return mean grid collapsed to (9,30)."""
+    npys = [p for p in npy_dir.glob('*.npy') if p.name != 'timesteps.npy']
     if not npys:
         return None
-    grids = [np.load(p) for p in npys]
+    grids = []
+    for p in npys:
+        g = np.load(p)
+        if g.ndim == 3:
+            g = g.mean(axis=2)   # [9,30,T] → [9,30]
+        if g.shape == (9, 30):
+            grids.append(g)
+    if not grids:
+        return None
     return np.stack(grids).mean(axis=0)   # (9, 30)
 
 gt_grid = load_mean_grid(GT_DIR)

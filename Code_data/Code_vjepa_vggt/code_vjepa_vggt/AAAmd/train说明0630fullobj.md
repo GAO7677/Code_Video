@@ -303,3 +303,13 @@ depth 监督是噪声信号(pybullet/PhyCo 两个数据集均确认 proxy 误差
 2. anchor 修复后 pred_box 在动，box head 和 track head 之间的几何一致性约束改变。
 3. 需等 step 3000-5000 的 val 点才能判断最终趋势（旧 run 在 step2500 后才平台）。
 - 帧级可视化(inspect_stage1a_frames)已确认 pred box 跟踪运动，修复效果可见。继续观察。
+
+## 巡检进度表（stage2 + ablation）
+
+| 时间 | 阶段 | 状态 | 备注 |
+|------|------|------|------|
+| 0701 巡检52 | Stage2 | 首次成功启动 step1 loss=0.924 | 修3bug: CoTracker view→reshape; VGGT None guard×2; VGGT disabled |
+| 0701 巡检53 | Stage2 | step2 ema0.909 finite; bs=2 ~20GB/卡 | 143s/it(串行) |
+| 0701 巡检54 | Stage2 | step7 ema0.636↓ finite; 87s/it | batched oracle_encoder 改善 |
+| 0701 巡检56 | Stage2 | step73 ema0.278↓↓ finite; 123s/it | 健康; loss仍下降 |
+| 0701 巡检56 | Ablation | baseline(5条)完成→进入future_zero | gpu5; 7mode串行; ~90min总计 |

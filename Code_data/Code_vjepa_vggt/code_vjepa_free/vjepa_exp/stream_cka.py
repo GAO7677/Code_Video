@@ -105,14 +105,14 @@ def load_video_frames(video_path: str, num_frames: int = 49,
 # ── gram + CKA ─────────────────────────────────────────────────────────────────
 
 def gram_aligned(grid: torch.Tensor) -> np.ndarray:
-    """grid: [T, H, W, D] on the common spatiotemporal grid → gram [T*H*W, T*H*W].
+    """grid: [T, H, W, D] on the common spatiotemporal grid → cosine-kernel gram [T*H*W, T*H*W].
 
-    Tokens are L2-normalised before computing the gram matrix.
+    Tokens are L2-normalised so the gram is a cosine similarity kernel (not linear kernel).
     All T*H*W = ALIGN_N_TOK tokens are used (no subsampling).
     """
     T, H, W, D = grid.shape
     tok = F.normalize(grid.reshape(T * H * W, D).float(), dim=-1)  # [N, D]
-    gram = tok @ tok.T                                              # [N, N]
+    gram = tok @ tok.T                                              # [N, N] cosine kernel
     return gram.cpu().numpy().astype(np.float64)
 
 
@@ -266,16 +266,26 @@ class CKAAccumulator:
     def update(self, dataset: str,
                vj_grams: dict[int, np.ndarray],
                dt_grams_multi: dict[int, dict[int, np.ndarray]],
-               precomputed_grid: np.ndarray | None = None) -> np.ndarray:
+               precomputed_grid: np.ndarray | None = None,
+               expected_timesteps: list[int] | None = None) -> np.ndarray:
         """Returns [n_vj, n_dt, T] grid for this video."""
         if precomputed_grid is not None:
             grid = precomputed_grid.astype(np.float32)
             if grid.ndim == 2:              # legacy [9,30] → [9,30,1]
                 grid = grid[:, :, np.newaxis]
+            T_cached = grid.shape[2]
+            if expected_timesteps is not None and len(expected_timesteps) != T_cached:
+                raise ValueError(
+                    f"cached grid has T={T_cached} timesteps but current run expects "
+                    f"{len(expected_timesteps)} {expected_timesteps}; "
+                    f"delete the stale cache or use a matching --timesteps list"
+                )
             if self.vj_layers is None:
                 self.vj_layers = VJEPA_LAYERS
                 self.dt_layers = DIT_LAYERS
-                self.timesteps = [500]
+                # infer from cache shape; expected_timesteps is authoritative when provided
+                self.timesteps = expected_timesteps if expected_timesteps is not None \
+                    else ([500] if T_cached == 1 else list(range(T_cached)))
         else:
             vj_layers  = sorted(vj_grams)
             timesteps  = sorted(dt_grams_multi)
@@ -373,7 +383,7 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
         ax.set_xticks(range(len(dt_layers))); ax.set_xticklabels(dt_layers, fontsize=7, rotation=45)
         ax.set_yticks(range(len(vj_layers))); ax.set_yticklabels(vj_layers, fontsize=7)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.suptitle("V-JEPA vs Wan DiT-5B — Linear CKA (mean over timesteps)", fontsize=11)
+    fig.suptitle("V-JEPA vs Wan DiT-5B — Cosine-kernel CKA (mean over timesteps)", fontsize=11)
     fig.tight_layout()
     fig.savefig(str(out_dir / f"cka_per_dataset{suffix}.png"), dpi=150)
     plt.close(fig)
@@ -506,7 +516,8 @@ def main():
             if out_file.exists():
                 print(f"    skip (exists)", flush=True)
                 grid = np.load(str(out_file))
-                accum.update(dataset, {}, {}, precomputed_grid=grid)
+                accum.update(dataset, {}, {}, precomputed_grid=grid,
+                             expected_timesteps=timesteps)
                 continue
 
             frames = load_video_frames(video_path, num_frames=args.num_frames,
@@ -543,9 +554,12 @@ def main():
         if ds not in dataset_grids:
             continue
         g = dataset_grids[ds]
-        vi, di = np.unravel_index(np.argmax(g), g.shape)
+        flat_idx = np.argmax(g)
+        idx = np.unravel_index(flat_idx, g.shape)   # (vi, di) or (vi, di, ti)
+        vi, di = idx[0], idx[1]
+        ti_str = f" / τ={accum.timesteps[idx[2]]}" if g.ndim == 3 else ""
         print(f"  {ds:<20} max={g.max():.4f}"
-              f"  at V-JEPA L{accum.vj_layers[vi]} / DiT L{accum.dt_layers[di]}"
+              f"  at V-JEPA L{accum.vj_layers[vi]} / DiT L{accum.dt_layers[di]}{ti_str}"
               f"  (n={accum.count[ds]})")
 
 

@@ -2,7 +2,7 @@
 
 **脚本**：`stream_cka.py`
 
-用 Linear CKA 逐视频比较 V-JEPA 编码器与 Wan DiT-5B 各层在同一时空网格上的表征相似度。
+用 **Cosine-kernel CKA**（token 先 L2 归一化再构造 Gram）逐视频比较 V-JEPA 编码器与 Wan DiT-5B 各层在同一时空网格上的表征相似度。注意这与标准 Linear CKA（直接用 X@X.T 作为核矩阵）不同：L2 归一化会丢弃特征范数信息，使核矩阵变为余弦相似度核。
 
 ---
 
@@ -93,8 +93,8 @@ gram_aligned(grid)   # L107
 ```
 grid [T, H, W, D]
   reshape(N, D)
-  F.normalize(dim=-1)   → [N, D]  每 token L2 norm=1
-  tok @ tok.T           → [N, N]  float64
+  F.normalize(dim=-1)   → [N, D]  每 token L2 norm=1（cosine kernel，非 linear kernel）
+  tok @ tok.T           → [N, N]  余弦相似度矩阵，值域 [-1, 1]
 ```
 
 ---
@@ -129,8 +129,12 @@ capture.register(pipe.model)               # L168
 ```
 对每个 τ ∈ {100, 300, 500, 700, 900}:
   noisy_z = (1-σ)·z + σ·ε,  σ = τ/1000
-  DiT forward → hook 捕获 30 层输出 [1, seq_len+ctx, 3072]
-  取前 seq_len: raw[0, :seq_len, :]   → [2310, 3072]
+  DiT forward:
+    x = video token 序列 [1, seq_len, 3072]
+    context (text) 作为独立参数传入各 block 的 cross-attention，
+    不拼入 x — 见 wan/modules/model.py WanModel.forward()
+    hook 捕获每层 block(x, ...) 的输出 [1, seq_len, 3072]
+  取 raw[0, :seq_len, :]   → [2310, 3072]  （直接是全部 video token，无需截断 ctx）
 ```
 
 ---

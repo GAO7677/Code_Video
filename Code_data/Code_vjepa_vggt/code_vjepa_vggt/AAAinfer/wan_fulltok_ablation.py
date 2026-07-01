@@ -393,9 +393,11 @@ def main() -> None:
     future_token_mode = str(cli_args.future_token_mode)
     if future_token_mode == "predictor":
         method_name = method_name + "_pred"
+        step_label = step_label + "_pred"
     ablation_mode = str(cli_args.ablation_mode)
     if ablation_mode != "baseline":
         method_name = method_name + f"_{ablation_mode}"
+        step_label = step_label + f"_{ablation_mode}"
     lora_ckpt = cli_args.lora_ckpt.expanduser().resolve()
     stage1a_ckpt = cli_args.stage1a_weights.expanduser().resolve()
 

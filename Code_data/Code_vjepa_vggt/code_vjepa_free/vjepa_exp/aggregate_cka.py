@@ -1,5 +1,5 @@
 """
-Aggregate per-case [9,30] CKA .npy files into a mean matrix.
+Aggregate per-case [9,30] or [9,30,T] CKA .npy files into a mean matrix.
 
 Usage:
     python aggregate_cka.py \
@@ -18,18 +18,27 @@ def main():
     args = p.parse_args()
 
     case_dir = Path(args.case_dir)
-    files = sorted(case_dir.glob("*.npy"))
+    files = sorted(f for f in case_dir.glob("*.npy") if f.name != "timesteps.npy")
     if not files:
         print("No .npy files found.")
         return
 
     accum = None
+    ref_shape = None
     bad = 0
     for f in files:
         try:
             grid = np.load(str(f)).astype(np.float32)
-            if grid.shape != (9, 30):
+            if grid.ndim == 2:
+                grid = grid[:, :, np.newaxis]   # legacy [9,30] → [9,30,1]
+            if grid.shape[:2] != (9, 30):
                 print(f"  SKIP {f.name}: unexpected shape {grid.shape}")
+                bad += 1
+                continue
+            if ref_shape is None:
+                ref_shape = grid.shape
+            if grid.shape != ref_shape:
+                print(f"  SKIP {f.name}: shape {grid.shape} != ref {ref_shape}")
                 bad += 1
                 continue
             if accum is None:
@@ -40,14 +49,22 @@ def main():
             print(f"  WARN {f.name}: {e}")
             bad += 1
 
+    if accum is None:
+        print("No valid files to aggregate.")
+        return
+
     n = len(files) - bad
     mean = accum / n
     print(f"Aggregated {n} cases (skipped {bad}), shape {mean.shape}")
     print(f"  CKA range: [{mean.min():.4f}, {mean.max():.4f}]")
 
+    # load timesteps if available
+    ts_file = case_dir / "timesteps.npy"
+    timesteps = np.load(str(ts_file)) if ts_file.exists() else np.array([500])
+
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(str(out), mean=mean, count=np.array(n))
+    np.savez(str(out), mean=mean, count=np.array(n), timesteps=timesteps)
     print(f"Saved {out}")
 
 

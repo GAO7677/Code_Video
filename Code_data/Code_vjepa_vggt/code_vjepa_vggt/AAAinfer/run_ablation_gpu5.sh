@@ -31,7 +31,6 @@ SCRIPT="$(dirname "$0")/wan_fulltok_ablation.py"
 PYTHONPATH_EXTRA="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main"
 
 MODES=(
-    baseline
     future_zero
     future_noise
     all_zero
