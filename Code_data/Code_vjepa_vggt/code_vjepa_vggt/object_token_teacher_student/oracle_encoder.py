@@ -246,9 +246,17 @@ class OracleObjectTokenEncoder:
             vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=None,
         )
+        # Subsample full_boxes [B, T_all, N_obj, 4] to latent-frame resolution
+        # so bbox_xyxy aligns with object_latent_tokens along the time axis.
+        T_lat = int(object_out.object_latent_tokens.shape[1])
+        T_all = int(full_boxes.shape[1])
+        lat_indices = torch.linspace(0, T_all - 1, T_lat, device=full_boxes.device).long()
+        full_boxes_lat = full_boxes[:, lat_indices]  # [B, T_lat, N_obj, 4]
+
         object_context = self.trainer.object_adapter(
             object_out.object_latent_tokens,
             object_valid_mask=perception["object_valid_mask"],
+            bbox_xyxy=full_boxes_lat,
         )
         # Build per-sample OracleSampleArtifacts for compatibility with Stage1 callers
         batch_size = int(full_video.shape[0])
