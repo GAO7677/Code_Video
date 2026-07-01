@@ -140,11 +140,22 @@ class OracleObjectTokenEncoder:
         jepa_adapter = self._oracle_jepa_adapter(int(sample_video.shape[2]))
         jepa_out = jepa_adapter(sample_video)
         context_latents = self.trainer._encode_video_latents(sample_video)[0].unsqueeze(0).to(self.trainer.device_obj)
-        vggt_out = self.trainer.vggt_adapter(
-            frames_bthwc,
-            query_points_prior=query_points_prior,
-            query_image_hw=image_hw,
-        )
+        if self.trainer.vggt_adapter.model is not None:
+            vggt_out = self.trainer.vggt_adapter(
+                frames_bthwc,
+                query_points_prior=query_points_prior,
+                query_image_hw=image_hw,
+            )
+        else:
+            from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackOutput
+            vggt_out = VGGTTrackOutput(
+                query_points=query_points_prior,
+                tracks=torch.zeros_like(query_points_prior).unsqueeze(1).expand(-1, int(sample_video.shape[2]), -1, -1),
+                visibility=torch.ones(query_points_prior.shape[0], int(sample_video.shape[2]), query_points_prior.shape[1], device=sample_video.device),
+                confidence=torch.ones(query_points_prior.shape[0], int(sample_video.shape[2]), query_points_prior.shape[1], device=sample_video.device),
+                image_hw=image_hw,
+                used_model=False,
+            )
         cotracker_out = None
         if self.trainer.cotracker_adapter is not None:
             cotracker_out = self.trainer.cotracker_adapter(

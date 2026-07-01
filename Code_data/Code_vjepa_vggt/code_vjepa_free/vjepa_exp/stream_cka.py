@@ -46,7 +46,12 @@ WAN_VAE_STRIDE = (4, 16, 16)
 WAN_NUM_LAYERS = 30
 WAN_HIDDEN_DIM = 3072
 
-ALIGN_T, ALIGN_H, ALIGN_W = 24, 10, 15
+# V-JEPA spatial grid dimensions — set dynamically after first forward pass
+# H_p = VJEPA_H // PATCH = 10,  W_p = VJEPA_W // PATCH = 15
+# T_p is determined by the encoder (depends on tubelet stride and any internal padding)
+ALIGN_H = VJEPA_H // PATCH   # 10  — fixed by spatial patch size
+ALIGN_W = VJEPA_W // PATCH   # 15  — fixed by spatial patch size
+ALIGN_T: int | None = None    # resolved on first vjepa_grams() call
 
 VJEPA_LAYERS = [0, 3, 5, 8, 11, 14, 17, 20, 23]
 DIT_LAYERS   = list(range(30))
@@ -99,12 +104,15 @@ def load_video_frames(video_path: str, num_frames: int = 49,
 
 # ── gram + CKA ─────────────────────────────────────────────────────────────────
 
-def gram_spatial_mean(tokens: torch.Tensor) -> np.ndarray:
-    """tokens: [T, H, W, D] → mean spatial gram [HW, HW] float64"""
-    T, H, W, D = tokens.shape
-    HW = H * W
-    tok = F.normalize(tokens.reshape(T, HW, D).float(), dim=-1)  # [T, HW, D]
-    gram = torch.bmm(tok, tok.transpose(1, 2)).mean(0)            # [HW, HW]
+def gram_aligned(grid: torch.Tensor) -> np.ndarray:
+    """grid: [T, H, W, D] on the common spatiotemporal grid → gram [T*H*W, T*H*W].
+
+    Tokens are L2-normalised before computing the gram matrix.
+    All T*H*W = ALIGN_N_TOK tokens are used (no subsampling).
+    """
+    T, H, W, D = grid.shape
+    tok = F.normalize(grid.reshape(T * H * W, D).float(), dim=-1)  # [N, D]
+    gram = tok @ tok.T                                              # [N, N]
     return gram.cpu().numpy().astype(np.float64)
 
 
@@ -133,16 +141,19 @@ def preprocess_vjepa(frames: torch.Tensor) -> torch.Tensor:
 
 @torch.no_grad()
 def vjepa_grams(encoder, frames: torch.Tensor, device: torch.device) -> dict[int, np.ndarray]:
-    """Returns {layer_idx: gram_spatial_mean [HW, HW]}"""
+    """Returns {layer_idx: gram_aligned [N, N]}.  N = ALIGN_T * ALIGN_H * ALIGN_W."""
+    global ALIGN_T
     video_tensor = preprocess_vjepa(frames).to(device, dtype=torch.float32)
     outs = encoder(video_tensor)   # list of [1, N, D]
-    T  = VJEPA_FRAMES // TUBELET
-    H_p = VJEPA_H // PATCH
-    W_p = VJEPA_W // PATCH
+    if ALIGN_T is None:
+        # resolve actual temporal token count from the encoder output
+        N_actual = outs[0].shape[1]   # N = T_p * H_p * W_p
+        ALIGN_T = N_actual // (ALIGN_H * ALIGN_W)
+        print(f"[V-JEPA] resolved grid: T={ALIGN_T} H={ALIGN_H} W={ALIGN_W} → N={ALIGN_T*ALIGN_H*ALIGN_W}", flush=True)
     result = {}
     for layer_idx, feat in zip(VJEPA_LAYERS, outs):
-        feat = feat.squeeze(0).reshape(T, H_p, W_p, -1)  # [T, H, W, D]
-        result[layer_idx] = gram_spatial_mean(feat)
+        grid = feat.squeeze(0).reshape(ALIGN_T, ALIGN_H, ALIGN_W, -1)  # [T, H, W, D]
+        result[layer_idx] = gram_aligned(grid)
     return result
 
 
@@ -171,18 +182,30 @@ class BlockOutputCapture:
 
 
 def align_to_vjepa_grid(x_flat: torch.Tensor, T_p: int, H_p: int, W_p: int) -> torch.Tensor:
+    """Trilinear-interpolate DiT tokens to V-JEPA grid [ALIGN_T, ALIGN_H, ALIGN_W, D].
+
+    x_flat: [T_p*H_p*W_p, D]  (DiT patch-token sequence, spatial order T,H,W)
+    ALIGN_T must be resolved before this is called (happens on first vjepa_grams()).
+    Returns: [ALIGN_T, ALIGN_H, ALIGN_W, D]
+    """
+    assert ALIGN_T is not None, "call vjepa_grams() before dit_grams() to resolve ALIGN_T"
     D = x_flat.shape[-1]
     vol = x_flat.reshape(T_p, H_p, W_p, D).permute(3, 0, 1, 2).unsqueeze(0)
     vol = F.interpolate(vol, size=(ALIGN_T, ALIGN_H, ALIGN_W),
                         mode="trilinear", align_corners=False)
-    return vol.squeeze(0).permute(1, 2, 3, 0)   # [T, H, W, D]
+    return vol.squeeze(0).permute(1, 2, 3, 0)   # [ALIGN_T, ALIGN_H, ALIGN_W, D]
 
 
 @torch.no_grad()
 def dit_grams(pipe, frames: torch.Tensor, prompt: str,
-              device: torch.device, timestep: int,
-              height: int, width: int) -> dict[int, np.ndarray]:
-    """Returns {layer_idx: gram_spatial_mean [HW, HW]}"""
+              device: torch.device, timesteps: list[int],
+              height: int, width: int) -> dict[int, dict[int, np.ndarray]]:
+    """Returns {timestep: {layer_idx: gram_aligned [ALIGN_N_TOK, ALIGN_N_TOK]}}.
+
+    DiT tokens are trilinearly interpolated to V-JEPA grid [ALIGN_T, ALIGN_H, ALIGN_W]
+    before computing the gram, so both models share identical token coordinates.
+    VAE encode is done once; DiT forward is run once per timestep.
+    """
     C, F_vid, H_vid, W_vid = frames.shape
     if H_vid != height or W_vid != width:
         flat = F.interpolate(frames.permute(1, 0, 2, 3),
@@ -190,8 +213,7 @@ def dit_grams(pipe, frames: torch.Tensor, prompt: str,
         frames = flat.permute(1, 0, 2, 3)
 
     frames_dev = frames.to(device, dtype=torch.float32)
-    z_list = pipe.vae.encode([frames_dev])
-    z = z_list[0]
+    z = pipe.vae.encode([frames_dev])[0]
     C_lat, T_lat, H_lat, W_lat = z.shape
 
     t_p, h_p, w_p = WAN_PATCH_SIZE
@@ -200,61 +222,78 @@ def dit_grams(pipe, frames: torch.Tensor, prompt: str,
     W_p = W_lat // w_p
     seq_len = T_p * H_p * W_p
 
-    sigma = timestep / 1000.0
-    noisy_z = (1.0 - sigma) * z + sigma * torch.randn_like(z)
-
     context = pipe.text_encoder([prompt], torch.device("cpu"))
     context = [c.to(device) for c in context]
 
-    capture = BlockOutputCapture(DIT_LAYERS)
-    capture.register(pipe.model)
-    t_tensor = torch.tensor([timestep], dtype=torch.float32, device=device).expand(1, seq_len)
-    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-        _ = pipe.model([noisy_z.to(device)], t=t_tensor, context=context, seq_len=seq_len)
-    capture.remove()
+    result: dict[int, dict[int, np.ndarray]] = {}
+    for timestep in timesteps:
+        sigma = timestep / 1000.0
+        torch.manual_seed(0)
+        noisy_z = (1.0 - sigma) * z + sigma * torch.randn_like(z)
 
-    result = {}
-    for layer_idx in sorted(capture.captured):
-        raw = capture.captured[layer_idx]
-        x_flat = raw[0, :seq_len, :]
-        aligned = align_to_vjepa_grid(x_flat, T_p, H_p, W_p)
-        result[layer_idx] = gram_spatial_mean(aligned)
+        capture = BlockOutputCapture(DIT_LAYERS)
+        capture.register(pipe.model)
+        t_tensor = torch.tensor([timestep], dtype=torch.float32, device=device).expand(1, seq_len)
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            _ = pipe.model([noisy_z.to(device)], t=t_tensor, context=context, seq_len=seq_len)
+        capture.remove()
+
+        ts_result: dict[int, np.ndarray] = {}
+        for layer_idx in sorted(capture.captured):
+            raw = capture.captured[layer_idx]
+            x_flat = raw[0, :seq_len, :]                              # [T_p*H_p*W_p, D]
+            grid = align_to_vjepa_grid(x_flat, T_p, H_p, W_p)        # [ALIGN_T, ALIGN_H, ALIGN_W, D]
+            ts_result[layer_idx] = gram_aligned(grid)
+        result[timestep] = ts_result
     return result
 
 
 # ── running accumulators ───────────────────────────────────────────────────────
 
 class CKAAccumulator:
-    """Maintains a running sum of per-video CKA grids per dataset."""
+    """Maintains a running sum of per-video CKA grids per dataset.
+
+    Grid shape: [n_vj, n_dt, T] where T = number of timesteps.
+    Legacy [n_vj, n_dt] files (T=1) are expanded automatically on load.
+    """
     def __init__(self):
         self.sum:   dict[str, np.ndarray] = {}
         self.count: dict[str, int] = defaultdict(int)
-        self.vj_layers: list[int] | None = None
-        self.dt_layers: list[int] | None = None
+        self.vj_layers:  list[int] | None = None
+        self.dt_layers:  list[int] | None = None
+        self.timesteps:  list[int] | None = None
 
     def update(self, dataset: str,
                vj_grams: dict[int, np.ndarray],
-               dt_grams: dict[int, np.ndarray],
+               dt_grams_multi: dict[int, dict[int, np.ndarray]],
                precomputed_grid: np.ndarray | None = None) -> np.ndarray:
+        """Returns [n_vj, n_dt, T] grid for this video."""
         if precomputed_grid is not None:
             grid = precomputed_grid.astype(np.float32)
+            if grid.ndim == 2:              # legacy [9,30] → [9,30,1]
+                grid = grid[:, :, np.newaxis]
             if self.vj_layers is None:
                 self.vj_layers = VJEPA_LAYERS
                 self.dt_layers = DIT_LAYERS
+                self.timesteps = [500]
         else:
-            vj_layers = sorted(vj_grams)
-            dt_layers = sorted(dt_grams)
+            vj_layers  = sorted(vj_grams)
+            timesteps  = sorted(dt_grams_multi)
+            dt_layers  = sorted(dt_grams_multi[timesteps[0]])
             if self.vj_layers is None:
                 self.vj_layers = vj_layers
                 self.dt_layers = dt_layers
+                self.timesteps = timesteps
 
-            grid = np.zeros((len(vj_layers), len(dt_layers)), dtype=np.float32)
+            grid = np.zeros((len(vj_layers), len(dt_layers), len(timesteps)),
+                            dtype=np.float32)
             for vi, vl in enumerate(vj_layers):
                 Kv = vj_grams[vl]
                 for di, dl in enumerate(dt_layers):
-                    Kd = dt_grams[dl]
-                    n = min(Kv.shape[0], Kd.shape[0])
-                    grid[vi, di] = cka_from_grams(Kv[:n, :n], Kd[:n, :n])
+                    for ti, ts in enumerate(timesteps):
+                        Kd = dt_grams_multi[ts][dl]
+                        n = min(Kv.shape[0], Kd.shape[0])
+                        grid[vi, di, ti] = cka_from_grams(Kv[:n, :n], Kd[:n, :n])
 
         if dataset not in self.sum:
             self.sum[dataset] = grid.copy()
@@ -309,28 +348,32 @@ def build_wan_pipeline(device: torch.device):
 
 def save_plots(dataset_grids: dict[str, np.ndarray],
                vj_layers: list[int], dt_layers: list[int],
+               timesteps: list[int],
                out_dir: Path, suffix: str = "") -> None:
+    """dataset_grids values are [n_vj, n_dt, T]; plots collapse over T."""
     datasets = [d for d in DATASET_ORDER if d in dataset_grids]
     if not datasets:
         datasets = list(dataset_grids.keys())
     if not datasets:
         return
-    vmax = max(g.max() for g in dataset_grids.values())
 
-    # heatmaps
+    # collapse over timesteps for legacy-style plots
+    grids_t = {ds: g.mean(axis=2) for ds, g in dataset_grids.items()}   # [9,30]
+    vmax = max(g.max() for g in grids_t.values())
+
+    # per-dataset heatmaps (mean over timesteps)
     fig, axes = plt.subplots(1, len(datasets), figsize=(6*len(datasets), 5), sharey=True)
     if len(datasets) == 1:
         axes = [axes]
     for ax, ds in zip(axes, datasets):
-        g = dataset_grids[ds]
+        g = grids_t[ds]
         im = ax.imshow(g, aspect="auto", origin="lower", vmin=0, vmax=vmax, cmap="viridis")
         ax.set_title(f"{ds}\nmax={g.max():.3f}", fontsize=10)
-        ax.set_xlabel("DiT-5B layer")
-        ax.set_ylabel("V-JEPA layer")
+        ax.set_xlabel("DiT-5B layer"); ax.set_ylabel("V-JEPA layer")
         ax.set_xticks(range(len(dt_layers))); ax.set_xticklabels(dt_layers, fontsize=7, rotation=45)
         ax.set_yticks(range(len(vj_layers))); ax.set_yticklabels(vj_layers, fontsize=7)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.suptitle("V-JEPA vs Wan DiT-5B — Linear CKA (gram, per-dataset avg)", fontsize=11)
+    fig.suptitle("V-JEPA vs Wan DiT-5B — Linear CKA (mean over timesteps)", fontsize=11)
     fig.tight_layout()
     fig.savefig(str(out_dir / f"cka_per_dataset{suffix}.png"), dpi=150)
     plt.close(fig)
@@ -339,44 +382,44 @@ def save_plots(dataset_grids: dict[str, np.ndarray],
     # layer curves
     fig, ax = plt.subplots(figsize=(8, 4))
     for ds in datasets:
-        ax.plot(vj_layers, dataset_grids[ds].mean(axis=1),
+        ax.plot(vj_layers, grids_t[ds].mean(axis=1),
                 label=ds, color=COLORS.get(ds), marker="o", markersize=4)
-    ax.set_xlabel("V-JEPA layer"); ax.set_ylabel("Mean CKA (over DiT layers)")
-    ax.set_title("V-JEPA–DiT CKA vs V-JEPA depth — per dataset")
+    ax.set_xlabel("V-JEPA layer"); ax.set_ylabel("Mean CKA (over DiT layers & timesteps)")
+    ax.set_title("V-JEPA–DiT CKA vs V-JEPA depth")
     ax.legend(); ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(str(out_dir / f"cka_per_layer_curve{suffix}.png"), dpi=150)
     plt.close(fig)
     print(f"Saved cka_per_layer_curve{suffix}.png")
 
-    # diff heatmaps
-    pairs = [("pybullet","phyco_kubric"), ("physics-iq","phyco_kubric"), ("physics-iq","pybullet")]
-    pairs = [(a, b) for a, b in pairs if a in dataset_grids and b in dataset_grids]
-    if pairs:
-        fig, axes = plt.subplots(1, len(pairs), figsize=(6*len(pairs), 5), sharey=True)
-        if len(pairs) == 1:
+    # per-timestep heatmaps (first dataset only, or GT if present)
+    ref_ds = next((d for d in ["pybullet_test100", datasets[0]] if d in dataset_grids), datasets[0])
+    if len(timesteps) > 1:
+        g_ts = dataset_grids[ref_ds]   # [9, 30, T]
+        fig, axes = plt.subplots(1, len(timesteps), figsize=(5*len(timesteps), 4), sharey=True)
+        if len(timesteps) == 1:
             axes = [axes]
-        for ax, (a, b) in zip(axes, pairs):
-            diff = dataset_grids[a] - dataset_grids[b]
-            vabs = max(abs(diff).max(), 0.01)
-            im = ax.imshow(diff, aspect="auto", origin="lower",
-                           vmin=-vabs, vmax=vabs, cmap="RdBu_r")
-            ax.set_title(f"{a}\nminus {b}", fontsize=9)
-            ax.set_xlabel("DiT-5B layer"); ax.set_ylabel("V-JEPA layer")
-            ax.set_xticks(range(len(dt_layers))); ax.set_xticklabels(dt_layers, fontsize=7, rotation=45)
+        vmax_ts = g_ts.max()
+        for ax, (ti, ts) in zip(axes, enumerate(timesteps)):
+            im = ax.imshow(g_ts[:, :, ti], aspect="auto", origin="lower",
+                           vmin=0, vmax=vmax_ts, cmap="viridis")
+            ax.set_title(f"τ={ts}", fontsize=10)
+            ax.set_xlabel("DiT-5B layer")
+            ax.set_xticks(range(len(dt_layers))); ax.set_xticklabels(dt_layers, fontsize=6, rotation=45)
             ax.set_yticks(range(len(vj_layers))); ax.set_yticklabels(vj_layers, fontsize=7)
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        fig.suptitle("CKA difference between datasets", fontsize=11)
+        fig.suptitle(f"CKA per timestep — {ref_ds}", fontsize=11)
         fig.tight_layout()
-        fig.savefig(str(out_dir / f"cka_dataset_diff{suffix}.png"), dpi=150)
+        fig.savefig(str(out_dir / f"cka_per_timestep{suffix}.png"), dpi=150)
         plt.close(fig)
-        print(f"Saved cka_dataset_diff{suffix}.png")
+        print(f"Saved cka_per_timestep{suffix}.png")
 
     # save matrices
-    np.savez_compressed(str(out_dir / f"cka_matrices{suffix}.npz"),
-        **{ds.replace("-","_"): g for ds, g in dataset_grids.items()},
-        vj_layers=np.array(vj_layers),
-        dt_layers=np.array(dt_layers))
+    save_dict = {ds.replace("-", "_"): g for ds, g in dataset_grids.items()}
+    save_dict["vj_layers"]  = np.array(vj_layers)
+    save_dict["dt_layers"]  = np.array(dt_layers)
+    save_dict["timesteps"]  = np.array(timesteps)
+    np.savez_compressed(str(out_dir / f"cka_matrices{suffix}.npz"), **save_dict)
     print(f"Saved cka_matrices{suffix}.npz")
 
 
@@ -394,7 +437,10 @@ def parse_args():
     p.add_argument("--max-samples", type=int, default=None)
     p.add_argument("--shard-id",   type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
-    p.add_argument("--timestep", type=int, default=500)
+    p.add_argument("--timestep",  type=int, default=None,
+                   help="Single timestep (legacy alias; overrides --timesteps)")
+    p.add_argument("--timesteps", type=int, nargs="+", default=[500],
+                   help="One or more DiT noise timesteps, e.g. --timesteps 100 300 500 700 900")
     p.add_argument("--num-frames", type=int, default=49,
                    help="Number of frames to load per video")
     p.add_argument("--dit-height", type=int, default=480)
@@ -439,6 +485,14 @@ def main():
     encoder = build_vjepa_encoder(device)
     pipe    = build_wan_pipeline(device)
 
+    # resolve timesteps
+    timesteps = [args.timestep] if args.timestep is not None else args.timesteps
+    timesteps = sorted(set(timesteps))
+    print(f"Timesteps: {timesteps}", flush=True)
+
+    # write timesteps marker so analysis scripts can read it
+    np.save(str(args.case_dir / "timesteps.npy"), np.array(timesteps))
+
     accum = CKAAccumulator()
 
     for i, rec in enumerate(records):
@@ -446,13 +500,11 @@ def main():
         dataset    = rec["source"]
         prompt     = rec.get("caption", "")
         sample_name = rec.get("sample_name") or Path(video_path).parent.name
-        print(f"  [{i+1}/{len(records)}] {dataset} — {sample_name}/video.mp4", flush=True)
+        print(f"  [{i+1}/{len(records)}] {dataset} — {sample_name}", flush=True)
         try:
-            # skip if already computed
             out_file = args.case_dir / f"{sample_name}.npy"
             if out_file.exists():
                 print(f"    skip (exists)", flush=True)
-                # still load into accum for final summary
                 grid = np.load(str(out_file))
                 accum.update(dataset, {}, {}, precomputed_grid=grid)
                 continue
@@ -461,7 +513,7 @@ def main():
                                        first_frames=args.first_frames)
             vj = vjepa_grams(encoder, frames, device)
             dt = dit_grams(pipe, frames, prompt, device,
-                           timestep=args.timestep,
+                           timesteps=timesteps,
                            height=args.dit_height, width=args.dit_width)
             grid = accum.update(dataset, vj, dt)
             np.save(str(out_file), grid)
@@ -479,11 +531,12 @@ def main():
         **{f"{ds.replace('-','_')}_count": np.array(accum.count[ds]) for ds in accum.count},
         vj_layers=np.array(accum.vj_layers),
         dt_layers=np.array(accum.dt_layers),
+        timesteps=np.array(accum.timesteps),
     )
     print(f"Saved cka_sums{shard_tag}.npz")
 
     save_plots(dataset_grids, accum.vj_layers, accum.dt_layers,
-               out_dir, suffix=shard_tag)
+               accum.timesteps, out_dir, suffix=shard_tag)
 
     print("\n=== Summary: max CKA per dataset ===")
     for ds in DATASET_ORDER:

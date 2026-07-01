@@ -623,11 +623,26 @@ class ContextVideoTrainer(nn.Module):
                 self.total_object_queries,
                 2,
             )
-        vggt_out = self.vggt_adapter(
-            frames_bthwc,
-            query_points_prior=query_points_prior,
-            query_image_hw=(context_videos.shape[-2], context_videos.shape[-1]) if query_points_prior is not None else None,
-        )
+        if self.vggt_adapter.model is not None:
+            vggt_out = self.vggt_adapter(
+                frames_bthwc,
+                query_points_prior=query_points_prior,
+                query_image_hw=(context_videos.shape[-2], context_videos.shape[-1]) if query_points_prior is not None else None,
+            )
+        else:
+            from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackOutput
+            _image_hw = (int(context_videos.shape[-2]), int(context_videos.shape[-1]))
+            _B, _T = frames_bthwc.shape[0], frames_bthwc.shape[1]
+            _N = query_points_prior.shape[1] if query_points_prior is not None else self.total_object_queries
+            _dev = frames_bthwc.device
+            vggt_out = VGGTTrackOutput(
+                query_points=query_points_prior if query_points_prior is not None else torch.zeros(_B, _N, 2, device=_dev),
+                tracks=torch.zeros(_B, _T, _N, 2, device=_dev),
+                visibility=torch.ones(_B, _T, _N, device=_dev),
+                confidence=torch.ones(_B, _T, _N, device=_dev),
+                image_hw=_image_hw,
+                used_model=False,
+            )
         cotracker_out = None
         if self.cotracker_adapter is not None:
             cotracker_out = self.cotracker_adapter(

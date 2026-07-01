@@ -18,13 +18,11 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  "pdi"
   "wmreward"
   "physics_iq"
   "videophy2"
   "phyground"
   "cosmos_reason1"
-  "phys"
 )
 
 FAILED_METRICS=()
