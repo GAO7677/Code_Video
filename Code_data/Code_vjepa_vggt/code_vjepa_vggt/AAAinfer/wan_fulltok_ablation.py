@@ -28,50 +28,41 @@ DEFAULT_LORA_CKPT = Path(
 )
 
 """
-Full-token Stage1B inference: same as wan_stage1b_0613pybullet_v2v.py but constructs
-object_context for ALL latent time steps (context + future), giving the DiT cross-attn
-access to a full-length token sequence — matching the token layout used during stage2
-training.
+object_context 敏感性消融实验脚本。
 
-Future latent time steps (no real video available at inference) are filled by one of:
-  - repeat  (default): copy the last context latent token
-  - predictor:         run a trained Stage2 FutureObjectTokenPredictor
+在 wan_stage1b_0613pybullet_v2v_fulltok.py 基础上，通过 --ablation-mode 对
+object token 做不同扰动，验证 Stage1B cross-attn 对 full-length object token 是否敏感。
 
-Shape comparison:
-  context-only (wan_stage1b_0613pybullet_v2v.py):  [1, 2×4=8,  4096]
-  full-token   (this script):                       [1, 6×4=24, 4096]
+扰动条件：
+  baseline             无扰动，原始 repeat 模式（对照组）
+  future_zero          future 帧 token 置0
+  future_noise         future 帧替换为同均值/方差的随机高斯噪声
+  all_zero             context + future 全部置0
+  ctx_zero             context 帧置0，future 仍 repeat
+  future_rand_ctx_frame future 帧随机替换为 context 某帧的 token
+  object_context_zero  adapter 输出后 object_context [B,24,4096] 整体置0
+
+每个 mode 的输出目录通过 method_name 后缀自动区分。
 
 ────────────────────────────────────────────────────────────────────────
-模式1: repeat（默认，不需要 stage2 权重）
+单 mode 运行：
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=0 \
-python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_0613pybullet_v2v_fulltok.py \
+CUDA_VISIBLE_DEVICES=5 \
+python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_fulltok_ablation.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_oracle_cross_attn/step_XXXX.pt \
   --stage1a-weights /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name pybullet0629_stage1b_fulltok
+  --model-name pybullet0629_ablation \
+  --ablation-mode baseline
 
 ────────────────────────────────────────────────────────────────────────
-模式2: predictor（需要 stage2 训练完成后的权重）
-method 字段自动加 _pred 后缀，输出目录与 repeat 模式分开。
+批量运行所有 mode（见 run_ablation_gpu5.sh）：
 
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=0 \
-python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_0613pybullet_v2v_fulltok.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_oracle_cross_attn/step_XXXX.pt \
-  --stage1a-weights /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
-  --stage2-weights /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage2_predictor/step_XXXX.pt \
-  --future-token-mode predictor \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name pybullet0629_stage1b_fulltok
+CUDA_VISIBLE_DEVICES=5 bash \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/run_ablation_gpu5.sh
 
-────────────────────────────────────────────────────────────────────────
-注意：
-  --lora-ckpt       有默认值，与 stage1b 训练时一致，可省略。
-  --source-video-field 默认 "source_video"（JSON 里的完整视频字段）。
-  --predictor-max-context-latent-frames / --predictor-max-future-latent-frames
-                    需与 stage2 训练 config 里的值一致（默认 4/8）。
+注意：--lora-ckpt 有默认值可省略。
 """
 
 DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
@@ -115,6 +106,7 @@ def _build_full_object_context(
     context_video_single: torch.Tensor,
     num_total_latent_frames: int,
     predictor=None,
+    ablation_mode: str = "baseline",
 ) -> tuple[torch.Tensor | None, dict]:
     """Build object_context covering all latent time steps.
 
@@ -192,7 +184,6 @@ def _build_full_object_context(
         full_tokens = ctx_tokens
         future_mode = "none"
     elif predictor is not None:
-        # Stage2 predictor path
         pred_out = predictor(
             ctx_tokens.to(dtype=torch.float32),
             future_latent_frames=T_future,
@@ -203,18 +194,47 @@ def _build_full_object_context(
         )
         future_mode = "predictor"
     else:
-        # Default: repeat last context token
         last_token = ctx_tokens[:, -1:, :, :]
         future_tokens = last_token.expand(-1, T_future, -1, -1).clone()
         full_tokens = torch.cat([ctx_tokens, future_tokens], dim=1)
         future_mode = "repeat"
     # full_tokens: [1, num_total_latent_frames, N_obj, D_pooler]
 
+    # --- ablation patch (applied before object_adapter) ---
+    if ablation_mode == "future_zero":
+        full_tokens = full_tokens.clone()
+        full_tokens[:, T_ctx_lat:] = 0.0
+    elif ablation_mode == "future_noise":
+        full_tokens = full_tokens.clone()
+        ref = full_tokens[:, :T_ctx_lat]
+        std = ref.std().clamp_min(1e-6)
+        mean = ref.mean()
+        noise = torch.randn_like(full_tokens[:, T_ctx_lat:]) * std + mean
+        full_tokens[:, T_ctx_lat:] = noise
+    elif ablation_mode == "all_zero":
+        full_tokens = torch.zeros_like(full_tokens)
+    elif ablation_mode == "ctx_zero":
+        full_tokens = full_tokens.clone()
+        full_tokens[:, :T_ctx_lat] = 0.0
+    elif ablation_mode == "future_rand_ctx_frame":
+        full_tokens = full_tokens.clone()
+        for t in range(T_ctx_lat, T_ctx_lat + T_future):
+            rand_idx = int(torch.randint(0, T_ctx_lat, (1,)).item())
+            full_tokens[:, t] = full_tokens[:, rand_idx].clone()
+    # baseline / object_context_zero: no token-level change here
+    # ---
+
     object_context = model.object_adapter(full_tokens, object_valid_mask=object_valid_mask)
     # object_context: [1, num_total_latent_frames * N_obj, D_cond]
 
+    # --- ablation patch (applied after object_adapter) ---
+    if ablation_mode == "object_context_zero":
+        object_context = torch.zeros_like(object_context)
+    # ---
+
     debug = {
         "enabled": True,
+        "ablation_mode": ablation_mode,
         "future_mode": future_mode,
         "T_ctx_lat": T_ctx_lat,
         "T_future": T_future,
@@ -286,22 +306,35 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--future-token-mode", choices=["repeat", "predictor"], default="repeat",
-        help="How to fill future latent token slots: 'repeat' (default) copies the last "
-             "context token; 'predictor' uses a trained Stage2 FutureObjectTokenPredictor. "
-             "Adds a '_pred' suffix to method name when set to 'predictor'.",
+        help="How to fill future latent token slots. Adds '_pred' suffix to method name "
+             "when set to 'predictor'.",
     )
     parser.add_argument(
         "--stage2-weights", type=Path, default=None,
-        help=".pt file from stage2 training containing predictor + future_heads weights. "
-             "Required when --future-token-mode=predictor.",
+        help=".pt file from stage2 training. Required when --future-token-mode=predictor.",
     )
     parser.add_argument(
         "--predictor-max-context-latent-frames", type=int, default=4,
-        help="Must match the value used during stage2 training (default: 4).",
     )
     parser.add_argument(
         "--predictor-max-future-latent-frames", type=int, default=8,
-        help="Must match the value used during stage2 training (default: 8).",
+    )
+    parser.add_argument(
+        "--ablation-mode",
+        choices=[
+            "baseline",
+            "future_zero",
+            "future_noise",
+            "all_zero",
+            "ctx_zero",
+            "future_rand_ctx_frame",
+            "object_context_zero",
+        ],
+        default="baseline",
+        help=(
+            "Object token ablation mode (default: baseline = no perturbation). "
+            "Appends _<mode> suffix to method name so outputs land in separate dirs."
+        ),
     )
     return parser.parse_args()
 
@@ -357,10 +390,12 @@ def main() -> None:
     ckpt_file = _resolve_stage1b_ckpt(weights_root)
     step_label = ckpt_file.stem
     method_name = _build_method_name(weights_root)
-    # append suffix so repeat vs predictor results land in separate subdirs
     future_token_mode = str(cli_args.future_token_mode)
     if future_token_mode == "predictor":
         method_name = method_name + "_pred"
+    ablation_mode = str(cli_args.ablation_mode)
+    if ablation_mode != "baseline":
+        method_name = method_name + f"_{ablation_mode}"
     lora_ckpt = cli_args.lora_ckpt.expanduser().resolve()
     stage1a_ckpt = cli_args.stage1a_weights.expanduser().resolve()
 
@@ -383,6 +418,7 @@ def main() -> None:
         "num_total_latent_frames": num_total_latent_frames,
         "sampling_mode": str(cli_args.sampling_mode),
         "object_token_mode": future_token_mode,
+        "ablation_mode": ablation_mode,
         "stage2_weights": str(cli_args.stage2_weights) if cli_args.stage2_weights else None,
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
@@ -497,6 +533,7 @@ def main() -> None:
                     context_video_single=context_video_single,
                     num_total_latent_frames=num_total_latent_frames,
                     predictor=predictor,
+                    ablation_mode=ablation_mode,
                 )
             print(f"[object_context] shape={object_debug.get('object_context_shape')} "
                   f"T_ctx={object_debug.get('T_ctx_lat')} T_future={object_debug.get('T_future')}")
