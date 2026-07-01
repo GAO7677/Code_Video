@@ -107,6 +107,7 @@ def _build_full_object_context(
     num_total_latent_frames: int,
     predictor=None,
     ablation_mode: str = "baseline",
+    full_video_single: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor | None, dict]:
     """Build object_context covering all latent time steps.
 
@@ -114,6 +115,9 @@ def _build_full_object_context(
     Future latent frames are filled either by:
       - repeating the last context latent token (predictor=None, default)
       - running a trained FutureObjectTokenPredictor (predictor != None)
+      - full_video_oracle: use the complete source video (context+future frames)
+        as input to CoTracker/JEPA/pooler, giving the model oracle-quality tokens
+        over all time steps — upper-bound experiment.
 
     Returns object_context [1, num_total_latent_frames * N_obj, D_cond].
     """
@@ -122,8 +126,17 @@ def _build_full_object_context(
 
     pipe = model.pipe
     device = torch.device(pipe.device)
-    context_video = context_video_single.unsqueeze(0).to(device=device, dtype=pipe.torch_dtype)
-    image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
+
+    # full_video_oracle mode: replace context_video with the complete source video
+    if ablation_mode == "full_video_oracle" and full_video_single is not None:
+        src_video_single = full_video_single
+        oracle_mode = True
+    else:
+        src_video_single = context_video_single
+        oracle_mode = False
+
+    src_video = src_video_single.unsqueeze(0).to(device=device, dtype=pipe.torch_dtype)
+    image_hw = (int(src_video.shape[-2]), int(src_video.shape[-1]))
 
     query_points_prior, object_valid_mask = _build_center_box_query_priors(
         height=image_hw[0],
@@ -134,7 +147,7 @@ def _build_full_object_context(
     query_points_prior = query_points_prior.to(device=device, dtype=pipe.torch_dtype)
     object_valid_mask = object_valid_mask.to(device=device, dtype=pipe.torch_dtype)
 
-    frames_bthwc_01 = ((context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
+    frames_bthwc_01 = ((src_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0).clamp(0.0, 1.0)
     cotracker_out = model.cotracker_adapter(
         frames_bthwc_01,
         query_points_prior=query_points_prior,
@@ -148,9 +161,9 @@ def _build_full_object_context(
         points_per_object=model.object_num_queries,
     )
     jepa_dtype = next(model.jepa_adapter.parameters()).dtype
-    jepa_out = model.jepa_adapter(context_video.to(dtype=jepa_dtype))
+    jepa_out = model.jepa_adapter(src_video.to(dtype=jepa_dtype))
 
-    preprocessed_context = pipe.preprocess_video(_tensor_video_to_pil_list(context_video_single))
+    preprocessed_context = pipe.preprocess_video(_tensor_video_to_pil_list(src_video_single))
     clean_prefix_latents = pipe.vae.encode(
         preprocessed_context,
         device=pipe.device,
@@ -174,13 +187,23 @@ def _build_full_object_context(
         ).unsqueeze(0),
         frame_valid_mask=None,
     )
-    # object_latent_tokens: [1, T_ctx_lat, N_obj, D_pooler]
+    # object_latent_tokens: [1, T_lat, N_obj, D_pooler]
+    # For full_video_oracle: T_lat covers all latent frames directly
     ctx_tokens = object_out.object_latent_tokens
     T_ctx_lat = int(ctx_tokens.shape[1])
     T_future = int(num_total_latent_frames) - T_ctx_lat
 
     future_mode: str
-    if T_future <= 0:
+    if oracle_mode:
+        # full_video_oracle: pooler already saw all frames, T_future should be 0
+        # If T_lat < num_total_latent_frames (e.g. JEPA tubelet mismatch), repeat last
+        if T_future <= 0:
+            full_tokens = ctx_tokens
+        else:
+            last_token = ctx_tokens[:, -1:, :, :]
+            full_tokens = torch.cat([ctx_tokens, last_token.expand(-1, T_future, -1, -1).clone()], dim=1)
+        future_mode = "full_video_oracle"
+    elif T_future <= 0:
         full_tokens = ctx_tokens
         future_mode = "none"
     elif predictor is not None:
@@ -329,10 +352,13 @@ def parse_args() -> argparse.Namespace:
             "ctx_zero",
             "future_rand_ctx_frame",
             "object_context_zero",
+            "full_video_oracle",
         ],
         default="baseline",
         help=(
             "Object token ablation mode (default: baseline = no perturbation). "
+            "full_video_oracle: use source_video (all frames) as oracle input — "
+            "upper-bound experiment showing max possible object branch quality. "
             "Appends _<mode> suffix to method name so outputs land in separate dirs."
         ),
     )
@@ -528,6 +554,19 @@ def main() -> None:
             )
             context_pil = _tensor_video_to_pil_list(context_video_single)
 
+            # load full source video for oracle mode
+            full_video_single = None
+            if ablation_mode == "full_video_oracle":
+                src_vid_path = payload.get(str(cli_args.source_video_field)) or str(input_video)
+                full_frames, _ = _load_context_video(
+                    video_path=Path(src_vid_path),
+                    target_context_frames=int(cli_args.num_frames),
+                    sampling_mode="prefix",
+                )
+                full_video_single = preprocess_video_rgb_uint8(
+                    full_frames, (int(cli_args.height), int(cli_args.width))
+                )
+
             # build full-length object_context
             with torch.no_grad():
                 object_context, object_debug = _build_full_object_context(
@@ -536,6 +575,7 @@ def main() -> None:
                     num_total_latent_frames=num_total_latent_frames,
                     predictor=predictor,
                     ablation_mode=ablation_mode,
+                    full_video_single=full_video_single,
                 )
             print(f"[object_context] shape={object_debug.get('object_context_shape')} "
                   f"T_ctx={object_debug.get('T_ctx_lat')} T_future={object_debug.get('T_future')}")

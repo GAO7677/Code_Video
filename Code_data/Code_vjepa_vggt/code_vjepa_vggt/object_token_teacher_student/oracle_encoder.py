@@ -246,12 +246,14 @@ class OracleObjectTokenEncoder:
             vggt_geometry_image_hw=vggt_out.image_hw,
             frame_valid_mask=None,
         )
-        # Subsample full_boxes [B, T_all, N_obj, 4] to latent-frame resolution
-        # so bbox_xyxy aligns with object_latent_tokens along the time axis.
+        # Subsample full_boxes [B, T_all, N_obj_data, 4] to latent-frame resolution
+        # and clip the slot dimension to match the adapter's num_slots, which may
+        # differ from the dataset's max_objects (e.g. num_slots=4, max_objects=6).
         T_lat = int(object_out.object_latent_tokens.shape[1])
+        O_tok = int(object_out.object_latent_tokens.shape[2])  # adapter's slot count
         T_all = int(full_boxes.shape[1])
         lat_indices = torch.linspace(0, T_all - 1, T_lat, device=full_boxes.device).long()
-        full_boxes_lat = full_boxes[:, lat_indices]  # [B, T_lat, N_obj, 4]
+        full_boxes_lat = full_boxes[:, lat_indices, :O_tok]  # [B, T_lat, O_tok, 4]
 
         object_context = self.trainer.object_adapter(
             object_out.object_latent_tokens,
