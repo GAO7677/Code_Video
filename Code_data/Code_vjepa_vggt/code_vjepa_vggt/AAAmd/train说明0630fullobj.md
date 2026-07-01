@@ -250,6 +250,7 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检50 | Stage1B | step556 ema0.949 finite 0err; 4卡~100%util ~48GB | 健康2.8%; **step_0000500.pt落盘**; 推理已启动(gpu0,model=pybullet0629_stage1b_cross) |
 | 0701 巡检52 | Stage2 | **首次成功启动** step1 loss=0.924 finite; gpu2367 bs=1 ~19GB/卡 | 修3个bug: CoTracker view→reshape; oracle_encoder/context_video_trainer VGGT None guard; VGGT disabled(novggt); 63s/it |
 | 0701 巡检53 | Stage2 | step2 ema0.909 finite 0err; gpu2367 bs=2 ~20GB/卡 | 健康; 143s/it(bs=2串行2x); 1B进程已停(tmux残留) |
+| 0701 巡检54 | Stage2 | step7 ema0.636↓ finite 0err; gpu2367 bs=2 ~20GB/卡 | 健康; 87s/it(batched改善); loss下降明显 |
 
 #### 1B loss 说明
 - flow-matching loss 初期振荡很大（0.02~3.5），是正常现象——DiT cross-attn 权重随机初始化

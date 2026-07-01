@@ -62,45 +62,58 @@ class OracleInjectionTrainer(Stage1OracleMixin, ContextVideoTrainer):
         }
 
     def _prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
-        # Expose the batch so the mixin's _maybe_build_query_priors can derive
-        # GT-box query priors for the default context path (CoTracker/VGGT).
-        self._teacher_student_current_batch = batch
-        try:
-            prepared = super()._prepare_batch(batch)
-        finally:
-            self._teacher_student_current_batch = None
+        # Stage1B/1C use full-video oracle tokens for object context. The default
+        # context path in super()._prepare_batch() runs JEPA + CoTracker +
+        # object_pooler + object_adapter — all of which are frozen and whose
+        # results are immediately overwritten by the oracle path below. Running
+        # them is pure waste. Instead, extract only what the Wan forward pass
+        # actually needs (VAE latents + text context) and build everything else
+        # from the oracle encoder directly.
+        videos = batch["video"].to(self.device_obj)
+        context_videos = batch["context_video"].to(self.device_obj)
+        captions = list(batch["caption"])
+        num_context_frames = batch["num_context_frames"].to(self.device_obj).long()
+
+        text_ctx = self._encode_text(captions)
+        full_latents = self._encode_video_latents(videos)
+        context_latents = self._encode_video_latents(context_videos)
+
         oracle_batch = self._build_oracle_stage1_batch(batch)
-        prepared["object_context"] = oracle_batch.oracle_object_context.to(
-            device=self.device_obj,
-            dtype=prepared["object_context"].dtype,
-        )
-        prepared["object_latent_tokens"] = oracle_batch.oracle_object_latent_tokens.to(
-            device=self.device_obj,
-            dtype=prepared["object_latent_tokens"].dtype,
-        )
-        prepared["object_aux_out"] = oracle_batch.object_aux_out
-        prepared["object_tokens"] = oracle_batch.object_tokens.to(
-            device=self.device_obj,
-            dtype=prepared["object_tokens"].dtype,
-        )
-        # The oracle path produces aux predictions over the full-video latent
-        # frames (T_full_lat). The default context path filled prepared["gt_*"]
-        # from the context-only latent frames (T_ctx_lat), so the base forward
-        # would otherwise compute aux loss as (pred[T_full] - gt[T_ctx]) and hit
-        # a shape mismatch. Replace the GT targets with the full-video oracle GT
-        # so predictions and targets share the same latent-frame axis.
-        prepared["gt_track_summary"] = oracle_batch.gt_track_summary
-        prepared["gt_track_valid"] = oracle_batch.gt_track_valid
-        prepared["gt_box_xyxy"] = oracle_batch.gt_box_xyxy
-        prepared["gt_box_valid"] = oracle_batch.gt_box_valid
-        prepared["gt_depth"] = oracle_batch.gt_depth
-        prepared["gt_depth_valid"] = oracle_batch.gt_depth_valid
-        prepared["debug"]["teacher_student_stage1"] = {
-            "mode": "oracle_full_video_object_context",
-            "oracle_object_latent_tokens": list(oracle_batch.oracle_object_latent_tokens.shape),
-            "oracle_object_context": list(oracle_batch.oracle_object_context.shape),
-            "default_context_object_context": list(prepared["debug"]["object_context"]),
+
+        debug: dict[str, Any] = {
+            "video": list(videos.shape),
+            "context_video": list(context_videos.shape),
+            "num_context_frames": num_context_frames.detach().cpu().tolist(),
+            "full_latents": [list(t.shape) for t in full_latents],
+            "context_latents": [list(t.shape) for t in context_latents],
+            "object_context": list(oracle_batch.oracle_object_context.shape),
+            "object_latent_tokens": list(oracle_batch.oracle_object_latent_tokens.shape),
+            "teacher_student_stage1": {
+                "mode": "oracle_full_video_object_context",
+                "oracle_object_latent_tokens": list(oracle_batch.oracle_object_latent_tokens.shape),
+                "oracle_object_context": list(oracle_batch.oracle_object_context.shape),
+            },
         }
-        prepared["debug"]["object_context"] = list(oracle_batch.oracle_object_context.shape)
-        prepared["debug"]["object_latent_tokens"] = list(oracle_batch.oracle_object_latent_tokens.shape)
-        return prepared
+
+        return {
+            "videos": videos,
+            "context_videos": context_videos,
+            "captions": captions,
+            "num_context_frames": num_context_frames,
+            "full_latents": full_latents,
+            "context_latents": context_latents,
+            "text_context": text_ctx,
+            "object_context": oracle_batch.oracle_object_context.to(self.device_obj),
+            "object_latent_tokens": oracle_batch.oracle_object_latent_tokens.to(self.device_obj),
+            "object_aux_out": oracle_batch.object_aux_out,
+            "object_tokens": oracle_batch.object_tokens.to(self.device_obj),
+            "track_box_loss": None,
+            "track_iou_loss": None,
+            "gt_track_summary": oracle_batch.gt_track_summary,
+            "gt_track_valid": oracle_batch.gt_track_valid,
+            "gt_box_xyxy": oracle_batch.gt_box_xyxy,
+            "gt_box_valid": oracle_batch.gt_box_valid,
+            "gt_depth": oracle_batch.gt_depth,
+            "gt_depth_valid": oracle_batch.gt_depth_valid,
+            "debug": debug,
+        }
