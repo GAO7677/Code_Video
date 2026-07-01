@@ -248,6 +248,7 @@ box: 0.0789→0.0783(平), track: 0.0462→0.0450(平), total step3000 后基本
 | 0701 巡检48 | Stage1B | step456 ema0.848 finite 0err; 4卡DDP活跃 ~48GB | 健康2.3%; 29s/it; 首ckpt@500约13min后 |
 | 0701 巡检49 | Stage1B | step492 ema0.810↓ finite 0err; 4卡DDP活跃 ~48GB | 健康2.5%; 32s/it; 首ckpt@500约2min后 |
 | 0701 巡检50 | Stage1B | step556 ema0.949 finite 0err; 4卡~100%util ~48GB | 健康2.8%; **step_0000500.pt落盘**; 推理已启动(gpu0,model=pybullet0629_stage1b_cross) |
+| 0701 巡检51 | Stage1B | step1455 ema0.842↓ finite 0err; 4卡~100%util ~48GB | 健康7.3%; s500+s1000落盘; **s500推理完成**(17个MP4); 磁盘198G |
 
 #### 1B loss 说明
 - flow-matching loss 初期振荡很大（0.02~3.5），是正常现象——DiT cross-attn 权重随机初始化

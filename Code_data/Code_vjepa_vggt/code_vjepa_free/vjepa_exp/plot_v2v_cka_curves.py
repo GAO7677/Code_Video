@@ -22,6 +22,12 @@ BASE   = Path('/data/gaoya/AAA_test_video/0626vjepa_free/GT_check/0623test_100')
 OUT    = BASE / 'plots'
 OUT.mkdir(exist_ok=True)
 
+import argparse as _ap
+_parser = _ap.ArgumentParser(add_help=False)
+_parser.add_argument('--gt-dir', default=str(BASE / 'GT'))
+_args, _ = _parser.parse_known_args()
+GT_DIR = Path(_args.gt_dir)
+
 # ── load GT ──────────────────────────────────────────────────────────────────
 def load_mean_grid(npy_dir: Path) -> np.ndarray | None:
     """Load all (9,30) npy in dir and return mean grid."""
@@ -31,8 +37,8 @@ def load_mean_grid(npy_dir: Path) -> np.ndarray | None:
     grids = [np.load(p) for p in npys]
     return np.stack(grids).mean(axis=0)   # (9, 30)
 
-gt_grid = load_mean_grid(BASE / 'GT')
-assert gt_grid is not None, "GT npy not found"
+gt_grid = load_mean_grid(GT_DIR)
+assert gt_grid is not None, f"GT npy not found in {GT_DIR}"
 
 # ── load all v2v groups ───────────────────────────────────────────────────────
 tasks = json.load(open('/data/gaoya/AAA_test_video/0623/testjsons/v2v_task_list.json'))

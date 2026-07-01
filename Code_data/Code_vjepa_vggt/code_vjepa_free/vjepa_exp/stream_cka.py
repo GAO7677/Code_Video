@@ -57,14 +57,22 @@ COLORS = {"phyco_kubric": "#1f77b4", "pybullet": "#ff7f0e", "physics-iq": "#2ca0
 
 # ── video loading ──────────────────────────────────────────────────────────────
 
-def load_video_frames(video_path: str, num_frames: int = 49) -> torch.Tensor:
-    """Return [C, F, H, W] float32 in [-1, 1]."""
+def load_video_frames(video_path: str, num_frames: int = 49,
+                      first_frames: bool = False) -> torch.Tensor:
+    """Return [C, F, H, W] float32 in [-1, 1].
+
+    first_frames=True: take the first num_frames frames (no resampling).
+    first_frames=False: uniformly sample num_frames across the full video.
+    """
     try:
         import decord
         decord.bridge.set_bridge("torch")
         vr = decord.VideoReader(video_path, ctx=decord.cpu(0))
         total = len(vr)
-        indices = np.linspace(0, total - 1, num_frames).astype(int)
+        if first_frames:
+            indices = np.arange(min(num_frames, total))
+        else:
+            indices = np.linspace(0, total - 1, num_frames).astype(int)
         frames = vr.get_batch(indices).float()
         return frames.permute(3, 0, 1, 2) / 127.5 - 1.0
     except Exception:
@@ -72,7 +80,10 @@ def load_video_frames(video_path: str, num_frames: int = 49) -> torch.Tensor:
     import cv2
     cap = cv2.VideoCapture(video_path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    idx_set = set(np.linspace(0, total - 1, num_frames).astype(int).tolist())
+    if first_frames:
+        idx_set = set(range(min(num_frames, total)))
+    else:
+        idx_set = set(np.linspace(0, total - 1, num_frames).astype(int).tolist())
     frames_list, i = [], 0
     while cap.isOpened():
         ret, frame = cap.read()
@@ -384,11 +395,15 @@ def parse_args():
     p.add_argument("--shard-id",   type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--timestep", type=int, default=500)
+    p.add_argument("--num-frames", type=int, default=49,
+                   help="Number of frames to load per video")
     p.add_argument("--dit-height", type=int, default=480)
     p.add_argument("--dit-width",  type=int, default=720)
     p.add_argument("--case-dir", default="/data/gaoya/AAA_test_video/0626vjepa_free/GT_check/0613pybullet",
                    help="Per-case [9,30] CKA grids saved as <sample_name>.npy here")
     p.add_argument("--device", default="cuda")
+    p.add_argument("--first-frames", action="store_true",
+                   help="Take the first num_frames frames instead of uniform sampling")
     return p.parse_args()
 
 
@@ -442,7 +457,8 @@ def main():
                 accum.update(dataset, {}, {}, precomputed_grid=grid)
                 continue
 
-            frames = load_video_frames(video_path, num_frames=49)
+            frames = load_video_frames(video_path, num_frames=args.num_frames,
+                                       first_frames=args.first_frames)
             vj = vjepa_grams(encoder, frames, device)
             dt = dit_grams(pipe, frames, prompt, device,
                            timestep=args.timestep,

@@ -22,7 +22,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 
   
 # 一键启动所有指标的评估
-CUDA_VISIBLE_DEVICES=3 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v
+CUDA_VISIBLE_DEVICES=0 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v
 
 
 # 统计并可视化指标报告
