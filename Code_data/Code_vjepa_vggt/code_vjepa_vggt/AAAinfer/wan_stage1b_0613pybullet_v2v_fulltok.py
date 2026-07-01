@@ -45,7 +45,7 @@ Shape comparison:
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=0 \
 python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_0613pybullet_v2v_fulltok.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_oracle_cross_attn/step_0001000.pt \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_fulltok_cross_attn/old_8000_cross.pt \
   --stage1a-weights /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name pybullet0629_stage1b_old8000_fulltok

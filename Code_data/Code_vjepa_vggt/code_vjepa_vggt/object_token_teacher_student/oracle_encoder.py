@@ -70,76 +70,90 @@ class OracleObjectTokenEncoder:
         image_hw: tuple[int, int],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch, total_frames, _, _ = full_boxes.shape
-        if batch != 1:
-            raise NotImplementedError("first oracle version only supports per-sample query-prior construction inside batched loop")
         height, width = int(image_hw[0]), int(image_hw[1])
-        grouped_points = []
-        query_frame_ids = []
-        object_valid_mask = []
-        box_priors = []
-        for object_idx in range(int(self.trainer.max_objects)):
-            first_valid_frame = None
-            first_box = None
-            for frame_idx in range(total_frames):
-                candidate = full_boxes[0, frame_idx, object_idx]
-                if bool((candidate[2] - candidate[0] > 1.0e-6) and (candidate[3] - candidate[1] > 1.0e-6)):
-                    first_valid_frame = frame_idx
-                    first_box = candidate
-                    break
-            if first_box is None:
-                object_valid_mask.append(0.0)
-                cx = 0.5 * float(width)
-                cy = 0.5 * float(height)
-                points = torch.tensor(
-                    [[cx, cy]] * int(self.trainer.points_per_object),
-                    dtype=torch.float32,
-                    device=full_boxes.device,
-                )
-                box_priors.append(torch.tensor([0.45, 0.45, 0.55, 0.55], dtype=torch.float32, device=full_boxes.device))
-                query_frame_ids.extend([0.0] * int(self.trainer.points_per_object))
-            else:
-                object_valid_mask.append(1.0)
-                points = _sample_points_from_box(first_box, int(self.trainer.points_per_object)).to(
-                    device=full_boxes.device,
-                    dtype=torch.float32,
-                )
-                points[:, 0] *= float(width)
-                points[:, 1] *= float(height)
-                box_priors.append(first_box.to(device=full_boxes.device, dtype=torch.float32))
-                query_frame_ids.extend([float(first_valid_frame)] * int(self.trainer.points_per_object))
-            grouped_points.append(points)
-        query_points_prior = torch.stack(grouped_points, dim=0).view(1, int(self.trainer.total_object_queries), 2)
-        query_frame_ids_tensor = torch.tensor(query_frame_ids, dtype=torch.float32, device=full_boxes.device).view(
-            1, int(self.trainer.total_object_queries), 1
-        )
-        object_valid_mask_tensor = torch.tensor(object_valid_mask, dtype=torch.float32, device=full_boxes.device).view(
-            1, int(self.trainer.max_objects)
-        )
-        box_prior_xyxy = torch.stack(box_priors, dim=0).view(1, int(self.trainer.max_objects), 4)
+        all_query_points = []
+        all_query_frame_ids = []
+        all_object_valid_masks = []
+        all_box_priors = []
+        for b in range(batch):
+            grouped_points = []
+            query_frame_ids = []
+            object_valid_mask = []
+            box_priors = []
+            for object_idx in range(int(self.trainer.max_objects)):
+                first_valid_frame = None
+                first_box = None
+                for frame_idx in range(total_frames):
+                    candidate = full_boxes[b, frame_idx, object_idx]
+                    if bool((candidate[2] - candidate[0] > 1.0e-6) and (candidate[3] - candidate[1] > 1.0e-6)):
+                        first_valid_frame = frame_idx
+                        first_box = candidate
+                        break
+                if first_box is None:
+                    object_valid_mask.append(0.0)
+                    cx = 0.5 * float(width)
+                    cy = 0.5 * float(height)
+                    points = torch.tensor(
+                        [[cx, cy]] * int(self.trainer.points_per_object),
+                        dtype=torch.float32,
+                        device=full_boxes.device,
+                    )
+                    box_priors.append(torch.tensor([0.45, 0.45, 0.55, 0.55], dtype=torch.float32, device=full_boxes.device))
+                    query_frame_ids.extend([0.0] * int(self.trainer.points_per_object))
+                else:
+                    object_valid_mask.append(1.0)
+                    points = _sample_points_from_box(first_box, int(self.trainer.points_per_object)).to(
+                        device=full_boxes.device,
+                        dtype=torch.float32,
+                    )
+                    points[:, 0] *= float(width)
+                    points[:, 1] *= float(height)
+                    box_priors.append(first_box.to(device=full_boxes.device, dtype=torch.float32))
+                    query_frame_ids.extend([float(first_valid_frame)] * int(self.trainer.points_per_object))
+                grouped_points.append(points)
+            all_query_points.append(torch.stack(grouped_points, dim=0).view(1, int(self.trainer.total_object_queries), 2))
+            all_query_frame_ids.append(
+                torch.tensor(query_frame_ids, dtype=torch.float32, device=full_boxes.device).view(1, int(self.trainer.total_object_queries), 1)
+            )
+            all_object_valid_masks.append(
+                torch.tensor(object_valid_mask, dtype=torch.float32, device=full_boxes.device).view(1, int(self.trainer.max_objects))
+            )
+            all_box_priors.append(torch.stack(box_priors, dim=0).view(1, int(self.trainer.max_objects), 4))
+        query_points_prior = torch.cat(all_query_points, dim=0)        # [B, N_total, 2]
+        query_frame_ids_tensor = torch.cat(all_query_frame_ids, dim=0) # [B, N_total, 1]
+        object_valid_mask_tensor = torch.cat(all_object_valid_masks, dim=0)  # [B, N_obj]
+        box_prior_xyxy = torch.cat(all_box_priors, dim=0)              # [B, N_obj, 4]
         return query_points_prior, query_frame_ids_tensor, object_valid_mask_tensor, box_prior_xyxy
 
     @torch.no_grad()
     def _run_frozen_perception(
         self,
-        sample_video: torch.Tensor,
-        sample_boxes: torch.Tensor,
+        batch_video: torch.Tensor,
+        batch_boxes: torch.Tensor,
     ) -> dict[str, Any]:
-        """Run the frozen perception backbone for one sample under no_grad.
+        """Run frozen perception backbone for a whole batch under no_grad.
 
-        Covers JEPA, VGGT, optional CoTracker and the VAE latent encode. All of
-        these are frozen in every stage, so keeping them under no_grad avoids
-        building an autograd graph and keeps activation memory bounded.
+        batch_video: [B, C, T, H, W]
+        batch_boxes: [B, T, N_obj, 4]
         """
-        image_hw = (int(sample_video.shape[-2]), int(sample_video.shape[-1]))
+        image_hw = (int(batch_video.shape[-2]), int(batch_video.shape[-1]))
         query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = self._build_object_query_priors(
-            sample_boxes,
+            batch_boxes,
             image_hw=image_hw,
         )
-        frames_bthwc = sample_video.permute(0, 2, 3, 4, 1).float()
+        frames_bthwc = batch_video.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
-        jepa_adapter = self._oracle_jepa_adapter(int(sample_video.shape[2]))
-        jepa_out = jepa_adapter(sample_video)
-        context_latents = self.trainer._encode_video_latents(sample_video)[0].unsqueeze(0).to(self.trainer.device_obj)
+
+        jepa_adapter = self._oracle_jepa_adapter(int(batch_video.shape[2]))
+        jepa_out = jepa_adapter(batch_video)
+
+        # VAE encode each sample; _encode_video_latents operates on [C, T, H, W]
+        context_latents_list = []
+        for b in range(int(batch_video.shape[0])):
+            lat = self.trainer._encode_video_latents(batch_video[b : b + 1])[0].unsqueeze(0)
+            context_latents_list.append(lat.to(self.trainer.device_obj))
+        context_latents = torch.cat(context_latents_list, dim=0)  # [B, C_lat, T_lat, H_lat, W_lat]
+
         if self.trainer.vggt_adapter.model is not None:
             vggt_out = self.trainer.vggt_adapter(
                 frames_bthwc,
@@ -148,14 +162,18 @@ class OracleObjectTokenEncoder:
             )
         else:
             from code_vjepa_vggt.adapters.vggt_adapter import VGGTTrackOutput
+            _B, _T = frames_bthwc.shape[0], frames_bthwc.shape[1]
+            _N = query_points_prior.shape[1]
+            _dev = frames_bthwc.device
             vggt_out = VGGTTrackOutput(
                 query_points=query_points_prior,
-                tracks=torch.zeros_like(query_points_prior).unsqueeze(1).expand(-1, int(sample_video.shape[2]), -1, -1),
-                visibility=torch.ones(query_points_prior.shape[0], int(sample_video.shape[2]), query_points_prior.shape[1], device=sample_video.device),
-                confidence=torch.ones(query_points_prior.shape[0], int(sample_video.shape[2]), query_points_prior.shape[1], device=sample_video.device),
+                tracks=torch.zeros(_B, _T, _N, 2, device=_dev),
+                visibility=torch.ones(_B, _T, _N, device=_dev),
+                confidence=torch.ones(_B, _T, _N, device=_dev),
                 image_hw=image_hw,
                 used_model=False,
             )
+
         cotracker_out = None
         if self.trainer.cotracker_adapter is not None:
             cotracker_out = self.trainer.cotracker_adapter(
@@ -164,6 +182,7 @@ class OracleObjectTokenEncoder:
                 query_frame_ids=query_frame_ids,
                 query_image_hw=image_hw,
             )
+
         if cotracker_out is not None:
             tracks = cotracker_out.tracks
             visibility = cotracker_out.visibility
@@ -174,6 +193,7 @@ class OracleObjectTokenEncoder:
             visibility = vggt_out.visibility
             confidence = vggt_out.confidence
             track_image_hw = vggt_out.image_hw
+
         tracks_grouped, visibility_grouped, confidence_grouped = self.trainer._group_tracks_to_objects(
             tracks,
             visibility,
@@ -199,65 +219,53 @@ class OracleObjectTokenEncoder:
         *,
         use_full_video_as_context: bool,
     ) -> OracleTokenOutput:
-        """Build oracle object tokens from the full video.
-
-        The frozen perception backbone runs under no_grad inside
-        `_run_frozen_perception`, while the (possibly trainable) object pooler and
-        condition adapter run here in the caller's autograd context. This lets
-        Stage1B/1C train `object_pooler` / `object_adapter` while Stage2 can still
-        wrap the whole call in no_grad for a pure-teacher forward.
-        """
+        """Build oracle object tokens from the full video (batched)."""
         if not use_full_video_as_context:
-            raise NotImplementedError("only full-video oracle token extraction is implemented in the first version")
+            raise NotImplementedError("only full-video oracle token extraction is implemented")
         full_video = batch["video"].to(self.trainer.device_obj)
         full_boxes = torch.cat([batch["context_boxes"], batch["future_boxes"]], dim=1).to(self.trainer.device_obj)
+
+        perception = self._run_frozen_perception(full_video, full_boxes)
+        vggt_out = perception["vggt_out"]
+
+        object_out = self.trainer.object_pooler(
+            jepa_patch_tokens=perception["jepa_out"].patch_tokens,
+            context_latents=perception["context_latents"],
+            tracks=perception["tracks_grouped"],
+            visibility=perception["visibility_grouped"],
+            confidence=perception["confidence_grouped"],
+            track_image_hw=perception["track_image_hw"],
+            object_valid_mask=perception["object_valid_mask"],
+            box_prior_xyxy=perception["box_prior_xyxy"],
+            vggt_world_points=vggt_out.world_points,
+            vggt_world_points_conf=vggt_out.world_points_conf,
+            vggt_depth=vggt_out.depth,
+            vggt_depth_conf=vggt_out.depth_conf,
+            vggt_dense_patch_tokens=vggt_out.dense_patch_tokens,
+            vggt_patch_grid_hw=vggt_out.patch_grid_hw,
+            vggt_geometry_image_hw=vggt_out.image_hw,
+            frame_valid_mask=None,
+        )
+        object_context = self.trainer.object_adapter(
+            object_out.object_latent_tokens,
+            object_valid_mask=perception["object_valid_mask"],
+        )
+        # Build per-sample OracleSampleArtifacts for compatibility with Stage1 callers
         batch_size = int(full_video.shape[0])
-        token_outputs = []
-        context_outputs = []
         samples: list[OracleSampleArtifacts] = []
-        for sample_idx in range(batch_size):
-            sample_video = full_video[sample_idx : sample_idx + 1]
-            sample_boxes = full_boxes[sample_idx : sample_idx + 1]
-            perception = self._run_frozen_perception(sample_video, sample_boxes)
-            vggt_out = perception["vggt_out"]
-            object_out = self.trainer.object_pooler(
-                jepa_patch_tokens=perception["jepa_out"].patch_tokens,
-                context_latents=perception["context_latents"],
-                tracks=perception["tracks_grouped"],
-                visibility=perception["visibility_grouped"],
-                confidence=perception["confidence_grouped"],
+        for b in range(batch_size):
+            samples.append(OracleSampleArtifacts(
+                object_out=object_out,
+                object_context=object_context[b : b + 1],
+                tracks_grouped=perception["tracks_grouped"][b : b + 1],
+                visibility_grouped=perception["visibility_grouped"][b : b + 1],
+                confidence_grouped=perception["confidence_grouped"][b : b + 1],
                 track_image_hw=perception["track_image_hw"],
-                object_valid_mask=perception["object_valid_mask"],
-                box_prior_xyxy=perception["box_prior_xyxy"],
-                vggt_world_points=vggt_out.world_points,
-                vggt_world_points_conf=vggt_out.world_points_conf,
-                vggt_depth=vggt_out.depth,
-                vggt_depth_conf=vggt_out.depth_conf,
-                vggt_dense_patch_tokens=vggt_out.dense_patch_tokens,
-                vggt_patch_grid_hw=vggt_out.patch_grid_hw,
-                vggt_geometry_image_hw=vggt_out.image_hw,
-                frame_valid_mask=None,
-            )
-            object_context = self.trainer.object_adapter(
-                object_out.object_latent_tokens,
-                object_valid_mask=perception["object_valid_mask"],
-            )
-            token_outputs.append(object_out.object_latent_tokens)
-            context_outputs.append(object_context)
-            samples.append(
-                OracleSampleArtifacts(
-                    object_out=object_out,
-                    object_context=object_context,
-                    tracks_grouped=perception["tracks_grouped"],
-                    visibility_grouped=perception["visibility_grouped"],
-                    confidence_grouped=perception["confidence_grouped"],
-                    track_image_hw=perception["track_image_hw"],
-                    object_valid_mask=perception["object_valid_mask"],
-                )
-            )
+                object_valid_mask=perception["object_valid_mask"][b : b + 1],
+            ))
         return OracleTokenOutput(
-            object_latent_tokens=torch.cat(token_outputs, dim=0),
-            object_context=torch.cat(context_outputs, dim=0),
+            object_latent_tokens=object_out.object_latent_tokens,
+            object_context=object_context,
             samples=samples,
         )
 
