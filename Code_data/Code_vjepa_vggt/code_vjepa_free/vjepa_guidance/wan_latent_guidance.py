@@ -119,13 +119,13 @@ def normalize_gradient(gradient: torch.Tensor, mode: str = "rms", eps: float = 1
     raise ValueError(f"Unsupported gradient normalization mode: {mode}")
 
 
-def apply_vjepa_latent_guidance(
+def apply_vjepa_latent_guidance_with_decoder(
     *,
     latent_xt: torch.Tensor,
     model_output: torch.Tensor,
     timestep: torch.Tensor | int,
     scheduler,
-    vae,
+    preview_decoder: Callable[..., torch.Tensor],
     energy_fn: Callable[..., torch.Tensor],
     config: WanVJEPAConfig,
 ) -> tuple[torch.Tensor, dict[str, float]]:
@@ -139,9 +139,8 @@ def apply_vjepa_latent_guidance(
         timestep=timestep,
     )
 
-    preview_video = decode_preview_video(
-        vae=vae,
-        x0_latent=x0_pred,
+    preview_video = preview_decoder(
+        x0_pred,
         preview_downsample_factor=config.preview_downsample_factor,
         preview_frame_stride=config.preview_frame_stride,
     )
@@ -174,3 +173,29 @@ def apply_vjepa_latent_guidance(
         "preview_width": float(preview_video.shape[4]),
     }
     return corrected, stats
+
+
+def apply_vjepa_latent_guidance(
+    *,
+    latent_xt: torch.Tensor,
+    model_output: torch.Tensor,
+    timestep: torch.Tensor | int,
+    scheduler,
+    vae,
+    energy_fn: Callable[..., torch.Tensor],
+    config: WanVJEPAConfig,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    return apply_vjepa_latent_guidance_with_decoder(
+        latent_xt=latent_xt,
+        model_output=model_output,
+        timestep=timestep,
+        scheduler=scheduler,
+        preview_decoder=lambda x0_pred, preview_downsample_factor, preview_frame_stride: decode_preview_video(
+            vae=vae,
+            x0_latent=x0_pred,
+            preview_downsample_factor=preview_downsample_factor,
+            preview_frame_stride=preview_frame_stride,
+        ),
+        energy_fn=energy_fn,
+        config=config,
+    )

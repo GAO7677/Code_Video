@@ -56,6 +56,20 @@ class ObjectTrack:
     phrase: str
 
 
+def box_iou_xyxy(box_a: np.ndarray, box_b: np.ndarray) -> float:
+    ax0, ay0, ax1, ay1 = [float(v) for v in box_a.tolist()]
+    bx0, by0, bx1, by1 = [float(v) for v in box_b.tolist()]
+    inter_x0 = max(ax0, bx0)
+    inter_y0 = max(ay0, by0)
+    inter_x1 = min(ax1, bx1)
+    inter_y1 = min(ay1, by1)
+    inter = max(0.0, inter_x1 - inter_x0) * max(0.0, inter_y1 - inter_y0)
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    union = max(area_a + area_b - inter, 1.0e-6)
+    return float(inter / union)
+
+
 def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     x = frame_chw.detach().cpu().clamp(-1.0, 1.0)
     x = ((x + 1.0) * 127.5).to(torch.uint8).permute(1, 2, 0).contiguous()
@@ -136,6 +150,36 @@ def build_multi_object_prompt(caption: str) -> str:
     if not found:
         return caption
     return " . ".join(found) + " ."
+
+
+def build_open_vocab_prompt(
+    caption: str,
+    *,
+    text_prompt: str,
+    extra_prompt_terms: str,
+    include_caption_terms: bool,
+) -> str:
+    parts: list[str] = []
+    if include_caption_terms:
+        caption_prompt = build_multi_object_prompt(caption).strip()
+        if caption_prompt:
+            parts.extend([item.strip() for item in caption_prompt.split(".") if item.strip()])
+    if extra_prompt_terms.strip():
+        raw = extra_prompt_terms.replace(",", ".")
+        parts.extend([item.strip() for item in raw.split(".") if item.strip()])
+    if text_prompt.strip():
+        raw = text_prompt.replace(",", ".")
+        parts.extend([item.strip() for item in raw.split(".") if item.strip()])
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in parts:
+        norm = item.lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        deduped.append(item)
+    return " . ".join(deduped) + (" ." if deduped else "")
 
 
 def score_mask(mask_hw: np.ndarray) -> tuple[float, float]:
@@ -221,35 +265,133 @@ def detect_and_track_objects(
     gdino_device: str,
     max_objects: int,
     prompt_frame_mode: str,
+    proposal_source: str,
+    motion_score_ratio: float,
+    text_prompt: str,
+    extra_prompt_terms: str,
+    include_caption_terms: bool,
+    gdino_box_threshold: float,
+    gdino_text_threshold: float,
 ) -> tuple[list[ObjectTrack], int]:
+    def make_box_fallback_track(box_xyxy: np.ndarray, score: float, phrase: str) -> ObjectTrack | None:
+        height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
+        fallback_box = np.asarray(box_xyxy, dtype=np.float32)
+        x0, y0, x1, y1 = [int(round(v)) for v in fallback_box.tolist()]
+        x0 = max(0, min(x0, width - 1))
+        x1 = max(0, min(x1, width))
+        y0 = max(0, min(y0, height - 1))
+        y1 = max(0, min(y1, height))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        masks = np.zeros((frames_tchw_01.shape[0], height, width), dtype=np.uint8)
+        masks[:, y0:y1, x0:x1] = 1
+        boxes = np.repeat(fallback_box[None, :], repeats=frames_tchw_01.shape[0], axis=0).astype(np.float32)
+        return ObjectTrack(
+            box_prompt_xyxy=fallback_box,
+            masks_thw=masks,
+            boxes_t4=boxes,
+            score=float(score),
+            phrase=str(phrase),
+        )
+
     if prompt_frame_mode == "first":
         prompt_frame_idx = 0
     else:
         prompt_frame_idx = max(frames_tchw_01.shape[0] - 1, 0)
-    text_prompt = build_multi_object_prompt(caption)
-    detector = GroundingDINOTextDetector(device=gdino_device, max_boxes=max_objects)
-    try:
-        detection = detector.detect(frames_tchw_01[prompt_frame_idx], text_prompt, guidance_box_xyxy=None)
-        track_boxes = detection.boxes_xyxy[:max_objects]
-        track_scores = detection.scores[:max_objects]
-        track_phrases = detection.phrases[:max_objects]
-    except Exception as exc:
-        print(f"[warn] GroundingDINO detect failed, fallback to motion proxy: {exc}")
+
+    proposal_source = str(proposal_source)
+    motion_multi = build_motion_prompt_boxes(frames_tchw_01, max_boxes=max_objects)
+    if proposal_source in {"motion_only", "motion_then_gdino"} and motion_multi.boxes_xyxy.shape[0] > 0:
+        prompt_frame_idx = int(motion_multi.prompt_frame_idx)
+
+    candidate_boxes: list[np.ndarray] = []
+    candidate_scores: list[float] = []
+    candidate_phrases: list[str] = []
+
+    def add_candidate(box_xyxy: np.ndarray, score: float, phrase: str) -> None:
+        box = np.asarray(box_xyxy, dtype=np.float32)
+        if not np.all(np.isfinite(box)):
+            return
+        if float(box[2] - box[0]) <= 1.0 or float(box[3] - box[1]) <= 1.0:
+            return
+        for idx, existing in enumerate(candidate_boxes):
+            if box_iou_xyxy(box, existing) >= 0.75:
+                if float(score) > float(candidate_scores[idx]):
+                    candidate_boxes[idx] = box
+                    candidate_scores[idx] = float(score)
+                    candidate_phrases[idx] = str(phrase)
+                return
+        if len(candidate_boxes) >= max_objects:
+            return
+        candidate_boxes.append(box)
+        candidate_scores.append(float(score))
+        candidate_phrases.append(str(phrase))
+
+    def add_motion_candidates() -> None:
+        motion_boxes = motion_multi.boxes_xyxy[:max_objects]
+        motion_scores = motion_multi.scores[:max_objects]
+        if motion_boxes.shape[0] == 0:
+            return
+        top_score = float(motion_scores.max()) if motion_scores.size > 0 else 0.0
+        min_keep_score = max(1.0e-6, top_score * max(float(motion_score_ratio), 0.0))
+        for idx, (box_xyxy, score) in enumerate(zip(motion_boxes, motion_scores)):
+            if float(score) < min_keep_score:
+                continue
+            add_candidate(box_xyxy, float(score), f"motion_component_{idx}")
+
+    def add_gdino_candidates() -> None:
+        prompt_text = build_open_vocab_prompt(
+            caption,
+            text_prompt=text_prompt,
+            extra_prompt_terms=extra_prompt_terms,
+            include_caption_terms=include_caption_terms,
+        )
+        detector = GroundingDINOTextDetector(
+            device=gdino_device,
+            max_boxes=max_objects,
+            box_threshold=float(gdino_box_threshold),
+            text_threshold=float(gdino_text_threshold),
+        )
+        try:
+            detection = detector.detect(frames_tchw_01[prompt_frame_idx], prompt_text, guidance_box_xyxy=None)
+        except Exception as exc:
+            print(f"[warn] GroundingDINO detect failed: {exc}")
+            return
+        for box_xyxy, score, phrase in zip(
+            detection.boxes_xyxy[:max_objects],
+            detection.scores[:max_objects],
+            detection.phrases[:max_objects],
+        ):
+            add_candidate(box_xyxy, float(score), str(phrase))
+
+    if proposal_source == "motion_only":
+        add_motion_candidates()
+    elif proposal_source == "motion_then_gdino":
+        add_motion_candidates()
+        if len(candidate_boxes) < max_objects:
+            add_gdino_candidates()
+    elif proposal_source == "gdino_then_motion":
+        add_gdino_candidates()
+        if len(candidate_boxes) < max_objects:
+            add_motion_candidates()
+    else:
+        raise ValueError(f"unsupported proposal_source={proposal_source}")
+
+    if candidate_boxes:
+        track_boxes = np.stack(candidate_boxes, axis=0).astype(np.float32)[:max_objects]
+        track_scores = np.asarray(candidate_scores, dtype=np.float32)[:max_objects]
+        track_phrases = candidate_phrases[:max_objects]
+    else:
         track_boxes = np.zeros((0, 4), dtype=np.float32)
         track_scores = np.zeros((0,), dtype=np.float32)
         track_phrases = []
 
     if track_boxes.shape[0] == 0:
-        motion_multi = build_motion_prompt_boxes(frames_tchw_01, max_boxes=max_objects)
-        track_boxes = motion_multi.boxes_xyxy[:max_objects]
-        track_scores = motion_multi.scores[:max_objects]
-        if track_boxes.shape[0] == 0:
-            motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=motion_multi.prompt_frame_idx)
-            track_boxes = motion_box[None, :]
-            track_scores = np.asarray([1.0], dtype=np.float32)
-            track_phrases = ["motion_proxy"]
-        else:
-            track_phrases = [f"motion_component_{idx}" for idx in range(track_boxes.shape[0])]
+        motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=motion_multi.prompt_frame_idx)
+        track_boxes = motion_box[None, :]
+        track_scores = np.asarray([1.0], dtype=np.float32)
+        track_phrases = ["motion_proxy"]
+        prompt_frame_idx = int(motion_multi.prompt_frame_idx)
 
     tracker = SAM2MotionTracker(device=sam2_device, enable_text_prompt=False)
     outputs: list[ObjectTrack] = []
@@ -263,8 +405,14 @@ def detect_and_track_objects(
             )
         except Exception as exc:
             print(f"[warn] SAM2 track failed for phrase={phrase!r}, box={np.asarray(box_xyxy).tolist()}: {exc}")
+            fallback_track = make_box_fallback_track(np.asarray(box_xyxy, dtype=np.float32), float(score), f"{phrase}_box_fallback")
+            if fallback_track is not None:
+                outputs.append(fallback_track)
             continue
         if int(sam_out.masks_thw[0].sum()) <= 0:
+            fallback_track = make_box_fallback_track(np.asarray(box_xyxy, dtype=np.float32), float(score), f"{phrase}_empty_mask_fallback")
+            if fallback_track is not None:
+                outputs.append(fallback_track)
             continue
         outputs.append(
             ObjectTrack(
@@ -276,26 +424,13 @@ def detect_and_track_objects(
             )
         )
     if not outputs and track_boxes.shape[0] > 0:
-        height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
-        fallback_box = np.asarray(track_boxes[0], dtype=np.float32)
-        x0, y0, x1, y1 = [int(round(v)) for v in fallback_box.tolist()]
-        x0 = max(0, min(x0, width - 1))
-        x1 = max(0, min(x1, width))
-        y0 = max(0, min(y0, height - 1))
-        y1 = max(0, min(y1, height))
-        masks = np.zeros((frames_tchw_01.shape[0], height, width), dtype=np.uint8)
-        if x1 > x0 and y1 > y0:
-            masks[:, y0:y1, x0:x1] = 1
-        boxes = np.repeat(fallback_box[None, :], repeats=frames_tchw_01.shape[0], axis=0).astype(np.float32)
-        outputs.append(
-            ObjectTrack(
-                box_prompt_xyxy=fallback_box,
-                masks_thw=masks,
-                boxes_t4=boxes,
-                score=float(track_scores[0]) if len(track_scores) > 0 else 1.0,
-                phrase=str(track_phrases[0]) if len(track_phrases) > 0 else "pseudo_box_track",
-            )
+        fallback_track = make_box_fallback_track(
+            np.asarray(track_boxes[0], dtype=np.float32),
+            float(track_scores[0]) if len(track_scores) > 0 else 1.0,
+            str(track_phrases[0]) if len(track_phrases) > 0 else "pseudo_box_track",
         )
+        if fallback_track is not None:
+            outputs.append(fallback_track)
     return outputs, prompt_frame_idx
 
 
@@ -431,6 +566,16 @@ def evaluate_case(
     output_dir: Path,
     min_queries_per_object: int,
     prompt_frame_mode: str,
+    save_depth_video: bool,
+    save_world_points_video: bool,
+    max_objects: int,
+    proposal_source: str,
+    motion_score_ratio: float,
+    text_prompt: str,
+    extra_prompt_terms: str,
+    include_caption_terms: bool,
+    gdino_box_threshold: float,
+    gdino_text_threshold: float,
 ) -> dict:
     context_video = sample["context_video"]
     frames_tchw_01 = ((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
@@ -439,8 +584,15 @@ def evaluate_case(
         sample["caption"],
         sam2_device=sam2_device,
         gdino_device=gdino_device,
-        max_objects=4,
+        max_objects=int(max_objects),
         prompt_frame_mode=prompt_frame_mode,
+        proposal_source=str(proposal_source),
+        motion_score_ratio=float(motion_score_ratio),
+        text_prompt=str(text_prompt),
+        extra_prompt_terms=str(extra_prompt_terms),
+        include_caption_terms=bool(include_caption_terms),
+        gdino_box_threshold=float(gdino_box_threshold),
+        gdino_text_threshold=float(gdino_text_threshold),
     )
     query_points_px, query_owner, query_alloc, prior_source = build_query_prior_from_tracks_with_minimum(
         object_tracks,
@@ -505,11 +657,11 @@ def evaluate_case(
 
     depth_video_path = None
     world_points_video_path = None
-    if vggt_out.depth is not None:
+    if save_depth_video and vggt_out.depth is not None:
         depth_frames = colorize_scalar_video(vggt_out.depth[0, ..., 0].detach().cpu().numpy())
         depth_video_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__vggt_depth.mp4"
         write_mp4(depth_video_path, depth_frames, fps=int(sample.get("_fps", 8)))
-    if vggt_out.world_points is not None:
+    if save_world_points_video and vggt_out.world_points is not None:
         world_frames = colorize_world_points_video(vggt_out.world_points[0].detach().cpu().numpy())
         world_points_video_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__vggt_world_points.mp4"
         write_mp4(world_points_video_path, world_frames, fps=int(sample.get("_fps", 8)))
@@ -615,11 +767,25 @@ def main() -> None:
     parser.add_argument("--num-multi", type=int, default=3)
     parser.add_argument("--phys-start-index", type=int, default=0)
     parser.add_argument("--phys-split", default=None)
+    parser.add_argument("--max-objects", type=int, default=6)
+    parser.add_argument(
+        "--proposal-source",
+        choices=["motion_only", "motion_then_gdino", "gdino_then_motion"],
+        default="gdino_then_motion",
+    )
+    parser.add_argument("--motion-score-ratio", type=float, default=0.15)
+    parser.add_argument("--text-prompt", default="")
+    parser.add_argument("--extra-prompt-terms", default="object . thing . item . tool . toy . rigid object .")
+    parser.add_argument("--disable-caption-terms", action="store_true")
+    parser.add_argument("--gdino-box-threshold", type=float, default=0.20)
+    parser.add_argument("--gdino-text-threshold", type=float, default=0.15)
     parser.add_argument("--num-queries", type=int, default=8)
     parser.add_argument("--min-queries-per-object", type=int, default=4)
     parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
     parser.add_argument("--sam2-device", default="cpu")
     parser.add_argument("--gdino-device", default="cpu")
+    parser.add_argument("--skip-depth-video", action="store_true")
+    parser.add_argument("--skip-world-points-video", action="store_true")
     parser.add_argument("--ball-num-frames", type=int, default=16)
     parser.add_argument("--ball-num-context-frames", type=int, default=16)
     parser.add_argument(
@@ -678,6 +844,16 @@ def main() -> None:
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
                 prompt_frame_mode=str(args.prompt_frame_mode),
+                save_depth_video=not bool(args.skip_depth_video),
+                save_world_points_video=not bool(args.skip_world_points_video),
+                max_objects=int(args.max_objects),
+                proposal_source=str(args.proposal_source),
+                motion_score_ratio=float(args.motion_score_ratio),
+                text_prompt=str(args.text_prompt),
+                extra_prompt_terms=str(args.extra_prompt_terms),
+                include_caption_terms=not bool(args.disable_caption_terms),
+                gdino_box_threshold=float(args.gdino_box_threshold),
+                gdino_text_threshold=float(args.gdino_text_threshold),
             )
         )
 
@@ -695,6 +871,16 @@ def main() -> None:
                 output_dir=assets_dir,
                 min_queries_per_object=int(args.min_queries_per_object),
                 prompt_frame_mode=str(args.prompt_frame_mode),
+                save_depth_video=not bool(args.skip_depth_video),
+                save_world_points_video=not bool(args.skip_world_points_video),
+                max_objects=int(args.max_objects),
+                proposal_source=str(args.proposal_source),
+                motion_score_ratio=float(args.motion_score_ratio),
+                text_prompt=str(args.text_prompt),
+                extra_prompt_terms=str(args.extra_prompt_terms),
+                include_caption_terms=not bool(args.disable_caption_terms),
+                gdino_box_threshold=float(args.gdino_box_threshold),
+                gdino_text_threshold=float(args.gdino_text_threshold),
             )
         )
 

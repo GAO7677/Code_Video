@@ -16,7 +16,40 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
 
+'''
+CUDA_VISIBLE_DEVICES=5 /data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan_ti2v_vjepa.py \
+    --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
+    --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+    --image /data/gaoya/AAA_test_video/0623/testdataset/025_Solid_Mechanics_0002_perspective-center_trimmed/physicIQ_0002_clip_2p5s_3p5s_firstframe.png \
+    --output /data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/physicIQ_0002_clip_2p5s_3p5s_firstframe_baseline.mp4 \
+    --sample_steps 10 \
+    --sample_solver unipc \
+    --offload_model \
+    --convert_model_dtype \
+    --disable_vjepa_guidance
 
+
+
+
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+CUDA_VISIBLE_DEVICES=0,5 \
+/data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan_ti2v_vjepa.py \
+    --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
+    --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+    --image /data/gaoya/AAA_test_video/0623/testdataset/025_Solid_Mechanics_0002_perspective-center_trimmed/physicIQ_0002_clip_2p5s_3p5s_firstframe.png \
+    --output /data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/physicIQ_0002_clip_2p5s_3p5s_firstframe_vjepa.mp4 \
+    --sample_steps 50 \
+    --sample_solver unipc \
+    --device_id 0 \
+    --vjepa_device_id 1 \
+    --vjepa_model vith \
+    --vjepa_ckpt /data/gaoya/ckpt/VJEPA2/vith.pt \
+    --vjepa_guidance_steps 6 \
+    --vjepa_latent_step_size 0.02 
+
+'''
 THIS_FILE = Path(__file__).resolve()
 GUIDANCE_DIR = THIS_FILE.parent
 WAN_REPO_DIR = Path("/home/gaoya/Code_Video/phaselock-main/Wan2.2-main")
@@ -36,12 +69,20 @@ from wan.utils.fm_solvers import (  # noqa: E402
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler  # noqa: E402
 from wan.utils.utils import best_output_size, masks_like, save_video  # noqa: E402
 
-from vjepa_surprise import VJEPASurpriseEnergy  # noqa: E402
-from wan_latent_guidance import (  # noqa: E402
-    WanVJEPAConfig,
-    apply_vjepa_latent_guidance,
-    pick_guidance_step_indices,
-)
+try:
+    from .vjepa_surprise import VJEPASurpriseEnergy  # noqa: E402
+    from .wan_latent_guidance import (  # noqa: E402
+        WanVJEPAConfig,
+        apply_vjepa_latent_guidance,
+        pick_guidance_step_indices,
+    )
+except ImportError:
+    from vjepa_surprise import VJEPASurpriseEnergy  # noqa: E402
+    from wan_latent_guidance import (  # noqa: E402
+        WanVJEPAConfig,
+        apply_vjepa_latent_guidance,
+        pick_guidance_step_indices,
+    )
 
 
 DEFAULT_PROMPT = (
@@ -67,6 +108,7 @@ class WanTI2VVJEPA(WanTI2V):
         vjepa_checkpoint_path: Optional[str] = None,
         vjepa_device: Optional[str | torch.device] = None,
         vjepa_config: Optional[WanVJEPAConfig] = None,
+        enable_vjepa_guidance: bool = True,
         **kwargs,
     ):
         checkpoint_dir = kwargs.get("checkpoint_dir")
@@ -78,6 +120,7 @@ class WanTI2VVJEPA(WanTI2V):
         self.vjepa_checkpoint_path = vjepa_checkpoint_path
         self.vjepa_device = torch.device(vjepa_device) if vjepa_device is not None else self.device
         self.vjepa_config = vjepa_config or WanVJEPAConfig()
+        self.enable_vjepa_guidance = enable_vjepa_guidance
         self._vjepa_energy: VJEPASurpriseEnergy | None = None
 
         if any(parameter.is_meta for parameter in self.model.parameters()):
@@ -105,6 +148,8 @@ class WanTI2VVJEPA(WanTI2V):
             vae_module.eval()
 
     def _ensure_vjepa_energy(self) -> VJEPASurpriseEnergy:
+        if not self.enable_vjepa_guidance:
+            raise RuntimeError("V-JEPA guidance is disabled for this pipeline instance.")
         if self._vjepa_energy is None:
             logging.info("Loading V-JEPA energy model: %s", self.vjepa_model_name)
             self._vjepa_energy = VJEPASurpriseEnergy(
@@ -130,6 +175,23 @@ class WanTI2VVJEPA(WanTI2V):
         seed=-1,
         offload_model=True,
     ):
+        if not self.enable_vjepa_guidance or self.vjepa_config.guidance_steps <= 0:
+            logging.info("V-JEPA guidance disabled; falling back to default WanTI2V sampling.")
+            return super().generate(
+                input_prompt=input_prompt,
+                img=img,
+                size=size,
+                max_area=max_area,
+                frame_num=frame_num,
+                shift=shift,
+                sample_solver=sample_solver,
+                sampling_steps=sampling_steps,
+                guide_scale=guide_scale,
+                n_prompt=n_prompt,
+                seed=seed,
+                offload_model=offload_model,
+            )
+
         self._ensure_vjepa_energy()
 
         if img is None:
@@ -547,6 +609,12 @@ def parse_args():
     parser.add_argument("--vjepa_reduction", type=str, default="mean", choices=["mean", "max"])
     parser.add_argument("--vjepa_grad_norm_mode", type=str, default="rms", choices=["none", "rms", "l2"])
     parser.add_argument("--vjepa_max_grad_norm", type=float, default=10.0)
+    parser.add_argument(
+        "--disable_vjepa_guidance",
+        action="store_true",
+        default=False,
+        help="Disable V-JEPA guidance and run the default WanTI2V sampling path.",
+    )
     return parser.parse_args()
 
 
@@ -605,15 +673,19 @@ def main():
         vjepa_checkpoint_path=args.vjepa_ckpt,
         vjepa_device=vjepa_device,
         vjepa_config=vjepa_config,
+        enable_vjepa_guidance=not args.disable_vjepa_guidance,
     )
 
-    logging.info(
-        "Generating video with sample_steps=%s, vjepa_model=%s, guidance_steps=%s, latent_step_size=%s",
-        sample_steps,
-        args.vjepa_model,
-        args.vjepa_guidance_steps,
-        args.vjepa_latent_step_size,
-    )
+    if args.disable_vjepa_guidance:
+        logging.info("Generating video with default WanTI2V sampling (V-JEPA guidance disabled).")
+    else:
+        logging.info(
+            "Generating video with sample_steps=%s, vjepa_model=%s, guidance_steps=%s, latent_step_size=%s",
+            sample_steps,
+            args.vjepa_model,
+            args.vjepa_guidance_steps,
+            args.vjepa_latent_step_size,
+        )
     result = pipe.generate_vjepa(
         input_prompt=args.prompt,
         img=img,
@@ -630,7 +702,7 @@ def main():
 
     logging.info("Saving video to %s", output_path)
     save_video(
-        tensor=result,
+        tensor=result[None],
         save_file=str(output_path),
         fps=cfg.sample_fps,
         nrow=1,

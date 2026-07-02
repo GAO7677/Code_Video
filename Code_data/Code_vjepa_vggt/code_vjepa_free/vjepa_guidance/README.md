@@ -101,6 +101,10 @@ Expected practical starting point:
   Standalone Wan 2.2 TI2V/I2V wrapper that reuses the PhaseLock-style
   sampling-loop structure, but swaps the guidance rule to V-JEPA energy
   guidance.
+- `wan21_t2v_1_3b_vjepa.py`
+  Standalone Wan 2.1 T2V 1.3B Diffusers wrapper with the same V-JEPA latent
+  guidance idea. This variant is text-to-video only because the 1.3B
+  checkpoint is not an image-conditioned model.
 
 ## Integration Target In Wan
 
@@ -208,6 +212,45 @@ CUDA_VISIBLE_DEVICES=0 python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/
 ```
 
 This is the foreground startup command for the current prototype script.
+
+## Wan2.1 1.3B Command
+
+The `Wan-AI-Wan2.1-T2V-1.3B-Diffusers` checkpoint is `T2V` only, so this
+script does not accept a first-frame image.
+
+```bash
+CUDA_VISIBLE_DEVICES=0,5 /data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_vjepa.py \
+  --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers \
+  --prompt "A ball falls from a platform and bounces on the floor" \
+  --output /data/gaoya/agent-data/outputs/vjepa_guidance/wan21_t2v_1_3b_vjepa.mp4 \
+  --height 480 \
+  --width 832 \
+  --num_frames 81 \
+  --num_inference_steps 50 \
+  --guidance_scale 6 \
+  --flow_shift 8 \
+  --device_id 1 \
+  --vjepa_device_id 0 \
+  --vjepa_model vith \
+  --vjepa_ckpt /data/gaoya/ckpt/VJEPA2/vith.pt
+```
+
+For a pure baseline run with default Diffusers sampling:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,5 /data/gaoya/miniconda3/envs/wan/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_vjepa.py \
+  --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers \
+  --prompt "A ball falls from a platform and bounces on the floor" \
+  --output /data/gaoya/agent-data/outputs/vjepa_guidance/wan21_t2v_1_3b_baseline.mp4 \
+  --height 480 \
+  --width 832 \
+  --num_frames 81 \
+  --num_inference_steps 50 \
+  --guidance_scale 6 \
+  --flow_shift 8 \
+  --device_id 1 \
+  --disable_vjepa_guidance
+```
 
 ## What Is Not Implemented Here
 
