@@ -460,6 +460,8 @@ def _build_cond_context(
     captions: list[str],
     num_context_frames: torch.Tensor,
     device_obj: torch.device,
+    context_boxes: torch.Tensor | None = None,
+    batch_extra_tensors: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, object]]:
     model_cfg = config["model"]
     data_cfg = config["data"]
@@ -484,6 +486,11 @@ def _build_cond_context(
             "video_path": ["inference_input"],
             "frame_indices": torch.arange(videos.shape[2], dtype=torch.long).unsqueeze(0),
         }
+        if context_boxes is not None:
+            batch["context_boxes"] = context_boxes.to(device_obj)
+        if batch_extra_tensors:
+            for key, value in batch_extra_tensors.items():
+                batch[key] = value.to(device_obj)
         prepared = trainer._prepare_batch(batch)
 
     debug = prepared["debug"]

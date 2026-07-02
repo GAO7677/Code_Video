@@ -22,7 +22,13 @@ from code_vjepa_vggt.infer_context_video_wan import (
 from code_vjepa_vggt.infer_v_newtrain_context_video_wan import _load_context_video
 from code_vjepa_vggt.object_token_teacher_student.runtime_stage1b_context_only import ContextOnlyInjectionTrainer
 from code_vjepa_vggt.utils.config import load_yaml_config
+from code_vjepa_vggt.utils.npz_io import load_npz_tensor_dict
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
+
+_DEFAULT_0613PYBULLET_EPISODES_ROOT = Path(
+    "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/"
+    "industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500/val"
+)
 
 
 def _normalize_ckpt_method_name(name: str) -> str:
@@ -133,6 +139,69 @@ def _resolve_input_video(payload: dict[str, object], json_path: Path) -> str:
     raise KeyError(f"missing required field 'input_video' in {json_path}")
 
 
+def _sample_npz_from_json_name(json_name: str) -> Path | None:
+    if not json_name.startswith("0613pybullet_sample_") or not json_name.endswith(".json"):
+        return None
+    sample_stub = json_name[len("0613pybullet_") : -len(".json")]
+    candidate = _DEFAULT_0613PYBULLET_EPISODES_ROOT / f"{sample_stub}.npz"
+    return candidate if candidate.is_file() else None
+
+
+def _resolve_sample_npz(payload: dict[str, object], json_path: Path) -> Path | None:
+    explicit_npz = payload.get("sample_npz")
+    if isinstance(explicit_npz, str) and explicit_npz.strip():
+        candidate = Path(explicit_npz).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
+    return _sample_npz_from_json_name(json_path.name)
+
+
+def _load_sample_batch_tensors_for_inference(
+    *,
+    payload: dict[str, object],
+    json_path: Path,
+    frame_indices,
+    max_objects: int,
+) -> tuple[dict[str, torch.Tensor] | None, dict[str, object]]:
+    sample_npz = _resolve_sample_npz(payload, json_path)
+    if sample_npz is None:
+        return None, {"sample_npz": None, "context_boxes": None, "status": "missing_sample_npz"}
+    tensors = load_npz_tensor_dict(sample_npz)
+    if "context_boxes" not in tensors:
+        return None, {"sample_npz": str(sample_npz), "context_boxes": None, "status": "missing_context_boxes"}
+    context_boxes = tensors["context_boxes"].float()
+    frame_indices_t = torch.as_tensor(frame_indices, dtype=torch.long)
+    if frame_indices_t.numel() == 0:
+        return None, {"sample_npz": str(sample_npz), "context_boxes": None, "status": "empty_frame_indices"}
+    if int(frame_indices_t.max().item()) >= int(context_boxes.shape[0]):
+        raise IndexError(
+            f"frame_indices out of range for context_boxes in {sample_npz}: "
+            f"max_index={int(frame_indices_t.max().item())}, context_frames={int(context_boxes.shape[0])}"
+        )
+    selected = context_boxes.index_select(0, frame_indices_t)
+    selected = selected[:, : max(1, int(max_objects))].contiguous()
+    batch_tensors: dict[str, torch.Tensor] = {
+        "context_boxes": selected.unsqueeze(0),
+    }
+    if "context_states" in tensors:
+        context_states = tensors["context_states"].float().index_select(0, frame_indices_t).contiguous()
+        batch_tensors["context_states"] = context_states.unsqueeze(0)
+    if "future_boxes" in tensors:
+        batch_tensors["future_boxes"] = tensors["future_boxes"].float()[:, : max(1, int(max_objects))].unsqueeze(0)
+    if "future_states" in tensors:
+        batch_tensors["future_states"] = tensors["future_states"].float().unsqueeze(0)
+    if "appearance" in tensors:
+        batch_tensors["appearance"] = tensors["appearance"].float().unsqueeze(0)
+    if "camera" in tensors:
+        batch_tensors["camera"] = tensors["camera"].float().unsqueeze(0)
+    return batch_tensors, {
+        "sample_npz": str(sample_npz),
+        "context_boxes": list(selected.shape),
+        "loaded_keys": sorted(batch_tensors.keys()),
+        "status": "loaded",
+    }
+
+
 def _write_text_lines(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -211,6 +280,17 @@ def main() -> None:
             context_video_single = preprocess_video_rgb_uint8(frames, tuple(config["data"]["resolution"]))
             context_video = context_video_single.unsqueeze(0).to(trainer.device_obj)
             num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long, device=trainer.device_obj)
+            sample_batch_tensors, context_boxes_debug = _load_sample_batch_tensors_for_inference(
+                payload=payload,
+                json_path=input_json_path,
+                frame_indices=frame_indices,
+                max_objects=int(getattr(trainer, "max_objects", config["model"].get("object_num_queries", 8))),
+            )
+            if sample_batch_tensors is None:
+                raise RuntimeError(
+                    "context_boxes are required for stage1b_context_only inference with CoTracker priors; "
+                    f"resolve_status={context_boxes_debug}"
+                )
 
             text_context, object_context, context_latents, prep_debug = _build_cond_context(
                 trainer=trainer,
@@ -219,6 +299,12 @@ def main() -> None:
                 captions=[input_caption],
                 num_context_frames=num_context_frames,
                 device_obj=trainer.device_obj,
+                context_boxes=sample_batch_tensors["context_boxes"].to(trainer.device_obj),
+                batch_extra_tensors={
+                    key: value.to(trainer.device_obj)
+                    for key, value in sample_batch_tensors.items()
+                    if key != "context_boxes"
+                },
             )
             with torch.inference_mode():
                 pred, sample_debug = _run_sampling(
@@ -245,6 +331,7 @@ def main() -> None:
             "context_video": str(input_video),
             "prompt": str(input_caption),
             "frame_indices": frame_indices.tolist(),
+            "context_boxes_debug": context_boxes_debug,
             "prep_debug": prep_debug,
             "sample_debug": sample_debug,
             "trainable_tensor_stats": {
