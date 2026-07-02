@@ -1,15 +1,18 @@
 from __future__ import annotations
-# Usage:
-#   CUDA_VISIBLE_DEVICES=0 \
-#   PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-#   python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_v2v.py \
-#     --checkpoint /data/gaoya/agent-data/checkpoints/pybullet0629_teacher_student/stage1b_context_only/<STAGE1B_STEP>.pt \
-#     --init-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
-#     --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-#     --model-name <MODEL_NAME> \
-#     --sampling-steps 40 \
-#     --save-raw \
-#     [--limit N] [--force]
+'''
+  CUDA_VISIBLE_DEVICES=0 \
+  PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+  python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_v2v.py \
+    --checkpoint /data/gaoya/agent-data/checkpoints/pybullet0629_teacher_student/stage1b_context_only/<STAGE1B_STEP>.pt \
+    --init-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+    --model-name <MODEL_NAME> \
+    --sampling-steps 40 \
+    --save-raw 
+
+'''
+
+
 #
 # Weight loading order (must match training):
 #   1. Wan DiT base        : config model.wan_ckpt_dir  (Wan2.2-TI2V-5B shards)

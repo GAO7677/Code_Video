@@ -1,0 +1,3 @@
+from .vjepa_surprise import VJEPASurpriseEnergy
+from .wan_latent_guidance import WanVJEPAConfig, apply_vjepa_latent_guidance, pick_guidance_step_indices
+
