@@ -1,24 +1,18 @@
 from __future__ import annotations
-'''
-  CUDA_VISIBLE_DEVICES=0 \
-  PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
-  python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_v2v.py \
-    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only/step_0001000.pt \
-    --init-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
-    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-    --model-name stage1b_context_only_0001000 \
-    --sampling-steps 40 \
-    --save-raw 
+"""
+Stage1B context-only no-GT-box inference.
 
-'''
+Weight loading order (must match training):
+  1. Wan DiT base        : config model.wan_ckpt_dir
+  2. Wan LoRA            : config model.init_wan_lora_from_checkpoint
+  3. Stage1A pooler      : --init-from
+  4. Stage1B trainables  : --checkpoint
 
-
-#
-# Weight loading order (must match training):
-#   1. Wan DiT base        : config model.wan_ckpt_dir  (Wan2.2-TI2V-5B shards)
-#   2. Wan LoRA            : config model.init_wan_lora_from_checkpoint  (frozen, loaded by trainer constructor)
-#   3. Stage1A pooler      : --init-from  (object_pooler + object_aux_heads, strict=False)
-#   4. Stage1B trainables  : --checkpoint (object_adapter + wan object_embedding/cross_attn/gate/norm4, strict=False)
+Unlike the original `wan_stage1b_context_only_v2v.py`, this script does NOT read
+dataset GT `context_boxes` from sample npz. It rebuilds pseudo boxes at inference
+time using the same viewer-style GroundingDINO + SAM2 provider used by
+`train_stage1b_context_only_no_gt_box.py`.
+"""
 
 import argparse
 import gc
@@ -41,14 +35,9 @@ from code_vjepa_vggt.infer_context_video_wan import (
 )
 from code_vjepa_vggt.infer_v_newtrain_context_video_wan import _load_context_video
 from code_vjepa_vggt.object_token_teacher_student.runtime_stage1b_context_only import ContextOnlyInjectionTrainer
+from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import ViewerGroundingBoxProvider
 from code_vjepa_vggt.utils.config import load_yaml_config
-from code_vjepa_vggt.utils.npz_io import load_npz_tensor_dict
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
-
-_DEFAULT_0613PYBULLET_EPISODES_ROOT = Path(
-    "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/"
-    "industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500/val"
-)
 
 
 def _normalize_ckpt_method_name(name: str) -> str:
@@ -85,22 +74,50 @@ def _checkpoint_chain_info(config: dict, checkpoint_path: Path, init_from: Path)
         state_dict,
         int(config["model"].get("object_pooler_latent_dim", 16)),
     )
+    slot_embed = state_dict.get("object_adapter.slot_embed.weight")
+    if slot_embed is not None and hasattr(slot_embed, "shape") and len(slot_embed.shape) == 2:
+        inferred_num_slots = int(slot_embed.shape[0])
+        config["model"]["sam2_max_objects"] = inferred_num_slots
+        config["model"]["object_num_queries"] = inferred_num_slots
     config["model"]["object_pooler_latent_dim"] = int(object_pooler_latent_dim)
-    config["model"]["init_wan_lora_from_checkpoint"] = str(
-        config["model"]["init_wan_lora_from_checkpoint"]
-    )
+    config["model"]["init_wan_lora_from_checkpoint"] = str(config["model"]["init_wan_lora_from_checkpoint"])
     return {
         "trainable_checkpoint": str(checkpoint_path),
         "stage1a_init_from": str(init_from),
         "wan_root": str(config["model"]["wan_ckpt_dir"]),
         "frozen_wan_lora_init": str(config["model"].get("init_wan_lora_from_checkpoint")),
         "object_pooler_latent_dim": int(object_pooler_latent_dim),
+        "inferred_num_slots": int(config["model"].get("sam2_max_objects", -1)),
     }
+
+
+def _build_grounding_provider(config: dict, trainer: ContextOnlyInjectionTrainer, device: str) -> ViewerGroundingBoxProvider:
+    model_cfg = config["model"]
+    include_caption_terms = not bool(model_cfg.get("grounding_disable_caption_terms", True))
+    return ViewerGroundingBoxProvider(
+        device=str(model_cfg.get("grounding_device", device)),
+        segment_len=int(model_cfg.get("sam2_segment_len", 8)),
+        max_objects=int(getattr(trainer, "max_objects", model_cfg.get("object_num_queries", 8))),
+        points_per_object=int(getattr(trainer, "points_per_object", model_cfg.get("object_num_queries", 8))),
+        proposal_source=str(model_cfg.get("grounding_proposal_source", "gdino_only")),
+        motion_score_ratio=float(model_cfg.get("grounding_motion_score_ratio", 0.15)),
+        text_prompt=str(model_cfg.get("grounding_text_prompt", "box . cube . block . cylinder . capsule . sphere . ball .")),
+        extra_prompt_terms=str(model_cfg.get("grounding_extra_prompt_terms", "")),
+        include_caption_terms=include_caption_terms,
+        gdino_box_threshold=float(model_cfg.get("grounding_gdino_box_threshold", 0.20)),
+        gdino_text_threshold=float(model_cfg.get("grounding_gdino_text_threshold", 0.15)),
+        prompt_frame_mode=str(model_cfg.get("grounding_prompt_frame_mode", "first")),
+        track_dedupe_iou_threshold=float(model_cfg.get("grounding_track_dedupe_iou_threshold", 0.75)),
+        container_suppress_ratio_threshold=float(model_cfg.get("grounding_container_suppress_ratio_threshold", 0.95)),
+        container_suppress_min_contained=int(model_cfg.get("grounding_container_suppress_min_contained", 2)),
+        container_suppress_min_area_ratio=float(model_cfg.get("grounding_container_suppress_min_area_ratio", 1.5)),
+        container_suppress_small_iou_threshold=float(model_cfg.get("grounding_container_suppress_small_iou_threshold", 0.7)),
+    )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Batch-run Stage1B context-only checkpoints over an input json list."
+        description="Batch-run Stage1B context-only no-GT-box checkpoints over an input json list."
     )
     parser.add_argument("--checkpoint", type=Path, required=True, help="step_XXXXXXX.pt trainable checkpoint")
     parser.add_argument("--init-from", type=Path, required=True, help="Stage1A checkpoint used during training init-from")
@@ -111,7 +128,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/"
-            "object_token_teacher_student/config_stage1b_context_only_template.yaml"
+            "object_token_teacher_student/config_stage1b_context_only_no_gt_box_template.yaml"
         ),
     )
     parser.add_argument("--output-root", type=Path, default=None)
@@ -159,69 +176,6 @@ def _resolve_input_video(payload: dict[str, object], json_path: Path) -> str:
     raise KeyError(f"missing required field 'input_video' in {json_path}")
 
 
-def _sample_npz_from_json_name(json_name: str) -> Path | None:
-    if not json_name.startswith("0613pybullet_sample_") or not json_name.endswith(".json"):
-        return None
-    sample_stub = json_name[len("0613pybullet_") : -len(".json")]
-    candidate = _DEFAULT_0613PYBULLET_EPISODES_ROOT / f"{sample_stub}.npz"
-    return candidate if candidate.is_file() else None
-
-
-def _resolve_sample_npz(payload: dict[str, object], json_path: Path) -> Path | None:
-    explicit_npz = payload.get("sample_npz")
-    if isinstance(explicit_npz, str) and explicit_npz.strip():
-        candidate = Path(explicit_npz).expanduser().resolve()
-        if candidate.is_file():
-            return candidate
-    return _sample_npz_from_json_name(json_path.name)
-
-
-def _load_sample_batch_tensors_for_inference(
-    *,
-    payload: dict[str, object],
-    json_path: Path,
-    frame_indices,
-    max_objects: int,
-) -> tuple[dict[str, torch.Tensor] | None, dict[str, object]]:
-    sample_npz = _resolve_sample_npz(payload, json_path)
-    if sample_npz is None:
-        return None, {"sample_npz": None, "context_boxes": None, "status": "missing_sample_npz"}
-    tensors = load_npz_tensor_dict(sample_npz)
-    if "context_boxes" not in tensors:
-        return None, {"sample_npz": str(sample_npz), "context_boxes": None, "status": "missing_context_boxes"}
-    context_boxes = tensors["context_boxes"].float()
-    frame_indices_t = torch.as_tensor(frame_indices, dtype=torch.long)
-    if frame_indices_t.numel() == 0:
-        return None, {"sample_npz": str(sample_npz), "context_boxes": None, "status": "empty_frame_indices"}
-    if int(frame_indices_t.max().item()) >= int(context_boxes.shape[0]):
-        raise IndexError(
-            f"frame_indices out of range for context_boxes in {sample_npz}: "
-            f"max_index={int(frame_indices_t.max().item())}, context_frames={int(context_boxes.shape[0])}"
-        )
-    selected = context_boxes.index_select(0, frame_indices_t)
-    selected = selected[:, : max(1, int(max_objects))].contiguous()
-    batch_tensors: dict[str, torch.Tensor] = {
-        "context_boxes": selected.unsqueeze(0),
-    }
-    if "context_states" in tensors:
-        context_states = tensors["context_states"].float().index_select(0, frame_indices_t).contiguous()
-        batch_tensors["context_states"] = context_states.unsqueeze(0)
-    if "future_boxes" in tensors:
-        batch_tensors["future_boxes"] = tensors["future_boxes"].float()[:, : max(1, int(max_objects))].unsqueeze(0)
-    if "future_states" in tensors:
-        batch_tensors["future_states"] = tensors["future_states"].float().unsqueeze(0)
-    if "appearance" in tensors:
-        batch_tensors["appearance"] = tensors["appearance"].float().unsqueeze(0)
-    if "camera" in tensors:
-        batch_tensors["camera"] = tensors["camera"].float().unsqueeze(0)
-    return batch_tensors, {
-        "sample_npz": str(sample_npz),
-        "context_boxes": list(selected.shape),
-        "loaded_keys": sorted(batch_tensors.keys()),
-        "status": "loaded",
-    }
-
-
 def _write_text_lines(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -229,6 +183,27 @@ def _write_text_lines(path: Path, lines: list[str]) -> None:
             handle.write(line)
             if not line.endswith("\n"):
                 handle.write("\n")
+
+
+def _build_zero_batch_extras(
+    *,
+    context_video: torch.Tensor,
+    context_boxes: torch.Tensor,
+    total_frames: int,
+) -> dict[str, torch.Tensor]:
+    batch_size = int(context_video.shape[0])
+    context_frames = int(context_video.shape[2])
+    max_objects = int(context_boxes.shape[2])
+    future_frames = max(0, int(total_frames) - int(context_frames))
+    device = context_video.device
+    dtype = context_video.dtype
+    return {
+        "future_boxes": torch.zeros((batch_size, future_frames, max_objects, 4), dtype=dtype, device=device),
+        "context_states": torch.zeros((batch_size, context_frames, max_objects, 10), dtype=dtype, device=device),
+        "future_states": torch.zeros((batch_size, future_frames, max_objects, 10), dtype=dtype, device=device),
+        "appearance": torch.zeros((batch_size, max_objects, 16), dtype=dtype, device=device),
+        "camera": torch.zeros((batch_size, context_frames, 10), dtype=dtype, device=device),
+    }
 
 
 def main() -> None:
@@ -239,7 +214,7 @@ def main() -> None:
     model_name = str(args.model_name).strip()
     output_root = resolve_output_root(
         explicit_output_root=args.output_root,
-        base_output_root="/data/gaoya/agent-data/outputs/stage1b_context_only_v2v",
+        base_output_root="/data/gaoya/agent-data/outputs/stage1b_context_only_no_gt_box_v2v",
         model_name=model_name,
     )
     output_root.mkdir(parents=True, exist_ok=True)
@@ -248,14 +223,12 @@ def main() -> None:
     checkpoint_chain = _checkpoint_chain_info(config, checkpoint_path, init_from)
     device = _resolve_launch_device()
     trainer = ContextOnlyInjectionTrainer(config, build_optimizer=False, device=device)
-    # Load Stage1A pooler weights first so object_pooler matches what was used during training.
-    # The Stage1B checkpoint only saves adapter + Wan object modules (pooler was frozen),
-    # so without this step object_pooler would stay at random init.
+    grounding_provider = _build_grounding_provider(config, trainer, device)
+
     if init_from.is_file():
         stage1a_state = torch.load(init_from, map_location="cpu", weights_only=False)
         if isinstance(stage1a_state, dict) and "model" in stage1a_state:
             trainer.load_state_dict(stage1a_state["model"], strict=False)
-    # Overlay Stage1B trainable weights (adapter + Wan object_embedding/cross_attn/gate/norm4).
     load_info = _load_trainable_state_into_model(trainer, checkpoint_path)
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
@@ -277,6 +250,8 @@ def main() -> None:
         "sampling_steps": int(args.sampling_steps),
         "sampling_mode": str(args.sampling_mode),
         "seed": int(args.seed),
+        "box_source": "viewer_grounding_gdino_sam2",
+        "depends_on_dataset_boxes": False,
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(batch_manifest, handle, indent=2, ensure_ascii=False)
@@ -308,17 +283,23 @@ def main() -> None:
             context_video_single = preprocess_video_rgb_uint8(frames, tuple(config["data"]["resolution"]))
             context_video = context_video_single.unsqueeze(0).to(trainer.device_obj)
             num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long, device=trainer.device_obj)
-            sample_batch_tensors, context_boxes_debug = _load_sample_batch_tensors_for_inference(
-                payload=payload,
-                json_path=input_json_path,
-                frame_indices=frame_indices,
-                max_objects=int(getattr(trainer, "max_objects", config["model"].get("object_num_queries", 8))),
+
+            frames_tchw_01 = ((context_video_single.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
+            viewer_sample = grounding_provider.build_sample(
+                frames_tchw_01=frames_tchw_01,
+                caption=input_caption,
+                image_hw=(int(context_video_single.shape[-2]), int(context_video_single.shape[-1])),
             )
-            if sample_batch_tensors is None:
-                raise RuntimeError(
-                    "context_boxes are required for stage1b_context_only inference with CoTracker priors; "
-                    f"resolve_status={context_boxes_debug}"
-                )
+            context_boxes = torch.from_numpy(viewer_sample.context_boxes_norm).unsqueeze(0).to(
+                trainer.device_obj,
+                dtype=context_video.dtype,
+            )
+            total_frames = int(config["data"]["num_context_frames"] / float(config["data"].get("context_fraction", 0.5)))
+            batch_extra_tensors = _build_zero_batch_extras(
+                context_video=context_video,
+                context_boxes=context_boxes,
+                total_frames=total_frames,
+            )
 
             text_context, object_context, context_latents, prep_debug = _build_cond_context(
                 trainer=trainer,
@@ -327,12 +308,8 @@ def main() -> None:
                 captions=[input_caption],
                 num_context_frames=num_context_frames,
                 device_obj=trainer.device_obj,
-                context_boxes=sample_batch_tensors["context_boxes"].to(trainer.device_obj),
-                batch_extra_tensors={
-                    key: value.to(trainer.device_obj)
-                    for key, value in sample_batch_tensors.items()
-                    if key != "context_boxes"
-                },
+                context_boxes=context_boxes,
+                batch_extra_tensors=batch_extra_tensors,
             )
             with torch.inference_mode():
                 pred, sample_debug = _run_sampling(
@@ -340,7 +317,7 @@ def main() -> None:
                     text_context=text_context,
                     object_context=object_context,
                     context_latents=context_latents,
-                    total_frames=int(config["data"]["num_context_frames"] / float(config["data"].get("context_fraction", 0.5))),
+                    total_frames=total_frames,
                     num_context_frames=int(num_context_frames.item()),
                     num_inference_steps=int(args.sampling_steps),
                 )
@@ -359,7 +336,15 @@ def main() -> None:
             "context_video": str(input_video),
             "prompt": str(input_caption),
             "frame_indices": frame_indices.tolist(),
-            "context_boxes_debug": context_boxes_debug,
+            "context_boxes_debug": {
+                "status": "viewer_grounding_loaded",
+                "context_boxes": list(viewer_sample.context_boxes_norm.shape),
+                "object_count": int(viewer_sample.object_valid_mask.sum()),
+                "prior_source": viewer_sample.prior_source,
+                "prompt_mode": viewer_sample.prompt_mode,
+                "prompt_frame_idx": int(viewer_sample.prompt_frame_idx),
+                "debug": viewer_sample.debug,
+            },
             "prep_debug": prep_debug,
             "sample_debug": sample_debug,
             "trainable_tensor_stats": {
