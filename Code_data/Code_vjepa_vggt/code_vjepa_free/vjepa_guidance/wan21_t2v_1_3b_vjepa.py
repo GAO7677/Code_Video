@@ -21,6 +21,31 @@ CUDA_VISIBLE_DEVICES=0,5 /data/gaoya/miniconda3/envs/wan/bin/python \
     --vjepa_model vith \
     --vjepa_ckpt /data/gaoya/ckpt/VJEPA2/vith.pt
 
+Tested no-OOM guided run:
+
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=5,0 /data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_vjepa.py \
+    --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers \
+    --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+    --output /data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/wan21_1p3b_vjepa_nf49_g2.mp4 \
+    --height 480 \
+    --width 832 \
+    --num_frames 49 \
+    --num_inference_steps 10 \
+    --guidance_scale 6 \
+    --flow_shift 8 \
+    --device_id 0 \
+    --vjepa_device_id 1 \
+    --vjepa_model vith \
+    --vjepa_ckpt /data/gaoya/ckpt/VJEPA2/vith.pt \
+    --vae_dtype bfloat16 \
+    --preview_downsample_factor 4 \
+    --preview_frame_stride 2 \
+    --vjepa_guidance_steps 2 \
+    --window_size 8 \
+    --context_frames 4 \
+    --stride 2
+
 Baseline run:
 
 CUDA_VISIBLE_DEVICES=0 /data/gaoya/miniconda3/envs/wan/bin/python \
@@ -463,6 +488,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--ckpt_dir", type=Path, default=DEFAULT_CKPT_DIR)
     parser.add_argument("--prompt", type=str, default=DEFAULT_PROMPT)
     parser.add_argument("--negative_prompt", type=str, default="")
+    parser.add_argument(
+        "--image",
+        type=Path,
+        default=None,
+        help="Unsupported for this checkpoint. Kept only to provide an explicit error message.",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device_id", type=int, default=0)
@@ -529,6 +560,11 @@ def main() -> None:
 
     if not args.ckpt_dir.is_dir():
         raise FileNotFoundError(f"Wan checkpoint dir not found: {args.ckpt_dir}")
+    if args.image is not None:
+        raise ValueError(
+            "Wan-AI-Wan2.1-T2V-1.3B-Diffusers is a text-to-video checkpoint and does not support "
+            "first-frame image conditioning. Use Wan2.2 TI2V or Wan2.1-I2V-14B for image-conditioned generation."
+        )
     if not args.disable_vjepa_guidance and not args.vjepa_ckpt.exists():
         raise FileNotFoundError(f"V-JEPA checkpoint not found: {args.vjepa_ckpt}")
 

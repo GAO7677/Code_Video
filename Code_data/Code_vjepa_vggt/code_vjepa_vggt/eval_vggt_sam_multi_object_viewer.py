@@ -916,6 +916,9 @@ def main() -> None:
     parser.add_argument("--num-multi", type=int, default=3)
     parser.add_argument("--phys-start-index", type=int, default=0)
     parser.add_argument("--phys-split", default=None)
+    parser.add_argument("--sample-ids", default="")
+    parser.add_argument("--window-indexes", default="")
+    parser.add_argument("--skip-ball-block", action="store_true")
     parser.add_argument("--max-objects", type=int, default=6)
     parser.add_argument(
         "--proposal-source",
@@ -923,7 +926,7 @@ def main() -> None:
         default="gdino_then_motion",
     )
     parser.add_argument("--motion-score-ratio", type=float, default=0.15)
-    parser.add_argument("--text-prompt", default="")
+    parser.add_argument("--text-prompt", default="box . cube . block . cylinder . capsule . sphere . ball .")
     parser.add_argument("--extra-prompt-terms", default="object . thing . item . tool . toy . rigid object .")
     parser.add_argument("--disable-caption-terms", action="store_true")
     parser.add_argument("--gdino-box-threshold", type=float, default=0.20)
@@ -983,9 +986,45 @@ def main() -> None:
     assets_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
-    phys_start = max(int(args.phys_start_index), 0)
-    phys_end = min(len(phys_ds), phys_start + max(int(args.num_single), 0))
-    for idx in range(phys_start, phys_end):
+    sample_ids = [item.strip() for item in str(args.sample_ids).split(",") if item.strip()]
+    selected_window_indexes: set[int] | None = None
+    if str(args.window_indexes).strip():
+        selected_window_indexes = set()
+        for item in str(args.window_indexes).split(","):
+            item = item.strip()
+            if not item:
+                continue
+            selected_window_indexes.add(int(item))
+
+    selected_phys_indices: list[int]
+    if sample_ids:
+        wanted = set(sample_ids)
+        selected_phys_indices = []
+        for idx, meta_path in enumerate(phys_ds.samples):
+            stem = meta_path.stem
+            if "_w" not in stem:
+                continue
+            sample_id, window_suffix = stem.rsplit("_w", 1)
+            if sample_id not in wanted:
+                continue
+            try:
+                window_idx = int(window_suffix)
+            except ValueError:
+                continue
+            if selected_window_indexes is not None and window_idx not in selected_window_indexes:
+                continue
+            selected_phys_indices.append(idx)
+        if not selected_phys_indices:
+            raise RuntimeError(
+                f"no phys_state samples matched sample_ids={sample_ids} "
+                f"with window_indexes={sorted(selected_window_indexes) if selected_window_indexes is not None else 'all'}"
+            )
+    else:
+        phys_start = max(int(args.phys_start_index), 0)
+        phys_end = min(len(phys_ds), phys_start + max(int(args.num_single), 0))
+        selected_phys_indices = list(range(phys_start, phys_end))
+
+    for idx in selected_phys_indices:
         sample = phys_ds[idx]
         sample["_fps"] = int(data_cfg.get("fps", 8))
         results.append(
@@ -1018,38 +1057,39 @@ def main() -> None:
             )
         )
 
-    for idx in range(min(args.num_multi, len(ball_ds))):
-        sample = ball_ds[idx]
-        sample["_fps"] = int(data_cfg.get("fps", 8))
-        results.append(
-            evaluate_case(
-                sample,
-                case_group="multi_ball_block",
-                vggt_adapter=vggt_adapter,
-                device=device,
-                sam2_device=str(args.sam2_device),
-                gdino_device=str(args.gdino_device),
-                output_dir=assets_dir,
-                min_queries_per_object=int(args.min_queries_per_object),
-                prompt_frame_mode=str(args.prompt_frame_mode),
-                save_depth_video=not bool(args.skip_depth_video),
-                save_world_points_video=not bool(args.skip_world_points_video),
-                max_objects=int(args.max_objects),
-                proposal_source=str(args.proposal_source),
-                motion_score_ratio=float(args.motion_score_ratio),
-                text_prompt=str(args.text_prompt),
-                extra_prompt_terms=str(args.extra_prompt_terms),
-                include_caption_terms=not bool(args.disable_caption_terms),
-                gdino_box_threshold=float(args.gdino_box_threshold),
-                gdino_text_threshold=float(args.gdino_text_threshold),
-                box_only_overlay=bool(args.box_only_overlay),
-                track_dedupe_iou_threshold=float(args.track_dedupe_iou_threshold),
-                container_suppress_ratio_threshold=float(args.container_suppress_ratio_threshold),
-                container_suppress_min_contained=int(args.container_suppress_min_contained),
-                container_suppress_min_area_ratio=float(args.container_suppress_min_area_ratio),
-                container_suppress_small_iou_threshold=float(args.container_suppress_small_iou_threshold),
+    if not bool(args.skip_ball_block):
+        for idx in range(min(args.num_multi, len(ball_ds))):
+            sample = ball_ds[idx]
+            sample["_fps"] = int(data_cfg.get("fps", 8))
+            results.append(
+                evaluate_case(
+                    sample,
+                    case_group="multi_ball_block",
+                    vggt_adapter=vggt_adapter,
+                    device=device,
+                    sam2_device=str(args.sam2_device),
+                    gdino_device=str(args.gdino_device),
+                    output_dir=assets_dir,
+                    min_queries_per_object=int(args.min_queries_per_object),
+                    prompt_frame_mode=str(args.prompt_frame_mode),
+                    save_depth_video=not bool(args.skip_depth_video),
+                    save_world_points_video=not bool(args.skip_world_points_video),
+                    max_objects=int(args.max_objects),
+                    proposal_source=str(args.proposal_source),
+                    motion_score_ratio=float(args.motion_score_ratio),
+                    text_prompt=str(args.text_prompt),
+                    extra_prompt_terms=str(args.extra_prompt_terms),
+                    include_caption_terms=not bool(args.disable_caption_terms),
+                    gdino_box_threshold=float(args.gdino_box_threshold),
+                    gdino_text_threshold=float(args.gdino_text_threshold),
+                    box_only_overlay=bool(args.box_only_overlay),
+                    track_dedupe_iou_threshold=float(args.track_dedupe_iou_threshold),
+                    container_suppress_ratio_threshold=float(args.container_suppress_ratio_threshold),
+                    container_suppress_min_contained=int(args.container_suppress_min_contained),
+                    container_suppress_min_area_ratio=float(args.container_suppress_min_area_ratio),
+                    container_suppress_small_iou_threshold=float(args.container_suppress_small_iou_threshold),
+                )
             )
-        )
 
     html_path = build_report(results, output_dir)
     print(f"eval report: {html_path}")

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
+from PIL import Image
 
 
 WAN_DIFFUSER_ROOT = "/home/gaoya/diffuser_code/src"
@@ -36,6 +37,7 @@ class ProbeConfig:
     capture_layers: List[int]
     capture_branches: str
     save_final_latents: bool
+    use_image_cond: bool
 
 
 def parse_args():
@@ -70,6 +72,11 @@ def parse_args():
     parser.add_argument("--capture_layers", default="2,8,14,20,29")
     parser.add_argument("--capture_branches", default="cond", choices=["cond", "both"])
     parser.add_argument("--save_final_latents", action="store_true")
+    parser.add_argument(
+        "--no_image_cond",
+        action="store_true",
+        help="Disable image conditioning even when input_image is available (pure T2V mode).",
+    )
     return parser.parse_args()
 
 
@@ -101,7 +108,9 @@ def choose_prompt(source_record: Dict, manifest_row: Dict[str, str]) -> str:
     prompt = source_record.get("input_caption") or source_record.get("caption") or source_record.get("prompt")
     if prompt:
         return str(prompt)
-    return manifest_row["basename"].replace(".mp4", "").replace("_", " ")
+    fallback = manifest_row["basename"].replace(".mp4", "").replace("_", " ")
+    print(f"WARNING: no caption in source JSON for {manifest_row['basename']}, using basename fallback", flush=True)
+    return fallback
 
 
 def choose_negative_prompt(source_record: Dict, cli_negative_prompt: Optional[str]) -> str:
@@ -111,11 +120,69 @@ def choose_negative_prompt(source_record: Dict, cli_negative_prompt: Optional[st
     return "" if value is None else str(value)
 
 
-def choose_seed(source_record: Dict, config: ProbeConfig) -> int:
+def choose_seed(source_record: Dict, config: "ProbeConfig") -> int:
     if config.seed_mode == "fixed":
         return config.fixed_seed
-    value = source_record.get("seed", config.fixed_seed)
+    value = source_record.get("seed")
+    if value is None:
+        print(f"WARNING: no seed in source JSON, using fixed_seed={config.fixed_seed}", flush=True)
+        return config.fixed_seed
     return int(value)
+
+
+def choose_image_path(source_record: Dict) -> Optional[str]:
+    """Return an image path for I2V conditioning, or None if not available."""
+    img = source_record.get("input_image")
+    if img and Path(img).exists():
+        return str(img)
+    # Fallback: extract first frame path from input_video if present
+    vid = source_record.get("input_video")
+    if vid and Path(vid).exists():
+        return str(vid)
+    return None
+
+
+def load_image_for_cond(image_path: str, height: int, width: int) -> Image.Image:
+    """Load a PIL image (or first frame of video) resized to (width, height)."""
+    p = Path(image_path)
+    if p.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv", ".webm"):
+        import cv2
+        cap = cv2.VideoCapture(str(p))
+        ret, frame = cap.read()
+        cap.release()
+        if not ret:
+            raise RuntimeError(f"Cannot read first frame from video: {image_path}")
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+    else:
+        img = Image.open(image_path).convert("RGB")
+    return img.resize((width, height), Image.LANCZOS)
+
+
+def encode_image_latent(pipe, pil_image: Image.Image, height: int, width: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """VAE-encode a PIL image into a latent tensor of shape [1, z_dim, 1, H_lat, W_lat]."""
+    import numpy as np
+    arr = np.array(pil_image, dtype=np.float32) / 255.0  # [H, W, 3]
+    arr = arr * 2.0 - 1.0  # [-1, 1]
+    img_tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).unsqueeze(2)  # [1, 3, 1, H, W]
+    img_tensor = img_tensor.to(device=device, dtype=pipe.vae.dtype)
+
+    with torch.no_grad():
+        latent = pipe.vae.encode(img_tensor).latent_dist.mode()  # [1, z_dim, 1, H_lat, W_lat]
+
+    latents_mean = (
+        torch.tensor(pipe.vae.config.latents_mean)
+        .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+        .to(device, dtype)
+    )
+    latents_std = 1.0 / (
+        torch.tensor(pipe.vae.config.latents_std)
+        .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+        .to(device, dtype)
+    )
+    latent = latent.to(dtype)
+    latent = (latent - latents_mean) * latents_std
+    return latent
 
 
 def compute_token_grid(latent_shape: Tuple[int, ...], patch_size: Tuple[int, int, int]) -> Tuple[int, int, int]:
@@ -248,9 +315,10 @@ def load_pipe(config: ProbeConfig):
     return pipe
 
 
-def build_sample_runtime(manifest_row: Dict[str, str], config: ProbeConfig) -> Dict:
+def build_sample_runtime(manifest_row: Dict[str, str], config: "ProbeConfig") -> Dict:
     source_record = load_json(manifest_row["json_path"])
     sample_id = f"{manifest_row['pair_id']}__{manifest_row['role']}"
+    image_path = choose_image_path(source_record) if config.use_image_cond else None
     return {
         "sample_id": sample_id,
         "manifest_row": manifest_row,
@@ -258,6 +326,7 @@ def build_sample_runtime(manifest_row: Dict[str, str], config: ProbeConfig) -> D
         "prompt": choose_prompt(source_record, manifest_row),
         "negative_prompt": choose_negative_prompt(source_record, config.negative_prompt),
         "seed": choose_seed(source_record, config),
+        "image_path": image_path,
     }
 
 
@@ -309,16 +378,55 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
         generator=torch.Generator(device=config.device).manual_seed(runtime["seed"]),
         latents=None,
     )
-    mask = torch.ones(latents.shape, dtype=torch.float32, device=pipe._execution_device)
     patch_size = tuple(pipe.transformer.config.patch_size)
+
+    # Build image conditioning if available (I2V mode for Wan2.2 TI2V).
+    # first_frame_mask is 0 at the first temporal latent frame and 1 elsewhere.
+    # The conditioned latent_model_input replaces first-frame noise with VAE(image),
+    # and the per-token timestep is set to 0 for already-denoised (first-frame) positions.
+    image_path = runtime.get("image_path")
+    image_cond_active = False
+    latent_condition = None
+    first_frame_mask = None
+    if image_path is not None:
+        try:
+            pil_img = load_image_for_cond(image_path, config.height, config.width)
+            dtype_t = torch_dtype_from_name(config.dtype)
+            latent_condition = encode_image_latent(pipe, pil_img, config.height, config.width, pipe._execution_device, dtype_t)
+            # shape: [1, z_dim, 1, H_lat, W_lat] -> broadcast to [1, z_dim, T_lat, H_lat, W_lat]
+            num_latent_frames = latents.shape[2]
+            latent_condition = latent_condition.expand(-1, -1, num_latent_frames, -1, -1).clone()
+            first_frame_mask = torch.ones(1, 1, num_latent_frames, latents.shape[3], latents.shape[4],
+                                          dtype=torch.float32, device=pipe._execution_device)
+            first_frame_mask[:, :, 0] = 0.0
+            image_cond_active = True
+            print(f"[I2V] image conditioning active: {image_path}", flush=True)
+        except Exception as e:
+            print(f"WARNING: failed to load/encode image {image_path}: {e}, falling back to T2V mode", flush=True)
+
+    if not image_cond_active:
+        # Pure T2V: all-ones mask, latent_model_input = latents
+        first_frame_mask = torch.ones(latents.shape, dtype=torch.float32, device=pipe._execution_device)
 
     try:
         for step_idx, t in enumerate(timesteps):
-            latent_model_input = latents.to(transformer_dtype)
+            if image_cond_active:
+                # I2V: blend conditioned first frame with noisy latents
+                latent_model_input = (
+                    (1.0 - first_frame_mask) * latent_condition + first_frame_mask * latents
+                ).to(transformer_dtype)
+            else:
+                latent_model_input = latents.to(transformer_dtype)
+
             token_grid = compute_token_grid(tuple(latent_model_input.shape), patch_size)
 
             if pipe.config.expand_timesteps:
-                temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
+                # Use first_frame_mask's spatial downsampled version for per-token timestep.
+                # first_frame_mask shape: [1, 1, T, H, W] (I2V) or [1, C, T, H, W] (T2V all-ones).
+                # For T2V all-ones mask: take [0][0] -> [T, H, W], then spatial downsample.
+                # For I2V first_frame_mask: take [0][0] -> [T, H, W].
+                ts_mask = first_frame_mask[0][0]  # [T, H, W]
+                temp_ts = (ts_mask[:, ::2, ::2] * t).flatten()
                 timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
             else:
                 timestep = t.expand(latents.shape[0])
@@ -378,6 +486,8 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
                 "capture_layers": config.capture_layers,
                 "capture_branches": config.capture_branches,
                 "model_root": config.model_root,
+                "image_cond_active": image_cond_active,
+                "image_path_used": image_path if image_cond_active else None,
                 "final_latents_shape": list(latents.shape),
             },
             "features": recorder.data,
@@ -418,6 +528,7 @@ def main():
         capture_layers=[int(x) for x in args.capture_layers.split(",") if x.strip()],
         capture_branches=args.capture_branches,
         save_final_latents=args.save_final_latents,
+        use_image_cond=not args.no_image_cond,
     )
 
     os.makedirs(config.output_root, exist_ok=True)
