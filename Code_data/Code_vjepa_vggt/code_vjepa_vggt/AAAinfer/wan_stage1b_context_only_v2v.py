@@ -1,4 +1,21 @@
 from __future__ import annotations
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 \
+#   PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt \
+#   python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_v2v.py \
+#     --checkpoint /data/gaoya/agent-data/checkpoints/pybullet0629_teacher_student/stage1b_context_only/<STAGE1B_STEP>.pt \
+#     --init-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+#     --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+#     --model-name <MODEL_NAME> \
+#     --sampling-steps 40 \
+#     --save-raw \
+#     [--limit N] [--force]
+#
+# Weight loading order (must match training):
+#   1. Wan DiT base        : config model.wan_ckpt_dir  (Wan2.2-TI2V-5B shards)
+#   2. Wan LoRA            : config model.init_wan_lora_from_checkpoint  (frozen, loaded by trainer constructor)
+#   3. Stage1A pooler      : --init-from  (object_pooler + object_aux_heads, strict=False)
+#   4. Stage1B trainables  : --checkpoint (object_adapter + wan object_embedding/cross_attn/gate/norm4, strict=False)
 
 import argparse
 import gc
@@ -227,7 +244,15 @@ def main() -> None:
     config = load_yaml_config(args.config.expanduser().resolve())
     checkpoint_chain = _checkpoint_chain_info(config, checkpoint_path, init_from)
     device = _resolve_launch_device()
-    trainer = ContextOnlyInjectionTrainer(config, build_optimizer=True, device=device)
+    trainer = ContextOnlyInjectionTrainer(config, build_optimizer=False, device=device)
+    # Load Stage1A pooler weights first so object_pooler matches what was used during training.
+    # The Stage1B checkpoint only saves adapter + Wan object modules (pooler was frozen),
+    # so without this step object_pooler would stay at random init.
+    if init_from.is_file():
+        stage1a_state = torch.load(init_from, map_location="cpu", weights_only=False)
+        if isinstance(stage1a_state, dict) and "model" in stage1a_state:
+            trainer.load_state_dict(stage1a_state["model"], strict=False)
+    # Overlay Stage1B trainable weights (adapter + Wan object_embedding/cross_attn/gate/norm4).
     load_info = _load_trainable_state_into_model(trainer, checkpoint_path)
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
