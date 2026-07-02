@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offload_model", action="store_true")
     parser.add_argument("--t5_cpu", action="store_true")
     parser.add_argument("--convert_model_dtype", action="store_true")
+    parser.add_argument("--continue_on_error", action="store_true")
     parser.add_argument("--mode_ids", type=str, nargs="*", default=None)
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument(
@@ -51,6 +52,7 @@ def main() -> None:
             f"No matching rows found for prompt_id={args.prompt_id}, seed={args.seed} in {args.manifest}"
         )
 
+    failures: list[str] = []
     for exp_id in exp_ids:
         cmd = [
             "python3",
@@ -73,7 +75,18 @@ def main() -> None:
         if args.dry_run:
             cmd.append("--dry_run")
         print(f"[RUN] {exp_id}")
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            failures.append(exp_id)
+            print(f"[FAIL] {exp_id} returncode={result.returncode}")
+            if not args.continue_on_error:
+                raise SystemExit(result.returncode)
+
+    if failures:
+        print("FAILED_EXP_IDS:")
+        for exp_id in failures:
+            print(exp_id)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

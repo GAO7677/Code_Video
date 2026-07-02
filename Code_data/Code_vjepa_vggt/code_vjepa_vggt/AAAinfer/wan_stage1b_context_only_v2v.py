@@ -66,13 +66,29 @@ def _build_method_name_from_checkpoint_path(checkpoint_path: Path) -> str:
 
 
 def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_path: Path) -> dict[str, object]:
-    state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if not isinstance(state, dict) or "model" not in state or not isinstance(state["model"], dict):
-        raise RuntimeError(f"unsupported trainable checkpoint format: {checkpoint_path}")
-    model_state = state["model"]
+    resolved = checkpoint_path.expanduser().resolve()
+    if resolved.is_dir():
+        candidate = resolved / "checkpoint.safetensors"
+        if candidate.is_file():
+            resolved = candidate
+        else:
+            candidates = sorted(resolved.rglob("checkpoint.safetensors"))
+            if candidates:
+                resolved = candidates[-1]
+    if resolved.suffix == ".safetensors":
+        from safetensors.torch import load_file as load_safetensors_file
+
+        model_state = load_safetensors_file(str(resolved), device="cpu")
+        checkpoint_step = -1
+    else:
+        state = torch.load(resolved, map_location="cpu", weights_only=False)
+        if not isinstance(state, dict) or "model" not in state or not isinstance(state["model"], dict):
+            raise RuntimeError(f"unsupported trainable checkpoint format: {resolved}")
+        model_state = state["model"]
+        checkpoint_step = int(state.get("step", -1))
     loaded = model.load_state_dict(model_state, strict=False)
     return {
-        "checkpoint_step": int(state.get("step", -1)),
+        "checkpoint_step": checkpoint_step,
         "loaded_key_count": len(model_state),
         "missing_keys": list(loaded.missing_keys),
         "unexpected_keys": list(loaded.unexpected_keys),
@@ -102,7 +118,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Batch-run Stage1B context-only checkpoints over an input json list."
     )
-    parser.add_argument("--checkpoint", type=Path, required=True, help="step_XXXXXXX.pt trainable checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        required=True,
+        help="trainable checkpoint: supports old step_XXXXXXX.pt, checkpoint.safetensors, or a checkpoint directory",
+    )
     parser.add_argument("--init-from", type=Path, required=True, help="Stage1A checkpoint used during training init-from")
     parser.add_argument("--input-json-list-path", type=Path, required=True)
     parser.add_argument("--model-name", type=str, required=True)
