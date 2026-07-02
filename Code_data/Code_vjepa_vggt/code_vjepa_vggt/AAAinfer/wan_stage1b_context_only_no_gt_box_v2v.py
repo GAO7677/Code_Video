@@ -20,11 +20,13 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
 from code_vjepa_vggt.infer_context_video_wan import (
     _build_cond_context,
+    _draw_box_rgb,
     _ensure_browser_video,
     _infer_object_pooler_latent_dim,
     _load_trainable_state,
@@ -39,6 +41,10 @@ from code_vjepa_vggt.object_token_teacher_student.runtime_stage1b_context_only_n
 )
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
+
+
+BOX_GT_COLOR = (214, 40, 40)
+BOX_PRED_COLOR = (42, 157, 143)
 
 
 def _normalize_ckpt_method_name(name: str) -> str:
@@ -140,6 +146,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--save-raw", action="store_true")
+    parser.add_argument("--save-box-overlay", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args()
@@ -205,6 +212,55 @@ def _build_zero_batch_extras(
         "appearance": torch.zeros((batch_size, max_objects, 16), dtype=dtype, device=device),
         "camera": torch.zeros((batch_size, context_frames, 10), dtype=dtype, device=device),
     }
+
+
+def _norm_box_to_px(box_xyxy: np.ndarray, image_hw: tuple[int, int]) -> np.ndarray:
+    height, width = image_hw
+    scale = np.array([width, height, width, height], dtype=np.float32)
+    return np.asarray(box_xyxy, dtype=np.float32) * scale
+
+
+def _render_box_overlay_video(
+    raw_context_frames: np.ndarray,
+    gt_box_xyxy: np.ndarray,
+    gt_box_valid: np.ndarray,
+    pred_box_xyxy: np.ndarray,
+    pred_box_valid: np.ndarray,
+) -> np.ndarray:
+    image_hw = (int(raw_context_frames.shape[1]), int(raw_context_frames.shape[2]))
+    latent_frames = min(
+        int(raw_context_frames.shape[0]),
+        int(gt_box_xyxy.shape[0]),
+        int(pred_box_xyxy.shape[0]),
+    )
+    if latent_frames <= 0:
+        raise ValueError("no frames available for box overlay rendering")
+    latent_to_source = np.linspace(
+        0,
+        max(int(raw_context_frames.shape[0]) - 1, 0),
+        latent_frames,
+    ).round().astype(np.int64)
+    rendered = []
+    for latent_idx in range(latent_frames):
+        src_idx = int(latent_to_source[latent_idx])
+        frame = np.asarray(raw_context_frames[src_idx], dtype=np.uint8).copy()
+        for obj_idx in range(int(gt_box_xyxy.shape[1])):
+            if bool(gt_box_valid[latent_idx, obj_idx]):
+                _draw_box_rgb(
+                    frame,
+                    _norm_box_to_px(gt_box_xyxy[latent_idx, obj_idx], image_hw),
+                    BOX_GT_COLOR,
+                    f"gt{obj_idx}",
+                )
+            if bool(pred_box_valid[latent_idx, obj_idx]):
+                _draw_box_rgb(
+                    frame,
+                    _norm_box_to_px(pred_box_xyxy[latent_idx, obj_idx], image_hw),
+                    BOX_PRED_COLOR,
+                    f"pred{obj_idx}",
+                )
+        rendered.append(frame)
+    return np.stack(rendered, axis=0)
 
 
 def main() -> None:
@@ -353,6 +409,46 @@ def main() -> None:
             video_out = ((video_out.clamp(-1.0, 1.0) + 1.0) * 127.5).to(torch.uint8).permute(0, 2, 3, 1).numpy()
             _write_mp4(output_video, video_out, fps=int(args.fps))
             result["prediction_video"] = str(_ensure_browser_video(output_video))
+
+        if args.save_box_overlay:
+            with torch.no_grad():
+                batch_for_overlay = {
+                    "video": context_video,
+                    "context_video": context_video,
+                    "caption": [input_caption],
+                    "num_context_frames": num_context_frames,
+                    "video_path": [str(input_video)],
+                    "frame_indices": torch.as_tensor(frame_indices, dtype=torch.long).unsqueeze(0),
+                }
+                for key, value in batch_extra_tensors.items():
+                    batch_for_overlay[key] = value
+                prepared_overlay = trainer._prepare_batch(batch_for_overlay)
+
+            gt_box_xyxy = prepared_overlay["gt_box_xyxy"][0].detach().cpu().numpy()
+            gt_box_valid = prepared_overlay["gt_box_valid"][0].detach().cpu().numpy() > 0.5
+            pred_box_xyxy = prepared_overlay["object_aux_out"].pred_box_xyxy[0].detach().cpu().numpy()
+            pred_slot_valid = gt_box_valid.any(axis=0)
+            pred_box_valid = np.broadcast_to(
+                pred_slot_valid[None, :],
+                (pred_box_xyxy.shape[0], pred_box_xyxy.shape[1]),
+            )
+            box_overlay_video = _render_box_overlay_video(
+                raw_context_frames=np.asarray(frames, dtype=np.uint8),
+                gt_box_xyxy=gt_box_xyxy,
+                gt_box_valid=gt_box_valid,
+                pred_box_xyxy=pred_box_xyxy,
+                pred_box_valid=pred_box_valid,
+            )
+            box_overlay_raw = step_output_dir / f"{sample_stem}__box_overlay.mp4"
+            _write_mp4(box_overlay_raw, box_overlay_video, fps=int(args.fps))
+            result["box_overlay_video"] = str(_ensure_browser_video(box_overlay_raw))
+            result["box_overlay_debug"] = {
+                "gt_box_xyxy": list(gt_box_xyxy.shape),
+                "gt_box_valid": list(gt_box_valid.shape),
+                "pred_box_xyxy": list(pred_box_xyxy.shape),
+                "pred_box_valid": list(pred_box_valid.shape),
+                "raw_context_frames": list(np.asarray(frames).shape),
+            }
 
         with output_json.open("w", encoding="utf-8") as handle:
             json.dump(result, handle, indent=2, ensure_ascii=False)
