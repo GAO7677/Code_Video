@@ -18,11 +18,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train simple ridge probes on Wan probing features.")
     parser.add_argument(
         "--index_csv",
-        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/smoke_forward_outputs_20260702/probe_index.csv",
+        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/indices/probe_index.csv",
     )
     parser.add_argument(
         "--output_root",
-        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/probe_results_smoke",
+        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/probe_results",
     )
     parser.add_argument(
         "--target_field",

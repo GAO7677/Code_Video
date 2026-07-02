@@ -9,12 +9,18 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import imageio.v3 as iio
+import numpy as np
+from PIL import Image
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WMREWARD_ROOT = Path(__file__).resolve().parents[1]
 PROBE_ROOT = Path(__file__).resolve().parent
+WMREWARD_DATA_ROOT = Path("/data/gaoya/AAA_test_video/0626vjepa_free/wmreward")
 DEFAULT_INPUT_JSON_DIR = Path("/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons")
-DEFAULT_PIPELINE_ROOT = Path("/data/gaoya/agent-data/outputs/wmreward_probe_wan22")
+DEFAULT_PIPELINE_ROOT = WMREWARD_DATA_ROOT / "probe_wan22/datasets/generated"
+DEFAULT_SMOKE_PIPELINE_ROOT = WMREWARD_DATA_ROOT / "tmp/smoke/pipeline_runs"
 DEFAULT_WAN_PYTHON = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
 DEFAULT_WMREWARD_CHECKPOINT = Path("/data/gaoya/ckpt/Sylvest-vjepa2-vit-g/vitg-384.pt")
 DEFAULT_WMREWARD_MODEL_NAME = "vitg384"
@@ -144,6 +150,61 @@ def safe_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def ensure_non_empty_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def derive_firstframe_png_path(source_video: Path) -> Path:
+    return source_video.parent / f"{source_video.stem}_firstframe.png"
+
+
+def extract_first_frame_png(video_path: Path, output_png: Path) -> Path:
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    frame = iio.imread(video_path, index=0)
+    if frame.ndim != 3:
+        raise ValueError(f"unexpected first-frame shape from {video_path}: {frame.shape}")
+    if frame.dtype != np.uint8:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+    Image.fromarray(frame).save(output_png)
+    return output_png
+
+
+def build_normalized_input_json(
+    *,
+    source_json_path: Path,
+    normalized_root: Path,
+) -> Path:
+    payload = load_json(source_json_path)
+    source_video = ensure_non_empty_str(payload, "source_video")
+    if source_video is None:
+        raise ValueError(f"missing or empty 'source_video' in {source_json_path}")
+    source_video_path = Path(source_video).expanduser().resolve()
+    payload["source_video"] = str(source_video_path)
+
+    input_video = ensure_non_empty_str(payload, "input_video")
+    if input_video is None:
+        payload["input_video"] = str(source_video_path)
+    else:
+        payload["input_video"] = str(Path(input_video).expanduser().resolve())
+
+    input_image = ensure_non_empty_str(payload, "input_image")
+    if input_image is None:
+        firstframe_path = derive_firstframe_png_path(source_video_path)
+        if not firstframe_path.exists():
+            extract_first_frame_png(source_video_path, firstframe_path)
+        payload["input_image"] = str(firstframe_path.resolve())
+    else:
+        payload["input_image"] = str(Path(input_image).expanduser().resolve())
+
+    output_path = normalized_root / source_json_path.name
+    write_json(output_path, payload)
+    return output_path
 
 
 def make_generation_record(

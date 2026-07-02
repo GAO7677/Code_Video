@@ -36,6 +36,9 @@ the existing external inference scripts without modifying them:
 
 - `run_generation_pipeline.py`
   - Reads GT input JSONs from `v2v_jsons`.
+  - Normalizes each input JSON before generation.
+  - If `input_video` is missing, it falls back to `source_video`.
+  - If `input_image` is missing, it extracts the first frame from `source_video`.
   - Calls the external generators through subprocess.
   - Produces `mp4 + same-name json` per model.
   - Writes generation registries under `pipeline_root/manifests/`.
@@ -69,29 +72,60 @@ The generation pipeline has three fixed model branches:
   - Weights root:
     `/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500`
 
-### Default Output Root
+Generation behavior:
 
-By default all large generated artifacts go to:
+- `base` uses the normalized first-frame image condition.
+- `openvid_lora` and `pybullet_lora` are invoked in `input_image_only` mode.
+- This means all three branches now follow the same "use source_video first frame"
+  fallback rule when raw `input_video` is missing.
 
-- `/data/gaoya/agent-data/outputs/wmreward_probe_wan22`
+### Directory Layout
 
-Layout:
+Formal probe data should stay under:
 
-- `generations/base`
-- `generations/openvid_lora`
-- `generations/pybullet_lora`
-- `wmreward/<model_key>`
-- `manifests/`
+- `/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22`
+
+Recommended structure:
+
+- `datasets/generated/`
+  - formal generation outputs, WMReward backfills, and manifests
+- `extracted/`
+  - formal extracted probe features
+- `indices/`
+  - formal probe index CSV/JSONL
+- `probe_results/`
+  - formal probe training outputs
+
+Temporary smoke data should stay under:
+
+- `/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/tmp/smoke`
+
+Current smoke layout:
+
+- `tmp/smoke/probe_wan22/...`
+- `tmp/smoke/pipeline_runs/...`
+- `tmp/smoke/wmreward_runs/...`
+- `tmp/smoke/legacy_runs/...`
 
 ### Run Order
 
-1. Generate videos and result JSONs:
+1. Generate videos and result JSONs for a formal dataset run:
 
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/wmreward/probe_wan22/run_generation_pipeline.py \
   --input-json-dir /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons \
-  --pipeline-root /data/gaoya/agent-data/outputs/wmreward_probe_wan22
+  --pipeline-root /data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/datasets/generated
+```
+
+For a smoke run, use:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/wmreward/probe_wan22/run_generation_pipeline.py \
+  --input-json-dir /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons \
+  --smoke-name gpu7_case1 \
+  --limit 1
 ```
 
 2. Compute WMReward and write it back into each generated JSON:
@@ -99,7 +133,7 @@ Layout:
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/wmreward/probe_wan22/backfill_wmreward_scores.py \
-  --pipeline-root /data/gaoya/agent-data/outputs/wmreward_probe_wan22 \
+  --pipeline-root /data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/datasets/generated \
   --wmreward-checkpoint-path /data/gaoya/ckpt/Sylvest-vjepa2-vit-g/vitg-384.pt
 ```
 
@@ -108,7 +142,7 @@ Layout:
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/wmreward/probe_wan22/build_generation_manifest.py \
-  --pipeline-root /data/gaoya/agent-data/outputs/wmreward_probe_wan22 \
+  --pipeline-root /data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/datasets/generated \
   --subset-name generated_probe_pairs
 ```
 

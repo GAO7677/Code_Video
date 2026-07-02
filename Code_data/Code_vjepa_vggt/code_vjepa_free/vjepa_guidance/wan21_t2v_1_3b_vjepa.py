@@ -226,7 +226,7 @@ class WanT2V13BVJEPA(WanPipeline):
                 align_corners=False,
             )
 
-        vae_device = next(self.vae.parameters()).device
+        vae_device = self._execution_device
         preview_latent = preview_latent.to(device=vae_device, dtype=self.vae.dtype)
         preview_latent = self._destandardize_latents(preview_latent)
         preview_video = self.vae.decode(preview_latent, return_dict=False)[0]
@@ -235,7 +235,7 @@ class WanT2V13BVJEPA(WanPipeline):
         return preview_video
 
     def _decode_final_video(self, latents: torch.Tensor, output_type: str):
-        vae_device = next(self.vae.parameters()).device
+        vae_device = self._execution_device
         latents = latents.to(device=vae_device, dtype=self.vae.dtype)
         latents = self._destandardize_latents(latents)
         video = self.vae.decode(latents, return_dict=False)[0]

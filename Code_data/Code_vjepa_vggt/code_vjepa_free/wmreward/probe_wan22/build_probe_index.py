@@ -13,11 +13,11 @@ def parse_args():
     )
     parser.add_argument(
         "--output_csv",
-        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/probe_index.csv",
+        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/indices/probe_index.csv",
     )
     parser.add_argument(
         "--output_jsonl",
-        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/probe_index.jsonl",
+        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/indices/probe_index.jsonl",
     )
     return parser.parse_args()
 

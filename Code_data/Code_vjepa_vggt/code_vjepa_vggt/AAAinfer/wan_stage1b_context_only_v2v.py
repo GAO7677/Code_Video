@@ -97,10 +97,14 @@ def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_path: Pa
 
 def _checkpoint_chain_info(config: dict, checkpoint_path: Path, init_from: Path) -> dict[str, object]:
     state_dict = _load_trainable_state(checkpoint_path)
-    object_pooler_latent_dim = _infer_object_pooler_latent_dim(
-        state_dict,
-        int(config["model"].get("object_pooler_latent_dim", 16)),
-    )
+    default_latent_dim = int(config["model"].get("object_pooler_latent_dim", 16))
+    object_pooler_latent_dim = _infer_object_pooler_latent_dim(state_dict, default_latent_dim)
+    if object_pooler_latent_dim == default_latent_dim and init_from.is_file():
+        try:
+            init_state = _load_trainable_state(init_from)
+            object_pooler_latent_dim = _infer_object_pooler_latent_dim(init_state, object_pooler_latent_dim)
+        except Exception:
+            pass
     config["model"]["object_pooler_latent_dim"] = int(object_pooler_latent_dim)
     config["model"]["init_wan_lora_from_checkpoint"] = str(
         config["model"]["init_wan_lora_from_checkpoint"]

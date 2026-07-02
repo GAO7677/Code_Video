@@ -27,7 +27,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output_root",
-        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/probe_wan22/smoke_forward_outputs",
+        default="/data/gaoya/AAA_test_video/0626vjepa_free/wmreward/tmp/smoke/probe_wan22/smoke_forward_outputs",
     )
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--device", default="cuda:0")

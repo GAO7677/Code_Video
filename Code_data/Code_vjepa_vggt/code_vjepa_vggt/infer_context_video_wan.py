@@ -218,6 +218,12 @@ def _resolve_checkpoint_file(checkpoint_path: Path) -> Path:
     if checkpoint_path.is_file():
         return checkpoint_path
     if checkpoint_path.is_dir():
+        direct_safetensors = checkpoint_path / "checkpoint.safetensors"
+        if direct_safetensors.is_file():
+            return direct_safetensors
+        nested_safetensors = sorted(checkpoint_path.rglob("checkpoint.safetensors"))
+        if nested_safetensors:
+            return nested_safetensors[-1]
         candidates = sorted(checkpoint_path.glob("step_*.pt"))
         if not candidates:
             raise FileNotFoundError(f"no step_*.pt found under {checkpoint_path}")

@@ -34,8 +34,9 @@ from code_vjepa_vggt.infer_context_video_wan import (
     _write_mp4,
 )
 from code_vjepa_vggt.infer_v_newtrain_context_video_wan import _load_context_video
-from code_vjepa_vggt.object_token_teacher_student.runtime_stage1b_context_only import ContextOnlyInjectionTrainer
-from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import ViewerGroundingBoxProvider
+from code_vjepa_vggt.object_token_teacher_student.runtime_stage1b_context_only_no_gt_box import (
+    ContextOnlyInjectionNoGTBoxTrainer,
+)
 from code_vjepa_vggt.utils.config import load_yaml_config
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8
 
@@ -55,13 +56,29 @@ def _build_method_name_from_checkpoint_path(checkpoint_path: Path) -> str:
 
 
 def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_path: Path) -> dict[str, object]:
-    state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if not isinstance(state, dict) or "model" not in state or not isinstance(state["model"], dict):
-        raise RuntimeError(f"unsupported trainable checkpoint format: {checkpoint_path}")
-    model_state = state["model"]
+    resolved = checkpoint_path.expanduser().resolve()
+    if resolved.is_dir():
+        candidate = resolved / "checkpoint.safetensors"
+        if candidate.is_file():
+            resolved = candidate
+        else:
+            candidates = sorted(resolved.rglob("checkpoint.safetensors"))
+            if candidates:
+                resolved = candidates[-1]
+    if resolved.suffix == ".safetensors":
+        from safetensors.torch import load_file as load_safetensors_file
+
+        model_state = load_safetensors_file(str(resolved), device="cpu")
+        checkpoint_step = -1
+    else:
+        state = torch.load(resolved, map_location="cpu", weights_only=False)
+        if not isinstance(state, dict) or "model" not in state or not isinstance(state["model"], dict):
+            raise RuntimeError(f"unsupported trainable checkpoint format: {resolved}")
+        model_state = state["model"]
+        checkpoint_step = int(state.get("step", -1))
     loaded = model.load_state_dict(model_state, strict=False)
     return {
-        "checkpoint_step": int(state.get("step", -1)),
+        "checkpoint_step": checkpoint_step,
         "loaded_key_count": len(model_state),
         "missing_keys": list(loaded.missing_keys),
         "unexpected_keys": list(loaded.unexpected_keys),
@@ -70,10 +87,14 @@ def _load_trainable_state_into_model(model: torch.nn.Module, checkpoint_path: Pa
 
 def _checkpoint_chain_info(config: dict, checkpoint_path: Path, init_from: Path) -> dict[str, object]:
     state_dict = _load_trainable_state(checkpoint_path)
-    object_pooler_latent_dim = _infer_object_pooler_latent_dim(
-        state_dict,
-        int(config["model"].get("object_pooler_latent_dim", 16)),
-    )
+    default_latent_dim = int(config["model"].get("object_pooler_latent_dim", 16))
+    object_pooler_latent_dim = _infer_object_pooler_latent_dim(state_dict, default_latent_dim)
+    if object_pooler_latent_dim == default_latent_dim and init_from.is_file():
+        try:
+            init_state = _load_trainable_state(init_from)
+            object_pooler_latent_dim = _infer_object_pooler_latent_dim(init_state, object_pooler_latent_dim)
+        except Exception:
+            pass
     slot_embed = state_dict.get("object_adapter.slot_embed.weight")
     if slot_embed is not None and hasattr(slot_embed, "shape") and len(slot_embed.shape) == 2:
         inferred_num_slots = int(slot_embed.shape[0])
@@ -91,35 +112,16 @@ def _checkpoint_chain_info(config: dict, checkpoint_path: Path, init_from: Path)
     }
 
 
-def _build_grounding_provider(config: dict, trainer: ContextOnlyInjectionTrainer, device: str) -> ViewerGroundingBoxProvider:
-    model_cfg = config["model"]
-    include_caption_terms = not bool(model_cfg.get("grounding_disable_caption_terms", True))
-    return ViewerGroundingBoxProvider(
-        device=str(model_cfg.get("grounding_device", device)),
-        segment_len=int(model_cfg.get("sam2_segment_len", 8)),
-        max_objects=int(getattr(trainer, "max_objects", model_cfg.get("object_num_queries", 8))),
-        points_per_object=int(getattr(trainer, "points_per_object", model_cfg.get("object_num_queries", 8))),
-        proposal_source=str(model_cfg.get("grounding_proposal_source", "gdino_only")),
-        motion_score_ratio=float(model_cfg.get("grounding_motion_score_ratio", 0.15)),
-        text_prompt=str(model_cfg.get("grounding_text_prompt", "box . cube . block . cylinder . capsule . sphere . ball .")),
-        extra_prompt_terms=str(model_cfg.get("grounding_extra_prompt_terms", "")),
-        include_caption_terms=include_caption_terms,
-        gdino_box_threshold=float(model_cfg.get("grounding_gdino_box_threshold", 0.20)),
-        gdino_text_threshold=float(model_cfg.get("grounding_gdino_text_threshold", 0.15)),
-        prompt_frame_mode=str(model_cfg.get("grounding_prompt_frame_mode", "first")),
-        track_dedupe_iou_threshold=float(model_cfg.get("grounding_track_dedupe_iou_threshold", 0.75)),
-        container_suppress_ratio_threshold=float(model_cfg.get("grounding_container_suppress_ratio_threshold", 0.95)),
-        container_suppress_min_contained=int(model_cfg.get("grounding_container_suppress_min_contained", 2)),
-        container_suppress_min_area_ratio=float(model_cfg.get("grounding_container_suppress_min_area_ratio", 1.5)),
-        container_suppress_small_iou_threshold=float(model_cfg.get("grounding_container_suppress_small_iou_threshold", 0.7)),
-    )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Batch-run Stage1B context-only no-GT-box checkpoints over an input json list."
     )
-    parser.add_argument("--checkpoint", type=Path, required=True, help="step_XXXXXXX.pt trainable checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        required=True,
+        help="trainable checkpoint: supports old step_XXXXXXX.pt, checkpoint.safetensors, or a checkpoint directory",
+    )
     parser.add_argument("--init-from", type=Path, required=True, help="Stage1A checkpoint used during training init-from")
     parser.add_argument("--input-json-list-path", type=Path, required=True)
     parser.add_argument("--model-name", type=str, required=True)
@@ -188,12 +190,11 @@ def _write_text_lines(path: Path, lines: list[str]) -> None:
 def _build_zero_batch_extras(
     *,
     context_video: torch.Tensor,
-    context_boxes: torch.Tensor,
+    max_objects: int,
     total_frames: int,
 ) -> dict[str, torch.Tensor]:
     batch_size = int(context_video.shape[0])
     context_frames = int(context_video.shape[2])
-    max_objects = int(context_boxes.shape[2])
     future_frames = max(0, int(total_frames) - int(context_frames))
     device = context_video.device
     dtype = context_video.dtype
@@ -222,8 +223,8 @@ def main() -> None:
     config = load_yaml_config(args.config.expanduser().resolve())
     checkpoint_chain = _checkpoint_chain_info(config, checkpoint_path, init_from)
     device = _resolve_launch_device()
-    trainer = ContextOnlyInjectionTrainer(config, build_optimizer=False, device=device)
-    grounding_provider = _build_grounding_provider(config, trainer, device)
+    config["model"]["grounding_device"] = str(device)
+    trainer = ContextOnlyInjectionNoGTBoxTrainer(config, build_optimizer=False, device=device)
 
     if init_from.is_file():
         stage1a_state = torch.load(init_from, map_location="cpu", weights_only=False)
@@ -283,24 +284,12 @@ def main() -> None:
             context_video_single = preprocess_video_rgb_uint8(frames, tuple(config["data"]["resolution"]))
             context_video = context_video_single.unsqueeze(0).to(trainer.device_obj)
             num_context_frames = torch.tensor([context_video.shape[2]], dtype=torch.long, device=trainer.device_obj)
-
-            frames_tchw_01 = ((context_video_single.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
-            viewer_sample = grounding_provider.build_sample(
-                frames_tchw_01=frames_tchw_01,
-                caption=input_caption,
-                image_hw=(int(context_video_single.shape[-2]), int(context_video_single.shape[-1])),
-            )
-            context_boxes = torch.from_numpy(viewer_sample.context_boxes_norm).unsqueeze(0).to(
-                trainer.device_obj,
-                dtype=context_video.dtype,
-            )
             total_frames = int(config["data"]["num_context_frames"] / float(config["data"].get("context_fraction", 0.5)))
             batch_extra_tensors = _build_zero_batch_extras(
                 context_video=context_video,
-                context_boxes=context_boxes,
+                max_objects=int(getattr(trainer, "max_objects", config["model"].get("object_num_queries", 8))),
                 total_frames=total_frames,
             )
-
             text_context, object_context, context_latents, prep_debug = _build_cond_context(
                 trainer=trainer,
                 config=config,
@@ -308,7 +297,6 @@ def main() -> None:
                 captions=[input_caption],
                 num_context_frames=num_context_frames,
                 device_obj=trainer.device_obj,
-                context_boxes=context_boxes,
                 batch_extra_tensors=batch_extra_tensors,
             )
             with torch.inference_mode():
@@ -338,12 +326,8 @@ def main() -> None:
             "frame_indices": frame_indices.tolist(),
             "context_boxes_debug": {
                 "status": "viewer_grounding_loaded",
-                "context_boxes": list(viewer_sample.context_boxes_norm.shape),
-                "object_count": int(viewer_sample.object_valid_mask.sum()),
-                "prior_source": viewer_sample.prior_source,
-                "prompt_mode": viewer_sample.prompt_mode,
-                "prompt_frame_idx": int(viewer_sample.prompt_frame_idx),
-                "debug": viewer_sample.debug,
+                "teacher_student_stage1": prep_debug.get("teacher_student_stage1", {}),
+                "grounding_samples": prep_debug.get("grounding_samples", []),
             },
             "prep_debug": prep_debug,
             "sample_debug": sample_debug,

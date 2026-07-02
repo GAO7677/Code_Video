@@ -9,7 +9,9 @@ from pathlib import Path
 from pipeline_common import (
     DEFAULT_INPUT_JSON_DIR,
     DEFAULT_PIPELINE_ROOT,
+    DEFAULT_SMOKE_PIPELINE_ROOT,
     MODEL_SPECS,
+    build_normalized_input_json,
     discover_input_jsons,
     generation_registry_fieldnames,
     parse_model_keys,
@@ -30,6 +32,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-json-dir", type=Path, default=DEFAULT_INPUT_JSON_DIR)
     parser.add_argument("--pipeline-root", type=Path, default=DEFAULT_PIPELINE_ROOT)
+    parser.add_argument(
+        "--smoke-name",
+        default=None,
+        help="If set, override pipeline-root to tmp/smoke/pipeline_runs/<smoke-name>.",
+    )
     parser.add_argument("--models", default="base,openvid_lora,pybullet_lora")
     parser.add_argument("--python-bin", default=None)
     parser.add_argument("--limit", type=int, default=None)
@@ -128,6 +135,8 @@ def build_generation_command(
         str(args.seed),
         "--negative-prompt",
         args.negative_prompt,
+        "--conditioning-mode",
+        "input_image_only",
     ]
     if args.force:
         cmd.append("--overwrite")
@@ -146,13 +155,20 @@ def main() -> None:
     args = parse_args()
     input_json_dir = args.input_json_dir.expanduser().resolve()
     pipeline_root = args.pipeline_root.expanduser().resolve()
+    if args.smoke_name:
+        pipeline_root = (DEFAULT_SMOKE_PIPELINE_ROOT / args.smoke_name).resolve()
     python_bin = resolve_python_bin(args.python_bin)
     selected_model_keys = parse_model_keys(args.models)
-    input_json_paths = discover_input_jsons(input_json_dir, limit=args.limit)
-    if not input_json_paths:
+    source_input_json_paths = discover_input_jsons(input_json_dir, limit=args.limit)
+    if not source_input_json_paths:
         raise FileNotFoundError(f"No input JSONs found under: {input_json_dir}")
 
     pipeline_root.mkdir(parents=True, exist_ok=True)
+    normalized_input_root = pipeline_root / "manifests" / "normalized_inputs"
+    input_json_paths = [
+        build_normalized_input_json(source_json_path=path, normalized_root=normalized_input_root)
+        for path in source_input_json_paths
+    ]
     input_list_path = pipeline_root / "manifests" / "input_jsons.txt"
     write_list_file(input_list_path, input_json_paths)
 

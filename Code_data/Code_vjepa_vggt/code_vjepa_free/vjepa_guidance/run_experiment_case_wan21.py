@@ -10,14 +10,12 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run one manifest case for Wan2.2 TI2V V-JEPA experiments.")
+    parser = argparse.ArgumentParser(description="Run one manifest case for Wan2.1 T2V 1.3B V-JEPA experiments.")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--exp_id", type=str, required=True)
     parser.add_argument("--device_id", type=int, default=None)
     parser.add_argument("--vjepa_device_id", type=int, default=None)
-    parser.add_argument("--offload_model", action="store_true")
-    parser.add_argument("--t5_cpu", action="store_true")
-    parser.add_argument("--convert_model_dtype", action="store_true")
+    parser.add_argument("--cpu_offload", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     return parser.parse_args()
 
@@ -36,9 +34,7 @@ def build_command(
     *,
     device_id_override: int | None = None,
     vjepa_device_id_override: int | None = None,
-    offload_model: bool = False,
-    t5_cpu: bool = False,
-    convert_model_dtype: bool = False,
+    cpu_offload: bool = False,
 ) -> list[str]:
     device_id = str(device_id_override) if device_id_override is not None else row["device_id"]
     vjepa_device_id = (
@@ -53,24 +49,30 @@ def build_command(
         row["prompt"],
         "--output",
         row["output_video"],
-        "--sample_steps",
-        row["sample_steps"],
-        "--sample_solver",
-        row["sample_solver"],
-        "--sample_shift",
-        row["sample_shift"],
-        "--sample_guide_scale",
-        row["sample_guide_scale"],
-        "--frame_num",
-        row["frame_num"],
-        "--size",
-        row["size"],
         "--seed",
         row["seed"],
         "--device_id",
         device_id,
         "--vjepa_device_id",
         vjepa_device_id,
+        "--height",
+        row["height"],
+        "--width",
+        row["width"],
+        "--num_frames",
+        row["num_frames"],
+        "--num_inference_steps",
+        row["num_inference_steps"],
+        "--guidance_scale",
+        row["guidance_scale"],
+        "--flow_shift",
+        row["flow_shift"],
+        "--fps",
+        row["fps"],
+        "--transformer_dtype",
+        row["transformer_dtype"],
+        "--vae_dtype",
+        row["vae_dtype"],
         "--vjepa_model",
         row["vjepa_model"],
         "--vjepa_ckpt",
@@ -83,33 +85,27 @@ def build_command(
         row["vjepa_max_step_percent"],
         "--vjepa_latent_step_size",
         row["vjepa_latent_step_size"],
-        "--vjepa_preview_downsample_factor",
+        "--preview_downsample_factor",
         row["vjepa_preview_downsample_factor"],
-        "--vjepa_preview_frame_stride",
+        "--preview_frame_stride",
         row["vjepa_preview_frame_stride"],
-        "--vjepa_window_size",
+        "--window_size",
         row["vjepa_window_size"],
-        "--vjepa_context_frames",
+        "--context_frames",
         row["vjepa_context_frames"],
-        "--vjepa_stride",
+        "--stride",
         row["vjepa_stride"],
-        "--vjepa_reduction",
+        "--reduction",
         row["vjepa_reduction"],
-        "--vjepa_grad_norm_mode",
+        "--gradient_normalization",
         row["vjepa_grad_norm_mode"],
-        "--vjepa_max_grad_norm",
+        "--max_grad_norm",
         row["vjepa_max_grad_norm"],
     ]
-    if row.get("source_image", "").strip():
-        cmd.extend(["--image", row["source_image"]])
     if row["disable_vjepa_guidance"] == "1":
         cmd.append("--disable_vjepa_guidance")
-    if offload_model:
-        cmd.append("--offload_model")
-    if t5_cpu:
-        cmd.append("--t5_cpu")
-    if convert_model_dtype:
-        cmd.append("--convert_model_dtype")
+    if cpu_offload:
+        cmd.append("--cpu_offload")
     return cmd
 
 
@@ -148,9 +144,7 @@ def main() -> None:
         row,
         device_id_override=args.device_id,
         vjepa_device_id_override=args.vjepa_device_id,
-        offload_model=args.offload_model,
-        t5_cpu=args.t5_cpu,
-        convert_model_dtype=args.convert_model_dtype,
+        cpu_offload=args.cpu_offload,
     )
 
     if args.dry_run:

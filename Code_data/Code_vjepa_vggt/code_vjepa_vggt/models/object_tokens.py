@@ -83,15 +83,43 @@ class ObjectTubeProjector(nn.Module):
         self.vggt_world_clip = 16.0
         self.vggt_depth_clip = 16.0
 
+    @staticmethod
+    def _rebuild_linear_preserving_state(
+        module: nn.Linear,
+        *,
+        in_features: int,
+        out_features: int,
+        device: torch.device,
+    ) -> nn.Linear:
+        new_module = nn.Linear(
+            int(in_features),
+            int(out_features),
+            bias=module.bias is not None,
+        ).to(device=device, dtype=module.weight.dtype)
+        new_module.train(module.training)
+        requires_grad = any(param.requires_grad for param in module.parameters())
+        new_module.requires_grad_(requires_grad)
+        return new_module
+
     def _ensure_latent_proj(self, latent_dim: int, device: torch.device) -> None:
         if self.latent_proj.in_features == int(latent_dim):
             return
-        self.latent_proj = nn.Linear(int(latent_dim), self.out_dim).to(device)
+        self.latent_proj = self._rebuild_linear_preserving_state(
+            self.latent_proj,
+            in_features=int(latent_dim),
+            out_features=self.out_dim,
+            device=device,
+        )
 
     def _ensure_jepa_proj(self, jepa_dim: int, device: torch.device) -> None:
         if self.jepa_proj.in_features == int(jepa_dim):
             return
-        self.jepa_proj = nn.Linear(int(jepa_dim), self.out_dim).to(device)
+        self.jepa_proj = self._rebuild_linear_preserving_state(
+            self.jepa_proj,
+            in_features=int(jepa_dim),
+            out_features=self.out_dim,
+            device=device,
+        )
 
     @staticmethod
     def _grid_feature_hw(feature_grid: torch.Tensor) -> tuple[int, int]:

@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python_bin", type=Path, default=Path("/data/gaoya/miniconda3/envs/wan/bin/python"))
     parser.add_argument("--script_path", type=Path, default=Path(__file__).resolve().parent / "wan_ti2v_vjepa.py")
     parser.add_argument("--output_manifest", type=Path, default=None)
+    parser.add_argument("--allow_missing_image", action="store_true")
     return parser.parse_args()
 
 
@@ -56,7 +57,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, object]]:
         case = load_case(args.source_dir, prompt_id)
         prompt = case["prompt"]
         first_frame = case.get("first_frame") or case.get("image_path")
-        if not first_frame:
+        if not first_frame and not args.allow_missing_image:
             raise ValueError(f"Sample {prompt_id} has no first_frame or image_path")
         for seed in args.seeds:
             for mode_id in args.mode_ids:
@@ -72,7 +73,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, object]]:
                         "prompt_id": prompt_id,
                         "prompt": prompt,
                         "source_json": str(args.source_dir / f"{prompt_id}.json"),
-                        "source_image": str(first_frame),
+                        "source_image": str(first_frame) if first_frame else "",
                         "main_category": case.get("main_category", ""),
                         "sub_category": case.get("sub_category", ""),
                         "physical_laws": case.get("physical_laws", ""),
