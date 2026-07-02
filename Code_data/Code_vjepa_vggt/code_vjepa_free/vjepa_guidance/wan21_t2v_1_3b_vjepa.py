@@ -1,5 +1,43 @@
 from __future__ import annotations
 
+"""
+Wan2.1 T2V 1.3B is text-to-video only. It does not accept a first-frame image.
+
+Guided run:
+
+CUDA_VISIBLE_DEVICES=0,5 /data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_vjepa.py \
+    --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers \
+    --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+    --output /data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/wan21_1p3b_vjepa.mp4 \
+    --height 480 \
+    --width 832 \
+    --num_frames 24 \
+    --num_inference_steps 10 \
+    --guidance_scale 6 \
+    --flow_shift 8 \
+    --device_id 1 \
+    --vjepa_device_id 0 \
+    --vjepa_model vith \
+    --vjepa_ckpt /data/gaoya/ckpt/VJEPA2/vith.pt
+
+Baseline run:
+
+CUDA_VISIBLE_DEVICES=0 /data/gaoya/miniconda3/envs/wan/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_vjepa.py \
+    --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers \
+    --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+    --output /data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/wan21_1p3b_baseline.mp4 \
+    --height 480 \
+    --width 832 \
+    --num_frames 81 \
+    --num_inference_steps 10 \
+    --guidance_scale 6 \
+    --flow_shift 8 \
+    --device_id 0 \
+    --disable_vjepa_guidance
+"""
+
 import argparse
 import logging
 import random
@@ -11,9 +49,12 @@ import torch
 import torch.nn.functional as F
 from diffusers import AutoencoderKLWan, WanPipeline
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
+from diffusers.models import WanTransformer3DModel
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.schedulers.scheduling_unipc_multistep import UniPCMultistepScheduler
 from diffusers.utils import export_to_video
+from transformers import AutoTokenizer, UMT5EncoderModel
 
 try:
     from .vjepa_surprise import VJEPASurpriseEnergy
@@ -62,8 +103,14 @@ def set_seed(seed: int) -> None:
 
 def resolve_device(device_id: Optional[int]) -> torch.device:
     if torch.cuda.is_available():
+        visible_count = torch.cuda.device_count()
         if device_id is None:
             return torch.device("cuda")
+        if device_id < 0 or device_id >= visible_count:
+            raise ValueError(
+                f"Requested device_id={device_id}, but only {visible_count} CUDA device(s) are visible. "
+                "Check CUDA_VISIBLE_DEVICES and the local device index."
+            )
         return torch.device(f"cuda:{device_id}")
     return torch.device("cpu")
 
@@ -71,15 +118,31 @@ def resolve_device(device_id: Optional[int]) -> torch.device:
 class WanT2V13BVJEPA(WanPipeline):
     def __init__(
         self,
-        *args,
+        tokenizer: AutoTokenizer,
+        text_encoder: UMT5EncoderModel,
+        vae: AutoencoderKLWan,
+        scheduler: FlowMatchEulerDiscreteScheduler,
+        transformer: Optional[WanTransformer3DModel] = None,
+        transformer_2: Optional[WanTransformer3DModel] = None,
+        boundary_ratio: Optional[float] = None,
+        expand_timesteps: bool = False,
+        *,
         vjepa_model_name: str = "vith",
         vjepa_checkpoint_path: Optional[str] = None,
         vjepa_device: Optional[str | torch.device] = None,
         vjepa_config: Optional[WanVJEPAConfig] = None,
         enable_vjepa_guidance: bool = True,
-        **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            tokenizer=tokenizer,
+            text_encoder=text_encoder,
+            vae=vae,
+            scheduler=scheduler,
+            transformer=transformer,
+            transformer_2=transformer_2,
+            boundary_ratio=boundary_ratio,
+            expand_timesteps=expand_timesteps,
+        )
         self.vjepa_model_name = vjepa_model_name
         self.vjepa_checkpoint_path = vjepa_checkpoint_path
         self.vjepa_device = torch.device(vjepa_device) if vjepa_device is not None else self._execution_device
@@ -147,7 +210,8 @@ class WanT2V13BVJEPA(WanPipeline):
         return preview_video
 
     def _decode_final_video(self, latents: torch.Tensor, output_type: str):
-        latents = latents.to(self.vae.dtype)
+        vae_device = next(self.vae.parameters()).device
+        latents = latents.to(device=vae_device, dtype=self.vae.dtype)
         latents = self._destandardize_latents(latents)
         video = self.vae.decode(latents, return_dict=False)[0]
         return self.video_processor.postprocess_video(video, output_type=output_type)
@@ -485,17 +549,28 @@ def main() -> None:
         torch_dtype=vae_dtype,
         local_files_only=True,
     )
-    pipe = WanT2V13BVJEPA.from_pretrained(
+    base_pipe = WanPipeline.from_pretrained(
         str(args.ckpt_dir),
         vae=vae,
         torch_dtype=transformer_dtype,
         local_files_only=True,
+    )
+    pipe = WanT2V13BVJEPA(
+        tokenizer=base_pipe.tokenizer,
+        text_encoder=base_pipe.text_encoder,
+        vae=base_pipe.vae,
+        scheduler=base_pipe.scheduler,
+        transformer=base_pipe.transformer,
+        transformer_2=getattr(base_pipe, "transformer_2", None),
+        boundary_ratio=getattr(base_pipe.config, "boundary_ratio", None),
+        expand_timesteps=getattr(base_pipe.config, "expand_timesteps", False),
         vjepa_model_name=args.vjepa_model,
         vjepa_checkpoint_path=str(args.vjepa_ckpt),
         vjepa_device=vjepa_device,
         vjepa_config=build_vjepa_config(args),
         enable_vjepa_guidance=not args.disable_vjepa_guidance,
     )
+    del base_pipe
     pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=args.flow_shift)
 
     if args.cpu_offload:
@@ -504,6 +579,9 @@ def main() -> None:
         pipe.enable_model_cpu_offload(gpu_id=args.device_id)
     else:
         pipe.to(main_device)
+        if not args.disable_vjepa_guidance and vjepa_device != main_device:
+            logging.info("Moving VAE to %s for preview decode and final decode.", vjepa_device)
+            pipe.vae.to(vjepa_device)
 
     generator_device = main_device.type if main_device.type == "cpu" else str(main_device)
     generator = torch.Generator(device=generator_device).manual_seed(args.seed)

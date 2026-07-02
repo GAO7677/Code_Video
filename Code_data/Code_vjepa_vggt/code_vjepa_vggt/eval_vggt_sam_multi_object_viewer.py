@@ -70,6 +70,20 @@ def box_iou_xyxy(box_a: np.ndarray, box_b: np.ndarray) -> float:
     return float(inter / union)
 
 
+def box_containment_ratio_xyxy(container_box: np.ndarray, inner_box: np.ndarray) -> float:
+    cx0, cy0, cx1, cy1 = [float(v) for v in container_box.tolist()]
+    ix0, iy0, ix1, iy1 = [float(v) for v in inner_box.tolist()]
+    inter_x0 = max(cx0, ix0)
+    inter_y0 = max(cy0, iy0)
+    inter_x1 = min(cx1, ix1)
+    inter_y1 = min(cy1, iy1)
+    inter = max(0.0, inter_x1 - inter_x0) * max(0.0, inter_y1 - inter_y0)
+    inner_area = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    if inner_area <= 1.0e-6:
+        return 0.0
+    return float(inter / inner_area)
+
+
 def tensor_frame_to_uint8_hwc(frame_chw: torch.Tensor) -> np.ndarray:
     x = frame_chw.detach().cpu().clamp(-1.0, 1.0)
     x = ((x + 1.0) * 127.5).to(torch.uint8).permute(1, 2, 0).contiguous()
@@ -195,6 +209,108 @@ def score_mask(mask_hw: np.ndarray) -> tuple[float, float]:
     return area, confidence
 
 
+def score_track(track: ObjectTrack) -> float:
+    if track.masks_thw.size <= 0:
+        return max(float(track.score), 1.0e-6)
+    areas = []
+    confs = []
+    for mask_hw in track.masks_thw:
+        area, conf = score_mask(mask_hw)
+        if area <= 0:
+            continue
+        areas.append(area)
+        confs.append(conf)
+    if not areas:
+        return max(float(track.score), 1.0e-6)
+    mean_area = float(np.mean(np.asarray(areas, dtype=np.float32)))
+    mean_conf = float(np.mean(np.asarray(confs, dtype=np.float32)))
+    return max(float(track.score), 1.0e-3) * max(mean_area, 1.0) * max(mean_conf, 1.0e-3)
+
+
+def track_similarity_iou(track_a: ObjectTrack, track_b: ObjectTrack) -> float:
+    prompt_iou = box_iou_xyxy(track_a.box_prompt_xyxy.astype(np.float32), track_b.box_prompt_xyxy.astype(np.float32))
+    if track_a.boxes_t4.shape[0] <= 0 or track_b.boxes_t4.shape[0] <= 0:
+        return float(prompt_iou)
+    length = min(int(track_a.boxes_t4.shape[0]), int(track_b.boxes_t4.shape[0]))
+    temporal_ious = [
+        box_iou_xyxy(track_a.boxes_t4[t].astype(np.float32), track_b.boxes_t4[t].astype(np.float32))
+        for t in range(length)
+    ]
+    if not temporal_ious:
+        return float(prompt_iou)
+    return float(max(prompt_iou, float(np.mean(np.asarray(temporal_ious, dtype=np.float32)))))
+
+
+def dedupe_object_tracks(tracks: list[ObjectTrack], iou_threshold: float) -> list[ObjectTrack]:
+    if len(tracks) <= 1:
+        return tracks
+    ranked = sorted(tracks, key=score_track, reverse=True)
+    kept: list[ObjectTrack] = []
+    for candidate in ranked:
+        if any(track_similarity_iou(candidate, existing) >= float(iou_threshold) for existing in kept):
+            continue
+        kept.append(candidate)
+    return kept
+
+
+def suppress_container_tracks(
+    tracks: list[ObjectTrack],
+    *,
+    containment_ratio_threshold: float,
+    min_contained_tracks: int,
+    min_area_ratio: float,
+    small_track_iou_threshold: float,
+) -> list[ObjectTrack]:
+    if len(tracks) <= 1:
+        return tracks
+
+    keep_mask = [True] * len(tracks)
+    mean_boxes = [np.mean(track.boxes_t4.astype(np.float32), axis=0) for track in tracks]
+    mean_areas = [
+        max(0.0, float(box[2] - box[0])) * max(0.0, float(box[3] - box[1]))
+        for box in mean_boxes
+    ]
+
+    for big_idx, big_track in enumerate(tracks):
+        if not keep_mask[big_idx]:
+            continue
+        big_box = mean_boxes[big_idx]
+        big_area = mean_areas[big_idx]
+        if big_area <= 1.0e-6:
+            continue
+
+        contained_indices: list[int] = []
+        for small_idx, small_track in enumerate(tracks):
+            if small_idx == big_idx or not keep_mask[small_idx]:
+                continue
+            small_box = mean_boxes[small_idx]
+            small_area = mean_areas[small_idx]
+            if small_area <= 1.0e-6:
+                continue
+            if big_area < (small_area * float(min_area_ratio)):
+                continue
+            containment = box_containment_ratio_xyxy(big_box.astype(np.float32), small_box.astype(np.float32))
+            if containment >= float(containment_ratio_threshold):
+                contained_indices.append(small_idx)
+
+        unique_small_indices: list[int] = []
+        for idx in contained_indices:
+            if any(
+                box_iou_xyxy(mean_boxes[idx].astype(np.float32), mean_boxes[kept_idx].astype(np.float32))
+                >= float(small_track_iou_threshold)
+                for kept_idx in unique_small_indices
+            ):
+                continue
+            unique_small_indices.append(idx)
+
+        if len(unique_small_indices) < int(min_contained_tracks):
+            continue
+
+        keep_mask[big_idx] = False
+
+    return [track for track, keep in zip(tracks, keep_mask) if keep]
+
+
 def allocate_queries(tracks: list[ObjectTrack], num_queries: int) -> list[int]:
     if not tracks or num_queries <= 0:
         return []
@@ -272,6 +388,11 @@ def detect_and_track_objects(
     include_caption_terms: bool,
     gdino_box_threshold: float,
     gdino_text_threshold: float,
+    track_dedupe_iou_threshold: float,
+    container_suppress_ratio_threshold: float,
+    container_suppress_min_contained: int,
+    container_suppress_min_area_ratio: float,
+    container_suppress_small_iou_threshold: float,
 ) -> tuple[list[ObjectTrack], int]:
     def make_box_fallback_track(box_xyxy: np.ndarray, score: float, phrase: str) -> ObjectTrack | None:
         height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
@@ -364,7 +485,9 @@ def detect_and_track_objects(
         ):
             add_candidate(box_xyxy, float(score), str(phrase))
 
-    if proposal_source == "motion_only":
+    if proposal_source == "gdino_only":
+        add_gdino_candidates()
+    elif proposal_source == "motion_only":
         add_motion_candidates()
     elif proposal_source == "motion_then_gdino":
         add_motion_candidates()
@@ -386,7 +509,7 @@ def detect_and_track_objects(
         track_scores = np.zeros((0,), dtype=np.float32)
         track_phrases = []
 
-    if track_boxes.shape[0] == 0:
+    if track_boxes.shape[0] == 0 and proposal_source != "gdino_only":
         motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=motion_multi.prompt_frame_idx)
         track_boxes = motion_box[None, :]
         track_scores = np.asarray([1.0], dtype=np.float32)
@@ -431,7 +554,19 @@ def detect_and_track_objects(
         )
         if fallback_track is not None:
             outputs.append(fallback_track)
-    return outputs, prompt_frame_idx
+    deduped_outputs = dedupe_object_tracks(outputs, iou_threshold=float(track_dedupe_iou_threshold))
+    if len(deduped_outputs) < len(outputs):
+        print(f"[info] deduped object tracks: {len(outputs)} -> {len(deduped_outputs)}")
+    suppressed_outputs = suppress_container_tracks(
+        deduped_outputs,
+        containment_ratio_threshold=float(container_suppress_ratio_threshold),
+        min_contained_tracks=int(container_suppress_min_contained),
+        min_area_ratio=float(container_suppress_min_area_ratio),
+        small_track_iou_threshold=float(container_suppress_small_iou_threshold),
+    )
+    if len(suppressed_outputs) < len(deduped_outputs):
+        print(f"[info] suppressed container tracks: {len(deduped_outputs)} -> {len(suppressed_outputs)}")
+    return suppressed_outputs, prompt_frame_idx
 
 
 def build_query_prior_from_tracks(tracks: list[ObjectTrack], num_queries: int) -> tuple[np.ndarray, list[int], list[int], str]:
@@ -516,6 +651,7 @@ def render_overlay_video(
     correction_mask_tk: torch.Tensor,
     visibility_tk: torch.Tensor,
     gt_boxes: torch.Tensor | None = None,
+    box_only_overlay: bool = False,
 ) -> np.ndarray:
     frames = []
     image_hw = (context_video.shape[-2], context_video.shape[-1])
@@ -535,22 +671,23 @@ def render_overlay_video(
             if t == prompt_frame_idx:
                 draw_box_rgb(frame, obj_track.box_prompt_xyxy.astype(np.float32), color, f"prompt{obj_idx}")
 
-        if t == 0:
-            for q_idx, point in enumerate(query_points_px_k2):
-                owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
-                color = OBJECT_COLORS[owner % len(OBJECT_COLORS)] if owner >= 0 else (17, 17, 17)
-                draw_point_rgb(frame, point.astype(np.float32), color, f"q{q_idx}@o{owner}", radius=6)
+        if not box_only_overlay:
+            if t == 0:
+                for q_idx, point in enumerate(query_points_px_k2):
+                    owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
+                    color = OBJECT_COLORS[owner % len(OBJECT_COLORS)] if owner >= 0 else (17, 17, 17)
+                    draw_point_rgb(frame, point.astype(np.float32), color, f"q{q_idx}@o{owner}", radius=6)
 
-        for q_idx in range(tracks_native_tk2.shape[1]):
-            owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
-            color = QUERY_COLORS[q_idx % len(QUERY_COLORS)] if owner < 0 else OBJECT_COLORS[owner % len(OBJECT_COLORS)]
-            point = tracks_native_tk2[t, q_idx].cpu().numpy().astype(np.float32)
-            label = f"q{q_idx}"
-            if float(visibility_tk[t, q_idx].item()) < 0.5:
-                label += "(inv)"
-            draw_point_rgb(frame, point, color, label)
-            if float(correction_mask_tk[t, q_idx].item()) > 0.5:
-                draw_point_rgb(frame, tracks_corrected_tk2[t, q_idx].cpu().numpy().astype(np.float32), (255, 255, 0), f"fix{q_idx}", radius=4)
+            for q_idx in range(tracks_native_tk2.shape[1]):
+                owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
+                color = QUERY_COLORS[q_idx % len(QUERY_COLORS)] if owner < 0 else OBJECT_COLORS[owner % len(OBJECT_COLORS)]
+                point = tracks_native_tk2[t, q_idx].cpu().numpy().astype(np.float32)
+                label = f"q{q_idx}"
+                if float(visibility_tk[t, q_idx].item()) < 0.5:
+                    label += "(inv)"
+                draw_point_rgb(frame, point, color, label)
+                if float(correction_mask_tk[t, q_idx].item()) > 0.5:
+                    draw_point_rgb(frame, tracks_corrected_tk2[t, q_idx].cpu().numpy().astype(np.float32), (255, 255, 0), f"fix{q_idx}", radius=4)
         frames.append(frame)
     return np.stack(frames, axis=0)
 
@@ -576,6 +713,12 @@ def evaluate_case(
     include_caption_terms: bool,
     gdino_box_threshold: float,
     gdino_text_threshold: float,
+    box_only_overlay: bool,
+    track_dedupe_iou_threshold: float,
+    container_suppress_ratio_threshold: float,
+    container_suppress_min_contained: int,
+    container_suppress_min_area_ratio: float,
+    container_suppress_small_iou_threshold: float,
 ) -> dict:
     context_video = sample["context_video"]
     frames_tchw_01 = ((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy()
@@ -593,6 +736,11 @@ def evaluate_case(
         include_caption_terms=bool(include_caption_terms),
         gdino_box_threshold=float(gdino_box_threshold),
         gdino_text_threshold=float(gdino_text_threshold),
+        track_dedupe_iou_threshold=float(track_dedupe_iou_threshold),
+        container_suppress_ratio_threshold=float(container_suppress_ratio_threshold),
+        container_suppress_min_contained=int(container_suppress_min_contained),
+        container_suppress_min_area_ratio=float(container_suppress_min_area_ratio),
+        container_suppress_small_iou_threshold=float(container_suppress_small_iou_threshold),
     )
     query_points_px, query_owner, query_alloc, prior_source = build_query_prior_from_tracks_with_minimum(
         object_tracks,
@@ -651,6 +799,7 @@ def evaluate_case(
         correction_mask_tk=correction_mask[0].cpu(),
         visibility_tk=vggt_out.visibility[0].cpu(),
         gt_boxes=gt_boxes,
+        box_only_overlay=bool(box_only_overlay),
     )
     raw_path = output_dir / f"{case_group}__{Path(sample['video_path']).stem}__overlay.mp4"
     write_mp4(raw_path, overlay, fps=int(sample.get("_fps", 8)))
@@ -770,7 +919,7 @@ def main() -> None:
     parser.add_argument("--max-objects", type=int, default=6)
     parser.add_argument(
         "--proposal-source",
-        choices=["motion_only", "motion_then_gdino", "gdino_then_motion"],
+        choices=["gdino_only", "motion_only", "motion_then_gdino", "gdino_then_motion"],
         default="gdino_then_motion",
     )
     parser.add_argument("--motion-score-ratio", type=float, default=0.15)
@@ -779,6 +928,11 @@ def main() -> None:
     parser.add_argument("--disable-caption-terms", action="store_true")
     parser.add_argument("--gdino-box-threshold", type=float, default=0.20)
     parser.add_argument("--gdino-text-threshold", type=float, default=0.15)
+    parser.add_argument("--track-dedupe-iou-threshold", type=float, default=0.75)
+    parser.add_argument("--container-suppress-ratio-threshold", type=float, default=0.95)
+    parser.add_argument("--container-suppress-min-contained", type=int, default=2)
+    parser.add_argument("--container-suppress-min-area-ratio", type=float, default=1.5)
+    parser.add_argument("--container-suppress-small-iou-threshold", type=float, default=0.7)
     parser.add_argument("--num-queries", type=int, default=8)
     parser.add_argument("--min-queries-per-object", type=int, default=4)
     parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
@@ -786,6 +940,7 @@ def main() -> None:
     parser.add_argument("--gdino-device", default="cpu")
     parser.add_argument("--skip-depth-video", action="store_true")
     parser.add_argument("--skip-world-points-video", action="store_true")
+    parser.add_argument("--box-only-overlay", action="store_true")
     parser.add_argument("--ball-num-frames", type=int, default=16)
     parser.add_argument("--ball-num-context-frames", type=int, default=16)
     parser.add_argument(
@@ -854,6 +1009,12 @@ def main() -> None:
                 include_caption_terms=not bool(args.disable_caption_terms),
                 gdino_box_threshold=float(args.gdino_box_threshold),
                 gdino_text_threshold=float(args.gdino_text_threshold),
+                box_only_overlay=bool(args.box_only_overlay),
+                track_dedupe_iou_threshold=float(args.track_dedupe_iou_threshold),
+                container_suppress_ratio_threshold=float(args.container_suppress_ratio_threshold),
+                container_suppress_min_contained=int(args.container_suppress_min_contained),
+                container_suppress_min_area_ratio=float(args.container_suppress_min_area_ratio),
+                container_suppress_small_iou_threshold=float(args.container_suppress_small_iou_threshold),
             )
         )
 
@@ -881,6 +1042,12 @@ def main() -> None:
                 include_caption_terms=not bool(args.disable_caption_terms),
                 gdino_box_threshold=float(args.gdino_box_threshold),
                 gdino_text_threshold=float(args.gdino_text_threshold),
+                box_only_overlay=bool(args.box_only_overlay),
+                track_dedupe_iou_threshold=float(args.track_dedupe_iou_threshold),
+                container_suppress_ratio_threshold=float(args.container_suppress_ratio_threshold),
+                container_suppress_min_contained=int(args.container_suppress_min_contained),
+                container_suppress_min_area_ratio=float(args.container_suppress_min_area_ratio),
+                container_suppress_small_iou_threshold=float(args.container_suppress_small_iou_threshold),
             )
         )
 
