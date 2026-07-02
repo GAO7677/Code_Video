@@ -93,6 +93,8 @@ def decode_preview_video(
     preview_frame_stride: int = 1,
 ) -> torch.Tensor:
     preview_latent = x0_latent
+    if preview_frame_stride > 1:
+        preview_latent = preview_latent[:, ::preview_frame_stride].contiguous()
     if preview_downsample_factor > 1:
         preview_latent = F.interpolate(
             preview_latent.unsqueeze(0),
@@ -102,8 +104,6 @@ def decode_preview_video(
         ).squeeze(0)
 
     preview_video = _decode_with_wan_vae(vae, preview_latent)
-    if preview_frame_stride > 1:
-        preview_video = preview_video[:, ::preview_frame_stride]
     return preview_video.unsqueeze(0)
 
 

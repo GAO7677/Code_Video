@@ -18,6 +18,11 @@ _MODEL_ALIASES = {
     "vitg384": "vjepa2_vit_giant_384",
 }
 
+_DEFAULT_CHECKPOINTS = {
+    "vitg384": Path("/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth"),
+    "vitg": Path("/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth"),
+}
+
 
 def add_vjepa_repo_to_path(repo_root: Path = VJEPA2_REPO) -> None:
     repo_root = repo_root.expanduser().resolve()
@@ -46,21 +51,58 @@ def load_vjepa2_models(
     *,
     repo_root: Path = VJEPA2_REPO,
     local_torchhub: bool = True,
+    checkpoint_path: str | Path | None = None,
 ) -> tuple[torch.nn.Module, torch.nn.Module, torch.nn.Module, int]:
     model_key = _MODEL_ALIASES.get(model_name)
     if model_key is None:
         raise ValueError(f"Unsupported V-JEPA 2 model: {model_name}")
 
     repo_root = repo_root.expanduser().resolve()
+    checkpoint_path = Path(checkpoint_path).expanduser().resolve() if checkpoint_path else None
     if local_torchhub:
         encoder, predictor = torch.hub.load(
             str(repo_root),
             model_key,
             source="local",
+            pretrained=checkpoint_path is None,
         )
     else:
-        encoder, predictor = torch.hub.load("facebookresearch/vjepa2", model_key)
+        encoder, predictor = torch.hub.load(
+            "facebookresearch/vjepa2",
+            model_key,
+            pretrained=checkpoint_path is None,
+        )
     target_encoder = copy.deepcopy(encoder)
+
+    if checkpoint_path is None:
+        checkpoint_path = _DEFAULT_CHECKPOINTS.get(model_name)
+
+    if checkpoint_path is not None:
+        checkpoint_path = checkpoint_path.expanduser().resolve()
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"V-JEPA checkpoint not found: {checkpoint_path}")
+
+        add_vjepa_repo_to_path(repo_root)
+        from src.hub.backbones import _clean_backbone_key
+
+        state_dict = torch.load(str(checkpoint_path), map_location="cpu")
+        target_key = "target_encoder" if "target_encoder" in state_dict else "ema_encoder"
+        encoder_key = "encoder" if "encoder" in state_dict else target_key
+        if target_key not in state_dict:
+            raise KeyError(
+                f"Checkpoint {checkpoint_path} does not contain target_encoder or ema_encoder"
+            )
+        if "predictor" not in state_dict:
+            raise KeyError(f"Checkpoint {checkpoint_path} does not contain predictor")
+
+        encoder_state_dict = _clean_backbone_key(state_dict[encoder_key])
+        target_state_dict = _clean_backbone_key(state_dict[target_key])
+        predictor_state_dict = _clean_backbone_key(state_dict["predictor"])
+
+        encoder.load_state_dict(encoder_state_dict, strict=False)
+        target_encoder.load_state_dict(target_state_dict, strict=False)
+        predictor.load_state_dict(predictor_state_dict, strict=False)
+
     img_size = 384 if "384" in model_name else 256
     return encoder, target_encoder, predictor, img_size
 
@@ -190,18 +232,21 @@ class VJEPASurpriseEnergy:
         device: torch.device | str = "cuda",
         repo_root: Path = VJEPA2_REPO,
         local_torchhub: bool = True,
+        checkpoint_path: str | Path | None = None,
     ) -> None:
         self.device = torch.device(device)
         encoder, target_encoder, predictor, img_size = load_vjepa2_models(
             model_name=model_name,
             repo_root=repo_root,
             local_torchhub=local_torchhub,
+            checkpoint_path=checkpoint_path,
         )
         self.encoder = freeze_module(encoder.to(self.device))
         self.target_encoder = freeze_module(target_encoder.to(self.device))
         self.predictor = freeze_module(predictor.to(self.device))
         self.img_size = img_size
         self.model_name = model_name
+        self.checkpoint_path = str(checkpoint_path) if checkpoint_path else None
 
     def __call__(
         self,

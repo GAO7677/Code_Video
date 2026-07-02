@@ -97,6 +97,10 @@ Expected practical starting point:
 - `wan_latent_guidance.py`
   Utilities to reconstruct `x0`, decode a preview video, choose guidance
   steps, and apply one latent correction step.
+- `wan_ti2v_vjepa.py`
+  Standalone Wan 2.2 TI2V/I2V wrapper that reuses the PhaseLock-style
+  sampling-loop structure, but swaps the guidance rule to V-JEPA energy
+  guidance.
 
 ## Integration Target In Wan
 
@@ -187,6 +191,23 @@ for step_idx, t in enumerate(timesteps):
 
 That keeps the method single-sample and adds only one lightweight correction on
 selected steps.
+
+## Minimal Run Command
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan_ti2v_vjepa.py \
+  --ckpt_dir /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
+  --prompt "A ball falls from a platform and bounces on the floor" \
+  --image /path/to/first_frame.png \
+  --output /data/gaoya/agent-data/outputs/vjepa_guidance/ball_bounce_vjepa.mp4 \
+  --sample_steps 50 \
+  --vjepa_model vitg \
+  --vjepa_guidance_steps 6 \
+  --vjepa_latent_step_size 0.02 \
+  --offload_model
+```
+
+This is the foreground startup command for the current prototype script.
 
 ## What Is Not Implemented Here
 
