@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 
 VJEPA2_REPO = Path("/home/gaoya/Code_Video/vjepa2-main")
+CACHE_DIR = Path("/data/gaoya/agent-data/cache/torch/hub/checkpoints")
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
 
@@ -19,6 +20,7 @@ _MODEL_ALIASES = {
 }
 
 _DEFAULT_CHECKPOINTS = {
+    "vith": "https://dl.fbaipublicfiles.com/vjepa2/vith.pt",
     "vitg384": Path("/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth"),
     "vitg": Path("/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth"),
 }
@@ -36,6 +38,20 @@ def freeze_module(module: torch.nn.Module) -> torch.nn.Module:
     for parameter in module.parameters():
         parameter.requires_grad_(False)
     return module
+
+
+def _load_state_dict(checkpoint_path: str | Path) -> dict:
+    if isinstance(checkpoint_path, Path):
+        return torch.load(str(checkpoint_path), map_location="cpu")
+    checkpoint_text = str(checkpoint_path)
+    if checkpoint_text.startswith(("http://", "https://")):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        return torch.hub.load_state_dict_from_url(
+            checkpoint_text,
+            map_location="cpu",
+            model_dir=str(CACHE_DIR),
+        )
+    return torch.load(checkpoint_text, map_location="cpu")
 
 
 def _scalar_attr(value) -> int:
@@ -58,7 +74,14 @@ def load_vjepa2_models(
         raise ValueError(f"Unsupported V-JEPA 2 model: {model_name}")
 
     repo_root = repo_root.expanduser().resolve()
-    checkpoint_path = Path(checkpoint_path).expanduser().resolve() if checkpoint_path else None
+    if checkpoint_path:
+        checkpoint_text = str(checkpoint_path)
+        if checkpoint_text.startswith(("http://", "https://")):
+            checkpoint_path = checkpoint_text
+        else:
+            checkpoint_path = Path(checkpoint_path).expanduser().resolve()
+    else:
+        checkpoint_path = None
     if local_torchhub:
         encoder, predictor = torch.hub.load(
             str(repo_root),
@@ -78,14 +101,13 @@ def load_vjepa2_models(
         checkpoint_path = _DEFAULT_CHECKPOINTS.get(model_name)
 
     if checkpoint_path is not None:
-        checkpoint_path = checkpoint_path.expanduser().resolve()
-        if not checkpoint_path.is_file():
+        if isinstance(checkpoint_path, Path) and not checkpoint_path.is_file():
             raise FileNotFoundError(f"V-JEPA checkpoint not found: {checkpoint_path}")
 
         add_vjepa_repo_to_path(repo_root)
         from src.hub.backbones import _clean_backbone_key
 
-        state_dict = torch.load(str(checkpoint_path), map_location="cpu")
+        state_dict = _load_state_dict(checkpoint_path)
         target_key = "target_encoder" if "target_encoder" in state_dict else "ema_encoder"
         encoder_key = "encoder" if "encoder" in state_dict else target_key
         if target_key not in state_dict:
@@ -135,7 +157,7 @@ def generate_causal_masks(
     encoder: torch.nn.Module,
     context_frames: int,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     patch_size = _scalar_attr(encoder.patch_size)
     tubelet_size = _scalar_attr(encoder.tubelet_size)
     grid_size = img_size // patch_size
@@ -153,7 +175,7 @@ def generate_causal_masks(
     ctxt_positions = torch.arange(n_context, device=device).unsqueeze(0).repeat(batch_size, 1)
     tgt_positions = torch.arange(n_target, device=device).unsqueeze(0).repeat(batch_size, 1)
     tgt_positions = tgt_positions + n_context
-    return ctxt_positions, tgt_positions
+    return [ctxt_positions], [tgt_positions]
 
 
 def _window_video(video_btchw: torch.Tensor, window_size: int, stride: int) -> torch.Tensor:
@@ -203,13 +225,13 @@ def compute_masked_predictive_surprise(
         )
 
         target_tokens = target_encoder(chunk)
-        if isinstance(target_tokens, torch.Tensor):
-            target_token_list = [target_tokens]
-        else:
-            target_token_list = list(target_tokens)
-        target_tokens = torch.stack(
-            [F.layer_norm(tokens, (tokens.shape[-1],)) for tokens in target_token_list]
-        )
+        if isinstance(target_tokens, (list, tuple)):
+            if len(target_tokens) == 0:
+                raise RuntimeError("V-JEPA target encoder returned an empty output list")
+            target_tokens = target_tokens[-1]
+        if not isinstance(target_tokens, torch.Tensor):
+            raise RuntimeError(f"Unexpected V-JEPA target encoder output type: {type(target_tokens)!r}")
+        target_tokens = F.layer_norm(target_tokens, (target_tokens.shape[-1],))
         context_tokens = encoder(chunk, masks_enc)
         context_tokens = predictor(context_tokens, masks_enc, masks_pred)
         context_tokens = F.layer_norm(context_tokens, (context_tokens.shape[-1],))

@@ -65,6 +65,7 @@ class WanTI2VVJEPA(WanTI2V):
         *args,
         vjepa_model_name: str = "vitg",
         vjepa_checkpoint_path: Optional[str] = None,
+        vjepa_device: Optional[str | torch.device] = None,
         vjepa_config: Optional[WanVJEPAConfig] = None,
         **kwargs,
     ):
@@ -75,6 +76,7 @@ class WanTI2VVJEPA(WanTI2V):
         super().__init__(*args, **kwargs)
         self.vjepa_model_name = vjepa_model_name
         self.vjepa_checkpoint_path = vjepa_checkpoint_path
+        self.vjepa_device = torch.device(vjepa_device) if vjepa_device is not None else self.device
         self.vjepa_config = vjepa_config or WanVJEPAConfig()
         self._vjepa_energy: VJEPASurpriseEnergy | None = None
 
@@ -107,7 +109,7 @@ class WanTI2VVJEPA(WanTI2V):
             logging.info("Loading V-JEPA energy model: %s", self.vjepa_model_name)
             self._vjepa_energy = VJEPASurpriseEnergy(
                 model_name=self.vjepa_model_name,
-                device=self.device,
+                device=self.vjepa_device,
                 local_torchhub=True,
                 checkpoint_path=self.vjepa_checkpoint_path,
             )
@@ -520,6 +522,12 @@ def parse_args():
     parser.add_argument("--t5_cpu", action="store_true", default=False)
     parser.add_argument("--convert_model_dtype", action="store_true", default=False)
     parser.add_argument("--device_id", type=int, default=0)
+    parser.add_argument(
+        "--vjepa_device_id",
+        type=int,
+        default=None,
+        help="Optional CUDA device id for the V-JEPA energy model. Uses the main device when omitted.",
+    )
     parser.add_argument("--vjepa_model", type=str, default="vitg", choices=["vith", "vitg", "vitg384"])
     parser.add_argument(
         "--vjepa_ckpt",
@@ -582,6 +590,7 @@ def main():
     )
 
     logging.info("Loading WanTI2V with V-JEPA wrapper.")
+    vjepa_device = None if args.vjepa_device_id is None else f"cuda:{args.vjepa_device_id}"
     pipe = WanTI2VVJEPA(
         config=cfg,
         checkpoint_dir=args.ckpt_dir,
@@ -594,6 +603,7 @@ def main():
         convert_model_dtype=args.convert_model_dtype,
         vjepa_model_name=args.vjepa_model,
         vjepa_checkpoint_path=args.vjepa_ckpt,
+        vjepa_device=vjepa_device,
         vjepa_config=vjepa_config,
     )
 

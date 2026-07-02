@@ -254,12 +254,16 @@ def detect_and_track_objects(
     tracker = SAM2MotionTracker(device=sam2_device, enable_text_prompt=False)
     outputs: list[ObjectTrack] = []
     for box_xyxy, score, phrase in zip(track_boxes, track_scores, track_phrases):
-        sam_out = tracker.track(
-            frames_tchw_01,
-            prompt_frame_idx=prompt_frame_idx,
-            prompt_box_xyxy=np.asarray(box_xyxy, dtype=np.float32),
-            caption="",
-        )
+        try:
+            sam_out = tracker.track(
+                frames_tchw_01,
+                prompt_frame_idx=prompt_frame_idx,
+                prompt_box_xyxy=np.asarray(box_xyxy, dtype=np.float32),
+                caption="",
+            )
+        except Exception as exc:
+            print(f"[warn] SAM2 track failed for phrase={phrase!r}, box={np.asarray(box_xyxy).tolist()}: {exc}")
+            continue
         if int(sam_out.masks_thw[0].sum()) <= 0:
             continue
         outputs.append(
@@ -609,6 +613,8 @@ def main() -> None:
     )
     parser.add_argument("--num-single", type=int, default=2)
     parser.add_argument("--num-multi", type=int, default=3)
+    parser.add_argument("--phys-start-index", type=int, default=0)
+    parser.add_argument("--phys-split", default=None)
     parser.add_argument("--num-queries", type=int, default=8)
     parser.add_argument("--min-queries-per-object", type=int, default=4)
     parser.add_argument("--prompt-frame-mode", choices=["first", "last"], default="first")
@@ -626,11 +632,12 @@ def main() -> None:
     cfg = load_yaml_config(args.config)
     model_cfg = cfg["model"]
     data_cfg = cfg["data"]
+    phys_split = args.phys_split if args.phys_split is not None else data_cfg["split"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     phys_ds = PhysStateEpisodeDataset(
         root=data_cfg["root"],
-        split=data_cfg["split"],
+        split=phys_split,
         resolution=tuple(data_cfg["resolution"]),
         num_context_frames=int(data_cfg["num_context_frames"]),
         context_fraction=float(data_cfg.get("context_fraction", 0.5)),
@@ -655,7 +662,9 @@ def main() -> None:
     assets_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
-    for idx in range(min(args.num_single, len(phys_ds))):
+    phys_start = max(int(args.phys_start_index), 0)
+    phys_end = min(len(phys_ds), phys_start + max(int(args.num_single), 0))
+    for idx in range(phys_start, phys_end):
         sample = phys_ds[idx]
         sample["_fps"] = int(data_cfg.get("fps", 8))
         results.append(
