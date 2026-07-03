@@ -287,6 +287,8 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
         self.trace_case_dir: Path | None = None
         self.trace_case_payload: dict[str, Any] | None = None
         self.trace_fps = 16
+        self.vjepa_target_timestep_values: list[int] = []
+        self.vjepa_target_step_indices: list[int] = []
 
     def configure_trace(
         self,
@@ -296,6 +298,12 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
     ) -> None:
         self.trace_intermediates_enabled = enabled
         self.trace_max_strip_frames = max(2, int(max_strip_frames))
+
+    def configure_target_timesteps(self, timestep_values: list[int]) -> None:
+        self.vjepa_target_timestep_values = [int(value) for value in timestep_values]
+
+    def configure_target_step_indices(self, step_indices: list[int]) -> None:
+        self.vjepa_target_step_indices = [int(value) for value in step_indices]
 
     def set_trace_case(
         self,
@@ -397,6 +405,45 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
             **latent_stats,
         }
         (step_dir / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _select_guidance_steps(self) -> tuple[set[int], dict[int, int]]:
+        if self.vjepa_target_step_indices:
+            selected = {
+                max(0, min(int(step_idx), len(self.scheduler.timesteps) - 1))
+                for step_idx in self.vjepa_target_step_indices
+            }
+            mapping = {
+                int(step_idx): int(round(float(self.scheduler.timesteps[step_idx].detach().cpu().item())))
+                for step_idx in sorted(selected)
+            }
+            return selected, mapping
+
+        if self.vjepa_target_timestep_values:
+            scheduler_values = self.scheduler.timesteps.detach().cpu().tolist()
+            selected: set[int] = set()
+            mapping: dict[int, int] = {}
+            for target in self.vjepa_target_timestep_values:
+                best_idx = min(
+                    range(len(scheduler_values)),
+                    key=lambda idx: abs(float(scheduler_values[idx]) - float(target)),
+                )
+                selected.add(int(best_idx))
+                mapping[int(best_idx)] = int(round(float(scheduler_values[best_idx])))
+            return selected, mapping
+
+        selected = set(
+            pick_guidance_step_indices(
+                total_steps=len(self.scheduler.timesteps),
+                count=self.vjepa_config.guidance_steps,
+                min_step_percent=self.vjepa_config.min_step_percent,
+                max_step_percent=self.vjepa_config.max_step_percent,
+            )
+        )
+        mapping = {
+            int(step_idx): int(round(float(self.scheduler.timesteps[step_idx].detach().cpu().item())))
+            for step_idx in sorted(selected)
+        }
+        return selected, mapping
 
     def _ensure_vjepa_energy(self) -> VJEPASurpriseEnergy:
         if not self.enable_vjepa_guidance:
@@ -674,17 +721,15 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
             )
 
         energy_fn = self._ensure_vjepa_energy()
-        selected_steps = set(
-            pick_guidance_step_indices(
-                total_steps=len(self.scheduler.timesteps),
-                count=self.vjepa_config.guidance_steps,
-                min_step_percent=self.vjepa_config.min_step_percent,
-                max_step_percent=self.vjepa_config.max_step_percent,
-            )
-        )
+        selected_steps, selected_step_timestep_map = self._select_guidance_steps()
         self._write_trace_case_payload(
             {
                 "selected_guidance_steps": sorted(int(step) for step in selected_steps),
+                "selected_guidance_timestep_map": {
+                    str(step): int(timestep) for step, timestep in sorted(selected_step_timestep_map.items())
+                },
+                "target_step_indices": [int(value) for value in self.vjepa_target_step_indices],
+                "target_timestep_values": [int(value) for value in self.vjepa_target_timestep_values],
                 "num_inference_steps": int(num_inference_steps),
                 "vjepa_config": {
                     "guidance_steps": int(self.vjepa_config.guidance_steps),
@@ -856,6 +901,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-guidance-steps", type=int, default=2)
     parser.add_argument("--vjepa-min-step-percent", type=float, default=0.35)
     parser.add_argument("--vjepa-max-step-percent", type=float, default=0.65)
+    parser.add_argument("--vjepa-target-step-indices", type=int, nargs="*", default=None)
+    parser.add_argument("--vjepa-target-timesteps", type=int, nargs="*", default=None)
     parser.add_argument("--vjepa-latent-step-size", type=float, default=0.01)
     parser.add_argument("--vjepa-preview-downsample-factor", type=int, default=4)
     parser.add_argument("--vjepa-preview-frame-stride", type=int, default=2)
@@ -963,6 +1010,12 @@ def _build_pipeline_with_vjepa(cli_args: argparse.Namespace):
         pipe.configure_trace(
             enabled=bool(cli_args.trace_intermediates),
             max_strip_frames=int(cli_args.trace_max_strip_frames),
+        )
+        pipe.configure_target_timesteps(
+            [int(value) for value in (cli_args.vjepa_target_timesteps or [])]
+        )
+        pipe.configure_target_step_indices(
+            [int(value) for value in (cli_args.vjepa_target_step_indices or [])]
         )
         return pipe
 

@@ -17,33 +17,34 @@ adapted for checkpoints produced by run_train_stage1b_context_only_no_gt_box_dif
           pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/
           checkpoints/step-001000/checkpoint.safetensors
 
-运行指令（完整推理，test_5.txt 全量）：
-  PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
-  CUDA_VISIBLE_DEVICES=7 \
-  /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_diffsynth_v2v.py \
-    --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \
-    --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
-    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-    --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \
-    --sampling-steps 40 \
-    --cfg-scale 5.0 \
-    --seed 42 \
-    --force
+========== 冒烟测试（1条样本，20步） ==========
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=5 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_diffsynth_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \
+  --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \
+  --sampling-steps 20 \
+  --cfg-scale 5.0 \
+  --seed 42 \
+  --limit 1 \
+  --force
 
-快速冒烟测试（--limit 1）：
-  PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \\
-  CUDA_VISIBLE_DEVICES=5 \\
-  /home/gaoya/miniconda3/envs/wan-cu128/bin/python \\
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_diffsynth_v2v.py \\
-    --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \\
-    --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \\
-    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \\
-    --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \\
-    --sampling-steps 1 \\
-    --cfg-scale 5.0 \\
-    --limit 1 \\
-    --force
+========== 正式推理（test_5.txt 全量，40步） ==========
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=7 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_diffsynth_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \
+  --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \
+  --sampling-steps 40 \
+  --cfg-scale 5.0 \
+  --seed 42 \
+  --force
 
 输出目录：
   /data/gaoya/AAA_test_video/0623/test/v2v/
