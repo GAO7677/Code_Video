@@ -44,7 +44,7 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "DiffSynth-Studio-main")]:
         sys.path.insert(0, _p)
 
 try:
-    from .vjepa_surprise import VJEPASurpriseEnergy
+    from .vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
     from .wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
     from .wan_openvid_0613pybullet_lorav2v_vjepa import (
         ContextAwareWanVideoPipelineVJEPA,
@@ -53,7 +53,7 @@ try:
         _apply_diffsynth_vjepa_guidance,
     )
 except ImportError:
-    from vjepa_surprise import VJEPASurpriseEnergy
+    from vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
     from wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
     from wan_openvid_0613pybullet_lorav2v_vjepa import (
         ContextAwareWanVideoPipelineVJEPA,
@@ -65,6 +65,23 @@ except ImportError:
 from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
 
 log = logging.getLogger(__name__)
+
+
+def _pil_frames_to_tensor(frames: list) -> torch.Tensor:
+    """Convert a list of PIL RGB frames to a [1,3,T,H,W] tensor in [-1,1].
+
+    Matches DiffSynth's preprocess_video normalization so the anchor context
+    lives in the same value range as the VAE-decoded generated frames.
+    """
+    import numpy as np
+
+    arrs = []
+    for frame in frames:
+        arr = torch.from_numpy(np.asarray(frame.convert("RGB"))).float()  # [H,W,3] in 0..255
+        arr = arr.permute(2, 0, 1) / 127.5 - 1.0  # [3,H,W] in [-1,1]
+        arrs.append(arr)
+    stacked = torch.stack(arrs, dim=1)  # [3,T,H,W]
+    return stacked.unsqueeze(0)  # [1,3,T,H,W]
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +130,13 @@ class _SchedulerEnergyProbe:
         self._step_counter = 0
         self.records: list[dict] = []
         self.guidance_step_indices: set[int] = set()
+        # Anchored-probe state: when enabled, the probe measures the same
+        # context-anchored energy that context_anchored guidance optimizes,
+        # against a fixed precomputed reference (so baseline and guided runs
+        # are directly comparable).
+        self.anchored_probe: bool = False
+        self._anchor_context_pixel: Optional[torch.Tensor] = None
+        self._anchor_future_ref: Optional[torch.Tensor] = None
 
     def __getattr__(self, name: str):
         return getattr(self.inner, name)
@@ -138,27 +162,59 @@ class _SchedulerEnergyProbe:
                     sigma_t = sigma_t.unsqueeze(-1)
                 x0_pred = latent_xt.detach().float() - sigma_t * model_output.detach().float()
 
-                # decode low-res preview via VAE
-                preview = self._pipe._decode_preview_video(
-                    x0_pred,
-                    preview_downsample_factor=self._config.preview_downsample_factor,
-                    preview_frame_stride=self._config.preview_frame_stride,
-                    tiled=self._tiled,
-                    tile_size=self._tile_size,
-                    tile_stride=self._tile_stride,
-                    framewise_decoding=self._framewise_decoding,
-                    restore_model_names=self._restore_model_names,
-                )
-
-                energy = float(
-                    self._energy_fn(
-                        preview,
+                if self.anchored_probe and self._anchor_context_pixel is not None:
+                    # Anchored energy: decode full video, take future frames, prepend
+                    # the fixed real context, measure mismatch vs the fixed prediction.
+                    full_video = self._pipe._decode_preview_video(
+                        x0_pred,
+                        preview_downsample_factor=self._config.preview_downsample_factor,
+                        preview_frame_stride=1,
+                        tiled=self._tiled,
+                        tile_size=self._tile_size,
+                        tile_stride=self._tile_stride,
+                        framewise_decoding=self._framewise_decoding,
+                        restore_model_names=self._restore_model_names,
+                    )
+                    n_ctx = int(self._config.context_frames)
+                    generated_future = full_video[:, :, n_ctx:]
+                    clip = build_context_future_clip(
+                        context_btchw=self._anchor_context_pixel.to(
+                            device=generated_future.device, dtype=generated_future.dtype
+                        ),
+                        future_btchw=generated_future,
                         window_size=self._config.window_size,
-                        context_frames=self._config.context_frames,
-                        stride=self._config.stride,
-                        reduction=self._config.reduction,
-                    ).item()
-                )
+                        context_frames=n_ctx,
+                    )
+                    energy = float(
+                        self._energy_fn.context_anchored(
+                            clip,
+                            window_size=self._config.window_size,
+                            context_frames=n_ctx,
+                            predicted_future_ref=self._anchor_future_ref,
+                        ).item()
+                    )
+                else:
+                    # decode low-res preview via VAE
+                    preview = self._pipe._decode_preview_video(
+                        x0_pred,
+                        preview_downsample_factor=self._config.preview_downsample_factor,
+                        preview_frame_stride=self._config.preview_frame_stride,
+                        tiled=self._tiled,
+                        tile_size=self._tile_size,
+                        tile_stride=self._tile_stride,
+                        framewise_decoding=self._framewise_decoding,
+                        restore_model_names=self._restore_model_names,
+                    )
+
+                    energy = float(
+                        self._energy_fn(
+                            preview,
+                            window_size=self._config.window_size,
+                            context_frames=self._config.context_frames,
+                            stride=self._config.stride,
+                            reduction=self._config.reduction,
+                        ).item()
+                    )
 
             timestep_val = int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
             return {
@@ -250,10 +306,33 @@ def _run_condition(
     latent_step_size: Optional[float] = None,   # overrides vjepa_config value
     inner_k: int = 1,                            # guidance repetitions per step
     save_video_path: Optional[Path] = None,     # if provided, save generated video
+    guidance_mode: str = "surprise",            # "surprise" | "context_anchored"
 ) -> tuple[list, list[dict]]:
-    """Run one generation condition with per-step energy probing. Returns (video, records)."""
+    """Run one generation condition with per-step energy probing. Returns (video, records).
+
+    When ``guidance_mode == "context_anchored"``, both the guidance and the probe
+    measure the context-anchored energy (generated future vs V-JEPA's prediction
+    from the real conditioning frames), so baseline and guided runs stay comparable.
+    """
 
     effective_step_size = latent_step_size if latent_step_size is not None else vjepa_config.latent_step_size
+
+    def _make_config(*, steps: int, min_p: float, max_p: float, step_size: float) -> WanVJEPAConfig:
+        return WanVJEPAConfig(
+            guidance_steps=steps,
+            min_step_percent=min_p,
+            max_step_percent=max_p,
+            latent_step_size=step_size,
+            preview_downsample_factor=vjepa_config.preview_downsample_factor,
+            preview_frame_stride=vjepa_config.preview_frame_stride,
+            window_size=vjepa_config.window_size,
+            context_frames=vjepa_config.context_frames,
+            stride=vjepa_config.stride,
+            reduction=vjepa_config.reduction,
+            gradient_normalization=vjepa_config.gradient_normalization,
+            max_grad_norm=vjepa_config.max_grad_norm,
+            guidance_mode=guidance_mode,
+        )
 
     # Determine guidance steps
     if guidance_step_percents:
@@ -265,24 +344,24 @@ def _run_condition(
                 max_step_percent=max(guidance_step_percents),
             )
         )
-        pipe.vjepa_config = WanVJEPAConfig(
-            guidance_steps=len(guidance_step_percents),
-            min_step_percent=min(guidance_step_percents),
-            max_step_percent=max(guidance_step_percents),
-            latent_step_size=effective_step_size,
-            preview_downsample_factor=vjepa_config.preview_downsample_factor,
-            preview_frame_stride=vjepa_config.preview_frame_stride,
-            window_size=vjepa_config.window_size,
-            context_frames=vjepa_config.context_frames,
-            stride=vjepa_config.stride,
-            reduction=vjepa_config.reduction,
-            gradient_normalization=vjepa_config.gradient_normalization,
-            max_grad_norm=vjepa_config.max_grad_norm,
+        pipe.vjepa_config = _make_config(
+            steps=len(guidance_step_percents),
+            min_p=min(guidance_step_percents),
+            max_p=max(guidance_step_percents),
+            step_size=effective_step_size,
         )
         pipe.enable_vjepa_guidance = True
         pipe.vjepa_inner_k = max(1, int(inner_k))
     else:
         guidance_step_indices = set()
+        # Baseline still needs guidance_mode on the config so the probe knows which
+        # energy to measure; enable_vjepa_guidance stays False so no correction runs.
+        pipe.vjepa_config = _make_config(
+            steps=1,
+            min_p=0.5,
+            max_p=0.5,
+            step_size=effective_step_size,
+        )
         pipe.enable_vjepa_guidance = False
         pipe.vjepa_inner_k = 1
 
@@ -299,11 +378,48 @@ def _run_condition(
         )
     energy_fn = pipe._vjepa_energy
 
+    # For context-anchored mode, precompute the fixed anchor (real context frames
+    # in pixel space + V-JEPA's future prediction from them). The SAME anchor is
+    # used to probe baseline and every guided condition, so the delta curve is
+    # measured against one consistent reference.
+    anchor_context_pixel = None
+    anchor_future_ref = None
+    if guidance_mode == "context_anchored":
+        ctx_frames = core.load_context_frames(
+            context_path,
+            context_frames=int(vjepa_config.context_frames),
+            height=height,
+            width=width,
+        )
+        anchor_context_pixel = _pil_frames_to_tensor(ctx_frames).to(pipe.vjepa_device)
+        n_ctx = int(vjepa_config.context_frames)
+        future_frames = int(vjepa_config.window_size) - n_ctx
+        placeholder = torch.zeros(
+            1, 3, future_frames,
+            anchor_context_pixel.shape[3],
+            anchor_context_pixel.shape[4],
+            device=anchor_context_pixel.device,
+            dtype=anchor_context_pixel.dtype,
+        )
+        precompute_clip = build_context_future_clip(
+            context_btchw=anchor_context_pixel,
+            future_btchw=placeholder,
+            window_size=int(vjepa_config.window_size),
+            context_frames=n_ctx,
+        )
+        anchor_future_ref = energy_fn.precompute_future_prediction(
+            precompute_clip,
+            window_size=int(vjepa_config.window_size),
+            context_frames=n_ctx,
+        )
+        log.info("[%s] anchored probe ready: ctx=%d future=%d ref=%s",
+                 condition_label, n_ctx, future_frames, tuple(anchor_future_ref.shape))
+
     probe = _SchedulerEnergyProbe(
         inner_scheduler=pipe.scheduler,
         energy_fn=energy_fn,
         pipe=pipe,
-        config=vjepa_config,
+        config=pipe.vjepa_config,
         probe_every_n=probe_every_n,
         restore_model_names=tuple(pipe.in_iteration_models),
         tiled=True,
@@ -312,6 +428,9 @@ def _run_condition(
         framewise_decoding=False,
     )
     probe.guidance_step_indices = guidance_step_indices
+    probe.anchored_probe = guidance_mode == "context_anchored"
+    probe._anchor_context_pixel = anchor_context_pixel
+    probe._anchor_future_ref = anchor_future_ref
     pipe.scheduler = probe
 
     log.info("[%s] guidance_steps=%s  probe_every_n=%d", condition_label, sorted(guidance_step_indices), probe_every_n)
@@ -479,6 +598,40 @@ def _phase3_conditions(p_best: float, ss_best: float) -> list[dict]:
     ]
 
 
+def _phase4_conditions(p_center: float = 0.50, ss_base: float = 0.02) -> list[dict]:
+    """Mechanism comparison: context-anchored guidance at a few timing/count/size
+    settings. The whole phase runs in guidance_mode='context_anchored', so both the
+    baseline and every condition are measured with the anchored energy.
+
+    Anchored guidance is applied in the mid/low-noise band (x0 decode is sharp enough
+    for feature alignment to be meaningful) and uses multiple steps so the correction
+    accumulates instead of being washed out by the remaining diffusion steps.
+
+    ``p_center`` centers the timing band; ``ss_base`` is the base latent step size.
+    """
+    lo = max(0.05, p_center - 0.10)
+    hi = min(0.95, p_center + 0.10)
+    span3 = [lo, p_center, hi]
+    span4 = [lo, p_center - 0.03, p_center + 0.03, hi + 0.10 if hi + 0.10 <= 0.95 else hi]
+    span4 = sorted({round(v, 3) for v in span4})
+    return [
+        # single-step, mid trajectory (direct analog of the old single-step probe)
+        {"label": "anch_p50_s02", "guidance_step_percents": [p_center],
+         "latent_step_size": ss_base, "inner_k": 1},
+        # multi-step spans -- accumulate the pull toward the predicted future
+        {"label": "anch_span3", "guidance_step_percents": span3,
+         "latent_step_size": ss_base, "inner_k": 1},
+        {"label": "anch_span4", "guidance_step_percents": span4,
+         "latent_step_size": ss_base, "inner_k": 1},
+        # larger step, multi-step
+        {"label": "anch_span3_s05", "guidance_step_percents": span3,
+         "latent_step_size": ss_base * 2.5, "inner_k": 1},
+        # inner-k accumulation at a single step
+        {"label": "anch_p50_k3", "guidance_step_percents": [p_center],
+         "latent_step_size": ss_base, "inner_k": 3},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Phase runner
 # ---------------------------------------------------------------------------
@@ -494,8 +647,15 @@ def _run_phase(
     output_dir: Path,
     probe_every_n: int,
     baseline_records_path: Optional[Path] = None,
+    guidance_mode: str = "surprise",
 ) -> tuple[list[dict], dict[str, list[dict]]]:
-    """Run baseline + conditions, return (scores_list, all_records_dict)."""
+    """Run baseline + conditions, return (scores_list, all_records_dict).
+
+    ``guidance_mode`` selects the energy/guidance mechanism for the whole phase
+    ("surprise" = legacy self-consistency, "context_anchored" = anchored to the
+    real conditioning frames). Individual conditions may override via a
+    "guidance_mode" key.
+    """
 
     phase_dir = output_dir / f"phase{phase_num}"
     phase_dir.mkdir(parents=True, exist_ok=True)
@@ -522,6 +682,7 @@ def _run_phase(
             probe_every_n=probe_every_n,
             condition_label="baseline",
             save_video_path=baseline_video_path,
+            guidance_mode=guidance_mode,
         )
         baseline_json.write_text(json.dumps(baseline_records, indent=2), encoding="utf-8")
 
@@ -547,6 +708,7 @@ def _run_phase(
                 latent_step_size=cond.get("latent_step_size"),
                 inner_k=cond.get("inner_k", 1),
                 save_video_path=video_path,
+                guidance_mode=cond.get("guidance_mode", guidance_mode),
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
@@ -597,8 +759,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vjepa-device", type=str, default=None)
     p.add_argument("--vjepa-model", type=str, default="vith")
     p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3], default=1,
-                   help="Which experiment phase to run (1=timing, 2=step-size, 3=count+inner_k)")
+    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4], default=1,
+                   help="Which experiment phase to run (1=timing, 2=step-size, "
+                        "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored)")
     p.add_argument("--probe-every-n", type=int, default=2)
     p.add_argument("--num-frames", type=int, default=49)
     p.add_argument("--height", type=int, default=480)
@@ -612,6 +775,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-size", type=int, default=16)
     p.add_argument("--context-frames-vjepa", type=int, default=8)
     p.add_argument("--stride", type=int, default=4)
+    p.add_argument("--anchor-timing", type=float, default=0.35,
+                   help="Phase 4: guidance timing percent for context-anchored conditions")
+    p.add_argument("--anchor-step-size", type=float, default=0.05,
+                   help="Phase 4: latent step size for context-anchored conditions")
     p.add_argument("--log-level", type=str, default="INFO")
     return p.parse_args()
 
@@ -709,6 +876,21 @@ def main() -> None:
                    base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
                    output_dir=args.output_dir, probe_every_n=args.probe_every_n,
                    baseline_records_path=p1_baseline)
+
+    elif args.phase == 4:
+        # Mechanism comparison: context-anchored guidance vs the legacy
+        # self-consistency surprise, at a shared timing/step-size. Runs entirely
+        # in context_anchored mode so baseline + all conditions are probed with
+        # the anchored energy (the quantity the new mechanism optimizes). The
+        # anchored baseline is NOT reused from phase1 (different energy).
+        p_best = args.anchor_timing
+        ss_best = args.anchor_step_size
+        log.info("Phase 4 (context-anchored) using p_best=%.2f ss_best=%.3f", p_best, ss_best)
+        conditions = _phase4_conditions(p_best, ss_best)
+        _run_phase(4, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   guidance_mode="context_anchored")
 
     log.info("Done. Output dir: %s", args.output_dir)
 

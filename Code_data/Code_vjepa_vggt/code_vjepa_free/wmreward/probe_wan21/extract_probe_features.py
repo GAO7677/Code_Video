@@ -311,7 +311,10 @@ def load_pipe(config: ProbeConfig):
         torch_dtype=dtype,
         local_files_only=True,
     )
-    pipe.to(config.device)
+    # T5 text encoder is ~22 GB; keep it on CPU to stay within 48 GB GPU VRAM.
+    # Only move transformer (5.3 GB) and vae (0.5 GB) to GPU.
+    pipe.transformer.to(config.device)
+    pipe.vae.to(config.device)
     return pipe
 
 
@@ -343,6 +346,9 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # text_encoder stays on CPU; use transformer's device as the compute device
+    gpu_device = next(pipe.transformer.parameters()).device
+
     recorder = BlockFeatureRecorder(
         capture_layers=config.capture_layers,
         capture_step_indices=config.capture_step_indices,
@@ -351,21 +357,22 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
     recorder.register(pipe.transformer)
 
     do_cfg = config.guidance_scale > 1.0
+    # T5 text encoder stays on CPU; encode on CPU then move embeddings to GPU
     prompt_embeds, negative_prompt_embeds = pipe.encode_prompt(
         prompt=runtime["prompt"],
         negative_prompt=runtime["negative_prompt"],
         do_classifier_free_guidance=do_cfg,
         num_videos_per_prompt=1,
         max_sequence_length=config.prompt_max_length,
-        device=pipe._execution_device,
+        device=torch.device("cpu"),
     )
 
     transformer_dtype = pipe.transformer.dtype
-    prompt_embeds = prompt_embeds.to(transformer_dtype)
+    prompt_embeds = prompt_embeds.to(gpu_device, transformer_dtype)
     if negative_prompt_embeds is not None:
-        negative_prompt_embeds = negative_prompt_embeds.to(transformer_dtype)
+        negative_prompt_embeds = negative_prompt_embeds.to(gpu_device, transformer_dtype)
 
-    pipe.scheduler.set_timesteps(config.num_inference_steps, device=pipe._execution_device)
+    pipe.scheduler.set_timesteps(config.num_inference_steps, device=gpu_device)
     timesteps = pipe.scheduler.timesteps
     latents = pipe.prepare_latents(
         batch_size=1,
@@ -374,8 +381,8 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
         width=config.width,
         num_frames=config.num_frames,
         dtype=torch.float32,
-        device=pipe._execution_device,
-        generator=torch.Generator(device=config.device).manual_seed(runtime["seed"]),
+        device=gpu_device,
+        generator=torch.Generator(device=gpu_device).manual_seed(runtime["seed"]),
         latents=None,
     )
     patch_size = tuple(pipe.transformer.config.patch_size)
@@ -392,12 +399,12 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
         try:
             pil_img = load_image_for_cond(image_path, config.height, config.width)
             dtype_t = torch_dtype_from_name(config.dtype)
-            latent_condition = encode_image_latent(pipe, pil_img, config.height, config.width, pipe._execution_device, dtype_t)
+            latent_condition = encode_image_latent(pipe, pil_img, config.height, config.width, gpu_device, dtype_t)
             # shape: [1, z_dim, 1, H_lat, W_lat] -> broadcast to [1, z_dim, T_lat, H_lat, W_lat]
             num_latent_frames = latents.shape[2]
             latent_condition = latent_condition.expand(-1, -1, num_latent_frames, -1, -1).clone()
             first_frame_mask = torch.ones(1, 1, num_latent_frames, latents.shape[3], latents.shape[4],
-                                          dtype=torch.float32, device=pipe._execution_device)
+                                          dtype=torch.float32, device=gpu_device)
             first_frame_mask[:, :, 0] = 0.0
             image_cond_active = True
             print(f"[I2V] image conditioning active: {image_path}", flush=True)
@@ -406,9 +413,10 @@ def run_single(pipe, config: ProbeConfig, runtime: Dict) -> Dict[str, str]:
 
     if not image_cond_active:
         # Pure T2V: all-ones mask, latent_model_input = latents
-        first_frame_mask = torch.ones(latents.shape, dtype=torch.float32, device=pipe._execution_device)
+        first_frame_mask = torch.ones(latents.shape, dtype=torch.float32, device=gpu_device)
 
     try:
+      with torch.no_grad():
         for step_idx, t in enumerate(timesteps):
             if image_cond_active:
                 # I2V: blend conditioned first frame with noisy latents

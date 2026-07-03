@@ -17,10 +17,10 @@ from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root, reso
 from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
 
 try:
-    from .vjepa_surprise import VJEPASurpriseEnergy
+    from .vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
     from .wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
 except ImportError:
-    from vjepa_surprise import VJEPASurpriseEnergy
+    from vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
     from wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
 
 """
@@ -230,6 +230,115 @@ def _apply_diffsynth_vjepa_guidance(
         "preview_width": float(preview_video.shape[4]),
     }
     return corrected, stats
+
+
+def _apply_context_anchored_guidance(
+    *,
+    latent_xt: torch.Tensor,
+    model_output: torch.Tensor,
+    timestep: torch.Tensor | int,
+    scheduler,
+    full_decoder: Callable[..., torch.Tensor],
+    context_frames_pixel: torch.Tensor,
+    energy_obj,
+    config: WanVJEPAConfig,
+    predicted_future_ref: Optional[torch.Tensor],
+    trace_hook: Optional[Callable[..., None]] = None,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Context-anchored guidance.
+
+    Instead of measuring the *self-consistency* of the generated clip (the old
+    ``_apply_diffsynth_vjepa_guidance`` path), this decodes the predicted clean
+    video, takes only its generated (future) frames, prepends the *real*
+    conditioning frames, and drives the generated future toward the feature-space
+    continuation V-JEPA forecasts from that real context.
+
+    ``context_frames_pixel`` is a fixed [1,3,Tc,H,W] tensor in [-1,1] (decoded once
+    from the real context latents). ``predicted_future_ref`` is the precomputed
+    V-JEPA future prediction; if None it is computed on the fly each call.
+    """
+    latent_for_grad = latent_xt.detach().float().requires_grad_(True)
+    model_output = model_output.detach().float()
+
+    x0_pred = _predict_x0_from_diffsynth_flow(
+        scheduler=scheduler,
+        latent_xt=latent_for_grad,
+        model_output=model_output,
+        timestep=timestep,
+    )
+
+    # Decode the full predicted clean video (keeps graph to latent_for_grad).
+    full_video = full_decoder(x0_pred)  # [1,3,T,H,W] in [-1,1]
+
+    n_ctx = int(config.context_frames)
+    total_frames = full_video.shape[2]
+    if total_frames <= n_ctx:
+        raise ValueError(
+            f"Decoded video has {total_frames} frames, need > context_frames={n_ctx}"
+        )
+    # Generated (future) portion of the decoded prediction. Gradients flow here.
+    generated_future = full_video[:, :, n_ctx:]
+
+    ctx = context_frames_pixel.to(device=generated_future.device, dtype=generated_future.dtype)
+
+    clip = build_context_future_clip(
+        context_btchw=ctx,
+        future_btchw=generated_future,
+        window_size=config.window_size,
+        context_frames=n_ctx,
+    )
+
+    energy = energy_obj.context_anchored(
+        clip,
+        window_size=config.window_size,
+        context_frames=n_ctx,
+        predicted_future_ref=predicted_future_ref,
+    )
+
+    gradient = torch.autograd.grad(energy, latent_for_grad, retain_graph=False, create_graph=False)[0]
+    gradient = torch.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
+    raw_grad_norm = float(gradient.norm().item())
+    if config.max_grad_norm is not None and raw_grad_norm > config.max_grad_norm:
+        gradient = gradient * (config.max_grad_norm / max(raw_grad_norm, 1e-6))
+    gradient = _normalize_gradient(gradient, mode=config.gradient_normalization)
+
+    # Do not modify the clean-prefix latents: zero the gradient on context region.
+    n_ctx_latent = _pixel_frames_to_latent_len(n_ctx)
+    if n_ctx_latent > 0 and n_ctx_latent < gradient.shape[2]:
+        gradient[:, :, :n_ctx_latent] = 0.0
+
+    if trace_hook is not None:
+        trace_hook(
+            x0_pred=x0_pred.detach(),
+            preview_video=full_video.detach(),
+            energy=float(energy.detach().item()),
+            raw_grad_norm=raw_grad_norm,
+            normalized_grad_rms=float(gradient.detach().pow(2).mean().sqrt().item()),
+        )
+
+    corrected = latent_xt.detach().float() - config.latent_step_size * gradient
+    corrected = corrected.to(dtype=latent_xt.dtype)
+
+    stats = {
+        "energy": float(energy.detach().item()),
+        "grad_rms": float(gradient.detach().pow(2).mean().sqrt().item()),
+        "latent_rms": float(latent_xt.detach().float().pow(2).mean().sqrt().item()),
+        "preview_frames": float(full_video.shape[2]),
+        "preview_height": float(full_video.shape[3]),
+        "preview_width": float(full_video.shape[4]),
+    }
+    return corrected, stats
+
+
+def _pixel_frames_to_latent_len(pixel_frames: int) -> int:
+    """Wan VAE temporal compression: latent_T = (pixel_T - 1) // 4 + 1.
+
+    The clean prefix occupies the first ``_pixel_frames_to_latent_len(Tc)`` latent
+    frames; guidance must not touch them since they are overwritten each step.
+    """
+    if pixel_frames <= 0:
+        return 0
+    return (pixel_frames - 1) // 4 + 1
 
 
 class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
@@ -749,6 +858,61 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
             }
         )
 
+        # --- Context-anchored guidance setup (guidance_mode == "context_anchored") ---
+        # Decode the real context latents to pixel space once, and precompute the
+        # V-JEPA future prediction from that fixed real context. Both are held fixed
+        # for the whole denoising trajectory.
+        guidance_mode = getattr(self.vjepa_config, "guidance_mode", "surprise")
+        context_frames_pixel: Optional[torch.Tensor] = None
+        predicted_future_ref: Optional[torch.Tensor] = None
+        if (
+            guidance_mode == "context_anchored"
+            and selected_steps
+            and inputs_shared.get("clean_prefix_latents") is not None
+        ):
+            n_ctx = int(self.vjepa_config.context_frames)
+            with torch.no_grad():
+                prefix_latents = inputs_shared["clean_prefix_latents"].detach()
+                context_video_pixel = self._decode_preview_video(
+                    prefix_latents,
+                    preview_downsample_factor=1,
+                    preview_frame_stride=1,
+                    tiled=tiled,
+                    tile_size=tile_size,
+                    tile_stride=tile_stride,
+                    framewise_decoding=framewise_decoding,
+                    restore_model_names=tuple(self.in_iteration_models),
+                )  # [1,3,Tc,H,W]
+                context_frames_pixel = context_video_pixel.detach()
+                # Build a [context | zero-future] clip to precompute the fixed prediction.
+                future_frames = int(self.vjepa_config.window_size) - n_ctx
+                placeholder = torch.zeros(
+                    context_frames_pixel.shape[0],
+                    context_frames_pixel.shape[1],
+                    future_frames,
+                    context_frames_pixel.shape[3],
+                    context_frames_pixel.shape[4],
+                    device=context_frames_pixel.device,
+                    dtype=context_frames_pixel.dtype,
+                )
+                precompute_clip = build_context_future_clip(
+                    context_btchw=context_frames_pixel,
+                    future_btchw=placeholder,
+                    window_size=int(self.vjepa_config.window_size),
+                    context_frames=n_ctx,
+                )
+                predicted_future_ref = energy_fn.precompute_future_prediction(
+                    precompute_clip,
+                    window_size=int(self.vjepa_config.window_size),
+                    context_frames=n_ctx,
+                )
+            logging.info(
+                "Context-anchored guidance ready: ctx_frames=%d future_frames=%d ref_shape=%s",
+                context_frames_pixel.shape[2],
+                future_frames,
+                tuple(predicted_future_ref.shape),
+            )
+
         self.load_models_to_device(self.in_iteration_models)
         active_model_names = self.in_iteration_models
         models = {name: getattr(self, name) for name in self.in_iteration_models}
@@ -781,41 +945,82 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
 
             if progress_id in selected_steps:
                 inner_k = max(1, int(getattr(self, "vjepa_inner_k", 1)))
+                use_anchored = (
+                    guidance_mode == "context_anchored"
+                    and context_frames_pixel is not None
+                    and predicted_future_ref is not None
+                )
                 for _inner in range(inner_k):
                     with torch.enable_grad():
-                        inputs_shared["latents"], stats = _apply_diffsynth_vjepa_guidance(
-                            latent_xt=inputs_shared["latents"],
-                            model_output=noise_pred,
-                            timestep=timestep_cpu,
-                            scheduler=self.scheduler,
-                            preview_decoder=lambda x0_pred, preview_downsample_factor, preview_frame_stride: self._decode_preview_video(
-                                x0_pred,
-                                preview_downsample_factor=preview_downsample_factor,
-                                preview_frame_stride=preview_frame_stride,
-                                tiled=tiled,
-                                tile_size=tile_size,
-                                tile_stride=tile_stride,
-                                framewise_decoding=framewise_decoding,
-                                restore_model_names=active_model_names,
-                            ),
-                            energy_fn=energy_fn,
-                            config=self.vjepa_config,
-                            trace_hook=(
-                                lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
-                                    step_idx=progress_id,
-                                    timestep=int(timestep_cpu.item()),
-                                    x0_pred=x0_pred,
-                                    preview_video=preview_video,
-                                    energy=energy,
-                                    raw_grad_norm=raw_grad_norm,
-                                    normalized_grad_rms=normalized_grad_rms,
-                                )
-                                if self.trace_intermediates_enabled and _inner == 0
-                                else None
-                            ),
-                        )
+                        if use_anchored:
+                            inputs_shared["latents"], stats = _apply_context_anchored_guidance(
+                                latent_xt=inputs_shared["latents"],
+                                model_output=noise_pred,
+                                timestep=timestep_cpu,
+                                scheduler=self.scheduler,
+                                full_decoder=lambda x0_pred: self._decode_preview_video(
+                                    x0_pred,
+                                    preview_downsample_factor=self.vjepa_config.preview_downsample_factor,
+                                    preview_frame_stride=1,
+                                    tiled=tiled,
+                                    tile_size=tile_size,
+                                    tile_stride=tile_stride,
+                                    framewise_decoding=framewise_decoding,
+                                    restore_model_names=active_model_names,
+                                ),
+                                context_frames_pixel=context_frames_pixel,
+                                energy_obj=energy_fn,
+                                config=self.vjepa_config,
+                                predicted_future_ref=predicted_future_ref,
+                                trace_hook=(
+                                    lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
+                                        step_idx=progress_id,
+                                        timestep=int(timestep_cpu.item()),
+                                        x0_pred=x0_pred,
+                                        preview_video=preview_video,
+                                        energy=energy,
+                                        raw_grad_norm=raw_grad_norm,
+                                        normalized_grad_rms=normalized_grad_rms,
+                                    )
+                                    if self.trace_intermediates_enabled and _inner == 0
+                                    else None
+                                ),
+                            )
+                        else:
+                            inputs_shared["latents"], stats = _apply_diffsynth_vjepa_guidance(
+                                latent_xt=inputs_shared["latents"],
+                                model_output=noise_pred,
+                                timestep=timestep_cpu,
+                                scheduler=self.scheduler,
+                                preview_decoder=lambda x0_pred, preview_downsample_factor, preview_frame_stride: self._decode_preview_video(
+                                    x0_pred,
+                                    preview_downsample_factor=preview_downsample_factor,
+                                    preview_frame_stride=preview_frame_stride,
+                                    tiled=tiled,
+                                    tile_size=tile_size,
+                                    tile_stride=tile_stride,
+                                    framewise_decoding=framewise_decoding,
+                                    restore_model_names=active_model_names,
+                                ),
+                                energy_fn=energy_fn,
+                                config=self.vjepa_config,
+                                trace_hook=(
+                                    lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
+                                        step_idx=progress_id,
+                                        timestep=int(timestep_cpu.item()),
+                                        x0_pred=x0_pred,
+                                        preview_video=preview_video,
+                                        energy=energy,
+                                        raw_grad_norm=raw_grad_norm,
+                                        normalized_grad_rms=normalized_grad_rms,
+                                    )
+                                    if self.trace_intermediates_enabled and _inner == 0
+                                    else None
+                                ),
+                            )
                 logging.info(
-                    "V-JEPA step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
+                    "V-JEPA[%s] step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
+                    guidance_mode,
                     progress_id,
                     int(timestep_cpu.item()),
                     inner_k,

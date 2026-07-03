@@ -21,6 +21,10 @@ class WanVJEPAConfig:
     reduction: str = "mean"
     gradient_normalization: str = "rms"
     max_grad_norm: float | None = 10.0
+    # "surprise": legacy self-consistency windowing over the whole generation.
+    # "context_anchored": align generated future to V-JEPA's prediction from the
+    #   real conditioning frames (uses clean_prefix as fixed context).
+    guidance_mode: str = "surprise"
 
 
 def pick_guidance_step_indices(

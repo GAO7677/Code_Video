@@ -246,6 +246,136 @@ def compute_masked_predictive_surprise(
     return loss_stack.max()
 
 
+def _resample_frames(video_btchw: torch.Tensor, num_frames: int) -> torch.Tensor:
+    """Uniformly resample the temporal axis of [B,C,T,H,W] to exactly num_frames."""
+    total = video_btchw.shape[2]
+    if total == num_frames:
+        return video_btchw
+    idx = torch.linspace(0, total - 1, steps=num_frames, device=video_btchw.device)
+    idx = idx.round().long().clamp_(0, total - 1)
+    return video_btchw.index_select(2, idx)
+
+
+def build_context_future_clip(
+    *,
+    context_btchw: torch.Tensor,
+    future_btchw: torch.Tensor,
+    window_size: int,
+    context_frames: int,
+) -> torch.Tensor:
+    """Assemble a single [B,C,window_size,H,W] clip = [context | future].
+
+    The context portion is detached (fixed real conditioning); the future portion
+    keeps its graph so gradients flow only to the generated frames.
+    """
+    future_frames = window_size - context_frames
+    if future_frames <= 0:
+        raise ValueError(
+            f"window_size={window_size} must exceed context_frames={context_frames}"
+        )
+    if context_btchw.shape[-2:] != future_btchw.shape[-2:]:
+        future_btchw = F.interpolate(
+            future_btchw.reshape(-1, *future_btchw.shape[-3:]),
+            size=context_btchw.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        ).view(future_btchw.shape[0], future_btchw.shape[1], future_btchw.shape[2], *context_btchw.shape[-2:])
+
+    ctx = _resample_frames(context_btchw, context_frames).detach()
+    fut = _resample_frames(future_btchw, future_frames)
+    return torch.cat([ctx, fut], dim=2)
+
+
+def compute_context_anchored_alignment(
+    clip_btchw: torch.Tensor,
+    *,
+    encoder: torch.nn.Module,
+    target_encoder: torch.nn.Module,
+    predictor: torch.nn.Module,
+    img_size: int,
+    window_size: int = 16,
+    context_frames: int = 8,
+    predicted_future_ref: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Energy = feature-space mismatch between the generated future frames and the
+    future that V-JEPA's predictor forecasts from the *real* context.
+
+    Unlike ``compute_masked_predictive_surprise`` (which windows the generation and
+    only measures self-consistency), this anchors the target to the actual
+    conditioning video, so minimizing it pushes the generated motion toward the
+    physically-grounded continuation V-JEPA expects.
+
+    ``clip_btchw`` is a single [B,3,window_size,H,W] clip = [real_context | generated].
+    If ``predicted_future_ref`` is provided it is used as the fixed target and the
+    encoder+predictor pass is skipped (the prediction depends only on the fixed
+    context, so it can be precomputed once per generation).
+    """
+    add_vjepa_repo_to_path()
+    from src.masks.utils import apply_masks
+
+    if clip_btchw.shape[2] != window_size:
+        raise ValueError(
+            f"Expected clip with {window_size} frames, got {clip_btchw.shape[2]}"
+        )
+
+    model_dtype = next(target_encoder.parameters()).dtype
+    x = prepare_video_for_vjepa(clip_btchw, img_size=img_size).to(dtype=model_dtype)
+
+    masks_enc, masks_pred = generate_causal_masks(
+        batch_size=x.shape[0],
+        img_size=img_size,
+        frames_per_clip=window_size,
+        encoder=target_encoder,
+        context_frames=context_frames,
+        device=x.device,
+    )
+
+    if predicted_future_ref is None:
+        context_tokens = encoder(x, masks_enc)
+        predicted = predictor(context_tokens, masks_enc, masks_pred)
+        predicted = F.layer_norm(predicted, (predicted.shape[-1],))
+    else:
+        predicted = predicted_future_ref.to(device=x.device, dtype=x.dtype)
+
+    target_tokens = target_encoder(x)
+    if isinstance(target_tokens, (list, tuple)):
+        target_tokens = target_tokens[-1]
+    target_tokens = F.layer_norm(target_tokens, (target_tokens.shape[-1],))
+    masked_target = apply_masks(target_tokens, masks_pred, concat=False)[0]
+
+    energy = 1.0 - F.cosine_similarity(predicted, masked_target, dim=-1).mean()
+    return energy
+
+
+def precompute_future_prediction(
+    clip_btchw: torch.Tensor,
+    *,
+    encoder: torch.nn.Module,
+    predictor: torch.nn.Module,
+    img_size: int,
+    window_size: int = 16,
+    context_frames: int = 8,
+) -> torch.Tensor:
+    """Run encoder+predictor once on a [context | placeholder] clip to obtain the
+    fixed future-feature target. Only the context portion affects the result."""
+    add_vjepa_repo_to_path()
+
+    model_dtype = next(encoder.parameters()).dtype
+    x = prepare_video_for_vjepa(clip_btchw, img_size=img_size).to(dtype=model_dtype)
+    masks_enc, masks_pred = generate_causal_masks(
+        batch_size=x.shape[0],
+        img_size=img_size,
+        frames_per_clip=window_size,
+        encoder=encoder,
+        context_frames=context_frames,
+        device=x.device,
+    )
+    context_tokens = encoder(x, masks_enc)
+    predicted = predictor(context_tokens, masks_enc, masks_pred)
+    predicted = F.layer_norm(predicted, (predicted.shape[-1],))
+    return predicted.detach()
+
+
 class VJEPASurpriseEnergy:
     def __init__(
         self,
@@ -289,4 +419,39 @@ class VJEPASurpriseEnergy:
             context_frames=context_frames,
             stride=stride,
             reduction=reduction,
+        )
+
+    def context_anchored(
+        self,
+        clip_btchw: torch.Tensor,
+        *,
+        window_size: int = 16,
+        context_frames: int = 8,
+        predicted_future_ref: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return compute_context_anchored_alignment(
+            clip_btchw.to(self.device),
+            encoder=self.encoder,
+            target_encoder=self.target_encoder,
+            predictor=self.predictor,
+            img_size=self.img_size,
+            window_size=window_size,
+            context_frames=context_frames,
+            predicted_future_ref=predicted_future_ref,
+        )
+
+    def precompute_future_prediction(
+        self,
+        clip_btchw: torch.Tensor,
+        *,
+        window_size: int = 16,
+        context_frames: int = 8,
+    ) -> torch.Tensor:
+        return precompute_future_prediction(
+            clip_btchw.to(self.device),
+            encoder=self.encoder,
+            predictor=self.predictor,
+            img_size=self.img_size,
+            window_size=window_size,
+            context_frames=context_frames,
         )
