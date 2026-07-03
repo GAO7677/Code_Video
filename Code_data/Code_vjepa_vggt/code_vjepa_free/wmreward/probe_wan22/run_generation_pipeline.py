@@ -16,6 +16,7 @@ from pipeline_common import (
     generation_registry_fieldnames,
     parse_model_keys,
     pipeline_run_summary,
+    read_csv_rows,
     resolve_python_bin,
     scan_generated_records,
     write_csv_rows,
@@ -206,6 +207,16 @@ def main() -> None:
             generation_registry_fieldnames(),
         )
         all_rows.extend(rows)
+
+    # Merge with existing per-model registries that were NOT run this time,
+    # so generation_registry_all.csv always reflects all models seen so far.
+    run_model_keys = set(selected_model_keys)
+    for model_key in MODEL_SPECS:
+        if model_key in run_model_keys:
+            continue
+        existing_csv = pipeline_root / "manifests" / f"generation_registry_{model_key}.csv"
+        if existing_csv.is_file():
+            all_rows.extend(read_csv_rows(existing_csv))
 
     output_csv = pipeline_root / "manifests" / "generation_registry_all.csv"
     write_csv_rows(output_csv, all_rows, generation_registry_fieldnames())

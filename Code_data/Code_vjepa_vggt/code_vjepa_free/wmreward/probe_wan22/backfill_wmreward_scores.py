@@ -127,12 +127,23 @@ def create_pending_input_root(
     return pending_root
 
 
+def load_existing_registry_if_any(
+    *,
+    pipeline_root: Path,
+    model_key: str,
+) -> list[dict[str, str]]:
+    registry_path = pipeline_root / "manifests" / f"generation_registry_{model_key}.csv"
+    if not registry_path.is_file():
+        return []
+    return read_csv_rows(registry_path)
+
+
 def main() -> None:
     args = parse_args()
     pipeline_root = args.pipeline_root.expanduser().resolve()
     python_bin = resolve_python_bin(args.python_bin)
     selected_model_keys = parse_model_keys(args.models)
-    all_rows: list[dict[str, object]] = []
+    all_rows_by_model: dict[str, list[dict[str, object]]] = {}
 
     for model_key in selected_model_keys:
         spec = MODEL_SPECS[model_key]
@@ -155,7 +166,7 @@ def main() -> None:
             pending_rows = pending_rows[: args.limit]
         if not pending_rows:
             print(f"[wmreward] model={model_key} no pending rows, skip")
-            all_rows.extend(registry_rows)
+            all_rows_by_model[model_key] = list(registry_rows)
             continue
 
         pending_input_root = create_pending_input_root(
@@ -224,11 +235,25 @@ def main() -> None:
             refreshed_rows,
             generation_registry_fieldnames(),
         )
-        all_rows.extend(refreshed_rows)
+        all_rows_by_model[model_key] = list(refreshed_rows)
+
+    for model_key in MODEL_SPECS:
+        if model_key in all_rows_by_model:
+            continue
+        existing_rows = load_existing_registry_if_any(
+            pipeline_root=pipeline_root,
+            model_key=model_key,
+        )
+        if existing_rows:
+            all_rows_by_model[model_key] = [dict(row) for row in existing_rows]
 
     write_csv_rows(
         pipeline_root / "manifests" / "generation_registry_all.csv",
-        all_rows,
+        [
+            row
+            for model_key in MODEL_SPECS
+            for row in all_rows_by_model.get(model_key, [])
+        ],
         generation_registry_fieldnames(),
     )
     write_json(

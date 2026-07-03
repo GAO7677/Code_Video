@@ -1,0 +1,703 @@
+#!/usr/bin/env python3
+"""
+probe_energy_persistence.py
+
+Multi-phase sweep to find which V-JEPA guidance configuration produces a
+durable, measurable energy signal.
+
+Phase 1: timing sweep  -- single step at 5 positions (p20/35/50/65/80)
+Phase 2: step-size sweep -- at best timing from Phase 1
+Phase 3: step-count + inner-K sweep -- at best timing+size from Phase 2
+
+Each phase runs baseline + N guided conditions, computes persistence_score,
+saves per-condition JSON and delta-curve plots.
+
+Example (Phase 1):
+  PYTHONPATH=.../Code_vjepa_vggt:.../DiffSynth-Studio-main:.../train_0419 \
+  CUDA_VISIBLE_DEVICES=2,3 \
+  python probe_energy_persistence.py \
+    --weights-root .../step-000500 \
+    --input-json .../physicIQ_025_...trimmed.json \
+    --context-path .../context_video_8f.mp4 \
+    --output-dir /data/gaoya/agent-data/outputs/probe_sweep \
+    --phase 1 \
+    --device cuda:0 --vjepa-device cuda:1 \
+    --probe-every-n 2 --seed 42
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+import torch
+import torch.nn.functional as F
+
+_VJEPA_GUIDANCE_DIR = Path(__file__).parent.resolve()
+_REPO_ROOT = _VJEPA_GUIDANCE_DIR.parents[1]
+for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "DiffSynth-Studio-main")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from .vjepa_surprise import VJEPASurpriseEnergy
+    from .wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
+    from .wan_openvid_0613pybullet_lorav2v_vjepa import (
+        ContextAwareWanVideoPipelineVJEPA,
+        _diffsynth_sigma_for_timestep,
+        _predict_x0_from_diffsynth_flow,
+        _apply_diffsynth_vjepa_guidance,
+    )
+except ImportError:
+    from vjepa_surprise import VJEPASurpriseEnergy
+    from wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
+    from wan_openvid_0613pybullet_lorav2v_vjepa import (
+        ContextAwareWanVideoPipelineVJEPA,
+        _diffsynth_sigma_for_timestep,
+        _predict_x0_from_diffsynth_flow,
+        _apply_diffsynth_vjepa_guidance,
+    )
+
+from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler proxy
+# ---------------------------------------------------------------------------
+
+class _SchedulerEnergyProbe:
+    """
+    Transparent proxy around a DiffSynth scheduler.
+
+    Intercepts every .step() call to passively measure V-JEPA energy on the
+    current x0 prediction. Does NOT modify the latent in any way.
+
+    Usage:
+        probe = _SchedulerEnergyProbe(pipe.scheduler, energy_fn, pipe, config)
+        pipe.scheduler = probe
+        # run generation ...
+        pipe.scheduler = probe.inner   # restore
+        records = probe.records
+    """
+
+    def __init__(
+        self,
+        inner_scheduler,
+        energy_fn: VJEPASurpriseEnergy,
+        pipe: ContextAwareWanVideoPipelineVJEPA,
+        config: WanVJEPAConfig,
+        *,
+        probe_every_n: int = 1,
+        restore_model_names: tuple[str, ...] = ("dit",),
+        tiled: bool = True,
+        tile_size: tuple[int, int] = (30, 52),
+        tile_stride: tuple[int, int] = (15, 26),
+        framewise_decoding: bool = False,
+    ) -> None:
+        self.inner = inner_scheduler
+        self._energy_fn = energy_fn
+        self._pipe = pipe
+        self._config = config
+        self._probe_every_n = max(1, probe_every_n)
+        self._restore_model_names = restore_model_names
+        self._tiled = tiled
+        self._tile_size = tile_size
+        self._tile_stride = tile_stride
+        self._framewise_decoding = framewise_decoding
+        self._step_counter = 0
+        self.records: list[dict] = []
+        self.guidance_step_indices: set[int] = set()
+
+    def __getattr__(self, name: str):
+        return getattr(self.inner, name)
+
+    def step(self, model_output: torch.Tensor, timestep, sample: torch.Tensor, **kwargs):
+        idx = self._step_counter
+        self._step_counter += 1
+
+        if idx % self._probe_every_n == 0:
+            record = self._probe(idx, timestep, model_output, sample)
+            self.records.append(record)
+
+        return self.inner.step(model_output, timestep, sample, **kwargs)
+
+    def _probe(self, step_idx: int, timestep, model_output: torch.Tensor, latent_xt: torch.Tensor) -> dict:
+        t0 = time.time()
+        try:
+            with torch.no_grad():
+                # x0_pred via flow-matching formula
+                sigma_t = _diffsynth_sigma_for_timestep(self.inner, timestep)
+                sigma_t = sigma_t.to(device=latent_xt.device, dtype=torch.float32)
+                while sigma_t.ndim < latent_xt.ndim:
+                    sigma_t = sigma_t.unsqueeze(-1)
+                x0_pred = latent_xt.detach().float() - sigma_t * model_output.detach().float()
+
+                # decode low-res preview via VAE
+                preview = self._pipe._decode_preview_video(
+                    x0_pred,
+                    preview_downsample_factor=self._config.preview_downsample_factor,
+                    preview_frame_stride=self._config.preview_frame_stride,
+                    tiled=self._tiled,
+                    tile_size=self._tile_size,
+                    tile_stride=self._tile_stride,
+                    framewise_decoding=self._framewise_decoding,
+                    restore_model_names=self._restore_model_names,
+                )
+
+                energy = float(
+                    self._energy_fn(
+                        preview,
+                        window_size=self._config.window_size,
+                        context_frames=self._config.context_frames,
+                        stride=self._config.stride,
+                        reduction=self._config.reduction,
+                    ).item()
+                )
+
+            timestep_val = int(timestep.item()) if hasattr(timestep, "item") else int(timestep)
+            return {
+                "step": step_idx,
+                "timestep": timestep_val,
+                "energy": energy,
+                "was_guidance_step": step_idx in self.guidance_step_indices,
+                "probe_elapsed_s": round(time.time() - t0, 3),
+            }
+        except Exception as exc:
+            log.warning("Probe failed at step %d: %s", step_idx, exc)
+            return {
+                "step": step_idx,
+                "timestep": int(timestep.item()) if hasattr(timestep, "item") else -1,
+                "energy": None,
+                "was_guidance_step": step_idx in self.guidance_step_indices,
+                "error": str(exc),
+            }
+
+
+# ---------------------------------------------------------------------------
+# Pipeline helper
+# ---------------------------------------------------------------------------
+
+def _resolve_lora_path(weights_root: Path) -> Path:
+    p = weights_root.expanduser().resolve() / "checkpoint.safetensors"
+    if not p.is_file():
+        raise FileNotFoundError(f"LoRA checkpoint not found: {p}")
+    return p
+
+
+def _build_pipeline(
+    wan_root: Path,
+    device: str,
+    lora_path: Path,
+    vjepa_model: str,
+    vjepa_ckpt: Path,
+    vjepa_device: str,
+    vjepa_config: WanVJEPAConfig,
+) -> ContextAwareWanVideoPipelineVJEPA:
+    pipe = ContextAwareWanVideoPipelineVJEPA.from_pretrained_vjepa(
+        wan_root=wan_root,
+        device=device,
+        lora_path=lora_path,
+        vjepa_model_name=vjepa_model,
+        vjepa_checkpoint_path=vjepa_ckpt,
+        vjepa_device=vjepa_device,
+        vjepa_config=vjepa_config,
+        enable_vjepa_guidance=True,
+    )
+    return pipe
+
+
+def _load_case(json_path: Path) -> dict:
+    return json.loads(json_path.read_text(encoding="utf-8"))
+
+
+def _persistence_score(baseline_records: list[dict], guided_records: list[dict]) -> tuple[float, float]:
+    """Fraction of post-guidance probes where delta < 0, and mean delta."""
+    baseline_map = {r["step"]: r["energy"] for r in baseline_records if r.get("energy") is not None}
+    guided_steps = [r["step"] for r in guided_records if r.get("was_guidance_step")]
+    first_g = min(guided_steps) if guided_steps else 0
+    post = [(r["step"], r["energy"]) for r in guided_records
+            if r.get("energy") is not None and r["step"] >= first_g]
+    deltas = [e - baseline_map[s] for s, e in post if s in baseline_map]
+    if not deltas:
+        return 0.0, 0.0
+    score = sum(1 for d in deltas if d < 0) / len(deltas)
+    mean_delta = sum(deltas) / len(deltas)
+    return score, mean_delta
+
+
+def _run_condition(
+    pipe: ContextAwareWanVideoPipelineVJEPA,
+    case: dict,
+    *,
+    seed: int,
+    num_frames: int,
+    height: int,
+    width: int,
+    num_inference_steps: int,
+    cfg_scale: float,
+    negative_prompt: str,
+    context_path: Path,
+    guidance_step_percents: list[float],  # empty = baseline
+    vjepa_config: WanVJEPAConfig,
+    probe_every_n: int,
+    condition_label: str,
+    latent_step_size: Optional[float] = None,   # overrides vjepa_config value
+    inner_k: int = 1,                            # guidance repetitions per step
+) -> tuple[list, list[dict]]:
+    """Run one generation condition with per-step energy probing. Returns (video, records)."""
+
+    effective_step_size = latent_step_size if latent_step_size is not None else vjepa_config.latent_step_size
+
+    # Determine guidance steps
+    if guidance_step_percents:
+        guidance_step_indices = set(
+            pick_guidance_step_indices(
+                total_steps=num_inference_steps,
+                count=len(guidance_step_percents),
+                min_step_percent=min(guidance_step_percents),
+                max_step_percent=max(guidance_step_percents),
+            )
+        )
+        pipe.vjepa_config = WanVJEPAConfig(
+            guidance_steps=len(guidance_step_percents),
+            min_step_percent=min(guidance_step_percents),
+            max_step_percent=max(guidance_step_percents),
+            latent_step_size=effective_step_size,
+            preview_downsample_factor=vjepa_config.preview_downsample_factor,
+            preview_frame_stride=vjepa_config.preview_frame_stride,
+            window_size=vjepa_config.window_size,
+            context_frames=vjepa_config.context_frames,
+            stride=vjepa_config.stride,
+            reduction=vjepa_config.reduction,
+            gradient_normalization=vjepa_config.gradient_normalization,
+            max_grad_norm=vjepa_config.max_grad_norm,
+        )
+        pipe.enable_vjepa_guidance = True
+        pipe.vjepa_inner_k = max(1, int(inner_k))
+    else:
+        guidance_step_indices = set()
+        pipe.enable_vjepa_guidance = False
+        pipe.vjepa_inner_k = 1
+
+    pipe.configure_target_step_indices([])
+    pipe.configure_target_timesteps([])
+
+    # Ensure V-JEPA energy model is loaded (needed for probe in both conditions)
+    if pipe._vjepa_energy is None:
+        pipe._vjepa_energy = VJEPASurpriseEnergy(
+            model_name=pipe.vjepa_model_name,
+            device=pipe.vjepa_device,
+            local_torchhub=True,
+            checkpoint_path=pipe.vjepa_checkpoint_path,
+        )
+    energy_fn = pipe._vjepa_energy
+
+    probe = _SchedulerEnergyProbe(
+        inner_scheduler=pipe.scheduler,
+        energy_fn=energy_fn,
+        pipe=pipe,
+        config=vjepa_config,
+        probe_every_n=probe_every_n,
+        restore_model_names=tuple(pipe.in_iteration_models),
+        tiled=True,
+        tile_size=(30, 52),
+        tile_stride=(15, 26),
+        framewise_decoding=False,
+    )
+    probe.guidance_step_indices = guidance_step_indices
+    pipe.scheduler = probe
+
+    log.info("[%s] guidance_steps=%s  probe_every_n=%d", condition_label, sorted(guidance_step_indices), probe_every_n)
+
+    try:
+        prompt = case.get("input_caption", case.get("caption", case.get("prompt", "")))
+        context_frames_list = core.load_context_frames(
+            context_path,
+            context_frames=8,
+            height=height,
+            width=width,
+        )
+
+        video, _ = core.generate_one_video(
+            pipe=pipe,
+            context_path=context_path,
+            first_frame_path=None,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            fps=16,
+            cfg_scale=cfg_scale,
+            num_inference_steps=num_inference_steps,
+            context_frames=8,
+            output_num_frames=num_frames,
+        )
+    finally:
+        pipe.scheduler = probe.inner
+        pipe.enable_vjepa_guidance = bool(guidance_step_percents)
+
+    records = probe.records
+    log.info("[%s] collected %d probe records", condition_label, len(records))
+    return video, records
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def _plot_phase(
+    records_per_condition: dict[str, list[dict]],
+    output_dir: Path,
+    phase_name: str,
+    prompt_short: str = "",
+) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        log.warning("matplotlib not available, skipping plot")
+        return
+
+    baseline_records = records_per_condition.get("baseline", [])
+    baseline_map = {r["step"]: r["energy"] for r in baseline_records if r.get("energy") is not None}
+    colors = plt.cm.tab10.colors
+    guided_labels = [lb for lb in records_per_condition if lb != "baseline"]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig.suptitle(f"{phase_name} -- V-JEPA Energy Persistence\n{prompt_short}", fontsize=10)
+
+    # Top: raw energy curves
+    if baseline_records:
+        steps_b = [r["step"] for r in baseline_records if r.get("energy") is not None]
+        energies_b = [r["energy"] for r in baseline_records if r.get("energy") is not None]
+        ax1.plot(steps_b, energies_b, color="black", linewidth=2.0, label="baseline", zorder=10)
+
+    for i, label in enumerate(guided_labels):
+        records = records_per_condition[label]
+        steps = [r["step"] for r in records if r.get("energy") is not None]
+        energies = [r["energy"] for r in records if r.get("energy") is not None]
+        color = colors[i % len(colors)]
+        ax1.plot(steps, energies, color=color, linewidth=1.2, label=label, alpha=0.8)
+        gs = [r["step"] for r in records if r.get("was_guidance_step") and r.get("energy") is not None]
+        ge = [r["energy"] for r in records if r.get("was_guidance_step") and r.get("energy") is not None]
+        if gs:
+            ax1.scatter(gs, ge, marker="*", s=120, color=color, zorder=5)
+
+    ax1.set_ylabel("V-JEPA surprise energy")
+    ax1.legend(loc="upper right", fontsize=7)
+    ax1.grid(True, alpha=0.3)
+
+    # Bottom: delta curves (guided - baseline)
+    ax2.axhline(0, color="black", linewidth=1.0, linestyle="--")
+    for i, label in enumerate(guided_labels):
+        records = records_per_condition[label]
+        guided_steps_set = {r["step"] for r in records if r.get("was_guidance_step")}
+        first_g = min(guided_steps_set) if guided_steps_set else 0
+        steps_d, deltas = [], []
+        for r in records:
+            if r.get("energy") is not None and r["step"] in baseline_map:
+                steps_d.append(r["step"])
+                deltas.append(r["energy"] - baseline_map[r["step"]])
+        if not steps_d:
+            continue
+        color = colors[i % len(colors)]
+        ax2.plot(steps_d, deltas, color=color, linewidth=1.2, label=label, alpha=0.8)
+        # shade post-guidance region
+        post_x = [s for s in steps_d if s >= first_g]
+        if post_x:
+            ax2.axvspan(first_g, max(post_x), alpha=0.05, color=color)
+
+    ax2.set_xlabel("Denoising step index")
+    ax2.set_ylabel("delta = guided - baseline")
+    ax2.legend(loc="upper right", fontsize=7)
+    ax2.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    out = output_dir / f"{phase_name}_delta_curves.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    log.info("Plot saved: %s", out)
+
+
+# ---------------------------------------------------------------------------
+# Phase condition definitions
+# ---------------------------------------------------------------------------
+
+def _phase1_conditions() -> list[dict]:
+    return [
+        {"label": "timing_p20", "guidance_step_percents": [0.20], "latent_step_size": 0.02, "inner_k": 1},
+        {"label": "timing_p35", "guidance_step_percents": [0.35], "latent_step_size": 0.02, "inner_k": 1},
+        {"label": "timing_p50", "guidance_step_percents": [0.50], "latent_step_size": 0.02, "inner_k": 1},
+        {"label": "timing_p65", "guidance_step_percents": [0.65], "latent_step_size": 0.02, "inner_k": 1},
+        {"label": "timing_p80", "guidance_step_percents": [0.80], "latent_step_size": 0.02, "inner_k": 1},
+    ]
+
+
+def _phase2_conditions(p_best: float) -> list[dict]:
+    return [
+        {"label": "stepsize_001", "guidance_step_percents": [p_best], "latent_step_size": 0.01, "inner_k": 1},
+        {"label": "stepsize_005", "guidance_step_percents": [p_best], "latent_step_size": 0.05, "inner_k": 1},
+        {"label": "stepsize_010", "guidance_step_percents": [p_best], "latent_step_size": 0.10, "inner_k": 1},
+        {"label": "stepsize_020", "guidance_step_percents": [p_best], "latent_step_size": 0.20, "inner_k": 1},
+    ]
+
+
+def _phase3_conditions(p_best: float, ss_best: float) -> list[dict]:
+    lo = max(0.05, p_best - 0.15)
+    hi = min(0.95, p_best + 0.15)
+    lo2 = max(0.05, p_best - 0.10)
+    hi2 = min(0.95, p_best + 0.10)
+    return [
+        # step count
+        {"label": "count2", "guidance_step_percents": [lo2, hi2], "latent_step_size": ss_best, "inner_k": 1},
+        {"label": "count4", "guidance_step_percents": [lo, lo + (hi - lo) / 3, lo + 2 * (hi - lo) / 3, hi],
+         "latent_step_size": ss_best, "inner_k": 1},
+        {"label": "count6", "guidance_step_percents": [lo + i * (hi - lo) / 5 for i in range(6)],
+         "latent_step_size": ss_best, "inner_k": 1},
+        # inner k
+        {"label": "inner_k2", "guidance_step_percents": [p_best], "latent_step_size": ss_best, "inner_k": 2},
+        {"label": "inner_k4", "guidance_step_percents": [p_best], "latent_step_size": ss_best, "inner_k": 4},
+        {"label": "inner_k2_half", "guidance_step_percents": [p_best], "latent_step_size": ss_best / 2, "inner_k": 2},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Phase runner
+# ---------------------------------------------------------------------------
+
+def _run_phase(
+    phase_num: int,
+    conditions: list[dict],
+    *,
+    pipe,
+    case: dict,
+    base_run_kwargs: dict,
+    vjepa_config: WanVJEPAConfig,
+    output_dir: Path,
+    probe_every_n: int,
+    baseline_records_path: Optional[Path] = None,
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Run baseline + conditions, return (scores_list, all_records_dict)."""
+
+    phase_dir = output_dir / f"phase{phase_num}"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+
+    all_records: dict[str, list[dict]] = {}
+
+    # Load or run baseline
+    baseline_json = phase_dir / "baseline_records.json"
+    if baseline_records_path is not None and baseline_records_path.exists():
+        log.info("Reusing baseline from: %s", baseline_records_path)
+        baseline_records = json.loads(baseline_records_path.read_text())
+    elif baseline_json.exists():
+        log.info("Reusing existing baseline: %s", baseline_json)
+        baseline_records = json.loads(baseline_json.read_text())
+    else:
+        log.info("=== Running BASELINE ===")
+        _, baseline_records = _run_condition(
+            **base_run_kwargs,
+            guidance_step_percents=[],
+            vjepa_config=vjepa_config,
+            probe_every_n=probe_every_n,
+            condition_label="baseline",
+        )
+        baseline_json.write_text(json.dumps(baseline_records, indent=2), encoding="utf-8")
+
+    all_records["baseline"] = baseline_records
+
+    scores: list[dict] = []
+    for cond in conditions:
+        label = cond["label"]
+        rec_path = phase_dir / f"{label}_records.json"
+
+        if rec_path.exists():
+            log.info("Reusing existing condition: %s", label)
+            records = json.loads(rec_path.read_text())
+        else:
+            log.info("=== Running condition: %s ===", label)
+            _, records = _run_condition(
+                **base_run_kwargs,
+                guidance_step_percents=cond["guidance_step_percents"],
+                vjepa_config=vjepa_config,
+                probe_every_n=probe_every_n,
+                condition_label=label,
+                latent_step_size=cond.get("latent_step_size"),
+                inner_k=cond.get("inner_k", 1),
+            )
+            rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
+
+        all_records[label] = records
+        score, mean_delta = _persistence_score(baseline_records, records)
+        scores.append({
+            "label": label,
+            "persistence_score": round(score, 4),
+            "mean_delta_post": round(mean_delta, 6),
+            **{k: v for k, v in cond.items() if k != "label"},
+        })
+        log.info("[%s] persistence=%.3f  mean_delta=%.6f", label, score, mean_delta)
+
+    # Print ranking
+    ranked = sorted(scores, key=lambda x: x["persistence_score"], reverse=True)
+    print(f"\n=== Phase {phase_num} results ===")
+    print(f"{'Label':<20}  {'persist':>7}  {'mean_delta':>12}  {'step_percents'}")
+    for s in ranked:
+        print(f"{s['label']:<20}  {s['persistence_score']:>7.3f}  {s['mean_delta_post']:>12.6f}  "
+              f"{s.get('guidance_step_percents', [])}")
+
+    # Save summary
+    summary = {"ranked": ranked, "best": ranked[0] if ranked else {}}
+    (phase_dir / f"phase{phase_num}_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    log.info("Phase %d summary saved to %s", phase_num, phase_dir)
+
+    # Plot
+    prompt_short = case.get("input_caption", case.get("caption", ""))[:60]
+    _plot_phase(all_records, phase_dir, f"Phase{phase_num}", prompt_short)
+
+    return scores, all_records
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Probe V-JEPA energy persistence -- multi-phase sweep.")
+    p.add_argument("--weights-root", type=Path, required=True)
+    p.add_argument("--input-json", type=Path, required=True, help="Single case JSON file")
+    p.add_argument("--context-path", type=Path, default=None)
+    p.add_argument("--output-dir", type=Path, default=Path("/data/gaoya/agent-data/outputs/probe_sweep"))
+    p.add_argument("--wan-root", type=Path, default=Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"))
+    p.add_argument("--device", type=str, default="cuda:0")
+    p.add_argument("--vjepa-device", type=str, default=None)
+    p.add_argument("--vjepa-model", type=str, default="vith")
+    p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
+    p.add_argument("--phase", type=int, choices=[1, 2, 3], default=1,
+                   help="Which experiment phase to run (1=timing, 2=step-size, 3=count+inner_k)")
+    p.add_argument("--probe-every-n", type=int, default=2)
+    p.add_argument("--num-frames", type=int, default=49)
+    p.add_argument("--height", type=int, default=480)
+    p.add_argument("--width", type=int, default=832)
+    p.add_argument("--num-inference-steps", type=int, default=40)
+    p.add_argument("--cfg-scale", type=float, default=5.0)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--negative-prompt", type=str, default="")
+    p.add_argument("--preview-downsample-factor", type=int, default=4)
+    p.add_argument("--preview-frame-stride", type=int, default=2)
+    p.add_argument("--window-size", type=int, default=16)
+    p.add_argument("--context-frames-vjepa", type=int, default=8)
+    p.add_argument("--stride", type=int, default=4)
+    p.add_argument("--log-level", type=str, default="INFO")
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    lora_path = _resolve_lora_path(args.weights_root)
+
+    # Base vjepa_config (probe settings, not guidance settings -- those come from conditions)
+    vjepa_config = WanVJEPAConfig(
+        guidance_steps=1,
+        min_step_percent=0.50,
+        max_step_percent=0.50,
+        latent_step_size=0.02,
+        preview_downsample_factor=args.preview_downsample_factor,
+        preview_frame_stride=args.preview_frame_stride,
+        window_size=args.window_size,
+        context_frames=args.context_frames_vjepa,
+        stride=args.stride,
+    )
+
+    vjepa_device = args.vjepa_device or args.device
+    log.info("Building pipeline (device=%s vjepa_device=%s)...", args.device, vjepa_device)
+    pipe = _build_pipeline(
+        wan_root=args.wan_root.expanduser().resolve(),
+        device=args.device,
+        lora_path=lora_path,
+        vjepa_model=args.vjepa_model,
+        vjepa_ckpt=args.vjepa_ckpt.expanduser().resolve() if args.vjepa_ckpt else None,
+        vjepa_device=vjepa_device,
+        vjepa_config=vjepa_config,
+    )
+
+    case = _load_case(args.input_json)
+    context_path = args.context_path or Path(case.get("input_video", case.get("context_path", "")))
+    if not context_path.is_file():
+        raise FileNotFoundError(f"Context path not found: {context_path}")
+
+    base_run_kwargs = dict(
+        pipe=pipe,
+        case=case,
+        seed=args.seed,
+        num_frames=args.num_frames,
+        height=args.height,
+        width=args.width,
+        num_inference_steps=args.num_inference_steps,
+        cfg_scale=args.cfg_scale,
+        negative_prompt=args.negative_prompt,
+        context_path=context_path,
+    )
+
+    # Reuse baseline from phase1 if available
+    p1_baseline = args.output_dir / "phase1" / "baseline_records.json"
+
+    if args.phase == 1:
+        conditions = _phase1_conditions()
+        _run_phase(1, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n)
+
+    elif args.phase == 2:
+        p1_summary = args.output_dir / "phase1" / "phase1_summary.json"
+        if not p1_summary.exists():
+            raise FileNotFoundError(f"Phase 1 summary not found: {p1_summary} -- run --phase 1 first")
+        p1 = json.loads(p1_summary.read_text())
+        p_best = float(p1["best"]["guidance_step_percents"][0])
+        log.info("Phase 1 best timing: p_best=%.2f (label=%s, score=%.3f)",
+                 p_best, p1["best"]["label"], p1["best"]["persistence_score"])
+        conditions = _phase2_conditions(p_best)
+        _run_phase(2, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   baseline_records_path=p1_baseline)
+
+    elif args.phase == 3:
+        p1_summary = args.output_dir / "phase1" / "phase1_summary.json"
+        p2_summary = args.output_dir / "phase2" / "phase2_summary.json"
+        if not p1_summary.exists():
+            raise FileNotFoundError(f"Phase 1 summary not found -- run --phase 1 first")
+        if not p2_summary.exists():
+            raise FileNotFoundError(f"Phase 2 summary not found -- run --phase 2 first")
+        p1 = json.loads(p1_summary.read_text())
+        p2 = json.loads(p2_summary.read_text())
+        p_best = float(p1["best"]["guidance_step_percents"][0])
+        ss_best = float(p2["best"]["latent_step_size"])
+        log.info("Phase 3 using p_best=%.2f ss_best=%.3f", p_best, ss_best)
+        conditions = _phase3_conditions(p_best, ss_best)
+        _run_phase(3, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   baseline_records_path=p1_baseline)
+
+    log.info("Done. Output dir: %s", args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

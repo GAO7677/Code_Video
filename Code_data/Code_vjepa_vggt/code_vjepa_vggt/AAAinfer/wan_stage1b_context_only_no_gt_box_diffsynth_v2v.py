@@ -228,6 +228,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--disable-object-context", action="store_true",
+                        help="Pass disable_object_context=True to _run_sampling for ablation")
     return parser.parse_args()
 
 
@@ -378,6 +380,7 @@ def main() -> None:
                     total_frames=total_frames,
                     num_context_frames=int(num_context_frames.item()),
                     num_inference_steps=int(args.sampling_steps),
+                    disable_object_context=bool(getattr(args, "disable_object_context", False)),
                     cfg_scale=cfg_scale,
                     negative_text_context=negative_text_context,
                 )

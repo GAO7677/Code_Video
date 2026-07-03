@@ -278,6 +278,7 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
         self.vjepa_config = vjepa_config
         self.enable_vjepa_guidance = enable_vjepa_guidance
         self._vjepa_energy: VJEPASurpriseEnergy | None = None
+        self.vjepa_inner_k: int = 1  # repetitions of guidance per selected step
 
         for parameter in self.vae.model.parameters():
             parameter.requires_grad_(False)
@@ -779,42 +780,45 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                 noise_pred = noise_pred_posi
 
             if progress_id in selected_steps:
-                with torch.enable_grad():
-                    inputs_shared["latents"], stats = _apply_diffsynth_vjepa_guidance(
-                        latent_xt=inputs_shared["latents"],
-                        model_output=noise_pred,
-                        timestep=timestep_cpu,
-                        scheduler=self.scheduler,
-                        preview_decoder=lambda x0_pred, preview_downsample_factor, preview_frame_stride: self._decode_preview_video(
-                            x0_pred,
-                            preview_downsample_factor=preview_downsample_factor,
-                            preview_frame_stride=preview_frame_stride,
-                            tiled=tiled,
-                            tile_size=tile_size,
-                            tile_stride=tile_stride,
-                            framewise_decoding=framewise_decoding,
-                            restore_model_names=active_model_names,
-                        ),
-                        energy_fn=energy_fn,
-                        config=self.vjepa_config,
-                        trace_hook=(
-                            lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
-                                step_idx=progress_id,
-                                timestep=int(timestep_cpu.item()),
-                                x0_pred=x0_pred,
-                                preview_video=preview_video,
-                                energy=energy,
-                                raw_grad_norm=raw_grad_norm,
-                                normalized_grad_rms=normalized_grad_rms,
-                            )
-                            if self.trace_intermediates_enabled
-                            else None
-                        ),
-                    )
+                inner_k = max(1, int(getattr(self, "vjepa_inner_k", 1)))
+                for _inner in range(inner_k):
+                    with torch.enable_grad():
+                        inputs_shared["latents"], stats = _apply_diffsynth_vjepa_guidance(
+                            latent_xt=inputs_shared["latents"],
+                            model_output=noise_pred,
+                            timestep=timestep_cpu,
+                            scheduler=self.scheduler,
+                            preview_decoder=lambda x0_pred, preview_downsample_factor, preview_frame_stride: self._decode_preview_video(
+                                x0_pred,
+                                preview_downsample_factor=preview_downsample_factor,
+                                preview_frame_stride=preview_frame_stride,
+                                tiled=tiled,
+                                tile_size=tile_size,
+                                tile_stride=tile_stride,
+                                framewise_decoding=framewise_decoding,
+                                restore_model_names=active_model_names,
+                            ),
+                            energy_fn=energy_fn,
+                            config=self.vjepa_config,
+                            trace_hook=(
+                                lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
+                                    step_idx=progress_id,
+                                    timestep=int(timestep_cpu.item()),
+                                    x0_pred=x0_pred,
+                                    preview_video=preview_video,
+                                    energy=energy,
+                                    raw_grad_norm=raw_grad_norm,
+                                    normalized_grad_rms=normalized_grad_rms,
+                                )
+                                if self.trace_intermediates_enabled and _inner == 0
+                                else None
+                            ),
+                        )
                 logging.info(
-                    "V-JEPA step=%d timestep=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
+                    "V-JEPA step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
                     progress_id,
                     int(timestep_cpu.item()),
+                    inner_k,
                     stats["energy"],
                     stats["grad_rms"],
                     int(stats["preview_frames"]),
