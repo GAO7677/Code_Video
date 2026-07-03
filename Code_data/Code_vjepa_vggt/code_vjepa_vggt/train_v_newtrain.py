@@ -91,6 +91,8 @@ DEFAULT_CHECKPOINT_SUBDIR = "checkpoints"
 DEFAULT_TEST_SUBDIR = "test"
 DEFAULT_BENCHMARK_WAIT_TIMEOUT_SECONDS = 12 * 60 * 60
 DEFAULT_CONTEXT_REFERENCE_PREFIXES = (1, 4, 8, 12, 16)
+DEFAULT_OPTIMIZER_BETAS = (0.9, 0.999)
+DEFAULT_OPTIMIZER_EPS = 1.0e-8
 
 
 class FrozenAuxRunner:
@@ -119,6 +121,47 @@ class FrozenAuxRunner:
         if self.module is None:
             raise RuntimeError("FrozenAuxRunner has no module bound")
         return self.module(*args, **kwargs)
+
+
+def _build_optimizer(
+    optimizer_name: str,
+    parameters,
+    *,
+    learning_rate: float,
+    weight_decay: float,
+    betas: tuple[float, float],
+    eps: float,
+):
+    name = str(optimizer_name).strip().lower()
+    if name in {"adamw", "torch_adamw", "torch"}:
+        return torch.optim.AdamW(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    if name in {"adamw8bit", "8bit_adamw"}:
+        import bitsandbytes as bnb
+
+        return bnb.optim.AdamW8bit(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    if name in {"paged_adamw8bit", "pagedadamw8bit"}:
+        import bitsandbytes as bnb
+
+        return bnb.optim.PagedAdamW8bit(
+            parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            betas=betas,
+            eps=eps,
+        )
+    raise ValueError(f"unsupported optimizer_type: {optimizer_name}")
 
 
 def _tensor_video_to_pil_list(video_cthw: torch.Tensor) -> list[Image.Image]:
@@ -227,6 +270,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         lora_base_model=None,
         lora_target_modules="",
         lora_rank=32,
+        lora_alpha=None,
         lora_checkpoint=None,
         preset_lora_path=None,
         preset_lora_model=None,
@@ -336,6 +380,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             lora_base_model,
             lora_target_modules,
             lora_rank,
+            lora_alpha,
             lora_checkpoint,
             preset_lora_path,
             preset_lora_model,
@@ -1295,6 +1340,25 @@ def wan_parser():
         allow_abbrev=False,
     )
     parser = add_general_config(parser)
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=None,
+        help="LoRA alpha. Defaults to lora_rank when unset.",
+    )
+    parser.add_argument(
+        "--optimizer_type",
+        type=str,
+        default="adamw",
+        choices=["adamw", "adamw8bit", "paged_adamw8bit"],
+        help="Optimizer used for trainable parameters.",
+    )
+    parser.add_argument(
+        "--max_grad_norm",
+        type=float,
+        default=0.0,
+        help="Gradient clipping norm. Disabled when <= 0.",
+    )
     for action in parser._actions:
         if action.dest == "dataset_base_path":
             action.required = False
@@ -1860,6 +1924,7 @@ def build_model(args, accelerator):
         lora_base_model=args.lora_base_model,
         lora_target_modules=args.lora_target_modules,
         lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
         lora_checkpoint=args.lora_checkpoint,
         preset_lora_path=args.preset_lora_path,
         preset_lora_model=args.preset_lora_model,
@@ -2860,10 +2925,13 @@ def train_loop(
     headonly_val_dataloader=None,
     headonly_val_config=None,
 ):
-    optimizer = torch.optim.AdamW(
+    optimizer = _build_optimizer(
+        args.optimizer_type,
         model.trainable_modules(),
-        lr=args.learning_rate,
+        learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        betas=DEFAULT_OPTIMIZER_BETAS,
+        eps=DEFAULT_OPTIMIZER_EPS,
     )
     scheduler = torch.optim.lr_scheduler.ConstantLR(optimizer)
     sampler = None
@@ -2986,6 +3054,11 @@ def train_loop(
                 accelerator.backward(loss)
                 grad_stats = {}
                 if accelerator.sync_gradients:
+                    if args.max_grad_norm is not None and args.max_grad_norm > 0:
+                        accelerator.clip_grad_norm_(
+                            accelerator.unwrap_model(model).trainable_modules(),
+                            args.max_grad_norm,
+                        )
                     grad_stats = _collect_trainable_grad_stats(accelerator.unwrap_model(model))
                 optimizer.step()
                 scheduler.step()

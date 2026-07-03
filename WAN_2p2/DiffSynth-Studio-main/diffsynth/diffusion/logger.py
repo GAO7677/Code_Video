@@ -104,4 +104,5 @@ class ModelLogger:
             state_dict = self.state_dict_converter(state_dict)
             os.makedirs(self.output_path, exist_ok=True)
             path = os.path.join(self.output_path, file_name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             accelerator.save(state_dict, path, safe_serialization=True)

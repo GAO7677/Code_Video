@@ -8,6 +8,9 @@ durable, measurable energy signal.
 Phase 1: timing sweep  -- single step at 5 positions (p20/35/50/65/80)
 Phase 2: step-size sweep -- at best timing from Phase 1
 Phase 3: step-count + inner-K sweep -- at best timing+size from Phase 2
+Phase 4: context-anchored persistence sweep
+Phase 5: context-anchored strength ladder
+Phase 6: context-anchored knee refinement around the first wmreward-positive regime
 
 Each phase runs baseline + N guided conditions, computes persistence_score,
 saves per-condition JSON and delta-curve plots.
@@ -705,6 +708,45 @@ def _phase5_conditions(p_center: float = 0.50, ss_base: float = 0.005) -> list[d
     ]
 
 
+def _phase6_conditions() -> list[dict]:
+    """Refine the first wmreward-positive region found in phase 5.
+
+    Phase 5 showed that weak steps barely write into the latent, while stronger
+    rms-normalized steps (0.10 / 0.20) finally move wmreward. This phase
+    narrows in on the knee by varying:
+      - strength between 0.10 and 0.20,
+      - timing band shifts (early / mid / late),
+      - inner-K repeats vs one larger update,
+      - backtracking at a knee-sized step.
+    """
+    early12 = _dense_percents(0.10, 0.55, 12)
+    mid12 = _dense_percents(0.20, 0.65, 12)
+    late12 = _dense_percents(0.35, 0.80, 12)
+    return [
+        {"label": "knee_mid_s12", "guidance_step_percents": mid12, "latent_step_size": 0.12, "inner_k": 1},
+        {"label": "knee_mid_s15", "guidance_step_percents": mid12, "latent_step_size": 0.15, "inner_k": 1},
+        {"label": "knee_mid_s18", "guidance_step_percents": mid12, "latent_step_size": 0.18, "inner_k": 1},
+        {"label": "knee_mid_s15_bt", "guidance_step_percents": mid12, "latent_step_size": 0.15, "inner_k": 1, "backtracking": True},
+        {"label": "knee_early_s15", "guidance_step_percents": early12, "latent_step_size": 0.15, "inner_k": 1},
+        {"label": "knee_late_s15", "guidance_step_percents": late12, "latent_step_size": 0.15, "inner_k": 1},
+        {"label": "knee_mid_s10_k2", "guidance_step_percents": mid12, "latent_step_size": 0.10, "inner_k": 2},
+        {"label": "knee_mid_s075_k2", "guidance_step_percents": mid12, "latent_step_size": 0.075, "inner_k": 2},
+    ]
+
+
+def _rank_phase_scores(scores: list[dict], ranking_mode: str) -> list[dict]:
+    if ranking_mode == "abs_mean_delta_desc":
+        return sorted(
+            scores,
+            key=lambda x: (
+                abs(float(x.get("mean_delta_post", 0.0))),
+                float(x.get("persistence_score", 0.0)),
+            ),
+            reverse=True,
+        )
+    return sorted(scores, key=lambda x: x["persistence_score"], reverse=True)
+
+
 # ---------------------------------------------------------------------------
 # Phase runner
 # ---------------------------------------------------------------------------
@@ -721,6 +763,7 @@ def _run_phase(
     probe_every_n: int,
     baseline_records_path: Optional[Path] = None,
     guidance_mode: str = "surprise",
+    ranking_mode: str = "persistence_desc",
 ) -> tuple[list[dict], dict[str, list[dict]]]:
     """Run baseline + conditions, return (scores_list, all_records_dict).
 
@@ -798,7 +841,7 @@ def _run_phase(
         log.info("[%s] persistence=%.3f  mean_delta=%.6f", label, score, mean_delta)
 
     # Print ranking
-    ranked = sorted(scores, key=lambda x: x["persistence_score"], reverse=True)
+    ranked = _rank_phase_scores(scores, ranking_mode)
     print(f"\n=== Phase {phase_num} results ===")
     print(f"{'Label':<20}  {'persist':>7}  {'mean_delta':>12}  {'step_percents'}")
     for s in ranked:
@@ -806,7 +849,7 @@ def _run_phase(
               f"{s.get('guidance_step_percents', [])}")
 
     # Save summary
-    summary = {"ranked": ranked, "best": ranked[0] if ranked else {}}
+    summary = {"ranking_mode": ranking_mode, "ranked": ranked, "best": ranked[0] if ranked else {}}
     (phase_dir / f"phase{phase_num}_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
@@ -834,10 +877,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vjepa-device", type=str, default=None)
     p.add_argument("--vjepa-model", type=str, default="vith")
     p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5], default=1,
+    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6], default=1,
                    help="Which experiment phase to run (1=timing, 2=step-size, "
                         "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored, "
-                        "5=strength ladder: latent_step_size sweep in context_anchored)")
+                        "5=strength ladder: latent_step_size sweep in context_anchored, "
+                        "6=knee refinement: timing/inner-k/backtracking near the first wmreward-positive regime)")
     p.add_argument("--probe-every-n", type=int, default=2)
     p.add_argument("--num-frames", type=int, default=49)
     p.add_argument("--height", type=int, default=480)
@@ -968,6 +1012,30 @@ def main() -> None:
                    base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
                    output_dir=args.output_dir, probe_every_n=args.probe_every_n,
                    guidance_mode="context_anchored")
+
+    elif args.phase == 5:
+        # Strength ladder (Phase 0a finding): energy reduction of ~0.005 did NOT move
+        # wmreward and every phase-4 video is visually identical to baseline. Sweep the
+        # step-size axis in context_anchored mode to find where the decoded video
+        # actually diverges from baseline. Timing held at the p35..p80 dense band.
+        p_best = args.anchor_timing
+        ss_best = args.anchor_step_size
+        log.info("Phase 5 (strength ladder, context-anchored) p_center=%.2f", p_best)
+        conditions = _phase5_conditions(p_best, ss_best)
+        _run_phase(5, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   guidance_mode="context_anchored",
+                   ranking_mode="abs_mean_delta_desc")
+
+    elif args.phase == 6:
+        log.info("Phase 6 (knee refinement, context-anchored)")
+        conditions = _phase6_conditions()
+        _run_phase(6, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   guidance_mode="context_anchored",
+                   ranking_mode="abs_mean_delta_desc")
 
     log.info("Done. Output dir: %s", args.output_dir)
 

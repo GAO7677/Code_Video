@@ -389,6 +389,7 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         lora_base_model=args.lora_base_model,
         lora_target_modules=args.lora_target_modules,
         lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
         lora_checkpoint=args.lora_checkpoint,
         preset_lora_path=args.preset_lora_path,
         preset_lora_model=args.preset_lora_model,

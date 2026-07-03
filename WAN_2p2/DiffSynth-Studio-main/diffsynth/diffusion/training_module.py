@@ -267,7 +267,7 @@ class DiffusionTrainingModule(torch.nn.Module):
         self,
         pipe,
         trainable_models=None,
-        lora_base_model=None, lora_target_modules="", lora_rank=32, lora_checkpoint=None,
+        lora_base_model=None, lora_target_modules="", lora_rank=32, lora_alpha=None, lora_checkpoint=None,
         preset_lora_path=None, preset_lora_model=None,
         task="sft",
     ):
@@ -295,6 +295,7 @@ class DiffusionTrainingModule(torch.nn.Module):
                 model,
                 target_modules=self.parse_lora_target_modules(model, lora_target_modules),
                 lora_rank=lora_rank,
+                lora_alpha=lora_alpha,
                 upcast_dtype=pipe.torch_dtype,
             )
             if lora_checkpoint is not None:
