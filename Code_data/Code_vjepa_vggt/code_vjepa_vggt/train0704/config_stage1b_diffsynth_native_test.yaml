@@ -25,6 +25,7 @@ model:
   jepa_window_radius: 1
   latent_window_radius: 1
   cond_proj_dim: 4096
+  train_object_branch: true
 
 data:
   dataset_type: phys_state_episode

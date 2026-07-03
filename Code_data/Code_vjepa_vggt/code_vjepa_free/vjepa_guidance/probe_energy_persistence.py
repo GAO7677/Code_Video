@@ -307,6 +307,8 @@ def _run_condition(
     inner_k: int = 1,                            # guidance repetitions per step
     save_video_path: Optional[Path] = None,     # if provided, save generated video
     guidance_mode: str = "surprise",            # "surprise" | "context_anchored"
+    backtracking: bool = False,                 # auto-pick step size via line search
+    backtracking_taps: Optional[list[float]] = None,
 ) -> tuple[list, list[dict]]:
     """Run one generation condition with per-step energy probing. Returns (video, records).
 
@@ -414,6 +416,20 @@ def _run_condition(
         )
         log.info("[%s] anchored probe ready: ctx=%d future=%d ref=%s",
                  condition_label, n_ctx, future_frames, tuple(anchor_future_ref.shape))
+        # Share the SAME anchor with the pipeline guidance so guidance descends
+        # exactly the energy the probe measures (Bug 1 fix: previously guidance
+        # re-derived a shorter context by decoding the compressed latent prefix).
+        pipe.set_external_anchor(
+            context_frames_pixel=anchor_context_pixel,
+            predicted_future_ref=anchor_future_ref,
+        )
+    else:
+        pipe.set_external_anchor(context_frames_pixel=None, predicted_future_ref=None)
+
+    # Per-step backtracking: pick the tap that most lowers anchored energy instead
+    # of a fixed step (the fixed 0.02 overshot the shallow descent basin). Only
+    # meaningful in context_anchored mode.
+    pipe.set_backtracking(backtracking and guidance_mode == "context_anchored")
 
     probe = _SchedulerEnergyProbe(
         inner_scheduler=pipe.scheduler,
@@ -598,37 +614,50 @@ def _phase3_conditions(p_best: float, ss_best: float) -> list[dict]:
     ]
 
 
-def _phase4_conditions(p_center: float = 0.50, ss_base: float = 0.02) -> list[dict]:
-    """Mechanism comparison: context-anchored guidance at a few timing/count/size
-    settings. The whole phase runs in guidance_mode='context_anchored', so both the
-    baseline and every condition are measured with the anchored energy.
+def _dense_percents(lo: float, hi: float, n: int) -> list[float]:
+    """n evenly-spaced guidance-step percents in [lo, hi] (inclusive)."""
+    if n <= 1:
+        return [round((lo + hi) / 2, 3)]
+    return [round(lo + i * (hi - lo) / (n - 1), 3) for i in range(n)]
 
-    Anchored guidance is applied in the mid/low-noise band (x0 decode is sharp enough
-    for feature alignment to be meaningful) and uses multiple steps so the correction
-    accumulates instead of being washed out by the remaining diffusion steps.
 
-    ``p_center`` centers the timing band; ``ss_base`` is the base latent step size.
+def _phase4_conditions(p_center: float = 0.50, ss_base: float = 0.005) -> list[dict]:
+    """Context-anchored sweep built on the line-search finding (2026-07-03):
+
+    The gradient DIRECTION is correct, but a single fixed step of 0.02 overshoots the
+    sharp/shallow energy basin (only tap<=0.005 lowers energy). A single small step
+    also gets washed out by the next diffusion step. So this sweep tests the two ways
+    to make the correction PERSIST:
+
+      1. CONTINUOUS small-step guidance -- apply a small (~0.005) step at many
+         consecutive denoising steps so the pull is re-applied faster than the DiT
+         prior can erase it.
+      2. BACKTRACKING -- at each guidance step, auto-pick the tap that most lowers the
+         anchored energy (never climb). Robust to the basin being step-dependent.
+
+    The whole phase runs in guidance_mode='context_anchored' so baseline + all
+    conditions are probed with the same anchored energy.
+
+    ``p_center`` centers the timing band; ``ss_base`` is the corrected small step.
     """
-    lo = max(0.05, p_center - 0.10)
-    hi = min(0.95, p_center + 0.10)
-    span3 = [lo, p_center, hi]
-    span4 = [lo, p_center - 0.03, p_center + 0.03, hi + 0.10 if hi + 0.10 <= 0.95 else hi]
-    span4 = sorted({round(v, 3) for v in span4})
+    lo = max(0.05, p_center - 0.15)   # ~p35
+    hi = min(0.95, p_center + 0.30)   # ~p80 -- extend into low-noise region
     return [
-        # single-step, mid trajectory (direct analog of the old single-step probe)
-        {"label": "anch_p50_s02", "guidance_step_percents": [p_center],
+        # A single small-step reference (the verified fix, one step).
+        {"label": "anch_single_s005", "guidance_step_percents": [p_center],
          "latent_step_size": ss_base, "inner_k": 1},
-        # multi-step spans -- accumulate the pull toward the predicted future
-        {"label": "anch_span3", "guidance_step_percents": span3,
+        # Continuous small-step guidance at increasing density across p35..p80.
+        {"label": "anch_dense6_s005", "guidance_step_percents": _dense_percents(lo, hi, 6),
          "latent_step_size": ss_base, "inner_k": 1},
-        {"label": "anch_span4", "guidance_step_percents": span4,
+        {"label": "anch_dense12_s005", "guidance_step_percents": _dense_percents(lo, hi, 12),
          "latent_step_size": ss_base, "inner_k": 1},
-        # larger step, multi-step
-        {"label": "anch_span3_s05", "guidance_step_percents": span3,
-         "latent_step_size": ss_base * 2.5, "inner_k": 1},
-        # inner-k accumulation at a single step
-        {"label": "anch_p50_k3", "guidance_step_percents": [p_center],
-         "latent_step_size": ss_base, "inner_k": 3},
+        {"label": "anch_dense20_s003", "guidance_step_percents": _dense_percents(lo, hi, 20),
+         "latent_step_size": 0.003, "inner_k": 1},
+        # Backtracking (auto step size) at medium and high density.
+        {"label": "anch_dense12_bt", "guidance_step_percents": _dense_percents(lo, hi, 12),
+         "latent_step_size": ss_base, "inner_k": 1, "backtracking": True},
+        {"label": "anch_dense20_bt", "guidance_step_percents": _dense_percents(lo, hi, 20),
+         "latent_step_size": ss_base, "inner_k": 1, "backtracking": True},
     ]
 
 
@@ -709,6 +738,7 @@ def _run_phase(
                 inner_k=cond.get("inner_k", 1),
                 save_video_path=video_path,
                 guidance_mode=cond.get("guidance_mode", guidance_mode),
+                backtracking=cond.get("backtracking", False),
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
@@ -777,8 +807,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--stride", type=int, default=4)
     p.add_argument("--anchor-timing", type=float, default=0.35,
                    help="Phase 4: guidance timing percent for context-anchored conditions")
-    p.add_argument("--anchor-step-size", type=float, default=0.05,
-                   help="Phase 4: latent step size for context-anchored conditions")
+    p.add_argument("--anchor-step-size", type=float, default=0.005,
+                   help="Phase 4: latent step size for context-anchored conditions "
+                        "(0.005 = verified descent-basin step; 0.02 overshoots)")
     p.add_argument("--log-level", type=str, default="INFO")
     return p.parse_args()
 

@@ -244,6 +244,8 @@ def _apply_context_anchored_guidance(
     config: WanVJEPAConfig,
     predicted_future_ref: Optional[torch.Tensor],
     trace_hook: Optional[Callable[..., None]] = None,
+    line_search_taps: Optional[list[float]] = None,
+    backtracking: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Context-anchored guidance.
 
@@ -307,6 +309,39 @@ def _apply_context_anchored_guidance(
     if n_ctx_latent > 0 and n_ctx_latent < gradient.shape[2]:
         gradient[:, :, :n_ctx_latent] = 0.0
 
+    line_search: dict[str, float] = {}
+    if line_search_taps:
+        # Decisive overshoot-vs-noise test: re-evaluate the anchored energy after
+        # stepping the latent by -tap*gradient for several taps. If ANY tap lowers
+        # energy below E(0), the gradient direction is descending (overshoot); if
+        # none do, the direction itself is not a descent direction (noise/flat).
+        with torch.no_grad():
+            for tap in line_search_taps:
+                trial_latent = (latent_xt.detach().float() - tap * gradient).to(dtype=latent_xt.dtype)
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent.float(),
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                trial_future = trial_video[:, :, n_ctx:]
+                trial_clip = build_context_future_clip(
+                    context_btchw=ctx,
+                    future_btchw=trial_future,
+                    window_size=config.window_size,
+                    context_frames=n_ctx,
+                )
+                trial_energy = float(
+                    energy_obj.context_anchored(
+                        trial_clip,
+                        window_size=config.window_size,
+                        context_frames=n_ctx,
+                        predicted_future_ref=predicted_future_ref,
+                    ).item()
+                )
+                line_search[f"tap_{tap:g}"] = trial_energy
+
     if trace_hook is not None:
         trace_hook(
             x0_pred=x0_pred.detach(),
@@ -316,7 +351,21 @@ def _apply_context_anchored_guidance(
             normalized_grad_rms=float(gradient.detach().pow(2).mean().sqrt().item()),
         )
 
-    corrected = latent_xt.detach().float() - config.latent_step_size * gradient
+    corrected_step_size = config.latent_step_size
+    if backtracking and line_search:
+        # Pick the tap that most lowers the anchored energy below E(0). If none of
+        # the taps beat the base energy, take NO step (better to skip than climb).
+        base_e = float(energy.detach().item())
+        best_tap = None
+        best_e = base_e
+        for key, trial_e in line_search.items():
+            tap_val = float(key.split("_", 1)[1])
+            if trial_e < best_e:
+                best_e = trial_e
+                best_tap = tap_val
+        corrected_step_size = best_tap if best_tap is not None else 0.0
+
+    corrected = latent_xt.detach().float() - corrected_step_size * gradient
     corrected = corrected.to(dtype=latent_xt.dtype)
 
     stats = {
@@ -326,7 +375,11 @@ def _apply_context_anchored_guidance(
         "preview_frames": float(full_video.shape[2]),
         "preview_height": float(full_video.shape[3]),
         "preview_width": float(full_video.shape[4]),
+        "step_size_used": float(corrected_step_size),
     }
+    if line_search:
+        stats["line_search"] = line_search
+        stats["line_search_base_energy"] = float(energy.detach().item())
     return corrected, stats
 
 
@@ -399,6 +452,37 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
         self.trace_fps = 16
         self.vjepa_target_timestep_values: list[int] = []
         self.vjepa_target_step_indices: list[int] = []
+        # Externally-provided context-anchored anchor (context pixels + future ref).
+        # When set, guidance uses these instead of decoding the clean prefix, so the
+        # guidance and the probe optimize/measure the exact same energy.
+        self._external_anchor_context_pixel: torch.Tensor | None = None
+        self._external_anchor_future_ref: torch.Tensor | None = None
+
+    def set_external_anchor(
+        self,
+        *,
+        context_frames_pixel: torch.Tensor | None,
+        predicted_future_ref: torch.Tensor | None,
+    ) -> None:
+        """Inject a fixed context-anchored reference shared with an external probe.
+
+        ``context_frames_pixel`` is [1,3,Tc,H,W] in [-1,1]; ``predicted_future_ref``
+        is the precomputed V-JEPA future prediction. Pass (None, None) to clear and
+        fall back to decoding the clean prefix internally.
+        """
+        self._external_anchor_context_pixel = context_frames_pixel
+        self._external_anchor_future_ref = predicted_future_ref
+
+    def set_line_search_taps(self, taps: Optional[list[float]]) -> None:
+        """Enable a diagnostic line search at each guidance step (logging only)."""
+        self._line_search_taps = list(taps) if taps else None
+
+    def set_backtracking(self, enabled: bool, taps: Optional[list[float]] = None) -> None:
+        """Enable backtracking: at each guidance step pick the tap that most lowers
+        the anchored energy (take no step if none beat E(0)). Robust to the sharp,
+        shallow energy basin -- avoids the fixed-step overshoot."""
+        self._backtracking = bool(enabled)
+        self._backtracking_taps = list(taps) if taps else [0.002, 0.005, 0.01, 0.02]
 
     def configure_trace(
         self,
@@ -865,53 +949,63 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
         guidance_mode = getattr(self.vjepa_config, "guidance_mode", "surprise")
         context_frames_pixel: Optional[torch.Tensor] = None
         predicted_future_ref: Optional[torch.Tensor] = None
-        if (
-            guidance_mode == "context_anchored"
-            and selected_steps
-            and inputs_shared.get("clean_prefix_latents") is not None
-        ):
+        if guidance_mode == "context_anchored" and selected_steps:
             n_ctx = int(self.vjepa_config.context_frames)
-            with torch.no_grad():
-                prefix_latents = inputs_shared["clean_prefix_latents"].detach()
-                context_video_pixel = self._decode_preview_video(
-                    prefix_latents,
-                    preview_downsample_factor=1,
-                    preview_frame_stride=1,
-                    tiled=tiled,
-                    tile_size=tile_size,
-                    tile_stride=tile_stride,
-                    framewise_decoding=framewise_decoding,
-                    restore_model_names=tuple(self.in_iteration_models),
-                )  # [1,3,Tc,H,W]
-                context_frames_pixel = context_video_pixel.detach()
-                # Build a [context | zero-future] clip to precompute the fixed prediction.
-                future_frames = int(self.vjepa_config.window_size) - n_ctx
-                placeholder = torch.zeros(
-                    context_frames_pixel.shape[0],
-                    context_frames_pixel.shape[1],
+            future_frames = int(self.vjepa_config.window_size) - n_ctx
+            # Prefer an externally-injected anchor (set by the probe harness) so the
+            # guidance optimizes the EXACT same energy the probe measures. Fall back
+            # to decoding the clean-prefix latent only if none was provided.
+            external_ctx = getattr(self, "_external_anchor_context_pixel", None)
+            external_ref = getattr(self, "_external_anchor_future_ref", None)
+            if external_ctx is not None and external_ref is not None:
+                context_frames_pixel = external_ctx.detach()
+                predicted_future_ref = external_ref.detach()
+                logging.info(
+                    "Context-anchored guidance using EXTERNAL anchor: ctx_frames=%d future_frames=%d ref_shape=%s",
+                    context_frames_pixel.shape[2],
                     future_frames,
-                    context_frames_pixel.shape[3],
-                    context_frames_pixel.shape[4],
-                    device=context_frames_pixel.device,
-                    dtype=context_frames_pixel.dtype,
+                    tuple(predicted_future_ref.shape),
                 )
-                precompute_clip = build_context_future_clip(
-                    context_btchw=context_frames_pixel,
-                    future_btchw=placeholder,
-                    window_size=int(self.vjepa_config.window_size),
-                    context_frames=n_ctx,
+            elif inputs_shared.get("clean_prefix_latents") is not None:
+                with torch.no_grad():
+                    prefix_latents = inputs_shared["clean_prefix_latents"].detach()
+                    context_video_pixel = self._decode_preview_video(
+                        prefix_latents,
+                        preview_downsample_factor=1,
+                        preview_frame_stride=1,
+                        tiled=tiled,
+                        tile_size=tile_size,
+                        tile_stride=tile_stride,
+                        framewise_decoding=framewise_decoding,
+                        restore_model_names=tuple(self.in_iteration_models),
+                    )  # [1,3,Tc,H,W]
+                    context_frames_pixel = context_video_pixel.detach()
+                    placeholder = torch.zeros(
+                        context_frames_pixel.shape[0],
+                        context_frames_pixel.shape[1],
+                        future_frames,
+                        context_frames_pixel.shape[3],
+                        context_frames_pixel.shape[4],
+                        device=context_frames_pixel.device,
+                        dtype=context_frames_pixel.dtype,
+                    )
+                    precompute_clip = build_context_future_clip(
+                        context_btchw=context_frames_pixel,
+                        future_btchw=placeholder,
+                        window_size=int(self.vjepa_config.window_size),
+                        context_frames=n_ctx,
+                    )
+                    predicted_future_ref = energy_fn.precompute_future_prediction(
+                        precompute_clip,
+                        window_size=int(self.vjepa_config.window_size),
+                        context_frames=n_ctx,
+                    )
+                logging.info(
+                    "Context-anchored guidance decoded-prefix anchor: ctx_frames=%d future_frames=%d ref_shape=%s",
+                    context_frames_pixel.shape[2],
+                    future_frames,
+                    tuple(predicted_future_ref.shape),
                 )
-                predicted_future_ref = energy_fn.precompute_future_prediction(
-                    precompute_clip,
-                    window_size=int(self.vjepa_config.window_size),
-                    context_frames=n_ctx,
-                )
-            logging.info(
-                "Context-anchored guidance ready: ctx_frames=%d future_frames=%d ref_shape=%s",
-                context_frames_pixel.shape[2],
-                future_frames,
-                tuple(predicted_future_ref.shape),
-            )
 
         self.load_models_to_device(self.in_iteration_models)
         active_model_names = self.in_iteration_models
@@ -972,6 +1066,12 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                                 energy_obj=energy_fn,
                                 config=self.vjepa_config,
                                 predicted_future_ref=predicted_future_ref,
+                                line_search_taps=(
+                                    getattr(self, "_line_search_taps", None)
+                                    or (getattr(self, "_backtracking_taps", None)
+                                        if getattr(self, "_backtracking", False) else None)
+                                ),
+                                backtracking=getattr(self, "_backtracking", False),
                                 trace_hook=(
                                     lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
                                         step_idx=progress_id,
@@ -1030,6 +1130,16 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                     int(stats["preview_height"]),
                     int(stats["preview_width"]),
                 )
+                if stats.get("line_search"):
+                    base_e = stats.get("line_search_base_energy", float("nan"))
+                    taps_str = "  ".join(
+                        f"{k}={v:.6f}({'DOWN' if v < base_e else 'up'})"
+                        for k, v in stats["line_search"].items()
+                    )
+                    logging.info(
+                        "V-JEPA[%s] step=%d LINE-SEARCH base_E=%.6f  %s",
+                        guidance_mode, progress_id, base_e, taps_str,
+                    )
 
             inputs_shared["latents"] = self.scheduler.step(
                 noise_pred,
