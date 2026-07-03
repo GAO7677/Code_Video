@@ -49,11 +49,10 @@ def load_config(config_path: str) -> dict:
 
 
 def setup_pipeline(config: dict, device: torch.device):
-    """Initialize WanVideoPipeline and inject object branch."""
+    """Initialize WanVideoPipeline (without object branch - injected after LoRA)."""
     from diffsynth.pipelines.wan_video import WanVideoPipeline
     from diffsynth.core import ModelConfig
     from code_vjepa_vggt.training.flow_match import WanFlowMatchScheduler
-    from code_vjepa_vggt.models.diffsynth_object_injection import inject_object_branch_to_dit
 
     print(f"Loading WanVideoPipeline from {config['model']['wan_ckpt_dir']}...")
 
@@ -76,13 +75,8 @@ def setup_pipeline(config: dict, device: torch.device):
     # Replace scheduler with WanFlowMatchScheduler
     pipe.scheduler = WanFlowMatchScheduler(num_train_timesteps=1000, shift=5.0)
 
-    # Inject object branch to DiT
-    print("Injecting object branch to DiT blocks...")
-    inject_object_branch_to_dit(
-        pipe.dit,
-        object_cross_attn_dim=config['model']['cond_proj_dim'],  # 4096
-        object_gate_init=0.1,
-    )
+    # NOTE: object branch injection happens AFTER LoRA injection in train()
+    # to avoid LoRA wrapping object_cross_attn.q/k/v/o
 
     # Freeze VAE and text encoder
     if config['model']['freeze_vae']:
@@ -107,7 +101,7 @@ def setup_lora(pipe: WanVideoPipeline, config: dict, device: torch.device):
 
     print(f"Injecting LoRA (rank={lora_rank}, alpha={lora_alpha}) to DiT...")
 
-    # Inject LoRA to DiT
+    # Inject LoRA to DiT (standard injection, object branch will be frozen)
     lora_config = LoraConfig(
         r=lora_rank,
         lora_alpha=lora_alpha,
@@ -146,16 +140,16 @@ def setup_lora(pipe: WanVideoPipeline, config: dict, device: torch.device):
     # Freeze DiT base parameters
     if config['model']['freeze_wan_dit']:
         for name, param in pipe.dit.named_parameters():
-            # Keep trainable: lora_*, object_*, norm4
-            if "lora_" not in name and "object_" not in name and "norm4" not in name:
+            # Keep trainable: lora_*
+            if "lora_" not in name:
                 param.requires_grad = False
-        print("DiT base parameters frozen (except object branch)")
+        print("DiT base parameters frozen (except LoRA)")
 
-    # Explicitly set object branch to trainable (LoRA injection sets all params to False)
-    for name, param in pipe.dit.named_parameters():
-        if "object_" in name or "norm4" in name:
-            param.requires_grad = True
-    print("Object branch parameters set to trainable")
+    # Note: Object branch is frozen (requires_grad=False) but will be manually saved
+    object_params = sum(1 for n, p in pipe.dit.named_parameters() if "object_" in n or "norm4" in n)
+    total_trainable = sum(p.numel() for p in pipe.dit.parameters() if p.requires_grad)
+    print(f"Object branch parameters (frozen, will save manually): {object_params}")
+    print(f"Total trainable DiT parameters: {total_trainable:,}")
 
 
 def setup_object_modules(config: dict, device: torch.device):
@@ -241,22 +235,32 @@ def save_checkpoint(
     step: int,
     output_dir: str,
 ):
-    """Save checkpoint to disk."""
+    """Save checkpoint to disk (manually extract object branch weights)."""
     ckpt_dir = Path(output_dir) / "checkpoints" / f"step-{step:06d}"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect state dict (only trainable parameters)
+    # Collect state dict
     state_dict = {}
 
-    # DiT object branch + LoRA
-    for name, param in trainer.pipe.dit.named_parameters():
-        if param.requires_grad:
-            state_dict[f"dit.{name}"] = param.cpu()
-
-    # Box encoder
+    # 1. Box encoder (standard requires_grad check)
     for name, param in trainer.box_encoder.named_parameters():
         if param.requires_grad:
             state_dict[f"box_encoder.{name}"] = param.cpu()
+
+    # 2. Object branch weights (manually extract, bypass requires_grad check)
+    object_count = 0
+    for name, param in trainer.pipe.dit.named_parameters():
+        if "object_" in name or "norm4" in name:
+            state_dict[f"dit.{name}"] = param.cpu()
+            object_count += 1
+
+    print(f"DEBUG: Found {object_count} object branch parameters in dit.named_parameters()")
+    if object_count == 0:
+        print("DEBUG: First 10 dit parameter names:")
+        for i, (n, _) in enumerate(trainer.pipe.dit.named_parameters()):
+            if i >= 10:
+                break
+            print(f"  {n}")
 
     # Save with safetensors
     save_path = ckpt_dir / "checkpoint.safetensors"
@@ -279,6 +283,21 @@ def train(args, config: dict):
     # Setup pipeline
     pipe = setup_pipeline(config, device)
     setup_lora(pipe, config, device)
+
+    # Inject object branch AFTER LoRA (so LoRA doesn't wrap object_cross_attn)
+    from code_vjepa_vggt.models.diffsynth_object_injection import inject_object_branch_to_dit
+    print("Injecting object branch to DiT blocks (after LoRA)...")
+    inject_object_branch_to_dit(
+        pipe.dit,
+        object_cross_attn_dim=config['model']['cond_proj_dim'],
+        object_gate_init=0.1,
+    )
+    # Freeze object branch (saves initialized weights without gradient computation)
+    for name, param in pipe.dit.named_parameters():
+        if "object_" in name or "norm4" in name:
+            param.requires_grad = False
+    obj_count = sum(1 for n, p in pipe.dit.named_parameters() if "object_" in n or "norm4" in n)
+    print(f"Object branch frozen (will save {obj_count} params manually): {obj_count} params")
 
     # Setup object modules
     box_encoder = setup_object_modules(config, device)
