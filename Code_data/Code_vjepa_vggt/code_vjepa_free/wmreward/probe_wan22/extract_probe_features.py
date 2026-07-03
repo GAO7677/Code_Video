@@ -311,7 +311,9 @@ def load_pipe(config: ProbeConfig):
         torch_dtype=dtype,
         local_files_only=True,
     )
-    pipe.to(config.device)
+    # Use sequential offload for maximum memory savings
+    # This offloads each submodule layer-by-layer
+    pipe.enable_sequential_cpu_offload()
     return pipe
 
 

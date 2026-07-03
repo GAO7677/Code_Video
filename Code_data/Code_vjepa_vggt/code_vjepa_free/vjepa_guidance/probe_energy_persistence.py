@@ -249,6 +249,7 @@ def _run_condition(
     condition_label: str,
     latent_step_size: Optional[float] = None,   # overrides vjepa_config value
     inner_k: int = 1,                            # guidance repetitions per step
+    save_video_path: Optional[Path] = None,     # if provided, save generated video
 ) -> tuple[list, list[dict]]:
     """Run one generation condition with per-step energy probing. Returns (video, records)."""
 
@@ -346,6 +347,13 @@ def _run_condition(
 
     records = probe.records
     log.info("[%s] collected %d probe records", condition_label, len(records))
+
+    # Save video if requested
+    if save_video_path is not None:
+        save_video_path.parent.mkdir(parents=True, exist_ok=True)
+        core.save_video(video, save_video_path, fps=16)
+        log.info("[%s] saved video to %s", condition_label, save_video_path)
+
     return video, records
 
 
@@ -491,11 +499,14 @@ def _run_phase(
 
     phase_dir = output_dir / f"phase{phase_num}"
     phase_dir.mkdir(parents=True, exist_ok=True)
+    videos_dir = phase_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
 
     all_records: dict[str, list[dict]] = {}
 
     # Load or run baseline
     baseline_json = phase_dir / "baseline_records.json"
+    baseline_video_path = videos_dir / "baseline.mp4"
     if baseline_records_path is not None and baseline_records_path.exists():
         log.info("Reusing baseline from: %s", baseline_records_path)
         baseline_records = json.loads(baseline_records_path.read_text())
@@ -510,6 +521,7 @@ def _run_phase(
             vjepa_config=vjepa_config,
             probe_every_n=probe_every_n,
             condition_label="baseline",
+            save_video_path=baseline_video_path,
         )
         baseline_json.write_text(json.dumps(baseline_records, indent=2), encoding="utf-8")
 
@@ -519,6 +531,7 @@ def _run_phase(
     for cond in conditions:
         label = cond["label"]
         rec_path = phase_dir / f"{label}_records.json"
+        video_path = videos_dir / f"{label}.mp4"
 
         if rec_path.exists():
             log.info("Reusing existing condition: %s", label)
@@ -533,6 +546,7 @@ def _run_phase(
                 condition_label=label,
                 latent_step_size=cond.get("latent_step_size"),
                 inner_k=cond.get("inner_k", 1),
+                save_video_path=video_path,
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 

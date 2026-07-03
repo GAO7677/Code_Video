@@ -55,6 +55,22 @@ h1 {{
     margin-bottom: 30px;
     font-size: 14px;
 }}
+.context-video {{
+    margin-bottom: 40px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}}
+.context-video h2 {{
+    margin: 0 0 15px 0;
+    font-size: 18px;
+    color: #2c3e50;
+}}
+.context-video video {{
+    max-width: 600px;
+    border: 2px solid #dee2e6;
+    border-radius: 4px;
+}}
 .phase-section {{
     margin-bottom: 50px;
 }}
@@ -83,6 +99,32 @@ h1 {{
     font-size: 13px;
     color: #555;
     line-height: 1.6;
+}}
+.video-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 15px;
+    margin: 20px 0;
+}}
+.video-card {{
+    background: #f8f9fa;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}}
+.video-card h4 {{
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #495057;
+}}
+.video-card video {{
+    width: 100%;
+    border-radius: 4px;
+}}
+.video-card .video-info {{
+    font-size: 11px;
+    color: #6c757d;
+    margin-top: 6px;
 }}
 table {{
     width: 100%;
@@ -122,6 +164,8 @@ tr:hover {{
 <h1>V-JEPA Guidance Energy Persistence Experiment</h1>
 <div class="subtitle">Sample: {sample_name}</div>
 
+{context_html}
+
 {phase1_html}
 
 {phase2_html}
@@ -154,6 +198,10 @@ Guidance Steps: {best_percents}<br>
 Latent Step Size: {best_ss}<br>
 Inner K: {best_k}
 </div>
+</div>
+
+<div class="video-grid">
+{video_cards}
 </div>
 
 <table>
@@ -278,6 +326,51 @@ def _build_phase_html(phase_num: int, phase_dir: Path, title: str) -> str:
     best_ss = best.get("latent_step_size", "N/A")
     best_k = best.get("inner_k", 1)
 
+    # Video cards
+    videos_dir = phase_dir / "videos"
+    video_cards = []
+    if videos_dir.exists():
+        # Baseline first
+        baseline_video = videos_dir / "baseline.mp4"
+        if baseline_video.exists():
+            video_cards.append(f"""
+<div class="video-card">
+<h4>Baseline (No Guidance)</h4>
+<video controls loop muted>
+<source src="/video/phase{phase_num}/baseline.mp4" type="video/mp4">
+</video>
+<div class="video-info">Reference trajectory</div>
+</div>
+""")
+
+        # Best condition
+        best_video = videos_dir / f"{best_label}.mp4"
+        if best_video.exists():
+            video_cards.append(f"""
+<div class="video-card">
+<h4>{best_label} (Best)</h4>
+<video controls loop muted>
+<source src="/video/phase{phase_num}/{best_label}.mp4" type="video/mp4">
+</video>
+<div class="video-info">Persist: {best_score:.3f}, Delta: {best_delta:.6f}</div>
+</div>
+""")
+
+        # Other top conditions (up to 2 more)
+        for item in ranked[1:3]:
+            label = item["label"]
+            video_path = videos_dir / f"{label}.mp4"
+            if video_path.exists():
+                video_cards.append(f"""
+<div class="video-card">
+<h4>{label}</h4>
+<video controls loop muted>
+<source src="/video/phase{phase_num}/{label}.mp4" type="video/mp4">
+</video>
+<div class="video-info">Persist: {item['persistence_score']:.3f}, Delta: {item['mean_delta_post']:.6f}</div>
+</div>
+""")
+
     # Table rows
     rows = []
     for rank, item in enumerate(ranked, start=1):
@@ -337,19 +430,34 @@ Plotly.newPlot('phase{phase_num}_delta', delta_data, delta_layout, {{responsive:
         best_percents=best_percents,
         best_ss=best_ss,
         best_k=best_k,
+        video_cards="".join(video_cards) if video_cards else "<p>No videos available (run experiment with video saving enabled)</p>",
         rows="".join(rows),
         plot_script=plot_script,
     )
 
 
-def build_html(results_dir: Path, sample_name: str) -> str:
+def build_html(results_dir: Path, sample_name: str, context_video_path: Path = None) -> str:
     """Build complete HTML page."""
+
+    # Context video section
+    context_html = ""
+    if context_video_path and context_video_path.exists():
+        context_html = f"""
+<div class="context-video">
+<h2>Input Context Video (First 8 frames)</h2>
+<video controls loop muted>
+<source src="/context_video" type="video/mp4">
+</video>
+</div>
+"""
+
     phase1_html = _build_phase_html(1, results_dir / "phase1", "Timing Sweep")
     phase2_html = _build_phase_html(2, results_dir / "phase2", "Step Size Sweep")
     phase3_html = _build_phase_html(3, results_dir / "phase3", "Step Count + Inner K Sweep")
 
     return HTML_TEMPLATE.format(
         sample_name=sample_name,
+        context_html=context_html,
         phase1_html=phase1_html,
         phase2_html=phase2_html,
         phase3_html=phase3_html,
@@ -358,6 +466,8 @@ def build_html(results_dir: Path, sample_name: str) -> str:
 
 class CustomHandler(SimpleHTTPRequestHandler):
     html_content = None
+    results_dir = None
+    context_video_path = None
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
@@ -365,6 +475,31 @@ class CustomHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(self.html_content.encode("utf-8"))
+        elif self.path == "/context_video":
+            if self.context_video_path and self.context_video_path.exists():
+                self.send_response(200)
+                self.send_header("Content-type", "video/mp4")
+                self.end_headers()
+                with open(self.context_video_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404)
+        elif self.path.startswith("/video/"):
+            # /video/phase1/baseline.mp4 -> phase1/videos/baseline.mp4
+            parts = self.path.split("/")[2:]  # ['phase1', 'baseline.mp4']
+            if len(parts) == 2:
+                phase_name, filename = parts
+                video_path = self.results_dir / phase_name / "videos" / filename
+                if video_path.exists():
+                    self.send_response(200)
+                    self.send_header("Content-type", "video/mp4")
+                    self.end_headers()
+                    with open(video_path, "rb") as f:
+                        self.wfile.write(f.read())
+                else:
+                    self.send_error(404)
+            else:
+                self.send_error(404)
         else:
             self.send_error(404)
 
@@ -377,6 +512,8 @@ def main():
     parser.add_argument("--results-dir", type=Path, default=Path("/data/gaoya/agent-data/outputs/probe_sweep"))
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--sample-name", type=str, default="physicIQ_025_Solid_Mechanics_0002")
+    parser.add_argument("--context-video", type=Path,
+                       default=Path("/data/gaoya/AAA_test_video/0623/testdataset/025_Solid_Mechanics_0002_perspective-center_trimmed/source_video/context_video_8f.mp4"))
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -386,9 +523,11 @@ def main():
         return
 
     log.info("Building HTML from %s ...", args.results_dir)
-    html = build_html(args.results_dir, args.sample_name)
+    html = build_html(args.results_dir, args.sample_name, args.context_video)
 
     CustomHandler.html_content = html
+    CustomHandler.results_dir = args.results_dir
+    CustomHandler.context_video_path = args.context_video if args.context_video and args.context_video.exists() else None
 
     server = HTTPServer(("0.0.0.0", args.port), CustomHandler)
     log.info("Serving visualization at http://localhost:%d", args.port)
