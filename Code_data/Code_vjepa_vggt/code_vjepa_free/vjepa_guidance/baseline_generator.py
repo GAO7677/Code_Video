@@ -36,16 +36,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wan-root", type=Path,
                        default=Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"))
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--height", type=int, default=576)
-    parser.add_argument("--width", type=int, default=1024)
-    parser.add_argument("--num-frames", type=int, default=16)
+    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int, default=832)
+    parser.add_argument("--num-frames", type=int, default=49)
     parser.add_argument("--context-frames", type=int, default=8)
     parser.add_argument("--fps", type=int, default=16)
     parser.add_argument("--num-inference-steps", type=int, default=40)
-    parser.add_argument("--cfg-scale", type=float, default=7.0)
+    parser.add_argument("--cfg-scale", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--negative-prompt", type=str,
-                       default="worst quality, inconsistent motion, blurry, jittery, distorted")
+    parser.add_argument("--negative-prompt", type=str, default="")
     return parser.parse_args()
 
 
