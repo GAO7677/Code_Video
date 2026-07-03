@@ -30,7 +30,11 @@ def parse_args():
     )
     parser.add_argument(
         "--feature_keys",
-        default="h_post_global_mean,delta_h_global_mean,h_post_frame_mean,delta_h_frame_mean",
+        default=(
+            "h_post_global_mean,delta_h_global_mean,"
+            "h_post_frame_mean,delta_h_frame_mean,"
+            "h_post_token_l2_mean,delta_h_token_l2_mean"
+        ),
         help="Comma-separated feature names to evaluate.",
     )
     parser.add_argument(
@@ -53,6 +57,16 @@ def parse_args():
         "--alphas",
         default="0.01,0.1,1.0,10.0,100.0",
     )
+    parser.add_argument(
+        "--allowed_steps",
+        default="",
+        help="Optional comma-separated capture step indices to keep.",
+    )
+    parser.add_argument(
+        "--allowed_layers",
+        default="",
+        help="Optional comma-separated layer indices to keep.",
+    )
     return parser.parse_args()
 
 
@@ -67,10 +81,15 @@ def safe_float(value) -> Optional[float]:
     return float(value)
 
 
-def tensor_to_vector(value: torch.Tensor, frame_reduce: str) -> np.ndarray:
-    array = value.detach().float().cpu().numpy()
+def tensor_to_vector(value, frame_reduce: str) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        array = value.detach().float().cpu().numpy()
+    else:
+        array = np.asarray(value, dtype=np.float32)
     if array.ndim == 1:
         return array
+    if array.ndim == 0:
+        return array.reshape(1)
     if array.ndim == 2:
         if frame_reduce == "mean":
             return array.mean(axis=0)
@@ -85,6 +104,8 @@ def extract_samples(
     target_field: str,
     group_field: str,
     frame_reduce: str,
+    allowed_steps: Optional[set[int]] = None,
+    allowed_layers: Optional[set[int]] = None,
 ) -> Dict[Tuple[int, int, str], List[Dict]]:
     combos = defaultdict(list)
 
@@ -101,10 +122,14 @@ def extract_samples(
 
         for step_key, step_payload in features.items():
             step_idx = int(step_key)
+            if allowed_steps is not None and step_idx not in allowed_steps:
+                continue
             branches = step_payload.get("branches", {})
             cond_layers = branches.get("cond", {})
             for layer_key, layer_payload in cond_layers.items():
                 layer_idx = int(layer_key)
+                if allowed_layers is not None and layer_idx not in allowed_layers:
+                    continue
                 for feature_key in feature_keys:
                     if feature_key not in layer_payload:
                         continue
@@ -234,6 +259,8 @@ def main():
 
     feature_keys = [item.strip() for item in args.feature_keys.split(",") if item.strip()]
     alphas = [float(item.strip()) for item in args.alphas.split(",") if item.strip()]
+    allowed_steps = {int(item.strip()) for item in args.allowed_steps.split(",") if item.strip()} or None
+    allowed_layers = {int(item.strip()) for item in args.allowed_layers.split(",") if item.strip()} or None
     index_rows = load_index_rows(args.index_csv)
 
     combos = extract_samples(
@@ -242,6 +269,8 @@ def main():
         target_field=args.target_field,
         group_field=args.group_field,
         frame_reduce=args.frame_reduce,
+        allowed_steps=allowed_steps,
+        allowed_layers=allowed_layers,
     )
 
     result_rows = []

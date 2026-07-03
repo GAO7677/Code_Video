@@ -130,7 +130,7 @@ CUDA_VISIBLE_DEVICES=<gpus> \
 移动的步长。预期三段：太弱（无变化）→ 有用（物理改善）→ 太强（artifact、wmreward 变差）。
 要的是那个拐点。
 
-### Phase 2 — 拐点附近的 timing × inner-K 精调 ⏳ 已建脚本入口，待完整跑分
+### Phase 2 — 拐点附近的 timing × inner-K 精调 ✅ 单 case 已完整跑分
 
 Phase 1 找到能动结果的步长后：
 - **timing**：早（高噪声 p10–p40）vs 中（p35–p65）vs 晚（p60–p90）。平的能量暗示
@@ -150,6 +150,47 @@ Phase 1 找到能动结果的步长后：
 
 另外，`phase5_summary.json` / `phase6_summary.json` 这类摘要在 phase 5/6 下改成按
 `abs(mean_delta_post)` 优先排序，避免“最没写进去的弱扰动”因为 persistence 高而被误判为 best。
+
+单 case 结果（`025_Solid_Mechanics_0002`）现已完整跑完，产物：
+- `phase6/phase6_summary.json`
+- `phase6/wmreward_scores.json`
+- `phase6/phase6_multimetric_scores.json`
+- `phase6/videos/*.mp4`
+
+关键信号：
+- `knee_mid_s15_bt`：`mean_delta_post = -0.002003`，`surprise = 0.6942`，比 baseline `0.6928`
+  略差；这再次证明 backtracking 会退回“几乎没写进去”的弱扰动区。
+- `knee_mid_s075_k2`：`mean_delta_post = 0.096013`，`surprise = 0.6756`，已优于 baseline，
+  但改善幅度明显小于更强配置。
+- `knee_mid_s10_k2`：`mean_delta_post = 0.111499`，`surprise = 0.6626`，`similarity = 0.3374`，
+  `physics_iq = 15.36`，`videophy2_pc = 5`。
+- `knee_early_s15`：`mean_delta_post = 0.118585`，`surprise = 0.6623`，`similarity = 0.3377`，
+  `physics_iq = 15.35`，`videophy2_pc = 5`。
+- `knee_mid_s15`：`mean_delta_post = 0.114565`，`surprise = 0.6684`，`physics_iq = 15.47`，
+  `videophy2_pc = 5`。
+- `knee_mid_s18`：`mean_delta_post = 0.118087`，`surprise = 0.6582`，`similarity = 0.3418`，
+  `physics_iq = 16.44`，`videophy2_pc = 5`。
+- `knee_late_s15`：`mean_delta_post = 0.110535`，`surprise = 0.6663`，`physics_iq = 17.06`，
+  但 `videophy2_pc = 4`，没有随 wmreward 同步上涨。
+- `cosmos_reason1` 在所有 phase6 视频上都为 `1`，没有提供可分辨排序力。
+
+和 phase5 的最优 `ladder_s20` 对比：
+- `ladder_s20` 仍是当前 **最佳 wmreward**：`surprise = 0.6485`，`similarity = 0.3515`，
+  `physics_iq = 16.10`，`videophy2_pc = 5`。
+- Phase 6 中最接近它的是 `knee_mid_s18`：`surprise = 0.6582`，`similarity = 0.3418`，
+  `physics_iq = 16.44`，`videophy2_pc = 5`。
+- `knee_early_s15` / `knee_mid_s10_k2` 也很稳，说明“更早时机”与“较小步长 + inner_k=2”
+  都能进入有效区，但目前还没有超过 `s20` 的中段强推。
+
+**Phase 2 结论：**
+- strong fixed-step 配置在 timing / inner-K 上确实都会写进结果视频，并且多数会带来
+  一致的 wmreward 改善。
+- backtracking 在当前能量地形下不合适；它过于保守，等价于把 guidance 强度降回无效区。
+- 当前最值得进入多 case 验证的候选是：
+  - `ladder_s20`（phase5 总冠军）
+  - `knee_mid_s18`
+  - `knee_early_s15`
+  - `knee_mid_s10_k2`
 
 ### Phase 3 —（仅当 Phase 0/1 显示解耦时）重审能量目标 ⏳ 条件触发
 

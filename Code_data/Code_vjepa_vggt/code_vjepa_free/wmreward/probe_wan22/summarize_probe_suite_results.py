@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+from collections import defaultdict
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,22 +114,34 @@ def main() -> None:
         writer.writerows(leaderboard_rows)
 
     output_json = results_root / "suite_leaderboard_summary.json"
-    output_json.write_text(
-        json.dumps(
-            {
-                "results_root": str(results_root),
-                "num_rows": len(leaderboard_rows),
-                "top_k": args.top_k,
-                "top_results": leaderboard_rows[: args.top_k],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    summary_payload = {
+        "results_root": str(results_root),
+        "num_rows": len(leaderboard_rows),
+        "top_k": args.top_k,
+        "top_results": leaderboard_rows[: args.top_k],
+    }
+    output_json.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    per_preset: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in leaderboard_rows:
+        per_preset[str(row["preset"])].append(row)
+
+    best_report = {
+        "results_root": str(results_root),
+        "overall_best": leaderboard_rows[0] if leaderboard_rows else None,
+        "per_preset_best": {
+            preset: rows[0]
+            for preset, rows in sorted(per_preset.items())
+            if rows
+        },
+        "top_k": args.top_k,
+        "top_results": leaderboard_rows[: args.top_k],
+    }
+    best_report_json = results_root / "best_probe_report.json"
+    best_report_json.write_text(json.dumps(best_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(output_csv)
     print(output_json)
+    print(best_report_json)
 
 
 if __name__ == "__main__":

@@ -1233,12 +1233,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-vjepa-guidance", action="store_true")
     parser.add_argument("--vjepa-model", type=str, default="vith")
     parser.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
+    parser.add_argument("--vjepa-guidance-mode", choices=["surprise", "context_anchored"], default="surprise")
     parser.add_argument("--vjepa-guidance-steps", type=int, default=2)
     parser.add_argument("--vjepa-min-step-percent", type=float, default=0.35)
     parser.add_argument("--vjepa-max-step-percent", type=float, default=0.65)
     parser.add_argument("--vjepa-target-step-indices", type=int, nargs="*", default=None)
     parser.add_argument("--vjepa-target-timesteps", type=int, nargs="*", default=None)
     parser.add_argument("--vjepa-latent-step-size", type=float, default=0.01)
+    parser.add_argument("--vjepa-inner-k", type=int, default=1)
+    parser.add_argument("--vjepa-backtracking", action="store_true")
+    parser.add_argument("--vjepa-backtracking-taps", type=float, nargs="*", default=None)
+    parser.add_argument("--vjepa-line-search-taps", type=float, nargs="*", default=None)
     parser.add_argument("--vjepa-preview-downsample-factor", type=int, default=4)
     parser.add_argument("--vjepa-preview-frame-stride", type=int, default=2)
     parser.add_argument("--vjepa-window-size", type=int, default=16)
@@ -1324,6 +1329,7 @@ def build_vjepa_config(cli_args: argparse.Namespace) -> WanVJEPAConfig:
         reduction=str(cli_args.vjepa_reduction),
         gradient_normalization=str(cli_args.vjepa_grad_norm_mode),
         max_grad_norm=max_grad_norm,
+        guidance_mode=str(cli_args.vjepa_guidance_mode),
     )
 
 
@@ -1351,6 +1357,14 @@ def _build_pipeline_with_vjepa(cli_args: argparse.Namespace):
         )
         pipe.configure_target_step_indices(
             [int(value) for value in (cli_args.vjepa_target_step_indices or [])]
+        )
+        pipe.vjepa_inner_k = max(1, int(cli_args.vjepa_inner_k))
+        pipe.set_backtracking(
+            bool(cli_args.vjepa_backtracking),
+            [float(value) for value in (cli_args.vjepa_backtracking_taps or [])] or None,
+        )
+        pipe.set_line_search_taps(
+            [float(value) for value in (cli_args.vjepa_line_search_taps or [])] or None
         )
         return pipe
 
@@ -1633,6 +1647,12 @@ def main() -> None:
             "model": cli_args.vjepa_model,
             "ckpt": str(cli_args.vjepa_ckpt.expanduser().resolve()) if cli_args.vjepa_ckpt is not None else None,
             "config": vars(build_vjepa_config(cli_args)),
+            "target_step_indices": [int(value) for value in (cli_args.vjepa_target_step_indices or [])],
+            "target_timesteps": [int(value) for value in (cli_args.vjepa_target_timesteps or [])],
+            "inner_k": max(1, int(cli_args.vjepa_inner_k)),
+            "backtracking": bool(cli_args.vjepa_backtracking),
+            "backtracking_taps": [float(value) for value in (cli_args.vjepa_backtracking_taps or [])],
+            "line_search_taps": [float(value) for value in (cli_args.vjepa_line_search_taps or [])],
         },
     }
     core.write_json(summary_json_path, payload)

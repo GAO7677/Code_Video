@@ -49,8 +49,13 @@ def parse_args() -> argparse.Namespace:
             "delta_h_global_mean;"
             "h_post_frame_mean;"
             "delta_h_frame_mean;"
+            "h_post_token_l2_mean;"
+            "delta_h_token_l2_mean;"
             "h_post_global_mean+delta_h_global_mean;"
             "h_post_frame_mean+delta_h_frame_mean;"
+            "h_post_token_l2_mean+delta_h_token_l2_mean;"
+            "h_post_global_mean+h_post_token_l2_mean;"
+            "delta_h_global_mean+delta_h_token_l2_mean;"
             "h_post_global_mean+delta_h_global_mean+h_post_frame_mean+delta_h_frame_mean"
         ),
         help=(
@@ -58,6 +63,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--top_k", type=int, default=20)
+    parser.add_argument(
+        "--allowed_steps",
+        default="",
+        help="Optional comma-separated capture step indices to keep.",
+    )
+    parser.add_argument(
+        "--allowed_layers",
+        default="",
+        help="Optional comma-separated layer indices to keep.",
+    )
     return parser.parse_args()
 
 
@@ -86,6 +101,8 @@ def extract_group_samples(
     target_field: str,
     group_field: str,
     frame_reduce: str,
+    allowed_steps: set[int] | None = None,
+    allowed_layers: set[int] | None = None,
 ) -> dict[tuple[int, int, str, str], list[dict[str, object]]]:
     combos: dict[tuple[int, int, str, str], list[dict[str, object]]] = defaultdict(list)
 
@@ -102,9 +119,13 @@ def extract_group_samples(
 
         for step_key, step_payload in features.items():
             step_idx = int(step_key)
+            if allowed_steps is not None and step_idx not in allowed_steps:
+                continue
             cond_layers = step_payload.get("branches", {}).get("cond", {})
             for layer_key, layer_payload in cond_layers.items():
                 layer_idx = int(layer_key)
+                if allowed_layers is not None and layer_idx not in allowed_layers:
+                    continue
                 for feature_group_name, feature_keys in feature_groups:
                     vectors: list[np.ndarray] = []
                     missing_feature = False
@@ -137,6 +158,8 @@ def main() -> None:
     feature_groups = parse_feature_groups(args.feature_groups)
     frame_reduces = parse_frame_reduces(args.frame_reduces)
     alphas = [float(item.strip()) for item in args.alphas.split(",") if item.strip()]
+    allowed_steps = {int(item.strip()) for item in args.allowed_steps.split(",") if item.strip()} or None
+    allowed_layers = {int(item.strip()) for item in args.allowed_layers.split(",") if item.strip()} or None
 
     result_rows: list[dict[str, object]] = []
     for frame_reduce in frame_reduces:
@@ -146,6 +169,8 @@ def main() -> None:
             target_field=args.target_field,
             group_field=args.group_field,
             frame_reduce=frame_reduce,
+            allowed_steps=allowed_steps,
+            allowed_layers=allowed_layers,
         )
         for (step_idx, layer_idx, combo_frame_reduce, feature_group_name), records in sorted(combos.items()):
             metrics = evaluate_combo(records, alphas=alphas, max_splits=args.max_splits)
