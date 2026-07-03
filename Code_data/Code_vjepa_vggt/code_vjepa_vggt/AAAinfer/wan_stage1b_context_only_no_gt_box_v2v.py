@@ -2,6 +2,22 @@ from __future__ import annotations
 """
 Stage1B context-only no-GT-box inference.
 
+Example:
+  source /home/gaoya/miniconda3/etc/profile.d/conda.sh
+  conda activate wan-cu128
+  export PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main
+  export CUDA_VISIBLE_DEVICES=6
+  python3 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_v2v.py \
+    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \
+    --init-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+    --model-name stage1b_context_only_no_gt_box_diffsynth \
+    --sampling-steps 1 \
+    --limit 1 \
+    --save-raw \
+    --output-root /data/gaoya/AAA_test_video/0623/test/v2v \
+    --force
+
 Weight loading order (must match training):
   1. Wan DiT base        : config model.wan_ckpt_dir
   2. Wan LoRA            : config model.init_wan_lora_from_checkpoint
