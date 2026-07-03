@@ -309,6 +309,7 @@ def _run_condition(
     guidance_mode: str = "surprise",            # "surprise" | "context_anchored"
     backtracking: bool = False,                 # auto-pick step size via line search
     backtracking_taps: Optional[list[float]] = None,
+    grad_norm: Optional[str] = None,            # overrides vjepa_config.gradient_normalization
 ) -> tuple[list, list[dict]]:
     """Run one generation condition with per-step energy probing. Returns (video, records).
 
@@ -318,6 +319,7 @@ def _run_condition(
     """
 
     effective_step_size = latent_step_size if latent_step_size is not None else vjepa_config.latent_step_size
+    effective_grad_norm = grad_norm if grad_norm is not None else vjepa_config.gradient_normalization
 
     def _make_config(*, steps: int, min_p: float, max_p: float, step_size: float) -> WanVJEPAConfig:
         return WanVJEPAConfig(
@@ -331,7 +333,7 @@ def _run_condition(
             context_frames=vjepa_config.context_frames,
             stride=vjepa_config.stride,
             reduction=vjepa_config.reduction,
-            gradient_normalization=vjepa_config.gradient_normalization,
+            gradient_normalization=effective_grad_norm,
             max_grad_norm=vjepa_config.max_grad_norm,
             guidance_mode=guidance_mode,
         )
@@ -661,6 +663,48 @@ def _phase4_conditions(p_center: float = 0.50, ss_base: float = 0.005) -> list[d
     ]
 
 
+def _phase5_conditions(p_center: float = 0.50, ss_base: float = 0.005) -> list[dict]:
+    """Strength ladder (Phase 0a finding, 2026-07-03): reducing the anchored energy
+    by ~0.005 does NOT move wmreward, and every phase-4 video is visually identical to
+    baseline. The guidance is simply too weak to change the output. Before revisiting
+    the energy target, we must first find the step size at which the decoded video
+    ACTUALLY diverges from baseline.
+
+    Timing is held at the dense band (p35..p80, 12 steps) that gave the most
+    persistent energy drop in phase 4. We sweep only the strength axis:
+
+      latent_step_size in {0.01, 0.02, 0.05, 0.1, 0.2}  (rms normalization)
+
+    plus two normalization variants at a promising step size to test whether rms
+    rescaling is what caps the effect. Every condition records energy trajectory,
+    applied-correction L2 (Phase 0b stats), and produces a video for wmreward +
+    pixel-delta scoring downstream.
+
+    Expected three regimes: too-weak (no change) -> useful (physics moves) ->
+    too-strong (artifacts, wmreward worsens). We want the knee.
+    """
+    lo = max(0.05, p_center - 0.15)   # ~p35
+    hi = min(0.95, p_center + 0.30)   # ~p80
+    band12 = _dense_percents(lo, hi, 12)
+    return [
+        {"label": "ladder_s01", "guidance_step_percents": band12,
+         "latent_step_size": 0.01, "inner_k": 1},
+        {"label": "ladder_s02", "guidance_step_percents": band12,
+         "latent_step_size": 0.02, "inner_k": 1},
+        {"label": "ladder_s05", "guidance_step_percents": band12,
+         "latent_step_size": 0.05, "inner_k": 1},
+        {"label": "ladder_s10", "guidance_step_percents": band12,
+         "latent_step_size": 0.10, "inner_k": 1},
+        {"label": "ladder_s20", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1},
+        # Normalization variants at 0.05 to test whether rms rescaling caps the effect.
+        {"label": "ladder_s05_none", "guidance_step_percents": band12,
+         "latent_step_size": 0.05, "inner_k": 1, "grad_norm": "none"},
+        {"label": "ladder_s05_l2", "guidance_step_percents": band12,
+         "latent_step_size": 0.05, "inner_k": 1, "grad_norm": "l2"},
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Phase runner
 # ---------------------------------------------------------------------------
@@ -739,6 +783,7 @@ def _run_phase(
                 save_video_path=video_path,
                 guidance_mode=cond.get("guidance_mode", guidance_mode),
                 backtracking=cond.get("backtracking", False),
+                grad_norm=cond.get("grad_norm"),
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
@@ -789,9 +834,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vjepa-device", type=str, default=None)
     p.add_argument("--vjepa-model", type=str, default="vith")
     p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4], default=1,
+    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5], default=1,
                    help="Which experiment phase to run (1=timing, 2=step-size, "
-                        "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored)")
+                        "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored, "
+                        "5=strength ladder: latent_step_size sweep in context_anchored)")
     p.add_argument("--probe-every-n", type=int, default=2)
     p.add_argument("--num-frames", type=int, default=49)
     p.add_argument("--height", type=int, default=480)

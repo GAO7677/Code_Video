@@ -365,13 +365,24 @@ def _apply_context_anchored_guidance(
                 best_tap = tap_val
         corrected_step_size = best_tap if best_tap is not None else 0.0
 
-    corrected = latent_xt.detach().float() - corrected_step_size * gradient
+    correction = corrected_step_size * gradient
+    corrected = latent_xt.detach().float() - correction
     corrected = corrected.to(dtype=latent_xt.dtype)
 
+    # Phase 0b: quantify how much the guidance actually writes to the latent.
+    # correction_l2   = ||step * grad|| (absolute displacement applied this step)
+    # latent_l2       = ||latent_xt||   (scale of the thing we're perturbing)
+    # correction_ratio= relative perturbation (correction_l2 / latent_l2); a tiny
+    #                   ratio means the denoiser will almost certainly wash it out.
+    correction_l2 = float(correction.detach().norm().item())
+    latent_l2 = float(latent_xt.detach().float().norm().item())
     stats = {
         "energy": float(energy.detach().item()),
         "grad_rms": float(gradient.detach().pow(2).mean().sqrt().item()),
         "latent_rms": float(latent_xt.detach().float().pow(2).mean().sqrt().item()),
+        "correction_l2": correction_l2,
+        "latent_l2": latent_l2,
+        "correction_ratio": correction_l2 / max(latent_l2, 1e-6),
         "preview_frames": float(full_video.shape[2]),
         "preview_height": float(full_video.shape[3]),
         "preview_width": float(full_video.shape[4]),
@@ -1119,13 +1130,18 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                                 ),
                             )
                 logging.info(
-                    "V-JEPA[%s] step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
+                    "V-JEPA[%s] step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f "
+                    "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f preview=%dx%dx%d",
                     guidance_mode,
                     progress_id,
                     int(timestep_cpu.item()),
                     inner_k,
                     stats["energy"],
                     stats["grad_rms"],
+                    stats.get("correction_l2", float("nan")),
+                    stats.get("latent_l2", float("nan")),
+                    stats.get("correction_ratio", float("nan")),
+                    stats.get("step_size_used", float("nan")),
                     int(stats["preview_frames"]),
                     int(stats["preview_height"]),
                     int(stats["preview_width"]),
