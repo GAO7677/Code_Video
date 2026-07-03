@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import shutil
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import torch
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root, resolve_runtime_root
@@ -82,6 +85,93 @@ def _normalize_gradient(gradient: torch.Tensor, mode: str = "rms", eps: float = 
     raise ValueError(f"Unsupported gradient normalization mode: {mode}")
 
 
+def _video_tensor_to_pil_frames(video: torch.Tensor) -> list[Image.Image]:
+    if video.ndim == 5:
+        if video.shape[0] != 1:
+            raise ValueError(f"Expected batch size 1 for video trace export, got {tuple(video.shape)}")
+        video = video[0]
+    if video.ndim != 4:
+        raise ValueError(f"Expected video tensor [C,T,H,W], got {tuple(video.shape)}")
+    video_u8 = ((video.detach().float().clamp(-1.0, 1.0) + 1.0) * 127.5).round().to(torch.uint8).cpu()
+    frames: list[Image.Image] = []
+    for frame_idx in range(video_u8.shape[1]):
+        frame = video_u8[:, frame_idx].permute(1, 2, 0).contiguous().numpy()
+        frames.append(Image.fromarray(frame))
+    return frames
+
+
+def _latent_norm_to_pil_frames(latent: torch.Tensor, *, upscale: int = 8) -> tuple[list[Image.Image], dict[str, float]]:
+    if latent.ndim == 5:
+        if latent.shape[0] != 1:
+            raise ValueError(f"Expected batch size 1 for latent trace export, got {tuple(latent.shape)}")
+        latent = latent[0]
+    if latent.ndim != 4:
+        raise ValueError(f"Expected latent tensor [C,T,H,W], got {tuple(latent.shape)}")
+    norm_map = latent.detach().float().cpu().pow(2).mean(dim=0).sqrt()
+    min_value = float(norm_map.min().item())
+    max_value = float(norm_map.max().item())
+    scale = max(max_value - min_value, 1e-6)
+    frames: list[Image.Image] = []
+    for frame_idx in range(norm_map.shape[0]):
+        frame = ((norm_map[frame_idx] - min_value) / scale * 255.0).round().to(torch.uint8).numpy()
+        image = Image.fromarray(frame, mode="L").resize(
+            (frame.shape[1] * upscale, frame.shape[0] * upscale),
+            Image.Resampling.NEAREST,
+        )
+        frames.append(image.convert("RGB"))
+    return frames, {"latent_norm_min": min_value, "latent_norm_max": max_value}
+
+
+def _pick_strip_indices(num_frames: int, max_frames: int) -> list[int]:
+    if num_frames <= 0:
+        return []
+    if num_frames <= max_frames:
+        return list(range(num_frames))
+    positions = torch.linspace(0, num_frames - 1, steps=max_frames)
+    return [int(round(value.item())) for value in positions]
+
+
+def _save_frame_strip(
+    frames: list[Image.Image],
+    output_path: Path,
+    *,
+    max_frames: int = 8,
+    tile_height: int = 160,
+) -> None:
+    if not frames:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    indices = _pick_strip_indices(len(frames), max_frames=max_frames)
+    selected = []
+    for frame_idx in indices:
+        frame = frames[frame_idx].convert("RGB")
+        new_width = max(1, int(round(frame.width * (tile_height / max(frame.height, 1)))))
+        selected.append((frame.resize((new_width, tile_height), Image.Resampling.BILINEAR), frame_idx))
+
+    padding = 10
+    label_height = 22
+    width = padding + sum(frame.width + padding for frame, _ in selected)
+    height = tile_height + label_height + 2 * padding
+    canvas = Image.new("RGB", (width, height), color=(248, 244, 238))
+    draw = ImageDraw.Draw(canvas)
+    x = padding
+    for frame, frame_idx in selected:
+        canvas.paste(frame, (x, padding))
+        draw.text((x, padding + tile_height + 4), f"t={frame_idx}", fill=(40, 40, 40))
+        x += frame.width + padding
+    canvas.save(output_path)
+
+
+def _safe_symlink_or_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def _apply_diffsynth_vjepa_guidance(
     *,
     latent_xt: torch.Tensor,
@@ -91,6 +181,7 @@ def _apply_diffsynth_vjepa_guidance(
     preview_decoder,
     energy_fn,
     config: WanVJEPAConfig,
+    trace_hook: Optional[Callable[..., None]] = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     latent_for_grad = latent_xt.detach().float().requires_grad_(True)
     model_output = model_output.detach().float()
@@ -119,6 +210,14 @@ def _apply_diffsynth_vjepa_guidance(
     if config.max_grad_norm is not None and raw_grad_norm > config.max_grad_norm:
         gradient = gradient * (config.max_grad_norm / max(raw_grad_norm, 1e-6))
     gradient = _normalize_gradient(gradient, mode=config.gradient_normalization)
+    if trace_hook is not None:
+        trace_hook(
+            x0_pred=x0_pred.detach(),
+            preview_video=preview_video.detach(),
+            energy=float(energy.detach().item()),
+            raw_grad_norm=raw_grad_norm,
+            normalized_grad_rms=float(gradient.detach().pow(2).mean().sqrt().item()),
+        )
     corrected = latent_xt.detach().float() - config.latent_step_size * gradient
     corrected = corrected.to(dtype=latent_xt.dtype)
 
@@ -183,6 +282,121 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
         for parameter in self.vae.model.parameters():
             parameter.requires_grad_(False)
         self.vae.model.eval()
+        self.trace_intermediates_enabled = False
+        self.trace_max_strip_frames = 8
+        self.trace_case_dir: Path | None = None
+        self.trace_case_payload: dict[str, Any] | None = None
+        self.trace_fps = 16
+
+    def configure_trace(
+        self,
+        *,
+        enabled: bool,
+        max_strip_frames: int,
+    ) -> None:
+        self.trace_intermediates_enabled = enabled
+        self.trace_max_strip_frames = max(2, int(max_strip_frames))
+
+    def set_trace_case(
+        self,
+        *,
+        case_dir: Path | None,
+        sample_id: str | None,
+        prompt: str | None,
+        output_video_path: Path | None,
+        source_json: str | None,
+        fps: int,
+    ) -> None:
+        self.trace_case_dir = case_dir if self.trace_intermediates_enabled else None
+        self.trace_fps = int(fps)
+        if self.trace_case_dir is None:
+            self.trace_case_payload = None
+            return
+        self.trace_case_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "sample_id": sample_id,
+            "prompt": prompt,
+            "source_json": source_json,
+            "fps": int(fps),
+        }
+        if output_video_path is not None:
+            payload["output_video_path"] = str(output_video_path)
+            payload["final_video"] = "final_video.mp4"
+        self.trace_case_payload = payload
+        if output_video_path is not None and output_video_path.exists():
+            _safe_symlink_or_copy(output_video_path, self.trace_case_dir / "final_video.mp4")
+        (self.trace_case_dir / "case.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_trace_case_payload(self, extra: dict[str, Any]) -> None:
+        if self.trace_case_dir is None:
+            return
+        payload = dict(self.trace_case_payload or {})
+        payload.update(extra)
+        self.trace_case_payload = payload
+        (self.trace_case_dir / "case.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _trace_guidance_step(
+        self,
+        *,
+        step_idx: int,
+        timestep: int,
+        x0_pred: torch.Tensor,
+        preview_video: torch.Tensor,
+        energy: float,
+        raw_grad_norm: float,
+        normalized_grad_rms: float,
+    ) -> None:
+        if self.trace_case_dir is None:
+            return
+        step_dir = self.trace_case_dir / f"step_{step_idx:02d}_t{timestep:04d}"
+        step_dir.mkdir(parents=True, exist_ok=True)
+
+        preview_frames = _video_tensor_to_pil_frames(preview_video)
+        core.save_video(
+            preview_frames,
+            str(step_dir / "preview_video.mp4"),
+            fps=max(1, self.trace_fps // max(1, self.vjepa_config.preview_frame_stride)),
+            quality=6,
+        )
+        _save_frame_strip(
+            preview_frames,
+            step_dir / "preview_strip.png",
+            max_frames=self.trace_max_strip_frames,
+            tile_height=140,
+        )
+
+        latent_frames, latent_stats = _latent_norm_to_pil_frames(x0_pred)
+        core.save_video(
+            latent_frames,
+            str(step_dir / "x0_latent_norm.mp4"),
+            fps=max(1, self.trace_fps // max(1, self.vjepa_config.preview_frame_stride)),
+            quality=6,
+        )
+        _save_frame_strip(
+            latent_frames,
+            step_dir / "x0_latent_norm_strip.png",
+            max_frames=self.trace_max_strip_frames,
+            tile_height=140,
+        )
+
+        stats = {
+            "step_idx": int(step_idx),
+            "timestep": int(timestep),
+            "energy": float(energy),
+            "raw_grad_norm": float(raw_grad_norm),
+            "normalized_grad_rms": float(normalized_grad_rms),
+            "preview_frames": len(preview_frames),
+            "preview_height": preview_frames[0].height if preview_frames else 0,
+            "preview_width": preview_frames[0].width if preview_frames else 0,
+            **latent_stats,
+        }
+        (step_dir / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def _ensure_vjepa_energy(self) -> VJEPASurpriseEnergy:
         if not self.enable_vjepa_guidance:
@@ -468,6 +682,26 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                 max_step_percent=self.vjepa_config.max_step_percent,
             )
         )
+        self._write_trace_case_payload(
+            {
+                "selected_guidance_steps": sorted(int(step) for step in selected_steps),
+                "num_inference_steps": int(num_inference_steps),
+                "vjepa_config": {
+                    "guidance_steps": int(self.vjepa_config.guidance_steps),
+                    "min_step_percent": float(self.vjepa_config.min_step_percent),
+                    "max_step_percent": float(self.vjepa_config.max_step_percent),
+                    "latent_step_size": float(self.vjepa_config.latent_step_size),
+                    "preview_downsample_factor": int(self.vjepa_config.preview_downsample_factor),
+                    "preview_frame_stride": int(self.vjepa_config.preview_frame_stride),
+                    "window_size": int(self.vjepa_config.window_size),
+                    "context_frames": int(self.vjepa_config.context_frames),
+                    "stride": int(self.vjepa_config.stride),
+                    "reduction": str(self.vjepa_config.reduction),
+                    "gradient_normalization": str(self.vjepa_config.gradient_normalization),
+                    "max_grad_norm": self.vjepa_config.max_grad_norm,
+                },
+            }
+        )
 
         self.load_models_to_device(self.in_iteration_models)
         active_model_names = self.in_iteration_models
@@ -518,6 +752,19 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                         ),
                         energy_fn=energy_fn,
                         config=self.vjepa_config,
+                        trace_hook=(
+                            lambda *, x0_pred, preview_video, energy, raw_grad_norm, normalized_grad_rms: self._trace_guidance_step(
+                                step_idx=progress_id,
+                                timestep=int(timestep_cpu.item()),
+                                x0_pred=x0_pred,
+                                preview_video=preview_video,
+                                energy=energy,
+                                raw_grad_norm=raw_grad_norm,
+                                normalized_grad_rms=normalized_grad_rms,
+                            )
+                            if self.trace_intermediates_enabled
+                            else None
+                        ),
                     )
                 logging.info(
                     "V-JEPA step=%d timestep=%d energy=%.6f grad_rms=%.6f preview=%dx%dx%d",
@@ -618,6 +865,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-reduction", choices=["mean", "max"], default="mean")
     parser.add_argument("--vjepa-grad-norm-mode", choices=["rms", "l2", "none"], default="rms")
     parser.add_argument("--vjepa-max-grad-norm", type=float, default=10.0)
+    parser.add_argument("--trace-intermediates", action="store_true")
+    parser.add_argument("--trace-root", type=Path, default=None)
+    parser.add_argument("--trace-max-strip-frames", type=int, default=8)
     parser.add_argument("--log-level", type=str, default="INFO")
     return parser.parse_args()
 
@@ -700,7 +950,7 @@ def _build_pipeline_with_vjepa(cli_args: argparse.Namespace):
     vjepa_device = cli_args.vjepa_device or cli_args.device
 
     def _builder(wan_root: Path, device: str, lora_path: Path | None):
-        return ContextAwareWanVideoPipelineVJEPA.from_pretrained_vjepa(
+        pipe = ContextAwareWanVideoPipelineVJEPA.from_pretrained_vjepa(
             wan_root=wan_root,
             device=device,
             lora_path=lora_path,
@@ -710,8 +960,199 @@ def _build_pipeline_with_vjepa(cli_args: argparse.Namespace):
             vjepa_config=vjepa_config,
             enable_vjepa_guidance=not cli_args.disable_vjepa_guidance,
         )
+        pipe.configure_trace(
+            enabled=bool(cli_args.trace_intermediates),
+            max_strip_frames=int(cli_args.trace_max_strip_frames),
+        )
+        return pipe
 
     return _builder
+
+
+def run_generation_with_optional_trace(
+    args: argparse.Namespace,
+    cli_args: argparse.Namespace,
+    generated_dir: Path,
+    metadata_dir: Path,
+) -> None:
+    if not cli_args.trace_intermediates:
+        core.run_generation(args, generated_dir, metadata_dir)
+        return
+
+    trace_root = (
+        cli_args.trace_root.expanduser().resolve()
+        if cli_args.trace_root is not None
+        else (args.runtime_root / "trace_viewer" / args.model_name).resolve()
+    )
+    trace_root.mkdir(parents=True, exist_ok=True)
+
+    cases = core.collect_cases_from_args(args)
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    core.write_run_manifest(args, metadata_dir)
+    method_name = core.build_method_name(args.lora_path)
+
+    per_case_jsonl = core.per_case_jsonl_path(metadata_dir, args.model_name, args.num_shards, args.shard_id)
+    if args.overwrite and per_case_jsonl.exists():
+        per_case_jsonl.unlink()
+    existing_entries = core.load_jsonl(per_case_jsonl) if per_case_jsonl.exists() else []
+    entries_by_index: dict[int, dict[str, Any]] = {}
+    for entry in existing_entries:
+        entries_by_index[core.entry_sort_index(entry)] = entry
+
+    indexed_cases = list(enumerate(cases))
+    shard_cases = [(idx, row) for idx, row in indexed_cases if idx % args.num_shards == args.shard_id]
+    print(
+        f"[worker] shard_id={args.shard_id}/{args.num_shards}, "
+        f"num_cases={len(shard_cases)}, device={args.device}, seed={args.seed}, "
+        f"context_frames={args.context_frames}, trace_root={trace_root}"
+    )
+
+    pipe = core.build_pipeline(args.wan_root, args.device, args.lora_path)
+
+    for index, row in shard_cases:
+        output_override = row.get("output_path_override")
+        output_path = (
+            Path(output_override)
+            if isinstance(output_override, str) and output_override
+            else generated_dir / row["output_name"]
+        )
+        sidecar_path = output_path.with_suffix(".json")
+        context_path = Path(row["context_path"])
+        core.assert_exists(context_path, "Context video")
+        trace_case_dir = trace_root / f"{index:04d}_{core.sanitize_filename(str(row['sample_id']))}"
+        if hasattr(pipe, "set_trace_case"):
+            pipe.set_trace_case(
+                case_dir=trace_case_dir,
+                sample_id=str(row["sample_id"]),
+                prompt=str(row["caption"]),
+                output_video_path=output_path,
+                source_json=str(row["meta_path"]),
+                fps=int(args.fps),
+            )
+
+        if output_path.exists() and not args.overwrite:
+            print(f"[skip][shard {args.shard_id}] {row['output_name']} | seed={args.seed}")
+            if row.get("simple_input_json_mode"):
+                case_payload = core.build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    method=method_name,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="skipped_existing",
+                )
+            else:
+                case_payload = core.build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=1 if args.conditioning_mode == "input_image_only" else args.context_frames,
+                    status="skipped_existing",
+                )
+            core.write_json(sidecar_path, case_payload)
+            entries_by_index[index] = case_payload
+            continue
+
+        print(
+            f"[generate][shard {args.shard_id}] {row['dataset']}::{row['sample_id']} "
+            f"-> {row['output_name']} | seed={args.seed}"
+        )
+        try:
+            first_frame_path = None
+            raw_first_frame_path = row.get("source_paths", {}).get("first_frame_path")
+            if isinstance(raw_first_frame_path, str) and raw_first_frame_path:
+                first_frame_path = Path(raw_first_frame_path)
+            video, used_context_frames = core.generate_one_video(
+                pipe=pipe,
+                context_path=context_path,
+                first_frame_path=first_frame_path,
+                prompt=row["caption"],
+                negative_prompt=args.negative_prompt,
+                seed=args.seed,
+                height=args.height,
+                width=args.width,
+                num_frames=args.num_frames,
+                fps=args.fps,
+                cfg_scale=args.cfg_scale,
+                num_inference_steps=args.num_inference_steps,
+                context_frames=args.context_frames,
+                output_num_frames=args.requested_output_frames,
+                context_resize_mode=row.get("context_resize_mode", "crop"),
+                conditioning_mode=args.conditioning_mode,
+            )
+            core.save_video(video, str(output_path), fps=args.fps, quality=args.quality)
+            if hasattr(pipe, "set_trace_case"):
+                pipe.set_trace_case(
+                    case_dir=trace_case_dir,
+                    sample_id=str(row["sample_id"]),
+                    prompt=str(row["caption"]),
+                    output_video_path=output_path,
+                    source_json=str(row["meta_path"]),
+                    fps=int(args.fps),
+                )
+            if row.get("simple_input_json_mode"):
+                case_payload = core.build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    method=method_name,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="generated",
+                )
+            else:
+                case_payload = core.build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=used_context_frames,
+                    status="generated",
+                )
+        except Exception as exc:
+            print(f"[error][shard {args.shard_id}] {row['output_name']} | {exc}")
+            if row.get("simple_input_json_mode"):
+                case_payload = core.build_simple_result_payload(
+                    input_json_path=Path(str(row["meta_path"])).expanduser().resolve(),
+                    input_video=str(row["context_path"]),
+                    input_caption=str(row["caption"]),
+                    output_video=output_path,
+                    method=method_name,
+                    seed=args.seed,
+                    step=args.num_inference_steps,
+                    guidance=args.cfg_scale,
+                    ckpt=args.lora_path,
+                    status="failed",
+                    error=repr(exc),
+                )
+            else:
+                case_payload = core.build_case_metadata(
+                    args=args,
+                    row=row,
+                    index=index,
+                    seed=args.seed,
+                    output_path=output_path,
+                    used_context_frames=0,
+                    status="failed",
+                    error=repr(exc),
+                )
+        core.write_json(sidecar_path, case_payload)
+        entries_by_index[index] = case_payload
+    core.write_jsonl(
+        per_case_jsonl,
+        [entries_by_index[idx] for idx in sorted(entries_by_index)],
+    )
 
 
 def main() -> None:
@@ -764,7 +1205,7 @@ def main() -> None:
         if args.multi_gpu and not args.worker:
             effective_num_shards = core.launch_multi_gpu_workers(args, generated_dir, metadata_dir)
         else:
-            core.run_generation(args, generated_dir, metadata_dir)
+            run_generation_with_optional_trace(args, cli_args, generated_dir, metadata_dir)
     finally:
         core.build_pipeline = original_build_pipeline
         core.build_method_name = original_build_method_name

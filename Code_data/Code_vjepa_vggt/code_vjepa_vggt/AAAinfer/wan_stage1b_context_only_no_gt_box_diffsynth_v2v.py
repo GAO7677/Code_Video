@@ -5,12 +5,33 @@ Stage1B context-only no-GT-box DiffSynth inference.
 Mirrors wan_vnewtrain_0613pybullet_stage2_v2v.py in CLI/output conventions,
 adapted for checkpoints produced by run_train_stage1b_context_only_no_gt_box_diffsynth_gpu2367.sh.
 
-Weight loading order (must match training):
-  1. YAML config   : wan DiT + frozen LoRA from init_wan_lora_from_checkpoint
-  2. --head-resume-from : stage1A pooler/adapter init checkpoint (.pt)
-  3. --weights-root     : stage1B trainable checkpoint.safetensors
+加载的权重文件及来源：
+  [1] Wan DiT base + frozen LoRA（由 YAML config 中 init_wan_lora_from_checkpoint 指定）
+        /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/
+          raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
+  [2] Stage1A pooler/adapter init（--head-resume-from）
+        /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/
+          pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt
+  [3] Stage1B trainable weights（--weights-root，覆盖 [2] 中的可训练参数）
+        /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/
+          pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/
+          checkpoints/step-001000/checkpoint.safetensors
 
-Example:
+运行指令（完整推理，test_5.txt 全量）：
+  PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
+  CUDA_VISIBLE_DEVICES=7 \
+  /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_diffsynth_v2v.py \
+    --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \
+    --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \
+    --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+    --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \
+    --sampling-steps 40 \
+    --cfg-scale 5.0 \
+    --seed 42 \
+    --force
+
+快速冒烟测试（--limit 1）：
   PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \\
   CUDA_VISIBLE_DEVICES=5 \\
   /home/gaoya/miniconda3/envs/wan-cu128/bin/python \\
@@ -18,10 +39,22 @@ Example:
     --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1b_context_only_no_gt_box_diffsynth/checkpoints/step-001000 \\
     --head-resume-from /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt \\
     --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \\
-    --model-name stage1b_context_only_no_gt_box_diffsynth \\
-    --sampling-steps 40 \\
-    --limit 2 \\
+    --model-name pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000 \\
+    --sampling-steps 1 \\
+    --cfg-scale 5.0 \\
+    --limit 1 \\
     --force
+
+输出目录：
+  /data/gaoya/AAA_test_video/0623/test/v2v/
+    pybullet0629_stage1b_context_only_no_gt_box_diffsynth_step001000/
+      batch_manifest.json
+      summary.json
+      step-001000/
+        <sample_stem>.mp4
+        <sample_stem>.json
+        <sample_stem>.log
+        result.json
 """
 
 import argparse
@@ -168,6 +201,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--sampling-steps", type=int, default=40)
+    parser.add_argument("--cfg-scale", type=float, default=5.0,
+                        help="Classifier-free guidance scale (1.0 = no CFG)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--lora-rank", type=int, default=32)
@@ -218,15 +253,11 @@ def main() -> None:
 
     trainer = ContextOnlyInjectionNoGTBoxTrainer(config, build_optimizer=False, device=device)
 
-    if head_resume_from.is_file():
-        head_state = torch.load(head_resume_from, map_location="cpu", weights_only=False)
-        if isinstance(head_state, dict) and "model" in head_state:
-            head_state = head_state["model"]
-        head_info = trainer.load_state_dict(head_state, strict=False)
-        print(f"[head_resume_from] missing={len(head_info.missing_keys)} unexpected={len(head_info.unexpected_keys)}")
-    else:
-        head_load_info = _load_matching_state_into_model(trainer, head_resume_from)
-        print(f"[head_resume_from] loaded_count={head_load_info['loaded_count']}")
+    head_load_info = _load_matching_state_into_model(trainer, head_resume_from)
+    print(
+        f"[head_resume_from] loaded_count={head_load_info['loaded_count']} "
+        f"shape_mismatch={len(head_load_info['skipped_shape_mismatch'])}"
+    )
 
     stage1b_load_info = _load_matching_state_into_model(trainer, weights_root)
     print(
@@ -236,6 +267,17 @@ def main() -> None:
 
     if trainer.bundle.dit is not None:
         trainer.bundle.dit.eval()
+
+    # Pre-encode null text for CFG (done once, reused for all samples)
+    cfg_scale = float(args.cfg_scale)
+    negative_text_context = None
+    if cfg_scale > 1.0:
+        with torch.no_grad():
+            neg_ctx_list = trainer.bundle.text_encoder(
+                [""], trainer.bundle.text_encoder.device
+            )
+        negative_text_context = neg_ctx_list[0].to(trainer.device_obj)
+        print(f"[cfg] scale={cfg_scale}, negative_text_context shape={list(negative_text_context.shape)}")
 
     json_paths = core._read_list_file(input_json_list_path)
     if args.limit is not None:
@@ -254,6 +296,7 @@ def main() -> None:
         "num_frames": int(args.num_frames),
         "context_frames": int(args.context_frames),
         "sampling_mode": str(args.sampling_mode),
+        "cfg_scale": float(cfg_scale),
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
@@ -334,6 +377,8 @@ def main() -> None:
                     total_frames=total_frames,
                     num_context_frames=int(num_context_frames.item()),
                     num_inference_steps=int(args.sampling_steps),
+                    cfg_scale=cfg_scale,
+                    negative_text_context=negative_text_context,
                 )
 
             with torch.no_grad():

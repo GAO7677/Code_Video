@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from pipeline_common import (
     DEFAULT_WMREWARD_MODEL_NAME,
     MODEL_SPECS,
     WMREWARD_ROOT,
+    discover_input_jsons,
     generation_registry_fieldnames,
     load_json,
     parse_model_keys,
@@ -54,10 +57,14 @@ def update_result_json(
     row: dict[str, str],
     pipeline_root: Path,
     seed: int,
+    registry_row: dict[str, str] | None,
 ) -> None:
     payload = load_json(result_json_path)
     surprise_value = row.get("surprise_score", "")
     similarity_value = row.get("similarity_score", "")
+    actual_json_path = str(result_json_path)
+    actual_video_path = registry_row["output_video_path"] if registry_row is not None else row["video_path"]
+    actual_relative_path = registry_row["relative_path"] if registry_row is not None else row["relative_path"]
     wmreward_payload = {
         "surprise": float(surprise_value) if surprise_value else None,
         "similarity": float(similarity_value) if similarity_value else None,
@@ -71,15 +78,53 @@ def update_result_json(
         "checkpoint_path": row["checkpoint_path"],
         "status": row["status"],
         "error": row["error"],
-        "relative_path": row["relative_path"],
-        "json_path": row["json_path"],
-        "video_path": row["video_path"],
+        "relative_path": actual_relative_path,
+        "json_path": actual_json_path,
+        "video_path": actual_video_path,
         "pipeline_root": str(pipeline_root),
     }
     payload["wmreward"] = wmreward_payload
     payload["surprise_score"] = float(surprise_value) if surprise_value else None
     payload["similarity_score"] = float(similarity_value) if similarity_value else None
     write_json(result_json_path, payload)
+
+
+def load_or_scan_registry_rows(
+    *,
+    pipeline_root: Path,
+    model_key: str,
+    model_spec,
+) -> list[dict[str, str]]:
+    registry_path = pipeline_root / "manifests" / f"generation_registry_{model_key}.csv"
+    if registry_path.is_file():
+        return read_csv_rows(registry_path)
+
+    normalized_root = pipeline_root / "manifests" / "normalized_inputs"
+    input_json_paths = discover_input_jsons(normalized_root)
+    rows = scan_generated_records(
+        model_spec=model_spec,
+        input_json_paths=input_json_paths,
+        pipeline_root=pipeline_root,
+    )
+    write_csv_rows(registry_path, rows, generation_registry_fieldnames())
+    return rows
+
+
+def create_pending_input_root(
+    *,
+    pipeline_root: Path,
+    model_key: str,
+    pending_rows: list[dict[str, str]],
+) -> Path:
+    pending_root = pipeline_root / "wmreward_pending" / model_key
+    if pending_root.exists():
+        shutil.rmtree(pending_root)
+    pending_root.mkdir(parents=True, exist_ok=True)
+    for row in pending_rows:
+        source_json = Path(row["output_json_path"]).expanduser().resolve()
+        link_path = pending_root / source_json.name
+        os.symlink(source_json, link_path)
+    return pending_root
 
 
 def main() -> None:
@@ -94,11 +139,35 @@ def main() -> None:
         model_output_root = (pipeline_root / spec.output_subdir).resolve()
         score_output_dir = pipeline_root / "wmreward" / model_key
         output_name = "wmreward_scores.csv"
+        registry_rows = load_or_scan_registry_rows(
+            pipeline_root=pipeline_root,
+            model_key=model_key,
+            model_spec=spec,
+        )
+        pending_rows = [
+            row
+            for row in registry_rows
+            if row.get("output_json_exists") == "True"
+            and row.get("output_video_exists") == "True"
+            and row.get("wmreward_status") != "ok"
+        ]
+        if args.limit is not None:
+            pending_rows = pending_rows[: args.limit]
+        if not pending_rows:
+            print(f"[wmreward] model={model_key} no pending rows, skip")
+            all_rows.extend(registry_rows)
+            continue
+
+        pending_input_root = create_pending_input_root(
+            pipeline_root=pipeline_root,
+            model_key=model_key,
+            pending_rows=pending_rows,
+        )
         cmd = [
             str(python_bin),
             str(WMREWARD_ROOT / "batch_compute_wmreward.py"),
             "--input_root",
-            str(model_output_root),
+            str(pending_input_root),
             "--output_dir",
             str(score_output_dir),
             "--checkpoint_path",
@@ -120,14 +189,18 @@ def main() -> None:
             "--output_name",
             output_name,
         ]
-        if args.limit is not None:
-            cmd.extend(["--limit", str(args.limit)])
-        print(f"[wmreward] model={model_key} input_root={model_output_root}")
+        print(
+            f"[wmreward] model={model_key} pending={len(pending_rows)} "
+            f"input_root={pending_input_root} source_root={model_output_root}"
+        )
         print(" ".join(cmd), flush=True)
         run_wmreward_subprocess(cmd)
 
         score_csv_path = score_output_dir / output_name
         score_rows = read_csv_rows(score_csv_path)
+        registry_rows_by_json_path = {
+            str(Path(row["output_json_path"]).expanduser().resolve()): row for row in registry_rows
+        }
         for row in score_rows:
             result_json_path = Path(row["json_path"]).expanduser().resolve()
             if result_json_path.is_file():
@@ -136,6 +209,7 @@ def main() -> None:
                     row=row,
                     pipeline_root=pipeline_root,
                     seed=args.seed,
+                    registry_row=registry_rows_by_json_path.get(str(result_json_path)),
                 )
 
         registry_input_rows = read_csv_rows(pipeline_root / "manifests" / f"generation_registry_{model_key}.csv")

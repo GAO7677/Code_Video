@@ -573,6 +573,8 @@ def _run_sampling(
     num_context_frames: int,
     num_inference_steps: int,
     disable_object_context: bool = False,
+    cfg_scale: float = 1.0,
+    negative_text_context: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, object]]:
     assert bundle.dit is not None
     bundle.dit.eval()
@@ -629,6 +631,9 @@ def _run_sampling(
     else:
         object_context = object_context.to(device=dit_device, dtype=dit_dtype)
         object_context_input = None if disable_object_context else [object_context]
+    use_cfg = cfg_scale > 1.0 and negative_text_context is not None
+    if use_cfg:
+        negative_text_context = negative_text_context.to(device=dit_device, dtype=dit_dtype)
     trajectory_stats = []
     for step_idx, timestep in enumerate(timesteps):
         timestep_f = timestep.to(device=dit_device, dtype=dit_dtype)
@@ -642,6 +647,17 @@ def _run_sampling(
             seq_len=seq_len,
             y=None,
         )[0]
+        if use_cfg:
+            pred_nega = bundle.dit(
+                [x_t],
+                t=t_tokens,
+                context=None,
+                text_context=[negative_text_context],
+                object_context=None,
+                seq_len=seq_len,
+                y=None,
+            )[0]
+            pred = pred_nega + cfg_scale * (pred - pred_nega)
         _print_tensor_stats(f"pred_step_{step_idx}", pred)
         x_t = scheduler.step(
             pred,
@@ -676,6 +692,8 @@ def _run_sampling(
         "sampling_shift": float(sampling_shift),
         "scheduler": type(scheduler).__name__,
         "disable_object_context": bool(disable_object_context),
+        "cfg_scale": float(cfg_scale),
+        "use_cfg": bool(use_cfg),
         "trajectory": trajectory_stats[:5],
     }
     return x_t.detach(), debug

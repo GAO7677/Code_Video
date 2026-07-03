@@ -538,7 +538,19 @@ def main():
     results = []
     for manifest_row in samples:
         runtime = build_sample_runtime(manifest_row, config)
-        result = run_single(pipe, config, runtime)
+        sample_output_dir = Path(config.output_root) / runtime["sample_id"]
+        if (
+            not config.overwrite
+            and (sample_output_dir / "probe_features.pt").is_file()
+            and (sample_output_dir / "meta.json").is_file()
+        ):
+            result = {
+                "sample_id": runtime["sample_id"],
+                "status": "skipped_existing",
+                "output_dir": str(sample_output_dir),
+            }
+        else:
+            result = run_single(pipe, config, runtime)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
 
