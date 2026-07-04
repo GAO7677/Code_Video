@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import copy
 import fcntl
+import gc
 import json
 import os
 import re
@@ -104,6 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--videophy2-caption", default=None)
     parser.add_argument("--phyground-general-only", action="store_true")
     parser.add_argument("--pdi-caption", default="ball")
+    parser.add_argument("--wmreward-reset-interval", type=int, default=16)
     parser.add_argument("--flux-python", type=Path, default=FLUX_PYTHON, help=argparse.SUPPRESS)
     parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flux-worker", action="store_true", help=argparse.SUPPRESS)
@@ -365,10 +367,47 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         from physv_eval.single_case.wmreward import score_case as score_wmreward_case
         from physv_eval.wmreward_official import WMRewardRunner
 
-        runner = WMRewardRunner()
+        reset_interval = max(1, int(args.wmreward_reset_interval))
+        runner: WMRewardRunner | None = None
+        cases_since_reset = 0
+
+        def post_case_cleanup(active_runner: WMRewardRunner | None) -> None:
+            if active_runner is None:
+                return
+            torch_module = getattr(active_runner, "_torch", None)
+            if torch_module is not None and torch_module.cuda.is_available():
+                try:
+                    torch_module.cuda.empty_cache()
+                except Exception:
+                    pass
+            gc.collect()
+
+        def cleanup_runner(active_runner: WMRewardRunner | None) -> None:
+            if active_runner is None:
+                return
+            models = getattr(active_runner, "_models", None)
+            if isinstance(models, tuple):
+                for model in models[:3]:
+                    if hasattr(model, "cpu"):
+                        try:
+                            model.cpu()
+                        except Exception:
+                            pass
+            if hasattr(active_runner, "_models"):
+                active_runner._models = None
+            post_case_cleanup(active_runner)
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
-            return score_wmreward_case(build_case_payload(record), runner=runner)
+            nonlocal runner, cases_since_reset
+            if runner is None or cases_since_reset >= reset_interval:
+                cleanup_runner(runner)
+                runner = WMRewardRunner()
+                cases_since_reset = 0
+            try:
+                return score_wmreward_case(build_case_payload(record), runner=runner)
+            finally:
+                cases_since_reset += 1
+                post_case_cleanup(runner)
 
         return run
 
