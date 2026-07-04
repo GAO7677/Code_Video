@@ -106,6 +106,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phyground-general-only", action="store_true")
     parser.add_argument("--pdi-caption", default="ball")
     parser.add_argument("--wmreward-reset-interval", type=int, default=16)
+    parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--flux-python", type=Path, default=FLUX_PYTHON, help=argparse.SUPPRESS)
     parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--flux-worker", action="store_true", help=argparse.SUPPRESS)
@@ -329,6 +331,8 @@ def maybe_delegate_flux_metric(args: argparse.Namespace) -> bool:
         cmd.append("--cosmos-worker")
     if args.output_summary is not None:
         cmd.extend(["--output-summary", str(args.output_summary.expanduser().resolve())])
+    if int(args.num_shards) > 1:
+        cmd.extend(["--num-shards", str(int(args.num_shards)), "--shard-index", str(int(args.shard_index))])
     if args.overwrite:
         cmd.append("--overwrite")
     if args.dry_run:
@@ -536,6 +540,7 @@ def prepare_cases(result_root: Path) -> tuple[list[CaseRecord], list[dict[str, A
 def write_summary(
     summary_path: Path,
     *,
+    args: argparse.Namespace,
     result_root: Path,
     metric_spec: MetricSpec,
     cases: list[CaseRecord],
@@ -547,6 +552,8 @@ def write_summary(
         "result_root": str(result_root),
         "num_result_jsons": len(cases),
         "metric": metric_spec.name,
+        "num_shards": int(args.num_shards),
+        "shard_index": int(args.shard_index),
         "metric_status": round_floats(metric_status),
         "errors": errors,
     }
@@ -556,6 +563,13 @@ def write_summary(
 
 def main() -> None:
     args = parse_args()
+    if int(args.num_shards) <= 0:
+        raise ValueError(f"--num-shards must be >= 1, got {args.num_shards}")
+    if int(args.shard_index) < 0 or int(args.shard_index) >= int(args.num_shards):
+        raise ValueError(
+            f"--shard-index must satisfy 0 <= shard-index < num-shards, got "
+            f"shard-index={args.shard_index}, num-shards={args.num_shards}"
+        )
     if maybe_delegate_flux_metric(args):
         return
     result_root = args.result_root.expanduser().resolve()
@@ -567,11 +581,20 @@ def main() -> None:
     metric_spec = build_metric_spec(args)
 
     cases, errors = prepare_cases(result_root)
+    if int(args.num_shards) > 1:
+        cases = [
+            record
+            for case_index, record in enumerate(cases)
+            if case_index % int(args.num_shards) == int(args.shard_index)
+        ]
     metric_status: dict[str, Any] = {}
     if not args.dry_run:
         write_json(summary_path, {})
 
-    print(f"[metric:start] {metric_spec.name} cases={len(cases)}")
+    print(
+        f"[metric:start] {metric_spec.name} cases={len(cases)} "
+        f"shard={int(args.shard_index) + 1}/{int(args.num_shards)}"
+    )
     runner = metric_spec.builder(args)
     num_success = 0
     num_failed = 0
@@ -596,6 +619,7 @@ def main() -> None:
                     }
                     write_summary(
                         summary_path,
+                        args=args,
                         result_root=result_root,
                         metric_spec=metric_spec,
                         cases=cases,
@@ -647,6 +671,7 @@ def main() -> None:
         }
         write_summary(
             summary_path,
+            args=args,
             result_root=result_root,
             metric_spec=metric_spec,
             cases=cases,
