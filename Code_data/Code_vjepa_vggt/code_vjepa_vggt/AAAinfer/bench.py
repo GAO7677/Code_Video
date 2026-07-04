@@ -184,13 +184,16 @@ def resolve_gt_video_path(input_json_path: Path) -> Path:
 
 
 def collect_result_jsons(result_root: Path) -> list[Path]:
-    return sorted(
-        [
-            path
-            for path in result_root.rglob("*.json")
-            if path.name not in {"summary.json", "batch_manifest.json", "eval_summary.json"}
-        ]
-    )
+    result_jsons: list[Path] = []
+    for dirpath, _, filenames in os.walk(result_root, followlinks=True):
+        current_dir = Path(dirpath)
+        for filename in filenames:
+            if not filename.endswith(".json"):
+                continue
+            if filename in {"summary.json", "batch_manifest.json", "eval_summary.json"}:
+                continue
+            result_jsons.append((current_dir / filename).resolve())
+    return sorted(result_jsons)
 
 
 def resolve_candidate_video_path(result_json_path: Path, result_payload: dict[str, Any]) -> Path:
