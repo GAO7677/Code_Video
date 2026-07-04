@@ -12,6 +12,7 @@ Phase 4: context-anchored persistence sweep
 Phase 5: context-anchored strength ladder
 Phase 6: context-anchored knee refinement around the first wmreward-positive regime
 Phase 7: context-anchored target-shape sweep (wider future windows)
+Phase 8: context-anchored anti-artifact guard sweep
 
 Each phase runs baseline + N guided conditions, computes persistence_score,
 saves per-condition JSON and delta-curve plots.
@@ -318,6 +319,9 @@ def _run_condition(
     context_frames_vjepa: Optional[int] = None, # overrides vjepa_config.context_frames
     stride: Optional[int] = None,               # overrides vjepa_config.stride
     reduction: Optional[str] = None,            # overrides vjepa_config.reduction
+    max_correction_ratio: Optional[float] = None,
+    stay_close_max_video_l1: Optional[float] = None,
+    artifact_guard_mode: Optional[str] = None,
 ) -> tuple[list, list[dict]]:
     """Run one generation condition with per-step energy probing. Returns (video, records).
 
@@ -334,6 +338,21 @@ def _run_condition(
     )
     effective_stride = int(stride) if stride is not None else int(vjepa_config.stride)
     effective_reduction = str(reduction) if reduction is not None else str(vjepa_config.reduction)
+    effective_max_correction_ratio = (
+        float(max_correction_ratio)
+        if max_correction_ratio is not None
+        else vjepa_config.max_correction_ratio
+    )
+    effective_stay_close_max_video_l1 = (
+        float(stay_close_max_video_l1)
+        if stay_close_max_video_l1 is not None
+        else vjepa_config.stay_close_max_video_l1
+    )
+    effective_artifact_guard_mode = (
+        str(artifact_guard_mode)
+        if artifact_guard_mode is not None
+        else str(vjepa_config.artifact_guard_mode)
+    )
 
     def _make_config(*, steps: int, min_p: float, max_p: float, step_size: float) -> WanVJEPAConfig:
         return WanVJEPAConfig(
@@ -349,6 +368,9 @@ def _run_condition(
             reduction=effective_reduction,
             gradient_normalization=effective_grad_norm,
             max_grad_norm=vjepa_config.max_grad_norm,
+            max_correction_ratio=effective_max_correction_ratio,
+            stay_close_max_video_l1=effective_stay_close_max_video_l1,
+            artifact_guard_mode=effective_artifact_guard_mode,
             guidance_mode=guidance_mode,
         )
 
@@ -772,6 +794,35 @@ def _phase7_conditions(p_center: float = 0.35) -> list[dict]:
     ]
 
 
+def _phase8_conditions(p_center: float = 0.35) -> list[dict]:
+    """Stage 1 anti-artifact sweep.
+
+    Hold the current single-case metric winner skeleton (target_w24) fixed and
+    add trust-region style guards that try to reduce the visible color-block
+    failure mode:
+      - correction-ratio cap in latent space
+      - decoded-video L1 backoff against the unguided x0 preview
+      - both combined
+    """
+    lo = max(0.05, p_center - 0.15)
+    hi = min(0.95, p_center + 0.30)
+    band12 = _dense_percents(lo, hi, 12)
+    return [
+        {"label": "target_w24_old", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 24},
+        {"label": "target_w24_ratio_005", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 24,
+         "max_correction_ratio": 0.05},
+        {"label": "target_w24_guard_l1_003", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 24,
+         "artifact_guard_mode": "video_l1_backoff", "stay_close_max_video_l1": 0.03},
+        {"label": "target_w24_guard_combo", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 24,
+         "max_correction_ratio": 0.05,
+         "artifact_guard_mode": "video_l1_backoff", "stay_close_max_video_l1": 0.03},
+    ]
+
+
 def _rank_phase_scores(scores: list[dict], ranking_mode: str) -> list[dict]:
     if ranking_mode == "abs_mean_delta_desc":
         return sorted(
@@ -932,6 +983,9 @@ def _run_phase(
                 context_frames_vjepa=cond.get("context_frames_vjepa"),
                 stride=cond.get("stride"),
                 reduction=cond.get("reduction"),
+                max_correction_ratio=cond.get("max_correction_ratio"),
+                stay_close_max_video_l1=cond.get("stay_close_max_video_l1"),
+                artifact_guard_mode=cond.get("artifact_guard_mode"),
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
@@ -994,12 +1048,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vjepa-device", type=str, default=None)
     p.add_argument("--vjepa-model", type=str, default="vith")
     p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6, 7], default=1,
+    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6, 7, 8], default=1,
                    help="Which experiment phase to run (1=timing, 2=step-size, "
                         "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored, "
                         "5=strength ladder: latent_step_size sweep in context_anchored, "
                         "6=knee refinement: timing/inner-k/backtracking near the first wmreward-positive regime, "
-                        "7=target-shape sweep: wider context-anchored future windows)")
+                        "7=target-shape sweep: wider context-anchored future windows, "
+                        "8=anti-artifact guard sweep on target_w24)")
     p.add_argument("--probe-every-n", type=int, default=2)
     p.add_argument("--num-frames", type=int, default=49)
     p.add_argument("--height", type=int, default=480)
@@ -1163,6 +1218,16 @@ def main() -> None:
         log.info("Phase 7 (target-shape sweep, context-anchored) p_center=%.2f", p_best)
         conditions = _phase7_conditions(p_best)
         _run_phase(7, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   guidance_mode="context_anchored",
+                   ranking_mode="abs_mean_delta_desc")
+
+    elif args.phase == 8:
+        p_best = args.anchor_timing
+        log.info("Phase 8 (anti-artifact guard sweep, context-anchored) p_center=%.2f", p_best)
+        conditions = _phase8_conditions(p_best)
+        _run_phase(8, conditions, pipe=pipe, case=case,
                    base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
                    output_dir=args.output_dir, probe_every_n=args.probe_every_n,
                    guidance_mode="context_anchored",

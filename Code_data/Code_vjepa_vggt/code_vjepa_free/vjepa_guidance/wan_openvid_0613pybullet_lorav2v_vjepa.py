@@ -366,6 +366,65 @@ def _apply_context_anchored_guidance(
         corrected_step_size = best_tap if best_tap is not None else 0.0
 
     correction = corrected_step_size * gradient
+    latent_l2 = float(latent_xt.detach().float().norm().item())
+
+    ratio_cap_applied = False
+    ratio_cap_scale = 1.0
+    max_correction_ratio = getattr(config, "max_correction_ratio", None)
+    if max_correction_ratio is not None and max_correction_ratio > 0 and latent_l2 > 0:
+        correction_l2_raw = float(correction.detach().norm().item())
+        max_allowed_l2 = float(max_correction_ratio) * latent_l2
+        if correction_l2_raw > max_allowed_l2:
+            ratio_cap_scale = max_allowed_l2 / max(correction_l2_raw, 1e-6)
+            correction = correction * ratio_cap_scale
+            corrected_step_size *= ratio_cap_scale
+            ratio_cap_applied = True
+
+    artifact_guard_mode = str(getattr(config, "artifact_guard_mode", "none"))
+    stay_close_max_video_l1 = getattr(config, "stay_close_max_video_l1", None)
+    artifact_guard_applied = False
+    artifact_guard_backoff_steps = 0
+    artifact_guard_video_l1 = None
+    if (
+        artifact_guard_mode == "video_l1_backoff"
+        and stay_close_max_video_l1 is not None
+        and stay_close_max_video_l1 > 0
+        and corrected_step_size > 0
+    ):
+        base_video = full_video.detach()
+        trial_correction = correction.detach().clone()
+        for _attempt in range(5):
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - trial_correction
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
+            if artifact_guard_video_l1 <= float(stay_close_max_video_l1):
+                correction = trial_correction
+                corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+                break
+            trial_correction = trial_correction * 0.5
+            artifact_guard_backoff_steps += 1
+            artifact_guard_applied = True
+        else:
+            correction = trial_correction
+            corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - correction
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
+
     corrected = latent_xt.detach().float() - correction
     corrected = corrected.to(dtype=latent_xt.dtype)
 
@@ -375,7 +434,6 @@ def _apply_context_anchored_guidance(
     # correction_ratio= relative perturbation (correction_l2 / latent_l2); a tiny
     #                   ratio means the denoiser will almost certainly wash it out.
     correction_l2 = float(correction.detach().norm().item())
-    latent_l2 = float(latent_xt.detach().float().norm().item())
     stats = {
         "energy": float(energy.detach().item()),
         "grad_rms": float(gradient.detach().pow(2).mean().sqrt().item()),
@@ -387,7 +445,13 @@ def _apply_context_anchored_guidance(
         "preview_height": float(full_video.shape[3]),
         "preview_width": float(full_video.shape[4]),
         "step_size_used": float(corrected_step_size),
+        "ratio_cap_applied": float(ratio_cap_applied),
+        "ratio_cap_scale": float(ratio_cap_scale),
+        "artifact_guard_applied": float(artifact_guard_applied),
+        "artifact_guard_backoff_steps": float(artifact_guard_backoff_steps),
     }
+    if artifact_guard_video_l1 is not None:
+        stats["artifact_guard_video_l1"] = float(artifact_guard_video_l1)
     if line_search:
         stats["line_search"] = line_search
         stats["line_search_base_energy"] = float(energy.detach().item())
@@ -1131,7 +1195,8 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                             )
                 logging.info(
                     "V-JEPA[%s] step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f "
-                    "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f preview=%dx%dx%d",
+                    "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f "
+                    "ratio_cap=%s guard=%s guard_l1=%.5f preview=%dx%dx%d",
                     guidance_mode,
                     progress_id,
                     int(timestep_cpu.item()),
@@ -1142,6 +1207,9 @@ class ContextAwareWanVideoPipelineVJEPA(core.ContextAwareWanVideoPipeline):
                     stats.get("latent_l2", float("nan")),
                     stats.get("correction_ratio", float("nan")),
                     stats.get("step_size_used", float("nan")),
+                    bool(stats.get("ratio_cap_applied", 0.0)),
+                    bool(stats.get("artifact_guard_applied", 0.0)),
+                    stats.get("artifact_guard_video_l1", float("nan")),
                     int(stats["preview_frames"]),
                     int(stats["preview_height"]),
                     int(stats["preview_width"]),
@@ -1252,6 +1320,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-reduction", choices=["mean", "max"], default="mean")
     parser.add_argument("--vjepa-grad-norm-mode", choices=["rms", "l2", "none"], default="rms")
     parser.add_argument("--vjepa-max-grad-norm", type=float, default=10.0)
+    parser.add_argument("--vjepa-max-correction-ratio", type=float, default=None)
+    parser.add_argument("--vjepa-stay-close-max-video-l1", type=float, default=None)
+    parser.add_argument(
+        "--vjepa-artifact-guard-mode",
+        choices=["none", "video_l1_backoff"],
+        default="none",
+    )
     parser.add_argument("--trace-intermediates", action="store_true")
     parser.add_argument("--trace-root", type=Path, default=None)
     parser.add_argument("--trace-max-strip-frames", type=int, default=8)
@@ -1316,6 +1391,12 @@ def build_vjepa_config(cli_args: argparse.Namespace) -> WanVJEPAConfig:
     max_grad_norm = cli_args.vjepa_max_grad_norm
     if max_grad_norm is not None and max_grad_norm <= 0:
         max_grad_norm = None
+    max_correction_ratio = cli_args.vjepa_max_correction_ratio
+    if max_correction_ratio is not None and max_correction_ratio <= 0:
+        max_correction_ratio = None
+    stay_close_max_video_l1 = cli_args.vjepa_stay_close_max_video_l1
+    if stay_close_max_video_l1 is not None and stay_close_max_video_l1 <= 0:
+        stay_close_max_video_l1 = None
     return WanVJEPAConfig(
         guidance_steps=int(cli_args.vjepa_guidance_steps),
         min_step_percent=float(cli_args.vjepa_min_step_percent),
@@ -1329,6 +1410,9 @@ def build_vjepa_config(cli_args: argparse.Namespace) -> WanVJEPAConfig:
         reduction=str(cli_args.vjepa_reduction),
         gradient_normalization=str(cli_args.vjepa_grad_norm_mode),
         max_grad_norm=max_grad_norm,
+        max_correction_ratio=max_correction_ratio,
+        stay_close_max_video_l1=stay_close_max_video_l1,
+        artifact_guard_mode=str(cli_args.vjepa_artifact_guard_mode),
         guidance_mode=str(cli_args.vjepa_guidance_mode),
     )
 

@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+# Run command example:
+# PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+# CUDA_VISIBLE_DEVICES=7 \
+# /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
+#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+#   --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460/source_video/context_video_8f.mp4 \
+#   --prompt "f5 sample 001460 industrial rigid body simulation sphere box" \
+#   --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/inference_review/step-001000 \
+#   --sampling-steps 12
+
 """
 Stage1B context-only no-GT-box inference for the train0705 DiffSynth-native run.
 

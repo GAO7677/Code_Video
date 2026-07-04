@@ -21,6 +21,11 @@ class WanVJEPAConfig:
     reduction: str = "mean"
     gradient_normalization: str = "rms"
     max_grad_norm: float | None = 10.0
+    # Trust-region style guards for training-free guidance. These are off by
+    # default so existing configs remain unchanged.
+    max_correction_ratio: float | None = None
+    stay_close_max_video_l1: float | None = None
+    artifact_guard_mode: str = "none"
     # "surprise": legacy self-consistency windowing over the whole generation.
     # "context_anchored": align generated future to V-JEPA's prediction from the
     #   real conditioning frames (uses clean_prefix as fixed context).

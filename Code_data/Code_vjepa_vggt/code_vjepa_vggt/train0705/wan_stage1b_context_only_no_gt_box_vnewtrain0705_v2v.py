@@ -1,13 +1,50 @@
 from __future__ import annotations
 
+# Run command example:
+'''
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=7 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name train_stage1b_diffsynth_native0705_0705 \
+  --num-inference-steps 40
+'''
+
+
 import argparse
 import gc
 import json
 import re
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
+
+
+def _read_cli_arg_value(argv: list[str], names: tuple[str, ...], default: str | None = None) -> str | None:
+    for name in names:
+        if name not in argv:
+            continue
+        index = argv.index(name)
+        if index + 1 < len(argv):
+            return argv[index + 1]
+    return default
+
+
+_DEFAULT_DIFFSYNTH_ROOT_STR = "/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main"
+_SELECTED_DIFFSYNTH_ROOT = _read_cli_arg_value(
+    sys.argv,
+    ("--diffsynth-root", "--diffsynth_root"),
+    os.environ.get("DIFFSYNTH_ROOT", _DEFAULT_DIFFSYNTH_ROOT_STR),
+)
+if _SELECTED_DIFFSYNTH_ROOT:
+    os.environ["DIFFSYNTH_ROOT"] = _SELECTED_DIFFSYNTH_ROOT
+    if _SELECTED_DIFFSYNTH_ROOT not in sys.path:
+        sys.path.insert(0, _SELECTED_DIFFSYNTH_ROOT)
 
 from code_vjepa_vggt import batch_infer_v_newtrain_from_jsonl as core
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root

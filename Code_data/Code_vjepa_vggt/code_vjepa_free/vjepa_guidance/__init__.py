@@ -1,15 +1,9 @@
-from .vjepa_surprise import VJEPASurpriseEnergy
-from .wan_latent_guidance import (
-    WanVJEPAConfig,
-    apply_vjepa_latent_guidance,
-    apply_vjepa_latent_guidance_with_decoder,
-    pick_guidance_step_indices,
-)
+from .vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
+from .wan_latent_guidance import WanVJEPAConfig, pick_guidance_step_indices
 
 __all__ = [
     "VJEPASurpriseEnergy",
     "WanVJEPAConfig",
-    "apply_vjepa_latent_guidance",
-    "apply_vjepa_latent_guidance_with_decoder",
+    "build_context_future_clip",
     "pick_guidance_step_indices",
 ]

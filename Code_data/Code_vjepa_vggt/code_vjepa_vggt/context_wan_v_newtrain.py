@@ -1,9 +1,11 @@
 """该模块用于给 Wan 视频管线补充多帧上下文条件训练与推理逻辑；输入为 Wan 管线、上下文/噪声 latent 与条件张量，输出为上下文感知的损失计算和生成所需的中间结果。"""
+import logging
 import types
 from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange
 from PIL import Image
 from tqdm import tqdm
@@ -21,6 +23,12 @@ from diffsynth.pipelines.wan_video import (
     model_fn_longcat_video,
     model_fn_wans2v,
     wantodance_get_single_freqs,
+)
+
+from code_vjepa_free.vjepa_guidance import (
+    VJEPASurpriseEnergy,
+    build_context_future_clip,
+    pick_guidance_step_indices,
 )
 
 
@@ -214,6 +222,236 @@ def slice_non_context_latents(
         raise ValueError("Context covers all latent steps, leaving no future steps to predict.")
     index_tensor = torch.tensor(keep_indices, device=tensor.device, dtype=torch.long)
     return tensor.index_select(2, index_tensor)
+
+
+def _diffsynth_sigma_for_timestep(scheduler, timestep: torch.Tensor | int) -> torch.Tensor:
+    if isinstance(timestep, torch.Tensor):
+        timestep_scalar = timestep.detach().float().reshape(-1)[0].cpu()
+    else:
+        timestep_scalar = torch.tensor(float(timestep))
+    timestep_id = torch.argmin((scheduler.timesteps - timestep_scalar).abs())
+    return scheduler.sigmas[timestep_id]
+
+
+def _predict_x0_from_diffsynth_flow(
+    *,
+    scheduler,
+    latent_xt: torch.Tensor,
+    model_output: torch.Tensor,
+    timestep: torch.Tensor | int,
+) -> torch.Tensor:
+    sigma_t = _diffsynth_sigma_for_timestep(scheduler, timestep)
+    sigma_t = sigma_t.to(device=latent_xt.device, dtype=latent_xt.dtype)
+    while sigma_t.ndim < latent_xt.ndim:
+        sigma_t = sigma_t.unsqueeze(-1)
+    return latent_xt - sigma_t * model_output
+
+
+def _normalize_guidance_gradient(gradient: torch.Tensor, mode: str = "rms", eps: float = 1e-6) -> torch.Tensor:
+    if mode == "none":
+        return gradient
+    if mode == "rms":
+        scale = gradient.pow(2).mean().sqrt().clamp_min(eps)
+        return gradient / scale
+    if mode == "l2":
+        scale = gradient.norm().clamp_min(eps)
+        return gradient / scale
+    raise ValueError(f"Unsupported gradient normalization mode: {mode}")
+
+
+def _pixel_frames_to_latent_len(pixel_frames: int) -> int:
+    if pixel_frames <= 0:
+        return 0
+    return (pixel_frames - 1) // 4 + 1
+
+
+def _apply_context_anchored_vjepa_guidance(
+    *,
+    latent_xt: torch.Tensor,
+    model_output: torch.Tensor,
+    timestep: torch.Tensor | int,
+    scheduler,
+    full_decoder,
+    context_frames_pixel: torch.Tensor,
+    energy_obj,
+    config,
+    predicted_future_ref: Optional[torch.Tensor],
+    line_search_taps: Optional[list[float]] = None,
+    backtracking: bool = False,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    latent_for_grad = latent_xt.detach().float().requires_grad_(True)
+    model_output = model_output.detach().float()
+
+    x0_pred = _predict_x0_from_diffsynth_flow(
+        scheduler=scheduler,
+        latent_xt=latent_for_grad,
+        model_output=model_output,
+        timestep=timestep,
+    )
+    full_video = full_decoder(x0_pred)
+
+    n_ctx = int(config.context_frames)
+    if int(full_video.shape[2]) <= n_ctx:
+        raise ValueError(
+            f"Decoded video has {int(full_video.shape[2])} frames, need > context_frames={n_ctx}"
+        )
+    generated_future = full_video[:, :, n_ctx:]
+    ctx = context_frames_pixel.to(device=generated_future.device, dtype=generated_future.dtype)
+    clip = build_context_future_clip(
+        context_btchw=ctx,
+        future_btchw=generated_future,
+        window_size=int(config.window_size),
+        context_frames=n_ctx,
+    )
+    energy = energy_obj.context_anchored(
+        clip,
+        window_size=int(config.window_size),
+        context_frames=n_ctx,
+        predicted_future_ref=predicted_future_ref,
+    )
+
+    gradient = torch.autograd.grad(energy, latent_for_grad, retain_graph=False, create_graph=False)[0]
+    gradient = torch.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
+    raw_grad_norm = float(gradient.norm().item())
+    max_grad_norm = getattr(config, "max_grad_norm", None)
+    if max_grad_norm is not None and raw_grad_norm > float(max_grad_norm):
+        gradient = gradient * (float(max_grad_norm) / max(raw_grad_norm, 1e-6))
+    gradient = _normalize_guidance_gradient(
+        gradient,
+        mode=str(getattr(config, "gradient_normalization", "rms")),
+    )
+
+    n_ctx_latent = _pixel_frames_to_latent_len(n_ctx)
+    if 0 < n_ctx_latent < gradient.shape[2]:
+        gradient[:, :, :n_ctx_latent] = 0.0
+
+    line_search: dict[str, float] = {}
+    if line_search_taps:
+        with torch.no_grad():
+            for tap in line_search_taps:
+                trial_latent = (latent_xt.detach().float() - float(tap) * gradient).to(dtype=latent_xt.dtype)
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent.float(),
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                trial_future = trial_video[:, :, n_ctx:]
+                trial_clip = build_context_future_clip(
+                    context_btchw=ctx,
+                    future_btchw=trial_future,
+                    window_size=int(config.window_size),
+                    context_frames=n_ctx,
+                )
+                trial_energy = float(
+                    energy_obj.context_anchored(
+                        trial_clip,
+                        window_size=int(config.window_size),
+                        context_frames=n_ctx,
+                        predicted_future_ref=predicted_future_ref,
+                    ).item()
+                )
+                line_search[f"tap_{tap:g}"] = trial_energy
+
+    corrected_step_size = float(getattr(config, "latent_step_size", 0.0))
+    if backtracking and line_search:
+        base_e = float(energy.detach().item())
+        best_tap = None
+        best_e = base_e
+        for key, trial_e in line_search.items():
+            tap_val = float(key.split("_", 1)[1])
+            if trial_e < best_e:
+                best_e = trial_e
+                best_tap = tap_val
+        corrected_step_size = best_tap if best_tap is not None else 0.0
+
+    correction = corrected_step_size * gradient
+    latent_l2 = float(latent_xt.detach().float().norm().item())
+
+    ratio_cap_applied = False
+    ratio_cap_scale = 1.0
+    max_correction_ratio = getattr(config, "max_correction_ratio", None)
+    if max_correction_ratio is not None and float(max_correction_ratio) > 0 and latent_l2 > 0:
+        correction_l2_raw = float(correction.detach().norm().item())
+        max_allowed_l2 = float(max_correction_ratio) * latent_l2
+        if correction_l2_raw > max_allowed_l2:
+            ratio_cap_scale = max_allowed_l2 / max(correction_l2_raw, 1e-6)
+            correction = correction * ratio_cap_scale
+            corrected_step_size *= ratio_cap_scale
+            ratio_cap_applied = True
+
+    artifact_guard_mode = str(getattr(config, "artifact_guard_mode", "none"))
+    stay_close_max_video_l1 = getattr(config, "stay_close_max_video_l1", None)
+    artifact_guard_applied = False
+    artifact_guard_backoff_steps = 0
+    artifact_guard_video_l1 = None
+    if (
+        artifact_guard_mode == "video_l1_backoff"
+        and stay_close_max_video_l1 is not None
+        and float(stay_close_max_video_l1) > 0
+        and corrected_step_size > 0
+    ):
+        base_video = full_video.detach()
+        trial_correction = correction.detach().clone()
+        for _attempt in range(5):
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - trial_correction
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
+            if artifact_guard_video_l1 <= float(stay_close_max_video_l1):
+                correction = trial_correction
+                corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+                break
+            trial_correction = trial_correction * 0.5
+            artifact_guard_backoff_steps += 1
+            artifact_guard_applied = True
+        else:
+            correction = trial_correction
+            corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - correction
+                trial_x0 = _predict_x0_from_diffsynth_flow(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = full_decoder(trial_x0)
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
+
+    corrected = latent_xt.detach().float() - correction
+    corrected = corrected.to(dtype=latent_xt.dtype)
+
+    correction_l2 = float(correction.detach().norm().item())
+    stats = {
+        "energy": float(energy.detach().item()),
+        "grad_rms": float(gradient.detach().pow(2).mean().sqrt().item()),
+        "latent_rms": float(latent_xt.detach().float().pow(2).mean().sqrt().item()),
+        "correction_l2": correction_l2,
+        "latent_l2": latent_l2,
+        "correction_ratio": correction_l2 / max(latent_l2, 1e-6),
+        "preview_frames": float(full_video.shape[2]),
+        "preview_height": float(full_video.shape[3]),
+        "preview_width": float(full_video.shape[4]),
+        "step_size_used": float(corrected_step_size),
+        "ratio_cap_applied": float(ratio_cap_applied),
+        "ratio_cap_scale": float(ratio_cap_scale),
+        "artifact_guard_applied": float(artifact_guard_applied),
+        "artifact_guard_backoff_steps": float(artifact_guard_backoff_steps),
+    }
+    if artifact_guard_video_l1 is not None:
+        stats["artifact_guard_video_l1"] = float(artifact_guard_video_l1)
+    if line_search:
+        stats["line_search"] = line_search
+        stats["line_search_base_energy"] = float(energy.detach().item())
+    return corrected, stats
 
 
 def flow_match_context_sft_loss(pipe: WanVideoPipeline, **inputs):
