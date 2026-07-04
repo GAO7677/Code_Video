@@ -12,6 +12,20 @@ CUDA_VISIBLE_DEVICES=6,7 \
   --model-name-prefix train0705_current \
   --device cuda:0 \
   --vjepa-device cuda:1
+
+Run current guard-ablation group:
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=6,7 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_current_modes.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation_cases.txt \
+  --model-name-prefix train0705_round3_guard \
+  --output-base /data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation \
+  --device cuda:0 \
+  --vjepa-device cuda:1 \
+  --mode-group guard_ablation \
+  --initialize-model-on-cpu
 """
 
 import argparse
@@ -19,9 +33,19 @@ import subprocess
 from pathlib import Path
 
 try:
-    from .experiment_presets import TRAIN0705_CURRENT_MODES, resolve_train0705_preset
+    from .experiment_presets import (
+        TRAIN0705_CURRENT_MODES,
+        TRAIN0705_MODE_GROUPS,
+        resolve_train0705_mode_group,
+        resolve_train0705_preset,
+    )
 except ImportError:
-    from experiment_presets import TRAIN0705_CURRENT_MODES, resolve_train0705_preset
+    from experiment_presets import (
+        TRAIN0705_CURRENT_MODES,
+        TRAIN0705_MODE_GROUPS,
+        resolve_train0705_mode_group,
+        resolve_train0705_preset,
+    )
 
 
 SCRIPT_PATH = (
@@ -38,9 +62,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the current train0705 V-JEPA baseline/guided preset family over a JSON list."
     )
-    parser.add_argument("--weights-root", type=Path, required=True)
-    parser.add_argument("--input-json-list-path", type=Path, required=True)
-    parser.add_argument("--model-name-prefix", type=str, required=True)
+    parser.add_argument("--weights-root", type=Path, default=None)
+    parser.add_argument("--input-json-list-path", type=Path, default=None)
+    parser.add_argument("--model-name-prefix", type=str, default=None)
     parser.add_argument("--python-bin", type=Path, default=DEFAULT_PYTHON_BIN)
     parser.add_argument("--output-base", type=Path, default=DEFAULT_OUTPUT_BASE)
     parser.add_argument("--device", type=str, default="cuda:0")
@@ -62,30 +86,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--mode-ids", nargs="*", default=None)
+    parser.add_argument("--mode-group", choices=sorted(TRAIN0705_MODE_GROUPS), default=None)
+    parser.add_argument("--list-modes", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def _select_modes(mode_ids: list[str] | None):
-    modes = TRAIN0705_CURRENT_MODES
+def _select_modes(mode_ids: list[str] | None, mode_group: str | None):
     if mode_ids:
-        canonical_ids: list[str] = []
+        modes: list = []
         seen: set[str] = set()
         for mode_id in mode_ids:
             preset = resolve_train0705_preset(str(mode_id))
             if preset.mode_id in seen:
                 continue
             seen.add(preset.mode_id)
-            canonical_ids.append(preset.mode_id)
-        wanted = set(canonical_ids)
-        modes = [mode for mode in modes if mode.mode_id in wanted]
-    return modes
+            modes.append(preset)
+        return modes
+
+    if mode_group:
+        return list(resolve_train0705_mode_group(mode_group))
+
+    if not mode_ids and not mode_group:
+        return TRAIN0705_CURRENT_MODES
+    return TRAIN0705_CURRENT_MODES
+
+
+def _print_available_modes() -> None:
+    print("TRAIN0705 mode groups:", flush=True)
+    for group_name, mode_ids in sorted(TRAIN0705_MODE_GROUPS.items()):
+        print(f"  - {group_name}: {', '.join(mode_ids)}", flush=True)
+    print("TRAIN0705 canonical modes:", flush=True)
+    seen: set[str] = set()
+    for group_name in ("current", "guard_ablation"):
+        for preset in resolve_train0705_mode_group(group_name):
+            if preset.mode_id in seen:
+                continue
+            seen.add(preset.mode_id)
+            aliases = f" aliases={list(preset.aliases)}" if preset.aliases else ""
+            print(f"  - {preset.mode_id}: {preset.description}{aliases}", flush=True)
 
 
 def main() -> None:
     args = parse_args()
-    modes = _select_modes(args.mode_ids)
+    if args.list_modes:
+        _print_available_modes()
+        return
+    missing = [
+        name
+        for name in ("weights_root", "input_json_list_path", "model_name_prefix")
+        if getattr(args, name) in (None, "")
+    ]
+    if missing:
+        readable = ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+        raise SystemExit(f"Missing required arguments: {readable}")
+    modes = _select_modes(args.mode_ids, args.mode_group)
     failures: list[str] = []
 
     for index, mode in enumerate(modes, start=1):

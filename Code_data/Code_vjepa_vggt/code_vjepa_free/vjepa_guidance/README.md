@@ -26,14 +26,16 @@ The training-free idea is unchanged:
   Shared mode definitions for baseline and guided variants, including the
   current `train0705` presets:
   - `baseline`
-  - `ladder_s20` / `current_best`
-  - `knee_mid_s18` / `current_balanced`
+  - `ladder_s20` / `pilot_best`
+  - `knee_mid_s18` / `current_candidate` / `current_balanced`
 - `batch_compute_wmreward.py`
   Batch scoring script for WMReward and optional V-JEPA surprise.
 - `build_wmreward_visualization.py`
   Local HTML visualization builder for video + score inspection.
 - `run_train0705_current_modes.py`
   Batch runner for the current `train0705 -> Wan2.2 v2v` preset family.
+- `run_train0705_guard_ablation.py`
+  Thin wrapper for the current round3 `guard_ablation` batch.
 
 ## Archived Files
 
@@ -59,16 +61,27 @@ For generation:
 - `wan_openvid_0613pybullet_lorav2v_vjepa.py`
 - `run_lora_vjepa_modes.py`
 - `run_train0705_current_modes.py`
+- `run_train0705_guard_ablation.py`
 
 For the current `train0705` guidance family:
 
-- `current_best`
-  Alias of `ladder_s20`. This is the current best `wmreward` preset in the
-  available multi-case evidence.
-- `current_balanced`
+- `pilot_best`
+  Alias of `ladder_s20`. This was the best `wmreward` preset in the small
+  pilot, but round2/test5 did not confirm a positive mean `wmreward` delta.
+- `current_candidate` / `current_balanced`
   Alias of `knee_mid_s18`. This is the current more stable trade-off preset:
-  smaller `wmreward` gain than `current_best`, but lower cross-metric tension
-  in the existing pilot evidence.
+  round2/test5 still does not show a positive mean `wmreward` delta, but it has
+  lower cross-metric tension than `pilot_best`.
+
+Available runner mode groups:
+
+- `current`
+  Expands to the current baseline + guided comparison family.
+- `guard_ablation`
+  Expands to `target_w24_old`, `target_w24_ratio_005`,
+  `target_w24_guard_l1_003`.
+- `all`
+  Expands to every registered `train0705` preset above.
 
 For scoring and inspection:
 

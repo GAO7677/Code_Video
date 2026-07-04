@@ -595,6 +595,178 @@ phase5/phase6 winner 配置写错。
 - `knee_mid_s10_k2` 说明 `inner_k=2` 这条方向不是没用，而是**更不稳**：
   它能给出最漂亮的单 case 改善，但 case 间方差明显更大。
 
+### train0705 round2 / test5 subset（2026-07-04 06:18 UTC）
+
+在 `17` 个 case 的 `round2_test5` 子集上，重新用同一套只读
+`score_multicase_methods.py -> physv_eval score_case` 跑了两组成对比较：
+
+- `baseline` vs `ladder_s20`
+- `baseline` vs `knee_mid_s18`
+
+产物：
+
+- `baseline vs ladder_s20`
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5/round2_test5_baseline_vs_ladder_partial_scores.json`
+- `baseline vs knee_mid_s18`
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5/round2_test5_baseline_vs_knee_partial_scores.json`
+
+关键信号：
+
+- baseline:
+  - `mean_surprise = 0.701611`
+  - `mean_similarity = 0.298389`
+- `ladder_s20`:
+  - `mean_surprise = 0.701962`
+  - `mean_delta_surprise_vs_baseline = +0.000351`
+  - `mean_delta_physics_iq_vs_baseline = +0.0594`
+  - `mean_delta_videophy2_vs_baseline = 0.0`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.2`
+- `knee_mid_s18`:
+  - `mean_surprise = 0.701768`
+  - `mean_delta_surprise_vs_baseline = +0.000157`
+  - `mean_delta_physics_iq_vs_baseline = +0.1324`
+  - `mean_delta_videophy2_vs_baseline = +0.0588`
+  - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+
+这轮的结论和 pilot3 **不一致**，而且更重要：
+
+- 两个当前 guarded `context_anchored` preset 在这个 `17`-case 子集上，`wmreward`
+  主指标都**没有**实现正向改善；两者的 `mean_delta_surprise_vs_baseline` 都是轻微正值，
+  即比 baseline 更差。
+- `knee_mid_s18` 仍然比 `ladder_s20` 更稳：
+  - 它的 `wmreward` 退化更小（`+0.000157` vs `+0.000351`）
+  - `physics_iq` 增益更高
+  - `videophy2_pc` 也略有提升
+  - `cosmos_reason1` 没有继续下降
+- 但这只能支持“`knee_mid_s18` 是当前**更安全的候选**”，**不能**支持
+  “已经找到一组在 multi-case 上对 `wmreward` 有可测量正向改变的配置”。
+
+因此，`ladder_s20` 不再适合继续被称为“当前最佳”；
+更准确的状态是：
+
+- `ladder_s20` = **pilot winner / round2 未确认**
+- `knee_mid_s18` = **当前更稳的 guarded candidate**
+
+对主目标的影响：
+
+- 现在已有证据表明：把 `window_size=24 + trust-region guards` 的固定
+  `context_anchored` skeleton 直接搬到 `train0705` multi-case 上，还不足以稳定推低
+  `wmreward surprise`。
+- 下一步不该再继续只在 `ladder_s20` / `knee_mid_s18` 这两个固定强度点上复读；
+  优先级应切到：
+  - `Phase 8` 的 anti-artifact guard 变体真正进入 `train0705` preset family；
+  - 或者把 `target_w24_guard_combo` 这类更接近单-case 最优 target-shape 的配置
+    迁移到 `train0705`，再做新一轮 multi-case 验证。
+
+### round3 guard ablation（2026-07-04，5-case overlap 已完成）
+
+为回答“问题是不是出在 guard 太强”这个关键问题，已把 `Phase 8` 的三个
+guard ablation 变体接进 `train0705` preset family：
+
+- `target_w24_old`
+  - 无 `max_correction_ratio`
+  - 无 `video_l1_backoff`
+- `target_w24_ratio_005`
+  - 只有 `max_correction_ratio = 0.05`
+  - 无 `video_l1_backoff`
+- `target_w24_guard_l1_003`
+  - 无 `max_correction_ratio`
+  - 只有 `artifact_guard_mode = video_l1_backoff`
+  - `stay_close_max_video_l1 = 0.03`
+
+说明：
+
+- 当前 `ladder_s20` 本身已经等价于 `Phase 8` 里的 `target_w24_guard_combo`
+  （同样的 dense mid-band / `step_size = 0.20` / `window_size = 24` /
+  ratio cap + L1 guard 同开）。
+- 所以这轮 round3 不再重复跑 combo，而是专门测试：
+  - 完全去掉 guard 会不会恢复 `wmreward`
+  - 只保留 ratio cap 或只保留 L1 guard，哪一种更可能是合适的 trust-region
+
+本轮生成现已完成，输出目录：
+
+- `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation/`
+
+对比评分：
+
+- `target_w24_old_vs_baseline5_scores.json`
+- `target_w24_ratio_005_vs_baseline5_scores.json`
+- `target_w24_guard_l1_003_vs_baseline5_scores.json`
+- 聚合摘要：
+  - `round3_guard_ablation_compare_summary.json`
+  - `round3_guard_ablation_compare_summary.md`
+
+输入子集：
+
+- `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation_cases.txt`
+- 覆盖 `5` 个 case：
+  - `0613pybullet_sample_000301_w000`
+  - `0613pybullet_sample_001460_w002`
+  - `phyco_kubric_ball_drop_v2_2025-09-04_018559`
+  - `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`
+  - `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`
+
+这轮的判断标准很直接：
+
+- 如果 `target_w24_old` 明显优于当前 guarded combo，说明 trust-region guard
+  把有效写入压得过头了；
+- 如果 `ratio_only` 或 `l1_only` 优于 combo，说明需要保留 guard，但 guard 结构应拆开；
+- 如果三者都不优于 baseline，那么问题就更可能在 `target-shape / energy objective`
+  本身，而不是 guard 强度。
+
+现在已有正式结果：
+
+- baseline（同 5 个 overlap case）:
+  - `mean_surprise = 0.707120`
+  - `mean_similarity = 0.292880`
+  - `mean_physics_iq = 47.224`
+  - `mean_videophy2 = 3.4`
+  - `mean_cosmos_reason1 = 3.0`
+- `target_w24_old`（无 guard）:
+  - `mean_surprise = 0.673501`
+  - `mean_delta_surprise_vs_baseline = -0.033619`
+  - `mean_delta_physics_iq_vs_baseline = -40.036`
+  - `mean_delta_videophy2_vs_baseline = +0.8`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.667`
+- `target_w24_ratio_005`（只保留 ratio cap）:
+  - `mean_surprise = 0.706683`
+  - `mean_delta_surprise_vs_baseline = -0.000437`
+  - `mean_delta_physics_iq_vs_baseline = +1.194`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.333`
+- `target_w24_guard_l1_003`（只保留 L1 backoff）:
+  - `mean_surprise = 0.706439`
+  - `mean_delta_surprise_vs_baseline = -0.000681`
+  - `mean_delta_physics_iq_vs_baseline = -0.406`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+
+当前解读：
+
+- `target_w24_old` 证明了一件重要的事：**guard 确实会压掉有效写入**。
+  一旦完全去掉 guard，`wmreward` 会在 5 个 overlap case 上大幅正向移动，
+  而且 5/5 case 的 `surprise` 都比 baseline 更低。
+- 但 `target_w24_old` 也同样证明：**完全去掉 guard 不可接受**。
+  它把 `physics_iq` 平均拉低 `-40.036`，`cosmos_reason1` 也明显下降，
+  因此不能作为最终候选。
+- `target_w24_ratio_005` 是当前 round3 里最值得继续扩 case 的结果：
+  - 主指标 `wmreward` 仍保持轻微正向（`-0.000437`）
+  - `physics_iq` 平均是正向的（`+1.194`）
+  - `videophy2_pc` 也略有提升（`+0.2`）
+  - `cosmos_reason1` 只轻微回落（`-0.333`）
+- `target_w24_guard_l1_003` 也能保住轻微 `wmreward` 改善，但比 `ratio_only` 更弱：
+  - `wmreward` 增益略大于 `ratio_only`
+  - 但 `physics_iq` 变成轻微负向
+  - `cosmos_reason1` 下降更多
+
+因此，这轮 round3 的关键结论已经比较清楚：
+
+- 问题**不只是** energy / target-shape 本身；当前 guarded combo 很可能确实 guard 过强。
+- 但正确方向不是直接回到 `target_w24_old`，而是朝**拆 guard**继续收缩。
+- 就当前 5-case overlap 证据看，下一轮最值得扩到更大 case 集的是：
+  - 首选：`target_w24_ratio_005`
+  - 次选：`target_w24_guard_l1_003`
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅

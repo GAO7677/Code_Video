@@ -158,11 +158,16 @@ TRAIN0705_CURRENT_MODES = [
     Train0705GuidancePreset(
         mode_id="ladder_s20",
         description=(
-            "Current wmreward winner: dense mid-band guidance, step size 0.20, "
-            "window_size=24 with trust-region guards enabled."
+            "Pilot wmreward winner, not confirmed by round2: dense mid-band guidance, "
+            "step size 0.20, window_size=24 with trust-region guards enabled."
         ),
         disable_vjepa_guidance=False,
-        aliases=("current_best", "target_w24_s20", "target_w24_guarded_s20"),
+        aliases=(
+            "pilot_best",
+            "target_w24_s20",
+            "target_w24_guarded_s20",
+            "target_w24_guard_combo",
+        ),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.20,
@@ -170,11 +175,11 @@ TRAIN0705_CURRENT_MODES = [
     Train0705GuidancePreset(
         mode_id="knee_mid_s18",
         description=(
-            "Current balanced preset: dense mid-band guidance, step size 0.18, "
+            "Current safer preset candidate: dense mid-band guidance, step size 0.18, "
             "window_size=24 with trust-region guards enabled."
         ),
         disable_vjepa_guidance=False,
-        aliases=("current_balanced", "target_w24_s18", "target_w24_guarded_s18"),
+        aliases=("current_candidate", "current_balanced", "target_w24_s18", "target_w24_guarded_s18"),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.18,
@@ -201,9 +206,74 @@ TRAIN0705_CURRENT_MODES = [
 ]
 
 
+TRAIN0705_GUARD_ABLATION_MODES = [
+    Train0705GuidancePreset(
+        mode_id="target_w24_old",
+        description=(
+            "Phase-8 ablation: dense mid-band step-0.20 target_w24 without any "
+            "trust-region guard."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("phase8_old",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.0,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_ratio_005",
+        description=(
+            "Phase-8 ablation: dense mid-band step-0.20 target_w24 with latent "
+            "correction-ratio cap only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("phase8_ratio_only",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.05,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_guard_l1_003",
+        description=(
+            "Phase-8 ablation: dense mid-band step-0.20 target_w24 with decoded-video "
+            "L1 backoff only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("phase8_l1_only",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.0,
+        vjepa_stay_close_max_video_l1=0.03,
+        vjepa_artifact_guard_mode="video_l1_backoff",
+    ),
+]
+
+
+TRAIN0705_ALL_MODES = [
+    *TRAIN0705_CURRENT_MODES,
+    *TRAIN0705_GUARD_ABLATION_MODES,
+]
+
+
+TRAIN0705_MODE_GROUPS = {
+    "current": tuple(mode.mode_id for mode in TRAIN0705_CURRENT_MODES),
+    "guard_ablation": tuple(mode.mode_id for mode in TRAIN0705_GUARD_ABLATION_MODES),
+    "all": tuple(mode.mode_id for mode in TRAIN0705_ALL_MODES),
+}
+
+
 def _build_train0705_mode_map() -> dict[str, Train0705GuidancePreset]:
     mode_map: dict[str, Train0705GuidancePreset] = {}
-    for mode in TRAIN0705_CURRENT_MODES:
+    for mode in TRAIN0705_ALL_MODES:
         keys = (mode.mode_id, *mode.aliases)
         for key in keys:
             if key in mode_map:
@@ -215,13 +285,24 @@ def _build_train0705_mode_map() -> dict[str, Train0705GuidancePreset]:
 TRAIN0705_MODE_MAP = _build_train0705_mode_map()
 
 
+def resolve_train0705_mode_group(group_name: str) -> tuple[Train0705GuidancePreset, ...]:
+    try:
+        mode_ids = TRAIN0705_MODE_GROUPS[group_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown train0705 mode group: {group_name}. "
+            f"Available groups: {sorted(TRAIN0705_MODE_GROUPS)}"
+        ) from exc
+    return tuple(resolve_train0705_preset(mode_id) for mode_id in mode_ids)
+
+
 def resolve_train0705_preset(preset_name: str) -> Train0705GuidancePreset:
     try:
         return TRAIN0705_MODE_MAP[preset_name]
     except KeyError as exc:
         raise ValueError(
             f"Unknown train0705 V-JEPA preset: {preset_name}. "
-            f"Available canonical modes: {[mode.mode_id for mode in TRAIN0705_CURRENT_MODES]}"
+            f"Available canonical modes: {[mode.mode_id for mode in TRAIN0705_ALL_MODES]}"
         ) from exc
 
 
