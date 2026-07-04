@@ -844,7 +844,7 @@ guard ablation 变体接进 `train0705` preset family：
   - `target_w24_s20_ratio_010`
   - `target_w24_s25_ratio_005`
 
-目前已经先完成并正式打分了两个新候选：
+目前这一轮 overlap-5 sweep 已全部生成并全部完成正式打分：
 
 1. `target_w24_s15_ratio_003`
 
@@ -894,20 +894,227 @@ guard ablation 变体接进 `train0705` preset family：
 - 这给出一个很直接的局部结论：**更紧 cap 下，强度拐点大概率在 `0.15 < step_size < 0.20` 之间**，
   而不是继续往更大步长走。
 
-截至当前 round5 partial 的临时排序：
+3. `target_w24_ratio_005`
 
-- 当前最值得继续关注的是 `target_w24_s15_ratio_003`
-- `target_w24_s20_ratio_003` 已经基本可视为“过强”
-- 后续仍待本轮继续验证的高价值点是：
-  - `target_w24_s20_ratio_0075`
-  - `target_w24_s20_ratio_010`
-  - `target_w24_s25_ratio_005`
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_ratio_005_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = -0.00023818016052246094`
+  - `mean_delta_physics_iq_vs_baseline = -0.5920000000000016`
+  - `mean_delta_videophy2_vs_baseline = 0.0`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.3333333333333333`
+
+当前解读：
+
+- 这次在同一 overlap-5 框架下，`ratio_005` 的表现比 round3 初看的印象更弱：
+  - `wmreward` 仍是轻微正向
+  - 但增益已经明显弱于 `s15_ratio_003`
+  - `physics_iq` / `cosmos_reason1` 也都更差
+- 因此，`s15_ratio_003` 已经在同子集证据上**严格优于** `ratio_005`。
+
+4. `target_w24_s20_ratio_0075`
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s20_ratio_0075_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = +0.003514409065246582`
+  - `mean_delta_physics_iq_vs_baseline = -13.378000000000004`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+
+当前解读：
+
+- 在 `step_size = 0.20` 固定时，把 cap 从 `0.03` 放宽到 `0.075` 会同时伤害主指标和
+  `physics_iq`，而不是恢复 `wmreward`。
+- 这基本排除了“靠适度放宽 cap 就能把 `s20` 拉回有效区”这一条局部假设。
+
+5. `target_w24_s20_ratio_010`
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s20_ratio_010_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = +0.013415420055389404`
+  - `mean_delta_physics_iq_vs_baseline = -30.415999999999997`
+  - `mean_delta_videophy2_vs_baseline = 0.0`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+
+当前解读：
+
+- 这已经属于明显的过强/失稳区：主指标和 `physics_iq` 同时严重恶化。
+- 因而 `ratio_cap = 0.10` 可视为当前局部空间中的无效区域。
+
+6. `target_w24_s25_ratio_005`
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s25_ratio_005_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = +0.0010239958763122558`
+  - `mean_delta_physics_iq_vs_baseline = -7.558000000000002`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+
+当前解读：
+
+- 把步长推到 `0.25` 即使保留 `ratio_cap = 0.05`，依然会让 `wmreward` 回到 baseline 之上，
+  同时显著伤害 `physics_iq`。
+- 因而“更大步长再配中等 cap”这条方向也可以视为被排除。
+
+round5 overlap-5 的最终排序，可以按 `mean_delta_surprise_vs_baseline` 粗排为：
+
+1. `ladder_s20`
+   - `Δsurprise = -0.001007`
+   - `Δphysics_iq = +0.074`
+2. `target_w24_s15_ratio_003`
+   - `Δsurprise = -0.000708`
+   - `Δphysics_iq = -0.196`
+3. `knee_mid_s18`
+   - `Δsurprise = -0.000426`
+   - `Δphysics_iq = -0.426`
+4. `target_w24_ratio_005`
+   - `Δsurprise = -0.000238`
+   - `Δphysics_iq = -0.592`
+5. `target_w24_s20_ratio_003`
+   - `Δsurprise = +0.000654`
+   - `Δphysics_iq = +0.384`
+6. `target_w24_s25_ratio_005`
+   - `Δsurprise = +0.001024`
+   - `Δphysics_iq = -7.558`
+7. `target_w24_s20_ratio_0075`
+   - `Δsurprise = +0.003514`
+   - `Δphysics_iq = -13.378`
+8. `target_w24_s20_ratio_010`
+   - `Δsurprise = +0.013415`
+   - `Δphysics_iq = -30.416`
+
+最终结论不只是“选一个最好分数”，而是：
+
+- 目前最佳的新候选是 **`target_w24_s15_ratio_003`**。
+- 它没有超过 overlap-5 子集上的 `ladder_s20`，但它在当前新的 `ratio_only` 家族里是最稳、最像可扩展方向的点。
+- round5 已经把局部几何压缩得很清楚：
+  - `step_size >= 0.20` 基本都在往坏方向走
+  - 放宽 cap 也不会把 `s20` 拉回有效区
+  - 下一步应该围绕 **`s15_ratio_003` 附近做更细的局部扫描**
+    （更小步长微调、以及 `0.03` 附近更窄的 ratio cap 微调）
 
 也就是说，round5 已经给出了一个具体可操作的新方向：
 
 - 如果要稳住 cross-metric，同时争取保留一些 `wmreward` 提升，
   下一步优先级应放在**较小步长 + 更紧 ratio cap**这一支；
-- 而不是继续沿着 `step_size=0.20` 以上去推。
+- 而不是继续沿着 `step_size=0.20` 以上、再放宽 cap 去推。
+
+为此，已经把下一轮 **round6 local sweep** 的代码入口准备好了，并已在 overlap-5 上启动：
+
+- 新 mode group：`s15_local_sweep`
+- 预置候选：
+  - `target_w24_s14_ratio_003`
+  - `target_w24_s15_ratio_0025`
+  - `target_w24_s15_ratio_003`
+  - `target_w24_s15_ratio_0035`
+  - `target_w24_s16_ratio_003`
+- runner:
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_s15_local_sweep.py`
+- scoring runner:
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_train0705_s15_local_sweep.py`
+- 默认 `current` 组已收口为：
+  - `baseline`
+  - `ladder_s20`
+  - `knee_mid_s18`
+  - `target_w24_s15_ratio_003`
+- `target_w24_s15_ratio_003` 已增加别名：
+  - `current_local_best`
+  - `round5_best_local`
+  - `ratio_only_candidate`
+
+当前状态（2026-07-04，进行中）：
+
+- 运行命令：
+  - `PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main`
+  - `CUDA_VISIBLE_DEVICES=6,7`
+  - `/home/gaoya/miniconda3/envs/wan-cu128/bin/python`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_s15_local_sweep.py`
+  - `--weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000`
+  - `--device cuda:0 --vjepa-device cuda:1 --initialize-model-on-cpu --continue-on-error`
+- 当前生成进度：
+  - `target_w24_s14_ratio_003`：`5/5`
+  - `target_w24_s15_ratio_0025`：`5/5`
+  - `target_w24_s15_ratio_003`：`5/5`
+  - `target_w24_s15_ratio_0035`：进行中
+  - `target_w24_s16_ratio_003`：未开始
+- 已完成的 partial 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5/round6_partial_scores.json`
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5/round6_partial_summary.md`
+
+对目前已经完整落盘并完成正式打分的两个新候选，overlap-5 partial 排序如下：
+
+1. `target_w24_s15_ratio_0025`
+   - `mean_delta_surprise_vs_baseline = -0.0016273021697998046`
+   - `mean_delta_physics_iq_vs_baseline = +0.16599999999999682`
+   - `mean_delta_videophy2_vs_baseline = +0.2`
+   - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+2. `ladder_s20`
+   - `mean_delta_surprise_vs_baseline = -0.0010070204734802246`
+   - `mean_delta_physics_iq_vs_baseline = +0.0740000000000002`
+3. `target_w24_s14_ratio_003`
+   - `mean_delta_surprise_vs_baseline = -0.0004938125610351562`
+   - `mean_delta_physics_iq_vs_baseline = +0.2599999999999973`
+   - `mean_delta_videophy2_vs_baseline = +0.2`
+   - `mean_delta_cosmos_reason1_vs_baseline = -0.3333333333333333`
+4. `knee_mid_s18`
+   - `mean_delta_surprise_vs_baseline = -0.0004264235496520996`
+   - `mean_delta_physics_iq_vs_baseline = -0.42600000000000265`
+
+当前解读：
+
+- round6 到目前为止最强的新点不是原来的 `target_w24_s15_ratio_003`，而是更紧 cap 的
+  **`target_w24_s15_ratio_0025`**。
+- 在当前 overlap-5 partial 上，它已经同时超过：
+  - `ladder_s20` 的主指标 `wmreward surprise`
+  - `target_w24_s14_ratio_003` 的主指标
+  - `knee_mid_s18` 的主指标与 `physics_iq`
+- `target_w24_s14_ratio_003` 虽然主指标不如 `s15_ratio_0025`，但它给出了目前最稳的
+  cross-metric 组合之一：`physics_iq` 正增、`videophy2` 正增、`cosmos_reason1` 只轻微下降。
+- 这说明 round5 提出的“沿着更小步长 / 更紧 ratio cap 往内缩”方向是对的，而且局部最优点
+  可能比 `0.15 @ 0.03` 更靠向 **`0.15 @ 0.025`**。
+- `target_w24_s15_ratio_003` 已在当前 round6 目录中生成完成，正在补做与当前落盘视频严格一致的
+ 正式评分；待它与 `target_w24_s15_ratio_0035` / `target_w24_s16_ratio_003` 完成后，再决定是否把
+  `s15_ratio_0025` 扩展到更大 case 集。
+
+后续补评分更新（同一轮 round6，仍是 overlap-5）：
+
+- `target_w24_s15_ratio_003` 的当前落盘视频已完成正式 5-case 打分：
+  - `mean_delta_surprise_vs_baseline = -0.0016898989677429199`
+  - `mean_delta_physics_iq_vs_baseline = -0.02200000000000273`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+
+这把当前 round6 的局部结论进一步压实成了一个很清楚的 tradeoff：
+
+- 如果只按主指标 `wmreward surprise` 排，当前最好的是 **`target_w24_s15_ratio_003`**，
+  它略强于 `target_w24_s15_ratio_0025`。
+- 但这点主指标增益是用 `physics_iq` 从轻微正增（`+0.166`）回落到近乎持平略负
+  （`-0.022`）换来的。
+- 因而当前最值得继续扩展的，不再是单点“谁的 `Δsurprise` 最负”，而是：
+  - `target_w24_s15_ratio_003`
+    - 作为当前 **主指标 best** 的候选
+  - `target_w24_s15_ratio_0025`
+    - 作为当前 **更平衡** 的候选
+
+也就是说，round6 到目前为止并没有把答案推到一个绝对单峰点，而是把候选压缩成了
+`0.15 @ 0.025` 和 `0.15 @ 0.03` 之间的 very local tradeoff。
+
+实现层注意事项：
+
+- 之前启动的 `round6_partial_plus003_scores.json` 是在 `target_w24_s15_ratio_0035`
+  目录尚未生成完成时启动的，因此它的 `collect_records(...)` 只抓到了启动瞬间已存在的 mp4，
+  最终只包含：
+  - `baseline`
+  - `ladder_s20`
+  - `knee_mid_s18`
+  - `target_w24_s14_ratio_003`
+  - `target_w24_s15_ratio_0025`
+  - `target_w24_s15_ratio_003`
+- 等 `target_w24_s16_ratio_003` 完成后，需要重新跑一轮完整 round6 正式评分，
+  才能把 `target_w24_s15_ratio_0035` 与 `target_w24_s16_ratio_003` 一并纳入最终排序。
 
 ## 交付物
 

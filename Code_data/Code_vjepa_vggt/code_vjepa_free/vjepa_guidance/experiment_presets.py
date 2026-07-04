@@ -266,7 +266,12 @@ TRAIN0705_RATIO_CAP_SWEEP_MODES = [
             "step size 0.15, latent correction-ratio cap 0.03 only."
         ),
         disable_vjepa_guidance=False,
-        aliases=("ratio_cap_s15_c003",),
+        aliases=(
+            "ratio_cap_s15_c003",
+            "current_local_best",
+            "round5_best_local",
+            "ratio_only_candidate",
+        ),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.15,
@@ -342,15 +347,89 @@ TRAIN0705_RATIO_CAP_SWEEP_MODES = [
 ]
 
 
+TRAIN0705_S15_LOCAL_SWEEP_MODES = [
+    Train0705GuidancePreset(
+        mode_id="target_w24_s14_ratio_003",
+        description=(
+            "Round-6 local sweep: dense mid-band target_w24, step size 0.14, "
+            "latent correction-ratio cap 0.03 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("s15_local_s14_c003",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.14,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.03,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s15_ratio_0025",
+        description=(
+            "Round-6 local sweep: dense mid-band target_w24, step size 0.15, "
+            "latent correction-ratio cap 0.025 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("s15_local_s15_c0025",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.15,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.025,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s15_ratio_0035",
+        description=(
+            "Round-6 local sweep: dense mid-band target_w24, step size 0.15, "
+            "latent correction-ratio cap 0.035 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("s15_local_s15_c0035",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.15,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.035,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s16_ratio_003",
+        description=(
+            "Round-6 local sweep: dense mid-band target_w24, step size 0.16, "
+            "latent correction-ratio cap 0.03 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("s15_local_s16_c003",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.16,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.03,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+]
+
+
 TRAIN0705_ALL_MODES = [
     *TRAIN0705_CURRENT_MODES,
     *TRAIN0705_GUARD_ABLATION_MODES,
     *TRAIN0705_RATIO_CAP_SWEEP_MODES,
+    *TRAIN0705_S15_LOCAL_SWEEP_MODES,
 ]
 
 
 TRAIN0705_MODE_GROUPS = {
-    "current": tuple(mode.mode_id for mode in TRAIN0705_CURRENT_MODES),
+    "current": (
+        "baseline",
+        "ladder_s20",
+        "knee_mid_s18",
+        "target_w24_s15_ratio_003",
+    ),
     "guard_ablation": tuple(mode.mode_id for mode in TRAIN0705_GUARD_ABLATION_MODES),
     "ratio_cap_sweep": (
         "target_w24_s15_ratio_003",
@@ -359,6 +438,13 @@ TRAIN0705_MODE_GROUPS = {
         "target_w24_s20_ratio_0075",
         "target_w24_s20_ratio_010",
         "target_w24_s25_ratio_005",
+    ),
+    "s15_local_sweep": (
+        "target_w24_s14_ratio_003",
+        "target_w24_s15_ratio_0025",
+        "target_w24_s15_ratio_003",
+        "target_w24_s15_ratio_0035",
+        "target_w24_s16_ratio_003",
     ),
     "all": tuple(mode.mode_id for mode in TRAIN0705_ALL_MODES),
 }

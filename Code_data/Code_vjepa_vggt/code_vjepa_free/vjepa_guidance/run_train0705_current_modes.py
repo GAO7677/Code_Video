@@ -109,8 +109,8 @@ def _select_modes(mode_ids: list[str] | None, mode_group: str | None):
         return list(resolve_train0705_mode_group(mode_group))
 
     if not mode_ids and not mode_group:
-        return TRAIN0705_CURRENT_MODES
-    return TRAIN0705_CURRENT_MODES
+        return list(resolve_train0705_mode_group("current"))
+    return list(resolve_train0705_mode_group("current"))
 
 
 def _print_available_modes() -> None:
