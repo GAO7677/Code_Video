@@ -1116,6 +1116,144 @@ round5 overlap-5 的最终排序，可以按 `mean_delta_surprise_vs_baseline` �
 - 等 `target_w24_s16_ratio_003` 完成后，需要重新跑一轮完整 round6 正式评分，
   才能把 `target_w24_s15_ratio_0035` 与 `target_w24_s16_ratio_003` 一并纳入最终排序。
 
+round6 完整正式评分现已完成：
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5/round6_full_scores.json`
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5/round6_full_summary.md`
+
+最终 overlap-5 排序如下：
+
+1. `target_w24_s15_ratio_0035`
+   - `mean_delta_surprise_vs_baseline = -0.0019044160842895507`
+   - `mean_delta_similarity_vs_baseline = +0.0019044160842895507`
+   - `mean_delta_physics_iq_vs_baseline = +0.43799999999999883`
+   - `mean_delta_videophy2_vs_baseline = +0.2`
+   - `mean_delta_cosmos_reason1_vs_baseline = -0.8`
+2. `target_w24_s15_ratio_003`
+   - `mean_delta_surprise_vs_baseline = -0.0016898989677429199`
+   - `mean_delta_physics_iq_vs_baseline = -0.02200000000000273`
+3. `target_w24_s15_ratio_0025`
+   - `mean_delta_surprise_vs_baseline = -0.0016273021697998046`
+   - `mean_delta_physics_iq_vs_baseline = +0.16599999999999682`
+4. `ladder_s20`
+   - `mean_delta_surprise_vs_baseline = -0.0010070204734802246`
+   - `mean_delta_physics_iq_vs_baseline = +0.0740000000000002`
+5. `target_w24_s14_ratio_003`
+   - `mean_delta_surprise_vs_baseline = -0.0004938125610351562`
+   - `mean_delta_physics_iq_vs_baseline = +0.2599999999999973`
+6. `knee_mid_s18`
+   - `mean_delta_surprise_vs_baseline = -0.0004264235496520996`
+   - `mean_delta_physics_iq_vs_baseline = -0.42600000000000265`
+7. `target_w24_s16_ratio_003`
+   - `mean_delta_surprise_vs_baseline = +0.00010606050491333008`
+   - `mean_delta_physics_iq_vs_baseline = +0.3200000000000003`
+
+round6 的正式结论：
+
+- 当前 overlap-5 上新的主候选已经从 `target_w24_s15_ratio_003` 进一步移动到
+  **`target_w24_s15_ratio_0035`**。
+- 这不是单纯“主指标最好”的弱结论；它同时给出：
+  - 最好的 `wmreward surprise`
+  - 最好的 `wmreward similarity`
+  - 显著正向的 `physics_iq`
+  - 正向的 `videophy2`
+- `target_w24_s15_ratio_0025` 仍然保留为更保守的 backup candidate，因为它的
+  `cosmos_reason1` 下降更小一些（与 `target_w24_s15_ratio_003` 相同，且低于 `ladder_s20`），
+  但从当前 overlap-5 证据看，**首选扩展对象应改为 `target_w24_s15_ratio_0035`**。
+
+### round7 17-case 扩展验证（2026-07-04，已启动）
+
+基于 round6 完整排序，已不再继续做 overlap-5 局部微调，而是把以下两个候选扩展到
+`round2_test5_unique.txt` 的完整 `17` 个 case：
+
+- 主候选：`target_w24_s15_ratio_0035`
+- backup：`target_w24_s15_ratio_0025`
+
+输入：
+
+- `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5_unique.txt`
+
+输出根目录：
+
+- `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion`
+
+新建的 runner：
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_round7_expansion.py`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_train0705_round7_expansion.py`
+
+当前启动命令：
+
+- `PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main`
+- `CUDA_VISIBLE_DEVICES=6,7`
+- `/home/gaoya/miniconda3/envs/wan-cu128/bin/python`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_round7_expansion.py`
+- `--weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000`
+- `--device cuda:0 --vjepa-device cuda:1 --initialize-model-on-cpu --continue-on-error`
+
+下一决策边界：
+
+- 若 `target_w24_s15_ratio_0035` 在 full 17-case 上仍保住负向 `mean_delta_surprise_vs_baseline`，
+  且不出现明显的 `physics_iq` 反向崩塌，那么它将成为当前最接近“可推广答案”的
+  training-free preset。
+- 若它在 17-case 上退化，而 `target_w24_s15_ratio_0025` 更稳，则需要把“更紧 cap 更稳”
+  这一方向重新提升为主线。
+
+round7 当前验证进展（2026-07-04，两个候选都已 17/17 生成完成）：
+
+- `target_w24_s15_ratio_0035`
+  - 正式评分文件：
+    - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_baseline_vs_0035_scores.json`
+  - 相对 baseline（full 17-case）：
+    - `mean_delta_surprise_vs_baseline = -8.452990475822898e-05`
+    - `mean_delta_similarity_vs_baseline = +8.452990475822898e-05`
+    - `mean_delta_physics_iq_vs_baseline = -0.3000000000000001`
+    - `mean_delta_videophy2_vs_baseline = +0.058823529411764705`
+    - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+
+- `target_w24_s15_ratio_0025`
+  - 正式评分文件：
+    - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_baseline_vs_0025_scores.json`
+  - 相对 baseline（full 17-case）：
+    - `mean_delta_surprise_vs_baseline = -0.0003775182892294491`
+    - `mean_delta_similarity_vs_baseline = +0.0003775182892294491`
+    - `mean_delta_physics_iq_vs_baseline = +0.12352941176470533`
+    - `mean_delta_videophy2_vs_baseline = 0.0`
+    - `mean_delta_cosmos_reason1_vs_baseline = +0.17647058823529413`
+
+当前 round7 的实质结论已经很清楚：
+
+- overlap-5 上的 round6 冠军 `target_w24_s15_ratio_0035` **没有**在 full 17-case 上保住
+  稳定的跨指标正向改善：
+  - 主指标 `wmreward surprise` 只有极小负向变化
+  - `physics_iq` 反而转成了明显负向
+- 相比之下，`target_w24_s15_ratio_0025` 在 full 17-case 上更接近我们真正要的行为：
+  - `wmreward surprise` 改善幅度反而**比 `0035` 更大**
+  - `physics_iq` 转成了正向
+  - `cosmos_reason1` 也转成了正向
+  - `videophy2` 至少没有恶化
+
+也就是说，round7 把 round6 的局部判断重新翻转成了一个更可靠的全局趋势：
+
+- `0.15 @ 0.035` 更像是 overlap-5 上的局部最佳点；
+- `0.15 @ 0.025` 才是当前更有希望在更大 case 集上保住正向变化的
+  **broad candidate**。
+
+这仍然不足以宣布目标完成，原因是：
+
+- `target_w24_s15_ratio_0025` 的 `wmreward` 改善量级虽然明显好于 `0035` 和旧的
+  `target_w24_ratio_005`，但绝对数值仍然偏小；
+- 还需要把它与 `ladder_s20 / knee_mid_s18` 放在同一份正式评分文件里统一比较，
+  再判断它是否足以称为“当前最佳 training-free preset”。
+
+为此，已启动统一的 round7 正式比较：
+
+- runner:
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_train0705_round7_expansion.py`
+- 当前输出目标：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_test5_scores.json`
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅
