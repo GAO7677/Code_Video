@@ -1254,6 +1254,66 @@ round7 当前验证进展（2026-07-04，两个候选都已 17/17 生成完成�
 - 当前输出目标：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_test5_scores.json`
 
+round7 统一正式比较现已完成：
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_test5_scores.json`
+- 摘要：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_test5_summary.md`
+
+统一 17-case 排序如下：
+
+1. `target_w24_s15_ratio_0025`
+   - `mean_delta_surprise_vs_baseline = -0.0003775182892294491`
+   - `mean_delta_physics_iq_vs_baseline = +0.11176470588235222`
+   - `mean_delta_videophy2_vs_baseline = 0.0`
+   - `mean_delta_cosmos_reason1_vs_baseline = +0.17647058823529413`
+2. `target_w24_s15_ratio_0035`
+   - `mean_delta_surprise_vs_baseline = -8.452990475822898e-05`
+   - `mean_delta_physics_iq_vs_baseline = -0.29411764705882354`
+   - `mean_delta_videophy2_vs_baseline = +0.058823529411764705`
+   - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+3. `knee_mid_s18`
+   - `mean_delta_surprise_vs_baseline = +0.00015680930193732768`
+   - `mean_delta_physics_iq_vs_baseline = +0.22705882352941173`
+   - `mean_delta_videophy2_vs_baseline = +0.058823529411764705`
+   - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+4. `ladder_s20`
+   - `mean_delta_surprise_vs_baseline = +0.00035080488990334906`
+   - `mean_delta_physics_iq_vs_baseline = -0.05176470588235215`
+   - `mean_delta_videophy2_vs_baseline = 0.0`
+   - `mean_delta_cosmos_reason1_vs_baseline = -0.23529411764705882`
+
+最终判断（截至当前工作）：
+
+- **当前最佳、已在 full 17-case 上验证过的 training-free preset 是
+  `target_w24_s15_ratio_0025`。**
+- 它是当前比较表里唯一一个同时满足：
+  - 主指标 `wmreward surprise` 正向改善（`Δsurprise < 0`）
+  - `physics_iq` 正向
+  - `cosmos_reason1` 正向
+  - `videophy2` 不恶化
+- 因而，相比此前的 overlap-5 结论，当前更可靠的 broad candidate 不再是
+  `target_w24_s15_ratio_0035`，而是**更紧的 ratio cap：`0.15 @ 0.025`**。
+
+当前可以给出的、最稳妥的答案是：
+
+- `guidance_mode = context_anchored`
+- `target_step_indices = (8, 10, 11, 13, 14, 16, 17, 19, 20, 22, 23, 25)`
+- `latent_step_size = 0.15`
+- `max_correction_ratio = 0.025`
+- `artifact_guard_mode = none`
+- `window_size = 24`
+- `context_frames = 8`
+- `gradient_normalization = rms`
+
+保留意见：
+
+- 这套配置已经满足“在不重训模型前提下，对主指标和部分交叉指标产生可测量正向改变”
+  这一要求；
+- 但它的改善幅度仍然偏小，因此更准确的定位是：
+  **当前最佳已验证 preset**，而不是一个大幅领先的终局解。
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅
