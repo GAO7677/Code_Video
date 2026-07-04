@@ -351,6 +351,11 @@ Phase 1 找到能动结果的步长后：
 - `wait_for_phase7_gpus.py` — Phase 7 前台等待器：轮询指定物理 GPU，等显存/利用率连续
   低于阈值后，再自动启动 `run_phase7_target_shape.py`。✅
   作用不是后台偷跑，而是在当前外部训练 / probe 作业结束时间不稳定时，避免人工持续盯卡。
+  当前状态（2026-07-04 00:16 UTC 起）：
+  - 已在前台启动，监控物理 `gpu6/7`
+  - 条件：`memory_used <= 8000 MiB` 且 `utilization <= 20%`
+  - 需要连续 `3` 次轮询满足条件，轮询间隔 `30s`
+  - 启动后首个观测仍为 busy：`gpu6 ~3513 MiB @ 96%`，`gpu7 ~3617 MiB @ 96%`
 - 引导 stats 里的能量/修正量埋点（不改指标代码）。✅
 - 每个 phase 一张结果表（JSON + 简短 markdown）：配置 → 能量 delta → 修正 L2 →
   像素差 → wmreward（Phase 4 再加 judge 分）。
