@@ -6,6 +6,17 @@ Stage1B context-only no-GT-box inference for the train0705 DiffSynth-native run.
 This is based on the official DiffSynth example:
   examples/wanvideo/model_inference/Wan2.2-TI2V-5B.py
 
+Example run command:
+  env PYTHONPATH="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main" \
+  CUDA_VISIBLE_DEVICES="7" \
+  /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
+    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+    --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460/source_video/context_video_8f.mp4 \
+    --prompt "f5 sample 001460 industrial rigid body simulation sphere box" \
+    --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/inference_review/step-001000 \
+    --sampling-steps 12
+
 The script keeps the inference core on top of `diffsynth`, but reconstructs the
 same object-conditioning path used during train0705:
 
@@ -22,11 +33,35 @@ It loads three weight sources exactly like training:
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import torch
+
+
+def _read_cli_arg_value(argv: list[str], names: tuple[str, ...], default: str | None = None) -> str | None:
+    for name in names:
+        if name not in argv:
+            continue
+        index = argv.index(name)
+        if index + 1 < len(argv):
+            return argv[index + 1]
+    return default
+
+
+_DEFAULT_DIFFSYNTH_ROOT = "/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main"
+_SELECTED_DIFFSYNTH_ROOT = _read_cli_arg_value(
+    sys.argv,
+    ("--diffsynth-root", "--diffsynth_root"),
+    os.environ.get("DIFFSYNTH_ROOT", _DEFAULT_DIFFSYNTH_ROOT),
+)
+if _SELECTED_DIFFSYNTH_ROOT:
+    os.environ["DIFFSYNTH_ROOT"] = _SELECTED_DIFFSYNTH_ROOT
+    if _SELECTED_DIFFSYNTH_ROOT not in sys.path:
+        sys.path.insert(0, _SELECTED_DIFFSYNTH_ROOT)
+
 from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.train_v_newtrain as tvn

@@ -1,6 +1,6 @@
 # V-JEPA 引导 → WMReward 优化：进展与后续计划
 
-最后更新：2026-07-03
+最后更新：2026-07-04
 
 ## 目标
 
@@ -220,6 +220,46 @@ Phase 1 找到能动结果的步长后：
     单独缓存 baseline，并在 summary 里写 `baseline_signature_key` / `energy_signature`，
     避免把不同基准下的 `mean_delta_post` 混为一谈
 
+Phase 7 单 case（`025_Solid_Mechanics_0002`）现已跑完并完成打分，产物：
+- `phase7/phase7_summary.json`
+- `phase7/phase7_multimetric_scores.json`
+- `phase7/videos/*.mp4`
+
+关键信号：
+- baseline:
+  - `surprise = 0.6843`
+  - `similarity = 0.3157`
+  - `physics_iq = 12.15`
+  - `videophy2_pc = 4`
+- `target_w16`:
+  - `mean_delta_post = 0.129899`
+  - `surprise = 0.6636` (`Δsurprise = -0.0208`)
+  - `similarity = 0.3364`
+  - `physics_iq = 14.70`
+  - `videophy2_pc = 5`
+- `target_w24`:
+  - `mean_delta_post = 0.116108`
+  - `surprise = 0.6603` (`Δsurprise = -0.0241`)
+  - `similarity = 0.3397`
+  - `physics_iq = 15.00`
+  - `videophy2_pc = 5`
+- `target_w32`:
+  - `mean_delta_post = 0.118315`
+  - `surprise = 0.6626` (`Δsurprise = -0.0218`)
+  - `similarity = 0.3374`
+  - `physics_iq = 14.03`
+  - `videophy2_pc = 5`
+
+Phase 7 当前结论：
+- 在保持 `ladder_s20` 强 guidance 时序不变的前提下，**加宽 anchored future horizon 是有效的**；
+  `w16 / w24 / w32` 全都比 baseline 更好。
+- 若按最终 `wmreward` 排序，当前单 case 最优是 **`target_w24`**，优于 `w16` 和 `w32`。
+- 若按 `mean_delta_post` 排序，`w16` 写入最强，但最终 `wmreward` 反而不如 `w24`；
+  这说明在当前阶段，**“写得更多”不等于“结果更好”**，window shape 已经开始影响优化方向本身，
+  而不再只是影响 guidance 强度。
+- `physics_iq` 与 `videophy2_pc` 在这个单 case 上也与 `wmreward` 同向改善，
+  因而 `target_w24` 是当前最合适进入下一轮多 case 验证的 Phase 3 候选。
+
 ### Phase 4 — 在 3–5 个 case 上验证胜出配置 ⏳ 已启动，已有首批多 case 结果
 
 拿 Phase 1–2 的最优配置，对 3–5 个 v2v case 跑 baseline vs 引导。报告每个 case 及
@@ -351,11 +391,10 @@ Phase 1 找到能动结果的步长后：
 - `wait_for_phase7_gpus.py` — Phase 7 前台等待器：轮询指定物理 GPU，等显存/利用率连续
   低于阈值后，再自动启动 `run_phase7_target_shape.py`。✅
   作用不是后台偷跑，而是在当前外部训练 / probe 作业结束时间不稳定时，避免人工持续盯卡。
-  当前状态（2026-07-04 00:16 UTC 起）：
-  - 已在前台启动，监控物理 `gpu6/7`
-  - 条件：`memory_used <= 8000 MiB` 且 `utilization <= 20%`
-  - 需要连续 `3` 次轮询满足条件，轮询间隔 `30s`
-  - 启动后首个观测仍为 busy：`gpu6 ~3513 MiB @ 96%`，`gpu7 ~3617 MiB @ 96%`
+  当前状态（2026-07-04 01:31 UTC）：
+  - 本轮没有继续依赖 waiter；直接确认 `gpu6` 空闲后，用单卡路径完成了 `Phase 7` 的复核与打分
+  - 也即：`run_phase7_target_shape.py` 可以在 `CUDA_VISIBLE_DEVICES=6` 下运行，令
+    `--device cuda:0 --vjepa-device cuda:0`
 - 引导 stats 里的能量/修正量埋点（不改指标代码）。✅
 - 每个 phase 一张结果表（JSON + 简短 markdown）：配置 → 能量 delta → 修正 L2 →
   像素差 → wmreward（Phase 4 再加 judge 分）。
