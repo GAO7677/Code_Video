@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg-scale", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quality", type=int, default=5)
+    parser.add_argument("--initialize-model-on-cpu", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -129,6 +130,8 @@ def main() -> None:
         ]
         if args.limit is not None:
             cmd.extend(["--limit", str(args.limit)])
+        if args.initialize_model_on_cpu:
+            cmd.append("--initialize-model-on-cpu")
         if args.force:
             cmd.append("--force")
         if args.overwrite:

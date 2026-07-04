@@ -166,6 +166,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-contained", type=int, default=2)
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
+    parser.add_argument("--initialize-model-on-cpu", action="store_true")
     infer0705.add_vjepa_cli_args(parser)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
@@ -229,6 +230,7 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         grounding_container_suppress_min_area_ratio=float(cli_args.grounding_container_suppress_min_area_ratio),
         grounding_container_suppress_small_iou_threshold=float(cli_args.grounding_container_suppress_small_iou_threshold),
         device=str(cli_args.device),
+        initialize_model_on_cpu=bool(cli_args.initialize_model_on_cpu),
     )
     for name in infer0705._VJEPA_RUNTIME_ARG_NAMES:
         runtime_kwargs[name] = getattr(cli_args, name)
@@ -365,6 +367,7 @@ def main() -> None:
         "num_frames": int(cli_args.num_frames),
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
+        "initialize_model_on_cpu": bool(cli_args.initialize_model_on_cpu),
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:

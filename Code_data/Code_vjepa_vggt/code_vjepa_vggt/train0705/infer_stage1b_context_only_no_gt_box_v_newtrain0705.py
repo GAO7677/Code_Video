@@ -314,6 +314,7 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     model_args.output_path = str(args.output_dir)
     model_args.dataset_type = "wan_ti2v"
     model_args.report_to = "none"
+    model_args.initialize_model_on_cpu = bool(getattr(args, "initialize_model_on_cpu", False))
 
     model_args.lora_base_model = "dit"
     model_args.lora_target_modules = "q,k,v,o,ffn.0,ffn.2"
@@ -406,7 +407,13 @@ def _build_runtime_model(args: argparse.Namespace):
             ".norm4.",
         ),
     )
-    model.to(torch.device(args.device))
+    target_device = torch.device(args.device)
+    model.to(target_device)
+    model.pipe.to(device=target_device, dtype=model.pipe.torch_dtype)
+    for aux_name in ("cotracker_adapter", "jepa_adapter", "vggt_adapter"):
+        aux_module = getattr(model, aux_name, None)
+        if aux_module is not None and hasattr(aux_module, "device_obj"):
+            aux_module.device_obj = target_device
     model.eval()
     configure_runtime_pipe_vjepa(model.pipe, args)
     return model, model_args, {
@@ -619,6 +626,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-contained", type=int, default=2)
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
+    parser.add_argument("--initialize-model-on-cpu", action="store_true")
     add_vjepa_cli_args(parser)
     return parser.parse_args()
 

@@ -485,6 +485,67 @@ smoke 产物：
 不用重复抄写 target indices / inner_k / artifact guard 等细参数，也能避免把已验证过的
 phase5/phase6 winner 配置写错。
 
+### train0705 pilot3 / current preset family（2026-07-04）
+
+这轮直接用新的 `train0705` preset runner，在 3 个 pilot case 上跑了完整 5-mode：
+
+- `baseline`
+- `ladder_s20`
+- `knee_mid_s18`
+- `knee_early_s15`
+- `knee_mid_s10_k2`
+
+运行方式：
+- Wan 主模型：`gpu6`
+- V-JEPA guidance：`gpu7`
+- 评测：单独放到 `gpu1` / `gpu7`，避免和生成抢显存
+
+产物：
+- 生成结果：
+  `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1/`
+- 按 case 的完整 compare + 评分：
+  `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1_compare_full/`
+- 聚合摘要：
+  - `aggregate_summary.json`
+  - `aggregate_summary.md`
+
+3-case 均值结论（相对 baseline）：
+
+- `knee_early_s15`
+  - `mean Δsurprise = +0.000312`
+  - `mean Δphysics_iq = -0.0567`
+  - 基本可视为**无效或略差**
+- `knee_mid_s10_k2`
+  - `mean Δsurprise = -0.000975`
+  - `mean Δphysics_iq = -0.4167`
+  - `mean Δcosmos = -1.0`
+  - 这是**最分裂**的一组：在 `0613pybullet_sample_001460_w002` 和
+    `physicIQ_025_Solid_Mechanics_0002` 上都能明显拉低 `wmreward surprise`，
+    其中前者还提升 `physics_iq`；但在 `phyco_kubric_cube_deform_soft_v2_noeff...`
+    上会把 `physics_iq` 拉低 `-5.27`，并且在 `physicIQ_025...` 上把 `cosmos_reason1`
+    从 `5` 拉到 `2`
+- `knee_mid_s18`
+  - `mean Δsurprise = -0.000447`
+  - `mean Δphysics_iq = +0.6733`
+  - 这是当前 **最稳** 的一组：
+    - `wmreward` 平均是正向的（虽然幅度不是最大）
+    - `physics_iq` 三个 case 平均是正向的
+    - `videophy2_pc` 全部不变
+    - `cosmos_reason1` 补跑后也没有出现系统性退化
+- `ladder_s20`
+  - `mean Δsurprise = -0.001203`
+  - `mean Δphysics_iq = -0.4267`
+  - 这是当前 **最强 wmreward** 的一组，但它不像 `knee_mid_s18` 那样稳；
+    `0613pybullet_sample_001460_w002` 上主指标很好，但 `physics_iq` 会掉
+
+当前解读：
+
+- 如果主目标只看 `wmreward`，`ladder_s20` 仍然是当前均值最优。
+- 如果要找“更像可推广配置”的选择，`knee_mid_s18` 现在更值得继续扩 case：
+  它虽然主指标增益更小，但跨 3 个 case 的 `physics_iq` 没有被牺牲掉，整体张力更低。
+- `knee_mid_s10_k2` 说明 `inner_k=2` 这条方向不是没用，而是**更不稳**：
+  它能给出最漂亮的单 case 改善，但 case 间方差明显更大。
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅
