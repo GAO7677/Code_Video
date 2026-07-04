@@ -30,6 +30,17 @@ CUDA_VISIBLE_DEVICES=7 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name train_stage1b_diffsynth_native0705_step1000_0705
 
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=6 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name train_stage1b_diffsynth_native0705_step1000_0705_vjepa \
+  --num-inference-steps 40 \
+  --vjepa-preset ladder_s20 \
+  --vjepa-device cuda:0
+
 Default output root:
 - /data/gaoya/AAA_test_video/0623/test/v2v/<model-name>/<step-name>
 """
@@ -155,6 +166,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-contained", type=int, default=2)
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
+    infer0705.add_vjepa_cli_args(parser)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -162,7 +174,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, output_dir: Path) -> argparse.Namespace:
-    return argparse.Namespace(
+    runtime_kwargs = dict(
         checkpoint=str(checkpoint_dir),
         context_video="",
         prompt="",
@@ -218,6 +230,9 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         grounding_container_suppress_small_iou_threshold=float(cli_args.grounding_container_suppress_small_iou_threshold),
         device=str(cli_args.device),
     )
+    for name in infer0705._VJEPA_RUNTIME_ARG_NAMES:
+        runtime_kwargs[name] = getattr(cli_args, name)
+    return argparse.Namespace(**runtime_kwargs)
 
 
 def _run_single_case_in_process(
@@ -242,6 +257,7 @@ def _run_single_case_in_process(
     load_info: dict[str, object],
     lora_checkpoint: str,
     stage1a_init_from: str,
+    vjepa_summary: dict | None,
 ) -> tuple[dict[str, object], list[str]]:
     logs: list[str] = []
     logs.append(f"[case] input_json={input_json_path}")
@@ -308,12 +324,14 @@ def _run_single_case_in_process(
             "lora_checkpoint": str(lora_checkpoint),
             "stage1a_init_from": str(stage1a_init_from),
         },
+        "vjepa": vjepa_summary,
     }
     return result, logs
 
 
 def main() -> None:
     cli_args = parse_args()
+    infer0705.apply_vjepa_preset_if_requested(cli_args)
     weights_root = cli_args.weights_root.expanduser().resolve()
     input_json_list_path = cli_args.input_json_list_path.expanduser().resolve()
     model_name = str(cli_args.model_name).strip()
@@ -347,6 +365,7 @@ def main() -> None:
         "num_frames": int(cli_args.num_frames),
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
+        "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
@@ -413,6 +432,7 @@ def main() -> None:
                 load_info=load_info,
                 lora_checkpoint=str(cli_args.lora_checkpoint),
                 stage1a_init_from=str(cli_args.stage1a_init_from),
+                vjepa_summary=infer0705.summarize_vjepa_args(cli_args),
             )
         except Exception as exc:
             error_lines = step_log_lines + [f"[error] {sample_stem}: {exc}"]

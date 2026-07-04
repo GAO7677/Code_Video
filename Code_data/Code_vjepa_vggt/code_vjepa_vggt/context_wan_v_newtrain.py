@@ -1092,6 +1092,149 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
         self.units.insert(insert_at, WanVideoUnit_ContextVideoEmbedder())
         self.model_fn = model_fn_wan_video_with_context
 
+    def configure_vjepa(
+        self,
+        *,
+        vjepa_model_name: str,
+        vjepa_checkpoint_path,
+        vjepa_device,
+        vjepa_config,
+        enable_vjepa_guidance: bool,
+    ) -> None:
+        self.vjepa_model_name = str(vjepa_model_name)
+        self.vjepa_checkpoint_path = (
+            str(vjepa_checkpoint_path) if vjepa_checkpoint_path is not None else None
+        )
+        self.vjepa_device = torch.device(vjepa_device) if vjepa_device is not None else torch.device(self.device)
+        self.vjepa_config = vjepa_config
+        self.enable_vjepa_guidance = bool(enable_vjepa_guidance)
+        self._vjepa_energy = None
+        self.vjepa_inner_k = 1
+        self.vjepa_target_timestep_values = []
+        self.vjepa_target_step_indices = []
+        self._backtracking = False
+        self._backtracking_taps = [0.002, 0.005, 0.01, 0.02]
+        self._line_search_taps = None
+        self._external_anchor_context_pixel = None
+        self._external_anchor_future_ref = None
+
+    def configure_target_timesteps(self, timestep_values: list[int]) -> None:
+        self.vjepa_target_timestep_values = [int(value) for value in timestep_values]
+
+    def configure_target_step_indices(self, step_indices: list[int]) -> None:
+        self.vjepa_target_step_indices = [int(value) for value in step_indices]
+
+    def set_line_search_taps(self, taps: Optional[list[float]]) -> None:
+        self._line_search_taps = list(taps) if taps else None
+
+    def set_backtracking(self, enabled: bool, taps: Optional[list[float]] = None) -> None:
+        self._backtracking = bool(enabled)
+        if taps:
+            self._backtracking_taps = [float(value) for value in taps]
+
+    def set_external_anchor(
+        self,
+        *,
+        context_frames_pixel: Optional[torch.Tensor],
+        predicted_future_ref: Optional[torch.Tensor],
+    ) -> None:
+        self._external_anchor_context_pixel = context_frames_pixel
+        self._external_anchor_future_ref = predicted_future_ref
+
+    def _ensure_vjepa_energy(self) -> VJEPASurpriseEnergy:
+        if self._vjepa_energy is None:
+            self._vjepa_energy = VJEPASurpriseEnergy(
+                model_name=str(self.vjepa_model_name),
+                device=self.vjepa_device,
+                local_torchhub=True,
+                checkpoint_path=self.vjepa_checkpoint_path,
+            )
+        return self._vjepa_energy
+
+    def _select_vjepa_guidance_steps(self) -> tuple[set[int], dict[int, int]]:
+        guidance_config = getattr(self, "vjepa_config", None)
+        if guidance_config is None:
+            return set(), {}
+
+        if getattr(self, "vjepa_target_step_indices", None):
+            selected = {
+                max(0, min(int(step_idx), len(self.scheduler.timesteps) - 1))
+                for step_idx in self.vjepa_target_step_indices
+            }
+            mapping = {
+                int(step_idx): int(round(float(self.scheduler.timesteps[step_idx].detach().cpu().item())))
+                for step_idx in sorted(selected)
+            }
+            return selected, mapping
+
+        if getattr(self, "vjepa_target_timestep_values", None):
+            scheduler_values = self.scheduler.timesteps.detach().cpu().tolist()
+            selected: set[int] = set()
+            mapping: dict[int, int] = {}
+            for target in self.vjepa_target_timestep_values:
+                best_idx = min(
+                    range(len(scheduler_values)),
+                    key=lambda idx: abs(float(scheduler_values[idx]) - float(target)),
+                )
+                selected.add(int(best_idx))
+                mapping[int(best_idx)] = int(round(float(scheduler_values[best_idx])))
+            return selected, mapping
+
+        selected = set(
+            pick_guidance_step_indices(
+                total_steps=len(self.scheduler.timesteps),
+                count=int(getattr(guidance_config, "guidance_steps", 0)),
+                min_step_percent=float(getattr(guidance_config, "min_step_percent", 0.2)),
+                max_step_percent=float(getattr(guidance_config, "max_step_percent", 0.8)),
+            )
+        )
+        mapping = {
+            int(step_idx): int(round(float(self.scheduler.timesteps[step_idx].detach().cpu().item())))
+            for step_idx in sorted(selected)
+        }
+        return selected, mapping
+
+    def _decode_preview_video(
+        self,
+        x0_latent: torch.Tensor,
+        *,
+        preview_downsample_factor: int,
+        preview_frame_stride: int,
+        tiled: bool,
+        tile_size: tuple[int, int],
+        tile_stride: tuple[int, int],
+        framewise_decoding: bool,
+        restore_model_names: tuple[str, ...],
+    ) -> torch.Tensor:
+        preview_latent = x0_latent
+        if preview_frame_stride > 1:
+            preview_latent = preview_latent[:, :, ::preview_frame_stride].contiguous()
+        if preview_downsample_factor > 1:
+            preview_latent = F.interpolate(
+                preview_latent,
+                scale_factor=(1.0, 1.0 / preview_downsample_factor, 1.0 / preview_downsample_factor),
+                mode="trilinear",
+                align_corners=False,
+            )
+
+        self.load_models_to_device(["vae"])
+        try:
+            vae_dtype = next(self.vae.model.parameters()).dtype
+            preview_latent = preview_latent.to(device=self.device, dtype=vae_dtype)
+            if framewise_decoding:
+                preview_video = self.vae.decode_framewise(preview_latent, device=self.device)
+            else:
+                preview_video = self.vae.decode(
+                    preview_latent,
+                    device=self.device,
+                    tiled=tiled,
+                    tile_size=tile_size,
+                    tile_stride=tile_stride,
+                )
+            return preview_video.clamp_(-1, 1)
+        finally:
+            self.load_models_to_device(list(restore_model_names))
+
     @torch.no_grad()
     def __call__(
         self,
@@ -1175,6 +1318,12 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
         progress_bar_cmd=tqdm,
         output_type: Optional[Literal["quantized", "floatpoint"]] = "quantized",
     ):
+        guidance_config = getattr(self, "vjepa_config", None)
+        guidance_enabled = bool(
+            getattr(self, "enable_vjepa_guidance", False)
+            and guidance_config is not None
+            and int(getattr(guidance_config, "guidance_steps", 0)) > 0
+        )
         self.scheduler.set_timesteps(
             num_inference_steps,
             denoising_strength=denoising_strength,
@@ -1256,19 +1405,82 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 inputs_nega,
             )
 
+        selected_steps: set[int] = set()
+        active_model_names = self.in_iteration_models
+        guidance_mode = "surprise"
+        energy_fn = None
+        context_frames_pixel: Optional[torch.Tensor] = None
+        predicted_future_ref: Optional[torch.Tensor] = None
+        if guidance_enabled:
+            energy_fn = self._ensure_vjepa_energy()
+            selected_steps, selected_step_timestep_map = self._select_vjepa_guidance_steps()
+            guidance_mode = str(getattr(guidance_config, "guidance_mode", "surprise"))
+            logging.info(
+                "V-JEPA guidance enabled: mode=%s steps=%s timesteps=%s",
+                guidance_mode,
+                sorted(int(step) for step in selected_steps),
+                {
+                    str(step): int(timestep)
+                    for step, timestep in sorted(selected_step_timestep_map.items())
+                },
+            )
+            if guidance_mode == "context_anchored" and selected_steps:
+                n_ctx = int(getattr(guidance_config, "context_frames", 8))
+                future_frames = int(getattr(guidance_config, "window_size", 16)) - n_ctx
+                external_ctx = getattr(self, "_external_anchor_context_pixel", None)
+                external_ref = getattr(self, "_external_anchor_future_ref", None)
+                if external_ctx is not None and external_ref is not None:
+                    context_frames_pixel = external_ctx.detach()
+                    predicted_future_ref = external_ref.detach()
+                elif inputs_shared.get("clean_prefix_latents") is not None:
+                    with torch.no_grad():
+                        prefix_latents = inputs_shared["clean_prefix_latents"].detach()
+                        context_video_pixel = self._decode_preview_video(
+                            prefix_latents,
+                            preview_downsample_factor=1,
+                            preview_frame_stride=1,
+                            tiled=tiled,
+                            tile_size=tile_size,
+                            tile_stride=tile_stride,
+                            framewise_decoding=framewise_decoding,
+                            restore_model_names=tuple(self.in_iteration_models),
+                        )
+                        context_frames_pixel = context_video_pixel.detach()
+                        placeholder = torch.zeros(
+                            context_frames_pixel.shape[0],
+                            context_frames_pixel.shape[1],
+                            future_frames,
+                            context_frames_pixel.shape[3],
+                            context_frames_pixel.shape[4],
+                            device=context_frames_pixel.device,
+                            dtype=context_frames_pixel.dtype,
+                        )
+                        precompute_clip = build_context_future_clip(
+                            context_btchw=context_frames_pixel,
+                            future_btchw=placeholder,
+                            window_size=int(getattr(guidance_config, "window_size", 16)),
+                            context_frames=n_ctx,
+                        )
+                        predicted_future_ref = energy_fn.precompute_future_prediction(
+                            precompute_clip,
+                            window_size=int(getattr(guidance_config, "window_size", 16)),
+                            context_frames=n_ctx,
+                        )
+
         self.load_models_to_device(self.in_iteration_models)
         models = {name: getattr(self, name) for name in self.in_iteration_models}
-        for progress_id, timestep in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
+        for progress_id, timestep_cpu in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
             if (
-                timestep.item() < switch_DiT_boundary * 1000
+                timestep_cpu.item() < switch_DiT_boundary * 1000
                 and self.dit2 is not None
                 and models["dit"] is not self.dit2
             ):
                 self.load_models_to_device(self.in_iteration_models_2)
+                active_model_names = self.in_iteration_models_2
                 models["dit"] = self.dit2
                 models["vace"] = self.vace2
 
-            timestep = timestep.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)
+            timestep = timestep_cpu.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)
             noise_pred_posi = self.model_fn(**models, **inputs_shared, **inputs_posi, timestep=timestep)
             if cfg_scale != 1.0:
                 if cfg_merge:
@@ -1283,6 +1495,82 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 noise_pred = noise_pred_nega + cfg_scale * (noise_pred_posi - noise_pred_nega)
             else:
                 noise_pred = noise_pred_posi
+
+            if guidance_enabled and progress_id in selected_steps:
+                inner_k = max(1, int(getattr(self, "vjepa_inner_k", 1)))
+                use_anchored = (
+                    guidance_mode == "context_anchored"
+                    and context_frames_pixel is not None
+                    and predicted_future_ref is not None
+                )
+                for _inner in range(inner_k):
+                    if not use_anchored:
+                        break
+                    with torch.enable_grad():
+                        inputs_shared["latents"], stats = _apply_context_anchored_vjepa_guidance(
+                            latent_xt=inputs_shared["latents"],
+                            model_output=noise_pred,
+                            timestep=timestep_cpu,
+                            scheduler=self.scheduler,
+                            full_decoder=lambda x0_pred: self._decode_preview_video(
+                                x0_pred,
+                                preview_downsample_factor=int(getattr(guidance_config, "preview_downsample_factor", 1)),
+                                preview_frame_stride=1,
+                                tiled=tiled,
+                                tile_size=tile_size,
+                                tile_stride=tile_stride,
+                                framewise_decoding=framewise_decoding,
+                                restore_model_names=tuple(active_model_names),
+                            ),
+                            context_frames_pixel=context_frames_pixel,
+                            energy_obj=energy_fn,
+                            config=guidance_config,
+                            predicted_future_ref=predicted_future_ref,
+                            line_search_taps=(
+                                getattr(self, "_line_search_taps", None)
+                                or (
+                                    getattr(self, "_backtracking_taps", None)
+                                    if getattr(self, "_backtracking", False)
+                                    else None
+                                )
+                            ),
+                            backtracking=bool(getattr(self, "_backtracking", False)),
+                        )
+                if use_anchored:
+                    logging.info(
+                        "V-JEPA[%s] step=%d timestep=%d inner_k=%d energy=%.6f grad_rms=%.6f "
+                        "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f "
+                        "ratio_cap=%s guard=%s guard_l1=%.5f preview=%dx%dx%d",
+                        guidance_mode,
+                        progress_id,
+                        int(timestep_cpu.item()),
+                        inner_k,
+                        stats["energy"],
+                        stats["grad_rms"],
+                        stats.get("correction_l2", float("nan")),
+                        stats.get("latent_l2", float("nan")),
+                        stats.get("correction_ratio", float("nan")),
+                        stats.get("step_size_used", float("nan")),
+                        bool(stats.get("ratio_cap_applied", 0.0)),
+                        bool(stats.get("artifact_guard_applied", 0.0)),
+                        stats.get("artifact_guard_video_l1", float("nan")),
+                        int(stats["preview_frames"]),
+                        int(stats["preview_height"]),
+                        int(stats["preview_width"]),
+                    )
+                    if stats.get("line_search"):
+                        base_e = stats.get("line_search_base_energy", float("nan"))
+                        taps_str = "  ".join(
+                            f"{k}={v:.6f}({'DOWN' if v < base_e else 'up'})"
+                            for k, v in stats["line_search"].items()
+                        )
+                        logging.info(
+                            "V-JEPA[%s] step=%d LINE-SEARCH base_E=%.6f  %s",
+                            guidance_mode,
+                            progress_id,
+                            base_e,
+                            taps_str,
+                        )
 
             inputs_shared["latents"] = self.scheduler.step(
                 noise_pred,

@@ -10,6 +10,19 @@ from __future__ import annotations
 #   --prompt "f5 sample 001460 industrial rigid body simulation sphere box" \
 #   --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/inference_review/step-001000 \
 #   --sampling-steps 12
+#
+# Guided example:
+# PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+# CUDA_VISIBLE_DEVICES=6 \
+# /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
+#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+#   --context-video /path/to/context_video_8f.mp4 \
+#   --prompt "your prompt" \
+#   --output-dir /data/gaoya/agent-data/outputs/train0705_vjepa_demo \
+#   --sampling-steps 40 \
+#   --vjepa-preset ladder_s20 \
+#   --vjepa-device cuda:0
 
 """
 Stage1B context-only no-GT-box inference for the train0705 DiffSynth-native run.
@@ -76,6 +89,7 @@ if _SELECTED_DIFFSYNTH_ROOT:
 from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.train_v_newtrain as tvn
+from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
 from code_vjepa_vggt.context_wan_v_newtrain import ContextAwareWanVideoPipeline
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.train0705 import train_stage1b_context_only_no_gt_box_v_newtrain as t0705
@@ -111,6 +125,170 @@ def _resolve_launch_device() -> str:
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     torch.cuda.set_device(local_rank)
     return f"cuda:{local_rank}"
+
+
+_VJEPA_RUNTIME_ARG_NAMES = (
+    "vjepa_preset",
+    "enable_vjepa_guidance",
+    "vjepa_device",
+    "vjepa_model",
+    "vjepa_ckpt",
+    "vjepa_guidance_mode",
+    "vjepa_guidance_steps",
+    "vjepa_min_step_percent",
+    "vjepa_max_step_percent",
+    "vjepa_target_step_indices",
+    "vjepa_target_timesteps",
+    "vjepa_latent_step_size",
+    "vjepa_inner_k",
+    "vjepa_backtracking",
+    "vjepa_backtracking_taps",
+    "vjepa_line_search_taps",
+    "vjepa_preview_downsample_factor",
+    "vjepa_preview_frame_stride",
+    "vjepa_window_size",
+    "vjepa_context_frames",
+    "vjepa_stride",
+    "vjepa_reduction",
+    "vjepa_grad_norm_mode",
+    "vjepa_max_grad_norm",
+    "vjepa_max_correction_ratio",
+    "vjepa_stay_close_max_video_l1",
+    "vjepa_artifact_guard_mode",
+)
+
+
+def add_vjepa_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--vjepa-preset", type=str, default=None)
+    parser.add_argument("--enable-vjepa-guidance", action="store_true")
+    parser.add_argument("--vjepa-device", type=str, default=None)
+    parser.add_argument("--vjepa-model", type=str, default="vith")
+    parser.add_argument("--vjepa-ckpt", default="/data/gaoya/ckpt/VJEPA2/vith.pt")
+    parser.add_argument("--vjepa-guidance-mode", choices=["surprise", "context_anchored"], default="context_anchored")
+    parser.add_argument("--vjepa-guidance-steps", type=int, default=12)
+    parser.add_argument("--vjepa-min-step-percent", type=float, default=0.35)
+    parser.add_argument("--vjepa-max-step-percent", type=float, default=0.80)
+    parser.add_argument("--vjepa-target-step-indices", type=int, nargs="*", default=None)
+    parser.add_argument("--vjepa-target-timesteps", type=int, nargs="*", default=None)
+    parser.add_argument("--vjepa-latent-step-size", type=float, default=0.20)
+    parser.add_argument("--vjepa-inner-k", type=int, default=1)
+    parser.add_argument("--vjepa-backtracking", action="store_true")
+    parser.add_argument("--vjepa-backtracking-taps", type=float, nargs="*", default=None)
+    parser.add_argument("--vjepa-line-search-taps", type=float, nargs="*", default=None)
+    parser.add_argument("--vjepa-preview-downsample-factor", type=int, default=4)
+    parser.add_argument("--vjepa-preview-frame-stride", type=int, default=1)
+    parser.add_argument("--vjepa-window-size", type=int, default=24)
+    parser.add_argument("--vjepa-context-frames", type=int, default=8)
+    parser.add_argument("--vjepa-stride", type=int, default=4)
+    parser.add_argument("--vjepa-reduction", choices=["mean", "max"], default="mean")
+    parser.add_argument("--vjepa-grad-norm-mode", choices=["rms", "l2", "none"], default="rms")
+    parser.add_argument("--vjepa-max-grad-norm", type=float, default=10.0)
+    parser.add_argument("--vjepa-max-correction-ratio", type=float, default=0.05)
+    parser.add_argument("--vjepa-stay-close-max-video-l1", type=float, default=0.03)
+    parser.add_argument(
+        "--vjepa-artifact-guard-mode",
+        choices=["none", "video_l1_backoff"],
+        default="video_l1_backoff",
+    )
+    return parser
+
+
+def apply_vjepa_preset_if_requested(args: argparse.Namespace) -> None:
+    preset_name = getattr(args, "vjepa_preset", None)
+    if not preset_name:
+        return
+    apply_train0705_preset(args, str(preset_name))
+
+
+def _build_vjepa_config_from_args(args: argparse.Namespace) -> WanVJEPAConfig:
+    max_grad_norm = args.vjepa_max_grad_norm
+    if max_grad_norm is not None and float(max_grad_norm) <= 0:
+        max_grad_norm = None
+    max_correction_ratio = args.vjepa_max_correction_ratio
+    if max_correction_ratio is not None and float(max_correction_ratio) <= 0:
+        max_correction_ratio = None
+    stay_close_max_video_l1 = args.vjepa_stay_close_max_video_l1
+    if stay_close_max_video_l1 is not None and float(stay_close_max_video_l1) <= 0:
+        stay_close_max_video_l1 = None
+    return WanVJEPAConfig(
+        guidance_steps=int(args.vjepa_guidance_steps),
+        min_step_percent=float(args.vjepa_min_step_percent),
+        max_step_percent=float(args.vjepa_max_step_percent),
+        latent_step_size=float(args.vjepa_latent_step_size),
+        preview_downsample_factor=int(args.vjepa_preview_downsample_factor),
+        preview_frame_stride=int(args.vjepa_preview_frame_stride),
+        window_size=int(args.vjepa_window_size),
+        context_frames=int(args.vjepa_context_frames),
+        stride=int(args.vjepa_stride),
+        reduction=str(args.vjepa_reduction),
+        gradient_normalization=str(args.vjepa_grad_norm_mode),
+        max_grad_norm=max_grad_norm,
+        max_correction_ratio=max_correction_ratio,
+        stay_close_max_video_l1=stay_close_max_video_l1,
+        artifact_guard_mode=str(args.vjepa_artifact_guard_mode),
+        guidance_mode=str(args.vjepa_guidance_mode),
+    )
+
+
+def summarize_vjepa_args(args: argparse.Namespace) -> dict | None:
+    apply_vjepa_preset_if_requested(args)
+    if not bool(getattr(args, "enable_vjepa_guidance", False)):
+        return None
+    config = _build_vjepa_config_from_args(args)
+    return {
+        "enabled": True,
+        "preset": str(getattr(args, "vjepa_preset", "") or ""),
+        "device": str(args.vjepa_device or args.device),
+        "model": str(args.vjepa_model),
+        "checkpoint": str(args.vjepa_ckpt),
+        "target_step_indices": [int(v) for v in (args.vjepa_target_step_indices or [])],
+        "target_timesteps": [int(v) for v in (args.vjepa_target_timesteps or [])],
+        "inner_k": int(args.vjepa_inner_k),
+        "backtracking": bool(args.vjepa_backtracking),
+        "backtracking_taps": [float(v) for v in (args.vjepa_backtracking_taps or [])],
+        "line_search_taps": [float(v) for v in (args.vjepa_line_search_taps or [])],
+        "config": {
+            "guidance_mode": str(config.guidance_mode),
+            "guidance_steps": int(config.guidance_steps),
+            "min_step_percent": float(config.min_step_percent),
+            "max_step_percent": float(config.max_step_percent),
+            "latent_step_size": float(config.latent_step_size),
+            "preview_downsample_factor": int(config.preview_downsample_factor),
+            "preview_frame_stride": int(config.preview_frame_stride),
+            "window_size": int(config.window_size),
+            "context_frames": int(config.context_frames),
+            "stride": int(config.stride),
+            "reduction": str(config.reduction),
+            "gradient_normalization": str(config.gradient_normalization),
+            "max_grad_norm": config.max_grad_norm,
+            "max_correction_ratio": config.max_correction_ratio,
+            "stay_close_max_video_l1": config.stay_close_max_video_l1,
+            "artifact_guard_mode": str(config.artifact_guard_mode),
+        },
+    }
+
+
+def configure_runtime_pipe_vjepa(pipe: ContextAwareWanVideoPipeline, args: argparse.Namespace) -> None:
+    apply_vjepa_preset_if_requested(args)
+    if not bool(getattr(args, "enable_vjepa_guidance", False)):
+        return
+    pipe.configure_vjepa(
+        vjepa_model_name=str(args.vjepa_model),
+        vjepa_checkpoint_path=Path(args.vjepa_ckpt).expanduser().resolve()
+        if args.vjepa_ckpt is not None
+        else None,
+        vjepa_device=str(args.vjepa_device or args.device),
+        vjepa_config=_build_vjepa_config_from_args(args),
+        enable_vjepa_guidance=True,
+    )
+    pipe.configure_target_timesteps([int(value) for value in (args.vjepa_target_timesteps or [])])
+    pipe.configure_target_step_indices([int(value) for value in (args.vjepa_target_step_indices or [])])
+    pipe.vjepa_inner_k = max(1, int(args.vjepa_inner_k))
+    pipe.set_backtracking(
+        bool(args.vjepa_backtracking),
+        [float(value) for value in (args.vjepa_backtracking_taps or [])] or None,
+    )
+    pipe.set_line_search_taps([float(value) for value in (args.vjepa_line_search_taps or [])] or None)
 
 
 def _tensor_video_to_pil_list(context_video_single: torch.Tensor):
@@ -207,6 +385,7 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def _build_runtime_model(args: argparse.Namespace):
+    apply_vjepa_preset_if_requested(args)
     model_args = _build_model_args(args)
     accelerator = SimpleNamespace(device=torch.device(args.device))
     model = t0705.build_model(model_args, accelerator)
@@ -229,6 +408,7 @@ def _build_runtime_model(args: argparse.Namespace):
     )
     model.to(torch.device(args.device))
     model.eval()
+    configure_runtime_pipe_vjepa(model.pipe, args)
     return model, model_args, {
         "stage1a_info": stage1a_info,
         "stage1b_info": stage1b_info,
@@ -439,11 +619,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-contained", type=int, default=2)
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
+    add_vjepa_cli_args(parser)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    apply_vjepa_preset_if_requested(args)
     args.device = _resolve_launch_device()
     torch.manual_seed(int(args.seed))
     np.random.seed(int(args.seed))
@@ -509,6 +691,7 @@ def main() -> None:
         },
         "load_info": _summarize_load_info(load_info),
         "object_debug": object_debug,
+        "vjepa": summarize_vjepa_args(args),
     }
     (output_dir / f"{checkpoint_tag}.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n",

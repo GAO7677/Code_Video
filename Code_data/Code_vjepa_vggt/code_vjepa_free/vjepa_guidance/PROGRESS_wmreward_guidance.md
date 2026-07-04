@@ -374,6 +374,117 @@ Phase 7 当前结论：
   - 若后续要缓解 cross-metric 冲突，优先级不再是继续在这 4 个 fixed-step 配置里微调强弱，
     而是要么扩展 case 集进一步确认张力是否稳定存在，要么进入 Phase 3 重审能量目标/窗口定义。
 
+## train0705 / Wan2.2 接入 smoke（2026-07-04）
+
+本轮把 `context_anchored` training-free guidance 真正接到了
+`code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py`
+这条 `train0705 -> Wan2.2 v2v` 推理链路里，并在真实 case
+`0613pybullet_sample_001460_w002` 上做了单 case smoke。
+
+代码接入点：
+- `context_wan_v_newtrain.py`
+  - 新增可选 `configure_vjepa(...)`
+  - 在 diffusion step 内插入 `_apply_context_anchored_vjepa_guidance(...)`
+  - 复用了 `code_vjepa_free/vjepa_guidance` 里的 `WanVJEPAConfig` /
+    `VJEPASurpriseEnergy` / `build_context_future_clip`
+- `infer_stage1b_context_only_no_gt_box_v_newtrain0705.py`
+  - 新增 `--enable-vjepa-guidance` 及整套 `--vjepa-*` CLI
+  - 会把启用的 V-JEPA 配置写入结果 JSON
+- 两个 batch wrapper
+  - `train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - `AAAinfer/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - 已同步透传 `--vjepa-*` 参数
+
+当前 smoke 配置：
+- `guidance_mode = context_anchored`
+- `guidance_steps = 12`
+- `step_percent = [0.35, 0.80]`
+- `latent_step_size = 0.20`
+- `window_size = 24`, `context_frames = 8`
+- `gradient_normalization = rms`
+- `max_correction_ratio = 0.05`
+- `artifact_guard_mode = video_l1_backoff`
+- `stay_close_max_video_l1 = 0.03`
+
+运行观察：
+- baseline 单卡 `gpu6` 可以直接跑通。
+- guided 若把 Wan 和 V-JEPA 都放在同一张卡，会在**第一个 guidance step**
+  的 V-JEPA forward OOM。
+  - 失败位置已经确认：`progress_id = 14/40`，也就是第一个被选中的 guidance step
+  - 根因不是主采样，而是 Wan 主模型几乎吃满显存后，V-JEPA target encoder 再进卡导致 OOM
+- 解决方式：
+  - `CUDA_VISIBLE_DEVICES=6,7`
+  - Wan 主模型保留在 `cuda:0`（物理 `gpu6`）
+  - V-JEPA 单独放在 `cuda:1`（物理 `gpu7`）
+  - 这样 guided 端到端稳定跑通
+
+smoke 产物：
+- baseline:
+  `/data/gaoya/agent-data/outputs/train0705_vjepa_smoke/baseline_sample001460/step-001000.mp4`
+- guided:
+  `/data/gaoya/agent-data/outputs/train0705_vjepa_smoke/guided_sample001460_gpu67/step-001000.mp4`
+- 对比分数：
+  `/data/gaoya/agent-data/outputs/train0705_vjepa_smoke/compare_sample001460/wmreward_physicsiq_videophy2_cosmos_scores.json`
+
+当前 smoke 结果：
+- `wmreward`
+  - baseline: `surprise = 0.6944`, `similarity = 0.3056`
+  - guided: `surprise = 0.6933`, `similarity = 0.3067`
+  - 即：`Δsurprise ≈ -0.0010`，主指标上是**很轻微的正向变化**
+- `physics_iq`
+  - baseline: `81.53`
+  - guided: `42.98`
+  - 即：出现了**明显退化**
+- `videophy2_pc`
+  - baseline: `3`
+  - guided: `3`
+  - 即：**无可见变化**
+- `cosmos_reason1`
+  - baseline: `2`
+  - guided: `2`
+  - 即：**无可见变化**
+
+这次 smoke 的当前解读：
+- 工程上：
+  - `train0705` 链路的 V-JEPA guidance 接入已跑通
+  - 但当前形式**不适合单卡同放**；默认实用部署应视为“Wan / V-JEPA 分卡”
+- 指标上：
+  - `wmreward` 主指标确实能被推到一个轻微更优的方向
+  - 但这个改动幅度很小，而且没有得到 `videophy2_pc / cosmos_reason1` 的同步支持
+  - `physics_iq` 还出现了明显反向
+- 结论上：
+  - 当前这套 guarded `context_anchored` 配置可以作为**已接通、可继续扫参**的工作基线
+- 但还不能把它视为“在 train0705 / Wan2.2 上已找到稳定跨指标正向的最终配置”
+
+### train0705 当前方案代码化（2026-07-04）
+
+为避免后续继续手拼一长串 `--vjepa-*` 参数，这一轮把当前 train0705 的主方案
+整理成了可复用 preset + runner：
+
+- `experiment_presets.py`
+  - 新增 `TRAIN0705_CURRENT_MODES`
+  - 当前包含：
+    - `baseline`
+    - `ladder_s20`
+    - `knee_mid_s18`
+    - `knee_early_s15`
+    - `knee_mid_s10_k2`
+- `infer_stage1b_context_only_no_gt_box_v_newtrain0705.py`
+  - 新增 `--vjepa-preset`
+  - preset 会自动展开为对应的 `context_anchored` guidance 参数
+  - 输出 JSON 里的 `vjepa.preset` 会记录实际使用的 preset 名
+- 两个 batch wrapper
+  - `train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - `AAAinfer/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - 现在都支持 `--vjepa-preset`
+- 新增 runner：
+  - `run_train0705_current_modes.py`
+  - 用于按当前方案一键批量跑 baseline + top guided family
+
+这样后续做 multi-case 扩展时，命令层只需要切 `--vjepa-preset <mode_id>`，
+不用重复抄写 target indices / inner_k / artifact guard 等细参数，也能避免把已验证过的
+phase5/phase6 winner 配置写错。
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅
