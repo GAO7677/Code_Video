@@ -61,16 +61,22 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def load_delta_map(summary_json: Path | None) -> dict[str, float]:
+def load_summary_rows(summary_json: Path | None) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     if summary_json is None or not summary_json.is_file():
-        return {}
+        return {}, {}
+
     data = json.loads(summary_json.read_text())
-    out: dict[str, float] = {}
+    per_label: dict[str, dict[str, Any]] = {}
     for row in data.get("ranked", []):
         label = row.get("label")
-        if label is not None and row.get("mean_delta_post") is not None:
-            out[label] = float(row["mean_delta_post"])
-    return out
+        if isinstance(label, str):
+            per_label[label] = dict(row)
+
+    summary_meta = {
+        "ranking_mode": data.get("ranking_mode"),
+        "best": data.get("best"),
+    }
+    return per_label, summary_meta
 
 
 def load_existing_rows(existing_json: Path | None) -> dict[str, dict[str, Any]]:
@@ -93,7 +99,7 @@ def main() -> None:
     if not videos:
         raise SystemExit(f"No .mp4 files under {args.videos_dir}")
 
-    delta_map = load_delta_map(args.summary_json)
+    summary_rows, summary_meta = load_summary_rows(args.summary_json)
     existing_rows = load_existing_rows(args.merge_from_json)
 
     runner = None
@@ -129,14 +135,18 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for video in videos:
         label = video.stem
-        rec: dict[str, Any] = dict(existing_rows.get(label, {}))
+        rec: dict[str, Any] = dict(summary_rows.get(label, {}))
+        rec.update(existing_rows.get(label, {}))
         rec["label"] = label
         rec["video"] = str(video)
         if runner is not None:
             wm = runner.score(video)
             rec["surprise"] = wm["surprise"]
             rec["similarity"] = wm["similarity"]
-        rec["mean_delta_post"] = delta_map.get(label)
+        if rec.get("mean_delta_post") is not None:
+            rec["mean_delta_post"] = float(rec["mean_delta_post"])
+        else:
+            rec["mean_delta_post"] = None
         if physics_iq_score_case is not None:
             try:
                 piq = physics_iq_score_case(str(video), source_video_path=str(args.source_video))
@@ -168,9 +178,12 @@ def main() -> None:
         if rec.get("physics_iq_score") is not None:
             extras.append(f"physics_iq={rec['physics_iq_score']}")
         if rec.get("videophy2_score") is not None:
-            extras.append(f"videophy2_{args.videophy2_task}={rec['videophy2_score']}")
+            task_label = args.videophy2_task or rec.get("videophy2_task") or "score"
+            extras.append(f"videophy2_{task_label}={rec['videophy2_score']}")
         if rec.get("cosmos_reason1_score") is not None:
             extras.append(f"cosmos={rec['cosmos_reason1_score']}")
+        if rec.get("baseline_signature_key") is not None:
+            extras.append(f"sig={rec['baseline_signature_key']}")
         extras_str = (" " + " ".join(extras)) if extras else ""
         surprise_str = f"{rec['surprise']:.4f}" if rec.get("surprise") is not None else "n/a"
         sim_str = f"{rec['similarity']:.4f}" if rec.get("similarity") is not None else "n/a"
@@ -209,6 +222,8 @@ def main() -> None:
         )
 
     out = {
+        "summary_ranking_mode": summary_meta.get("ranking_mode"),
+        "summary_best": summary_meta.get("best"),
         "baseline_label": args.baseline_label,
         "baseline_surprise": base_surprise,
         "baseline_similarity": base_similarity,

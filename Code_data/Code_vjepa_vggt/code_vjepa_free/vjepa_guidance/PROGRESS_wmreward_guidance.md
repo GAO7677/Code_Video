@@ -202,12 +202,137 @@ Phase 1 找到能动结果的步长后：
   问题就在 anchor。
 只在有证据时触发，不投机做。
 
-### Phase 4 — 在 3–5 个 case 上验证胜出配置 ⏳
+当前更新（2026-07-03, pilot3 完成后）：
+- pilot3 表明强 fixed-step guidance 已经**稳定地**推动了 `wmreward`，所以严格说
+  “wmreward 对强 guidance 不响应”这一触发条件并不成立。
+- 但 pilot3 也表明当前 top-4 fixed-step 配置之间继续微调强弱，**并不能**缓解
+  `physics_iq / cosmos_reason1` 的张力。因此，若后续目标是“保住 wmreward 提升并减少
+  cross-metric 冲突”，优先级已经转向 Phase 3。
+- 一个重要实现细节：当前 `reduction="max"` 只对**滑窗 self-consistency surprise**
+  是直接有意义的；现有 `context_anchored` loss 是单个 anchored clip 的 feature mismatch，
+  还没有“多窗口取 max”的结构。所以当前最低成本的 Phase 3 入口不是先切 `reduction=max`，
+  而是**固定 `ladder_s20` 调度，先加宽 `window_size`**，让 anchored target 看更长的未来。
+- 已在 `probe_energy_persistence.py` 中加入 **Phase 7**：
+  - `target_w16` / `target_w24` / `target_w32`
+  - 都固定用 `ladder_s20` 的强 guidance 时序与步长
+  - 只比较 anchored future horizon 的改变
+  - 由于不同 `window_size` 对应的是不同 energy signature，脚本现在会为每种 signature
+    单独缓存 baseline，并在 summary 里写 `baseline_signature_key` / `energy_signature`，
+    避免把不同基准下的 `mean_delta_post` 混为一谈
+
+### Phase 4 — 在 3–5 个 case 上验证胜出配置 ⏳ 已启动，已有首批多 case 结果
 
 拿 Phase 1–2 的最优配置，对 3–5 个 v2v case 跑 baseline vs 引导。报告每个 case 及
 平均 wmreward delta，再加一个副指标（`videophy2 --task pc` 和/或 `cosmos_reason1`）
 确认 wmreward 的提升不是在钻单一指标的空子。用已有的 HTML compare viewer 做可视检查。
 （本 case 有真实续帧 `physicIQ_0002_clip_2p5s_3p5s.mp4`，Phase 4 可用 `physics_iq` 做参照打分。）
+
+目前已补齐 Phase 4 所需脚本：
+- `run_phase4_multicase.py`
+  - 复用 Wan2.2 LoRA 批量入口，直接跑当前 top 配置：
+    `baseline / ladder_s20 / knee_mid_s18 / knee_early_s15 / knee_mid_s10_k2`
+  - 用 **exact target_step_indices** 复现 phase5/6 里真正验证过的 winner，
+    不再用百分比近似回推步号。
+  - 显式传 `--vjepa-guidance-mode context_anchored`，避免误回退到 `surprise` 路径。
+- `score_multicase_methods.py`
+  - 按方法目录逐 case 打分；
+  - 每个视频从 sidecar 里的 `input_json` 反查 `source_video`，从而逐 case 调用
+    `physics_iq`；
+  - 只读调用 `WMRewardRunner` / `score_case`，不修改任何指标代码。
+
+首批 pilot case（3 个）：
+- `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`
+- `0613pybullet_sample_001460_w002`
+- `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`
+
+**已完成的 pilot3 全量多 case 对比：baseline + 4 个候选（3/3 cases）**
+
+产物：
+- `phase4_pilot3_baseline_vs_ladder_s20_scores.json`
+- `phase4_pilot3_all_methods_scores.json`
+
+方法均值（按 `mean_delta_surprise_vs_baseline` 排序）：
+- baseline:
+  - `mean_surprise = 0.69585`
+  - `mean_similarity = 0.30415`
+  - `mean_physics_iq = 34.25`
+  - `mean_videophy2_pc = 3.00`
+  - `mean_cosmos_reason1 = 1.67`
+- `ladder_s20`（当前 pilot3 总冠军）:
+  - `mean_surprise = 0.65595`
+  - `mean_similarity = 0.34405`
+  - `mean_delta_surprise_vs_baseline = -0.03990`
+  - `mean_delta_similarity_vs_baseline = +0.03990`
+  - `mean_delta_videophy2_pc_vs_baseline = +0.67`
+  - `mean_delta_physics_iq_vs_baseline = -30.87`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.67`
+- `knee_early_s15`:
+  - `mean_surprise = 0.66846`
+  - `mean_similarity = 0.33154`
+  - `mean_delta_surprise_vs_baseline = -0.02739`
+  - `mean_delta_similarity_vs_baseline = +0.02739`
+  - `mean_delta_videophy2_pc_vs_baseline = +0.33`
+  - `mean_delta_physics_iq_vs_baseline = -30.99`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.67`
+- `knee_mid_s18`:
+  - `mean_surprise = 0.66853`
+  - `mean_similarity = 0.33147`
+  - `mean_delta_surprise_vs_baseline = -0.02732`
+  - `mean_delta_similarity_vs_baseline = +0.02732`
+  - `mean_delta_videophy2_pc_vs_baseline = +0.33`
+  - `mean_delta_physics_iq_vs_baseline = -30.36`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.67`
+- `knee_mid_s10_k2`:
+  - `mean_surprise = 0.66936`
+  - `mean_similarity = 0.33064`
+  - `mean_delta_surprise_vs_baseline = -0.02648`
+  - `mean_delta_similarity_vs_baseline = +0.02648`
+  - `mean_delta_videophy2_pc_vs_baseline = +0.33`
+  - `mean_delta_physics_iq_vs_baseline = -29.67`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.67`
+
+逐 case 的 `wmreward` 变化（`ladder_s20`）：
+- `0613pybullet_sample_001460_w002`: `0.6948 -> 0.6604` (`Δsurprise = -0.0344`)
+- `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`:
+  `0.6854 -> 0.6591` (`Δsurprise = -0.0262`)
+- `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`:
+  `0.7074 -> 0.6483` (`Δsurprise = -0.0591`)
+
+逐 case 的 `wmreward` 变化（其余 3 个候选）：
+- `knee_mid_s18`
+  - `0613pybullet_sample_001460_w002`: `0.6948 -> 0.6657` (`Δsurprise = -0.0291`)
+  - `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`: `0.6854 -> 0.6732` (`Δsurprise = -0.0122`)
+  - `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`: `0.7074 -> 0.6667` (`Δsurprise = -0.0407`)
+- `knee_early_s15`
+  - `0613pybullet_sample_001460_w002`: `0.6948 -> 0.6743` (`Δsurprise = -0.0205`)
+  - `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`: `0.6854 -> 0.6627` (`Δsurprise = -0.0226`)
+  - `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`: `0.7074 -> 0.6684` (`Δsurprise = -0.0390`)
+- `knee_mid_s10_k2`
+  - `0613pybullet_sample_001460_w002`: `0.6948 -> 0.6718` (`Δsurprise = -0.0230`)
+  - `phyco_kubric_cube_deform_soft_v2_noeff_2025-09-08_fe6f35`: `0.6854 -> 0.6665` (`Δsurprise = -0.0189`)
+  - `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`: `0.7074 -> 0.6698` (`Δsurprise = -0.0376`)
+
+当前解读：
+- 这是一个**稳定的正向多 case 信号**：4 个 guided 配置在这 3 个 pilot case 上的
+  `wmreward` 都比 baseline 更好，没有出现单 case 反向。
+- 当前排序已经比较稳定：`ladder_s20` 明显领先，其余 3 个候选彼此非常接近，
+  且都落后于 `ladder_s20` 约 `0.0125–0.0134` 的 mean surprise 改善幅度。
+- `videophy2_pc` 也与 `wmreward` 大体同向：
+  - `ladder_s20` 从 baseline 的 `3.00` 提升到 `3.67`
+  - 其余 3 个候选都提升到 `3.33`
+- 但 `physics_iq` 和 `cosmos_reason1` 的张力没有被更弱配置消解：
+  - 4 个 guided 配置的 `mean_cosmos_reason1` 都从 baseline 的 `1.67` 降到 `1.00`
+  - 4 个 guided 配置的 `mean_physics_iq` 都从 baseline 的 `34.25` 大幅降到 `3.26–4.58`
+- 这意味着当前 pilot3 的结论不是“存在一个更温和的 config，能同时保住 wmreward 提升并显著少伤 `physics_iq` / `cosmos_reason1`”；
+  相反，更像是：
+  - `wmreward` / `videophy2_pc` 所偏好的 reference-free predictive plausibility
+    与 GT-reference judge (`physics_iq`) 存在结构性张力；
+  - 在当前 4 个候选里，**最强 `wmreward` 点仍然就是 `ladder_s20`**，
+    没有出现更平衡的明显替代者。
+- 实务上，Phase 4 的 pilot3 已经给出一个清晰结论：
+  - 若主目标是 `wmreward`，当前应该继续以 `ladder_s20` 为主配置；
+  - 若后续要缓解 cross-metric 冲突，优先级不再是继续在这 4 个 fixed-step 配置里微调强弱，
+    而是要么扩展 case 集进一步确认张力是否稳定存在，要么进入 Phase 3 重审能量目标/窗口定义。
 
 ## 交付物
 
@@ -218,6 +343,14 @@ Phase 1 找到能动结果的步长后：
   - `videophy2-task pc`
   - `cosmos-reason1`
   - `--merge-from-json` + `--skip-wmreward` 复用已有 wmreward 结果，只补交叉指标
+  - 从 `phaseN_summary.json` 继承每个条件的元数据；对 Phase 7 这类多 energy-signature
+    phase，会把 `baseline_signature_key` / `energy_signature` 一并写进评分结果，避免后续解释时
+    丢失“这条视频对应哪种 anchored target”的上下文
+- `run_phase7_target_shape.py` — Phase 7 单 case 一键 runner（先跑生成，再对
+  `phase7/videos` 目录做 `wmreward + physics_iq + videophy2-pc + cosmos_reason1` 打分）。✅
+- `wait_for_phase7_gpus.py` — Phase 7 前台等待器：轮询指定物理 GPU，等显存/利用率连续
+  低于阈值后，再自动启动 `run_phase7_target_shape.py`。✅
+  作用不是后台偷跑，而是在当前外部训练 / probe 作业结束时间不稳定时，避免人工持续盯卡。
 - 引导 stats 里的能量/修正量埋点（不改指标代码）。✅
 - 每个 phase 一张结果表（JSON + 简短 markdown）：配置 → 能量 delta → 修正 L2 →
   像素差 → wmreward（Phase 4 再加 judge 分）。
@@ -227,6 +360,8 @@ Phase 1 找到能动结果的步长后：
 
 代码（都在 `code_vjepa_free/vjepa_guidance/`）：
 - `probe_energy_persistence.py` — 扫描驱动（Phase 1 = `--phase 5`，Phase 2 = `--phase 6`）
+- `run_phase7_target_shape.py` — Phase 7 单 case 编排器（生成 + 打分）
+- `wait_for_phase7_gpus.py` — Phase 7 GPU 等待器（前台轮询后自动接力运行）
 - `wan_openvid_0613pybullet_lorav2v_vjepa.py` — 引导 pipeline（Phase 0b 埋点在此）
 - `vjepa_surprise.py` — 能量计算（`context_anchored` / `precompute_future_prediction`）
 - `score_guided_videos.py` — wmreward 批量打分（只读调用指标）

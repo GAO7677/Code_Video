@@ -12,6 +12,29 @@ from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 DEFAULT_PYTHON = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
+DEFAULT_GRID_FEATURE_GROUPS = (
+    "h_post_global_mean;"
+    "delta_h_global_mean;"
+    "h_post_frame_mean;"
+    "delta_h_frame_mean;"
+    "h_post_token_l2_mean;"
+    "delta_h_token_l2_mean;"
+    "h_post_global_mean+delta_h_global_mean;"
+    "h_post_frame_mean+delta_h_frame_mean;"
+    "h_post_token_l2_mean+delta_h_token_l2_mean;"
+    "h_post_global_mean+h_post_token_l2_mean;"
+    "delta_h_global_mean+delta_h_token_l2_mean;"
+    "h_post_frame_mean+h_post_token_l2_mean;"
+    "delta_h_frame_mean+delta_h_token_l2_mean;"
+    "h_post_global_mean+h_post_frame_mean;"
+    "delta_h_global_mean+delta_h_frame_mean;"
+    "h_post_global_mean+h_post_frame_mean+h_post_token_l2_mean;"
+    "delta_h_global_mean+delta_h_frame_mean+delta_h_token_l2_mean;"
+    "h_post_global_mean+delta_h_global_mean+h_post_token_l2_mean+delta_h_token_l2_mean;"
+    "h_post_frame_mean+delta_h_frame_mean+h_post_token_l2_mean+delta_h_token_l2_mean;"
+    "h_post_global_mean+delta_h_global_mean+h_post_frame_mean+delta_h_frame_mean;"
+    "h_post_global_mean+delta_h_global_mean+h_post_frame_mean+delta_h_frame_mean+h_post_token_l2_mean+delta_h_token_l2_mean"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -329,6 +352,12 @@ def run_single_preset_postprocess(
         preset_index_root / "probe_index.csv",
         "--output_root",
         preset_results_root / "grid_search",
+        "--frame_reduces",
+        "mean,flatten",
+        "--feature_groups",
+        DEFAULT_GRID_FEATURE_GROUPS,
+        "--top_k",
+        "50",
         "--allowed_steps",
         spec["capture_steps"],
         "--allowed_layers",

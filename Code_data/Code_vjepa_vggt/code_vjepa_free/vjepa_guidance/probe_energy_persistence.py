@@ -11,6 +11,7 @@ Phase 3: step-count + inner-K sweep -- at best timing+size from Phase 2
 Phase 4: context-anchored persistence sweep
 Phase 5: context-anchored strength ladder
 Phase 6: context-anchored knee refinement around the first wmreward-positive regime
+Phase 7: context-anchored target-shape sweep (wider future windows)
 
 Each phase runs baseline + N guided conditions, computes persistence_score,
 saves per-condition JSON and delta-curve plots.
@@ -313,6 +314,10 @@ def _run_condition(
     backtracking: bool = False,                 # auto-pick step size via line search
     backtracking_taps: Optional[list[float]] = None,
     grad_norm: Optional[str] = None,            # overrides vjepa_config.gradient_normalization
+    window_size: Optional[int] = None,          # overrides vjepa_config.window_size
+    context_frames_vjepa: Optional[int] = None, # overrides vjepa_config.context_frames
+    stride: Optional[int] = None,               # overrides vjepa_config.stride
+    reduction: Optional[str] = None,            # overrides vjepa_config.reduction
 ) -> tuple[list, list[dict]]:
     """Run one generation condition with per-step energy probing. Returns (video, records).
 
@@ -323,6 +328,12 @@ def _run_condition(
 
     effective_step_size = latent_step_size if latent_step_size is not None else vjepa_config.latent_step_size
     effective_grad_norm = grad_norm if grad_norm is not None else vjepa_config.gradient_normalization
+    effective_window_size = int(window_size) if window_size is not None else int(vjepa_config.window_size)
+    effective_context_frames = (
+        int(context_frames_vjepa) if context_frames_vjepa is not None else int(vjepa_config.context_frames)
+    )
+    effective_stride = int(stride) if stride is not None else int(vjepa_config.stride)
+    effective_reduction = str(reduction) if reduction is not None else str(vjepa_config.reduction)
 
     def _make_config(*, steps: int, min_p: float, max_p: float, step_size: float) -> WanVJEPAConfig:
         return WanVJEPAConfig(
@@ -332,10 +343,10 @@ def _run_condition(
             latent_step_size=step_size,
             preview_downsample_factor=vjepa_config.preview_downsample_factor,
             preview_frame_stride=vjepa_config.preview_frame_stride,
-            window_size=vjepa_config.window_size,
-            context_frames=vjepa_config.context_frames,
-            stride=vjepa_config.stride,
-            reduction=vjepa_config.reduction,
+            window_size=effective_window_size,
+            context_frames=effective_context_frames,
+            stride=effective_stride,
+            reduction=effective_reduction,
             gradient_normalization=effective_grad_norm,
             max_grad_norm=vjepa_config.max_grad_norm,
             guidance_mode=guidance_mode,
@@ -394,13 +405,13 @@ def _run_condition(
     if guidance_mode == "context_anchored":
         ctx_frames = core.load_context_frames(
             context_path,
-            context_frames=int(vjepa_config.context_frames),
+            context_frames=effective_context_frames,
             height=height,
             width=width,
         )
         anchor_context_pixel = _pil_frames_to_tensor(ctx_frames).to(pipe.vjepa_device)
-        n_ctx = int(vjepa_config.context_frames)
-        future_frames = int(vjepa_config.window_size) - n_ctx
+        n_ctx = effective_context_frames
+        future_frames = effective_window_size - n_ctx
         placeholder = torch.zeros(
             1, 3, future_frames,
             anchor_context_pixel.shape[3],
@@ -411,12 +422,12 @@ def _run_condition(
         precompute_clip = build_context_future_clip(
             context_btchw=anchor_context_pixel,
             future_btchw=placeholder,
-            window_size=int(vjepa_config.window_size),
+            window_size=effective_window_size,
             context_frames=n_ctx,
         )
         anchor_future_ref = energy_fn.precompute_future_prediction(
             precompute_clip,
-            window_size=int(vjepa_config.window_size),
+            window_size=effective_window_size,
             context_frames=n_ctx,
         )
         log.info("[%s] anchored probe ready: ctx=%d future=%d ref=%s",
@@ -734,6 +745,33 @@ def _phase6_conditions() -> list[dict]:
     ]
 
 
+def _phase7_conditions(p_center: float = 0.35) -> list[dict]:
+    """Phase 3 entry point: keep the strongest fixed-step guidance schedule and
+    vary the *anchored target shape* by widening the future horizon that V-JEPA
+    must explain from the real context.
+
+    Important: `reduction=max` is only meaningful for the legacy sliding-window
+    surprise energy today. The current context-anchored loss is a single anchored
+    clip, so the first low-cost Phase 3 probe is to widen `window_size`, not to
+    toggle `reduction`.
+
+    All conditions reuse the phase-5 winner schedule (`ladder_s20` / dense mid
+    band, step size 0.20) so any wmreward change can be attributed to the target
+    horizon, not to a weaker/stronger latent correction.
+    """
+    lo = max(0.05, p_center - 0.15)   # default p_center=0.35 -> lo=0.20
+    hi = min(0.95, p_center + 0.30)   # default -> hi=0.65
+    band12 = _dense_percents(lo, hi, 12)
+    return [
+        {"label": "target_w16", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 16},
+        {"label": "target_w24", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 24},
+        {"label": "target_w32", "guidance_step_percents": band12,
+         "latent_step_size": 0.20, "inner_k": 1, "window_size": 32},
+    ]
+
+
 def _rank_phase_scores(scores: list[dict], ranking_mode: str) -> list[dict]:
     if ranking_mode == "abs_mean_delta_desc":
         return sorted(
@@ -745,6 +783,33 @@ def _rank_phase_scores(scores: list[dict], ranking_mode: str) -> list[dict]:
             reverse=True,
         )
     return sorted(scores, key=lambda x: x["persistence_score"], reverse=True)
+
+
+def _energy_signature(
+    *,
+    guidance_mode: str,
+    window_size: int,
+    context_frames: int,
+    stride: int,
+    reduction: str,
+) -> dict[str, str | int]:
+    return {
+        "guidance_mode": str(guidance_mode),
+        "window_size": int(window_size),
+        "context_frames": int(context_frames),
+        "stride": int(stride),
+        "reduction": str(reduction),
+    }
+
+
+def _signature_key(signature: dict[str, str | int]) -> str:
+    return (
+        f"{signature['guidance_mode']}"
+        f"_w{signature['window_size']}"
+        f"_c{signature['context_frames']}"
+        f"_s{signature['stride']}"
+        f"_{signature['reduction']}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -779,36 +844,72 @@ def _run_phase(
     videos_dir.mkdir(parents=True, exist_ok=True)
 
     all_records: dict[str, list[dict]] = {}
-
-    # Load or run baseline
-    baseline_json = phase_dir / "baseline_records.json"
     baseline_video_path = videos_dir / "baseline.mp4"
-    if baseline_records_path is not None and baseline_records_path.exists():
-        log.info("Reusing baseline from: %s", baseline_records_path)
-        baseline_records = json.loads(baseline_records_path.read_text())
-    elif baseline_json.exists():
-        log.info("Reusing existing baseline: %s", baseline_json)
-        baseline_records = json.loads(baseline_json.read_text())
-    else:
-        log.info("=== Running BASELINE ===")
-        _, baseline_records = _run_condition(
-            **base_run_kwargs,
-            guidance_step_percents=[],
-            vjepa_config=vjepa_config,
-            probe_every_n=probe_every_n,
-            condition_label="baseline",
-            save_video_path=baseline_video_path,
-            guidance_mode=guidance_mode,
-        )
-        baseline_json.write_text(json.dumps(baseline_records, indent=2), encoding="utf-8")
+    default_signature = _energy_signature(
+        guidance_mode=guidance_mode,
+        window_size=int(vjepa_config.window_size),
+        context_frames=int(vjepa_config.context_frames),
+        stride=int(vjepa_config.stride),
+        reduction=str(vjepa_config.reduction),
+    )
+    default_sig_key = _signature_key(default_signature)
+    baseline_cache: dict[str, list[dict]] = {}
+    baseline_sig_map: dict[str, dict[str, str | int]] = {}
 
-    all_records["baseline"] = baseline_records
+    def _baseline_json_path(sig_key: str) -> Path:
+        if sig_key == default_sig_key:
+            return phase_dir / "baseline_records.json"
+        return phase_dir / f"baseline_{sig_key}_records.json"
+
+    def _load_or_run_baseline(sig: dict[str, str | int]) -> tuple[str, list[dict]]:
+        sig_key = _signature_key(sig)
+        if sig_key in baseline_cache:
+            return sig_key, baseline_cache[sig_key]
+
+        baseline_json = _baseline_json_path(sig_key)
+        if sig_key == default_sig_key and baseline_records_path is not None and baseline_records_path.exists():
+            log.info("Reusing baseline from: %s", baseline_records_path)
+            baseline_records = json.loads(baseline_records_path.read_text())
+        elif baseline_json.exists():
+            log.info("Reusing existing baseline: %s", baseline_json)
+            baseline_records = json.loads(baseline_json.read_text())
+        else:
+            log.info("=== Running BASELINE [%s] ===", sig_key)
+            _, baseline_records = _run_condition(
+                **base_run_kwargs,
+                guidance_step_percents=[],
+                vjepa_config=vjepa_config,
+                probe_every_n=probe_every_n,
+                condition_label=f"baseline__{sig_key}",
+                save_video_path=baseline_video_path if not baseline_video_path.exists() else None,
+                guidance_mode=str(sig["guidance_mode"]),
+                window_size=int(sig["window_size"]),
+                context_frames_vjepa=int(sig["context_frames"]),
+                stride=int(sig["stride"]),
+                reduction=str(sig["reduction"]),
+            )
+            baseline_json.write_text(json.dumps(baseline_records, indent=2), encoding="utf-8")
+
+        baseline_cache[sig_key] = baseline_records
+        baseline_sig_map[sig_key] = sig
+        return sig_key, baseline_records
+
+    default_baseline_key, default_baseline_records = _load_or_run_baseline(default_signature)
+    all_records["baseline"] = default_baseline_records
 
     scores: list[dict] = []
     for cond in conditions:
         label = cond["label"]
         rec_path = phase_dir / f"{label}_records.json"
         video_path = videos_dir / f"{label}.mp4"
+        sig = _energy_signature(
+            guidance_mode=cond.get("guidance_mode", guidance_mode),
+            window_size=int(cond.get("window_size", vjepa_config.window_size)),
+            context_frames=int(cond.get("context_frames_vjepa", vjepa_config.context_frames)),
+            stride=int(cond.get("stride", vjepa_config.stride)),
+            reduction=str(cond.get("reduction", vjepa_config.reduction)),
+        )
+        sig_key, baseline_records = _load_or_run_baseline(sig)
 
         if rec_path.exists():
             log.info("Reusing existing condition: %s", label)
@@ -827,6 +928,10 @@ def _run_phase(
                 guidance_mode=cond.get("guidance_mode", guidance_mode),
                 backtracking=cond.get("backtracking", False),
                 grad_norm=cond.get("grad_norm"),
+                window_size=cond.get("window_size"),
+                context_frames_vjepa=cond.get("context_frames_vjepa"),
+                stride=cond.get("stride"),
+                reduction=cond.get("reduction"),
             )
             rec_path.write_text(json.dumps(records, indent=2), encoding="utf-8")
 
@@ -836,6 +941,8 @@ def _run_phase(
             "label": label,
             "persistence_score": round(score, 4),
             "mean_delta_post": round(mean_delta, 6),
+            "baseline_signature_key": sig_key,
+            "energy_signature": sig,
             **{k: v for k, v in cond.items() if k != "label"},
         })
         log.info("[%s] persistence=%.3f  mean_delta=%.6f", label, score, mean_delta)
@@ -857,7 +964,17 @@ def _run_phase(
 
     # Plot
     prompt_short = case.get("input_caption", case.get("caption", ""))[:60]
-    _plot_phase(all_records, phase_dir, f"Phase{phase_num}", prompt_short)
+    if len(baseline_cache) == 1:
+        _plot_phase(all_records, phase_dir, f"Phase{phase_num}", prompt_short)
+    else:
+        note = phase_dir / f"phase{phase_num}_plot_skipped.txt"
+        note.write_text(
+            "Skipped combined delta plot because this phase used multiple energy signatures "
+            "with different baselines; see per-condition baseline_signature_key in the summary JSON.\n",
+            encoding="utf-8",
+        )
+        log.info("Skipped combined plot for phase %d because %d baseline signatures were used",
+                 phase_num, len(baseline_cache))
 
     return scores, all_records
 
@@ -877,11 +994,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vjepa-device", type=str, default=None)
     p.add_argument("--vjepa-model", type=str, default="vith")
     p.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
-    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6], default=1,
+    p.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5, 6, 7], default=1,
                    help="Which experiment phase to run (1=timing, 2=step-size, "
                         "3=count+inner_k, 4=mechanism compare: surprise vs context_anchored, "
                         "5=strength ladder: latent_step_size sweep in context_anchored, "
-                        "6=knee refinement: timing/inner-k/backtracking near the first wmreward-positive regime)")
+                        "6=knee refinement: timing/inner-k/backtracking near the first wmreward-positive regime, "
+                        "7=target-shape sweep: wider context-anchored future windows)")
     p.add_argument("--probe-every-n", type=int, default=2)
     p.add_argument("--num-frames", type=int, default=49)
     p.add_argument("--height", type=int, default=480)
@@ -1032,6 +1150,19 @@ def main() -> None:
         log.info("Phase 6 (knee refinement, context-anchored)")
         conditions = _phase6_conditions()
         _run_phase(6, conditions, pipe=pipe, case=case,
+                   base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
+                   output_dir=args.output_dir, probe_every_n=args.probe_every_n,
+                   guidance_mode="context_anchored",
+                   ranking_mode="abs_mean_delta_desc")
+
+    elif args.phase == 7:
+        # Phase 3, low-cost path: before reworking the anchored objective itself,
+        # hold the strongest fixed-step schedule constant and widen the future
+        # horizon V-JEPA must explain from the real context.
+        p_best = args.anchor_timing
+        log.info("Phase 7 (target-shape sweep, context-anchored) p_center=%.2f", p_best)
+        conditions = _phase7_conditions(p_best)
+        _run_phase(7, conditions, pipe=pipe, case=case,
                    base_run_kwargs=base_run_kwargs, vjepa_config=vjepa_config,
                    output_dir=args.output_dir, probe_every_n=args.probe_every_n,
                    guidance_mode="context_anchored",
