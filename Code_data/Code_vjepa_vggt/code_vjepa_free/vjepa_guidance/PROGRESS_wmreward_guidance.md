@@ -767,6 +767,148 @@ guard ablation 变体接进 `train0705` preset family：
   - 首选：`target_w24_ratio_005`
   - 次选：`target_w24_guard_l1_003`
 
+### round4 ratio-only 扩展验证（2026-07-04，full 17-case 已完成）
+
+为验证 round3 的 `ratio_only` 信号是否能外推，已将
+`target_w24_ratio_005` 扩展到 `round2_test5_unique.txt` 的完整 `17` 个 case，
+并用同一套官方只读指标入口统一重打：
+
+- 生成目录：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round4_test5_ratio_only/train0705_round4_test5_ratio_only_target_w24_ratio_005/step-001000`
+- 评分结果：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round4_test5_ratio_only/round4_test5_ratio_only_scores.json`
+
+四个方法的 full 17-case 汇总如下：
+
+- baseline:
+  - `mean_surprise = 0.7016113295274622`
+  - `mean_similarity = 0.29838867047253775`
+  - `mean_physics_iq = 45.73941176470587`
+  - `mean_videophy2 = 3.6470588235294117`
+  - `mean_cosmos_reason1 = 2.176470588235294`
+- `knee_mid_s18`:
+  - `mean_surprise = 0.7017681388293996`
+  - `mean_delta_surprise_vs_baseline = +0.00015680930193732768`
+  - `mean_delta_physics_iq_vs_baseline = +0.2311764705882353`
+  - `mean_delta_videophy2_vs_baseline = +0.058823529411764705`
+  - `mean_delta_cosmos_reason1_vs_baseline = 0.0`
+- `ladder_s20`:
+  - `mean_surprise = 0.7019621344173655`
+  - `mean_delta_surprise_vs_baseline = +0.00035080488990334906`
+  - `mean_delta_physics_iq_vs_baseline = +0.07411764705882436`
+  - `mean_delta_videophy2_vs_baseline = 0.0`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.23529411764705882`
+- `target_w24_ratio_005`:
+  - `mean_surprise = 0.7015835572691524`
+  - `mean_delta_surprise_vs_baseline = -2.7772258309757008e-05`
+  - `mean_delta_physics_iq_vs_baseline = -4.299999999999999`
+  - `mean_delta_videophy2_vs_baseline = 0.0`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.058823529411764705`
+
+这轮结果把 round3 的乐观判断明显收紧了：
+
+- `target_w24_ratio_005` 在 full 17-case 上**确实保住了极小幅度的 wmreward 正向变化**，
+  但量级只有 `-2.8e-05`，已经接近噪声底。
+- 更关键的是，它同时带来了明显的 `physics_iq` 下降（`-4.3`），而 `videophy2` 没有补偿性提升，
+  `cosmos_reason1` 也略降。
+- 因此，`target_w24_ratio_005` 不能再被视为“当前最佳候选配置”；它更准确的定位是：
+  **一个证明“只拆掉 L1 guard 还不够”的诊断点**。
+- 与之相比，`knee_mid_s18` 虽然没有改善 `wmreward`，但至少保持了更稳的 cross-metric：
+  它是当前 guarded family 里更安全的参考线，而不是最终答案。
+
+截至 round4 的总体判断：
+
+- 目前还**没有**一套 `context_anchored` training-free preset，能在 multi-case 上同时给出
+  稳定可测的 `wmreward` 改善，并且不明显伤害 `physics_iq / cosmos_reason1`。
+- 当前问题的重心已经从“guard 是否过强”转成：
+  - `ratio-cap` 的强度是否仍不合适；
+  - 还是 `context_anchored` target shape 与 `physics_iq` 存在系统张力。
+- 因此，下一轮不再继续围绕旧 combo 做重复验证，而是进入 **round5 ratio-cap sweep**：
+  在 `ratio_only` 家族内同时扫描 `step_size × max_correction_ratio`，先判断
+  “更紧 cap 能否保住 cross-metric，同时保留那一点 wmreward 改善”。
+
+### round5 ratio-cap sweep（2026-07-04，overlap-5 进行中）
+
+为把问题压缩到“ratio cap 太松还是 target-shape 张力”上，已启动一轮新的
+`step_size × max_correction_ratio` 小网格扫描。当前运行的是 round3 同一组 `5` 个 overlap case：
+
+- 输入：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation_cases.txt`
+- 输出根目录：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5`
+- 活动 preset 组：
+  - `target_w24_s15_ratio_003`
+  - `target_w24_s20_ratio_003`
+  - `target_w24_ratio_005`
+  - `target_w24_s20_ratio_0075`
+  - `target_w24_s20_ratio_010`
+  - `target_w24_s25_ratio_005`
+
+目前已经先完成并正式打分了两个新候选：
+
+1. `target_w24_s15_ratio_003`
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s15_ratio_003_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = -0.0007075667381286621`
+  - `mean_delta_physics_iq_vs_baseline = -0.19600000000000223`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -1.0`
+
+对比同一 5-case 参考线：
+
+- `ladder_s20`
+  - `mean_delta_surprise_vs_baseline = -0.0010070204734802246`
+  - `mean_delta_physics_iq_vs_baseline = +0.0740000000000002`
+- `knee_mid_s18`
+  - `mean_delta_surprise_vs_baseline = -0.0004264235496520996`
+  - `mean_delta_physics_iq_vs_baseline = -0.42600000000000265`
+
+当前解读：
+
+- `s15_ratio_003` 比 `knee_mid_s18` 更强：
+  - `wmreward` 改善更大
+  - `physics_iq` 下降更小
+  - `videophy2` 同样保持正向
+- 但它还没有超过这个 5-case 子集上的 `ladder_s20`。
+- 重要的是：它没有重现 `ratio_005` 在 full 17-case 上的明显 `physics_iq` 崩塌，
+  因而说明**更紧的 ratio cap 是值得继续追的方向**。
+
+2. `target_w24_s20_ratio_003`
+
+- 评分文件：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s20_ratio_003_scores.json`
+- 相对 baseline（同 5-case）：
+  - `mean_delta_surprise_vs_baseline = +0.0006542563438415528`
+  - `mean_delta_physics_iq_vs_baseline = +0.38400000000000034`
+  - `mean_delta_videophy2_vs_baseline = +0.2`
+  - `mean_delta_cosmos_reason1_vs_baseline = -0.6666666666666666`
+
+当前解读：
+
+- 在 `ratio_cap = 0.03` 固定的前提下，把 `step_size` 从 `0.15` 提到 `0.20`
+  会把 `wmreward` 从轻微正向推回负向。
+- 虽然 `physics_iq` 变成了正向，但主目标 `wmreward` 已经不成立，因此
+  `s20_ratio_003` 不是当前优先候选。
+- 这给出一个很直接的局部结论：**更紧 cap 下，强度拐点大概率在 `0.15 < step_size < 0.20` 之间**，
+  而不是继续往更大步长走。
+
+截至当前 round5 partial 的临时排序：
+
+- 当前最值得继续关注的是 `target_w24_s15_ratio_003`
+- `target_w24_s20_ratio_003` 已经基本可视为“过强”
+- 后续仍待本轮继续验证的高价值点是：
+  - `target_w24_s20_ratio_0075`
+  - `target_w24_s20_ratio_010`
+  - `target_w24_s25_ratio_005`
+
+也就是说，round5 已经给出了一个具体可操作的新方向：
+
+- 如果要稳住 cross-metric，同时争取保留一些 `wmreward` 提升，
+  下一步优先级应放在**较小步长 + 更紧 ratio cap**这一支；
+- 而不是继续沿着 `step_size=0.20` 以上去推。
+
 ## 交付物
 
 - `score_guided_videos.py` — 只读批量打分器（各 phase 复用）。✅
@@ -788,6 +930,10 @@ guard ablation 变体接进 `train0705` preset family：
   - 本轮没有继续依赖 waiter；直接确认 `gpu6` 空闲后，用单卡路径完成了 `Phase 7` 的复核与打分
   - 也即：`run_phase7_target_shape.py` 可以在 `CUDA_VISIBLE_DEVICES=6` 下运行，令
     `--device cuda:0 --vjepa-device cuda:0`
+- `run_train0705_ratio_cap_sweep.py` — round5 ratio-cap sweep 一键 runner，
+  固定 `target_w24` 的 dense mid-band 调度，只扫描 `step_size × ratio_cap`。✅
+- `score_train0705_round2_compare.py` — 现支持 `--extra-candidate label=path`，
+  可在同一次正式评分里并排比较多个新候选，而不需要手动改脚本。✅
 - 引导 stats 里的能量/修正量埋点（不改指标代码）。✅
 - 每个 phase 一张结果表（JSON + 简短 markdown）：配置 → 能量 delta → 修正 L2 →
   像素差 → wmreward（Phase 4 再加 judge 分）。

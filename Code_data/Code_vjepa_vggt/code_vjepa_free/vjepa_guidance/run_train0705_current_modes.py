@@ -119,13 +119,12 @@ def _print_available_modes() -> None:
         print(f"  - {group_name}: {', '.join(mode_ids)}", flush=True)
     print("TRAIN0705 canonical modes:", flush=True)
     seen: set[str] = set()
-    for group_name in ("current", "guard_ablation"):
-        for preset in resolve_train0705_mode_group(group_name):
-            if preset.mode_id in seen:
-                continue
-            seen.add(preset.mode_id)
-            aliases = f" aliases={list(preset.aliases)}" if preset.aliases else ""
-            print(f"  - {preset.mode_id}: {preset.description}{aliases}", flush=True)
+    for preset in resolve_train0705_mode_group("all"):
+        if preset.mode_id in seen:
+            continue
+        seen.add(preset.mode_id)
+        aliases = f" aliases={list(preset.aliases)}" if preset.aliases else ""
+        print(f"  - {preset.mode_id}: {preset.description}{aliases}", flush=True)
 
 
 def main() -> None:

@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--candidate-label", required=True)
     parser.add_argument("--candidate-dir", type=Path, required=True)
+    parser.add_argument(
+        "--extra-candidate",
+        action="append",
+        default=[],
+        help="Additional candidate in the form label=/abs/path/to/method_dir.",
+    )
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--python-bin", type=Path, default=DEFAULT_PYTHON_BIN)
     parser.add_argument("--round2-base", type=Path, default=DEFAULT_ROUND2_BASE)
@@ -63,6 +69,14 @@ def main() -> None:
         if not path.is_dir():
             raise SystemExit(f"Reference method directory not found for {label}: {path}")
     method_dirs.append((str(args.candidate_label), candidate_dir))
+    for spec in args.extra_candidate:
+        if "=" not in spec:
+            raise SystemExit(f"Invalid --extra-candidate spec (expected label=path): {spec}")
+        label, path_str = spec.split("=", 1)
+        path = Path(path_str).expanduser().resolve()
+        if not path.is_dir():
+            raise SystemExit(f"Extra candidate directory not found for {label}: {path}")
+        method_dirs.append((str(label), path))
 
     cmd = [
         str(args.python_bin),

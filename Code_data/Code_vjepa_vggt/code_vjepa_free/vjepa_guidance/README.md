@@ -36,6 +36,8 @@ The training-free idea is unchanged:
   Batch runner for the current `train0705 -> Wan2.2 v2v` preset family.
 - `run_train0705_guard_ablation.py`
   Thin wrapper for the current round3 `guard_ablation` batch.
+- `run_train0705_ratio_cap_sweep.py`
+  Thin wrapper for the round5 `ratio_cap_sweep` batch.
 
 ## Archived Files
 
@@ -62,6 +64,7 @@ For generation:
 - `run_lora_vjepa_modes.py`
 - `run_train0705_current_modes.py`
 - `run_train0705_guard_ablation.py`
+- `run_train0705_ratio_cap_sweep.py`
 
 For the current `train0705` guidance family:
 
@@ -72,6 +75,10 @@ For the current `train0705` guidance family:
   Alias of `knee_mid_s18`. This is the current more stable trade-off preset:
   round2/test5 still does not show a positive mean `wmreward` delta, but it has
   lower cross-metric tension than `pilot_best`.
+- `target_w24_ratio_005`
+  Best round3 5-case guard-ablation candidate, but round4 full 17-case only
+  gave near-zero `wmreward` gain and a clear `physics_iq` drop. Treat it as a
+  diagnostic anchor, not a solved guidance preset.
 
 Available runner mode groups:
 
@@ -80,6 +87,8 @@ Available runner mode groups:
 - `guard_ablation`
   Expands to `target_w24_old`, `target_w24_ratio_005`,
   `target_w24_guard_l1_003`.
+- `ratio_cap_sweep`
+  Expands to the round5 ratio-cap probes around `target_w24_ratio_005`.
 - `all`
   Expands to every registered `train0705` preset above.
 

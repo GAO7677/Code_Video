@@ -258,15 +258,108 @@ TRAIN0705_GUARD_ABLATION_MODES = [
 ]
 
 
+TRAIN0705_RATIO_CAP_SWEEP_MODES = [
+    Train0705GuidancePreset(
+        mode_id="target_w24_s15_ratio_003",
+        description=(
+            "Round-5 conservative ratio-cap probe: dense mid-band target_w24, "
+            "step size 0.15, latent correction-ratio cap 0.03 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("ratio_cap_s15_c003",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.15,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.03,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s20_ratio_003",
+        description=(
+            "Round-5 lower-cap probe: dense mid-band target_w24, step size 0.20, "
+            "latent correction-ratio cap 0.03 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("ratio_cap_s20_c003",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.03,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s20_ratio_0075",
+        description=(
+            "Round-5 higher-cap probe: dense mid-band target_w24, step size 0.20, "
+            "latent correction-ratio cap 0.075 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("ratio_cap_s20_c0075",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.075,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s20_ratio_010",
+        description=(
+            "Round-5 high-cap probe: dense mid-band target_w24, step size 0.20, "
+            "latent correction-ratio cap 0.10 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("ratio_cap_s20_c010",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.20,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.10,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+    Train0705GuidancePreset(
+        mode_id="target_w24_s25_ratio_005",
+        description=(
+            "Round-5 step/cap interaction probe: dense mid-band target_w24, "
+            "step size 0.25, latent correction-ratio cap 0.05 only."
+        ),
+        disable_vjepa_guidance=False,
+        aliases=("ratio_cap_s25_c005",),
+        vjepa_guidance_steps=len(MID12_INDICES),
+        vjepa_target_step_indices=MID12_INDICES,
+        vjepa_latent_step_size=0.25,
+        vjepa_window_size=24,
+        vjepa_max_correction_ratio=0.05,
+        vjepa_stay_close_max_video_l1=0.0,
+        vjepa_artifact_guard_mode="none",
+    ),
+]
+
+
 TRAIN0705_ALL_MODES = [
     *TRAIN0705_CURRENT_MODES,
     *TRAIN0705_GUARD_ABLATION_MODES,
+    *TRAIN0705_RATIO_CAP_SWEEP_MODES,
 ]
 
 
 TRAIN0705_MODE_GROUPS = {
     "current": tuple(mode.mode_id for mode in TRAIN0705_CURRENT_MODES),
     "guard_ablation": tuple(mode.mode_id for mode in TRAIN0705_GUARD_ABLATION_MODES),
+    "ratio_cap_sweep": (
+        "target_w24_s15_ratio_003",
+        "target_w24_s20_ratio_003",
+        "target_w24_ratio_005",
+        "target_w24_s20_ratio_0075",
+        "target_w24_s20_ratio_010",
+        "target_w24_s25_ratio_005",
+    ),
     "all": tuple(mode.mode_id for mode in TRAIN0705_ALL_MODES),
 }
 
