@@ -19,9 +19,9 @@ import subprocess
 from pathlib import Path
 
 try:
-    from .experiment_presets import TRAIN0705_CURRENT_MODES
+    from .experiment_presets import TRAIN0705_CURRENT_MODES, resolve_train0705_preset
 except ImportError:
-    from experiment_presets import TRAIN0705_CURRENT_MODES
+    from experiment_presets import TRAIN0705_CURRENT_MODES, resolve_train0705_preset
 
 
 SCRIPT_PATH = (
@@ -70,11 +70,16 @@ def parse_args() -> argparse.Namespace:
 def _select_modes(mode_ids: list[str] | None):
     modes = TRAIN0705_CURRENT_MODES
     if mode_ids:
-        wanted = set(mode_ids)
+        canonical_ids: list[str] = []
+        seen: set[str] = set()
+        for mode_id in mode_ids:
+            preset = resolve_train0705_preset(str(mode_id))
+            if preset.mode_id in seen:
+                continue
+            seen.add(preset.mode_id)
+            canonical_ids.append(preset.mode_id)
+        wanted = set(canonical_ids)
         modes = [mode for mode in modes if mode.mode_id in wanted]
-        missing = wanted.difference(mode.mode_id for mode in modes)
-        if missing:
-            raise ValueError(f"Unknown mode_ids: {sorted(missing)}")
     return modes
 
 

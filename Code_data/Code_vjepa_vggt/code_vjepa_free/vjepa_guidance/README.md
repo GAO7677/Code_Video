@@ -23,11 +23,17 @@ The training-free idea is unchanged:
 - `run_lora_vjepa_modes.py`
   Batch runner for the 7 preset guidance modes on the current LoRA workflow.
 - `experiment_presets.py`
-  Shared mode definitions for baseline and guided variants.
+  Shared mode definitions for baseline and guided variants, including the
+  current `train0705` presets:
+  - `baseline`
+  - `ladder_s20` / `current_best`
+  - `knee_mid_s18` / `current_balanced`
 - `batch_compute_wmreward.py`
   Batch scoring script for WMReward and optional V-JEPA surprise.
 - `build_wmreward_visualization.py`
   Local HTML visualization builder for video + score inspection.
+- `run_train0705_current_modes.py`
+  Batch runner for the current `train0705 -> Wan2.2 v2v` preset family.
 
 ## Archived Files
 
@@ -52,6 +58,17 @@ For generation:
 
 - `wan_openvid_0613pybullet_lorav2v_vjepa.py`
 - `run_lora_vjepa_modes.py`
+- `run_train0705_current_modes.py`
+
+For the current `train0705` guidance family:
+
+- `current_best`
+  Alias of `ladder_s20`. This is the current best `wmreward` preset in the
+  available multi-case evidence.
+- `current_balanced`
+  Alias of `knee_mid_s18`. This is the current more stable trade-off preset:
+  smaller `wmreward` gain than `current_best`, but lower cross-metric tension
+  in the existing pilot evidence.
 
 For scoring and inspection:
 

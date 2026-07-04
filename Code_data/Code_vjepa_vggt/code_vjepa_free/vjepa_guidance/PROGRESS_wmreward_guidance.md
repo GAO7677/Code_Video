@@ -485,6 +485,55 @@ smoke 产物：
 不用重复抄写 target indices / inner_k / artifact guard 等细参数，也能避免把已验证过的
 phase5/phase6 winner 配置写错。
 
+### train0705 guided 批量入口修复（2026-07-04）
+
+在继续跑 `round2_test5` 时，guided 版暴露出一个新的工程问题：不再是
+“第一个 preview decode OOM”，而是更早地在 **runtime model 初始化** 阶段爆显存。
+
+触发方式：
+
+- `train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+- `CUDA_VISIBLE_DEVICES=6,7`
+- Wan on `cuda:0`, V-JEPA on `cuda:1`
+- baseline 已经成功，但 guided mode 在 build model 时 OOM
+
+根因拆成了两层：
+
+- 问题 1：Wan/T5/VAE 装载峰值过高
+  - guided batch 入口需要显式支持 `initialize_model_on_cpu`
+- 问题 2：CPU 初始化后，runtime device 元数据没有同步
+  - `pipe.device` 仍可能停在 CPU
+  - `CoTrackerAdapter.device_obj` / `JEPAPatchAdapter.device_obj` /
+    `VGGTTrackAdapter.device_obj` 也可能停在 CPU
+  - 直接表现为：
+    `RuntimeError: Input type (torch.FloatTensor) and weight type (torch.cuda.FloatTensor) should be the same`
+
+已落实的修复：
+
+- 在以下入口新增 `--initialize-model-on-cpu`
+  - `train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py`
+  - `train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - `AAAinfer/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
+  - `run_train0705_current_modes.py`
+- `_build_runtime_model(...)` 现在会：
+  - 先 CPU 初始化模型
+  - 再 `model.to(target_device)`
+  - 再显式 `model.pipe.to(target_device, dtype=...)`
+  - 并同步 `cotracker_adapter / jepa_adapter / vggt_adapter` 的 `device_obj`
+
+当前验证结果：
+
+- single-case guided `infer` 已重新跑通：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/cpuinit_trace_single_v2/step-001000.mp4`
+- batch wrapper `limit 1` 已重新跑通：
+  - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/cpuinit_batch_probe_ladder_s20/step-001000/0613pybullet_sample_000301_w000.mp4`
+
+当前结论：
+
+- `initialize_model_on_cpu + runtime device sync` 已把 train0705 guided 批量入口重新打通
+- 后续继续跑 `round2_test5` 这类 guided batch 时，应默认带：
+  - `--initialize-model-on-cpu`
+
 ### train0705 pilot3 / current preset family（2026-07-04）
 
 这轮直接用新的 `train0705` preset runner，在 3 个 pilot case 上跑了完整 5-mode：

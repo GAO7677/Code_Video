@@ -121,6 +121,7 @@ class Train0705GuidancePreset:
     mode_id: str
     description: str
     disable_vjepa_guidance: bool
+    aliases: tuple[str, ...] = ()
     vjepa_model: str = "vith"
     vjepa_guidance_mode: str = "context_anchored"
     vjepa_guidance_steps: int = 12
@@ -152,19 +153,28 @@ TRAIN0705_CURRENT_MODES = [
         mode_id="baseline",
         description="train0705 Wan2.2 baseline without V-JEPA guidance.",
         disable_vjepa_guidance=True,
+        aliases=("off",),
     ),
     Train0705GuidancePreset(
         mode_id="ladder_s20",
-        description="Current wmreward winner: dense mid-band guidance, step size 0.20.",
+        description=(
+            "Current wmreward winner: dense mid-band guidance, step size 0.20, "
+            "window_size=24 with trust-region guards enabled."
+        ),
         disable_vjepa_guidance=False,
+        aliases=("current_best", "target_w24_s20", "target_w24_guarded_s20"),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.20,
     ),
     Train0705GuidancePreset(
         mode_id="knee_mid_s18",
-        description="Phase-6 near-winner: dense mid-band guidance, step size 0.18.",
+        description=(
+            "Current balanced preset: dense mid-band guidance, step size 0.18, "
+            "window_size=24 with trust-region guards enabled."
+        ),
         disable_vjepa_guidance=False,
+        aliases=("current_balanced", "target_w24_s18", "target_w24_guarded_s18"),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.18,
@@ -173,6 +183,7 @@ TRAIN0705_CURRENT_MODES = [
         mode_id="knee_early_s15",
         description="Timing variant: dense early-band guidance, step size 0.15.",
         disable_vjepa_guidance=False,
+        aliases=("timing_early_s15",),
         vjepa_guidance_steps=len(EARLY12_INDICES),
         vjepa_target_step_indices=EARLY12_INDICES,
         vjepa_latent_step_size=0.15,
@@ -181,6 +192,7 @@ TRAIN0705_CURRENT_MODES = [
         mode_id="knee_mid_s10_k2",
         description="Inner-k variant: dense mid-band guidance, step size 0.10, inner_k=2.",
         disable_vjepa_guidance=False,
+        aliases=("inner_k2_s10",),
         vjepa_guidance_steps=len(MID12_INDICES),
         vjepa_target_step_indices=MID12_INDICES,
         vjepa_latent_step_size=0.10,
@@ -189,16 +201,32 @@ TRAIN0705_CURRENT_MODES = [
 ]
 
 
-TRAIN0705_MODE_MAP = {mode.mode_id: mode for mode in TRAIN0705_CURRENT_MODES}
+def _build_train0705_mode_map() -> dict[str, Train0705GuidancePreset]:
+    mode_map: dict[str, Train0705GuidancePreset] = {}
+    for mode in TRAIN0705_CURRENT_MODES:
+        keys = (mode.mode_id, *mode.aliases)
+        for key in keys:
+            if key in mode_map:
+                raise ValueError(f"Duplicate train0705 preset key detected: {key}")
+            mode_map[key] = mode
+    return mode_map
+
+
+TRAIN0705_MODE_MAP = _build_train0705_mode_map()
+
+
+def resolve_train0705_preset(preset_name: str) -> Train0705GuidancePreset:
+    try:
+        return TRAIN0705_MODE_MAP[preset_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown train0705 V-JEPA preset: {preset_name}. "
+            f"Available canonical modes: {[mode.mode_id for mode in TRAIN0705_CURRENT_MODES]}"
+        ) from exc
 
 
 def apply_train0705_preset(args, preset_name: str):
-    if preset_name not in TRAIN0705_MODE_MAP:
-        raise ValueError(
-            f"Unknown train0705 V-JEPA preset: {preset_name}. "
-            f"Available: {sorted(TRAIN0705_MODE_MAP)}"
-        )
-    preset = TRAIN0705_MODE_MAP[preset_name]
+    preset = resolve_train0705_preset(preset_name)
     args.vjepa_preset = preset.mode_id
     args.enable_vjepa_guidance = not bool(preset.disable_vjepa_guidance)
     args.vjepa_model = str(preset.vjepa_model)

@@ -33,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--videophy2-num-frames", type=int, default=32)
     parser.add_argument("--cosmos-reason1", action="store_true")
     parser.add_argument("--limit-cases", type=int, default=None)
+    parser.add_argument("--save-every", type=int, default=1,
+                        help="Write an incremental JSON snapshot every N scored rows. Set <=0 to only write once at the end.")
     return parser.parse_args()
 
 
@@ -103,6 +105,99 @@ def mean_or_none(values: list[float | None]) -> float | None:
     return sum(filtered) / len(filtered)
 
 
+def build_output_payload(
+    *,
+    scored_rows: list[dict[str, Any]],
+    method_dirs: list[tuple[str, Path]],
+    baseline_label: str,
+) -> dict[str, Any]:
+    by_case: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in scored_rows:
+        by_case[row["case_id"]][row["method"]] = row
+        by_method[row["method"]].append(row)
+
+    summary_by_method: dict[str, dict[str, Any]] = {}
+    baseline_by_case = by_case
+    for method, rows in sorted(by_method.items()):
+        overlap_rows: list[dict[str, Any]] = []
+        for row in rows:
+            base = baseline_by_case.get(row["case_id"], {}).get(baseline_label)
+            if base is not None and method != baseline_label:
+                row["delta_surprise_vs_baseline"] = (
+                    row.get("surprise") - base.get("surprise")
+                    if row.get("surprise") is not None and base.get("surprise") is not None
+                    else None
+                )
+                row["delta_similarity_vs_baseline"] = (
+                    row.get("similarity") - base.get("similarity")
+                    if row.get("similarity") is not None and base.get("similarity") is not None
+                    else None
+                )
+                row["delta_physics_iq_vs_baseline"] = (
+                    row.get("physics_iq_score") - base.get("physics_iq_score")
+                    if row.get("physics_iq_score") is not None and base.get("physics_iq_score") is not None
+                    else None
+                )
+                row["delta_videophy2_vs_baseline"] = (
+                    row.get("videophy2_score") - base.get("videophy2_score")
+                    if row.get("videophy2_score") is not None and base.get("videophy2_score") is not None
+                    else None
+                )
+                row["delta_cosmos_reason1_vs_baseline"] = (
+                    row.get("cosmos_reason1_score") - base.get("cosmos_reason1_score")
+                    if row.get("cosmos_reason1_score") is not None and base.get("cosmos_reason1_score") is not None
+                    else None
+                )
+                overlap_rows.append(row)
+            elif method == baseline_label:
+                row["delta_surprise_vs_baseline"] = 0.0 if row.get("surprise") is not None else None
+                row["delta_similarity_vs_baseline"] = 0.0 if row.get("similarity") is not None else None
+                row["delta_physics_iq_vs_baseline"] = 0.0 if row.get("physics_iq_score") is not None else None
+                row["delta_videophy2_vs_baseline"] = 0.0 if row.get("videophy2_score") is not None else None
+                row["delta_cosmos_reason1_vs_baseline"] = 0.0 if row.get("cosmos_reason1_score") is not None else None
+
+        summary_by_method[method] = {
+            "num_cases": len(rows),
+            "num_overlap_with_baseline": len(overlap_rows) if method != baseline_label else len(rows),
+            "mean_surprise": mean_or_none([row.get("surprise") for row in rows]),
+            "mean_similarity": mean_or_none([row.get("similarity") for row in rows]),
+            "mean_physics_iq": mean_or_none([row.get("physics_iq_score") for row in rows]),
+            "mean_videophy2": mean_or_none([row.get("videophy2_score") for row in rows]),
+            "mean_cosmos_reason1": mean_or_none([row.get("cosmos_reason1_score") for row in rows]),
+            "mean_delta_surprise_vs_baseline": mean_or_none([row.get("delta_surprise_vs_baseline") for row in overlap_rows]),
+            "mean_delta_similarity_vs_baseline": mean_or_none([row.get("delta_similarity_vs_baseline") for row in overlap_rows]),
+            "mean_delta_physics_iq_vs_baseline": mean_or_none([row.get("delta_physics_iq_vs_baseline") for row in overlap_rows]),
+            "mean_delta_videophy2_vs_baseline": mean_or_none([row.get("delta_videophy2_vs_baseline") for row in overlap_rows]),
+            "mean_delta_cosmos_reason1_vs_baseline": mean_or_none([row.get("delta_cosmos_reason1_vs_baseline") for row in overlap_rows]),
+        }
+
+    ranking = sorted(
+        summary_by_method.items(),
+        key=lambda item: (
+            item[1].get("mean_delta_surprise_vs_baseline")
+            if item[1].get("mean_delta_surprise_vs_baseline") is not None
+            else float("inf")
+        ),
+    )
+    return {
+        "baseline_label": baseline_label,
+        "method_dirs": {label: str(path) for label, path in method_dirs},
+        "rows": scored_rows,
+        "summary_by_method": summary_by_method,
+        "ranking_by_mean_delta_surprise": [
+            {"method": method, **summary} for method, summary in ranking
+        ],
+    }
+
+
+def write_output_snapshot(out_json: Path, payload: dict[str, Any]) -> None:
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_json.with_suffix(out_json.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    tmp_path.replace(out_json)
+
+
 def main() -> None:
     args = parse_args()
     method_dirs = parse_method_dirs(args.method_dir)
@@ -170,96 +265,29 @@ def main() -> None:
                 out["cosmos_reason1_score"] = None
                 out["cosmos_reason1_error"] = repr(exc)
         scored_rows.append(out)
+        if args.save_every > 0 and (idx % args.save_every == 0 or idx == len(records)):
+            payload = build_output_payload(
+                scored_rows=scored_rows,
+                method_dirs=method_dirs,
+                baseline_label=args.baseline_label,
+            )
+            write_output_snapshot(args.out_json, payload)
 
-    by_case: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
-    by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in scored_rows:
-        by_case[row["case_id"]][row["method"]] = row
-        by_method[row["method"]].append(row)
-
-    summary_by_method: dict[str, dict[str, Any]] = {}
-    baseline_by_case = by_case
-    for method, rows in sorted(by_method.items()):
-        overlap_rows: list[dict[str, Any]] = []
-        for row in rows:
-            base = baseline_by_case.get(row["case_id"], {}).get(args.baseline_label)
-            if base is not None and method != args.baseline_label:
-                row["delta_surprise_vs_baseline"] = (
-                    row.get("surprise") - base.get("surprise")
-                    if row.get("surprise") is not None and base.get("surprise") is not None
-                    else None
-                )
-                row["delta_similarity_vs_baseline"] = (
-                    row.get("similarity") - base.get("similarity")
-                    if row.get("similarity") is not None and base.get("similarity") is not None
-                    else None
-                )
-                row["delta_physics_iq_vs_baseline"] = (
-                    row.get("physics_iq_score") - base.get("physics_iq_score")
-                    if row.get("physics_iq_score") is not None and base.get("physics_iq_score") is not None
-                    else None
-                )
-                row["delta_videophy2_vs_baseline"] = (
-                    row.get("videophy2_score") - base.get("videophy2_score")
-                    if row.get("videophy2_score") is not None and base.get("videophy2_score") is not None
-                    else None
-                )
-                row["delta_cosmos_reason1_vs_baseline"] = (
-                    row.get("cosmos_reason1_score") - base.get("cosmos_reason1_score")
-                    if row.get("cosmos_reason1_score") is not None and base.get("cosmos_reason1_score") is not None
-                    else None
-                )
-                overlap_rows.append(row)
-            elif method == args.baseline_label:
-                row["delta_surprise_vs_baseline"] = 0.0 if row.get("surprise") is not None else None
-                row["delta_similarity_vs_baseline"] = 0.0 if row.get("similarity") is not None else None
-                row["delta_physics_iq_vs_baseline"] = 0.0 if row.get("physics_iq_score") is not None else None
-                row["delta_videophy2_vs_baseline"] = 0.0 if row.get("videophy2_score") is not None else None
-                row["delta_cosmos_reason1_vs_baseline"] = 0.0 if row.get("cosmos_reason1_score") is not None else None
-
-        summary_by_method[method] = {
-            "num_cases": len(rows),
-            "num_overlap_with_baseline": len(overlap_rows) if method != args.baseline_label else len(rows),
-            "mean_surprise": mean_or_none([row.get("surprise") for row in rows]),
-            "mean_similarity": mean_or_none([row.get("similarity") for row in rows]),
-            "mean_physics_iq": mean_or_none([row.get("physics_iq_score") for row in rows]),
-            "mean_videophy2": mean_or_none([row.get("videophy2_score") for row in rows]),
-            "mean_cosmos_reason1": mean_or_none([row.get("cosmos_reason1_score") for row in rows]),
-            "mean_delta_surprise_vs_baseline": mean_or_none([row.get("delta_surprise_vs_baseline") for row in overlap_rows]),
-            "mean_delta_similarity_vs_baseline": mean_or_none([row.get("delta_similarity_vs_baseline") for row in overlap_rows]),
-            "mean_delta_physics_iq_vs_baseline": mean_or_none([row.get("delta_physics_iq_vs_baseline") for row in overlap_rows]),
-            "mean_delta_videophy2_vs_baseline": mean_or_none([row.get("delta_videophy2_vs_baseline") for row in overlap_rows]),
-            "mean_delta_cosmos_reason1_vs_baseline": mean_or_none([row.get("delta_cosmos_reason1_vs_baseline") for row in overlap_rows]),
-        }
-
-    ranking = sorted(
-        summary_by_method.items(),
-        key=lambda item: (
-            item[1].get("mean_delta_surprise_vs_baseline")
-            if item[1].get("mean_delta_surprise_vs_baseline") is not None
-            else float("inf")
-        ),
+    output = build_output_payload(
+        scored_rows=scored_rows,
+        method_dirs=method_dirs,
+        baseline_label=args.baseline_label,
     )
-
-    output = {
-        "baseline_label": args.baseline_label,
-        "method_dirs": {label: str(path) for label, path in method_dirs},
-        "rows": scored_rows,
-        "summary_by_method": summary_by_method,
-        "ranking_by_mean_delta_surprise": [
-            {"method": method, **summary} for method, summary in ranking
-        ],
-    }
-    args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    args.out_json.write_text(json.dumps(output, indent=2) + "\n")
+    write_output_snapshot(args.out_json, output)
 
     print("\nMethod summary:", flush=True)
-    for method, summary in ranking:
+    for summary_row in output["ranking_by_mean_delta_surprise"]:
+        method = summary_row["method"]
         print(
-            f"{method:18s} mean_surprise={summary.get('mean_surprise')} "
-            f"mean_d_surprise={summary.get('mean_delta_surprise_vs_baseline')} "
-            f"mean_physics_iq={summary.get('mean_physics_iq')} "
-            f"mean_videophy2={summary.get('mean_videophy2')}",
+            f"{method:18s} mean_surprise={summary_row.get('mean_surprise')} "
+            f"mean_d_surprise={summary_row.get('mean_delta_surprise_vs_baseline')} "
+            f"mean_physics_iq={summary_row.get('mean_physics_iq')} "
+            f"mean_videophy2={summary_row.get('mean_videophy2')}",
             flush=True,
         )
     print(f"\nWrote {args.out_json}", flush=True)
