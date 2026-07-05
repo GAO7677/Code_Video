@@ -1,5 +1,6 @@
 """该脚本用于训练 Wan2.2 TI2V LoRA 视频生成模型；当前输入数据集路径为 /data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train，模型权重路径为 /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B，输出目录为 /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_ctx49_736x1280_lora，产出 LoRA 检查点、训练日志和 benchmark 结果。"""
 import argparse
+import inspect
 import json
 import math
 import os
@@ -374,17 +375,25 @@ class WanTrainingModule(DiffusionTrainingModule):
             task, self.pipe, trainable_models, lora_base_model
         )
 
+        switch_kwargs = {
+            "pipe": self.pipe,
+            "trainable_models": trainable_models,
+            "lora_base_model": lora_base_model,
+            "lora_target_modules": lora_target_modules,
+            "lora_rank": lora_rank,
+            "lora_alpha": lora_alpha,
+            "lora_checkpoint": lora_checkpoint,
+            "preset_lora_path": preset_lora_path,
+            "preset_lora_model": preset_lora_model,
+            "task": task,
+        }
+        switch_signature = inspect.signature(self.switch_pipe_to_training_mode)
         self.switch_pipe_to_training_mode(
-            self.pipe,
-            trainable_models,
-            lora_base_model,
-            lora_target_modules,
-            lora_rank,
-            lora_alpha,
-            lora_checkpoint,
-            preset_lora_path,
-            preset_lora_model,
-            task=task,
+            **{
+                key: value
+                for key, value in switch_kwargs.items()
+                if key in switch_signature.parameters
+            }
         )
         self.enable_object_branch = bool(enable_object_branch)
         self.fixed_num_context_frames = int(fixed_num_context_frames)

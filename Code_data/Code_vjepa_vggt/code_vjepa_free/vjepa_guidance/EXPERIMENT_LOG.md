@@ -1,72 +1,74 @@
-# V-JEPA Guidance Experiment Log
+# V-JEPA Guidance 实验记录
 
-Created: 2026-07-05
-Maintainer: Codex + gaoya
-Scope: `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance`
+创建日期：2026-07-05
+维护者：Codex + gaoya
+范围：`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance`
 
-This file is the project-local registry for experiments run from this
-workspace. Starting now, every new experiment under `vjepa_guidance/` should be
-recorded here with:
+这个文件是 `vjepa_guidance/` 目录下实验的统一登记册。从现在开始，凡是在这个项目下执行的新实验，都应在这里补充记录。
 
-- date or date range;
-- experiment name / purpose;
-- main code entry points;
-- model / preset / input scope;
-- output directory;
-- score or summary files;
-- short conclusion / status.
+每条实验记录至少包含：
 
-Companion docs:
+- 日期或日期范围
+- 实验名称 / 目标
+- 主要代码入口
+- 模型 / preset / 输入范围
+- 输出目录
+- 分数文件或汇总文件
+- 当前状态
+- 简短结论
 
-- code overview: `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/README.md`
-- progress memo: `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/PROGRESS_wmreward_guidance.md`
+相关配套文档：
 
-## Update Template
+- 代码概览：
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/README.md`
+- 进度备忘：
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/PROGRESS_wmreward_guidance.md`
 
-Copy this block for future runs:
+## 后续更新模板
+
+后续新增实验时，复制下面这个模板填写：
 
 ```md
-## YYYY-MM-DD — <experiment name>
+## YYYY-MM-DD — <实验名称>
 
-- Goal:
-- Code:
+- 目标：
+- 代码：
   - /abs/path/to/script.py
-- Inputs:
+- 输入：
   - /abs/path/to/input_manifest_or_json.txt
-- Outputs:
+- 输出：
   - /abs/path/to/output_root
-- Scores / summaries:
+- 分数 / 汇总：
   - /abs/path/to/summary.json
   - /abs/path/to/scores.json
-- Status:
-- Conclusion:
+- 状态：
+- 结论：
 ```
 
-## Historical Backfill
+## 历史实验回填
 
-The entries below were backfilled on 2026-07-05 from existing code, output
-trees, and summary files. When an exact start day was not recoverable, the date
-is marked as inferred from directory names or progress docs.
+下面的条目是在 2026-07-05 根据现有代码、输出目录和 summary 文件回填整理的。
 
-## 2026-06-26 to 2026-06-30 (inferred) — Early LoRA 7-mode and case-batch prototype suite
+如果无法精确恢复实验开始日期，会明确标注为“按目录名/进度文档推断”。
 
-- Goal:
-  - Validate whether simple training-free V-JEPA guidance presets change Wan2.2
-    + LoRA v2v outputs on `test_5` and on a larger `v2v_jsons` batch.
-- Code:
+## 2026-06-26 到 2026-06-30（推断）— 早期 LoRA 7 模式与批量 case 原型实验
+
+- 目标：
+  - 验证简单的 training-free V-JEPA guidance preset 是否会改变 Wan2.2 + LoRA v2v 在 `test_5` 和更大 `v2v_jsons` 批次上的输出。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan_openvid_0613pybullet_lorav2v_vjepa.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_lora_vjepa_modes.py`
-  - historical helpers:
+  - 历史辅助脚本：
     `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/archive/2026-07-cleanup/run_mode_smoke_suite.py`
-    and
+    和
     `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/archive/2026-07-cleanup/run_manifest_all_cases.py`
-- Inputs:
+- 输入：
   - `/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt`
   - `/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons`
-- Outputs:
+- 输出：
   - `/data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/test/results/lora_test5`
   - `/data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/test/results/v2v_jsons_full_wan22`
-- Main modes seen in artifacts:
+- 产物中出现的主要模式：
   - `baseline`
   - `g1_mid1_s001`
   - `g2_mid2_s001`
@@ -74,334 +76,314 @@ is marked as inferred from directory names or progress docs.
   - `g4_wide4_s001`
   - `g5_wide4_s002`
   - `g6_wide6_s002`
-- Scores / summaries:
-  - per-video sidecar JSONs under each mode directory, for example
+- 分数 / 汇总：
+  - 各 mode 目录下的逐视频 sidecar JSON，例如：
     `/data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/test/results/lora_test5/wan_openvid_0613pybullet_lorav2v_step000500_test5_vjepa_baseline/0613pybullet_sample_000301_w000.json`
-  - suite config:
+  - suite 配置：
     `/data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/test/results/v2v_jsons_full_wan22/suite_config.json`
-  - manifest:
+  - manifest：
     `/data/gaoya/AAA_test_video/0626vjepa_free/vjepa_guidance/test/results/v2v_jsons_full_wan22/manifests/manifest.csv`
-- Status:
-  - Completed historical prototype suite.
-- Conclusion:
-  - Established the initial 7-mode comparison pattern that later evolved into
-    the active `experiment_presets.py` / `run_lora_vjepa_modes.py` workflow.
+- 状态：
+  - 已完成，属于历史原型批次。
+- 结论：
+  - 建立了最初的 7-mode 对比形态，后续演化成当前的 `experiment_presets.py` 和 `run_lora_vjepa_modes.py` 工作流。
 
-## 2026-07-01 to 2026-07-02 (inferred) — One-case timestep / step-index visual diagnostics
+## 2026-07-01 到 2026-07-02（推断）— 单 case timestep / step-index 可视化诊断
 
-- Goal:
-  - Probe whether guidance timing matters by forcing guidance at selected
-    denoising timesteps and comparing intermediate / final outputs visually.
-- Code:
+- 目标：
+  - 通过只在选定去噪步上施加 guidance，观察 timing 是否显著影响中间结果和最终结果。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/build_timestep_sweep_viewer.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/compare_guidance_videos.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/diag_anchored_onestep.py`
-- Inputs:
-  - one-case manifests saved under:
+- 输入：
+  - 单 case 清单保存在：
     `/data/gaoya/agent-data/outputs/vjepa_timestep_sweep/one_case.txt`
-    and
+    和
     `/data/gaoya/agent-data/outputs/vjepa_stepindex_sweep/one_case.txt`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/vjepa_timestep_sweep`
   - `/data/gaoya/agent-data/outputs/vjepa_timestep_sweep_1460`
   - `/data/gaoya/agent-data/outputs/vjepa_stepindex_sweep`
-- Scores / summaries:
-  - run manifests:
+- 分数 / 汇总：
+  - 运行脚本记录：
     `/data/gaoya/agent-data/outputs/vjepa_timestep_sweep/run_sweep.sh`
-    and
+    和
     `/data/gaoya/agent-data/outputs/vjepa_stepindex_sweep/run_sweep.sh`
-  - viewer:
+  - 可视化页面：
     `/data/gaoya/agent-data/outputs/vjepa_stepindex_sweep/index.html`
-- Status:
-  - Diagnostic only; mainly visual / qualitative.
-- Conclusion:
-  - Helped narrow the useful guidance region before the later single-case
-    `phase5/phase6/phase7` probe work.
+- 状态：
+  - 以诊断为主，主要是视觉/定性分析。
+- 结论：
+  - 帮助缩小了后续单 case `phase5/phase6/phase7` 重点探索的 guidance 区域。
 
-## 2026-07-02 — Probe Sweep Phase 4: wmreward coupling check on single case
+## 2026-07-02 — Probe Sweep Phase 4：单 case 上的 wmreward 耦合检查
 
-- Goal:
-  - Test whether small anchored-energy decreases actually move `wmreward`.
-- Code:
+- 目标：
+  - 测试小幅 anchored energy 下降是否真的会推动 `wmreward`。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/probe_energy_persistence.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_guided_videos.py`
-- Inputs:
-  - single case `physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`
-- Outputs:
+- 输入：
+  - 单 case：`physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed`
+- 输出：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase4`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase4/phase4_summary.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase4/wmreward_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Small anchored-energy reductions mostly sat in the noise floor and did not
-    translate into reliable `wmreward` gains.
+- 状态：
+  - 已完成。
+- 结论：
+  - 小幅 anchored energy 降低基本落在噪声区间内，不能稳定转化为 `wmreward` 提升。
 
-## 2026-07-03 — Probe Sweep Phase 5: strong fixed-step intensity ladder
+## 2026-07-03 — Probe Sweep Phase 5：强 fixed-step 强度阶梯
 
-- Goal:
-  - Sweep larger latent step sizes to find the point where guidance actually
-    writes into the latent enough to move final metrics.
-- Code:
+- 目标：
+  - 扫更大的 latent step size，找出 guidance 真正“写进” latent 并影响最终指标的阈值。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/probe_energy_persistence.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase5`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase5/phase5_summary.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase5/wmreward_scores.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase5/phase5_multimetric_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Confirmed the earlier issue was mainly weak write strength. `ladder_s20`
-    became the first clearly positive single-case candidate on `wmreward`.
+- 状态：
+  - 已完成。
+- 结论：
+  - 证实前面的问题主要不是方向错，而是写入太弱。`ladder_s20` 成为首个在单 case 上明显正向推动 `wmreward` 的候选。
 
-## 2026-07-03 — Probe Sweep Phase 6: timing × inner-k refinement
+## 2026-07-03 — Probe Sweep Phase 6：timing × inner-k 精调
 
-- Goal:
-  - Refine around the phase5 knee using earlier/later timing, repeated inner
-    correction, and backtracking variants.
-- Code:
+- 目标：
+  - 在 phase5 的“膝点”附近继续细调，比较更早/更晚 timing、重复 inner correction、以及 backtracking 变体。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/probe_energy_persistence.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase6`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase6/phase6_summary.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase6/wmreward_scores.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase6/phase6_multimetric_scores.json`
-  - regression-light score dumps:
+  - regression-light 补充结果：
     `/data/gaoya/agent-data/outputs/probe_sweep/phase6/phase6_multimetric_scores_regression_light.json`
-    and
+    和
     `/data/gaoya/agent-data/outputs/probe_sweep/phase6/phase6_multimetric_scores_regression_light2.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Backtracking was too conservative. `knee_mid_s18`,
-    `knee_early_s15`, and `knee_mid_s10_k2` emerged as strong alternatives,
-    but `ladder_s20` still remained the best single-case `wmreward` result.
+- 状态：
+  - 已完成。
+- 结论：
+  - backtracking 太保守，不适合当前能量地形。
+    `knee_mid_s18`、`knee_early_s15`、`knee_mid_s10_k2` 成为强候选，
+    但单 case 最强 `wmreward` 结果仍是 `ladder_s20`。
 
-## 2026-07-04 — Probe Sweep Phase 7: target window size / future horizon
+## 2026-07-04 — Probe Sweep Phase 7：target window size / future horizon
 
-- Goal:
-  - Hold strong guidance timing fixed and compare anchored future window sizes.
-- Code:
+- 目标：
+  - 固定强 guidance timing，仅比较 anchored future window 的大小。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/probe_energy_persistence.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_phase7_target_shape.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wait_for_phase7_gpus.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase7`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase7/phase7_summary.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase7/phase7_multimetric_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - `target_w24` became the best single-case target-shape variant, better than
-    `w16` and `w32` on final `wmreward`.
+- 状态：
+  - 已完成。
+- 结论：
+  - `target_w24` 成为最优的 target-shape 单 case 变体，优于 `w16` 和 `w32`。
 
-## 2026-07-04 (inferred) — Probe Sweep Phase 8 follow-up
+## 2026-07-04（推断）— Probe Sweep Phase 8 后续实验
 
-- Goal:
-  - Later-phase probe follow-up after phase7; exact memo not yet backfilled.
-- Code:
+- 目标：
+  - phase7 之后的后续 probe；精确文字结论尚未完全补回。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/probe_energy_persistence.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase8`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase8/phase8_summary.json`
   - `/data/gaoya/agent-data/outputs/probe_sweep/phase8/phase8_multimetric_scores.json`
-- Status:
-  - Artifacts present; narrative summary still needs manual backfill.
-- Conclusion:
-  - Keep as recorded artifact set until the detailed notes are restored.
+- 状态：
+  - 有产物，但文字总结尚未完整回填。
+- 结论：
+  - 暂时保留为已记录的实验产物集合，待后续恢复详细实验说明。
 
-## 2026-07-03 to 2026-07-04 — Phase4 multicase pilot3 on LoRA baseline + guided presets
+## 2026-07-03 到 2026-07-04 — Phase4 multicase pilot3：LoRA baseline + guided preset 小规模多 case 对比
 
-- Goal:
-  - Compare the main guided candidates on a small multicase subset before
-    moving to the heavier `train0705` rounds.
-- Code:
+- 目标：
+  - 在转入更重的 `train0705` 批次前，先在小规模多 case 子集上比较主要 guided 候选。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_phase4_multicase.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_multicase_methods.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/vjepa_phase4_multicase`
-- Main methods in artifacts:
+- 产物中的主要方法：
   - `phase4_pilot3_baseline`
   - `phase4_pilot3_ladder_s20`
   - `phase4_pilot3_knee_early_s15`
   - `phase4_pilot3_knee_mid_s18`
   - `phase4_pilot3_knee_mid_s10_k2`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/vjepa_phase4_multicase/phase4_pilot3_all_methods_scores.json`
   - `/data/gaoya/agent-data/outputs/vjepa_phase4_multicase/phase4_pilot3_baseline_vs_ladder_s20_scores.json`
-  - runtime summaries under the corresponding `*_runtime/summary.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Served as the bridge from single-case tuning to subset-level A/B
-    comparison, and fed the later `train0705 current modes` presets.
+  - 各方法对应的 `*_runtime/summary.json`
+- 状态：
+  - 已完成。
+- 结论：
+  - 这是从单 case 调参过渡到子集级 A/B 的桥接实验，也直接喂给了后面的 `train0705 current modes` preset 家族。
 
-## 2026-07-03 — train0705 current modes, pilot3 round1
+## 2026-07-03 — train0705 current modes：pilot3 round1
 
-- Goal:
-  - Move the best single-case presets onto the custom `train0705 stage1b`
-    branch and compare them on a small 3-case pilot.
-- Code:
+- 目标：
+  - 将单 case 上表现最好的 preset 移植到自定义 `train0705 stage1b` 分支，并在 3-case pilot 上对比。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_current_modes.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1`
-  - compare reports:
+  - 对比报告：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1_compare_partial`
-    and
+    和
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1_compare_full`
-- Scores / summaries:
-  - per-method summaries under each method folder, for example
+- 分数 / 汇总：
+  - 各方法 summary，例如：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1/train0705_pilot3_round1_ladder_s20/summary.json`
-  - aggregate comparison:
+  - 汇总对比：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1_compare_full/aggregate_summary.md`
-    and
+    和
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/pilot3_round1_compare_full/aggregate_summary.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - `ladder_s20` had the best mean `Δsurprise` on the 3-case pilot, while
-    `knee_mid_s18` looked more balanced on cross-metrics.
+- 状态：
+  - 已完成。
+- 结论：
+  - `ladder_s20` 在 3-case pilot 上的平均 `Δsurprise` 最好，
+    `knee_mid_s18` 在跨指标稳定性上更均衡。
 
-## 2026-07-03 — train0705 round2: full test_5 baseline vs ladder_s20 vs knee_mid_s18
+## 2026-07-03 — train0705 round2：完整 test_5 上 baseline vs ladder_s20 vs knee_mid_s18
 
-- Goal:
-  - Check whether pilot3 winners hold up on the 17-case `test_5` subset.
-- Code:
+- 目标：
+  - 检查 pilot3 的优胜 preset 在 17-case `test_5` 子集上是否还能成立。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_current_modes.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5/round2_test5_compare_summary.md`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5/round2_test5_compare_summary.json`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round2_test5/round2_test5_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Neither `ladder_s20` nor `knee_mid_s18` improved mean `wmreward surprise`
-    over the 17-case baseline. `knee_mid_s18` was retained as the more stable
-    trade-off preset.
+- 状态：
+  - 已完成。
+- 结论：
+  - `ladder_s20` 和 `knee_mid_s18` 都没有在 17-case baseline 上取得平均 `wmreward surprise` 的正向提升。
+    最后保留 `knee_mid_s18` 作为更稳的折中 preset。
 
-## 2026-07-03 — train0705 round3: guard ablation on overlap-5 subset
+## 2026-07-03 — train0705 round3：overlap-5 子集上的 guard ablation
 
-- Goal:
-  - Compare old dense target guidance against ratio-cap and L1-guard variants.
-- Code:
+- 目标：
+  - 比较旧版 dense target guidance 与 ratio-cap、L1 guard 变体。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_guard_ablation.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation/round3_guard_ablation_compare_summary.md`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation/round3_guard_ablation_compare_summary.json`
-  - score dumps such as
+  - 例如：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round3_guard_ablation/target_w24_ratio_005_vs_baseline5_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - `target_w24_old` moved `wmreward` the most but destroyed `physics_iq`.
-    `target_w24_ratio_005` became the best “not obviously broken” diagnostic
-    anchor for later rounds.
+- 状态：
+  - 已完成。
+- 结论：
+  - `target_w24_old` 虽然最能拉动 `wmreward`，但会明显破坏 `physics_iq`。
+    `target_w24_ratio_005` 因此成为后续多轮实验里的“相对不坏”的诊断锚点。
 
-## 2026-07-03 to 2026-07-04 — train0705 round4/5/6 local refinement around ratio-cap and s15
+## 2026-07-03 到 2026-07-04 — train0705 round4/5/6：围绕 ratio-cap 与 s15 的局部细化
 
-- Goal:
-  - Refine dense mid-band `context_anchored` guidance around
-    `target_w24_ratio_005` and later around the `s15` family.
-- Code:
+- 目标：
+  - 围绕 `target_w24_ratio_005`，以及后续 `s15` 家族，对 dense mid-band `context_anchored` guidance 继续做局部精调。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_ratio_cap_sweep.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_s15_local_sweep.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_train0705_s15_local_sweep.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round4_test5_ratio_only`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5`
-- Scores / summaries:
-  - round4:
+- 分数 / 汇总：
+  - round4：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round4_test5_ratio_only/round4_test5_ratio_only_scores.json`
-  - round5:
+  - round5：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round5_ratio_cap_sweep_overlap5/overlap5_target_w24_s20_ratio_010_scores.json`
-  - round6:
+  - round6：
     `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round6_s15_local_sweep_overlap5/round6_full_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - These rounds established the current local candidate family around
-    `target_w24_s15_ratio_003` and nearby ratio-cap variants.
+- 状态：
+  - 已完成。
+- 结论：
+  - 这些回合逐步建立了当前围绕 `target_w24_s15_ratio_003` 及附近 ratio-cap 变体的本地候选族。
 
-## 2026-07-04 — train0705 round7 expansion on full test_5
+## 2026-07-04 — train0705 round7：在完整 test_5 上扩展验证
 
-- Goal:
-  - Re-test the current dense-mid local candidates on the full 17-case subset.
-- Code:
+- 目标：
+  - 在完整 17-case 子集上重新验证当前 dense-mid 本地候选。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_round7_expansion.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_test5_scores.json`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_baseline_vs_0025_scores.json`
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round7_test5_expansion/round7_baseline_vs_0035_scores.json`
-- Status:
-  - Completed.
-- Conclusion:
-  - Confirmed that the local dense-mid family remained a live direction, but
-    did not yet produce a clean full-subset win.
+- 状态：
+  - 已完成。
+- 结论：
+  - 说明 dense-mid 本地候选仍是活跃方向，但还没有形成一个在完整子集上“干净取胜”的配置。
 
-## 2026-07-04 to 2026-07-05 — train0705 round8 step-005000 guided pass
+## 2026-07-04 到 2026-07-05 — train0705 round8：step-005000 guided 复跑
 
-- Goal:
-  - Re-run the current guided family on the later `train0705 step-005000`
-    checkpoint.
-- Code:
+- 目标：
+  - 在更晚的 `train0705 step-005000` checkpoint 上重新跑当前 guided 家族。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_train0705_current_modes.py`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round8_step5000_test5_guided`
-- Scores / summaries:
+- 分数 / 汇总：
   - `/data/gaoya/agent-data/outputs/train0705_vjepa_current_modes/round8_step5000_test5_guided/train0705_round8_step5000_test5_target_w24_s15_ratio_0025/summary.json`
-- Status:
-  - Partial historical artifact; full comparison write-up not yet backfilled.
-- Conclusion:
-  - Captured the step-005000 guided branch that later fed into the broader
-    model-weight A/B test.
+- 状态：
+  - 历史产物存在，但完整对比结论尚未完全回填。
+- 结论：
+  - 记录了 step-005000 guided 分支，后面也被纳入更大的 model-weight A/B 测试。
 
-## 2026-07-05 — Unified model-weight A/B on test_5
+## 2026-07-05 — 多模型权重统一 A/B：test_5 上 baseline vs guided
 
-- Goal:
-  - Run baseline vs guided comparisons across multiple model lines:
-    official Wan2.2 TI2V, early LoRA, `train0705 step-002500`,
-    `train0705 step-005000`, and Wan2.1 T2V 1.3B prototype.
-- Code:
+- 目标：
+  - 在多个模型线上统一执行 baseline vs guided 对比：
+    Wan2.2 official TI2V、早期 LoRA、`train0705 step-002500`、
+    `train0705 step-005000`、以及 Wan2.1 T2V 1.3B 原型线。
+- 代码：
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_multicase_methods.py`
   - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan21_t2v_1_3b_batch.py`
-  - supporting generators:
+  - 支撑生成脚本：
     `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wanti2v.py`
-    and
+    和
     `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wan_openvid_0613pybullet_lorav2v_vjepa.py`
-- Inputs:
+- 输入：
   - `/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt`
-  - deduped manifest:
+  - 去重后清单：
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/inputs/test5_unique.txt`
-- Outputs:
+- 输出：
   - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
-- Scores / summaries:
-  - summary placeholders / runtime summaries already present under:
+- 分数 / 汇总：
+  - 现有 summary / runtime summary：
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step002500/baseline/summary.json`
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step002500/guided/summary.json`
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step005000/baseline/summary.json`
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step005000/guided/summary.json`
-  - reuse reports:
+  - baseline 复用报告：
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/reuse_reports/lora_baseline_reuse.json`
-    and
+    和
     `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/reuse_reports/official_baseline_reuse.json`
-- Status:
-  - In progress as of 2026-07-05.
-- Current conclusion:
-  - LoRA baseline has partial safe reuse from existing
-    `/data/gaoya/AAA_test_video/0623/test/v2v` results.
-  - Official Wan2.2 baseline did not have byte-identical historical matches and
-    still requires fresh generation in this A/B tree.
+- 状态：
+  - 截至 2026-07-05 仍在进行中。
+- 当前结论：
+  - LoRA baseline 可以安全复用一部分 `/data/gaoya/AAA_test_video/0623/test/v2v` 里的历史结果。
+  - Official Wan2.2 baseline 没有找到字节级一致的历史匹配，仍需在当前 A/B 树下重新生成。
