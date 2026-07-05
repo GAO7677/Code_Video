@@ -60,7 +60,7 @@ class WanContextVideoModel(nn.Module):
         self.disable_object_branch = bool(disable_object_branch)
         _debug_log("load wan helper classes")
         T5EncoderModel = load_wan_t5_encoder()
-        Wan2_2_VAE = load_wan_vae()
+        WanVAE = load_wan_vae(task)
 
         _debug_log("build text_encoder start")
         self.text_encoder = T5EncoderModel(
@@ -73,7 +73,7 @@ class WanContextVideoModel(nn.Module):
         )
         _debug_log("build text_encoder done")
         _debug_log("build vae start")
-        self.vae = Wan2_2_VAE(
+        self.vae = WanVAE(
             vae_pth=f"{ckpt_dir}/{self.config.vae_checkpoint}",
             device=self.device_obj,
         )
@@ -186,7 +186,7 @@ class WanContextVideoModel(nn.Module):
             if debug_init:
                 elapsed = time.perf_counter() - t0
                 print(f"[wan_dit_load +{elapsed:.2f}s] {message}", flush=True)
-        WanModel = load_wan_model()
+        WanModel = load_wan_model(self.task)
         target_dtype = getattr(self.config, "param_dtype", None)
         # The WAN backbone now includes extra object-conditioning layers that do
         # not exist in the upstream checkpoint. Loading with low_cpu_mem_usage

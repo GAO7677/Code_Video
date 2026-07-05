@@ -32,6 +32,10 @@ class MaterialSpec:
     normal_path: str = ""
     roughness_path: str = ""
     ao_path: str = ""
+    texture_repeat_range: tuple[float, float] = (1.0, 1.0)
+    texture_rotation_deg_range: tuple[float, float] = (0.0, 0.0)
+    tone_jitter_range: tuple[float, float] = (0.0, 0.0)
+    mix_variation_range: tuple[float, float] = (0.0, 0.0)
     notes: str = ""
 
 
@@ -174,4 +178,3 @@ class DatasetLayoutSpec:
     episode_output_root: Path
     preview_output_root: Path
     qa_output_root: Path
-

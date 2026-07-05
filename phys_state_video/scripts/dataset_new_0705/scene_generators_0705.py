@@ -50,6 +50,60 @@ def build_camera_catalog() -> dict[str, CameraSpec]:
             jitter_fov_deg=4.0,
             hdri_key="studio_warm",
         ),
+        CameraSpec(
+            eye=(-0.45, -2.65, 1.62),
+            target=(0.12, 0.22, 0.34),
+            yfov_deg=42.0,
+            jitter_eye_xyz=(0.18, 0.12, 0.08),
+            jitter_target_xyz=(0.18, 0.15, 0.06),
+            jitter_fov_deg=3.0,
+            hdri_key="studio_soft",
+        ),
+        CameraSpec(
+            eye=(0.38, -3.35, 1.28),
+            target=(-0.08, 0.26, 0.30),
+            yfov_deg=56.0,
+            jitter_eye_xyz=(0.20, 0.16, 0.06),
+            jitter_target_xyz=(0.18, 0.16, 0.06),
+            jitter_fov_deg=4.0,
+            hdri_key="hall_neutral",
+        ),
+        CameraSpec(
+            eye=(0.0, -2.35, 1.82),
+            target=(0.0, 0.18, 0.58),
+            yfov_deg=36.0,
+            jitter_eye_xyz=(0.16, 0.10, 0.08),
+            jitter_target_xyz=(0.16, 0.12, 0.08),
+            jitter_fov_deg=2.0,
+            hdri_key="studio_warm",
+        ),
+        CameraSpec(
+            eye=(0.55, -2.55, 1.18),
+            target=(0.02, 0.30, 0.28),
+            yfov_deg=39.0,
+            jitter_eye_xyz=(0.12, 0.10, 0.05),
+            jitter_target_xyz=(0.12, 0.12, 0.05),
+            jitter_fov_deg=2.0,
+            hdri_key="hall_neutral",
+        ),
+        CameraSpec(
+            eye=(-0.62, -2.85, 1.26),
+            target=(0.08, 0.18, 0.30),
+            yfov_deg=44.0,
+            jitter_eye_xyz=(0.14, 0.12, 0.05),
+            jitter_target_xyz=(0.14, 0.12, 0.05),
+            jitter_fov_deg=2.5,
+            hdri_key="studio_soft",
+        ),
+        CameraSpec(
+            eye=(0.20, -2.15, 1.68),
+            target=(0.02, 0.16, 0.54),
+            yfov_deg=35.0,
+            jitter_eye_xyz=(0.10, 0.08, 0.05),
+            jitter_target_xyz=(0.10, 0.08, 0.05),
+            jitter_fov_deg=1.5,
+            hdri_key="studio_warm",
+        ),
     ]
     return {f"cam_{idx:02d}": camera for idx, camera in enumerate(cameras)}
 
@@ -68,8 +122,8 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_occlusion=False,
             supports_support_objects=True,
             target_event_types=("first_bounce", "peak_speed", "stop"),
-            preferred_surface_keys=("studio_wood_floor", "dark_wood_floor"),
-            preferred_camera_keys=("cam_00", "cam_02"),
+            preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "dark_wood_floor"),
+            preferred_camera_keys=("cam_00", "cam_02", "cam_03", "cam_06"),
         ),
         ScenarioFamilySpec(
             key="F2",
@@ -83,8 +137,8 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_occlusion=False,
             supports_support_objects=False,
             target_event_types=("first_contact", "max_impulse", "post_impact_turn"),
-            preferred_surface_keys=("studio_wood_floor", "painted_concrete_floor"),
-            preferred_camera_keys=("cam_00", "cam_01"),
+            preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_00", "cam_01", "cam_04", "cam_05"),
         ),
         ScenarioFamilySpec(
             key="F3",
@@ -98,8 +152,8 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_occlusion=False,
             supports_support_objects=False,
             target_event_types=("first_contact", "second_contact", "peak_chain_motion"),
-            preferred_surface_keys=("studio_wood_floor", "painted_concrete_floor"),
-            preferred_camera_keys=("cam_00", "cam_01"),
+            preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_00", "cam_01", "cam_03", "cam_06"),
         ),
         ScenarioFamilySpec(
             key="F4",
@@ -113,8 +167,8 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_occlusion=True,
             supports_support_objects=False,
             target_event_types=("enter_occlusion", "full_occlusion", "reappear"),
-            preferred_surface_keys=("studio_wood_floor", "dark_wood_floor"),
-            preferred_camera_keys=("cam_00", "cam_02"),
+            preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "dark_wood_floor"),
+            preferred_camera_keys=("cam_00", "cam_02", "cam_04", "cam_05"),
         ),
         ScenarioFamilySpec(
             key="F5",
@@ -128,8 +182,8 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             supports_occlusion=False,
             supports_support_objects=True,
             target_event_types=("support_loss", "drop_start", "land"),
-            preferred_surface_keys=("dark_wood_floor", "painted_concrete_floor"),
-            preferred_camera_keys=("cam_01", "cam_02"),
+            preferred_surface_keys=("dark_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_01", "cam_02", "cam_04", "cam_06"),
         ),
     ]
     return {family.key: family for family in families}
@@ -176,8 +230,9 @@ def _sample_object(
     orientation_euler_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
     linear_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
     angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    forced_material_key: str | None = None,
 ) -> ObjectInstanceSpec:
-    material_key = _pick_material_key(rng, family, material_keys_by_category)
+    material_key = forced_material_key or _pick_material_key(rng, family, material_keys_by_category)
     return ObjectInstanceSpec(
         name=name,
         family_key=family.key,
@@ -218,11 +273,18 @@ def _material_keys_by_category() -> dict[str, list[str]]:
     return out
 
 
+def _allowed_material_keys(family: ObjectFamilySpec, material_keys_by_category: dict[str, list[str]]) -> list[str]:
+    keys: list[str] = []
+    for category in family.allowed_material_categories:
+        keys.extend(material_keys_by_category.get(category, []))
+    return keys
+
+
 def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F1"]
     material_keys = _material_keys_by_category()
-    driver_key = str(rng.choice(["ball", "capsule_can", "flat_puck", "wheel", "spool", "dumbbell"]))
+    driver_key = str(rng.choice(["ball", "capsule_can", "flat_puck", "wheel", "spool", "bobbin", "drum_barrel", "roller_drum", "dumbbell"]))
     driver_family = object_families[driver_key]
     driver = _sample_object(
         rng,
@@ -255,8 +317,8 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F2"]
     material_keys = _material_keys_by_category()
-    driver_family = object_families[str(rng.choice(["flat_puck", "ball", "capsule_can", "wheel"]))]
-    target_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box", "cone_frustum"]))]
+    driver_family = object_families[str(rng.choice(["flat_puck", "ball", "capsule_can", "wheel", "bobbin", "drum_barrel", "roller_drum"]))]
+    target_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box", "cone_frustum", "tool_case", "shipping_box"]))]
     driver = _sample_object(
         rng,
         driver_family,
@@ -296,9 +358,9 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F3"]
     material_keys = _material_keys_by_category()
-    lead_family = object_families[str(rng.choice(["ball", "capsule_can", "wheel", "spool"]))]
-    mid_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box"]))]
-    tail_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "cone_frustum"]))]
+    lead_family = object_families[str(rng.choice(["ball", "capsule_can", "wheel", "spool", "bobbin", "drum_barrel"]))]
+    mid_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box", "tool_case", "shipping_box"]))]
+    tail_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "cone_frustum", "tool_case", "shipping_box", "roller_drum"]))]
     lead = _sample_object(
         rng,
         lead_family,
@@ -350,6 +412,12 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     occluder_family = object_families["pillar_occluder"]
     mover_count = int(rng.choice([1, 2]))
     movers: list[ObjectInstanceSpec] = []
+    shared_allowed = _allowed_material_keys(mover_family, material_keys)
+    forced_mover_materials: list[str] = []
+    if mover_count == 2 and len(shared_allowed) >= 2:
+        forced_mover_materials = list(rng.choice(shared_allowed, size=2, replace=False))
+    elif mover_count == 2 and shared_allowed:
+        forced_mover_materials = [shared_allowed[0], shared_allowed[0]]
     for idx in range(mover_count):
         direction = 1.0 if idx == 0 else -1.0
         start_x = -2.70 if idx == 0 else 2.55
@@ -362,6 +430,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
                 position=(start_x + rng.uniform(-0.18, 0.12), rng.uniform(0.50, 0.92), 0.17),
                 linear_velocity=(direction * rng.uniform(2.8, 3.8), rng.uniform(-0.08, 0.08), 0.0),
                 angular_velocity=(0.0, rng.uniform(-7.0, 7.0), 0.0),
+                forced_material_key=forced_mover_materials[idx] if idx < len(forced_mover_materials) else None,
             )
         )
     occluders = [
@@ -410,7 +479,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F5"]
     material_keys = _material_keys_by_category()
-    dynamic_family = object_families[str(rng.choice(["ball", "upright_cylinder", "crate_box", "cone_frustum"]))]
+    dynamic_family = object_families[str(rng.choice(["ball", "upright_cylinder", "crate_box", "cone_frustum", "tool_case", "shipping_box", "drum_barrel"]))]
     support_family = object_families[str(rng.choice(["platform_block", "wedge_ramp"]))]
     support = _sample_object(
         rng,
@@ -493,4 +562,3 @@ def preview_diversity_report(num_samples_per_family: int = 6) -> dict[str, dict[
             "unique_cameras": sorted(camera_keys),
         }
     return report
-

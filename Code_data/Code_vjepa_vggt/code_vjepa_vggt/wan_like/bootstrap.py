@@ -35,6 +35,12 @@ def _reset_fake_package(name: str, path: Path) -> None:
     sys.modules[name] = module
 
 
+def _drop_wan_module_cache(prefix: str) -> None:
+    stale_keys = [name for name in sys.modules if name == prefix or name.startswith(prefix + ".")]
+    for key in stale_keys:
+        sys.modules.pop(key, None)
+
+
 def _load_module(name: str, path: Path):
     if name in sys.modules:
         return sys.modules[name]
@@ -303,6 +309,7 @@ def _select_wan_roots(task: str) -> tuple[Path, Path, Path]:
 
 def ensure_wan_module_packages(task: str = "ti2v-5B") -> tuple[Path, Path, Path]:
     wan_root, modules_root, configs_root = _select_wan_roots(task)
+    _drop_wan_module_cache("wan")
     _reset_fake_package("wan", wan_root)
     _reset_fake_package("wan.modules", modules_root)
     _reset_fake_package("wan.configs", configs_root)

@@ -8,6 +8,7 @@ from .common_specs import LightingSpec, MaterialSpec, RangeSpec, SurfaceThemeSpe
 TEXTURE_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures")
 HDRI_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/hdris")
 LEGACY_TEXTURE_ROOT = Path("/data/gaoya/dataset/textures/polyhaven_wood")
+INDOOR_ASSET_PACK_ROOT = Path("/data/gaoya/agent-data/outputs/dataset_new_0705/assets")
 
 
 def build_material_catalog() -> dict[str, MaterialSpec]:
@@ -19,6 +20,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             base_color=(0.82, 0.26, 0.18),
             accent_color=(0.93, 0.79, 0.73),
             roughness=0.86,
+            tone_jitter_range=(0.03, 0.08),
+            mix_variation_range=(0.10, 0.24),
             notes="Primary high-contrast dynamic object material.",
         ),
         MaterialSpec(
@@ -28,6 +31,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             base_color=(0.20, 0.38, 0.72),
             accent_color=(0.80, 0.87, 0.94),
             roughness=0.84,
+            tone_jitter_range=(0.03, 0.08),
+            mix_variation_range=(0.10, 0.24),
         ),
         MaterialSpec(
             key="painted_metal_teal",
@@ -37,6 +42,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             accent_color=(0.90, 0.92, 0.92),
             roughness=0.44,
             metallic=0.35,
+            tone_jitter_range=(0.02, 0.06),
+            mix_variation_range=(0.08, 0.18),
             notes="Works for cans, cylinders and support props.",
         ),
         MaterialSpec(
@@ -47,6 +54,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             accent_color=(0.96, 0.95, 0.90),
             roughness=0.40,
             metallic=0.30,
+            tone_jitter_range=(0.02, 0.05),
+            mix_variation_range=(0.06, 0.15),
         ),
         MaterialSpec(
             key="plastic_orange",
@@ -55,6 +64,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             base_color=(0.87, 0.45, 0.22),
             accent_color=(0.99, 0.92, 0.84),
             roughness=0.56,
+            tone_jitter_range=(0.02, 0.05),
+            mix_variation_range=(0.06, 0.16),
         ),
         MaterialSpec(
             key="plastic_white",
@@ -63,6 +74,8 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             base_color=(0.86, 0.86, 0.84),
             accent_color=(0.98, 0.98, 0.97),
             roughness=0.42,
+            tone_jitter_range=(0.01, 0.03),
+            mix_variation_range=(0.04, 0.10),
         ),
         MaterialSpec(
             key="wood_plywood",
@@ -73,6 +86,10 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             accent_color=(0.88, 0.82, 0.71),
             roughness=0.82,
             texture_path=str(LEGACY_TEXTURE_ROOT / "plywood_diff_4k.jpg"),
+            texture_repeat_range=(1.2, 2.0),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.02, 0.06),
+            mix_variation_range=(0.08, 0.20),
         ),
         MaterialSpec(
             key="wood_dark",
@@ -83,6 +100,10 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             accent_color=(0.68, 0.56, 0.42),
             roughness=0.78,
             texture_path=str(LEGACY_TEXTURE_ROOT / "dark_wood_diff_4k.jpg"),
+            texture_repeat_range=(1.2, 2.2),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.02, 0.06),
+            mix_variation_range=(0.08, 0.20),
         ),
         MaterialSpec(
             key="cardboard_kraft",
@@ -91,7 +112,15 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             base_color=(0.68, 0.54, 0.37),
             accent_color=(0.84, 0.76, 0.62),
             roughness=0.88,
-            notes="Approximation until a dedicated cardboard texture is added.",
+            texture_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_diff_2k.jpg"),
+            normal_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_nor_gl_2k.jpg"),
+            roughness_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_rough_2k.jpg"),
+            ao_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_ao_2k.jpg"),
+            texture_repeat_range=(1.1, 2.0),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.03, 0.08),
+            mix_variation_range=(0.05, 0.14),
+            notes="Textured kraft-cardboard approximation built from the indoor texture pack.",
         ),
         MaterialSpec(
             key="leather_brown",
@@ -104,6 +133,27 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             normal_path=str(TEXTURE_ROOT / "brown_leather" / "brown_leather_nor_gl_2k.jpg"),
             roughness_path=str(TEXTURE_ROOT / "brown_leather" / "brown_leather_rough_2k.jpg"),
             ao_path=str(TEXTURE_ROOT / "brown_leather" / "brown_leather_ao_2k.jpg"),
+            texture_repeat_range=(0.9, 1.8),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.01, 0.04),
+            mix_variation_range=(0.03, 0.10),
+        ),
+        MaterialSpec(
+            key="fabric_curtain",
+            category="fabric",
+            texture_style="fabric_real",
+            base_color=(0.76, 0.74, 0.70),
+            accent_color=(0.90, 0.88, 0.84),
+            roughness=0.88,
+            texture_path="",
+            normal_path=str(TEXTURE_ROOT / "fabric_pattern_07" / "fabric_pattern_07_nor_gl_2k.jpg"),
+            roughness_path=str(TEXTURE_ROOT / "fabric_pattern_07" / "fabric_pattern_07_rough_2k.jpg"),
+            ao_path=str(TEXTURE_ROOT / "fabric_pattern_07" / "fabric_pattern_07_ao_2k.jpg"),
+            texture_repeat_range=(2.2, 4.0),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.04, 0.10),
+            mix_variation_range=(0.06, 0.18),
+            notes="Curtain-like fabric surface with AO-backed diffuse synthesis and stronger weave variation.",
         ),
         MaterialSpec(
             key="concrete_painted",
@@ -116,6 +166,10 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             normal_path=str(TEXTURE_ROOT / "painted_concrete" / "painted_concrete_nor_gl_2k.jpg"),
             roughness_path=str(TEXTURE_ROOT / "painted_concrete" / "painted_concrete_rough_2k.jpg"),
             ao_path=str(TEXTURE_ROOT / "painted_concrete" / "painted_concrete_ao_2k.jpg"),
+            texture_repeat_range=(1.0, 1.9),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.01, 0.03),
+            mix_variation_range=(0.02, 0.08),
         ),
         MaterialSpec(
             key="floor_wood",
@@ -129,6 +183,28 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             normal_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_nor_gl_2k.jpg"),
             roughness_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_rough_2k.jpg"),
             ao_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_ao_2k.jpg"),
+            texture_repeat_range=(1.0, 1.8),
+            texture_rotation_deg_range=(0.0, 90.0),
+            tone_jitter_range=(0.02, 0.05),
+            mix_variation_range=(0.05, 0.16),
+        ),
+        MaterialSpec(
+            key="floor_wood_weathered",
+            category="floor",
+            texture_style="wood_real",
+            texture_asset="weathered_planks",
+            base_color=(0.58, 0.47, 0.34),
+            accent_color=(0.78, 0.70, 0.60),
+            roughness=0.86,
+            texture_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_diff_2k.jpg"),
+            normal_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_nor_gl_2k.jpg"),
+            roughness_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_rough_2k.jpg"),
+            ao_path=str(TEXTURE_ROOT / "wood_floor" / "wood_floor_ao_2k.jpg"),
+            texture_repeat_range=(1.2, 2.4),
+            texture_rotation_deg_range=(0.0, 90.0),
+            tone_jitter_range=(0.03, 0.08),
+            mix_variation_range=(0.06, 0.20),
+            notes="Slightly older, more uneven floor finish for residential scenes.",
         ),
         MaterialSpec(
             key="wall_beige",
@@ -141,6 +217,27 @@ def build_material_catalog() -> dict[str, MaterialSpec]:
             normal_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_nor_gl_2k.jpg"),
             roughness_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_rough_2k.jpg"),
             ao_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_ao_2k.jpg"),
+            texture_repeat_range=(0.8, 1.5),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.01, 0.03),
+            mix_variation_range=(0.03, 0.10),
+        ),
+        MaterialSpec(
+            key="wall_cream",
+            category="wall",
+            texture_style="wood_real",
+            base_color=(0.88, 0.85, 0.79),
+            accent_color=(0.96, 0.94, 0.90),
+            roughness=0.92,
+            texture_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_diff_2k.jpg"),
+            normal_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_nor_gl_2k.jpg"),
+            roughness_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_rough_2k.jpg"),
+            ao_path=str(TEXTURE_ROOT / "beige_wall_001" / "beige_wall_001_ao_2k.jpg"),
+            texture_repeat_range=(0.8, 1.4),
+            texture_rotation_deg_range=(0.0, 180.0),
+            tone_jitter_range=(0.01, 0.03),
+            mix_variation_range=(0.03, 0.09),
+            notes="Cleaner painted wall for softer indoor lighting.",
         ),
     ]
     return {material.key: material for material in materials}
@@ -184,6 +281,29 @@ def build_hdri_catalog() -> dict[str, str]:
     }
 
 
+def build_indoor_asset_pack_manifest() -> dict[str, object]:
+    materials = build_material_catalog()
+    return {
+        "asset_pack_key": "real_indoor_assets_v1",
+        "output_root": str(INDOOR_ASSET_PACK_ROOT),
+        "texture_root": str(TEXTURE_ROOT),
+        "hdri_root": str(HDRI_ROOT),
+        "legacy_texture_root": str(LEGACY_TEXTURE_ROOT),
+        "materials": {
+            key: {
+                "category": material.category,
+                "texture_path": material.texture_path,
+                "normal_path": material.normal_path,
+                "roughness_path": material.roughness_path,
+                "ao_path": material.ao_path,
+                "texture_style": material.texture_style,
+            }
+            for key, material in materials.items()
+        },
+        "hdris": build_hdri_catalog(),
+    }
+
+
 def build_surface_catalog() -> dict[str, SurfaceThemeSpec]:
     surfaces = [
         SurfaceThemeSpec(
@@ -193,6 +313,14 @@ def build_surface_catalog() -> dict[str, SurfaceThemeSpec]:
             floor_friction_range=RangeSpec(0.58, 0.86),
             background_mode="studio",
             notes="Default clean training setup with higher visual realism.",
+        ),
+        SurfaceThemeSpec(
+            key="residential_wood_floor",
+            floor_material_key="floor_wood_weathered",
+            wall_material_key="wall_cream",
+            floor_friction_range=RangeSpec(0.56, 0.84),
+            background_mode="warm_studio",
+            notes="More residential indoor look with softer wall tone and slightly weathered wood.",
         ),
         SurfaceThemeSpec(
             key="painted_concrete_floor",
@@ -208,6 +336,13 @@ def build_surface_catalog() -> dict[str, SurfaceThemeSpec]:
             floor_friction_range=RangeSpec(0.62, 0.92),
             background_mode="warm_studio",
         ),
+        SurfaceThemeSpec(
+            key="soft_wall_floor",
+            floor_material_key="floor_wood_weathered",
+            wall_material_key="wall_cream",
+            floor_friction_range=RangeSpec(0.54, 0.80),
+            background_mode="studio",
+            notes="Neutral indoor version for close-up camera checks.",
+        ),
     ]
     return {surface.key: surface for surface in surfaces}
-

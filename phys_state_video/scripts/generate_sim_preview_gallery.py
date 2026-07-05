@@ -254,17 +254,31 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
             colors[:, 1] += grain * 0.06
         else:
             colors = sampled
+    elif style in {"fabric_real", "paper_real"}:
+        sampled = _textured_vertex_colors(mesh, obj.texture_asset, np.asarray(obj.color, dtype=np.float32))
+        if sampled is None:
+            warp = 0.5 + 0.5 * np.sin(verts[:, 0] * 18.0 + verts[:, 1] * 12.0)
+            weft = 0.5 + 0.5 * np.cos(verts[:, 1] * 16.0 + verts[:, 2] * 10.0)
+            colors = base.copy()
+            colors[:, 0] = np.clip(colors[:, 0] * (0.86 + 0.10 * warp), 0.0, 1.0)
+            colors[:, 1] = np.clip(colors[:, 1] * (0.84 + 0.10 * weft), 0.0, 1.0)
+            colors[:, 2] = np.clip(colors[:, 2] * (0.88 + 0.08 * warp), 0.0, 1.0)
+        else:
+            colors = sampled
     elif style == "painted":
-        band = 0.5 + 0.5 * np.sin(verts[:, 2] * 14.0)
+        band = 0.5 + 0.5 * np.sin(verts[:, 2] * 11.0 + verts[:, 0] * 2.3)
+        streak = 0.5 + 0.5 * np.sin(verts[:, 0] * 9.0 + verts[:, 1] * 5.0 + verts[:, 2] * 3.0)
         topcoat = np.array([0.96, 0.95, 0.92], dtype=np.float32)
-        colors = base * (0.78 + 0.14 * band[:, None])
+        colors = base * (0.74 + 0.16 * band[:, None])
+        colors = colors * (0.88 + 0.08 * streak[:, None])
         colors = colors * 0.82 + topcoat[None, :] * (0.18 * band[:, None])
     elif style == "stripe":
-        stripe = (np.sin(verts[:, 0] * 26.0) > 0).astype(np.float32)
+        stripe = (np.sin(verts[:, 0] * 22.0 + verts[:, 1] * 4.0) > 0).astype(np.float32)
+        stripe = 0.25 + 0.75 * stripe
         accent = np.clip(np.asarray(obj.color, dtype=np.float32) * np.array([1.10, 0.92, 0.82], dtype=np.float32), 0.0, 1.0)
         light = np.array([0.95, 0.94, 0.90], dtype=np.float32)
         colors = accent[None, :] * stripe[:, None] + light[None, :] * (1.0 - stripe[:, None])
-        colors = colors * 0.92
+        colors = colors * (0.88 + 0.08 * (0.5 + 0.5 * np.sin(verts[:, 2] * 4.0)))
     elif style == "two_tone":
         split = (verts[:, 1] > np.median(verts[:, 1])).astype(np.float32)
         alt = np.clip(
@@ -291,17 +305,23 @@ def _apply_procedural_material(mesh: trimesh.Trimesh, obj: ObjectSpec) -> None:
         colors[:, 0] += grain * 0.10
         colors[:, 1] += grain * 0.06
     elif style == "metal":
-        sheen = 0.35 + 0.65 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
-        colors = base * (0.82 + 0.28 * sheen[:, None])
+        sheen = 0.32 + 0.68 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
+        micro = 0.5 + 0.5 * np.sin(verts[:, 0] * 48.0 + verts[:, 1] * 17.0)
+        colors = base * (0.78 + 0.24 * sheen[:, None])
+        colors = colors * (0.95 + 0.05 * micro[:, None])
     elif style == "rubber":
-        speckle = 0.5 + 0.5 * np.sin(verts[:, 0] * 55.0) * np.cos(verts[:, 1] * 40.0)
-        colors = base * (0.82 + 0.18 * speckle[:, None])
+        speckle = 0.5 + 0.5 * np.sin(verts[:, 0] * 33.0) * np.cos(verts[:, 1] * 24.0)
+        blotch = 0.5 + 0.5 * np.sin(verts[:, 0] * 7.0 + verts[:, 1] * 6.0 + verts[:, 2] * 2.0)
+        colors = base * (0.80 + 0.16 * speckle[:, None])
+        colors = colors * (0.95 + 0.05 * blotch[:, None])
     elif style == "plastic":
         soften = 0.55 + 0.45 * (verts[:, 2] - verts[:, 2].min()) / max(float(np.ptp(verts[:, 2])), 1e-6)
-        colors = base * (0.88 + 0.08 * soften[:, None])
-        colors += np.array([0.03, 0.03, 0.02], dtype=np.float32)
+        micro = 0.5 + 0.5 * np.sin(verts[:, 0] * 22.0 + verts[:, 1] * 19.0)
+        colors = base * (0.86 + 0.08 * soften[:, None])
+        colors = colors * (0.96 + 0.04 * micro[:, None])
+        colors += np.array([0.02, 0.02, 0.015], dtype=np.float32)
     elif style == "checker":
-        pattern = (((verts[:, 0] * 10).astype(int) + (verts[:, 1] * 10).astype(int)) % 2).astype(np.float32)
+        pattern = (((verts[:, 0] * 8).astype(int) + (verts[:, 1] * 8).astype(int)) % 2).astype(np.float32)
         colors = base * (0.72 + 0.28 * pattern[:, None])
     else:
         colors = base
