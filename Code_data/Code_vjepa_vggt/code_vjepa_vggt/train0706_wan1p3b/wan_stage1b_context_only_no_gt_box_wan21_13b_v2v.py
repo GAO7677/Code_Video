@@ -91,7 +91,7 @@ DEFAULT_BASE_LORA = Path(
 )
 DEFAULT_STAGE1A = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt"
+    "pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt"
 )
 
 

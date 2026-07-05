@@ -17,7 +17,7 @@ else
   EXTRA_ARGS+=(--lora_checkpoint "${INIT_LORA}")
 fi
 
-CUDA_VISIBLE_DEVICES=3,5 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 2 --num_machines 1 "${TRAIN_SCRIPT}" \
+CUDA_VISIBLE_DEVICES=3,5,6,7 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 4 --num_machines 1 "${TRAIN_SCRIPT}" \
   --diffsynth_root /home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
   --wan_root "${WAN_ROOT}" \
   --dataset_base_path "${DATASET_CONFIG}" \
@@ -46,7 +46,7 @@ CUDA_VISIBLE_DEVICES=3,5 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --max_checkpoints_keep 20 \
   --benchmark_every_steps 1000 \
   --benchmark_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt \
-  --benchmark_cuda_visible_devices 3,5 \
+  --benchmark_cuda_visible_devices 3,5,6,7 \
   --benchmark_context_frames 8 \
   --benchmark_num_frames 24 \
   --benchmark_height 576 \

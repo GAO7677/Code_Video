@@ -296,16 +296,36 @@ def build_model_configs(wan_root: Path) -> list[ModelConfig]:
         wan_root / "diffusion_pytorch_model-00002-of-00003.safetensors",
         wan_root / "diffusion_pytorch_model-00003-of-00003.safetensors",
     ]
+    dit_single = wan_root / "diffusion_pytorch_model.safetensors"
     t5_path = wan_root / "models_t5_umt5-xxl-enc-bf16.pth"
-    vae_path = wan_root / "Wan2.2_VAE.pth"
-    for path in dit_shards + [t5_path, vae_path]:
-        if not path.is_file():
-            raise FileNotFoundError(f"Required model file not found: {path}")
-    return [
-        ModelConfig(path=[str(path) for path in dit_shards]),
-        ModelConfig(path=str(t5_path)),
-        ModelConfig(path=str(vae_path)),
-    ]
+    vae22_path = wan_root / "Wan2.2_VAE.pth"
+    vae21_path = wan_root / "Wan2.1_VAE.pth"
+
+    if all(path.is_file() for path in dit_shards) and vae22_path.is_file():
+        for path in dit_shards + [t5_path, vae22_path]:
+            if not path.is_file():
+                raise FileNotFoundError(f"Required model file not found: {path}")
+        return [
+            ModelConfig(path=[str(path) for path in dit_shards]),
+            ModelConfig(path=str(t5_path)),
+            ModelConfig(path=str(vae22_path)),
+        ]
+
+    if dit_single.is_file() and vae21_path.is_file():
+        for path in [dit_single, t5_path, vae21_path]:
+            if not path.is_file():
+                raise FileNotFoundError(f"Required model file not found: {path}")
+        return [
+            ModelConfig(path=str(dit_single)),
+            ModelConfig(path=str(t5_path)),
+            ModelConfig(path=str(vae21_path)),
+        ]
+
+    raise FileNotFoundError(
+        "Unsupported Wan checkpoint layout under "
+        f"{wan_root}. Expected either Wan2.2 3-shard DiT + Wan2.2_VAE.pth "
+        "or Wan2.1 single-file DiT + Wan2.1_VAE.pth."
+    )
 
 
 def build_pipeline(wan_root: Path, device: str, lora_path: Path | None) -> ContextAwareWanVideoPipeline:

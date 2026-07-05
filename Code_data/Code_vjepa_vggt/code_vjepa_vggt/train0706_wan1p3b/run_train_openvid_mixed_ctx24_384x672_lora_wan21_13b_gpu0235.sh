@@ -20,6 +20,7 @@ TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train.py"
 DATASET_CONFIG="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
+BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_mixed_ctx24_384x672_lora}"
 
 mkdir -p "${OUTPUT_DIR}"
@@ -86,6 +87,7 @@ CMD=(
   --lora_target_modules q,k,v,o,ffn.0,ffn.2
   --lora_rank 32
   --extra_inputs input_image
+  --lora_checkpoint "${BASE_LORA}"
   --report_to wandb
   --wandb_project openvid-movid-genesis-wan21_13b
   --wandb_mode online

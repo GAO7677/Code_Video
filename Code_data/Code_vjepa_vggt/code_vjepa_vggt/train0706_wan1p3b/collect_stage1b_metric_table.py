@@ -4,9 +4,9 @@ from __future__ import annotations
 # /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 # /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/collect_stage1b_metric_table.py \
 #   --report-csv /data/gaoya/AAA_test_video/0623/test/report/v2v/method_summary.csv \
-#   --result-substring /train_stage1b_diffsynth_native0705_0705/step- \
-#   --output-csv /data/gaoya/AAA_test_video/0623/test/report/v2v/train_stage1b_diffsynth_native0705_0705_metric_table.csv \
-#   --output-md /data/gaoya/AAA_test_video/0623/test/report/v2v/train_stage1b_diffsynth_native0705_0705_metric_table.md
+#   --result-substring /train_stage1b_diffsynth_native0706_wan21_13b/step- \
+#   --output-csv /data/gaoya/AAA_test_video/0623/test/report/v2v/train_stage1b_diffsynth_native0706_wan21_13b_metric_table.csv \
+#   --output-md /data/gaoya/AAA_test_video/0623/test/report/v2v/train_stage1b_diffsynth_native0706_wan21_13b_metric_table.md
 
 import argparse
 import csv
@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 DEFAULT_REPORT_CSV = Path("/data/gaoya/AAA_test_video/0623/test/report/v2v/method_summary.csv")
-DEFAULT_RESULT_SUBSTRING = "/train_stage1b_diffsynth_native0705_0705/step-"
+DEFAULT_RESULT_SUBSTRING = "/train_stage1b_diffsynth_native0706_wan21_13b/step-"
 
 METRIC_COLUMNS = (
     "wmreward_surprise_mean",

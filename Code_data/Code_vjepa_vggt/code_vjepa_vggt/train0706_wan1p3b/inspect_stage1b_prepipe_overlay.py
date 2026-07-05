@@ -44,11 +44,11 @@ from code_vjepa_vggt.utils.video_io import (
 
 DEFAULT_CHECKPOINT_ROOT = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints"
+    "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints"
 )
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/AAA_test_video/0623/test/v2v/"
-    "train_stage1b_diffsynth_native0705_0705/prepipe_overlays"
+    "train_stage1b_diffsynth_native0706_wan21_13b/prepipe_overlays"
 )
 
 OBJECT_COLORS = [
@@ -85,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--object-num-queries", type=int, default=8)
     parser.add_argument("--aux-max-objects", type=int, default=4)
-    parser.add_argument("--wan-root", default="/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+    parser.add_argument("--wan-root", default="/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B")
     parser.add_argument("--diffsynth-root", default="/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
     parser.add_argument(
         "--lora-checkpoint",
@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage1a-init-from",
-        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt",
+        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt",
     )
     parser.add_argument("--grounding-device", default=None)
     parser.add_argument("--aux-device", default=None, help="optional device for live VGGT forward, e.g. cuda:1")

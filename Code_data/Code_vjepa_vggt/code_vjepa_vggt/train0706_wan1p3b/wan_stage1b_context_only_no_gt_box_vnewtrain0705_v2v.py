@@ -6,18 +6,18 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-xxxx \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-xxxx \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705 \
+  --model-name train_stage1b_diffsynth_native0706_wan21_13b \
   --num-inference-steps 40
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=6 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705_vjepa \
+  --model-name train_stage1b_diffsynth_native0706_wan21_13b_vjepa \
   --num-inference-steps 40 \
   --vjepa-preset ladder_s20 \
   --vjepa-device cuda:0
@@ -80,10 +80,10 @@ CUDA_VISIBLE_DEVICES=7 \
   --num-inference-steps 40
 
 Default output root:
-- /data/gaoya/AAA_test_video/0623/test/v2v/<model-name>/<step-name>
+- /data/gaoya/AAA_test_video/0623/test/v2v_1p3b/<model-name>/<step-name>
 """
 
-DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B")
 DEFAULT_DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
 DEFAULT_BASE_LORA = Path(
     "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/"
@@ -91,7 +91,7 @@ DEFAULT_BASE_LORA = Path(
 )
 DEFAULT_STAGE1A = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt"
+    "pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt"
 )
 
 

@@ -41,12 +41,12 @@ DEFAULT_INFER_SCRIPT = (
 DEFAULT_BENCH_SCRIPT = DEFAULT_PROJECT_ROOT / "code_vjepa_vggt/AAAinfer/bench.sh"
 DEFAULT_CHECKPOINT_ROOT = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints"
+    "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints"
 )
 DEFAULT_INPUT_JSON_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
-DEFAULT_MODEL_NAME = "train_stage1b_diffsynth_native0705_0705"
-WATCH_STATE_DIRNAME = ".watch_stage1b_context_only_no_gt_box_vnewtrain0705"
+DEFAULT_MODEL_NAME = "train_stage1b_diffsynth_native0706_wan21_13b"
+WATCH_STATE_DIRNAME = ".watch_stage1b_context_only_no_gt_box_vnewtrain0706_wan21_13b"
 
 
 @dataclass(frozen=True)

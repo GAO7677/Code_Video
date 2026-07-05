@@ -21,7 +21,7 @@ Continue training from the base LoRA above.
 Script:
 
 ```bash
-CUDA_VISIBLE_DEVICES=3,5 sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/run_train_phys_state_lora_continue_wan21_13b.sh
+CUDA_VISIBLE_DEVICES=3,5,6,7 sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/run_train_phys_state_lora_continue_wan21_13b.sh
 ```
 
 Smoke:
@@ -46,7 +46,7 @@ sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wa
 
 Expected output:
 
-`/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/pybullet_teacher_student/stage1a_full_token/step_0005000.pt`
+`/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt`
 
 ## 4. Stage 1b
 

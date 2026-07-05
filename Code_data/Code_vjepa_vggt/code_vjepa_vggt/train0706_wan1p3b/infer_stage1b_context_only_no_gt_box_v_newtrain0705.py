@@ -5,10 +5,10 @@ from __future__ import annotations
 # CUDA_VISIBLE_DEVICES=7 \
 # /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 # /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
-#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-001000 \
 #   --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460/source_video/context_video_8f.mp4 \
 #   --prompt "f5 sample 001460 industrial rigid body simulation sphere box" \
-#   --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/inference_review/step-001000 \
+#   --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/inference_review/step-001000 \
 #   --sampling-steps 12
 #
 # Guided example:
@@ -16,7 +16,7 @@ from __future__ import annotations
 # CUDA_VISIBLE_DEVICES=6 \
 # /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 # /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
-#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-001000 \
 #   --context-video /path/to/context_video_8f.mp4 \
 #   --prompt "your prompt" \
 #   --output-dir /data/gaoya/agent-data/outputs/train0706_vjepa_demo \
@@ -616,7 +616,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-video", required=True, help="Context video mp4")
     parser.add_argument("--prompt", required=True, help="Prompt / caption for generation")
     parser.add_argument("--output-dir", required=True, help="Directory for video + json outputs")
-    parser.add_argument("--wan-root", default="/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+    parser.add_argument("--wan-root", default="/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B")
     parser.add_argument(
         "--diffsynth-root",
         default="/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main",
@@ -627,7 +627,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage1a-init-from",
-        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt",
+        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt",
     )
     parser.add_argument("--num-frames", type=int, default=24)
     parser.add_argument("--context-frames", type=int, default=8)

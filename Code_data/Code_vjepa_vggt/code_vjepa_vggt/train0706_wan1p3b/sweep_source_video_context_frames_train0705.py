@@ -5,9 +5,9 @@ from __future__ import annotations
 # CUDA_VISIBLE_DEVICES=7 \
 # /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 # /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/sweep_source_video_context_frames_train0705.py \
-#   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-007000 \
+#   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-007000 \
 #   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-#   --model-name train_stage1b_diffsynth_native0705_0705_sourcectx_sweep \
+#   --model-name train_stage1b_diffsynth_native0706_wan21_13b_sourcectx_sweep \
 #   --context-frames-list 4 16 24 \
 #   --num-inference-steps 40
 
@@ -534,7 +534,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python-executable", type=Path, default=Path(sys.executable))
     parser.add_argument("--batch-script", type=Path, default=DEFAULT_BATCH_SCRIPT)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--wan-root", type=Path, default=Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"))
+    parser.add_argument("--wan-root", type=Path, default=Path("/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B"))
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
     parser.add_argument(
         "--lora-checkpoint",
