@@ -531,6 +531,63 @@ def _build_object_context(
     return object_context, debug
 
 
+def _apply_object_context_ablation(
+    object_context: torch.Tensor,
+    *,
+    mode: str = "none",
+    random_seed: int | None = None,
+    random_scale: float = 1.0,
+) -> tuple[torch.Tensor, dict[str, object]]:
+    mode_norm = str(mode).strip().lower()
+    base = object_context.detach().float()
+    debug = {
+        "mode": mode_norm,
+        "input_shape": list(object_context.shape),
+        "input_mean": float(base.mean().item()),
+        "input_std": float(base.std(unbiased=False).item()),
+        "input_abs_mean": float(base.abs().mean().item()),
+        "input_abs_max": float(base.abs().max().item()),
+        "random_seed": None if random_seed is None else int(random_seed),
+        "random_scale": float(random_scale),
+    }
+    if mode_norm in ("", "none"):
+        debug["applied"] = False
+        return object_context, debug
+
+    if mode_norm == "zero":
+        ablated = torch.zeros_like(object_context)
+    elif mode_norm == "random":
+        generator = None
+        if random_seed is not None:
+            generator = torch.Generator(device=object_context.device)
+            generator.manual_seed(int(random_seed))
+        random_fp32 = torch.randn(
+            tuple(object_context.shape),
+            device=object_context.device,
+            dtype=torch.float32,
+            generator=generator,
+        )
+        input_mean = float(base.mean().item())
+        input_std = float(base.std(unbiased=False).item())
+        target_std = input_std if np.isfinite(input_std) and input_std > 1.0e-6 else 1.0
+        random_fp32 = random_fp32 * (target_std * float(random_scale)) + input_mean
+        ablated = random_fp32.to(device=object_context.device, dtype=object_context.dtype)
+    else:
+        raise ValueError(f"unsupported object_context ablation mode: {mode}")
+
+    ablated_fp32 = ablated.detach().float()
+    debug.update(
+        {
+            "applied": True,
+            "output_mean": float(ablated_fp32.mean().item()),
+            "output_std": float(ablated_fp32.std(unbiased=False).item()),
+            "output_abs_mean": float(ablated_fp32.abs().mean().item()),
+            "output_abs_max": float(ablated_fp32.abs().max().item()),
+        }
+    )
+    return ablated, debug
+
+
 def _load_context_video(
     *,
     video_path: Path,
@@ -627,6 +684,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
     parser.add_argument("--initialize-model-on-cpu", action="store_true")
+    parser.add_argument(
+        "--object-context-ablation",
+        choices=["none", "zero", "random"],
+        default="none",
+        help="Replace the final object_context fed into Wan DiT for ablation.",
+    )
+    parser.add_argument(
+        "--object-context-random-seed",
+        type=int,
+        default=None,
+        help="Optional RNG seed used when --object-context-ablation=random.",
+    )
+    parser.add_argument(
+        "--object-context-random-scale",
+        type=float,
+        default=1.0,
+        help="Std multiplier used when --object-context-ablation=random.",
+    )
     add_vjepa_cli_args(parser)
     return parser.parse_args()
 
@@ -657,12 +732,19 @@ def main() -> None:
     context_pil = _tensor_video_to_pil_list(context_video_single)
 
     with torch.no_grad():
-        object_context, object_debug = _build_object_context(
+        object_context_raw, object_debug = _build_object_context(
             model,
             context_video_single=context_video_single,
             prompt=str(args.prompt),
             video_path=str(context_video_path),
         )
+        object_context, ablation_debug = _apply_object_context_ablation(
+            object_context_raw,
+            mode=str(args.object_context_ablation),
+            random_seed=args.object_context_random_seed,
+            random_scale=float(args.object_context_random_scale),
+        )
+        object_debug["object_context_ablation"] = ablation_debug
         video = pipe(
             prompt=str(args.prompt),
             negative_prompt="",
@@ -696,6 +778,11 @@ def main() -> None:
             "context_frames": int(model_args.fixed_num_context_frames),
             "lora_checkpoint": str(model_args.lora_checkpoint),
             "stage1a_init_from": str(model_args.stage1a_init_from),
+        },
+        "object_context_ablation": {
+            "mode": str(args.object_context_ablation),
+            "random_seed": args.object_context_random_seed,
+            "random_scale": float(args.object_context_random_scale),
         },
         "load_info": _summarize_load_info(load_info),
         "object_debug": object_debug,

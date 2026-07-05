@@ -209,6 +209,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--object-context-ablation",
+        choices=["none", "zero", "random"],
+        default="none",
+        help="Replace the final object_context fed into Wan DiT for ablation.",
+    )
+    parser.add_argument(
+        "--object-context-random-seed",
+        type=int,
+        default=None,
+        help="Optional RNG seed used when --object-context-ablation=random.",
+    )
+    parser.add_argument(
+        "--object-context-random-scale",
+        type=float,
+        default=1.0,
+        help="Std multiplier used when --object-context-ablation=random.",
+    )
     return parser.parse_args()
 
 
@@ -319,6 +337,13 @@ def _run_single_case_in_process(
         prompt=str(input_caption),
         video_path=str(context_video_path),
     )
+    object_context, ablation_debug = infer0705._apply_object_context_ablation(
+        object_context,
+        mode=str(getattr(model, "_object_context_ablation_mode", "none")),
+        random_seed=getattr(model, "_object_context_random_seed", None),
+        random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
+    )
+    object_debug["object_context_ablation"] = ablation_debug
 
     pipe = model.pipe
     pipe.dit.eval()
@@ -356,6 +381,11 @@ def _run_single_case_in_process(
         "model_device": str(model.pipe.device),
         "load_info": summarized_load_info,
         "object_debug": object_debug,
+        "object_context_ablation": {
+            "mode": str(getattr(model, "_object_context_ablation_mode", "none")),
+            "random_seed": getattr(model, "_object_context_random_seed", None),
+            "random_scale": float(getattr(model, "_object_context_random_scale", 1.0)),
+        },
         "model_args": {
             "height": int(height),
             "width": int(width),
@@ -406,6 +436,11 @@ def main() -> None:
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
         "initialize_model_on_cpu": bool(cli_args.initialize_model_on_cpu),
+        "object_context_ablation": {
+            "mode": str(cli_args.object_context_ablation),
+            "random_seed": cli_args.object_context_random_seed,
+            "random_scale": float(cli_args.object_context_random_scale),
+        },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
@@ -421,6 +456,9 @@ def main() -> None:
     model.to(torch.device(cli_args.device))
     model.eval()
     model.pipe.dit.eval()
+    model._object_context_ablation_mode = str(cli_args.object_context_ablation)
+    model._object_context_random_seed = cli_args.object_context_random_seed
+    model._object_context_random_scale = float(cli_args.object_context_random_scale)
 
     step_success = 0
     step_failed = 0
