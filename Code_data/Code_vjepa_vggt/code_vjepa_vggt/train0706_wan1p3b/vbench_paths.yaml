@@ -1,0 +1,20 @@
+paths:
+  vbench_repo_root: /home/gaoya/Code_Video/Code_data/Code_benchmark/VBench-master
+  work_root: /data/gaoya/AAA_test_video/Benchmark/VBench
+  vbench_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench
+  vbench2_cache_dir: /data/gaoya/AAA_test_video/Benchmark/VBench/cache/vbench2
+
+runtime:
+  device: cuda
+  load_ckpt_from_local: false
+  read_frame: false
+  imaging_quality_preprocessing_mode: longer
+  use_symlink: true
+  cleanup_staging: true
+
+continuation:
+  max_video_frames: -1
+  generated_start_frame: 0
+  gt_start_frame: 0
+  enable_lpips: false
+  lpips_net: alex

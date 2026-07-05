@@ -3,7 +3,7 @@ set -euo pipefail
 
 ACCELERATE_BIN=/data/gaoya/miniconda3/envs/wan/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/train.py
-DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/dataset_raw_phys_state_config.json
+DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_raw_phys_state_config.json
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 INIT_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors
 OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/raw_phys_state_wan21_13b_lora_continue_576x1024_f24}
@@ -43,6 +43,7 @@ CUDA_VISIBLE_DEVICES=3,5 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --num_epochs 10 \
   --gradient_accumulation_steps 4 \
   --save_steps 500 \
+  --max_checkpoints_keep 20 \
   --benchmark_every_steps 1000 \
   --benchmark_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt \
   --benchmark_cuda_visible_devices 3,5 \
@@ -54,14 +55,14 @@ CUDA_VISIBLE_DEVICES=3,5 "${ACCELERATE_BIN}" launch --multi_gpu --num_processes 
   --benchmark_num_inference_steps 50 \
   --benchmark_cfg_scale 5.0 \
   --benchmark_seed 42 \
-  --benchmark_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/batch_eval_lora.py \
+  --benchmark_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/batch_eval_lora.py \
   --benchmark_output_subdir fixed24_generation \
   --validation_every_steps 2000 \
-  --validation_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/run_validation_vbench.py \
+  --validation_script_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/run_validation_vbench.py \
   --validation_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_validation100.txt \
   --validation_context_frames_list 0,1,2,4,6,8 \
   --validation_output_subdir validation100_vbench \
-  --validation_vbench_config_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0419_reference/vbench_paths.yaml \
+  --validation_vbench_config_path /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/vbench_paths.yaml \
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
   --lora_base_model dit \

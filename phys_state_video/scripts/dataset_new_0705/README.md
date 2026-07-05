@@ -33,7 +33,7 @@
     - `spool`
     - `dumbbell`
 - `scene_generators_0705.py`
-  - 定义 F1-F5 的参数化场景生成逻辑。
+  - 定义 F1-F10 的参数化场景生成逻辑。
   - 核心变化不是“增加 seed 抖动”，而是每个 family 内部允许切换不同 object family、material family、camera setup 和 surface setup。
 
 ## 设计原则
@@ -52,7 +52,7 @@
 - 物体种类不再局限于球、盒、圆柱、胶囊、圆盘。
 - 材质不再只有单一 procedural 色块，增加了 wood / leather / concrete / painted metal / plastic / rubber 的目录定义。
 - 相机不再固定为一个视角，而是有多个 base camera 加 jitter。
-- F1-F5 不再强绑定单一模板组合。
+  - F1-F10 不再强绑定单一模板组合。
 
 ## 下一步实现顺序
 
@@ -78,3 +78,35 @@ print(preview_diversity_report())
 ```
 
 如果这一步看到每个 family 都能产出多个 object family / material / camera 组合，说明“定义层”已经具备继续接 raw 生成器的基础。
+
+## 100 case 生成建议
+
+正式批量生成建议使用：
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/phys_state_video/scripts:/home/gaoya/Code_Video \
+/data/gaoya/miniconda3/envs/wan/bin/python -m dataset_new_0705.generate_0706_batch \
+  --output-root /data/gaoya/AAA_test_video/Dataset_physV/0706pybullet \
+  --num-cases 100
+```
+
+默认输出结构：
+
+```text
+/data/gaoya/AAA_test_video/Dataset_physV/0706pybullet/
+  manifest.json
+  cases/
+    F1/
+    F2/
+    F3/
+    F4/
+    F5/
+    F6/
+    F7/
+    F8/
+    F9/
+    F10/
+  qa_preview/
+  logs/
+  reports/
+```

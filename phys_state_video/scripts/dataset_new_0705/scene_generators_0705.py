@@ -124,6 +124,10 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             target_event_types=("first_bounce", "peak_speed", "stop"),
             preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "dark_wood_floor"),
             preferred_camera_keys=("cam_00", "cam_02", "cam_03", "cam_06"),
+            motion_modes=("roll", "slide", "bounce", "spin", "glance"),
+            speed_range=(1.0, 5.2),
+            spin_range=(0.0, 12.0),
+            angle_range_deg=(0.0, 28.0),
         ),
         ScenarioFamilySpec(
             key="F2",
@@ -139,6 +143,10 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             target_event_types=("first_contact", "max_impulse", "post_impact_turn"),
             preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
             preferred_camera_keys=("cam_00", "cam_01", "cam_04", "cam_05"),
+            motion_modes=("head_on", "glance", "crossing", "offset_push"),
+            speed_range=(1.8, 5.5),
+            spin_range=(0.0, 10.0),
+            angle_range_deg=(2.0, 36.0),
         ),
         ScenarioFamilySpec(
             key="F3",
@@ -154,6 +162,10 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             target_event_types=("first_contact", "second_contact", "peak_chain_motion"),
             preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
             preferred_camera_keys=("cam_00", "cam_01", "cam_03", "cam_06"),
+            motion_modes=("domino", "push_chain", "rolling_chain", "offset_chain"),
+            speed_range=(1.4, 4.8),
+            spin_range=(0.0, 10.0),
+            angle_range_deg=(0.0, 24.0),
         ),
         ScenarioFamilySpec(
             key="F4",
@@ -169,6 +181,10 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             target_event_types=("enter_occlusion", "full_occlusion", "reappear"),
             preferred_surface_keys=("studio_wood_floor", "residential_wood_floor", "dark_wood_floor"),
             preferred_camera_keys=("cam_00", "cam_02", "cam_04", "cam_05"),
+            motion_modes=("left_pass", "right_pass", "cross", "double_pass"),
+            speed_range=(1.2, 4.2),
+            spin_range=(0.0, 8.0),
+            angle_range_deg=(0.0, 18.0),
         ),
         ScenarioFamilySpec(
             key="F5",
@@ -184,6 +200,105 @@ def build_scenario_family_catalog() -> dict[str, ScenarioFamilySpec]:
             target_event_types=("support_loss", "drop_start", "land"),
             preferred_surface_keys=("dark_wood_floor", "residential_wood_floor", "painted_concrete_floor"),
             preferred_camera_keys=("cam_01", "cam_02", "cam_04", "cam_06"),
+            motion_modes=("drop", "topple", "slide_off", "roll_off"),
+            speed_range=(0.2, 1.6),
+            spin_range=(0.0, 6.0),
+            angle_range_deg=(0.0, 22.0),
+        ),
+        ScenarioFamilySpec(
+            key="F6",
+            title="Ramp Slide",
+            description="Objects sliding down a visible incline with variable roll-out behavior.",
+            family_slug="F6_ramp_slide",
+            min_dynamic_objects=1,
+            max_dynamic_objects=2,
+            min_total_objects=2,
+            max_total_objects=4,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("ramp_entry", "ramp_exit", "land"),
+            preferred_surface_keys=("residential_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_02", "cam_04", "cam_06"),
+            motion_modes=("shallow_slide", "steep_slide", "rollout"),
+            speed_range=(0.8, 3.6),
+            spin_range=(0.0, 8.0),
+            angle_range_deg=(8.0, 35.0),
+        ),
+        ScenarioFamilySpec(
+            key="F7",
+            title="Spin Dominant Motion",
+            description="Strong angular motion with translation secondary.",
+            family_slug="F7_spin_dominant",
+            min_dynamic_objects=1,
+            max_dynamic_objects=2,
+            min_total_objects=1,
+            max_total_objects=3,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("peak_spin", "orientation_change", "stop"),
+            preferred_surface_keys=("studio_wood_floor", "dark_wood_floor"),
+            preferred_camera_keys=("cam_00", "cam_03", "cam_06"),
+            motion_modes=("high_spin", "reverse_spin", "wobble_spin"),
+            speed_range=(0.6, 3.2),
+            spin_range=(6.0, 16.0),
+            angle_range_deg=(0.0, 22.0),
+        ),
+        ScenarioFamilySpec(
+            key="F8",
+            title="Bounce Heavy Motion",
+            description="Repeated rebound and settling with high restitution objects.",
+            family_slug="F8_bounce_heavy",
+            min_dynamic_objects=1,
+            max_dynamic_objects=2,
+            min_total_objects=1,
+            max_total_objects=3,
+            supports_occlusion=False,
+            supports_support_objects=False,
+            target_event_types=("first_bounce", "second_bounce", "settle"),
+            preferred_surface_keys=("studio_wood_floor", "residential_wood_floor"),
+            preferred_camera_keys=("cam_00", "cam_01", "cam_05"),
+            motion_modes=("vertical_drop", "oblique_drop", "multi_bounce"),
+            speed_range=(1.0, 5.0),
+            spin_range=(0.0, 8.0),
+            angle_range_deg=(0.0, 20.0),
+        ),
+        ScenarioFamilySpec(
+            key="F9",
+            title="Clutter Interaction",
+            description="Local interaction among multiple objects in a room-like cluttered area.",
+            family_slug="F9_clutter_interaction",
+            min_dynamic_objects=2,
+            max_dynamic_objects=3,
+            min_total_objects=3,
+            max_total_objects=6,
+            supports_occlusion=True,
+            supports_support_objects=True,
+            target_event_types=("contact", "occlusion", "settle"),
+            preferred_surface_keys=("residential_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_02", "cam_04", "cam_06"),
+            motion_modes=("crowded_slide", "offset_collision", "spill"),
+            speed_range=(0.8, 4.0),
+            spin_range=(0.0, 8.0),
+            angle_range_deg=(0.0, 26.0),
+        ),
+        ScenarioFamilySpec(
+            key="F10",
+            title="Edge and Boundary",
+            description="Edge-aware motion around table, platform or floor boundary.",
+            family_slug="F10_edge_boundary",
+            min_dynamic_objects=1,
+            max_dynamic_objects=2,
+            min_total_objects=2,
+            max_total_objects=4,
+            supports_occlusion=False,
+            supports_support_objects=True,
+            target_event_types=("edge_approach", "fall_off", "land"),
+            preferred_surface_keys=("dark_wood_floor", "painted_concrete_floor"),
+            preferred_camera_keys=("cam_01", "cam_04", "cam_06"),
+            motion_modes=("edge_roll", "fall_off", "boundary_slide"),
+            speed_range=(0.6, 3.8),
+            spin_range=(0.0, 10.0),
+            angle_range_deg=(0.0, 30.0),
         ),
     ]
     return {family.key: family for family in families}
@@ -216,6 +331,50 @@ def _color_from_material_key(material_key: str) -> tuple[float, float, float]:
 
 def _family_sizes(rng: np.random.Generator, family: ObjectFamilySpec) -> dict[str, float]:
     return {name: _sample_range(rng, spec) for name, spec in family.size_ranges.items()}
+
+
+def _sample_motion_profile(rng: np.random.Generator, family: ScenarioFamilySpec) -> dict[str, float | str]:
+    speed_min, speed_max = family.speed_range
+    spin_min, spin_max = family.spin_range
+    angle_min, angle_max = family.angle_range_deg
+    modes = family.motion_modes or ("default",)
+    return {
+        "motion_mode": str(rng.choice(modes)),
+        "speed": float(rng.uniform(speed_min, speed_max)) if speed_max > speed_min else float(speed_min),
+        "spin": float(rng.uniform(spin_min, spin_max)) if spin_max > spin_min else float(spin_min),
+        "angle_deg": float(rng.uniform(angle_min, angle_max)) if angle_max > angle_min else float(angle_min),
+    }
+
+
+def _motion_vectors(
+    rng: np.random.Generator,
+    *,
+    speed: float,
+    spin: float,
+    angle_deg: float,
+    axis: str = "x",
+    lateral_jitter: float = 0.35,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    angle = math.radians(angle_deg)
+    vx = speed * math.cos(angle)
+    vy = speed * math.sin(angle) * float(rng.uniform(-lateral_jitter, lateral_jitter))
+    vz = float(rng.uniform(-0.08, 0.04))
+    if axis == "y":
+        vx, vy = vy, vx
+    elif axis == "diag":
+        vx *= float(rng.choice([-1.0, 1.0]))
+    linear_velocity = (vx, vy, vz)
+    angular_velocity = (
+        float(rng.uniform(-spin, spin)),
+        float(rng.uniform(-spin, spin)),
+        float(rng.uniform(-spin, spin)),
+    )
+    orientation = (
+        float(rng.uniform(-angle_deg, angle_deg)),
+        float(rng.uniform(-angle_deg, angle_deg)),
+        float(rng.uniform(-angle_deg, angle_deg)),
+    )
+    return linear_velocity, angular_velocity, orientation
 
 
 def _sample_object(
@@ -284,17 +443,25 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F1"]
     material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
     driver_key = str(rng.choice(["ball", "capsule_can", "flat_puck", "wheel", "spool", "bobbin", "drum_barrel", "roller_drum", "dumbbell"]))
     driver_family = object_families[driver_key]
+    linear_velocity, angular_velocity, orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
+    )
     driver = _sample_object(
         rng,
         driver_family,
         name="driver_0",
         material_keys_by_category=material_keys,
         position=(-2.0 + rng.uniform(-0.25, 0.10), rng.uniform(-0.55, 0.55), 0.18 + rng.uniform(-0.03, 0.10)),
-        orientation_euler_deg=tuple(float(rng.uniform(-a, a)) for a in driver_family.orientation_jitter_deg),
-        linear_velocity=(rng.uniform(2.7, 4.9), rng.uniform(-0.45, 0.45), rng.uniform(-0.08, 0.04)),
-        angular_velocity=(rng.uniform(-2.0, 10.0), rng.uniform(-8.0, 8.0), rng.uniform(-3.0, 5.0)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(orientation, driver_family.orientation_jitter_deg)),
+        linear_velocity=linear_velocity,
+        angular_velocity=angular_velocity,
     )
     camera_key = str(rng.choice(family.preferred_camera_keys))
     return ScenarioBlueprint(
@@ -309,7 +476,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
         camera=_sample_camera(rng, camera_key),
         objects=(driver,),
-        tags=("diverse_object", "appearance_randomized", "single_motion"),
+        tags=("diverse_object", "appearance_randomized", "single_motion", motion["motion_mode"]),
     )
 
 
@@ -317,17 +484,25 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F2"]
     material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
     driver_family = object_families[str(rng.choice(["flat_puck", "ball", "capsule_can", "wheel", "bobbin", "drum_barrel", "roller_drum"]))]
     target_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box", "cone_frustum", "tool_case", "shipping_box"]))]
+    driver_linear, driver_angular, driver_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis=str(rng.choice(["x", "diag"])),
+    )
     driver = _sample_object(
         rng,
         driver_family,
         name="driver_0",
         material_keys_by_category=material_keys,
         position=(-2.10 + rng.uniform(-0.25, 0.08), rng.uniform(-0.50, 0.50), 0.16 + rng.uniform(-0.04, 0.06)),
-        orientation_euler_deg=tuple(float(rng.uniform(-a, a)) for a in driver_family.orientation_jitter_deg),
-        linear_velocity=(rng.uniform(3.2, 5.0), rng.uniform(-0.35, 0.35), 0.0),
-        angular_velocity=(rng.uniform(-2.0, 8.0), rng.uniform(-8.0, 8.0), rng.uniform(-3.0, 7.0)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(driver_orientation, driver_family.orientation_jitter_deg)),
+        linear_velocity=driver_linear,
+        angular_velocity=driver_angular,
     )
     target = _sample_object(
         rng,
@@ -350,7 +525,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
         camera=_sample_camera(rng, camera_key),
         objects=(driver, target),
-        tags=("diverse_object", "appearance_randomized", "two_body_contact"),
+        tags=("diverse_object", "appearance_randomized", "two_body_contact", motion["motion_mode"]),
     )
 
 
@@ -358,18 +533,26 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F3"]
     material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
     lead_family = object_families[str(rng.choice(["ball", "capsule_can", "wheel", "spool", "bobbin", "drum_barrel"]))]
     mid_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "tall_box", "tool_case", "shipping_box"]))]
     tail_family = object_families[str(rng.choice(["crate_box", "upright_cylinder", "cone_frustum", "tool_case", "shipping_box", "roller_drum"]))]
+    lead_linear, lead_angular, lead_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
+    )
     lead = _sample_object(
         rng,
         lead_family,
         name="lead_0",
         material_keys_by_category=material_keys,
         position=(-2.20 + rng.uniform(-0.18, 0.06), rng.uniform(-0.18, 0.18), 0.17 + rng.uniform(-0.03, 0.04)),
-        orientation_euler_deg=tuple(float(rng.uniform(-a, a)) for a in lead_family.orientation_jitter_deg),
-        linear_velocity=(rng.uniform(3.4, 4.8), rng.uniform(-0.18, 0.18), 0.0),
-        angular_velocity=(rng.uniform(-1.0, 9.0), rng.uniform(-7.0, 7.0), rng.uniform(-2.0, 6.0)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(lead_orientation, lead_family.orientation_jitter_deg)),
+        linear_velocity=lead_linear,
+        angular_velocity=lead_angular,
     )
     mid = _sample_object(
         rng,
@@ -400,7 +583,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
         camera=_sample_camera(rng, camera_key),
         objects=(lead, mid, tail),
-        tags=("diverse_object", "appearance_randomized", "chain_reaction"),
+        tags=("diverse_object", "appearance_randomized", "chain_reaction", motion["motion_mode"]),
     )
 
 
@@ -408,6 +591,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F4"]
     material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
     mover_family = object_families[str(rng.choice(["ball", "wheel", "capsule_can"]))]
     occluder_family = object_families["pillar_occluder"]
     mover_count = int(rng.choice([1, 2]))
@@ -421,6 +605,13 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     for idx in range(mover_count):
         direction = 1.0 if idx == 0 else -1.0
         start_x = -2.70 if idx == 0 else 2.55
+        mover_linear, mover_angular, mover_orientation = _motion_vectors(
+            rng,
+            speed=motion["speed"],
+            spin=motion["spin"],
+            angle_deg=motion["angle_deg"],
+            axis="x",
+        )
         movers.append(
             _sample_object(
                 rng,
@@ -428,8 +619,9 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
                 name=f"mover_{idx}",
                 material_keys_by_category=material_keys,
                 position=(start_x + rng.uniform(-0.18, 0.12), rng.uniform(0.50, 0.92), 0.17),
-                linear_velocity=(direction * rng.uniform(2.8, 3.8), rng.uniform(-0.08, 0.08), 0.0),
-                angular_velocity=(0.0, rng.uniform(-7.0, 7.0), 0.0),
+                orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
+                linear_velocity=(direction * abs(mover_linear[0]), mover_linear[1], mover_linear[2]),
+                angular_velocity=mover_angular,
                 forced_material_key=forced_mover_materials[idx] if idx < len(forced_mover_materials) else None,
             )
         )
@@ -471,7 +663,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
         camera=_sample_camera(rng, camera_key),
         objects=tuple(movers + occluders),
-        tags=("diverse_object", "appearance_randomized", "occlusion"),
+        tags=("diverse_object", "appearance_randomized", "occlusion", motion["motion_mode"]),
     )
 
 
@@ -479,8 +671,9 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F5"]
     material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
     dynamic_family = object_families[str(rng.choice(["ball", "upright_cylinder", "crate_box", "cone_frustum", "tool_case", "shipping_box", "drum_barrel"]))]
-    support_family = object_families[str(rng.choice(["platform_block", "wedge_ramp"]))]
+    support_family = object_families["crate_box"]
     support = _sample_object(
         rng,
         support_family,
@@ -488,7 +681,15 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         material_keys_by_category=material_keys,
         dynamic=False,
         role="support",
-        position=(rng.uniform(-0.08, 0.20), 0.0, 0.12),
+        position=(rng.uniform(-0.08, 0.20), 0.0, 0.16),
+        forced_material_key=str(rng.choice(["wood_plywood", "wood_dark", "cardboard_kraft"])),
+    )
+    drop_linear, drop_angular, drop_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
     )
     dynamic = _sample_object(
         rng,
@@ -496,9 +697,9 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         name="drop_0",
         material_keys_by_category=material_keys,
         position=(rng.uniform(-0.28, 0.00), 0.0, rng.uniform(0.64, 1.18)),
-        orientation_euler_deg=(rng.uniform(-10.0, 14.0), rng.uniform(-10.0, 14.0), rng.uniform(-18.0, 18.0)),
-        linear_velocity=(rng.uniform(0.10, 0.80), 0.0, rng.uniform(-0.16, 0.02)),
-        angular_velocity=(rng.uniform(-3.0, 4.0), rng.uniform(-5.0, 5.0), rng.uniform(-3.0, 4.0)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(drop_orientation, dynamic_family.orientation_jitter_deg)),
+        linear_velocity=drop_linear,
+        angular_velocity=drop_angular,
     )
     camera_key = str(rng.choice(family.preferred_camera_keys))
     return ScenarioBlueprint(
@@ -513,7 +714,239 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
         camera=_sample_camera(rng, camera_key),
         objects=(dynamic, support),
-        tags=("diverse_object", "appearance_randomized", "support_drop"),
+        tags=("diverse_object", "appearance_randomized", "support_drop", motion["motion_mode"]),
+    )
+
+
+def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+    object_families = build_object_family_catalog()
+    family = build_scenario_family_catalog()["F6"]
+    material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
+    mover_family = object_families[str(rng.choice(["ball", "capsule_can", "crate_box", "shipping_box", "wheel"]))]
+    support_family = object_families[str(rng.choice(["slab_box", "wedge_ramp"]))]
+    support = _sample_object(
+        rng,
+        support_family,
+        name="ramp_0",
+        material_keys_by_category=material_keys,
+        dynamic=False,
+        role="support",
+        position=(0.0, 0.0, 0.12),
+        forced_material_key=str(rng.choice(["wood_plywood", "wood_dark", "concrete_painted"])),
+        orientation_euler_deg=(0.0, rng.uniform(0.0, 14.0), rng.uniform(-6.0, 6.0)),
+    )
+    mover_linear, mover_angular, mover_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
+    )
+    mover = _sample_object(
+        rng,
+        mover_family,
+        name="slider_0",
+        material_keys_by_category=material_keys,
+        position=(-1.6 + rng.uniform(-0.2, 0.1), rng.uniform(-0.08, 0.16), 0.55 + rng.uniform(0.0, 0.22)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
+        linear_velocity=(abs(mover_linear[0]), mover_linear[1], mover_linear[2]),
+        angular_velocity=mover_angular,
+    )
+    camera_key = str(rng.choice(family.preferred_camera_keys))
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title=f"{mover_family.display_name} ramp slide",
+        description="Inclined-plane motion with visible support geometry and more natural indoor view.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=float(rng.uniform(0.08, 0.20)),
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=_sample_camera(rng, camera_key),
+        objects=(mover, support),
+        tags=("diverse_object", "appearance_randomized", "ramp_motion", motion["motion_mode"]),
+    )
+
+
+def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+    object_families = build_object_family_catalog()
+    family = build_scenario_family_catalog()["F7"]
+    material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
+    mover_family = object_families[str(rng.choice(["wheel", "spool", "drum_barrel", "capsule_can", "dumbbell"]))]
+    mover_linear, mover_angular, mover_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
+    )
+    mover = _sample_object(
+        rng,
+        mover_family,
+        name="spinner_0",
+        material_keys_by_category=material_keys,
+        position=(-1.3 + rng.uniform(-0.15, 0.15), rng.uniform(-0.10, 0.10), 0.22 + rng.uniform(-0.04, 0.06)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
+        linear_velocity=(mover_linear[0] * 0.55, mover_linear[1], mover_linear[2]),
+        angular_velocity=(mover_angular[0], mover_angular[1] * 1.2, mover_angular[2]),
+    )
+    camera_key = str(rng.choice(family.preferred_camera_keys))
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title=f"{mover_family.display_name} spin dominant",
+        description="Rotation-heavy motion where angular momentum dominates translation.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=float(rng.uniform(0.04, 0.16)),
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=_sample_camera(rng, camera_key),
+        objects=(mover,),
+        tags=("diverse_object", "appearance_randomized", "spin_dominant", motion["motion_mode"]),
+    )
+
+
+def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+    object_families = build_object_family_catalog()
+    family = build_scenario_family_catalog()["F8"]
+    material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
+    mover_family = object_families[str(rng.choice(["ball", "capsule_can", "cone_frustum", "upright_cylinder"]))]
+    mover_linear, mover_angular, mover_orientation = _motion_vectors(
+        rng,
+        speed=motion["speed"],
+        spin=motion["spin"],
+        angle_deg=motion["angle_deg"],
+        axis="x",
+    )
+    mover = _sample_object(
+        rng,
+        mover_family,
+        name="bouncer_0",
+        material_keys_by_category=material_keys,
+        position=(-1.0 + rng.uniform(-0.15, 0.15), rng.uniform(-0.15, 0.15), 1.05 + rng.uniform(0.0, 0.30)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
+        linear_velocity=(abs(mover_linear[0]), mover_linear[1], -abs(mover_linear[0]) * 0.08),
+        angular_velocity=mover_angular,
+    )
+    camera_key = str(rng.choice(family.preferred_camera_keys))
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title=f"{mover_family.display_name} heavy bounce",
+        description="Repeated rebound and settling with a visually clean indoor backdrop.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=float(rng.uniform(0.02, 0.10)),
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=_sample_camera(rng, camera_key),
+        objects=(mover,),
+        tags=("diverse_object", "appearance_randomized", "bounce_heavy", motion["motion_mode"]),
+    )
+
+
+def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+    object_families = build_object_family_catalog()
+    family = build_scenario_family_catalog()["F9"]
+    material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
+    mover_a_family = object_families[str(rng.choice(["ball", "crate_box", "capsule_can", "wheel", "spool"]))]
+    mover_b_family = object_families[str(rng.choice(["shipping_box", "tool_case", "upright_cylinder", "cone_frustum"]))]
+    mover_a_lin, mover_a_ang, mover_a_ori = _motion_vectors(rng, speed=motion["speed"], spin=motion["spin"], angle_deg=motion["angle_deg"], axis="x")
+    mover_b_lin, mover_b_ang, mover_b_ori = _motion_vectors(rng, speed=motion["speed"] * 0.85, spin=motion["spin"], angle_deg=motion["angle_deg"], axis="diag")
+    mover_a = _sample_object(
+        rng,
+        mover_a_family,
+        name="clutter_a",
+        material_keys_by_category=material_keys,
+        position=(-1.6 + rng.uniform(-0.2, 0.1), rng.uniform(-0.25, 0.25), 0.18 + rng.uniform(-0.05, 0.08)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_a_ori, mover_a_family.orientation_jitter_deg)),
+        linear_velocity=mover_a_lin,
+        angular_velocity=mover_a_ang,
+    )
+    mover_b = _sample_object(
+        rng,
+        mover_b_family,
+        name="clutter_b",
+        material_keys_by_category=material_keys,
+        position=(rng.uniform(-0.3, 0.5), rng.uniform(-0.2, 0.2), 0.18 + rng.uniform(-0.05, 0.08)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_b_ori, mover_b_family.orientation_jitter_deg)),
+        linear_velocity=mover_b_lin,
+        angular_velocity=mover_b_ang,
+    )
+    support = _sample_object(
+        rng,
+        object_families[str(rng.choice(["slab_box", "stack_box"]))],
+        name="clutter_support",
+        material_keys_by_category=material_keys,
+        dynamic=False,
+        role="support",
+        position=(rng.uniform(-0.20, 0.20), rng.uniform(-0.08, 0.08), 0.12),
+        forced_material_key=str(rng.choice(["wood_plywood", "cardboard_kraft", "concrete_painted"])),
+    )
+    camera_key = str(rng.choice(family.preferred_camera_keys))
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title="Clutter interaction",
+        description="Room-like local clutter with multiple interacting objects and partial occlusion.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=float(rng.uniform(0.12, 0.30)),
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=_sample_camera(rng, camera_key),
+        objects=(mover_a, mover_b, support),
+        tags=("diverse_object", "appearance_randomized", "clutter_interaction", motion["motion_mode"]),
+    )
+
+
+def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+    object_families = build_object_family_catalog()
+    family = build_scenario_family_catalog()["F10"]
+    material_keys = _material_keys_by_category()
+    motion = _sample_motion_profile(rng, family)
+    mover_family = object_families[str(rng.choice(["ball", "wheel", "drum_barrel", "shipping_box", "tool_case"]))]
+    mover_lin, mover_ang, mover_ori = _motion_vectors(rng, speed=motion["speed"], spin=motion["spin"], angle_deg=motion["angle_deg"], axis="x")
+    mover = _sample_object(
+        rng,
+        mover_family,
+        name="edge_mover",
+        material_keys_by_category=material_keys,
+        position=(-1.5 + rng.uniform(-0.2, 0.1), rng.uniform(-0.10, 0.10), 0.18 + rng.uniform(-0.04, 0.06)),
+        orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_ori, mover_family.orientation_jitter_deg)),
+        linear_velocity=mover_lin,
+        angular_velocity=mover_ang,
+    )
+    support = _sample_object(
+        rng,
+        object_families[str(rng.choice(["slab_box", "stack_box", "platform_block"]))],
+        name="edge_support",
+        material_keys_by_category=material_keys,
+        dynamic=False,
+        role="support",
+        position=(rng.uniform(-0.15, 0.15), 0.0, 0.10),
+        forced_material_key=str(rng.choice(["wood_dark", "wood_plywood", "cardboard_kraft"])),
+    )
+    camera_key = str(rng.choice(family.preferred_camera_keys))
+    return ScenarioBlueprint(
+        family_key=family.key,
+        sample_key=sample_key,
+        title="Edge and boundary",
+        description="Motion near an edge or boundary with fall-off potential.",
+        gravity=EARTH_GRAVITY,
+        pre_roll_s=float(rng.uniform(0.08, 0.22)),
+        camera_key=camera_key,
+        surface_key=str(rng.choice(family.preferred_surface_keys)),
+        lighting_key=build_camera_catalog()[camera_key].hdri_key,
+        camera=_sample_camera(rng, camera_key),
+        objects=(mover, support),
+        tags=("diverse_object", "appearance_randomized", "edge_boundary", motion["motion_mode"]),
     )
 
 
@@ -523,6 +956,11 @@ FAMILY_GENERATORS = {
     "F3": _make_f3,
     "F4": _make_f4,
     "F5": _make_f5,
+    "F6": _make_f6,
+    "F7": _make_f7,
+    "F8": _make_f8,
+    "F9": _make_f9,
+    "F10": _make_f10,
 }
 
 

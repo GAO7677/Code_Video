@@ -55,7 +55,7 @@ CMD=(
   --max_grad_norm 1.0
   --find_unused_parameters
   --save_steps 500
-  --max_checkpoints_keep 10
+  --max_checkpoints_keep 20
   --remove_prefix_in_ckpt pipe.dit.
   --output_path "${OUTPUT_DIR}"
   --lora_base_model dit

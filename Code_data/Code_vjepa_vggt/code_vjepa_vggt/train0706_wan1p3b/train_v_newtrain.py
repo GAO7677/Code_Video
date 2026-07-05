@@ -78,7 +78,7 @@ from diffsynth.pipelines.wan_video import ModelConfig
 DEFAULT_WAN_ROOT = "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"
 WAN_SPATIAL_DIVISIBILITY = 32
 TRAIN_SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
-TRAIN0419_REFERENCE_ROOT = os.path.join(TRAIN_SCRIPT_ROOT, "train0419_reference")
+TRAIN0419_REFERENCE_ROOT = TRAIN_SCRIPT_ROOT
 
 DEFAULT_BENCHMARK_SCRIPT = os.path.join(
     TRAIN0419_REFERENCE_ROOT,

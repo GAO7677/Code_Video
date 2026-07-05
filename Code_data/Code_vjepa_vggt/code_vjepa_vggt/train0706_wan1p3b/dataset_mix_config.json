@@ -1,0 +1,21 @@
+[
+  {
+    "type": "openvid",
+    "path": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train",
+    "repeat": 1
+  },
+  {
+    "type": "movi_d",
+    "path": "/data/gaoya/dataset/kubric_tfds_movi-d",
+    "split": "train",
+    "repeat": 2
+  },
+  {
+    "type": "genesis_rigid",
+    "path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version_1_genesis_rigid_data_all_cases/train/rigid",
+    "split": "train",
+    "heldout_seed": 20260421,
+    "heldout_count": 8,
+    "repeat": 2
+  }
+]

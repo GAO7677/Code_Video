@@ -13,7 +13,7 @@ DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/dataset_new_0705_prev
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render a single dataset_new_0705 preview case.")
-    parser.add_argument("--family-key", default="F3", choices=["F1", "F2", "F3", "F4", "F5"])
+    parser.add_argument("--family-key", default="F3", choices=["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"])
     parser.add_argument("--sample-key", default="f3_preview_case_000")
     parser.add_argument("--seed", type=int, default=20260705)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)

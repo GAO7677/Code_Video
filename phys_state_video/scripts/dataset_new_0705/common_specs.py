@@ -152,6 +152,10 @@ class ScenarioFamilySpec:
     target_event_types: tuple[str, ...]
     preferred_surface_keys: tuple[str, ...]
     preferred_camera_keys: tuple[str, ...]
+    motion_modes: tuple[str, ...] = ()
+    speed_range: tuple[float, float] = (0.0, 0.0)
+    spin_range: tuple[float, float] = (0.0, 0.0)
+    angle_range_deg: tuple[float, float] = (0.0, 0.0)
     notes: str = ""
 
 
