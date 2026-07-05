@@ -130,10 +130,18 @@ def _normalize_gradient(gradient: torch.Tensor, mode: str = "rms", eps: float = 
     raise ValueError(f"Unsupported gradient normalization mode: {mode}")
 
 
-def _pixel_frames_to_latent_len(pixel_frames: int) -> int:
+def _pixel_frames_to_latent_len(pixel_frames: int, temporal_stride: int) -> int:
     if pixel_frames <= 0:
         return 0
-    return (pixel_frames - 1) // 4 + 1
+    temporal_stride = max(1, int(temporal_stride))
+    return (pixel_frames - 1) // temporal_stride + 1
+
+
+def _pixel_frames_to_preview_len(pixel_frames: int, preview_frame_stride: int) -> int:
+    if pixel_frames <= 0:
+        return 0
+    preview_frame_stride = max(1, int(preview_frame_stride))
+    return (pixel_frames - 1) // preview_frame_stride + 1
 
 
 def _apply_context_anchored_guidance(
@@ -147,9 +155,11 @@ def _apply_context_anchored_guidance(
     energy_obj: VJEPASurpriseEnergy,
     config: WanVJEPAConfig,
     predicted_future_ref: torch.Tensor,
+    vae_temporal_stride: int,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     latent_for_grad = latent_xt.detach().float().requires_grad_(True)
     model_output = model_output.detach().float()
+    preview_frame_stride = max(1, int(config.preview_frame_stride))
 
     x0_pred = predict_x0_from_flow_model_output(
         scheduler=scheduler,
@@ -161,15 +171,17 @@ def _apply_context_anchored_guidance(
         vae=vae,
         x0_latent=x0_pred,
         preview_downsample_factor=int(config.preview_downsample_factor),
-        preview_frame_stride=1,
+        preview_frame_stride=preview_frame_stride,
     )
 
     n_ctx = int(config.context_frames)
-    if int(full_video.shape[2]) <= n_ctx:
+    preview_ctx_frames = _pixel_frames_to_preview_len(n_ctx, preview_frame_stride)
+    if int(full_video.shape[2]) <= preview_ctx_frames:
         raise ValueError(
-            f"Decoded preview has {int(full_video.shape[2])} frames, need > context_frames={n_ctx}"
+            "Decoded preview has "
+            f"{int(full_video.shape[2])} frames, need > preview_context_frames={preview_ctx_frames}"
         )
-    generated_future = full_video[:, :, n_ctx:]
+    generated_future = full_video[:, :, preview_ctx_frames:]
     ctx = context_frames_pixel.to(device=generated_future.device, dtype=generated_future.dtype)
     clip = build_context_future_clip(
         context_btchw=ctx,
@@ -194,13 +206,14 @@ def _apply_context_anchored_guidance(
         mode=str(config.gradient_normalization),
     )
 
-    n_ctx_latent = _pixel_frames_to_latent_len(n_ctx)
+    n_ctx_latent = _pixel_frames_to_latent_len(n_ctx, vae_temporal_stride)
     if 0 < n_ctx_latent < gradient.shape[1]:
         gradient[:, :n_ctx_latent] = 0.0
     elif 0 < n_ctx_latent < gradient.shape[2]:
         gradient[:, :, :n_ctx_latent] = 0.0
 
-    correction = float(config.latent_step_size) * gradient
+    corrected_step_size = float(config.latent_step_size)
+    correction = corrected_step_size * gradient
     latent_l2 = float(latent_xt.detach().float().norm().item())
 
     ratio_cap_applied = False
@@ -211,7 +224,63 @@ def _apply_context_anchored_guidance(
         if correction_l2_raw > max_allowed_l2:
             ratio_cap_scale = max_allowed_l2 / max(correction_l2_raw, 1e-6)
             correction = correction * ratio_cap_scale
+            corrected_step_size *= ratio_cap_scale
             ratio_cap_applied = True
+
+    artifact_guard_mode = str(getattr(config, "artifact_guard_mode", "none"))
+    stay_close_max_video_l1 = getattr(config, "stay_close_max_video_l1", None)
+    artifact_guard_applied = False
+    artifact_guard_backoff_steps = 0
+    artifact_guard_video_l1 = None
+    if (
+        artifact_guard_mode == "video_l1_backoff"
+        and stay_close_max_video_l1 is not None
+        and float(stay_close_max_video_l1) > 0
+        and corrected_step_size > 0
+    ):
+        base_video = full_video.detach()
+        trial_correction = correction.detach().clone()
+        for _attempt in range(5):
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - trial_correction
+                trial_x0 = predict_x0_from_flow_model_output(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = decode_preview_video(
+                    vae=vae,
+                    x0_latent=trial_x0,
+                    preview_downsample_factor=int(config.preview_downsample_factor),
+                    preview_frame_stride=preview_frame_stride,
+                )
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
+            if artifact_guard_video_l1 <= float(stay_close_max_video_l1):
+                correction = trial_correction
+                corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+                break
+            trial_correction = trial_correction * 0.5
+            artifact_guard_backoff_steps += 1
+            artifact_guard_applied = True
+        else:
+            correction = trial_correction
+            corrected_step_size = float(corrected_step_size) * (0.5 ** artifact_guard_backoff_steps)
+            with torch.no_grad():
+                trial_latent = latent_xt.detach().float() - correction
+                trial_x0 = predict_x0_from_flow_model_output(
+                    scheduler=scheduler,
+                    latent_xt=trial_latent,
+                    model_output=model_output,
+                    timestep=timestep,
+                )
+                trial_video = decode_preview_video(
+                    vae=vae,
+                    x0_latent=trial_x0,
+                    preview_downsample_factor=int(config.preview_downsample_factor),
+                    preview_frame_stride=preview_frame_stride,
+                )
+                artifact_guard_video_l1 = float((trial_video - base_video).abs().mean().item())
 
     corrected = latent_xt.detach().float() - correction
     corrected = corrected.to(dtype=latent_xt.dtype)
@@ -227,10 +296,15 @@ def _apply_context_anchored_guidance(
         "preview_frames": float(full_video.shape[2]),
         "preview_height": float(full_video.shape[3]),
         "preview_width": float(full_video.shape[4]),
-        "step_size_used": float(config.latent_step_size) * float(ratio_cap_scale),
+        "preview_context_frames": float(preview_ctx_frames),
+        "step_size_used": float(corrected_step_size),
         "ratio_cap_applied": float(ratio_cap_applied),
         "ratio_cap_scale": float(ratio_cap_scale),
+        "artifact_guard_applied": float(artifact_guard_applied),
+        "artifact_guard_backoff_steps": float(artifact_guard_backoff_steps),
     }
+    if artifact_guard_video_l1 is not None:
+        stats["artifact_guard_video_l1"] = float(artifact_guard_video_l1)
     return corrected, stats
 
 
@@ -513,6 +587,34 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
             yield
 
         no_sync = getattr(self.model, "no_sync", noop_no_sync)
+        inner_k = max(1, int(getattr(self.vjepa_config, "inner_k", 1)))
+        recompute_noise_pred_after_guidance = bool(
+            getattr(self.vjepa_config, "recompute_noise_pred_after_guidance", False)
+        )
+
+        def _predict_cfg_noise(current_latent: torch.Tensor, timestep_value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            latent_model_input = [current_latent.to(self.device)]
+            timestep = torch.stack([timestep_value]).to(self.device)
+
+            temp_ts = (mask2[0][0][:, ::2, ::2] * timestep).flatten()
+            temp_ts = torch.cat(
+                [temp_ts, temp_ts.new_ones(seq_len - temp_ts.size(0)) * timestep]
+            )
+            timestep = temp_ts.unsqueeze(0)
+
+            noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]
+            if offload_model:
+                torch.cuda.empty_cache()
+            noise_pred_uncond = self.model(
+                latent_model_input,
+                t=timestep,
+                **arg_null,
+            )[0]
+            if offload_model:
+                torch.cuda.empty_cache()
+
+            noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
+            return noise_pred, timestep
 
         with torch.amp.autocast("cuda", dtype=self.param_dtype), no_sync():
             for step_index, timestep_value in enumerate(tqdm(timesteps)):
@@ -521,76 +623,88 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
                     torch.cuda.empty_cache()
 
                 with torch.no_grad():
-                    latent_model_input = [latent.to(self.device)]
-                    timestep = torch.stack([timestep_value]).to(self.device)
-
-                    temp_ts = (mask2[0][0][:, ::2, ::2] * timestep).flatten()
-                    temp_ts = torch.cat(
-                        [temp_ts, temp_ts.new_ones(seq_len - temp_ts.size(0)) * timestep]
-                    )
-                    timestep = temp_ts.unsqueeze(0)
-
-                    noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]
-                    if offload_model:
-                        torch.cuda.empty_cache()
-                    noise_pred_uncond = self.model(
-                        latent_model_input,
-                        t=timestep,
-                        **arg_null,
-                    )[0]
-                    if offload_model:
-                        torch.cuda.empty_cache()
-
-                    noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
+                    noise_pred, timestep = _predict_cfg_noise(latent, timestep_value)
 
                 latent_xt = latent
                 if step_index in selected_steps:
                     if next(self.model.parameters()).device.type == "cuda":
                         self.model.cpu()
                         torch.cuda.empty_cache()
-                    with torch.enable_grad():
-                        latent_xt, stats = _apply_context_anchored_guidance(
-                            latent_xt=latent_xt,
-                            model_output=noise_pred,
-                            timestep=timestep_value,
-                            scheduler=scheduler,
-                            vae=self.vae,
-                            context_frames_pixel=context_frames_pixel,
-                            energy_obj=energy_fn,
-                            config=self.vjepa_config,
-                            predicted_future_ref=predicted_future_ref,
+                    for inner_index in range(inner_k):
+                        with torch.enable_grad():
+                            latent_xt, stats = _apply_context_anchored_guidance(
+                                latent_xt=latent_xt,
+                                model_output=noise_pred,
+                                timestep=timestep_value,
+                                scheduler=scheduler,
+                                vae=self.vae,
+                                context_frames_pixel=context_frames_pixel,
+                                energy_obj=energy_fn,
+                                config=self.vjepa_config,
+                                predicted_future_ref=predicted_future_ref,
+                                vae_temporal_stride=int(self.vae_stride[0]),
+                            )
+                        trace_row = {
+                            "step_index": int(step_index),
+                            "inner_index": int(inner_index),
+                            "inner_k": int(inner_k),
+                            "timestep": int(timestep_value.detach().cpu().item()),
+                            "energy": float(stats["energy"]),
+                            "grad_rms": float(stats["grad_rms"]),
+                            "correction_l2": float(stats["correction_l2"]),
+                            "latent_l2": float(stats["latent_l2"]),
+                            "correction_ratio": float(stats["correction_ratio"]),
+                            "step_size_used": float(stats["step_size_used"]),
+                            "ratio_cap_applied": bool(stats["ratio_cap_applied"]),
+                            "ratio_cap_scale": float(stats["ratio_cap_scale"]),
+                            "artifact_guard_applied": bool(stats.get("artifact_guard_applied", 0.0)),
+                            "artifact_guard_backoff_steps": int(stats.get("artifact_guard_backoff_steps", 0.0)),
+                            "artifact_guard_video_l1": (
+                                float(stats["artifact_guard_video_l1"])
+                                if "artifact_guard_video_l1" in stats
+                                else None
+                            ),
+                            "preview_frames": int(stats["preview_frames"]),
+                            "preview_context_frames": int(stats["preview_context_frames"]),
+                            "preview_height": int(stats["preview_height"]),
+                            "preview_width": int(stats["preview_width"]),
+                            "preview_frame_stride": int(self.vjepa_config.preview_frame_stride),
+                            "recompute_noise_pred_after_guidance": bool(recompute_noise_pred_after_guidance),
+                        }
+                        self.last_vjepa_trace.append(trace_row)
+                        logging.info(
+                            "V-JEPA[context_anchored] step=%d inner=%d/%d timestep=%d energy=%.6f grad_rms=%.6f "
+                            "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f ratio_cap=%s "
+                            "guard=%s guard_l1=%s preview=%dx%dx%d stride=%d recompute_noise=%s",
+                            trace_row["step_index"],
+                            trace_row["inner_index"] + 1,
+                            trace_row["inner_k"],
+                            trace_row["timestep"],
+                            trace_row["energy"],
+                            trace_row["grad_rms"],
+                            trace_row["correction_l2"],
+                            trace_row["latent_l2"],
+                            trace_row["correction_ratio"],
+                            trace_row["step_size_used"],
+                            trace_row["ratio_cap_applied"],
+                            trace_row["artifact_guard_applied"],
+                            (
+                                f"{trace_row['artifact_guard_video_l1']:.6f}"
+                                if trace_row["artifact_guard_video_l1"] is not None
+                                else "NA"
+                            ),
+                            trace_row["preview_frames"],
+                            trace_row["preview_height"],
+                            trace_row["preview_width"],
+                            trace_row["preview_frame_stride"],
+                            trace_row["recompute_noise_pred_after_guidance"],
                         )
-                    trace_row = {
-                        "step_index": int(step_index),
-                        "timestep": int(timestep_value.detach().cpu().item()),
-                        "energy": float(stats["energy"]),
-                        "grad_rms": float(stats["grad_rms"]),
-                        "correction_l2": float(stats["correction_l2"]),
-                        "latent_l2": float(stats["latent_l2"]),
-                        "correction_ratio": float(stats["correction_ratio"]),
-                        "step_size_used": float(stats["step_size_used"]),
-                        "ratio_cap_applied": bool(stats["ratio_cap_applied"]),
-                        "preview_frames": int(stats["preview_frames"]),
-                        "preview_height": int(stats["preview_height"]),
-                        "preview_width": int(stats["preview_width"]),
-                    }
-                    self.last_vjepa_trace.append(trace_row)
-                    logging.info(
-                        "V-JEPA[context_anchored] step=%d timestep=%d energy=%.6f grad_rms=%.6f "
-                        "corr_l2=%.4f latent_l2=%.1f corr_ratio=%.5f step_used=%.4f ratio_cap=%s preview=%dx%dx%d",
-                        trace_row["step_index"],
-                        trace_row["timestep"],
-                        trace_row["energy"],
-                        trace_row["grad_rms"],
-                        trace_row["correction_l2"],
-                        trace_row["latent_l2"],
-                        trace_row["correction_ratio"],
-                        trace_row["step_size_used"],
-                        trace_row["ratio_cap_applied"],
-                        trace_row["preview_frames"],
-                        trace_row["preview_height"],
-                        trace_row["preview_width"],
-                    )
+                    if recompute_noise_pred_after_guidance:
+                        if next(self.model.parameters()).device.type != "cuda":
+                            self.model.to(self.device)
+                            torch.cuda.empty_cache()
+                        with torch.no_grad():
+                            noise_pred, timestep = _predict_cfg_noise(latent_xt, timestep_value)
 
                 with torch.no_grad():
                     temp_x0 = scheduler.step(
@@ -726,6 +840,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-max-step-percent", type=float, default=None)
     parser.add_argument("--vjepa-target-step-indices", type=int, nargs="*", default=None)
     parser.add_argument("--vjepa-latent-step-size", type=float, default=None)
+    parser.add_argument("--vjepa-inner-k", type=int, default=None)
+    parser.add_argument("--vjepa-backtracking", action="store_true")
     parser.add_argument("--vjepa-preview-downsample-factor", type=int, default=None)
     parser.add_argument("--vjepa-preview-frame-stride", type=int, default=None)
     parser.add_argument("--vjepa-window-size", type=int, default=None)
@@ -735,6 +851,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-grad-norm-mode", default=None, choices=["none", "rms", "l2"])
     parser.add_argument("--vjepa-max-grad-norm", type=float, default=None)
     parser.add_argument("--vjepa-max-correction-ratio", type=float, default=None)
+    parser.add_argument("--vjepa-stay-close-max-video-l1", type=float, default=None)
+    parser.add_argument("--vjepa-artifact-guard-mode", default=None, choices=["none", "video_l1_backoff"])
+    parser.add_argument("--vjepa-recompute-noise-pred-after-guidance", action="store_true")
     return parser.parse_args()
 
 
@@ -747,6 +866,8 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         "vjepa_max_step_percent": cli_args.vjepa_max_step_percent,
         "vjepa_target_step_indices": list(cli_args.vjepa_target_step_indices) if cli_args.vjepa_target_step_indices is not None else None,
         "vjepa_latent_step_size": cli_args.vjepa_latent_step_size,
+        "vjepa_inner_k": cli_args.vjepa_inner_k,
+        "vjepa_backtracking": bool(cli_args.vjepa_backtracking),
         "vjepa_preview_downsample_factor": cli_args.vjepa_preview_downsample_factor,
         "vjepa_preview_frame_stride": cli_args.vjepa_preview_frame_stride,
         "vjepa_window_size": cli_args.vjepa_window_size,
@@ -756,6 +877,9 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         "vjepa_grad_norm_mode": cli_args.vjepa_grad_norm_mode,
         "vjepa_max_grad_norm": cli_args.vjepa_max_grad_norm,
         "vjepa_max_correction_ratio": cli_args.vjepa_max_correction_ratio,
+        "vjepa_stay_close_max_video_l1": cli_args.vjepa_stay_close_max_video_l1,
+        "vjepa_artifact_guard_mode": cli_args.vjepa_artifact_guard_mode,
+        "vjepa_recompute_noise_pred_after_guidance": bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
     }
     apply_train0705_preset(cli_args, cli_args.vjepa_preset)
 
@@ -777,6 +901,10 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         cli_args.vjepa_target_step_indices = [int(value) for value in override_fields["vjepa_target_step_indices"]]
     if override_fields["vjepa_latent_step_size"] is not None:
         cli_args.vjepa_latent_step_size = float(override_fields["vjepa_latent_step_size"])
+    if override_fields["vjepa_inner_k"] is not None:
+        cli_args.vjepa_inner_k = int(override_fields["vjepa_inner_k"])
+    if override_fields["vjepa_backtracking"]:
+        cli_args.vjepa_backtracking = True
     if override_fields["vjepa_preview_downsample_factor"] is not None:
         cli_args.vjepa_preview_downsample_factor = int(override_fields["vjepa_preview_downsample_factor"])
     if override_fields["vjepa_preview_frame_stride"] is not None:
@@ -795,12 +923,37 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         cli_args.vjepa_max_grad_norm = float(override_fields["vjepa_max_grad_norm"])
     if override_fields["vjepa_max_correction_ratio"] is not None:
         cli_args.vjepa_max_correction_ratio = float(override_fields["vjepa_max_correction_ratio"])
+    if override_fields["vjepa_stay_close_max_video_l1"] is not None:
+        cli_args.vjepa_stay_close_max_video_l1 = float(override_fields["vjepa_stay_close_max_video_l1"])
+    if override_fields["vjepa_artifact_guard_mode"] is not None:
+        cli_args.vjepa_artifact_guard_mode = str(override_fields["vjepa_artifact_guard_mode"])
+    if override_fields["vjepa_recompute_noise_pred_after_guidance"]:
+        cli_args.vjepa_recompute_noise_pred_after_guidance = True
+
+    if cli_args.vjepa_backtracking:
+        raise ValueError(
+            "Backtracking is not supported in wanti2v.py after the minimal-fix rewrite. "
+            "Use fixed-step presets instead."
+        )
+    if bool(cli_args.enable_vjepa_guidance) and str(cli_args.vjepa_guidance_mode) != "context_anchored":
+        raise ValueError(
+            "wanti2v.py only supports V-JEPA guidance_mode=context_anchored in the current path."
+        )
+
+    stay_close_max_video_l1 = cli_args.vjepa_stay_close_max_video_l1
+    if stay_close_max_video_l1 is not None and float(stay_close_max_video_l1) <= 0:
+        stay_close_max_video_l1 = None
+    max_correction_ratio = cli_args.vjepa_max_correction_ratio
+    if max_correction_ratio is not None and float(max_correction_ratio) <= 0:
+        max_correction_ratio = None
 
     vjepa_config = WanVJEPAConfig(
         guidance_steps=int(cli_args.vjepa_guidance_steps),
         min_step_percent=float(cli_args.vjepa_min_step_percent),
         max_step_percent=float(cli_args.vjepa_max_step_percent),
         latent_step_size=float(cli_args.vjepa_latent_step_size),
+        inner_k=max(1, int(cli_args.vjepa_inner_k)),
+        backtracking=bool(cli_args.vjepa_backtracking),
         preview_downsample_factor=int(cli_args.vjepa_preview_downsample_factor),
         preview_frame_stride=int(cli_args.vjepa_preview_frame_stride),
         window_size=int(cli_args.vjepa_window_size),
@@ -809,14 +962,15 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         reduction=str(cli_args.vjepa_reduction),
         gradient_normalization=str(cli_args.vjepa_grad_norm_mode),
         max_grad_norm=float(cli_args.vjepa_max_grad_norm) if cli_args.vjepa_max_grad_norm is not None else None,
-        max_correction_ratio=(
-            float(cli_args.vjepa_max_correction_ratio)
-            if cli_args.vjepa_max_correction_ratio is not None
+        max_correction_ratio=float(max_correction_ratio) if max_correction_ratio is not None else None,
+        stay_close_max_video_l1=(
+            float(stay_close_max_video_l1)
+            if stay_close_max_video_l1 is not None
             else None
         ),
-        stay_close_max_video_l1=0.0,
-        artifact_guard_mode="none",
+        artifact_guard_mode=str(cli_args.vjepa_artifact_guard_mode),
         guidance_mode=str(cli_args.vjepa_guidance_mode),
+        recompute_noise_pred_after_guidance=bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
     )
     return cli_args, vjepa_config
 
@@ -921,6 +1075,11 @@ def run_single_case_vjepa(
         f"[case] negative_prompt={args.negative_prompt}",
         f"[case] vjepa_preset={cli_args.vjepa_preset}",
         f"[case] enable_vjepa_guidance={bool(cli_args.enable_vjepa_guidance)}",
+        f"[case] vjepa_inner_k={int(cli_args.vjepa_inner_k)}",
+        f"[case] vjepa_preview_frame_stride={int(cli_args.vjepa_preview_frame_stride)}",
+        f"[case] vjepa_artifact_guard_mode={cli_args.vjepa_artifact_guard_mode}",
+        f"[case] vjepa_stay_close_max_video_l1={cli_args.vjepa_stay_close_max_video_l1}",
+        f"[case] vjepa_recompute_noise_pred_after_guidance={bool(cli_args.vjepa_recompute_noise_pred_after_guidance)}",
     ]
 
     used_offload = bool(args.offload_model)
@@ -987,6 +1146,16 @@ def run_single_case_vjepa(
         "vjepa_model": str(cli_args.vjepa_model),
         "vjepa_ckpt": str(cli_args.vjepa_ckpt) if cli_args.vjepa_ckpt is not None else None,
         "vjepa_target_step_indices": list(cli_args.vjepa_target_step_indices or []),
+        "vjepa_inner_k": int(cli_args.vjepa_inner_k),
+        "vjepa_backtracking": bool(cli_args.vjepa_backtracking),
+        "vjepa_preview_frame_stride": int(cli_args.vjepa_preview_frame_stride),
+        "vjepa_artifact_guard_mode": str(cli_args.vjepa_artifact_guard_mode),
+        "vjepa_stay_close_max_video_l1": (
+            float(cli_args.vjepa_stay_close_max_video_l1)
+            if cli_args.vjepa_stay_close_max_video_l1 is not None
+            else None
+        ),
+        "vjepa_recompute_noise_pred_after_guidance": bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
         "vjepa_anchor_mode": getattr(pipe, "anchor_mode", "repeated_first_frame"),
         "vjepa_trace": list(getattr(pipe, "last_vjepa_trace", [])),
     }
@@ -1057,12 +1226,20 @@ def main() -> None:
         "guidance_steps": int(cli_args.vjepa_guidance_steps),
         "target_step_indices": list(cli_args.vjepa_target_step_indices or []),
         "latent_step_size": float(cli_args.vjepa_latent_step_size),
+        "inner_k": int(cli_args.vjepa_inner_k),
+        "backtracking": bool(cli_args.vjepa_backtracking),
         "preview_downsample_factor": int(cli_args.vjepa_preview_downsample_factor),
+        "preview_frame_stride": int(cli_args.vjepa_preview_frame_stride),
         "window_size": int(cli_args.vjepa_window_size),
         "context_frames": int(cli_args.vjepa_context_frames),
         "max_correction_ratio": float(cli_args.vjepa_max_correction_ratio)
         if cli_args.vjepa_max_correction_ratio is not None
         else None,
+        "stay_close_max_video_l1": float(cli_args.vjepa_stay_close_max_video_l1)
+        if cli_args.vjepa_stay_close_max_video_l1 is not None
+        else None,
+        "artifact_guard_mode": str(cli_args.vjepa_artifact_guard_mode),
+        "recompute_noise_pred_after_guidance": bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
         "anchor_mode": "repeated_first_frame",
     }
     with (args.output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:

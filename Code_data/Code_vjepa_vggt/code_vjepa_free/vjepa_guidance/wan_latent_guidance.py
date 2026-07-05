@@ -13,6 +13,8 @@ class WanVJEPAConfig:
     min_step_percent: float = 0.2
     max_step_percent: float = 0.8
     latent_step_size: float = 0.02
+    inner_k: int = 1
+    backtracking: bool = False
     preview_downsample_factor: int = 2
     preview_frame_stride: int = 1
     window_size: int = 16
@@ -30,6 +32,7 @@ class WanVJEPAConfig:
     # "context_anchored": align generated future to V-JEPA's prediction from the
     #   real conditioning frames (uses clean_prefix as fixed context).
     guidance_mode: str = "surprise"
+    recompute_noise_pred_after_guidance: bool = False
 
 
 def pick_guidance_step_indices(
