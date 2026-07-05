@@ -47,7 +47,7 @@ DEFAULT_CHECKPOINT_ROOT = Path(
     "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints"
 )
 DEFAULT_OUTPUT_ROOT = Path(
-    "/data/gaoya/AAA_test_video/0623/test/v2v/"
+    "/data/gaoya/AAA_test_video/0623/test/v2v_1p3b/"
     "train_stage1b_diffsynth_native0706_wan21_13b/prepipe_overlays"
 )
 

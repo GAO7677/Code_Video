@@ -86,8 +86,8 @@ Default output root:
 DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B")
 DEFAULT_DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
 DEFAULT_BASE_LORA = Path(
-    "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/"
-    "raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors"
+    "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/"
+    "raw_phys_state_lora_continue/checkpoints/step-000002/checkpoint.safetensors"
 )
 DEFAULT_STAGE1A = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
@@ -407,7 +407,7 @@ def main() -> None:
     model_name = str(cli_args.model_name).strip()
     output_root = resolve_output_root(
         explicit_output_root=cli_args.output_root,
-        base_output_root="/data/gaoya/AAA_test_video/0623/test/v2v",
+        base_output_root="/data/gaoya/AAA_test_video/0623/test/v2v_1p3b",
         model_name=model_name,
     )
 

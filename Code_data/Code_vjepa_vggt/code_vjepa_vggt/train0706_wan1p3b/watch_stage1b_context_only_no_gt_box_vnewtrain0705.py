@@ -45,12 +45,13 @@ DEFAULT_INFER_SCRIPT = (
 DEFAULT_BENCH_SCRIPT = DEFAULT_PROJECT_ROOT / "code_vjepa_vggt/AAAinfer/bench.sh"
 DEFAULT_CHECKPOINT_ROOT = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints"
+    "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu3567_20260705_retry2/checkpoints"
 )
 DEFAULT_INPUT_JSON_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
-DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
+DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v_1p3b")
 DEFAULT_MODEL_NAME = "train_stage1b_diffsynth_native0706_wan21_13b"
 WATCH_STATE_DIRNAME = ".watch_stage1b_context_only_no_gt_box_vnewtrain0706_wan21_13b"
+DEFAULT_BENCH_IDLE_GPUS = "0,1,2"
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
     parser.add_argument("--infer-gpu", default="7")
     parser.add_argument("--bench-gpu", default="0")
+    parser.add_argument(
+        "--bench-idle-gpus",
+        default=DEFAULT_BENCH_IDLE_GPUS,
+        help="Comma-separated GPU indices that must be idle before bench.sh runs.",
+    )
     parser.add_argument("--num-inference-steps", type=int, default=40)
     parser.add_argument("--poll-interval-seconds", type=int, default=120)
     parser.add_argument("--min-checkpoint-age-seconds", type=int, default=60)
@@ -222,6 +228,54 @@ def build_bench_env(args: argparse.Namespace) -> dict[str, str]:
     return env
 
 
+def _parse_gpu_index_list(value: str | None) -> list[int]:
+    if value is None:
+        return []
+    parsed: list[int] = []
+    for item in str(value).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parsed.append(int(item))
+    return parsed
+
+
+def bench_idle_gpus_ready(gpu_indices: list[int], *, max_memory_used_mib: int = 1024) -> tuple[bool, str]:
+    if not gpu_indices:
+        return True, "no idle-gpu gate configured"
+    command = [
+        "nvidia-smi",
+        "--query-gpu=index,memory.used,utilization.gpu",
+        "--format=csv,noheader",
+    ]
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    if completed.returncode != 0:
+        return False, f"nvidia-smi failed with return code {completed.returncode}"
+    gpu_stats: dict[int, tuple[int, int]] = {}
+    for line in completed.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            gpu_index = int(parts[0])
+            memory_used = int(parts[1].split()[0])
+            utilization = int(parts[2].split()[0])
+        except ValueError:
+            continue
+        gpu_stats[gpu_index] = (memory_used, utilization)
+    missing = [idx for idx in gpu_indices if idx not in gpu_stats]
+    if missing:
+        return False, f"missing gpu stats for indices: {missing}"
+    busy = []
+    for idx in gpu_indices:
+        memory_used, utilization = gpu_stats[idx]
+        if memory_used > int(max_memory_used_mib) or utilization > 0:
+            busy.append(f"gpu{idx}(mem={memory_used}MiB,util={utilization}%)")
+    if busy:
+        return False, "busy: " + ", ".join(busy)
+    return True, "idle"
+
+
 def run_command(command: list[str], *, env: dict[str, str], dry_run: bool) -> tuple[int, str | None]:
     command_str = " ".join(command)
     if dry_run:
@@ -296,6 +350,12 @@ def run_bench_if_needed(args: argparse.Namespace, state: dict[str, Any], now: fl
     if not pending_steps:
         return False
 
+    idle_gpu_indices = _parse_gpu_index_list(getattr(args, "bench_idle_gpus", None))
+    ready, reason = bench_idle_gpus_ready(idle_gpu_indices)
+    if not ready:
+        log(f"[wait] bench gated by gpu idle check: {reason}")
+        return False
+
     bench_state = state.setdefault("bench", {})
     last_attempt_at = bench_state.get("last_attempt_at")
     if (
@@ -307,9 +367,10 @@ def run_bench_if_needed(args: argparse.Namespace, state: dict[str, Any], now: fl
         log("[wait] bench retry cooldown active")
         return False
 
-    log(f"[bench] pending steps: {', '.join(pending_steps)}")
-    bench_state["last_attempt_at"] = now
-    command = build_bench_command(args)
+        log(f"[bench] pending steps: {', '.join(pending_steps)}")
+        log(f"[bench] gpu idle check: {reason}")
+        bench_state["last_attempt_at"] = now
+        command = build_bench_command(args)
     returncode, error = run_command(command, env=build_bench_env(args), dry_run=bool(args.dry_run))
     bench_state["last_returncode"] = returncode
     bench_state["last_error"] = error
@@ -359,8 +420,6 @@ def main() -> None:
     args.project_root = args.project_root.expanduser().resolve()
     args.diffsynth_root = args.diffsynth_root.expanduser().resolve()
 
-    if not args.checkpoint_root.is_dir():
-        raise FileNotFoundError(f"checkpoint-root not found: {args.checkpoint_root}")
     if not args.input_json_list_path.is_file():
         raise FileNotFoundError(f"input-json-list-path not found: {args.input_json_list_path}")
     if not args.python_bin.is_file():
@@ -379,6 +438,13 @@ def main() -> None:
         log(f"[watch] model_name={args.model_name}")
         log(f"[watch] infer_gpu={args.infer_gpu} bench_gpu={args.bench_gpu}")
         while True:
+            if not args.checkpoint_root.is_dir():
+                log(f"[wait] checkpoint root not ready yet: {args.checkpoint_root}")
+                atomic_write_json(state_path, state)
+                if args.once:
+                    break
+                time.sleep(int(args.poll_interval_seconds))
+                continue
             changed = scan_once(args, state)
             atomic_write_json(state_path, state)
             if args.once:

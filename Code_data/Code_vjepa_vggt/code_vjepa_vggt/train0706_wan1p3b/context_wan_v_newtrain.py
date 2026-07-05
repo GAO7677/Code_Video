@@ -1330,9 +1330,6 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
             shift=sigma_shift,
         )
 
-        if context_video is not None and input_image is None and len(context_video) > 0:
-            input_image = context_video[0]
-
         inputs_posi = {
             "prompt": prompt,
             "vap_prompt": vap_prompt,
