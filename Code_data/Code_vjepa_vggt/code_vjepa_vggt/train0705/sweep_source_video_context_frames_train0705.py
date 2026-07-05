@@ -286,32 +286,12 @@ def _sync_result_json_input_context_video(
 def _sync_original_json_input_context_video(
     *,
     original_json_path: Path,
-    model_name: str,
     context_frames: int,
-    sampling_mode: str,
     saved_video_info: dict[str, object],
-    json_field_name: str,
 ) -> None:
     payload = _load_json_object(original_json_path)
-    registry = payload.get(json_field_name)
-    if not isinstance(registry, dict):
-        registry = {}
-    model_registry = registry.get(model_name)
-    if not isinstance(model_registry, dict):
-        model_registry = {}
-    model_registry[f"context_frames_{int(context_frames):02d}"] = {
-        "path": str(saved_video_info["path"]),
-        "frame_indices": list(saved_video_info["frame_indices"]),
-        "num_frames": int(saved_video_info["num_frames"]),
-        "fps": float(saved_video_info["fps"]),
-        "sampling_mode": str(sampling_mode),
-        "source_video": str(saved_video_info["source_video"]),
-        "codec": str(saved_video_info["codec"]),
-        "container": str(saved_video_info["container"]),
-        "backend": str(saved_video_info["backend"]),
-    }
-    registry[str(model_name)] = model_registry
-    payload[json_field_name] = registry
+    payload[f"input_video_{int(context_frames)}f"] = str(saved_video_info["path"])
+    payload.pop(DEFAULT_ORIGINAL_JSON_FIELD, None)
     _write_json_object(original_json_path, payload)
 
 
@@ -371,11 +351,8 @@ def _prepare_saved_input_context_videos(
 
         _sync_original_json_input_context_video(
             original_json_path=original_json_path,
-            model_name=str(args.model_name),
             context_frames=int(context_frames),
-            sampling_mode=str(args.sampling_mode),
             saved_video_info=saved_video_info,
-            json_field_name=str(args.original_json_field_name),
         )
         saved_items.append(
             {
@@ -616,7 +593,7 @@ def parse_args() -> argparse.Namespace:
         "--original-json-field-name",
         type=str,
         default=DEFAULT_ORIGINAL_JSON_FIELD,
-        help="Field name written back into the original test json for saved input context clips.",
+        help="Deprecated no-op; original json now uses flat input_video_<frames>f fields.",
     )
     parser.add_argument(
         "--sync-input-context-videos-only",
