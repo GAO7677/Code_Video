@@ -7,7 +7,7 @@ CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_vnewtrain_0613pybullet_stage2_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun/checkpoints/step-007500 \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_physco.txt \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name pybullet0626_diffsynth_object_stage2_freeze_heads_from004000_gpu67_freshrun \
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main \
@@ -99,7 +99,7 @@ CUDA_VISIBLE_DEVICES=5 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_openvid_0613pybullet_lorav2v.py \
   --weights-root /data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500 \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_physco.txt \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name wan_openvid_0613pybullet_lorav2v_step000500 \
   --num-frames 49
 

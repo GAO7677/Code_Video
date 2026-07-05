@@ -21,7 +21,12 @@ DEFAULT_NEGATIVE_PROMPT = (
     "messy background, three legs, many people in the background, walking backwards"
 )
 DEFAULT_OFFICIAL_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
-OFFICIAL_WAN_REPO = Path("/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main")
+OFFICIAL_WAN_REPO = Path(
+    os.environ.get(
+        "WAN22_OFFICIAL_REPO",
+        "/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main_official",
+    )
+)
 LEGACY_WAN_REPO = Path("/home/gaoya/Code_Video/Code_data/Code_try0526")
 
 
