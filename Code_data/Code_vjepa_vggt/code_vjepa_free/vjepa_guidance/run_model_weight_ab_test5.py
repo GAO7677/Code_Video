@@ -43,9 +43,9 @@ LORA_STEP000500 = Path(
     "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/"
     "raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500"
 )
-TRAIN0705_STEP001000 = Path(
+TRAIN0705_STEP002500 = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000"
+    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500"
 )
 TRAIN0705_STEP005000 = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
@@ -60,6 +60,15 @@ class Family:
     family_id: str
     baseline_dir: Path
     guided_dir: Path
+    score_baseline_dir: Path | None = None
+
+
+TRAIN0705_BASELINE_002500 = Path(
+    "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-002500"
+)
+TRAIN0705_BASELINE_005000 = Path(
+    "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-005000"
+)
 
 
 FAMILIES = [
@@ -74,14 +83,16 @@ FAMILIES = [
         guided_dir=OUTPUT_ROOT / "wan22_early_lora_step000500" / "guided",
     ),
     Family(
-        family_id="train0705_step001000",
-        baseline_dir=OUTPUT_ROOT / "train0705_step001000" / "baseline" / TRAIN0705_STEP001000.name,
-        guided_dir=OUTPUT_ROOT / "train0705_step001000" / "guided" / TRAIN0705_STEP001000.name,
+        family_id="train0705_step002500",
+        baseline_dir=OUTPUT_ROOT / "train0705_step002500" / "baseline" / TRAIN0705_STEP002500.name,
+        guided_dir=OUTPUT_ROOT / "train0705_step002500" / "guided" / TRAIN0705_STEP002500.name,
+        score_baseline_dir=TRAIN0705_BASELINE_002500,
     ),
     Family(
         family_id="train0705_step005000",
         baseline_dir=OUTPUT_ROOT / "train0705_step005000" / "baseline" / TRAIN0705_STEP005000.name,
         guided_dir=OUTPUT_ROOT / "train0705_step005000" / "guided" / TRAIN0705_STEP005000.name,
+        score_baseline_dir=TRAIN0705_BASELINE_005000,
     ),
     Family(
         family_id="wan21_t2v_1p3b",
@@ -458,12 +469,12 @@ def generate(args: argparse.Namespace) -> None:
         wanti2v_generate(unique_list, args)
     if "wan22_early_lora_step000500" in selected:
         lora_generate(unique_list, args)
-    if "train0705_step001000" in selected:
+    if "train0705_step002500" in selected:
         train0705_generate(
             unique_list,
-            TRAIN0705_STEP001000,
-            OUTPUT_ROOT / "train0705_step001000",
-            "train0705_step001000",
+            TRAIN0705_STEP002500,
+            OUTPUT_ROOT / "train0705_step002500",
+            "train0705_step002500",
             args,
         )
     if "train0705_step005000" in selected:
@@ -490,11 +501,13 @@ def score(args: argparse.Namespace) -> None:
         env = os.environ.copy()
         env["PYTHONPATH"] = f"/home/gaoya/Code_Video/Code_data/Code_try0526:{ROOT}"
         env["CUDA_VISIBLE_DEVICES"] = str(args.score_gpu)
+        baseline_dir = family.score_baseline_dir if family.score_baseline_dir and family.score_baseline_dir.is_dir() else family.baseline_dir
+        print(f"[score] {family.family_id} baseline_dir={baseline_dir}", flush=True)
         cmd = [
             str(PY_WAN),
             str(GUIDANCE_DIR / "score_multicase_methods.py"),
             "--method-dir",
-            f"baseline={family.baseline_dir}",
+            f"baseline={baseline_dir}",
             "--method-dir",
             f"guided={family.guided_dir}",
             "--out-json",

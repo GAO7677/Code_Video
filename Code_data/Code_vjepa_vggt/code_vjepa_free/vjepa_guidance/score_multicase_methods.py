@@ -69,12 +69,30 @@ def load_case_sidecar(sidecar_path: Path) -> tuple[dict[str, Any], dict[str, Any
 def collect_records(method_dirs: list[tuple[str, Path]], limit_cases: int | None = None) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for method_label, method_dir in method_dirs:
-        videos = sorted(method_dir.glob("*.mp4"))
+        local_videos = {path.stem: path for path in sorted(method_dir.glob("*.mp4"))}
+        sidecars = {
+            path.stem: path
+            for path in sorted(method_dir.glob("*.json"))
+            if path.name != "batch_manifest.json"
+        }
+        case_ids = sorted(set(local_videos) | set(sidecars))
         if limit_cases is not None:
-            videos = videos[:limit_cases]
-        for video_path in videos:
-            sidecar_path = video_path.with_suffix(".json")
-            sidecar, input_payload = ({}, None) if not sidecar_path.is_file() else load_case_sidecar(sidecar_path)
+            case_ids = case_ids[:limit_cases]
+        for case_id in case_ids:
+            local_video_path = local_videos.get(case_id)
+            sidecar_path = sidecars.get(case_id)
+            sidecar, input_payload = ({}, None) if sidecar_path is None else load_case_sidecar(sidecar_path)
+            resolved_video_path = None
+            referenced_output = sidecar.get("output_video")
+            if isinstance(referenced_output, str) and referenced_output:
+                candidate = Path(referenced_output).expanduser().resolve()
+                if candidate.is_file():
+                    resolved_video_path = candidate
+            if resolved_video_path is None:
+                resolved_video_path = local_video_path
+            if resolved_video_path is None:
+                print(f"[warn] skip {method_label}/{case_id}: no local mp4 and output_video is missing or invalid", flush=True)
+                continue
             source_video = None
             prompt = None
             input_json = sidecar.get("input_json")
@@ -87,12 +105,14 @@ def collect_records(method_dirs: list[tuple[str, Path]], limit_cases: int | None
                 {
                     "method": method_label,
                     "method_dir": str(method_dir),
-                    "case_id": video_path.stem,
-                    "video_path": str(video_path),
-                    "sidecar_path": str(sidecar_path) if sidecar_path.is_file() else None,
+                    "case_id": case_id,
+                    "video_path": str(resolved_video_path),
+                    "local_video_path": str(local_video_path) if local_video_path is not None else None,
+                    "sidecar_path": str(sidecar_path) if sidecar_path is not None else None,
                     "input_json": input_json,
                     "source_video": source_video,
                     "prompt": prompt,
+                    "referenced_output_video": sidecar.get("output_video"),
                 }
             )
     return records
