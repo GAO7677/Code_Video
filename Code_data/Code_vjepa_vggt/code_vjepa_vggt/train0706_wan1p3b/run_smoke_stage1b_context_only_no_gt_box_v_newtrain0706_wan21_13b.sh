@@ -15,8 +15,8 @@ DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train_stage1b_context_only_no_gt_box_v_newtrain.py"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
-BASE_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/raw_phys_state_wan21_13b_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
-STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt
+BASE_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/raw_phys_state_lora_continue/checkpoints/step-000002/checkpoint.safetensors
+STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/stage1a_full_token/step_000002.pt
 DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/train_stage1b_diffsynth_native0706_wan21_13b/smoke
 

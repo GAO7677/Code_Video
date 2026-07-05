@@ -13,6 +13,10 @@ import time
 import warnings
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 def _read_arg_value(argv, name, default=None):
     if name not in argv:
@@ -73,6 +77,8 @@ from diffsynth.diffusion import (
 )
 from diffsynth.diffusion.runner import initialize_deepspeed_gradient_checkpointing
 from diffsynth.pipelines.wan_video import ModelConfig
+
+from dataset import WanTI2VDataset
 
 
 DEFAULT_WAN_ROOT = "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"
@@ -1366,6 +1372,7 @@ def wan_parser():
     parser = argparse.ArgumentParser(
         description="Wan2.2-TI2V-5B LoRA training script.",
         allow_abbrev=False,
+        conflict_handler="resolve",
     )
     parser = add_general_config(parser)
     parser.add_argument(

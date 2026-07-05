@@ -14,6 +14,16 @@ Expected output:
 
 `/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors`
 
+Smoke:
+
+```bash
+GPU=3 sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/run_smoke_openvid_mixed_ctx24_384x672_lora_wan21_13b.sh
+```
+
+Expected smoke output:
+
+`/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx24_384x672_lora/checkpoints/step-000002/checkpoint.safetensors`
+
 ## 2. Stage 0 phys-state continuation
 
 Continue training from the base LoRA above.

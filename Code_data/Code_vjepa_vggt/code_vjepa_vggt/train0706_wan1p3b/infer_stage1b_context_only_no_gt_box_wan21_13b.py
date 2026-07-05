@@ -627,7 +627,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--lora-checkpoint",
-        default="/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/raw_phys_state_lora_continue/checkpoints/step-000002/checkpoint.safetensors",
     )
     parser.add_argument(
         "--stage1a-init-from",

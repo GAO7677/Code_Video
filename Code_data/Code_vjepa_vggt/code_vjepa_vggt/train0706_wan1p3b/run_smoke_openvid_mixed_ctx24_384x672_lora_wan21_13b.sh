@@ -8,12 +8,11 @@ if [ "$GPU" = "4" ]; then
   exit 1
 fi
 
-ACCELERATE_BIN=/data/gaoya/miniconda3/envs/wan/bin/accelerate
-TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/train.py
-DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_raw_phys_state_config.json
+ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
+TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py
+DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
-INIT_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx24_384x672_lora/checkpoints/step-000002/checkpoint.safetensors
-OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/raw_phys_state_lora_continue}
+OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx24_384x672_lora}
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -22,8 +21,8 @@ CUDA_VISIBLE_DEVICES="${GPU}" "${ACCELERATE_BIN}" launch --num_processes 1 --num
   --wan_root "${WAN_ROOT}" \
   --dataset_base_path "${DATASET_CONFIG}" \
   --dataset_metadata_path "" \
-  --height 576 \
-  --width 1024 \
+  --height 384 \
+  --width 672 \
   --num_frames 24 \
   --max_train_steps 2 \
   --context_sampling_profile mixed_modes \
@@ -43,12 +42,13 @@ CUDA_VISIBLE_DEVICES="${GPU}" "${ACCELERATE_BIN}" launch --num_processes 1 --num
   --num_epochs 1 \
   --gradient_accumulation_steps 1 \
   --save_steps 1 \
+  --max_checkpoints_keep 3 \
   --remove_prefix_in_ckpt pipe.dit. \
   --output_path "${OUTPUT_DIR}" \
   --lora_base_model dit \
   --lora_target_modules q,k,v,o,ffn.0,ffn.2 \
   --lora_rank 32 \
-  --lora_checkpoint "${INIT_LORA}" \
+  --extra_inputs input_image \
   --report_to wandb \
-  --wandb_project phys_state_wan21_13b_continue \
+  --wandb_project openvid-movid-genesis-wan21_13b \
   --wandb_mode online

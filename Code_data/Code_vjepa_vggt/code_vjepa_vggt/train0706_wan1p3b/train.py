@@ -430,6 +430,7 @@ def wan_parser():
     parser = argparse.ArgumentParser(
         description="Wan2.2-TI2V-5B LoRA training script.",
         allow_abbrev=False,
+        conflict_handler="resolve",
     )
     parser = add_general_config(parser)
     parser = add_video_size_config(parser)
