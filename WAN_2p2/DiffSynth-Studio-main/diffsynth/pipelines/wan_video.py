@@ -477,24 +477,29 @@ class WanVideoUnit_ImageEmbedderCLIP(PipelineUnit):
 class WanVideoUnit_ImageEmbedderVAE(PipelineUnit):
     def __init__(self):
         super().__init__(
-            input_params=("input_image", "end_image", "num_frames", "height", "width", "tiled", "tile_size", "tile_stride"),
+            input_params=("input_image", "input_video", "end_image", "num_frames", "height", "width", "tiled", "tile_size", "tile_stride"),
             output_params=("y",),
             onload_model_names=("vae",)
         )
 
-    def process(self, pipe: WanVideoPipeline, input_image, end_image, num_frames, height, width, tiled, tile_size, tile_stride):
+    def process(self, pipe: WanVideoPipeline, input_image, input_video, end_image, num_frames, height, width, tiled, tile_size, tile_stride):
         if input_image is None or not pipe.dit.require_vae_embedding:
             return {}
         pipe.load_models_to_device(self.onload_model_names)
         image = pipe.preprocess_image(input_image.resize((width, height))).to(pipe.device)
-        msk = torch.ones(1, num_frames, height//8, width//8, device=pipe.device)
+        # Wan rounds 24 raw frames up to 25 for the scheduler, but the actual
+        # video conditioning path should stay aligned with the real clip length.
+        # Prefer the supplied input_video length here so train-time VAE features
+        # match the latents coming from the decoded clip.
+        effective_num_frames = len(input_video) if input_video is not None and len(input_video) > 0 else int(num_frames)
+        msk = torch.ones(1, effective_num_frames, height//8, width//8, device=pipe.device)
         msk[:, 1:] = 0
         if end_image is not None:
             end_image = pipe.preprocess_image(end_image.resize((width, height))).to(pipe.device)
-            vae_input = torch.concat([image.transpose(0,1), torch.zeros(3, num_frames-2, height, width).to(image.device), end_image.transpose(0,1)],dim=1)
+            vae_input = torch.concat([image.transpose(0,1), torch.zeros(3, effective_num_frames-2, height, width).to(image.device), end_image.transpose(0,1)],dim=1)
             msk[:, -1:] = 1
         else:
-            vae_input = torch.concat([image.transpose(0, 1), torch.zeros(3, num_frames-1, height, width).to(image.device)], dim=1)
+            vae_input = torch.concat([image.transpose(0, 1), torch.zeros(3, effective_num_frames-1, height, width).to(image.device)], dim=1)
 
         msk = torch.concat([torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]], dim=1)
         msk = msk.view(1, msk.shape[1] // 4, 4, height//8, width//8)
