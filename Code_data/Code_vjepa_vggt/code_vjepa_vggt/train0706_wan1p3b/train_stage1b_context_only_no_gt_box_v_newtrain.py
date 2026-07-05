@@ -48,8 +48,8 @@ import torch
 # ``sys.path.insert(0, --diffsynth_root)`` shim (it reads --diffsynth_root
 # straight from sys.argv), so the DiffSynth-Studio checkout passed on the
 # command line is the one used for every `diffsynth` import below.
-import code_vjepa_vggt.train_v_newtrain as tvn
-from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
+import code_vjepa_vggt.train0706_wan1p3b.train_v_newtrain as tvn
+from code_vjepa_vggt.train0706_wan1p3b.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     ViewerGroundingBoxProvider,
 )

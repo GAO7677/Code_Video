@@ -92,9 +92,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from diffsynth.utils.data import save_video
 
-import code_vjepa_vggt.train_v_newtrain as tvn
+import code_vjepa_vggt.train0706_wan1p3b.train_v_newtrain as tvn
 from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
-from code_vjepa_vggt.context_wan_v_newtrain import ContextAwareWanVideoPipeline
+from code_vjepa_vggt.train0706_wan1p3b.context_wan_v_newtrain import ContextAwareWanVideoPipeline
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
 from code_vjepa_vggt.train0706_wan1p3b import train_stage1b_context_only_no_gt_box_v_newtrain as t0706
 from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache

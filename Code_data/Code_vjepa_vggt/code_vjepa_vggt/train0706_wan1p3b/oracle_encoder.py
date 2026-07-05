@@ -6,7 +6,7 @@ from typing import Any
 import torch
 
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
-from code_vjepa_vggt.train_v_newtrain import _sample_points_from_box
+from code_vjepa_vggt.train0706_wan1p3b.train_v_newtrain import _sample_points_from_box
 
 
 @dataclass
@@ -278,5 +278,4 @@ class OracleObjectTokenEncoder:
             object_context=object_context,
             samples=samples,
         )
-
 

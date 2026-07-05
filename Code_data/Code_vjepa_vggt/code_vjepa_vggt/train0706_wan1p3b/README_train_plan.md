@@ -1,5 +1,10 @@
 # Wan2.1-1.3B Training Plan
 
+## Canonical Maintenance Root
+
+All future training and inference edits for this 1.3B Wan flow should be made under `code_vjepa_vggt/train0706_wan1p3b/`. Treat the older `train0705` tree as a historical snapshot only.
+The files whose names still contain `0705` are kept only for compatibility with the existing call sites; the maintained source of truth is this directory.
+
 ## 1. Base LoRA pretraining
 
 Train the OpenVid + MOVI-D + Genesis rigid mixed recipe first.

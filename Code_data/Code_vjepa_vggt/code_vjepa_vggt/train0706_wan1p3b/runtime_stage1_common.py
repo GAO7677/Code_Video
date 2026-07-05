@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 
-from code_vjepa_vggt.train_v_newtrain import _sample_points_from_box
+from code_vjepa_vggt.train0706_wan1p3b.train_v_newtrain import _sample_points_from_box
 from code_vjepa_vggt.trainers.context_video_trainer import ContextVideoTrainer
 
 from .oracle_encoder import OracleObjectTokenEncoder

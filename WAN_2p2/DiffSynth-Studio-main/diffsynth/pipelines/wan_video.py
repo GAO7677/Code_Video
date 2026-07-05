@@ -487,11 +487,13 @@ class WanVideoUnit_ImageEmbedderVAE(PipelineUnit):
             return {}
         pipe.load_models_to_device(self.onload_model_names)
         image = pipe.preprocess_image(input_image.resize((width, height))).to(pipe.device)
-        # Wan rounds 24 raw frames up to 25 for the scheduler, but the actual
-        # video conditioning path should stay aligned with the real clip length.
-        # Prefer the supplied input_video length here so train-time VAE features
-        # match the latents coming from the decoded clip.
-        effective_num_frames = len(input_video) if input_video is not None and len(input_video) > 0 else int(num_frames)
+        # Wan rounds raw frame counts to 4n+1 for video generation. Keep the
+        # VAE conditioning path aligned to the same scheduler length so the
+        # mask reshaping below matches the latent grid.
+        effective_num_frames = int(num_frames)
+        remainder = (effective_num_frames - 1) % 4
+        if remainder != 0:
+            effective_num_frames += 4 - remainder
         msk = torch.ones(1, effective_num_frames, height//8, width//8, device=pipe.device)
         msk[:, 1:] = 0
         if end_image is not None:
@@ -554,7 +556,8 @@ class WanVideoUnit_FunControl(PipelineUnit):
         y_dim = pipe.dit.in_dim-control_latents.shape[1]-latents.shape[1]
         if clip_feature is None or y is None:
             clip_feature = torch.zeros((1, 257, 1280), dtype=pipe.torch_dtype, device=pipe.device)
-            y = torch.zeros((1, y_dim, (num_frames - 1) // 4 + 1, height//8, width//8), dtype=pipe.torch_dtype, device=pipe.device)
+            latent_frames = int(latents.shape[2])
+            y = torch.zeros((1, y_dim, latent_frames, height//8, width//8), dtype=pipe.torch_dtype, device=pipe.device)
         else:
             y = y[:, -y_dim:]
         y = torch.concat([control_latents, y], dim=1)
@@ -621,10 +624,14 @@ class WanVideoUnit_FunCameraControl(PipelineUnit):
 
         if y.shape[1] != pipe.dit.in_dim - latents.shape[1]:
             image = pipe.preprocess_image(input_image.resize((width, height))).to(pipe.device)
-            vae_input = torch.concat([image.transpose(0, 1), torch.zeros(3, num_frames-1, height, width).to(image.device)], dim=1)
+            effective_num_frames = int(num_frames)
+            remainder = (effective_num_frames - 1) % 4
+            if remainder != 0:
+                effective_num_frames += 4 - remainder
+            vae_input = torch.concat([image.transpose(0, 1), torch.zeros(3, effective_num_frames-1, height, width).to(image.device)], dim=1)
             y = pipe.vae.encode([vae_input.to(dtype=pipe.torch_dtype, device=pipe.device)], device=pipe.device, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)[0]
             y = y.to(dtype=pipe.torch_dtype, device=pipe.device)
-            msk = torch.ones(1, num_frames, height//8, width//8, device=pipe.device)
+            msk = torch.ones(1, effective_num_frames, height//8, width//8, device=pipe.device)
             msk[:, 1:] = 0
             msk = torch.concat([torch.repeat_interleave(msk[:, 0:1], repeats=4, dim=1), msk[:, 1:]], dim=1)
             msk = msk.view(1, msk.shape[1] // 4, 4, height//8, width//8)

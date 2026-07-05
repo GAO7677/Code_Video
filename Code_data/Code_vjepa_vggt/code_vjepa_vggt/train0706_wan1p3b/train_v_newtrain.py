@@ -62,7 +62,7 @@ from code_vjepa_vggt.utils.depth_anything_cache import load_depth_anything_cache
 from code_vjepa_vggt.utils.depth_target_branch import group_last, pool_depth_from_boxes_median
 from code_vjepa_vggt.utils.vggt_cache import VGGTDenseCache, load_vggt_cache
 from code_vjepa_vggt.utils.track_supervision import align_tracks_to_boxes, track_box_iou_loss, track_box_l1_loss
-from code_vjepa_vggt.context_wan_v_newtrain import (
+from code_vjepa_vggt.train0706_wan1p3b.context_wan_v_newtrain import (
     ContextAwareWanVideoPipeline,
     enable_object_condition_branch,
     flow_match_context_sft_loss,
@@ -1752,6 +1752,13 @@ def prepare_args(args):
         args.tokenizer_path = find_tokenizer_path(args.wan_root)
     if args.max_train_steps is not None and args.max_train_steps <= 0:
         raise ValueError(f"max_train_steps must be positive when set, got {args.max_train_steps}.")
+    aligned_num_frames = align_num_frames_to_wan21(int(args.num_frames))
+    if aligned_num_frames != int(args.num_frames):
+        print(
+            "[time_align] Adjusting training length from "
+            f"{args.num_frames} to {aligned_num_frames} to satisfy 4n+1."
+        )
+        args.num_frames = aligned_num_frames
     if args.height is not None and args.height % WAN_SPATIAL_DIVISIBILITY != 0:
         raise ValueError(
             f"height must be divisible by {WAN_SPATIAL_DIVISIBILITY} for Wan2.2 training, got {args.height}."
@@ -1921,6 +1928,15 @@ def init_trackers(accelerator, args):
             }
         },
     )
+
+
+def align_num_frames_to_wan21(num_frames: int) -> int:
+    if num_frames < 1:
+        raise ValueError(f"num_frames must be positive, got {num_frames}.")
+    remainder = (num_frames - 1) % 4
+    if remainder == 0:
+        return num_frames
+    return num_frames + (4 - remainder)
 
 
 def build_dataset(args):

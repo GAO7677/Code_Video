@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 from accelerate import Accelerator
+from safetensors.torch import load_file as load_safetensors_file
 from tqdm import tqdm
 
 
@@ -94,6 +95,29 @@ def _save_checkpoint_atomic(state: dict[str, object], target_path: Path) -> None
         if tmp_path.exists():
             tmp_path.unlink()
         raise
+
+
+def _load_state_dict_file(path: Path) -> dict[str, object]:
+    if path.suffix == ".safetensors":
+        state = load_safetensors_file(str(path))
+        if not isinstance(state, dict):
+            raise RuntimeError(f"unexpected safetensors state format: {path}")
+        return state
+    loaded = torch.load(path, map_location="cpu")
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"unexpected checkpoint format: {path}")
+    return loaded
+
+
+def _extract_model_state(loaded: dict[str, object], *, source: Path) -> dict[str, object]:
+    if "model" in loaded and isinstance(loaded["model"], dict):
+        model_state = loaded["model"]
+        if not isinstance(model_state, dict):
+            raise RuntimeError(f"checkpoint 'model' entry must be a dict: {source}")
+        return model_state
+    if loaded and all(isinstance(value, torch.Tensor) for value in loaded.values()):
+        return loaded
+    raise RuntimeError(f"checkpoint does not contain a model state dict: {source}")
 
 
 def _save_trainable_checkpoint(
@@ -224,12 +248,8 @@ def launch_training_task(
         init_path = Path(init_from)
         if not init_path.is_file():
             raise FileNotFoundError(f"init-from checkpoint not found: {init_path}")
-        init_state = torch.load(init_path, map_location="cpu")
-        if not isinstance(init_state, dict) or "model" not in init_state:
-            raise RuntimeError(f"init-from checkpoint missing 'model' key: {init_path}")
-        init_model_state = init_state["model"]
-        if not isinstance(init_model_state, dict):
-            raise RuntimeError(f"init-from checkpoint 'model' entry must be a dict: {init_path}")
+        init_state = _load_state_dict_file(init_path)
+        init_model_state = _extract_model_state(init_state, source=init_path)
         unwrapped = accelerator.unwrap_model(model)
         # Materialize lazy pooler layers before loading (same fix as resume path)
         lk = "object_pooler.latent_proj.weight"
@@ -251,14 +271,10 @@ def launch_training_task(
         resume_path = Path(resume_checkpoint)
         if not resume_path.is_file():
             raise FileNotFoundError(f"resume checkpoint not found: {resume_path}")
-        state = torch.load(resume_path, map_location="cpu")
+        state = _load_state_dict_file(resume_path)
         if not isinstance(state, dict):
             raise RuntimeError(f"unsupported resume checkpoint format in {resume_path}")
-        if "model" not in state:
-            raise RuntimeError(f"resume checkpoint missing 'model' key: {resume_path}")
-        model_state = state["model"]
-        if not isinstance(model_state, dict):
-            raise RuntimeError(f"resume checkpoint 'model' entry must be a dict: {resume_path}")
+        model_state = _extract_model_state(state, source=resume_path)
         unwrapped = accelerator.unwrap_model(model)
         # object_pooler.latent_proj / jepa_proj are lazily rebuilt on first forward
         # (their in_features adapt to the real VAE/JEPA dim). Run one warmup batch

@@ -16,7 +16,7 @@ TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train_stage1b_context_on
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 BASE_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/raw_phys_state_lora_continue/checkpoints/step-000002/checkpoint.safetensors
-STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/stage1a_full_token/step_000002.pt
+STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/stage1a_full_token/step_0000002.pt
 DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/train_stage1b_diffsynth_native0706_wan21_13b/smoke
 
@@ -41,7 +41,7 @@ CMD=(
   --phys_state_split train
   --height 512
   --width 896
-  --num_frames 24
+  --num_frames 25
   --fixed_num_context_frames 8
   --max_train_steps 5
   --num_epochs 100
@@ -101,8 +101,8 @@ CMD=(
   --grounding_container_suppress_min_area_ratio 1.5
   --grounding_container_suppress_small_iou_threshold 0.7
   --sam2_segment_len 8
-  --report_to wandb \
-  --wandb_project vjepa_vggt_wan \
+  --report_to wandb
+  --wandb_project vjepa_vggt_wan
   --wandb_mode online
 )
 
