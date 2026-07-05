@@ -21,6 +21,8 @@ Build + serve from /data/gaoya:
 import argparse
 import html
 import json
+import os
+import re
 from functools import partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -42,6 +44,95 @@ SUMMARY_ORDER = [
     "train0705_step002500",
     "train0705_step005000",
 ]
+
+
+class RangeRequestHandler(SimpleHTTPRequestHandler):
+    """Simple static file handler with HTTP Range support for browser video playback."""
+
+    range_re = re.compile(r"bytes=(\d*)-(\d*)$")
+
+    def send_head(self):  # type: ignore[override]
+        path = self.translate_path(self.path)
+        if os.path.isdir(path):
+            return super().send_head()
+
+        ctype = self.guess_type(path)
+        try:
+            file_obj = open(path, "rb")
+        except OSError:
+            self.send_error(404, "File not found")
+            return None
+
+        file_size = os.fstat(file_obj.fileno()).st_size
+        range_header = self.headers.get("Range")
+        byte_range = self._parse_range_header(range_header, file_size)
+
+        if byte_range is None:
+            self.send_response(200)
+            self.send_header("Content-type", ctype)
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Last-Modified", self.date_time_string(os.path.getmtime(path)))
+            self.end_headers()
+            self._range = None
+            return file_obj
+
+        start, end = byte_range
+        chunk_size = end - start + 1
+        self.send_response(206)
+        self.send_header("Content-type", ctype)
+        self.send_header("Content-Length", str(chunk_size))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Last-Modified", self.date_time_string(os.path.getmtime(path)))
+        self.end_headers()
+        file_obj.seek(start)
+        self._range = (start, end)
+        return file_obj
+
+    def copyfile(self, source, outputfile):  # type: ignore[override]
+        byte_range = getattr(self, "_range", None)
+        if byte_range is None:
+            return super().copyfile(source, outputfile)
+
+        start, end = byte_range
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = source.read(min(64 * 1024, remaining))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            remaining -= len(chunk)
+
+    def _parse_range_header(self, range_header: str | None, file_size: int) -> tuple[int, int] | None:
+        if not range_header:
+            return None
+        match = self.range_re.fullmatch(range_header.strip())
+        if not match:
+            return None
+
+        start_str, end_str = match.groups()
+        if not start_str and not end_str:
+            return None
+
+        if start_str:
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+        else:
+            suffix_len = int(end_str)
+            if suffix_len <= 0:
+                return None
+            start = max(file_size - suffix_len, 0)
+            end = file_size - 1
+
+        if start >= file_size:
+            self.send_error(416, "Requested Range Not Satisfiable")
+            return None
+
+        end = min(end, file_size - 1)
+        if start > end:
+            return None
+        return start, end
 
 
 def parse_args() -> argparse.Namespace:
@@ -668,7 +759,7 @@ def render_html(payload: dict[str, Any], title: str, output_html: Path) -> None:
 
 
 def serve_forever(serve_root: Path, port: int) -> None:
-    handler = partial(SimpleHTTPRequestHandler, directory=str(serve_root))
+    handler = partial(RangeRequestHandler, directory=str(serve_root))
     httpd = HTTPServer(("0.0.0.0", port), handler)
     print(f"Serving {serve_root} at http://localhost:{port}", flush=True)
     httpd.serve_forever()
