@@ -35,10 +35,10 @@ Example run command:
   CUDA_VISIBLE_DEVICES="7" \
   /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py \
-    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+    --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-001000 \
     --context-video /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460/source_video/context_video_8f.mp4 \
     --prompt "f5 sample 001460 industrial rigid body simulation sphere box" \
-    --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/inference_review/step-001000 \
+    --output-dir /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/inference_review/step-001000 \
     --sampling-steps 12
 
 The script keeps the inference core on top of `diffsynth`, but reconstructs the
@@ -86,13 +86,17 @@ if _SELECTED_DIFFSYNTH_ROOT:
     if _SELECTED_DIFFSYNTH_ROOT not in sys.path:
         sys.path.insert(0, _SELECTED_DIFFSYNTH_ROOT)
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.train_v_newtrain as tvn
 from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
 from code_vjepa_vggt.context_wan_v_newtrain import ContextAwareWanVideoPipeline
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
-from code_vjepa_vggt.train0706_wan1p3b import train_stage1b_context_only_no_gt_box_v_newtrain as t0705
+from code_vjepa_vggt.train0706_wan1p3b import train_stage1b_context_only_no_gt_box_v_newtrain as t0706
 from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, read_video_prefix
 
@@ -300,7 +304,7 @@ def _tensor_video_to_pil_list(context_video_single: torch.Tensor):
 
 
 def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
-    parser = t0705.build_parser()
+    parser = t0706.build_parser()
     model_args = parser.parse_args([])
 
     model_args.diffsynth_root = str(args.diffsynth_root)
@@ -389,7 +393,7 @@ def _build_runtime_model(args: argparse.Namespace):
     apply_vjepa_preset_if_requested(args)
     model_args = _build_model_args(args)
     accelerator = SimpleNamespace(device=torch.device(args.device))
-    model = t0705.build_model(model_args, accelerator)
+    model = t0706.build_model(model_args, accelerator)
 
     stage1a_info = tvn._load_filtered_checkpoint_into_model(
         model,
@@ -438,7 +442,7 @@ def _encode_context_latents(
 
 
 def _build_object_context(
-    model: t0705.ContextOnlyNoGTBoxWanModule,
+    model: t0706.ContextOnlyNoGTBoxWanModule,
     *,
     context_video_single: torch.Tensor,
     prompt: str,

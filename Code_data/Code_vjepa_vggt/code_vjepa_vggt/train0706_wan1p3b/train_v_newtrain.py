@@ -1357,6 +1357,11 @@ def build_wan_model_paths(wan_root):
     )
 
 
+def build_wan22_ti2v5b_model_paths(wan_root):
+    """Backward-compatible alias for older inference helpers."""
+    return build_wan_model_paths(wan_root)
+
+
 def wan_parser():
     parser = argparse.ArgumentParser(
         description="Wan2.2-TI2V-5B LoRA training script.",

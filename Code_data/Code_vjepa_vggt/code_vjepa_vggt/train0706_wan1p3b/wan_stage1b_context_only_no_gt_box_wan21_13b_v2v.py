@@ -57,9 +57,13 @@ if _SELECTED_DIFFSYNTH_ROOT:
     if _SELECTED_DIFFSYNTH_ROOT not in sys.path:
         sys.path.insert(0, _SELECTED_DIFFSYNTH_ROOT)
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from code_vjepa_vggt import batch_infer_v_newtrain_from_jsonl as core
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
-from code_vjepa_vggt.train0706_wan1p3b import infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer0705
+from code_vjepa_vggt.train0706_wan1p3b import infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer0706
 from code_vjepa_vggt.utils.video_io import (
     preprocess_video_rgb_uint8,
     read_video_prefix,
@@ -73,7 +77,7 @@ Run command example:
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/wan_stage1b_context_only_no_gt_box_wan21_13b_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name train_stage1b_diffsynth_native0706_wan21_13b \
@@ -115,7 +119,7 @@ def _build_method_name_from_checkpoint_dir(checkpoint_dir: Path) -> str:
 def _resolve_runtime_device(device_arg: str) -> str:
     if str(device_arg).strip() and str(device_arg).strip().lower() != "cuda":
         return str(device_arg).strip()
-    return infer0705._resolve_launch_device()
+    return infer0706._resolve_launch_device()
 
 
 def _load_context_video_for_mode(
@@ -205,7 +209,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounding-container-suppress-min-area-ratio", type=float, default=1.5)
     parser.add_argument("--grounding-container-suppress-small-iou-threshold", type=float, default=0.7)
     parser.add_argument("--initialize-model-on-cpu", action="store_true")
-    infer0705.add_vjepa_cli_args(parser)
+    infer0706.add_vjepa_cli_args(parser)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -288,7 +292,7 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         device=str(cli_args.device),
         initialize_model_on_cpu=bool(cli_args.initialize_model_on_cpu),
     )
-    for name in infer0705._VJEPA_RUNTIME_ARG_NAMES:
+    for name in infer0706._VJEPA_RUNTIME_ARG_NAMES:
         runtime_kwargs[name] = getattr(cli_args, name)
     return argparse.Namespace(**runtime_kwargs)
 
@@ -330,14 +334,14 @@ def _run_single_case_in_process(
         sampling_mode=sampling_mode,
     )
     context_video_single = preprocess_video_rgb_uint8(frames, (int(height), int(width)))
-    context_pil = infer0705._tensor_video_to_pil_list(context_video_single)
-    object_context, object_debug = infer0705._build_object_context(
+    context_pil = infer0706._tensor_video_to_pil_list(context_video_single)
+    object_context, object_debug = infer0706._build_object_context(
         model=model,
         context_video_single=context_video_single,
         prompt=str(input_caption),
         video_path=str(context_video_path),
     )
-    object_context, ablation_debug = infer0705._apply_object_context_ablation(
+    object_context, ablation_debug = infer0706._apply_object_context_ablation(
         object_context,
         mode=str(getattr(model, "_object_context_ablation_mode", "none")),
         random_seed=getattr(model, "_object_context_random_seed", None),
@@ -366,7 +370,7 @@ def _run_single_case_in_process(
     output_video.parent.mkdir(parents=True, exist_ok=True)
     save_video(video, str(output_video), fps=int(fps), quality=int(quality))
 
-    summarized_load_info = infer0705._summarize_load_info(load_info)
+    summarized_load_info = infer0706._summarize_load_info(load_info)
     result = {
         "input_json": str(input_json_path),
         "input_video": str(input_video),
@@ -401,7 +405,7 @@ def _run_single_case_in_process(
 
 def main() -> None:
     cli_args = parse_args()
-    infer0705.apply_vjepa_preset_if_requested(cli_args)
+    infer0706.apply_vjepa_preset_if_requested(cli_args)
     weights_root = cli_args.weights_root.expanduser().resolve()
     input_json_list_path = cli_args.input_json_list_path.expanduser().resolve()
     model_name = str(cli_args.model_name).strip()
@@ -441,7 +445,7 @@ def main() -> None:
             "random_seed": cli_args.object_context_random_seed,
             "random_scale": float(cli_args.object_context_random_scale),
         },
-        "vjepa": infer0705.summarize_vjepa_args(cli_args),
+        "vjepa": infer0706.summarize_vjepa_args(cli_args),
     }
     with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
@@ -452,7 +456,7 @@ def main() -> None:
     method_name = _build_method_name_from_checkpoint_dir(weights_root)
 
     runtime_args = _build_runtime_args(cli_args, weights_root, step_output_dir)
-    model, _, load_info = infer0705._build_runtime_model(runtime_args)
+    model, _, load_info = infer0706._build_runtime_model(runtime_args)
     model.to(torch.device(cli_args.device))
     model.eval()
     model.pipe.dit.eval()
@@ -466,7 +470,7 @@ def main() -> None:
     step_entries: list[dict[str, object]] = []
     step_log_lines = [
         f"[checkpoint] {weights_root}",
-        f"[load_info] {json.dumps(infer0705._summarize_load_info(load_info), ensure_ascii=False)}",
+        f"[load_info] {json.dumps(infer0706._summarize_load_info(load_info), ensure_ascii=False)}",
     ]
 
     for input_json_path in json_paths:
@@ -511,7 +515,7 @@ def main() -> None:
                 load_info=load_info,
                 lora_checkpoint=str(cli_args.lora_checkpoint),
                 stage1a_init_from=str(cli_args.stage1a_init_from),
-                vjepa_summary=infer0705.summarize_vjepa_args(cli_args),
+                vjepa_summary=infer0706.summarize_vjepa_args(cli_args),
             )
         except Exception as exc:
             error_lines = step_log_lines + [f"[error] {sample_stem}: {exc}"]

@@ -86,13 +86,17 @@ if _SELECTED_DIFFSYNTH_ROOT:
     if _SELECTED_DIFFSYNTH_ROOT not in sys.path:
         sys.path.insert(0, _SELECTED_DIFFSYNTH_ROOT)
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from diffsynth.utils.data import save_video
 
 import code_vjepa_vggt.train_v_newtrain as tvn
 from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
 from code_vjepa_vggt.context_wan_v_newtrain import ContextAwareWanVideoPipeline
 from code_vjepa_vggt.data.phys_state_dataset import PhysStateEpisodeDataset
-from code_vjepa_vggt.train0706_wan1p3b import train_stage1b_context_only_no_gt_box_v_newtrain as t0705
+from code_vjepa_vggt.train0706_wan1p3b import train_stage1b_context_only_no_gt_box_v_newtrain as t0706
 from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache
 from code_vjepa_vggt.utils.video_io import preprocess_video_rgb_uint8, read_video_prefix
 
@@ -300,7 +304,7 @@ def _tensor_video_to_pil_list(context_video_single: torch.Tensor):
 
 
 def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
-    parser = t0705.build_parser()
+    parser = t0706.build_parser()
     model_args = parser.parse_args([])
 
     model_args.diffsynth_root = str(args.diffsynth_root)
@@ -389,7 +393,7 @@ def _build_runtime_model(args: argparse.Namespace):
     apply_vjepa_preset_if_requested(args)
     model_args = _build_model_args(args)
     accelerator = SimpleNamespace(device=torch.device(args.device))
-    model = t0705.build_model(model_args, accelerator)
+    model = t0706.build_model(model_args, accelerator)
 
     stage1a_info = tvn._load_filtered_checkpoint_into_model(
         model,
@@ -438,7 +442,7 @@ def _encode_context_latents(
 
 
 def _build_object_context(
-    model: t0705.ContextOnlyNoGTBoxWanModule,
+    model: t0706.ContextOnlyNoGTBoxWanModule,
     *,
     context_video_single: torch.Tensor,
     prompt: str,
@@ -627,7 +631,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage1a-init-from",
-        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt",
+        default="/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt",
     )
     parser.add_argument("--num-frames", type=int, default=24)
     parser.add_argument("--context-frames", type=int, default=8)

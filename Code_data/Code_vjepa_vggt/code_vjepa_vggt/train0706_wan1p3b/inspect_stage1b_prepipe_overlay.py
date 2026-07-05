@@ -33,7 +33,7 @@ from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     ViewerGroundingBoxProvider,
 )
-from code_vjepa_vggt.train0706_wan1p3b import infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer0705
+from code_vjepa_vggt.train0706_wan1p3b import infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer0706
 from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache
 from code_vjepa_vggt.utils.video_io import (
     preprocess_video_rgb_uint8,
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
 def _resolve_runtime_device(device_arg: str) -> str:
     if str(device_arg).strip() and str(device_arg).strip().lower() != "cuda":
         return str(device_arg).strip()
-    return infer0705._resolve_launch_device()
+    return infer0706._resolve_launch_device()
 
 
 def _build_infer_args(
@@ -148,7 +148,7 @@ def _build_infer_args(
             "--output-dir",
             str(output_dir),
         ]
-        infer_args = infer0705.parse_args()
+        infer_args = infer0706.parse_args()
     finally:
         sys.argv = old_argv
 
@@ -460,7 +460,7 @@ def _build_spatial_debug(
                 setattr(vggt_out, attr_name, attr_value.to(device))
 
     jepa_out = model._run_jepa(context_video)
-    context_latents = infer0705._encode_context_latents(pipe, context_video_single)
+    context_latents = infer0706._encode_context_latents(pipe, context_video_single)
     object_out = model.object_pooler(
         jepa_patch_tokens=jepa_out.patch_tokens,
         context_latents=context_latents,
@@ -814,7 +814,7 @@ def main() -> None:
             torch.manual_seed(int(infer_args.seed))
             np.random.seed(int(infer_args.seed))
             print(f"[load] {checkpoint_dir}")
-            model, model_args, load_info = infer0705._build_runtime_model(infer_args)
+            model, model_args, load_info = infer0706._build_runtime_model(infer_args)
             _ = model_args, load_info
             model.pipe.dit.eval()
             if args.aux_device and model.vggt_adapter is not None:

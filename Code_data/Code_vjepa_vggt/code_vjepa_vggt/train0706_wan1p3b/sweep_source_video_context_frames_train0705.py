@@ -26,7 +26,7 @@ THIS_FILE = Path(__file__).resolve()
 TRAIN0706_DIR = THIS_FILE.parent
 PACKAGE_DIR = TRAIN0706_DIR.parent
 REPO_ROOT = PACKAGE_DIR.parent
-DEFAULT_BATCH_SCRIPT = TRAIN0706_DIR / "wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py"
+DEFAULT_BATCH_SCRIPT = TRAIN0706_DIR / "wan_stage1b_context_only_no_gt_box_wan21_13b_v2v.py"
 DEFAULT_DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
 DEFAULT_ORIGINAL_JSON_FIELD = "train0706_saved_input_context_videos"
@@ -549,7 +549,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(
             "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-            "pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt"
+            "pybullet0629_teacher_student/stage1a_full_token/step_0003000.pt"
         ),
     )
     parser.add_argument("--height", type=int, default=512)

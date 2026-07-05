@@ -16,7 +16,7 @@ Behavior:
    over the whole V2V result root.
 
 State is stored under:
-  <result-root>/.watch_stage1b_context_only_no_gt_box_vnewtrain0705/state.json
+  <result-root>/.watch_stage1b_context_only_no_gt_box_vnewtrain0706_wan21_13b/state.json
 """
 
 import argparse
@@ -30,13 +30,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 DEFAULT_PROJECT_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt")
 DEFAULT_DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
 DEFAULT_PYTHON_BIN = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
 DEFAULT_INFER_SCRIPT = (
     DEFAULT_PROJECT_ROOT
-    / "code_vjepa_vggt/train0706_wan1p3b/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py"
+    / "code_vjepa_vggt/train0706_wan1p3b/wan_stage1b_context_only_no_gt_box_wan21_13b_v2v.py"
 )
 DEFAULT_BENCH_SCRIPT = DEFAULT_PROJECT_ROOT / "code_vjepa_vggt/AAAinfer/bench.sh"
 DEFAULT_CHECKPOINT_ROOT = Path(

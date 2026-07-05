@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from code_vjepa_vggt.utils.config import load_yaml_config
-
-from .runtime_stage1a_full_token import FullTokenTeacherTrainer
+from code_vjepa_vggt.train0706_wan1p3b.runtime_stage1a_full_token import FullTokenTeacherTrainer
 
 
 def _resolve_launch_device() -> str:
