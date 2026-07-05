@@ -56,13 +56,14 @@ METRICS = [
 
 def load_case_payloads(result_dir: Path) -> list[dict]:
     payloads = []
+    required_metric_keys = [key_path[0] for _, _, key_path, _ in METRICS]
     for path in sorted(result_dir.glob("*.json")):
         if path.name in {"result.json", "summary.json"}:
             continue
         if path.name.startswith("eval_summary_"):
             continue
         payload = json.loads(path.read_text())
-        if all(metric_key in payload for metric_key, *_ in METRICS):
+        if all(metric_key in payload for metric_key in required_metric_keys):
             payloads.append(payload)
     return payloads
 
