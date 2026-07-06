@@ -300,7 +300,7 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_smoke_gpu5/checkpoints/step-000005 \
+  --weights-root /data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_gpu3567/checkpoints/step-000500 \
   --input-json-list-path /data/gaoya/agent-data/outputs/tmp_stage1b_kubric_smoke_infer/kubric_test3.txt \
   --model-name kubric_stage1b_smoke_step000005 \
   --output-root /data/gaoya/agent-data/outputs/tmp_stage1b_kubric_smoke_infer \
