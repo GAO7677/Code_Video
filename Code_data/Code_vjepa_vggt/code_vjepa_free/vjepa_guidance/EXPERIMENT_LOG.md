@@ -461,3 +461,93 @@
 - 当前结论：
   - LoRA baseline 可以安全复用一部分 `/data/gaoya/AAA_test_video/0623/test/v2v` 里的历史结果。
   - Official Wan2.2 baseline 没有找到字节级一致的历史匹配，仍需在当前 A/B 树下重新生成。
+
+## 2026-07-06 — frequency-guidance sweep入口整理与 smoke 排障
+
+- 目标：
+  - 把“频域 guidance + motion mask 默认 `temporal_union_except_first`”整理成统一的 4-family A/B 入口。
+  - 新增 sweep 脚本，用多个频域组合去探索对物理合理性更有效的 guided 配置。
+- 代码：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py`
+    - 改成参数化入口：
+      - 支持 `--input-list`
+      - 支持 `--output-root`
+      - 支持 `--limit-cases`
+      - 支持频域相关 guided 参数：
+        `--guided-motion-mask-mode`
+        `--guided-use-spectral-guidance`
+        `--guided-spectral-*`
+        `--guided-preview-downsample-factor`
+        `--guided-preview-frame-stride`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py`
+    - 改为薄 wrapper，直接透传到新的参数化主入口。
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide_sweep.py`
+    - 新增多 mode sweep 入口。
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wanti2v.py`
+    - CLI 默认 `--motion-mask-mode` 改为 `temporal_union_except_first`。
+- 新增 sweep mode：
+  - `mask_only_tunionx1`
+  - `freq_tunionx1_lp018_d5`
+  - `freq_tunionx1_lp018_d5_pd8_fs2`
+  - `freq_tunionx1_lp018_d0`
+  - `freq_tunionx1_lp012_d3_wf010`
+  - `freq_tunionx1_lp024_d7_wf040_ws125`
+- 输出根目录：
+  - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_sweep_20260706`
+- smoke：
+  - 先在 `Wan2.2 official TI2V-5B` 上跑 `1 case × 2 modes`，
+    输入取自 `test_5.txt` 的第一个去重 case：
+    `0613pybullet_sample_000301_w000`
+  - 已验证：
+    - sweep 入口会正确生成每个 mode 的独立目录
+    - `freqguide_preset.json` 会落到每个 mode 根目录
+    - baseline/guided 目录结构与后续 scoring 入口兼容
+- 发现的问题与处理：
+  - 问题 1：
+    official `wanti2v.py` 分支使用 `--motion-mask-mode`，
+    而 train0705 / LoRA 分支使用 `--vjepa-motion-mask-mode`。
+  - 处理：
+    在 `run_model_weight_ab_test5.py` 中按 family 做了参数桥接，
+    official 分支现在传 `--motion-mask-mode`。
+  - 问题 2：
+    official guided smoke 在当前 GPU 环境下再次出现 OOM。
+    先前一次表现为：
+    `Tried to allocate 1.96 GiB`，主模型所在卡只剩 `1.95 GiB`。
+  - 处理：
+    把 `preview_downsample_factor` / `preview_frame_stride` 纳入 sweep 参数，
+    新增 `freq_tunionx1_lp018_d5_pd8_fs2`。
+  - 问题 3：
+    第二次 smoke 时，物理 `gpu2` 被其他进程占用约 `42.3 GiB`，
+    导致 even baseline 也可能在加载或采样时 OOM。
+- 当前结论：
+  - 代码入口层已经整理到可以系统扫频域参数的状态。
+  - 当前阻塞不再是脚本结构，而是“official 家族在拥挤 GPU 上的显存余量不足”。
+  - 下一步更有价值的是：
+    1. 在更空闲的 GPU 上重跑 `freq_tunionx1_lp018_d5_pd8_fs2`
+    2. 优先在 LoRA / train0705 family 上做 1-case smoke，因为这些分支已经支持更激进的 preview 低分辨率配置
+    3. smoke 稳定后，再扩展到完整 17-case + 全指标评分
+
+### 2026-07-06 当日晚些时候补充
+
+- baseline 复用：
+  - `run_model_weight_ab_test5.py` 新增了 baseline 复用逻辑，并且默认开启：
+    - official baseline 复用源：
+      `/data/gaoya/agent-data/outputs/official_freqguide_test5/baseline`
+    - early LoRA baseline 复用源：
+      `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_early_lora_step000500/baseline`
+    - train0705 baseline 复用源：
+      `/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-002500`
+      `/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-007000`
+  - 已把这些 baseline 挂到：
+    `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_sweep_20260706/freq_tunionx1_lp018_d5_pd8_fs2`
+    下面对应 family 的 `baseline/` 目录中。
+- smoke 新结论：
+  - official `freq_tunionx1_lp018_d5_pd8_fs2` 在 `CUDA_VISIBLE_DEVICES=2,1` 的一次尝试里，
+    已经越过模型装载与 VAE preview 初始化，真正进入采样循环，并报在 `0/40` 的第一个去噪步 OOM。
+  - 这说明：
+    - `temporal_union_except_first + spectral guidance + preview_downsample_factor=8 + preview_frame_stride=2`
+      这条代码路径已经接通；
+    - 当前剩余问题主要是外部 GPU 上存在其他大进程时，第一步采样的可用余量仍不够。
+- 兼容性修复补充：
+  - early LoRA 分支不支持 `--vjepa-preset`，已在 `run_model_weight_ab_test5.py`
+    中改成把 preset 展开为显式 `--vjepa-*` 参数。

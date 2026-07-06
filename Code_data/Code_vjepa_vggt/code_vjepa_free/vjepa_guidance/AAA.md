@@ -384,3 +384,61 @@ Useful result directories already generated:
 
 These are not separate model families; they are analysis runs on top of the
 Wan2.2 official TI2V-5B pipeline.
+
+## 8. Frequency-Guidance Sweep on test_5
+
+Primary scripts:
+
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide_sweep.py`
+
+Current isolated output roots:
+
+- Single-mode isolated root:
+  `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706`
+- Multi-mode sweep root:
+  `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_sweep_20260706`
+
+Useful commands:
+
+Current single-mode frequency-guidance A/B:
+
+```bash
+CUDA_VISIBLE_DEVICES=5,6,7 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py \
+  --stage generate
+```
+
+List available sweep modes:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide_sweep.py \
+  --list-modes
+```
+
+One-case official smoke for the current safer preview-downsample variant:
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2,1 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide_sweep.py \
+  --stage generate \
+  --families wan22_official_ti2v5b \
+  --mode-ids freq_tunionx1_lp018_d5_pd8_fs2 \
+  --limit-cases 1 \
+  --main-gpu 2 \
+  --vjepa-gpu 1 \
+  --continue-on-error
+```
+
+Current sweep modes:
+
+- `mask_only_tunionx1`
+- `freq_tunionx1_lp018_d5`
+- `freq_tunionx1_lp018_d5_pd8_fs2`
+- `freq_tunionx1_lp018_d0`
+- `freq_tunionx1_lp012_d3_wf010`
+- `freq_tunionx1_lp024_d7_wf040_ws125`

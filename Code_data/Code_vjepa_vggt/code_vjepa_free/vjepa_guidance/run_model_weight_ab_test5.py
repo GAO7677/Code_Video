@@ -19,9 +19,15 @@ CUDA_VISIBLE_DEVICES=7 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    from .experiment_presets import resolve_train0705_preset
+except ImportError:
+    from experiment_presets import resolve_train0705_preset
 
 
 THIS_FILE = Path(__file__).resolve()
@@ -68,6 +74,10 @@ TRAIN0705_BASELINE_002500 = Path(
 TRAIN0705_BASELINE_007000 = Path(
     "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-007000"
 )
+LORA_BASELINE_SOURCE = Path(
+    "/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_early_lora_step000500/baseline"
+)
+OFFICIAL_BASELINE_SOURCE = Path("/data/gaoya/agent-data/outputs/official_freqguide_test5/baseline")
 
 
 def build_families(output_root: Path) -> list[Family]:
@@ -124,7 +134,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guided-spectral-weight-floor", type=float, default=0.25)
     parser.add_argument("--guided-spectral-weight-scale", type=float, default=1.0)
     parser.add_argument("--guided-spectral-mask-dilation", type=int, default=5)
+    parser.add_argument("--guided-preview-downsample-factor", type=int, default=None)
+    parser.add_argument("--guided-preview-frame-stride", type=int, default=None)
     parser.add_argument("--guided-model-suffix", type=str, default=DEFAULT_FREQGUIDE_MODEL_SUFFIX)
+    parser.add_argument(
+        "--reuse-baselines",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--train0705-initialize-model-on-cpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     return parser.parse_args()
@@ -152,9 +174,13 @@ def ensure_unique_input_list(*, output_root: Path, input_list: Path, limit_cases
     return dedup_list
 
 
-def build_guided_extra_args(args: argparse.Namespace) -> list[str]:
+def build_guided_extra_args(
+    args: argparse.Namespace,
+    *,
+    motion_mask_flag: str = "--vjepa-motion-mask-mode",
+) -> list[str]:
     extra = [
-        "--vjepa-motion-mask-mode",
+        str(motion_mask_flag),
         str(args.guided_motion_mask_mode),
     ]
     if bool(args.guided_use_spectral_guidance):
@@ -175,7 +201,83 @@ def build_guided_extra_args(args: argparse.Namespace) -> list[str]:
                 str(max(0, int(args.guided_spectral_mask_dilation))),
             ]
         )
+    if args.guided_preview_downsample_factor is not None:
+        extra.extend(
+            [
+                "--vjepa-preview-downsample-factor",
+                str(max(1, int(args.guided_preview_downsample_factor))),
+            ]
+        )
+    if args.guided_preview_frame_stride is not None:
+        extra.extend(
+            [
+                "--vjepa-preview-frame-stride",
+                str(max(1, int(args.guided_preview_frame_stride))),
+            ]
+        )
     return extra
+
+
+def build_explicit_vjepa_args_from_preset_name(preset_name: str) -> list[str]:
+    preset = resolve_train0705_preset(str(preset_name))
+    args: list[str] = [
+        "--vjepa-guidance-mode",
+        str(preset.vjepa_guidance_mode),
+        "--vjepa-guidance-steps",
+        str(int(preset.vjepa_guidance_steps)),
+        "--vjepa-min-step-percent",
+        str(float(preset.vjepa_min_step_percent)),
+        "--vjepa-max-step-percent",
+        str(float(preset.vjepa_max_step_percent)),
+        "--vjepa-latent-step-size",
+        str(float(preset.vjepa_latent_step_size)),
+        "--vjepa-inner-k",
+        str(int(preset.vjepa_inner_k)),
+        "--vjepa-preview-downsample-factor",
+        str(int(preset.vjepa_preview_downsample_factor)),
+        "--vjepa-preview-frame-stride",
+        str(int(preset.vjepa_preview_frame_stride)),
+        "--vjepa-window-size",
+        str(int(preset.vjepa_window_size)),
+        "--vjepa-context-frames",
+        str(int(preset.vjepa_context_frames)),
+        "--vjepa-stride",
+        str(int(preset.vjepa_stride)),
+        "--vjepa-reduction",
+        str(preset.vjepa_reduction),
+        "--vjepa-grad-norm-mode",
+        str(preset.vjepa_grad_norm_mode),
+        "--vjepa-max-grad-norm",
+        str(float(preset.vjepa_max_grad_norm)),
+        "--vjepa-max-correction-ratio",
+        str(float(preset.vjepa_max_correction_ratio)),
+        "--vjepa-artifact-guard-mode",
+        str(preset.vjepa_artifact_guard_mode),
+    ]
+    if preset.vjepa_target_step_indices:
+        args.extend(
+            [
+                "--vjepa-target-step-indices",
+                *[str(int(value)) for value in preset.vjepa_target_step_indices],
+            ]
+        )
+    if preset.vjepa_target_timesteps:
+        args.extend(
+            [
+                "--vjepa-target-timesteps",
+                *[str(int(value)) for value in preset.vjepa_target_timesteps],
+            ]
+        )
+    if bool(preset.vjepa_backtracking):
+        args.append("--vjepa-backtracking")
+    if float(preset.vjepa_stay_close_max_video_l1) > 0:
+        args.extend(
+            [
+                "--vjepa-stay-close-max-video-l1",
+                str(float(preset.vjepa_stay_close_max_video_l1)),
+            ]
+        )
+    return args
 
 
 def base_env() -> dict[str, str]:
@@ -194,6 +296,76 @@ def run_cmd(cmd: list[str], *, env: dict[str, str], label: str, continue_on_erro
             print(f"[warn] {label} failed with returncode={result.returncode}", flush=True)
             return
         raise SystemExit(result.returncode)
+
+
+def _try_symlink(src: Path, dst: Path) -> bool:
+    try:
+        dst.symlink_to(src, target_is_directory=src.is_dir())
+        return True
+    except OSError:
+        return False
+
+
+def _count_case_artifacts(root: Path) -> int:
+    if not root.exists():
+        return 0
+    count = 0
+    for pattern in ("*.mp4", "*.json"):
+        count += len(list(root.glob(pattern)))
+    return count
+
+
+def reuse_baseline_dir(*, src: Path, dst: Path, family_id: str) -> bool:
+    src = src.expanduser().resolve()
+    dst = dst.expanduser().resolve()
+    if not src.is_dir():
+        print(f"[baseline-reuse] family={family_id} source missing: {src}", flush=True)
+        return False
+    src_artifact_count = _count_case_artifacts(src)
+    if dst.exists():
+        if dst.is_symlink():
+            print(f"[baseline-reuse] family={family_id} target already exists: {dst}", flush=True)
+            return True
+        artifact_count = _count_case_artifacts(dst)
+        if artifact_count > 0 and (src_artifact_count <= 0 or artifact_count >= src_artifact_count):
+            print(
+                f"[baseline-reuse] family={family_id} target already exists with {artifact_count} case artifacts: {dst}",
+                flush=True,
+            )
+            return True
+        if dst.is_dir():
+            shutil.rmtree(dst)
+        else:
+            dst.unlink()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if _try_symlink(src, dst):
+        mode = "symlink"
+    else:
+        shutil.copytree(src, dst)
+        mode = "copytree"
+    manifest = {
+        "family_id": family_id,
+        "reused_from": str(src),
+        "reuse_mode": mode,
+    }
+    marker = dst.parent / f"{dst.name}_reuse.json"
+    marker.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"[baseline-reuse] family={family_id} {mode}: {src} -> {dst}", flush=True)
+    return True
+
+
+def maybe_reuse_baseline(*, family_id: str, baseline_dir: Path, force: bool) -> bool:
+    if force:
+        return False
+    if family_id == "wan22_official_ti2v5b":
+        return reuse_baseline_dir(src=OFFICIAL_BASELINE_SOURCE, dst=baseline_dir, family_id=family_id)
+    if family_id == "wan22_early_lora_step000500":
+        return reuse_baseline_dir(src=LORA_BASELINE_SOURCE, dst=baseline_dir, family_id=family_id)
+    if family_id == "train0705_step002500":
+        return reuse_baseline_dir(src=TRAIN0705_BASELINE_002500, dst=baseline_dir, family_id=family_id)
+    if family_id == "train0705_step007000":
+        return reuse_baseline_dir(src=TRAIN0705_BASELINE_007000, dst=baseline_dir, family_id=family_id)
+    return False
 
 
 def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namespace) -> None:
@@ -232,7 +404,7 @@ def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namesp
     ]
     guided_cmd = [
         str(PY_WAN_CU128),
-        str(GUIDANCE_DIR / "wanti2v_freqguidance.py"),
+        str(GUIDANCE_DIR / "wanti2v.py"),
         "--input-list",
         str(unique_list),
         "--output-root",
@@ -263,11 +435,19 @@ def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namesp
         "--vjepa-device-id",
         "1",
     ]
-    guided_cmd.extend(build_guided_extra_args(args))
+    guided_cmd.extend(build_guided_extra_args(args, motion_mask_flag="--motion-mask-mode"))
+    baseline_reused = False
+    if bool(args.reuse_baselines):
+        baseline_reused = maybe_reuse_baseline(
+            family_id="wan22_official_ti2v5b",
+            baseline_dir=baseline_dir,
+            force=bool(args.force),
+        )
     if args.force:
         baseline_cmd.append("--force")
         guided_cmd.append("--force")
-    run_cmd(baseline_cmd, env=env, label="wan22_official_ti2v5b/baseline", continue_on_error=args.continue_on_error)
+    if not baseline_reused:
+        run_cmd(baseline_cmd, env=env, label="wan22_official_ti2v5b/baseline", continue_on_error=args.continue_on_error)
     run_cmd(guided_cmd, env=env, label="wan22_official_ti2v5b/guided", continue_on_error=args.continue_on_error)
 
 
@@ -327,20 +507,25 @@ def lora_generate(unique_list: Path, output_root: Path, args: argparse.Namespace
         "vith",
         "--vjepa-ckpt",
         str(VJEPA_CKPT),
-        "--vjepa-preset",
-        str(args.guided_vjepa_preset),
-        # LoRA branch needs a more aggressive low-res preview to survive
-        # guidance-time VAE decode on shared GPUs.
-        "--vjepa-preview-downsample-factor",
-        "8",
-        "--vjepa-preview-frame-stride",
-        "2",
     ]
+    guided_cmd.extend(build_explicit_vjepa_args_from_preset_name(str(args.guided_vjepa_preset)))
     guided_cmd.extend(build_guided_extra_args(args))
+    if args.guided_preview_downsample_factor is None:
+        guided_cmd.extend(["--vjepa-preview-downsample-factor", "8"])
+    if args.guided_preview_frame_stride is None:
+        guided_cmd.extend(["--vjepa-preview-frame-stride", "2"])
+    baseline_reused = False
+    if bool(args.reuse_baselines):
+        baseline_reused = maybe_reuse_baseline(
+            family_id="wan22_early_lora_step000500",
+            baseline_dir=output_root / "wan22_early_lora_step000500" / "baseline",
+            force=bool(args.force),
+        )
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
-    run_cmd(baseline_cmd, env=env, label="wan22_early_lora_step000500/baseline", continue_on_error=args.continue_on_error)
+    if not baseline_reused:
+        run_cmd(baseline_cmd, env=env, label="wan22_early_lora_step000500/baseline", continue_on_error=args.continue_on_error)
     run_cmd(guided_cmd, env=env, label="wan22_early_lora_step000500/guided", continue_on_error=args.continue_on_error)
 
 
@@ -401,10 +586,22 @@ def train0705_generate(unique_list: Path, weights_root: Path, family_root: Path,
         str(args.guided_vjepa_preset),
     ]
     guided_cmd.extend(build_guided_extra_args(args))
+    baseline_dir = family_root / "baseline" / weights_root.name
+    baseline_reused = False
+    if bool(args.reuse_baselines):
+        baseline_reused = maybe_reuse_baseline(
+            family_id=family_name,
+            baseline_dir=baseline_dir,
+            force=bool(args.force),
+        )
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
-    run_cmd(baseline_cmd, env=env, label=f"{family_name}/baseline", continue_on_error=args.continue_on_error)
+    if bool(args.train0705_initialize_model_on_cpu):
+        baseline_cmd.append("--initialize-model-on-cpu")
+        guided_cmd.append("--initialize-model-on-cpu")
+    if not baseline_reused:
+        run_cmd(baseline_cmd, env=env, label=f"{family_name}/baseline", continue_on_error=args.continue_on_error)
     run_cmd(guided_cmd, env=env, label=f"{family_name}/guided", continue_on_error=args.continue_on_error)
 
 

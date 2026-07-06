@@ -16,6 +16,7 @@ SCRIPT=${PROJ}/code_vjepa_vggt/train0706_wan1p3b/prepare_openvid_wan21_13b_datas
 INPUT_ROOT=${INPUT_ROOT:-/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train_wan21_13b_ready_ctx24}
 NUM_FRAMES=${NUM_FRAMES:-24}
+MODE=${MODE:-auto}
 
 CMD=(
   env
@@ -25,6 +26,7 @@ CMD=(
   --input-root "${INPUT_ROOT}"
   --output-root "${OUTPUT_ROOT}"
   --num-frames "${NUM_FRAMES}"
+  --mode "${MODE}"
   --force
 )
 

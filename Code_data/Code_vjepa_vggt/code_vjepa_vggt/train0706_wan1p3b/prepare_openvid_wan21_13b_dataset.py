@@ -66,6 +66,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=384, help="Smoke-check height.")
     parser.add_argument("--width", type=int, default=672, help="Smoke-check width.")
     parser.add_argument("--dataset-repeat", type=int, default=1, help="Repeat value to write into generated OpenVid config.")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="auto",
+        choices=("auto", "copy", "symlink"),
+        help="How to materialize the prepared train root. "
+        "'copy' writes filtered parquet shards, 'symlink' links train/ to the source parquet dir, "
+        "and 'auto' chooses symlink when free disk is insufficient for a full copy.",
+    )
     parser.add_argument("--max-files", type=int, default=None, help="Debug option passed to the filter script.")
     parser.add_argument("--max-rows-per-file", type=int, default=None, help="Debug option passed to the filter script.")
     parser.add_argument("--skip-smoke", action="store_true", help="Skip loader smoke validation after export.")
@@ -82,20 +91,40 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def run_filter(args: argparse.Namespace, train_root: Path, report_root: Path) -> dict[str, Any]:
+def resolve_mode(args: argparse.Namespace, input_root: Path, output_root: Path) -> tuple[str, dict[str, Any]]:
+    if args.mode in {"copy", "symlink"}:
+        return args.mode, {}
+
+    usage = shutil.disk_usage(output_root.parent)
+    input_size_bytes = 0
+    for parquet_path in input_root.glob("*.parquet"):
+        try:
+            input_size_bytes += parquet_path.stat().st_size
+        except FileNotFoundError:
+            continue
+    decision = "copy" if usage.free > input_size_bytes else "symlink"
+    details = {
+        "free_bytes": int(usage.free),
+        "input_parquet_bytes": int(input_size_bytes),
+        "decision_basis": "free_bytes > input_parquet_bytes",
+    }
+    return decision, details
+
+
+def run_filter(args: argparse.Namespace, report_root: Path, output_train_root: Path | None) -> dict[str, Any]:
     cmd = [
         sys.executable,
         str(DEFAULT_FILTER_SCRIPT),
         "--input-root",
         str(args.input_root.resolve()),
-        "--output-root",
-        str(train_root.resolve()),
         "--report-root",
         str(report_root.resolve()),
         "--num-frames",
         str(int(args.num_frames)),
         "--keep-going",
     ]
+    if output_train_root is not None:
+        cmd.extend(["--output-root", str(output_train_root.resolve())])
     if args.max_files is not None:
         cmd.extend(["--max-files", str(int(args.max_files))])
     if args.max_rows_per_file is not None:
@@ -184,7 +213,14 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     started_at = time.time()
-    filter_summary = run_filter(args=args, train_root=train_root, report_root=report_root)
+    materialize_mode, mode_details = resolve_mode(args=args, input_root=input_root, output_root=output_root)
+    filter_output_root = train_root if materialize_mode == "copy" else None
+    filter_summary = run_filter(args=args, report_root=report_root, output_train_root=filter_output_root)
+
+    if materialize_mode == "symlink":
+        if train_root.exists() or train_root.is_symlink():
+            train_root.unlink()
+        os.symlink(str(input_root), str(train_root), target_is_directory=True)
 
     openvid_only_config = build_openvid_only_config(train_root=train_root, repeat=args.dataset_repeat)
     mixed_config = build_mixed_config(
@@ -213,6 +249,8 @@ def main() -> None:
         "output_root": str(output_root),
         "train_root": str(train_root),
         "report_root": str(report_root),
+        "materialize_mode": materialize_mode,
+        "mode_details": mode_details,
         "openvid_only_config": str(openvid_only_config_path),
         "mixed_config": str(mixed_config_path),
         "num_frames_required": int(args.num_frames),

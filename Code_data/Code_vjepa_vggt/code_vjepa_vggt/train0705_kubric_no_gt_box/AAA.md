@@ -297,16 +297,15 @@ GPU=5 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=7 \
+CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_gpu3567/checkpoints/step-000500 \
-  --input-json-list-path /data/gaoya/agent-data/outputs/tmp_stage1b_kubric_smoke_infer/kubric_test3.txt \
-  --model-name kubric_stage1b_smoke_step000005 \
-  --output-root /data/gaoya/agent-data/outputs/tmp_stage1b_kubric_smoke_infer \
-  --num-inference-steps 12 \
-  --device cuda \
-  --force
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/stage1b_kubric_no_gt_box_train_gpu3567_stop1067_20260706/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name kubric_stage1b_train_step001000 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare \
+  --num-inference-steps 40 \
+  --device cuda 
 ```
 
 推理输出根目录：

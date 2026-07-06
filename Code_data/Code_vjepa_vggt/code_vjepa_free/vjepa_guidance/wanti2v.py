@@ -1403,6 +1403,9 @@ def build_vjepa_aware_pipeline(args: WanTI2VArgs, cli_args: argparse.Namespace, 
     if args.backend == "legacy":
         raise ValueError("V-JEPA TI2V guidance is only wired for backend=official.")
 
+    if torch.cuda.is_available():
+        torch.cuda.set_device(int(cli_args.device_id))
+
     resolved_wan_root = resolve_official_wan_root(args.wan_root)
     patch_wanmodel_from_pretrained_defaults()
     cfg = WAN_CONFIGS["ti2v-5B"]
@@ -1480,6 +1483,23 @@ def _run_pipe_once(
         )
 
 
+def _visible_cuda_snapshot() -> list[dict[str, object]]:
+    if not torch.cuda.is_available():
+        return []
+    snapshot: list[dict[str, object]] = []
+    for device_index in range(torch.cuda.device_count()):
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device_index)
+        snapshot.append(
+            {
+                "device_index": int(device_index),
+                "device_name": torch.cuda.get_device_name(device_index),
+                "free_gib": round(float(free_bytes) / (1024**3), 3),
+                "total_gib": round(float(total_bytes) / (1024**3), 3),
+            }
+        )
+    return snapshot
+
+
 def run_single_case_vjepa(
     *,
     pipe,
@@ -1500,6 +1520,9 @@ def run_single_case_vjepa(
         f"[case] input_json={input_json_path}",
         f"[case] input_image={firstframe_path}",
         f"[case] input_caption={input_caption}",
+        f"[case] cuda_visible_devices={os.environ.get('CUDA_VISIBLE_DEVICES')}",
+        f"[case] device_id={int(cli_args.device_id)}",
+        f"[case] current_cuda_device={torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'}",
         f"[case] wan_root={args.wan_root}",
         f"[case] resolved_wan_root={pipe.resolved_wan_root}",
         f"[case] backend={args.backend}",
@@ -1520,6 +1543,20 @@ def run_single_case_vjepa(
         f"[case] vjepa_spectral_weight_scale={float(cli_args.vjepa_spectral_weight_scale)}",
         f"[case] vjepa_spectral_mask_dilation={int(cli_args.vjepa_spectral_mask_dilation)}",
     ]
+    print(
+        "[preflight] "
+        + json.dumps(
+            {
+                "sample_id": input_json_path.stem,
+                "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                "requested_device_id": int(cli_args.device_id),
+                "current_cuda_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+                "visible_cuda_snapshot": _visible_cuda_snapshot(),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
 
     if trace_case_dir is not None and hasattr(pipe, "model") and hasattr(pipe.model, "set_trace_case"):
         pipe.model.set_trace_case(

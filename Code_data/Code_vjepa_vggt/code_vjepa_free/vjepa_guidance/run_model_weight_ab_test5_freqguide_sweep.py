@@ -46,6 +46,8 @@ class FreqGuideSweepPreset:
     spectral_weight_floor: float = 0.25
     spectral_weight_scale: float = 1.0
     spectral_mask_dilation: int = 5
+    preview_downsample_factor: int | None = None
+    preview_frame_stride: int | None = None
     guided_vjepa_preset: str = "target_w24_s15_ratio_0025"
 
 
@@ -59,6 +61,12 @@ PRESETS: tuple[FreqGuideSweepPreset, ...] = (
     FreqGuideSweepPreset(
         mode_id="freq_tunionx1_lp018_d5",
         description="Current reference frequency-guidance setting.",
+    ),
+    FreqGuideSweepPreset(
+        mode_id="freq_tunionx1_lp018_d5_pd8_fs2",
+        description="Current reference spectral weighting with more aggressive preview downsampling for OOM-sensitive families.",
+        preview_downsample_factor=8,
+        preview_frame_stride=2,
     ),
     FreqGuideSweepPreset(
         mode_id="freq_tunionx1_lp018_d0",
@@ -175,6 +183,20 @@ def run_mode(args: argparse.Namespace, preset: FreqGuideSweepPreset) -> None:
         "--guided-spectral-mask-dilation",
         str(int(preset.spectral_mask_dilation)),
     ]
+    if preset.preview_downsample_factor is not None:
+        argv.extend(
+            [
+                "--guided-preview-downsample-factor",
+                str(int(preset.preview_downsample_factor)),
+            ]
+        )
+    if preset.preview_frame_stride is not None:
+        argv.extend(
+            [
+                "--guided-preview-frame-stride",
+                str(int(preset.preview_frame_stride)),
+            ]
+        )
     if args.limit_cases is not None:
         argv.extend(["--limit-cases", str(int(args.limit_cases))])
     if args.families:
