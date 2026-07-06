@@ -212,11 +212,11 @@ def _motion_weights_for_future_tokens(
             "future_motion_mask_thw must be [T,H,W] or [B,T,H,W], "
             f"got {tuple(future_motion_mask_thw.shape)}"
         )
-    if motion_mask_mode not in {"per_frame", "temporal_union"}:
+    if motion_mask_mode not in {"per_frame", "temporal_union", "temporal_union_except_first"}:
         raise ValueError(f"Unsupported motion_mask_mode: {motion_mask_mode}")
 
     weights = future_motion_mask_thw.to(device=device, dtype=dtype)
-    if motion_mask_mode == "temporal_union":
+    if motion_mask_mode in {"temporal_union", "temporal_union_except_first"}:
         union_hw = (weights > 0.5).any(dim=1, keepdim=True).to(dtype=dtype)
         weights = union_hw.expand(-1, weights.shape[1], -1, -1).contiguous()
 

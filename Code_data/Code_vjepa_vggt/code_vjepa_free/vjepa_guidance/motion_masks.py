@@ -15,17 +15,32 @@ class MotionMaskResult:
     threshold: float
 
 
-def temporal_union_mask_thw(mask_thw: np.ndarray, *, dilate_px: int = 0) -> np.ndarray:
+def temporal_union_mask_thw(
+    mask_thw: np.ndarray,
+    *,
+    dilate_px: int = 0,
+    exclude_first_frame: bool = False,
+    zero_first_frame: bool = False,
+) -> np.ndarray:
     """
     Collapse a [T,H,W] motion mask into a spatial support mask by taking the
     union over time, then broadcast it back to [T,H,W].
     """
     if mask_thw.ndim != 3:
         raise ValueError(f"expected [T,H,W] mask, got shape={list(mask_thw.shape)}")
-    union_hw = (mask_thw > 0.5).any(axis=0).astype(np.float32)
+    if exclude_first_frame and mask_thw.shape[0] > 1:
+        union_source = mask_thw[1:]
+    elif exclude_first_frame:
+        union_source = np.zeros_like(mask_thw, dtype=np.float32)
+    else:
+        union_source = mask_thw
+    union_hw = (union_source > 0.5).any(axis=0).astype(np.float32)
     if dilate_px > 0:
         union_hw = _dilate_mask(union_hw[None, ...], dilate_px=dilate_px)[0]
-    return np.repeat(union_hw[None, ...], mask_thw.shape[0], axis=0).astype(np.float32)
+    union_thw = np.repeat(union_hw[None, ...], mask_thw.shape[0], axis=0).astype(np.float32)
+    if zero_first_frame and union_thw.shape[0] > 0:
+        union_thw[0] = 0.0
+    return union_thw
 
 
 def extract_motion_mask_thw(
@@ -38,6 +53,8 @@ def extract_motion_mask_thw(
     blur_ksize: int = 5,
     temporal_union: bool = False,
     temporal_union_dilate_px: int = 0,
+    temporal_union_exclude_first_frame: bool = False,
+    temporal_union_zero_first_frame: bool = False,
 ) -> np.ndarray:
     """
     Standard project API:
@@ -55,7 +72,12 @@ def extract_motion_mask_thw(
         raise KeyError(f"unknown motion mask method: {method}")
     mask = results[method].mask.astype(np.float32)
     if temporal_union:
-        mask = temporal_union_mask_thw(mask, dilate_px=temporal_union_dilate_px)
+        mask = temporal_union_mask_thw(
+            mask,
+            dilate_px=temporal_union_dilate_px,
+            exclude_first_frame=temporal_union_exclude_first_frame,
+            zero_first_frame=temporal_union_zero_first_frame,
+        )
     return mask
 
 

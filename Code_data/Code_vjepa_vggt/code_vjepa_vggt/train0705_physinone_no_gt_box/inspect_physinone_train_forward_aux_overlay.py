@@ -5,13 +5,18 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 
 import cv2
-import imageio_ffmpeg
 import numpy as np
 import torch
+
+try:
+    import imageio_ffmpeg
+except ImportError:
+    imageio_ffmpeg = None
 
 from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
@@ -38,13 +43,23 @@ def _write_rgb_png(path: Path, image_hwc: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image_hwc, cv2.COLOR_RGB2BGR))
 
 
-def _ensure_browser_video(source_path: Path) -> Path:
+def _resolve_ffmpeg() -> str | None:
     ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
+    if ffmpeg:
+        return ffmpeg
+    env_ffmpeg = Path(sys.executable).resolve().parent / "ffmpeg"
+    if env_ffmpeg.is_file():
+        return str(env_ffmpeg)
+    if imageio_ffmpeg is not None:
         try:
-            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+            return imageio_ffmpeg.get_ffmpeg_exe()
         except Exception:
-            ffmpeg = None
+            return None
+    return None
+
+
+def _ensure_browser_video(source_path: Path) -> Path:
+    ffmpeg = _resolve_ffmpeg()
     if ffmpeg is None:
         return source_path
     out_path = source_path.with_name(f"{source_path.stem}.browser.mp4")
@@ -433,8 +448,6 @@ def _build_html_report(result: dict[str, Any], output_dir: Path) -> Path:
   </div>
   <h2>Metrics</h2>
   <pre>{json.dumps(result["metrics"], indent=2, ensure_ascii=False)}</pre>
-  <h2>Shapes</h2>
-  <pre>{json.dumps(result["shapes"], indent=2, ensure_ascii=False)}</pre>
 </body>
 </html>
 """

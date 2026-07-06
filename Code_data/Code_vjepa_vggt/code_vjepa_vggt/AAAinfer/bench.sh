@@ -20,6 +20,10 @@ fi
 METRICS=(
   "wmreward"
   "physics_iq"
+  "physics_iq_with_context"
+  "physics_iq_without_context"
+  "pmf_with_context"
+  "pmf_without_context"
   "videophy2"
   "phyground"
   "cosmos_reason1"

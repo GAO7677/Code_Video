@@ -95,7 +95,19 @@ def parse_args() -> argparse.Namespace:
             "loading one metric model per process and backfilling immediately."
         )
     )
-    metric_choices = ["pdi", "wmreward", "proxy", "videophy2", "phyground", "cosmos_reason1", "physics_iq"]
+    metric_choices = [
+        "pdi",
+        "wmreward",
+        "proxy",
+        "videophy2",
+        "phyground",
+        "cosmos_reason1",
+        "physics_iq",
+        "physics_iq_with_context",
+        "physics_iq_without_context",
+        "pmf_with_context",
+        "pmf_without_context",
+    ]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument("--output-summary", type=Path, default=None)
     parser.add_argument("--metric", required=True, choices=metric_choices)
@@ -117,6 +129,15 @@ def parse_args() -> argparse.Namespace:
         default=Path("/tmp/gaoya/physics_iq_single_case/AAAinfer_bench"),
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--pmf-output-root",
+        type=Path,
+        default=Path("/tmp/gaoya/physinone_pmf_single_case/AAAinfer_bench"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--pmf-device", default="cpu", help=argparse.SUPPRESS)
+    parser.add_argument("--physics-iq-threshold-value", type=int, default=10, help=argparse.SUPPRESS)
+    parser.add_argument("--physics-iq-downsample-factor", type=int, default=4, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -181,6 +202,18 @@ def resolve_gt_video_path(input_json_path: Path) -> Path:
     if candidate.is_file():
         return candidate
     raise FileNotFoundError(f"Cannot resolve source_video from {input_json_path}: {source_video}")
+
+
+def resolve_context_video_path(input_json_path: Path) -> Path | None:
+    source_payload = load_json(input_json_path)
+    for key in ("input_video", "context_video"):
+        candidate_value = source_payload.get(key)
+        if not isinstance(candidate_value, str) or not candidate_value.strip():
+            continue
+        candidate = Path(candidate_value).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def collect_result_jsons(result_root: Path) -> list[Path]:
@@ -253,7 +286,10 @@ def derive_method_name(result_payload: dict[str, Any], fallback_video_path: Path
 def build_case_payload(record: CaseRecord) -> dict[str, Any]:
     payload = dict(record.result_payload)
     payload["video"] = str(record.candidate_video_path)
-    payload["context_video"] = str(record.gt_video_path)
+    context_video_path = resolve_context_video_path(record.input_json_path)
+    if context_video_path is not None:
+        payload["context_video"] = str(context_video_path)
+        payload.setdefault("input_video", str(context_video_path))
     payload["source_video"] = str(record.gt_video_path)
     return payload
 
@@ -357,6 +393,14 @@ def maybe_delegate_flux_metric(args: argparse.Namespace) -> bool:
 
 
 def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
+    def build_method_case_dir(base_root: Path, record: CaseRecord, metric_name: str | None = None) -> Path:
+        method_name = derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
+        method_dir = method_name if method_name else record.result_json_path.stem
+        path = base_root
+        if metric_name is not None:
+            path = path / metric_name
+        return path / method_dir / record.input_json_path.stem
+
     def build_pdi(_: argparse.Namespace) -> MetricFunc:
         from physv_eval.official_pdi import OfficialPDIRunner
         from physv_eval.single_case.pdi import score_case as score_pdi_case
@@ -483,19 +527,59 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
             case = build_case_payload(record)
-            aligned_video_dir = (
-                physics_iq_output_root
-                / derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
-                if derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
-                else physics_iq_output_root / record.result_json_path.stem
-            ) / record.input_json_path.stem
+            aligned_video_dir = build_method_case_dir(physics_iq_output_root, record)
             return score_physics_iq_case(
                 case,
                 source_video_path=record.gt_video_path,
+                threshold_value=int(args.physics_iq_threshold_value),
+                downsample_factor=int(args.physics_iq_downsample_factor),
                 aligned_video_dir=aligned_video_dir,
             )
 
         return run
+
+    def build_physics_iq_context_metric(context_mode: str, metric_name: str) -> Callable[[argparse.Namespace], MetricFunc]:
+        def factory(_: argparse.Namespace) -> MetricFunc:
+            from physv_eval.single_case.physics_iq import score_case as score_physics_iq_case
+
+            physics_iq_output_root = args.physics_iq_output_root.expanduser().resolve()
+
+            def run(record: CaseRecord) -> dict[str, Any] | None:
+                case = build_case_payload(record)
+                aligned_video_dir = build_method_case_dir(physics_iq_output_root, record, metric_name)
+                return score_physics_iq_case(
+                    case,
+                    source_video_path=record.gt_video_path,
+                    context_mode=context_mode,
+                    threshold_value=int(args.physics_iq_threshold_value),
+                    downsample_factor=int(args.physics_iq_downsample_factor),
+                    aligned_video_dir=aligned_video_dir,
+                )
+
+            return run
+
+        return factory
+
+    def build_pmf_context_metric(context_mode: str, metric_name: str) -> Callable[[argparse.Namespace], MetricFunc]:
+        def factory(_: argparse.Namespace) -> MetricFunc:
+            from physv_eval.single_case.pmf import score_case as score_pmf_case
+
+            pmf_output_root = args.pmf_output_root.expanduser().resolve()
+
+            def run(record: CaseRecord) -> dict[str, Any] | None:
+                case = build_case_payload(record)
+                aligned_video_dir = build_method_case_dir(pmf_output_root, record, metric_name)
+                return score_pmf_case(
+                    case,
+                    source_video_path=record.gt_video_path,
+                    context_mode=context_mode,
+                    device=str(args.pmf_device),
+                    aligned_video_dir=aligned_video_dir,
+                )
+
+            return run
+
+        return factory
 
     builders: dict[str, Callable[[argparse.Namespace], MetricFunc]] = {
         "pdi": build_pdi,
@@ -505,6 +589,10 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         "phyground": build_phyground,
         "cosmos_reason1": build_cosmos_reason1,
         "physics_iq": build_physics_iq,
+        "physics_iq_with_context": build_physics_iq_context_metric("with_context", "physics_iq_with_context"),
+        "physics_iq_without_context": build_physics_iq_context_metric("without_context", "physics_iq_without_context"),
+        "pmf_with_context": build_pmf_context_metric("with_context", "pmf_with_context"),
+        "pmf_without_context": build_pmf_context_metric("without_context", "pmf_without_context"),
     }
     return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 

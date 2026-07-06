@@ -171,11 +171,13 @@ def _motion_mask_from_preview_video(
     mode: str,
 ) -> torch.Tensor:
     preview_u8 = _video_btchw_to_u8(preview_video)
-    temporal_union = mode == "temporal_union"
+    temporal_union = mode in {"temporal_union", "temporal_union_except_first"}
     mask_np = extract_motion_mask_thw(
         preview_u8,
         method="background_residual",
         temporal_union=temporal_union,
+        temporal_union_exclude_first_frame=(mode == "temporal_union_except_first"),
+        temporal_union_zero_first_frame=(mode == "temporal_union_except_first"),
     )
     return torch.from_numpy(mask_np.astype(np.float32)).unsqueeze(0)
 
@@ -1177,7 +1179,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-stay-close-max-video-l1", type=float, default=None)
     parser.add_argument("--vjepa-artifact-guard-mode", default=None, choices=["none", "video_l1_backoff"])
     parser.add_argument("--vjepa-recompute-noise-pred-after-guidance", action="store_true")
-    parser.add_argument("--motion-mask-mode", default="per_frame", choices=["per_frame", "temporal_union"])
+    parser.add_argument(
+        "--motion-mask-mode",
+        default="per_frame",
+        choices=["per_frame", "temporal_union", "temporal_union_except_first"],
+    )
     parser.add_argument("--trace-intermediates", action="store_true")
     parser.add_argument("--trace-root", type=Path, default=Path("/data/gaoya/agent-data/outputs/vjepa_guidance_trace"))
     parser.add_argument("--trace-max-strip-frames", type=int, default=8)
