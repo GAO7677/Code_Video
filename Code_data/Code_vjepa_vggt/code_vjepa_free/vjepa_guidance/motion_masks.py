@@ -15,6 +15,19 @@ class MotionMaskResult:
     threshold: float
 
 
+def temporal_union_mask_thw(mask_thw: np.ndarray, *, dilate_px: int = 0) -> np.ndarray:
+    """
+    Collapse a [T,H,W] motion mask into a spatial support mask by taking the
+    union over time, then broadcast it back to [T,H,W].
+    """
+    if mask_thw.ndim != 3:
+        raise ValueError(f"expected [T,H,W] mask, got shape={list(mask_thw.shape)}")
+    union_hw = (mask_thw > 0.5).any(axis=0).astype(np.float32)
+    if dilate_px > 0:
+        union_hw = _dilate_mask(union_hw[None, ...], dilate_px=dilate_px)[0]
+    return np.repeat(union_hw[None, ...], mask_thw.shape[0], axis=0).astype(np.float32)
+
+
 def extract_motion_mask_thw(
     video_thwc_u8: np.ndarray,
     *,
@@ -23,6 +36,8 @@ def extract_motion_mask_thw(
     flow_quantile: float = 0.96,
     dilate_px: int = 10,
     blur_ksize: int = 5,
+    temporal_union: bool = False,
+    temporal_union_dilate_px: int = 0,
 ) -> np.ndarray:
     """
     Standard project API:
@@ -38,7 +53,10 @@ def extract_motion_mask_thw(
     )
     if method not in results:
         raise KeyError(f"unknown motion mask method: {method}")
-    return results[method].mask.astype(np.float32)
+    mask = results[method].mask.astype(np.float32)
+    if temporal_union:
+        mask = temporal_union_mask_thw(mask, dilate_px=temporal_union_dilate_px)
+    return mask
 
 
 def _normalize_heat(heat: np.ndarray) -> np.ndarray:

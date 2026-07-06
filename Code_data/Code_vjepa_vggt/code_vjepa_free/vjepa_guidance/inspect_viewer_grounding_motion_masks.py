@@ -9,11 +9,13 @@ CUDA_VISIBLE_DEVICES=6 \
   --video /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step002500/baseline/step-002500/0613pybullet_sample_001460_w002.mp4 \
   --caption "f5 sample 001460 industrial rigid body simulation sphere box" \
   --out-dir /data/gaoya/agent-data/outputs/viewer_grounding_motion_masks/0613pybullet_sample_001460_w002 \
+  --motion-mask-mode both \
   --serve
 """
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 from pathlib import Path
@@ -62,6 +64,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--container-suppress-small-iou-threshold", type=float, default=0.7)
     parser.add_argument("--motion-dilate-px", type=int, default=10)
     parser.add_argument("--support-dilate-px", type=int, default=20)
+    parser.add_argument(
+        "--motion-mask-mode",
+        choices=["per_frame", "temporal_union", "both"],
+        default="per_frame",
+    )
     parser.add_argument("--port", type=int, default=8793)
     parser.add_argument("--serve", action="store_true")
     return parser.parse_args()
@@ -210,8 +217,91 @@ def build_panel(
     canvas.save(out_path)
 
 
+def _select_mask(mask: np.ndarray, mode: str) -> np.ndarray:
+    if mode == "temporal_union":
+        union_hw = (mask > 0.5).any(axis=0).astype(np.float32)
+        return np.repeat(union_hw[None, ...], mask.shape[0], axis=0).astype(np.float32)
+    return mask.astype(np.float32)
+
+
+def _render_mode_videos(
+    video_thwc_u8: np.ndarray,
+    motion_mask: np.ndarray,
+    *,
+    out_dir: Path,
+    prefix: str,
+) -> dict[str, str]:
+    binary_video = out_dir / f"{prefix}_binary.mp4"
+    motion_overlay_video = out_dir / f"{prefix}_motion_overlay.mp4"
+    background_overlay_video = out_dir / f"{prefix}_background_overlay.mp4"
+    write_mp4_h264(binary_video, render_binary_mask_video(motion_mask), fps=30)
+    write_mp4_h264(motion_overlay_video, render_motion_overlay_video(video_thwc_u8, motion_mask), fps=30)
+    write_mp4_h264(background_overlay_video, render_background_overlay_video(video_thwc_u8, motion_mask), fps=30)
+    return {
+        "binary_video": str(binary_video),
+        "motion_overlay_video": str(motion_overlay_video),
+        "background_overlay_video": str(background_overlay_video),
+    }
+
+
 def build_html(summary: dict, *, out_html: Path) -> None:
     title = f"Viewer Grounding Motion Masks: {Path(summary['video']).name}"
+    mode_titles = summary.get("mode_titles", {})
+    mode_badge = summary.get("motion_mask_mode", "per_frame")
+
+    def _render_video_cards_for_mode(mode: str) -> str:
+        mode_data = summary.get("modes", {}).get(mode, {})
+        if not mode_data:
+            return ""
+        cards = []
+        for key in (
+            "legacy_binary_video",
+            "legacy_motion_overlay_video",
+            "legacy_background_overlay_video",
+            "viewer_binary_video",
+            "viewer_motion_overlay_video",
+            "viewer_background_overlay_video",
+        ):
+            src = mode_data.get(key, "")
+            if not src:
+                continue
+            cards.append(
+                f"""
+                <div class="video-card">
+                  <div class="video-title">{html.escape(mode_titles.get(f'{mode}_{key}', key))}</div>
+                  <video controls loop muted preload="metadata">
+                    <source src="{html.escape(Path(src).name)}" type="video/mp4">
+                  </video>
+                </div>
+                """
+            )
+        return "".join(cards)
+
+    if mode_badge == "both":
+        video_cards_html = (
+            _render_video_cards_for_mode("per_frame")
+            + _render_video_cards_for_mode("temporal_union")
+        )
+    else:
+        video_cards_html = "".join(
+            f"""
+            <div class="video-card">
+              <div class="video-title">{html.escape(mode_titles.get(key, key))}</div>
+              <video controls loop muted preload="metadata">
+                <source src="{html.escape(Path(summary[key]).name)}" type="video/mp4">
+              </video>
+            </div>
+            """
+            for key in (
+                "legacy_binary_video",
+                "legacy_motion_overlay_video",
+                "legacy_background_overlay_video",
+                "viewer_binary_video",
+                "viewer_motion_overlay_video",
+                "viewer_background_overlay_video",
+            )
+        )
+
     html_text = f"""<!doctype html>
 <html lang="zh">
 <head>
@@ -230,6 +320,7 @@ def build_html(summary: dict, *, out_html: Path) -> None:
     .video-grid {{ display: grid; grid-template-columns: repeat(2, minmax(320px, 1fr)); gap: 16px; margin-bottom: 16px; }}
     .video-card {{ background: #faf6ef; border: 1px solid #e0d7ca; border-radius: 12px; padding: 12px; }}
     .video-title {{ font-weight: 700; margin-bottom: 8px; }}
+    .mode-note {{ margin: 8px 0 14px; color: #6b6256; }}
   </style>
 </head>
 <body>
@@ -241,49 +332,13 @@ def build_html(summary: dict, *, out_html: Path) -> None:
     <div class="note">
       绿色 = 运动区域，蓝色 = 背景区域。左行是旧版 legacy <code>background_residual</code>，右行是新的 viewer-grounding <code>viewer_guidance_support</code>。
     </div>
+    <div class="mode-note">当前运动 mask 模式：<b>{html.escape(str(mode_badge))}</b></div>
     <div class="card">
       <video controls loop muted preload="metadata">
         <source src="{Path(summary['browser_video']).name}" type="video/mp4">
       </video>
       <img src="{Path(summary['panel']).name}" />
-      <div class="video-grid">
-        <div class="video-card">
-          <div class="video-title">Legacy | Binary Mask Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['legacy_binary_video']).name}" type="video/mp4">
-          </video>
-        </div>
-        <div class="video-card">
-          <div class="video-title">Legacy | Motion Overlay Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['legacy_motion_overlay_video']).name}" type="video/mp4">
-          </video>
-        </div>
-        <div class="video-card">
-          <div class="video-title">Viewer | Binary Mask Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['viewer_binary_video']).name}" type="video/mp4">
-          </video>
-        </div>
-        <div class="video-card">
-          <div class="video-title">Viewer | Motion Overlay Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['viewer_motion_overlay_video']).name}" type="video/mp4">
-          </video>
-        </div>
-        <div class="video-card">
-          <div class="video-title">Legacy | Background Overlay Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['legacy_background_overlay_video']).name}" type="video/mp4">
-          </video>
-        </div>
-        <div class="video-card">
-          <div class="video-title">Viewer | Background Overlay Video</div>
-          <video controls loop muted preload="metadata">
-            <source src="{Path(summary['viewer_background_overlay_video']).name}" type="video/mp4">
-          </video>
-        </div>
-      </div>
+      <div class="video-grid">{video_cards_html}</div>
       <pre>{json.dumps(summary, ensure_ascii=False, indent=2)}</pre>
     </div>
   </div>
@@ -326,60 +381,73 @@ def main() -> None:
         support_dilate_px=args.support_dilate_px,
     )
 
-    panel_path = out_dir / "viewer_grounding_motion_panel.png"
-    debug_payload = summarize_debug_payload(viewer_debug)
-    build_panel(video_thwc_u8, legacy_masks, viewer_masks, debug_payload, panel_path)
+    legacy_raw_motion = legacy_masks["background_residual"].mask.astype(np.float32)
+    viewer_raw_motion = viewer_masks["viewer_guidance_support"].mask.astype(np.float32)
 
-    legacy_motion = legacy_masks["background_residual"].mask.astype(np.float32)
-    viewer_motion = viewer_masks["viewer_guidance_support"].mask.astype(np.float32)
-    legacy_binary_video = out_dir / "legacy_background_residual_binary.mp4"
-    legacy_motion_overlay_video = out_dir / "legacy_background_residual_motion_overlay.mp4"
-    legacy_background_overlay_video = out_dir / "legacy_background_residual_background_overlay.mp4"
-    viewer_binary_video = out_dir / "viewer_guidance_support_binary.mp4"
-    viewer_motion_overlay_video = out_dir / "viewer_guidance_support_motion_overlay.mp4"
-    viewer_background_overlay_video = out_dir / "viewer_guidance_support_background_overlay.mp4"
+    mode_list = ["per_frame", "temporal_union"] if args.motion_mask_mode == "both" else [args.motion_mask_mode]
+    mode_outputs: dict[str, dict[str, str]] = {}
+    mode_titles: dict[str, str] = {}
+    for mode in mode_list:
+        legacy_motion = _select_mask(legacy_raw_motion, mode)
+        viewer_motion = _select_mask(viewer_raw_motion, mode)
+        suffix = mode
+        legacy_paths = _render_mode_videos(video_thwc_u8, legacy_motion, out_dir=out_dir, prefix=f"legacy_{suffix}")
+        viewer_paths = _render_mode_videos(video_thwc_u8, viewer_motion, out_dir=out_dir, prefix=f"viewer_{suffix}")
+        mode_outputs[f"legacy_{suffix}"] = legacy_paths
+        mode_outputs[f"viewer_{suffix}"] = viewer_paths
+        mode_titles[f"legacy_{suffix}_binary_video"] = f"Legacy ({mode}) | Binary Mask Video"
+        mode_titles[f"legacy_{suffix}_motion_overlay_video"] = f"Legacy ({mode}) | Motion Overlay Video"
+        mode_titles[f"legacy_{suffix}_background_overlay_video"] = f"Legacy ({mode}) | Background Overlay Video"
+        mode_titles[f"viewer_{suffix}_binary_video"] = f"Viewer ({mode}) | Binary Mask Video"
+        mode_titles[f"viewer_{suffix}_motion_overlay_video"] = f"Viewer ({mode}) | Motion Overlay Video"
+        mode_titles[f"viewer_{suffix}_background_overlay_video"] = f"Viewer ({mode}) | Background Overlay Video"
 
-    write_mp4_h264(legacy_binary_video, render_binary_mask_video(legacy_motion), fps=30)
-    write_mp4_h264(
-        legacy_motion_overlay_video,
-        render_motion_overlay_video(video_thwc_u8, legacy_motion),
-        fps=30,
-    )
-    write_mp4_h264(
-        legacy_background_overlay_video,
-        render_background_overlay_video(video_thwc_u8, legacy_motion),
-        fps=30,
-    )
-    write_mp4_h264(viewer_binary_video, render_binary_mask_video(viewer_motion), fps=30)
-    write_mp4_h264(
-        viewer_motion_overlay_video,
-        render_motion_overlay_video(video_thwc_u8, viewer_motion),
-        fps=30,
-    )
-    write_mp4_h264(
-        viewer_background_overlay_video,
-        render_background_overlay_video(video_thwc_u8, viewer_motion),
-        fps=30,
-    )
-
-    browser_video = ensure_browser_video(args.video.expanduser().resolve())
-    summary = {
-        "video": str(args.video.expanduser().resolve()),
-        "browser_video": str(browser_video),
-        "panel": str(panel_path),
-        "caption": str(args.caption),
-        "legacy_binary_video": str(legacy_binary_video),
-        "legacy_motion_overlay_video": str(legacy_motion_overlay_video),
-        "legacy_background_overlay_video": str(legacy_background_overlay_video),
-        "viewer_binary_video": str(viewer_binary_video),
-        "viewer_motion_overlay_video": str(viewer_motion_overlay_video),
-        "viewer_background_overlay_video": str(viewer_background_overlay_video),
-        "viewer_debug": debug_payload,
-        "legacy_coverage": float(legacy_masks["background_residual"].coverage),
-        "viewer_coverage": float(viewer_masks["viewer_guidance_support"].coverage),
-        "legacy_mask_shape": list(legacy_motion.shape),
-        "viewer_mask_shape": list(viewer_motion.shape),
-    }
+    if args.motion_mask_mode == "both":
+        panel_path = out_dir / "viewer_grounding_motion_panel_both.png"
+        debug_payload = summarize_debug_payload(viewer_debug)
+        build_panel(video_thwc_u8, legacy_masks, viewer_masks, debug_payload, panel_path)
+        browser_video = ensure_browser_video(args.video.expanduser().resolve())
+        summary = {
+            "video": str(args.video.expanduser().resolve()),
+            "browser_video": str(browser_video),
+            "panel": str(panel_path),
+            "caption": str(args.caption),
+            "motion_mask_mode": args.motion_mask_mode,
+            "mode_titles": mode_titles,
+            "viewer_debug": debug_payload,
+            "legacy_coverage": float(legacy_masks["background_residual"].coverage),
+            "viewer_coverage": float(viewer_masks["viewer_guidance_support"].coverage),
+            "legacy_mask_shape": list(legacy_raw_motion.shape),
+            "viewer_mask_shape": list(viewer_raw_motion.shape),
+            "modes": mode_outputs,
+        }
+    else:
+        mode = mode_list[0]
+        legacy_paths = mode_outputs[f"legacy_{mode}"]
+        viewer_paths = mode_outputs[f"viewer_{mode}"]
+        panel_path = out_dir / f"viewer_grounding_motion_panel_{mode}.png"
+        debug_payload = summarize_debug_payload(viewer_debug)
+        build_panel(video_thwc_u8, legacy_masks, viewer_masks, debug_payload, panel_path)
+        browser_video = ensure_browser_video(args.video.expanduser().resolve())
+        summary = {
+            "video": str(args.video.expanduser().resolve()),
+            "browser_video": str(browser_video),
+            "panel": str(panel_path),
+            "caption": str(args.caption),
+            "motion_mask_mode": mode,
+            "mode_titles": mode_titles,
+            "viewer_debug": debug_payload,
+            "legacy_coverage": float(legacy_masks["background_residual"].coverage),
+            "viewer_coverage": float(viewer_masks["viewer_guidance_support"].coverage),
+            "legacy_mask_shape": list(legacy_raw_motion.shape),
+            "viewer_mask_shape": list(viewer_raw_motion.shape),
+            "legacy_binary_video": legacy_paths["binary_video"],
+            "legacy_motion_overlay_video": legacy_paths["motion_overlay_video"],
+            "legacy_background_overlay_video": legacy_paths["background_overlay_video"],
+            "viewer_binary_video": viewer_paths["binary_video"],
+            "viewer_motion_overlay_video": viewer_paths["motion_overlay_video"],
+            "viewer_background_overlay_video": viewer_paths["background_overlay_video"],
+        }
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     html_path = out_dir / "index.html"

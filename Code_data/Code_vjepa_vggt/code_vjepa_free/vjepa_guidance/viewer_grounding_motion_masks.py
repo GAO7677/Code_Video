@@ -219,6 +219,8 @@ def extract_viewer_grounding_motion_mask_thw(
     provider_kwargs: dict[str, Any] | None = None,
     motion_dilate_px: int = 10,
     support_dilate_px: int = 20,
+    temporal_union: bool = False,
+    temporal_union_dilate_px: int = 0,
 ) -> np.ndarray:
     """
     Standard project API:
@@ -235,7 +237,13 @@ def extract_viewer_grounding_motion_mask_thw(
     )
     if method not in results:
         raise KeyError(f"unknown viewer grounding motion mask method: {method}")
-    return results[method].mask.astype(np.float32)
+    mask = results[method].mask.astype(np.float32)
+    if temporal_union:
+        union_hw = (mask > 0.5).any(axis=0).astype(np.float32)
+        if temporal_union_dilate_px > 0:
+            union_hw = _dilate_mask(union_hw[None, ...], dilate_px=temporal_union_dilate_px)[0]
+        mask = np.repeat(union_hw[None, ...], mask.shape[0], axis=0).astype(np.float32)
+    return mask
 
 
 def summarize_debug_payload(debug: ViewerGroundingMaskDebug) -> dict[str, Any]:
