@@ -32,7 +32,15 @@ class WanVJEPAConfig:
     # "context_anchored": align generated future to V-JEPA's prediction from the
     #   real conditioning frames (uses clean_prefix as fixed context).
     guidance_mode: str = "surprise"
+    motion_mask_mode: str = "temporal_union_except_first"
     recompute_noise_pred_after_guidance: bool = False
+    use_spectral_guidance: bool = False
+    spectral_source: str = "temporal_lowpass_residual"
+    spectral_lowpass_ratio: float = 0.18
+    spectral_normalize_percentile: float = 95.0
+    spectral_weight_floor: float = 0.25
+    spectral_weight_scale: float = 1.0
+    spectral_mask_dilation: int = 0
 
 
 def pick_guidance_step_indices(

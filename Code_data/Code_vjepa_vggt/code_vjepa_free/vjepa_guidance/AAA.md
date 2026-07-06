@@ -19,12 +19,20 @@ Notes:
 Primary script:
 
 - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wanti2v.py`
+- Frequency-guided wrapper:
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wanti2v_freqguidance.py`
+- Official 17-case pilot runner:
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_official_freqguide_test5.py`
+- Full-metric multicase scorer:
+  `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_multicase_allmetrics.py`
 
 Main result directories:
 
 - `/data/gaoya/agent-data/outputs/wanti2v_official_clean_batch_eval`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_official_ti2v5b`
 - `/data/gaoya/agent-data/outputs/vjepa_mask_union_except_first_case`
+- `/data/gaoya/agent-data/outputs/vjepa_freqguide_smoke`
+- `/data/gaoya/agent-data/outputs/vjepa_guidance_trace/wan22_official_freqguide_000301_gpu21`
 
 Baseline rerun command:
 
@@ -65,6 +73,31 @@ CUDA_VISIBLE_DEVICES=6 \
   --offload-model \
   --vjepa-preset target_w24_s15_ratio_0025 \
   --vjepa-ckpt /data/gaoya/ckpt/VJEPA2/vith.pt
+```
+
+Frequency-guided smoke command:
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/Wan2.2-main \
+CUDA_VISIBLE_DEVICES=2,1 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/wanti2v_freqguidance.py \
+  --input-list /data/gaoya/agent-data/outputs/vjepa_freqguide_smoke/case_000301.txt \
+  --output-root /data/gaoya/agent-data/outputs/vjepa_freqguide_smoke/guided_gpu21 \
+  --model-name wan22_official_freqguide_000301_gpu21 \
+  --backend official \
+  --size 704*1280 \
+  --frame-num 49 \
+  --sampling-steps 40 \
+  --cfg-scale 5.0 \
+  --fps 30 \
+  --seed 42 \
+  --offload-model \
+  --vjepa-preset target_w24_s15_ratio_0025 \
+  --vjepa-ckpt /data/gaoya/ckpt/VJEPA2/vith.pt \
+  --vjepa-device-id 1 \
+  --trace-intermediates \
+  --trace-build-html
 ```
 
 ## 2. Wan2.2 Early LoRA Step-000500
@@ -157,7 +190,7 @@ CUDA_VISIBLE_DEVICES=6,7 \
   --initialize-model-on-cpu
 ```
 
-## 4. Train0705 Custom Wan2.2 Step-002500 / Step-005000
+## 4. Four-Family Frequency-Guidance A/B on test_5
 
 Unified A/B driver:
 
@@ -169,11 +202,29 @@ Main result directory:
 
 Important subdirectories:
 
+- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_official_ti2v5b`
+- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_early_lora_step000500`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step002500`
-- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step005000`
+- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step007000`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/scores`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/ab_report`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/ab_dashboard`
+
+Current intended family set:
+
+- `wan22_official_ti2v5b`
+- `wan22_early_lora_step000500`
+- `train0705_step002500`
+- `train0705_step007000`
+
+Current guided mode:
+
+- motion mask default: `temporal_union_except_first`
+- spectral weighting: `temporal_lowpass_residual`
+- `lowpass_ratio = 0.18`
+- `spectral_weight_floor = 0.25`
+- `spectral_weight_scale = 1.0`
+- `spectral_mask_dilation = 5`
 
 Generate command:
 

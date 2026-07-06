@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
@@ -15,6 +16,11 @@ from tqdm import tqdm
 
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root, resolve_runtime_root
 from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
+from code_vjepa_free.vjepa_guidance.motion_masks import extract_motion_mask_thw
+from code_vjepa_free.vjepa_guidance.spectral_guidance import (
+    compute_temporal_lowpass_residual_map,
+    dilate_mask_thw,
+)
 
 try:
     from .vjepa_surprise import VJEPASurpriseEnergy, build_context_future_clip
@@ -162,6 +168,95 @@ def _save_frame_strip(
     canvas.save(output_path)
 
 
+def _video_btchw_to_u8(video_btchw: torch.Tensor) -> np.ndarray:
+    if video_btchw.ndim != 5:
+        raise ValueError(f"Expected [B,C,T,H,W], got {tuple(video_btchw.shape)}")
+    if int(video_btchw.shape[0]) != 1:
+        raise ValueError(f"Expected batch size 1 for mask extraction, got {tuple(video_btchw.shape)}")
+    video = video_btchw[0].detach().float().clamp(-1.0, 1.0)
+    video = ((video + 1.0) * 127.5).round().to(torch.uint8)
+    return video.permute(1, 2, 3, 0).contiguous().cpu().numpy()
+
+
+def _motion_mask_from_preview_video(
+    preview_video: torch.Tensor,
+    *,
+    mode: str,
+) -> torch.Tensor:
+    preview_u8 = _video_btchw_to_u8(preview_video)
+    temporal_union = mode in {"temporal_union", "temporal_union_except_first"}
+    mask_np = extract_motion_mask_thw(
+        preview_u8,
+        method="background_residual",
+        temporal_union=temporal_union,
+        temporal_union_exclude_first_frame=(mode == "temporal_union_except_first"),
+        temporal_union_zero_first_frame=(mode == "temporal_union_except_first"),
+    )
+    return torch.from_numpy(mask_np.astype(np.float32)).unsqueeze(0)
+
+
+def _build_context_anchored_energy_terms(
+    *,
+    full_video: torch.Tensor,
+    context_frames_pixel: torch.Tensor,
+    energy_obj,
+    config,
+    predicted_future_ref: Optional[torch.Tensor],
+) -> tuple[torch.Tensor, str]:
+    n_ctx = int(config.context_frames)
+    if int(full_video.shape[2]) <= n_ctx:
+        raise ValueError(
+            f"Decoded video has {int(full_video.shape[2])} frames, need > context_frames={n_ctx}"
+        )
+    generated_future = full_video[:, :, n_ctx:]
+    ctx = context_frames_pixel.to(device=generated_future.device, dtype=generated_future.dtype)
+    clip = build_context_future_clip(
+        context_btchw=ctx,
+        future_btchw=generated_future,
+        window_size=int(config.window_size),
+        context_frames=n_ctx,
+    )
+
+    motion_mask_mode = str(getattr(config, "motion_mask_mode", "temporal_union_except_first"))
+    future_motion_mask_thw = _motion_mask_from_preview_video(
+        full_video,
+        mode=motion_mask_mode,
+    )[:, n_ctx:].to(device=generated_future.device, dtype=generated_future.dtype)
+    future_energy_mask_thw = future_motion_mask_thw
+    spectral_future_weight_thw = None
+    if bool(getattr(config, "use_spectral_guidance", False)):
+        spectral_source = str(getattr(config, "spectral_source", "temporal_lowpass_residual"))
+        if spectral_source != "temporal_lowpass_residual":
+            raise ValueError(f"Unsupported spectral_source: {spectral_source}")
+        spectral_future_weight_thw = compute_temporal_lowpass_residual_map(
+            full_video,
+            future_start_idx=n_ctx,
+            lowpass_ratio=float(getattr(config, "spectral_lowpass_ratio", 0.18)),
+            normalize_percentile=float(getattr(config, "spectral_normalize_percentile", 95.0)),
+        ).to(device=generated_future.device, dtype=generated_future.dtype)
+        spectral_future_weight_thw = (
+            float(getattr(config, "spectral_weight_floor", 0.25))
+            + float(getattr(config, "spectral_weight_scale", 1.0)) * spectral_future_weight_thw
+        )
+        dilation = max(0, int(getattr(config, "spectral_mask_dilation", 0)))
+        if dilation > 0:
+            future_energy_mask_thw = dilate_mask_thw(future_motion_mask_thw, dilation).to(
+                device=generated_future.device,
+                dtype=generated_future.dtype,
+            )
+
+    energy = energy_obj.context_anchored(
+        clip,
+        window_size=int(config.window_size),
+        context_frames=n_ctx,
+        predicted_future_ref=predicted_future_ref,
+        future_motion_mask_thw=future_energy_mask_thw,
+        future_extra_weight_thw=spectral_future_weight_thw,
+        motion_mask_mode=motion_mask_mode,
+    )
+    return energy, motion_mask_mode
+
+
 def _safe_symlink_or_copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() or dst.is_symlink():
@@ -273,27 +368,11 @@ def _apply_context_anchored_guidance(
     full_video = full_decoder(x0_pred)  # [1,3,T,H,W] in [-1,1]
 
     n_ctx = int(config.context_frames)
-    total_frames = full_video.shape[2]
-    if total_frames <= n_ctx:
-        raise ValueError(
-            f"Decoded video has {total_frames} frames, need > context_frames={n_ctx}"
-        )
-    # Generated (future) portion of the decoded prediction. Gradients flow here.
-    generated_future = full_video[:, :, n_ctx:]
-
-    ctx = context_frames_pixel.to(device=generated_future.device, dtype=generated_future.dtype)
-
-    clip = build_context_future_clip(
-        context_btchw=ctx,
-        future_btchw=generated_future,
-        window_size=config.window_size,
-        context_frames=n_ctx,
-    )
-
-    energy = energy_obj.context_anchored(
-        clip,
-        window_size=config.window_size,
-        context_frames=n_ctx,
+    energy, motion_mask_mode = _build_context_anchored_energy_terms(
+        full_video=full_video,
+        context_frames_pixel=context_frames_pixel,
+        energy_obj=energy_obj,
+        config=config,
         predicted_future_ref=predicted_future_ref,
     )
 
@@ -325,21 +404,14 @@ def _apply_context_anchored_guidance(
                     timestep=timestep,
                 )
                 trial_video = full_decoder(trial_x0)
-                trial_future = trial_video[:, :, n_ctx:]
-                trial_clip = build_context_future_clip(
-                    context_btchw=ctx,
-                    future_btchw=trial_future,
-                    window_size=config.window_size,
-                    context_frames=n_ctx,
+                trial_energy, _ = _build_context_anchored_energy_terms(
+                    full_video=trial_video,
+                    context_frames_pixel=context_frames_pixel,
+                    energy_obj=energy_obj,
+                    config=config,
+                    predicted_future_ref=predicted_future_ref,
                 )
-                trial_energy = float(
-                    energy_obj.context_anchored(
-                        trial_clip,
-                        window_size=config.window_size,
-                        context_frames=n_ctx,
-                        predicted_future_ref=predicted_future_ref,
-                    ).item()
-                )
+                trial_energy = float(trial_energy.item())
                 line_search[f"tap_{tap:g}"] = trial_energy
 
     if trace_hook is not None:
@@ -449,6 +521,8 @@ def _apply_context_anchored_guidance(
         "ratio_cap_scale": float(ratio_cap_scale),
         "artifact_guard_applied": float(artifact_guard_applied),
         "artifact_guard_backoff_steps": float(artifact_guard_backoff_steps),
+        "motion_mask_mode": motion_mask_mode,
+        "spectral_guidance_enabled": float(bool(getattr(config, "use_spectral_guidance", False))),
     }
     if artifact_guard_video_l1 is not None:
         stats["artifact_guard_video_l1"] = float(artifact_guard_video_l1)
@@ -1302,6 +1376,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-model", type=str, default="vith")
     parser.add_argument("--vjepa-ckpt", type=Path, default=Path("/data/gaoya/ckpt/VJEPA2/vith.pt"))
     parser.add_argument("--vjepa-guidance-mode", choices=["surprise", "context_anchored"], default="surprise")
+    parser.add_argument(
+        "--vjepa-motion-mask-mode",
+        choices=["per_frame", "temporal_union", "temporal_union_except_first"],
+        default="temporal_union_except_first",
+    )
     parser.add_argument("--vjepa-guidance-steps", type=int, default=2)
     parser.add_argument("--vjepa-min-step-percent", type=float, default=0.35)
     parser.add_argument("--vjepa-max-step-percent", type=float, default=0.65)
@@ -1327,6 +1406,13 @@ def parse_args() -> argparse.Namespace:
         choices=["none", "video_l1_backoff"],
         default="none",
     )
+    parser.add_argument("--vjepa-use-spectral-guidance", action="store_true")
+    parser.add_argument("--vjepa-spectral-source", type=str, default="temporal_lowpass_residual")
+    parser.add_argument("--vjepa-spectral-lowpass-ratio", type=float, default=0.18)
+    parser.add_argument("--vjepa-spectral-normalize-percentile", type=float, default=95.0)
+    parser.add_argument("--vjepa-spectral-weight-floor", type=float, default=0.25)
+    parser.add_argument("--vjepa-spectral-weight-scale", type=float, default=1.0)
+    parser.add_argument("--vjepa-spectral-mask-dilation", type=int, default=0)
     parser.add_argument("--trace-intermediates", action="store_true")
     parser.add_argument("--trace-root", type=Path, default=None)
     parser.add_argument("--trace-max-strip-frames", type=int, default=8)
@@ -1414,6 +1500,14 @@ def build_vjepa_config(cli_args: argparse.Namespace) -> WanVJEPAConfig:
         stay_close_max_video_l1=stay_close_max_video_l1,
         artifact_guard_mode=str(cli_args.vjepa_artifact_guard_mode),
         guidance_mode=str(cli_args.vjepa_guidance_mode),
+        motion_mask_mode=str(cli_args.vjepa_motion_mask_mode),
+        use_spectral_guidance=bool(cli_args.vjepa_use_spectral_guidance),
+        spectral_source=str(cli_args.vjepa_spectral_source),
+        spectral_lowpass_ratio=float(cli_args.vjepa_spectral_lowpass_ratio),
+        spectral_normalize_percentile=float(cli_args.vjepa_spectral_normalize_percentile),
+        spectral_weight_floor=float(cli_args.vjepa_spectral_weight_floor),
+        spectral_weight_scale=float(cli_args.vjepa_spectral_weight_scale),
+        spectral_mask_dilation=int(cli_args.vjepa_spectral_mask_dilation),
     )
 
 

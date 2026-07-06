@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 """
-Run the 5-model-line baseline/guided A/B on the deduplicated test_5 list and
+Run the 4-model-line baseline/guided A/B on the deduplicated test_5 list and
 score physical metrics.
 
 Generate only:
@@ -37,7 +37,6 @@ OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/model_weight_ab_test5_2026070
 DEDUP_LIST = OUTPUT_ROOT / "inputs" / "test5_unique.txt"
 
 WAN22_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
-WAN21_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B-Diffusers")
 VJEPA_CKPT = Path("/data/gaoya/ckpt/VJEPA2/vith.pt")
 LORA_STEP000500 = Path(
     "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/"
@@ -47,12 +46,30 @@ TRAIN0705_STEP002500 = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
     "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500"
 )
-TRAIN0705_STEP005000 = Path(
+TRAIN0705_STEP007000 = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
-    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-005000"
+    "train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-007000"
 )
 
 MID12 = ["8", "10", "11", "13", "14", "16", "17", "19", "20", "22", "23", "25"]
+FREQGUIDE_MODEL_SUFFIX = "freqguide_tunionx1_lp018_d5"
+FREQGUIDE_COMMON_ARGS = [
+    "--vjepa-motion-mask-mode",
+    "temporal_union_except_first",
+    "--vjepa-use-spectral-guidance",
+    "--vjepa-spectral-source",
+    "temporal_lowpass_residual",
+    "--vjepa-spectral-lowpass-ratio",
+    "0.18",
+    "--vjepa-spectral-normalize-percentile",
+    "95.0",
+    "--vjepa-spectral-weight-floor",
+    "0.25",
+    "--vjepa-spectral-weight-scale",
+    "1.0",
+    "--vjepa-spectral-mask-dilation",
+    "5",
+]
 
 
 @dataclass(frozen=True)
@@ -66,8 +83,8 @@ class Family:
 TRAIN0705_BASELINE_002500 = Path(
     "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-002500"
 )
-TRAIN0705_BASELINE_005000 = Path(
-    "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-005000"
+TRAIN0705_BASELINE_007000 = Path(
+    "/data/gaoya/AAA_test_video/0623/test/v2v/train_stage1b_diffsynth_native0705_0705/step-007000"
 )
 
 
@@ -89,15 +106,10 @@ FAMILIES = [
         score_baseline_dir=TRAIN0705_BASELINE_002500,
     ),
     Family(
-        family_id="train0705_step005000",
-        baseline_dir=OUTPUT_ROOT / "train0705_step005000" / "baseline" / TRAIN0705_STEP005000.name,
-        guided_dir=OUTPUT_ROOT / "train0705_step005000" / "guided" / TRAIN0705_STEP005000.name,
-        score_baseline_dir=TRAIN0705_BASELINE_005000,
-    ),
-    Family(
-        family_id="wan21_t2v_1p3b",
-        baseline_dir=OUTPUT_ROOT / "wan21_t2v_1p3b" / "baseline",
-        guided_dir=OUTPUT_ROOT / "wan21_t2v_1p3b" / "guided",
+        family_id="train0705_step007000",
+        baseline_dir=OUTPUT_ROOT / "train0705_step007000" / "baseline" / TRAIN0705_STEP007000.name,
+        guided_dir=OUTPUT_ROOT / "train0705_step007000" / "guided" / TRAIN0705_STEP007000.name,
+        score_baseline_dir=TRAIN0705_BASELINE_007000,
     ),
 ]
 
@@ -149,7 +161,7 @@ def run_cmd(cmd: list[str], *, env: dict[str, str], label: str, continue_on_erro
 
 def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
     env = base_env()
-    env["CUDA_VISIBLE_DEVICES"] = str(args.main_gpu)
+    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
     baseline_dir = OUTPUT_ROOT / "wan22_official_ti2v5b" / "baseline"
     guided_dir = OUTPUT_ROOT / "wan22_official_ti2v5b" / "guided"
     baseline_cmd = [
@@ -183,13 +195,13 @@ def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
     ]
     guided_cmd = [
         str(PY_WAN_CU128),
-        str(GUIDANCE_DIR / "wanti2v.py"),
+        str(GUIDANCE_DIR / "wanti2v_freqguidance.py"),
         "--input-list",
         str(unique_list),
         "--output-root",
         str(guided_dir),
         "--model-name",
-        "wan22_official_ti2v5b_target_w24_s15_ratio_0025",
+        f"wan22_official_ti2v5b_{FREQGUIDE_MODEL_SUFFIX}",
         "--backend",
         "official",
         "--wan-root",
@@ -212,8 +224,9 @@ def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
         "--vjepa-ckpt",
         str(VJEPA_CKPT),
         "--vjepa-device-id",
-        "-1",
+        "1",
     ]
+    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
     if args.force:
         baseline_cmd.append("--force")
         guided_cmd.append("--force")
@@ -268,7 +281,7 @@ def lora_generate(unique_list: Path, args: argparse.Namespace) -> None:
     ]
     guided_cmd = common + [
         "--model-name",
-        "wan22_early_lora_step000500_target_w24_s15_ratio_0025",
+        f"wan22_early_lora_step000500_{FREQGUIDE_MODEL_SUFFIX}",
         "--output-root",
         str(OUTPUT_ROOT / "wan22_early_lora_step000500" / "guided"),
         "--runtime-root",
@@ -306,6 +319,7 @@ def lora_generate(unique_list: Path, args: argparse.Namespace) -> None:
         "--vjepa-artifact-guard-mode",
         "none",
     ]
+    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
@@ -363,103 +377,18 @@ def train0705_generate(unique_list: Path, weights_root: Path, family_root: Path,
     ]
     guided_cmd = common + [
         "--model-name",
-        f"{family_name}_target_w24_s15_ratio_0025",
+        f"{family_name}_{FREQGUIDE_MODEL_SUFFIX}",
         "--output-root",
         str(family_root / "guided"),
         "--vjepa-preset",
         "target_w24_s15_ratio_0025",
     ]
+    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
     run_cmd(baseline_cmd, env=env, label=f"{family_name}/baseline", continue_on_error=args.continue_on_error)
     run_cmd(guided_cmd, env=env, label=f"{family_name}/guided", continue_on_error=args.continue_on_error)
-
-
-def wan21_generate(unique_list: Path, args: argparse.Namespace) -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
-    script = GUIDANCE_DIR / "wan21_t2v_1_3b_batch.py"
-    common = [
-        str(PY_WAN),
-        str(script),
-        "--input-list",
-        str(unique_list),
-        "--ckpt-dir",
-        str(WAN21_ROOT),
-        "--seed",
-        "42",
-        "--height",
-        "480",
-        "--width",
-        "832",
-        "--num-frames",
-        "49",
-        "--num-inference-steps",
-        "10",
-        "--guidance-scale",
-        "6.0",
-        "--flow-shift",
-        "8.0",
-        "--fps",
-        "16",
-        "--transformer-dtype",
-        "bfloat16",
-        "--vae-dtype",
-        "bfloat16",
-        "--device-id",
-        "0",
-        "--vjepa-device-id",
-        "1",
-        "--cpu-offload",
-    ]
-    baseline_cmd = common + [
-        "--output-root",
-        str(OUTPUT_ROOT / "wan21_t2v_1p3b" / "baseline"),
-        "--model-name",
-        "wan21_t2v_1p3b_baseline",
-        "--disable-vjepa-guidance",
-    ]
-    guided_cmd = common + [
-        "--output-root",
-        str(OUTPUT_ROOT / "wan21_t2v_1p3b" / "guided"),
-        "--model-name",
-        "wan21_t2v_1p3b_guided_g2mid2s002",
-        "--vjepa-model",
-        "vith",
-        "--vjepa-ckpt",
-        str(VJEPA_CKPT),
-        "--vjepa-guidance-steps",
-        "2",
-        "--vjepa-min-step-percent",
-        "0.35",
-        "--vjepa-max-step-percent",
-        "0.65",
-        "--vjepa-latent-step-size",
-        "0.02",
-        "--preview-downsample-factor",
-        "4",
-        "--preview-frame-stride",
-        "2",
-        "--window-size",
-        "8",
-        "--context-frames",
-        "4",
-        "--stride",
-        "2",
-        "--reduction",
-        "mean",
-        "--gradient-normalization",
-        "rms",
-        "--max-grad-norm",
-        "10.0",
-    ]
-    if args.force:
-        baseline_cmd.append("--force")
-        guided_cmd.append("--force")
-    run_cmd(baseline_cmd, env=env, label="wan21_t2v_1p3b/baseline", continue_on_error=args.continue_on_error)
-    run_cmd(guided_cmd, env=env, label="wan21_t2v_1p3b/guided", continue_on_error=args.continue_on_error)
 
 
 def generate(args: argparse.Namespace) -> None:
@@ -477,16 +406,14 @@ def generate(args: argparse.Namespace) -> None:
             "train0705_step002500",
             args,
         )
-    if "train0705_step005000" in selected:
+    if "train0705_step007000" in selected:
         train0705_generate(
             unique_list,
-            TRAIN0705_STEP005000,
-            OUTPUT_ROOT / "train0705_step005000",
-            "train0705_step005000",
+            TRAIN0705_STEP007000,
+            OUTPUT_ROOT / "train0705_step007000",
+            "train0705_step007000",
             args,
         )
-    if "wan21_t2v_1p3b" in selected:
-        wan21_generate(unique_list, args)
 
 
 def score(args: argparse.Namespace) -> None:
@@ -498,6 +425,7 @@ def score(args: argparse.Namespace) -> None:
         if family.family_id not in selected:
             continue
         out_json = score_root / f"{family.family_id}_summary.json"
+        out_md = score_root / f"{family.family_id}_summary.md"
         env = os.environ.copy()
         env["PYTHONPATH"] = f"/home/gaoya/Code_Video/Code_data/Code_try0526:{ROOT}"
         env["CUDA_VISIBLE_DEVICES"] = str(args.score_gpu)
@@ -505,21 +433,24 @@ def score(args: argparse.Namespace) -> None:
         print(f"[score] {family.family_id} baseline_dir={baseline_dir}", flush=True)
         cmd = [
             str(PY_WAN),
-            str(GUIDANCE_DIR / "score_multicase_methods.py"),
+            str(GUIDANCE_DIR / "score_multicase_allmetrics.py"),
             "--method-dir",
             f"baseline={baseline_dir}",
             "--method-dir",
             f"guided={family.guided_dir}",
             "--out-json",
             str(out_json),
+            "--out-md",
+            str(out_md),
             "--baseline-label",
             "baseline",
-            "--physics-iq",
             "--videophy2-task",
             "pc",
             "--videophy2-device",
             "cuda:0",
-            "--cosmos-reason1",
+            "--pmf-device",
+            "cpu",
+            "--phyground-general-only",
         ]
         run_cmd(cmd, env=env, label=f"score/{family.family_id}", continue_on_error=args.continue_on_error)
         if out_json.exists():

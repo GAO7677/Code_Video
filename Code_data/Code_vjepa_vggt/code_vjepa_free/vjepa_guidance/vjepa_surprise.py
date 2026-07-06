@@ -230,10 +230,38 @@ def _motion_weights_for_future_tokens(
     return weights.clamp_(0.0, 1.0)
 
 
+def _resize_future_weights_to_tokens(
+    future_weight_thw: torch.Tensor | None,
+    *,
+    token_shape: tuple[int, int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor | None:
+    if future_weight_thw is None:
+        return None
+    if future_weight_thw.ndim == 3:
+        future_weight_thw = future_weight_thw.unsqueeze(0)
+    if future_weight_thw.ndim != 4:
+        raise ValueError(
+            "future_weight_thw must be [T,H,W] or [B,T,H,W], "
+            f"got {tuple(future_weight_thw.shape)}"
+        )
+    future_depth, grid_h, grid_w = token_shape
+    weights = future_weight_thw.to(device=device, dtype=dtype)
+    weights = F.interpolate(
+        weights.unsqueeze(1),
+        size=(future_depth, grid_h, grid_w),
+        mode="trilinear",
+        align_corners=False,
+    ).squeeze(1)
+    return weights.clamp_min_(0.0)
+
+
 def _masked_token_surprise_mean(
     token_surprise: torch.Tensor,
     *,
     future_motion_mask_thw: torch.Tensor | None,
+    future_extra_weight_thw: torch.Tensor | None,
     motion_mask_mode: str,
     token_shape: tuple[int, int, int],
     device: torch.device,
@@ -259,6 +287,16 @@ def _masked_token_surprise_mean(
         device=device,
         dtype=dtype,
     )
+    extra_weights = _resize_future_weights_to_tokens(
+        future_extra_weight_thw,
+        token_shape=token_shape,
+        device=device,
+        dtype=dtype,
+    )
+    if weights is None:
+        weights = extra_weights
+    elif extra_weights is not None:
+        weights = weights * extra_weights
     if weights is None or float(weights.sum().item()) <= 1.0e-6:
         return token_surprise.mean()
     if weights.shape[0] == 1 and token_surprise.shape[0] > 1:
@@ -283,6 +321,7 @@ def compute_masked_predictive_surprise(
     stride: int = 4,
     reduction: str = "mean",
     future_motion_mask_thw: torch.Tensor | None = None,
+    future_extra_weight_thw: torch.Tensor | None = None,
     motion_mask_mode: str = "per_frame",
 ) -> torch.Tensor:
     add_vjepa_repo_to_path()
@@ -333,6 +372,7 @@ def compute_masked_predictive_surprise(
         surprise = _masked_token_surprise_mean(
             token_surprise,
             future_motion_mask_thw=future_motion_mask_thw,
+            future_extra_weight_thw=future_extra_weight_thw,
             motion_mask_mode=motion_mask_mode,
             token_shape=token_shape,
             device=video_btchw.device,
@@ -397,6 +437,7 @@ def compute_context_anchored_alignment(
     context_frames: int = 8,
     predicted_future_ref: torch.Tensor | None = None,
     future_motion_mask_thw: torch.Tensor | None = None,
+    future_extra_weight_thw: torch.Tensor | None = None,
     motion_mask_mode: str = "per_frame",
 ) -> torch.Tensor:
     """Energy = feature-space mismatch between the generated future frames and the
@@ -454,6 +495,7 @@ def compute_context_anchored_alignment(
     return _masked_token_surprise_mean(
         token_surprise,
         future_motion_mask_thw=future_motion_mask_thw,
+        future_extra_weight_thw=future_extra_weight_thw,
         motion_mask_mode=motion_mask_mode,
         token_shape=token_shape,
         device=clip_btchw.device,
@@ -523,6 +565,7 @@ class VJEPASurpriseEnergy:
         stride: int = 4,
         reduction: str = "mean",
         future_motion_mask_thw: torch.Tensor | None = None,
+        future_extra_weight_thw: torch.Tensor | None = None,
         motion_mask_mode: str = "per_frame",
     ) -> torch.Tensor:
         return compute_masked_predictive_surprise(
@@ -536,6 +579,7 @@ class VJEPASurpriseEnergy:
             stride=stride,
             reduction=reduction,
             future_motion_mask_thw=future_motion_mask_thw.to(self.device) if future_motion_mask_thw is not None else None,
+            future_extra_weight_thw=future_extra_weight_thw.to(self.device) if future_extra_weight_thw is not None else None,
             motion_mask_mode=motion_mask_mode,
         )
 
@@ -547,6 +591,7 @@ class VJEPASurpriseEnergy:
         context_frames: int = 8,
         predicted_future_ref: torch.Tensor | None = None,
         future_motion_mask_thw: torch.Tensor | None = None,
+        future_extra_weight_thw: torch.Tensor | None = None,
         motion_mask_mode: str = "per_frame",
     ) -> torch.Tensor:
         return compute_context_anchored_alignment(
@@ -559,6 +604,7 @@ class VJEPASurpriseEnergy:
             context_frames=context_frames,
             predicted_future_ref=predicted_future_ref,
             future_motion_mask_thw=future_motion_mask_thw.to(self.device) if future_motion_mask_thw is not None else None,
+            future_extra_weight_thw=future_extra_weight_thw.to(self.device) if future_extra_weight_thw is not None else None,
             motion_mask_mode=motion_mask_mode,
         )
 

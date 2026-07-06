@@ -165,6 +165,11 @@ def add_vjepa_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     parser.add_argument("--vjepa-model", type=str, default="vith")
     parser.add_argument("--vjepa-ckpt", default="/data/gaoya/ckpt/VJEPA2/vith.pt")
     parser.add_argument("--vjepa-guidance-mode", choices=["surprise", "context_anchored"], default="context_anchored")
+    parser.add_argument(
+        "--vjepa-motion-mask-mode",
+        choices=["per_frame", "temporal_union", "temporal_union_except_first"],
+        default="temporal_union_except_first",
+    )
     parser.add_argument("--vjepa-guidance-steps", type=int, default=12)
     parser.add_argument("--vjepa-min-step-percent", type=float, default=0.35)
     parser.add_argument("--vjepa-max-step-percent", type=float, default=0.80)
@@ -190,6 +195,13 @@ def add_vjepa_cli_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         choices=["none", "video_l1_backoff"],
         default="video_l1_backoff",
     )
+    parser.add_argument("--vjepa-use-spectral-guidance", action="store_true")
+    parser.add_argument("--vjepa-spectral-source", type=str, default="temporal_lowpass_residual")
+    parser.add_argument("--vjepa-spectral-lowpass-ratio", type=float, default=0.18)
+    parser.add_argument("--vjepa-spectral-normalize-percentile", type=float, default=95.0)
+    parser.add_argument("--vjepa-spectral-weight-floor", type=float, default=0.25)
+    parser.add_argument("--vjepa-spectral-weight-scale", type=float, default=1.0)
+    parser.add_argument("--vjepa-spectral-mask-dilation", type=int, default=0)
     return parser
 
 
@@ -227,6 +239,14 @@ def _build_vjepa_config_from_args(args: argparse.Namespace) -> WanVJEPAConfig:
         stay_close_max_video_l1=stay_close_max_video_l1,
         artifact_guard_mode=str(args.vjepa_artifact_guard_mode),
         guidance_mode=str(args.vjepa_guidance_mode),
+        motion_mask_mode=str(args.vjepa_motion_mask_mode),
+        use_spectral_guidance=bool(args.vjepa_use_spectral_guidance),
+        spectral_source=str(args.vjepa_spectral_source),
+        spectral_lowpass_ratio=float(args.vjepa_spectral_lowpass_ratio),
+        spectral_normalize_percentile=float(args.vjepa_spectral_normalize_percentile),
+        spectral_weight_floor=float(args.vjepa_spectral_weight_floor),
+        spectral_weight_scale=float(args.vjepa_spectral_weight_scale),
+        spectral_mask_dilation=int(args.vjepa_spectral_mask_dilation),
     )
 
 
@@ -249,6 +269,7 @@ def summarize_vjepa_args(args: argparse.Namespace) -> dict | None:
         "line_search_taps": [float(v) for v in (args.vjepa_line_search_taps or [])],
         "config": {
             "guidance_mode": str(config.guidance_mode),
+            "motion_mask_mode": str(config.motion_mask_mode),
             "guidance_steps": int(config.guidance_steps),
             "min_step_percent": float(config.min_step_percent),
             "max_step_percent": float(config.max_step_percent),
@@ -264,6 +285,13 @@ def summarize_vjepa_args(args: argparse.Namespace) -> dict | None:
             "max_correction_ratio": config.max_correction_ratio,
             "stay_close_max_video_l1": config.stay_close_max_video_l1,
             "artifact_guard_mode": str(config.artifact_guard_mode),
+            "use_spectral_guidance": bool(config.use_spectral_guidance),
+            "spectral_source": str(config.spectral_source),
+            "spectral_lowpass_ratio": float(config.spectral_lowpass_ratio),
+            "spectral_normalize_percentile": float(config.spectral_normalize_percentile),
+            "spectral_weight_floor": float(config.spectral_weight_floor),
+            "spectral_weight_scale": float(config.spectral_weight_scale),
+            "spectral_mask_dilation": int(config.spectral_mask_dilation),
         },
     }
 
