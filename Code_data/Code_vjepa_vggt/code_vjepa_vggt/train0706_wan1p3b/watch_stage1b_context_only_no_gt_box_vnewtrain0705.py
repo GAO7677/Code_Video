@@ -44,7 +44,7 @@ DEFAULT_INFER_SCRIPT = (
 )
 DEFAULT_BENCH_SCRIPT = DEFAULT_PROJECT_ROOT / "code_vjepa_vggt/AAAinfer/bench.sh"
 DEFAULT_CHECKPOINT_ROOT = Path(
-    "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
+    "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/"
     "train_stage1b_diffsynth_native0706_wan21_13b/run_gpu3567_20260705_retry2/checkpoints"
 )
 DEFAULT_INPUT_JSON_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")

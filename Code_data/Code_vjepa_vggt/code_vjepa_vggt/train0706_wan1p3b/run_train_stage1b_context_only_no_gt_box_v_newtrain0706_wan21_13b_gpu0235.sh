@@ -19,7 +19,7 @@ WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 BASE_LORA=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/raw_phys_state_lora_continue/checkpoints/step-000002/checkpoint.safetensors
 STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/stage1a_full_token/step_0000002.pt
 DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu0235_$(date +%Y%m%d)}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/train_stage1b_diffsynth_native0706_wan21_13b/run_gpu3567_$(date +%Y%m%d)}"
 DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-0}"
 
 mkdir -p "${OUTPUT_DIR}"
@@ -105,7 +105,7 @@ CMD=(
   --sam2_segment_len 8
   --report_to wandb
   --wandb_project vjepa_vggt_wan
-  --wandb_name pybullet0629_teacher_student_stage1b_context_only_no_gt_box_v_newtrain0706_wan21_13b_gpu0235
+  --wandb_name pybullet0629_teacher_student_stage1b_context_only_no_gt_box_v_newtrain0706_wan21_13b_gpu3567
   --wandb_mode online
 )
 
