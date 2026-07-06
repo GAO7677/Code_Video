@@ -18,6 +18,8 @@ PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py"
 DATASET_CONFIG="${DATASET_CONFIG:-${PROJ}/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json}"
+USE_SAMPLE_FULL_VIDEO_LENGTH="${USE_SAMPLE_FULL_VIDEO_LENGTH:-1}"
+SAMPLE_FULL_VIDEO_MAX_FRAMES="${SAMPLE_FULL_VIDEO_MAX_FRAMES:-}"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 BASE_LORA="${BASE_LORA:-}"
@@ -44,6 +46,7 @@ CMD=(
   --height 384
   --width 672
   --num_frames 24
+  --use_sample_full_video_length
   --max_train_steps 10000
   --context_sampling_profile mixed_modes
   --min_context_frames 1
@@ -90,6 +93,21 @@ CMD=(
   --wandb_project openvid-movid-genesis-wan21_13b
   --wandb_mode online
 )
+
+if [[ "${USE_SAMPLE_FULL_VIDEO_LENGTH}" != "1" ]]; then
+  FILTERED_CMD=()
+  for arg in "${CMD[@]}"; do
+    if [[ "${arg}" == "--use_sample_full_video_length" ]]; then
+      continue
+    fi
+    FILTERED_CMD+=("${arg}")
+  done
+  CMD=("${FILTERED_CMD[@]}")
+fi
+
+if [[ -n "${SAMPLE_FULL_VIDEO_MAX_FRAMES}" ]]; then
+  CMD+=(--sample_full_video_max_frames "${SAMPLE_FULL_VIDEO_MAX_FRAMES}")
+fi
 
 CMD+=("${EXTRA_ARGS[@]}")
 if [[ -n "${BASE_LORA}" ]]; then

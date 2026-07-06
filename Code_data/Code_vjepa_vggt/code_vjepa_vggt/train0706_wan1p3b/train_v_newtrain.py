@@ -1662,6 +1662,23 @@ def wan_parser():
     parser.add_argument("--phys_state_root", type=str, default=None)
     parser.add_argument("--phys_state_split", type=str, default="train")
     parser.add_argument("--fixed_num_context_frames", type=int, default=8)
+    parser.add_argument(
+        "--use_sample_full_video_length",
+        action="store_true",
+        help=(
+            "Use each sample's own full video length, clipped down to the largest "
+            "Wan-compatible 4n+1 frame count. No temporal padding is introduced."
+        ),
+    )
+    parser.add_argument(
+        "--sample_full_video_max_frames",
+        type=int,
+        default=None,
+        help=(
+            "Optional upper bound for --use_sample_full_video_length. Samples longer "
+            "than this cap are clipped first, then aligned downward to Wan 4n+1."
+        ),
+    )
     parser.add_argument("--enable_object_branch", action="store_true", default=False)
     parser.add_argument("--object_num_queries", type=int, default=8)
     parser.add_argument("--aux_max_objects", type=int, default=4)
@@ -1767,6 +1784,13 @@ def prepare_args(args):
         raise ValueError(
             f"width must be divisible by {WAN_SPATIAL_DIVISIBILITY} for Wan2.2 training, got {args.width}."
         )
+    if args.sample_full_video_max_frames is not None:
+        if int(args.sample_full_video_max_frames) <= 0:
+            raise ValueError(
+                "sample_full_video_max_frames must be positive when set, "
+                f"got {args.sample_full_video_max_frames}."
+            )
+        args.sample_full_video_max_frames = int(args.sample_full_video_max_frames)
     if args.min_context_frames < 1:
         raise ValueError(
             f"min_context_frames must be at least 1, got {args.min_context_frames}."
@@ -1962,6 +1986,8 @@ def build_dataset(args):
         width=args.width,
         num_frames=args.num_frames,
         framewise_decoding=args.framewise_decoding,
+        use_sample_full_video_length=args.use_sample_full_video_length,
+        sample_full_video_max_frames=args.sample_full_video_max_frames,
     )
 
 

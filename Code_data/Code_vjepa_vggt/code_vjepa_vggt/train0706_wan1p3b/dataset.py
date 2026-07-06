@@ -46,6 +46,9 @@ from diffsynth.core.data.operators import (
 
 
 WAN_SPATIAL_DIVISIBILITY = 32
+WAN_TEMPORAL_DIVISIBILITY = 4
+WAN_TEMPORAL_REMAINDER = 1
+WAN_MIN_VARIABLE_VIDEO_FRAMES = 5
 MOVI_D_TFRECORD_MIN_BYTES = 1_000_000
 MOVI_D_TFRECORD_MAX_BYTES = 100_000_000
 MOVI_D_SPLIT_ALIASES = {"tests": "test", "testing": "test"}
@@ -89,16 +92,64 @@ def _sample_start_index(total_frames, clip_frames):
     return random.randint(0, max_start) if max_start > 0 else 0
 
 
-def _decode_video_path(video_path, num_frames, frame_processor, require_min_frames=False):
+def _largest_wan21_clip_length(total_frames):
+    total_frames = int(total_frames)
+    if total_frames < 1:
+        raise ValueError(f"Video is empty: total_frames={total_frames}.")
+    return (
+        ((total_frames - WAN_TEMPORAL_REMAINDER) // WAN_TEMPORAL_DIVISIBILITY)
+        * WAN_TEMPORAL_DIVISIBILITY
+        + WAN_TEMPORAL_REMAINDER
+    )
+
+
+def _resolve_video_clip(
+    total_frames,
+    requested_frames,
+    require_min_frames=False,
+    use_sample_full_video_length=False,
+    sample_full_video_max_frames=None,
+):
+    if use_sample_full_video_length:
+        clip_frames = _largest_wan21_clip_length(total_frames)
+        if sample_full_video_max_frames is not None:
+            aligned_cap = _largest_wan21_clip_length(int(sample_full_video_max_frames))
+            clip_frames = min(clip_frames, aligned_cap)
+        if clip_frames < WAN_MIN_VARIABLE_VIDEO_FRAMES:
+            raise ValueError(
+                "Video is too short for variable full-video training after Wan 4n+1 alignment: "
+                f"total_frames={total_frames}, aligned_frames={clip_frames}, "
+                f"minimum_required={WAN_MIN_VARIABLE_VIDEO_FRAMES}."
+            )
+        return 0, clip_frames
+
+    if require_min_frames and total_frames < requested_frames:
+        raise ValueError(
+            f"Video has only {total_frames} frames, fewer than requested {requested_frames}."
+        )
+    clip_frames = _resolve_clip_length(total_frames, requested_frames)
+    start_frame = _sample_start_index(total_frames, clip_frames)
+    return start_frame, clip_frames
+
+
+def _decode_video_path(
+    video_path,
+    num_frames,
+    frame_processor,
+    require_min_frames=False,
+    use_sample_full_video_length=False,
+    sample_full_video_max_frames=None,
+):
     reader = imageio.get_reader(video_path)
     try:
         total_frames = reader.count_frames()
-        if require_min_frames and total_frames < num_frames:
-            raise ValueError(
-                f"Video has only {total_frames} frames, fewer than requested {num_frames}."
-            )
-        clip_frames = _resolve_clip_length(total_frames, num_frames)
-        start_frame = _sample_start_index(total_frames, clip_frames)
+        start_frame, clip_frames = _resolve_video_clip(
+            total_frames,
+            num_frames,
+            require_min_frames=require_min_frames,
+            use_sample_full_video_length=use_sample_full_video_length,
+            sample_full_video_max_frames=sample_full_video_max_frames,
+        )
 
         frames = []
         for frame_id in range(start_frame, start_frame + clip_frames):
@@ -110,7 +161,14 @@ def _decode_video_path(video_path, num_frames, frame_processor, require_min_fram
         reader.close()
 
 
-def _decode_video_bytes(raw_video, num_frames, frame_processor, require_min_frames=False):
+def _decode_video_bytes(
+    raw_video,
+    num_frames,
+    frame_processor,
+    require_min_frames=False,
+    use_sample_full_video_length=False,
+    sample_full_video_max_frames=None,
+):
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
@@ -121,6 +179,8 @@ def _decode_video_bytes(raw_video, num_frames, frame_processor, require_min_fram
             num_frames,
             frame_processor,
             require_min_frames=require_min_frames,
+            use_sample_full_video_length=use_sample_full_video_length,
+            sample_full_video_max_frames=sample_full_video_max_frames,
         )
     finally:
         if temp_path is not None and os.path.exists(temp_path):
@@ -268,6 +328,8 @@ class OpenVidParquetDataset(torch.utils.data.Dataset):
         height=None,
         width=None,
         num_frames=81,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
     ):
         if pq is None:
             raise ImportError(
@@ -281,6 +343,10 @@ class OpenVidParquetDataset(torch.utils.data.Dataset):
         self.height = height
         self.width = width
         self.num_frames = num_frames
+        self.use_sample_full_video_length = bool(use_sample_full_video_length)
+        self.sample_full_video_max_frames = (
+            None if sample_full_video_max_frames is None else int(sample_full_video_max_frames)
+        )
         self.load_from_cache = False
         self.frame_processor = _frame_processor(height, width, max_pixels)
 
@@ -301,6 +367,10 @@ class OpenVidParquetDataset(torch.utils.data.Dataset):
             "effective_num_samples": len(self),
             "resolution": resolution or "variable",
             "raw_frames": "variable",
+            "temporal_mode": "sample_full_video_4n+1"
+            if self.use_sample_full_video_length
+            else f"fixed_clip_{int(self.num_frames)}",
+            "sample_full_video_max_frames": self.sample_full_video_max_frames,
         }
 
     @staticmethod
@@ -380,7 +450,9 @@ class OpenVidParquetDataset(torch.utils.data.Dataset):
                     raw_video,
                     num_frames=self.num_frames,
                     frame_processor=self.frame_processor,
-                    require_min_frames=True,
+                    require_min_frames=not self.use_sample_full_video_length,
+                    use_sample_full_video_length=self.use_sample_full_video_length,
+                    sample_full_video_max_frames=self.sample_full_video_max_frames,
                 )
                 return {"video": video, "prompt": prompt}
             except Exception as exc:
@@ -409,6 +481,8 @@ class MoviDTFRecordDataset(torch.utils.data.Dataset):
         height=None,
         width=None,
         num_frames=81,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
     ):
         if TF_EXAMPLE is None:
             raise ImportError(
@@ -422,6 +496,10 @@ class MoviDTFRecordDataset(torch.utils.data.Dataset):
         self.height = height
         self.width = width
         self.num_frames = num_frames
+        self.use_sample_full_video_length = bool(use_sample_full_video_length)
+        self.sample_full_video_max_frames = (
+            None if sample_full_video_max_frames is None else int(sample_full_video_max_frames)
+        )
         self.load_from_cache = False
         self.frame_processor = _pad_frame_processor(height, width, max_pixels)
         self.selected_splits = self._normalize_splits(splits or [split])
@@ -443,6 +521,10 @@ class MoviDTFRecordDataset(torch.utils.data.Dataset):
             "raw_frames": int(metadata["num_frames"]),
             "skipped_shards": skipped_shards,
             "resize_mode": "pad_to_canvas",
+            "temporal_mode": "sample_full_video_4n+1"
+            if self.use_sample_full_video_length
+            else f"fixed_clip_{int(self.num_frames)}",
+            "sample_full_video_max_frames": self.sample_full_video_max_frames,
         }
 
     @staticmethod
@@ -559,8 +641,13 @@ class MoviDTFRecordDataset(torch.utils.data.Dataset):
 
     def _decode_frames(self, frame_bytes):
         total_frames = len(frame_bytes)
-        clip_frames = _resolve_clip_length(total_frames, self.num_frames)
-        start_frame = _sample_start_index(total_frames, clip_frames)
+        start_frame, clip_frames = _resolve_video_clip(
+            total_frames,
+            self.num_frames,
+            require_min_frames=False,
+            use_sample_full_video_length=self.use_sample_full_video_length,
+            sample_full_video_max_frames=self.sample_full_video_max_frames,
+        )
 
         frames = []
         for frame_id in range(start_frame, start_frame + clip_frames):
@@ -607,6 +694,8 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
         height=None,
         width=None,
         num_frames=81,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
         heldout_seed=GENESIS_HELDOUT_DEFAULT_SEED,
         heldout_count=GENESIS_HELDOUT_DEFAULT_COUNT,
         heldout_ids=None,
@@ -618,6 +707,10 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
         self.height = height
         self.width = width
         self.num_frames = num_frames
+        self.use_sample_full_video_length = bool(use_sample_full_video_length)
+        self.sample_full_video_max_frames = (
+            None if sample_full_video_max_frames is None else int(sample_full_video_max_frames)
+        )
         self.load_from_cache = False
         self.frame_processor = _frame_processor(height, width, max_pixels)
 
@@ -665,6 +758,10 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
             "heldout_count": int(len(self.heldout_ids)),
             "heldout_ids": list(self.heldout_ids),
             "heldout_sample_count": heldout_sample_count,
+            "temporal_mode": "sample_full_video_4n+1"
+            if self.use_sample_full_video_length
+            else f"fixed_clip_{int(self.num_frames)}",
+            "sample_full_video_max_frames": self.sample_full_video_max_frames,
         }
 
     @staticmethod
@@ -801,6 +898,8 @@ class GenesisRigidDataset(torch.utils.data.Dataset):
                     entry["video_path"],
                     num_frames=self.num_frames,
                     frame_processor=self.frame_processor,
+                    use_sample_full_video_length=self.use_sample_full_video_length,
+                    sample_full_video_max_frames=self.sample_full_video_max_frames,
                 )
                 return {"video": video, "prompt": prompt}
             except Exception as exc:
@@ -828,6 +927,8 @@ class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
         height=None,
         width=None,
         num_frames=24,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
     ):
         del max_pixels
         self.dataset_base_path = os.path.abspath(dataset_base_path)
@@ -836,6 +937,10 @@ class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
         self.height = int(height) if height is not None else None
         self.width = int(width) if width is not None else None
         self.num_frames = int(num_frames)
+        self.use_sample_full_video_length = bool(use_sample_full_video_length)
+        self.sample_full_video_max_frames = (
+            None if sample_full_video_max_frames is None else int(sample_full_video_max_frames)
+        )
         self.load_from_cache = False
 
         self.samples_root = self._resolve_samples_root(self.dataset_base_path, self.split)
@@ -863,6 +968,10 @@ class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
             "resolution": [effective_width, effective_height],
             "raw_frames": int(preview_frames.shape[0]),
             "sample_id": preview_meta.get("sample_id"),
+            "temporal_mode": "sample_full_video_4n+1"
+            if self.use_sample_full_video_length
+            else f"fixed_clip_{int(self.num_frames)}",
+            "sample_full_video_max_frames": self.sample_full_video_max_frames,
         }
 
     @staticmethod
@@ -919,11 +1028,25 @@ class PhysStateEpisodeDatasetForWan(torch.utils.data.Dataset):
                     raise ValueError(
                         f"Expected full_frames shape [T,3,H,W], got {tuple(full_frames.shape)}"
                     )
-                if full_frames.shape[0] < self.num_frames:
-                    raise ValueError(
-                        f"Phys-state sample has only {full_frames.shape[0]} frames, fewer than requested {self.num_frames}."
-                    )
-                full_frames = full_frames[: self.num_frames]
+                if self.use_sample_full_video_length:
+                    aligned_frames = _largest_wan21_clip_length(full_frames.shape[0])
+                    if self.sample_full_video_max_frames is not None:
+                        aligned_frames = min(
+                            aligned_frames,
+                            _largest_wan21_clip_length(self.sample_full_video_max_frames),
+                        )
+                    if aligned_frames < WAN_MIN_VARIABLE_VIDEO_FRAMES:
+                        raise ValueError(
+                            "Phys-state sample is too short for variable full-video training after "
+                            f"Wan 4n+1 alignment: raw={full_frames.shape[0]}, aligned={aligned_frames}."
+                        )
+                    full_frames = full_frames[:aligned_frames]
+                else:
+                    if full_frames.shape[0] < self.num_frames:
+                        raise ValueError(
+                            f"Phys-state sample has only {full_frames.shape[0]} frames, fewer than requested {self.num_frames}."
+                        )
+                    full_frames = full_frames[: self.num_frames]
                 full_frames = self._resize_video_tensor(full_frames)
                 video = self._tensor_to_pil_frames(full_frames)
                 prompt = _clean_text(meta.get("prompt", ""))
@@ -955,6 +1078,8 @@ class RawPhysStateVideoDataset(torch.utils.data.Dataset):
         height=None,
         width=None,
         num_frames=24,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
     ):
         self.dataset_base_path = os.path.abspath(dataset_base_path)
         self.split = str(split).strip().lower()
@@ -963,6 +1088,10 @@ class RawPhysStateVideoDataset(torch.utils.data.Dataset):
         self.height = height
         self.width = width
         self.num_frames = int(num_frames)
+        self.use_sample_full_video_length = bool(use_sample_full_video_length)
+        self.sample_full_video_max_frames = (
+            None if sample_full_video_max_frames is None else int(sample_full_video_max_frames)
+        )
         self.load_from_cache = False
         self.frame_processor = _frame_processor(height, width, max_pixels)
 
@@ -985,6 +1114,10 @@ class RawPhysStateVideoDataset(torch.utils.data.Dataset):
             "resolution": resolution,
             "raw_frames": int(round(float(first_meta.get("duration_s", 0.0)) * float(first_meta.get("fps", 0)))) if first_meta.get("duration_s") else "variable",
             "fps": first_meta.get("fps"),
+            "temporal_mode": "sample_full_video_4n+1"
+            if self.use_sample_full_video_length
+            else f"fixed_clip_{int(self.num_frames)}",
+            "sample_full_video_max_frames": self.sample_full_video_max_frames,
         }
 
     @staticmethod
@@ -1057,7 +1190,9 @@ class RawPhysStateVideoDataset(torch.utils.data.Dataset):
                     entry["video_path"],
                     num_frames=self.num_frames,
                     frame_processor=self.frame_processor,
-                    require_min_frames=True,
+                    require_min_frames=not self.use_sample_full_video_length,
+                    use_sample_full_video_length=self.use_sample_full_video_length,
+                    sample_full_video_max_frames=self.sample_full_video_max_frames,
                 )
                 return {"video": video, "prompt": prompt}
             except Exception as exc:
@@ -1113,6 +1248,8 @@ class WanTI2VDataset:
         width=None,
         num_frames=81,
         framewise_decoding=False,
+        use_sample_full_video_length=False,
+        sample_full_video_max_frames=None,
     ):
         dataset_metadata_path = _normalize_optional_path(dataset_metadata_path)
         self.dataset_stats = []
@@ -1130,6 +1267,8 @@ class WanTI2VDataset:
                 width=width,
                 num_frames=num_frames,
                 framewise_decoding=framewise_decoding,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
                 data_file_keys=data_file_keys,
             )
             for spec in dataset_specs
@@ -1293,6 +1432,8 @@ class WanTI2VDataset:
         width,
         num_frames,
         framewise_decoding,
+        use_sample_full_video_length,
+        sample_full_video_max_frames,
         data_file_keys,
     ):
         dataset_type = self._infer_dataset_type(spec)
@@ -1308,6 +1449,8 @@ class WanTI2VDataset:
                 height=height,
                 width=width,
                 num_frames=num_frames,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
             )
             return {"dataset": dataset, "stats": dataset.dataset_stats}
 
@@ -1323,6 +1466,8 @@ class WanTI2VDataset:
                 height=height,
                 width=width,
                 num_frames=num_frames,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
             )
             return {"dataset": dataset, "stats": dataset.dataset_stats}
 
@@ -1335,6 +1480,8 @@ class WanTI2VDataset:
                 height=height,
                 width=width,
                 num_frames=num_frames,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
                 heldout_seed=spec.get("heldout_seed", GENESIS_HELDOUT_DEFAULT_SEED),
                 heldout_count=spec.get("heldout_count", GENESIS_HELDOUT_DEFAULT_COUNT),
                 heldout_ids=spec.get("heldout_ids"),
@@ -1350,6 +1497,8 @@ class WanTI2VDataset:
                 height=height,
                 width=width,
                 num_frames=num_frames,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
             )
             return {"dataset": dataset, "stats": dataset.dataset_stats}
 
@@ -1362,6 +1511,8 @@ class WanTI2VDataset:
                 height=height,
                 width=width,
                 num_frames=num_frames,
+                use_sample_full_video_length=use_sample_full_video_length,
+                sample_full_video_max_frames=sample_full_video_max_frames,
             )
             return {"dataset": dataset, "stats": dataset.dataset_stats}
 

@@ -10,13 +10,18 @@ fi
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py
-DATASET_CONFIG=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json
+DATASET_CONFIG=${DATASET_CONFIG:-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json}
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx24_384x672_lora}
+USE_SAMPLE_FULL_VIDEO_LENGTH=${USE_SAMPLE_FULL_VIDEO_LENGTH:-1}
+SAMPLE_FULL_VIDEO_MAX_FRAMES=${SAMPLE_FULL_VIDEO_MAX_FRAMES:-}
 
 mkdir -p "${OUTPUT_DIR}"
 
-CUDA_VISIBLE_DEVICES="${GPU}" "${ACCELERATE_BIN}" launch --num_processes 1 --num_machines 1 "${TRAIN_SCRIPT}" \
+CMD=(
+  env
+  CUDA_VISIBLE_DEVICES="${GPU}"
+  "${ACCELERATE_BIN}" launch --num_processes 1 --num_machines 1 "${TRAIN_SCRIPT}" \
   --diffsynth_root /home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
   --wan_root "${WAN_ROOT}" \
   --dataset_base_path "${DATASET_CONFIG}" \
@@ -24,6 +29,7 @@ CUDA_VISIBLE_DEVICES="${GPU}" "${ACCELERATE_BIN}" launch --num_processes 1 --num
   --height 384 \
   --width 672 \
   --num_frames 24 \
+  --use_sample_full_video_length \
   --max_train_steps 2 \
   --context_sampling_profile mixed_modes \
   --min_context_frames 1 \
@@ -51,3 +57,21 @@ CUDA_VISIBLE_DEVICES="${GPU}" "${ACCELERATE_BIN}" launch --num_processes 1 --num
   --report_to wandb \
   --wandb_project openvid-movid-genesis-wan21_13b \
   --wandb_mode online
+)
+
+if [[ "${USE_SAMPLE_FULL_VIDEO_LENGTH}" != "1" ]]; then
+  FILTERED_CMD=()
+  for arg in "${CMD[@]}"; do
+    if [[ "${arg}" == "--use_sample_full_video_length" ]]; then
+      continue
+    fi
+    FILTERED_CMD+=("${arg}")
+  done
+  CMD=("${FILTERED_CMD[@]}")
+fi
+
+if [[ -n "${SAMPLE_FULL_VIDEO_MAX_FRAMES}" ]]; then
+  CMD+=(--sample_full_video_max_frames "${SAMPLE_FULL_VIDEO_MAX_FRAMES}")
+fi
+
+exec "${CMD[@]}"

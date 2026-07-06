@@ -359,10 +359,11 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     model_args.lora_checkpoint = str(args.lora_checkpoint)
     model_args.extra_inputs = "input_image"
 
-    model_args.enable_object_branch = True
-    model_args.freeze_non_object_trainables = True
-    model_args.train_object_adapter = True
-    model_args.train_object_dit_branch = True
+    object_branch_enabled = not bool(getattr(args, "disable_object_branch", False))
+    model_args.enable_object_branch = object_branch_enabled
+    model_args.freeze_non_object_trainables = object_branch_enabled
+    model_args.train_object_adapter = object_branch_enabled
+    model_args.train_object_dit_branch = object_branch_enabled
     model_args.train_object_pooler = False
     model_args.train_object_aux_heads = False
 
@@ -427,22 +428,26 @@ def _build_runtime_model(args: argparse.Namespace):
     accelerator = SimpleNamespace(device=torch.device(args.device))
     model = t0705.build_model(model_args, accelerator)
 
-    stage1a_info = tvn._load_filtered_checkpoint_into_model(
-        model,
-        model_args.stage1a_init_from,
-        include_prefixes=("object_pooler.", "object_aux_heads."),
-    )
-    stage1b_info = tvn._load_filtered_checkpoint_into_model(
-        model,
-        args.checkpoint,
-        include_prefixes=("object_adapter.",),
-        include_substrings=(
-            "object_embedding",
-            ".object_cross_attn.",
-            ".object_gate",
-            ".norm4.",
-        ),
-    )
+    if model_args.enable_object_branch:
+        stage1a_info = tvn._load_filtered_checkpoint_into_model(
+            model,
+            model_args.stage1a_init_from,
+            include_prefixes=("object_pooler.", "object_aux_heads."),
+        )
+        stage1b_info = tvn._load_filtered_checkpoint_into_model(
+            model,
+            args.checkpoint,
+            include_prefixes=("object_adapter.",),
+            include_substrings=(
+                "object_embedding",
+                ".object_cross_attn.",
+                ".object_gate",
+                ".norm4.",
+            ),
+        )
+    else:
+        stage1a_info = {"skipped": True, "reason": "disable_object_branch"}
+        stage1b_info = {"skipped": True, "reason": "disable_object_branch"}
     target_device = torch.device(args.device)
     model.to(target_device)
     model.pipe.to(device=target_device, dtype=model.pipe.torch_dtype)
@@ -480,6 +485,9 @@ def _build_object_context(
     prompt: str,
     video_path: str,
 ):
+    if not bool(getattr(model, "enable_object_branch", False)):
+        return None, {"enabled": False}
+
     pipe = model.pipe
     device = torch.device(pipe.device)
     context_video = context_video_single.unsqueeze(0).to(device=device, dtype=pipe.torch_dtype)
@@ -568,13 +576,22 @@ def _build_object_context(
 
 
 def _apply_object_context_ablation(
-    object_context: torch.Tensor,
+    object_context: torch.Tensor | None,
     *,
     mode: str = "none",
     random_seed: int | None = None,
     random_scale: float = 1.0,
-) -> tuple[torch.Tensor, dict[str, object]]:
+) -> tuple[torch.Tensor | None, dict[str, object]]:
     mode_norm = str(mode).strip().lower()
+    if object_context is None:
+        return None, {
+            "mode": mode_norm,
+            "applied": False,
+            "disabled_object_branch": True,
+            "random_seed": None if random_seed is None else int(random_seed),
+            "random_scale": float(random_scale),
+        }
+
     base = object_context.detach().float()
     debug = {
         "mode": mode_norm,
@@ -676,6 +693,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--lora-rank", type=int, default=32)
     parser.add_argument("--lora-alpha", type=int, default=32)
+    parser.add_argument("--disable-object-branch", action="store_true")
     parser.add_argument("--object-num-queries", type=int, default=8)
     parser.add_argument("--aux-max-objects", type=int, default=4)
     parser.add_argument("--object-pooler-latent-dim", type=int, default=16)
@@ -781,7 +799,7 @@ def main() -> None:
             random_scale=float(args.object_context_random_scale),
         )
         object_debug["object_context_ablation"] = ablation_debug
-        video = pipe(
+        pipe_kwargs = dict(
             prompt=str(args.prompt),
             negative_prompt="",
             context_video=context_pil,
@@ -792,8 +810,10 @@ def main() -> None:
             num_frames=int(args.num_frames),
             num_inference_steps=int(args.sampling_steps),
             cfg_scale=float(args.cfg_scale),
-            object_context=object_context,
         )
+        if bool(getattr(model, "enable_object_branch", False)):
+            pipe_kwargs["object_context"] = object_context
+        video = pipe(**pipe_kwargs)
 
     checkpoint_path = Path(tvn._resolve_checkpoint_file(args.checkpoint)).resolve()
     checkpoint_tag = checkpoint_path.parent.name
@@ -812,6 +832,7 @@ def main() -> None:
             "width": int(model_args.width),
             "num_frames": int(model_args.num_frames),
             "context_frames": int(model_args.fixed_num_context_frames),
+            "enable_object_branch": bool(model_args.enable_object_branch),
             "lora_checkpoint": str(model_args.lora_checkpoint),
             "stage1a_init_from": str(model_args.stage1a_init_from),
         },

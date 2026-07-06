@@ -167,6 +167,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--lora-rank", type=int, default=32)
     parser.add_argument("--lora-alpha", type=int, default=32)
+    parser.add_argument("--disable-object-branch", action="store_true")
     parser.add_argument("--object-num-queries", type=int, default=8)
     parser.add_argument("--aux-max-objects", type=int, default=4)
     parser.add_argument("--object-pooler-latent-dim", type=int, default=16)
@@ -251,6 +252,7 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         quality=int(cli_args.quality),
         lora_rank=int(cli_args.lora_rank),
         lora_alpha=int(cli_args.lora_alpha),
+        disable_object_branch=bool(cli_args.disable_object_branch),
         object_num_queries=int(cli_args.object_num_queries),
         aux_max_objects=int(cli_args.aux_max_objects),
         object_pooler_latent_dim=int(cli_args.object_pooler_latent_dim),
@@ -348,7 +350,7 @@ def _run_single_case_in_process(
     pipe = model.pipe
     pipe.dit.eval()
     with torch.no_grad():
-        video = pipe(
+        pipe_kwargs = dict(
             prompt=str(input_caption),
             negative_prompt="",
             context_video=context_pil,
@@ -359,8 +361,10 @@ def _run_single_case_in_process(
             num_frames=int(num_frames),
             num_inference_steps=int(sampling_steps),
             cfg_scale=float(cfg_scale),
-            object_context=object_context,
         )
+        if bool(getattr(model, "enable_object_branch", False)):
+            pipe_kwargs["object_context"] = object_context
+        video = pipe(**pipe_kwargs)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_video.parent.mkdir(parents=True, exist_ok=True)
@@ -391,6 +395,7 @@ def _run_single_case_in_process(
             "width": int(width),
             "num_frames": int(num_frames),
             "context_frames": int(context_frames),
+            "enable_object_branch": bool(getattr(model, "enable_object_branch", False)),
             "lora_checkpoint": str(lora_checkpoint),
             "stage1a_init_from": str(stage1a_init_from),
         },
@@ -436,6 +441,7 @@ def main() -> None:
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
         "initialize_model_on_cpu": bool(cli_args.initialize_model_on_cpu),
+        "disable_object_branch": bool(cli_args.disable_object_branch),
         "object_context_ablation": {
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
