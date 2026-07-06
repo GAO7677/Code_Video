@@ -50,15 +50,16 @@ import logging
 import math
 import os
 import random
+import shutil
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as TF
-from PIL import Image
+from PIL import Image, ImageDraw
 from tqdm import tqdm
 
 from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
@@ -202,6 +203,78 @@ def _video_thwc_u8_to_pil_frames(video_thwc_u8: np.ndarray) -> list[Image.Image]
     if video_thwc_u8.ndim != 4:
         raise ValueError(f"Expected [T,H,W,3] video array, got {tuple(video_thwc_u8.shape)}")
     return [Image.fromarray(frame) for frame in video_thwc_u8.astype(np.uint8)]
+
+
+def _latent_norm_to_pil_frames(latent: torch.Tensor, *, upscale: int = 8) -> tuple[list[Image.Image], dict[str, float]]:
+    if latent.ndim == 5:
+        if latent.shape[0] != 1:
+            raise ValueError(f"Expected batch size 1 for latent trace export, got {tuple(latent.shape)}")
+        latent = latent[0]
+    if latent.ndim != 4:
+        raise ValueError(f"Expected latent tensor [C,T,H,W], got {tuple(latent.shape)}")
+    norm_map = latent.detach().float().cpu().pow(2).mean(dim=0).sqrt()
+    min_value = float(norm_map.min().item())
+    max_value = float(norm_map.max().item())
+    scale = max(max_value - min_value, 1e-6)
+    frames: list[Image.Image] = []
+    for frame_idx in range(norm_map.shape[0]):
+        frame = ((norm_map[frame_idx] - min_value) / scale * 255.0).round().to(torch.uint8).numpy()
+        image = Image.fromarray(frame, mode="L").resize(
+            (frame.shape[1] * upscale, frame.shape[0] * upscale),
+            Image.Resampling.NEAREST,
+        )
+        frames.append(image.convert("RGB"))
+    return frames, {"latent_norm_min": min_value, "latent_norm_max": max_value}
+
+
+def _pick_strip_indices(num_frames: int, max_frames: int) -> list[int]:
+    if num_frames <= 0:
+        return []
+    if num_frames <= max_frames:
+        return list(range(num_frames))
+    positions = torch.linspace(0, num_frames - 1, steps=max_frames)
+    return [int(round(value.item())) for value in positions]
+
+
+def _save_frame_strip(
+    frames: list[Image.Image],
+    output_path: Path,
+    *,
+    max_frames: int = 8,
+    tile_height: int = 160,
+) -> None:
+    if not frames:
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    indices = _pick_strip_indices(len(frames), max_frames=max_frames)
+    selected = []
+    for frame_idx in indices:
+        frame = frames[frame_idx].convert("RGB")
+        new_width = max(1, int(round(frame.width * (tile_height / max(frame.height, 1)))))
+        selected.append((frame.resize((new_width, tile_height), Image.Resampling.BILINEAR), frame_idx))
+
+    padding = 10
+    label_height = 22
+    width = padding + sum(frame.width + padding for frame, _ in selected)
+    height = tile_height + label_height + 2 * padding
+    canvas = Image.new("RGB", (width, height), color=(248, 244, 238))
+    draw = ImageDraw.Draw(canvas)
+    x = padding
+    for frame, frame_idx in selected:
+        canvas.paste(frame, (x, padding))
+        draw.text((x, padding + tile_height + 4), f"t={frame_idx}", fill=(40, 40, 40))
+        x += frame.width + padding
+    canvas.save(output_path)
+
+
+def _safe_symlink_or_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def _apply_context_anchored_guidance(
