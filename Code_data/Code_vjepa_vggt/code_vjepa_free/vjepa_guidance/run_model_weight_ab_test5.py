@@ -32,9 +32,8 @@ DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main")
 PY_WAN_CU128 = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
 PY_WAN = Path("/data/gaoya/miniconda3/envs/wan/bin/python")
 
-INPUT_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
-OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705")
-DEDUP_LIST = OUTPUT_ROOT / "inputs" / "test5_unique.txt"
+DEFAULT_INPUT_LIST = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
+DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705")
 
 WAN22_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 VJEPA_CKPT = Path("/data/gaoya/ckpt/VJEPA2/vith.pt")
@@ -52,24 +51,7 @@ TRAIN0705_STEP007000 = Path(
 )
 
 MID12 = ["8", "10", "11", "13", "14", "16", "17", "19", "20", "22", "23", "25"]
-FREQGUIDE_MODEL_SUFFIX = "freqguide_tunionx1_lp018_d5"
-FREQGUIDE_COMMON_ARGS = [
-    "--vjepa-motion-mask-mode",
-    "temporal_union_except_first",
-    "--vjepa-use-spectral-guidance",
-    "--vjepa-spectral-source",
-    "temporal_lowpass_residual",
-    "--vjepa-spectral-lowpass-ratio",
-    "0.18",
-    "--vjepa-spectral-normalize-percentile",
-    "95.0",
-    "--vjepa-spectral-weight-floor",
-    "0.25",
-    "--vjepa-spectral-weight-scale",
-    "1.0",
-    "--vjepa-spectral-mask-dilation",
-    "5",
-]
+DEFAULT_FREQGUIDE_MODEL_SUFFIX = "freqguide_tunionx1_lp018_d5"
 
 
 @dataclass(frozen=True)
@@ -88,57 +70,112 @@ TRAIN0705_BASELINE_007000 = Path(
 )
 
 
-FAMILIES = [
-    Family(
-        family_id="wan22_official_ti2v5b",
-        baseline_dir=OUTPUT_ROOT / "wan22_official_ti2v5b" / "baseline",
-        guided_dir=OUTPUT_ROOT / "wan22_official_ti2v5b" / "guided",
-    ),
-    Family(
-        family_id="wan22_early_lora_step000500",
-        baseline_dir=OUTPUT_ROOT / "wan22_early_lora_step000500" / "baseline",
-        guided_dir=OUTPUT_ROOT / "wan22_early_lora_step000500" / "guided",
-    ),
-    Family(
-        family_id="train0705_step002500",
-        baseline_dir=OUTPUT_ROOT / "train0705_step002500" / "baseline" / TRAIN0705_STEP002500.name,
-        guided_dir=OUTPUT_ROOT / "train0705_step002500" / "guided" / TRAIN0705_STEP002500.name,
-        score_baseline_dir=TRAIN0705_BASELINE_002500,
-    ),
-    Family(
-        family_id="train0705_step007000",
-        baseline_dir=OUTPUT_ROOT / "train0705_step007000" / "baseline" / TRAIN0705_STEP007000.name,
-        guided_dir=OUTPUT_ROOT / "train0705_step007000" / "guided" / TRAIN0705_STEP007000.name,
-        score_baseline_dir=TRAIN0705_BASELINE_007000,
-    ),
-]
+def build_families(output_root: Path) -> list[Family]:
+    return [
+        Family(
+            family_id="wan22_official_ti2v5b",
+            baseline_dir=output_root / "wan22_official_ti2v5b" / "baseline",
+            guided_dir=output_root / "wan22_official_ti2v5b" / "guided",
+        ),
+        Family(
+            family_id="wan22_early_lora_step000500",
+            baseline_dir=output_root / "wan22_early_lora_step000500" / "baseline",
+            guided_dir=output_root / "wan22_early_lora_step000500" / "guided",
+        ),
+        Family(
+            family_id="train0705_step002500",
+            baseline_dir=output_root / "train0705_step002500" / "baseline" / TRAIN0705_STEP002500.name,
+            guided_dir=output_root / "train0705_step002500" / "guided" / TRAIN0705_STEP002500.name,
+            score_baseline_dir=TRAIN0705_BASELINE_002500,
+        ),
+        Family(
+            family_id="train0705_step007000",
+            baseline_dir=output_root / "train0705_step007000" / "baseline" / TRAIN0705_STEP007000.name,
+            guided_dir=output_root / "train0705_step007000" / "guided" / TRAIN0705_STEP007000.name,
+            score_baseline_dir=TRAIN0705_BASELINE_007000,
+        ),
+    ]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run/score model-weight baseline vs guided A/B on test_5.")
     parser.add_argument("--stage", choices=["generate", "score", "all"], default="all")
     parser.add_argument("--families", nargs="*", default=None, help="Subset of family ids to run.")
+    parser.add_argument("--input-list", type=Path, default=DEFAULT_INPUT_LIST)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--limit-cases", type=int, default=None)
     parser.add_argument("--main-gpu", type=int, default=5)
     parser.add_argument("--vjepa-gpu", type=int, default=6)
     parser.add_argument("--score-gpu", type=int, default=7)
+    parser.add_argument("--guided-vjepa-preset", type=str, default="target_w24_s15_ratio_0025")
+    parser.add_argument(
+        "--guided-motion-mask-mode",
+        choices=["per_frame", "temporal_union", "temporal_union_except_first"],
+        default="temporal_union_except_first",
+    )
+    parser.add_argument(
+        "--guided-use-spectral-guidance",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--guided-spectral-source", type=str, default="temporal_lowpass_residual")
+    parser.add_argument("--guided-spectral-lowpass-ratio", type=float, default=0.18)
+    parser.add_argument("--guided-spectral-normalize-percentile", type=float, default=95.0)
+    parser.add_argument("--guided-spectral-weight-floor", type=float, default=0.25)
+    parser.add_argument("--guided-spectral-weight-scale", type=float, default=1.0)
+    parser.add_argument("--guided-spectral-mask-dilation", type=int, default=5)
+    parser.add_argument("--guided-model-suffix", type=str, default=DEFAULT_FREQGUIDE_MODEL_SUFFIX)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     return parser.parse_args()
 
 
-def ensure_unique_input_list() -> Path:
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    DEDUP_LIST.parent.mkdir(parents=True, exist_ok=True)
+def _dedup_list_path(output_root: Path) -> Path:
+    return output_root / "inputs" / "test5_unique.txt"
+
+
+def ensure_unique_input_list(*, output_root: Path, input_list: Path, limit_cases: int | None) -> Path:
+    output_root.mkdir(parents=True, exist_ok=True)
+    dedup_list = _dedup_list_path(output_root)
+    dedup_list.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     ordered: list[str] = []
-    for raw in INPUT_LIST.read_text(encoding="utf-8").splitlines():
+    for raw in input_list.read_text(encoding="utf-8").splitlines():
         value = raw.strip()
         if not value or value in seen:
             continue
         seen.add(value)
         ordered.append(value)
-    DEDUP_LIST.write_text("\n".join(ordered) + "\n", encoding="utf-8")
-    return DEDUP_LIST
+        if limit_cases is not None and len(ordered) >= max(0, int(limit_cases)):
+            break
+    dedup_list.write_text("\n".join(ordered) + "\n", encoding="utf-8")
+    return dedup_list
+
+
+def build_guided_extra_args(args: argparse.Namespace) -> list[str]:
+    extra = [
+        "--vjepa-motion-mask-mode",
+        str(args.guided_motion_mask_mode),
+    ]
+    if bool(args.guided_use_spectral_guidance):
+        extra.extend(
+            [
+                "--vjepa-use-spectral-guidance",
+                "--vjepa-spectral-source",
+                str(args.guided_spectral_source),
+                "--vjepa-spectral-lowpass-ratio",
+                str(float(args.guided_spectral_lowpass_ratio)),
+                "--vjepa-spectral-normalize-percentile",
+                str(float(args.guided_spectral_normalize_percentile)),
+                "--vjepa-spectral-weight-floor",
+                str(float(args.guided_spectral_weight_floor)),
+                "--vjepa-spectral-weight-scale",
+                str(float(args.guided_spectral_weight_scale)),
+                "--vjepa-spectral-mask-dilation",
+                str(max(0, int(args.guided_spectral_mask_dilation))),
+            ]
+        )
+    return extra
 
 
 def base_env() -> dict[str, str]:
@@ -159,11 +196,11 @@ def run_cmd(cmd: list[str], *, env: dict[str, str], label: str, continue_on_erro
         raise SystemExit(result.returncode)
 
 
-def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
+def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namespace) -> None:
     env = base_env()
     env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
-    baseline_dir = OUTPUT_ROOT / "wan22_official_ti2v5b" / "baseline"
-    guided_dir = OUTPUT_ROOT / "wan22_official_ti2v5b" / "guided"
+    baseline_dir = output_root / "wan22_official_ti2v5b" / "baseline"
+    guided_dir = output_root / "wan22_official_ti2v5b" / "guided"
     baseline_cmd = [
         str(PY_WAN_CU128),
         str(GUIDANCE_DIR / "wanti2v.py"),
@@ -201,7 +238,7 @@ def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
         "--output-root",
         str(guided_dir),
         "--model-name",
-        f"wan22_official_ti2v5b_{FREQGUIDE_MODEL_SUFFIX}",
+        f"wan22_official_ti2v5b_{args.guided_model_suffix}",
         "--backend",
         "official",
         "--wan-root",
@@ -220,13 +257,13 @@ def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
         "42",
         "--offload-model",
         "--vjepa-preset",
-        "target_w24_s15_ratio_0025",
+        str(args.guided_vjepa_preset),
         "--vjepa-ckpt",
         str(VJEPA_CKPT),
         "--vjepa-device-id",
         "1",
     ]
-    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
+    guided_cmd.extend(build_guided_extra_args(args))
     if args.force:
         baseline_cmd.append("--force")
         guided_cmd.append("--force")
@@ -234,7 +271,7 @@ def wanti2v_generate(unique_list: Path, args: argparse.Namespace) -> None:
     run_cmd(guided_cmd, env=env, label="wan22_official_ti2v5b/guided", continue_on_error=args.continue_on_error)
 
 
-def lora_generate(unique_list: Path, args: argparse.Namespace) -> None:
+def lora_generate(unique_list: Path, output_root: Path, args: argparse.Namespace) -> None:
     env = base_env()
     env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
     script = GUIDANCE_DIR / "wan_openvid_0613pybullet_lorav2v_vjepa.py"
@@ -274,52 +311,32 @@ def lora_generate(unique_list: Path, args: argparse.Namespace) -> None:
         "--model-name",
         "wan22_early_lora_step000500_baseline",
         "--output-root",
-        str(OUTPUT_ROOT / "wan22_early_lora_step000500" / "baseline"),
+        str(output_root / "wan22_early_lora_step000500" / "baseline"),
         "--runtime-root",
-        str(OUTPUT_ROOT / "wan22_early_lora_step000500" / "baseline_runtime"),
+        str(output_root / "wan22_early_lora_step000500" / "baseline_runtime"),
         "--disable-vjepa-guidance",
     ]
     guided_cmd = common + [
         "--model-name",
-        f"wan22_early_lora_step000500_{FREQGUIDE_MODEL_SUFFIX}",
+        f"wan22_early_lora_step000500_{args.guided_model_suffix}",
         "--output-root",
-        str(OUTPUT_ROOT / "wan22_early_lora_step000500" / "guided"),
+        str(output_root / "wan22_early_lora_step000500" / "guided"),
         "--runtime-root",
-        str(OUTPUT_ROOT / "wan22_early_lora_step000500" / "guided_runtime"),
+        str(output_root / "wan22_early_lora_step000500" / "guided_runtime"),
         "--vjepa-model",
         "vith",
         "--vjepa-ckpt",
         str(VJEPA_CKPT),
-        "--vjepa-guidance-mode",
-        "context_anchored",
-        "--vjepa-guidance-steps",
-        "12",
-        "--vjepa-target-step-indices",
-        *MID12,
-        "--vjepa-latent-step-size",
-        "0.15",
+        "--vjepa-preset",
+        str(args.guided_vjepa_preset),
+        # LoRA branch needs a more aggressive low-res preview to survive
+        # guidance-time VAE decode on shared GPUs.
         "--vjepa-preview-downsample-factor",
-        "4",
-        "--vjepa-preview-frame-stride",
-        "1",
-        "--vjepa-window-size",
-        "24",
-        "--vjepa-context-frames",
         "8",
-        "--vjepa-stride",
-        "4",
-        "--vjepa-reduction",
-        "mean",
-        "--vjepa-grad-norm-mode",
-        "rms",
-        "--vjepa-max-grad-norm",
-        "10.0",
-        "--vjepa-max-correction-ratio",
-        "0.025",
-        "--vjepa-artifact-guard-mode",
-        "none",
+        "--vjepa-preview-frame-stride",
+        "2",
     ]
-    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
+    guided_cmd.extend(build_guided_extra_args(args))
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
@@ -377,13 +394,13 @@ def train0705_generate(unique_list: Path, weights_root: Path, family_root: Path,
     ]
     guided_cmd = common + [
         "--model-name",
-        f"{family_name}_{FREQGUIDE_MODEL_SUFFIX}",
+        f"{family_name}_{args.guided_model_suffix}",
         "--output-root",
         str(family_root / "guided"),
         "--vjepa-preset",
-        "target_w24_s15_ratio_0025",
+        str(args.guided_vjepa_preset),
     ]
-    guided_cmd.extend(FREQGUIDE_COMMON_ARGS)
+    guided_cmd.extend(build_guided_extra_args(args))
     if args.force:
         baseline_cmd.append("--overwrite")
         guided_cmd.append("--overwrite")
@@ -392,17 +409,20 @@ def train0705_generate(unique_list: Path, weights_root: Path, family_root: Path,
 
 
 def generate(args: argparse.Namespace) -> None:
-    unique_list = ensure_unique_input_list()
-    selected = set(args.families or [family.family_id for family in FAMILIES])
+    output_root = args.output_root.expanduser().resolve()
+    input_list = args.input_list.expanduser().resolve()
+    families = build_families(output_root)
+    unique_list = ensure_unique_input_list(output_root=output_root, input_list=input_list, limit_cases=args.limit_cases)
+    selected = set(args.families or [family.family_id for family in families])
     if "wan22_official_ti2v5b" in selected:
-        wanti2v_generate(unique_list, args)
+        wanti2v_generate(unique_list, output_root, args)
     if "wan22_early_lora_step000500" in selected:
-        lora_generate(unique_list, args)
+        lora_generate(unique_list, output_root, args)
     if "train0705_step002500" in selected:
         train0705_generate(
             unique_list,
             TRAIN0705_STEP002500,
-            OUTPUT_ROOT / "train0705_step002500",
+            output_root / "train0705_step002500",
             "train0705_step002500",
             args,
         )
@@ -410,18 +430,20 @@ def generate(args: argparse.Namespace) -> None:
         train0705_generate(
             unique_list,
             TRAIN0705_STEP007000,
-            OUTPUT_ROOT / "train0705_step007000",
+            output_root / "train0705_step007000",
             "train0705_step007000",
             args,
         )
 
 
 def score(args: argparse.Namespace) -> None:
-    selected = set(args.families or [family.family_id for family in FAMILIES])
-    score_root = OUTPUT_ROOT / "scores"
+    output_root = args.output_root.expanduser().resolve()
+    families = build_families(output_root)
+    selected = set(args.families or [family.family_id for family in families])
+    score_root = output_root / "scores"
     score_root.mkdir(parents=True, exist_ok=True)
     combined: dict[str, object] = {}
-    for family in FAMILIES:
+    for family in families:
         if family.family_id not in selected:
             continue
         out_json = score_root / f"{family.family_id}_summary.json"

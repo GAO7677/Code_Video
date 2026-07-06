@@ -259,6 +259,80 @@
   - `ladder_s20` 在 3-case pilot 上的平均 `Δsurprise` 最好，
     `knee_mid_s18` 在跨指标稳定性上更均衡。
 
+## 2026-07-06 — 4-family freqguide A/B 状态审计
+
+- 目标：
+  - 核对当前 4-family 频域 guidance 目标和现有输出根目录是否一致，避免把历史 `step-005000` 结果误当成当前目标 `step-007000`。
+- 代码：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/audit_model_weight_ab_status.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py`
+- 输入：
+  - 历史 root：
+    `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
+  - 当前目标 root：
+    `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706`
+- 输出：
+  - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/status_audit.json`
+  - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/status_audit.md`
+  - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706/status_audit.json`
+  - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706/status_audit.md`
+- 状态：
+  - 已完成审计。
+- 结论：
+  - 历史 root `model_weight_ab_test5_20260705` 已完整覆盖：
+    `wan22_official_ti2v5b`、`wan22_early_lora_step000500`、`train0705_step002500`，
+    以及一个额外的历史 family `train0705_step005000`。
+  - 它不包含当前目标里的 `train0705_step007000`。
+  - 新目标 root `model_weight_ab_test5_freqguide_20260706` 目前还是空目录，4 个目标 family 都尚未开始生成。
+  - 因此，当前“脚本目标”已经切到
+    `wan22_official_ti2v5b / wan22_early_lora_step000500 / train0705_step002500 / train0705_step007000`，
+    但“已验证落盘结果”还没有覆盖到这个新目标组合。
+
+## 2026-07-06 — 现有 A/B root 的 full-metric 重打分脚本
+
+- 目标：
+  - 为历史 root 和未来的新 root 提供统一的全指标重打分入口，避免继续依赖早期只含部分指标的 `scores/*.json`。
+- 代码：
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/rescore_model_weight_ab_root.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/score_multicase_allmetrics.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/export_model_weight_ab_markdown.py`
+  - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/visualize_model_weight_ab.py`
+- 输入：
+  - 任意已有 baseline/guided family 目录的 A/B root，例如：
+    `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
+- 输出：
+  - 对应 root 下新的 `scores/*.json`
+  - `ab_report/model_weight_ab_report.md`
+  - `ab_dashboard/index.html`
+- 状态：
+  - 脚本已创建并通过 `py_compile` 静态检查，尚未启动完整重打分。
+- 结论：
+  - 后续如果先重打历史 root，可以直接验证当前 full-metric 评分链条是否完整；
+    等 `model_weight_ab_test5_freqguide_20260706` 有生成结果后，也可以复用同一脚本做统一汇总。
+
+### 2026-07-06 当天 smoke 追记
+
+- 1-case / 1-family smoke 使用：
+  - `wan22_official_ti2v5b`
+  - `limit-cases=1`
+  - root:
+    `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
+- 观察到的具体问题：
+  - `Official PDI` 最初不是纯慢，而是直接报错：
+    `third_party/mega_sam/work_space` 目录缺失。
+    现已在
+    `/home/gaoya/Code_Video/Code_data/Code_try0526/physv_eval/official_pdi.py`
+    中补了启动前的目录创建。
+  - `WMReward` 最初因为新版 PyTorch 的 `torch.load` 默认行为与上游
+    `WMReward-main/utils.py` 不兼容而失败。
+    现已在
+    `/home/gaoya/Code_Video/Code_data/Code_try0526/physv_eval/wmreward_official.py`
+    中补了本地 trusted checkpoint 的兼容层，使其默认走
+    `weights_only=False`。
+  - 修复后再次 smoke，`wmreward` 已经进入大权重加载阶段，不再是先前的
+    `weights_only` 异常；当前剩余问题更偏向运行时长，而不是接口错误。
+
 ## 2026-07-03 — train0705 round2：完整 test_5 上 baseline vs ladder_s20 vs knee_mid_s18
 
 - 目标：

@@ -195,20 +195,37 @@ CUDA_VISIBLE_DEVICES=6,7 \
 Unified A/B driver:
 
 - `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py`
+- `/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/rescore_model_weight_ab_root.py`
 
 Main result directory:
 
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
+
+Recommended isolated frequency-guidance result directory:
+
+- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706`
 
 Important subdirectories:
 
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_official_ti2v5b`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/wan22_early_lora_step000500`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step002500`
-- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step007000`
+- `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/train0705_step005000`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/scores`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/ab_report`
 - `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/ab_dashboard`
+
+Current status note:
+
+- The historical root `/data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705`
+  is a completed older A/B bundle that contains `train0705_step005000`, not the
+  current target `train0705_step007000`.
+- The current 4-family target for the new frequency-guidance run is:
+  `wan22_official_ti2v5b`, `wan22_early_lora_step000500`,
+  `train0705_step002500`, `train0705_step007000`.
+- That new target should be written into the isolated root
+  `/data/gaoya/agent-data/outputs/model_weight_ab_test5_freqguide_20260706`.
 
 Current intended family set:
 
@@ -225,13 +242,15 @@ Current guided mode:
 - `spectral_weight_floor = 0.25`
 - `spectral_weight_scale = 1.0`
 - `spectral_mask_dilation = 5`
+- LoRA low-memory preview setting:
+  `preview_downsample_factor = 8`, `preview_frame_stride = 2`
 
 Generate command:
 
 ```bash
 CUDA_VISIBLE_DEVICES=5,6,7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py \
   --stage generate
 ```
 
@@ -240,8 +259,40 @@ Score command:
 ```bash
 CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5.py \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/run_model_weight_ab_test5_freqguide.py \
   --stage score
+```
+
+Status audit command:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/audit_model_weight_ab_status.py \
+  --output-root /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705 \
+  --out-json /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/status_audit.json \
+  --out-md /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705/status_audit.md
+```
+
+Full-metric rescore command for an existing root:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/rescore_model_weight_ab_root.py \
+  --output-root /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705 \
+  --score-gpu 2
+```
+
+One-case smoke command for the scorer chain:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_free/vjepa_guidance/rescore_model_weight_ab_root.py \
+  --output-root /data/gaoya/agent-data/outputs/model_weight_ab_test5_20260705 \
+  --families wan22_official_ti2v5b \
+  --score-gpu 2 \
+  --limit-cases 1
 ```
 
 ## 5. Wan2.1 T2V 1.3B

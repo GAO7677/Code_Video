@@ -96,6 +96,7 @@ class OfficialPDIRunner:
         python_bin: str | None = None,
         cuda_visible_devices: str | None = None,
         max_retries: int = 5,
+        timeout_seconds: float | None = None,
     ) -> None:
         if ALT_SAM_PYTHON.is_file():
             default_python = str(ALT_SAM_PYTHON)
@@ -106,6 +107,7 @@ class OfficialPDIRunner:
         self.python_bin = python_bin or default_python
         self.cuda_visible_devices = cuda_visible_devices
         self.max_retries = max(int(max_retries), 1)
+        self.timeout_seconds = None if timeout_seconds is None or float(timeout_seconds) <= 0 else float(timeout_seconds)
 
     def run(self, video_path: Path, text_query: str, refresh: bool = False) -> dict[str, Any]:
         sample_id = stable_path_id(video_path)
@@ -127,6 +129,9 @@ class OfficialPDIRunner:
         if self.cuda_visible_devices is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
 
+        # Some upstream PDI paths assume this workspace exists already.
+        (PDI_ROOT / "third_party" / "mega_sam" / "work_space").mkdir(parents=True, exist_ok=True)
+
         cmd = [
             self.python_bin,
             "evaluation/main.py",
@@ -141,14 +146,20 @@ class OfficialPDIRunner:
         ]
         last_error = ""
         for attempt in range(1, self.max_retries + 1):
-            completed = subprocess.run(
-                cmd,
-                cwd=PDI_ROOT,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    cwd=PDI_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=self.timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"Official PDI timed out for {video_path.name} after {self.timeout_seconds}s"
+                ) from exc
             if completed.returncode == 0:
                 return parse_report(report_path)
 

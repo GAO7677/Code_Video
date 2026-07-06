@@ -1262,7 +1262,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-spectral-mask-dilation", type=int, default=0)
     parser.add_argument(
         "--motion-mask-mode",
-        default="per_frame",
+        default="temporal_union_except_first",
         choices=["per_frame", "temporal_union", "temporal_union_except_first"],
     )
     parser.add_argument("--trace-intermediates", action="store_true")

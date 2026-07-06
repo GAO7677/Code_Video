@@ -46,12 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--videophy2-device", default="cuda")
     parser.add_argument("--videophy2-dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--videophy2-num-frames", type=int, default=32)
+    parser.add_argument("--proxy-device", default="cuda")
     parser.add_argument("--phyground-general-only", action="store_true")
     parser.add_argument("--pmf-device", default="cpu")
     parser.add_argument("--limit-cases", type=int, default=None)
     parser.add_argument("--save-every", type=int, default=1)
     parser.add_argument("--pdi-python-bin", default=None)
     parser.add_argument("--pdi-cuda-visible-devices", default=None)
+    parser.add_argument("--pdi-timeout-seconds", type=float, default=None)
     parser.add_argument("--wmreward-cuda-visible-devices", default=None)
     return parser.parse_args()
 
@@ -281,6 +283,12 @@ def _fmt_md(value: float | None) -> str:
     return f"{float(value):.4f}"
 
 
+def _log_metric_status(case_label: str, metric_name: str, *, ok: bool, detail: str | None = None) -> None:
+    status = "ok" if ok else "error"
+    suffix = f" :: {detail}" if detail else ""
+    print(f"  [{status}] {case_label} :: {metric_name}{suffix}", flush=True)
+
+
 def main() -> None:
     args = parse_args()
     method_dirs = parse_method_dirs(args.method_dir)
@@ -310,6 +318,7 @@ def main() -> None:
         pdi_runner = OfficialPDIRunner(
             python_bin=args.pdi_python_bin,
             cuda_visible_devices=args.pdi_cuda_visible_devices,
+            timeout_seconds=args.pdi_timeout_seconds,
         )
     if not args.skip_wmreward:
         from physv_eval.single_case.wmreward import score_case as wmreward_score_case
@@ -320,9 +329,14 @@ def main() -> None:
         from physv_eval.single_case.proxy import score_case as proxy_score_case
         from physv_eval.proxy_runner import ProxyRunner
 
-        proxy_runner = ProxyRunner(device="cuda")
+        proxy_runner = ProxyRunner(device=args.proxy_device)
     if not args.skip_physics_iq:
         from physv_eval.single_case.physics_iq import score_case as physics_iq_score_case
+    if not args.skip_phyground:
+        from physv_eval.single_case.phyground import score_case as phyground_score_case
+        from physv_eval.phyground_official import OfficialPhyGroundRunner
+
+        phyground_runner = OfficialPhyGroundRunner()
     if not args.skip_videophy2:
         from physv_eval.single_case.videophy2 import score_case as videophy2_score_case
         from physv_eval.videophy2_auto import VideoPhy2Runner
@@ -332,11 +346,6 @@ def main() -> None:
             dtype=args.videophy2_dtype,
             num_frames=args.videophy2_num_frames,
         )
-    if not args.skip_phyground:
-        from physv_eval.single_case.phyground import score_case as phyground_score_case
-        from physv_eval.phyground_official import OfficialPhyGroundRunner
-
-        phyground_runner = OfficialPhyGroundRunner()
     if not args.skip_cosmos:
         from physv_eval.single_case.cosmos_reason1 import score_case as cosmos_score_case
         from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
@@ -364,8 +373,10 @@ def main() -> None:
                 out["traj_component"] = pdi.get("traj_component")
                 out["epsilon_rigidity"] = pdi.get("epsilon_rigidity")
                 out["vp_component"] = pdi.get("vp_component")
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "pdi", ok=True, detail=f"pdi={out['official_pdi']}")
             except Exception as exc:
                 out["pdi_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "pdi", ok=False, detail=repr(exc))
 
         if wmreward_score_case is not None and wmreward_runner is not None:
             try:
@@ -373,38 +384,45 @@ def main() -> None:
                 out["wmreward"] = wm
                 out["wmreward_surprise"] = wm.get("surprise")
                 out["wmreward_similarity"] = wm.get("similarity")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "wmreward",
+                    ok=True,
+                    detail=f"surprise={out['wmreward_surprise']}",
+                )
             except Exception as exc:
                 out["wmreward_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "wmreward", ok=False, detail=repr(exc))
 
         if proxy_score_case is not None and proxy_runner is not None and context_video is not None:
             try:
                 proxy = proxy_score_case(str(video_path), context_video_path=str(context_video), runner=proxy_runner)
                 out["proxy"] = proxy
                 out["proxy_score"] = None if proxy is None else proxy.get("score")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "proxy",
+                    ok=True,
+                    detail=f"score={out['proxy_score']}",
+                )
             except Exception as exc:
                 out["proxy_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "proxy", ok=False, detail=repr(exc))
 
         if physics_iq_score_case is not None and source_video is not None:
             try:
                 piq = physics_iq_score_case(str(video_path), source_video_path=str(source_video))
                 out["physics_iq"] = piq
                 out["physics_iq_score"] = None if piq is None else piq.get("score")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "physics_iq",
+                    ok=True,
+                    detail=f"score={out['physics_iq_score']}",
+                )
             except Exception as exc:
                 out["physics_iq_error"] = repr(exc)
-
-        if videophy2_score_case is not None and videophy2_runner is not None:
-            try:
-                vp2 = videophy2_score_case(
-                    str(video_path),
-                    task=args.videophy2_task,
-                    caption=prompt,
-                    runner=videophy2_runner,
-                )
-                out["videophy2"] = vp2
-                out["videophy2_task"] = args.videophy2_task
-                out["videophy2_score"] = None if vp2 is None else vp2.get("score")
-            except Exception as exc:
-                out["videophy2_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "physics_iq", ok=False, detail=repr(exc))
 
         if phyground_score_case is not None and phyground_runner is not None:
             try:
@@ -418,28 +436,73 @@ def main() -> None:
                 out["phyground"] = phyground
                 out["phyground_general_avg"] = None if phyground is None else phyground.get("general_avg")
                 out["phyground_physical_avg"] = None if phyground is None else phyground.get("physical_avg")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "phyground",
+                    ok=True,
+                    detail=f"general={out['phyground_general_avg']}",
+                )
             except Exception as exc:
                 out["phyground_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "phyground", ok=False, detail=repr(exc))
+
+        if videophy2_score_case is not None and videophy2_runner is not None:
+            try:
+                vp2 = videophy2_score_case(
+                    str(video_path),
+                    task=args.videophy2_task,
+                    caption=prompt,
+                    runner=videophy2_runner,
+                )
+                out["videophy2"] = vp2
+                out["videophy2_task"] = args.videophy2_task
+                out["videophy2_score"] = None if vp2 is None else vp2.get("score")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "videophy2",
+                    ok=True,
+                    detail=f"score={out['videophy2_score']}",
+                )
+            except Exception as exc:
+                out["videophy2_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "videophy2", ok=False, detail=repr(exc))
 
         if cosmos_score_case is not None and cosmos_runner is not None:
             try:
                 cosmos = cosmos_score_case(str(video_path), runner=cosmos_runner)
                 out["cosmos_reason1"] = cosmos
                 out["cosmos_reason1_score"] = None if cosmos is None else cosmos.get("score")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "cosmos_reason1",
+                    ok=True,
+                    detail=f"score={out['cosmos_reason1_score']}",
+                )
             except Exception as exc:
                 out["cosmos_reason1_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "cosmos_reason1", ok=False, detail=repr(exc))
 
         if pmf_score_case is not None and source_video is not None:
             try:
+                pmf_case = dict(input_payload) if isinstance(input_payload, dict) else {}
+                pmf_case["video"] = str(video_path)
+                pmf_case["source_video"] = str(source_video)
                 pmf = pmf_score_case(
-                    input_payload if isinstance(input_payload, dict) else str(video_path),
+                    pmf_case,
                     source_video_path=str(source_video),
                     device=args.pmf_device,
                 )
                 out["pmf"] = pmf
                 out["pmf_score"] = None if pmf is None else pmf.get("score")
+                _log_metric_status(
+                    f"{row['method']}::{row['case_id']}",
+                    "pmf",
+                    ok=True,
+                    detail=f"score={out['pmf_score']}",
+                )
             except Exception as exc:
                 out["pmf_error"] = repr(exc)
+                _log_metric_status(f"{row['method']}::{row['case_id']}", "pmf", ok=False, detail=repr(exc))
 
         scored_rows.append(out)
         if args.save_every > 0 and (idx % args.save_every == 0 or idx == len(records)):

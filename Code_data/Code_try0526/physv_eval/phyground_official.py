@@ -5,11 +5,12 @@ import json
 import os
 import re
 import sys
+import subprocess
 from pathlib import Path
 from typing import Any
 
 from .case_inputs import EvalCase, coerce_eval_case
-from .paths import PHYJUDGE_ADAPTER, PHYJUDGE_INFER
+from .paths import PHYJUDGE_ADAPTER, PHYJUDGE_INFER, VPHY_PYTHON
 
 
 GENERAL_METRICS = ("SA", "PTV", "persistence")
@@ -129,6 +130,11 @@ class OfficialPhyGroundRunner:
         if self.cuda_visible_devices is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
         os.environ.setdefault("PYTHONNOUSERSITE", "1")
+        vphy_site_packages = VPHY_PYTHON.parent.parent / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        if vphy_site_packages.is_dir():
+            site_path = str(vphy_site_packages)
+            if site_path not in sys.path:
+                sys.path.insert(0, site_path)
         spec = importlib.util.spec_from_file_location("phyjudge_infer_local", self.infer_script)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Failed to load spec from {self.infer_script}")

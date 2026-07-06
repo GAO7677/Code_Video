@@ -91,6 +91,19 @@ class WMRewardRunner:
         import torch
         self._torch = torch
 
+        # Local WMReward / V-JEPA checkpoints under /data/gaoya are trusted.
+        # Newer torch may default to weights_only loading behavior that breaks
+        # upstream helpers which still call torch.load(...) without passing it.
+        if hasattr(torch, "load"):
+            original_torch_load = torch.load
+
+            def _trusted_torch_load(*args, **kwargs):
+                if "weights_only" not in kwargs:
+                    kwargs["weights_only"] = False
+                return original_torch_load(*args, **kwargs)
+
+            torch.load = _trusted_torch_load
+
         try:
             import decord  # noqa: F401
         except Exception:

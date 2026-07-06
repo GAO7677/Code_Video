@@ -18,6 +18,7 @@ from typing import Any
 
 FAMILY_TITLES = {
     "train0705_step002500": "train0705 step-002500",
+    "train0705_step005000": "train0705 step-005000",
     "train0705_step007000": "train0705 step-007000",
     "wan22_official_ti2v5b": "Wan2.2 official TI2V-5B",
     "wan22_early_lora_step000500": "Wan2.2 early LoRA step-000500",
@@ -27,6 +28,7 @@ SUMMARY_ORDER = [
     "wan22_official_ti2v5b",
     "wan22_early_lora_step000500",
     "train0705_step002500",
+    "train0705_step005000",
     "train0705_step007000",
 ]
 
