@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root, resolve_runtime_root
-from code_vjepa_vggt.train0419_reference import batch_eval_lora as core
+from code_vjepa_vggt.train0706_wan1p3b import batch_eval_lora as core
 
 """
 通用数据集openvid 10000 step + 0613pybullet 500 step LoRA模型评估脚本

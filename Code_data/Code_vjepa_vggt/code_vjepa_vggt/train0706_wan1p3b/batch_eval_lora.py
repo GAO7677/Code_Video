@@ -28,7 +28,7 @@ from PIL import Image
 
 DIFFSYNTH_ROOT = Path("/home/gaoya/Code_Video/DiffSynth-Studio-main")
 TRAIN0419_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_train/train_0419")
-MODEL_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
+MODEL_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B")
 DEFAULT_META_LIST_PATH = TRAIN0419_ROOT / "benchmark_meta_json_paths_full.txt"
 DEFAULT_INPUT_JSON_LIST_PATH = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_100.txt")
 DATASET_MARKERS = {
@@ -44,7 +44,7 @@ if str(TRAIN0419_ROOT) not in sys.path:
 
 from diffsynth import ModelConfig  # noqa: E402
 from diffsynth.utils.data import VideoData, save_video  # noqa: E402
-from code_vjepa_vggt.train0706_wan1p3b.context_wan import ContextAwareWanVideoPipeline  # noqa: E402
+from code_vjepa_vggt.train0706_wan1p3b.context_wan_v_newtrain import ContextAwareWanVideoPipeline  # noqa: E402
 
 sys.path.append("/home/gaoya/code_my_utils")
 from tools.seed import seed_everything  # noqa: E402
@@ -290,19 +290,40 @@ def find_tokenizer_path(wan_root: Path) -> Path:
     )
 
 
-def build_model_configs(wan_root: Path) -> list[ModelConfig]:
-    dit_shards = [
+def resolve_dit_paths(wan_root: Path) -> list[Path]:
+    sharded_paths = [
         wan_root / "diffusion_pytorch_model-00001-of-00003.safetensors",
         wan_root / "diffusion_pytorch_model-00002-of-00003.safetensors",
         wan_root / "diffusion_pytorch_model-00003-of-00003.safetensors",
     ]
+    if all(path.is_file() for path in sharded_paths):
+        return sharded_paths
+    single_path = wan_root / "diffusion_pytorch_model.safetensors"
+    if single_path.is_file():
+        return [single_path]
+    missing = [str(path) for path in sharded_paths] + [str(single_path)]
+    raise FileNotFoundError(f"Required diffusion model file not found. Checked: {', '.join(missing)}")
+
+
+def resolve_vae_path(wan_root: Path) -> Path:
+    for path in (wan_root / "Wan2.1_VAE.pth", wan_root / "Wan2.2_VAE.pth"):
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        "Required VAE file not found. Checked: "
+        f"{wan_root / 'Wan2.1_VAE.pth'}, {wan_root / 'Wan2.2_VAE.pth'}"
+    )
+
+
+def build_model_configs(wan_root: Path) -> list[ModelConfig]:
+    dit_shards = resolve_dit_paths(wan_root)
     t5_path = wan_root / "models_t5_umt5-xxl-enc-bf16.pth"
-    vae_path = wan_root / "Wan2.2_VAE.pth"
+    vae_path = resolve_vae_path(wan_root)
     for path in dit_shards + [t5_path, vae_path]:
         if not path.is_file():
             raise FileNotFoundError(f"Required model file not found: {path}")
     return [
-        ModelConfig(path=[str(path) for path in dit_shards]),
+        ModelConfig(path=[str(path) for path in dit_shards] if len(dit_shards) > 1 else str(dit_shards[0])),
         ModelConfig(path=str(t5_path)),
         ModelConfig(path=str(vae_path)),
     ]
@@ -524,16 +545,6 @@ def build_input_roles(
         return roles
 
     if conditioning_mode == "context_aware":
-        if isinstance(first_frame_path, str) and first_frame_path:
-            roles.append({"role": "input_image", "path": first_frame_path})
-        elif isinstance(context_video_path, str) and context_video_path:
-            roles.append(
-                {
-                    "role": "input_image",
-                    "path": context_video_path,
-                    "note": "first frame extracted from context video at runtime",
-                }
-            )
         if isinstance(context_video_path, str) and context_video_path:
             roles.append({"role": "context_video", "path": context_video_path})
         return roles
@@ -564,7 +575,7 @@ def build_model_input_summary(
     if conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
         pipeline_kwargs.append("input_image")
     elif conditioning_mode == "context_aware":
-        pipeline_kwargs.extend(["input_image", "context_video"])
+        pipeline_kwargs.append("context_video")
 
     payload: dict[str, Any] = {
         "conditioning_mode": conditioning_mode,
@@ -573,10 +584,7 @@ def build_model_input_summary(
     }
     if conditioning_mode == "context_aware":
         payload["used_context_frames"] = used_context_frames
-        payload["notes"] = [
-            "input_image is the first context frame passed separately",
-            "context_video is the resized context frame sequence",
-        ]
+        payload["notes"] = ["context_video is the resized context frame sequence"]
     elif conditioning_mode in {"input_image_only", "ti2v_firstframe"}:
         payload["notes"] = ["input_image is the first frame condition passed to the model"]
     return payload
@@ -945,7 +953,6 @@ def generate_one_video(
         if input_image is not None:
             generation_kwargs["input_image"] = input_image
         if context is not None:
-            generation_kwargs["input_image"] = context[0]
             generation_kwargs["context_video"] = context
         video = pipe(**generation_kwargs)
     keep = min(int(output_num_frames), len(video))

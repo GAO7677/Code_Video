@@ -995,6 +995,9 @@ def model_fn_wan_video_with_context(
                         block_id,
                     )
             else:
+                block_kwargs = {}
+                if object_context is not None and getattr(block, "object_cross_attn", None) is not None:
+                    block_kwargs["object_context"] = object_context
                 x = gradient_checkpoint_forward(
                     block,
                     use_gradient_checkpointing,
@@ -1003,7 +1006,7 @@ def model_fn_wan_video_with_context(
                     context,
                     t_mod,
                     freqs,
-                    object_context=object_context,
+                    **block_kwargs,
                 )
 
             if vace_context is not None and block_id in vace.vace_layers_mapping:
