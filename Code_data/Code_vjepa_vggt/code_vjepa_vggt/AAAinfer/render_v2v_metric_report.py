@@ -54,6 +54,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--input-json-list-path",
+        type=Path,
+        action="append",
+        default=[],
+        help="Only include result jsons whose input_json appears in the provided txt list(s).",
+    )
     return parser.parse_args()
 
 
@@ -99,7 +106,10 @@ def extract_metric_values(payload: dict[str, Any]) -> dict[str, float | None]:
     }
 
 
-def discover_result_jsons(result_root: Path) -> list[Path]:
+def discover_result_jsons(
+    result_root: Path,
+    allowed_input_json_paths: set[str] | None = None,
+) -> list[Path]:
     paths: list[Path] = []
     for path in sorted(result_root.rglob("*.json")):
         if path.name in EXCLUDED_JSON_NAMES:
@@ -111,6 +121,12 @@ def discover_result_jsons(result_root: Path) -> list[Path]:
             continue
         if "input_json" not in payload:
             continue
+        if allowed_input_json_paths is not None:
+            input_json = payload.get("input_json")
+            if not isinstance(input_json, str) or not input_json.strip():
+                continue
+            if resolve_path_string(input_json) not in allowed_input_json_paths:
+                continue
         paths.append(path)
     return paths
 
@@ -248,6 +264,22 @@ def discover_known_list_signatures(result_jsons: list[Path]) -> dict[str, dict[s
     return signature_map
 
 
+def load_allowed_input_json_paths(list_paths: list[Path]) -> tuple[set[str], list[dict[str, Any]]]:
+    allowed_paths: set[str] = set()
+    list_infos: list[dict[str, Any]] = []
+    for list_path in list_paths:
+        resolved_list_path = list_path.expanduser().resolve()
+        list_case_paths = read_list_file_paths(resolved_list_path)
+        list_infos.append(
+            {
+                "path": str(resolved_list_path),
+                "num_cases": len(list_case_paths),
+            }
+        )
+        allowed_paths.update(list_case_paths)
+    return allowed_paths, list_infos
+
+
 def summarize_methods(result_jsons: list[Path], known_list_signatures: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, Any]] = {}
     for json_path in result_jsons:
@@ -342,6 +374,39 @@ def build_group_rows(method_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = list(grouped.values())
     rows.sort(key=lambda item: (str(item["dataset_label"]), str(item["dataset_signature"])))
     return rows
+
+
+def build_filtered_progress_rows(method_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not method_rows:
+        return []
+
+    completed_by_metric: dict[str, int] = {metric.key: 0 for metric in METRICS}
+    total_cases = 0
+    for row in method_rows:
+        num_cases = row.get("num_cases")
+        if isinstance(num_cases, int) and num_cases > 0:
+            total_cases += num_cases
+        for metric in METRICS:
+            metric_count = row.get(f"{metric.key}_count")
+            if isinstance(metric_count, int) and metric_count > 0:
+                completed_by_metric[metric.key] += metric_count
+
+    progress_rows: list[dict[str, Any]] = []
+    for metric in METRICS:
+        completed = completed_by_metric[metric.key]
+        progress_rows.append(
+            {
+                "metric": metric.key,
+                "num_cases": total_cases,
+                "completed": completed,
+                "num_success": completed,
+                "num_failed": max(total_cases - completed, 0),
+                "errors_count": None,
+                "summary_path": None,
+                "updated_at": None,
+            }
+        )
+    return progress_rows
 
 
 def available_metric_count(record: dict[str, Any]) -> int:
@@ -571,6 +636,7 @@ def render_html(
     output_dir: Path,
     progress_rows: list[dict[str, Any]],
     group_rows: list[dict[str, Any]],
+    selected_list_infos: list[dict[str, Any]],
 ) -> str:
     progress_table_rows = []
     for row in progress_rows:
@@ -742,6 +808,20 @@ def render_html(
             "</section>"
         )
 
+    filter_summary_html = ""
+    if selected_list_infos:
+        list_items = "".join(
+            "<li>"
+            f"<span class='mono'>{html.escape(str(info['path']))}</span> "
+            f"({html.escape(str(info['num_cases']))} cases)"
+            "</li>"
+            for info in selected_list_infos
+        )
+        filter_summary_html = (
+            "<p>Selected input-json lists:</p>"
+            f"<ul>{list_items}</ul>"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -783,6 +863,11 @@ def render_html(
     }}
     p {{
       margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }}
+    ul {{
+      margin: 8px 0 0 20px;
       color: var(--muted);
       line-height: 1.6;
     }}
@@ -875,6 +960,7 @@ def render_html(
       <h1>V2V Metric Report</h1>
       <p>Result root: <span class="mono">{html.escape(str(result_root))}</span></p>
       <p>Output dir: <span class="mono">{html.escape(str(output_dir))}</span></p>
+      {filter_summary_html}
       <p>Direction notes: WMReward uses the official <span class="mono">surprise ↓</span> convention; Proxy columns report raw JEPA error terms <span class="mono">Proxy_RelRaw ↓ / Proxy_DeltaRel ↓ / Proxy_DeltaProf ↓</span>; Physics-IQ here is the project single-view approximate score <span class="mono">Physics-IQ Approx ↑</span>, not the official multi-view benchmark score.</p>
     </section>
 
@@ -936,10 +1022,19 @@ def main() -> None:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    result_jsons = discover_result_jsons(result_root)
+    selected_list_infos: list[dict[str, Any]] = []
+    allowed_input_json_paths: set[str] | None = None
+    if args.input_json_list_path:
+        allowed_input_json_paths, selected_list_infos = load_allowed_input_json_paths(args.input_json_list_path)
+
+    result_jsons = discover_result_jsons(result_root, allowed_input_json_paths=allowed_input_json_paths)
     known_list_signatures = discover_known_list_signatures(result_jsons)
     method_rows = summarize_methods(result_jsons, known_list_signatures)
-    progress_rows = load_progress_rows(result_root)
+    progress_rows = (
+        build_filtered_progress_rows(method_rows)
+        if allowed_input_json_paths is not None
+        else load_progress_rows(result_root)
+    )
     grouped_rows = build_group_rows(method_rows)
 
     group_summary_rows: list[dict[str, Any]] = []
@@ -996,6 +1091,7 @@ def main() -> None:
             {
                 "result_root": str(result_root),
                 "num_result_jsons": len(result_jsons),
+                "selected_list_infos": selected_list_infos,
                 "method_rows": method_rows,
                 "group_rows": group_summary_rows,
                 "known_list_signatures": known_list_signatures,
@@ -1011,7 +1107,7 @@ def main() -> None:
     write_csv(progress_csv_path, progress_rows)
     write_csv(group_summary_csv_path, group_summary_rows)
     html_path.write_text(
-        render_html(result_root, output_dir, progress_rows, grouped_rows),
+        render_html(result_root, output_dir, progress_rows, grouped_rows, selected_list_infos),
         encoding="utf-8",
     )
 
@@ -1019,6 +1115,7 @@ def main() -> None:
         {
             "result_root": str(result_root),
             "num_result_jsons": len(result_jsons),
+            "selected_lists": selected_list_infos,
             "output_dir": str(output_dir),
             "html_report": str(html_path),
             "method_summary_csv": str(summary_csv_path),

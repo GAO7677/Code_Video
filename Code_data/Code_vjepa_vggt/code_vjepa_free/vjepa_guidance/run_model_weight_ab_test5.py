@@ -287,8 +287,45 @@ def base_env() -> dict[str, str]:
     return env
 
 
+def _parse_visible_devices(raw_value: str | None) -> list[str]:
+    if raw_value is None:
+        return []
+    devices: list[str] = []
+    for chunk in str(raw_value).split(","):
+        value = chunk.strip()
+        if value:
+            devices.append(value)
+    return devices
+
+
+def resolve_child_cuda_visible_devices(
+    parent_env: dict[str, str],
+    *,
+    main_gpu: int,
+    vjepa_gpu: int,
+) -> str:
+    parent_visible = _parse_visible_devices(parent_env.get("CUDA_VISIBLE_DEVICES"))
+    requested = [int(main_gpu), int(vjepa_gpu)]
+    if parent_visible and all(0 <= device_idx < len(parent_visible) for device_idx in requested):
+        resolved = ",".join(parent_visible[device_idx] for device_idx in requested)
+        print(
+            "[gpu-map] interpreting requested GPUs as local indices under parent "
+            f"CUDA_VISIBLE_DEVICES={','.join(parent_visible)} -> child {resolved}",
+            flush=True,
+        )
+        return resolved
+    resolved = ",".join(str(device_idx) for device_idx in requested)
+    print(
+        "[gpu-map] using requested GPUs as physical ids "
+        f"-> child CUDA_VISIBLE_DEVICES={resolved}",
+        flush=True,
+    )
+    return resolved
+
+
 def run_cmd(cmd: list[str], *, env: dict[str, str], label: str, continue_on_error: bool) -> None:
     print(f"[run] {label}", flush=True)
+    print(f"[env] CUDA_VISIBLE_DEVICES={env.get('CUDA_VISIBLE_DEVICES', '<unset>')}", flush=True)
     print(subprocess.list2cmdline(cmd), flush=True)
     result = subprocess.run(cmd, env=env, check=False)
     if result.returncode != 0:
@@ -370,7 +407,11 @@ def maybe_reuse_baseline(*, family_id: str, baseline_dir: Path, force: bool) -> 
 
 def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namespace) -> None:
     env = base_env()
-    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
+    env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+        env,
+        main_gpu=int(args.main_gpu),
+        vjepa_gpu=int(args.vjepa_gpu),
+    )
     baseline_dir = output_root / "wan22_official_ti2v5b" / "baseline"
     guided_dir = output_root / "wan22_official_ti2v5b" / "guided"
     baseline_cmd = [
@@ -453,7 +494,11 @@ def wanti2v_generate(unique_list: Path, output_root: Path, args: argparse.Namesp
 
 def lora_generate(unique_list: Path, output_root: Path, args: argparse.Namespace) -> None:
     env = base_env()
-    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
+    env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+        env,
+        main_gpu=int(args.main_gpu),
+        vjepa_gpu=int(args.vjepa_gpu),
+    )
     script = GUIDANCE_DIR / "wan_openvid_0613pybullet_lorav2v_vjepa.py"
     common = [
         str(PY_WAN_CU128),
@@ -531,7 +576,11 @@ def lora_generate(unique_list: Path, output_root: Path, args: argparse.Namespace
 
 def train0705_generate(unique_list: Path, weights_root: Path, family_root: Path, family_name: str, args: argparse.Namespace) -> None:
     env = base_env()
-    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
+    env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+        env,
+        main_gpu=int(args.main_gpu),
+        vjepa_gpu=int(args.vjepa_gpu),
+    )
     script = ROOT / "code_vjepa_vggt" / "train0705" / "wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py"
     common = [
         str(PY_WAN_CU128),
@@ -647,7 +696,11 @@ def score(args: argparse.Namespace) -> None:
         out_md = score_root / f"{family.family_id}_summary.md"
         env = os.environ.copy()
         env["PYTHONPATH"] = f"/home/gaoya/Code_Video/Code_data/Code_try0526:{ROOT}"
-        env["CUDA_VISIBLE_DEVICES"] = str(args.score_gpu)
+        env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+            env,
+            main_gpu=int(args.score_gpu),
+            vjepa_gpu=int(args.score_gpu),
+        ).split(",", maxsplit=1)[0]
         baseline_dir = family.score_baseline_dir if family.score_baseline_dir and family.score_baseline_dir.is_dir() else family.baseline_dir
         print(f"[score] {family.family_id} baseline_dir={baseline_dir}", flush=True)
         cmd = [

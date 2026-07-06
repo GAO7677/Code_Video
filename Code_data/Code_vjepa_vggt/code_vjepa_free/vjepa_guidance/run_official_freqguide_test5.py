@@ -51,8 +51,45 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _parse_visible_devices(raw_value: str | None) -> list[str]:
+    if raw_value is None:
+        return []
+    devices: list[str] = []
+    for chunk in str(raw_value).split(","):
+        value = chunk.strip()
+        if value:
+            devices.append(value)
+    return devices
+
+
+def resolve_child_cuda_visible_devices(
+    parent_env: dict[str, str],
+    *,
+    main_gpu: int,
+    vjepa_gpu: int,
+) -> str:
+    parent_visible = _parse_visible_devices(parent_env.get("CUDA_VISIBLE_DEVICES"))
+    requested = [int(main_gpu), int(vjepa_gpu)]
+    if parent_visible and all(0 <= device_idx < len(parent_visible) for device_idx in requested):
+        resolved = ",".join(parent_visible[device_idx] for device_idx in requested)
+        print(
+            "[gpu-map] interpreting requested GPUs as local indices under parent "
+            f"CUDA_VISIBLE_DEVICES={','.join(parent_visible)} -> child {resolved}",
+            flush=True,
+        )
+        return resolved
+    resolved = ",".join(str(device_idx) for device_idx in requested)
+    print(
+        "[gpu-map] using requested GPUs as physical ids "
+        f"-> child CUDA_VISIBLE_DEVICES={resolved}",
+        flush=True,
+    )
+    return resolved
+
+
 def run_cmd(cmd: list[str], *, env: dict[str, str], label: str, continue_on_error: bool) -> None:
     print(f"[run] {label}", flush=True)
+    print(f"[env] CUDA_VISIBLE_DEVICES={env.get('CUDA_VISIBLE_DEVICES', '<unset>')}", flush=True)
     print(subprocess.list2cmdline(cmd), flush=True)
     result = subprocess.run(cmd, env=env, check=False)
     if result.returncode != 0:
@@ -86,7 +123,11 @@ def generate(args: argparse.Namespace) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{ROOT}:{WAN22_OFFICIAL_REPO}"
     env["WAN22_OFFICIAL_REPO"] = str(WAN22_OFFICIAL_REPO)
-    env["CUDA_VISIBLE_DEVICES"] = f"{args.main_gpu},{args.vjepa_gpu}"
+    env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+        env,
+        main_gpu=int(args.main_gpu),
+        vjepa_gpu=int(args.vjepa_gpu),
+    )
 
     baseline_dir = OUTPUT_ROOT / "baseline"
     guided_dir = OUTPUT_ROOT / "guided"
@@ -165,7 +206,11 @@ def generate(args: argparse.Namespace) -> None:
 def score(args: argparse.Namespace) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = f"/home/gaoya/Code_Video/Code_data/Code_try0526:{ROOT}"
-    env["CUDA_VISIBLE_DEVICES"] = str(args.score_gpu)
+    env["CUDA_VISIBLE_DEVICES"] = resolve_child_cuda_visible_devices(
+        env,
+        main_gpu=int(args.score_gpu),
+        vjepa_gpu=int(args.score_gpu),
+    ).split(",", maxsplit=1)[0]
     out_json = OUTPUT_ROOT / "scores" / "official_freqguide_test5_summary.json"
     out_md = OUTPUT_ROOT / "scores" / "official_freqguide_test5_summary.md"
     cmd = [

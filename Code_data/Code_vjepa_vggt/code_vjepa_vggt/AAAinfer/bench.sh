@@ -25,7 +25,7 @@ METRICS=(
   "pmf_with_context"
   "pmf_without_context"
   "videophy2"
-  "phyground"
+  # "phyground"
   "cosmos_reason1"
 )
 

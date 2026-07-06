@@ -48,13 +48,38 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 ```
 
 ## train0705 指标报告可视化
-只渲染 `morpheus_real_world` 和 `physicIQ` 两个数据集。
+只渲染 `morpheus_real_world` 和 `physicIQ` 两个数据集，并且只统计对应列表中记录的 case。
 
-### morpheus_real_world
+## 统计 + 合并可视化一键运行
+先整批回填 `train0705_formal_compare` 下的指标，再把 `morpheus_real_world(121)` 和 `physicIQ(67)` 合并到同一个 HTML 页面。在bench.sh里面控制跑哪些指标
+
+
+```bash
+CUDA_VISIBLE_DEVICES=5 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_train0705_formal_compare_report.sh
+```
+
+只重渲染合并报告，跳过指标回填：
+
+```bash
+RUN_BENCH=0 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_train0705_formal_compare_report.sh
+```
+
+渲染完成后预览：
+
+```bash
+pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/combined 8991
+```
+
+## 单独渲染某一个数据集
+
+### morpheus_real_world（121）
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/morpheus_real_world \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt \
   --output-dir /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/morpheus_real_world
 ```
 
@@ -62,11 +87,12 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/morpheus_real_world 8991
 ```
 
-### physicIQ
+### physicIQ（67）
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
   --output-dir /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/physicIQ
 ```
 

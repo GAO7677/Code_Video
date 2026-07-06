@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 # Run command example:
-# PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-# CUDA_VISIBLE_DEVICES=2 \
-# /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705_ctx1dupjepa.py \
-#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500/checkpoint.safetensors \
-#   --context-video /data/gaoya/agent-data/outputs/train0705_ctx1_smoke_20260706/input/physicIQ_0002_ctx01f.mp4 \
-#   --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
-#   --output-dir /data/gaoya/agent-data/outputs/train0705_ctx1_smoke_20260706/run_ctx1dupjepa \
-#   --context-frames 1 \
-#   --num-frames 9 \
-#   --sampling-steps 40 \
-#   --initialize-model-on-cpu
+'''
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705_ctx1dupjepa.py \
+  --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500/checkpoint.safetensors \
+  --context-video /data/gaoya/agent-data/outputs/train0705_ctx1_smoke_20260706/input/physicIQ_0002_ctx01f.mp4 \
+  --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+  --output-dir /data/gaoya/AAA_test_video/0623/test/ti2v/train0705_kubric_test5_compare \
+  --context-frames 1 \
+  --num-frames  \
+  --sampling-steps 40 \
+  --initialize-model-on-cpu
+
+'''
+
 
 import torch
 

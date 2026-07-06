@@ -134,6 +134,7 @@ _VJEPA_RUNTIME_ARG_NAMES = (
     "vjepa_model",
     "vjepa_ckpt",
     "vjepa_guidance_mode",
+    "vjepa_motion_mask_mode",
     "vjepa_guidance_steps",
     "vjepa_min_step_percent",
     "vjepa_max_step_percent",
@@ -155,6 +156,13 @@ _VJEPA_RUNTIME_ARG_NAMES = (
     "vjepa_max_correction_ratio",
     "vjepa_stay_close_max_video_l1",
     "vjepa_artifact_guard_mode",
+    "vjepa_use_spectral_guidance",
+    "vjepa_spectral_source",
+    "vjepa_spectral_lowpass_ratio",
+    "vjepa_spectral_normalize_percentile",
+    "vjepa_spectral_weight_floor",
+    "vjepa_spectral_weight_scale",
+    "vjepa_spectral_mask_dilation",
 )
 
 
