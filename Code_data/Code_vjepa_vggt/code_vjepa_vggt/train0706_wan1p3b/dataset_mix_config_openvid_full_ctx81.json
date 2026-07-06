@@ -1,0 +1,21 @@
+[
+  {
+    "type": "openvid",
+    "path": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train",
+    "repeat": 1
+  },
+  {
+    "type": "raw_phys_state_video",
+    "path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500",
+    "split": "train",
+    "repeat": 1
+  },
+  {
+    "type": "genesis_rigid",
+    "path": "/data/gaoya/AAA_test_video/Dataset_physV/0417data/version0515zoom_genesis_rigid",
+    "split": "train",
+    "heldout_seed": 20260421,
+    "heldout_count": 8,
+    "repeat": 1
+  }
+]

@@ -323,6 +323,11 @@ def run_inference_for_step(
         log(f"[wait] retry cooldown active for {step.step_name}")
         return False
 
+    infer_ready, infer_reason = bench_idle_gpus_ready([int(args.infer_gpu)])
+    if not infer_ready:
+        log(f"[wait] inference gated by gpu idle check: {infer_reason}")
+        return False
+
     step_state["last_infer_attempt_at"] = now
     command = build_infer_command(args, step.step_dir)
     returncode, error = run_command(command, env=build_infer_env(args), dry_run=bool(args.dry_run))
