@@ -17,7 +17,7 @@ ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py"
-DATASET_CONFIG="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json"
+DATASET_CONFIG="${DATASET_CONFIG:-${PROJ}/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json}"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 BASE_LORA="${BASE_LORA:-}"

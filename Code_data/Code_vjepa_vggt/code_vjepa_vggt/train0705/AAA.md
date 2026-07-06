@@ -48,19 +48,9 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 ```
 
 ## train0705 指标报告可视化
-```bash
-/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py \
-  --result-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare \
-  --output-dir /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare
-```
+只渲染 `morpheus_real_world` 和 `physicIQ` 两个数据集。
 
-```bash
-pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare 8991
-```
-
-如果只想渲染单个数据集，也可以单独指定：
-
+### morpheus_real_world
 ```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py \
@@ -69,8 +59,17 @@ pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare 
 ```
 
 ```bash
+pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/morpheus_real_world 8991
+```
+
+### physicIQ
+```bash
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/render_v2v_metric_report.py \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ \
   --output-dir /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/physicIQ
+```
+
+```bash
+pyport /data/gaoya/AAA_test_video/0623/test/report/v2v/train0705_formal_compare/physicIQ 8992
 ```
