@@ -86,7 +86,6 @@ CMD=(
   --lora_base_model dit
   --lora_target_modules q,k,v,o,ffn.0,ffn.2
   --lora_rank 32
-  --extra_inputs input_image
   --report_to wandb
   --wandb_project openvid-movid-genesis-wan21_13b
   --wandb_mode online
