@@ -88,6 +88,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-interval-seconds", type=int, default=120)
     parser.add_argument("--min-checkpoint-age-seconds", type=int, default=60)
     parser.add_argument("--retry-cooldown-seconds", type=int, default=300)
+    parser.add_argument(
+        "--watch-state-dirname",
+        default=WATCH_STATE_DIRNAME,
+        help="Subdirectory under result-root used to store watcher state and lock files.",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -126,8 +131,8 @@ def ensure_lock(lock_path: Path):
     return handle
 
 
-def build_state_paths(result_root: Path) -> tuple[Path, Path]:
-    state_root = result_root / WATCH_STATE_DIRNAME
+def build_state_paths(result_root: Path, watch_state_dirname: str) -> tuple[Path, Path]:
+    state_root = result_root / watch_state_dirname
     return state_root / "state.json", state_root / "watch.lock"
 
 
@@ -429,7 +434,7 @@ def main() -> None:
     if not args.bench_script.is_file():
         raise FileNotFoundError(f"bench-script not found: {args.bench_script}")
 
-    state_path, lock_path = build_state_paths(args.result_root)
+    state_path, lock_path = build_state_paths(args.result_root, str(args.watch_state_dirname))
     state = load_json(state_path, default_state(args))
     lock_handle = ensure_lock(lock_path)
     try:

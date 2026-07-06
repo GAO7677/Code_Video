@@ -15,6 +15,32 @@ class MotionMaskResult:
     threshold: float
 
 
+def extract_motion_mask_thw(
+    video_thwc_u8: np.ndarray,
+    *,
+    method: str = "background_residual",
+    diff_quantile: float = 0.97,
+    flow_quantile: float = 0.96,
+    dilate_px: int = 10,
+    blur_ksize: int = 5,
+) -> np.ndarray:
+    """
+    Standard project API:
+      input:  video_thwc_u8  [T,H,W,3]
+      output: motion_mask_thw [T,H,W] float32 in {0,1}
+    """
+    results = compute_all_motion_masks(
+        video_thwc_u8,
+        diff_quantile=diff_quantile,
+        flow_quantile=flow_quantile,
+        dilate_px=dilate_px,
+        blur_ksize=blur_ksize,
+    )
+    if method not in results:
+        raise KeyError(f"unknown motion mask method: {method}")
+    return results[method].mask.astype(np.float32)
+
+
 def _normalize_heat(heat: np.ndarray) -> np.ndarray:
     heat = np.nan_to_num(heat.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     max_value = float(heat.max(initial=0.0))

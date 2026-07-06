@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
 import torch
 
@@ -14,7 +17,6 @@ from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
     draw_box_rgb,
     draw_point_rgb,
-    ensure_browser_video,
     render_track_overlay,
     tensor_frame_to_uint8_hwc,
     write_mp4,
@@ -34,6 +36,44 @@ PRED_TRACK_COLOR = (39, 125, 161)
 def _write_rgb_png(path: Path, image_hwc: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(path), cv2.cvtColor(image_hwc, cv2.COLOR_RGB2BGR))
+
+
+def _ensure_browser_video(source_path: Path) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        try:
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            ffmpeg = None
+    if ffmpeg is None:
+        return source_path
+    out_path = source_path.with_name(f"{source_path.stem}.browser.mp4")
+    if (
+        out_path.exists()
+        and out_path.stat().st_mtime_ns >= source_path.stat().st_mtime_ns
+        and out_path.stat().st_size > 0
+    ):
+        return out_path
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(source_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(out_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return out_path
 
 
 def _norm_box_to_px(box_xyxy: np.ndarray, image_hw: tuple[int, int]) -> np.ndarray:
@@ -389,8 +429,6 @@ def _build_html_report(result: dict[str, Any], output_dir: Path) -> Path:
   <pre>{json.dumps(result["metrics"], indent=2, ensure_ascii=False)}</pre>
   <h2>Shapes</h2>
   <pre>{json.dumps(result["shapes"], indent=2, ensure_ascii=False)}</pre>
-  <h2>Load Info</h2>
-  <pre>{json.dumps(result["load_info"], indent=2, ensure_ascii=False)}</pre>
 </body>
 </html>
 """
@@ -504,7 +542,7 @@ def main() -> None:
     )
     input_overlay_raw = output_dir / "input_prepipe_overlay.mp4"
     write_mp4(input_overlay_raw, input_overlay_video, fps=int(args.inspect_fps))
-    input_overlay_browser = ensure_browser_video(input_overlay_raw)
+    input_overlay_browser = _ensure_browser_video(input_overlay_raw)
 
     ref_box_xyxy = debug["object_out"].active_box_xyxy[0].detach().float().cpu().numpy()
     pred_box_xyxy = debug["object_aux_out"].pred_box_xyxy[0].detach().float().cpu().numpy()
@@ -521,7 +559,7 @@ def main() -> None:
     )
     box_overlay_raw = output_dir / "aux_pred_box_overlay.mp4"
     write_mp4(box_overlay_raw, box_overlay_video, fps=int(args.inspect_fps))
-    box_overlay_browser = ensure_browser_video(box_overlay_raw)
+    box_overlay_browser = _ensure_browser_video(box_overlay_raw)
 
     track_overlay_video = _render_ref_pred_track_overlay(
         context_video=context_video,
@@ -532,7 +570,7 @@ def main() -> None:
     )
     track_overlay_raw = output_dir / "aux_pred_track_overlay.mp4"
     write_mp4(track_overlay_raw, track_overlay_video, fps=int(args.inspect_fps))
-    track_overlay_browser = ensure_browser_video(track_overlay_raw)
+    track_overlay_browser = _ensure_browser_video(track_overlay_raw)
 
     result = {
         "caption": str(sample["caption"]),
