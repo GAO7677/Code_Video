@@ -15,6 +15,15 @@ set -euo pipefail
 GPU_SET="${GPU_SET:-0,2,3,5}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 RESUME="${RESUME:-none}"
+NUM_FRAMES="${NUM_FRAMES:-24}"
+FIXED_NUM_CONTEXT_FRAMES="${FIXED_NUM_CONTEXT_FRAMES:-8}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-20000}"
+NUM_EPOCHS="${NUM_EPOCHS:-100}"
+HEIGHT="${HEIGHT:-512}"
+WIDTH="${WIDTH:-896}"
+WANDB_MODE="${WANDB_MODE:-online}"
+WANDB_PROJECT="${WANDB_PROJECT:-vjepa_vggt_wan}"
+WANDB_NAME="${WANDB_NAME:-pybullet0629_teacher_student_stage1b_context_only_no_gt_box_v_newtrain0705_gpu0235_20260703}"
 
 if [[ ",${GPU_SET}," == *",4,"* ]]; then
   echo "ERROR: gpu4 故障, 禁止使用。当前 GPU_SET=${GPU_SET}" >&2
@@ -55,12 +64,12 @@ CMD=(
   --dataset_type phys_state_episode
   --phys_state_root "${DATASET_ROOT}"
   --phys_state_split train
-  --height 512
-  --width 896
-  --num_frames 24
-  --fixed_num_context_frames 8
-  --max_train_steps 20000
-  --num_epochs 100
+  --height "${HEIGHT}"
+  --width "${WIDTH}"
+  --num_frames "${NUM_FRAMES}"
+  --fixed_num_context_frames "${FIXED_NUM_CONTEXT_FRAMES}"
+  --max_train_steps "${MAX_TRAIN_STEPS}"
+  --num_epochs "${NUM_EPOCHS}"
   --dataset_num_workers "${DATASET_NUM_WORKERS}"
   --learning_rate 1e-4
   --weight_decay 0.01
@@ -119,9 +128,9 @@ CMD=(
   --grounding_container_suppress_small_iou_threshold 0.7
   --sam2_segment_len 8
   --report_to wandb
-  --wandb_project vjepa_vggt_wan
-  --wandb_name pybullet0629_teacher_student_stage1b_context_only_no_gt_box_v_newtrain0705_gpu0235_20260703
-  --wandb_mode online
+  --wandb_project "${WANDB_PROJECT}"
+  --wandb_name "${WANDB_NAME}"
+  --wandb_mode "${WANDB_MODE}"
 )
 
 CMD+=("${RESUME_ARGS[@]}")

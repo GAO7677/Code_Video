@@ -1,29 +1,43 @@
 from __future__ import annotations
-
-# Run command example:
-# PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-# CUDA_VISIBLE_DEVICES=7 \
-# /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_t2v_v_newtrain0705.py \
-#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
-#   --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
-#   --output-dir /data/gaoya/agent-data/outputs/train0705_t2v_demo \
-#   --sampling-steps 40
-#
-# Guided example:
-# PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-# CUDA_VISIBLE_DEVICES=6 \
-# /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_t2v_v_newtrain0705.py \
-#   --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
-#   --prompt "A metal ball drops onto a block on a table. Static shot with no camera movement." \
-#   --output-dir /data/gaoya/agent-data/outputs/train0705_t2v_vjepa_demo \
-#   --sampling-steps 40 \
-#   --vjepa-preset ladder_s20 \
-#   --enable-vjepa-guidance \
-#   --vjepa-device cuda:0
-
 """
+Run command example:
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_t2v_v_newtrain0705.py \
+  --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --prompt "Two pillows on a table and two grabber tools hanging above them from which a brown tennis ball and an orange block are suspended. The grabber tools let go of the ball and block. Static shot with no camera movement." \
+  --output-dir /data/gaoya/agent-data/outputs/train0705_t2v_demo \
+  --sampling-steps 40
+
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  Guided example:
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=3 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/infer_t2v_v_newtrain0705.py \
+  --checkpoint /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --prompt "A metal ball drops onto a block on a table. Static shot with no camera movement." \
+  --output-dir /data/gaoya/agent-data/outputs/train0705_t2v_vjepa_demo \
+  --sampling-steps 40 \
+  --vjepa-preset ladder_s20 \
+  --enable-vjepa-guidance \
+  --vjepa-device cuda:0
+
+
 Pure text-to-video inference entry for the train0705 runtime stack.
 
 This script reuses the same DiffSynth-native Wan runtime, base LoRA loading, and
@@ -48,6 +62,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import MethodType
 from types import SimpleNamespace
 
 import numpy as np
@@ -162,6 +177,26 @@ def _load_overlapping_checkpoint_into_model(model, checkpoint_path):
     }
 
 
+def _patch_dit_blocks_for_optional_object_context(dit) -> None:
+    for block in getattr(dit, "blocks", []):
+        if getattr(block, "object_cross_attn", None) is not None:
+            continue
+        original_forward = block.forward
+
+        def _forward_with_optional_object_context(
+            self,
+            x,
+            context,
+            t_mod,
+            freqs,
+            object_context=None,
+            _original_forward=original_forward,
+        ):
+            return _original_forward(x, context, t_mod, freqs)
+
+        block.forward = MethodType(_forward_with_optional_object_context, block)
+
+
 def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     parser = t0705.build_parser()
     model_args = parser.parse_args([])
@@ -208,6 +243,7 @@ def _build_runtime_model(args: argparse.Namespace):
     target_device = torch.device(args.device)
     model.to(target_device)
     model.pipe.to(device=target_device, dtype=model.pipe.torch_dtype)
+    _patch_dit_blocks_for_optional_object_context(model.pipe.dit)
     model.eval()
     infer0705.configure_runtime_pipe_vjepa(model.pipe, args)
     return model, model_args, {

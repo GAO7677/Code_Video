@@ -71,7 +71,7 @@ CUDA_VISIBLE_DEVICES=2 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=7 \
+CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
@@ -85,7 +85,7 @@ CUDA_VISIBLE_DEVICES=7 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=6 \
+CUDA_VISIBLE_DEVICES=3 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
@@ -107,13 +107,25 @@ CUDA_VISIBLE_DEVICES=6 \
 
 ```bash
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=7 \
+CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_ctx1dupjepa_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
   --model-name train_stage1b_diffsynth_native0705_ctx1_ti2v_step002500 \
-  --output-root /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_physicIQ \
+  --context-frames 1 \
+  --num-inference-steps 40
+
+
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=3 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_ctx1dupjepa_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt \
+  --model-name train_stage1b_diffsynth_native0705_ctx1_ti2v_step002500 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world \
   --context-frames 1 \
   --num-inference-steps 40
 ```
