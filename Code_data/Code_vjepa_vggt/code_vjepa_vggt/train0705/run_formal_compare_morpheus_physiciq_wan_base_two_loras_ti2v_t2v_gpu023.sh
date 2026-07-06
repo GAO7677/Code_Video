@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# CUDA_VISIBLE_DEVICES=7 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_formal_compare_morpheus_physiciq_wan_base_two_loras_ti2v_t2v_gpu023.sh
+
 
 # Formal batch run for:
 # - morpheus_real_world
@@ -19,8 +21,9 @@ set -euo pipefail
 # - /data/gaoya/AAA_test_video/0623/test/t2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_{dataset}/{method}
 #
 # Execution policy:
-# - Use only GPU 0 / 2 / 3
-# - For each (dataset, mode), run 3 methods in parallel on the 3 GPUs
+# - Use only GPU 0 / 1 / 2
+# - Before each launch, detect which candidate GPU is genuinely idle and use that one
+# - For each (dataset, mode), run up to 3 methods in parallel across the idle GPUs
 # - After each (dataset, mode) finishes, run bench.sh on that mode root
 # - Keep per-case logs beside outputs
 # - Keep orchestration logs under /data/gaoya/agent-data
@@ -50,8 +53,19 @@ mkdir -p "${RESULT_BASE_TI2V}" "${RESULT_BASE_T2V}" "${LOG_BASE}"
 TARGET_DATASETS="${TARGET_DATASETS:-morpheus_real_world physicIQ}"
 TARGET_MODES="${TARGET_MODES:-ti2v t2v}"
 OVERWRITE="${OVERWRITE:-0}"
+GPU_POOL=(0 1 2)
+GPU_POLL_SECONDS="${GPU_POLL_SECONDS:-30}"
+GPU_MAX_MEMORY_MB="${GPU_MAX_MEMORY_MB:-1024}"
+GPU_MAX_UTILIZATION="${GPU_MAX_UTILIZATION:-10}"
 
 FAILED_JOBS=()
+declare -A GPU_PID=()
+declare -A GPU_LABEL=()
+
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "nvidia-smi not found" >&2
+  exit 127
+fi
 
 dataset_list_path() {
   local dataset_tag="$1"
@@ -78,18 +92,95 @@ mode_result_root() {
   esac
 }
 
-launch_method_job() {
+gpu_is_available() {
   local gpu="$1"
-  local mode="$2"
-  local dataset_tag="$3"
-  local list_path="$4"
-  local method_name="$5"
-  local dataset_root="$6"
+  local row
+  row="$(nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits -i "${gpu}" 2>/dev/null | head -n 1 || true)"
+  if [[ -z "${row}" ]]; then
+    return 1
+  fi
+
+  local index
+  local memory_used
+  local utilization
+  IFS=',' read -r index memory_used utilization <<< "${row}"
+  memory_used="$(echo "${memory_used}" | xargs)"
+  utilization="$(echo "${utilization}" | xargs)"
+
+  local app_count
+  app_count="$(
+    nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits -i "${gpu}" 2>/dev/null \
+      | sed '/^[[:space:]]*$/d' \
+      | wc -l
+  )"
+
+  if (( app_count > 0 )); then
+    return 1
+  fi
+  if (( memory_used > GPU_MAX_MEMORY_MB )); then
+    return 1
+  fi
+  if (( utilization > GPU_MAX_UTILIZATION )); then
+    return 1
+  fi
+  return 0
+}
+
+describe_gpu() {
+  local gpu="$1"
+  nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv,noheader,nounits -i "${gpu}" 2>/dev/null \
+    | head -n 1 \
+    | sed 's/^[[:space:]]*//'
+}
+
+check_freed_gpus() {
+  local gpu
+  for gpu in "${GPU_POOL[@]}"; do
+    local pid="${GPU_PID[$gpu]:-}"
+    if [[ -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null; then
+      unset 'GPU_PID[$gpu]'
+      unset 'GPU_LABEL[$gpu]'
+    fi
+  done
+}
+
+wait_for_free_gpu() {
+  while :; do
+    check_freed_gpus
+
+    local gpu
+    for gpu in "${GPU_POOL[@]}"; do
+      if [[ -n "${GPU_PID[$gpu]:-}" ]]; then
+        continue
+      fi
+      if gpu_is_available "${gpu}"; then
+        echo "${gpu}"
+        return 0
+      fi
+    done
+
+    echo "[gpu_wait] no idle gpu in pool ${GPU_POOL[*]}; poll=${GPU_POLL_SECONDS}s thresholds memory<=${GPU_MAX_MEMORY_MB}MB util<=${GPU_MAX_UTILIZATION}%" >&2
+    for gpu in "${GPU_POOL[@]}"; do
+      local owner="${GPU_LABEL[$gpu]:-(external_or_busy)}"
+      echo "[gpu_wait] gpu=${gpu} owner=${owner} status=$(describe_gpu "${gpu}")" >&2
+    done
+    sleep "${GPU_POLL_SECONDS}"
+  done
+}
+
+launch_method_job() {
+  local mode="$1"
+  local dataset_tag="$2"
+  local list_path="$3"
+  local method_name="$4"
+  local dataset_root="$5"
 
   local method_root="${dataset_root}/${method_name}"
   local job_label="${dataset_tag}:${mode}:${method_name}"
   local job_log="${LOG_BASE}/${dataset_tag}_${mode}_${method_name}.log"
+  local gpu
   mkdir -p "${method_root}"
+  gpu="$(wait_for_free_gpu)"
 
   echo "[launch] label=${job_label} gpu=${gpu} method_root=${method_root}" >&2
 
@@ -246,7 +337,10 @@ if __name__ == "__main__":
 PY
   ) >"${job_log}" 2>&1 &
 
-  echo $!
+  local pid=$!
+  GPU_PID["${gpu}"]="${pid}"
+  GPU_LABEL["${gpu}"]="${job_label}"
+  echo "${pid}"
 }
 
 wait_method_jobs() {
@@ -264,6 +358,14 @@ wait_method_jobs() {
       echo "[job:failed] dataset=${dataset_tag} mode=${mode} pid=${pid} rc=${rc}" >&2
       FAILED_JOBS+=("${dataset_tag}:${mode}:pid${pid}:rc${rc}")
     fi
+
+    local gpu
+    for gpu in "${GPU_POOL[@]}"; do
+      if [[ "${GPU_PID[$gpu]:-}" == "${pid}" ]]; then
+        unset 'GPU_PID[$gpu]'
+        unset 'GPU_LABEL[$gpu]'
+      fi
+    done
   done
 }
 
@@ -285,9 +387,9 @@ run_dataset_mode() {
   local pid_wan_base
   local pid_openvid
   local pid_pybullet
-  pid_wan_base="$(launch_method_job 0 "${mode}" "${dataset_tag}" "${list_path}" "wan_base" "${dataset_root}")"
-  pid_openvid="$(launch_method_job 2 "${mode}" "${dataset_tag}" "${list_path}" "openvid_lora_step10000" "${dataset_root}")"
-  pid_pybullet="$(launch_method_job 3 "${mode}" "${dataset_tag}" "${list_path}" "openvid_0613pybullet_lora_step000500" "${dataset_root}")"
+  pid_wan_base="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "wan_base" "${dataset_root}")"
+  pid_openvid="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_lora_step10000" "${dataset_root}")"
+  pid_pybullet="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_0613pybullet_lora_step000500" "${dataset_root}")"
 
   wait_method_jobs "${dataset_tag}" "${mode}" "${pid_wan_base}" "${pid_openvid}" "${pid_pybullet}"
 
@@ -295,9 +397,11 @@ run_dataset_mode() {
     echo "[dataset_mode:warning] some jobs failed before bench: ${FAILED_JOBS[*]}" >&2
   fi
 
-  echo "[bench:start] dataset=${dataset_tag} mode=${mode}"
-  CUDA_VISIBLE_DEVICES=0 BENCH_CUDA_VISIBLE_DEVICES=0 bash "${BENCH_SCRIPT}" "${dataset_root}"
-  echo "[bench:done] dataset=${dataset_tag} mode=${mode}"
+  local bench_gpu
+  bench_gpu="$(wait_for_free_gpu)"
+  echo "[bench:start] dataset=${dataset_tag} mode=${mode} gpu=${bench_gpu}"
+  CUDA_VISIBLE_DEVICES="${bench_gpu}" BENCH_CUDA_VISIBLE_DEVICES="${bench_gpu}" bash "${BENCH_SCRIPT}" "${dataset_root}"
+  echo "[bench:done] dataset=${dataset_tag} mode=${mode} gpu=${bench_gpu}"
 }
 
 for dataset_tag in ${TARGET_DATASETS}; do

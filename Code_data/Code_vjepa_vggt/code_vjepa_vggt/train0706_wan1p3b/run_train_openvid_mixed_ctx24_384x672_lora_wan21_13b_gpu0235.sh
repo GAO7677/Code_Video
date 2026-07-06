@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Train Wan2.1-T2V-1.3B on the OpenVid + MOVI-D + Genesis rigid mixed recipe.
 # This produces the base LoRA that stage 0 will continue from.
+# Default temporal recipe:
+#   - variable per-sample full-video length
+#   - Wan 4n+1 alignment
+#   - capped at 81 frames
 # Run:
 #   CUDA_VISIBLE_DEVICES=3,5,6,7 sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/run_train_openvid_mixed_ctx24_384x672_lora_wan21_13b_gpu0235.sh
 set -euo pipefail
@@ -19,11 +23,12 @@ DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py"
 DATASET_CONFIG="${DATASET_CONFIG:-${PROJ}/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json}"
 USE_SAMPLE_FULL_VIDEO_LENGTH="${USE_SAMPLE_FULL_VIDEO_LENGTH:-1}"
-SAMPLE_FULL_VIDEO_MAX_FRAMES="${SAMPLE_FULL_VIDEO_MAX_FRAMES:-}"
+TRAIN_NUM_FRAMES="${TRAIN_NUM_FRAMES:-81}"
+SAMPLE_FULL_VIDEO_MAX_FRAMES="${SAMPLE_FULL_VIDEO_MAX_FRAMES:-81}"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
 BASE_LORA="${BASE_LORA:-}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_mixed_ctx24_384x672_lora}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_mixed_ctx81_384x672_lora}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -45,7 +50,7 @@ CMD=(
   --dataset_metadata_path ""
   --height 384
   --width 672
-  --num_frames 24
+  --num_frames "${TRAIN_NUM_FRAMES}"
   --use_sample_full_video_length
   --max_train_steps 10000
   --context_sampling_profile mixed_modes
@@ -69,7 +74,7 @@ CMD=(
   --benchmark_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt
   --benchmark_cuda_visible_devices "${GPU_SET}"
   --benchmark_context_frames 8
-  --benchmark_num_frames 24
+  --benchmark_num_frames 81
   --benchmark_height 384
   --benchmark_width 672
   --benchmark_fps 8

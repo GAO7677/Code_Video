@@ -12,9 +12,10 @@ ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 TRAIN_SCRIPT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/train_v_newtrain.py
 DATASET_CONFIG=${DATASET_CONFIG:-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/dataset_mix_config.json}
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.1-T2V-1.3B
-OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx24_384x672_lora}
+OUTPUT_DIR=${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/smoke/openvid_mixed_ctx81_384x672_lora}
 USE_SAMPLE_FULL_VIDEO_LENGTH=${USE_SAMPLE_FULL_VIDEO_LENGTH:-1}
-SAMPLE_FULL_VIDEO_MAX_FRAMES=${SAMPLE_FULL_VIDEO_MAX_FRAMES:-}
+TRAIN_NUM_FRAMES=${TRAIN_NUM_FRAMES:-81}
+SAMPLE_FULL_VIDEO_MAX_FRAMES=${SAMPLE_FULL_VIDEO_MAX_FRAMES:-81}
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -28,7 +29,7 @@ CMD=(
   --dataset_metadata_path "" \
   --height 384 \
   --width 672 \
-  --num_frames 24 \
+  --num_frames "${TRAIN_NUM_FRAMES}" \
   --use_sample_full_video_length \
   --max_train_steps 2 \
   --context_sampling_profile mixed_modes \
