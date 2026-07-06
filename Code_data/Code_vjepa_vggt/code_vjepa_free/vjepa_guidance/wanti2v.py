@@ -518,6 +518,10 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
         preview_u8 = _preview_video_to_u8(preview_video)
         future_mask = future_motion_mask_thw.detach().float().cpu().numpy()
         full_mask = full_motion_mask_thw.detach().float().cpu().numpy()
+        if future_mask.ndim == 4 and future_mask.shape[0] == 1:
+            future_mask = future_mask[0]
+        if full_mask.ndim == 4 and full_mask.shape[0] == 1:
+            full_mask = full_mask[0]
 
         motion_mask_u8 = render_binary_mask_video(full_mask)
         motion_overlay_u8 = render_motion_overlay_video(preview_u8, full_mask)
