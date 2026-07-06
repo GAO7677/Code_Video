@@ -186,6 +186,91 @@ def _window_video(video_btchw: torch.Tensor, window_size: int, stride: int) -> t
     return pieces.permute(0, 2, 1, 3, 4).contiguous()
 
 
+def _token_grid_shape(*, img_size: int, encoder: torch.nn.Module, future_frames: int) -> tuple[int, int, int]:
+    patch_size = _scalar_attr(encoder.patch_size)
+    tubelet_size = _scalar_attr(encoder.tubelet_size)
+    grid_h = int(img_size // patch_size)
+    grid_w = int(img_size // patch_size)
+    future_depth = max(1, int(future_frames // max(1, tubelet_size)))
+    return future_depth, grid_h, grid_w
+
+
+def _motion_weights_for_future_tokens(
+    future_motion_mask_thw: torch.Tensor | None,
+    *,
+    token_shape: tuple[int, int, int],
+    motion_mask_mode: str,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor | None:
+    if future_motion_mask_thw is None:
+        return None
+    if future_motion_mask_thw.ndim == 3:
+        future_motion_mask_thw = future_motion_mask_thw.unsqueeze(0)
+    if future_motion_mask_thw.ndim != 4:
+        raise ValueError(
+            "future_motion_mask_thw must be [T,H,W] or [B,T,H,W], "
+            f"got {tuple(future_motion_mask_thw.shape)}"
+        )
+    if motion_mask_mode not in {"per_frame", "temporal_union"}:
+        raise ValueError(f"Unsupported motion_mask_mode: {motion_mask_mode}")
+
+    weights = future_motion_mask_thw.to(device=device, dtype=dtype)
+    if motion_mask_mode == "temporal_union":
+        union_hw = (weights > 0.5).any(dim=1, keepdim=True).to(dtype=dtype)
+        weights = union_hw.expand(-1, weights.shape[1], -1, -1).contiguous()
+
+    future_depth, grid_h, grid_w = token_shape
+    weights = F.interpolate(
+        weights.unsqueeze(1),
+        size=(future_depth, grid_h, grid_w),
+        mode="trilinear",
+        align_corners=False,
+    ).squeeze(1)
+    return weights.clamp_(0.0, 1.0)
+
+
+def _masked_token_surprise_mean(
+    token_surprise: torch.Tensor,
+    *,
+    future_motion_mask_thw: torch.Tensor | None,
+    motion_mask_mode: str,
+    token_shape: tuple[int, int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    if token_surprise.ndim == 1:
+        token_surprise = token_surprise.unsqueeze(0)
+    if token_surprise.ndim != 2:
+        raise ValueError(f"Expected token_surprise [B,N] or [N], got {tuple(token_surprise.shape)}")
+
+    future_depth, grid_h, grid_w = token_shape
+    expected_tokens = future_depth * grid_h * grid_w
+    if int(token_surprise.shape[-1]) != expected_tokens:
+        raise ValueError(
+            f"Expected {expected_tokens} tokens for future window, got {int(token_surprise.shape[-1])}"
+        )
+
+    token_surprise = token_surprise.view(token_surprise.shape[0], future_depth, grid_h, grid_w)
+    weights = _motion_weights_for_future_tokens(
+        future_motion_mask_thw,
+        token_shape=token_shape,
+        motion_mask_mode=motion_mask_mode,
+        device=device,
+        dtype=dtype,
+    )
+    if weights is None or float(weights.sum().item()) <= 1.0e-6:
+        return token_surprise.mean()
+    if weights.shape[0] == 1 and token_surprise.shape[0] > 1:
+        weights = weights.expand(token_surprise.shape[0], -1, -1, -1)
+    if weights.shape[0] != token_surprise.shape[0]:
+        raise ValueError(
+            "motion mask batch does not match token batch: "
+            f"weights={tuple(weights.shape)} tokens={tuple(token_surprise.shape)}"
+        )
+    return (token_surprise * weights).sum() / weights.sum().clamp_min(1.0e-6)
+
+
 def compute_masked_predictive_surprise(
     video_btchw: torch.Tensor,
     *,
@@ -197,6 +282,8 @@ def compute_masked_predictive_surprise(
     context_frames: int = 8,
     stride: int = 4,
     reduction: str = "mean",
+    future_motion_mask_thw: torch.Tensor | None = None,
+    motion_mask_mode: str = "per_frame",
 ) -> torch.Tensor:
     add_vjepa_repo_to_path()
     from src.masks.utils import apply_masks
@@ -237,7 +324,20 @@ def compute_masked_predictive_surprise(
         context_tokens = F.layer_norm(context_tokens, (context_tokens.shape[-1],))
 
         masked_target = apply_masks(target_tokens, masks_pred, concat=False)
-        surprise = 1.0 - F.cosine_similarity(context_tokens, masked_target[0], dim=-1).mean()
+        token_surprise = 1.0 - F.cosine_similarity(context_tokens, masked_target[0], dim=-1)
+        token_shape = _token_grid_shape(
+            img_size=img_size,
+            encoder=encoder,
+            future_frames=window_size - context_frames,
+        )
+        surprise = _masked_token_surprise_mean(
+            token_surprise,
+            future_motion_mask_thw=future_motion_mask_thw,
+            motion_mask_mode=motion_mask_mode,
+            token_shape=token_shape,
+            device=video_btchw.device,
+            dtype=video_btchw.dtype,
+        )
         losses.append(surprise)
 
     loss_stack = torch.stack(losses)
@@ -296,6 +396,8 @@ def compute_context_anchored_alignment(
     window_size: int = 16,
     context_frames: int = 8,
     predicted_future_ref: torch.Tensor | None = None,
+    future_motion_mask_thw: torch.Tensor | None = None,
+    motion_mask_mode: str = "per_frame",
 ) -> torch.Tensor:
     """Energy = feature-space mismatch between the generated future frames and the
     future that V-JEPA's predictor forecasts from the *real* context.
@@ -343,8 +445,20 @@ def compute_context_anchored_alignment(
     target_tokens = F.layer_norm(target_tokens, (target_tokens.shape[-1],))
     masked_target = apply_masks(target_tokens, masks_pred, concat=False)[0]
 
-    energy = 1.0 - F.cosine_similarity(predicted, masked_target, dim=-1).mean()
-    return energy
+    token_surprise = 1.0 - F.cosine_similarity(predicted, masked_target, dim=-1)
+    token_shape = _token_grid_shape(
+        img_size=img_size,
+        encoder=target_encoder,
+        future_frames=window_size - context_frames,
+    )
+    return _masked_token_surprise_mean(
+        token_surprise,
+        future_motion_mask_thw=future_motion_mask_thw,
+        motion_mask_mode=motion_mask_mode,
+        token_shape=token_shape,
+        device=clip_btchw.device,
+        dtype=clip_btchw.dtype,
+    )
 
 
 def precompute_future_prediction(
@@ -408,6 +522,8 @@ class VJEPASurpriseEnergy:
         context_frames: int = 8,
         stride: int = 4,
         reduction: str = "mean",
+        future_motion_mask_thw: torch.Tensor | None = None,
+        motion_mask_mode: str = "per_frame",
     ) -> torch.Tensor:
         return compute_masked_predictive_surprise(
             video_btchw.to(self.device),
@@ -419,6 +535,8 @@ class VJEPASurpriseEnergy:
             context_frames=context_frames,
             stride=stride,
             reduction=reduction,
+            future_motion_mask_thw=future_motion_mask_thw.to(self.device) if future_motion_mask_thw is not None else None,
+            motion_mask_mode=motion_mask_mode,
         )
 
     def context_anchored(
@@ -428,6 +546,8 @@ class VJEPASurpriseEnergy:
         window_size: int = 16,
         context_frames: int = 8,
         predicted_future_ref: torch.Tensor | None = None,
+        future_motion_mask_thw: torch.Tensor | None = None,
+        motion_mask_mode: str = "per_frame",
     ) -> torch.Tensor:
         return compute_context_anchored_alignment(
             clip_btchw.to(self.device),
@@ -438,6 +558,8 @@ class VJEPASurpriseEnergy:
             window_size=window_size,
             context_frames=context_frames,
             predicted_future_ref=predicted_future_ref,
+            future_motion_mask_thw=future_motion_mask_thw.to(self.device) if future_motion_mask_thw is not None else None,
+            motion_mask_mode=motion_mask_mode,
         )
 
     def precompute_future_prediction(

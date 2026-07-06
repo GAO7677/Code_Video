@@ -48,6 +48,7 @@ import gc
 import json
 import logging
 import math
+import os
 import random
 import sys
 from contextlib import contextmanager
@@ -61,6 +62,15 @@ from PIL import Image
 from tqdm import tqdm
 
 from code_vjepa_free.vjepa_guidance import WanVJEPAConfig, apply_train0705_preset
+from code_vjepa_free.vjepa_guidance.motion_masks import extract_motion_mask_thw
+from code_vjepa_free.vjepa_guidance.mask_video_viz import (
+    render_background_overlay_video,
+    render_binary_mask_video,
+    render_motion_overlay_video,
+    write_mp4_h264,
+)
+from code_vjepa_free.vjepa_guidance.build_trace_viewer import build_html as build_trace_viewer_html
+from code_vjepa_free.vjepa_guidance.build_trace_viewer import collect_cases as collect_trace_cases
 from code_vjepa_free.vjepa_guidance.vjepa_surprise import build_context_future_clip
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
 from code_vjepa_vggt.AAAinfer.utils.wanti2v_runtime import (
@@ -144,6 +154,56 @@ def _pixel_frames_to_preview_len(pixel_frames: int, preview_frame_stride: int) -
     return (pixel_frames - 1) // preview_frame_stride + 1
 
 
+def _video_btchw_to_u8(video_btchw: torch.Tensor) -> np.ndarray:
+    if video_btchw.ndim != 5:
+        raise ValueError(f"Expected [B,C,T,H,W], got {tuple(video_btchw.shape)}")
+    if int(video_btchw.shape[0]) != 1:
+        raise ValueError(f"Expected batch size 1 for mask extraction, got {tuple(video_btchw.shape)}")
+    video = video_btchw[0].detach().float().clamp(-1.0, 1.0)
+    video = ((video + 1.0) * 127.5).round().to(torch.uint8)
+    return video.permute(1, 2, 3, 0).contiguous().cpu().numpy()
+
+
+def _motion_mask_from_preview_video(
+    preview_video: torch.Tensor,
+    *,
+    mode: str,
+) -> torch.Tensor:
+    preview_u8 = _video_btchw_to_u8(preview_video)
+    temporal_union = mode == "temporal_union"
+    mask_np = extract_motion_mask_thw(
+        preview_u8,
+        method="background_residual",
+        temporal_union=temporal_union,
+    )
+    return torch.from_numpy(mask_np.astype(np.float32)).unsqueeze(0)
+
+
+def _preview_video_to_u8(preview_video: torch.Tensor) -> np.ndarray:
+    video = preview_video.detach().float().clamp(-1.0, 1.0)
+    if video.ndim == 5:
+        if int(video.shape[0]) != 1:
+            raise ValueError(f"Expected batch size 1, got {tuple(video.shape)}")
+        video = video[0]
+    if video.ndim != 4:
+        raise ValueError(f"Expected preview video [C,T,H,W], got {tuple(video.shape)}")
+    video_u8 = ((video + 1.0) * 127.5).round().to(torch.uint8).cpu().numpy()
+    return np.transpose(video_u8, (1, 2, 3, 0))
+
+
+def _overlay_mask_to_video(preview_video_u8: np.ndarray, mask_thw: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    motion_overlay = render_motion_overlay_video(preview_video_u8, mask_thw)
+    background_overlay = render_background_overlay_video(preview_video_u8, mask_thw)
+    binary_video = render_binary_mask_video(mask_thw)
+    return binary_video, motion_overlay, background_overlay
+
+
+def _video_thwc_u8_to_pil_frames(video_thwc_u8: np.ndarray) -> list[Image.Image]:
+    if video_thwc_u8.ndim != 4:
+        raise ValueError(f"Expected [T,H,W,3] video array, got {tuple(video_thwc_u8.shape)}")
+    return [Image.fromarray(frame) for frame in video_thwc_u8.astype(np.uint8)]
+
+
 def _apply_context_anchored_guidance(
     *,
     latent_xt: torch.Tensor,
@@ -156,6 +216,8 @@ def _apply_context_anchored_guidance(
     config: WanVJEPAConfig,
     predicted_future_ref: torch.Tensor,
     vae_temporal_stride: int,
+    motion_mask_mode: str = "per_frame",
+    trace_hook: Optional[Callable[..., None]] = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     latent_for_grad = latent_xt.detach().float().requires_grad_(True)
     model_output = model_output.detach().float()
@@ -189,11 +251,21 @@ def _apply_context_anchored_guidance(
         window_size=int(config.window_size),
         context_frames=n_ctx,
     )
+    future_motion_mask_thw = _motion_mask_from_preview_video(
+        full_video,
+        mode=str(motion_mask_mode),
+    )[:, preview_ctx_frames:].to(device=generated_future.device, dtype=generated_future.dtype)
+    full_motion_mask_thw = _motion_mask_from_preview_video(
+        full_video,
+        mode=str(motion_mask_mode),
+    ).to(device=full_video.device, dtype=full_video.dtype)
     energy = energy_obj.context_anchored(
         clip,
         window_size=int(config.window_size),
         context_frames=n_ctx,
         predicted_future_ref=predicted_future_ref,
+        future_motion_mask_thw=future_motion_mask_thw,
+        motion_mask_mode=str(motion_mask_mode),
     )
 
     gradient = torch.autograd.grad(energy, latent_for_grad, retain_graph=False, create_graph=False)[0]
@@ -205,6 +277,19 @@ def _apply_context_anchored_guidance(
         gradient,
         mode=str(config.gradient_normalization),
     )
+
+    if trace_hook is not None:
+        trace_hook(
+            x0_pred=x0_pred.detach(),
+            preview_video=full_video.detach(),
+            future_motion_mask_thw=future_motion_mask_thw.detach(),
+            full_motion_mask_thw=full_motion_mask_thw.detach(),
+            energy=float(energy.detach().item()),
+            raw_grad_norm=raw_grad_norm,
+            normalized_grad_rms=float(gradient.detach().pow(2).mean().sqrt().item()),
+            preview_context_frames=int(preview_ctx_frames),
+            motion_mask_mode=str(motion_mask_mode),
+        )
 
     n_ctx_latent = _pixel_frames_to_latent_len(n_ctx, vae_temporal_stride)
     if 0 < n_ctx_latent < gradient.shape[1]:
@@ -297,6 +382,7 @@ def _apply_context_anchored_guidance(
         "preview_height": float(full_video.shape[3]),
         "preview_width": float(full_video.shape[4]),
         "preview_context_frames": float(preview_ctx_frames),
+        "motion_mask_coverage": float(future_motion_mask_thw.mean().item()),
         "step_size_used": float(corrected_step_size),
         "ratio_cap_applied": float(ratio_cap_applied),
         "ratio_cap_scale": float(ratio_cap_scale),
@@ -318,6 +404,7 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
         vjepa_config: Optional[WanVJEPAConfig] = None,
         enable_vjepa_guidance: bool = False,
         vjepa_target_step_indices: Optional[list[int]] = None,
+        motion_mask_mode: str = "per_frame",
         **kwargs,
     ):
         checkpoint_dir = kwargs.get("checkpoint_dir")
@@ -329,9 +416,16 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
         self.vjepa_config = vjepa_config or WanVJEPAConfig()
         self.enable_vjepa_guidance = bool(enable_vjepa_guidance)
         self.vjepa_target_step_indices = [int(value) for value in (vjepa_target_step_indices or [])]
+        self.motion_mask_mode = str(motion_mask_mode)
         self._vjepa_energy: Optional[VJEPASurpriseEnergy] = None
         self.last_vjepa_trace: list[dict[str, object]] = []
+        self.last_vjepa_step_artifacts: list[dict[str, object]] = []
         self.anchor_mode = "repeated_first_frame"
+        self.trace_intermediates_enabled = False
+        self.trace_max_strip_frames = 8
+        self.trace_case_dir: Path | None = None
+        self.trace_case_payload: dict[str, Any] | None = None
+        self.trace_fps = 16
 
         if any(parameter.is_meta for parameter in self.model.parameters()):
             if checkpoint_dir is None:
@@ -351,6 +445,132 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
             for parameter in vae_module.parameters():
                 parameter.requires_grad_(False)
             vae_module.eval()
+
+    def configure_trace(self, *, enabled: bool, max_strip_frames: int, fps: int) -> None:
+        self.trace_intermediates_enabled = bool(enabled)
+        self.trace_max_strip_frames = max(2, int(max_strip_frames))
+        self.trace_fps = max(1, int(fps))
+
+    def set_trace_case(
+        self,
+        *,
+        case_dir: Path | None,
+        sample_id: str | None,
+        prompt: str | None,
+        output_video_path: Path | None,
+        source_json: str | None,
+        fps: int,
+    ) -> None:
+        self.trace_case_dir = case_dir if self.trace_intermediates_enabled else None
+        self.trace_fps = int(fps)
+        if self.trace_case_dir is None:
+            self.trace_case_payload = None
+            return
+        self.trace_case_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "sample_id": sample_id,
+            "prompt": prompt,
+            "source_json": source_json,
+            "fps": int(fps),
+        }
+        if output_video_path is not None:
+            payload["output_video_path"] = str(output_video_path)
+            payload["final_video"] = "final_video.mp4"
+        self.trace_case_payload = payload
+        if output_video_path is not None and output_video_path.exists():
+            _safe_symlink_or_copy(output_video_path, self.trace_case_dir / "final_video.mp4")
+        (self.trace_case_dir / "case.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_trace_case_payload(self, extra: dict[str, Any]) -> None:
+        if self.trace_case_dir is None:
+            return
+        payload = dict(self.trace_case_payload or {})
+        payload.update(extra)
+        self.trace_case_payload = payload
+        (self.trace_case_dir / "case.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _trace_guidance_step(
+        self,
+        *,
+        step_idx: int,
+        timestep: int,
+        x0_pred: torch.Tensor,
+        preview_video: torch.Tensor,
+        future_motion_mask_thw: torch.Tensor,
+        full_motion_mask_thw: torch.Tensor,
+        energy: float,
+        raw_grad_norm: float,
+        normalized_grad_rms: float,
+        preview_context_frames: int,
+        motion_mask_mode: str,
+    ) -> None:
+        if self.trace_case_dir is None:
+            return
+        step_dir = self.trace_case_dir / f"step_{step_idx:02d}_t{timestep:04d}"
+        step_dir.mkdir(parents=True, exist_ok=True)
+
+        preview_u8 = _preview_video_to_u8(preview_video)
+        future_mask = future_motion_mask_thw.detach().float().cpu().numpy()
+        full_mask = full_motion_mask_thw.detach().float().cpu().numpy()
+
+        motion_mask_u8 = render_binary_mask_video(full_mask)
+        motion_overlay_u8 = render_motion_overlay_video(preview_u8, full_mask)
+        background_overlay_u8 = render_background_overlay_video(preview_u8, full_mask)
+
+        preview_frames = _video_thwc_u8_to_pil_frames(preview_u8)
+        motion_mask_frames = _video_thwc_u8_to_pil_frames(motion_mask_u8)
+        motion_overlay_frames = _video_thwc_u8_to_pil_frames(motion_overlay_u8)
+        background_overlay_frames = _video_thwc_u8_to_pil_frames(background_overlay_u8)
+
+        fps = max(1, self.trace_fps // max(1, self.vjepa_config.preview_frame_stride))
+        write_mp4_h264(step_dir / "preview_video.mp4", preview_u8, fps=fps)
+        write_mp4_h264(step_dir / "motion_mask_video.mp4", motion_mask_u8, fps=fps)
+        write_mp4_h264(step_dir / "motion_overlay_video.mp4", motion_overlay_u8, fps=fps)
+        write_mp4_h264(step_dir / "background_overlay_video.mp4", background_overlay_u8, fps=fps)
+
+        _save_frame_strip(preview_frames, step_dir / "preview_strip.png", max_frames=self.trace_max_strip_frames, tile_height=140)
+        _save_frame_strip(motion_mask_frames, step_dir / "motion_mask_strip.png", max_frames=self.trace_max_strip_frames, tile_height=140)
+        _save_frame_strip(motion_overlay_frames, step_dir / "motion_overlay_strip.png", max_frames=self.trace_max_strip_frames, tile_height=140)
+        _save_frame_strip(background_overlay_frames, step_dir / "background_overlay_strip.png", max_frames=self.trace_max_strip_frames, tile_height=140)
+
+        latent_frames, latent_stats = _latent_norm_to_pil_frames(x0_pred)
+        latent_u8 = np.stack([np.asarray(frame.convert("RGB")) for frame in latent_frames], axis=0)
+        write_mp4_h264(step_dir / "x0_latent_norm.mp4", latent_u8, fps=fps)
+        _save_frame_strip(
+            latent_frames,
+            step_dir / "x0_latent_norm_strip.png",
+            max_frames=self.trace_max_strip_frames,
+            tile_height=140,
+        )
+
+        stats = {
+            "step_idx": int(step_idx),
+            "timestep": int(timestep),
+            "energy": float(energy),
+            "raw_grad_norm": float(raw_grad_norm),
+            "normalized_grad_rms": float(normalized_grad_rms),
+            "preview_frames": len(preview_frames),
+            "preview_height": preview_frames[0].height if preview_frames else 0,
+            "preview_width": preview_frames[0].width if preview_frames else 0,
+            "preview_context_frames": int(preview_context_frames),
+            "motion_mask_mode": str(motion_mask_mode),
+            "motion_mask_coverage_full": float(full_mask.mean()),
+            "motion_mask_coverage_future": float(future_mask.mean()),
+            **latent_stats,
+        }
+        (step_dir / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self._write_trace_case_payload(
+            {
+                "selected_guidance_steps": list(self.vjepa_target_step_indices or []),
+                "trace_enabled": True,
+            }
+        )
 
     def _ensure_vjepa_energy(self) -> VJEPASurpriseEnergy:
         if self._vjepa_energy is None:
@@ -448,6 +668,7 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
         offload_model=True,
     ):
         self.last_vjepa_trace = []
+        self.last_vjepa_step_artifacts = []
         if img is None:
             raise ValueError("Wan TI2V guidance requires an input image.")
         if not self.enable_vjepa_guidance or int(self.vjepa_config.guidance_steps) <= 0:
@@ -643,7 +864,26 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
                                 config=self.vjepa_config,
                                 predicted_future_ref=predicted_future_ref,
                                 vae_temporal_stride=int(self.vae_stride[0]),
+                                motion_mask_mode=self.motion_mask_mode,
+                                trace_hook=(
+                                    lambda **kwargs: self._trace_guidance_step(
+                                        step_idx=step_index,
+                                        timestep=int(timestep_value.detach().cpu().item()),
+                                        **kwargs,
+                                    )
+                                    if self.trace_intermediates_enabled and self.trace_case_dir is not None
+                                    else None
+                                ),
                             )
+                        self.last_vjepa_step_artifacts.append(
+                            {
+                                "step_index": int(step_index),
+                                "inner_index": int(inner_index),
+                                "timestep": int(timestep_value.detach().cpu().item()),
+                                "preview_video": None,
+                                "future_motion_mask": None,
+                            }
+                        )
                         trace_row = {
                             "step_index": int(step_index),
                             "inner_index": int(inner_index),
@@ -669,6 +909,8 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
                             "preview_height": int(stats["preview_height"]),
                             "preview_width": int(stats["preview_width"]),
                             "preview_frame_stride": int(self.vjepa_config.preview_frame_stride),
+                            "motion_mask_mode": str(self.motion_mask_mode),
+                            "motion_mask_coverage": float(stats.get("motion_mask_coverage", 0.0)),
                             "recompute_noise_pred_after_guidance": bool(recompute_noise_pred_after_guidance),
                         }
                         self.last_vjepa_trace.append(trace_row)
@@ -697,6 +939,8 @@ class WanTI2VContextAnchoredVJEPA(WanTI2V):
                             trace_row["preview_height"],
                             trace_row["preview_width"],
                             trace_row["preview_frame_stride"],
+                            trace_row["motion_mask_mode"],
+                            trace_row["motion_mask_coverage"],
                             trace_row["recompute_noise_pred_after_guidance"],
                         )
                     if recompute_noise_pred_after_guidance:
@@ -740,12 +984,14 @@ class OfficialWanTI2VVJEPAWrapper:
         max_area: int,
         guidance_enabled: bool,
         vjepa_preset: str,
+        motion_mask_mode: str,
     ) -> None:
         self.model = model
         self.resolved_wan_root = resolved_wan_root
         self.max_area = int(max_area)
         self.guidance_enabled = bool(guidance_enabled)
         self.vjepa_preset = str(vjepa_preset)
+        self.motion_mask_mode = str(motion_mask_mode)
         self.last_vjepa_trace: list[dict[str, object]] = []
         self.anchor_mode = getattr(model, "anchor_mode", "repeated_first_frame")
 
@@ -854,6 +1100,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa-stay-close-max-video-l1", type=float, default=None)
     parser.add_argument("--vjepa-artifact-guard-mode", default=None, choices=["none", "video_l1_backoff"])
     parser.add_argument("--vjepa-recompute-noise-pred-after-guidance", action="store_true")
+    parser.add_argument("--motion-mask-mode", default="per_frame", choices=["per_frame", "temporal_union"])
+    parser.add_argument("--trace-intermediates", action="store_true")
+    parser.add_argument("--trace-root", type=Path, default=Path("/data/gaoya/agent-data/outputs/vjepa_guidance_trace"))
+    parser.add_argument("--trace-max-strip-frames", type=int, default=8)
+    parser.add_argument("--trace-build-html", action="store_true")
+    parser.add_argument("--trace-output-html", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -880,6 +1132,7 @@ def _resolve_vjepa_settings(cli_args: argparse.Namespace) -> tuple[argparse.Name
         "vjepa_stay_close_max_video_l1": cli_args.vjepa_stay_close_max_video_l1,
         "vjepa_artifact_guard_mode": cli_args.vjepa_artifact_guard_mode,
         "vjepa_recompute_noise_pred_after_guidance": bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
+        "motion_mask_mode": cli_args.motion_mask_mode,
     }
     apply_train0705_preset(cli_args, cli_args.vjepa_preset)
 
@@ -1006,6 +1259,12 @@ def build_vjepa_aware_pipeline(args: WanTI2VArgs, cli_args: argparse.Namespace, 
         vjepa_config=vjepa_config,
         enable_vjepa_guidance=bool(cli_args.enable_vjepa_guidance),
         vjepa_target_step_indices=list(cli_args.vjepa_target_step_indices or []),
+        motion_mask_mode=str(cli_args.motion_mask_mode),
+    )
+    model.configure_trace(
+        enabled=bool(cli_args.trace_intermediates),
+        max_strip_frames=int(cli_args.trace_max_strip_frames),
+        fps=int(cli_args.fps),
     )
     return OfficialWanTI2VVJEPAWrapper(
         model=model,
@@ -1013,6 +1272,7 @@ def build_vjepa_aware_pipeline(args: WanTI2VArgs, cli_args: argparse.Namespace, 
         max_area=max_area,
         guidance_enabled=bool(cli_args.enable_vjepa_guidance),
         vjepa_preset=str(cli_args.vjepa_preset),
+        motion_mask_mode=str(cli_args.motion_mask_mode),
     )
 
 
@@ -1058,6 +1318,7 @@ def run_single_case_vjepa(
     payload: dict[str, Any],
     firstframe_path: Path,
     output_video: Path,
+    trace_case_dir: Path | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     input_caption = ensure_str_field(payload, "input_caption", input_json_path)
     height_str, width_str = args.size.split("*", maxsplit=1)
@@ -1075,12 +1336,23 @@ def run_single_case_vjepa(
         f"[case] negative_prompt={args.negative_prompt}",
         f"[case] vjepa_preset={cli_args.vjepa_preset}",
         f"[case] enable_vjepa_guidance={bool(cli_args.enable_vjepa_guidance)}",
+        f"[case] motion_mask_mode={cli_args.motion_mask_mode}",
         f"[case] vjepa_inner_k={int(cli_args.vjepa_inner_k)}",
         f"[case] vjepa_preview_frame_stride={int(cli_args.vjepa_preview_frame_stride)}",
         f"[case] vjepa_artifact_guard_mode={cli_args.vjepa_artifact_guard_mode}",
         f"[case] vjepa_stay_close_max_video_l1={cli_args.vjepa_stay_close_max_video_l1}",
         f"[case] vjepa_recompute_noise_pred_after_guidance={bool(cli_args.vjepa_recompute_noise_pred_after_guidance)}",
     ]
+
+    if trace_case_dir is not None and hasattr(pipe, "model") and hasattr(pipe.model, "set_trace_case"):
+        pipe.model.set_trace_case(
+            case_dir=trace_case_dir,
+            sample_id=input_json_path.stem,
+            prompt=input_caption,
+            output_video_path=output_video,
+            source_json=str(input_json_path),
+            fps=int(args.fps),
+        )
 
     used_offload = bool(args.offload_model)
     try:
@@ -1124,6 +1396,15 @@ def run_single_case_vjepa(
         used_offload = True
 
     save_video_np(video, output_video, fps=int(args.fps))
+    if trace_case_dir is not None and hasattr(pipe, "model") and hasattr(pipe.model, "_write_trace_case_payload"):
+        _safe_symlink_or_copy(output_video, trace_case_dir / "final_video.mp4")
+        pipe.model._write_trace_case_payload(
+            {
+                "output_video_path": str(output_video),
+                "trace_case_dir": str(trace_case_dir),
+                "final_video": "final_video.mp4",
+            }
+        )
 
     result = {
         "input_json": str(input_json_path),
@@ -1156,6 +1437,7 @@ def run_single_case_vjepa(
             else None
         ),
         "vjepa_recompute_noise_pred_after_guidance": bool(cli_args.vjepa_recompute_noise_pred_after_guidance),
+        "motion_mask_mode": str(cli_args.motion_mask_mode),
         "vjepa_anchor_mode": getattr(pipe, "anchor_mode", "repeated_first_frame"),
         "vjepa_trace": list(getattr(pipe, "last_vjepa_trace", [])),
     }
@@ -1264,6 +1546,9 @@ def main() -> None:
             sample_stem = input_json_path.stem
             output_video = args.output_root / f"{sample_stem}.mp4"
             output_json = args.output_root / f"{sample_stem}.json"
+            trace_case_dir = None
+            if bool(cli_args.trace_intermediates):
+                trace_case_dir = cli_args.trace_root.expanduser().resolve() / model_name / sample_stem
 
             if output_video.exists() and output_json.exists() and not args.force:
                 print(f"[skip] {sample_stem}")
@@ -1278,6 +1563,7 @@ def main() -> None:
                     payload=payload,
                     firstframe_path=firstframe_path,
                     output_video=output_video,
+                    trace_case_dir=trace_case_dir,
                 )
             except Exception as exc:
                 print(f"[error] {sample_stem}: {exc}")
@@ -1287,6 +1573,18 @@ def main() -> None:
             for log_line in case_logs:
                 print(log_line)
             print(f"[done] {sample_stem}")
+
+        if bool(cli_args.trace_intermediates) and bool(cli_args.trace_build_html):
+            trace_root = (cli_args.trace_root.expanduser().resolve() / model_name).resolve()
+            trace_root.mkdir(parents=True, exist_ok=True)
+            output_html = (
+                cli_args.trace_output_html.expanduser().resolve()
+                if cli_args.trace_output_html is not None
+                else trace_root / "index.html"
+            )
+            cases = collect_trace_cases(trace_root)
+            build_trace_viewer_html(trace_root, output_html, f"V-JEPA Guidance Trace Viewer - {model_name}", cases)
+            print(f"[trace-html] {output_html}")
     finally:
         cleanup_pipeline(pipe)
 

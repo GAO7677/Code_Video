@@ -18,6 +18,7 @@
 - `phyground`
 - `cosmos_reason1`
 - `physics_iq`
+- `pmf`
 
 ## 通用输入格式
 
@@ -405,13 +406,16 @@ python -m physv_eval.single_case.cosmos_reason1 \
 入口：
 
 - 模块：`physv_eval.single_case.physics_iq`
-- 函数：`score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4)`
-- 函数：`score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4, aligned_video_dir=None)`
+- 函数：
+  `score_case(case, source_video_path=None, threshold_value=10, downsample_factor=4, context_mode="with_context", context_frames=None, aligned_video_dir=None)`
 
 指标定义：
 
 - 基于官方 Physics-IQ 底层分量做的单视角近似版
 - 只比较一条 `output_video` 和一条 `source_video`
+- 支持两种上下文模式：
+  - `with_context`
+  - `without_context`
 - 保留：
   - `mse_mean`
   - `spatiotemporal_iou_mean`
@@ -422,8 +426,21 @@ python -m physv_eval.single_case.cosmos_reason1 \
   - 第二条 real take 的 physical variance 归一化
 - 会另存两条真正参与评分的视频：
   - 时间轴已对齐到公共窗口
-  - 已按评分尺寸缩放
-  - 路径写回 `scored_output_video` 和 `scored_source_video`
+  - `without_context` 时会先从输出视频和参考视频同时丢掉前 `context_frames`
+  - 如果参考视频更长，会再截到和输出窗口同样的帧数
+  - 参考视频会先被直接 resize 到输出视频空间尺寸，再按 `downsample_factor` 缩放到评分尺寸
+  - 路径写回 `scored_output_video`、`scored_source_video`
+  - 另存一个并排预览 `compare_side_by_side`
+
+模式语义：
+
+- `with_context`
+  - 从第 `0` 帧开始比较
+  - 更适合“输出视频本身包含 context 前缀”的场景
+- `without_context`
+  - 先从输出视频和参考视频同时丢掉前 `context_frames`
+  - 更适合 v2v / future prediction 任务，尤其是输出前缀本身就是上下文时
+  - `context_frames` 可以显式传入，也可以尝试从 case 元数据中推断，例如 `context_frames`、`used_context_frames`、`model_args.context_frames`
 
 指标属性：
 
@@ -441,8 +458,15 @@ python -m physv_eval.single_case.cosmos_reason1 \
     "official": bool,
     "method": str,
     "reference_video": str,
+    "context_mode": str,
+    "context_frames_used": int,
+    "output_start_frame": int,
+    "source_start_frame": int,
+    "output_frames_after_context_clip": int,
+    "source_frames_after_context_clip": int,
     "scored_output_video": str,
     "scored_source_video": str,
+    "compare_side_by_side": str,
     "mse_mean": float,
     "spatiotemporal_iou_mean": float,
     "spatial_iou": float,
@@ -455,10 +479,13 @@ python -m physv_eval.single_case.cosmos_reason1 \
     "source_fps": float,
     "output_duration_sec": float,
     "source_duration_sec": float,
+    "output_spatial_size": list[int],
+    "source_aligned_size": list[int],
     "target_size": list[int],
     "downsample_factor": int,
     "threshold_value": int,
     "frame_alignment": str,
+    "spatial_alignment": str,
     "score_formula": str,
     "notes": str,
 }
@@ -473,6 +500,17 @@ cd /home/gaoya/Code_Video/Code_data/Code_try0526
 python -m physv_eval.single_case.physics_iq \
   --video /path/to/output.mp4 \
   --source-video /path/to/source.mp4
+```
+
+future-only 比较：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.physics_iq \
+  --video /path/to/output.mp4 \
+  --source-video /path/to/source.mp4 \
+  --context-mode without_context \
+  --context-frames 8
 ```
 
 指定另存目录：
@@ -490,5 +528,98 @@ python -m physv_eval.single_case.physics_iq \
 ```bash
 cd /home/gaoya/Code_Video/Code_data/Code_try0526
 python -m physv_eval.single_case.physics_iq \
+  --input-json /path/to/case.json
+```
+
+## 8. PhysInOne PMF
+
+入口：
+
+- 模块：`physv_eval.single_case.pmf`
+- 函数：
+  `score_case(case, source_video_path=None, context_mode="with_context", context_frames=None, device="cpu", aligned_video_dir=None)`
+
+指标定义：
+
+- 对齐 PhysInOne 的 PMF
+- 基于 3D FFT 频域能量分布的相似度
+- 更适合看整体运动频谱是否和 GT 接近
+- 支持两种上下文模式：
+  - `with_context`
+  - `without_context`
+- `without_context` 时会先从输出视频和参考视频同时丢掉前 `context_frames`
+- 如果参考视频更长，会再截到和输出窗口同样的帧数
+- 参考视频会先被直接 resize 到输出视频空间尺寸，再调用官方 PMF 实现
+- 会另存三条真正参与评测的可视化视频：
+  - `pred_used_for_pmf`
+  - `gt_used_for_pmf`
+  - `compare_side_by_side`
+
+指标属性：
+
+- 类型：连续值
+- 主字段：`score`
+- 主方向：越高越好
+
+函数返回：
+
+```python
+{
+    "score": float,
+    "pmf_score": float,
+    "official": bool,
+    "method": str,
+    "reference_video": str,
+    "context_mode": str,
+    "context_frames_used": int,
+    "output_start_frame": int,
+    "source_start_frame": int,
+    "output_frames_after_context_clip": int,
+    "source_frames_after_context_clip": int,
+    "pred_used_for_pmf": str,
+    "gt_used_for_pmf": str,
+    "compare_side_by_side": str,
+    "video_codec": str,
+    "metric_direction": str,
+    "device": str,
+    "output_fps": float,
+    "source_fps": float,
+    "compare_fps": float,
+    "output_spatial_size": list[int],
+    "source_aligned_size": list[int],
+    "used_shape": list[int],
+    "frame_alignment": str,
+    "spatial_alignment": str,
+    "notes": str,
+}
+```
+
+运行示例：
+
+直接传两条视频：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.pmf \
+  --video /path/to/output.mp4 \
+  --source-video /path/to/source.mp4
+```
+
+future-only 比较：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.pmf \
+  --video /path/to/output.mp4 \
+  --source-video /path/to/source.mp4 \
+  --context-mode without_context \
+  --context-frames 8
+```
+
+传 case JSON：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.pmf \
   --input-json /path/to/case.json
 ```

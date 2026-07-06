@@ -136,7 +136,7 @@ h1 {
 }
 .mini-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 12px;
 }
 .mini-card {
@@ -156,6 +156,12 @@ h1 {
   display: block;
   width: 100%;
   height: auto;
+}
+.mini-card .caption {
+  padding: 8px 12px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 .mini-card video {
   display: block;
@@ -211,6 +217,12 @@ def collect_cases(trace_root: Path) -> list[dict]:
                     "stats": stats,
                     "preview_video": step_dir / "preview_video.mp4",
                     "preview_strip": step_dir / "preview_strip.png",
+                    "motion_mask_video": step_dir / "motion_mask_video.mp4",
+                    "motion_mask_strip": step_dir / "motion_mask_strip.png",
+                    "motion_overlay_video": step_dir / "motion_overlay_video.mp4",
+                    "motion_overlay_strip": step_dir / "motion_overlay_strip.png",
+                    "background_overlay_video": step_dir / "background_overlay_video.mp4",
+                    "background_overlay_strip": step_dir / "background_overlay_strip.png",
                     "latent_video": step_dir / "x0_latent_norm.mp4",
                     "latent_strip": step_dir / "x0_latent_norm_strip.png",
                 }
@@ -299,6 +311,7 @@ def build_html(trace_root: Path, output_html: Path, title: str, cases: list[dict
                 parts.append(
                     f"<img src='{html.escape(rel(trace_root, step['preview_strip']))}' alt='Preview strip for {html.escape(sample_id)}'>"
                 )
+                parts.append("<div class='caption'>Decoded x0 preview video used for the guidance energy.</div>")
                 parts.append("</div>")
             if step["preview_video"].exists():
                 parts.append("<div class='mini-card'>")
@@ -306,6 +319,55 @@ def build_html(trace_root: Path, output_html: Path, title: str, cases: list[dict
                 parts.append(
                     f"<video controls preload='metadata' src='{html.escape(rel(trace_root, step['preview_video']))}'></video>"
                 )
+                parts.append("<div class='caption'>Same preview as a playable mp4.</div>")
+                parts.append("</div>")
+            if step["motion_mask_strip"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Motion Mask Strip</h4>")
+                parts.append(
+                    f"<img src='{html.escape(rel(trace_root, step['motion_mask_strip']))}' alt='Motion mask strip for {html.escape(sample_id)}'>"
+                )
+                parts.append("<div class='caption'>Binary mask used to restrict the guidance energy to motion regions.</div>")
+                parts.append("</div>")
+            if step["motion_mask_video"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Motion Mask Video</h4>")
+                parts.append(
+                    f"<video controls preload='metadata' src='{html.escape(rel(trace_root, step['motion_mask_video']))}'></video>"
+                )
+                parts.append("<div class='caption'>Per-step mask video aligned with the preview frames.</div>")
+                parts.append("</div>")
+            if step["motion_overlay_strip"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Motion Overlay Strip</h4>")
+                parts.append(
+                    f"<img src='{html.escape(rel(trace_root, step['motion_overlay_strip']))}' alt='Motion overlay strip for {html.escape(sample_id)}'>"
+                )
+                parts.append("<div class='caption'>Foreground motion tinted in green for inspection.</div>")
+                parts.append("</div>")
+            if step["motion_overlay_video"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Motion Overlay Video</h4>")
+                parts.append(
+                    f"<video controls preload='metadata' src='{html.escape(rel(trace_root, step['motion_overlay_video']))}'></video>"
+                )
+                parts.append("<div class='caption'>Playable overlay with motion tint.</div>")
+                parts.append("</div>")
+            if step["background_overlay_strip"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Background Overlay Strip</h4>")
+                parts.append(
+                    f"<img src='{html.escape(rel(trace_root, step['background_overlay_strip']))}' alt='Background overlay strip for {html.escape(sample_id)}'>"
+                )
+                parts.append("<div class='caption'>Background tinted in blue to check whether the mask is too broad.</div>")
+                parts.append("</div>")
+            if step["background_overlay_video"].exists():
+                parts.append("<div class='mini-card'>")
+                parts.append("<h4>Background Overlay Video</h4>")
+                parts.append(
+                    f"<video controls preload='metadata' src='{html.escape(rel(trace_root, step['background_overlay_video']))}'></video>"
+                )
+                parts.append("<div class='caption'>Playable background-focused overlay.</div>")
                 parts.append("</div>")
             if step["latent_strip"].exists():
                 parts.append("<div class='mini-card'>")
@@ -313,6 +375,7 @@ def build_html(trace_root: Path, output_html: Path, title: str, cases: list[dict
                 parts.append(
                     f"<img src='{html.escape(rel(trace_root, step['latent_strip']))}' alt='x0 latent strip for {html.escape(sample_id)}'>"
                 )
+                parts.append("<div class='caption'>Magnitude heatmap of the decoded x0 prediction.</div>")
                 parts.append("</div>")
             if step["latent_video"].exists():
                 parts.append("<div class='mini-card'>")
@@ -320,6 +383,7 @@ def build_html(trace_root: Path, output_html: Path, title: str, cases: list[dict
                 parts.append(
                     f"<video controls preload='metadata' src='{html.escape(rel(trace_root, step['latent_video']))}'></video>"
                 )
+                parts.append("<div class='caption'>Playable x0 magnitude video.</div>")
                 parts.append("</div>")
             parts.append("</div>")
             parts.append(

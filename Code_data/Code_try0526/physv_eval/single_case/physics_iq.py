@@ -24,6 +24,12 @@ _SOURCE_VIDEO_KEYS = (
     "gt_video",
     "gt_video_path",
 )
+_CONTEXT_FRAME_KEYS = (
+    "context_frames",
+    "used_context_frames",
+    "model_args.context_frames",
+)
+_CONTEXT_MODE_CHOICES = ("with_context", "without_context")
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,7 +70,25 @@ def parse_args() -> argparse.Namespace:
         "--downsample-factor",
         type=int,
         default=4,
-        help="Resize reference frames by this factor before scoring, matching the official benchmark style.",
+        help="Resize frames by this factor after optional context clipping and GT-to-output spatial alignment.",
+    )
+    parser.add_argument(
+        "--context-mode",
+        choices=_CONTEXT_MODE_CHOICES,
+        default="with_context",
+        help=(
+            "with_context compares from frame 0; without_context drops the first context_frames "
+            "from both output and source before scoring."
+        ),
+    )
+    parser.add_argument(
+        "--context-frames",
+        type=int,
+        default=None,
+        help=(
+            "Number of context frames to drop when --context-mode=without_context. "
+            "If omitted, the scorer tries to infer it from case metadata."
+        ),
     )
     parser.add_argument(
         "--aligned-video-dir",
@@ -76,6 +100,31 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def _get_nested(payload: Mapping[str, Any], dotted_key: str) -> Any:
+    value: Any = payload
+    for part in dotted_key.split("."):
+        if not isinstance(value, Mapping) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _first_int(payload: Mapping[str, Any], keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = _get_nested(payload, key) if "." in key else payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and np.isfinite(value):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if text.isdigit():
+                return int(text)
+    return None
 
 
 def _load_case_and_source(
@@ -138,17 +187,72 @@ def _read_video(path: Path) -> tuple[list[np.ndarray], float]:
     return frames, fps
 
 
+def _infer_context_frames_from_case(case: EvalCase) -> int | None:
+    if case.metadata is not None:
+        inferred = _first_int(case.metadata, _CONTEXT_FRAME_KEYS)
+        if inferred is not None:
+            return inferred
+    context_path = case.context_video_path
+    if context_path is None or not context_path.is_file():
+        return None
+    cap = cv2.VideoCapture(str(context_path))
+    if not cap.isOpened():
+        return None
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    if count > 0:
+        return count
+    return None
+
+
+def _resolve_context_frames(case: EvalCase, explicit_context_frames: int | None, context_mode: str) -> int:
+    if explicit_context_frames is not None:
+        if explicit_context_frames < 0:
+            raise ValueError(f"context_frames must be >= 0, got {explicit_context_frames}")
+        return explicit_context_frames
+    inferred = _infer_context_frames_from_case(case)
+    if inferred is not None:
+        return inferred
+    if context_mode == "without_context":
+        raise ValueError(
+            "context_frames is required for context_mode=without_context when it cannot be inferred from case metadata"
+        )
+    return 0
+
+
 def _sample_frame_indices(num_frames: int, fps: float, timestamps: np.ndarray) -> np.ndarray:
     indices = np.clip(np.floor(timestamps * fps + 1e-6).astype(np.int64), 0, num_frames - 1)
     return indices
 
 
+def _resize_frames(frames: list[np.ndarray], target_size: tuple[int, int]) -> list[np.ndarray]:
+    return [cv2.resize(frame, target_size, interpolation=cv2.INTER_LINEAR) for frame in frames]
+
+
 def _resize_and_normalize(frames: list[np.ndarray], target_size: tuple[int, int]) -> list[np.ndarray]:
     out: list[np.ndarray] = []
     for frame in frames:
-        resized = cv2.resize(frame, target_size)
+        resized = cv2.resize(frame, target_size, interpolation=cv2.INTER_LINEAR)
         out.append(resized.astype(np.float32) / 255.0)
     return out
+
+
+def _clip_frames(frames: list[np.ndarray], start_frame: int, *, label: str) -> list[np.ndarray]:
+    if start_frame <= 0:
+        return list(frames)
+    if start_frame >= len(frames):
+        raise ValueError(
+            f"{label} has {len(frames)} frames, cannot drop leading context_frames={start_frame}"
+        )
+    return list(frames[start_frame:])
+
+
+def _truncate_frames(frames: list[np.ndarray], max_count: int) -> list[np.ndarray]:
+    if max_count <= 0:
+        raise ValueError(f"max_count must be positive, got {max_count}")
+    if len(frames) <= max_count:
+        return list(frames)
+    return list(frames[:max_count])
 
 
 def _build_motion_masks(
@@ -257,18 +361,70 @@ def _write_video(frames: list[np.ndarray], path: Path, fps: float) -> None:
         container.close()
 
 
+def _to_u8_bgr(frame: np.ndarray) -> np.ndarray:
+    if frame.dtype == np.uint8:
+        return frame.copy()
+    return np.clip(frame * 255.0, 0, 255).astype(np.uint8)
+
+
+def _build_side_by_side_frames(
+    output_frames: list[np.ndarray],
+    source_frames: list[np.ndarray],
+) -> list[np.ndarray]:
+    if len(output_frames) != len(source_frames):
+        raise ValueError("Need the same number of frames to build a side-by-side video")
+    compare_frames: list[np.ndarray] = []
+    for output_frame, source_frame in zip(output_frames, source_frames):
+        left = _to_u8_bgr(output_frame)
+        right = _to_u8_bgr(source_frame)
+        if left.shape != right.shape:
+            raise ValueError("Need the same frame shape to build a side-by-side video")
+        merged = np.concatenate([left, right], axis=1)
+        width = left.shape[1]
+        cv2.putText(
+            merged,
+            "Prediction",
+            (20, 36),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            merged,
+            "Reference",
+            (width + 20, 36),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        compare_frames.append(merged)
+    return compare_frames
+
+
 def score_case(
     case: EvalCase | Path | str | Mapping[str, Any],
     *,
     source_video_path: Path | str | None = None,
     threshold_value: int = 10,
     downsample_factor: int = 4,
+    context_mode: str = "with_context",
+    context_frames: int | None = None,
     aligned_video_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     if downsample_factor < 1:
         raise ValueError("downsample_factor must be >= 1")
+    if context_mode not in _CONTEXT_MODE_CHOICES:
+        raise ValueError(f"context_mode must be one of {_CONTEXT_MODE_CHOICES}, got {context_mode!r}")
 
     normalized = coerce_eval_case(case)
+    resolved_context_frames = _resolve_context_frames(normalized, context_frames, context_mode)
+    output_start_frame = resolved_context_frames if context_mode == "without_context" else 0
+    source_start_frame = resolved_context_frames if context_mode == "without_context" else 0
+
     metadata_source: Path | None = None
     if source_video_path is not None:
         metadata_source = Path(source_video_path)
@@ -283,30 +439,37 @@ def score_case(
     _ensure_video(output_video_path)
     _ensure_video(metadata_source)
 
-    output_frames_raw, output_fps = _read_video(output_video_path)
-    source_frames_raw, source_fps = _read_video(metadata_source)
+    output_frames_all, output_fps = _read_video(output_video_path)
+    source_frames_all, source_fps = _read_video(metadata_source)
+
+    output_frames_raw = _clip_frames(output_frames_all, output_start_frame, label="output_video")
+    source_frames_clipped = _clip_frames(source_frames_all, source_start_frame, label="source_video")
+    source_frames_clipped = _truncate_frames(source_frames_clipped, len(output_frames_raw))
 
     output_duration = len(output_frames_raw) / output_fps
-    source_duration = len(source_frames_raw) / source_fps
+    source_duration = len(source_frames_clipped) / source_fps
     compare_duration = min(output_duration, source_duration)
     compare_fps = min(output_fps, source_fps)
     compare_count = max(1, int(np.floor(compare_duration * compare_fps + 1e-6)))
     timestamps = np.arange(compare_count, dtype=np.float32) / float(compare_fps)
 
     output_indices = _sample_frame_indices(len(output_frames_raw), output_fps, timestamps)
-    source_indices = _sample_frame_indices(len(source_frames_raw), source_fps, timestamps)
+    source_indices = _sample_frame_indices(len(source_frames_clipped), source_fps, timestamps)
     sampled_output_raw = [output_frames_raw[int(idx)] for idx in output_indices]
-    sampled_source_raw = [source_frames_raw[int(idx)] for idx in source_indices]
+    sampled_source_raw = [source_frames_clipped[int(idx)] for idx in source_indices]
 
-    source_h, source_w = sampled_source_raw[0].shape[:2]
+    output_h, output_w = sampled_output_raw[0].shape[:2]
+    output_size = (output_w, output_h)
+    sampled_source_resized_raw = _resize_frames(sampled_source_raw, output_size)
+
     target_w, target_h = _make_even_size(
-        max(1, source_w // downsample_factor),
-        max(1, source_h // downsample_factor),
+        max(1, output_w // downsample_factor),
+        max(1, output_h // downsample_factor),
     )
     target_size = (target_w, target_h)
 
     output_frames = _resize_and_normalize(sampled_output_raw, target_size)
-    source_frames = _resize_and_normalize(sampled_source_raw, target_size)
+    source_frames = _resize_and_normalize(sampled_source_resized_raw, target_size)
 
     aligned_dir = (
         Path(aligned_video_dir)
@@ -315,8 +478,10 @@ def score_case(
     )
     aligned_output_path = aligned_dir / "scored_output_video.mp4"
     aligned_source_path = aligned_dir / "scored_source_video.mp4"
+    compare_side_by_side_path = aligned_dir / "compare_side_by_side.mp4"
     _write_video(output_frames, aligned_output_path, compare_fps)
     _write_video(source_frames, aligned_source_path, compare_fps)
+    _write_video(_build_side_by_side_frames(output_frames, source_frames), compare_side_by_side_path, compare_fps)
 
     mse_per_frame = _mse_per_frame(source_frames, output_frames)
     source_masks = _build_motion_masks(source_frames, threshold_value=threshold_value)
@@ -342,8 +507,15 @@ def score_case(
         "official": False,
         "method": "physics_iq_single_view_approx",
         "reference_video": str(metadata_source),
+        "context_mode": str(context_mode),
+        "context_frames_used": int(resolved_context_frames),
+        "output_start_frame": int(output_start_frame),
+        "source_start_frame": int(source_start_frame),
+        "output_frames_after_context_clip": int(len(output_frames_raw)),
+        "source_frames_after_context_clip": int(len(source_frames_clipped)),
         "scored_output_video": str(aligned_output_path),
         "scored_source_video": str(aligned_source_path),
+        "compare_side_by_side": str(compare_side_by_side_path),
         "video_codec": "h264",
         "mse_mean": round(mse_mean, 6),
         "spatiotemporal_iou_mean": round(spatiotemporal_iou_mean, 6),
@@ -357,13 +529,18 @@ def score_case(
         "source_fps": round(float(source_fps), 6),
         "output_duration_sec": round(float(output_duration), 6),
         "source_duration_sec": round(float(source_duration), 6),
+        "output_spatial_size": [int(output_w), int(output_h)],
+        "source_aligned_size": [int(output_w), int(output_h)],
         "target_size": [int(target_w), int(target_h)],
         "downsample_factor": int(downsample_factor),
         "threshold_value": int(threshold_value),
-        "frame_alignment": "timestamp_resample_to_shorter_duration",
+        "frame_alignment": "timestamp_resample_to_shorter_duration_after_optional_context_clip",
+        "spatial_alignment": "resize_source_to_output_before_downsample",
         "score_formula": "100 * clip(((spatiotemporal_iou_mean + spatial_iou + weighted_spatial_iou) / 3) - mse_mean, 0, 1)",
         "notes": (
-            "Approximate single-view score. It drops the official multi-view and two-take physical variance terms."
+            "Approximate single-view score. It drops the official multi-view and two-take physical variance terms. "
+            "When context_mode=without_context, the scorer drops the first context_frames from both output and source "
+            "before temporal alignment."
         ),
     }
 
@@ -380,6 +557,8 @@ def main() -> None:
         source_video_path=source_video,
         threshold_value=args.threshold_value,
         downsample_factor=args.downsample_factor,
+        context_mode=args.context_mode,
+        context_frames=args.context_frames,
         aligned_video_dir=args.aligned_video_dir,
     )
     emit_result(result_record(case, result), output_json=args.output_json)
