@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bench-script", type=Path, default=DEFAULT_BENCH_SCRIPT)
     parser.add_argument("--project-root", type=Path, default=DEFAULT_PROJECT_ROOT)
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
-    parser.add_argument("--infer-gpu", default="7")
+    parser.add_argument("--infer-gpu", default="2")
     parser.add_argument("--bench-gpu", default="0")
     parser.add_argument(
         "--bench-idle-gpus",
@@ -367,10 +367,10 @@ def run_bench_if_needed(args: argparse.Namespace, state: dict[str, Any], now: fl
         log("[wait] bench retry cooldown active")
         return False
 
-        log(f"[bench] pending steps: {', '.join(pending_steps)}")
-        log(f"[bench] gpu idle check: {reason}")
-        bench_state["last_attempt_at"] = now
-        command = build_bench_command(args)
+    log(f"[bench] pending steps: {', '.join(pending_steps)}")
+    log(f"[bench] gpu idle check: {reason}")
+    bench_state["last_attempt_at"] = now
+    command = build_bench_command(args)
     returncode, error = run_command(command, env=build_bench_env(args), dry_run=bool(args.dry_run))
     bench_state["last_returncode"] = returncode
     bench_state["last_error"] = error

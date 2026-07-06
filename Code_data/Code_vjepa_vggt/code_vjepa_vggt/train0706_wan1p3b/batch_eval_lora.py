@@ -44,7 +44,7 @@ if str(TRAIN0419_ROOT) not in sys.path:
 
 from diffsynth import ModelConfig  # noqa: E402
 from diffsynth.utils.data import VideoData, save_video  # noqa: E402
-from context_wan import ContextAwareWanVideoPipeline  # noqa: E402
+from code_vjepa_vggt.train0706_wan1p3b.context_wan import ContextAwareWanVideoPipeline  # noqa: E402
 
 sys.path.append("/home/gaoya/code_my_utils")
 from tools.seed import seed_everything  # noqa: E402

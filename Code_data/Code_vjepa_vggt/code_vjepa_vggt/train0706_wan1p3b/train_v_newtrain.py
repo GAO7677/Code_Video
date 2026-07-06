@@ -78,7 +78,7 @@ from diffsynth.diffusion import (
 from diffsynth.diffusion.runner import initialize_deepspeed_gradient_checkpointing
 from diffsynth.pipelines.wan_video import ModelConfig
 
-from dataset import WanTI2VDataset
+from code_vjepa_vggt.train0706_wan1p3b.dataset import WanTI2VDataset
 
 
 DEFAULT_WAN_ROOT = "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"

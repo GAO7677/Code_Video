@@ -39,8 +39,8 @@ import accelerate
 import torch
 from tqdm import tqdm
 
-from dataset import WanTI2VDataset
-from context_wan import ContextAwareWanVideoPipeline, flow_match_context_sft_loss
+from code_vjepa_vggt.train0706_wan1p3b.dataset import WanTI2VDataset
+from code_vjepa_vggt.train0706_wan1p3b.context_wan import ContextAwareWanVideoPipeline, flow_match_context_sft_loss
 from diffsynth.diffusion import (
     DiffusionTrainingModule,
     DirectDistillLoss,

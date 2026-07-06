@@ -325,7 +325,11 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     model_args.lora_rank = int(args.lora_rank)
     model_args.lora_alpha = int(args.lora_alpha)
     model_args.lora_checkpoint = str(args.lora_checkpoint)
-    model_args.extra_inputs = "input_image"
+    # Wan2.1-1.3B stage1b is a pure T2V/context-conditioning flow.
+    # Do not inject `input_image`, otherwise DiffSynth will route the model
+    # through the image-conditioned VAE branch and corrupt the expected latent
+    # channel layout for this 16-channel DiT.
+    model_args.extra_inputs = ""
 
     model_args.enable_object_branch = True
     model_args.freeze_non_object_trainables = True
