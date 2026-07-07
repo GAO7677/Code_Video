@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -u
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -29,19 +29,13 @@ METRICS=(
   "cosmos_reason1"
 )
 
-FAILED_METRICS=()
-
 run_metric() {
   local metric="$1"
   echo "[bench] start metric=${metric}"
-  if "${PYTHON_BIN}" "${BENCH_PY}" \
+  "${PYTHON_BIN}" "${BENCH_PY}" \
     --metric "${metric}" \
-    --result-root "${RESULT_ROOT}"; then
-    echo "[bench] done metric=${metric}"
-  else
-    echo "[bench] failed metric=${metric}" >&2
-    FAILED_METRICS+=("${metric}")
-  fi
+    --result-root "${RESULT_ROOT}"
+  echo "[bench] done metric=${metric}"
 }
 
 echo "[bench] python=${PYTHON_BIN}"
@@ -55,14 +49,6 @@ for metric in "${METRICS[@]}"; do
 done
 
 echo "[bench] render report"
-if ! "${PYTHON_BIN}" "${REPORT_PY}" --result-root "${RESULT_ROOT}"; then
-  echo "[bench] failed metric report rendering" >&2
-  FAILED_METRICS+=("render_report")
-fi
-
-if ((${#FAILED_METRICS[@]} > 0)); then
-  echo "[bench] completed with failures: ${FAILED_METRICS[*]}" >&2
-  exit 1
-fi
+"${PYTHON_BIN}" "${REPORT_PY}" --result-root "${RESULT_ROOT}"
 
 echo "[bench] all metrics completed successfully"

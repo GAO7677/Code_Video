@@ -57,8 +57,10 @@ GPU_POOL=(0 1 2)
 GPU_POLL_SECONDS="${GPU_POLL_SECONDS:-30}"
 GPU_MAX_MEMORY_MB="${GPU_MAX_MEMORY_MB:-1024}"
 GPU_MAX_UTILIZATION="${GPU_MAX_UTILIZATION:-10}"
+FORCE_GPU="${FORCE_GPU:-}"
 
 FAILED_JOBS=()
+LAST_LAUNCHED_PID=""
 declare -A GPU_PID=()
 declare -A GPU_LABEL=()
 
@@ -145,6 +147,18 @@ check_freed_gpus() {
 }
 
 wait_for_free_gpu() {
+  if [[ -n "${FORCE_GPU}" ]]; then
+    while :; do
+      check_freed_gpus
+      if [[ -z "${GPU_PID[$FORCE_GPU]:-}" ]]; then
+        echo "${FORCE_GPU}"
+        return 0
+      fi
+      echo "[gpu_wait] forced gpu=${FORCE_GPU} still occupied by ${GPU_LABEL[$FORCE_GPU]:-unknown}; poll=${GPU_POLL_SECONDS}s" >&2
+      sleep "${GPU_POLL_SECONDS}"
+    done
+  fi
+
   while :; do
     check_freed_gpus
 
@@ -340,7 +354,7 @@ PY
   local pid=$!
   GPU_PID["${gpu}"]="${pid}"
   GPU_LABEL["${gpu}"]="${job_label}"
-  echo "${pid}"
+  LAST_LAUNCHED_PID="${pid}"
 }
 
 wait_method_jobs() {
@@ -384,14 +398,27 @@ run_dataset_mode() {
   echo "[dataset_mode:root]  ${dataset_root}"
   echo "============================================================"
 
-  local pid_wan_base
-  local pid_openvid
-  local pid_pybullet
-  pid_wan_base="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "wan_base" "${dataset_root}")"
-  pid_openvid="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_lora_step10000" "${dataset_root}")"
-  pid_pybullet="$(launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_0613pybullet_lora_step000500" "${dataset_root}")"
+  if [[ -n "${FORCE_GPU}" ]]; then
+    local method_name
+    local method_pid
+    for method_name in "wan_base" "openvid_lora_step10000" "openvid_0613pybullet_lora_step000500"; do
+      launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "${method_name}" "${dataset_root}"
+      method_pid="${LAST_LAUNCHED_PID}"
+      wait_method_jobs "${dataset_tag}" "${mode}" "${method_pid}"
+    done
+  else
+    local pid_wan_base
+    local pid_openvid
+    local pid_pybullet
+    launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "wan_base" "${dataset_root}"
+    pid_wan_base="${LAST_LAUNCHED_PID}"
+    launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_lora_step10000" "${dataset_root}"
+    pid_openvid="${LAST_LAUNCHED_PID}"
+    launch_method_job "${mode}" "${dataset_tag}" "${list_path}" "openvid_0613pybullet_lora_step000500" "${dataset_root}"
+    pid_pybullet="${LAST_LAUNCHED_PID}"
 
-  wait_method_jobs "${dataset_tag}" "${mode}" "${pid_wan_base}" "${pid_openvid}" "${pid_pybullet}"
+    wait_method_jobs "${dataset_tag}" "${mode}" "${pid_wan_base}" "${pid_openvid}" "${pid_pybullet}"
+  fi
 
   if ((${#FAILED_JOBS[@]} > 0)); then
     echo "[dataset_mode:warning] some jobs failed before bench: ${FAILED_JOBS[*]}" >&2
