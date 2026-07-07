@@ -127,6 +127,14 @@ def _resolve_launch_device() -> str:
     return f"cuda:{local_rank}"
 
 
+def _resolve_aux_device(args: argparse.Namespace) -> str | None:
+    raw_value = getattr(args, "aux_device", None)
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    return value or None
+
+
 _VJEPA_RUNTIME_ARG_NAMES = (
     "vjepa_preset",
     "enable_vjepa_guidance",
@@ -394,6 +402,7 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     model_args.vggt_input_h = int(args.vggt_input_h)
     model_args.vggt_input_w = int(args.vggt_input_w)
     model_args.vggt_cache_root = None if args.vggt_cache_root is None else str(args.vggt_cache_root)
+    model_args.object_aux_devices = _resolve_aux_device(args)
 
     model_args.grounding_device = None if args.grounding_device is None else str(args.grounding_device)
     model_args.sam2_segment_len = int(args.sam2_segment_len)
@@ -455,6 +464,13 @@ def _build_runtime_model(args: argparse.Namespace):
         aux_module = getattr(model, aux_name, None)
         if aux_module is not None and hasattr(aux_module, "device_obj"):
             aux_module.device_obj = target_device
+    aux_device = _resolve_aux_device(args)
+    if aux_device and getattr(model, "vggt_adapter", None) is not None:
+        resolved_aux_device = torch.device(aux_device)
+        model.vggt_adapter = model.vggt_adapter.to(resolved_aux_device)
+        model.vggt_adapter.device_obj = resolved_aux_device
+        if getattr(model.vggt_adapter, "model", None) is not None:
+            model.vggt_adapter.model = model.vggt_adapter.model.to(resolved_aux_device)
     model.eval()
     configure_runtime_pipe_vjepa(model.pipe, args)
     return model, model_args, {
@@ -522,11 +538,27 @@ def _build_object_context(
         if vggt_out is None:
             raise RuntimeError(f"VGGT cache missing for {video_path}")
     else:
+        vggt_device = getattr(model.vggt_adapter, "device_obj", device)
         vggt_out = model.vggt_adapter(
-            frames_bthwc_01,
-            query_points_prior=query_points_prior,
+            frames_bthwc_01.to(vggt_device),
+            query_points_prior=query_points_prior.to(vggt_device),
             query_image_hw=image_hw,
         )
+        for attr_name in (
+            "query_points",
+            "tracks",
+            "visibility",
+            "confidence",
+            "pose_enc",
+            "depth",
+            "depth_conf",
+            "world_points",
+            "world_points_conf",
+            "dense_patch_tokens",
+        ):
+            attr_value = getattr(vggt_out, attr_name, None)
+            if isinstance(attr_value, torch.Tensor):
+                setattr(vggt_out, attr_name, attr_value.to(device))
 
     tracks_grouped, visibility_grouped, confidence_grouped = model._group_tracks_to_objects(
         cotracker_out.tracks,
@@ -719,6 +751,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vggt-input-h", type=int, default=420)
     parser.add_argument("--vggt-input-w", type=int, default=728)
     parser.add_argument("--vggt-cache-root", default=None)
+    parser.add_argument("--aux-device", default=None, help="Optional device for JEPA/CoTracker/VGGT, e.g. cuda:1")
     parser.add_argument("--grounding-device", default=None)
     parser.add_argument("--sam2-segment-len", type=int, default=8)
     parser.add_argument("--grounding-proposal-source", default="gdino_only")
@@ -827,6 +860,7 @@ def main() -> None:
         "prompt": str(args.prompt),
         "frame_indices": frame_indices.tolist(),
         "model_device": str(args.device),
+        "aux_device": _resolve_aux_device(args),
         "model_args": {
             "height": int(model_args.height),
             "width": int(model_args.width),

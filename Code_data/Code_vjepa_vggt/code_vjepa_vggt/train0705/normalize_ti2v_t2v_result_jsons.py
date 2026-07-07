@@ -82,14 +82,20 @@ def infer_mode(result_json_path: Path, payload: dict[str, Any]) -> str | None:
     return None
 
 
-def infer_method(result_json_path: Path, payload: dict[str, Any]) -> str | None:
+def infer_method(result_json_path: Path, payload: dict[str, Any], mode: str | None) -> str | None:
     method = payload.get("method")
     if isinstance(method, str) and method.strip():
-        return method.strip()
-    model_preset = payload.get("model_preset")
-    if isinstance(model_preset, str) and model_preset.strip():
-        return model_preset.strip()
-    return result_json_path.parent.name
+        base_method = method.strip()
+    else:
+        model_preset = payload.get("model_preset")
+        if isinstance(model_preset, str) and model_preset.strip():
+            base_method = model_preset.strip()
+        else:
+            base_method = result_json_path.parent.name
+
+    if mode in {"ti2v", "t2v"} and not base_method.startswith(f"{mode}_"):
+        return f"{mode}_{base_method}"
+    return base_method
 
 
 def infer_case_json_path(result_json_path: Path, payload: dict[str, Any], input_json_root: Path) -> Path | None:
@@ -147,7 +153,7 @@ def normalize_one(result_json_path: Path, input_json_root: Path, *, write_back: 
     case_json_path = infer_case_json_path(result_json_path, payload, input_json_root)
     input_payload = load_json(case_json_path) if case_json_path is not None else None
     output_video_path = infer_output_video_path(result_json_path, payload)
-    method = infer_method(result_json_path, payload)
+    method = infer_method(result_json_path, payload, mode)
 
     input_caption = infer_text(payload, ("input_caption", "prompt", "caption", "input_prompt"))
     if input_caption is None and input_payload is not None:
