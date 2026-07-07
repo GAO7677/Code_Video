@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--repetition-penalty", type=float, default=1.05)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--max-attempts", type=int, default=10)
     return parser.parse_args()
 
 
@@ -61,6 +62,7 @@ def main() -> None:
         top_p=args.top_p,
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
+        max_attempts=args.max_attempts,
     )
     result = score_case(case, runner=runner)
     emit_result(result_record(case, result), output_json=args.output_json)

@@ -40,6 +40,7 @@ REPO=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN0419=/home/gaoya/Code_Video/Code_data/Code_train/train_0419
 ENTRY="${REPO}/code_vjepa_vggt/AAAinfer/wan_base_two_loras_ti2v_t2v.py"
+BATCH_ENTRY="${REPO}/code_vjepa_vggt/AAAinfer/wan_base_two_loras_ti2v_t2v_batch.py"
 BENCH_SCRIPT="${REPO}/code_vjepa_vggt/AAAinfer/bench.sh"
 
 LIST_MORPHEUS=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt
@@ -201,154 +202,17 @@ launch_method_job() {
   (
     export PYTHONPATH="${REPO}:${DIFFSYNTH}:${TRAIN0419}"
     export CUDA_VISIBLE_DEVICES="${gpu}"
-    export FORMAL_COMPARE_PY="${PY}"
-    export FORMAL_COMPARE_ENTRY="${ENTRY}"
-    export FORMAL_COMPARE_MODE="${mode}"
-    export FORMAL_COMPARE_METHOD="${method_name}"
-    export FORMAL_COMPARE_LIST="${list_path}"
-    export FORMAL_COMPARE_METHOD_ROOT="${method_root}"
-    export FORMAL_COMPARE_OVERWRITE="${OVERWRITE}"
-
-    "${PY}" -u - <<'PY'
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-
-PYTHON = os.environ["FORMAL_COMPARE_PY"]
-ENTRY = Path(os.environ["FORMAL_COMPARE_ENTRY"])
-MODE = os.environ["FORMAL_COMPARE_MODE"]
-METHOD = os.environ["FORMAL_COMPARE_METHOD"]
-LIST_PATH = Path(os.environ["FORMAL_COMPARE_LIST"])
-METHOD_ROOT = Path(os.environ["FORMAL_COMPARE_METHOD_ROOT"])
-OVERWRITE = os.environ.get("FORMAL_COMPARE_OVERWRITE", "0") == "1"
-
-
-def first_existing_path(payload: dict, keys: list[str]) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def build_command(payload: dict, output_video_path: Path) -> list[str]:
-    prompt = str(payload.get("input_caption", "")).strip()
-    if not prompt:
-        raise ValueError(f"missing input_caption in {payload}")
-
-    cmd = [
-        PYTHON,
-        str(ENTRY),
-        "--mode",
-        MODE,
-        "--model-preset",
-        METHOD,
-        "--prompt",
-        prompt,
-        "--output-video-path",
-        str(output_video_path),
-        "--num-inference-steps",
-        "40",
-        "--cfg-scale",
-        "5.0",
-        "--seed",
-        "42",
-        "--fps",
-        "30",
-        "--num-frames",
-        "24",
-    ]
-
-    if MODE == "ti2v":
-        context_path = first_existing_path(
-            payload,
-            [
-                "input_video",
-                "input_video_24f",
-                "input_video_16f",
-                "input_video_4f",
-                "input_video_randomf",
-                "source_video",
-            ],
-        )
-        if context_path is None:
-            raise ValueError(f"missing context video path for ti2v: {output_video_path.stem}")
-        cmd.extend(["--context-path", context_path, "--conditioning-mode", "input_image_only"])
-        first_frame_path = first_existing_path(payload, ["input_image"])
-        if first_frame_path is not None:
-            cmd.extend(["--first-frame-path", first_frame_path])
-    else:
-        cmd.extend(["--conditioning-mode", "context_aware"])
-
-    if OVERWRITE:
-        cmd.append("--overwrite")
-
-    return cmd
-
-
-def iter_json_paths(list_path: Path):
-    for raw_line in list_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        yield Path(line)
-
-
-def main() -> int:
-    METHOD_ROOT.mkdir(parents=True, exist_ok=True)
-    failures: list[str] = []
-    json_paths = list(iter_json_paths(LIST_PATH))
-    print(f"[method:start] mode={MODE} method={METHOD} cases={len(json_paths)} root={METHOD_ROOT}", flush=True)
-
-    for index, json_path in enumerate(json_paths, start=1):
-        case_name = json_path.stem
-        output_video_path = METHOD_ROOT / f"{case_name}.mp4"
-        output_log_path = METHOD_ROOT / f"{case_name}.log"
-
-        if output_video_path.exists() and not OVERWRITE:
-            print(f"[case:skip] {index}/{len(json_paths)} case={case_name} output_exists=1", flush=True)
-            continue
-
-        try:
-            payload = json.loads(json_path.read_text(encoding="utf-8"))
-            cmd = build_command(payload, output_video_path)
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"{case_name}:prepare:{exc}")
-            print(f"[case:prepare_failed] {index}/{len(json_paths)} case={case_name} error={exc}", flush=True)
-            continue
-
-        print(f"[case:start] {index}/{len(json_paths)} case={case_name}", flush=True)
-        with output_log_path.open("w", encoding="utf-8") as handle:
-            handle.write(" ".join(subprocess.list2cmdline([part]) for part in cmd) + "\n\n")
-            handle.flush()
-            result = subprocess.run(cmd, stdout=handle, stderr=subprocess.STDOUT, check=False)
-
-        if result.returncode != 0:
-            failures.append(f"{case_name}:run:{result.returncode}")
-            print(
-                f"[case:failed] {index}/{len(json_paths)} case={case_name} rc={result.returncode} log={output_log_path}",
-                flush=True,
-            )
-            continue
-
-        print(f"[case:done] {index}/{len(json_paths)} case={case_name} video={output_video_path}", flush=True)
-
-    if failures:
-        print(f"[method:failed] mode={MODE} method={METHOD} failures={len(failures)}", flush=True)
-        for item in failures:
-            print(f"[failure] {item}", flush=True)
-        return 1
-
-    print(f"[method:done] mode={MODE} method={METHOD} cases={len(json_paths)}", flush=True)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-PY
+    "${PY}" -u "${BATCH_ENTRY}" \
+      --mode "${mode}" \
+      --model-preset "${method_name}" \
+      --input-json-list-path "${list_path}" \
+      --output-root "${method_root}" \
+      --num-inference-steps 40 \
+      --cfg-scale 5.0 \
+      --seed 42 \
+      --fps 30 \
+      --num-frames 24 \
+      $( [[ "${OVERWRITE}" == "1" ]] && printf -- '--overwrite' )
   ) >"${job_log}" 2>&1 &
 
   local pid=$!

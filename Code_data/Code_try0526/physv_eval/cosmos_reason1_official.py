@@ -52,6 +52,7 @@ class OfficialCosmosReason1Runner:
         top_p: float = 0.95,
         repetition_penalty: float = 1.05,
         seed: int = 1,
+        max_attempts: int = 10,
     ) -> None:
         self.model_path = str(model_path)
         self.prompt_path = Path(prompt_path)
@@ -63,6 +64,7 @@ class OfficialCosmosReason1Runner:
         self.top_p = top_p
         self.repetition_penalty = repetition_penalty
         self.seed = seed
+        self.max_attempts = max(1, int(max_attempts))
 
         self._torch = None
         self._transformers = None
@@ -167,15 +169,17 @@ class OfficialCosmosReason1Runner:
             **video_kwargs,
         )
         inputs = inputs.to(self._model.device)
-        attempts: list[tuple[int, str, dict[str, Any] | None]] = []
-        for max_new_tokens in [self.max_new_tokens, max(self.max_new_tokens * 2, 512)]:
+        retry_max_new_tokens = max(self.max_new_tokens * 2, 512)
+        attempt_token_limits = [self.max_new_tokens] + [retry_max_new_tokens] * max(0, self.max_attempts - 1)
+        attempts: list[tuple[int, int, str, dict[str, Any] | None]] = []
+        for attempt_index, max_new_tokens in enumerate(attempt_token_limits, start=1):
             raw = self._generate_raw(inputs, max_new_tokens=max_new_tokens)
             parsed = parse_response(raw)
-            attempts.append((max_new_tokens, raw, parsed))
+            attempts.append((attempt_index, max_new_tokens, raw, parsed))
             if parsed is not None:
                 break
 
-        used_max_new_tokens, raw, parsed = attempts[-1]
+        used_attempt_index, used_max_new_tokens, raw, parsed = attempts[-1]
         score = None if parsed is None else parsed.get("answer")
         return {
             "score": score,
@@ -191,7 +195,8 @@ class OfficialCosmosReason1Runner:
             "top_p": self.top_p,
             "repetition_penalty": self.repetition_penalty,
             "seed": self.seed,
-            "attempt_count": len(attempts),
+            "attempt_count": used_attempt_index,
+            "max_attempts": self.max_attempts,
         }
 
     def score_case(self, case: EvalCase | Path | str | dict[str, Any]) -> dict[str, Any]:
