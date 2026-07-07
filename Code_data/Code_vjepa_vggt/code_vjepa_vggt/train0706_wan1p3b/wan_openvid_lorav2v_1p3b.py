@@ -13,17 +13,18 @@ from code_vjepa_vggt.train0706_wan1p3b import batch_eval_lora as core
 
 Run command example:
 
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/DiffSynth-Studio-main:/home/gaoya/Code_Video/Code_data/Code_train/train_0419 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/wan_openvid_lorav2v.py \
-  --weights-root /data/gaoya/AAA_test_video/Train_test/DiffSynth_wan21_13b/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000 \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_100.txt \
-  --model-name wan_openvid_lorav2v_step10000
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0706_wan1p3b/wan_openvid_lorav2v_1p3b.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints_wan21_13b/openvid_full_ctx81_384x672_lora/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name openvid_full_ctx81_384x672_lora_step001000 \
+  --num-inference-steps 40
 
 Default output roots:
-- /data/gaoya/AAA_test_video/0623/test/v2v_1p3b/loramodel/wan_openvid_lorav2v_step10000
-- /data/gaoya/AAA_test_video/0623/test/v2v_1p3b/loramodel/wan_openvid_lorav2v_step10000_runtime
+- /data/gaoya/AAA_test_video/0623/test/v2v_1p3b/loramodel/<model-name>
+- /data/gaoya/AAA_test_video/0623/test/v2v_1p3b/loramodel/<model-name>_runtime
 """
 
 

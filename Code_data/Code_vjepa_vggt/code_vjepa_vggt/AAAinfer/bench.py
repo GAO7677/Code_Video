@@ -216,9 +216,8 @@ def resolve_context_video_path(input_json_path: Path) -> Path | None:
     return None
 
 
-def resolve_input_image_path(input_json_path: Path) -> Path | None:
-    source_payload = load_json(input_json_path)
-    candidate_value = source_payload.get("input_image")
+def resolve_input_image_path(payload: dict[str, Any]) -> Path | None:
+    candidate_value = payload.get("input_image")
     if not isinstance(candidate_value, str) or not candidate_value.strip():
         return None
     candidate = Path(candidate_value).expanduser().resolve()
@@ -345,13 +344,13 @@ def resolve_without_context_override_frames(record: CaseRecord) -> int | None:
     if not is_ti2v_record(record):
         return None
 
-    input_payload = load_json(record.input_json_path)
-    input_video_value = input_payload.get("input_video")
+    result_payload = record.result_payload
+    input_video_value = result_payload.get("input_video")
     if isinstance(input_video_value, str) and input_video_value.strip():
         input_video_path = Path(input_video_value).expanduser().resolve()
         if not input_video_path.is_file():
             raise FileNotFoundError(
-                f"ti2v case input_video does not exist for {record.input_json_path}: {input_video_path}"
+                f"ti2v case input_video does not exist in result json {record.result_json_path}: {input_video_path}"
             )
         input_video_frames = count_video_frames(input_video_path)
         if input_video_frames != 1:
@@ -361,10 +360,10 @@ def resolve_without_context_override_frames(record: CaseRecord) -> int | None:
             )
         return 1
 
-    input_image_path = resolve_input_image_path(record.input_json_path)
+    input_image_path = resolve_input_image_path(result_payload)
     if input_image_path is None:
         raise ValueError(
-            f"ti2v case requires either a 1-frame input_video or an input_image in {record.input_json_path}"
+            f"ti2v case requires either a 1-frame input_video or an input_image in result json {record.result_json_path}"
         )
     return 1
 

@@ -137,7 +137,7 @@ describe_gpu() {
 
 check_freed_gpus() {
   local gpu
-  for gpu in "${GPU_POOL[@]}"; do
+  for gpu in "${!GPU_PID[@]}"; do
     local pid="${GPU_PID[$gpu]:-}"
     if [[ -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null; then
       unset 'GPU_PID[$gpu]'
@@ -374,7 +374,7 @@ wait_method_jobs() {
     fi
 
     local gpu
-    for gpu in "${GPU_POOL[@]}"; do
+    for gpu in "${!GPU_PID[@]}"; do
       if [[ "${GPU_PID[$gpu]:-}" == "${pid}" ]]; then
         unset 'GPU_PID[$gpu]'
         unset 'GPU_LABEL[$gpu]'

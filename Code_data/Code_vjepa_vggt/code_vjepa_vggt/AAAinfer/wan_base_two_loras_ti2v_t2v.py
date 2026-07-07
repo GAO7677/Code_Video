@@ -195,6 +195,14 @@ def write_sidecar_json(
         "cfg_scale": float(cfg_scale),
         "seed": int(seed),
     }
+    if conditioning_mode == "context_aware":
+        if context_path is not None:
+            payload["input_video"] = str(context_path)
+        if first_frame_path is not None:
+            payload["input_image"] = str(first_frame_path)
+    elif conditioning_mode == "input_image_only":
+        if first_frame_path is not None:
+            payload["input_image"] = str(first_frame_path)
     output_video_path.with_suffix(".json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
