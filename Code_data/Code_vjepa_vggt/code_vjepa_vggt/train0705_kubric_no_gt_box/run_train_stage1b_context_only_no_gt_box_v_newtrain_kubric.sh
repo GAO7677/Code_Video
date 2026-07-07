@@ -10,16 +10,17 @@
 #     (-> train_v_newtrain.WanTrainingModule)
 #
 # 用法:
-#   bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh                          # 默认可见 0,2,3,5,6,7；训练占可见 0,1,2,3
-#   VISIBLE_GPU_IDS=0,1,2,3,5,6 TRAIN_GPU_IDS=0,1,2,3 bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh
+#   bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh                          # 默认可见 0,2,3,5,6,7；训练占前 4 个可见槽位
+#   VISIBLE_GPU_IDS=0,2,3,5,6,7 bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh
 #   RESUME=<state.pt|dir> bash ...0705.sh                                        # 断点续训
 #
 # 说明:
 #   - 前台运行, 不使用 nohup / & / 后台方式 (遵循工作区规则)
 #   - 禁用 gpu4 (故障)
 #   - 默认暴露 6 张卡: 0,2,3,5,6,7
-#   - 默认四进程训练卡: 进程内可见 0,1,2,3 (对应物理 0,2,3,5)
+#   - 默认四进程训练卡: 总是占用前 4 个可见槽位 0,1,2,3 (对应物理 0,2,3,5)
 #   - 默认 object_aux_devices: 4,4,5,5 (对应物理 6,6,7,7)
+#   - 注意: 这里不能给 accelerate 传 --gpu_ids，否则它会把子进程 CUDA_VISIBLE_DEVICES 重写为 0,1,2,3，导致 aux 槽位 4/5 失效
 #   - 目标 DiffSynth 框架: WAN_2p2/DiffSynth-Studio-main
 #   - 每 500 step 保存一次 (--save_steps)
 #   - 当前正式 train split = 114276 条, 四卡全局 batch=4, 1 epoch = 28569 optimizer steps
@@ -31,13 +32,11 @@ set -euo pipefail
 
 # ---- 可配置项 (环境变量覆盖) ----
 VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-0,2,3,5,6,7}"   # 物理 GPU 可见列表 (禁止包含 gpu4)
-TRAIN_GPU_IDS="${TRAIN_GPU_IDS:-0,1,2,3}"           # 进程内可见训练卡编号
 RESUME="${RESUME:-none}"        # none=从头开始, 或指定 training_state.pt / checkpoint 目录
 
 IFS=',' read -r -a VISIBLE_GPU_ARRAY <<< "${VISIBLE_GPU_IDS}"
-IFS=',' read -r -a TRAIN_GPU_ARRAY <<< "${TRAIN_GPU_IDS}"
-if [ "${#TRAIN_GPU_ARRAY[@]}" -ne 4 ]; then
-  echo "ERROR: 当前脚本要求四卡训练，请提供 4 个训练 GPU 编号，例如 TRAIN_GPU_IDS=0,1,2,3" >&2
+if [ "${#VISIBLE_GPU_ARRAY[@]}" -lt 6 ]; then
+  echo "ERROR: 当前布局要求至少 6 张可见卡: 前 4 张给训练进程, 后 2 张给 object aux。" >&2
   exit 1
 fi
 for GPU in "${VISIBLE_GPU_ARRAY[@]}"; do
@@ -46,7 +45,7 @@ for GPU in "${VISIBLE_GPU_ARRAY[@]}"; do
     exit 1
   fi
 done
-NUM_PROCESSES="${#TRAIN_GPU_ARRAY[@]}"
+NUM_PROCESSES=4
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
@@ -79,7 +78,7 @@ CMD=(
   PYTHONPATH="${PROJ}:${DIFFSYNTH_ROOT}"
   CUDA_VISIBLE_DEVICES="${VISIBLE_GPU_IDS}"
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-  "${ACCELERATE_BIN}" launch --gpu_ids "${TRAIN_GPU_IDS}" --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16
+  "${ACCELERATE_BIN}" launch --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16
   "${TRAIN_SCRIPT}"
   --diffsynth_root "${DIFFSYNTH_ROOT}"
   --wan_root "${WAN_ROOT}"
@@ -164,6 +163,6 @@ fi
 
 CMD+=("${RESUME_ARGS[@]}")
 
-echo "[启动] 可见物理 GPU=${VISIBLE_GPU_IDS}  训练可见卡=${TRAIN_GPU_IDS}  aux=${OBJECT_AUX_DEVICES}  进程数=${NUM_PROCESSES}  输出=${OUTPUT_DIR}"
+echo "[启动] 可见物理 GPU=${VISIBLE_GPU_IDS}  训练槽位=0,1,2,3  aux=${OBJECT_AUX_DEVICES}  进程数=${NUM_PROCESSES}  输出=${OUTPUT_DIR}"
 echo "[启动] 命令: ${CMD[*]}"
 exec "${CMD[@]}"
