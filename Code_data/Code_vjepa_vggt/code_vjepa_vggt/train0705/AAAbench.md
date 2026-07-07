@@ -60,9 +60,13 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 ```
 
 ## 2.1 ti2v / t2v 专用评测
-旧格式 `ti2v/t2v` 结果 JSON 里有一部分没有 `input_json` / `output_video`，不能直接喂给 `bench.py`。专用脚本会先在临时目录下构造一个可评测镜像树，再分别调用 `AAAinfer/bench.sh` 跑 `ti2v` 和 `t2v`。
+`ti2v/t2v` 现在使用独立脚本：
 
-`ti2v/t2v` 专用评测默认不跑 `_without_context` 指标，只跑：
+`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/bench_ti2v_t2v.py`
+
+这版不会再从 `case_json/input_json` 里反推 `input_video/context_video`，只使用结果 JSON 里真实存在的 `input_*` 字段，适合当前 `ti2v=input_image_only` 和 `t2v` 的结果格式。
+
+默认支持这些指标：
 - `wmreward`
 - `physics_iq`
 - `physics_iq_with_context`
@@ -70,38 +74,68 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 - `videophy2`
 - `cosmos_reason1`
 
-适配脚本：
+先对单个目录做 1 个 case smoke：
 
-`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/prepare_ti2v_t2v_bench_inputs.py`
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
+CUDA_VISIBLE_DEVICES=0 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/bench_ti2v_t2v.py \
+  --metric physics_iq_with_context \
+  --result-root /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world/openvid_lora_step10000 \
+  --limit 1
+```
 
-总控脚本：
+## 2.2 ti2v / t2v 用 gpu0 整批回填所有指标
+下面这条命令会按目录依次回填：
+- `/data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705`
+- `/data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world`
+- `/data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_physicIQ`
+- `/data/gaoya/AAA_test_video/0623/test/t2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world`
+- `/data/gaoya/AAA_test_video/0623/test/t2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_physicIQ`
 
-`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh`
-
-先对每个子文件夹只跑 1 个 case 的 smoke：
+默认不加 `--overwrite`，只补缺失指标：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-LIMIT_PER_FOLDER=1 \
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
+bash -lc '
+PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
+BENCH_PY=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/bench_ti2v_t2v.py
+METRICS=(
+  wmreward
+  physics_iq
+  physics_iq_with_context
+  pmf_with_context
+  videophy2
+  cosmos_reason1
+)
+ROOTS=(
+  /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705
+  /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world
+  /data/gaoya/AAA_test_video/0623/test/ti2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_physicIQ
+  /data/gaoya/AAA_test_video/0623/test/t2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_morpheus_real_world
+  /data/gaoya/AAA_test_video/0623/test/t2v/train_stage1b_diffsynth_native0705_ctx1dupjepa_0705_physicIQ
+)
+for result_root in "${ROOTS[@]}"; do
+  echo "[train0705-ti2v-t2v] start result_root=${result_root}"
+  for metric in "${METRICS[@]}"; do
+    echo "[train0705-ti2v-t2v] metric=${metric} result_root=${result_root}"
+    "${PYTHON_BIN}" "${BENCH_PY}" \
+      --metric "${metric}" \
+      --result-root "${result_root}"
+  done
+done
+'
 ```
 
-跑完整棵 `ti2v/t2v`：
+如需强制重算，把内层命令改成：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 \
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
-```
-
-默认临时输出目录：
-
-`/data/gaoya/agent-data/outputs/train0705_ti2v_t2v_bench_inputs`
-
-如需覆盖 `ti2v/t2v` 专用脚本的指标列表，可以传：
-
-```bash
-TI2V_T2V_BENCH_METRICS=wmreward,physics_iq,physics_iq_with_context,pmf_with_context,videophy2,cosmos_reason1 \
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
+    "${PYTHON_BIN}" "${BENCH_PY}" \
+      --metric "${metric}" \
+      --result-root "${result_root}" \
+      --overwrite
 ```
 
 ## 3. 生成数量达标文件夹汇总
