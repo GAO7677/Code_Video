@@ -72,6 +72,7 @@ class OfficialCosmosReason1Runner:
         self._processor = None
         self._model = None
         self._prompt_cfg = None
+        self._model_device = None
 
     def _lazy_imports(self) -> None:
         if self._torch is not None:
@@ -98,11 +99,27 @@ class OfficialCosmosReason1Runner:
         self._lazy_imports()
         self._prompt_cfg = yaml.safe_load(self.prompt_path.read_text(encoding="utf-8"))
         self._processor = self._transformers.AutoProcessor.from_pretrained(self.model_path)
-        self._model = self._transformers.Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        model_cls = self._transformers.Qwen2_5_VLForConditionalGeneration
+        model_kwargs: dict[str, Any] = {"dtype": "auto"}
+        try:
+            self._model = model_cls.from_pretrained(
+                self.model_path,
+                device_map="auto",
+                **model_kwargs,
+            )
+            self._model_device = self._model.device
+            return
+        except ValueError as exc:
+            if "requires `accelerate`" not in str(exc):
+                raise
+
+        self._model = model_cls.from_pretrained(
             self.model_path,
-            torch_dtype="auto",
-            device_map="auto",
+            **model_kwargs,
         )
+        target_device = "cuda" if self._torch.cuda.is_available() else "cpu"
+        self._model = self._model.to(target_device)
+        self._model_device = self._torch.device(target_device)
 
     def _build_messages(self, video_path: Path) -> list[dict[str, Any]]:
         return [
@@ -168,7 +185,8 @@ class OfficialCosmosReason1Runner:
             return_tensors="pt",
             **video_kwargs,
         )
-        inputs = inputs.to(self._model.device)
+        model_device = self._model_device if self._model_device is not None else self._model.device
+        inputs = inputs.to(model_device)
         retry_max_new_tokens = max(self.max_new_tokens * 2, 512)
         attempt_token_limits = [self.max_new_tokens] + [retry_max_new_tokens] * max(0, self.max_attempts - 1)
         attempts: list[tuple[int, int, str, dict[str, Any] | None]] = []

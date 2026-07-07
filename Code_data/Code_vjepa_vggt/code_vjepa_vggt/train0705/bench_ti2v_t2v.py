@@ -23,6 +23,7 @@ import gc
 import json
 import os
 import re
+import subprocess
 import sys
 import traceback
 from contextlib import contextmanager
@@ -30,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from physv_eval.paths import VPHY_PYTHON
 
 ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt")
 TRY0526_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_try0526")
@@ -103,6 +105,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pmf-device", default="cpu")
     parser.add_argument("--physics-iq-threshold-value", type=int, default=10)
     parser.add_argument("--physics-iq-downsample-factor", type=int, default=4)
+    parser.add_argument("--cosmos-python", type=Path, default=VPHY_PYTHON, help=argparse.SUPPRESS)
+    parser.add_argument("--cosmos-worker", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -316,6 +320,46 @@ def sanitize_metric_value(value: dict[str, Any] | None) -> dict[str, Any] | None
     return round_floats(value)
 
 
+def maybe_delegate_cosmos_metric(args: argparse.Namespace) -> bool:
+    if args.metric != "cosmos_reason1":
+        return False
+    if args.cosmos_worker:
+        return False
+
+    cosmos_python = args.cosmos_python.expanduser().resolve()
+    cmd = [
+        str(cosmos_python),
+        str(Path(__file__).resolve()),
+        "--metric",
+        args.metric,
+        "--result-root",
+        str(args.result_root.expanduser().resolve()),
+        "--cosmos-worker",
+    ]
+    if args.output_summary is not None:
+        cmd.extend(["--output-summary", str(args.output_summary.expanduser().resolve())])
+    if args.overwrite:
+        cmd.append("--overwrite")
+    if args.dry_run:
+        cmd.append("--dry-run")
+    if args.limit is not None:
+        cmd.extend(["--limit", str(int(args.limit))])
+    if int(args.num_shards) > 1:
+        cmd.extend(["--num-shards", str(int(args.num_shards)), "--shard-index", str(int(args.shard_index))])
+
+    env = os.environ.copy()
+    pythonpath_entries = [str(ROOT), str(TRY0526_ROOT)]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    env["PYTHONNOUSERSITE"] = "1"
+
+    print(f"[ti2v_t2v_metric:delegate] metric=cosmos_reason1 python={cosmos_python}")
+    subprocess.run(cmd, check=True, env=env, cwd=str(ROOT))
+    return True
+
+
 def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
     def build_method_case_dir(base_root: Path, record: CaseRecord, metric_name: str | None = None) -> Path:
         method_name = derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path)
@@ -527,6 +571,8 @@ def main() -> None:
             f"--shard-index must satisfy 0 <= shard-index < num-shards, got "
             f"shard-index={args.shard_index}, num-shards={args.num_shards}"
         )
+    if maybe_delegate_cosmos_metric(args):
+        return
 
     result_root = args.result_root.expanduser().resolve()
     summary_path = (

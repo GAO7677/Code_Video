@@ -66,6 +66,8 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 
 这版不会再从 `case_json/input_json` 里反推 `input_video/context_video`，只使用结果 JSON 里真实存在的 `input_*` 字段，适合当前 `ti2v=input_image_only` 和 `t2v` 的结果格式。
 
+其中 `cosmos_reason1` 会自动切到 `vphy` 环境执行，不依赖 `wan-cu128` 里的 `transformers` 版本。
+
 默认支持这些指标：
 - `wmreward`
 - `physics_iq`
