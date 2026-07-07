@@ -1,90 +1,80 @@
 #!/usr/bin/env bash
+# =============================================================================
+# Stage1B context-only *no-GT-box* 训练启动脚本 (WISA raw dataset, DiffSynth-native)
+#
+# 说明:
+#   - 前台运行, 不使用 nohup / & / 后台方式
+#   - 禁用 gpu4 (故障)
+#   - 单进程单卡
+#   - WISA 当前 HF 仓库只提供 metadata, 实际 mp4 需放到 WISA_VIDEOS_ROOT
+# =============================================================================
 set -euo pipefail
 
-GPU_SET="${GPU_SET:-0,2,3,5}"
-NUM_PROCESSES="${NUM_PROCESSES:-4}"
+GPU="${GPU:-5}"
 RESUME="${RESUME:-none}"
-NUM_FRAMES="${NUM_FRAMES:-24}"
-FIXED_NUM_CONTEXT_FRAMES="${FIXED_NUM_CONTEXT_FRAMES:-8}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-20000}"
-NUM_EPOCHS="${NUM_EPOCHS:-100}"
-HEIGHT="${HEIGHT:-512}"
-WIDTH="${WIDTH:-896}"
-SAVE_STEPS="${SAVE_STEPS:-500}"
-MAX_CHECKPOINTS_KEEP="${MAX_CHECKPOINTS_KEEP:-10}"
-WANDB_MODE="${WANDB_MODE:-online}"
-WANDB_PROJECT="${WANDB_PROJECT:-vjepa_vggt_wan_structure_ablation}"
-STRUCTURE_ABLATION_TYPE="${STRUCTURE_ABLATION_TYPE:-none}"
-ABLATION_TAG="${ABLATION_TAG:-structure_ablation_${STRUCTURE_ABLATION_TYPE}}"
-WANDB_NAME="${WANDB_NAME:-${ABLATION_TAG}_gpu0235}"
-NO_STAGE1A_INIT="${NO_STAGE1A_INIT:-0}"
 
-if [[ ",${GPU_SET}," == *",4,"* ]]; then
-  echo "ERROR: gpu4 故障, 禁止使用。当前 GPU_SET=${GPU_SET}" >&2
+if [ "$GPU" = "4" ]; then
+  echo "ERROR: gpu4 故障, 禁止使用。请指定其他 GPU。" >&2
   exit 1
 fi
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
-TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0705/compare_ablation/structure_ablation_train_stage1b_context_only_no_gt_box_v_newtrain.py"
+TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0705_wisa_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_wisa.py"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
 BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
 STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt
-DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705_structure_ablation/${ABLATION_TAG}}"
-DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-0}"
+DATASET_ROOT="${DATASET_ROOT:-/data/gaoya/dataset/qihoo360-WISA-80K}"
+WISA_VIDEOS_ROOT="${WISA_VIDEOS_ROOT:-${DATASET_ROOT}/videos}"
+WISA_METADATA_PATH="${WISA_METADATA_PATH:-}"
+DATASET_SPLIT="${DATASET_SPLIT:-train}"
+WISA_CACHE_ROOT="${WISA_CACHE_ROOT:-/data/gaoya/agent-data/cache/wisa_no_gt_box_dataset}"
+WISA_SAMPLING="${WISA_SAMPLING:-prefix}"
+WISA_INIT_SCAN_LIMIT="${WISA_INIT_SCAN_LIMIT:-0}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_stage1b_diffsynth_native0705_wisa}"
 
 mkdir -p "${OUTPUT_DIR}"
 
 RESUME_ARGS=()
-if [[ "${RESUME}" != "none" ]]; then
+if [ "${RESUME}" != "none" ]; then
   RESUME_ARGS=(--stage2_resume_from "${RESUME}")
-fi
-
-ABLATION_ARGS=(
-  --structure_ablation_type "${STRUCTURE_ABLATION_TYPE}"
-)
-if [[ "${NO_STAGE1A_INIT}" != "1" ]]; then
-  ABLATION_ARGS+=(--stage1a_init_from "${STAGE1A_CKPT}")
+  echo "[resume] 断点续训: ${RESUME}"
+else
+  echo "[fresh] 从头开始训练"
 fi
 
 CMD=(
   env
   PYTHONPATH="${PROJ}:${DIFFSYNTH_ROOT}"
-  CUDA_VISIBLE_DEVICES="${GPU_SET}"
+  CUDA_VISIBLE_DEVICES="${GPU}"
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-)
-
-if [[ "${NUM_PROCESSES}" == "1" ]]; then
-  CMD+=("${ACCELERATE_BIN}" launch --num_processes 1 --num_machines 1 --mixed_precision bf16)
-else
-  CMD+=("${ACCELERATE_BIN}" launch --multi_gpu --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16)
-fi
-
-CMD+=(
+  "${ACCELERATE_BIN}" launch --num_processes 1 --num_machines 1 --mixed_precision bf16
   "${TRAIN_SCRIPT}"
   --diffsynth_root "${DIFFSYNTH_ROOT}"
   --wan_root "${WAN_ROOT}"
-  --dataset_type phys_state_episode
-  --phys_state_root "${DATASET_ROOT}"
-  --phys_state_split train
-  --height "${HEIGHT}"
-  --width "${WIDTH}"
-  --num_frames "${NUM_FRAMES}"
-  --fixed_num_context_frames "${FIXED_NUM_CONTEXT_FRAMES}"
-  --max_train_steps "${MAX_TRAIN_STEPS}"
-  --num_epochs "${NUM_EPOCHS}"
-  --dataset_num_workers "${DATASET_NUM_WORKERS}"
+  --dataset_type wisa_no_gt_box
+  --wisa_root "${DATASET_ROOT}"
+  --wisa_videos_root "${WISA_VIDEOS_ROOT}"
+  --wisa_split "${DATASET_SPLIT}"
+  --wisa_cache_root "${WISA_CACHE_ROOT}"
+  --wisa_sampling_strategy "${WISA_SAMPLING}"
+  --height 512
+  --width 896
+  --num_frames 24
+  --fixed_num_context_frames 8
+  --max_train_steps 20000
+  --num_epochs 100
+  --dataset_num_workers 4
   --learning_rate 1e-4
   --weight_decay 0.01
   --gradient_accumulation_steps 1
   --optimizer_type paged_adamw8bit
   --max_grad_norm 1.0
   --find_unused_parameters
-  --save_steps "${SAVE_STEPS}"
-  --max_checkpoints_keep "${MAX_CHECKPOINTS_KEEP}"
+  --save_steps 500
+  --max_checkpoints_keep 10
   --remove_prefix_in_ckpt pipe.dit.
   --output_path "${OUTPUT_DIR}"
   --lora_base_model dit
@@ -119,6 +109,7 @@ CMD+=(
   --lambda_track_aux 0.0
   --lambda_box_aux 0.0
   --lambda_depth_aux 0.0
+  --stage1a_init_from "${STAGE1A_CKPT}"
   --grounding_proposal_source gdino_only
   --grounding_motion_score_ratio 0.15
   --grounding_text_prompt "box . cube . block . cylinder . capsule . sphere . ball ."
@@ -133,15 +124,21 @@ CMD+=(
   --grounding_container_suppress_small_iou_threshold 0.7
   --sam2_segment_len 8
   --report_to wandb
-  --wandb_project "${WANDB_PROJECT}"
-  --wandb_name "${WANDB_NAME}"
-  --wandb_mode "${WANDB_MODE}"
+  --wandb_project vjepa_vggt_wan
+  --wandb_name stage1b_wisa_no_gt_box_gpu${GPU}
+  --wandb_mode online
 )
 
-CMD+=("${ABLATION_ARGS[@]}")
+if [ -n "${WISA_METADATA_PATH}" ]; then
+  CMD+=(--wisa_metadata_path "${WISA_METADATA_PATH}")
+fi
+
+if [ "${WISA_INIT_SCAN_LIMIT}" != "0" ]; then
+  CMD+=(--wisa_init_scan_limit "${WISA_INIT_SCAN_LIMIT}")
+fi
+
 CMD+=("${RESUME_ARGS[@]}")
 
-echo "[启动] structure_ablation=${STRUCTURE_ABLATION_TYPE} GPU_SET=${GPU_SET} NUM_PROCESSES=${NUM_PROCESSES}"
-echo "[启动] 输出=${OUTPUT_DIR}"
+echo "[启动] 物理 GPU=${GPU}  输出=${OUTPUT_DIR}"
 echo "[启动] 命令: ${CMD[*]}"
 exec "${CMD[@]}"

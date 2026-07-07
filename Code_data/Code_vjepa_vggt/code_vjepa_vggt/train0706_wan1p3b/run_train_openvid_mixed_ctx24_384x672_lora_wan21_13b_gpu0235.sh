@@ -11,6 +11,7 @@ set -euo pipefail
 
 GPU_SET="${GPU_SET:-3,5,6,7}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
+SAVE_STEPS="${SAVE_STEPS:-500}"
 
 if [[ ",${GPU_SET}," == *",4,"* ]]; then
   echo "ERROR: gpu4 故障, 禁止使用。当前 GPU_SET=${GPU_SET}" >&2
@@ -34,7 +35,7 @@ mkdir -p "${OUTPUT_DIR}"
 
 EXTRA_ARGS=()
 if [[ -f "${OUTPUT_DIR}/training_state.pt" || -d "${OUTPUT_DIR}/checkpoints" ]]; then
-  EXTRA_ARGS+=(--resume_from "${OUTPUT_DIR}")
+  EXTRA_ARGS+=(--stage2_resume_from "${OUTPUT_DIR}")
 fi
 
 CMD=(
@@ -69,7 +70,7 @@ CMD=(
   --weight_decay 0.01
   --num_epochs 10
   --gradient_accumulation_steps 4
-  --save_steps 1000
+  --save_steps "${SAVE_STEPS}"
   --benchmark_every_steps 1000
   --benchmark_meta_list_path /home/gaoya/Code_Video/Code_data/Code_train/train_0419/benchmark_meta_json_paths_fixed24.txt
   --benchmark_cuda_visible_devices "${GPU_SET}"
