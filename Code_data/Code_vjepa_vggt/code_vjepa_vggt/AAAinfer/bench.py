@@ -182,7 +182,9 @@ def round_floats(value: Any, ndigits: int = 4) -> Any:
 def resolve_input_json_path(result_payload: dict[str, Any], result_json_path: Path) -> Path:
     input_json = result_payload.get("input_json")
     if not isinstance(input_json, str) or not input_json.strip():
-        raise ValueError(f"Missing input_json in {result_json_path}")
+        input_json = result_payload.get("case_json")
+    if not isinstance(input_json, str) or not input_json.strip():
+        raise ValueError(f"Missing input_json/case_json in {result_json_path}")
     candidate = Path(input_json).expanduser().resolve()
     if not candidate.is_absolute():
         raise ValueError(f"input_json must be an absolute path in {result_json_path}: {input_json}")
@@ -689,7 +691,10 @@ def prepare_cases(result_root: Path) -> tuple[list[CaseRecord], list[dict[str, A
     for result_json_path in collect_result_jsons(result_root):
         try:
             result_payload = load_json(result_json_path)
-            if not isinstance(result_payload.get("input_json"), str):
+            if not (
+                isinstance(result_payload.get("input_json"), str)
+                or isinstance(result_payload.get("case_json"), str)
+            ):
                 continue
             input_json_path = resolve_input_json_path(result_payload, result_json_path)
             gt_video_path = resolve_gt_video_path(input_json_path)

@@ -14,12 +14,17 @@
 - `pmf_with_context`
 - `pmf_without_context`
 - `videophy2`
-- `phyground`
 - `cosmos_reason1`
 
 脚本行为：
-- 失败即退出，不跳过报错 case
-- 结束时打印每个结果文件夹的指标进度 `已完成/全部`
+- 每个 metric 结束后读取 `eval_summary_<metric>.json`，输出真实信号：
+  - `status=ok`
+  - `status=empty`
+  - `status=failed`
+  - `status=partial`
+- 还会打印每个结果文件夹当前的指标进度：`metric=已完成/全部`
+- 最终打印 `final_signal=success|empty|failed`
+- `status=empty/failed/partial` 时返回非零退出码，不再无条件打印成功
 
 整棵结果树回填：
 
@@ -52,6 +57,51 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
   --metric physics_iq_without_context \
   --result-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/morpheus_real_world \
   --overwrite
+```
+
+## 2.1 ti2v / t2v 专用评测
+旧格式 `ti2v/t2v` 结果 JSON 里有一部分没有 `input_json` / `output_video`，不能直接喂给 `bench.py`。专用脚本会先在临时目录下构造一个可评测镜像树，再分别调用 `AAAinfer/bench.sh` 跑 `ti2v` 和 `t2v`。
+
+`ti2v/t2v` 专用评测默认不跑 `_without_context` 指标，只跑：
+- `wmreward`
+- `physics_iq`
+- `physics_iq_with_context`
+- `pmf_with_context`
+- `videophy2`
+- `cosmos_reason1`
+
+适配脚本：
+
+`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/prepare_ti2v_t2v_bench_inputs.py`
+
+总控脚本：
+
+`/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh`
+
+先对每个子文件夹只跑 1 个 case 的 smoke：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+LIMIT_PER_FOLDER=1 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
+```
+
+跑完整棵 `ti2v/t2v`：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
+```
+
+默认临时输出目录：
+
+`/data/gaoya/agent-data/outputs/train0705_ti2v_t2v_bench_inputs`
+
+如需覆盖 `ti2v/t2v` 专用脚本的指标列表，可以传：
+
+```bash
+TI2V_T2V_BENCH_METRICS=wmreward,physics_iq,physics_iq_with_context,pmf_with_context,videophy2,cosmos_reason1 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_bench_ti2v_t2v.sh
 ```
 
 ## 3. 生成数量达标文件夹汇总

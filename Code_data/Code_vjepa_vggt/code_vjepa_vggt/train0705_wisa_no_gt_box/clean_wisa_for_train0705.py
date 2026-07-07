@@ -246,6 +246,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-blur-proxy", type=float, default=15.0)
     parser.add_argument("--min-frames", type=int, default=24)
     parser.add_argument("--max-per-label", type=int, default=0)
+    parser.add_argument("--probe-all-local-videos", action="store_true", default=False)
+    parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--only-recommended-labels", action="store_true", default=False)
     parser.add_argument("--exclude-low-priority-labels", action="store_true", default=True)
     parser.add_argument("--include-low-priority-labels", dest="exclude_low_priority_labels", action="store_false")
@@ -283,6 +285,7 @@ def main() -> None:
     reject_reason_counts = Counter()
     available_by_label = Counter()
 
+    local_candidate_index = 0
     for row_index, entry in enumerate(metadata):
         if not isinstance(entry, dict):
             continue
@@ -296,6 +299,7 @@ def main() -> None:
         if local_video is None:
             continue
 
+        local_candidate_index += 1
         available_by_label[label] += 1
         item = dict(entry)
         item["row_index"] = row_index
@@ -336,20 +340,24 @@ def main() -> None:
         if text_bbox_num is not None and text_bbox_num > args.max_text_bbox_num:
             reasons.append("text_bbox_num_too_high")
 
-        try:
-            probe = _probe_video(local_video, args.prefix_frames)
-        except Exception as exc:  # noqa: BLE001
-            item["probe_error"] = f"{type(exc).__name__}: {exc}"
-            probe = {}
-            reasons.append("video_decode_failed")
-        item["probe"] = probe
-        if probe:
-            if int(probe.get("frame_count", 0)) < args.min_frames:
-                reasons.append("frame_count_too_small")
-            if float(probe.get("motion_proxy", 0.0)) < args.min_motion_proxy:
-                reasons.append("motion_proxy_too_low")
-            if float(probe.get("blur_proxy", 0.0)) < args.min_blur_proxy:
-                reasons.append("blur_proxy_too_low")
+        should_probe = args.probe_all_local_videos or not reasons
+        probe = {}
+        if should_probe:
+            try:
+                probe = _probe_video(local_video, args.prefix_frames)
+            except Exception as exc:  # noqa: BLE001
+                item["probe_error"] = f"{type(exc).__name__}: {exc}"
+                reasons.append("video_decode_failed")
+            item["probe"] = probe
+            if probe:
+                if int(probe.get("frame_count", 0)) < args.min_frames:
+                    reasons.append("frame_count_too_small")
+                if float(probe.get("motion_proxy", 0.0)) < args.min_motion_proxy:
+                    reasons.append("motion_proxy_too_low")
+                if float(probe.get("blur_proxy", 0.0)) < args.min_blur_proxy:
+                    reasons.append("blur_proxy_too_low")
+        else:
+            item["probe"] = {"skipped": True}
 
         scoring = _score_record(item, args)
         item.update(scoring)
@@ -363,6 +371,19 @@ def main() -> None:
             reject_records.append(item)
             for reason in item["reject_reasons"]:
                 reject_reason_counts[reason] += 1
+
+        if args.progress_every > 0 and local_candidate_index % args.progress_every == 0:
+            print(
+                json.dumps(
+                    {
+                        "progress_local_candidates": local_candidate_index,
+                        "keep_so_far": len(keep_records),
+                        "reject_so_far": len(reject_records),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
 
     keep_records_sorted = sorted(
         keep_records,

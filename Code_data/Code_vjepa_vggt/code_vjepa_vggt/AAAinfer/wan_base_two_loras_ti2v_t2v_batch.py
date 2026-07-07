@@ -109,6 +109,7 @@ def save_t2v_with_pipe(
     args: argparse.Namespace,
     wan_root: Path,
     lora_path: Path | None,
+    input_json_path: Path,
     prompt: str,
     output_video_path: Path,
 ) -> None:
@@ -128,8 +129,10 @@ def save_t2v_with_pipe(
     save_video(video, str(output_video_path), fps=int(args.fps), quality=int(args.quality))
     single_case.write_sidecar_json(
         output_video_path=output_video_path,
+        case_json_path=input_json_path,
         mode="t2v",
         model_preset=str(args.model_preset),
+        method=str(args.model_preset),
         wan_root=wan_root,
         lora_path=lora_path,
         prompt=str(prompt),
@@ -155,6 +158,7 @@ def save_ti2v_with_pipe(
     args: argparse.Namespace,
     wan_root: Path,
     lora_path: Path | None,
+    input_json_path: Path,
     prompt: str,
     context_path: Path,
     first_frame_path: Path | None,
@@ -188,8 +192,10 @@ def save_ti2v_with_pipe(
     save_video(video, str(output_video_path), fps=int(args.fps), quality=int(args.quality))
     single_case.write_sidecar_json(
         output_video_path=output_video_path,
+        case_json_path=input_json_path,
         mode="ti2v",
         model_preset=str(args.model_preset),
+        method=str(args.model_preset),
         wan_root=wan_root,
         lora_path=lora_path,
         prompt=str(prompt),
@@ -284,6 +290,7 @@ def main() -> None:
                     args=args,
                     wan_root=wan_root,
                     lora_path=lora_path,
+                    input_json_path=json_path,
                     prompt=prompt,
                     output_video_path=output_video_path,
                 )
@@ -308,6 +315,7 @@ def main() -> None:
                     args=args,
                     wan_root=wan_root,
                     lora_path=lora_path,
+                    input_json_path=json_path,
                     prompt=prompt,
                     context_path=context_path,
                     first_frame_path=first_frame_path,

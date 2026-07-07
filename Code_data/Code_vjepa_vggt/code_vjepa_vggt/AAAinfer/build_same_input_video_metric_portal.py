@@ -948,6 +948,8 @@ def main() -> None:
         if payload is None:
             continue
         input_json_path = resolve_abs(payload.get("input_json"))
+        if input_json_path is None:
+            input_json_path = resolve_abs(payload.get("case_json"))
         output_video_path = resolve_abs(payload.get("output_video")) or result_json_path.with_suffix(".mp4")
         if input_json_path is None or not input_json_path.is_file():
             continue

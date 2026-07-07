@@ -205,6 +205,8 @@ def discover_folder_payloads(result_roots: list[Path]) -> dict[Path, list[dict[s
                 continue
             input_json = payload.get("input_json")
             if not isinstance(input_json, str) or not input_json.strip():
+                input_json = payload.get("case_json")
+            if not isinstance(input_json, str) or not input_json.strip():
                 continue
             payload["_result_json_path"] = str(json_path.resolve())
             payload["_input_json_resolved"] = resolve_path_string(input_json)

@@ -124,6 +124,8 @@ def discover_result_jsons(
         if allowed_input_json_paths is not None:
             input_json = payload.get("input_json")
             if not isinstance(input_json, str) or not input_json.strip():
+                input_json = payload.get("case_json")
+            if not isinstance(input_json, str) or not input_json.strip():
                 continue
             if resolve_path_string(input_json) not in allowed_input_json_paths:
                 continue
@@ -245,6 +247,8 @@ def discover_known_list_signatures(result_jsons: list[Path]) -> dict[str, dict[s
             continue
         input_json = payload.get("input_json")
         if not isinstance(input_json, str) or not input_json.strip():
+            input_json = payload.get("case_json")
+        if not isinstance(input_json, str) or not input_json.strip():
             continue
         input_json_path = Path(input_json).expanduser().resolve()
         for candidate_dir in (input_json_path.parent.parent, input_json_path.parent):
@@ -287,6 +291,8 @@ def summarize_methods(result_jsons: list[Path], known_list_signatures: dict[str,
         if payload is None:
             continue
         input_json = payload.get("input_json")
+        if not isinstance(input_json, str) or not input_json.strip():
+            input_json = payload.get("case_json")
         input_json_path = resolve_path_string(input_json) if isinstance(input_json, str) and input_json.strip() else None
         method = normalize_method(payload.get("method"), json_path)
         family, step = split_method_step(method)
@@ -428,6 +434,8 @@ def build_group_case_showcases(method_rows: list[dict[str, Any]]) -> list[dict[s
             if payload is None:
                 continue
             input_json = payload.get("input_json")
+            if not isinstance(input_json, str) or not input_json.strip():
+                input_json = payload.get("case_json")
             if not isinstance(input_json, str) or not input_json.strip():
                 continue
             input_json_path = resolve_path_string(input_json)

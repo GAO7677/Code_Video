@@ -155,8 +155,10 @@ def validate_args(args: argparse.Namespace) -> None:
 def write_sidecar_json(
     *,
     output_video_path: Path,
+    case_json_path: Path | None,
     mode: str,
     model_preset: str,
+    method: str | None,
     wan_root: Path,
     lora_path: Path | None,
     prompt: str,
@@ -174,8 +176,17 @@ def write_sidecar_json(
     cfg_scale: float,
     seed: int,
 ) -> None:
+    resolved_output_video = str(output_video_path.resolve())
+    resolved_case_json = str(case_json_path.resolve()) if case_json_path is not None else None
     payload = {
-        "video_path": str(output_video_path),
+        "input_json": resolved_case_json,
+        "case_json": resolved_case_json,
+        "input_caption": str(prompt),
+        "output_video": resolved_output_video,
+        "method": str(method).strip() if isinstance(method, str) and method.strip() else str(model_preset),
+        "step": int(num_inference_steps),
+        "guidance": float(cfg_scale),
+        "video_path": resolved_output_video,
         "mode": str(mode),
         "model_preset": str(model_preset),
         "wan_root": str(wan_root),
@@ -227,8 +238,10 @@ def run_t2v(args: argparse.Namespace, wan_root: Path, lora_path: Path | None, ou
     save_video(video, str(output_video_path), fps=int(args.fps), quality=int(args.quality))
     write_sidecar_json(
         output_video_path=output_video_path,
+        case_json_path=None,
         mode="t2v",
         model_preset=str(args.model_preset),
+        method=str(args.model_preset),
         wan_root=wan_root,
         lora_path=lora_path,
         prompt=str(args.prompt),
@@ -282,8 +295,10 @@ def run_ti2v(args: argparse.Namespace, wan_root: Path, lora_path: Path | None, o
     save_video(video, str(output_video_path), fps=int(args.fps), quality=int(args.quality))
     write_sidecar_json(
         output_video_path=output_video_path,
+        case_json_path=None,
         mode="ti2v",
         model_preset=str(args.model_preset),
+        method=str(args.model_preset),
         wan_root=wan_root,
         lora_path=lora_path,
         prompt=str(args.prompt),

@@ -231,6 +231,8 @@ def main() -> None:
             continue
         input_json = payload.get("input_json")
         if not isinstance(input_json, str) or not input_json.strip():
+            input_json = payload.get("case_json")
+        if not isinstance(input_json, str) or not input_json.strip():
             continue
         resolved_input_json = resolve_path_string(input_json)
         if resolved_input_json not in target_set:
