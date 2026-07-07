@@ -194,7 +194,7 @@ def normalize_one(result_json_path: Path, input_json_root: Path, *, write_back: 
     maybe_set(payload, "guidance", guidance, changed_keys)
     maybe_set(payload, "step", step, changed_keys)
     maybe_set(payload, "negative_prompt", negative_prompt, changed_keys)
-    if mode == "ti2v" and input_video_path is not None:
+    if mode == "ti2v" and input_video_path is not None and not uses_input_image:
         maybe_set(payload, "input_video", str(input_video_path), changed_keys)
     else:
         maybe_remove(payload, "input_video", changed_keys)
