@@ -40,7 +40,7 @@ DATASET_SPLIT="${DATASET_SPLIT:-train}"
 KUBRIC_CACHE_ROOT="${KUBRIC_CACHE_ROOT:-/data/gaoya/agent-data/cache/kubric_no_gt_box_dataset}"
 KUBRIC_SAMPLING="${KUBRIC_SAMPLING:-prefix}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-128}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705_kubric/smoke}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/smoke}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -68,8 +68,12 @@ CMD=(
   --kubric_sampling_strategy "${KUBRIC_SAMPLING}"
   --height 512
   --width 896
-  --num_frames 24
+  --num_frames 25
   --fixed_num_context_frames 8
+  --min_context_frames 8
+  --max_context_ratio 0.5
+  --context_frame_choices 8
+  --no_context_ratio 0.0
   --max_train_steps 5
   --num_epochs 100
   --dataset_num_workers 0
@@ -80,7 +84,7 @@ CMD=(
   --max_grad_norm 1.0
   --find_unused_parameters
   --save_steps 2
-  --max_checkpoints_keep 10
+  --max_checkpoints_keep 20
   --remove_prefix_in_ckpt pipe.dit.
   --output_path "${OUTPUT_DIR}"
   --lora_base_model dit

@@ -38,6 +38,47 @@ def _write_rgb_png(path: Path, image_hwc: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image_hwc, cv2.COLOR_RGB2BGR))
 
 
+def _write_tensor_video(path: Path, video_cthw: torch.Tensor, fps: int) -> Path:
+    frames = np.stack(
+        [tensor_frame_to_uint8_hwc(video_cthw[:, frame_idx]) for frame_idx in range(int(video_cthw.shape[1]))],
+        axis=0,
+    )
+    write_mp4(path, frames, fps=fps)
+    return _ensure_browser_video(path)
+
+
+def _export_browser_video(source_path: Path, output_path: Path) -> Path:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        try:
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            ffmpeg = None
+    if ffmpeg is None:
+        shutil.copy2(source_path, output_path)
+        return output_path
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(source_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return output_path
+
+
 def _ensure_browser_video(source_path: Path) -> Path:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -260,7 +301,7 @@ def _run_forward_debug(
         if vggt_out is None:
             raise RuntimeError(f"VGGT cache missing for sample {sample.get('video_path', '<unknown>')}")
     else:
-        vggt_out = model.vggt_adapter(
+        vggt_out = model._run_vggt(
             frames_bthwc_01,
             query_points_prior=query_points_prior,
             query_image_hw=image_hw,
@@ -273,8 +314,13 @@ def _run_forward_debug(
         max_objects=model.aux_max_objects,
         points_per_object=model.object_num_queries,
     )
-    jepa_out = model._run_jepa(context_video)
     context_latents = inputs_shared["clean_prefix_latents"]
+    jepa_input_video, _jepa_ctx_fix = trainmod.prepare_jepa_context_video(
+        context_video,
+        latent_frames=int(context_latents.shape[2]),
+        tubelet_size=int(getattr(model, "_jepa_tubelet_size", 2)),
+    )
+    jepa_out = model._run_jepa(jepa_input_video)
     object_out = model.object_pooler(
         jepa_patch_tokens=jepa_out.patch_tokens,
         context_latents=context_latents,
@@ -409,6 +455,18 @@ def _build_html_report(result: dict[str, Any], output_dir: Path) -> Path:
   <p><b>Input gallery:</b> <a href="{result["prepipe_gallery_url"]}">{result["prepipe_gallery_url"]}</a></p>
   <div class="grid">
     <figure>
+      <video controls preload="none" playsinline src="{result["context_video_mp4"]}"></video>
+      <figcaption>Actual context video used by this train forward</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{result["train_clip_video_mp4"]}"></video>
+      <figcaption>Sampled train clip full video ({result["shapes"]["video"][1]} frames)</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{result["source_full_video_mp4"]}"></video>
+      <figcaption>Original source rgba.mp4 full video</figcaption>
+    </figure>
+    <figure>
       <img src="{result["prompt_preview_png"]}" />
       <figcaption>Viewer-grounding prompt boxes + sampled query points</figcaption>
     </figure>
@@ -437,9 +495,91 @@ def _build_html_report(result: dict[str, Any], output_dir: Path) -> Path:
     return html_path
 
 
+def _build_gallery_report(results: list[dict[str, Any]], output_dir: Path) -> Path:
+    cards = []
+    for result in results:
+        rel_dir = result["relative_dir"]
+        cards.append(
+            f"""
+    <section class="card">
+      <h2>{result["title"]}</h2>
+      <p><b>Index:</b> {result["inspect_index"]} | <b>Context frames:</b> {result["num_context_frames"]} | <a href="{rel_dir}/index.html">detail page</a></p>
+      <p><b>Caption:</b> {result["caption"]}</p>
+      <p><b>Video:</b> {result["video_path"]}</p>
+      <div class="grid">
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["context_video_mp4"]}"></video>
+          <figcaption>Actual context video used in training</figcaption>
+        </figure>
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["train_clip_video_mp4"]}"></video>
+          <figcaption>Sampled train clip full video</figcaption>
+        </figure>
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["source_full_video_mp4"]}"></video>
+          <figcaption>Original source full video</figcaption>
+        </figure>
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["input_overlay_video"]}"></video>
+          <figcaption>Input pre-pipe overlay</figcaption>
+        </figure>
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["box_overlay_video"]}"></video>
+          <figcaption>Aux box overlay</figcaption>
+        </figure>
+        <figure>
+          <video controls preload="none" playsinline src="{rel_dir}/{result["track_overlay_video"]}"></video>
+          <figcaption>Aux track overlay</figcaption>
+        </figure>
+      </div>
+      <pre>{json.dumps(result["metrics"], indent=2, ensure_ascii=False)}</pre>
+    </section>
+"""
+        )
+    html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kubric Train Forward Aux Overlay Gallery</title>
+  <style>
+    body {{ font-family: sans-serif; margin: 20px; background: #f6f4ee; color: #222; }}
+    .card {{ background: #fff; border: 1px solid #ddd; padding: 16px; margin-bottom: 20px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }}
+    figure {{ margin: 0; }}
+    video {{ width: 100%; border: 1px solid #ccc; background: #000; }}
+    figcaption {{ font-size: 12px; color: #444; margin-top: 6px; }}
+    pre {{ background: #fafafa; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; }}
+  </style>
+</head>
+<body>
+  <h1>Kubric No-GT-Box: multi-sample train forward aux overlay</h1>
+  <p>这里展示的是当前训练配置下，真实进入 train forward 的 context video、相关 box/track overlay，以及完整视频。</p>
+  {''.join(cards)}
+</body>
+</html>
+"""
+    html_path = output_dir / "index.html"
+    html_path.write_text(html, encoding="utf-8")
+    return html_path
+
+
+def _parse_index_list(raw_value: str | None) -> list[int]:
+    if raw_value is None or not str(raw_value).strip():
+        return []
+    return [int(item.strip()) for item in str(raw_value).split(",") if item.strip()]
+
+
 def parse_args() -> argparse.Namespace:
     parser = trainmod.build_parser()
     parser.add_argument("--inspect_index", type=int, default=0)
+    parser.add_argument("--inspect_indices", type=str, default=None)
+    parser.add_argument("--inspect_num_samples", type=int, default=4)
+    parser.add_argument("--inspect_skip_zero_context", action="store_true", default=True)
+    parser.add_argument(
+        "--inspect_include_zero_context",
+        dest="inspect_skip_zero_context",
+        action="store_false",
+    )
     parser.add_argument(
         "--inspect_output_dir",
         type=str,
@@ -454,42 +594,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = trainmod.tvn.prepare_args(parse_args())
-    output_dir = Path(args.inspect_output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    dataset = trainmod.build_dataset(args)
-    accelerator = SimpleNamespace(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    model = trainmod.build_model(args, accelerator)
-    target_device = torch.device(model.pipe.device)
-    _move_optional_module(model.object_pooler, target_device)
-    _move_optional_module(model.object_aux_heads, target_device)
-    _move_optional_module(model.object_adapter, target_device)
-    _move_optional_module(model.vggt_adapter, target_device)
-
-    load_info: dict[str, Any] = {
-        "stage1a_init_from": None,
-        "stage1a_load": None,
-        "stage2_resume_from": args.stage2_resume_from,
-        "stage2_load": None,
-    }
-    if args.stage1a_init_from is not None:
-        stage1a_info = trainmod.tvn._load_filtered_checkpoint_into_model(
-            model,
-            args.stage1a_init_from,
-            include_prefixes=("object_pooler.", "object_aux_heads."),
-        )
-        load_info["stage1a_init_from"] = args.stage1a_init_from
-        load_info["stage1a_load"] = stage1a_info
-
-    stage2_info = _load_optional_stage2_weights(model, args.stage2_resume_from)
-    if stage2_info is not None:
-        load_info["stage2_load"] = stage2_info
-
-    torch.nn.Module.train(model, False)
-    sample = dataset[int(args.inspect_index)]
-    inputs_shared, inputs_posi, _ = _prepare_forward_inputs(model, sample)
+def _inspect_one(
+    *,
+    model: trainmod.ContextOnlyNoGTBoxWanModule,
+    sample: dict[str, Any],
+    inputs_shared: dict[str, Any],
+    inputs_posi: dict[str, Any],
+    output_dir: Path,
+    inspect_fps: int,
+    inspect_prepipe_gallery_url: str,
+    inspect_index: int,
+) -> dict[str, Any]:
     with torch.no_grad():
         debug = _run_forward_debug(
             model,
@@ -499,11 +614,27 @@ def main() -> None:
         )
 
     context_video = sample["context_video"]
+    train_clip_video = sample["video"]
     image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
     grounding_sample = model.viewer_grounding.build_sample(
         frames_tchw_01=((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy(),
         caption=str(sample["caption"]),
         image_hw=image_hw,
+    )
+
+    context_video_browser = _write_tensor_video(
+        output_dir / "context_video.mp4",
+        context_video,
+        fps=int(inspect_fps),
+    )
+    train_clip_video_browser = _write_tensor_video(
+        output_dir / "train_clip_full.mp4",
+        train_clip_video,
+        fps=int(inspect_fps),
+    )
+    source_full_video_browser = _export_browser_video(
+        Path(str(sample["video_path"])),
+        output_dir / "source_full_video.browser.mp4",
     )
 
     valid_queries = _valid_query_count(debug["object_valid_mask"], model.object_num_queries)
@@ -541,7 +672,7 @@ def main() -> None:
         prefix="trk",
     )
     input_overlay_raw = output_dir / "input_prepipe_overlay.mp4"
-    write_mp4(input_overlay_raw, input_overlay_video, fps=int(args.inspect_fps))
+    write_mp4(input_overlay_raw, input_overlay_video, fps=int(inspect_fps))
     input_overlay_browser = _ensure_browser_video(input_overlay_raw)
 
     ref_box_xyxy = debug["object_out"].active_box_xyxy[0].detach().float().cpu().numpy()
@@ -558,7 +689,7 @@ def main() -> None:
         image_hw=image_hw,
     )
     box_overlay_raw = output_dir / "aux_pred_box_overlay.mp4"
-    write_mp4(box_overlay_raw, box_overlay_video, fps=int(args.inspect_fps))
+    write_mp4(box_overlay_raw, box_overlay_video, fps=int(inspect_fps))
     box_overlay_browser = _ensure_browser_video(box_overlay_raw)
 
     track_overlay_video = _render_ref_pred_track_overlay(
@@ -569,21 +700,27 @@ def main() -> None:
         image_hw=image_hw,
     )
     track_overlay_raw = output_dir / "aux_pred_track_overlay.mp4"
-    write_mp4(track_overlay_raw, track_overlay_video, fps=int(args.inspect_fps))
+    write_mp4(track_overlay_raw, track_overlay_video, fps=int(inspect_fps))
     track_overlay_browser = _ensure_browser_video(track_overlay_raw)
 
     result = {
+        "inspect_index": int(inspect_index),
         "caption": str(sample["caption"]),
         "video_path": str(sample["video_path"]),
         "sample_key": str(sample.get("metadata", {}).get("sample_key", "")),
         "context_frame_indices": sample["context_frame_indices"].tolist(),
-        "prepipe_gallery_url": str(args.inspect_prepipe_gallery_url),
+        "num_context_frames": int(sample["num_context_frames"]),
+        "prepipe_gallery_url": str(inspect_prepipe_gallery_url),
         "prompt_preview_png": str(prompt_preview_path.name),
+        "context_video_mp4": str(context_video_browser.name),
+        "train_clip_video_mp4": str(train_clip_video_browser.name),
+        "source_full_video_mp4": str(source_full_video_browser.name),
         "input_overlay_video": str(input_overlay_browser.name),
         "box_overlay_video": str(box_overlay_browser.name),
         "track_overlay_video": str(track_overlay_browser.name),
         "metrics": debug["metrics"],
         "shapes": {
+            "video": list(train_clip_video.shape),
             "context_video": list(context_video.shape),
             "query_points_prior": list(debug["query_points_prior"].shape),
             "query_frame_ids": list(debug["query_frame_ids"].shape),
@@ -598,14 +735,97 @@ def main() -> None:
             "pred_track_summary": list(debug["object_aux_out"].pred_track_summary.shape),
             "pred_depth": list(debug["object_aux_out"].pred_depth.shape),
         },
+    }
+    result["title"] = f'{result["sample_key"]} | ctx={result["num_context_frames"]}'
+    return result
+
+
+def main() -> None:
+    args = trainmod.tvn.prepare_args(parse_args())
+    output_dir = Path(args.inspect_output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset = trainmod.build_dataset(args)
+    accelerator = SimpleNamespace(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    model = trainmod.build_model(args, accelerator)
+    target_device = torch.device(model.pipe.device)
+    _move_optional_module(model.object_pooler, target_device)
+    _move_optional_module(model.object_aux_heads, target_device)
+    _move_optional_module(model.object_adapter, target_device)
+    _move_optional_module(model.vggt_adapter, target_device)
+
+    load_info: dict[str, Any] = {
+        "stage1a_init_from": None,
+        "stage1a_load": None,
+        "stage2_resume_from": args.stage2_resume_from,
+        "stage2_load": None,
+    }
+    if args.stage1a_init_from is not None:
+        stage1a_info = trainmod.tvn._load_filtered_checkpoint_into_model(
+            model,
+            args.stage1a_init_from,
+            include_prefixes=("object_pooler.", "object_aux_heads."),
+        )
+        load_info["stage1a_init_from"] = args.stage1a_init_from
+        load_info["stage1a_load"] = stage1a_info
+
+    stage2_info = _load_optional_stage2_weights(model, args.stage2_resume_from)
+    if stage2_info is not None:
+        load_info["stage2_load"] = stage2_info
+
+    torch.nn.Module.train(model, False)
+    explicit_indices = _parse_index_list(args.inspect_indices)
+    candidate_indices = explicit_indices if explicit_indices else list(range(int(args.inspect_index), len(dataset)))
+    target_count = len(explicit_indices) if explicit_indices else max(1, int(args.inspect_num_samples))
+
+    results: list[dict[str, Any]] = []
+    skipped_zero_context: list[int] = []
+    for dataset_index in candidate_indices:
+        if len(results) >= target_count:
+            break
+        base_sample = dataset[int(dataset_index)]
+        inputs_shared, inputs_posi, _ = _prepare_forward_inputs(model, base_sample)
+        sample = inputs_shared["raw_sample"]
+        num_context_frames = int(sample.get("num_context_frames", 0))
+        if num_context_frames <= 0 and bool(args.inspect_skip_zero_context):
+            skipped_zero_context.append(int(dataset_index))
+            continue
+        sample_dir = output_dir / f"sample_{int(dataset_index):06d}_ctx{num_context_frames:02d}"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        result = _inspect_one(
+            model=model,
+            sample=sample,
+            inputs_shared=inputs_shared,
+            inputs_posi=inputs_posi,
+            output_dir=sample_dir,
+            inspect_fps=int(args.inspect_fps),
+            inspect_prepipe_gallery_url=str(args.inspect_prepipe_gallery_url),
+            inspect_index=int(dataset_index),
+        )
+        result["load_info"] = load_info
+        result["relative_dir"] = sample_dir.name
+        (sample_dir / "result.json").write_text(
+            json.dumps(result, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        _build_html_report(result, sample_dir)
+        results.append(result)
+
+    if not results:
+        raise RuntimeError("no inspectable samples were generated; try disabling --inspect_skip_zero_context")
+
+    gallery_payload = {
+        "output_dir": str(output_dir),
+        "results": results,
+        "skipped_zero_context_indices": skipped_zero_context,
         "load_info": load_info,
     }
-    (output_dir / "result.json").write_text(
-        json.dumps(result, indent=2, ensure_ascii=False) + "\n",
+    (output_dir / "results.json").write_text(
+        json.dumps(gallery_payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    html_path = _build_html_report(result, output_dir)
-    print(json.dumps({"output_dir": str(output_dir), "html": str(html_path), "result": result}, ensure_ascii=False, indent=2))
+    html_path = _build_gallery_report(results, output_dir)
+    print(json.dumps({"output_dir": str(output_dir), "html": str(html_path), "results": results}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

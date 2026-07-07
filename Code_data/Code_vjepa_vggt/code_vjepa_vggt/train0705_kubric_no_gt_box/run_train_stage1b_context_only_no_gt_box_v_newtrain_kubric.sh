@@ -61,7 +61,7 @@ KUBRIC_CACHE_ROOT="${KUBRIC_CACHE_ROOT:-/data/gaoya/agent-data/cache/kubric_no_g
 KUBRIC_SAMPLING="${KUBRIC_SAMPLING:-prefix}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-0}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_vis023567_train0123_aux4455_f69_ctx020}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -105,7 +105,7 @@ CMD=(
   --max_grad_norm 1.0
   --find_unused_parameters
   --save_steps 500
-  --max_checkpoints_keep 10
+  --max_checkpoints_keep 20
   --remove_prefix_in_ckpt pipe.dit.
   --output_path "${OUTPUT_DIR}"
   --lora_base_model dit
@@ -157,7 +157,7 @@ CMD=(
   --sam2_segment_len 8
   --report_to wandb
   --wandb_project vjepa_vggt_wan
-  --wandb_name stage1b_kubric_no_gt_box_vis023567_train0123_aux4455_f69_ctx020_1epoch
+  --wandb_name stage1b_kubric0708_vis023567_train0123_aux4455_f69_ctx020_1epoch
   --wandb_mode online
 )
 

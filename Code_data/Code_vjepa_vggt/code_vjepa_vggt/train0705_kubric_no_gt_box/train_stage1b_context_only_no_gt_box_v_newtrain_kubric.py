@@ -57,10 +57,48 @@ from diffsynth.diffusion import ModelLogger
 _DUMMY_BOX_XYXY = (0.45, 0.45, 0.55, 0.55)
 
 
+def prepare_jepa_context_video(
+    context_video: torch.Tensor,
+    *,
+    latent_frames: int,
+    tubelet_size: int = 2,
+) -> tuple[torch.Tensor, dict[str, int | bool]]:
+    """Pad JEPA input time so JEPA output frames align with latent time."""
+    if context_video.ndim != 5:
+        raise ValueError(f"context_video must be [B,C,T,H,W], got {list(context_video.shape)}")
+    latent_frames = max(int(latent_frames), 1)
+    tubelet_size = max(int(tubelet_size), 1)
+    input_frames = int(context_video.shape[2])
+    target_frames = max(input_frames, tubelet_size)
+    while (target_frames // tubelet_size) % latent_frames != 0:
+        target_frames += 1
+    if target_frames == input_frames:
+        return context_video, {
+            "duplicated_for_jepa": False,
+            "input_context_frames": input_frames,
+            "jepa_context_frames": input_frames,
+            "latent_frames": latent_frames,
+            "tubelet_size": tubelet_size,
+            "padded_context_frames": 0,
+        }
+    pad_count = target_frames - input_frames
+    pad_frames = context_video[:, :, -1:, :, :].expand(-1, -1, pad_count, -1, -1)
+    aligned = torch.cat([context_video, pad_frames], dim=2)
+    return aligned, {
+        "duplicated_for_jepa": True,
+        "input_context_frames": input_frames,
+        "jepa_context_frames": int(aligned.shape[2]),
+        "latent_frames": latent_frames,
+        "tubelet_size": tubelet_size,
+        "padded_context_frames": pad_count,
+    }
+
+
 class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
     """WanTrainingModule variant that sources object priors from viewer grounding."""
 
     def __init__(self, *args, grounding_config: dict | None = None, **kwargs) -> None:
+        self._jepa_tubelet_size = int(kwargs.get("jepa_tubelet_size", 2))
         super().__init__(*args, **kwargs)
         self.viewer_grounding: ViewerGroundingBoxProvider | None = None
         if self.enable_object_branch:
@@ -259,12 +297,13 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             max_objects=self.aux_max_objects,
             points_per_object=self.object_num_queries,
         )
-        jepa_input_video = context_video
-        if num_context_frames == 1:
-            # JEPA uses a temporal tubelet of 2, so duplicate only its input.
-            jepa_input_video = torch.cat([context_video, context_video], dim=2)
-        jepa_out = self._run_jepa(jepa_input_video)
         context_latents = inputs_shared["clean_prefix_latents"]
+        jepa_input_video, jepa_ctx_fix = prepare_jepa_context_video(
+            context_video,
+            latent_frames=int(context_latents.shape[2]),
+            tubelet_size=int(self._jepa_tubelet_size),
+        )
+        jepa_out = self._run_jepa(jepa_input_video)
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
             context_latents=context_latents,
@@ -316,6 +355,8 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
             "train/object_context_abs_max": float(object_context_abs.max().item()),
             "train/object_context_abs_mean": float(object_context_abs.mean().item()),
+            "train/jepa_input_frames": float(jepa_ctx_fix["jepa_context_frames"]),
+            "train/jepa_padding_frames": float(jepa_ctx_fix["padded_context_frames"]),
         }
         return total, metrics
 
