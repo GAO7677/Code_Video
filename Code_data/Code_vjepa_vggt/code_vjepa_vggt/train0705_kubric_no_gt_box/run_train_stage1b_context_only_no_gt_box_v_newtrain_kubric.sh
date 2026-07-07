@@ -10,16 +10,19 @@
 #     (-> train_v_newtrain.WanTrainingModule)
 #
 # 用法:
-#   bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh              # 从头训练
-#   GPU=3 bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh        # 指定物理 GPU
+#   bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh                          # 默认可见 0,2,3,5,6,7；训练占可见 0,1,2,3
+#   VISIBLE_GPU_IDS=0,1,2,3,5,6 TRAIN_GPU_IDS=0,1,2,3 bash run_train_stage1b_context_only_no_gt_box_v_newtrain0705.sh
 #   RESUME=<state.pt|dir> bash ...0705.sh                                        # 断点续训
 #
 # 说明:
 #   - 前台运行, 不使用 nohup / & / 后台方式 (遵循工作区规则)
 #   - 禁用 gpu4 (故障)
-#   - 单进程单卡 (源脚本即 num_processes=1)
+#   - 默认暴露 6 张卡: 0,2,3,5,6,7
+#   - 默认四进程训练卡: 进程内可见 0,1,2,3 (对应物理 0,2,3,5)
+#   - 默认 object_aux_devices: 4,4,5,5 (对应物理 6,6,7,7)
 #   - 目标 DiffSynth 框架: WAN_2p2/DiffSynth-Studio-main
 #   - 每 500 step 保存一次 (--save_steps)
+#   - 当前正式 train split = 114276 条, 四卡全局 batch=4, 1 epoch = 28569 optimizer steps
 #   - 基础 Wan LoRA (raw-phys, 冻结) 从 --lora_checkpoint 加载
 #   - Stage1A token builder (object_pooler/object_aux_heads, 冻结) 从 --stage1a_init_from 加载
 #   - 可训练: DiT object 注入分支 + ObjectConditionAdapter
@@ -27,13 +30,23 @@
 set -euo pipefail
 
 # ---- 可配置项 (环境变量覆盖) ----
-GPU="${GPU:-5}"                 # 物理 GPU 编号 (禁止使用 gpu4)
+VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-0,2,3,5,6,7}"   # 物理 GPU 可见列表 (禁止包含 gpu4)
+TRAIN_GPU_IDS="${TRAIN_GPU_IDS:-0,1,2,3}"           # 进程内可见训练卡编号
 RESUME="${RESUME:-none}"        # none=从头开始, 或指定 training_state.pt / checkpoint 目录
 
-if [ "$GPU" = "4" ]; then
-  echo "ERROR: gpu4 故障, 禁止使用。请指定其他 GPU。" >&2
+IFS=',' read -r -a VISIBLE_GPU_ARRAY <<< "${VISIBLE_GPU_IDS}"
+IFS=',' read -r -a TRAIN_GPU_ARRAY <<< "${TRAIN_GPU_IDS}"
+if [ "${#TRAIN_GPU_ARRAY[@]}" -ne 4 ]; then
+  echo "ERROR: 当前脚本要求四卡训练，请提供 4 个训练 GPU 编号，例如 TRAIN_GPU_IDS=0,1,2,3" >&2
   exit 1
 fi
+for GPU in "${VISIBLE_GPU_ARRAY[@]}"; do
+  if [ "${GPU}" = "4" ]; then
+    echo "ERROR: gpu4 故障, 禁止使用。请指定其他 GPU。" >&2
+    exit 1
+  fi
+done
+NUM_PROCESSES="${#TRAIN_GPU_ARRAY[@]}"
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
@@ -48,7 +61,8 @@ DATASET_SPLIT="${DATASET_SPLIT:-train}"
 KUBRIC_CACHE_ROOT="${KUBRIC_CACHE_ROOT:-/data/gaoya/agent-data/cache/kubric_no_gt_box_dataset}"
 KUBRIC_SAMPLING="${KUBRIC_SAMPLING:-prefix}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-0}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705_kubric}"
+OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_vis023567_train0123_aux4455}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -63,9 +77,9 @@ fi
 CMD=(
   env
   PYTHONPATH="${PROJ}:${DIFFSYNTH_ROOT}"
-  CUDA_VISIBLE_DEVICES="${GPU}"
+  CUDA_VISIBLE_DEVICES="${VISIBLE_GPU_IDS}"
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-  "${ACCELERATE_BIN}" launch --num_processes 1 --num_machines 1 --mixed_precision bf16
+  "${ACCELERATE_BIN}" launch --gpu_ids "${TRAIN_GPU_IDS}" --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16
   "${TRAIN_SCRIPT}"
   --diffsynth_root "${DIFFSYNTH_ROOT}"
   --wan_root "${WAN_ROOT}"
@@ -78,7 +92,7 @@ CMD=(
   --width 896
   --num_frames 24
   --fixed_num_context_frames 8
-  --max_train_steps 20000
+  --max_train_steps 28569
   --num_epochs 100
   --dataset_num_workers 4
   --learning_rate 1e-4
@@ -114,6 +128,7 @@ CMD=(
   --vggt_model_path /data/gaoya/ckpt/facebook-VGGT-1B
   --vggt_input_h 420
   --vggt_input_w 728
+  --object_aux_devices "${OBJECT_AUX_DEVICES}"
   --object_pooler_latent_dim 16
   --cond_proj_dim 4096
   --jepa_window_radius 1
@@ -139,7 +154,7 @@ CMD=(
   --sam2_segment_len 8
   --report_to wandb
   --wandb_project vjepa_vggt_wan
-  --wandb_name pybullet0629_teacher_student_stage1b_context_only_no_gt_box_v_newtrain0705
+  --wandb_name stage1b_kubric_no_gt_box_vis023567_train0123_aux4455_1epoch
   --wandb_mode online
 )
 
@@ -149,6 +164,6 @@ fi
 
 CMD+=("${RESUME_ARGS[@]}")
 
-echo "[启动] 物理 GPU=${GPU}  输出=${OUTPUT_DIR}"
+echo "[启动] 可见物理 GPU=${VISIBLE_GPU_IDS}  训练可见卡=${TRAIN_GPU_IDS}  aux=${OBJECT_AUX_DEVICES}  进程数=${NUM_PROCESSES}  输出=${OUTPUT_DIR}"
 echo "[启动] 命令: ${CMD[*]}"
 exec "${CMD[@]}"
