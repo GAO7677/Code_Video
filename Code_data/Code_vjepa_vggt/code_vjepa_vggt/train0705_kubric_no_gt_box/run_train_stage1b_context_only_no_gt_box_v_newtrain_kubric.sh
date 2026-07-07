@@ -23,7 +23,7 @@
 #   - 注意: 这里不能给 accelerate 传 --gpu_ids，否则它会把子进程 CUDA_VISIBLE_DEVICES 重写为 0,1,2,3，导致 aux 槽位 4/5 失效
 #   - 目标 DiffSynth 框架: WAN_2p2/DiffSynth-Studio-main
 #   - 每 500 step 保存一次 (--save_steps)
-#   - 当前正式 train split = 114276 条, 四卡全局 batch=4, 1 epoch = 28569 optimizer steps
+#   - 当前正式 train split 需要按实际 num_frames 配置确认；默认先保留 28569 steps
 #   - 基础 Wan LoRA (raw-phys, 冻结) 从 --lora_checkpoint 加载
 #   - Stage1A token builder (object_pooler/object_aux_heads, 冻结) 从 --stage1a_init_from 加载
 #   - 可训练: DiT object 注入分支 + ObjectConditionAdapter
@@ -61,7 +61,7 @@ KUBRIC_CACHE_ROOT="${KUBRIC_CACHE_ROOT:-/data/gaoya/agent-data/cache/kubric_no_g
 KUBRIC_SAMPLING="${KUBRIC_SAMPLING:-prefix}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-0}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_vis023567_train0123_aux4455}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_train_vis023567_train0123_aux4455_f69_ctx020}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -89,8 +89,12 @@ CMD=(
   --kubric_sampling_strategy "${KUBRIC_SAMPLING}"
   --height 512
   --width 896
-  --num_frames 24
-  --fixed_num_context_frames 8
+  --num_frames 69
+  --fixed_num_context_frames 20
+  --min_context_frames 0
+  --max_context_ratio 0.30
+  --context_frame_choices 0,1,2,3,4,6,8,9,12,16,20
+  --no_context_ratio 0.0
   --max_train_steps 28569
   --num_epochs 100
   --dataset_num_workers 4
@@ -153,7 +157,7 @@ CMD=(
   --sam2_segment_len 8
   --report_to wandb
   --wandb_project vjepa_vggt_wan
-  --wandb_name stage1b_kubric_no_gt_box_vis023567_train0123_aux4455_1epoch
+  --wandb_name stage1b_kubric_no_gt_box_vis023567_train0123_aux4455_f69_ctx020_1epoch
   --wandb_mode online
 )
 

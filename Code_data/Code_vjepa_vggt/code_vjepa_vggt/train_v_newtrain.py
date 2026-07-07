@@ -216,6 +216,15 @@ def _parse_aux_devices(raw_value: str | None) -> list[str]:
     return [item.strip() for item in str(raw_value).split(",") if item.strip()]
 
 
+def _move_named_tensor_attrs_to_device(obj, device: str | torch.device, attr_names: tuple[str, ...]):
+    target_device = torch.device(device)
+    for attr_name in attr_names:
+        value = getattr(obj, attr_name, None)
+        if isinstance(value, torch.Tensor):
+            setattr(obj, attr_name, value.to(target_device))
+    return obj
+
+
 def _collect_trainable_grad_stats(module: nn.Module) -> dict[str, float]:
     total_sq_norm = 0.0
     grad_abs_max = 0.0
@@ -287,6 +296,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         context_sampling_profile="legacy_prefix",
         min_context_frames=1,
         max_context_ratio=0.5,
+        context_frame_choices=None,
         context_reference_frames=49,
         context_reference_prefixes="1,4,8,12,16",
         prefix_context_ratio=0.55,
@@ -431,6 +441,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.depth_target_source = str(depth_target_source).strip().lower()
         self.jepa_runner = None
         self.cotracker_runner = None
+        self.vggt_runner = None
 
         if self.freeze_non_object_trainables:
             for _, param in self.pipe.dit.named_parameters():
@@ -460,6 +471,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 input_hw=(int(cotracker_input_h), int(cotracker_input_w)),
                 window_len=int(cotracker_window_len),
             )
+            aux_device = None
             if self.object_aux_devices:
                 aux_rank = torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else 0
                 aux_device = self.object_aux_devices[aux_rank % len(self.object_aux_devices)]
@@ -487,6 +499,9 @@ class WanTrainingModule(DiffusionTrainingModule):
                     trainable=bool(self.train_vggt),
                 )
                 vggt_dense_dim = int(self.vggt_adapter.patch_token_dim)
+                if aux_device is not None and not self.train_vggt:
+                    self.vggt_runner = FrozenAuxRunner(self.vggt_adapter, aux_device)
+                    self.vggt_adapter = None
             self.object_pooler = ObjectTubeProjector(
                 jepa_dim=jepa_dim,
                 latent_dim=int(object_pooler_latent_dim),
@@ -529,6 +544,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             self.cotracker_adapter = None
             self.jepa_runner = None
             self.cotracker_runner = None
+            self.vggt_runner = None
             self.vggt_adapter = None
             self.object_pooler = None
             self.object_aux_heads = None
@@ -560,6 +576,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.context_sampling_profile = str(context_sampling_profile).strip().lower()
         self.min_context_frames = min_context_frames
         self.max_context_ratio = max_context_ratio
+        self.context_frame_choices = self._parse_context_frame_choices(context_frame_choices)
         self.context_reference_frames = max(1, int(context_reference_frames))
         self.context_reference_prefixes = self._parse_context_reference_prefixes(
             context_reference_prefixes
@@ -642,6 +659,39 @@ class WanTrainingModule(DiffusionTrainingModule):
         jepa_dtype = next(self.jepa_adapter.parameters()).dtype
         return self.jepa_adapter(context_video.to(dtype=jepa_dtype))
 
+    def _run_vggt(self, frames_bthwc_01, *, query_points_prior, query_image_hw):
+        target_device = query_points_prior.device
+        if self.vggt_runner is not None:
+            runner_device = self.vggt_runner.device
+            vggt_out = self.vggt_runner(
+                frames_bthwc_01.to(runner_device),
+                query_points_prior=query_points_prior.to(runner_device),
+                query_image_hw=query_image_hw,
+            )
+            return _move_named_tensor_attrs_to_device(
+                vggt_out,
+                target_device,
+                (
+                    "query_points",
+                    "tracks",
+                    "visibility",
+                    "confidence",
+                    "pose_enc",
+                    "depth",
+                    "depth_conf",
+                    "world_points",
+                    "world_points_conf",
+                    "dense_patch_tokens",
+                ),
+            )
+        if self.vggt_adapter is None:
+            raise RuntimeError("VGGT adapter is unavailable and no cache was provided")
+        return self.vggt_adapter(
+            frames_bthwc_01,
+            query_points_prior=query_points_prior,
+            query_image_hw=query_image_hw,
+        )
+
     def export_trainable_state_dict(self, state_dict, remove_prefix=None):
         trainable_param_names = {
             name
@@ -683,6 +733,21 @@ class WanTrainingModule(DiffusionTrainingModule):
         if not prefixes:
             raise ValueError("context_reference_prefixes must contain at least one positive integer.")
         return prefixes
+
+    @staticmethod
+    def _parse_context_frame_choices(raw_value):
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, str):
+            values = [
+                int(item.strip())
+                for item in raw_value.split(",")
+                if item.strip()
+            ]
+        else:
+            values = [int(item) for item in raw_value]
+        values = sorted({value for value in values if value >= 0})
+        return values or None
 
     @staticmethod
     def _group_tracks_to_objects(
@@ -959,7 +1024,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                 raise RuntimeError(
                     f"VGGT cache root is set but no cache found for sample {sample.get('video_path', '<unknown>')}"
                 )
-            vggt_out = self.vggt_adapter(
+            vggt_out = self._run_vggt(
                 frames_bthwc_01,
                 query_points_prior=query_points_prior,
                 query_image_hw=image_hw,
@@ -1162,6 +1227,26 @@ class WanTrainingModule(DiffusionTrainingModule):
                 f"max_context_ratio={self.max_context_ratio}."
             )
 
+        if self.context_frame_choices is not None:
+            valid_choices = [
+                value
+                for value in self.context_frame_choices
+                if self.min_context_frames <= value <= max_context_frames
+            ]
+            if not valid_choices:
+                raise ValueError(
+                    "No valid context_frame_choices remain under the current video length. "
+                    f"choices={self.context_frame_choices}, total_frames={total_frames}, "
+                    f"min_context_frames={self.min_context_frames}, max_context_ratio={self.max_context_ratio}."
+                )
+            context_frames = random.choice(valid_choices)
+            if context_frames <= 0:
+                return {"mode": "text_only", "frame_indices": []}
+            return {
+                "mode": "prefix",
+                "frame_indices": list(range(context_frames)),
+            }
+
         # A small fraction of samples drop all visual conditioning so the same model
         # also learns the pure text-to-video path.
         if random.random() < self.no_context_ratio:
@@ -1283,9 +1368,31 @@ class WanTrainingModule(DiffusionTrainingModule):
             "min_timestep_boundary": self.min_timestep_boundary,
         }
         if raw_sample is not None:
-            inputs_shared["raw_sample"] = raw_sample
-            inputs_shared["context_video"] = _tensor_video_to_pil_list(raw_sample["context_video"])
-            inputs_shared["context_frame_indices"] = raw_sample["context_frame_indices"].tolist()
+            sampled_raw = raw_sample
+            if "context_video" in raw_sample and "context_frame_indices" in raw_sample:
+                raw_context_video = raw_sample["context_video"]
+                sampled_indices = [
+                    int(frame_idx)
+                    for frame_idx in context_frame_indices
+                    if 0 <= int(frame_idx) < int(raw_context_video.shape[1])
+                ]
+                sampled_raw = dict(raw_sample)
+                if sampled_indices:
+                    sampled_index_tensor = torch.tensor(sampled_indices, dtype=torch.long)
+                    sampled_raw["context_video"] = raw_context_video[:, sampled_index_tensor].contiguous()
+                else:
+                    sampled_index_tensor = torch.empty((0,), dtype=torch.long)
+                    sampled_raw["context_video"] = raw_context_video[:, :0].contiguous()
+                sampled_raw["context_frame_indices"] = sampled_index_tensor
+                sampled_raw["num_context_frames"] = int(sampled_index_tensor.numel())
+            inputs_shared["raw_sample"] = sampled_raw
+            context_video = sampled_raw["context_video"]
+            inputs_shared["context_video"] = (
+                _tensor_video_to_pil_list(context_video)
+                if int(context_video.shape[1]) > 0
+                else None
+            )
+            inputs_shared["context_frame_indices"] = sampled_raw["context_frame_indices"].tolist()
         inputs_shared = self.parse_extra_inputs(
             data,
             self.extra_inputs,
@@ -1436,6 +1543,12 @@ def wan_parser():
         type=float,
         default=0.5,
         help="Maximum context length as a ratio of total video frames. 0.5 means sample up to half the video.",
+    )
+    parser.add_argument(
+        "--context_frame_choices",
+        type=str,
+        default=None,
+        help="Optional comma-separated whitelist of legal context frame counts for legacy_prefix sampling.",
     )
     parser.add_argument(
         "--context_reference_frames",
@@ -1753,9 +1866,9 @@ def prepare_args(args):
         raise ValueError(
             f"width must be divisible by {WAN_SPATIAL_DIVISIBILITY} for Wan2.2 training, got {args.width}."
         )
-    if args.min_context_frames < 1:
+    if args.min_context_frames < 0:
         raise ValueError(
-            f"min_context_frames must be at least 1, got {args.min_context_frames}."
+            f"min_context_frames must be at least 0, got {args.min_context_frames}."
         )
     if not 0.0 <= args.no_context_ratio <= 1.0:
         raise ValueError(
@@ -1779,6 +1892,19 @@ def prepare_args(args):
         raise ValueError(
             f"max_context_ratio must be in (0, 0.5], got {args.max_context_ratio}."
         )
+    if args.context_frame_choices is not None:
+        parsed_context_choices = [
+            int(item.strip())
+            for item in str(args.context_frame_choices).split(",")
+            if item.strip()
+        ]
+        if not parsed_context_choices:
+            raise ValueError("context_frame_choices must contain at least one integer when set.")
+        if any(value < 0 for value in parsed_context_choices):
+            raise ValueError(
+                f"context_frame_choices must contain only non-negative integers, got {parsed_context_choices}."
+            )
+        args.context_frame_choices = ",".join(str(value) for value in sorted(set(parsed_context_choices)))
     if args.benchmark_every_steps is not None and args.benchmark_every_steps <= 0:
         raise ValueError(
             f"benchmark_every_steps must be positive when set, got {args.benchmark_every_steps}."
@@ -1968,6 +2094,7 @@ def build_model(args, accelerator):
         context_sampling_profile=args.context_sampling_profile,
         min_context_frames=args.min_context_frames,
         max_context_ratio=args.max_context_ratio,
+        context_frame_choices=args.context_frame_choices,
         context_reference_frames=args.context_reference_frames,
         context_reference_prefixes=args.context_reference_prefixes,
         prefix_context_ratio=args.prefix_context_ratio,

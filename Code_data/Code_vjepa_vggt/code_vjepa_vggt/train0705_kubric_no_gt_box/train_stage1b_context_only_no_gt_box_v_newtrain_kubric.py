@@ -181,6 +181,38 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             return flow_match_context_sft_loss(pipe, **inputs_shared, **inputs_posi), {}
 
         sample = inputs_shared["raw_sample"]
+        num_context_frames = int(sample.get("num_context_frames", 0))
+        if num_context_frames <= 0:
+            object_context = torch.zeros(
+                (1, int(self.aux_max_objects), int(self.object_adapter.dim)),
+                device=pipe.device,
+                dtype=pipe.torch_dtype,
+            )
+            if self.lambda_main > 0.0:
+                loss_main = flow_match_context_sft_loss(
+                    pipe,
+                    **inputs_shared,
+                    **inputs_posi,
+                    object_context=object_context,
+                )
+            else:
+                loss_main = object_context.new_zeros(())
+            object_context_reg = object_context.new_zeros(())
+            total = (
+                self.lambda_main * loss_main
+                + self.lambda_object_context_reg * object_context_reg
+            )
+            metrics = {
+                "train/loss_total": float(total.detach().item()),
+                "train/loss_main": float(loss_main.detach().item()),
+                "train/loss_object_context_reg": float(object_context_reg.detach().item()),
+                "train/object_count": 0.0,
+                "train/object_latent_tokens_abs_max": 0.0,
+                "train/object_context_abs_max": 0.0,
+                "train/object_context_abs_mean": 0.0,
+            }
+            return total, metrics
+
         context_video = sample["context_video"].unsqueeze(0).to(
             device=pipe.device, dtype=pipe.torch_dtype
         )
@@ -214,7 +246,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                     f"{sample.get('video_path', '<unknown>')}"
                 )
         else:
-            vggt_out = self.vggt_adapter(
+            vggt_out = self._run_vggt(
                 frames_bthwc_01,
                 query_points_prior=query_points_prior,
                 query_image_hw=image_hw,
@@ -227,7 +259,11 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             max_objects=self.aux_max_objects,
             points_per_object=self.object_num_queries,
         )
-        jepa_out = self._run_jepa(context_video)
+        jepa_input_video = context_video
+        if num_context_frames == 1:
+            # JEPA uses a temporal tubelet of 2, so duplicate only its input.
+            jepa_input_video = torch.cat([context_video, context_video], dim=2)
+        jepa_out = self._run_jepa(jepa_input_video)
         context_latents = inputs_shared["clean_prefix_latents"]
         object_out = self.object_pooler(
             jepa_patch_tokens=jepa_out.patch_tokens,
@@ -469,6 +505,7 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         context_sampling_profile=args.context_sampling_profile,
         min_context_frames=args.min_context_frames,
         max_context_ratio=args.max_context_ratio,
+        context_frame_choices=args.context_frame_choices,
         context_reference_frames=args.context_reference_frames,
         context_reference_prefixes=args.context_reference_prefixes,
         prefix_context_ratio=args.prefix_context_ratio,
