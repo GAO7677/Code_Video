@@ -92,8 +92,8 @@ CMD=(
   --num_frames 69
   --fixed_num_context_frames 20
   --min_context_frames 0
-  --max_context_ratio 0.30
-  --context_frame_choices 0,1,2,3,4,6,8,9,12,16,20
+  --max_context_ratio 0.70
+  --context_length_sampling short_biased
   --no_context_ratio 0.0
   --max_train_steps 28569
   --num_epochs 100

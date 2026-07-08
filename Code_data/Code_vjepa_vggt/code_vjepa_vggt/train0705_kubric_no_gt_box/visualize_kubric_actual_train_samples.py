@@ -40,12 +40,31 @@ def _parse_context_frame_choices(raw_value: str | None) -> list[int] | None:
     return values or None
 
 
+def _sample_context_length(
+    candidates: list[int] | range,
+    *,
+    context_length_sampling: str,
+    rng: random.Random,
+) -> int:
+    values = [int(value) for value in candidates]
+    if not values:
+        raise ValueError("Context length candidates must be non-empty.")
+    if context_length_sampling == "uniform":
+        return rng.choice(values)
+    if context_length_sampling == "short_biased":
+        max_value = max(values)
+        weights = [max_value - value + 1 for value in values]
+        return rng.choices(values, weights=weights, k=1)[0]
+    raise ValueError(f"Unsupported context_length_sampling={context_length_sampling!r}.")
+
+
 def _sample_context_spec(
     *,
     total_frames: int,
     min_context_frames: int,
     max_context_ratio: float,
     context_frame_choices: list[int] | None,
+    context_length_sampling: str,
     no_context_ratio: float,
     rng: random.Random,
 ) -> dict[str, Any]:
@@ -72,7 +91,11 @@ def _sample_context_spec(
                 f"choices={context_frame_choices}, total_frames={total_frames}, "
                 f"min_context_frames={min_context_frames}, max_context_ratio={max_context_ratio}."
             )
-        context_frames = rng.choice(valid_choices)
+        context_frames = _sample_context_length(
+            valid_choices,
+            context_length_sampling=context_length_sampling,
+            rng=rng,
+        )
         if context_frames <= 0:
             return {"mode": "text_only", "frame_indices": []}
         return {"mode": "prefix", "frame_indices": list(range(context_frames))}
@@ -80,7 +103,13 @@ def _sample_context_spec(
     if rng.random() < no_context_ratio:
         return {"mode": "text_only", "frame_indices": []}
 
-    context_frames = rng.randint(min_context_frames, max_context_frames)
+    context_frames = _sample_context_length(
+        range(min_context_frames, max_context_frames + 1),
+        context_length_sampling=context_length_sampling,
+        rng=rng,
+    )
+    if context_frames <= 0:
+        return {"mode": "text_only", "frame_indices": []}
     return {"mode": "prefix", "frame_indices": list(range(context_frames))}
 
 
@@ -162,6 +191,7 @@ def _select_actual_context_sample(
     min_context_frames: int,
     max_context_ratio: float,
     context_frame_choices: list[int] | None,
+    context_length_sampling: str,
     no_context_ratio: float,
     rng: random.Random,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -172,6 +202,7 @@ def _select_actual_context_sample(
         min_context_frames=min_context_frames,
         max_context_ratio=max_context_ratio,
         context_frame_choices=context_frame_choices,
+        context_length_sampling=context_length_sampling,
         no_context_ratio=no_context_ratio,
         rng=rng,
     )
@@ -395,8 +426,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_frames", type=int, default=69)
     parser.add_argument("--fixed_num_context_frames", type=int, default=20)
     parser.add_argument("--min_context_frames", type=int, default=0)
-    parser.add_argument("--max_context_ratio", type=float, default=0.30)
-    parser.add_argument("--context_frame_choices", type=str, default="0,1,2,3,4,6,8,9,12,16,20")
+    parser.add_argument("--max_context_ratio", type=float, default=0.70)
+    parser.add_argument("--context_frame_choices", type=str, default=None)
+    parser.add_argument(
+        "--context_length_sampling",
+        type=str,
+        default="short_biased",
+        choices=["uniform", "short_biased"],
+    )
     parser.add_argument("--no_context_ratio", type=float, default=0.0)
     parser.add_argument("--object_num_queries", type=int, default=8)
     parser.add_argument("--aux_max_objects", type=int, default=4)
@@ -483,6 +520,7 @@ def main() -> None:
             min_context_frames=int(args.min_context_frames),
             max_context_ratio=float(args.max_context_ratio),
             context_frame_choices=context_frame_choices,
+            context_length_sampling=str(args.context_length_sampling),
             no_context_ratio=float(args.no_context_ratio),
             rng=rng,
         )

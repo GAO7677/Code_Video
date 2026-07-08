@@ -528,6 +528,14 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
 
 def parse_args() -> argparse.Namespace:
     parser = trainmod.build_parser()
+    parser.set_defaults(
+        fixed_num_context_frames=20,
+        min_context_frames=0,
+        max_context_ratio=0.70,
+        context_frame_choices=None,
+        context_length_sampling="short_biased",
+        no_context_ratio=0.0,
+    )
     parser.add_argument("--inspect_indices", type=str, default=None)
     parser.add_argument("--inspect_num_samples", type=int, default=4)
     parser.add_argument("--inspect_seed", type=int, default=42)
@@ -595,6 +603,7 @@ def main() -> None:
             min_context_frames=int(args.min_context_frames),
             max_context_ratio=float(args.max_context_ratio),
             context_frame_choices=context_frame_choices,
+            context_length_sampling=str(args.context_length_sampling),
             no_context_ratio=float(args.no_context_ratio),
             rng=rng,
         )

@@ -297,6 +297,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         min_context_frames=1,
         max_context_ratio=0.5,
         context_frame_choices=None,
+        context_length_sampling="uniform",
         context_reference_frames=49,
         context_reference_prefixes="1,4,8,12,16",
         prefix_context_ratio=0.55,
@@ -577,6 +578,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.min_context_frames = min_context_frames
         self.max_context_ratio = max_context_ratio
         self.context_frame_choices = self._parse_context_frame_choices(context_frame_choices)
+        self.context_length_sampling = str(context_length_sampling).strip().lower()
         self.context_reference_frames = max(1, int(context_reference_frames))
         self.context_reference_prefixes = self._parse_context_reference_prefixes(
             context_reference_prefixes
@@ -748,6 +750,20 @@ class WanTrainingModule(DiffusionTrainingModule):
             values = [int(item) for item in raw_value]
         values = sorted({value for value in values if value >= 0})
         return values or None
+
+    def _sample_context_length(self, candidates):
+        values = [int(value) for value in candidates]
+        if not values:
+            raise ValueError("Context length candidates must be non-empty.")
+        if self.context_length_sampling == "uniform":
+            return random.choice(values)
+        if self.context_length_sampling == "short_biased":
+            max_value = max(values)
+            weights = [max_value - value + 1 for value in values]
+            return random.choices(values, weights=weights, k=1)[0]
+        raise ValueError(
+            f"Unsupported context_length_sampling={self.context_length_sampling!r}."
+        )
 
     @staticmethod
     def _group_tracks_to_objects(
@@ -1239,7 +1255,7 @@ class WanTrainingModule(DiffusionTrainingModule):
                     f"choices={self.context_frame_choices}, total_frames={total_frames}, "
                     f"min_context_frames={self.min_context_frames}, max_context_ratio={self.max_context_ratio}."
                 )
-            context_frames = random.choice(valid_choices)
+            context_frames = self._sample_context_length(valid_choices)
             if context_frames <= 0:
                 return {"mode": "text_only", "frame_indices": []}
             return {
@@ -1252,7 +1268,11 @@ class WanTrainingModule(DiffusionTrainingModule):
         if random.random() < self.no_context_ratio:
             return {"mode": "text_only", "frame_indices": []}
 
-        context_frames = random.randint(self.min_context_frames, max_context_frames)
+        context_frames = self._sample_context_length(
+            range(self.min_context_frames, max_context_frames + 1)
+        )
+        if context_frames <= 0:
+            return {"mode": "text_only", "frame_indices": []}
         return {
             "mode": "prefix",
             "frame_indices": list(range(context_frames)),
@@ -1549,6 +1569,13 @@ def wan_parser():
         type=str,
         default=None,
         help="Optional comma-separated whitelist of legal context frame counts for legacy_prefix sampling.",
+    )
+    parser.add_argument(
+        "--context_length_sampling",
+        type=str,
+        default="uniform",
+        choices=["uniform", "short_biased"],
+        help="How to sample a legal context length for legacy_prefix sampling.",
     )
     parser.add_argument(
         "--context_reference_frames",
@@ -1888,9 +1915,9 @@ def prepare_args(args):
             f"first_frame={args.first_frame_context_ratio}, sparse={args.sparse_context_ratio}, "
             f"random={args.random_context_ratio}, no_context={args.no_context_ratio}."
         )
-    if not 0.0 < args.max_context_ratio <= 0.5:
+    if not 0.0 < args.max_context_ratio < 1.0:
         raise ValueError(
-            f"max_context_ratio must be in (0, 0.5], got {args.max_context_ratio}."
+            f"max_context_ratio must be in (0, 1.0), got {args.max_context_ratio}."
         )
     if args.context_frame_choices is not None:
         parsed_context_choices = [
@@ -2095,6 +2122,7 @@ def build_model(args, accelerator):
         min_context_frames=args.min_context_frames,
         max_context_ratio=args.max_context_ratio,
         context_frame_choices=args.context_frame_choices,
+        context_length_sampling=args.context_length_sampling,
         context_reference_frames=args.context_reference_frames,
         context_reference_prefixes=args.context_reference_prefixes,
         prefix_context_ratio=args.prefix_context_ratio,
