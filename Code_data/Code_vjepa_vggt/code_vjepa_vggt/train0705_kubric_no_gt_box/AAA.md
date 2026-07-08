@@ -258,6 +258,35 @@ GPU=5 \
 
 本次实际 smoke 输出目录：
 
+
+## 5. Test5 多 Context 推理 Sweep
+
+使用 `gpu6,7` 对 `test_5.txt` 跑多组 context 长度，其他配置保持一致：
+
+```bash
+VISIBLE_GPU_IDS=6,7 \
+INFERENCE_DEVICES=cuda:0,cuda:1 \
+CONTEXT_FRAME_VALUES=1,4,8,12,16,20 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_batch_ctx_sweep_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.sh
+```
+
+输出根目录：
+
+```text
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn
+```
+
+每个 context 长度一个子目录，例如：
+
+```text
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx01
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx04
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx08
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx12
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx16
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn/ctx20
+```
+
 ```text
 /data/gaoya/agent-data/checkpoints/stage1b_kubric_no_gt_box_smoke_gpu5
 ```

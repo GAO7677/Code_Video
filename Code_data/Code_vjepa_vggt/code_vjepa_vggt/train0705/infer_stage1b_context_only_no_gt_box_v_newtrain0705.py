@@ -679,11 +679,8 @@ def _load_context_video(
     target_context_frames: int,
 ):
     frames, frame_indices = read_video_prefix(video_path, target_context_frames)
-    if int(frames.shape[0]) < int(target_context_frames):
-        raise RuntimeError(
-            f"context video {video_path} only provides {int(frames.shape[0])} frames, "
-            f"smaller than required num_context_frames={int(target_context_frames)}"
-        )
+    if int(frames.shape[0]) <= 0:
+        raise RuntimeError(f"context video {video_path} does not provide any readable frames")
     if int(frames.shape[0]) > int(target_context_frames):
         frames = frames[:target_context_frames]
         frame_indices = frame_indices[:target_context_frames]
@@ -812,6 +809,7 @@ def main() -> None:
         video_path=context_video_path,
         target_context_frames=int(args.context_frames),
     )
+    effective_context_frames = int(frames.shape[0])
     context_video_single = preprocess_video_rgb_uint8(
         frames,
         (int(args.height), int(args.width)),
@@ -859,13 +857,15 @@ def main() -> None:
         "context_video": str(context_video_path),
         "prompt": str(args.prompt),
         "frame_indices": frame_indices.tolist(),
+        "requested_context_frames": int(args.context_frames),
+        "effective_context_frames": effective_context_frames,
         "model_device": str(args.device),
         "aux_device": _resolve_aux_device(args),
         "model_args": {
             "height": int(model_args.height),
             "width": int(model_args.width),
             "num_frames": int(model_args.num_frames),
-            "context_frames": int(model_args.fixed_num_context_frames),
+            "context_frames": effective_context_frames,
             "enable_object_branch": bool(model_args.enable_object_branch),
             "lora_checkpoint": str(model_args.lora_checkpoint),
             "stage1a_init_from": str(model_args.stage1a_init_from),
@@ -875,8 +875,6 @@ def main() -> None:
             "random_seed": args.object_context_random_seed,
             "random_scale": float(args.object_context_random_scale),
         },
-        "load_info": _summarize_load_info(load_info),
-        "object_debug": object_debug,
         "vjepa": summarize_vjepa_args(args),
     }
     (output_dir / f"{checkpoint_tag}.json").write_text(
