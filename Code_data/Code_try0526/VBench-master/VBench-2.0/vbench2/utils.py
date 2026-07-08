@@ -46,6 +46,21 @@ logging.basicConfig(level = logging.INFO,format = '%(asctime)s - %(name)s - %(le
 logger = logging.getLogger(__name__)
 
 
+def _resolve_local_cotracker_repo() -> str | None:
+    explicit = os.environ.get("VBENCH2_COTRACKER_REPO")
+    if explicit and os.path.isfile(os.path.join(explicit, "hubconf.py")):
+        return explicit
+
+    candidates = [
+        "/home/gaoya/models/facebookresearch_co-tracker_main",
+        "/home/gaoya/Code_Video/co-tracker-main",
+    ]
+    for candidate in candidates:
+        if os.path.isfile(os.path.join(candidate, "hubconf.py")):
+            return candidate
+    return None
+
+
 def split_video_into_scenes(video_path, threshold=27.0):
     # Open our video, create a scene manager, and add a detector.
     video_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -295,9 +310,10 @@ def init_submodules(dimension_list, local=False, read_frame=False):
         os.makedirs(CACHE_DIR, exist_ok=True)
 
         if dimension == 'Multi-View_Consistency':
+            local_cotracker_repo = _resolve_local_cotracker_repo()
             submodules_dict[dimension] = {
                 'raft': f'{CACHE_DIR}/raft_model/models/raft-things.pth',
-                "repo":"facebookresearch/co-tracker",
+                "repo": local_cotracker_repo if (local and local_cotracker_repo) else "facebookresearch/co-tracker",
                 "model":"cotracker2"
             }
             details = submodules_dict[dimension]
@@ -314,8 +330,9 @@ def init_submodules(dimension_list, local=False, read_frame=False):
                     print(f"Error during downloading RAFT model: {err}")
                 
         elif dimension == 'Camera_Motion':
+            local_cotracker_repo = _resolve_local_cotracker_repo()
             submodules_dict[dimension] = {
-                "repo":"facebookresearch/co-tracker",
+                "repo": local_cotracker_repo if (local and local_cotracker_repo) else "facebookresearch/co-tracker",
                 "model":"cotracker2"
             }
             

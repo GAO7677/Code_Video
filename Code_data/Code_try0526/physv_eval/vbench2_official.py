@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import importlib
+from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +50,37 @@ def _normalize_official_result(
     }
 
 
+def _build_custom_prompt_entries(
+    videos: Sequence[tuple[Path, str | None]],
+    *,
+    dimension: str,
+) -> list[dict[str, Any]]:
+    if dimension == "Diversity":
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for video_path, caption in videos:
+            prompt = (caption or video_path.stem).strip()
+            grouped[prompt].append(str(video_path))
+        entries: list[dict[str, Any]] = []
+        for prompt, video_list in grouped.items():
+            entries.append(
+                {
+                    "prompt_en": prompt,
+                    "dimension": [dimension],
+                    "video_list": sorted(video_list),
+                }
+            )
+        return entries
+
+    return [
+        {
+            "prompt_en": caption or video_path.stem,
+            "dimension": [dimension],
+            "video_list": [str(video_path)],
+        }
+        for video_path, caption in videos
+    ]
+
+
 class OfficialVBench2Runner:
     def __init__(
         self,
@@ -84,6 +118,60 @@ class OfficialVBench2Runner:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.output_root.mkdir(parents=True, exist_ok=True)
 
+    def _evaluate_from_full_info(
+        self,
+        *,
+        full_info_entries: list[dict[str, Any]],
+        dimension: str,
+        output_path: Path | None = None,
+        run_name: str | None = None,
+    ) -> tuple[dict[str, Any], Path, Path, Path]:
+        if dimension not in _CUSTOM_DIMENSIONS:
+            raise ValueError(
+                f"VBench2 single-case custom input only supports {sorted(_CUSTOM_DIMENSIONS)}, got {dimension!r}"
+            )
+
+        self._prepare_env()
+        _, _ = self._lazy_imports()
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        resolved_run_name = run_name or f"{dimension}_batch_{stamp}"
+        run_output = (output_path or (self.output_root / resolved_run_name / dimension)).resolve()
+        run_output.mkdir(parents=True, exist_ok=True)
+
+        full_info_json = run_output / f"{resolved_run_name}_full_info.json"
+        full_info_json.write_text(json.dumps(full_info_entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        repo_root_str = str(self.repo_root)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+        import torch
+        from vbench2.utils import init_submodules
+
+        if dimension == "Multi-View_Consistency":
+            module_name = "multi_view_consistency"
+            compute_name = "compute_multi_view_consistency"
+        else:
+            module_name = dimension.lower()
+            compute_name = f"compute_{module_name}"
+        dimension_module = importlib.import_module(f"vbench2.{module_name}")
+        evaluate_func = getattr(dimension_module, compute_name)
+        submodules_dict = init_submodules(
+            [dimension],
+            local=self.load_ckpt_from_local,
+            read_frame=self.read_frame,
+        )
+        results = evaluate_func(
+            str(full_info_json),
+            torch.device(self.device),
+            submodules_dict[dimension],
+        )
+        payload = {dimension: list(results)}
+        result_json = run_output / f"{resolved_run_name}_eval_results.json"
+        result_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        normalized = _normalize_official_result(dimension, payload)
+        return normalized, result_json, full_info_json, run_output
+
     def score(
         self,
         video_path: Path,
@@ -97,45 +185,57 @@ class OfficialVBench2Runner:
                 f"VBench2 single-case custom input only supports {sorted(_CUSTOM_DIMENSIONS)}, got {dimension!r}"
             )
 
-        self._prepare_env()
-        torch, VBench2 = self._lazy_imports()
-
         sample_id = stable_path_id(video_path)
         run_name = f"{dimension}_{sample_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        run_output = (output_path or (self.output_root / sample_id / dimension)).resolve()
-        run_output.mkdir(parents=True, exist_ok=True)
-
-        model = VBench2(torch.device(self.device), str(self.full_json_dir), str(run_output))
-        prompt_list = [caption] if caption else []
-        input_path = video_path
-        if dimension == "Diversity":
-            input_path = video_path if video_path.is_dir() else video_path.parent
-        model.evaluate(
-            videos_path=str(input_path),
-            name=run_name,
-            prompt_list=prompt_list,
-            dimension_list=[dimension],
-            local=self.load_ckpt_from_local,
-            read_frame=self.read_frame,
-            mode="custom_input",
+        normalized, result_json, full_info_json, run_output = self._evaluate_from_full_info(
+            full_info_entries=_build_custom_prompt_entries([(video_path, caption)], dimension=dimension),
+            dimension=dimension,
+            output_path=output_path or (self.output_root / sample_id / dimension),
+            run_name=run_name,
         )
-
-        result_json = run_output / f"{run_name}_eval_results.json"
-        if not result_json.is_file():
-            raise FileNotFoundError(f"Expected VBench-2.0 result file not found: {result_json}")
-        payload = json.loads(result_json.read_text(encoding="utf-8"))
-
-        normalized = _normalize_official_result(dimension, payload)
         normalized.update(
             {
                 "video": str(video_path),
                 "caption_used": caption,
                 "result_json": str(result_json),
-                "full_info_json": str(run_output / f"{run_name}_full_info.json"),
+                "full_info_json": str(full_info_json),
                 "output_path": str(run_output),
                 "cache_dir": str(self.cache_dir),
                 "device": self.device,
-                "mode": "custom_input",
+                "mode": "custom_full_info",
+            }
+        )
+        return normalized
+
+    def score_batch(
+        self,
+        cases: Sequence[EvalCase | Path | str | dict[str, Any]],
+        *,
+        dimension: str,
+        output_path: Path | None = None,
+        run_name: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_cases = [coerce_eval_case(case) for case in cases]
+        entries = _build_custom_prompt_entries(
+            [(case.video_path, case.caption) for case in normalized_cases],
+            dimension=dimension,
+        )
+        normalized, result_json, full_info_json, run_output = self._evaluate_from_full_info(
+            full_info_entries=entries,
+            dimension=dimension,
+            output_path=output_path,
+            run_name=run_name,
+        )
+        normalized.update(
+            {
+                "videos": [str(case.video_path) for case in normalized_cases],
+                "captions_used": [case.caption for case in normalized_cases],
+                "result_json": str(result_json),
+                "full_info_json": str(full_info_json),
+                "output_path": str(run_output),
+                "cache_dir": str(self.cache_dir),
+                "device": self.device,
+                "mode": "custom_full_info",
             }
         )
         return normalized

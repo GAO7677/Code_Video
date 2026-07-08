@@ -9,8 +9,8 @@
 # - method name: METHOD_NAME=train_stage1b_kubric0708_step1000
 # - output root: OUTPUT_ROOT=/data/.../train0705_kubric_test5_compare_0708
 # - output frames: OUTPUT_FRAMES=49
-# - ctx count: CTX_NUM=8
-# - multiple ctx counts: CTX_NUMS=1,4,8,12,16,20
+# - ctx: CTX=8
+# - multiple ctx counts: CTX=1,4,8,12,16,20
 #
 # Direct one-run example:
 # GPU_PAIR=6,7 \
@@ -19,7 +19,7 @@
 # METHOD_NAME=train_stage1b_kubric0708_step1000 \
 # OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
 # OUTPUT_FRAMES=49 \
-# CTX_NUM=8 \
+# CTX=8 \
 # bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 #
 # Sweep on one GPU pair:
@@ -29,7 +29,7 @@
 # METHOD_NAME=train_stage1b_kubric0708_step1000 \
 # OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn \
 # OUTPUT_FRAMES=49 \
-# CTX_NUMS=1,4,8,12,16,20 \
+# CTX=1,4,8,12,16,20 \
 # bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 #
 # Sweep on multiple GPU pairs:
@@ -39,7 +39,7 @@
 # METHOD_NAME=train_stage1b_kubric0708_step1000 \
 # OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn \
 # OUTPUT_FRAMES=49 \
-# CTX_NUMS=1,4,8,12,16,20 \
+# CTX=1,4,8,12,16,20 \
 # bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 # =============================================================================
 set -euo pipefail
@@ -55,8 +55,13 @@ GPU_PAIRS="${GPU_PAIRS:-}"
 TEST_JSON_TXT="${TEST_JSON_TXT:-}"
 METHOD_NAME="${METHOD_NAME:-}"
 OUTPUT_FRAMES="${OUTPUT_FRAMES:-}"
+CTX="${CTX:-}"
 CTX_NUM="${CTX_NUM:-}"
 CTX_NUMS="${CTX_NUMS:-}"
+USER_VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-}"
+USER_INFERENCE_GPU_PAIRS="${INFERENCE_GPU_PAIRS:-}"
+USER_CONTEXT_FRAMES="${CONTEXT_FRAMES:-}"
+USER_CONTEXT_FRAME_VALUES="${CONTEXT_FRAME_VALUES:-}"
 
 VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-${GPU_PAIR:-5,6}}"
 INFERENCE_GPU_PAIRS="${INFERENCE_GPU_PAIRS:-${GPU_PAIRS:-}}"
@@ -72,8 +77,8 @@ HEIGHT="${HEIGHT:-512}"
 WIDTH="${WIDTH:-896}"
 INPUT_COVER_CROP_WIDTH="${INPUT_COVER_CROP_WIDTH:-832}"
 INPUT_COVER_CROP_HEIGHT="${INPUT_COVER_CROP_HEIGHT:-480}"
-CONTEXT_FRAMES="${CONTEXT_FRAMES:-${CTX_NUM:-8}}"
-CONTEXT_FRAME_VALUES="${CONTEXT_FRAME_VALUES:-${CTX_NUMS:-1,2,3,4,6,8,9,12,16,20}}"
+CONTEXT_FRAMES="${CONTEXT_FRAMES:-${CTX_NUM:-${CTX:-8}}}"
+CONTEXT_FRAME_VALUES="${CONTEXT_FRAME_VALUES:-${CTX_NUMS:-${CTX:-1,2,3,4,6,8,9,12,16,20}}}"
 SAMPLING_MODE="${SAMPLING_MODE:-prefix}"
 CFG_SCALE="${CFG_SCALE:-5.0}"
 SEED="${SEED:-42}"
@@ -87,12 +92,28 @@ infer_run_mode() {
     echo "${RUN_MODE}"
     return
   fi
-  if [ -n "${INFERENCE_GPU_PAIRS}" ]; then
+  if [ -n "${GPU_PAIRS}" ] || [ -n "${USER_INFERENCE_GPU_PAIRS}" ]; then
     echo "sweep"
     return
   fi
-  if [[ "${CONTEXT_FRAME_VALUES}" == *","* ]]; then
+  if [ -n "${CTX}" ]; then
+    if [[ "${CTX}" == *","* ]]; then
+      echo "sweep"
+    else
+      echo "direct"
+    fi
+    return
+  fi
+  if [ -n "${CTX_NUMS}" ] || [ -n "${USER_CONTEXT_FRAME_VALUES}" ]; then
     echo "sweep"
+    return
+  fi
+  if [ -n "${CTX_NUM}" ] || [ -n "${USER_CONTEXT_FRAMES}" ]; then
+    echo "direct"
+    return
+  fi
+  if [ -n "${GPU_PAIR}" ] || [ -n "${USER_VISIBLE_GPU_IDS}" ]; then
+    echo "direct"
     return
   fi
   echo "direct"
@@ -110,6 +131,40 @@ check_gpu_pair_has_faulty_gpu4() {
       exit 1
     fi
   done
+}
+
+prepare_launch_layout() {
+  local raw_pair="$1"
+  local requested_inference_devices="$2"
+  local -n out_visible_gpu_ids="$3"
+  local -n out_inference_devices="$4"
+  local clean_pair
+  local gpu_id
+  local -a pair_gpu_ids=()
+  local -a unique_gpu_ids=()
+
+  clean_pair="$(echo "${raw_pair}" | tr -d '[:space:]')"
+  IFS=',' read -r -a pair_gpu_ids <<< "${clean_pair}"
+  for gpu_id in "${pair_gpu_ids[@]}"; do
+    if [ -z "${gpu_id}" ]; then
+      continue
+    fi
+    if [ "${#unique_gpu_ids[@]}" -eq 0 ] || [ "${unique_gpu_ids[-1]}" != "${gpu_id}" ]; then
+      unique_gpu_ids+=("${gpu_id}")
+    fi
+  done
+
+  if [ "${#unique_gpu_ids[@]}" -eq 0 ]; then
+    echo "ERROR: GPU pair 解析后为空: ${raw_pair}" >&2
+    exit 1
+  fi
+
+  out_visible_gpu_ids="$(IFS=,; echo "${unique_gpu_ids[*]}")"
+  if [ "${#unique_gpu_ids[@]}" -lt 2 ]; then
+    out_inference_devices="none"
+  else
+    out_inference_devices="${requested_inference_devices}"
+  fi
 }
 
 normalize_ctx_values() {
@@ -149,14 +204,17 @@ run_one_inference() {
   local context_frames="$2"
   local run_output_root="$3"
   local run_model_name="$4"
+  local launch_visible_gpu_ids
+  local launch_inference_devices
   local -a cmd
 
   check_gpu_pair_has_faulty_gpu4 "${gpu_pair}"
+  prepare_launch_layout "${gpu_pair}" "${INFERENCE_DEVICES}" launch_visible_gpu_ids launch_inference_devices
   cmd=(
     env
     PYTHONNOUSERSITE=1
     PYTHONPATH="${PROJ}:${DIFFSYNTH_ROOT}"
-    CUDA_VISIBLE_DEVICES="${gpu_pair}"
+    CUDA_VISIBLE_DEVICES="${launch_visible_gpu_ids}"
     "${PYTHON_BIN}"
     "${INFER_SCRIPT}"
     --weights-root "${WEIGHTS_ROOT}"
@@ -176,8 +234,8 @@ run_one_inference() {
     --output-num-frames "${OUTPUT_NUM_FRAMES}"
   )
 
-  if [ -n "${INFERENCE_DEVICES}" ] && [ "${INFERENCE_DEVICES}" != "none" ]; then
-    cmd+=(--inference-devices "${INFERENCE_DEVICES}")
+  if [ -n "${launch_inference_devices}" ] && [ "${launch_inference_devices}" != "none" ]; then
+    cmd+=(--inference-devices "${launch_inference_devices}")
   fi
   if [ -n "${LIMIT}" ]; then
     cmd+=(--limit "${LIMIT}")
@@ -190,6 +248,7 @@ run_one_inference() {
   fi
 
   echo "[kubric-batch] gpu_pair=${gpu_pair} context_frames=${context_frames}"
+  echo "[kubric-batch] cuda_visible_devices=${launch_visible_gpu_ids} inference_devices=${launch_inference_devices}"
   echo "[kubric-batch] output=${run_output_root}"
   echo "[kubric-batch] model_name=${run_model_name}"
   echo "[kubric-batch] command: ${cmd[*]}"

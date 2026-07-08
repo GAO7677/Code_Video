@@ -30,10 +30,11 @@
   输出根目录
 - `OUTPUT_FRAMES=49`
   最终输出帧数
-- `CTX_NUM=8`
+- `CTX=8`
   单次只跑一个 context 长度
-- `CTX_NUMS=1,4,8,12,16,20`
+- `CTX=1,4,8,12,16,20`
   一次跑多组 context 长度
+- 旧参数 `CTX_NUM / CTX_NUMS / CONTEXT_FRAMES / CONTEXT_FRAME_VALUES` 仍兼容，但不再推荐
 
 ## 2. 默认处理逻辑
 
@@ -70,7 +71,7 @@ WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_s
 METHOD_NAME=train_stage1b_kubric0708_step1000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
 OUTPUT_FRAMES=49 \
-CTX_NUM=8 \
+CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 ```
 
@@ -95,7 +96,7 @@ WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_s
 METHOD_NAME=train_stage1b_kubric0708_step1000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn \
 OUTPUT_FRAMES=49 \
-CTX_NUMS=1,4,8,12,16,20 \
+CTX=1,4,8,12,16,20 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 ```
 
@@ -113,7 +114,7 @@ WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_s
 METHOD_NAME=train_stage1b_kubric0708_step1000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn \
 OUTPUT_FRAMES=49 \
-CTX_NUMS=1,4,8,12,16,20 \
+CTX=1,4,8,12,16,20 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 ```
 

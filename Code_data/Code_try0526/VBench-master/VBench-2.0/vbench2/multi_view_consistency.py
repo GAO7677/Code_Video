@@ -34,13 +34,15 @@ class CameraPredict:
         self.device = device
         self.grid_size = 10
         self.number_points = 1
+        repo = submodules_list["repo"]
+        load_kwargs = {"source": "local"} if os.path.isdir(repo) else {}
         try:
-            self.model = torch.hub.load(submodules_list["repo"], submodules_list["model"]).to(self.device)
+            self.model = torch.hub.load(repo, submodules_list["model"], **load_kwargs).to(self.device)
         except:
             # workaround for CERTIFICATE_VERIFY_FAILED (see: https://github.com/pytorch/pytorch/issues/33288#issuecomment-954160699)
             import ssl
             ssl._create_default_https_context = ssl._create_unverified_context
-            self.model = torch.hub.load(submodules_list["repo"], submodules_list["model"]).to(self.device)
+            self.model = torch.hub.load(repo, submodules_list["model"], **load_kwargs).to(self.device)
 
     def transform360(self, vector):
         up=[]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
+# CUDA_VISIBLE_DEVICES=0 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/baseline.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRY0526_ROOT="/home/gaoya/Code_Video/Code_data/Code_try0526"

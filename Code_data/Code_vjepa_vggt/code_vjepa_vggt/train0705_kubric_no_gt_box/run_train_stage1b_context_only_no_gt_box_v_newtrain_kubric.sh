@@ -27,6 +27,22 @@
 #   - 基础 Wan LoRA (raw-phys, 冻结) 从 --lora_checkpoint 加载
 #   - Stage1A token builder (object_pooler/object_aux_heads, 冻结) 从 --stage1a_init_from 加载
 #   - 可训练: DiT object 注入分支 + ObjectConditionAdapter
+
+
+
+# =================20260708 17:20=======================================
+
+  # cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box
+  # WANDB_RUN_ID=467j6zus \
+  # WANDB_RESUME=must \
+  # WANDB_DIR=/home/gaoya/wandb \
+  # VISIBLE_GPU_IDS=1,2,3,5,6,7 \
+  # RESUME=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/
+  # checkpoints/step-001000/training_state.pt \
+  # bash run_train_stage1b_context_only_no_gt_box_v_newtrain_kubric.sh
+
+
+
 # =============================================================================
 set -euo pipefail
 
