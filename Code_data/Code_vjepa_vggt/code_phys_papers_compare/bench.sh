@@ -17,14 +17,14 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  "wmreward"
-  "physics_iq"
+  # "wmreward"
+  # "physics_iq"
   "physics_iq_with_context"
   "physics_iq_without_context"
   "pmf_with_context"
   "pmf_without_context"
-  "videophy2"
-  "cosmos_reason1"
+  # "videophy2"
+  # "cosmos_reason1"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then
