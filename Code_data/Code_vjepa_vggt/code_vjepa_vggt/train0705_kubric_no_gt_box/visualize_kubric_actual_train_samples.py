@@ -28,18 +28,6 @@ def _parse_index_list(raw_value: str | None) -> list[int]:
     return [int(item.strip()) for item in str(raw_value).split(",") if item.strip()]
 
 
-def _parse_context_frame_choices(raw_value: str | None) -> list[int] | None:
-    if raw_value is None:
-        return None
-    values = [
-        int(item.strip())
-        for item in str(raw_value).split(",")
-        if item.strip()
-    ]
-    values = sorted({value for value in values if value >= 0})
-    return values or None
-
-
 def _sample_context_length(
     candidates: list[int] | range,
     *,
@@ -61,53 +49,46 @@ def _sample_context_length(
 def _sample_context_spec(
     *,
     total_frames: int,
+    ctx_max_length: int,
     min_context_frames: int,
-    max_context_ratio: float,
-    context_frame_choices: list[int] | None,
     context_length_sampling: str,
     no_context_ratio: float,
     rng: random.Random,
 ) -> dict[str, Any]:
     max_context_last_index = min(
         total_frames - 1,
-        max(int(total_frames * max_context_ratio) - 1, 0),
+        int(ctx_max_length),
     )
     min_context_last_index = max(int(min_context_frames), 0)
     if max_context_last_index < min_context_last_index:
         raise ValueError(
             "Context sampling range is empty. "
             f"Got total_frames={total_frames}, min_context_frames={min_context_frames}, "
-            f"max_context_ratio={max_context_ratio}."
+            f"ctx_max_length={ctx_max_length}."
         )
-
-    if context_frame_choices is not None:
-        valid_choices = [
-            value
-            for value in context_frame_choices
-            if min_context_last_index <= value <= max_context_last_index
-        ]
-        if not valid_choices:
-            raise ValueError(
-                "No valid context_frame_choices remain under the current video length. "
-                f"choices={context_frame_choices}, total_frames={total_frames}, "
-                f"min_context_frames={min_context_frames}, max_context_ratio={max_context_ratio}."
-            )
-        context_frames = _sample_context_length(
-            valid_choices,
-            context_length_sampling=context_length_sampling,
-            rng=rng,
-        )
-        return {"mode": "prefix", "frame_indices": list(range(int(context_frames) + 1))}
 
     if rng.random() < no_context_ratio:
-        return {"mode": "text_only", "frame_indices": []}
+        return {
+            "mode": "text_only",
+            "frame_indices": [],
+            "ctx_max_length": int(max_context_last_index),
+            "sampled_ctx_last_index": -1,
+            "sampled_ctx_num_frames": 0,
+        }
 
-    context_last_index = _sample_context_length(
+    sampled_ctx_last_index = _sample_context_length(
         range(min_context_last_index, max_context_last_index + 1),
         context_length_sampling=context_length_sampling,
         rng=rng,
     )
-    return {"mode": "prefix", "frame_indices": list(range(int(context_last_index) + 1))}
+    frame_indices = list(range(int(sampled_ctx_last_index) + 1))
+    return {
+        "mode": "prefix",
+        "frame_indices": frame_indices,
+        "ctx_max_length": int(max_context_last_index),
+        "sampled_ctx_last_index": int(sampled_ctx_last_index),
+        "sampled_ctx_num_frames": int(len(frame_indices)),
+    }
 
 
 def _build_grounding_provider(args: argparse.Namespace) -> ViewerGroundingBoxProvider:
@@ -185,20 +166,18 @@ def _build_priors_from_grounding_sample(
 def _select_actual_context_sample(
     raw_sample: dict[str, Any],
     *,
+    ctx_max_length: int,
     min_context_frames: int,
-    max_context_ratio: float,
-    context_frame_choices: list[int] | None,
     context_length_sampling: str,
     no_context_ratio: float,
     rng: random.Random,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    raw_context_video = raw_sample["context_video"]
-    total_frames = int(raw_context_video.shape[1])
+    raw_video = raw_sample["video"]
+    total_frames = int(raw_video.shape[1])
     context_spec = _sample_context_spec(
         total_frames=total_frames,
+        ctx_max_length=ctx_max_length,
         min_context_frames=min_context_frames,
-        max_context_ratio=max_context_ratio,
-        context_frame_choices=context_frame_choices,
         context_length_sampling=context_length_sampling,
         no_context_ratio=no_context_ratio,
         rng=rng,
@@ -206,11 +185,14 @@ def _select_actual_context_sample(
     sampled_indices = torch.tensor(context_spec["frame_indices"], dtype=torch.long)
     sample = dict(raw_sample)
     if int(sampled_indices.numel()) > 0:
-        sample["context_video"] = raw_context_video[:, sampled_indices].contiguous()
+        sample["context_video"] = raw_video[:, sampled_indices].contiguous()
     else:
-        sample["context_video"] = raw_context_video[:, :0].contiguous()
+        sample["context_video"] = raw_video[:, :0].contiguous()
     sample["context_frame_indices"] = sampled_indices
     sample["num_context_frames"] = int(sampled_indices.numel())
+    sample["ctx_max_length"] = int(context_spec["ctx_max_length"])
+    sample["sampled_ctx_last_index"] = int(context_spec["sampled_ctx_last_index"])
+    sample["sampled_ctx_num_frames"] = int(context_spec["sampled_ctx_num_frames"])
     return sample, context_spec
 
 
@@ -235,8 +217,10 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
   <p><b>Caption:</b> {html.escape(str(result["caption"]))}</p>
   <p><b>Video path:</b> {html.escape(str(result["video_path"]))}</p>
   <p><b>Context sampling mode:</b> {html.escape(str(result["context_sampling_mode"]))}</p>
-  <p><b>Actual context frame indices (within 20-frame context pool):</b> {html.escape(str(result["context_frame_indices"]))}</p>
-  <p><b>Mapped source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+  <p><b>ctx_max_length:</b> {int(result["ctx_max_length"])}</p>
+  <p><b>sampled_ctx_last_index:</b> {int(result["sampled_ctx_last_index"])}</p>
+  <p><b>sampled_ctx_num_frames:</b> {int(result["sampled_ctx_num_frames"])}</p>
+  <p><b>sampled source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
   <div class="grid">
     <figure>
       <video controls preload="none" playsinline src="{html.escape(result['train_clip_video_mp4'])}"></video>
@@ -245,10 +229,6 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <figure>
       <video controls preload="none" playsinline src="{html.escape(result['source_full_video_mp4'])}"></video>
       <figcaption>Original source rgba.mp4 full video</figcaption>
-    </figure>
-    <figure>
-      <video controls preload="none" playsinline src="{html.escape(result['context_pool_video_mp4'])}"></video>
-      <figcaption>20-frame context pool provided by the dataset</figcaption>
     </figure>
     <figure>
       <video controls preload="none" playsinline src="{html.escape(result['context_video_mp4'])}"></video>
@@ -282,7 +262,7 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]]) -> None
     <div>
       <h2>{html.escape(result['sample_key'])}</h2>
       <p class="meta"><b>dataset_index:</b> {result['inspect_index']}</p>
-      <p class="meta"><b>context_frames:</b> {result['num_context_frames']} ({html.escape(str(result['context_frame_indices']))})</p>
+      <p class="meta"><b>ctx:</b> last={int(result['sampled_ctx_last_index'])}, frames={int(result['sampled_ctx_num_frames'])}, max={int(result['ctx_max_length'])}</p>
       <p class="meta"><b>source_frame_indices:</b> {html.escape(str(result['context_source_frame_indices']))}</p>
       <p class="caption">{html.escape(result['caption'])}</p>
     </div>
@@ -310,10 +290,6 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]]) -> None
     <figure>
       <img src="{html.escape(case_dir)}/{html.escape(result['prompt_preview_png'])}" />
       <figcaption>Prompt preview</figcaption>
-    </figure>
-    <figure>
-      <video controls preload="none" playsinline src="{html.escape(case_dir)}/{html.escape(result['context_pool_video_mp4'])}"></video>
-      <figcaption>20-frame context pool</figcaption>
     </figure>
   </div>
   <details>
@@ -388,7 +364,7 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]]) -> None
     <p class="intro">
       These cases are sampled from the current Kubric training dataset configuration.
       Each card shows the sampled 69-frame training clip, the original source video,
-      the 20-frame context pool, the actual context frames selected under the current
+      the actual context prefix selected directly from the train clip under the current
       training context policy, and the corresponding box/query/track overlay.
       Total cases: {len(results)}.
     </p>
@@ -422,9 +398,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=896)
     parser.add_argument("--num_frames", type=int, default=69)
     parser.add_argument("--fixed_num_context_frames", type=int, default=20)
+    parser.add_argument("--ctx_max_length", type=int, default=20)
     parser.add_argument("--min_context_frames", type=int, default=0)
-    parser.add_argument("--max_context_ratio", type=float, default=1.0)
-    parser.add_argument("--context_frame_choices", type=str, default=None)
     parser.add_argument(
         "--context_length_sampling",
         type=str,
@@ -493,7 +468,6 @@ def main() -> None:
     )
     dataset = trainmod.build_dataset(dataset_args)
 
-    context_frame_choices = _parse_context_frame_choices(args.context_frame_choices)
     grounding_provider = _build_grounding_provider(args)
     cotracker = _build_cotracker(args)
 
@@ -514,9 +488,8 @@ def main() -> None:
         rng = random.Random(int(args.inspect_seed) * 1000003 + int(dataset_index))
         sample, context_spec = _select_actual_context_sample(
             raw_sample,
+            ctx_max_length=int(args.ctx_max_length),
             min_context_frames=int(args.min_context_frames),
-            max_context_ratio=float(args.max_context_ratio),
-            context_frame_choices=context_frame_choices,
             context_length_sampling=str(args.context_length_sampling),
             no_context_ratio=float(args.no_context_ratio),
             rng=rng,
@@ -552,11 +525,6 @@ def main() -> None:
             query_image_hw=image_hw,
         )
 
-        context_pool_video_browser = inspectmod._write_tensor_video(
-            case_dir / "context_pool.mp4",
-            raw_sample["context_video"],
-            fps=int(args.inspect_fps),
-        )
         context_video_browser = inspectmod._write_tensor_video(
             case_dir / "context_video.mp4",
             context_video,
@@ -625,12 +593,13 @@ def main() -> None:
             "context_sampling_mode": str(context_spec["mode"]),
             "context_frame_indices": actual_context_local_indices,
             "context_source_frame_indices": context_source_frame_indices,
+            "ctx_max_length": int(sample["ctx_max_length"]),
+            "sampled_ctx_last_index": int(sample["sampled_ctx_last_index"]),
+            "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
             "num_context_frames": int(sample["num_context_frames"]),
             "num_frames": int(raw_sample["video"].shape[1]),
-            "context_pool_frames": int(raw_sample["context_video"].shape[1]),
             "train_clip_video_mp4": train_clip_video_browser.name,
             "source_full_video_mp4": source_full_video_browser.name,
-            "context_pool_video_mp4": context_pool_video_browser.name,
             "context_video_mp4": context_video_browser.name,
             "prompt_preview_png": prompt_preview_path.name,
             "input_overlay_video": input_overlay_browser.name,
@@ -642,10 +611,12 @@ def main() -> None:
                 "source_video_path": str(sample.get("metadata", {}).get("source_video_path", sample["video_path"])),
                 "source_frame_count": sample.get("metadata", {}).get("source_frame_count"),
                 "sampled_train_frame_indices": sampled_source_indices,
-                "raw_context_pool_indices": raw_sample["context_frame_indices"].tolist(),
+                "ctx_max_length": int(sample["ctx_max_length"]),
                 "context_sampling_mode": str(context_spec["mode"]),
-                "actual_context_local_indices": actual_context_local_indices,
-                "actual_context_source_indices": context_source_frame_indices,
+                "sampled_ctx_last_index": int(sample["sampled_ctx_last_index"]),
+                "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
+                "sampled_ctx_frame_indices": actual_context_local_indices,
+                "sampled_ctx_source_indices": context_source_frame_indices,
                 "object_valid_mask": object_valid_mask[0].detach().cpu().tolist(),
                 "prompt_frame_idx": int(getattr(grounding_sample, "prompt_frame_idx", 0)),
             },

@@ -699,16 +699,18 @@ class ObjectTubeProjector(nn.Module):
 
             batch, src_frames, objects, points, _ = tracks.shape
             latent_frames = int(context_latents.shape[2])
-            if int(src_frames) % max(latent_frames, 1) != 0:
-                raise ValueError(
-                    f"track frames ({src_frames}) must be divisible by latent frames ({latent_frames}) "
-                    "for latent-time conditioning"
-                )
 
             jepa_time_idx = self._time_indices(src_frames, int(jepa_patch_tokens.shape[1]), tracks.device)
             latent_time_idx = self._time_indices(src_frames, latent_frames, tracks.device)
             jepa_tracks = tracks[:, jepa_time_idx]
             latent_tracks = tracks[:, latent_time_idx]
+            latent_visibility = visibility[:, latent_time_idx]
+            latent_confidence = confidence[:, latent_time_idx]
+            latent_frame_valid_mask = (
+                frame_valid_mask[:, latent_time_idx]
+                if frame_valid_mask is not None
+                else None
+            )
             flat_jepa_tracks, _, _ = self._flatten_point_axis(jepa_tracks)
             flat_latent_tracks, _, _ = self._flatten_point_axis(latent_tracks)
 
@@ -726,10 +728,9 @@ class ObjectTubeProjector(nn.Module):
             jepa_local = self._temporal_group_mean(jepa_local, latent_frames, frame_valid_mask=jepa_valid)
             jepa_local = self._restore_point_axis(jepa_local, objects, points)
             point_weights_lat = self._point_weights(
-                visibility,
-                confidence,
-                target_frames=latent_frames,
-                frame_valid_mask=frame_valid_mask,
+                latent_visibility,
+                latent_confidence,
+                frame_valid_mask=latent_frame_valid_mask,
             )
             jepa_local = self._aggregate_points(jepa_local, point_weights_lat)
             expected_jepa_dim = int(self.jepa_proj.in_features)
@@ -775,8 +776,8 @@ class ObjectTubeProjector(nn.Module):
                 [
                     motion_xy_norm,
                     motion_delta,
-                    visibility[:, latent_time_idx].unsqueeze(-1),
-                    confidence[:, latent_time_idx].unsqueeze(-1),
+                    latent_visibility.unsqueeze(-1),
+                    latent_confidence.unsqueeze(-1),
                 ],
                 dim=-1,
             )
@@ -788,9 +789,9 @@ class ObjectTubeProjector(nn.Module):
             )
 
             center_tracks, center_track_valid = self._center_tracks_from_grouped(
-                tracks,
-                visibility,
-                confidence,
+                latent_tracks,
+                latent_visibility,
+                latent_confidence,
             )
             active_track_summary = self._track_summary(
                 center_tracks,
@@ -798,12 +799,12 @@ class ObjectTubeProjector(nn.Module):
                 center_track_valid.to(dtype=center_tracks.dtype),
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
-                frame_valid_mask=frame_valid_mask,
+                frame_valid_mask=latent_frame_valid_mask,
             )
             active_box_xyxy = self._boxes_from_tracks(
-                tracks,
-                visibility,
-                confidence,
+                latent_tracks,
+                latent_visibility,
+                latent_confidence,
                 image_hw=track_image_hw,
                 target_frames=latent_frames,
                 box_prior_xyxy=box_prior_xyxy,
@@ -827,49 +828,34 @@ class ObjectTubeProjector(nn.Module):
                     dst_hw=vggt_geometry_image_hw if vggt_geometry_image_hw is not None else track_image_hw,
                     align_corners=False,
                 ).view(batch, src_frames, objects, points, 2)
+                geometry_tracks = geometry_tracks[:, latent_time_idx]
                 patch_tracks = self._resize_tracks_xy(
-                    geometry_tracks.reshape(batch, src_frames, objects * points, 2),
+                    geometry_tracks.reshape(batch, latent_frames, objects * points, 2),
                     src_hw=vggt_geometry_image_hw if vggt_geometry_image_hw is not None else track_image_hw,
                     dst_hw=geometry_patch_hw,
                     align_corners=False,
-                ).view(batch, src_frames, objects, points, 2)
+                ).view(batch, latent_frames, objects, points, 2)
                 flat_patch_tracks, _, _ = self._flatten_point_axis(patch_tracks)
                 geom_local = self._pool_feature_grid(
-                    vggt_dense_patch_tokens,
+                    vggt_dense_patch_tokens[:, latent_time_idx],
                     flat_patch_tracks,
                     image_hw=geometry_patch_hw,
                     window_radius=0,
                 )
                 geom_local = self._restore_point_axis(geom_local, objects, points)
-                geom_local = self._temporal_group_mean_grouped(
-                    geom_local,
-                    latent_frames,
-                    frame_valid_mask=frame_valid_mask,
-                )
                 flat_geometry_tracks, _, _ = self._flatten_point_axis(geometry_tracks)
                 depth_local = None
                 if vggt_depth is not None:
                     depth_local = self._pool_feature_grid(
-                        vggt_depth,
+                        vggt_depth[:, latent_time_idx],
                         flat_geometry_tracks,
                         image_hw=vggt_geometry_image_hw if vggt_geometry_image_hw is not None else track_image_hw,
                         window_radius=0,
                     ).clamp(-self.vggt_depth_clip, self.vggt_depth_clip)
                     depth_local = self._restore_point_axis(depth_local, objects, points)
-                    depth_local = self._temporal_group_mean_grouped(
-                        depth_local,
-                        latent_frames,
-                        frame_valid_mask=frame_valid_mask,
-                    )
                 else:
                     depth_local = geom_local.new_zeros(*geom_local.shape[:-1], 1)
                 motion_local_lat = motion_local
-                if int(motion_local_lat.shape[1]) != int(latent_frames):
-                    motion_local_lat = self._temporal_group_mean_grouped(
-                        motion_local_lat,
-                        latent_frames,
-                        frame_valid_mask=frame_valid_mask,
-                    )
                 geom_point_features = torch.cat(
                     [geom_local, depth_local, motion_local_lat],
                     dim=-1,
@@ -907,9 +893,10 @@ class ObjectTubeProjector(nn.Module):
                     align_corners=False,
                 )
                 geometry_tracks = geometry_tracks.view(batch, src_frames, objects, points, 2)
+                geometry_tracks = geometry_tracks[:, latent_time_idx]
                 flat_geometry_tracks, _, _ = self._flatten_point_axis(geometry_tracks)
                 depth_local = self._pool_feature_grid(
-                    vggt_depth,
+                    vggt_depth[:, latent_time_idx],
                     flat_geometry_tracks,
                     image_hw=geometry_image_hw,
                     window_radius=0,
@@ -917,7 +904,7 @@ class ObjectTubeProjector(nn.Module):
                 depth_local = self._restore_point_axis(depth_local, objects, points)
                 if vggt_depth_conf is not None:
                     depth_conf_local = self._pool_feature_grid(
-                        vggt_depth_conf.unsqueeze(-1),
+                        vggt_depth_conf[:, latent_time_idx].unsqueeze(-1),
                         flat_geometry_tracks,
                         image_hw=geometry_image_hw,
                         window_radius=0,
@@ -925,16 +912,6 @@ class ObjectTubeProjector(nn.Module):
                     depth_conf_local = self._restore_point_axis(depth_conf_local, objects, points)
                 else:
                     depth_conf_local = torch.ones_like(depth_local)
-                depth_local = self._temporal_group_mean_grouped(
-                    depth_local,
-                    latent_frames,
-                    frame_valid_mask=frame_valid_mask,
-                )
-                depth_conf_local = self._temporal_group_mean_grouped(
-                    depth_conf_local,
-                    latent_frames,
-                    frame_valid_mask=frame_valid_mask,
-                )
                 depth_local = self._aggregate_points(depth_local, point_weights_lat)
                 depth_conf_local = self._aggregate_points(depth_conf_local, point_weights_lat)
                 depth_latent_tokens = self.depth_proj(torch.cat([depth_local, depth_conf_local], dim=-1))

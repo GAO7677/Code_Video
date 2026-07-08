@@ -1,15 +1,26 @@
 from __future__ import annotations
 
-# Run command example:
+# Run command examples:
 '''
+Base batch v2v inference:
+
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-xxxx \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705 \
-  --num-inference-steps 40
+  --model-name train_stage1b_diffsynth_native0705_step1000 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_test5_compare \
+  --height 512 \
+  --width 896 \
+  --num-frames 24 \
+  --context-frames 8 \
+  --sampling-mode prefix \
+  --num-inference-steps 40 \
+  --cfg-scale 5.0
+
+VJEPA-enabled batch v2v inference:
 
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=6 \
@@ -17,10 +28,29 @@ CUDA_VISIBLE_DEVICES=6 \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705_vjepa \
+  --model-name train_stage1b_diffsynth_native0705_step1000_vjepa \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_test5_compare_vjepa \
+  --height 512 \
+  --width 896 \
+  --num-frames 24 \
+  --context-frames 8 \
+  --sampling-mode prefix \
   --num-inference-steps 40 \
+  --cfg-scale 5.0 \
   --vjepa-preset ladder_s20 \
   --vjepa-device cuda:0
+
+Force overwrite existing outputs:
+
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=7 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name train_stage1b_diffsynth_native0705_step1000_force \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_test5_compare_force \
+  --force
 '''
 
 
@@ -68,16 +98,7 @@ from code_vjepa_vggt.utils.video_io import (
 from diffsynth.utils.data import save_video
 
 """
-Run command example:
-
-PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=7 \
-/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
-  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705 \
-  --num-inference-steps 40
+Batch v2v inference for the train0705 stage1b context-only no-GT-box model.
 
 Default output root:
 - /data/gaoya/AAA_test_video/0623/test/v2v/<model-name>/<step-name>

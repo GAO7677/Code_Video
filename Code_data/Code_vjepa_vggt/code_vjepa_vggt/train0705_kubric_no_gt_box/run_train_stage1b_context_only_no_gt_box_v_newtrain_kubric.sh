@@ -75,6 +75,7 @@ fi
 
 CMD=(
   env
+  PYTHONNOUSERSITE=1
   PYTHONPATH="${PROJ}:${DIFFSYNTH_ROOT}"
   CUDA_VISIBLE_DEVICES="${VISIBLE_GPU_IDS}"
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -91,6 +92,7 @@ CMD=(
   --width 896
   --num_frames 69
   --fixed_num_context_frames 20
+  --ctx_max_length 20
   --min_context_frames 0
   --max_context_ratio 1.0
   --context_length_sampling short_biased

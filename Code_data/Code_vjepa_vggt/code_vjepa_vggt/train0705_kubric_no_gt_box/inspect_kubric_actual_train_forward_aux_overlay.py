@@ -87,8 +87,10 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <p><b>Dataset index:</b> {int(result["inspect_index"])}</p>
     <p><b>Caption:</b> {html.escape(str(result["caption"]))}</p>
     <p><b>Video path:</b> {html.escape(str(result["video_path"]))}</p>
-    <p><b>Context frame indices:</b> {html.escape(str(result["context_frame_indices"]))}</p>
-    <p><b>Mapped source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+    <p><b>ctx_max_length:</b> {int(result["ctx_max_length"])}</p>
+    <p><b>sampled_ctx_last_index:</b> {int(result["sampled_ctx_last_index"])}</p>
+    <p><b>sampled_ctx_num_frames:</b> {int(result["sampled_ctx_num_frames"])}</p>
+    <p><b>sampled source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
     <div class="grid">
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['train_clip_video_mp4'])}"></video>
@@ -97,10 +99,6 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['source_full_video_mp4'])}"></video>
         <figcaption>Original source full video</figcaption>
-      </figure>
-      <figure>
-        <video controls preload="none" playsinline src="{html.escape(result['context_pool_video_mp4'])}"></video>
-        <figcaption>20-frame context pool from dataset</figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['context_video_mp4'])}"></video>
@@ -402,13 +400,13 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
             f"""
 <section class="case-card">
   <div class="case-header">
-    <div>
-      <h2>{html.escape(result["sample_key"])}</h2>
-      <p class="meta"><b>dataset_index:</b> {int(result["inspect_index"])}</p>
-      <p class="meta"><b>context_frames:</b> {int(result["num_context_frames"])} ({html.escape(str(result["context_frame_indices"]))})</p>
-      <p class="meta"><b>source_frame_indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
-      <p class="caption">{html.escape(result["caption"])}</p>
-    </div>
+        <div>
+          <h2>{html.escape(result["sample_key"])}</h2>
+          <p class="meta"><b>dataset_index:</b> {int(result["inspect_index"])}</p>
+          <p class="meta"><b>ctx:</b> last={int(result["sampled_ctx_last_index"])}, frames={int(result["sampled_ctx_num_frames"])}, max={int(result["ctx_max_length"])}</p>
+          <p class="meta"><b>source_frame_indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+          <p class="caption">{html.escape(result["caption"])}</p>
+        </div>
     <div class="actions">
       <a href="{html.escape(rel_dir)}/index.html">open case report</a>
     </div>
@@ -530,6 +528,7 @@ def parse_args() -> argparse.Namespace:
     parser = trainmod.build_parser()
     parser.set_defaults(
         fixed_num_context_frames=20,
+        ctx_max_length=20,
         min_context_frames=0,
         max_context_ratio=1.0,
         context_frame_choices=None,
@@ -591,8 +590,6 @@ def main() -> None:
 
     results: list[dict[str, Any]] = []
     skipped_zero_context: list[int] = []
-    context_frame_choices = actualmod._parse_context_frame_choices(getattr(args, "context_frame_choices", None))
-
     for dataset_index in candidate_indices:
         if len(results) >= int(args.inspect_num_samples):
             break
@@ -600,9 +597,8 @@ def main() -> None:
         rng = random.Random(int(args.inspect_seed) * 1000003 + int(dataset_index))
         sample, context_spec = actualmod._select_actual_context_sample(
             raw_sample,
+            ctx_max_length=int(args.ctx_max_length),
             min_context_frames=int(args.min_context_frames),
-            max_context_ratio=float(args.max_context_ratio),
-            context_frame_choices=context_frame_choices,
             context_length_sampling=str(args.context_length_sampling),
             no_context_ratio=float(args.no_context_ratio),
             rng=rng,
@@ -622,12 +618,6 @@ def main() -> None:
             inspect_fps=int(args.inspect_fps),
             inspect_index=int(dataset_index),
         )
-
-        context_pool_video_browser = inspectmod._write_tensor_video(
-            sample_dir / "context_pool.mp4",
-            raw_sample["context_video"],
-            fps=int(args.inspect_fps),
-        )
         sampled_source_indices = list(raw_sample.get("metadata", {}).get("sampled_frame_indices", []))
         actual_context_local_indices = sample["context_frame_indices"].tolist()
         context_source_frame_indices = [
@@ -639,7 +629,9 @@ def main() -> None:
         result.update(
             {
                 "context_sampling_mode": str(context_spec["mode"]),
-                "context_pool_video_mp4": str(context_pool_video_browser.name),
+                "ctx_max_length": int(sample["ctx_max_length"]),
+                "sampled_ctx_last_index": int(sample["sampled_ctx_last_index"]),
+                "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
                 "context_source_frame_indices": context_source_frame_indices,
                 "metadata": {
                     "sample_key": str(sample.get("metadata", {}).get("sample_key", "")),
@@ -649,11 +641,12 @@ def main() -> None:
                     "source_video_path": str(sample.get("metadata", {}).get("source_video_path", sample["video_path"])),
                     "source_frame_count": sample.get("metadata", {}).get("source_frame_count"),
                     "sampled_train_frame_indices": sampled_source_indices,
-                    "raw_context_pool_indices": raw_sample["context_frame_indices"].tolist(),
+                    "ctx_max_length": int(sample["ctx_max_length"]),
                     "context_sampling_mode": str(context_spec["mode"]),
-                    "actual_context_local_indices": actual_context_local_indices,
-                    "actual_context_source_indices": context_source_frame_indices,
-                    "num_context_frames": num_context_frames,
+                    "sampled_ctx_last_index": int(sample["sampled_ctx_last_index"]),
+                    "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
+                    "sampled_ctx_frame_indices": actual_context_local_indices,
+                    "sampled_ctx_source_indices": context_source_frame_indices,
                 },
             }
         )
