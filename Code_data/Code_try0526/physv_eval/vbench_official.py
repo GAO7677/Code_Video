@@ -17,6 +17,7 @@ from .records import stable_path_id
 _CUSTOM_DIMENSIONS = {
     "subject_consistency",
     "background_consistency",
+    "temporal_flickering",
     "motion_smoothness",
     "dynamic_degree",
     "aesthetic_quality",

@@ -1,0 +1,2 @@
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708/train_stage1b_kubric0708_step-002500_ctx08_49f
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708/train_stage1b_kubric0708_step-002500_ctx08_49f

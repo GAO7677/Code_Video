@@ -633,6 +633,8 @@ python -m physv_eval.single_case.pmf \
 - 模块：`physv_eval.single_case.vbench`
 - 函数：
   `score_case(case, dimension, caption=None, output_path=None, runner=None)`
+- 批量 Table 1 聚合函数：
+  `score_case_many(case, dimensions, caption=None, output_path=None, runner=None)`
 
 指标定义：
 
@@ -649,6 +651,21 @@ python -m physv_eval.single_case.pmf \
 - `dynamic_degree`
 - `aesthetic_quality`
 - `imaging_quality`
+
+当前这个脚本不纳入评测的 Table 1 项：
+
+- `Temp.Flic.`
+- `Total Score`
+
+Table 1 别名支持：
+
+- `subj_cons` -> `subject_consistency`
+- `back_cons` -> `background_consistency`
+- `moti_smoo` -> `motion_smoothness`
+- `dyna_degr` -> `dynamic_degree`
+- `aest_qual` -> `aesthetic_quality`
+- `image_qual` -> `imaging_quality`
+- `table1_all` -> 一次返回 Table 1 里可直接跑的全部 VBench 单项指标
 
 指标属性：
 
@@ -683,7 +700,7 @@ python -m physv_eval.single_case.pmf \
 说明：
 
 - 该入口固定走官方 `custom_input` 模式
-- 一次只评一个维度
+- 默认一次评一个维度；`--dimension table1_all` 时会依次评完当前脚本纳入的 6 个 Table 1 单项维度
 - 如果不传 `caption`，默认复用通用 case 字段里的 prompt/caption
 - 官方输出目录默认放在 `/data/gaoya/agent-data/outputs/vbench_single_case/...`
 
@@ -715,6 +732,15 @@ cd /home/gaoya/Code_Video/Code_data/Code_try0526
 python -m physv_eval.single_case.vbench \
   --input-json /path/to/case.json \
   --dimension aesthetic_quality
+```
+
+按 Table 1 统一跑一遍当前可支持的 VBench 指标：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench \
+  --input-json /path/to/case.json \
+  --dimension table1_all
 ```
 
 ## 10. VBench-2.0
