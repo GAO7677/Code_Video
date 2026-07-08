@@ -73,8 +73,8 @@ MODEL_NAME_PREFIX="${MODEL_NAME_PREFIX:-${MODEL_NAME}}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708}"
 NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-40}"
 OUTPUT_NUM_FRAMES="${OUTPUT_NUM_FRAMES:-${OUTPUT_FRAMES:-49}}"
-HEIGHT="${HEIGHT:-512}"
-WIDTH="${WIDTH:-896}"
+HEIGHT="${HEIGHT:-480}"
+WIDTH="${WIDTH:-832}"
 INPUT_COVER_CROP_WIDTH="${INPUT_COVER_CROP_WIDTH:-832}"
 INPUT_COVER_CROP_HEIGHT="${INPUT_COVER_CROP_HEIGHT:-480}"
 CONTEXT_FRAMES="${CONTEXT_FRAMES:-${CTX_NUM:-${CTX:-8}}}"
@@ -204,6 +204,7 @@ run_one_inference() {
   local context_frames="$2"
   local run_output_root="$3"
   local run_model_name="$4"
+  local step_output_dir_name="${5:-}"
   local launch_visible_gpu_ids
   local launch_inference_devices
   local -a cmd
@@ -236,6 +237,9 @@ run_one_inference() {
 
   if [ -n "${launch_inference_devices}" ] && [ "${launch_inference_devices}" != "none" ]; then
     cmd+=(--inference-devices "${launch_inference_devices}")
+  fi
+  if [ -n "${step_output_dir_name}" ]; then
+    cmd+=(--step-output-dir-name "${step_output_dir_name}")
   fi
   if [ -n "${LIMIT}" ]; then
     cmd+=(--limit "${LIMIT}")
@@ -276,7 +280,7 @@ run_direct_mode() {
     echo "ERROR: RUN_MODE=direct 时不要设置 INFERENCE_GPU_PAIRS" >&2
     exit 1
   fi
-  run_one_inference "${VISIBLE_GPU_IDS}" "${CONTEXT_FRAMES}" "${OUTPUT_ROOT}" "${MODEL_NAME}"
+  run_one_inference "${VISIBLE_GPU_IDS}" "${CONTEXT_FRAMES}" "${OUTPUT_ROOT}" "${MODEL_NAME}" "__METHOD_NAME__"
 }
 
 run_sweep_mode() {

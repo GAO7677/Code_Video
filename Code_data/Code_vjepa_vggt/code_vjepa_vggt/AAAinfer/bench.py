@@ -46,6 +46,7 @@ import argparse
 import copy
 import fcntl
 import gc
+import hashlib
 import json
 import os
 import re
@@ -54,6 +55,7 @@ import sys
 import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable
 import shutil
@@ -69,6 +71,7 @@ from physv_eval.paths import FLUX_PYTHON
 
 
 DEFAULT_RESULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v")
+CONTEXT_PREFIX_CACHE_ROOT = Path("/data/gaoya/agent-data/cache/AAAinfer_bench_context_prefix")
 @dataclass
 class CaseRecord:
     result_json_path: Path
@@ -218,38 +221,96 @@ def resolve_context_video_path(input_json_path: Path) -> Path | None:
     return None
 
 
-def resolve_input_image_path(payload: dict[str, Any]) -> Path | None:
-    candidate_value = payload.get("input_image")
-    if not isinstance(candidate_value, str) or not candidate_value.strip():
+def parse_nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
         return None
-    candidate = Path(candidate_value).expanduser().resolve()
-    if candidate.is_file():
-        return candidate
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
     return None
 
 
-def count_video_frames(video_path: Path) -> int:
+def resolve_context_frames_override(record: CaseRecord) -> int | None:
+    for key in ("effective_context_frames", "context_frames"):
+        resolved = parse_nonnegative_int(record.result_payload.get(key))
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def write_bgr_frames_to_video(path: Path, frames: list[Any], fps: float) -> None:
+    import av
+    import cv2
+    import numpy as np
+
+    if not frames:
+        raise ValueError("Cannot write an empty context video")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    height, width = frames[0].shape[:2]
+    container = av.open(str(temp_path), mode="w")
+    rate = Fraction(str(fps if fps > 0 else 30.0)).limit_denominator(1000)
+    stream = container.add_stream("libx264", rate=rate)
+    stream.width = width
+    stream.height = height
+    stream.pix_fmt = "yuv420p"
+    try:
+        for frame in frames:
+            if getattr(frame, "dtype", None) != np.uint8:
+                frame_u8 = np.clip(frame, 0, 255).astype(np.uint8)
+            else:
+                frame_u8 = frame
+            rgb_frame = cv2.cvtColor(frame_u8, cv2.COLOR_BGR2RGB)
+            video_frame = av.VideoFrame.from_ndarray(rgb_frame, format="rgb24")
+            for packet in stream.encode(video_frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    finally:
+        container.close()
+    os.replace(temp_path, path)
+
+
+def materialize_source_prefix_context_video(source_video_path: Path, context_frames: int) -> Path:
     import cv2
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video to count frames: {video_path}")
-    try:
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if frame_count > 0:
-            return frame_count
+    if context_frames <= 0:
+        raise ValueError(f"context_frames must be positive, got {context_frames}")
+    cache_id = hashlib.sha1(
+        f"{source_video_path.resolve()}::{context_frames}".encode("utf-8")
+    ).hexdigest()[:16]
+    output_dir = CONTEXT_PREFIX_CACHE_ROOT / cache_id
+    output_path = output_dir / f"{source_video_path.stem}_prefix_ctx{context_frames:02d}.mp4"
+    if output_path.is_file():
+        return output_path.resolve()
 
-        decoded_frames = 0
-        while True:
-            ok, _ = cap.read()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cap = cv2.VideoCapture(str(source_video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open source video for context prefix extraction: {source_video_path}")
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if fps <= 0:
+            fps = 30.0
+        frames: list[Any] = []
+        for _ in range(context_frames):
+            ok, frame = cap.read()
             if not ok:
                 break
-            decoded_frames += 1
-        if decoded_frames <= 0:
-            raise RuntimeError(f"Video has no readable frames: {video_path}")
-        return decoded_frames
+            frames.append(frame)
     finally:
         cap.release()
+
+    if len(frames) != context_frames:
+        raise ValueError(
+            f"source_video {source_video_path} has only {len(frames)} readable prefix frames, "
+            f"cannot build context prefix with context_frames={context_frames}"
+        )
+    write_bgr_frames_to_video(output_path, frames, fps)
+    return output_path.resolve()
 
 
 def collect_result_jsons(result_root: Path) -> list[Path]:
@@ -330,44 +391,25 @@ def build_case_payload(record: CaseRecord) -> dict[str, Any]:
     return payload
 
 
-def is_ti2v_record(record: CaseRecord) -> bool:
-    candidates: list[str] = []
-    for value in (
-        record.result_payload.get("method"),
-        record.result_payload.get("ckpt"),
-        derive_method_name(record.result_payload, fallback_video_path=record.candidate_video_path),
-    ):
-        if isinstance(value, str) and value.strip():
-            candidates.append(value.strip().lower())
-    return any("ti2v" in value for value in candidates)
+def build_context_metric_case_payload(record: CaseRecord) -> tuple[dict[str, Any], int | None]:
+    payload = dict(record.result_payload)
+    payload["video"] = str(record.candidate_video_path)
+    payload["source_video"] = str(record.gt_video_path)
 
+    context_frames = resolve_context_frames_override(record)
+    if context_frames is not None:
+        context_video_path = materialize_source_prefix_context_video(record.gt_video_path, context_frames)
+        payload["context_video"] = str(context_video_path)
+        payload["input_video"] = str(context_video_path)
+        payload["context_frames"] = int(context_frames)
+        payload["effective_context_frames"] = int(context_frames)
+        return payload, int(context_frames)
 
-def resolve_without_context_override_frames(record: CaseRecord) -> int | None:
-    if not is_ti2v_record(record):
-        return None
-
-    result_payload = record.result_payload
-    input_video_value = result_payload.get("input_video")
-    if isinstance(input_video_value, str) and input_video_value.strip():
-        input_video_path = Path(input_video_value).expanduser().resolve()
-        if not input_video_path.is_file():
-            raise FileNotFoundError(
-                f"ti2v case input_video does not exist in result json {record.result_json_path}: {input_video_path}"
-            )
-        input_video_frames = count_video_frames(input_video_path)
-        if input_video_frames != 1:
-            raise ValueError(
-                f"ti2v case requires input_video to have exactly 1 frame for without_context metrics, "
-                f"got {input_video_frames} frames in {input_video_path}"
-            )
-        return 1
-
-    input_image_path = resolve_input_image_path(result_payload)
-    if input_image_path is None:
-        raise ValueError(
-            f"ti2v case requires either a 1-frame input_video or an input_image in result json {record.result_json_path}"
-        )
-    return 1
+    fallback_context_video_path = resolve_context_video_path(record.input_json_path)
+    if fallback_context_video_path is not None:
+        payload["context_video"] = str(fallback_context_video_path)
+        payload.setdefault("input_video", str(fallback_context_video_path))
+    return payload, None
 
 
 def sanitize_metric_value(metric_name: str, value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -621,13 +663,8 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
             physics_iq_output_root = args.physics_iq_output_root.expanduser().resolve()
 
             def run(record: CaseRecord) -> dict[str, Any] | None:
-                case = build_case_payload(record)
+                case, context_frames_override = build_context_metric_case_payload(record)
                 aligned_video_dir = build_method_case_dir(physics_iq_output_root, record, metric_name)
-                context_frames_override = (
-                    resolve_without_context_override_frames(record)
-                    if context_mode == "without_context"
-                    else None
-                )
                 return score_physics_iq_case(
                     case,
                     source_video_path=record.gt_video_path,
@@ -649,13 +686,8 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
             pmf_output_root = args.pmf_output_root.expanduser().resolve()
 
             def run(record: CaseRecord) -> dict[str, Any] | None:
-                case = build_case_payload(record)
+                case, context_frames_override = build_context_metric_case_payload(record)
                 aligned_video_dir = build_method_case_dir(pmf_output_root, record, metric_name)
-                context_frames_override = (
-                    resolve_without_context_override_frames(record)
-                    if context_mode == "without_context"
-                    else None
-                )
                 return score_pmf_case(
                     case,
                     source_video_path=record.gt_video_path,

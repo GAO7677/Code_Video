@@ -156,6 +156,27 @@ def _build_method_name_from_checkpoint_dir(
     return f"{step_name}{suffix}"
 
 
+def _resolve_step_output_dir_name(
+    raw_value: str | None,
+    *,
+    checkpoint_dir: Path,
+    context_frames: int,
+    num_frames: int,
+) -> str:
+    if raw_value is None:
+        return checkpoint_dir.name
+    value = str(raw_value).strip()
+    if not value:
+        return checkpoint_dir.name
+    if value == "__METHOD_NAME__":
+        return _build_method_name_from_checkpoint_dir(
+            checkpoint_dir,
+            context_frames=int(context_frames),
+            num_frames=int(num_frames),
+        )
+    return value
+
+
 def _normalize_device_token(raw_value: str) -> str:
     value = str(raw_value).strip()
     if not value:
@@ -285,6 +306,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-json-list-path", type=Path, required=True)
     parser.add_argument("--model-name", type=str, required=True)
     parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument(
+        "--step-output-dir-name",
+        type=str,
+        default=None,
+        help="Optional final result subdirectory name under output-root. Defaults to weights_root.name. Use __METHOD_NAME__ to derive the full method suffix name automatically.",
+    )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--aux-device", type=str, default=None)
     parser.add_argument(
@@ -297,8 +324,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
     parser.add_argument("--lora-checkpoint", type=Path, default=DEFAULT_BASE_LORA)
     parser.add_argument("--stage1a-init-from", type=Path, default=DEFAULT_STAGE1A)
-    parser.add_argument("--height", type=int, default=512)
-    parser.add_argument("--width", type=int, default=896)
+    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int, default=832)
     parser.add_argument(
         "--input-cover-crop-height",
         type=int,
@@ -640,7 +667,13 @@ def main() -> None:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
-    step_output_dir = output_root / weights_root.name
+    step_output_dir_name = _resolve_step_output_dir_name(
+        cli_args.step_output_dir_name,
+        checkpoint_dir=weights_root,
+        context_frames=int(cli_args.context_frames),
+        num_frames=int(cli_args.num_frames),
+    )
+    step_output_dir = output_root / step_output_dir_name
     step_output_dir.mkdir(parents=True, exist_ok=True)
     method_name = _build_method_name_from_checkpoint_dir(
         weights_root,

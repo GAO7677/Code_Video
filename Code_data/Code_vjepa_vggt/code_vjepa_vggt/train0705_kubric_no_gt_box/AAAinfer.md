@@ -78,13 +78,33 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 GPU_PAIR=0,0 \
-TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
 WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-002000 \
 METHOD_NAME=train_stage1b_kubric0708_step2000 \
-OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
-OUTPUT_FRAMES=24 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
+OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
+
+
+GPU_PAIR=0,0 \
+TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-002000 \
+METHOD_NAME=train_stage1b_kubric0708_step2000 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/morpheus_real_world/train_stage1b_kubric0708 \
+OUTPUT_FRAMES=49 \
+CTX=8 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
+
+
+
+
+
+
+
+
 
 
 ```
