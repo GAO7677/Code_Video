@@ -74,11 +74,12 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705 \
-  --output-root /data/gaoya/AAA_test_video/0623/tmpppppp \
-  --num-inference-steps 40 
+  --model-name train_stage1b_kubric0708_step1000 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+  --num-inference-steps 40 \
+  --num-frames 49
 ```
 
 带 VJEPA guidance 的例子:
