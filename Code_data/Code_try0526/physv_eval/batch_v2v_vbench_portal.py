@@ -47,6 +47,13 @@ class CaseRecord:
         return str(self.json_path.parent.relative_to(self.json_path.parents[2]))
 
 
+@dataclass
+class SkippedCase:
+    json_path: Path
+    reason: str
+    detail: str | None = None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Batch-evaluate VBench/VBench2 metrics for v2v JSON cases and render a local portal summary.")
     parser.add_argument(
@@ -112,20 +119,35 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def scan_cases(root: Path, json_name: str, limit: int | None) -> list[CaseRecord]:
+def scan_cases(root: Path, json_name: str, limit: int | None) -> tuple[list[CaseRecord], list[SkippedCase]]:
     json_paths = sorted(root.rglob(json_name))
     if limit is not None:
         json_paths = json_paths[:limit]
 
     records: list[CaseRecord] = []
+    skipped: list[SkippedCase] = []
     for json_path in json_paths:
         payload = load_payload(json_path)
         output_video = payload.get("output_video")
         if not isinstance(output_video, str) or not output_video.strip():
-            raise ValueError(f"Missing output_video in {json_path}")
+            skipped.append(
+                SkippedCase(
+                    json_path=json_path.resolve(),
+                    reason="missing_output_video",
+                    detail="JSON does not contain an evaluable output_video field.",
+                )
+            )
+            continue
         video_path = Path(output_video).resolve()
         if not video_path.is_file():
-            raise FileNotFoundError(f"Video not found for {json_path}: {video_path}")
+            skipped.append(
+                SkippedCase(
+                    json_path=json_path.resolve(),
+                    reason="missing_video_file",
+                    detail=str(video_path),
+                )
+            )
+            continue
         caption = payload.get("input_caption")
         if caption is not None:
             caption = str(caption).strip() or None
@@ -139,7 +161,7 @@ def scan_cases(root: Path, json_name: str, limit: int | None) -> list[CaseRecord
                 payload=payload,
             )
         )
-    return records
+    return records, skipped
 
 
 def ensure_runtime_env(gpu: int) -> None:
@@ -188,6 +210,21 @@ def extract_existing_metrics(payload: dict[str, Any]) -> dict[str, float | None]
 
 def base_metric_result() -> dict[str, Any]:
     return {"status": "pending", "score": None}
+
+
+def no_valid_samples_result(note: str | None = None) -> dict[str, Any]:
+    result = {"status": "no_valid_samples", "score": None}
+    if note:
+        result["note"] = note
+    return result
+
+
+def should_preserve_prior_result(prior: Any, current: Any) -> bool:
+    if not isinstance(prior, dict) or not isinstance(current, dict):
+        return False
+    prior_status = prior.get("status")
+    current_status = current.get("status")
+    return prior_status in {"ok", "error", "no_valid_samples"} and current_status in {"skipped", "pending"}
 
 
 def run_vbench_dimensions(
@@ -287,6 +324,11 @@ def run_vbench2_dimensions(
                     "status": "ok",
                     "score": scalar(item.get("video_results")),
                 }
+        except ZeroDivisionError:
+            note = "Official VBench2 found zero valid samples for this dimension on the current dataset."
+            run_status[dimension] = {"status": "no_valid_samples", "score": None, "note": note}
+            for video_path in by_video:
+                by_video[video_path][dimension] = no_valid_samples_result(note)
         except Exception as exc:
             error_text = f"{type(exc).__name__}: {exc}"
             run_status[dimension] = {"status": "error", "error": error_text}
@@ -336,6 +378,7 @@ def build_summary(
     cases: list[CaseRecord],
     out_dir: Path,
     *,
+    skipped_cases: list[SkippedCase],
     vbench_by_video: dict[str, dict[str, dict[str, Any]]],
     vbench_status: dict[str, Any],
     vbench2_by_video: dict[str, dict[str, dict[str, Any]]],
@@ -379,6 +422,15 @@ def build_summary(
         "root": str(cases[0].json_path.parents[2]) if cases else "",
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "record_count": len(records),
+        "skipped_case_count": len(skipped_cases),
+        "skipped_cases": [
+            {
+                "json_path": str(item.json_path),
+                "reason": item.reason,
+                "detail": item.detail,
+            }
+            for item in skipped_cases
+        ],
         "records": records,
         "dimension_runs": {
             "vbench": vbench_status,
@@ -404,12 +456,18 @@ def merge_with_existing_summary(summary: dict[str, Any], existing_summary: dict[
 
         if isinstance(prior.get("vbench"), dict):
             merged_vbench = dict(prior["vbench"])
-            merged_vbench.update(record.get("vbench", {}))
+            for key, value in record.get("vbench", {}).items():
+                if should_preserve_prior_result(merged_vbench.get(key), value):
+                    continue
+                merged_vbench[key] = value
             record["vbench"] = merged_vbench
 
         if isinstance(prior.get("vbench2"), dict):
             merged_vbench2 = dict(prior["vbench2"])
-            merged_vbench2.update(record.get("vbench2", {}))
+            for key, value in record.get("vbench2", {}).items():
+                if should_preserve_prior_result(merged_vbench2.get(key), value):
+                    continue
+                merged_vbench2[key] = value
             record["vbench2"] = merged_vbench2
 
         prior_errors = prior.get("errors") if isinstance(prior.get("errors"), list) else []
@@ -425,7 +483,10 @@ def merge_with_existing_summary(summary: dict[str, Any], existing_summary: dict[
             if isinstance(prior_runs.get(bucket_name), dict):
                 merged_bucket.update(prior_runs[bucket_name])
             if isinstance(summary.get("dimension_runs", {}).get(bucket_name), dict):
-                merged_bucket.update(summary["dimension_runs"][bucket_name])
+                for key, value in summary["dimension_runs"][bucket_name].items():
+                    if should_preserve_prior_result(merged_bucket.get(key), value):
+                        continue
+                    merged_bucket[key] = value
             merged_runs[bucket_name] = merged_bucket
         summary["dimension_runs"] = merged_runs
 
@@ -471,7 +532,7 @@ def main() -> None:
         return
 
     ensure_runtime_env(args.gpu)
-    cases = scan_cases(args.root, args.json_name, args.limit)
+    cases, skipped_cases = scan_cases(args.root, args.json_name, args.limit)
     vbench_by_video = {str(case.video_path): {} for case in cases}
     vbench_status: dict[str, Any] = {}
     vbench2_by_video = {str(case.video_path): {} for case in cases}
@@ -516,6 +577,7 @@ def main() -> None:
     summary = build_summary(
         cases,
         args.out_dir,
+        skipped_cases=skipped_cases,
         vbench_by_video=vbench_by_video,
         vbench_status=vbench_status,
         vbench2_by_video=vbench2_by_video,

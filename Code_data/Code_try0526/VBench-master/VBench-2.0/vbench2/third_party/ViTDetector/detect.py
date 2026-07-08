@@ -21,7 +21,20 @@ from vbench2.third_party.ViTDetector.models import build_model
 from torch.nn.parallel import DataParallel
 import math
 from torchvision import datasets, transforms
-from timm.data.transforms import _pil_interp
+try:
+    from timm.data.transforms import _pil_interp
+except ImportError:
+    from torchvision.transforms import InterpolationMode
+
+    def _pil_interp(method):
+        method = str(method).lower()
+        if method == "bicubic":
+            return InterpolationMode.BICUBIC
+        if method == "lanczos":
+            return InterpolationMode.LANCZOS
+        if method == "hamming":
+            return InterpolationMode.HAMMING
+        return InterpolationMode.BILINEAR
 from collections import defaultdict
 from typing import List, Dict
  

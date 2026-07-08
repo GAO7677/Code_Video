@@ -333,12 +333,14 @@ def build_html() -> str:
     function statusClass(status) {
       if (status === "ok") return "ok";
       if (status === "error") return "error";
+      if (status === "no_valid_samples") return "pending";
       return "pending";
     }
 
     function scoreOrDash(obj) {
       if (!obj || typeof obj !== "object") return "–";
       if (typeof obj.score === "number") return fmt(obj.score);
+      if (obj.status === "no_valid_samples") return "N/A";
       return "–";
     }
 
@@ -364,7 +366,7 @@ def build_html() -> str:
         "Multi-View_Consistency",
       ];
       return required.every((dim) => vb[dim] && vb[dim].status === "ok")
-        && required2.every((dim) => vb2[dim] && vb2[dim].status === "ok");
+        && required2.every((dim) => vb2[dim] && ["ok", "no_valid_samples"].includes(vb2[dim]?.status));
     }
 
     function buildCell(value, cls = "") {
@@ -379,11 +381,12 @@ def build_html() -> str:
 
     function populateHeader(summary) {
       document.getElementById("hero-copy").textContent =
-        `Root: ${summary.root} | Records: ${summary.records.length} | Last update: ${summary.updated_at || "pending"} | ` +
+        `Root: ${summary.root} | Records: ${summary.records.length} | Skipped: ${summary.skipped_case_count || 0} | Last update: ${summary.updated_at || "pending"} | ` +
         `VBench2 Diversity is rendered as a dataset-level score because the official custom-input implementation evaluates prompt groups rather than per-video rows.`;
 
       const stats = [
         ["Records", summary.records.length],
+        ["Skipped", summary.skipped_case_count || 0],
         ["Groups", new Set(summary.records.map((r) => r.group)).size],
         ["Methods", new Set(summary.records.map((r) => r.method)).size],
         ["Row Errors", summary.records.filter(recordHasErrors).length],
