@@ -13,14 +13,14 @@
 
 ## 0. 这份底稿覆盖什么
 
-这份底稿覆盖当前仓库里和 `train0705` 主线最直接相关的四部分：
+这份底稿覆盖当前仓库里和“当前正式 Stage1B 主线”最直接相关的四部分：
 
 - 上游权重来源链路
-- `train0705` 的主训练方法
-- `train0705` 的推理与评测工具链
-- 当前仓库里已经存在的 Kubric 扩展分支
+- 当前正式 Stage1B 的 Kubric 主训练方法
+- 当前正式 Stage1B 的推理与评测工具链
+- 早期 `train0705` phys-state Stage1B 实现与它和 Kubric 版的关系
 
-这份底稿的中心对象仍然是 `train0705` 物理视频分支，而不是把整个仓库里所有历史实验都展开。
+这份底稿的中心对象现在改为 `train0705_kubric_no_gt_box` 这条 Stage1B 主线。早期 `train0705` 物理视频分支保留为前序实现和方法来源说明，而不是当前项目里默认代表 Stage1B 的最终口径。
 
 
 ## 1. 已核查的源文件
@@ -59,12 +59,13 @@
 
 可以安全写成下面这句话：
 
-`code_vjepa_vggt` 在 Wan 2.2 TI2V-5B 基础上构建了一条面向物理视频的 object-conditioned 训练链，其中 `train0705` 的主线版本把老的 teacher-student `stage1b context-only no-GT-box` 逻辑迁移到了 DiffSynth-native `v_newtrain` 框架，并保留了 JEPA、CoTracker、VGGT、ObjectTubeProjector 和 ObjectConditionAdapter 这条对象条件分支。
+`code_vjepa_vggt` 在 Wan 2.2 TI2V-5B 基础上构建了一条面向物理视频的 object-conditioned 训练链，其中当前项目的正式 Stage1B 口径采用 `train0705_kubric_no_gt_box` 这版实现；它继承了早期 `train0705` no-GT-box 逻辑，并在 DiffSynth-native `v_newtrain` 框架上保留了 JEPA、CoTracker、VGGT、ObjectTubeProjector 和 ObjectConditionAdapter 这条对象条件分支。
 
 这句话来自以下已核实信息：
 
 - `train0705/train_stage1b_context_only_no_gt_box_v_newtrain.py` 的文件头明确写了这是把老 `run_train_teacher_student_stage1b_context_only_no_gt_box.sh` 迁到 `train_v_newtrain.WanTrainingModule`
-- `train0705/train_stage1b_context_only_no_gt_box_v_newtrain.py` 和 `infer_stage1b_context_only_no_gt_box_v_newtrain0705.py` 都明确列出了 `viewer grounding -> CoTracker / VGGT / JEPA -> ObjectTubeProjector -> ObjectConditionAdapter -> Wan object branch`
+- `train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 的文件头明确表明它沿用同一 no-GT-box Stage1B 结构，只把数据接口切到 Kubric
+- `train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 和 `train0705_kubric_no_gt_box/infer_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 都明确列出了与 Kubric 训练一致的 object-conditioning 路径
 
 
 ## 3. 已核实的训练链
@@ -164,7 +165,7 @@
 - `train0705` 并不是从零重新发明一条 Stage1B 方法线，而是把旧的 teacher-student `stage1b context-only no-GT-box` 思路迁到了新的 DiffSynth-native 框架。
 
 
-### 3.6 第五段：`train0705` 主线 Stage1B
+### 3.6 第五段：早期 `train0705` phys-state Stage1B 实现
 
 已核实事实：
 
@@ -209,19 +210,54 @@
 
 可安全写法：
 
-- `train0705` 是一条基于 DiffSynth-native `v_newtrain` 框架的 Stage1B 训练线，加载 Wan base、phys-state continuation LoRA 和冻结的 Stage1A token builder，然后只训练 object branch 相关模块。
+- 早期 `train0705` 是一条基于 DiffSynth-native `v_newtrain` 框架的 Stage1B 训练线，加载 Wan base、phys-state continuation LoRA 和冻结的 Stage1A token builder，然后只训练 object branch 相关模块。
+
+
+### 3.7 第六段：当前正式 `train0705_kubric_no_gt_box` Stage1B
+
+已核实事实：
+
+- 当前正式 Stage1B 训练脚本是：
+  - `code_vjepa_vggt/train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py`
+- 当前正式训练启动脚本是：
+  - `code_vjepa_vggt/train0705_kubric_no_gt_box/run_train_stage1b_context_only_no_gt_box_v_newtrain_kubric.sh`
+- 当前正式推理入口是：
+  - `code_vjepa_vggt/train0705_kubric_no_gt_box/infer_stage1b_context_only_no_gt_box_v_newtrain_kubric.py`
+- 训练脚本文件头明确写了：
+  - 仍然是 no-GT-box Stage1B
+  - query priors 来自 `ViewerGroundingBoxProvider`
+  - GT-box aux losses 被去掉
+  - 训练集合仍然是 `DiT object-injection branch + ObjectConditionAdapter`
+- 启动脚本当前显式加载的上游权重仍然是：
+  - Wan base：`/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B`
+  - 基础 LoRA：`raw_phys_state_wan_lora_continue_576x1024_f24/.../step-000500/checkpoint.safetensors`
+  - Stage1A：`stage1a_full_token_old/step_0005000.pt`
+- 启动脚本当前显式设置：
+  - `--dataset_type kubric_no_gt_box`
+  - `--num_frames 69`
+  - `--fixed_num_context_frames 20`
+  - `--ctx_max_length 20`
+  - `--context_length_sampling short_biased`
+  - `--save_steps 500`
+  - `--max_checkpoints_keep 20`
+  - `--output_path /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708`
+- 推理脚本文件头明确写了它复用 `train0705` 单样本推理入口，但把训练模块切到 Kubric 版本，以保证 loaded weights、viewer grounding、JEPA/CoTracker/VGGT runners 和 object branch 布局与 Kubric 训练完全一致。
+
+可安全写法：
+
+- 当前项目的正式 Stage1B 口径应当写成 `train0705_kubric_no_gt_box` 版本；早期 `train0705` phys-state 版更适合作为方法来源或前序实现，而不是当前主结果的默认代称。
 
 
 ## 4. 已核实的方法描述
 
-### 4.1 `train0705` 的对象条件路径
+### 4.1 当前 Stage1B 的对象条件路径
 
 已核实事实：
 
-- `train0705/train_stage1b_context_only_no_gt_box_v_newtrain.py` 文件头明确写了：
+- `train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 文件头明确写了：
   - 对象 query-point 和 box prior 不来自数据集 GT box
   - 而来自 `ViewerGroundingBoxProvider` 的 viewer-style pseudo-box 流程
-- 同一个文件和推理脚本都明确描述了主链路：
+- 同一个文件和 Kubric 推理脚本都明确描述了主链路：
   - `context video -> viewer grounding pseudo boxes -> CoTracker / VGGT / JEPA -> ObjectTubeProjector -> ObjectConditionAdapter -> Wan object branch`
 - 该训练脚本还明确写了：
   - 取消所有 GT-box 相关 aux loss
@@ -229,14 +265,14 @@
 
 可安全写法：
 
-- `train0705` 的核心方法不是直接使用人工 GT box 监督 Stage1B，而是通过 viewer-style grounding 产生 pseudo object priors，再结合 JEPA、CoTracker、VGGT 和 object token builder 构造 object context，最后注入 Wan 的 object branch。
+- 当前正式 Stage1B 的核心方法不是直接使用人工 GT box 监督，而是通过 viewer-style grounding 产生 pseudo object priors，再结合 JEPA、CoTracker、VGGT 和 object token builder 构造 object context，最后注入 Wan 的 object branch。
 
 
-### 4.2 `train0705` 真正训练哪些模块
+### 4.2 当前 Stage1B 真正训练哪些模块
 
 已核实事实：
 
-- `train0705/train_stage1b_context_only_no_gt_box_v_newtrain.py` 文件头明确写了当前可训练集合是：
+- `train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 文件头明确写了当前可训练集合是：
   - `DiT object-injection branch`
   - `ObjectConditionAdapter`
 - `train_v_newtrain.py` 里当 `enable_object_branch` 打开时，会给 DiT 加 object branch，并创建：
@@ -260,14 +296,14 @@
 
 可安全写法：
 
-- `train0705` 当前主线并不是 end-to-end 训练所有感知模块，而是冻结 Wan 主干和多种辅助感知模块，只训练 Wan 的 object injection 子分支以及 `ObjectConditionAdapter`。
+- 当前正式 Stage1B 并不是 end-to-end 训练所有感知模块，而是冻结 Wan 主干和多种辅助感知模块，只训练 Wan 的 object injection 子分支以及 `ObjectConditionAdapter`。
 
 
-### 4.3 哪些模块是冻结的
+### 4.3 当前 Stage1B 哪些模块是冻结的
 
 已核实事实：
 
-- `train0705/train_stage1b_context_only_no_gt_box_v_newtrain.py` 文件头明确写了冻结对象包括：
+- `train0705_kubric_no_gt_box/train_stage1b_context_only_no_gt_box_v_newtrain_kubric.py` 文件头明确写了冻结对象包括：
   - base Wan DiT
   - raw-phys LoRA
   - VAE
@@ -277,10 +313,10 @@
 
 可安全写法：
 
-- 主线训练把 Wan base、其基础 LoRA、VAE、文本编码器、Stage1A token builder 以及 JEPA/CoTracker/VGGT 感知分支视为冻结组件。
+- 当前正式 Stage1B 训练把 Wan base、其基础 LoRA、VAE、文本编码器、Stage1A token builder 以及 JEPA/CoTracker/VGGT 感知分支视为冻结组件。
 
 
-### 4.4 `train0705` 使用的数据接口
+### 4.4 早期 `train0705` phys-state 版本使用的数据接口
 
 已核实事实：
 
@@ -310,52 +346,68 @@
 
 可安全写法：
 
-- `train0705` 的 phys-state 主线仍然依赖 `PhysStateEpisodeDataset` 提供完整视频和 context pool；当前 0705 主线没有启用 `ctx_max_length`，因此它沿用 dataset 提供的 `context_video` 作为上下文候选来源。
+- 早期 `train0705` phys-state 版本仍然依赖 `PhysStateEpisodeDataset` 提供完整视频和 context pool；该版本没有启用 `ctx_max_length`，因此它沿用 dataset 提供的 `context_video` 作为上下文候选来源。
+
+
+### 4.5 当前正式 Kubric Stage1B 的数据接口与 context 采样
+
+已核实事实：
+
+- Kubric 训练脚本显式导入：
+  - `KubricNoGTBoxDataset`
+- Kubric 启动脚本显式设置：
+  - `--dataset_type kubric_no_gt_box`
+  - `--fixed_num_context_frames 20`
+  - `--ctx_max_length 20`
+  - `--context_length_sampling short_biased`
+- `train_v_newtrain.py` 当前在 `ctx_max_length` 被设置时，会直接从完整视频前缀采样 context，并记录：
+  - `ctx_max_length`
+  - `sampled_ctx_last_index`
+  - `sampled_ctx_num_frames`
+
+可安全写法：
+
+- 当前正式 Kubric Stage1B 采用 `KubricNoGTBoxDataset`，并启用基于完整视频前缀的 context 长度采样，而不是沿用早期 phys-state 版的固定 context pool 二次采样口径。
 
 
 ## 5. 已核实的推理工具链
 
-### 5.1 单 case 推理
+### 5.1 当前正式 Stage1B 的单 case 推理
 
 已核实事实：
 
 - 单 case 推理脚本是：
-  - `code_vjepa_vggt/train0705/infer_stage1b_context_only_no_gt_box_v_newtrain0705.py`
+  - `code_vjepa_vggt/train0705_kubric_no_gt_box/infer_stage1b_context_only_no_gt_box_v_newtrain_kubric.py`
 - 该脚本要求的核心输入参数是：
-  - `--checkpoint`
-  - `--context-video`
-  - `--prompt`
-  - `--output-dir`
-- 文件头明确写了它会按训练时相同的四类权重来源重建推理模型：
-  - Wan 2.2 base
-  - frozen base LoRA
-  - frozen Stage1A `object_pooler / object_aux_heads`
-  - Stage1B 训练得到的 `object_adapter + DiT object-branch`
+  - 它复用 `train0705` 单 case 推理入口的参数体系
+- 文件头明确写了它会把 runtime model 切换到 Kubric 训练模块，使 loaded weights、viewer grounding、JEPA/CoTracker/VGGT runners 和 object branch 布局与 Kubric 训练一致
 
 可安全写法：
 
-- 项目已经提供了与训练主线一致的单样本推理脚本，能够用相同的 object-conditioning 路径重建 Stage1B 推理。
+- 项目已经提供了与当前正式 Kubric Stage1B 训练一致的单样本推理脚本，能够用相同的 object-conditioning 路径重建推理。
 
 
 ### 5.2 VJEPA guidance 是可选推理增强
 
 已核实事实：
 
-- `infer_stage1b_context_only_no_gt_box_v_newtrain0705.py` 定义了大量 `--vjepa-*` 参数
-- `AAAinfer.md` 里给出了带 `--vjepa-preset ladder_s20` 的示例
+- 早期 `train0705` 推理脚本里定义了大量 `--vjepa-*` 参数
+- Kubric 推理脚本直接复用该推理入口
 
 可安全写法：
 
-- VJEPA guidance 在当前仓库里是推理期可选能力，而不是 `train0705` Stage1B 主训练目标本身。
+- VJEPA guidance 在当前仓库里是推理期可选能力，而不是当前正式 Stage1B 主训练目标本身。
 
 
 ### 5.3 批量推理和可视化
 
 已核实事实：
 
-- 批量 v2v 包装脚本是：
+- 早期 `train0705` 有批量 v2v 包装脚本：
   - `code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py`
-- `AAAinfer.md` 明确写了它内部复用单 case 推理脚本的核心 object-conditioning 路径
+- Kubric 版本额外提供了：
+  - `code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py`
+- Kubric 推理包装脚本和单 case 推理脚本都明确写了它们保持 Kubric 训练路径一致
 - 可视化脚本是：
   - `code_vjepa_vggt/train0705/inspect_stage1b_prepipe_overlay.py`
 - `AAAinfer.md` 中说明这个可视化会展示：
@@ -365,7 +417,7 @@
 
 可安全写法：
 
-- 项目不只有训练脚本，也包含了同路径的批量推理和 pre-pipe 可视化工具，便于检查 pseudo boxes、query points 和轨迹条件是否合理。
+- 项目不只有训练脚本，也包含了与当前正式 Kubric Stage1B 对齐的单样本推理、批量推理和检查工具，便于检查 pseudo boxes、query points 和轨迹条件是否合理。
 
 
 ## 6. 已核实的评测工具链
@@ -403,11 +455,11 @@
 - 不要在没有表格和数字的情况下写具体分数提升
 
 
-## 7. 当前仓库里的 Kubric 扩展分支
+## 7. 当前正式 Stage1B 与早期 Stage1B 的关系
 
-这部分不在 `AAAtrain.md` 原始主链里，但它已经是当前仓库的真实代码状态，可以作为“后续扩展”或“第二数据分支”来写。
+这里不再把 Kubric 版写成“扩展分支”。按当前项目口径，Kubric 版就是正式 Stage1B；早期 `train0705` phys-state 版是它的前序实现与方法来源。
 
-### 7.1 Kubric 分支的基本定位
+### 7.1 当前正式 Kubric Stage1B 的基本定位
 
 已核实事实：
 
@@ -424,10 +476,10 @@
 
 可安全写法：
 
-- 当前仓库已经把 `train0705` 的 no-GT-box Stage1B 方法扩展到了 Kubric/PhyCo 数据分支，核心 object-conditioning 结构保持一致，主要变化是数据适配与采样策略。
+- 当前项目的正式 Stage1B 采用 Kubric/PhyCo 数据分支，核心 object-conditioning 结构与早期 `train0705` no-GT-box 版保持一致，主要变化是数据适配与 context 采样策略。
 
 
-### 7.2 Kubric 分支当前训练配置
+### 7.2 当前正式 Kubric Stage1B 的训练配置
 
 已核实事实：
 
@@ -447,7 +499,7 @@
   - `--max_checkpoints_keep 20`
   - `--output_path /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708`
 
-### 7.3 Kubric 分支当前 context 采样语义
+### 7.3 当前正式 Kubric Stage1B 的 context 采样语义
 
 已核实事实：
 
@@ -463,7 +515,7 @@
 
 可安全写法：
 
-- Kubric 分支当前已经接入“基于完整视频前缀的 context 长度采样”，而不是只依赖固定 context pool。
+- 当前正式 Kubric Stage1B 已经接入“基于完整视频前缀的 context 长度采样”，而不是只依赖固定 context pool。
 
 
 ## 8. GPT 写论文时可以直接使用的主张
@@ -471,12 +523,11 @@
 下面这些主张都可以直接写，只要措辞保持保守：
 
 - 该项目建立在 Wan 2.2 TI2V-5B 上，并通过多阶段训练形成最终的 physics-oriented Stage1B 模型。
-- 上游权重链路是：Wan base -> 混合数据 LoRA 预训练 -> phys-state continuation LoRA -> Stage1A token builder -> `train0705` Stage1B。
-- `train0705` 的 Stage1B no-GT-box 主线把旧 teacher-student 逻辑迁移到了 DiffSynth-native `v_newtrain` 框架。
-- `train0705` 的 object-conditioning 路径使用 pseudo object priors，而不是依赖 GT boxes。
-- `train0705` 当前只训练 Wan 的 object injection 子分支和 `ObjectConditionAdapter`，大部分 backbone 与感知组件保持冻结。
-- 仓库已经提供了与训练路径一致的推理、批量推理、pre-pipe 可视化和指标回填脚本。
-- 当前仓库还包含一个基于相同 no-GT-box 思路的 Kubric 扩展分支。
+- 上游权重链路是：Wan base -> 混合数据 LoRA 预训练 -> phys-state continuation LoRA -> Stage1A token builder -> 当前正式 Kubric Stage1B。
+- 当前正式 Stage1B 沿用了早期 `train0705` no-GT-box 思路，并把它落实到 Kubric/PhyCo 数据分支。
+- 当前正式 Stage1B 的 object-conditioning 路径使用 pseudo object priors，而不是依赖 GT boxes。
+- 当前正式 Stage1B 只训练 Wan 的 object injection 子分支和 `ObjectConditionAdapter`，大部分 backbone 与感知组件保持冻结。
+- 仓库已经提供了与当前正式 Stage1B 路径一致的推理、批量推理、可视化和指标回填脚本。
 
 
 ## 9. GPT 不应该擅自写的内容
@@ -485,12 +536,12 @@
 
 - “方法显著优于某某 baseline”：
   - 这里没有附带最终数字表格。
-- “JEPA / VGGT / CoTracker 在 `train0705` 中被联合训练”：
-  - 当前主线事实更接近“被冻结或作为 frozen aux 使用”。
+- “JEPA / VGGT / CoTracker 在当前正式 Stage1B 中被联合训练”：
+  - 当前更接近“被冻结或作为 frozen aux 使用”。
 - “Stage1A、Stage1B、Kubric 分支是统一 end-to-end 联训”：
   - 当前代码和脚本更像分阶段训练与冻结加载。
-- “`train0705` 主线完全不使用 dataset context pool”：
-  - 这只对新 `ctx_max_length` 前缀采样语义成立；0705 物理主线本身没有启用 `ctx_max_length`。
+- “所有 Stage1B 版本都完全不使用 dataset context pool”：
+  - 这只对当前 Kubric 口径成立；早期 `train0705` phys-state 版没有启用 `ctx_max_length`。
 - “VJEPA guidance 是训练核心模块”：
   - 当前更安全的说法是推理时可选 guidance。
 - “Kubric 分支已经在所有最长 context 长度上做了完整稳定性实验并报告结果”：
@@ -513,7 +564,7 @@
   - 混合数据 LoRA 预训练
   - phys-state continuation LoRA
   - Stage1A object token builder
-  - Stage1B object-conditioned no-GT-box 训练
+  - 当前正式 Kubric Stage1B object-conditioned no-GT-box 训练
 - Stage1B 主路径：
   - viewer grounding pseudo boxes
   - CoTracker / VGGT / JEPA
@@ -536,15 +587,15 @@
 
 ### 10.5 扩展方向
 
-- 把同一 no-GT-box Stage1B 方法扩展到 Kubric/PhyCo 原始数据分支
-- 在 Kubric 分支中引入完整视频前缀 context 采样
+- 从早期 phys-state Stage1B 过渡到当前 Kubric/PhyCo Stage1B
+- 在当前正式 Stage1B 中引入完整视频前缀 context 采样
 
 
 ## 11. 让 GPT 写作时最稳的一段摘要素材
 
 下面这段可以直接发给 GPT，当作摘要或引言的事实起点：
 
-本项目基于 Wan 2.2 TI2V-5B 构建了一条面向物理视频场景的 object-conditioned 训练链。其权重来源按时间顺序包括：混合数据 LoRA 预训练、phys-state continuation LoRA、teacher-student Stage1A object token builder，以及最终的 `train0705` Stage1B no-GT-box 训练。`train0705` 的核心做法不是依赖数据集 GT boxes，而是通过 viewer-style grounding 生成 pseudo object priors，再结合 CoTracker、VGGT、JEPA 和 ObjectTubeProjector 构造 object context，并通过 ObjectConditionAdapter 注入 Wan 的 object branch。当前主线训练保持分阶段设计，冻结 Wan base、基础 LoRA、VAE、文本编码器、Stage1A token builder 和多种辅助感知模块，只训练 object injection 子分支与 adapter。仓库同时提供了与该训练链一致的推理、批量推理、可视化和物理指标评测脚本，并已扩展出一个基于 Kubric/PhyCo 数据的同结构 no-GT-box 分支。
+本项目基于 Wan 2.2 TI2V-5B 构建了一条面向物理视频场景的 object-conditioned 训练链。其权重来源按时间顺序包括：混合数据 LoRA 预训练、phys-state continuation LoRA、teacher-student Stage1A object token builder，以及当前正式采用的 `train0705_kubric_no_gt_box` Stage1B no-GT-box 训练。当前正式 Stage1B 的核心做法不是依赖数据集 GT boxes，而是通过 viewer-style grounding 生成 pseudo object priors，再结合 CoTracker、VGGT、JEPA 和 ObjectTubeProjector 构造 object context，并通过 ObjectConditionAdapter 注入 Wan 的 object branch。该训练线保持分阶段设计，冻结 Wan base、基础 LoRA、VAE、文本编码器、Stage1A token builder 和多种辅助感知模块，只训练 object injection 子分支与 adapter。仓库同时提供了与该训练链一致的推理、批量推理、可视化和物理指标评测脚本。早期 `train0705` phys-state Stage1B 可以作为这条正式 Kubric 训练线的方法来源与前序实现来描述。
 
 
 ## 12. 还需要你手工补给 GPT 的材料
@@ -556,7 +607,7 @@
 - 基线列表：
   - 要和哪些方法比较
 - 最终主模型选择：
-  - `step-002500` 到 `step-007000` 哪个是论文主结果
+  - 当前正式 Kubric Stage1B 应以哪个 checkpoint 作为论文主结果
 - 数据集统计：
   - 训练/验证/测试样本数
   - 各数据分支的场景类型和数量
