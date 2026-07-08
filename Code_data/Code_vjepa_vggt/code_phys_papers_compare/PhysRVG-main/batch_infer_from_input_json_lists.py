@@ -20,12 +20,16 @@ where:
       yy = output num_frames
 
 Example:
-  source /home/gaoya/miniconda3/etc/profile.d/conda.sh
-  conda activate vjepa2
-  PYTHONNOUSERSITE=1 python batch_infer_from_input_json_lists.py \
+cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/PhysRVG-main
+source /home/gaoya/miniconda3/etc/profile.d/conda.sh
+conda activate vjepa2
+PYTHONNOUSERSITE=0 python batch_infer_from_input_json_lists.py \
     --input-json-list-paths \
-      /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-      /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt
+        /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
+        /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt \
+    --height 512 \
+    --width 896 \
+    --num-inference-steps 40 
 """
 
 import argparse
@@ -123,8 +127,8 @@ def _dataset_name_from_list_path(list_path: Path) -> str:
     return stem
 
 
-def _method_name(context_frames: int, output_frames: int) -> str:
-    return f"physRVG_ctx{int(context_frames):02d}_{int(output_frames):02d}f"
+def _method_name(num_inference_steps: int, height: int, width: int, context_frames: int, output_frames: int) -> str:
+    return f"physRVG_steps{num_inference_steps}_{height}x{width}_{int(context_frames):02d}_{int(output_frames):02d}f"
 
 
 def _crop_and_resize(image: Image.Image, target_height: int, target_width: int) -> Image.Image:
@@ -253,7 +257,7 @@ def _run_single_case(
         input_video, target_height=int(args.height), target_width=int(args.width)
     )
     effective_context_frames = len(context_frames)
-    method_name = _method_name(effective_context_frames, int(args.num_frames))
+    method_name = _method_name(args.num_inference_steps, args.height, args.width, effective_context_frames, int(args.num_frames)    )
     output_dir = args.output_root / dataset_name / method_name
     sample_stem = input_json_path.stem
     output_video = output_dir / f"{sample_stem}.mp4"
