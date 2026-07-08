@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import html
 import json
 import random
@@ -254,6 +255,21 @@ def _run_forward_debug(
         "context_latents": context_latents,
         "latent_valid_mask": latent_valid_mask,
     }
+
+
+def _offload_unused_pipe_modules(model: trainmod.ContextOnlyNoGTBoxWanModule) -> list[str]:
+    unloaded: list[str] = []
+    pipe = model.pipe
+    for module_name in ("dit", "text_encoder"):
+        module = getattr(pipe, module_name, None)
+        if module is None:
+            continue
+        module.to("cpu")
+        unloaded.append(module_name)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return unloaded
 
 
 def _inspect_one(
@@ -554,6 +570,7 @@ def main() -> None:
             include_prefixes=("object_pooler.", "object_aux_heads."),
         )
     inspectmod._load_optional_stage2_weights(model, args.stage2_resume_from)
+    _offload_unused_pipe_modules(model)
 
     torch.nn.Module.train(model, False)
 
