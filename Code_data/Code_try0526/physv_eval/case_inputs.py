@@ -67,11 +67,11 @@ def first_path(
         if value in (None, ""):
             continue
         path = Path(value)
-        if path.is_file():
+        if path.exists():
             return path
         if base_dir is not None:
             candidate = (base_dir / path).resolve()
-            if candidate.is_file():
+            if candidate.exists():
                 return candidate
     return None
 
@@ -121,4 +121,3 @@ def coerce_eval_case(
         context_video_path=resolved_context,
         metadata=metadata if metadata is not None else base.metadata,
     )
-

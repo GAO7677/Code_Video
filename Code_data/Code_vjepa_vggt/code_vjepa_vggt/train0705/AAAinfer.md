@@ -70,29 +70,47 @@ CUDA_VISIBLE_DEVICES=2 \
 读取一个 txt 文件，每行一个输入 json，批量跑整套 v2v 推理。内部会复用单 case 推理脚本的 object-conditioning 路径。
 
 ```bash
+PYTHONNOUSERSITE=1 \
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=2 \
+CUDA_VISIBLE_DEVICES=7 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_kubric0708_step1000 \
-  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+  --model-name train_stage1b_diffsynth_native0705_step1000 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_test5_compare \
+  --height 512 \
+  --width 896 \
+  --input-cover-crop-width 832 \
+  --input-cover-crop-height 480 \
+  --num-frames 24 \
+  --context-frames 8 \
+  --sampling-mode prefix \
   --num-inference-steps 40 \
-  --num-frames 49
+  --cfg-scale 5.0
 ```
 
 带 VJEPA guidance 的例子:
 
 ```bash
+PYTHONNOUSERSITE=1 \
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=3 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_diffsynth_native0705_0705_vjepa \
+  --model-name train_stage1b_diffsynth_native0705_step1000_vjepa \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_test5_compare_vjepa \
+  --height 512 \
+  --width 896 \
+  --input-cover-crop-width 832 \
+  --input-cover-crop-height 480 \
+  --num-frames 24 \
+  --context-frames 8 \
+  --sampling-mode prefix \
   --num-inference-steps 40 \
+  --cfg-scale 5.0 \
   --vjepa-preset ladder_s20 \
   --vjepa-device cuda:0
 ```
@@ -188,6 +206,8 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 ## 8. 说明
 
 - `wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py` 是批量包装脚本，内部复用 `infer_stage1b_context_only_no_gt_box_v_newtrain0705.py` 的核心推理链。
+- 当前 `wan-cu128` 环境建议在命令前加 `PYTHONNOUSERSITE=1`，避免被 `~/.local/lib/python3.10/site-packages` 里的旧版 `huggingface_hub` 元数据污染。
+- `wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v.py` 现在默认对输入 context video 先做 `832x480` 的等比 cover，再做 center crop，最后再缩放到模型输入分辨率 `512x896`。
 - `infer_stage1b_context_only_no_gt_box_v_newtrain0705_ctx1dupjepa.py` 是为了单帧 context 单独加的兼容脚本。
 - `wan_stage1b_context_only_no_gt_box_vnewtrain0705_ctx1dupjepa_v2v.py` 是对应的批量版本，复用原批量脚本，只替换单帧 JEPA 相关逻辑。
 - `collect_stage1b_metric_table.py` 属于结果汇总，不属于推理脚本，这里不收录。

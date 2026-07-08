@@ -19,6 +19,8 @@
 - `cosmos_reason1`
 - `physics_iq`
 - `pmf`
+- `vbench`
+- `vbench2`
 
 ## 通用输入格式
 
@@ -622,4 +624,188 @@ python -m physv_eval.single_case.pmf \
 cd /home/gaoya/Code_Video/Code_data/Code_try0526
 python -m physv_eval.single_case.pmf \
   --input-json /path/to/case.json
+```
+
+## 9. VBench
+
+入口：
+
+- 模块：`physv_eval.single_case.vbench`
+- 函数：
+  `score_case(case, dimension, caption=None, output_path=None, runner=None)`
+
+指标定义：
+
+- 对齐官方 VBench 的 `custom_input` 单维度评测
+- 适合把已有视频接入 VBench 的单项能力评分
+- 当前这个 `single_case` 入口只封装官方明确支持自定义视频的维度
+- 官方结果会先落盘，再被适配层读回并整理成统一 `dict`
+
+当前支持维度：
+
+- `subject_consistency`
+- `background_consistency`
+- `motion_smoothness`
+- `dynamic_degree`
+- `aesthetic_quality`
+- `imaging_quality`
+
+指标属性：
+
+- 类型：连续值
+- 主字段：`score`
+- 主方向：通常越高越好
+- 原始逐视频结果保留在 `raw_results`
+
+函数返回：
+
+```python
+{
+    "score": float | None,
+    "dimension": str,
+    "metric_direction": str,
+    "official": bool,
+    "method": str,
+    "supported_dimensions": list[str],
+    "raw_dimension_score": float | None,
+    "raw_results": list[dict],
+    "video": str,
+    "caption_used": str | None,
+    "result_json": str,
+    "full_info_json": str,
+    "output_path": str,
+    "cache_dir": str,
+    "device": str,
+    "mode": str,
+}
+```
+
+说明：
+
+- 该入口固定走官方 `custom_input` 模式
+- 一次只评一个维度
+- 如果不传 `caption`，默认复用通用 case 字段里的 prompt/caption
+- 官方输出目录默认放在 `/data/gaoya/agent-data/outputs/vbench_single_case/...`
+
+运行示例：
+
+直接传视频：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench \
+  --video /path/to/video.mp4 \
+  --dimension motion_smoothness
+```
+
+带 caption 覆盖：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench \
+  --video /path/to/video.mp4 \
+  --dimension subject_consistency \
+  --caption "a red ball rolling on the floor"
+```
+
+传 case JSON：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench \
+  --input-json /path/to/case.json \
+  --dimension aesthetic_quality
+```
+
+## 10. VBench-2.0
+
+入口：
+
+- 模块：`physv_eval.single_case.vbench2`
+- 函数：
+  `score_case(case, dimension, caption=None, output_path=None, runner=None)`
+
+指标定义：
+
+- 对齐官方 VBench-2.0 的 `custom_input` 单维度评测
+- 更偏下一代视频模型的 intrinsic faithfulness 能力
+- 当前这个 `single_case` 入口只封装官方明确支持自定义视频的维度
+- 官方结果会先落盘，再被适配层读回并整理成统一 `dict`
+
+当前支持维度：
+
+- `Human_Anatomy`
+- `Human_Identity`
+- `Human_Clothes`
+- `Diversity`
+- `Multi-View_Consistency`
+
+指标属性：
+
+- 类型：连续值
+- 主字段：`score`
+- 主方向：通常越高越好
+- 原始逐视频结果保留在 `raw_results`
+
+函数返回：
+
+```python
+{
+    "score": float | None,
+    "dimension": str,
+    "metric_direction": str,
+    "official": bool,
+    "method": str,
+    "supported_dimensions": list[str],
+    "raw_dimension_score": float | None,
+    "raw_results": list[dict],
+    "video": str,
+    "caption_used": str | None,
+    "result_json": str,
+    "full_info_json": str,
+    "output_path": str,
+    "cache_dir": str,
+    "device": str,
+    "mode": str,
+}
+```
+
+说明：
+
+- 该入口固定走官方 `custom_input` 模式
+- 一次只评一个维度
+- `Diversity` 比较特殊：
+  - 需要至少 20 个视频
+  - 命名格式应为 `prompt-index.mp4`
+  - 这里的 `--video` 或 case JSON 视频字段应传“目录路径”而不是单个 mp4
+- `Human_Anatomy`、`Human_Identity`、`Human_Clothes`、`Multi-View_Consistency` 可直接传单视频
+- 官方输出目录默认放在 `/data/gaoya/agent-data/outputs/vbench2_single_case/...`
+
+运行示例：
+
+直接传视频：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench2 \
+  --video /path/to/video.mp4 \
+  --dimension Human_Anatomy
+```
+
+多样性目录评测：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench2 \
+  --video /path/to/diversity_case_folder \
+  --dimension Diversity
+```
+
+传 case JSON：
+
+```bash
+cd /home/gaoya/Code_Video/Code_data/Code_try0526
+python -m physv_eval.single_case.vbench2 \
+  --input-json /path/to/case.json \
+  --dimension Multi-View_Consistency
 ```

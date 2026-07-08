@@ -138,16 +138,22 @@ def _normalize_ckpt_method_name(name: str) -> str:
     return normalized or name
 
 
-def _build_method_name_from_checkpoint_dir(checkpoint_dir: Path) -> str:
+def _build_method_name_from_checkpoint_dir(
+    checkpoint_dir: Path,
+    *,
+    context_frames: int,
+    num_frames: int,
+) -> str:
     step_name = checkpoint_dir.name
     checkpoint_parent = checkpoint_dir.parent
+    suffix = f"_ctx{int(context_frames):02d}_{int(num_frames):02d}f"
     if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
         method_root = _normalize_ckpt_method_name(checkpoint_parent.parent.name)
-        return f"{method_root}_{step_name}"
+        return f"{method_root}_{step_name}{suffix}"
     if checkpoint_parent.name:
         method_root = _normalize_ckpt_method_name(checkpoint_parent.name)
-        return f"{method_root}_{step_name}"
-    return step_name
+        return f"{method_root}_{step_name}{suffix}"
+    return f"{step_name}{suffix}"
 
 
 def _normalize_device_token(raw_value: str) -> str:
@@ -636,7 +642,11 @@ def main() -> None:
 
     step_output_dir = output_root / weights_root.name
     step_output_dir.mkdir(parents=True, exist_ok=True)
-    method_name = _build_method_name_from_checkpoint_dir(weights_root)
+    method_name = _build_method_name_from_checkpoint_dir(
+        weights_root,
+        context_frames=int(cli_args.context_frames),
+        num_frames=int(cli_args.num_frames),
+    )
 
     runtime_args = _build_runtime_args(cli_args, weights_root, step_output_dir)
     model, _, load_info = infer0705._build_runtime_model(runtime_args)

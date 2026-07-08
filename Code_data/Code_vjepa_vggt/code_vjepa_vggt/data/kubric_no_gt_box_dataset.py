@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import uuid
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -244,7 +246,9 @@ class KubricNoGTBoxDataset(Dataset):
             "split": self.split,
             "samples": [asdict(record) for record in samples],
         }
-        tmp_path = index_path.with_suffix(".json.tmp")
+        tmp_path = index_path.with_name(
+            f"{index_path.stem}.{os.getpid()}.{uuid.uuid4().hex}.json.tmp"
+        )
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_path.replace(index_path)
         return samples

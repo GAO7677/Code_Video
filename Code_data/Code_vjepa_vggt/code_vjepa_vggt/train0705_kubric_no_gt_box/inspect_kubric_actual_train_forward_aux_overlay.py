@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 
 from code_vjepa_vggt.train0705_kubric_no_gt_box import (
     inspect_kubric_train_forward_aux_overlay as inspectmod,
@@ -29,6 +30,55 @@ def _parse_index_list(raw_value: str | None) -> list[int]:
     if raw_value is None or not str(raw_value).strip():
         return []
     return [int(item.strip()) for item in str(raw_value).split(",") if item.strip()]
+
+
+def _resize_video_bthwc(
+    frames_bthwc_01: torch.Tensor,
+    dst_hw: tuple[int, int],
+    *,
+    align_corners: bool,
+) -> torch.Tensor:
+    b, t, h, w, c = frames_bthwc_01.shape
+    frames_bchw = frames_bthwc_01.permute(0, 1, 4, 2, 3).reshape(b * t, c, h, w)
+    resized = F.interpolate(
+        frames_bchw,
+        size=tuple(int(v) for v in dst_hw),
+        mode="bilinear",
+        align_corners=align_corners,
+    )
+    return resized.reshape(b, t, c, int(dst_hw[0]), int(dst_hw[1])).permute(0, 1, 3, 4, 2).contiguous()
+
+
+def _write_frames_bthwc_video(path: Path, frames_bthwc_01: torch.Tensor, fps: int) -> Path:
+    if int(frames_bthwc_01.shape[0]) != 1:
+        raise ValueError(f"expected batch size 1 for visualization, got {list(frames_bthwc_01.shape)}")
+    video_cthw = (frames_bthwc_01[0].permute(3, 0, 1, 2).contiguous() * 2.0 - 1.0).clamp(-1.0, 1.0)
+    return inspectmod._write_tensor_video(path, video_cthw, fps=fps)
+
+
+def _select_video_frames(video_cthw: torch.Tensor, frame_indices: list[int]) -> torch.Tensor:
+    if not frame_indices:
+        return video_cthw[:, :0].contiguous()
+    return video_cthw[:, torch.tensor(frame_indices, dtype=torch.long)].contiguous()
+
+
+def _expand_with_last_index(base_indices: list[int], target_len: int) -> list[int]:
+    indices = [int(v) for v in base_indices]
+    if not indices:
+        return []
+    if len(indices) >= int(target_len):
+        return indices[: int(target_len)]
+    last_value = int(indices[-1])
+    return indices + [last_value] * (int(target_len) - len(indices))
+
+
+def _source_indices_from_time_idx(base_indices: list[int], time_idx: list[int]) -> list[int]:
+    out: list[int] = []
+    for idx in time_idx:
+        idx_int = int(idx)
+        if 0 <= idx_int < len(base_indices):
+            out.append(int(base_indices[idx_int]))
+    return out
 
 
 def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
@@ -91,6 +141,10 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <p><b>sampled_ctx_last_index:</b> {int(result["sampled_ctx_last_index"])}</p>
     <p><b>sampled_ctx_num_frames:</b> {int(result["sampled_ctx_num_frames"])}</p>
     <p><b>sampled source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+    <p><b>jepa_time_idx:</b> {html.escape(str(result["jepa_time_idx"]))}</p>
+    <p><b>latent_time_idx:</b> {html.escape(str(result["latent_time_idx"]))}</p>
+    <p><b>jepa_time_source_indices:</b> {html.escape(str(result["jepa_time_source_indices"]))}</p>
+    <p><b>latent_input_source_indices:</b> {html.escape(str(result["latent_input_source_indices"]))}</p>
     <div class="grid">
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['train_clip_video_mp4'])}"></video>
@@ -103,6 +157,30 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['context_video_mp4'])}"></video>
         <figcaption>Actual sampled context video used for this forward</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['cotracker_input_video_mp4'])}"></video>
+        <figcaption>Actual CoTracker input video: resized to 384x512</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['vggt_input_video_mp4'])}"></video>
+        <figcaption>Actual VGGT input video: resized to 420x728</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['jepa_padded_video_mp4'])}"></video>
+        <figcaption>JEPA time-padded context video before spatial resize</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['jepa_input_video_mp4'])}"></video>
+        <figcaption>Actual JEPA input video: time-padded and resized to 384x384</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['jepa_time_aligned_context_video_mp4'])}"></video>
+        <figcaption>Context frames picked by jepa_time_idx on the native context video</figcaption>
+      </figure>
+      <figure>
+        <video controls preload="none" playsinline src="{html.escape(result['latent_time_aligned_context_video_mp4'])}"></video>
+        <figcaption>Context frames picked by latent_time_idx on the native context video</figcaption>
       </figure>
       <figure>
         <img src="{html.escape(result['prompt_preview_png'])}" />
@@ -179,12 +257,24 @@ def _run_forward_debug(
         points_per_object=model.object_num_queries,
     )
     context_latents = inferbase._encode_context_latents(model.pipe, sample["context_video"])
-    jepa_input_video, _ = trainmod.prepare_jepa_context_video(
+    jepa_input_video, jepa_ctx_fix = trainmod.prepare_jepa_context_video(
         context_video,
         latent_frames=int(context_latents.shape[2]),
         tubelet_size=int(getattr(model, "_jepa_tubelet_size", 2)),
     )
     jepa_out = model._run_jepa(jepa_input_video)
+    src_frames = int(tracks_grouped.shape[1])
+    latent_frames = int(context_latents.shape[2])
+    jepa_time_idx = model.object_pooler._time_indices(
+        src_frames,
+        int(jepa_out.patch_tokens.shape[1]),
+        tracks_grouped.device,
+    )
+    latent_time_idx = model.object_pooler._time_indices(
+        src_frames,
+        latent_frames,
+        tracks_grouped.device,
+    )
     object_out = model.object_pooler(
         jepa_patch_tokens=jepa_out.patch_tokens,
         context_latents=context_latents,
@@ -237,6 +327,7 @@ def _run_forward_debug(
     }
     return {
         "metrics": metrics,
+        "frames_bthwc_01": frames_bthwc_01,
         "query_points_prior": query_points_prior,
         "query_frame_ids": query_frame_ids,
         "object_valid_mask": object_valid_mask,
@@ -251,6 +342,10 @@ def _run_forward_debug(
         "object_aux_out": object_aux_out,
         "object_context": object_context,
         "context_latents": context_latents,
+        "jepa_input_video": jepa_input_video,
+        "jepa_ctx_fix": jepa_ctx_fix,
+        "jepa_time_idx": jepa_time_idx,
+        "latent_time_idx": latent_time_idx,
         "latent_valid_mask": latent_valid_mask,
     }
 
@@ -296,6 +391,48 @@ def _inspect_one(
     context_video_browser = inspectmod._write_tensor_video(
         output_dir / "context_video.mp4",
         context_video,
+        fps=int(inspect_fps),
+    )
+    cotracker_input_video = _resize_video_bthwc(
+        debug["frames_bthwc_01"],
+        tuple(int(v) for v in debug["cotracker_out"].input_hw),
+        align_corners=True,
+    )
+    cotracker_input_video_browser = _write_frames_bthwc_video(
+        output_dir / "cotracker_input_video.mp4",
+        cotracker_input_video,
+        fps=int(inspect_fps),
+    )
+    vggt_input_hw = (420, 728)
+    if getattr(model, "vggt_adapter", None) is not None and getattr(model.vggt_adapter, "input_hw", None) is not None:
+        vggt_input_hw = tuple(int(v) for v in model.vggt_adapter.input_hw)
+    vggt_input_video = _resize_video_bthwc(
+        debug["frames_bthwc_01"],
+        vggt_input_hw,
+        align_corners=False,
+    )
+    vggt_input_video_browser = _write_frames_bthwc_video(
+        output_dir / "vggt_input_video.mp4",
+        vggt_input_video,
+        fps=int(inspect_fps),
+    )
+    jepa_padded_video_browser = inspectmod._write_tensor_video(
+        output_dir / "jepa_padded_context_video.mp4",
+        debug["jepa_input_video"][0].detach().float().cpu(),
+        fps=int(inspect_fps),
+    )
+    jepa_crop_size = int(getattr(getattr(model, "jepa_adapter", None), "crop_size", 384))
+    jepa_input_video_bthwc_01 = (
+        (debug["jepa_input_video"].permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0
+    ).clamp(0.0, 1.0)
+    jepa_resized_input_video = _resize_video_bthwc(
+        jepa_input_video_bthwc_01,
+        (jepa_crop_size, jepa_crop_size),
+        align_corners=False,
+    )
+    jepa_input_video_browser = _write_frames_bthwc_video(
+        output_dir / "jepa_input_video.mp4",
+        jepa_resized_input_video,
         fps=int(inspect_fps),
     )
     train_clip_video_browser = inspectmod._write_tensor_video(
@@ -374,6 +511,21 @@ def _inspect_one(
     inspectmod.write_mp4(track_overlay_raw, track_overlay_video, fps=int(inspect_fps))
     track_overlay_browser = inspectmod._ensure_browser_video(track_overlay_raw)
 
+    jepa_time_idx = [int(v) for v in debug["jepa_time_idx"].detach().cpu().tolist()]
+    latent_time_idx = [int(v) for v in debug["latent_time_idx"].detach().cpu().tolist()]
+    jepa_time_aligned_context = _select_video_frames(context_video, jepa_time_idx)
+    latent_time_aligned_context = _select_video_frames(context_video, latent_time_idx)
+    jepa_time_aligned_context_browser = inspectmod._write_tensor_video(
+        output_dir / "jepa_time_aligned_context.mp4",
+        jepa_time_aligned_context,
+        fps=int(inspect_fps),
+    )
+    latent_time_aligned_context_browser = inspectmod._write_tensor_video(
+        output_dir / "latent_time_aligned_context.mp4",
+        latent_time_aligned_context,
+        fps=int(inspect_fps),
+    )
+
     return {
         "inspect_index": int(inspect_index),
         "caption": str(sample["caption"]),
@@ -383,11 +535,23 @@ def _inspect_one(
         "num_context_frames": int(sample["num_context_frames"]),
         "prompt_preview_png": str(prompt_preview_path.name),
         "context_video_mp4": str(context_video_browser.name),
+        "cotracker_input_video_mp4": str(cotracker_input_video_browser.name),
+        "vggt_input_video_mp4": str(vggt_input_video_browser.name),
+        "jepa_padded_video_mp4": str(jepa_padded_video_browser.name),
+        "jepa_input_video_mp4": str(jepa_input_video_browser.name),
+        "jepa_time_aligned_context_video_mp4": str(jepa_time_aligned_context_browser.name),
+        "latent_time_aligned_context_video_mp4": str(latent_time_aligned_context_browser.name),
         "train_clip_video_mp4": str(train_clip_video_browser.name),
         "source_full_video_mp4": str(source_full_video_browser.name),
         "input_overlay_video": str(input_overlay_browser.name),
         "box_overlay_video": str(box_overlay_browser.name),
         "track_overlay_video": str(track_overlay_browser.name),
+        "jepa_time_idx": jepa_time_idx,
+        "latent_time_idx": latent_time_idx,
+        "jepa_input_frames": int(debug["jepa_input_video"].shape[2]),
+        "jepa_padding_frames": int(debug["jepa_ctx_fix"].get("padded_context_frames", 0)),
+        "latent_frames": int(debug["context_latents"].shape[2]),
+        "jepa_token_frames": int(debug["jepa_out"].patch_tokens.shape[1]),
         "metrics": debug["metrics"],
     }
 
@@ -405,6 +569,8 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
           <p class="meta"><b>dataset_index:</b> {int(result["inspect_index"])}</p>
           <p class="meta"><b>ctx:</b> last={int(result["sampled_ctx_last_index"])}, frames={int(result["sampled_ctx_num_frames"])}, max={int(result["ctx_max_length"])}</p>
           <p class="meta"><b>source_frame_indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+          <p class="meta"><b>jepa_time_idx:</b> {html.escape(str(result["jepa_time_idx"]))}</p>
+          <p class="meta"><b>latent_time_idx:</b> {html.escape(str(result["latent_time_idx"]))}</p>
           <p class="caption">{html.escape(result["caption"])}</p>
         </div>
     <div class="actions">
@@ -425,8 +591,32 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
       <figcaption>Actual sampled context video</figcaption>
     </figure>
     <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['cotracker_input_video_mp4'])}"></video>
+      <figcaption>CoTracker input</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['vggt_input_video_mp4'])}"></video>
+      <figcaption>VGGT input</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['jepa_input_video_mp4'])}"></video>
+      <figcaption>JEPA input</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['jepa_time_aligned_context_video_mp4'])}"></video>
+      <figcaption>jepa_time_idx frames</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['latent_time_aligned_context_video_mp4'])}"></video>
+      <figcaption>latent_time_idx frames</figcaption>
+    </figure>
+    <figure>
       <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['input_overlay_video'])}"></video>
       <figcaption>Input overlay</figcaption>
+    </figure>
+    <figure>
+      <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['jepa_padded_video_mp4'])}"></video>
+      <figcaption>JEPA padded context</figcaption>
     </figure>
     <figure>
       <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['box_overlay_video'])}"></video>
@@ -625,6 +815,18 @@ def main() -> None:
             for idx in actual_context_local_indices
             if 0 <= int(idx) < len(sampled_source_indices)
         ]
+        jepa_input_source_indices = _expand_with_last_index(
+            context_source_frame_indices,
+            int(result["jepa_input_frames"]),
+        )
+        jepa_time_source_indices = _source_indices_from_time_idx(
+            context_source_frame_indices,
+            result["jepa_time_idx"],
+        )
+        latent_input_source_indices = _source_indices_from_time_idx(
+            context_source_frame_indices,
+            result["latent_time_idx"],
+        )
 
         result.update(
             {
@@ -633,6 +835,9 @@ def main() -> None:
                 "sampled_ctx_last_index": int(sample["sampled_ctx_last_index"]),
                 "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
                 "context_source_frame_indices": context_source_frame_indices,
+                "jepa_input_source_indices": jepa_input_source_indices,
+                "jepa_time_source_indices": jepa_time_source_indices,
+                "latent_input_source_indices": latent_input_source_indices,
                 "metadata": {
                     "sample_key": str(sample.get("metadata", {}).get("sample_key", "")),
                     "scenario": str(sample.get("metadata", {}).get("scenario", "")),
@@ -647,6 +852,15 @@ def main() -> None:
                     "sampled_ctx_num_frames": int(sample["sampled_ctx_num_frames"]),
                     "sampled_ctx_frame_indices": actual_context_local_indices,
                     "sampled_ctx_source_indices": context_source_frame_indices,
+                    "jepa_input_frames": int(result["jepa_input_frames"]),
+                    "jepa_padding_frames": int(result["jepa_padding_frames"]),
+                    "latent_frames": int(result["latent_frames"]),
+                    "jepa_token_frames": int(result["jepa_token_frames"]),
+                    "jepa_time_idx": result["jepa_time_idx"],
+                    "latent_time_idx": result["latent_time_idx"],
+                    "jepa_input_source_indices": jepa_input_source_indices,
+                    "jepa_time_source_indices": jepa_time_source_indices,
+                    "latent_input_source_indices": latent_input_source_indices,
                 },
             }
         )

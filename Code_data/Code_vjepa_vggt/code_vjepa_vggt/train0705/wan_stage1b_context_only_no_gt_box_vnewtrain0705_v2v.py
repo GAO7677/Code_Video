@@ -178,6 +178,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage1a-init-from", type=Path, default=DEFAULT_STAGE1A)
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--width", type=int, default=896)
+    parser.add_argument(
+        "--input-cover-crop-height",
+        type=int,
+        default=480,
+        help="Resize input video proportionally to cover this height before center cropping.",
+    )
+    parser.add_argument(
+        "--input-cover-crop-width",
+        type=int,
+        default=832,
+        help="Resize input video proportionally to cover this width before center cropping.",
+    )
     parser.add_argument("--num-frames", type=int, default=24)
     parser.add_argument("--context-frames", type=int, default=8)
     parser.add_argument("--fps", type=int, default=30)
@@ -267,6 +279,8 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         sampling_steps=int(cli_args.num_inference_steps),
         height=int(cli_args.height),
         width=int(cli_args.width),
+        input_cover_crop_height=int(cli_args.input_cover_crop_height),
+        input_cover_crop_width=int(cli_args.input_cover_crop_width),
         fps=int(cli_args.fps),
         seed=int(cli_args.seed),
         cfg_scale=float(cli_args.cfg_scale),
@@ -334,6 +348,8 @@ def _run_single_case_in_process(
     cfg_scale: float,
     height: int,
     width: int,
+    input_cover_crop_height: int,
+    input_cover_crop_width: int,
     quality: int,
     load_info: dict[str, object],
     lora_checkpoint: str,
@@ -352,7 +368,12 @@ def _run_single_case_in_process(
         target_context_frames=int(context_frames),
         sampling_mode=sampling_mode,
     )
-    context_video_single = preprocess_video_rgb_uint8(frames, (int(height), int(width)))
+    context_video_single = preprocess_video_rgb_uint8(
+        frames,
+        (int(height), int(width)),
+        resize_mode="cover_crop",
+        cover_crop_hw=(int(input_cover_crop_height), int(input_cover_crop_width)),
+    )
     context_pil = infer0705._tensor_video_to_pil_list(context_video_single)
     object_context, object_debug = infer0705._build_object_context(
         model=model,
@@ -416,6 +437,9 @@ def _run_single_case_in_process(
             "width": int(width),
             "num_frames": int(num_frames),
             "context_frames": int(context_frames),
+            "input_resize_mode": "cover_crop",
+            "input_cover_crop_height": int(input_cover_crop_height),
+            "input_cover_crop_width": int(input_cover_crop_width),
             "enable_object_branch": bool(getattr(model, "enable_object_branch", False)),
             "lora_checkpoint": str(lora_checkpoint),
             "stage1a_init_from": str(stage1a_init_from),
@@ -458,6 +482,9 @@ def main() -> None:
         "seed": int(cli_args.seed),
         "height": int(cli_args.height),
         "width": int(cli_args.width),
+        "input_resize_mode": "cover_crop",
+        "input_cover_crop_height": int(cli_args.input_cover_crop_height),
+        "input_cover_crop_width": int(cli_args.input_cover_crop_width),
         "num_frames": int(cli_args.num_frames),
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
@@ -534,6 +561,8 @@ def main() -> None:
                 cfg_scale=float(cli_args.cfg_scale),
                 height=int(cli_args.height),
                 width=int(cli_args.width),
+                input_cover_crop_height=int(cli_args.input_cover_crop_height),
+                input_cover_crop_width=int(cli_args.input_cover_crop_width),
                 quality=int(cli_args.quality),
                 load_info=load_info,
                 lora_checkpoint=str(cli_args.lora_checkpoint),
