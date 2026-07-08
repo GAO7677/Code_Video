@@ -324,18 +324,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
     parser.add_argument("--lora-checkpoint", type=Path, default=DEFAULT_BASE_LORA)
     parser.add_argument("--stage1a-init-from", type=Path, default=DEFAULT_STAGE1A)
-    parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--width", type=int, default=832)
+    parser.add_argument("--height", type=int, default=512)
+    parser.add_argument("--width", type=int, default=896)
     parser.add_argument(
         "--input-cover-crop-height",
         type=int,
-        default=480,
+        default=512,
         help="Resize input video proportionally to cover this height before center cropping.",
     )
     parser.add_argument(
         "--input-cover-crop-width",
         type=int,
-        default=832,
+        default=896,
         help="Resize input video proportionally to cover this width before center cropping.",
     )
     parser.add_argument("--num-frames", type=int, default=49)

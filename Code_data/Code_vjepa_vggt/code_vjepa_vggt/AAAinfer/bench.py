@@ -249,7 +249,7 @@ def write_bgr_frames_to_video(path: Path, frames: list[Any], fps: float) -> None
     if not frames:
         raise ValueError("Cannot write an empty context video")
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    temp_path = path.with_name(f".{path.stem}.tmp.{os.getpid()}{path.suffix}")
     height, width = frames[0].shape[:2]
     container = av.open(str(temp_path), mode="w")
     rate = Fraction(str(fps if fps > 0 else 30.0)).limit_denominator(1000)
