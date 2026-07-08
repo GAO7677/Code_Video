@@ -92,7 +92,7 @@ CMD=(
   --num_frames 69
   --fixed_num_context_frames 20
   --min_context_frames 0
-  --max_context_ratio 0.70
+  --max_context_ratio 1.0
   --context_length_sampling short_biased
   --no_context_ratio 0.0
   --max_train_steps 28569

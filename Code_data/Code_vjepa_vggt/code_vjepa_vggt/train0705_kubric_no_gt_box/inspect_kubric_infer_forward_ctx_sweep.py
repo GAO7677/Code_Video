@@ -230,7 +230,10 @@ def _write_case_page(case_dir: Path, result: dict[str, Any]) -> None:
         input_image_block = f"""
       <figure>
         <img src="{html.escape(str(result['input_image_png']))}" />
-        <figcaption>Optional input image</figcaption>
+        <figcaption>
+          Optional input image
+          <br />Source: input json field <code>input_image</code> or fallback <code>first_frame_path</code>.
+        </figcaption>
       </figure>
 """
 
@@ -269,7 +272,17 @@ def _write_case_page(case_dir: Path, result: dict[str, Any]) -> None:
       background: #fff;
     }}
     img, video {{ display: block; width: 100%; background: #000; }}
-    figcaption {{ padding: 10px 12px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }}
+    figcaption {{ padding: 10px 12px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); line-height: 1.55; }}
+    .legend {{
+      margin: 18px 0 22px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fffaf2;
+    }}
+    .legend h2 {{ margin: 0 0 10px; font-size: 20px; }}
+    .legend p {{ margin: 8px 0; line-height: 1.6; }}
+    .legend code {{ font-size: 12px; }}
     pre {{
       margin: 16px 0 0;
       padding: 14px;
@@ -292,42 +305,96 @@ def _write_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <p><b>Requested / effective context frames:</b> {int(result["requested_context_frames"])} / {int(result["effective_context_frames"])}</p>
     <p><b>Context frame indices:</b> {html.escape(str(result["frame_indices"]))}</p>
     <p><b>Prompt:</b> {html.escape(str(result["input_caption"]))}</p>
+    <section class="legend">
+      <h2>Overlay Label Legend</h2>
+      <p><b><code>prompt0</code>, <code>prompt1</code>, ...</b>: prompt frame上的对象框。Source:
+      viewer grounding输出的 prompt box，也就是 <code>grounding_sample.object_tracks[*].box_prompt_xyxy</code>。</p>
+      <p><b><code>sam0</code>, <code>sam1</code>, ...</b>: 每个对象在 context 视频里的传播框。Source:
+      viewer grounding / SAM2 跟踪结果，也就是 <code>grounding_sample.object_tracks[*].boxes_t4</code>。</p>
+      <p><b><code>q0</code>, <code>q1</code>, ...</b>: 送入 CoTracker 的 query points。Source:
+      object prior 构造结果 <code>query_points_prior</code>。</p>
+      <p><b><code>trk0</code>, <code>trk1</code>, ...</b>: CoTracker 跟踪点。Source:
+      <code>cotracker_out.tracks</code>；如果显示为 <code>trk*(inv)</code>，表示该帧可见性低，来源是
+      <code>cotracker_out.visibility</code>。</p>
+      <p><b><code>ref0</code>, <code>ref1</code>, ...</b> in aux box overlay: object branch 里的参考框，颜色为红色。Source:
+      <code>object_out.active_box_xyxy</code>。</p>
+      <p><b><code>pred0</code>, <code>pred1</code>, ...</b> in aux box overlay: aux head 预测框，颜色为绿色偏青色。Source:
+      <code>object_aux_out.pred_box_xyxy</code>。</p>
+      <p><b><code>ref0</code>, <code>rs0</code></b> in aux track overlay: 参考轨迹摘要的中心点与起点，颜色为橙色。Source:
+      <code>object_out.active_track_summary[..., :4]</code>。其中 <code>ref*</code> 是中心点，
+      <code>rs*</code> 是由摘要里的位移还原出的起点。</p>
+      <p><b><code>pred0</code>, <code>ps0</code></b> in aux track overlay: aux head 预测轨迹摘要的中心点与起点，颜色为蓝色。Source:
+      <code>object_aux_out.pred_track_summary</code>。其中 <code>pred*</code> 是中心点，
+      <code>ps*</code> 是由预测位移还原出的起点。</p>
+    </section>
     <div class="grid">
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['generated_video_mp4']))}"></video>
-        <figcaption>Generated inference video</figcaption>
+        <figcaption>
+          Generated inference video
+          <br />Source: final <code>pipe(...)</code> sampling result after object context injection.
+        </figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['context_video_mp4']))}"></video>
-        <figcaption>Actual context video sent to pipe()</figcaption>
+        <figcaption>
+          Actual context video sent to pipe()
+          <br />Source: frames sampled from <code>source_video</code> using this ctx setting, then resized and converted into the actual <code>context_video</code> tensor / PIL frames.
+        </figcaption>
       </figure>
       <figure>
         <img src="{html.escape(str(result['context_sheet_jpg']))}" />
-        <figcaption>Context contact sheet</figcaption>
+        <figcaption>
+          Context contact sheet
+          <br />Source: the same context frame list that is fed into <code>pipe()</code>.
+        </figcaption>
       </figure>
       <figure>
         <img src="{html.escape(str(result['prompt_text_png']))}" />
-        <figcaption>Prompt text</figcaption>
+        <figcaption>
+          Prompt text
+          <br />Source: input json field <code>input_caption</code>.
+        </figcaption>
       </figure>
       <figure>
         <img src="{html.escape(str(result['prompt_preview_png']))}" />
-        <figcaption>Prompt frame plus prompt boxes and sampled query points</figcaption>
+        <figcaption>
+          Prompt frame plus prompt boxes and sampled query points
+          <br />Labels: <code>prompt*</code> = viewer-grounding prompt boxes; <code>q*</code> = query points used by CoTracker.
+          <br />Source: <code>grounding_sample.object_tracks[*].box_prompt_xyxy</code> and <code>query_points_prior</code>.
+        </figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['input_overlay_video']))}"></video>
-        <figcaption>Input overlay before pipe(): query points and CoTracker tracks</figcaption>
+        <figcaption>
+          Input overlay before pipe(): query points and CoTracker tracks
+          <br />Labels: <code>sam*</code> = SAM2 / grounding propagated boxes; <code>prompt*</code> = prompt-frame boxes;
+          <code>q*</code> = query points; <code>trk*</code> = CoTracker tracks; <code>(inv)</code> = low-visibility track.
+          <br />Source: <code>grounding_sample.object_tracks</code>, <code>query_points_prior</code>, <code>cotracker_out.tracks</code>, <code>cotracker_out.visibility</code>.
+        </figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['box_overlay_video']))}"></video>
-        <figcaption>Aux predicted boxes vs reference boxes</figcaption>
+        <figcaption>
+          Aux predicted boxes vs reference boxes
+          <br />Labels: red <code>ref*</code> = reference active boxes; green <code>pred*</code> = aux predicted boxes.
+          <br />Source: <code>object_out.active_box_xyxy</code> vs <code>object_aux_out.pred_box_xyxy</code>.
+        </figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['track_overlay_video']))}"></video>
-        <figcaption>Aux predicted track summaries vs reference track summaries</figcaption>
+        <figcaption>
+          Aux predicted track summaries vs reference track summaries
+          <br />Labels: orange <code>ref*</code>/<code>rs*</code> = reference summary center/start; blue <code>pred*</code>/<code>ps*</code> = predicted summary center/start.
+          <br />Source: <code>object_out.active_track_summary[..., :4]</code> vs <code>object_aux_out.pred_track_summary</code>.
+        </figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(str(result['source_full_video_mp4']))}"></video>
-        <figcaption>Original source full video</figcaption>
+        <figcaption>
+          Original source full video
+          <br />Source: input json field <code>source_video</code> if present; otherwise fallback to <code>input_video</code>.
+        </figcaption>
       </figure>
 {input_image_block}    </div>
     <h2>Metrics</h2>

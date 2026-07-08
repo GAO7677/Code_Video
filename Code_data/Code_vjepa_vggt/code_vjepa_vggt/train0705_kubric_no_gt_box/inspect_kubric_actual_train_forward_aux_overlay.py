@@ -531,7 +531,7 @@ def parse_args() -> argparse.Namespace:
     parser.set_defaults(
         fixed_num_context_frames=20,
         min_context_frames=0,
-        max_context_ratio=0.70,
+        max_context_ratio=1.0,
         context_frame_choices=None,
         context_length_sampling="short_biased",
         no_context_ratio=0.0,

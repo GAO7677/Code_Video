@@ -306,6 +306,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         random_context_ratio=0.05,
         no_context_ratio=0.05,
         fixed_num_context_frames=8,
+        ctx_max_length=None,
         enable_object_branch=False,
         object_num_queries=8,
         aux_max_objects=4,
@@ -408,6 +409,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         )
         self.enable_object_branch = bool(enable_object_branch)
         self.fixed_num_context_frames = int(fixed_num_context_frames)
+        self.ctx_max_length = None if ctx_max_length is None else int(ctx_max_length)
         self.aux_max_objects = int(aux_max_objects)
         self.object_num_queries = int(object_num_queries)
         self.total_object_queries = int(self.aux_max_objects * self.object_num_queries)
@@ -459,7 +461,15 @@ class WanTrainingModule(DiffusionTrainingModule):
                 ckpt_path=str(jepa_ckpt_path),
                 device=str(device),
                 crop_size=int(jepa_input_size),
-                num_frames=max(1, self.fixed_num_context_frames),
+                num_frames=max(
+                    1,
+                    self.fixed_num_context_frames,
+                    (
+                        int(self.ctx_max_length) + 1
+                        if self.ctx_max_length is not None
+                        else 0
+                    ),
+                ),
                 patch_size=int(jepa_patch_size),
                 tubelet_size=int(jepa_tubelet_size),
                 trainable=False,
@@ -764,6 +774,19 @@ class WanTrainingModule(DiffusionTrainingModule):
         raise ValueError(
             f"Unsupported context_length_sampling={self.context_length_sampling!r}."
         )
+
+    @staticmethod
+    def _finalize_context_spec(mode, frame_indices, *, ctx_max_length=None):
+        indices = [int(frame_idx) for frame_idx in frame_indices]
+        return {
+            "mode": str(mode),
+            "frame_indices": indices,
+            "sampled_ctx_last_index": (max(indices) if indices else -1),
+            "sampled_ctx_num_frames": len(indices),
+            "ctx_max_length": (
+                None if ctx_max_length is None else int(ctx_max_length)
+            ),
+        }
 
     @staticmethod
     def _group_tracks_to_objects(
@@ -1230,10 +1253,17 @@ class WanTrainingModule(DiffusionTrainingModule):
             inputs_shared["num_frames"] = 4 * (len(data["video"]) - 1) + 1
         return inputs_shared
 
-    def _legacy_sample_context(self, video):
-        total_frames = len(video)
+    def _legacy_sample_context(
+        self,
+        video,
+        *,
+        total_frames_override=None,
+        allow_full_length=False,
+    ):
+        total_frames = int(total_frames_override) if total_frames_override is not None else len(video)
+        max_available_frames = total_frames if allow_full_length else (total_frames - 1)
         max_context_frames = min(
-            total_frames - 1,
+            max_available_frames,
             int(total_frames * self.max_context_ratio),
         )
         if max_context_frames < self.min_context_frames:
@@ -1257,26 +1287,87 @@ class WanTrainingModule(DiffusionTrainingModule):
                 )
             context_frames = self._sample_context_length(valid_choices)
             if context_frames <= 0:
-                return {"mode": "text_only", "frame_indices": []}
-            return {
-                "mode": "prefix",
-                "frame_indices": list(range(context_frames)),
-            }
+                return self._finalize_context_spec("text_only", [])
+            return self._finalize_context_spec(
+                "prefix",
+                list(range(context_frames)),
+            )
 
         # A small fraction of samples drop all visual conditioning so the same model
         # also learns the pure text-to-video path.
         if random.random() < self.no_context_ratio:
-            return {"mode": "text_only", "frame_indices": []}
+            return self._finalize_context_spec("text_only", [])
 
         context_frames = self._sample_context_length(
             range(self.min_context_frames, max_context_frames + 1)
         )
         if context_frames <= 0:
-            return {"mode": "text_only", "frame_indices": []}
-        return {
-            "mode": "prefix",
-            "frame_indices": list(range(context_frames)),
-        }
+            return self._finalize_context_spec("text_only", [])
+        return self._finalize_context_spec(
+            "prefix",
+            list(range(context_frames)),
+        )
+
+    def _sample_context_from_pool(self, total_frames):
+        total_frames = int(total_frames)
+        if total_frames <= 0:
+            raise ValueError(f"Context pool must contain at least 1 frame, got {total_frames}.")
+
+        max_context_last_index = min(
+            total_frames - 1,
+            max(int(total_frames * self.max_context_ratio) - 1, 0),
+        )
+        min_context_last_index = max(int(self.min_context_frames), 0)
+        if max_context_last_index < min_context_last_index:
+            raise ValueError(
+                "Context-pool sampling range is empty. "
+                f"Got total_frames={total_frames}, min_context_frames={self.min_context_frames}, "
+                f"max_context_ratio={self.max_context_ratio}."
+            )
+
+        if random.random() < self.no_context_ratio:
+            return self._finalize_context_spec("text_only", [])
+
+        context_last_index = self._sample_context_length(
+            range(min_context_last_index, max_context_last_index + 1)
+        )
+        return self._finalize_context_spec(
+            "prefix",
+            list(range(int(context_last_index) + 1)),
+            ctx_max_length=max_context_last_index,
+        )
+
+    def _sample_context_from_full_video_prefix(self, total_frames):
+        total_frames = int(total_frames)
+        if total_frames <= 0:
+            raise ValueError(f"Input video must contain at least 1 frame, got {total_frames}.")
+        if self.ctx_max_length is None:
+            raise ValueError("ctx_max_length must be set for full-video prefix context sampling.")
+
+        max_context_last_index = min(total_frames - 1, int(self.ctx_max_length))
+        min_context_last_index = max(int(self.min_context_frames), 0)
+        if max_context_last_index < min_context_last_index:
+            raise ValueError(
+                "Full-video prefix context sampling range is empty. "
+                f"Got total_frames={total_frames}, ctx_max_length={self.ctx_max_length}, "
+                f"min_context_frames={self.min_context_frames}."
+            )
+
+        if random.random() < self.no_context_ratio:
+            return self._finalize_context_spec(
+                "text_only",
+                [],
+                ctx_max_length=max_context_last_index,
+            )
+
+        sampled_ctx_last_index = self._sample_context_length(
+            range(min_context_last_index, max_context_last_index + 1)
+        )
+        return self._finalize_context_spec(
+            "prefix",
+            list(range(int(sampled_ctx_last_index) + 1)),
+            ctx_max_length=max_context_last_index,
+        )
 
     def _scaled_reference_counts(self, total_frames):
         counts = []
@@ -1331,27 +1422,40 @@ class WanTrainingModule(DiffusionTrainingModule):
                 break
 
         if mode == "text_only":
-            return {"mode": mode, "frame_indices": []}
+            return self._finalize_context_spec(mode, [])
         if mode == "first_frame":
-            return {"mode": mode, "frame_indices": [0]}
+            return self._finalize_context_spec(mode, [0])
         if mode == "prefix":
             count = random.choice(counts)
-            return {"mode": mode, "frame_indices": list(range(count))}
+            return self._finalize_context_spec(mode, list(range(count)))
         if mode == "sparse":
             count = random.choice(multiframe_counts)
-            return {
-                "mode": mode,
-                "frame_indices": self._sparse_indices(total_frames, count),
-            }
+            return self._finalize_context_spec(
+                mode,
+                self._sparse_indices(total_frames, count),
+            )
         count = random.choice(multiframe_counts)
         if count <= 1:
-            return {"mode": "first_frame", "frame_indices": [0]}
+            return self._finalize_context_spec("first_frame", [0])
         middle = sorted(random.sample(range(1, total_frames), count - 1))
-        return {"mode": mode, "frame_indices": [0, *middle]}
+        return self._finalize_context_spec(mode, [0, *middle])
 
-    def sample_context_spec(self, video):
+    def sample_context_spec(self, video, raw_sample=None):
         if self.context_sampling_profile == "mixed_modes":
             return self._sample_mixed_context(video)
+        if self.ctx_max_length is not None:
+            total_frames = len(video)
+            if raw_sample is not None:
+                raw_video = raw_sample.get("video")
+                if isinstance(raw_video, torch.Tensor) and raw_video.ndim >= 2:
+                    total_frames = int(raw_video.shape[1])
+            return self._sample_context_from_full_video_prefix(total_frames)
+        if raw_sample is not None and "context_video" in raw_sample:
+            raw_context_video = raw_sample["context_video"]
+            if isinstance(raw_context_video, torch.Tensor) and raw_context_video.ndim >= 2:
+                return self._sample_context_from_pool(
+                    int(raw_context_video.shape[1])
+                )
         return self._legacy_sample_context(video)
 
     def get_pipeline_inputs(self, data):
@@ -1365,14 +1469,16 @@ class WanTrainingModule(DiffusionTrainingModule):
             raw_sample = data
         inputs_posi = {"prompt": prompt}
         inputs_nega = {}
-        context_spec = self.sample_context_spec(video)
+        context_spec = self.sample_context_spec(video, raw_sample=raw_sample)
         context_frame_indices = context_spec["frame_indices"]
         enable_condition_inputs = len(context_frame_indices) > 0
         inputs_shared = {
             "input_video": video,
             "context_video": None,
             "context_frame_indices": context_frame_indices,
-            "sampled_context_frames": len(context_frame_indices),
+            "ctx_max_length": context_spec.get("ctx_max_length"),
+            "sampled_ctx_last_index": int(context_spec.get("sampled_ctx_last_index", -1)),
+            "sampled_ctx_num_frames": int(context_spec.get("sampled_ctx_num_frames", len(context_frame_indices))),
             "context_sampling_mode": context_spec["mode"],
             "height": video[0].size[1],
             "width": video[0].size[0],
@@ -1389,7 +1495,38 @@ class WanTrainingModule(DiffusionTrainingModule):
         }
         if raw_sample is not None:
             sampled_raw = raw_sample
-            if "context_video" in raw_sample and "context_frame_indices" in raw_sample:
+            if (
+                self.ctx_max_length is not None
+                and "video" in raw_sample
+                and isinstance(raw_sample["video"], torch.Tensor)
+                and raw_sample["video"].ndim >= 2
+            ):
+                raw_context_source = raw_sample["video"]
+                sampled_indices = [
+                    int(frame_idx)
+                    for frame_idx in context_frame_indices
+                    if 0 <= int(frame_idx) < int(raw_context_source.shape[1])
+                ]
+                sampled_raw = dict(raw_sample)
+                if sampled_indices:
+                    sampled_index_tensor = torch.tensor(sampled_indices, dtype=torch.long)
+                    sampled_raw["context_video"] = raw_context_source[:, sampled_index_tensor].contiguous()
+                else:
+                    sampled_index_tensor = torch.empty((0,), dtype=torch.long)
+                    sampled_raw["context_video"] = raw_context_source[:, :0].contiguous()
+                sampled_raw["context_frame_indices"] = sampled_index_tensor
+                sampled_raw["num_context_frames"] = int(sampled_index_tensor.numel())
+                sampled_raw["sampled_ctx_last_index"] = int(
+                    context_spec.get("sampled_ctx_last_index", -1)
+                )
+                sampled_raw["sampled_ctx_num_frames"] = int(sampled_index_tensor.numel())
+                sampled_raw["ctx_max_length"] = int(
+                    context_spec.get(
+                        "ctx_max_length",
+                        min(int(raw_context_source.shape[1]) - 1, int(self.ctx_max_length)),
+                    )
+                )
+            elif "context_video" in raw_sample and "context_frame_indices" in raw_sample:
                 raw_context_video = raw_sample["context_video"]
                 sampled_indices = [
                     int(frame_idx)
@@ -1405,6 +1542,12 @@ class WanTrainingModule(DiffusionTrainingModule):
                     sampled_raw["context_video"] = raw_context_video[:, :0].contiguous()
                 sampled_raw["context_frame_indices"] = sampled_index_tensor
                 sampled_raw["num_context_frames"] = int(sampled_index_tensor.numel())
+                sampled_raw["sampled_ctx_last_index"] = int(
+                    context_spec.get("sampled_ctx_last_index", -1)
+                )
+                sampled_raw["sampled_ctx_num_frames"] = int(sampled_index_tensor.numel())
+                if context_spec.get("ctx_max_length") is not None:
+                    sampled_raw["ctx_max_length"] = int(context_spec["ctx_max_length"])
             inputs_shared["raw_sample"] = sampled_raw
             context_video = sampled_raw["context_video"]
             inputs_shared["context_video"] = (
@@ -1413,6 +1556,14 @@ class WanTrainingModule(DiffusionTrainingModule):
                 else None
             )
             inputs_shared["context_frame_indices"] = sampled_raw["context_frame_indices"].tolist()
+            inputs_shared["sampled_ctx_last_index"] = int(
+                sampled_raw.get("sampled_ctx_last_index", inputs_shared["sampled_ctx_last_index"])
+            )
+            inputs_shared["sampled_ctx_num_frames"] = int(
+                sampled_raw.get("sampled_ctx_num_frames", sampled_raw.get("num_context_frames", 0))
+            )
+            if "ctx_max_length" in sampled_raw:
+                inputs_shared["ctx_max_length"] = int(sampled_raw["ctx_max_length"])
         inputs_shared = self.parse_extra_inputs(
             data,
             self.extra_inputs,
@@ -1576,6 +1727,12 @@ def wan_parser():
         default="uniform",
         choices=["uniform", "short_biased"],
         help="How to sample a legal context length for legacy_prefix sampling.",
+    )
+    parser.add_argument(
+        "--ctx_max_length",
+        type=int,
+        default=None,
+        help="When set, ignore dataset context pools and sample a short-biased prefix directly from full video indices 0..ctx_max_length.",
     )
     parser.add_argument(
         "--context_reference_frames",
@@ -1875,6 +2032,12 @@ def wan_parser():
         default=8,
         help="How many validation batches to average for the lightweight head-only validation loss.",
     )
+    parser.add_argument(
+        "--debug_print_context_sampling",
+        action="store_true",
+        default=False,
+        help="Print sampled context-frame statistics to stdout every optimizer step.",
+    )
     return parser
 
 
@@ -1897,6 +2060,10 @@ def prepare_args(args):
         raise ValueError(
             f"min_context_frames must be at least 0, got {args.min_context_frames}."
         )
+    if args.ctx_max_length is not None and int(args.ctx_max_length) < 0:
+        raise ValueError(
+            f"ctx_max_length must be at least 0 when set, got {args.ctx_max_length}."
+        )
     if not 0.0 <= args.no_context_ratio <= 1.0:
         raise ValueError(
             f"no_context_ratio must be in [0, 1], got {args.no_context_ratio}."
@@ -1915,9 +2082,9 @@ def prepare_args(args):
             f"first_frame={args.first_frame_context_ratio}, sparse={args.sparse_context_ratio}, "
             f"random={args.random_context_ratio}, no_context={args.no_context_ratio}."
         )
-    if not 0.0 < args.max_context_ratio < 1.0:
+    if not 0.0 < args.max_context_ratio <= 1.0:
         raise ValueError(
-            f"max_context_ratio must be in (0, 1.0), got {args.max_context_ratio}."
+            f"max_context_ratio must be in (0, 1.0], got {args.max_context_ratio}."
         )
     if args.context_frame_choices is not None:
         parsed_context_choices = [
@@ -2003,15 +2170,18 @@ def prepare_args(args):
         raise ValueError(
             f"validation_context_frames_list must contain only non-negative integers, got {validation_contexts}."
         )
-    max_context_frames = min(
-        args.num_frames - 1,
-        int(args.num_frames * args.max_context_ratio),
-    )
-    if max_context_frames < args.min_context_frames:
+    if args.ctx_max_length is not None:
+        max_context_last_index = min(args.num_frames - 1, int(args.ctx_max_length))
+    else:
+        max_context_last_index = min(
+            args.num_frames - 1,
+            int(args.num_frames * args.max_context_ratio),
+        )
+    if max_context_last_index < args.min_context_frames:
         raise ValueError(
             "Context sampling range is empty for the configured video length. "
             f"num_frames={args.num_frames}, min_context_frames={args.min_context_frames}, "
-            f"max_context_ratio={args.max_context_ratio}."
+            f"ctx_max_length={args.ctx_max_length}, max_context_ratio={args.max_context_ratio}."
         )
     if not args.checkpoint_output_subdir:
         raise ValueError("checkpoint_output_subdir must be a non-empty path segment.")
@@ -2131,6 +2301,7 @@ def build_model(args, accelerator):
         random_context_ratio=args.random_context_ratio,
         no_context_ratio=args.no_context_ratio,
         fixed_num_context_frames=args.fixed_num_context_frames,
+        ctx_max_length=args.ctx_max_length,
         enable_object_branch=args.enable_object_branch,
         object_num_queries=args.object_num_queries,
         aux_max_objects=args.aux_max_objects,
@@ -3259,6 +3430,20 @@ def train_loop(
                     metrics.update(extra_metrics)
                     metrics.update(grad_stats)
                     accelerator.log(metrics, step=global_step)
+                    if args.debug_print_context_sampling and accelerator.is_local_main_process:
+                        sampled_ctx = extra_metrics.get("train/sampled_ctx_num_frames")
+                        if sampled_ctx is not None:
+                            ctx_last = extra_metrics.get("train/sampled_ctx_last_index", -1.0)
+                            ctx_cap = extra_metrics.get("train/ctx_max_length", -1.0)
+                            jepa_ctx = extra_metrics.get("train/jepa_input_frames", -1.0)
+                            accelerator.print(
+                                "[context-sampling] "
+                                f"step={global_step} "
+                                f"ctx_max_length={int(round(float(ctx_cap)))} "
+                                f"sampled_ctx_last_index={int(round(float(ctx_last)))} "
+                                f"sampled_ctx_num_frames={int(round(float(sampled_ctx)))} "
+                                f"jepa_input_frames={int(round(float(jepa_ctx)))}"
+                            )
 
                 progress["global_step"] = global_step
                 progress["epoch_id"] = epoch_id

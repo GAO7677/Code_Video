@@ -220,6 +220,12 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
 
         sample = inputs_shared["raw_sample"]
         num_context_frames = int(sample.get("num_context_frames", 0))
+        context_frame_indices = sample.get("context_frame_indices", None)
+        if isinstance(context_frame_indices, torch.Tensor) and int(context_frame_indices.numel()) > 0:
+            sampled_ctx_last_index = float(context_frame_indices.max().item())
+        else:
+            sampled_ctx_last_index = -1.0
+        ctx_max_length = float(sample.get("ctx_max_length", -1))
         if num_context_frames <= 0:
             object_context = torch.zeros(
                 (1, int(self.aux_max_objects), int(self.object_adapter.dim)),
@@ -248,6 +254,9 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 "train/object_latent_tokens_abs_max": 0.0,
                 "train/object_context_abs_max": 0.0,
                 "train/object_context_abs_mean": 0.0,
+                "train/ctx_max_length": ctx_max_length,
+                "train/sampled_ctx_last_index": sampled_ctx_last_index,
+                "train/sampled_ctx_num_frames": 0.0,
             }
             return total, metrics
 
@@ -357,6 +366,9 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/object_context_abs_mean": float(object_context_abs.mean().item()),
             "train/jepa_input_frames": float(jepa_ctx_fix["jepa_context_frames"]),
             "train/jepa_padding_frames": float(jepa_ctx_fix["padded_context_frames"]),
+            "train/ctx_max_length": ctx_max_length,
+            "train/sampled_ctx_last_index": sampled_ctx_last_index,
+            "train/sampled_ctx_num_frames": float(num_context_frames),
         }
         return total, metrics
 
@@ -547,6 +559,7 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         min_context_frames=args.min_context_frames,
         max_context_ratio=args.max_context_ratio,
         context_frame_choices=args.context_frame_choices,
+        context_length_sampling=args.context_length_sampling,
         context_reference_frames=args.context_reference_frames,
         context_reference_prefixes=args.context_reference_prefixes,
         prefix_context_ratio=args.prefix_context_ratio,
@@ -555,6 +568,7 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         random_context_ratio=args.random_context_ratio,
         no_context_ratio=args.no_context_ratio,
         fixed_num_context_frames=args.fixed_num_context_frames,
+        ctx_max_length=args.ctx_max_length,
         enable_object_branch=args.enable_object_branch,
         object_num_queries=args.object_num_queries,
         aux_max_objects=args.aux_max_objects,

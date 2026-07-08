@@ -68,11 +68,12 @@ def _sample_context_spec(
     no_context_ratio: float,
     rng: random.Random,
 ) -> dict[str, Any]:
-    max_context_frames = min(
+    max_context_last_index = min(
         total_frames - 1,
-        int(total_frames * max_context_ratio),
+        max(int(total_frames * max_context_ratio) - 1, 0),
     )
-    if max_context_frames < min_context_frames:
+    min_context_last_index = max(int(min_context_frames), 0)
+    if max_context_last_index < min_context_last_index:
         raise ValueError(
             "Context sampling range is empty. "
             f"Got total_frames={total_frames}, min_context_frames={min_context_frames}, "
@@ -83,7 +84,7 @@ def _sample_context_spec(
         valid_choices = [
             value
             for value in context_frame_choices
-            if min_context_frames <= value <= max_context_frames
+            if min_context_last_index <= value <= max_context_last_index
         ]
         if not valid_choices:
             raise ValueError(
@@ -96,21 +97,17 @@ def _sample_context_spec(
             context_length_sampling=context_length_sampling,
             rng=rng,
         )
-        if context_frames <= 0:
-            return {"mode": "text_only", "frame_indices": []}
-        return {"mode": "prefix", "frame_indices": list(range(context_frames))}
+        return {"mode": "prefix", "frame_indices": list(range(int(context_frames) + 1))}
 
     if rng.random() < no_context_ratio:
         return {"mode": "text_only", "frame_indices": []}
 
-    context_frames = _sample_context_length(
-        range(min_context_frames, max_context_frames + 1),
+    context_last_index = _sample_context_length(
+        range(min_context_last_index, max_context_last_index + 1),
         context_length_sampling=context_length_sampling,
         rng=rng,
     )
-    if context_frames <= 0:
-        return {"mode": "text_only", "frame_indices": []}
-    return {"mode": "prefix", "frame_indices": list(range(context_frames))}
+    return {"mode": "prefix", "frame_indices": list(range(int(context_last_index) + 1))}
 
 
 def _build_grounding_provider(args: argparse.Namespace) -> ViewerGroundingBoxProvider:
@@ -426,7 +423,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_frames", type=int, default=69)
     parser.add_argument("--fixed_num_context_frames", type=int, default=20)
     parser.add_argument("--min_context_frames", type=int, default=0)
-    parser.add_argument("--max_context_ratio", type=float, default=0.70)
+    parser.add_argument("--max_context_ratio", type=float, default=1.0)
     parser.add_argument("--context_frame_choices", type=str, default=None)
     parser.add_argument(
         "--context_length_sampling",

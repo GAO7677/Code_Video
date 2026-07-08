@@ -5,11 +5,55 @@ import os
 import imageio
 import random
 from PIL import Image
-from diffusers import WanImageToVideoPipeline, AutoencoderKLWan, ModularPipeline
+from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
 from diffusers.utils import export_to_video, load_image
 import numpy as np
 import random
 import glob
+
+
+def _open_video_reader(video_path):
+    try:
+        return imageio.get_reader(video_path, format="FFMPEG")
+    except Exception:
+        return imageio.get_reader(video_path)
+
+
+def _safe_video_length(reader):
+    try:
+        frame_count = int(reader.count_frames())
+        if frame_count > 0:
+            return frame_count
+    except Exception:
+        pass
+
+    try:
+        frame_count = int(reader.get_length())
+        if frame_count > 0:
+            return frame_count
+    except Exception:
+        pass
+
+    try:
+        meta = reader.get_meta_data()
+    except Exception:
+        meta = {}
+
+    fps = meta.get("fps")
+    duration = meta.get("duration")
+    if fps and duration:
+        estimated = int(round(float(fps) * float(duration)))
+        if estimated > 0:
+            return estimated
+
+    try:
+        frame_count = sum(1 for _ in reader)
+        if frame_count > 0:
+            return frame_count
+    except Exception:
+        pass
+
+    raise RuntimeError("Unable to determine video frame count")
 
 
 class WanV2V5BDataset(Dataset):
@@ -87,8 +131,8 @@ class WanV2V5BDataset(Dataset):
                 frames = []
 
                 # get frames
-                with imageio.get_reader(video_path) as reader:
-                    mp4_frames = int(reader.count_frames())
+                with _open_video_reader(video_path) as reader:
+                    mp4_frames = _safe_video_length(reader)
                     if mp4_frames < self.num_frames:
                         raise Exception(f"mp4_frames < self.num_frames,{mp4_frames}<{self.num_frames}")
 
@@ -123,7 +167,7 @@ class WanV2V5BDataset(Dataset):
                     mask_path1 = os.path.join(video_dir, "mask_object_1.mp4")
                     mask_path2 = os.path.join(video_dir, "mask_object_2.mp4")
 
-                    with imageio.get_reader(mask_path1) as m_reader:
+                    with _open_video_reader(mask_path1) as m_reader:
                         for frame_id in idxs:
                             if len(mask_frames_1) == self.num_frames:
                                 break
@@ -132,7 +176,7 @@ class WanV2V5BDataset(Dataset):
                             frame = self.crop_and_resize(frame,self.height,self.width)
                             mask_frames_1.append(frame)
                     
-                    with imageio.get_reader(mask_path2) as m_reader:
+                    with _open_video_reader(mask_path2) as m_reader:
                         for frame_id in idxs:
                             if len(mask_frames_2) == self.num_frames:
                                 break
@@ -239,8 +283,8 @@ class WanV2V5BInferDataset(Dataset):
                 text = self.data_list[idx]["text"]
                 video_path = self.data_list[idx]["path"]
                 frames = []
-                with imageio.get_reader(video_path) as reader:
-                    mp4_frames = int(reader.count_frames())
+                with _open_video_reader(video_path) as reader:
+                    mp4_frames = _safe_video_length(reader)
                     if mp4_frames < self.num_frames:
                         raise Exception(f"mp4_frames < self.num_frames,{mp4_frames}<{self.num_frames}")
 
@@ -283,4 +327,3 @@ class WanV2V5BInferDataset(Dataset):
         data["text"] = [d[0] for d in batch]
         data["video"] = [d[1] for d in batch]
         return data
-

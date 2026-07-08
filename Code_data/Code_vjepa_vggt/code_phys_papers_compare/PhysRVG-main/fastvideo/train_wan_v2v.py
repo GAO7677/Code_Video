@@ -32,7 +32,7 @@ from diffusers.utils import check_min_version
 from diffusers.video_processor import VideoProcessor
 from diffusers import AutoencoderKLWan, WanPipeline
 from diffusers.schedulers.scheduling_unipc_multistep import UniPCMultistepScheduler
-from diffusers import AutoencoderKLWan, ModularPipeline
+from diffusers import AutoencoderKLWan
 from diffusers.utils import export_to_video, load_image
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftModel
 from safetensors.torch import load_file, save_file

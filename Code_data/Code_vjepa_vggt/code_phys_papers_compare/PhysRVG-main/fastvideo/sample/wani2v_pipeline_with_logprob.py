@@ -13,7 +13,7 @@ from diffusers.image_processor import PipelineImageInput
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.pipelines.wan.pipeline_wan_i2v import retrieve_latents
 from diffusers.utils import export_to_video, load_image
-from diffusers import WanImageToVideoPipeline, AutoencoderKLWan, ModularPipeline
+from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
 
 from fastvideo.utils.logging_ import main_print
 
