@@ -346,13 +346,18 @@ def _tensor_video_to_pil_list(context_video_single: torch.Tensor):
 def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     parser = t0705.build_parser()
     model_args = parser.parse_args([])
+    jepa_tubelet_size = max(1, int(getattr(args, "jepa_tubelet_size", 2)))
+    configured_context_frames = max(int(args.context_frames), jepa_tubelet_size)
 
     model_args.diffsynth_root = str(args.diffsynth_root)
     model_args.wan_root = str(args.wan_root)
     model_args.height = int(args.height)
     model_args.width = int(args.width)
     model_args.num_frames = int(args.num_frames)
-    model_args.fixed_num_context_frames = int(args.context_frames)
+    # Keep JEPA on the video backbone path even when inference requests a
+    # single context frame. The actual context clip length is still governed by
+    # the loaded video frames and may remain 1; this only affects module setup.
+    model_args.fixed_num_context_frames = configured_context_frames
     model_args.max_train_steps = 1
     model_args.num_epochs = 1
     model_args.output_path = str(args.output_dir)

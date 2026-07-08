@@ -1,0 +1,39 @@
+torchrun --nnodes=1 --nproc_per_node=8 \
+    fastvideo/train_wan_rl.py \
+    --reward_type position \
+    --exp_name physrvg \
+    --reward_model_path models/sam2.1-hiera-large \
+    --model_id models/Wan2.2-TI2V-5B-Diffusers \
+    --resume_from_checkpoint models/dit/diffusion_pytorch_model.safetensors \
+    --data_json_path data/data.jsonl \
+    --data_repeat 1000 \
+    --output_dir exp \
+    --seed 42 \
+    --guidance_scale 5 \
+    --fps 15 \
+    --train_batch_size 1 \
+    --timestep_fraction 1.0 \
+    --gradient_checkpointing \
+    --learning_rate 1e-5 \
+    --weight_decay 0.0001 \
+    --lr_warmup_steps 0 \
+    --dataloader_num_workers 4 \
+    --train_epoch 99999 \
+    --max_train_steps 999999 \
+    --checkpoints_total_limit 2 \
+    --max_grad_norm 1.0 \
+    --height 480 \
+    --width 832 \
+    --num_frames 49 \
+    --eta 1.0 \
+    --num_generations 4 \
+    --sampling_steps 8 \
+    --bestofn 4 \
+    --collision_loss_weight \
+    --gradient_accumulation_steps 4 \
+    --use_same_noise \
+    --hybrid_train \
+    --checkpointing_steps 20 \
+    --hybrid_train_threshold 10.0 \
+    --start_max 8 \
+    --use_lora \

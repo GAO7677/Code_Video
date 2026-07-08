@@ -270,6 +270,23 @@ CONTEXT_FRAME_VALUES=1,4,8,12,16,20 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_batch_ctx_sweep_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.sh
 ```
 
+如果要按多个 GPU pair 并行分配不同 `ctx` 任务，可直接传：
+
+```bash
+INFERENCE_GPU_PAIRS="6,7 7,6 3,5 5,3" \
+INFERENCE_DEVICES=cuda:0,cuda:1 \
+CONTEXT_FRAME_VALUES=1,4,8,12,16,20 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_ctxn \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_batch_ctx_sweep_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.sh
+```
+
+上述配置会按 round-robin 分配：
+
+- `6,7` -> `ctx01, ctx16`
+- `7,6` -> `ctx04, ctx20`
+- `3,5` -> `ctx08`
+- `5,3` -> `ctx12`
+
 输出根目录：
 
 ```text
@@ -365,7 +382,38 @@ num_skipped=0
 ```
 
 
-## 6. 备注
+## 6. 辅助检查脚本区别
+
+这 4 个脚本可以按“介入训练链路的深浅”来理解：
+
+- `sample_kubric_overlay_inputs.py`
+  作用：只负责从 Kubric/PhyCo 数据集里抽样，生成后续检查脚本可直接使用的输入 json。
+  特点：不建模，不跑 viewer grounding，不跑 CoTracker / JEPA / VGGT，也不跑训练前向或 loss。
+
+- `visualize_kubric_actual_train_samples.py`
+  作用：查看“训练真正会吃到什么输入”。
+  特点：会按训练配置重新采样实际 context 帧，展示 full video、train clip、20-frame context pool、实际 sampled context、grounding prompt boxes、query points、CoTracker overlay 和 metadata。
+  限制：只到输入和先验层，不进入完整训练前向，不算 `loss_main`，也不检查 aux 预测框 / 预测轨迹。
+
+- `inspect_kubric_train_forward_aux_overlay.py`
+  作用：对训练样本真实跑一次模型前向，检查 aux 分支输出。
+  特点：会真实经过 `_build_object_query_priors`、`_run_cotracker`、`_run_vggt`、`_run_jepa`、`object_pooler`、`object_aux_heads`、`object_adapter`，并计算 `loss_main`、`loss_object_context_reg`、`loss_total`。
+  输出重点：input overlay、reference box vs aux predicted box、reference track summary vs aux predicted track summary、以及真实前向得到的 metrics。
+
+- `inspect_kubric_actual_train_forward_aux_overlay.py`
+  作用：在“真实训练时的 context 采样方式”下，再跑一次前向和 aux overlay。
+  特点：先对数据集样本按训练配置重新做实际 context 采样，再复用 `inspect_kubric_train_forward_aux_overlay.py` 的前向和可视化能力。
+  额外输出：`context_sampling_mode`、`raw_context_pool_indices`、`actual_context_local_indices`、`actual_context_source_indices`、`sampled_train_frame_indices`、`context_pool.mp4` 等，更贴近训练现场。
+
+怎么选：
+
+- 只想快速造一批检查输入：用 `sample_kubric_overlay_inputs.py`
+- 只想看训练输入长什么样：用 `visualize_kubric_actual_train_samples.py`
+- 想看真实前向和 aux 监督结果：用 `inspect_kubric_train_forward_aux_overlay.py`
+- 想看真实训练采样下的真实前向结果：优先用 `inspect_kubric_actual_train_forward_aux_overlay.py`
+
+
+## 7. 备注
 
 - 禁止使用 `gpu4`。
 - `run_smoke_stage1b_context_only_no_gt_box_v_newtrain_kubric.sh` 默认是单卡单进程。

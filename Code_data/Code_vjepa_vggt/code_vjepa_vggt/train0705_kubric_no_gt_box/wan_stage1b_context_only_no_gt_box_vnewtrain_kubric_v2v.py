@@ -14,13 +14,13 @@ CUDA_VISIBLE_DEVICES=2 \
 
 Run command example (two GPU):
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
-CUDA_VISIBLE_DEVICES=5,6 \
+CUDA_VISIBLE_DEVICES=0,1 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
   --model-name train_stage1b_kubric0708_step1000_f98 \
-  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+  --output-root /data/gaoya/AAA_test_video/tmp \
   --inference-devices cuda:0,cuda:1 \
   --num-inference-steps 40 \
   --output-num-frames 98
@@ -78,6 +78,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image
 
 
 def _read_cli_arg_value(argv: list[str], names: tuple[str, ...], default: str | None = None) -> str | None:
@@ -211,6 +212,60 @@ def _load_context_video_for_mode(
         frames = frames[:target_context_frames]
         frame_indices = frame_indices[:target_context_frames]
     return frames, frame_indices
+
+
+def _resolve_source_video(payload: dict[str, object], json_path: Path) -> str:
+    source_video = payload.get("source_video")
+    if isinstance(source_video, str) and source_video.strip():
+        return source_video.strip()
+    return core._resolve_input_video(payload, json_path)
+
+
+def _save_context_contact_sheet(
+    *,
+    context_pil: list[Image.Image],
+    output_path: Path,
+) -> None:
+    if not context_pil:
+        raise RuntimeError("context_pil is empty; cannot save contact sheet")
+    widths = [int(image.width) for image in context_pil]
+    heights = [int(image.height) for image in context_pil]
+    canvas = Image.new("RGB", (sum(widths), max(heights)))
+    cursor_x = 0
+    for image in context_pil:
+        canvas.paste(image, (cursor_x, 0))
+        cursor_x += int(image.width)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(output_path, format="JPEG", quality=95)
+
+
+def _has_complete_existing_output(output_video: Path, output_json: Path) -> bool:
+    if not output_video.exists() or not output_json.exists():
+        return False
+    try:
+        with output_json.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return False
+
+    input_video = payload.get("input_video")
+    if not isinstance(input_video, str) or not input_video.strip():
+        return False
+
+    input_video_path = Path(input_video).expanduser()
+    if not input_video_path.is_absolute():
+        input_video_path = (output_json.parent / input_video_path).resolve()
+    else:
+        input_video_path = input_video_path.resolve()
+
+    return input_video_path.exists()
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    if isinstance(exc, torch.OutOfMemoryError):
+        return True
+    message = str(exc).lower()
+    return "cuda out of memory" in message or "out of memory" in message
 
 
 def parse_args() -> argparse.Namespace:
@@ -388,7 +443,7 @@ def _run_single_case_in_process(
     model,
     checkpoint_dir: Path,
     input_json_path: Path,
-    input_video: str,
+    source_video: str,
     input_caption: str,
     output_dir: Path,
     output_video: Path,
@@ -409,11 +464,11 @@ def _run_single_case_in_process(
 ) -> tuple[dict[str, object], list[str]]:
     logs: list[str] = []
     logs.append(f"[case] input_json={input_json_path}")
-    logs.append(f"[case] input_video={input_video}")
+    logs.append(f"[case] source_video={source_video}")
     logs.append(f"[case] input_caption={input_caption}")
     logs.append(f"[case] checkpoint_dir={checkpoint_dir}")
 
-    context_video_path = Path(input_video).expanduser().resolve()
+    context_video_path = Path(source_video).expanduser().resolve()
     frames, frame_indices = _load_context_video_for_mode(
         video_path=context_video_path,
         target_context_frames=int(context_frames),
@@ -457,11 +512,16 @@ def _run_single_case_in_process(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_video.parent.mkdir(parents=True, exist_ok=True)
+    context_sheet_path = output_video.with_name(
+        f"{output_video.stem}_input_ctx{effective_context_frames:02d}.jpg"
+    )
+    _save_context_contact_sheet(context_pil=context_pil, output_path=context_sheet_path)
     save_video(video, str(output_video), fps=int(fps), quality=int(quality))
 
     result = {
         "input_json": str(input_json_path),
-        "input_video": str(input_video),
+        "input_video": str(context_sheet_path),
+        "source_video": str(source_video),
         "input_caption": str(input_caption),
         "output_video": str(output_video),
         "seed": int(seed),
@@ -574,7 +634,7 @@ def main() -> None:
     for input_json_path in json_paths:
         payload = core._load_input_json(input_json_path)
         try:
-            input_video = core._resolve_input_video(payload, input_json_path)
+            source_video = _resolve_source_video(payload, input_json_path)
             input_caption = core._ensure_str_field(payload, "input_caption", input_json_path)
         except (KeyError, ValueError) as exc:
             print(f"[skip] {weights_root.name} {input_json_path.stem}: {exc}")
@@ -586,7 +646,9 @@ def main() -> None:
         output_json = step_output_dir / f"{sample_stem}.json"
         output_log = step_output_dir / f"{sample_stem}.log"
 
-        if output_video.exists() and output_json.exists() and not (cli_args.force or cli_args.overwrite):
+        if _has_complete_existing_output(output_video, output_json) and not (
+            cli_args.force or cli_args.overwrite
+        ):
             print(f"[skip] {weights_root.name} {sample_stem}")
             step_skipped += 1
             continue
@@ -596,7 +658,7 @@ def main() -> None:
                 model=model,
                 checkpoint_dir=weights_root,
                 input_json_path=input_json_path,
-                input_video=input_video,
+                source_video=source_video,
                 input_caption=input_caption,
                 output_dir=step_output_dir,
                 output_video=output_video,
@@ -620,6 +682,10 @@ def main() -> None:
             core._write_text_lines(output_log, error_lines)
             print(f"[error] {weights_root.name} {sample_stem}: {exc}")
             step_failed += 1
+            if _is_cuda_oom(exc):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise SystemExit(86) from exc
             continue
 
         success_lines = step_log_lines + case_logs + [f"[done] {weights_root.name} {sample_stem}"]
