@@ -413,7 +413,62 @@ num_skipped=0
 - 想看真实训练采样下的真实前向结果：优先用 `inspect_kubric_actual_train_forward_aux_overlay.py`
 
 
-## 7. 备注
+## 7. 推理版 ctx sweep 中间可视化脚本
+
+新增脚本：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/inspect_kubric_infer_forward_ctx_sweep.py
+```
+
+作用：
+
+- 走 Kubric `stage1b context-only no-GT-box` 的真实推理链路，不走训练 dataset 路径。
+- 对同一批推理 case，分别用 `ctx=1,4,8,12,16,20` 做 sweep。
+- 每个 `ctx` 都会真实执行：
+  `source_video -> context 取帧 -> viewer grounding / CoTracker / VGGT / JEPA / object pooler / object adapter -> pipe() 生成`
+- 同时导出“中间前向可视化”与“最终生成视频”，方便对齐：
+  实际喂给 `pipe()` 的 context、prompt、可选 `input_image`、前向 overlay、最终生成结果。
+
+运行示例：
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+CUDA_VISIBLE_DEVICES=2,3 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/inspect_kubric_infer_forward_ctx_sweep.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+  --model-name train_stage1b_kubric0708_step1000_ctx_sweep \
+  --output-root /data/gaoya/agent-data/outputs/kubric_infer_forward_ctx_sweep \
+  --inference-devices cuda:0,cuda:1 \
+  --num-inference-steps 40 \
+  --num-frames 49 \
+  --ctx-values 1,4,8,12,16,20
+```
+
+输出结构：
+
+- 根目录按 `step-xxxxx` 再分层。
+- 每个样本再按 `ctx01/ctx04/ctx08/ctx12/ctx16/ctx20` 分子目录。
+- 每个 `ctx` 子目录至少包含：
+  `generated_video.mp4`、`context_video.mp4`、`context_sheet.jpg`、`prompt_text.png`、
+  `prompt_preview.png`、`input_prepipe_overlay.mp4`、`aux_pred_box_overlay.mp4`、
+  `aux_pred_track_overlay.mp4`、`source_full_video.browser.mp4`、`result.json`、`index.html`。
+- 若输入 json 里有 `input_image` 或 `first_frame_path`，会额外导出 `input_image.png`。
+
+说明：
+
+- `source_video` 优先作为 context 源；不存在时才回落到 `input_video`。
+- 如果源视频帧数小于请求的 `ctx`，会自动降到实际可用帧数，不报错。
+- `result.json` 里会记录 `requested_context_frames`、`effective_context_frames`、`frame_indices`、
+  prompt / source video / 可选 input image 路径、forward metrics、以及各可视化文件名。
+- 这个脚本是“推理版 actual forward overlay”，和
+  `inspect_kubric_actual_train_forward_aux_overlay.py` 的区别在于：
+  前者输入来自推理 case json，后者输入来自训练 dataset sample。
+
+
+## 8. 备注
 
 - 禁止使用 `gpu4`。
 - `run_smoke_stage1b_context_only_no_gt_box_v_newtrain_kubric.sh` 默认是单卡单进程。
