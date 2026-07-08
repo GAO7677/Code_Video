@@ -73,6 +73,20 @@ OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_comp
 OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
+
+
+
+GPU_PAIR=0,0 \
+TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001500 \
+METHOD_NAME=train_stage1b_kubric0708_step1500 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+OUTPUT_FRAMES=24 \
+CTX=8 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
+
 ```
 
 如果要明确写出输入预处理参数，也可以加：
