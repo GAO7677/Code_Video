@@ -65,11 +65,11 @@
 - 跑一整份 txt
 
 ```bash
-GPU_PAIR=6,6 \
+GPU_PAIR=0,0 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-003500 \
-METHOD_NAME=train_stage1b_kubric0708with_step3500 \
-OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+METHOD_NAME=train_stage1b_diffsynth_native0705_step2500 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0705 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
@@ -108,6 +108,50 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 ```
+
+## 3.1 按 GPU 数量自动分 shard 的并行脚本
+
+如果想把一个 `txt` 按 GPU 数量自动均分，再用多张单卡并行启动，可以用：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_parallel_infer_from_txt.sh
+```
+
+核心特性：
+
+- `--gpus 0,2,3`
+  传几张卡，就自动切几份 shard
+- 会把 `txt` 中的 case 按 round-robin 均分到各 shard
+- 每个 shard 用一张单卡启动一个 worker
+- 默认 `negative_prompt=DEFAULT_NEGATIVE_PROMPT`
+- 可以通过命令行覆盖 `ctx / output_frames / negative_prompt`
+
+运行示例：
+
+```bash
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_parallel_infer_from_txt.sh \
+  --input-txt /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_diffsynth_native0705_0705 \
+  --method-name train_stage1b_diffsynth_native0705_step2500 \
+  --gpus 5,6,7 \
+  --ctx 8 \
+  --output-frames 49 \
+  --negative-prompt default
+```
+
+其中：
+
+- `--negative-prompt default`
+  表示使用脚本内部的 `DEFAULT_NEGATIVE_PROMPT`
+- `--negative-prompt empty`
+  表示显式传空串 `""`
+- `--negative-prompt "some text"`
+  表示使用自定义 negative prompt
+
+分片文件会落在：
+
+- `/data/gaoya/agent-data/outputs/<txt_stem>_<step_name>_ctx<ctx>_gpus<gpu_tag>_shards`
 
 如果要明确写出输入预处理参数，也可以加：
 
