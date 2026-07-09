@@ -72,6 +72,14 @@ from diffsynth.utils.data import save_video
 
 
 DEFAULT_OUTPUT_BASE = "/data/gaoya/agent-data/outputs/kubric_infer_forward_ctx_sweep"
+SLOT_COLORS = (
+    (214, 40, 40),
+    (247, 127, 0),
+    (252, 191, 73),
+    (42, 157, 143),
+    (39, 125, 161),
+    (106, 76, 147),
+)
 
 
 def _parse_ctx_values(raw_value: str) -> list[int]:
@@ -93,9 +101,42 @@ def _parse_ctx_values(raw_value: str) -> list[int]:
     return deduped
 
 
+def _parse_optional_int_list(raw_value: str | None) -> list[int] | None:
+    if raw_value is None:
+        return None
+    values: list[int] = []
+    for item in str(raw_value).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        values.append(int(item))
+    deduped: list[int] = []
+    for value in values:
+        if value not in deduped:
+            deduped.append(value)
+    return deduped or None
+
+
 def _sanitize_name(value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in str(value))
     return cleaned.strip("._") or "sample"
+
+
+def _normalize_slot_ids(slot_ids: list[int] | None, *, slot_count: int) -> list[int]:
+    if slot_ids is None:
+        return list(range(int(slot_count)))
+    normalized: list[int] = []
+    invalid: list[int] = []
+    for slot_id in slot_ids:
+        slot_int = int(slot_id)
+        if 0 <= slot_int < int(slot_count):
+            if slot_int not in normalized:
+                normalized.append(slot_int)
+        else:
+            invalid.append(slot_int)
+    if invalid:
+        raise ValueError(f"slot ids out of range for slot_count={slot_count}: {invalid}")
+    return normalized
 
 
 def _sample_points_from_box(box_xyxy: torch.Tensor, points_per_object: int) -> torch.Tensor:
@@ -200,6 +241,173 @@ def _render_prompt_text_image(prompt: str, output_path: Path) -> Path:
     return output_path
 
 
+def _render_prompt_preview_for_slots(
+    *,
+    context_video: torch.Tensor,
+    grounding_sample: Any,
+    query_points_px_k2: np.ndarray,
+    object_num_queries: int,
+    slot_ids: list[int],
+) -> np.ndarray:
+    prompt_frame_idx = int(getattr(grounding_sample, "prompt_frame_idx", 0))
+    prompt_frame_idx = max(0, min(prompt_frame_idx, int(context_video.shape[1]) - 1))
+    frame = inspectmod.tensor_frame_to_uint8_hwc(context_video[:, prompt_frame_idx]).copy()
+    object_tracks = list(getattr(grounding_sample, "object_tracks", []))
+    for slot_id in slot_ids:
+        if 0 <= int(slot_id) < len(object_tracks):
+            track = object_tracks[int(slot_id)]
+            color = SLOT_COLORS[int(slot_id) % len(SLOT_COLORS)]
+            inspectmod.draw_box_rgb(frame, track.box_prompt_xyxy.astype(np.float32), color, f"prompt{int(slot_id)}")
+    for slot_id in slot_ids:
+        color = SLOT_COLORS[int(slot_id) % len(SLOT_COLORS)]
+        base = int(slot_id) * int(object_num_queries)
+        for local_idx in range(int(object_num_queries)):
+            query_idx = base + int(local_idx)
+            if query_idx >= int(query_points_px_k2.shape[0]):
+                continue
+            inspectmod.draw_point_rgb(
+                frame,
+                query_points_px_k2[query_idx].astype(np.float32),
+                color,
+                f"q{int(slot_id)}_{int(local_idx)}",
+                radius=6,
+            )
+    return frame
+
+
+def _render_input_overlay_for_slots(
+    *,
+    context_video: torch.Tensor,
+    grounding_sample: Any,
+    query_points_px_k2: np.ndarray,
+    tracks_tk2: np.ndarray,
+    visibility_tk: np.ndarray,
+    object_num_queries: int,
+    slot_ids: list[int],
+    prefix: str,
+) -> np.ndarray:
+    frames = []
+    prompt_frame_idx = int(getattr(grounding_sample, "prompt_frame_idx", 0))
+    object_tracks = list(getattr(grounding_sample, "object_tracks", []))
+    for frame_idx in range(int(context_video.shape[1])):
+        frame = inspectmod.tensor_frame_to_uint8_hwc(context_video[:, frame_idx]).copy()
+        for slot_id in slot_ids:
+            if 0 <= int(slot_id) < len(object_tracks):
+                track = object_tracks[int(slot_id)]
+                color = SLOT_COLORS[int(slot_id) % len(SLOT_COLORS)]
+                inspectmod.draw_box_rgb(frame, track.boxes_t4[frame_idx].astype(np.float32), color, f"sam{int(slot_id)}")
+                if frame_idx == prompt_frame_idx:
+                    inspectmod.draw_box_rgb(
+                        frame,
+                        track.box_prompt_xyxy.astype(np.float32),
+                        color,
+                        f"prompt{int(slot_id)}",
+                    )
+        if frame_idx == 0:
+            for slot_id in slot_ids:
+                color = SLOT_COLORS[int(slot_id) % len(SLOT_COLORS)]
+                base = int(slot_id) * int(object_num_queries)
+                for local_idx in range(int(object_num_queries)):
+                    query_idx = base + int(local_idx)
+                    if query_idx >= int(query_points_px_k2.shape[0]):
+                        continue
+                    inspectmod.draw_point_rgb(
+                        frame,
+                        query_points_px_k2[query_idx].astype(np.float32),
+                        color,
+                        f"q{int(slot_id)}_{int(local_idx)}",
+                        radius=6,
+                    )
+        for slot_id in slot_ids:
+            base = int(slot_id) * int(object_num_queries)
+            for local_idx in range(int(object_num_queries)):
+                query_idx = base + int(local_idx)
+                if query_idx >= int(tracks_tk2.shape[1]):
+                    continue
+                label = f"{prefix}{int(slot_id)}_{int(local_idx)}"
+                if float(visibility_tk[frame_idx, query_idx]) < 0.5:
+                    label += "(inv)"
+                inspectmod.draw_point_rgb(
+                    frame,
+                    tracks_tk2[frame_idx, query_idx].astype(np.float32),
+                    SLOT_COLORS[int(slot_id) % len(SLOT_COLORS)],
+                    label,
+                    radius=5,
+                )
+        frames.append(frame)
+    return np.stack(frames, axis=0)
+
+
+def _render_ref_pred_box_overlay_for_slots(
+    *,
+    context_video: torch.Tensor,
+    ref_box_xyxy: np.ndarray,
+    pred_box_xyxy: np.ndarray,
+    valid_mask: np.ndarray,
+    image_hw: tuple[int, int],
+    slot_ids: list[int],
+) -> np.ndarray:
+    frames: list[np.ndarray] = []
+    latent_frames = int(ref_box_xyxy.shape[0])
+    source_frames = int(context_video.shape[1])
+    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    for latent_idx in range(latent_frames):
+        src_idx = int(latent_to_source[latent_idx])
+        frame = inspectmod.tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        for slot_id in slot_ids:
+            if int(slot_id) >= int(ref_box_xyxy.shape[1]) or not bool(valid_mask[latent_idx, int(slot_id)]):
+                continue
+            inspectmod.draw_box_rgb(
+                frame,
+                inspectmod._norm_box_to_px(ref_box_xyxy[latent_idx, int(slot_id)], image_hw),
+                inspectmod.REF_BOX_COLOR,
+                f"ref{int(slot_id)}",
+            )
+            inspectmod.draw_box_rgb(
+                frame,
+                inspectmod._norm_box_to_px(pred_box_xyxy[latent_idx, int(slot_id)], image_hw),
+                inspectmod.PRED_BOX_COLOR,
+                f"pred{int(slot_id)}",
+            )
+        frames.append(frame)
+    return np.stack(frames, axis=0)
+
+
+def _render_ref_pred_track_overlay_for_slots(
+    *,
+    context_video: torch.Tensor,
+    ref_track_summary: np.ndarray,
+    pred_track_summary: np.ndarray,
+    valid_mask: np.ndarray,
+    image_hw: tuple[int, int],
+    slot_ids: list[int],
+) -> np.ndarray:
+    frames: list[np.ndarray] = []
+    latent_frames = int(ref_track_summary.shape[0])
+    source_frames = int(context_video.shape[1])
+    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    for latent_idx in range(latent_frames):
+        src_idx = int(latent_to_source[latent_idx])
+        frame = inspectmod.tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        for slot_id in slot_ids:
+            if int(slot_id) >= int(ref_track_summary.shape[1]) or not bool(valid_mask[latent_idx, int(slot_id)]):
+                continue
+            ref_center, ref_start = inspectmod._summary_to_px(ref_track_summary[latent_idx, int(slot_id)], image_hw)
+            pred_center, pred_start = inspectmod._summary_to_px(pred_track_summary[latent_idx, int(slot_id)], image_hw)
+            inspectmod.draw_point_rgb(frame, ref_center, inspectmod.REF_TRACK_COLOR, f"ref{int(slot_id)}", radius=5)
+            inspectmod.draw_point_rgb(frame, ref_start, inspectmod.REF_TRACK_COLOR, f"rs{int(slot_id)}", radius=3)
+            inspectmod.draw_point_rgb(
+                frame,
+                pred_center,
+                inspectmod.PRED_TRACK_COLOR,
+                f"pred{int(slot_id)}",
+                radius=5,
+            )
+            inspectmod.draw_point_rgb(frame, pred_start, inspectmod.PRED_TRACK_COLOR, f"ps{int(slot_id)}", radius=3)
+        frames.append(frame)
+    return np.stack(frames, axis=0)
+
+
 def _save_input_image_copy(input_image_path: Path, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image = Image.open(input_image_path).convert("RGB")
@@ -256,6 +464,8 @@ def _run_generation(
             mode=str(getattr(model, "_object_context_ablation_mode", "none")),
             random_seed=getattr(model, "_object_context_random_seed", None),
             random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
+            slot_count=int(getattr(model, "aux_max_objects", 0)),
+            keep_slot_ids=getattr(model, "_object_context_keep_slot_ids", None),
         )
 
     pipe_kwargs = dict(
@@ -665,7 +875,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--object-context-ablation",
-        choices=["none", "zero", "random"],
+        choices=["none", "zero", "random", "keep_slot"],
         default="none",
         help="Replace the final object_context fed into Wan DiT for ablation.",
     )
@@ -680,6 +890,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Std multiplier used when --object-context-ablation=random.",
+    )
+    parser.add_argument(
+        "--object-context-keep-slot-ids",
+        type=str,
+        default=None,
+        help="Comma-separated slot ids to keep when --object-context-ablation=keep_slot.",
     )
     return parser.parse_args()
 
@@ -735,6 +951,7 @@ def main() -> None:
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
             "random_scale": float(cli_args.object_context_random_scale),
+            "keep_slot_ids": _parse_optional_int_list(cli_args.object_context_keep_slot_ids),
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
@@ -752,6 +969,7 @@ def main() -> None:
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
+    model._object_context_keep_slot_ids = _parse_optional_int_list(cli_args.object_context_keep_slot_ids)
 
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
@@ -859,33 +1077,30 @@ def main() -> None:
                 query_points_prior = debug["query_points_prior"][0].detach().float().cpu().numpy()
                 cotracker_tracks = debug["cotracker_out"].tracks[0].detach().float().cpu().numpy()
                 cotracker_visibility = debug["cotracker_out"].visibility[0].detach().float().cpu().numpy()
-                valid_queries_px = query_points_prior[:valid_queries]
-                valid_tracks = cotracker_tracks[:, :valid_queries]
-                valid_visibility = cotracker_visibility[:, :valid_queries]
-                query_owner = [
-                    obj_idx
-                    for obj_idx in range(int((debug["object_valid_mask"][0] > 0.5).sum().item()))
-                    for _ in range(int(model.object_num_queries))
-                ]
+                total_slots = int(getattr(model, "aux_max_objects", 0))
+                render_slot_ids = _normalize_slot_ids(
+                    getattr(model, "_object_context_keep_slot_ids", None),
+                    slot_count=total_slots,
+                )
 
-                prompt_preview = inspectmod._render_prompt_preview(
+                prompt_preview = _render_prompt_preview_for_slots(
                     context_video=context_video_single,
                     grounding_sample=grounding_sample,
-                    valid_queries_px=valid_queries_px,
-                    query_owner=query_owner,
+                    query_points_px_k2=query_points_prior[:valid_queries],
+                    object_num_queries=int(model.object_num_queries),
+                    slot_ids=render_slot_ids,
                 )
                 prompt_preview_path = case_dir / "prompt_preview.png"
                 inspectmod._write_rgb_png(prompt_preview_path, prompt_preview)
 
-                input_overlay_video = inspectmod.render_track_overlay(
+                input_overlay_video = _render_input_overlay_for_slots(
                     context_video=context_video_single,
-                    object_tracks=getattr(grounding_sample, "object_tracks", []),
-                    prompt_frame_idx=int(getattr(grounding_sample, "prompt_frame_idx", 0)),
-                    query_points_px_k2=valid_queries_px.astype("float32"),
-                    query_owner=query_owner,
-                    tracks_tk2=valid_tracks.astype("float32"),
-                    visibility_tk=valid_visibility.astype("float32"),
-                    color_rgb=inspectmod.INPUT_TRACK_COLOR,
+                    grounding_sample=grounding_sample,
+                    query_points_px_k2=query_points_prior[:valid_queries].astype("float32"),
+                    tracks_tk2=cotracker_tracks[:, :valid_queries].astype("float32"),
+                    visibility_tk=cotracker_visibility[:, :valid_queries].astype("float32"),
+                    object_num_queries=int(model.object_num_queries),
+                    slot_ids=render_slot_ids,
                     prefix="trk",
                 )
                 input_overlay_raw = case_dir / "input_prepipe_overlay.mp4"
@@ -900,23 +1115,25 @@ def main() -> None:
                 pred_track_summary = debug["object_aux_out"].pred_track_summary[0].detach().float().cpu().numpy()
                 latent_valid_mask = debug["latent_valid_mask"]
 
-                box_overlay_video = inspectmod._render_ref_pred_box_overlay(
+                box_overlay_video = _render_ref_pred_box_overlay_for_slots(
                     context_video=context_video_single,
                     ref_box_xyxy=ref_box_xyxy,
                     pred_box_xyxy=pred_box_xyxy,
                     valid_mask=latent_valid_mask,
                     image_hw=image_hw,
+                    slot_ids=render_slot_ids,
                 )
                 box_overlay_raw = case_dir / "aux_pred_box_overlay.mp4"
                 inspectmod.write_mp4(box_overlay_raw, box_overlay_video, fps=int(cli_args.fps))
                 box_overlay_browser = inspectmod._ensure_browser_video(box_overlay_raw)
 
-                track_overlay_video = inspectmod._render_ref_pred_track_overlay(
+                track_overlay_video = _render_ref_pred_track_overlay_for_slots(
                     context_video=context_video_single,
                     ref_track_summary=ref_track_summary,
                     pred_track_summary=pred_track_summary,
                     valid_mask=latent_valid_mask,
                     image_hw=image_hw,
+                    slot_ids=render_slot_ids,
                 )
                 track_overlay_raw = case_dir / "aux_pred_track_overlay.mp4"
                 inspectmod.write_mp4(track_overlay_raw, track_overlay_video, fps=int(cli_args.fps))
@@ -964,6 +1181,7 @@ def main() -> None:
                         "model_device": str(model.pipe.device),
                         "aux_device": cli_args.aux_device,
                         "query_prior_mode": str(cli_args.query_prior_mode),
+                        "render_slot_ids": render_slot_ids,
                         "object_context_ablation": ablation_debug,
                         "model_args": {
                             "height": int(cli_args.height),

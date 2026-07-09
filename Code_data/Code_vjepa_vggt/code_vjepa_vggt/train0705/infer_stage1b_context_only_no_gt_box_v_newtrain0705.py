@@ -618,6 +618,8 @@ def _apply_object_context_ablation(
     mode: str = "none",
     random_seed: int | None = None,
     random_scale: float = 1.0,
+    slot_count: int | None = None,
+    keep_slot_ids: list[int] | tuple[int, ...] | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, object]]:
     mode_norm = str(mode).strip().lower()
     if object_context is None:
@@ -639,6 +641,8 @@ def _apply_object_context_ablation(
         "input_abs_max": float(base.abs().max().item()),
         "random_seed": None if random_seed is None else int(random_seed),
         "random_scale": float(random_scale),
+        "slot_count": None if slot_count is None else int(slot_count),
+        "keep_slot_ids": None if keep_slot_ids is None else [int(v) for v in keep_slot_ids],
     }
     if mode_norm in ("", "none"):
         debug["applied"] = False
@@ -646,6 +650,32 @@ def _apply_object_context_ablation(
 
     if mode_norm == "zero":
         ablated = torch.zeros_like(object_context)
+    elif mode_norm == "keep_slot":
+        if slot_count is None or int(slot_count) <= 0:
+            raise ValueError("slot_count must be positive when mode=keep_slot")
+        if not keep_slot_ids:
+            raise ValueError("keep_slot_ids must be non-empty when mode=keep_slot")
+        slot_count = int(slot_count)
+        keep_slot_ids = sorted({int(v) for v in keep_slot_ids})
+        seq_len = int(object_context.shape[1])
+        if seq_len % slot_count != 0:
+            raise ValueError(
+                f"object_context sequence length {seq_len} is not divisible by slot_count={slot_count}"
+            )
+        time_steps = seq_len // slot_count
+        invalid = [slot for slot in keep_slot_ids if slot < 0 or slot >= slot_count]
+        if invalid:
+            raise ValueError(f"keep_slot_ids out of range for slot_count={slot_count}: {invalid}")
+        keep_mask = torch.zeros(
+            (1, time_steps, slot_count, 1),
+            device=object_context.device,
+            dtype=object_context.dtype,
+        )
+        for slot_id in keep_slot_ids:
+            keep_mask[:, :, int(slot_id), :] = 1
+        keep_mask = keep_mask.view(1, seq_len, 1)
+        ablated = object_context * keep_mask
+        debug["time_steps"] = int(time_steps)
     elif mode_norm == "random":
         generator = None
         if random_seed is not None:

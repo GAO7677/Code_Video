@@ -522,7 +522,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
         "--object-context-ablation",
-        choices=["none", "zero", "random"],
+        choices=["none", "zero", "random", "keep_slot"],
         default="none",
         help="Replace the final object_context fed into Wan DiT for ablation.",
     )
@@ -537,6 +537,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Std multiplier used when --object-context-ablation=random.",
+    )
+    parser.add_argument(
+        "--object-context-keep-slot-ids",
+        type=str,
+        default=None,
+        help="Comma-separated slot ids to keep when --object-context-ablation=keep_slot.",
     )
     parser.add_argument(
         "--dump-pipe-inputs-root",
@@ -676,6 +682,8 @@ def _run_single_case_in_process(
         mode=str(getattr(model, "_object_context_ablation_mode", "none")),
         random_seed=getattr(model, "_object_context_random_seed", None),
         random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
+        slot_count=int(getattr(model, "aux_max_objects", 0)),
+        keep_slot_ids=getattr(model, "_object_context_keep_slot_ids", None),
     )
     object_debug["object_context_ablation"] = ablation_debug
     object_debug["object_context_stats"] = _tensor_numeric_stats(object_context)
@@ -747,6 +755,7 @@ def _run_single_case_in_process(
             "mode": str(getattr(model, "_object_context_ablation_mode", "none")),
             "random_seed": getattr(model, "_object_context_random_seed", None),
             "random_scale": float(getattr(model, "_object_context_random_scale", 1.0)),
+            "keep_slot_ids": getattr(model, "_object_context_keep_slot_ids", None),
         },
         "model_args": {
             "height": int(height),
@@ -824,6 +833,9 @@ def main() -> None:
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
             "random_scale": float(cli_args.object_context_random_scale),
+            "keep_slot_ids": None
+            if cli_args.object_context_keep_slot_ids is None
+            else [int(part.strip()) for part in str(cli_args.object_context_keep_slot_ids).split(",") if part.strip()],
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
@@ -859,6 +871,11 @@ def main() -> None:
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
+    model._object_context_keep_slot_ids = (
+        None
+        if cli_args.object_context_keep_slot_ids is None
+        else [int(part.strip()) for part in str(cli_args.object_context_keep_slot_ids).split(",") if part.strip()]
+    )
     model._dump_pipe_inputs_root = (
         None if cli_args.dump_pipe_inputs_root is None else str(cli_args.dump_pipe_inputs_root)
     )
