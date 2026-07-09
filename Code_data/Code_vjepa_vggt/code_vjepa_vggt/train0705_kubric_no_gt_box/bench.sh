@@ -48,9 +48,14 @@ mkdir -p "${RESULT_DIR}"
 
 for metric in "${METRICS[@]}"; do
   echo "[baseline-bench] start metric=${metric}"
+  EXTRA_ARGS=()
+  if [[ "${metric}" == "wmreward" ]]; then
+    EXTRA_ARGS+=(--wmreward-reset-interval 1000000)
+  fi
   "${PYTHON_BIN}" "${BENCH_PY}" \
     --metric "${metric}" \
-    --baseline-list "${BASELINE_LIST}"
+    --baseline-list "${BASELINE_LIST}" \
+    "${EXTRA_ARGS[@]}"
   echo "[baseline-bench] done metric=${metric}"
 done
 

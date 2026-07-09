@@ -135,6 +135,37 @@ DEFAULT_NEGATIVE_PROMPT = (
     "低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，"
     "毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
 )
+
+
+def _tensor_numeric_stats(tensor: torch.Tensor | None) -> dict[str, float | int | list[int] | None]:
+    if tensor is None:
+        return {
+            "shape": None,
+            "dtype": None,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "abs_max": None,
+            "nan_count": None,
+            "inf_count": None,
+        }
+    with torch.no_grad():
+        tensor_f32 = tensor.detach().float()
+        finite = torch.isfinite(tensor_f32)
+        safe = torch.nan_to_num(tensor_f32, nan=0.0, posinf=0.0, neginf=0.0)
+        return {
+            "shape": list(tensor.shape),
+            "dtype": str(tensor.dtype),
+            "mean": float(safe.mean().item()),
+            "std": float(safe.std(unbiased=False).item()),
+            "min": float(safe.min().item()),
+            "max": float(safe.max().item()),
+            "abs_max": float(safe.abs().max().item()),
+            "nan_count": int(torch.isnan(tensor_f32).sum().item()),
+            "inf_count": int(torch.isinf(tensor_f32).sum().item()),
+            "finite_ratio": float(finite.float().mean().item()),
+        }
 def _install_kubric_runtime_hooks() -> None:
     infer0705.t0705 = kubric_infer.trainmod
     infer0705._build_object_context = kubric_infer._build_object_context
@@ -513,6 +544,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional directory used to export the actual pipe conditioning inputs per sample.",
     )
+    parser.add_argument(
+        "--dump-numeric-trace-root",
+        type=Path,
+        default=None,
+        help="Optional directory used to dump per-step latent/noise numeric stats per sample.",
+    )
     return parser.parse_args()
 
 
@@ -641,8 +678,16 @@ def _run_single_case_in_process(
         random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
     )
     object_debug["object_context_ablation"] = ablation_debug
+    object_debug["object_context_stats"] = _tensor_numeric_stats(object_context)
 
     pipe = model.pipe
+    numeric_trace_root = getattr(model, "_dump_numeric_trace_root", None)
+    if numeric_trace_root is not None:
+        pipe._numeric_trace_enabled = True
+        pipe._numeric_trace_path = str(Path(numeric_trace_root) / f"{output_video.stem}_numeric_trace.json")
+    else:
+        pipe._numeric_trace_enabled = False
+        pipe._numeric_trace_path = None
     pipe.dit.eval()
     with torch.no_grad():
         pipe_kwargs = dict(
@@ -816,6 +861,9 @@ def main() -> None:
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
     model._dump_pipe_inputs_root = (
         None if cli_args.dump_pipe_inputs_root is None else str(cli_args.dump_pipe_inputs_root)
+    )
+    model._dump_numeric_trace_root = (
+        None if cli_args.dump_numeric_trace_root is None else str(cli_args.dump_numeric_trace_root)
     )
 
     step_success = 0

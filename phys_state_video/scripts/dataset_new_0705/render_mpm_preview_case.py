@@ -590,7 +590,7 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
         sim=SimSpec(
             dt=4e-3,
             substeps=18,
-            horizon=240,
+            horizon=480,
             gravity=(0.0, 0.0, -9.81),
             mpm_lower_bound=(-1.4, -1.2, -0.1),
             mpm_upper_bound=(1.4, 1.2, 1.9),
@@ -1139,11 +1139,14 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_box(scene, pos=(0.00, 2.84, 2.55), size=(5.12, 0.03, 0.22), surface=pale_panel_surface, collision=False)
     _add_fixed_box(scene, pos=(-1.18, 2.81, 1.56), size=(0.72, 0.02, 0.94), surface=pale_panel_surface, collision=False)
     _add_fixed_box(scene, pos=(2.12, 2.81, 1.42), size=(0.54, 0.02, 0.72), surface=dark_panel_surface, collision=False)
-    # Keep the front of the room readable from shallow exterior camera angles.
-    _add_fixed_box(scene, pos=(-1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
-    _add_fixed_box(scene, pos=(1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
-    _add_fixed_box(scene, pos=(0.00, -1.76, 2.42), size=(2.72, 0.04, 0.42), surface=wall_surface, collision=False)
-    _add_fixed_box(scene, pos=(0.00, -1.75, 0.08), size=(2.80, 0.06, 0.16), surface=trim_surface, collision=False)
+    # The near-camera front portal looks nice for interior viewpoints, but it becomes a hard occluder
+    # for the shallow exterior shots used by many dataset families. Keep it only when the camera is
+    # already inside that portal plane.
+    if case.camera.pos[1] > -1.55:
+        _add_fixed_box(scene, pos=(-1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
+        _add_fixed_box(scene, pos=(1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
+        _add_fixed_box(scene, pos=(0.00, -1.76, 2.42), size=(2.72, 0.04, 0.42), surface=wall_surface, collision=False)
+        _add_fixed_box(scene, pos=(0.00, -1.75, 0.08), size=(2.80, 0.06, 0.16), surface=trim_surface, collision=False)
 
     # Window, curtain, and beam structure on the rear wall.
     _add_fixed_box(scene, pos=(1.52, 2.80, 2.00), size=(1.56, 0.03, 1.22), surface=window_frame_surface, collision=False)
@@ -1602,8 +1605,8 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
     if case.motion_profile == "wall_pinch":
         _add_fixed_box(
             scene,
-            pos=(0.72, 0.12, 0.34),
-            size=(0.12, 0.52, 0.68),
+            pos=(0.78, 0.14, 0.31),
+            size=(0.08, 0.40, 0.62),
             surface=support_surface,
             collision=True,
         )

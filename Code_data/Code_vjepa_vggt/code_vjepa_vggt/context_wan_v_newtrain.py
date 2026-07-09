@@ -1,7 +1,9 @@
 """该模块用于给 Wan 视频管线补充多帧上下文条件训练与推理逻辑；输入为 Wan 管线、上下文/噪声 latent 与条件张量，输出为上下文感知的损失计算和生成所需的中间结果。"""
 import logging
 import types
+import json
 from typing import Optional, Union
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -36,6 +38,37 @@ from code_vjepa_free.vjepa_guidance.spectral_guidance import (
     compute_temporal_lowpass_residual_map,
     dilate_mask_thw,
 )
+
+
+def _tensor_numeric_stats(tensor: torch.Tensor | None) -> dict[str, float | int | list[int] | None]:
+    if tensor is None:
+        return {
+            "shape": None,
+            "dtype": None,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "abs_max": None,
+            "nan_count": None,
+            "inf_count": None,
+        }
+    with torch.no_grad():
+        tensor_f32 = tensor.detach().float()
+        finite = torch.isfinite(tensor_f32)
+        safe = torch.nan_to_num(tensor_f32, nan=0.0, posinf=0.0, neginf=0.0)
+        return {
+            "shape": list(tensor.shape),
+            "dtype": str(tensor.dtype),
+            "mean": float(safe.mean().item()),
+            "std": float(safe.std(unbiased=False).item()),
+            "min": float(safe.min().item()),
+            "max": float(safe.max().item()),
+            "abs_max": float(safe.abs().max().item()),
+            "nan_count": int(torch.isnan(tensor_f32).sum().item()),
+            "inf_count": int(torch.isinf(tensor_f32).sum().item()),
+            "finite_ratio": float(finite.float().mean().item()),
+        }
 
 
 def _reinit_linear(module: nn.Module, std: float = 0.02) -> None:
@@ -1580,6 +1613,17 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
 
         self.load_models_to_device(self.in_iteration_models)
         models = {name: getattr(self, name) for name in self.in_iteration_models}
+        numeric_trace: list[dict[str, object]] | None = []
+        trace_enabled = bool(getattr(self, "_numeric_trace_enabled", False))
+        if not trace_enabled:
+            numeric_trace = None
+        if trace_enabled and object_context is not None:
+            numeric_trace.append(
+                {
+                    "kind": "object_context",
+                    "stats": _tensor_numeric_stats(object_context),
+                }
+            )
         for progress_id, timestep_cpu in enumerate(progress_bar_cmd(self.scheduler.timesteps)):
             if (
                 timestep_cpu.item() < switch_DiT_boundary * 1000
@@ -1606,6 +1650,8 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 noise_pred = noise_pred_nega + cfg_scale * (noise_pred_posi - noise_pred_nega)
             else:
                 noise_pred = noise_pred_posi
+
+            latents_before_step = inputs_shared["latents"]
 
             if guidance_enabled and progress_id in selected_steps:
                 inner_k = max(1, int(getattr(self, "vjepa_inner_k", 1)))
@@ -1683,11 +1729,23 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                             taps_str,
                         )
 
-            inputs_shared["latents"] = self.scheduler.step(
+            latents_after_step = self.scheduler.step(
                 noise_pred,
                 self.scheduler.timesteps[progress_id],
-                inputs_shared["latents"],
+                latents_before_step,
             )
+            if trace_enabled and numeric_trace is not None:
+                numeric_trace.append(
+                    {
+                        "kind": "denoise_step",
+                        "step_index": int(progress_id),
+                        "timestep": int(round(float(timestep_cpu.detach().cpu().item()))),
+                        "latents_before": _tensor_numeric_stats(latents_before_step),
+                        "noise_pred": _tensor_numeric_stats(noise_pred),
+                        "latents_after": _tensor_numeric_stats(latents_after_step),
+                    }
+                )
+            inputs_shared["latents"] = latents_after_step
             if inputs_shared.get("clean_prefix_latents") is not None:
                 prefix_len = inputs_shared["clean_prefix_latents"].shape[2]
                 inputs_shared["latents"][:, :, :prefix_len] = inputs_shared["clean_prefix_latents"]
@@ -1705,6 +1763,16 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
 
         for unit in self.post_units:
             inputs_shared, _, _ = self.unit_runner(unit, self, inputs_shared, inputs_posi, inputs_nega)
+
+        if trace_enabled and numeric_trace is not None:
+            trace_path = getattr(self, "_numeric_trace_path", None)
+            if trace_path:
+                trace_file = Path(str(trace_path))
+                trace_file.parent.mkdir(parents=True, exist_ok=True)
+                trace_file.write_text(
+                    json.dumps(numeric_trace, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
         self.load_models_to_device(["vae"])
         if framewise_decoding:
