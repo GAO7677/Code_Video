@@ -46,6 +46,9 @@ GROUNDING_GT_MASK_OVERSAMPLE_FACTOR="${GROUNDING_GT_MASK_OVERSAMPLE_FACTOR:-4}"
 GROUNDING_GT_MASK_MIN_VISIBLE_RATIO="${GROUNDING_GT_MASK_MIN_VISIBLE_RATIO:-0.60}"
 GROUNDING_GT_MASK_MIN_IN_MASK_RATIO="${GROUNDING_GT_MASK_MIN_IN_MASK_RATIO:-0.60}"
 GROUNDING_GT_MASK_COLOR_TOLERANCE="${GROUNDING_GT_MASK_COLOR_TOLERANCE:-18}"
+CTX_MAX_LENGTH="${CTX_MAX_LENGTH:-8}"
+MIN_CONTEXT_FRAMES="${MIN_CONTEXT_FRAMES:-0}"
+MAX_CONTEXT_RATIO="${MAX_CONTEXT_RATIO:-1.0}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -75,9 +78,9 @@ CMD=(
   --width 896
   --num_frames 25
   --fixed_num_context_frames 8
-  --min_context_frames 8
-  --max_context_ratio 0.5
-  --context_frame_choices 8
+  --ctx_max_length "${CTX_MAX_LENGTH}"
+  --min_context_frames "${MIN_CONTEXT_FRAMES}"
+  --max_context_ratio "${MAX_CONTEXT_RATIO}"
   --no_context_ratio 0.0
   --max_train_steps 5
   --num_epochs 100

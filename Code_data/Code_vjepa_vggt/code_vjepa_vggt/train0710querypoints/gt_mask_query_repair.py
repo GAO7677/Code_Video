@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from typing import Callable
+from typing import Iterable
 
 import cv2
 import numpy as np
@@ -25,19 +26,103 @@ class GTMaskRepairConfig:
     color_tolerance: int = 18
 
 
-def resolve_raw_sample_dir_from_video_path(video_path: str | Path | None) -> Path | None:
-    if video_path is None:
-        return None
-    candidate = Path(video_path).expanduser().resolve()
-    if not candidate.is_file():
-        return None
-    if candidate.name != "rgba.mp4":
-        return None
-    sample_dir = candidate.parent
+@dataclass(slots=True)
+class CandidatePointScore:
+    point_idx: int
+    score: float
+    visible_ratio: float
+    in_mask_ratio: float
+    retained_given_visible: float
+    other_object_ratio: float
+    background_ratio: float
+
+
+def _is_raw_sample_dir(sample_dir: Path | None) -> bool:
+    if sample_dir is None or not sample_dir.is_dir():
+        return False
     for required_name in ("rgba.mp4", "segmentation.mp4", "metadata.json"):
         if not (sample_dir / required_name).is_file():
-            return None
-    return sample_dir
+            return False
+    return True
+
+
+def _normalize_raw_sample_candidate(path_like: str | Path | None) -> Path | None:
+    if path_like is None:
+        return None
+    candidate = Path(path_like).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except FileNotFoundError:
+        return None
+    if resolved.is_dir():
+        return resolved if _is_raw_sample_dir(resolved) else None
+    if not resolved.is_file():
+        return None
+    parent = resolved.parent
+    if resolved.name in {"rgba.mp4", "segmentation.mp4", "metadata.json"}:
+        return parent if _is_raw_sample_dir(parent) else None
+    return parent if _is_raw_sample_dir(parent) else None
+
+
+def resolve_raw_sample_dir_from_video_path(video_path: str | Path | None) -> Path | None:
+    return _normalize_raw_sample_candidate(video_path)
+
+
+def _iter_path_like_strings(payload: Any) -> Iterable[str]:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(value, str):
+                lower_key = str(key).lower()
+                lower_value = value.lower()
+                if (
+                    "/" in value
+                    or "\\" in value
+                    or lower_key.endswith("_path")
+                    or lower_key in {"sample_dir", "source_video", "raw_video"}
+                    or lower_value.endswith((".mp4", ".json", ".npz"))
+                ):
+                    yield value
+            else:
+                yield from _iter_path_like_strings(value)
+        return
+    if isinstance(payload, (list, tuple)):
+        for item in payload:
+            yield from _iter_path_like_strings(item)
+
+
+def resolve_raw_sample_dir_from_sample(sample: dict[str, Any] | None) -> tuple[Path | None, dict[str, Any]]:
+    if not isinstance(sample, dict):
+        return None, {"resolver": "sample", "checked_candidates": 0}
+
+    video_path = sample.get("video_path")
+    resolved_from_video = resolve_raw_sample_dir_from_video_path(video_path)
+    if resolved_from_video is not None:
+        return resolved_from_video, {
+            "resolver": "video_path",
+            "checked_candidates": 1,
+            "matched_candidate": str(video_path),
+        }
+
+    metadata = sample.get("metadata")
+    checked: list[str] = []
+    seen: set[str] = set()
+    for candidate_str in _iter_path_like_strings(metadata):
+        if candidate_str in seen:
+            continue
+        seen.add(candidate_str)
+        checked.append(candidate_str)
+        resolved = _normalize_raw_sample_candidate(candidate_str)
+        if resolved is not None:
+            return resolved, {
+                "resolver": "metadata_path",
+                "checked_candidates": len(checked),
+                "matched_candidate": candidate_str,
+            }
+
+    return None, {
+        "resolver": "unresolved",
+        "checked_candidates": len(checked) + (1 if video_path is not None else 0),
+    }
 
 
 def _read_video_rgb(path: Path) -> np.ndarray:
@@ -256,7 +341,7 @@ def _score_candidates_for_object(
         cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5) if int(mask.sum()) > 0 else np.zeros_like(mask, dtype=np.float32)
         for mask in object_gt_masks_thw
     ]
-    scored: list[tuple[int, float]] = []
+    scored: list[CandidatePointScore] = []
     for point_idx in range(int(query_points_xy.shape[0])):
         visible_frames = 0
         same_mask_frames = 0
@@ -296,9 +381,48 @@ def _score_candidates_for_object(
             - 0.75 * (float(other_object_frames) / max(float(object_visible_frames), 1.0))
             - 0.35 * (float(background_frames) / max(float(object_visible_frames), 1.0))
         )
-        scored.append((int(point_idx), float(score_value)))
-    scored.sort(key=lambda item: item[1], reverse=True)
+        scored.append(
+            CandidatePointScore(
+                point_idx=int(point_idx),
+                score=float(score_value),
+                visible_ratio=float(visible_ratio),
+                in_mask_ratio=float(in_mask_ratio),
+                retained_given_visible=float(retained_given_visible),
+                other_object_ratio=float(other_object_frames) / max(float(object_visible_frames), 1.0),
+                background_ratio=float(background_frames) / max(float(object_visible_frames), 1.0),
+            )
+        )
+    scored.sort(
+        key=lambda item: (item.score, item.in_mask_ratio, item.retained_given_visible),
+        reverse=True,
+    )
     return scored
+
+
+def _select_candidate_indices(
+    scored: list[CandidatePointScore],
+    *,
+    points_per_object: int,
+    min_visible_ratio: float,
+    min_in_mask_ratio: float,
+) -> list[int]:
+    eligible = [
+        item
+        for item in scored
+        if float(item.visible_ratio) >= float(min_visible_ratio)
+        and float(item.in_mask_ratio) >= float(min_in_mask_ratio)
+    ]
+    chosen = eligible[: int(points_per_object)]
+    if len(chosen) < int(points_per_object):
+        chosen_ids = {int(item.point_idx) for item in chosen}
+        for item in scored:
+            if int(item.point_idx) in chosen_ids:
+                continue
+            chosen.append(item)
+            chosen_ids.add(int(item.point_idx))
+            if len(chosen) >= int(points_per_object):
+                break
+    return [int(item.point_idx) for item in chosen[: int(points_per_object)]]
 
 
 def repair_grouped_queries_with_gt_masks(
@@ -317,9 +441,13 @@ def repair_grouped_queries_with_gt_masks(
     if not bool(config.enabled):
         return grouped_queries_px, {"applied": False, "reason": "disabled"}
 
-    sample_dir = resolve_raw_sample_dir_from_video_path(sample.get("video_path"))
+    sample_dir, resolve_debug = resolve_raw_sample_dir_from_sample(sample)
     if sample_dir is None:
-        return grouped_queries_px, {"applied": False, "reason": "no_raw_sample_dir"}
+        return grouped_queries_px, {
+            "applied": False,
+            "reason": "no_raw_sample_dir",
+            "resolve_debug": resolve_debug,
+        }
 
     gt_payload = _build_subset_gt_masks(
         sample=sample,
@@ -328,7 +456,12 @@ def repair_grouped_queries_with_gt_masks(
         color_tolerance=int(config.color_tolerance),
     )
     if gt_payload is None:
-        return grouped_queries_px, {"applied": False, "reason": "gt_mask_subset_unavailable"}
+        return grouped_queries_px, {
+            "applied": False,
+            "reason": "gt_mask_subset_unavailable",
+            "sample_dir": str(sample_dir),
+            "resolve_debug": resolve_debug,
+        }
     gt_masks_tnhw, gt_object_types = gt_payload
 
     valid_track_masks: list[np.ndarray] = []
@@ -339,7 +472,12 @@ def repair_grouped_queries_with_gt_masks(
         valid_track_masks.append(np.asarray(object_tracks[object_idx].masks_thw, dtype=np.uint8))
         valid_object_ids.append(int(object_idx))
     if not valid_track_masks:
-        return grouped_queries_px, {"applied": False, "reason": "no_valid_tracks"}
+        return grouped_queries_px, {
+            "applied": False,
+            "reason": "no_valid_tracks",
+            "sample_dir": str(sample_dir),
+            "resolve_debug": resolve_debug,
+        }
 
     matched_gt_ids = _match_tracks_to_gt(track_masks_tnhw=valid_track_masks, gt_masks_tnhw=gt_masks_tnhw)
 
@@ -364,7 +502,13 @@ def repair_grouped_queries_with_gt_masks(
         candidate_owner.extend([int(object_idx)] * int(candidates.shape[0]))
         owner_slices[int(object_idx)] = (start, end)
     if not candidate_queries:
-        return grouped_queries_px, {"applied": False, "reason": "no_gt_matched_candidates"}
+        return grouped_queries_px, {
+            "applied": False,
+            "reason": "no_gt_matched_candidates",
+            "sample_dir": str(sample_dir),
+            "resolve_debug": resolve_debug,
+            "matched_gt_ids": matched_gt_ids,
+        }
 
     flat_queries = np.concatenate(candidate_queries, axis=0).astype(np.float32)
     query_points_prior = torch.from_numpy(flat_queries).unsqueeze(0).to(device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
@@ -380,7 +524,6 @@ def repair_grouped_queries_with_gt_masks(
 
     repaired = np.asarray(grouped_queries_px, dtype=np.float32).copy()
     repair_items: list[dict[str, Any]] = []
-    gt_by_object = {object_idx: matched_gt_ids[valid_object_ids.index(object_idx)] for object_idx in valid_object_ids if object_idx in valid_object_ids}
     for local_idx, object_idx in enumerate(valid_object_ids):
         if int(object_idx) not in owner_slices:
             continue
@@ -395,10 +538,17 @@ def repair_grouped_queries_with_gt_masks(
             visibility_tk=visibility_tk[:, start:end],
             all_gt_masks_tnhw=gt_masks_tnhw,
         )
-        selected_local = [idx for idx, _ in scored[: int(points_per_object)]]
+        selected_local = _select_candidate_indices(
+            scored,
+            points_per_object=int(points_per_object),
+            min_visible_ratio=float(config.min_visible_ratio),
+            min_in_mask_ratio=float(config.min_in_mask_ratio),
+        )
         if len(selected_local) < int(points_per_object):
             fallback = list(range(min(int(points_per_object), int(end - start))))
-            selected_local = (selected_local + [idx for idx in fallback if idx not in selected_local])[: int(points_per_object)]
+            selected_local = (
+                selected_local + [idx for idx in fallback if idx not in selected_local]
+            )[: int(points_per_object)]
         repaired[int(object_idx)] = flat_queries[start:end][selected_local]
         repair_items.append(
             {
@@ -406,13 +556,20 @@ def repair_grouped_queries_with_gt_masks(
                 "gt_object_idx": int(gt_idx),
                 "gt_object_type": gt_object_types[int(gt_idx)] if int(gt_idx) < len(gt_object_types) else "",
                 "selected_local_indices": [int(v) for v in selected_local],
-                "top_scores": [float(score) for _, score in scored[: int(points_per_object)]],
+                "top_scores": [float(item.score) for item in scored[: int(points_per_object)]],
+                "top_visible_ratios": [float(item.visible_ratio) for item in scored[: int(points_per_object)]],
+                "top_in_mask_ratios": [float(item.in_mask_ratio) for item in scored[: int(points_per_object)]],
+                "thresholds": {
+                    "min_visible_ratio": float(config.min_visible_ratio),
+                    "min_in_mask_ratio": float(config.min_in_mask_ratio),
+                },
             }
         )
 
     return repaired, {
         "applied": True,
         "sample_dir": str(sample_dir),
+        "resolve_debug": resolve_debug,
         "valid_object_ids": valid_object_ids,
         "matched_gt_ids": matched_gt_ids,
         "repair_items": repair_items,

@@ -47,6 +47,8 @@ from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     ViewerGroundingBoxProvider,
 )
+from code_vjepa_vggt.train0710querypoints.gt_box_query_repair import GTBoxRepairConfig
+from code_vjepa_vggt.train0710querypoints.gt_box_query_repair import repair_grouped_queries_with_gt_boxes
 from code_vjepa_vggt.utils.vggt_cache import load_vggt_cache
 
 from diffsynth.diffusion import ModelLogger
@@ -61,6 +63,12 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
     def __init__(self, *args, grounding_config: dict | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.viewer_grounding: ViewerGroundingBoxProvider | None = None
+        self.gt_box_query_repair = GTBoxRepairConfig(
+            enabled=bool((grounding_config or {}).get("grounding_gt_box_query_repair", False)),
+            oversample_factor=int((grounding_config or {}).get("grounding_gt_box_oversample_factor", 4)),
+            min_visible_ratio=float((grounding_config or {}).get("grounding_gt_box_min_visible_ratio", 0.60)),
+            min_in_box_ratio=float((grounding_config or {}).get("grounding_gt_box_min_in_box_ratio", 0.60)),
+        )
         if self.enable_object_branch:
             cfg = dict(grounding_config or {})
             grounding_device = str(cfg.get("grounding_device") or self.pipe.device)
@@ -128,6 +136,24 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             caption=caption,
             image_hw=(height, width),
         )
+
+        repair_debug = {"applied": False, "reason": "disabled"}
+        if bool(self.gt_box_query_repair.enabled):
+            repaired_queries_px, repair_debug = repair_grouped_queries_with_gt_boxes(
+                sample=sample,
+                image_hw=(height, width),
+                frames_bthwc_01=torch.from_numpy(frames_tchw_01).permute(0, 2, 3, 1).unsqueeze(0).float(),
+                grouped_queries_px=grounding_sample.grouped_queries_px,
+                object_valid_mask=grounding_sample.object_valid_mask,
+                object_tracks=getattr(grounding_sample, "object_tracks", []),
+                prompt_frame_idx=int(getattr(grounding_sample, "prompt_frame_idx", 0)),
+                points_per_object=int(self.object_num_queries),
+                run_cotracker=self._run_cotracker,
+                config=self.gt_box_query_repair,
+            )
+            grounding_sample.grouped_queries_px = repaired_queries_px
+            if isinstance(getattr(grounding_sample, "debug", None), dict):
+                grounding_sample.debug["gt_box_query_repair"] = repair_debug
 
         # grouped_queries_px: [aux_max_objects, object_num_queries, 2] (pixels)
         grouped_queries = torch.from_numpy(grounding_sample.grouped_queries_px).float()
@@ -353,6 +379,10 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--grounding_container_suppress_min_contained", type=int, default=2)
     group.add_argument("--grounding_container_suppress_min_area_ratio", type=float, default=1.5)
     group.add_argument("--grounding_container_suppress_small_iou_threshold", type=float, default=0.7)
+    group.add_argument("--grounding_gt_box_query_repair", action="store_true")
+    group.add_argument("--grounding_gt_box_oversample_factor", type=int, default=4)
+    group.add_argument("--grounding_gt_box_min_visible_ratio", type=float, default=0.60)
+    group.add_argument("--grounding_gt_box_min_in_box_ratio", type=float, default=0.60)
     return parser
 
 
@@ -373,6 +403,10 @@ def _grounding_config_from_args(args: argparse.Namespace) -> dict:
         "grounding_container_suppress_min_contained": args.grounding_container_suppress_min_contained,
         "grounding_container_suppress_min_area_ratio": args.grounding_container_suppress_min_area_ratio,
         "grounding_container_suppress_small_iou_threshold": args.grounding_container_suppress_small_iou_threshold,
+        "grounding_gt_box_query_repair": args.grounding_gt_box_query_repair,
+        "grounding_gt_box_oversample_factor": args.grounding_gt_box_oversample_factor,
+        "grounding_gt_box_min_visible_ratio": args.grounding_gt_box_min_visible_ratio,
+        "grounding_gt_box_min_in_box_ratio": args.grounding_gt_box_min_in_box_ratio,
     }
 
 
