@@ -150,6 +150,7 @@ run_single_ctx() {
   local run_model_name="$3"
   local run_step_output_dir_name="$4"
   local run_name="$5"
+  shift 5
   local launch_visible_gpu_ids=""
   local launch_inference_devices=""
   local -a cmd
@@ -216,7 +217,9 @@ run_single_ctx() {
     cmd+=(--prepare-only)
   fi
 
-  cmd+=("$@")
+  if [ "$#" -gt 0 ]; then
+    cmd+=("$@")
+  fi
 
   echo "[physicsiq] gpu_pair=${GPU_PAIR}"
   echo "[physicsiq] ctx=${ctx_value}"

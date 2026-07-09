@@ -117,31 +117,6 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_parallel_infer_from_txt.sh
 ```
 
-核心特性：
-
-- `--gpus 0,2,3`
-  传几张卡，就自动切几份 shard
-- 会把 `txt` 中的 case 按 round-robin 均分到各 shard
-- 每个 shard 用一张单卡启动一个 worker
-- 默认 `negative_prompt=DEFAULT_NEGATIVE_PROMPT`
-- 可以通过命令行覆盖 `ctx / output_frames / negative_prompt`
-- 可以通过 `--disable-object-branch` 直接切到 no-object-branch 消融推理
-
-运行示例：
-
-```bash
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_parallel_infer_from_txt.sh \
-  --input-txt /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-007000 \
-  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_diffsynth_native0705_0705 \
-  --method-name run_gpu0235_20260703_step-007000_steps40_512x896_ctx08_49f_emptynegprompt_noobj \
-  --gpus 3,6,7 \
-  --ctx 8 \
-  --output-frames 49 \
-  --negative-prompt default \
-  --disable-object-branch
-```
-
 
 
 ## 4. 单个 GPU pair 顺序跑多组 ctx
@@ -161,6 +136,9 @@ OUTPUT_FRAMES=49 \
 CTX=1,4,8,12,16,20 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 ```
+
+
+
 
 ## 5. 多个 GPU pair 并行跑多组 ctx
 

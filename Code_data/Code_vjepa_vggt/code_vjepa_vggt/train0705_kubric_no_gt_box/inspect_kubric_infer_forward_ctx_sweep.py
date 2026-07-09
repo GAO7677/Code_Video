@@ -693,7 +693,15 @@ def main() -> None:
 
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
-    method_name = batchmod._build_method_name_from_checkpoint_dir(weights_root)
+    method_name = batchmod._build_method_name_from_checkpoint_dir(
+        weights_root,
+        context_frames=int(cli_args.context_frames),
+        num_frames=int(cli_args.num_frames),
+        sampling_steps=int(cli_args.num_inference_steps),
+        height=int(cli_args.height),
+        width=int(cli_args.width),
+        negative_prompt="",
+    )
 
     for input_json_path in json_paths:
         payload = core._load_input_json(input_json_path)

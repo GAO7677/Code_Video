@@ -162,72 +162,72 @@ f 21/1/6 23/3/6 24/4/6
 
 def _palette_residential_warm() -> MaterialPalette:
     return MaterialPalette(
-        floor_color=(0.55, 0.49, 0.41, 1.0),
-        wall_color=(0.83, 0.80, 0.74, 1.0),
-        wall_alt_color=(0.77, 0.73, 0.67, 1.0),
-        ceiling_color=(0.92, 0.91, 0.88, 1.0),
+        floor_color=(0.44, 0.35, 0.27, 1.0),
+        wall_color=(0.88, 0.85, 0.79, 1.0),
+        wall_alt_color=(0.76, 0.72, 0.65, 1.0),
+        ceiling_color=(0.95, 0.94, 0.91, 1.0),
         trim_color=(0.37, 0.26, 0.18, 1.0),
         wood_mid_color=(0.64, 0.50, 0.34, 1.0),
         wood_dark_color=(0.30, 0.21, 0.15, 1.0),
         fabric_color=(0.76, 0.72, 0.67, 1.0),
         metal_color=(0.48, 0.56, 0.58, 1.0),
         clutter_color=(0.61, 0.54, 0.42, 1.0),
-        soft_color=(0.79, 0.46, 0.36, 1.0),
-        rigid_color=(0.22, 0.34, 0.47, 1.0),
+        soft_color=(0.24, 0.50, 0.76, 1.0),
+        rigid_color=(0.86, 0.67, 0.21, 1.0),
         accent_color=(0.84, 0.67, 0.26, 1.0),
     )
 
 
 def _palette_industrial_cool() -> MaterialPalette:
     return MaterialPalette(
-        floor_color=(0.47, 0.47, 0.46, 1.0),
-        wall_color=(0.71, 0.73, 0.74, 1.0),
-        wall_alt_color=(0.58, 0.61, 0.63, 1.0),
-        ceiling_color=(0.82, 0.84, 0.85, 1.0),
+        floor_color=(0.32, 0.34, 0.35, 1.0),
+        wall_color=(0.84, 0.84, 0.82, 1.0),
+        wall_alt_color=(0.70, 0.72, 0.73, 1.0),
+        ceiling_color=(0.84, 0.86, 0.87, 1.0),
         trim_color=(0.27, 0.30, 0.31, 1.0),
         wood_mid_color=(0.47, 0.37, 0.27, 1.0),
         wood_dark_color=(0.21, 0.20, 0.18, 1.0),
-        fabric_color=(0.70, 0.73, 0.75, 1.0),
-        metal_color=(0.36, 0.52, 0.58, 1.0),
+        fabric_color=(0.73, 0.74, 0.74, 1.0),
+        metal_color=(0.48, 0.51, 0.53, 1.0),
         clutter_color=(0.56, 0.50, 0.38, 1.0),
-        soft_color=(0.69, 0.42, 0.32, 1.0),
-        rigid_color=(0.21, 0.31, 0.41, 1.0),
+        soft_color=(0.30, 0.51, 0.74, 1.0),
+        rigid_color=(0.93, 0.76, 0.22, 1.0),
         accent_color=(0.78, 0.62, 0.21, 1.0),
     )
 
 
 def _palette_soft_daylight() -> MaterialPalette:
     return MaterialPalette(
-        floor_color=(0.63, 0.57, 0.48, 1.0),
-        wall_color=(0.89, 0.87, 0.82, 1.0),
-        wall_alt_color=(0.80, 0.78, 0.72, 1.0),
-        ceiling_color=(0.96, 0.95, 0.93, 1.0),
+        floor_color=(0.50, 0.42, 0.31, 1.0),
+        wall_color=(0.91, 0.90, 0.85, 1.0),
+        wall_alt_color=(0.80, 0.79, 0.73, 1.0),
+        ceiling_color=(0.97, 0.96, 0.94, 1.0),
         trim_color=(0.45, 0.33, 0.22, 1.0),
         wood_mid_color=(0.72, 0.58, 0.39, 1.0),
         wood_dark_color=(0.34, 0.25, 0.17, 1.0),
         fabric_color=(0.81, 0.78, 0.73, 1.0),
         metal_color=(0.56, 0.62, 0.64, 1.0),
         clutter_color=(0.67, 0.58, 0.44, 1.0),
-        soft_color=(0.80, 0.50, 0.39, 1.0),
-        rigid_color=(0.20, 0.39, 0.62, 1.0),
+        soft_color=(0.18, 0.52, 0.78, 1.0),
+        rigid_color=(0.83, 0.64, 0.18, 1.0),
         accent_color=(0.86, 0.71, 0.28, 1.0),
     )
 
 
 def _palette_loft_neutral() -> MaterialPalette:
     return MaterialPalette(
-        floor_color=(0.52, 0.47, 0.40, 1.0),
-        wall_color=(0.78, 0.77, 0.74, 1.0),
-        wall_alt_color=(0.66, 0.66, 0.65, 1.0),
-        ceiling_color=(0.90, 0.90, 0.89, 1.0),
+        floor_color=(0.38, 0.31, 0.25, 1.0),
+        wall_color=(0.82, 0.81, 0.78, 1.0),
+        wall_alt_color=(0.63, 0.63, 0.62, 1.0),
+        ceiling_color=(0.92, 0.92, 0.90, 1.0),
         trim_color=(0.29, 0.27, 0.24, 1.0),
         wood_mid_color=(0.58, 0.48, 0.36, 1.0),
         wood_dark_color=(0.26, 0.22, 0.18, 1.0),
         fabric_color=(0.73, 0.72, 0.69, 1.0),
         metal_color=(0.50, 0.54, 0.57, 1.0),
         clutter_color=(0.60, 0.54, 0.46, 1.0),
-        soft_color=(0.68, 0.44, 0.33, 1.0),
-        rigid_color=(0.27, 0.40, 0.55, 1.0),
+        soft_color=(0.77, 0.34, 0.27, 1.0),
+        rigid_color=(0.22, 0.47, 0.70, 1.0),
         accent_color=(0.80, 0.62, 0.24, 1.0),
     )
 
@@ -747,7 +747,7 @@ def _material_surface(
     smooth: bool = True,
 ) -> Any:
     material = _MATERIAL_CATALOG[material_key]
-    texture_tint = _mix_rgb((1.0, 1.0, 1.0), tint_rgb, 0.35) if tint_rgb is not None else None
+    texture_tint = _mix_rgb((1.0, 1.0, 1.0), tint_rgb, 0.52) if tint_rgb is not None else None
     diffuse_tex = _safe_image_texture(material.texture_path, encoding="srgb", image_color=texture_tint)
     roughness_tex = _safe_image_texture(material.roughness_path, encoding="linear")
     normal_tex = _safe_image_texture(material.normal_path, encoding="linear")
@@ -764,7 +764,7 @@ def _material_surface(
     else:
         base_rgb = _rgb(material.base_color)
         if tint_rgb is not None:
-            base_rgb = _mix_rgb(base_rgb, tint_rgb, 0.45)
+            base_rgb = _mix_rgb(base_rgb, tint_rgb, 0.62)
         kwargs["color"] = _rgba(base_rgb, alpha=opacity)
 
     if roughness_tex is not None:
@@ -809,14 +809,14 @@ def _scene_material_keys(case: CaseSpec) -> dict[str, str]:
     }
     if case.scene_theme == "industrial_cool":
         keys.update(
-            floor="concrete_painted",
-            floor_alt="concrete_painted",
+            floor="concrete_clean_floor",
+            floor_alt="concrete_clean_floor",
             stage="wood_dark",
-            wall="wall_beige",
-            wall_alt="concrete_painted",
-            cabinet="concrete_painted",
+            wall="wall_cream",
+            wall_alt="concrete_clean_wall",
+            cabinet="wall_beige",
             desk_top="wood_dark",
-            desk_leg="concrete_painted",
+            desk_leg="concrete_clean_wall",
             metal="painted_metal_teal",
             metal_accent="painted_metal_yellow",
         )
@@ -884,7 +884,7 @@ def _scene_lights(case: CaseSpec) -> list[dict[str, Any]]:
 def _soft_surface(case: CaseSpec, *, secondary: bool = False, vis_mode: str | None = None) -> Any:
     material_key = case.soft_secondary_material_key if secondary and case.soft_secondary_material_key else case.soft_material_key
     material = _MATERIAL_CATALOG[material_key]
-    tint = _mix_rgb(_rgb(case.palette.soft_color), _rgb(material.base_color), 0.18 if not secondary else 0.35)
+    tint = _mix_rgb(_rgb(material.base_color), _rgb(case.palette.soft_color), 0.78 if not secondary else 0.62)
     return _bsdf_surface(
         _rgba(tint),
         roughness=max(0.62, float(material.roughness)),
@@ -894,7 +894,7 @@ def _soft_surface(case: CaseSpec, *, secondary: bool = False, vis_mode: str | No
 
 
 def _rigid_surface(case: CaseSpec) -> Any:
-    tint = _mix_rgb(_rgb(_MATERIAL_CATALOG[case.rigid_material_key].base_color), _rgb(case.palette.rigid_color), 0.20)
+    tint = _mix_rgb(_rgb(_MATERIAL_CATALOG[case.rigid_material_key].base_color), _rgb(case.palette.rigid_color), 0.72)
     return _material_surface(
         case.rigid_material_key,
         tint_rgb=tint,
@@ -1052,20 +1052,20 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     p = case.palette
     mats = _scene_material_keys(case)
     floor_surface = _material_surface(mats["floor"], tint_rgb=_rgb(p.floor_color), smooth=True)
-    floor_alt_surface = _material_surface(mats["floor_alt"], tint_rgb=_rgb(p.wood_mid_color), smooth=True)
-    stage_tint = _mix_rgb(_rgb(p.wood_mid_color), _rgb(p.fabric_color), 0.42)
+    floor_alt_surface = _material_surface(mats["floor_alt"], tint_rgb=_mix_rgb(_rgb(p.floor_color), _rgb(p.wood_mid_color), 0.28), smooth=True)
+    stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.fabric_color), 0.34)
     if case.scene_theme == "soft_daylight":
-        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wood_mid_color), 0.44)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.ceiling_color), 0.22)
     elif case.scene_theme == "industrial_cool":
-        stage_tint = _mix_rgb(_rgb(p.wall_alt_color), _rgb(p.wood_dark_color), 0.22)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.wall_alt_color), 0.18)
     elif case.scene_theme == "loft_neutral":
-        stage_tint = _mix_rgb(_rgb(p.wall_color), _rgb(p.wood_mid_color), 0.34)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.wall_color), 0.16)
     if case.motion_profile == "overhead_press":
-        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wall_color), 0.18)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.ceiling_color), 0.28)
     elif case.motion_profile == "wall_pinch":
-        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wall_alt_color), 0.24)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.ceiling_color), 0.24)
     elif case.motion_profile == "ledge_topple":
-        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wood_mid_color), 0.28)
+        stage_tint = _mix_rgb(_rgb(p.floor_color), _rgb(p.ceiling_color), 0.20)
     stage_surface = _material_surface(mats["stage"], tint_rgb=stage_tint, smooth=True)
     wall_surface = _material_surface(mats["wall"], tint_rgb=_rgb(p.wall_color), smooth=True)
     wall_alt_surface = _material_surface(mats["wall_alt"], tint_rgb=_rgb(p.wall_alt_color), smooth=True)
@@ -1082,8 +1082,8 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     metal_surface = _material_surface(mats["metal"], tint_rgb=_rgb(p.metal_color), roughness_override=0.34, metallic_override=0.42, smooth=True)
     metal_accent_surface = _material_surface(mats["metal_accent"], tint_rgb=_rgb(p.accent_color), roughness_override=0.28, metallic_override=0.36, smooth=True)
     clutter_surface = _material_surface(mats["clutter"], tint_rgb=_rgb(p.clutter_color), roughness_override=0.86, smooth=True)
-    pale_panel_surface = _material_surface(mats["wall"], tint_rgb=_mix_rgb(_rgb(p.wall_color), _rgb(p.ceiling_color), 0.28), smooth=True)
-    dark_panel_surface = _material_surface(mats["wall_alt"], tint_rgb=_mix_rgb(_rgb(p.wall_alt_color), _rgb(p.trim_color), 0.18), smooth=True)
+    pale_panel_surface = _material_surface(mats["wall"], tint_rgb=_mix_rgb(_rgb(p.wall_color), _rgb(p.ceiling_color), 0.18), smooth=True)
+    dark_panel_surface = _material_surface(mats["wall_alt"], tint_rgb=_mix_rgb(_rgb(p.wall_alt_color), _rgb(p.trim_color), 0.30), smooth=True)
     book_surface = _material_surface(mats["metal_accent"], tint_rgb=_mix_rgb(_rgb(p.accent_color), _rgb(p.fabric_color), 0.22), roughness_override=0.72, metallic_override=0.0, smooth=True)
     neutral_book_surface = _material_surface(mats["cabinet"], tint_rgb=_mix_rgb(_rgb(p.fabric_color), _rgb(p.wall_color), 0.36), roughness_override=0.74, smooth=True)
 
@@ -1177,9 +1177,9 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
         _add_fixed_box(scene, pos=(0.00, 2.82, 1.20), size=(0.96, 0.04, 0.56), surface=desk_leg_surface, collision=False)
         _add_fixed_box(scene, pos=(-0.25, -0.18, 0.05), size=(0.50, 0.18, 0.10), surface=clutter_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.16, 0.45, 2.30), size=(0.34, 0.14, 0.22), surface=metal_surface, collision=False)
-        _add_fixed_box(scene, pos=(-1.92, 1.30, 1.36), size=(0.52, 0.16, 0.52), surface=dark_panel_surface, collision=False)
+        _add_fixed_box(scene, pos=(-1.92, 1.30, 1.36), size=(0.52, 0.16, 0.52), surface=wall_alt_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.00, 1.18, 1.12), size=(0.14, 0.10, 0.08), surface=metal_accent_surface, collision=False)
-        _add_fixed_box(scene, pos=(2.34, 1.88, 1.12), size=(0.22, 0.22, 1.10), surface=metal_surface, collision=False)
+        _add_fixed_box(scene, pos=(2.34, 1.88, 1.12), size=(0.22, 0.22, 1.10), surface=pale_panel_surface, collision=False)
     elif case.scene_theme == "soft_daylight":
         _add_fixed_box(scene, pos=(2.30, 2.76, 2.45), size=(0.28, 0.02, 0.22), surface=ceiling_surface, collision=False)
         _add_fixed_box(scene, pos=(-1.88, 2.30, 1.30), size=(0.24, 0.08, 0.36), surface=wood_mid_surface, collision=False)
