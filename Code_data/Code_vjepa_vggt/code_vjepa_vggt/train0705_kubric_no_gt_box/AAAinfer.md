@@ -131,9 +131,9 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 ```bash
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_parallel_infer_from_txt.sh \
   --input-txt /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-007000 \
   --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_diffsynth_native0705_0705 \
-  --method-name train_stage1b_diffsynth_native0705_step2500 \
+  --method-name train_stage1b_diffsynth_native0705_step7000 \
   --gpus 5,6,7 \
   --ctx 8 \
   --output-frames 49 \

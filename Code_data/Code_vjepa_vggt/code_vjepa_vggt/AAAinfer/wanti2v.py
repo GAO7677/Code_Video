@@ -72,7 +72,16 @@ def parse_args() -> argparse.Namespace:
         help="Official Wan2.2 TI2V checkpoint directory.",
     )
     parser.add_argument("--backend", default="legacy", choices=["official", "legacy"])
-    parser.add_argument("--size", default="704*1280", choices=["704*1280", "1280*704"])
+    parser.add_argument(
+        "--size",
+        default="704*1280",
+        choices=["704*1280", "1280*704", "512*896"],
+        help=(
+            "Output size in H*W format. "
+            "Wan TI2V officially exposes 704*1280 / 1280*704; "
+            "512*896 is enabled here for aligned local comparisons."
+        ),
+    )
     parser.add_argument("--frame-num", type=int, default=25)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)

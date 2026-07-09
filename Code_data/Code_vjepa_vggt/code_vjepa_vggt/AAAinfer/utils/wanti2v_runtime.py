@@ -350,7 +350,11 @@ def build_wan_ti2v_pipeline(args: WanTI2VArgs):
     wan, WAN_CONFIGS, _, MAX_AREA_CONFIGS = _ensure_official_wan_imports()
     patch_wanmodel_from_pretrained_defaults()
     cfg = WAN_CONFIGS["ti2v-5B"]
-    max_area = int(MAX_AREA_CONFIGS[args.size])
+    if args.size in MAX_AREA_CONFIGS:
+        max_area = int(MAX_AREA_CONFIGS[args.size])
+    else:
+        height, width = _parse_size(args.size)
+        max_area = int(height * width)
 
     model = wan.WanTI2V(
         config=cfg,
