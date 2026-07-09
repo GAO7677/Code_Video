@@ -269,3 +269,79 @@ CUDA_VISIBLE_DEVICES=2 \
   `/data/gaoya/AAA_test_video/0623/test/physicsiq/step-002500`
 - wrapper 里的 `run-name` 现在只用于 `_physics_iq_inputs/...` 的准备目录命名，不影响最终输出目录
 - 如果后续要补 leaderboard 的多次 run，只需要换不同 `--seed`；如果只是为了区分准备目录，再额外换不同 `--run-name`
+
+## 9. physicIQ formal compare 可视化一键脚本
+
+如果要把下面整个目录：
+
+```text
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ
+```
+
+统一做成可视化页面，并且同时生成：
+
+- `physicIQ` 根入口页
+- 每个结果叶子目录自己的 grouped gallery
+- 跨所有结果目录、按同一 case 聚合的超大总对比页
+
+可以直接运行下面这个一键脚本：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/run_physiciq_compare_portal.sh
+```
+
+直接执行：
+
+```bash
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/run_physiciq_compare_portal.sh
+```
+
+这个脚本会自动完成：
+
+- 扫描 `physicIQ` 目录下所有带 `*_input_ctx*.jpg` 的叶子结果目录
+- 为每个叶子目录生成一个 `/_case_grouped_gallery/index.html`
+- 生成 `physicIQ/index.html` 根入口页
+- 生成 `physicIQ/_global_case_compare_gallery/index.html` 超大总对比页
+- 最后以前台方式启动本地静态服务
+
+默认前台启动命令是：
+
+```bash
+python3 -m http.server 8011 --bind 127.0.0.1
+```
+
+默认访问地址：
+
+- 根入口页：
+
+```text
+http://127.0.0.1:8011/
+```
+
+- 超大总对比页：
+
+```text
+http://127.0.0.1:8011/_global_case_compare_gallery/
+```
+
+关键输出文件路径：
+
+- 根入口页：
+
+```text
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/index.html
+```
+
+- 超大总对比页：
+
+```text
+/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/_global_case_compare_gallery/index.html
+```
+
+如果要改端口或根目录，可以这样覆盖环境变量：
+
+```bash
+ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ \
+PORT=8022 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/run_physiciq_compare_portal.sh
+```

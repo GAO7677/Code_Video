@@ -27,10 +27,10 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  # "physics_iq_with_context"
-  # "physics_iq_without_context"
-  # "pmf_with_context"
-  # "pmf_without_context"
+  "physics_iq_with_context"
+  "physics_iq_without_context"
+  "pmf_with_context"
+  "pmf_without_context"
   "wmreward"
   "videophy2"
   "cosmos_reason1"

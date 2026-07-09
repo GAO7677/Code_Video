@@ -633,6 +633,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--run-name", default="", help="Optional explicit output folder name.")
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument(
+        "--playback-speed",
+        type=float,
+        default=1.0,
+        help="Video playback speed relative to real simulation time. 1.0 is real-time, values below 1.0 are slower.",
+    )
     parser.add_argument("--width", type=int, default=0, help="Optional override for camera width.")
     parser.add_argument("--height", type=int, default=0, help="Optional override for camera height.")
     parser.add_argument(
@@ -909,6 +915,25 @@ def _record_frame_indices(num_steps: int) -> list[int]:
         return [0]
     mid = num_steps // 2
     return sorted({0, mid, num_steps - 1})
+
+
+def _resample_video_frames_to_fps(
+    raw_frames: list[np.ndarray],
+    *,
+    sim_dt: float,
+    target_fps: int,
+    playback_speed: float = 1.0,
+) -> list[np.ndarray]:
+    if not raw_frames:
+        return []
+    speed = max(float(playback_speed), 1e-6)
+    sim_duration = float(sim_dt) * len(raw_frames) / speed
+    target_frame_count = max(1, min(len(raw_frames), int(round(sim_duration * float(target_fps)))))
+    if target_frame_count == len(raw_frames):
+        return raw_frames
+    sampled_positions = np.linspace(0, len(raw_frames) - 1, num=target_frame_count)
+    sampled_indices = np.clip(np.rint(sampled_positions).astype(int), 0, len(raw_frames) - 1)
+    return [raw_frames[idx] for idx in sampled_indices.tolist()]
 
 
 def _render_rgb(camera: Any) -> np.ndarray:
@@ -1648,6 +1673,7 @@ def render_case(
     output_root: Path,
     run_name: str,
     fps: int,
+    playback_speed: float,
     width: int,
     height: int,
     mpm_vis_mode_override: str,
@@ -1684,10 +1710,17 @@ def render_case(
             saved_keyframes.append(frame_path.name)
         preview_frames.append(rgb)
 
+    video_frames = _resample_video_frames_to_fps(
+        preview_frames,
+        sim_dt=case.sim.dt,
+        target_fps=fps,
+        playback_speed=playback_speed,
+    )
     video_path = dirs["video"] / "preview.mp4"
-    imageio.mimwrite(video_path, preview_frames, fps=fps, quality=8)
+    imageio.mimwrite(video_path, video_frames, fps=fps, quality=8)
 
     final_state = _collect_entity_states(entities)
+    sim_duration_s = float(case.sim.dt) * float(case.sim.horizon)
 
     manifest = {
         "case_key": case.key,
@@ -1700,7 +1733,11 @@ def render_case(
         "video": str(video_path),
         "keyframes": saved_keyframes,
         "fps": int(fps),
-        "num_frames": int(len(preview_frames)),
+        "playback_speed": float(playback_speed),
+        "num_frames": int(len(video_frames)),
+        "raw_sim_frames": int(len(preview_frames)),
+        "sim_duration_s": sim_duration_s,
+        "video_duration_s": float(len(video_frames)) / float(fps),
         "mpm_vis_mode": mpm_vis_mode,
         "camera": asdict(camera),
         "sim": asdict(case.sim),
@@ -1728,6 +1765,7 @@ def main() -> None:
         output_root=args.output_root,
         run_name=args.run_name,
         fps=args.fps,
+        playback_speed=args.playback_speed,
         width=args.width,
         height=args.height,
         mpm_vis_mode_override=args.mpm_vis_mode,

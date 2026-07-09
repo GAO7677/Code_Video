@@ -20,9 +20,11 @@ import argparse
 import gc
 import html
 import json
+import math
 import os
 import sys
 import textwrap
+import types
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +96,59 @@ def _parse_ctx_values(raw_value: str) -> list[int]:
 def _sanitize_name(value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in str(value))
     return cleaned.strip("._") or "sample"
+
+
+def _sample_points_from_box(box_xyxy: torch.Tensor, points_per_object: int) -> torch.Tensor:
+    x0, y0, x1, y1 = [float(v) for v in box_xyxy.tolist()]
+    if x1 <= x0 or y1 <= y0:
+        cx = 0.5 * (x0 + x1)
+        cy = 0.5 * (y0 + y1)
+        return torch.tensor([[cx, cy]] * int(points_per_object), dtype=torch.float32)
+    cols = max(1, int(math.ceil(math.sqrt(float(points_per_object)))))
+    rows = max(1, int(math.ceil(float(points_per_object) / float(cols))))
+    xs = torch.linspace(x0 + 0.2 * (x1 - x0), x0 + 0.8 * (x1 - x0), cols)
+    ys = torch.linspace(y0 + 0.2 * (y1 - y0), y0 + 0.8 * (y1 - y0), rows)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+    points = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)
+    return points[: int(points_per_object)].contiguous()
+
+
+def _install_query_prior_override(model, mode: str) -> None:
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode not in {"original", "box_uniform"}:
+        raise ValueError(f"unsupported query prior mode: {mode}")
+    model._query_prior_mode = normalized_mode
+    original_method = getattr(model, "_original_build_object_query_priors", None)
+    if original_method is None:
+        original_method = model._build_object_query_priors
+        model._original_build_object_query_priors = original_method
+    if normalized_mode == "original":
+        model._build_object_query_priors = original_method
+        return
+
+    def _build_object_query_priors_box_uniform(self, sample: dict[str, Any], *, image_hw: tuple[int, int]):
+        query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = original_method(
+            sample,
+            image_hw=image_hw,
+        )
+        height, width = image_hw
+        grouped_points = []
+        for object_idx in range(int(self.aux_max_objects)):
+            box = box_prior_xyxy[0, object_idx].detach().float().cpu()
+            is_valid = bool(object_valid_mask[0, object_idx].item() > 0.5)
+            if is_valid:
+                points = _sample_points_from_box(box, int(self.object_num_queries))
+                points[:, 0] *= float(width)
+                points[:, 1] *= float(height)
+            else:
+                cx = 0.5 * float(width)
+                cy = 0.5 * float(height)
+                points = torch.tensor([[cx, cy]] * int(self.object_num_queries), dtype=torch.float32)
+            grouped_points.append(points)
+        flat = torch.stack(grouped_points, dim=0).view(1, int(self.total_object_queries), 2)
+        return flat, query_frame_ids, object_valid_mask, box_prior_xyxy
+
+    model._build_object_query_priors = types.MethodType(_build_object_query_priors_box_uniform, model)
 
 
 def _resolve_existing_path(value: object, *, base_dir: Path | None = None) -> Path | None:
@@ -603,6 +658,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--query-prior-mode",
+        choices=["original", "box_uniform"],
+        default="original",
+        help="How to construct query_points_prior before CoTracker/VGGT.",
+    )
+    parser.add_argument(
         "--object-context-ablation",
         choices=["none", "zero", "random"],
         default="none",
@@ -687,6 +748,7 @@ def main() -> None:
     model.to(torch.device(cli_args.device))
     model.eval()
     model.pipe.dit.eval()
+    _install_query_prior_override(model, str(cli_args.query_prior_mode))
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
@@ -702,6 +764,8 @@ def main() -> None:
         width=int(cli_args.width),
         negative_prompt="",
     )
+    if str(cli_args.query_prior_mode) != "original":
+        method_name = f"{method_name}_{str(cli_args.query_prior_mode)}"
 
     for input_json_path in json_paths:
         payload = core._load_input_json(input_json_path)
@@ -899,6 +963,7 @@ def main() -> None:
                     "metadata": {
                         "model_device": str(model.pipe.device),
                         "aux_device": cli_args.aux_device,
+                        "query_prior_mode": str(cli_args.query_prior_mode),
                         "object_context_ablation": ablation_debug,
                         "model_args": {
                             "height": int(cli_args.height),

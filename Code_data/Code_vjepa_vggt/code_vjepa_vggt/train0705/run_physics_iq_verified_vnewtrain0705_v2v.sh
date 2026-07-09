@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Physics-IQ Verified 双卡正式跑法示例:
+# 当前 LIMIT=1 ctx sweep 跑法:
+# GROUNDING_DEVICE=cuda:0 \
 # GPU_PAIR=0,1 \
+# LIMIT=1 \
 # WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
 # MODEL_NAME=train_stage1b_diffsynth_native0705_step2500_physiq_verified \
-# OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/physicsiq/train_stage1b_diffsynth_native0705 \
+# OUTPUT_ROOT=/data/gaoya/agent-data/outputs/physicsiq_ctx_sweep_limit1 \
 # VERIFIED_ROOT=/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified \
 # DESCRIPTIONS_FILE=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv \
 # FPS=30 \
@@ -12,7 +14,29 @@
 # INPUT_COVER_CROP_HEIGHT=512 \
 # INPUT_COVER_CROP_WIDTH=896 \
 # NUM_FRAMES=150 \
-# CONTEXT_FRAMES=20 \
+# CTX=10,20,30,50,90 \
+# SAMPLING_MODE=prefix \
+# NUM_INFERENCE_STEPS=40 \
+# CFG_SCALE=5.0 \
+# SEED=42 \
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.sh
+#
+# 当前 LIMIT=1 ctx sweep 跑法（kubric0708 step-003500）:
+# GROUNDING_DEVICE=cuda:0 \
+# GPU_PAIR=2,3 \
+# LIMIT=1 \
+# WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-003500 \
+# MODEL_NAME=train_stage1b_kubric0708_step3500_physiq_verified \
+# OUTPUT_ROOT=/data/gaoya/agent-data/outputs/physicsiq_ctx_sweep_limit1_kubric0708_step3500 \
+# VERIFIED_ROOT=/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified \
+# DESCRIPTIONS_FILE=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv \
+# FPS=30 \
+# HEIGHT=512 \
+# WIDTH=896 \
+# INPUT_COVER_CROP_HEIGHT=512 \
+# INPUT_COVER_CROP_WIDTH=896 \
+# NUM_FRAMES=150 \
+# CTX=10,20,30,50,90 \
 # SAMPLING_MODE=prefix \
 # NUM_INFERENCE_STEPS=40 \
 # CFG_SCALE=5.0 \
