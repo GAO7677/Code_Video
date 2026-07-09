@@ -11,6 +11,7 @@
 # - output frames: OUTPUT_FRAMES=49
 # - ctx: CTX=8
 # - multiple ctx counts: CTX=1,4,8,12,16,20
+# - disable object branch ablation: DISABLE_OBJECT_BRANCH=1
 #
 # Direct one-run example:
 # GPU_PAIR=6,7 \
@@ -20,6 +21,17 @@
 # OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
 # OUTPUT_FRAMES=49 \
 # CTX=8 \
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+#
+# Direct one-run no-object-branch ablation:
+# GPU_PAIR=0,0 \
+# TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+# WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+# METHOD_NAME=train_stage1b_diffsynth_native0705_step2500_no_object_branch \
+# OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0705_no_object_branch \
+# OUTPUT_FRAMES=49 \
+# CTX=8 \
+# DISABLE_OBJECT_BRANCH=1 \
 # bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 #
 # Sweep on one GPU pair:
@@ -47,7 +59,8 @@ set -euo pipefail
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
-INFER_SCRIPT="${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py"
+INFER_SCRIPT_OBJECT="${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py"
+INFER_SCRIPT_NO_OBJECT="${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_no_object_branch_v2v.py"
 DEFAULT_NEGATIVE_PROMPT="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
 
 RUN_MODE="${RUN_MODE:-}"
@@ -88,6 +101,13 @@ NEGATIVE_PROMPT="${NEGATIVE_PROMPT:-${DEFAULT_NEGATIVE_PROMPT}}"
 LIMIT="${LIMIT:-}"
 FORCE="${FORCE:-0}"
 OVERWRITE="${OVERWRITE:-0}"
+DISABLE_OBJECT_BRANCH="${DISABLE_OBJECT_BRANCH:-0}"
+
+if [ "${DISABLE_OBJECT_BRANCH}" = "1" ]; then
+  INFER_SCRIPT="${INFER_SCRIPT_NO_OBJECT}"
+else
+  INFER_SCRIPT="${INFER_SCRIPT_OBJECT}"
+fi
 
 infer_run_mode() {
   if [ -n "${RUN_MODE}" ]; then
@@ -241,6 +261,9 @@ run_one_inference() {
   if [ -n "${launch_inference_devices}" ] && [ "${launch_inference_devices}" != "none" ]; then
     cmd+=(--inference-devices "${launch_inference_devices}")
   fi
+  if [ "${DISABLE_OBJECT_BRANCH}" = "1" ]; then
+    cmd+=(--disable-object-branch)
+  fi
   if [ -n "${step_output_dir_name}" ]; then
     cmd+=(--step-output-dir-name "${step_output_dir_name}")
   fi
@@ -256,6 +279,8 @@ run_one_inference() {
 
   echo "[kubric-batch] gpu_pair=${gpu_pair} context_frames=${context_frames}"
   echo "[kubric-batch] cuda_visible_devices=${launch_visible_gpu_ids} inference_devices=${launch_inference_devices}"
+  echo "[kubric-batch] disable_object_branch=${DISABLE_OBJECT_BRANCH}"
+  echo "[kubric-batch] infer_script=${INFER_SCRIPT}"
   echo "[kubric-batch] output=${run_output_root}"
   echo "[kubric-batch] model_name=${run_model_name}"
   echo "[kubric-batch] command: ${cmd[*]}"

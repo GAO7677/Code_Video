@@ -114,6 +114,7 @@ DEFAULT_STAGE1A = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
     "pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt"
 )
+DEFAULT_NEGATIVE_PROMPT = ""
 
 
 def _normalize_ckpt_method_name(name: str) -> str:
@@ -121,16 +122,63 @@ def _normalize_ckpt_method_name(name: str) -> str:
     return normalized or name
 
 
-def _build_method_name_from_checkpoint_dir(checkpoint_dir: Path) -> str:
+def _build_method_name_from_checkpoint_dir(
+    checkpoint_dir: Path,
+    *,
+    context_frames: int,
+    num_frames: int,
+    sampling_steps: int,
+    height: int,
+    width: int,
+    negative_prompt: str | None,
+) -> str:
     step_name = checkpoint_dir.name
     checkpoint_parent = checkpoint_dir.parent
+    if negative_prompt is None:
+        neg_tag = "nullnegprompt"
+    elif negative_prompt == "":
+        neg_tag = "defaultnegprompt"
+    else:
+        neg_tag = "customnegprompt"
+    suffix = (
+        f"_steps{int(sampling_steps):02d}"
+        f"_{int(height)}x{int(width)}"
+        f"_ctx{int(context_frames):02d}"
+        f"_{int(num_frames):02d}f"
+        f"_{neg_tag}"
+    )
     if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
         method_root = _normalize_ckpt_method_name(checkpoint_parent.parent.name)
-        return f"{method_root}_{step_name}"
+        return f"{method_root}_{step_name}{suffix}"
     if checkpoint_parent.name:
         method_root = _normalize_ckpt_method_name(checkpoint_parent.name)
-        return f"{method_root}_{step_name}"
-    return step_name
+        return f"{method_root}_{step_name}{suffix}"
+    return f"{step_name}{suffix}"
+
+
+def _append_method_suffix(method_name: str, suffix: str | None) -> str:
+    if suffix is None:
+        return method_name
+    suffix_norm = str(suffix).strip()
+    if not suffix_norm:
+        return method_name
+    return f"{method_name}_{suffix_norm}"
+
+
+def _resolve_step_output_dir_name(
+    raw_value: str | None,
+    *,
+    checkpoint_dir: Path,
+    method_name: str,
+) -> str:
+    if raw_value is None:
+        return checkpoint_dir.name
+    value = str(raw_value).strip()
+    if not value:
+        return checkpoint_dir.name
+    if value == "__METHOD_NAME__":
+        return method_name
+    return value
 
 
 def _resolve_runtime_device(device_arg: str) -> str:
@@ -171,6 +219,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-json-list-path", type=Path, required=True)
     parser.add_argument("--model-name", type=str, required=True)
     parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument(
+        "--step-output-dir-name",
+        type=str,
+        default=None,
+        help="Optional final result subdirectory name under output-root. Use __METHOD_NAME__ to derive from checkpoint metadata.",
+    )
+    parser.add_argument(
+        "--method-suffix",
+        type=str,
+        default=None,
+        help="Optional suffix appended to the auto-derived method name, e.g. no_obj.",
+    )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--wan-root", type=Path, default=DEFAULT_WAN_ROOT)
     parser.add_argument("--diffsynth-root", type=Path, default=DEFAULT_DIFFSYNTH_ROOT)
@@ -196,6 +256,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--num-inference-steps", type=int, default=40)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
+    parser.add_argument("--negative-prompt", type=str, default=DEFAULT_NEGATIVE_PROMPT)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--lora-rank", type=int, default=32)
@@ -394,7 +455,7 @@ def _run_single_case_in_process(
     with torch.no_grad():
         pipe_kwargs = dict(
             prompt=str(input_caption),
-            negative_prompt="",
+            negative_prompt=str(getattr(model, "_negative_prompt", DEFAULT_NEGATIVE_PROMPT)),
             context_video=context_pil,
             seed=int(seed),
             tiled=True,
@@ -473,12 +534,14 @@ def main() -> None:
         json_paths = json_paths[: max(0, int(cli_args.limit))]
 
     output_root.mkdir(parents=True, exist_ok=True)
+    resolved_negative_prompt = str(cli_args.negative_prompt)
     manifest = {
         "input_json_list_path": str(input_json_list_path),
         "weights_root": str(weights_root),
         "num_items": len(json_paths),
         "num_inference_steps": int(cli_args.num_inference_steps),
         "cfg_scale": float(cli_args.cfg_scale),
+        "negative_prompt": resolved_negative_prompt,
         "seed": int(cli_args.seed),
         "height": int(cli_args.height),
         "width": int(cli_args.width),
@@ -501,15 +564,32 @@ def main() -> None:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
-    step_output_dir = output_root / weights_root.name
+    method_name = _append_method_suffix(
+        _build_method_name_from_checkpoint_dir(
+            weights_root,
+            context_frames=int(cli_args.context_frames),
+            num_frames=int(cli_args.num_frames),
+            sampling_steps=int(cli_args.num_inference_steps),
+            height=int(cli_args.height),
+            width=int(cli_args.width),
+            negative_prompt=resolved_negative_prompt,
+        ),
+        cli_args.method_suffix,
+    )
+    step_output_dir_name = _resolve_step_output_dir_name(
+        cli_args.step_output_dir_name,
+        checkpoint_dir=weights_root,
+        method_name=method_name,
+    )
+    step_output_dir = output_root / step_output_dir_name
     step_output_dir.mkdir(parents=True, exist_ok=True)
-    method_name = _build_method_name_from_checkpoint_dir(weights_root)
 
     runtime_args = _build_runtime_args(cli_args, weights_root, step_output_dir)
     model, _, load_info = infer0705._build_runtime_model(runtime_args)
     model.to(torch.device(cli_args.device))
     model.eval()
     model.pipe.dit.eval()
+    model._negative_prompt = resolved_negative_prompt
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
@@ -603,6 +683,8 @@ def main() -> None:
         "weights_root": str(weights_root),
         "output_root": str(output_root),
         "step": weights_root.name,
+        "step_output_dir_name": step_output_dir_name,
+        "method": method_name,
         "num_total": len(json_paths),
         "num_success": step_success,
         "num_failed": step_failed,

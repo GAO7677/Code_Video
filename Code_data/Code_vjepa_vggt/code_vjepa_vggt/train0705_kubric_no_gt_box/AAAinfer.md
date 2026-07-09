@@ -77,7 +77,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 
-GPU_PAIR="5,5 6,6 7,7" \
+GPU_PAIR="5,5" \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
 WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-003500 \
 METHOD_NAME=train_stage1b_kubric0708with_step3500 \
@@ -258,14 +258,52 @@ CUDA_VISIBLE_DEVICES=0,1 \
 /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
   --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-  --model-name train_stage1b_kubric0708_step1000_f98 \
-  --output-root /data/gaoya/AAA_test_video/tmp \
-  --height 512 \
-  --width 896 \
-  --input-cover-crop-width 832 \
-  --input-cover-crop-height 480 \
-  --inference-devices cuda:0,cuda:1 \
-  --context-frames 8 \
-  --num-inference-steps 40 \
-  --output-num-frames 98
+
+## 8. Physics-IQ Verified 正式跑法
+
+如果要严格按官方 `Physics-IQ Verified` workflow 跑 `train0705 native` 权重，不要走 Kubric 入口，使用下面这个专用包装器：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.py
 ```
+
+这个脚本会：
+
+- 直接读取官方 `descriptions_base.csv`
+- 只取 `take-1` 的 198 个 case
+- 直接读取官方 Verified `conditioning` 视频
+- 生成阶段自动对齐到底层 Wan 的 `num_frames % 4 == 1`
+- 生成后自动裁成官方要求的精确 `5.0s`
+- 最终生成结果保留在原生目录 `step-002500/`，不再额外改名
+- 已有 `mp4 + json` 的样本会自动跳过，只有未完成样本继续跑
+
+本次正式跑 `step-002500` 到 `/data/gaoya/AAA_test_video/0623/test/physicsiq` 的命令如下：
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+PYTHONNOUSERSITE=1 \
+CUDA_VISIBLE_DEVICES=2 \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.py \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+  --model-name train_stage1b_diffsynth_native0705_step2500_physiq_verified \
+  --output-root /data/gaoya/AAA_test_video/0623/test/physicsiq \
+  --verified-root /data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified \
+  --descriptions-file /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv \
+  --fps 30 \
+  --num-frames 150 \
+  --context-frames 20 \
+  --sampling-mode prefix \
+  --num-inference-steps 40 \
+  --cfg-scale 5.0 \
+  --seed 42 \
+  --device cuda
+```
+
+说明：
+
+- 这里显式用了 `CUDA_VISIBLE_DEVICES=2`，避开 `gpu4`，也避免和当前占用较高的 `gpu0/1/6` 冲突
+- 生成产物会直接续写到：
+  `/data/gaoya/AAA_test_video/0623/test/physicsiq/step-002500`
+- wrapper 里的 `run-name` 现在只用于 `_physics_iq_inputs/...` 的准备目录命名，不影响最终输出目录
+- 如果后续要补 leaderboard 的多次 run，只需要换不同 `--seed`；如果只是为了区分准备目录，再额外换不同 `--run-name`
