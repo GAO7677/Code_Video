@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CUDA_VISIBLE_DEVICES=0 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAeval.txt
+# CUDA_VISIBLE_DEVICES=1 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAeval.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRY0526_ROOT="/home/gaoya/Code_Video/Code_data/Code_try0526"
@@ -19,13 +19,13 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  "wmreward"
-  # "physics_iq_with_context"
-  # "physics_iq_without_context"
-  # "pmf_with_context"
-  # "pmf_without_context"
-  "videophy2"
-  "cosmos_reason1"
+  "physics_iq_with_context"
+  "physics_iq_without_context"
+  "pmf_with_context"
+  "pmf_without_context"
+  # "wmreward"
+  # "videophy2"
+  # "cosmos_reason1"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then
