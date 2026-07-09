@@ -91,6 +91,10 @@ def _read_cli_arg_value(argv: list[str], names: tuple[str, ...], default: str | 
     return default
 
 
+def _cli_flag_present(argv: list[str], names: tuple[str, ...]) -> bool:
+    return any(name in argv for name in names)
+
+
 _DEFAULT_DIFFSYNTH_ROOT_STR = "/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main"
 _SELECTED_DIFFSYNTH_ROOT = _read_cli_arg_value(
     sys.argv,
@@ -147,10 +151,28 @@ def _build_method_name_from_checkpoint_dir(
     *,
     context_frames: int,
     num_frames: int,
+    sampling_steps: int,
+    height: int,
+    width: int,
+    negative_prompt: str | None,
 ) -> str:
     step_name = checkpoint_dir.name
     checkpoint_parent = checkpoint_dir.parent
-    suffix = f"_ctx{int(context_frames):02d}_{int(num_frames):02d}f"
+    if negative_prompt is None:
+        neg_tag = "nullnegprompt"
+    elif negative_prompt == "":
+        neg_tag = "emptynegprompt"
+    elif negative_prompt == DEFAULT_NEGATIVE_PROMPT:
+        neg_tag = "defaultnegprompt"
+    else:
+        neg_tag = "customnegprompt"
+    suffix = (
+        f"_steps{int(sampling_steps):02d}"
+        f"_{int(height)}x{int(width)}"
+        f"_ctx{int(context_frames):02d}"
+        f"_{int(num_frames):02d}f"
+        f"_{neg_tag}"
+    )
     if checkpoint_parent.name == "checkpoints" and checkpoint_parent.parent.name:
         method_root = _normalize_ckpt_method_name(checkpoint_parent.parent.name)
         return f"{method_root}_{step_name}{suffix}"
@@ -166,6 +188,10 @@ def _resolve_step_output_dir_name(
     checkpoint_dir: Path,
     context_frames: int,
     num_frames: int,
+    sampling_steps: int,
+    height: int,
+    width: int,
+    negative_prompt: str | None,
 ) -> str:
     if raw_value is None:
         return checkpoint_dir.name
@@ -177,6 +203,10 @@ def _resolve_step_output_dir_name(
             checkpoint_dir,
             context_frames=int(context_frames),
             num_frames=int(num_frames),
+            sampling_steps=int(sampling_steps),
+            height=int(height),
+            width=int(width),
+            negative_prompt=negative_prompt,
         )
     return value
 
@@ -243,6 +273,12 @@ def _load_context_video_for_mode(
         frames = frames[:target_context_frames]
         frame_indices = frame_indices[:target_context_frames]
     return frames, frame_indices
+
+
+def _resolve_negative_prompt_from_cli(cli_args: argparse.Namespace) -> str | None:
+    if getattr(cli_args, "_negative_prompt_provided", False):
+        return str(cli_args.negative_prompt)
+    return None
 
 
 def _resolve_source_video(payload: dict[str, object], json_path: Path) -> str:
@@ -354,6 +390,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--num-inference-steps", type=int, default=40)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
+    parser.add_argument(
+        "--negative-prompt",
+        type=str,
+        default=DEFAULT_NEGATIVE_PROMPT,
+        help=(
+            "Negative prompt to pass into the pipeline. "
+            "Pass an empty string to use ''. If this argument is omitted, the default "
+            "DEFAULT_NEGATIVE_PROMPT is used."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--quality", type=int, default=5)
     parser.add_argument("--lora-rank", type=int, default=32)
@@ -500,6 +546,7 @@ def _run_single_case_in_process(
     context_frames: int,
     sampling_mode: str,
     sampling_steps: int,
+    negative_prompt: str | None,
     fps: int,
     seed: int,
     cfg_scale: float,
@@ -552,7 +599,6 @@ def _run_single_case_in_process(
     with torch.no_grad():
         pipe_kwargs = dict(
             prompt=str(input_caption),
-            negative_prompt="",
             context_video=context_pil,
             seed=int(seed),
             tiled=True,
@@ -561,8 +607,9 @@ def _run_single_case_in_process(
             num_frames=int(num_frames),
             num_inference_steps=int(sampling_steps),
             cfg_scale=float(cfg_scale),
-            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
         )
+        if negative_prompt is not None:
+            pipe_kwargs["negative_prompt"] = str(negative_prompt)
         if bool(getattr(model, "enable_object_branch", False)):
             pipe_kwargs["object_context"] = object_context
         video = pipe(**pipe_kwargs)
@@ -584,7 +631,7 @@ def _run_single_case_in_process(
         "seed": int(seed),
         "step": int(sampling_steps),
         "guidance": float(cfg_scale),
-        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+        "negative_prompt": negative_prompt,
         "ckpt": str(checkpoint_dir),
         "frame_indices": frame_indices.tolist(),
         "requested_context_frames": int(context_frames),
@@ -601,6 +648,9 @@ def _run_single_case_in_process(
             "width": int(width),
             "num_frames": int(num_frames),
             "context_frames": effective_context_frames,
+            "num_inference_steps": int(sampling_steps),
+            "cfg_scale": float(cfg_scale),
+            "negative_prompt": negative_prompt,
             "input_resize_mode": "cover_crop",
             "input_cover_crop_height": int(input_cover_crop_height),
             "input_cover_crop_width": int(input_cover_crop_width),
@@ -617,6 +667,7 @@ def main() -> None:
     _install_kubric_runtime_hooks()
 
     cli_args = parse_args()
+    cli_args._negative_prompt_provided = _cli_flag_present(sys.argv, ("--negative-prompt",))
     if cli_args.output_num_frames is not None:
         cli_args.num_frames = int(cli_args.output_num_frames)
 
@@ -642,6 +693,7 @@ def main() -> None:
         json_paths = json_paths[: max(0, int(cli_args.limit))]
 
     output_root.mkdir(parents=True, exist_ok=True)
+    resolved_negative_prompt = _resolve_negative_prompt_from_cli(cli_args)
     manifest = {
         "input_json_list_path": str(input_json_list_path),
         "weights_root": str(weights_root),
@@ -657,6 +709,7 @@ def main() -> None:
         "num_frames": int(cli_args.num_frames),
         "context_frames": int(cli_args.context_frames),
         "sampling_mode": str(cli_args.sampling_mode),
+        "negative_prompt": resolved_negative_prompt,
         "initialize_model_on_cpu": bool(cli_args.initialize_model_on_cpu),
         "disable_object_branch": bool(cli_args.disable_object_branch),
         "device": str(cli_args.device),
@@ -678,6 +731,10 @@ def main() -> None:
         checkpoint_dir=weights_root,
         context_frames=int(cli_args.context_frames),
         num_frames=int(cli_args.num_frames),
+        sampling_steps=int(cli_args.num_inference_steps),
+        height=int(cli_args.height),
+        width=int(cli_args.width),
+        negative_prompt=resolved_negative_prompt,
     )
     step_output_dir = output_root / step_output_dir_name
     step_output_dir.mkdir(parents=True, exist_ok=True)
@@ -685,6 +742,10 @@ def main() -> None:
         weights_root,
         context_frames=int(cli_args.context_frames),
         num_frames=int(cli_args.num_frames),
+        sampling_steps=int(cli_args.num_inference_steps),
+        height=int(cli_args.height),
+        width=int(cli_args.width),
+        negative_prompt=resolved_negative_prompt,
     )
 
     runtime_args = _build_runtime_args(cli_args, weights_root, step_output_dir)
@@ -740,6 +801,7 @@ def main() -> None:
                 context_frames=int(cli_args.context_frames),
                 sampling_mode=str(cli_args.sampling_mode),
                 sampling_steps=int(cli_args.num_inference_steps),
+                negative_prompt=resolved_negative_prompt,
                 fps=int(cli_args.fps),
                 seed=int(cli_args.seed),
                 cfg_scale=float(cli_args.cfg_scale),

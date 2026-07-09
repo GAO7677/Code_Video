@@ -65,10 +65,10 @@
 - 跑一整份 txt
 
 ```bash
-GPU_PAIR=2,2 \
+GPU_PAIR=6,6 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
-WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-004000 \
-METHOD_NAME=train_stage1b_kubric0708_step4000 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-003500 \
+METHOD_NAME=train_stage1b_kubric0708with_step3500 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
@@ -77,10 +77,10 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 
-GPU_PAIR=2,2 \
+GPU_PAIR="5,5 6,6 7,7" \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
 WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-003500 \
-METHOD_NAME=train_stage1b_kubric0708_step3500 \
+METHOD_NAME=train_stage1b_kubric0708with_step3500 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
@@ -88,7 +88,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 
-GPU_PAIR=0,0 \
+GPU_PAIR="0,0" \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_morpheus_real_world.txt \
 WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-002000 \
 METHOD_NAME=train_stage1b_kubric0708_step2000 \

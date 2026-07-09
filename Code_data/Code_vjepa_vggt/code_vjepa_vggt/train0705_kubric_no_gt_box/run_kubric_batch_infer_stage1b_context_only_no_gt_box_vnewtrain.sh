@@ -48,6 +48,7 @@ PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 INFER_SCRIPT="${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v.py"
+DEFAULT_NEGATIVE_PROMPT="色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
 
 RUN_MODE="${RUN_MODE:-}"
 GPU_PAIR="${GPU_PAIR:-}"
@@ -83,6 +84,7 @@ SAMPLING_MODE="${SAMPLING_MODE:-prefix}"
 CFG_SCALE="${CFG_SCALE:-5.0}"
 SEED="${SEED:-42}"
 FPS="${FPS:-30}"
+NEGATIVE_PROMPT="${NEGATIVE_PROMPT:-${DEFAULT_NEGATIVE_PROMPT}}"
 LIMIT="${LIMIT:-}"
 FORCE="${FORCE:-0}"
 OVERWRITE="${OVERWRITE:-0}"
@@ -232,6 +234,7 @@ run_one_inference() {
     --cfg-scale "${CFG_SCALE}"
     --seed "${SEED}"
     --fps "${FPS}"
+    --negative-prompt "${NEGATIVE_PROMPT}"
     --output-num-frames "${OUTPUT_NUM_FRAMES}"
   )
 
