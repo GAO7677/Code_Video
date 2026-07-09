@@ -40,7 +40,7 @@ from code_vjepa_free.vjepa_guidance.spectral_guidance import (
 )
 
 
-def _tensor_numeric_stats(tensor: torch.Tensor | None) -> dict[str, float | int | list[int] | None]:
+def _tensor_numeric_stats(tensor: torch.Tensor | np.ndarray | list | tuple | None) -> dict[str, float | int | list[int] | None]:
     if tensor is None:
         return {
             "shape": None,
@@ -53,6 +53,28 @@ def _tensor_numeric_stats(tensor: torch.Tensor | None) -> dict[str, float | int 
             "nan_count": None,
             "inf_count": None,
         }
+    if isinstance(tensor, (list, tuple)):
+        if len(tensor) == 0:
+            return {
+                "shape": [0],
+                "dtype": type(tensor).__name__,
+                "mean": None,
+                "std": None,
+                "min": None,
+                "max": None,
+                "abs_max": None,
+                "nan_count": 0,
+                "inf_count": 0,
+                "finite_ratio": 1.0,
+            }
+        if all(isinstance(item, Image.Image) for item in tensor):
+            tensor = np.stack([np.asarray(item) for item in tensor], axis=0)
+        else:
+            tensor = np.asarray(tensor)
+    if isinstance(tensor, Image.Image):
+        tensor = np.asarray(tensor)
+    if isinstance(tensor, np.ndarray):
+        tensor = torch.from_numpy(tensor)
     with torch.no_grad():
         tensor_f32 = tensor.detach().float()
         finite = torch.isfinite(tensor_f32)

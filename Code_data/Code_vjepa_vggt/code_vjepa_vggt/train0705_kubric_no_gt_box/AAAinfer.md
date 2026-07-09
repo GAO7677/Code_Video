@@ -27,13 +27,13 @@
 4. Physics-IQ Verified 专用 wrapper
 
 ```text
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.py
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.py
 ```
 
 对应 shell wrapper：
 
 ```text
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.sh
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.sh
 ```
 
 ## 2. 统一 shell 入口的实际默认值
@@ -255,8 +255,8 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 ```bash
 GPU_PAIR=5,5 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-004500 \
-METHOD_NAME=train_stage1b_kubric0708_step4500 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-005000 \
+METHOD_NAME=train_stage1b_kubric0708_step5000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
@@ -442,13 +442,13 @@ CUDA_VISIBLE_DEVICES=0,1 \
 这里不要再用旧的 `train0705/run_physics_iq_verified_vnewtrain0705_v2v.py`。当前 Kubric 版本的实际 wrapper 是：
 
 ```text
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.py
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.py
 ```
 
 对应 shell wrapper：
 
 ```text
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.sh
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.sh
 ```
 
 这个 wrapper 当前实际行为：
@@ -488,7 +488,7 @@ WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_s
 MODEL_NAME=train_stage1b_kubric0708_step4500_physiq_verified \
 OUTPUT_ROOT=/data/gaoya/agent-data/outputs/physics_iq_verified_v2v \
 RUN_NAME=train_stage1b_kubric0708_step4500_physiq_verified-bpp-run_01 \
-bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.sh
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.sh
 ```
 
 说明：
@@ -506,7 +506,7 @@ PYTHONNOUSERSITE=1 \
 PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
 CUDA_VISIBLE_DEVICES=2 \
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.py \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.py \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-004500 \
   --model-name train_stage1b_kubric0708_step4500_physiq_verified \
   --output-root /data/gaoya/agent-data/outputs/physics_iq_verified_v2v \
@@ -610,6 +610,6 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/r
 这次已明确修正的旧文档问题包括：
 
 - 旧文档里把默认输入 cover-crop 写成了 `832x480`，实际当前统一入口默认是 `896x512`
-- 旧文档里 Physics-IQ 指向了旧的 `train0705/...` 脚本路径，当前应使用 `train0705_kubric_no_gt_box/.../run_physics_iq_verified_kubric_v2v.py`
+- 旧文档里 Physics-IQ 指向了旧的 `train0705/...` 脚本路径，当前应使用 `code_phys_papers_compare/.../run_physics_iq_verified_kubric_v2v.py`
 - 旧文档里的双卡 Python 示例是不完整命令，已经替换成完整可执行版本
 - 旧文档没有区分 direct 和 sweep 两种输出目录规则，这里已经按当前脚本真实行为拆开说明

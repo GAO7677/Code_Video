@@ -15,7 +15,7 @@ Example:
   PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
   CUDA_VISIBLE_DEVICES=2 \
   /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
-  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_physics_iq_verified_kubric_v2v.py \
+  /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.py \
     --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
     --model-name train_stage1b_kubric0708_physiq_verified \
     --output-root /data/gaoya/agent-data/outputs/physics_iq_verified_v2v \
@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

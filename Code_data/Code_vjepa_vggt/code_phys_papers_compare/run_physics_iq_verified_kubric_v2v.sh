@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt"
 PYTHON_BIN="${PYTHON_BIN:-/home/gaoya/miniconda3/envs/wan-cu128/bin/python}"
 DIFFSYNTH_ROOT="${DIFFSYNTH_ROOT:-/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main}"
-RUNNER_PY="${SCRIPT_DIR}/run_physics_iq_verified_kubric_v2v.py"
+RUNNER_PY="${REPO_ROOT}/code_phys_papers_compare/run_physics_iq_verified_kubric_v2v.py"
 
 WEIGHTS_ROOT="${WEIGHTS_ROOT:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000}"
 MODEL_NAME="${MODEL_NAME:-train_stage1b_kubric0708_physiq_verified}"
