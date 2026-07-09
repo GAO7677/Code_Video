@@ -495,6 +495,122 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
         rigid_material_key="painted_metal_yellow",
         motion_profile="reverse_swipe",
     ),
+    "F10_ramp_slide_study": CaseSpec(
+        key="F10_ramp_slide_study",
+        family="F10",
+        title="Ramp slide in study-like interior",
+        description="A soft block starts on a shallow ramp and slides into a tumble, adding a gravity-driven motion family distinct from direct impact.",
+        sim=SimSpec(
+            dt=4e-3,
+            substeps=18,
+            horizon=230,
+            gravity=(0.0, 0.0, -9.81),
+            mpm_lower_bound=(-1.4, -1.2, -0.1),
+            mpm_upper_bound=(1.4, 1.2, 1.9),
+            grid_density=112,
+        ),
+        camera=CameraSpec(
+            res=DEFAULT_RES,
+            pos=(1.42, -1.38, 1.18),
+            lookat=(-0.16, 0.10, 0.30),
+            fov=36.0,
+        ),
+        mpm_vis_mode="visual",
+        palette=_palette_soft_daylight(),
+        scene_theme="soft_daylight",
+        surface_key="studio_wood_floor",
+        lighting_key="studio_soft",
+        soft_material_key="leather_brown",
+        rigid_material_key="painted_metal_teal",
+        motion_profile="ramp_slide",
+    ),
+    "F11_overhead_press_atelier": CaseSpec(
+        key="F11_overhead_press_atelier",
+        family="F11",
+        title="Overhead press in atelier room",
+        description="A rigid sphere drops from above with a slight lateral bias, producing a more vertical compression event on a tall soft block.",
+        sim=SimSpec(
+            dt=4e-3,
+            substeps=18,
+            horizon=240,
+            gravity=(0.0, 0.0, -9.81),
+            mpm_lower_bound=(-1.4, -1.2, -0.1),
+            mpm_upper_bound=(1.4, 1.2, 2.0),
+            grid_density=112,
+        ),
+        camera=CameraSpec(
+            res=DEFAULT_RES,
+            pos=(0.98, -1.30, 1.34),
+            lookat=(0.06, 0.02, 0.38),
+            fov=35.0,
+        ),
+        mpm_vis_mode="visual",
+        palette=_palette_residential_warm(),
+        scene_theme="residential_warm",
+        surface_key="residential_wood_floor",
+        lighting_key="studio_warm",
+        soft_material_key="cardboard_kraft",
+        rigid_material_key="painted_metal_yellow",
+        motion_profile="overhead_press",
+    ),
+    "F12_ledge_topple_loft": CaseSpec(
+        key="F12_ledge_topple_loft",
+        family="F12",
+        title="Ledge topple in loft room",
+        description="A soft block is perched on a narrow ledge and topples under gravity, creating delayed contact and asymmetric landing.",
+        sim=SimSpec(
+            dt=4e-3,
+            substeps=18,
+            horizon=220,
+            gravity=(0.0, 0.0, -9.81),
+            mpm_lower_bound=(-1.4, -1.2, -0.1),
+            mpm_upper_bound=(1.4, 1.2, 1.9),
+            grid_density=112,
+        ),
+        camera=CameraSpec(
+            res=DEFAULT_RES,
+            pos=(-1.02, -1.42, 1.06),
+            lookat=(0.56, 0.20, 0.36),
+            fov=37.0,
+        ),
+        mpm_vis_mode="visual",
+        palette=_palette_loft_neutral(),
+        scene_theme="loft_neutral",
+        surface_key="dark_wood_floor",
+        lighting_key="hall_neutral",
+        soft_material_key="leather_brown",
+        rigid_material_key="painted_metal_teal",
+        motion_profile="ledge_topple",
+    ),
+    "F13_wall_pinch_workroom": CaseSpec(
+        key="F13_wall_pinch_workroom",
+        family="F13",
+        title="Wall pinch in workroom interior",
+        description="A rigid sphere drives a soft block toward a nearby support wall, producing a more constrained compression and rebound pattern.",
+        sim=SimSpec(
+            dt=4e-3,
+            substeps=18,
+            horizon=240,
+            gravity=(0.0, 0.0, -9.81),
+            mpm_lower_bound=(-1.4, -1.2, -0.1),
+            mpm_upper_bound=(1.4, 1.2, 1.9),
+            grid_density=112,
+        ),
+        camera=CameraSpec(
+            res=DEFAULT_RES,
+            pos=(1.18, -1.34, 0.96),
+            lookat=(0.28, 0.10, 0.24),
+            fov=34.0,
+        ),
+        mpm_vis_mode="visual",
+        palette=_palette_industrial_cool(),
+        scene_theme="industrial_cool",
+        surface_key="painted_concrete_floor",
+        lighting_key="hall_neutral",
+        soft_material_key="cardboard_kraft",
+        rigid_material_key="painted_metal_yellow",
+        motion_profile="wall_pinch",
+    ),
 }
 
 
@@ -937,7 +1053,20 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     mats = _scene_material_keys(case)
     floor_surface = _material_surface(mats["floor"], tint_rgb=_rgb(p.floor_color), smooth=True)
     floor_alt_surface = _material_surface(mats["floor_alt"], tint_rgb=_rgb(p.wood_mid_color), smooth=True)
-    stage_surface = _material_surface(mats["stage"], tint_rgb=_mix_rgb(_rgb(p.wood_mid_color), _rgb(p.fabric_color), 0.28), smooth=True)
+    stage_tint = _mix_rgb(_rgb(p.wood_mid_color), _rgb(p.fabric_color), 0.42)
+    if case.scene_theme == "soft_daylight":
+        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wood_mid_color), 0.44)
+    elif case.scene_theme == "industrial_cool":
+        stage_tint = _mix_rgb(_rgb(p.wall_alt_color), _rgb(p.wood_dark_color), 0.22)
+    elif case.scene_theme == "loft_neutral":
+        stage_tint = _mix_rgb(_rgb(p.wall_color), _rgb(p.wood_mid_color), 0.34)
+    if case.motion_profile == "overhead_press":
+        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wall_color), 0.18)
+    elif case.motion_profile == "wall_pinch":
+        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wall_alt_color), 0.24)
+    elif case.motion_profile == "ledge_topple":
+        stage_tint = _mix_rgb(_rgb(p.ceiling_color), _rgb(p.wood_mid_color), 0.28)
+    stage_surface = _material_surface(mats["stage"], tint_rgb=stage_tint, smooth=True)
     wall_surface = _material_surface(mats["wall"], tint_rgb=_rgb(p.wall_color), smooth=True)
     wall_alt_surface = _material_surface(mats["wall_alt"], tint_rgb=_rgb(p.wall_alt_color), smooth=True)
     ceiling_surface = _material_surface("plastic_white", tint_rgb=_rgb(p.ceiling_color), roughness_override=0.28, smooth=True)
@@ -953,12 +1082,27 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     metal_surface = _material_surface(mats["metal"], tint_rgb=_rgb(p.metal_color), roughness_override=0.34, metallic_override=0.42, smooth=True)
     metal_accent_surface = _material_surface(mats["metal_accent"], tint_rgb=_rgb(p.accent_color), roughness_override=0.28, metallic_override=0.36, smooth=True)
     clutter_surface = _material_surface(mats["clutter"], tint_rgb=_rgb(p.clutter_color), roughness_override=0.86, smooth=True)
+    pale_panel_surface = _material_surface(mats["wall"], tint_rgb=_mix_rgb(_rgb(p.wall_color), _rgb(p.ceiling_color), 0.28), smooth=True)
+    dark_panel_surface = _material_surface(mats["wall_alt"], tint_rgb=_mix_rgb(_rgb(p.wall_alt_color), _rgb(p.trim_color), 0.18), smooth=True)
+    book_surface = _material_surface(mats["metal_accent"], tint_rgb=_mix_rgb(_rgb(p.accent_color), _rgb(p.fabric_color), 0.22), roughness_override=0.72, metallic_override=0.0, smooth=True)
+    neutral_book_surface = _material_surface(mats["cabinet"], tint_rgb=_mix_rgb(_rgb(p.fabric_color), _rgb(p.wall_color), 0.36), roughness_override=0.74, smooth=True)
+
+    stage_size = (1.32, 1.04, 0.010)
+    stage_pos = (0.12, 0.16, 0.005)
+    if case.motion_profile in {"tall_flip", "overhead_press"}:
+        stage_size = (1.18, 0.92, 0.010)
+        stage_pos = (0.08, 0.10, 0.005)
+    elif case.motion_profile in {"ramp_slide", "ledge_topple"}:
+        stage_size = (1.10, 0.86, 0.010)
+        stage_pos = (-0.06, 0.08, 0.005)
 
     # Main room shell and a slightly elevated central stage to focus the interaction area.
     _add_fixed_box(scene, pos=(0.0, 0.60, -0.04), size=(5.4, 4.8, 0.08), surface=floor_surface)
-    _add_fixed_box(scene, pos=(0.10, 0.18, 0.005), size=(1.55, 1.20, 0.012), surface=stage_surface, collision=False)
+    _add_fixed_box(scene, pos=stage_pos, size=stage_size, surface=stage_surface, collision=False)
     _add_fixed_box(scene, pos=(-1.35, 0.55, 0.003), size=(1.10, 1.55, 0.010), surface=floor_alt_surface, collision=False)
     _add_fixed_box(scene, pos=(1.55, 1.65, 0.003), size=(1.00, 1.35, 0.010), surface=floor_alt_surface, collision=False)
+    _add_fixed_box(scene, pos=(0.98, -0.24, 0.002), size=(0.78, 0.22, 0.006), surface=floor_alt_surface, collision=False)
+    _add_fixed_box(scene, pos=(-1.86, 1.48, 0.002), size=(0.52, 0.86, 0.006), surface=floor_alt_surface, collision=False)
     _add_fixed_box(scene, pos=(0.0, 2.88, 1.55), size=(5.4, 0.08, 3.10), surface=wall_surface, collision=False)
     _add_fixed_box(scene, pos=(-2.68, 0.60, 1.55), size=(0.08, 4.8, 3.10), surface=wall_alt_surface, collision=False)
     _add_fixed_box(scene, pos=(2.68, 0.60, 1.55), size=(0.08, 4.8, 3.10), surface=wall_alt_surface, collision=False)
@@ -967,6 +1111,14 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_box(scene, pos=(-2.64, 0.60, 0.07), size=(0.04, 4.66, 0.14), surface=trim_surface, collision=False)
     _add_fixed_box(scene, pos=(2.64, 0.60, 0.07), size=(0.04, 4.66, 0.14), surface=trim_surface, collision=False)
     _add_fixed_box(scene, pos=(0.0, 2.82, 0.74), size=(5.16, 0.05, 0.72), surface=wall_alt_surface, collision=False)
+    _add_fixed_box(scene, pos=(0.00, 2.84, 2.55), size=(5.12, 0.03, 0.22), surface=pale_panel_surface, collision=False)
+    _add_fixed_box(scene, pos=(-1.18, 2.81, 1.56), size=(0.72, 0.02, 0.94), surface=pale_panel_surface, collision=False)
+    _add_fixed_box(scene, pos=(2.12, 2.81, 1.42), size=(0.54, 0.02, 0.72), surface=dark_panel_surface, collision=False)
+    # Keep the front of the room readable from shallow exterior camera angles.
+    _add_fixed_box(scene, pos=(-1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
+    _add_fixed_box(scene, pos=(0.00, -1.76, 2.42), size=(2.72, 0.04, 0.42), surface=wall_surface, collision=False)
+    _add_fixed_box(scene, pos=(0.00, -1.75, 0.08), size=(2.80, 0.06, 0.16), surface=trim_surface, collision=False)
 
     # Window, curtain, and beam structure on the rear wall.
     _add_fixed_box(scene, pos=(1.52, 2.80, 2.00), size=(1.56, 0.03, 1.22), surface=window_frame_surface, collision=False)
@@ -974,17 +1126,29 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_cylinder(scene, pos=(1.52, 2.74, 2.57), radius=0.025, height=1.78, surface=metal_surface, euler=(0.0, 0.0, 90.0), collision=False)
     _add_fixed_box(scene, pos=(0.88, 2.74, 1.94), size=(0.44, 0.02, 1.22), surface=fabric_surface, collision=False)
     _add_fixed_box(scene, pos=(2.16, 2.74, 1.94), size=(0.44, 0.02, 1.22), surface=fabric_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.52, 2.73, 1.30), size=(1.36, 0.10, 0.05), surface=trim_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.54, 2.70, 0.44), size=(0.92, 0.12, 0.54), surface=pale_panel_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.22, 2.66, 0.44), size=(0.05, 0.04, 0.46), surface=trim_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.52, 2.66, 0.44), size=(0.05, 0.04, 0.46), surface=trim_surface, collision=False)
+    _add_fixed_box(scene, pos=(1.82, 2.66, 0.44), size=(0.05, 0.04, 0.46), surface=trim_surface, collision=False)
     _add_fixed_box(scene, pos=(0.00, 2.05, 3.02), size=(5.00, 0.10, 0.08), surface=wood_dark_surface, collision=False)
 
     # Left-side door frame and cabinet cluster.
     _add_fixed_box(scene, pos=(-2.62, 2.12, 1.02), size=(0.05, 0.74, 2.04), surface=trim_surface, collision=False)
     _add_fixed_box(scene, pos=(-2.50, 2.12, 2.01), size=(0.22, 0.70, 0.08), surface=trim_surface, collision=False)
+    _add_fixed_box(scene, pos=(-2.48, 2.08, 1.00), size=(0.02, 0.58, 1.90), surface=wall_surface, collision=False)
     _add_fixed_box(scene, pos=(-1.84, 1.95, 0.58), size=(1.24, 0.38, 1.16), surface=cabinet_surface, collision=False)
     _add_fixed_box(scene, pos=(-1.84, 1.94, 1.10), size=(1.12, 0.31, 0.08), surface=wood_dark_surface, collision=False)
     _add_fixed_cylinder(scene, pos=(-1.28, 1.78, 0.66), radius=0.015, height=0.36, surface=metal_accent_surface, euler=(0.0, 0.0, 90.0), collision=False)
     _add_fixed_box(scene, pos=(-1.34, 2.30, 0.20), size=(0.54, 0.26, 0.26), surface=clutter_surface, euler=(0.0, 0.0, -6.0), collision=False)
     _add_fixed_box(scene, pos=(-2.18, 2.80, 1.78), size=(0.58, 0.06, 1.42), surface=trim_surface, collision=False)
     _add_fixed_box(scene, pos=(-2.40, 2.72, 1.00), size=(0.24, 0.12, 0.32), surface=clutter_surface, collision=False)
+    _add_fixed_box(scene, pos=(-1.82, 1.74, 1.46), size=(1.00, 0.16, 0.06), surface=wood_mid_surface, collision=False)
+    _add_fixed_box(scene, pos=(-2.10, 1.72, 1.56), size=(0.18, 0.10, 0.18), surface=neutral_book_surface, collision=False)
+    _add_fixed_box(scene, pos=(-1.88, 1.72, 1.58), size=(0.10, 0.12, 0.22), surface=book_surface, collision=False)
+    _add_fixed_box(scene, pos=(-1.70, 1.72, 1.54), size=(0.14, 0.10, 0.16), surface=clutter_surface, collision=False)
+    _add_fixed_box(scene, pos=(-0.96, 2.80, 1.70), size=(0.52, 0.03, 0.72), surface=trim_surface, collision=False)
+    _add_fixed_box(scene, pos=(-0.96, 2.78, 1.70), size=(0.40, 0.02, 0.58), surface=pale_panel_surface, collision=False)
 
     # Right-side desk, stool, and foreground clutter.
     _add_fixed_box(scene, pos=(1.86, 0.98, 0.78), size=(1.42, 0.74, 0.08), surface=desk_top_surface, collision=False)
@@ -994,6 +1158,10 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_cylinder(scene, pos=(1.76, 0.62, 0.26), radius=0.05, height=0.50, surface=metal_surface, collision=False)
     _add_fixed_box(scene, pos=(2.06, -0.02, 0.09), size=(0.36, 0.22, 0.18), surface=clutter_surface, euler=(0.0, 0.0, 8.0), collision=False)
     _add_fixed_cylinder(scene, pos=(1.72, 0.20, 0.11), radius=0.06, height=0.22, surface=metal_accent_surface, collision=False)
+    _add_fixed_box(scene, pos=(2.12, 1.02, 0.90), size=(0.24, 0.14, 0.06), surface=neutral_book_surface, collision=False)
+    _add_fixed_box(scene, pos=(2.34, 0.96, 0.92), size=(0.16, 0.10, 0.10), surface=book_surface, collision=False)
+    _add_fixed_box(scene, pos=(2.50, -0.20, 0.44), size=(0.28, 0.28, 0.70), surface=dark_panel_surface, collision=False)
+    _add_fixed_box(scene, pos=(2.50, -0.20, 0.82), size=(0.20, 0.22, 0.06), surface=wood_dark_surface, collision=False)
 
     # Ceiling/floor pipes and small structure elements to avoid the empty-simulator look.
     _add_fixed_cylinder(scene, pos=(-2.28, 2.20, 2.48), radius=0.03, height=1.78, surface=metal_surface, euler=(90.0, 0.0, 0.0), collision=False)
@@ -1001,19 +1169,30 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_cylinder(scene, pos=(-2.18, -0.36, 2.76), radius=0.018, height=1.98, surface=metal_surface, collision=False)
     _add_fixed_box(scene, pos=(2.38, 2.84, 2.46), size=(0.28, 0.03, 0.22), surface=ceiling_surface, collision=False)
     _add_fixed_box(scene, pos=(-0.92, 2.83, 1.32), size=(0.56, 0.04, 0.32), surface=wood_mid_surface, collision=False)
+    _add_fixed_box(scene, pos=(-2.44, 0.20, 2.86), size=(0.18, 2.30, 0.10), surface=metal_surface, collision=False)
+    _add_fixed_box(scene, pos=(-2.44, -0.76, 2.70), size=(0.18, 0.18, 0.18), surface=desk_leg_surface, collision=False)
+    _add_fixed_box(scene, pos=(0.52, 2.84, 2.46), size=(0.54, 0.03, 0.18), surface=ceiling_surface, collision=False)
 
     if case.scene_theme == "industrial_cool":
         _add_fixed_box(scene, pos=(0.00, 2.82, 1.20), size=(0.96, 0.04, 0.56), surface=desk_leg_surface, collision=False)
         _add_fixed_box(scene, pos=(-0.25, -0.18, 0.05), size=(0.50, 0.18, 0.10), surface=clutter_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.16, 0.45, 2.30), size=(0.34, 0.14, 0.22), surface=metal_surface, collision=False)
+        _add_fixed_box(scene, pos=(-1.92, 1.30, 1.36), size=(0.52, 0.16, 0.52), surface=dark_panel_surface, collision=False)
+        _add_fixed_box(scene, pos=(-2.00, 1.18, 1.12), size=(0.14, 0.10, 0.08), surface=metal_accent_surface, collision=False)
+        _add_fixed_box(scene, pos=(2.34, 1.88, 1.12), size=(0.22, 0.22, 1.10), surface=metal_surface, collision=False)
     elif case.scene_theme == "soft_daylight":
         _add_fixed_box(scene, pos=(2.30, 2.76, 2.45), size=(0.28, 0.02, 0.22), surface=ceiling_surface, collision=False)
         _add_fixed_box(scene, pos=(-1.88, 2.30, 1.30), size=(0.24, 0.08, 0.36), surface=wood_mid_surface, collision=False)
         _add_fixed_box(scene, pos=(2.16, 1.62, 0.14), size=(0.24, 0.24, 0.28), surface=clutter_surface, collision=False)
+        _add_fixed_box(scene, pos=(-2.06, 0.04, 0.28), size=(0.20, 0.42, 0.56), surface=pale_panel_surface, collision=False)
+        _add_fixed_box(scene, pos=(-2.06, 0.04, 0.60), size=(0.12, 0.12, 0.08), surface=wood_mid_surface, collision=False)
     elif case.scene_theme == "loft_neutral":
         _add_fixed_box(scene, pos=(-0.10, 2.84, 2.62), size=(1.10, 0.05, 0.18), surface=wood_dark_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.12, 0.10, 1.10), size=(0.12, 0.42, 2.20), surface=desk_leg_surface, collision=False)
         _add_fixed_box(scene, pos=(2.36, 1.86, 0.40), size=(0.26, 0.26, 0.80), surface=clutter_surface, collision=False)
+        _add_fixed_box(scene, pos=(-1.86, 1.30, 0.42), size=(0.68, 0.24, 0.84), surface=dark_panel_surface, collision=False)
+        _add_fixed_box(scene, pos=(-1.86, 1.28, 0.86), size=(0.56, 0.18, 0.06), surface=wood_dark_surface, collision=False)
+        _add_fixed_box(scene, pos=(-1.84, 1.22, 0.96), size=(0.12, 0.10, 0.18), surface=book_surface, collision=False)
 
 
 def _scene_common(case: CaseSpec, camera: CameraSpec, mpm_vis_mode: str) -> tuple[Any, Any]:
@@ -1313,6 +1492,118 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
         )
         return entities
 
+    if case.motion_profile == "ramp_slide":
+        _add_fixed_box(
+            scene,
+            pos=(-0.10, 0.10, 0.18),
+            size=(0.86, 0.46, 0.12),
+            euler=(0.0, -18.0, 10.0),
+            surface=support_surface,
+            collision=True,
+        )
+        _add_fixed_box(
+            scene,
+            pos=(-0.44, 0.26, 0.09),
+            size=(0.20, 0.28, 0.18),
+            surface=support_surface,
+            collision=True,
+        )
+        entities["soft_block"] = _add_soft_box(
+            scene,
+            pos=(-0.22, 0.12, 0.42),
+            size=(0.28, 0.22, 0.22),
+            euler=(12.0, -10.0, 18.0),
+            color=p.soft_color,
+            vis_mode=mpm_vis_mode,
+            E=4.4e4,
+            nu=0.24,
+            rho=225.0,
+            surface=primary_soft_surface,
+        )
+        return entities
+
+    if case.motion_profile == "overhead_press":
+        entities["soft_block"] = _add_soft_box(
+            scene,
+            pos=(0.10, 0.04, 0.28),
+            size=(0.24, 0.24, 0.34),
+            euler=(6.0, 0.0, 12.0),
+            color=p.soft_color,
+            vis_mode=mpm_vis_mode,
+            E=4.8e4,
+            nu=0.25,
+            rho=230.0,
+            surface=primary_soft_surface,
+        )
+        entities["rigid_sphere"] = scene.add_entity(
+            material=gs.materials.Rigid(rho=980.0, friction=0.42, coup_friction=0.90),
+            morph=gs.morphs.Sphere(
+                pos=(-0.10, -0.08, 1.08),
+                radius=0.11,
+            ),
+            surface=rigid_surface,
+        )
+        return entities
+
+    if case.motion_profile == "ledge_topple":
+        _add_fixed_box(
+            scene,
+            pos=(0.28, 0.20, 0.16),
+            size=(0.44, 0.28, 0.16),
+            surface=support_surface,
+            collision=True,
+        )
+        _add_fixed_box(
+            scene,
+            pos=(0.54, 0.20, 0.30),
+            size=(0.10, 0.26, 0.10),
+            surface=support_surface,
+            collision=True,
+        )
+        entities["soft_block"] = _add_soft_box(
+            scene,
+            pos=(0.66, 0.20, 0.48),
+            size=(0.22, 0.22, 0.28),
+            euler=(28.0, 10.0, 38.0),
+            color=p.soft_color,
+            vis_mode=mpm_vis_mode,
+            E=4.6e4,
+            nu=0.25,
+            rho=228.0,
+            surface=primary_soft_surface,
+        )
+        return entities
+
+    if case.motion_profile == "wall_pinch":
+        _add_fixed_box(
+            scene,
+            pos=(0.72, 0.12, 0.34),
+            size=(0.12, 0.52, 0.68),
+            surface=support_surface,
+            collision=True,
+        )
+        entities["soft_block"] = _add_soft_box(
+            scene,
+            pos=(0.24, 0.10, 0.24),
+            size=(0.30, 0.24, 0.24),
+            euler=(0.0, 0.0, 8.0),
+            color=p.soft_color,
+            vis_mode=mpm_vis_mode,
+            E=4.3e4,
+            nu=0.24,
+            rho=220.0,
+            surface=primary_soft_surface,
+        )
+        entities["rigid_sphere"] = scene.add_entity(
+            material=gs.materials.Rigid(rho=960.0, friction=0.42, coup_friction=0.90),
+            morph=gs.morphs.Sphere(
+                pos=(-0.70, 0.04, 0.30),
+                radius=0.10,
+            ),
+            surface=rigid_surface,
+        )
+        return entities
+
     raise ValueError(f"unsupported motion_profile: {case.motion_profile}")
 
 
@@ -1332,6 +1623,12 @@ def _apply_case_initial_conditions(case: CaseSpec, entities: dict[str, Any]) -> 
         return
     if case.motion_profile == "reverse_swipe":
         entities["rigid_cylinder"].set_dofs_velocity((-2.10, -0.34, 0.0, -8.5, 0.0, 0.0))
+        return
+    if case.motion_profile == "overhead_press":
+        entities["rigid_sphere"].set_dofs_velocity((0.42, 0.18, -2.35, 2.4, 0.0, 1.0))
+        return
+    if case.motion_profile == "wall_pinch":
+        entities["rigid_sphere"].set_dofs_velocity((2.65, 0.10, -0.06, 0.0, 5.4, 0.0))
         return
 
 

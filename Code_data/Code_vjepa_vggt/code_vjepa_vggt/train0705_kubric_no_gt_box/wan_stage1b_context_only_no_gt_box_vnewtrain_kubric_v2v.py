@@ -182,16 +182,20 @@ def _build_method_name_from_checkpoint_dir(
     return f"{step_name}{suffix}"
 
 
+def _append_method_suffix(method_name: str, suffix: str | None) -> str:
+    if suffix is None:
+        return method_name
+    suffix_norm = str(suffix).strip()
+    if not suffix_norm:
+        return method_name
+    return f"{method_name}_{suffix_norm}"
+
+
 def _resolve_step_output_dir_name(
     raw_value: str | None,
     *,
     checkpoint_dir: Path,
-    context_frames: int,
-    num_frames: int,
-    sampling_steps: int,
-    height: int,
-    width: int,
-    negative_prompt: str | None,
+    method_name: str,
 ) -> str:
     if raw_value is None:
         return checkpoint_dir.name
@@ -199,15 +203,7 @@ def _resolve_step_output_dir_name(
     if not value:
         return checkpoint_dir.name
     if value == "__METHOD_NAME__":
-        return _build_method_name_from_checkpoint_dir(
-            checkpoint_dir,
-            context_frames=int(context_frames),
-            num_frames=int(num_frames),
-            sampling_steps=int(sampling_steps),
-            height=int(height),
-            width=int(width),
-            negative_prompt=negative_prompt,
-        )
+        return method_name
     return value
 
 
@@ -306,6 +302,51 @@ def _save_context_contact_sheet(
     canvas.save(output_path, format="JPEG", quality=95)
 
 
+def _dump_pipe_inputs(
+    *,
+    dump_root: Path,
+    sample_stem: str,
+    context_pil: list[Image.Image],
+    prompt: str,
+    negative_prompt: str | None,
+    pipe_kwargs: dict[str, object],
+    source_video: str,
+    frame_indices,
+) -> None:
+    sample_dir = dump_root / sample_stem
+    sample_dir.mkdir(parents=True, exist_ok=True)
+
+    _save_context_contact_sheet(
+        context_pil=context_pil,
+        output_path=sample_dir / "pipe_context_contact_sheet.jpg",
+    )
+    for frame_idx, image in enumerate(context_pil):
+        image.save(sample_dir / f"context_frame_{frame_idx:02d}.png")
+
+    (sample_dir / "prompt.txt").write_text(str(prompt) + "\n", encoding="utf-8")
+    (sample_dir / "negative_prompt.txt").write_text(
+        "" if negative_prompt is None else str(negative_prompt),
+        encoding="utf-8",
+    )
+    payload = {
+        "source_video": str(source_video),
+        "prompt": str(prompt),
+        "negative_prompt": negative_prompt,
+        "frame_indices": frame_indices.tolist(),
+        "num_context_frames": len(context_pil),
+        "pipe_kwargs": {
+            key: value
+            for key, value in pipe_kwargs.items()
+            if key not in {"context_video", "object_context"}
+        },
+        "has_object_context": "object_context" in pipe_kwargs,
+    }
+    (sample_dir / "pipe_inputs.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _has_complete_existing_output(output_video: Path, output_json: Path) -> bool:
     if not output_video.exists() or not output_json.exists():
         return False
@@ -352,6 +393,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional final result subdirectory name under output-root. Defaults to weights_root.name. Use __METHOD_NAME__ to derive the full method suffix name automatically.",
     )
+    parser.add_argument("--method-suffix", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--aux-device", type=str, default=None)
     parser.add_argument(
@@ -464,6 +506,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Std multiplier used when --object-context-ablation=random.",
+    )
+    parser.add_argument(
+        "--dump-pipe-inputs-root",
+        type=Path,
+        default=None,
+        help="Optional directory used to export the actual pipe conditioning inputs per sample.",
     )
     return parser.parse_args()
 
@@ -612,6 +660,18 @@ def _run_single_case_in_process(
             pipe_kwargs["negative_prompt"] = str(negative_prompt)
         if bool(getattr(model, "enable_object_branch", False)):
             pipe_kwargs["object_context"] = object_context
+        dump_pipe_inputs_root = getattr(model, "_dump_pipe_inputs_root", None)
+        if dump_pipe_inputs_root is not None:
+            _dump_pipe_inputs(
+                dump_root=Path(dump_pipe_inputs_root),
+                sample_stem=output_video.stem,
+                context_pil=context_pil,
+                prompt=str(input_caption),
+                negative_prompt=negative_prompt,
+                pipe_kwargs=pipe_kwargs,
+                source_video=str(source_video),
+                frame_indices=frame_indices,
+            )
         video = pipe(**pipe_kwargs)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -726,27 +786,25 @@ def main() -> None:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
+    method_name = _append_method_suffix(
+        _build_method_name_from_checkpoint_dir(
+            weights_root,
+            context_frames=int(cli_args.context_frames),
+            num_frames=int(cli_args.num_frames),
+            sampling_steps=int(cli_args.num_inference_steps),
+            height=int(cli_args.height),
+            width=int(cli_args.width),
+            negative_prompt=resolved_negative_prompt,
+        ),
+        cli_args.method_suffix,
+    )
     step_output_dir_name = _resolve_step_output_dir_name(
         cli_args.step_output_dir_name,
         checkpoint_dir=weights_root,
-        context_frames=int(cli_args.context_frames),
-        num_frames=int(cli_args.num_frames),
-        sampling_steps=int(cli_args.num_inference_steps),
-        height=int(cli_args.height),
-        width=int(cli_args.width),
-        negative_prompt=resolved_negative_prompt,
+        method_name=method_name,
     )
     step_output_dir = output_root / step_output_dir_name
     step_output_dir.mkdir(parents=True, exist_ok=True)
-    method_name = _build_method_name_from_checkpoint_dir(
-        weights_root,
-        context_frames=int(cli_args.context_frames),
-        num_frames=int(cli_args.num_frames),
-        sampling_steps=int(cli_args.num_inference_steps),
-        height=int(cli_args.height),
-        width=int(cli_args.width),
-        negative_prompt=resolved_negative_prompt,
-    )
 
     runtime_args = _build_runtime_args(cli_args, weights_root, step_output_dir)
     model, _, load_info = infer0705._build_runtime_model(runtime_args)
@@ -756,6 +814,9 @@ def main() -> None:
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
+    model._dump_pipe_inputs_root = (
+        None if cli_args.dump_pipe_inputs_root is None else str(cli_args.dump_pipe_inputs_root)
+    )
 
     step_success = 0
     step_failed = 0

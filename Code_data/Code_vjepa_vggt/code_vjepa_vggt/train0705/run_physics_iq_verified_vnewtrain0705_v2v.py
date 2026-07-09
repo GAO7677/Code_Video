@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """
 Prepare and run Physics-IQ Verified V2V inference through the train0705
-native DiffSynth runner.
+Kubric no-GT-box batch runner.
 
 This wrapper follows the official Physics-IQ Verified workflow:
 1. Read the official descriptions CSV.
@@ -33,13 +33,13 @@ if "DIFFSYNTH_ROOT" not in os.environ:
 if str(DEFAULT_DIFFSYNTH_ROOT) not in sys.path:
     sys.path.insert(0, str(DEFAULT_DIFFSYNTH_ROOT))
 
-from code_vjepa_vggt.train0705 import (  # noqa: E402
-    wan_stage1b_context_only_no_gt_box_vnewtrain0705_v2v as batchmod,
+from code_vjepa_vggt.train0705_kubric_no_gt_box import (  # noqa: E402
+    wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v as batchmod,
 )
 
 
 DEFAULT_VERIFIED_ROOT = Path("/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified")
-DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/physicsiq")
+DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/physicsiq/train_stage1b_diffsynth_native0705")
 DEFAULT_PHYSICS_IQ_REPO = Path(
     "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main"
 )
@@ -57,7 +57,7 @@ def _infer_prompt_setting(descriptions_file: Path) -> str:
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(
-        description="Adapt the native train0705 V2V runner to Physics-IQ Verified."
+        description="Adapt the train0705 Kubric V2V runner to Physics-IQ Verified."
     )
     parser.add_argument("--weights-root", type=Path, required=True)
     parser.add_argument("--model-name", type=str, required=True)
@@ -75,6 +75,10 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
         ),
     )
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--height", type=int, default=512)
+    parser.add_argument("--width", type=int, default=896)
+    parser.add_argument("--input-cover-crop-height", type=int, default=480)
+    parser.add_argument("--input-cover-crop-width", type=int, default=832)
     parser.add_argument(
         "--num-frames",
         type=int,
@@ -85,6 +89,12 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--sampling-mode", choices=["prefix", "uniform"], default="prefix")
     parser.add_argument("--num-inference-steps", type=int, default=40)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
+    parser.add_argument(
+        "--negative-prompt",
+        type=str,
+        default="",
+        help="Negative prompt forwarded into the Kubric batch runner. Defaults to empty string.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--limit", type=int, default=None)
@@ -226,6 +236,14 @@ def _build_batch_command(
         str(args.model_name),
         "--output-root",
         str(args.output_root),
+        "--height",
+        str(int(args.height)),
+        "--width",
+        str(int(args.width)),
+        "--input-cover-crop-height",
+        str(int(args.input_cover_crop_height)),
+        "--input-cover-crop-width",
+        str(int(args.input_cover_crop_width)),
         "--fps",
         str(int(args.fps)),
         "--num-frames",
@@ -238,6 +256,8 @@ def _build_batch_command(
         str(int(args.num_inference_steps)),
         "--cfg-scale",
         str(float(args.cfg_scale)),
+        "--negative-prompt",
+        str(args.negative_prompt),
         "--seed",
         str(int(args.seed)),
         "--device",
