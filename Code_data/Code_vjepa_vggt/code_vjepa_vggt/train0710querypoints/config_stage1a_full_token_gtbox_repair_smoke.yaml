@@ -1,6 +1,6 @@
 experiment:
-  name: pybullet0629_teacher_student_stage1a_full_token
-  output_dir: /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token
+  name: stage1a_full_token_gtbox_repair_smoke
+  output_dir: /data/gaoya/agent-data/checkpoints/stage1a_full_token_gtbox_repair_smoke
   seed: 42
 
 model:
@@ -34,7 +34,7 @@ model:
   cotracker_checkpoint: /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth
   cotracker_input_hw: [384, 512]
   cotracker_window_len: 60
-  grounding_gt_box_query_repair: false
+  grounding_gt_box_query_repair: true
   grounding_gt_box_oversample_factor: 4
   grounding_gt_box_min_visible_ratio: 0.60
   grounding_gt_box_min_in_box_ratio: 0.60
@@ -57,15 +57,16 @@ data:
   context_fraction: 0.5
   random_context_frames: false
   batch_size: 1
-  num_workers: 4
+  num_workers: 0
   fps: 30
+  init_scan_limit: 16
 
 optimization:
   lr: 1.0e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
   eps: 1.0e-8
-  max_steps: 20000
+  max_steps: 5
   grad_accum_steps: 1
   max_grad_norm: 1.0
   mixed_precision: bf16
@@ -76,11 +77,11 @@ loss:
   lambda_depth_aux: 0.0
 
 logging:
-  log_every: 10
-  save_every: 500
+  log_every: 1
+  save_every: 2
   max_checkpoints: 10
-  min_checkpoint_free_gb: 2.0
-  use_wandb: true
+  min_checkpoint_free_gb: 1.0
+  use_wandb: false
   wandb_project: vjepa_vggt_wan
-  wandb_run_name: pybullet0629_teacher_student_stage1a_full_token
-  wandb_dir: /data/gaoya/AAA_test_video/0623/train/train0624/wandb
+  wandb_run_name: stage1a_full_token_gtbox_repair_smoke
+  wandb_dir: /data/gaoya/agent-data/outputs/wandb

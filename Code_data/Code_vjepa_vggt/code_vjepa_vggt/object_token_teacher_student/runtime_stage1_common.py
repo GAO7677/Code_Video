@@ -269,6 +269,10 @@ class Stage1OracleMixin:
             "object_aux_pred_depth": list(pred_depth.shape),
             "object_valid_mask": list(object_valid_mask_batch.shape),
         }
+        if oracle_out.samples:
+            repair_debug = getattr(oracle_out.samples[0], "query_repair_debug", None)
+            if repair_debug is not None:
+                debug["query_repair_debug"] = repair_debug
         if gt_track_summary is not None:
             debug["gt_track_summary"] = list(gt_track_summary.shape)
         if gt_box_xyxy is not None:

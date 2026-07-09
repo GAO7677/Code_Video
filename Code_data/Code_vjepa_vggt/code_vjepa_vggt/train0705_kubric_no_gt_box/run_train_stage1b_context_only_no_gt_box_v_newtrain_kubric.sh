@@ -78,6 +78,11 @@ KUBRIC_SAMPLING="${KUBRIC_SAMPLING:-prefix}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-0}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708}"
+GROUNDING_GT_MASK_QUERY_REPAIR="${GROUNDING_GT_MASK_QUERY_REPAIR:-0}"
+GROUNDING_GT_MASK_OVERSAMPLE_FACTOR="${GROUNDING_GT_MASK_OVERSAMPLE_FACTOR:-4}"
+GROUNDING_GT_MASK_MIN_VISIBLE_RATIO="${GROUNDING_GT_MASK_MIN_VISIBLE_RATIO:-0.60}"
+GROUNDING_GT_MASK_MIN_IN_MASK_RATIO="${GROUNDING_GT_MASK_MIN_IN_MASK_RATIO:-0.60}"
+GROUNDING_GT_MASK_COLOR_TOLERANCE="${GROUNDING_GT_MASK_COLOR_TOLERANCE:-18}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -181,6 +186,16 @@ CMD=(
 
 if [ "${KUBRIC_INIT_SCAN_LIMIT}" != "0" ]; then
   CMD+=(--kubric_init_scan_limit "${KUBRIC_INIT_SCAN_LIMIT}")
+fi
+
+if [ "${GROUNDING_GT_MASK_QUERY_REPAIR}" = "1" ]; then
+  CMD+=(
+    --grounding_gt_mask_query_repair
+    --grounding_gt_mask_oversample_factor "${GROUNDING_GT_MASK_OVERSAMPLE_FACTOR}"
+    --grounding_gt_mask_min_visible_ratio "${GROUNDING_GT_MASK_MIN_VISIBLE_RATIO}"
+    --grounding_gt_mask_min_in_mask_ratio "${GROUNDING_GT_MASK_MIN_IN_MASK_RATIO}"
+    --grounding_gt_mask_color_tolerance "${GROUNDING_GT_MASK_COLOR_TOLERANCE}"
+  )
 fi
 
 CMD+=("${RESUME_ARGS[@]}")

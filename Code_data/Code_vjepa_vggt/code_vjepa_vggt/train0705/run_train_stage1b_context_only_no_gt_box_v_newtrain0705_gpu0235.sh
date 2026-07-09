@@ -41,6 +41,10 @@ STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybulle
 DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703}"
 DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-0}"
+GROUNDING_GT_BOX_QUERY_REPAIR="${GROUNDING_GT_BOX_QUERY_REPAIR:-0}"
+GROUNDING_GT_BOX_OVERSAMPLE_FACTOR="${GROUNDING_GT_BOX_OVERSAMPLE_FACTOR:-4}"
+GROUNDING_GT_BOX_MIN_VISIBLE_RATIO="${GROUNDING_GT_BOX_MIN_VISIBLE_RATIO:-0.60}"
+GROUNDING_GT_BOX_MIN_IN_BOX_RATIO="${GROUNDING_GT_BOX_MIN_IN_BOX_RATIO:-0.60}"
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -132,6 +136,15 @@ CMD=(
   --wandb_name "${WANDB_NAME}"
   --wandb_mode "${WANDB_MODE}"
 )
+
+if [ "${GROUNDING_GT_BOX_QUERY_REPAIR}" = "1" ]; then
+  CMD+=(
+    --grounding_gt_box_query_repair
+    --grounding_gt_box_oversample_factor "${GROUNDING_GT_BOX_OVERSAMPLE_FACTOR}"
+    --grounding_gt_box_min_visible_ratio "${GROUNDING_GT_BOX_MIN_VISIBLE_RATIO}"
+    --grounding_gt_box_min_in_box_ratio "${GROUNDING_GT_BOX_MIN_IN_BOX_RATIO}"
+  )
+fi
 
 CMD+=("${RESUME_ARGS[@]}")
 

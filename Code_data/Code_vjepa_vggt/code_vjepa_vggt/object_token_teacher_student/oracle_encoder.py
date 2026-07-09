@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import torch
 
 from code_vjepa_vggt.adapters.jepa_adapter import JEPAPatchAdapter
+from code_vjepa_vggt.train0710querypoints.gt_box_query_repair import GTBoxRepairConfig
+from code_vjepa_vggt.train0710querypoints.gt_box_query_repair import repair_grouped_queries_with_aligned_gt_boxes
 from code_vjepa_vggt.train_v_newtrain import _sample_points_from_box
 
 
@@ -24,6 +27,7 @@ class OracleSampleArtifacts:
     confidence_grouped: torch.Tensor
     track_image_hw: tuple[int, int]
     object_valid_mask: torch.Tensor
+    query_repair_debug: dict[str, Any] | None = None
 
 
 @dataclass
@@ -40,6 +44,13 @@ class OracleObjectTokenEncoder:
     ) -> None:
         self.trainer = trainer
         self._oracle_jepa_adapters: dict[int, JEPAPatchAdapter] = {}
+        model_cfg = trainer.cfg.get("model", {})
+        self.gt_box_query_repair = GTBoxRepairConfig(
+            enabled=bool(model_cfg.get("grounding_gt_box_query_repair", False)),
+            oversample_factor=int(model_cfg.get("grounding_gt_box_oversample_factor", 4)),
+            min_visible_ratio=float(model_cfg.get("grounding_gt_box_min_visible_ratio", 0.60)),
+            min_in_box_ratio=float(model_cfg.get("grounding_gt_box_min_in_box_ratio", 0.60)),
+        )
 
     def _oracle_jepa_adapter(self, total_frames: int) -> JEPAPatchAdapter:
         total_frames = int(total_frames)
@@ -141,8 +152,42 @@ class OracleObjectTokenEncoder:
             batch_boxes,
             image_hw=image_hw,
         )
+        repair_debug: dict[str, Any] = {"applied": False, "reason": "not_requested"}
         frames_bthwc = batch_video.permute(0, 2, 3, 4, 1).float()
         frames_bthwc = (frames_bthwc + 1.0) / 2.0
+
+        if bool(self.gt_box_query_repair.enabled) and self.trainer.cotracker_adapter is not None:
+            repaired_queries_batches: list[torch.Tensor] = []
+            repair_items: list[dict[str, Any]] = []
+            for batch_idx in range(int(batch_video.shape[0])):
+                grouped_queries_px = query_points_prior[batch_idx].detach().float().cpu().view(
+                    int(self.trainer.max_objects),
+                    int(self.trainer.points_per_object),
+                    2,
+                ).numpy()
+                valid_mask_np = object_valid_mask[batch_idx].detach().float().cpu().numpy()
+                repaired_np, repair_item = repair_grouped_queries_with_aligned_gt_boxes(
+                    gt_boxes_tn4_norm=batch_boxes[batch_idx].detach().float().cpu().numpy(),
+                    image_hw=image_hw,
+                    frames_bthwc_01=frames_bthwc[batch_idx : batch_idx + 1],
+                    grouped_queries_px=grouped_queries_px,
+                    object_valid_mask=valid_mask_np,
+                    points_per_object=int(self.trainer.points_per_object),
+                    run_cotracker=self.trainer.cotracker_adapter,
+                    config=self.gt_box_query_repair,
+                )
+                repaired_queries_batches.append(
+                    torch.from_numpy(np.asarray(repaired_np, dtype=np.float32)).view(1, int(self.trainer.total_object_queries), 2)
+                )
+                repair_items.append(repair_item)
+            query_points_prior = torch.cat(repaired_queries_batches, dim=0).to(
+                device=batch_video.device,
+                dtype=batch_video.dtype,
+            )
+            repair_debug = {
+                "applied": True,
+                "batch_items": repair_items,
+            }
 
         jepa_adapter = self._oracle_jepa_adapter(int(batch_video.shape[2]))
         jepa_out = jepa_adapter(batch_video)
@@ -211,6 +256,8 @@ class OracleObjectTokenEncoder:
             "track_image_hw": track_image_hw,
             "object_valid_mask": object_valid_mask,
             "box_prior_xyxy": box_prior_xyxy,
+            "query_points_prior": query_points_prior,
+            "query_repair_debug": repair_debug,
         }
 
     def forward_from_batch(
@@ -272,11 +319,10 @@ class OracleObjectTokenEncoder:
                 confidence_grouped=perception["confidence_grouped"][b : b + 1],
                 track_image_hw=perception["track_image_hw"],
                 object_valid_mask=perception["object_valid_mask"][b : b + 1],
+                query_repair_debug=perception.get("query_repair_debug"),
             ))
         return OracleTokenOutput(
             object_latent_tokens=object_out.object_latent_tokens,
             object_context=object_context,
             samples=samples,
         )
-
-

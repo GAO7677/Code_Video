@@ -173,6 +173,105 @@ def _score_candidates_for_object_boxes(
     return scored
 
 
+def repair_grouped_queries_with_aligned_gt_boxes(
+    *,
+    gt_boxes_tn4_norm: np.ndarray,
+    image_hw: tuple[int, int],
+    frames_bthwc_01: torch.Tensor,
+    grouped_queries_px: np.ndarray,
+    object_valid_mask: np.ndarray,
+    points_per_object: int,
+    run_cotracker: Callable[..., Any],
+    config: GTBoxRepairConfig,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if not bool(config.enabled):
+        return grouped_queries_px, {"applied": False, "reason": "disabled"}
+
+    gt_boxes_tn4_norm = np.asarray(gt_boxes_tn4_norm, dtype=np.float32)
+    if gt_boxes_tn4_norm.ndim != 3 or gt_boxes_tn4_norm.shape[-1] != 4:
+        return grouped_queries_px, {"applied": False, "reason": "invalid_gt_boxes_shape"}
+
+    gt_boxes_tn4 = _boxes_norm_to_px(gt_boxes_tn4_norm, image_hw=image_hw)
+    repaired = np.asarray(grouped_queries_px, dtype=np.float32).copy()
+
+    candidate_queries: list[np.ndarray] = []
+    candidate_frame_ids: list[float] = []
+    owner_slices: dict[int, tuple[int, int]] = {}
+    anchor_frames: dict[int, int] = {}
+    oversample_count = int(points_per_object) * max(int(config.oversample_factor), 1)
+
+    for object_idx in range(min(int(object_valid_mask.shape[0]), int(gt_boxes_tn4.shape[1]))):
+        if float(object_valid_mask[object_idx]) <= 0.5:
+            continue
+        object_gt_boxes_t4 = gt_boxes_tn4[:, int(object_idx)]
+        anchor_frame = _choose_anchor_frame_from_boxes(object_gt_boxes_t4, preferred_frame=0)
+        candidates = _sample_candidate_queries_from_box(
+            object_gt_boxes_t4,
+            anchor_frame=int(anchor_frame),
+            num_candidates=int(oversample_count),
+        )
+        if candidates.shape[0] <= 0:
+            continue
+        start = sum(int(item.shape[0]) for item in candidate_queries)
+        end = start + int(candidates.shape[0])
+        candidate_queries.append(candidates.astype(np.float32))
+        candidate_frame_ids.extend([float(anchor_frame)] * int(candidates.shape[0]))
+        owner_slices[int(object_idx)] = (start, end)
+        anchor_frames[int(object_idx)] = int(anchor_frame)
+
+    if not candidate_queries:
+        return repaired, {"applied": False, "reason": "no_valid_objects"}
+
+    flat_queries = np.concatenate(candidate_queries, axis=0).astype(np.float32)
+    query_points_prior = torch.from_numpy(flat_queries).unsqueeze(0).to(device=frames_bthwc_01.device, dtype=frames_bthwc_01.dtype)
+    query_frame_ids = torch.tensor(candidate_frame_ids, dtype=frames_bthwc_01.dtype, device=frames_bthwc_01.device).view(1, -1, 1)
+    cot_out = run_cotracker(
+        frames_bthwc_01,
+        query_points_prior=query_points_prior,
+        query_frame_ids=query_frame_ids,
+        query_image_hw=image_hw,
+    )
+    tracks_tk2 = cot_out.tracks[0].detach().float().cpu().numpy()
+    visibility_tk = cot_out.visibility[0].detach().float().cpu().numpy()
+
+    repair_items: list[dict[str, Any]] = []
+    for object_idx, (start, end) in owner_slices.items():
+        scored = _score_candidates_for_object_boxes(
+            object_gt_boxes_t4=gt_boxes_tn4[:, int(object_idx)],
+            query_points_xy=flat_queries[start:end],
+            tracks_tk2=tracks_tk2[:, start:end],
+            visibility_tk=visibility_tk[:, start:end],
+            all_gt_boxes_tn4=gt_boxes_tn4,
+        )
+        selected_local = _select_candidate_indices(
+            scored,
+            points_per_object=int(points_per_object),
+            min_visible_ratio=float(config.min_visible_ratio),
+            min_in_mask_ratio=float(config.min_in_box_ratio),
+        )
+        if len(selected_local) < int(points_per_object):
+            fallback = list(range(min(int(points_per_object), int(end - start))))
+            selected_local = (selected_local + [idx for idx in fallback if idx not in selected_local])[: int(points_per_object)]
+        repaired[int(object_idx)] = flat_queries[start:end][selected_local]
+        repair_items.append(
+            {
+                "object_idx": int(object_idx),
+                "anchor_frame": int(anchor_frames[int(object_idx)]),
+                "selected_local_indices": [int(v) for v in selected_local],
+                "top_scores": [float(item.score) for item in scored[: int(points_per_object)]],
+                "top_visible_ratios": [float(item.visible_ratio) for item in scored[: int(points_per_object)]],
+                "top_in_box_ratios": [float(item.in_mask_ratio) for item in scored[: int(points_per_object)]],
+            }
+        )
+
+    return repaired, {
+        "applied": True,
+        "mode": "aligned_gt_boxes",
+        "anchor_frames": anchor_frames,
+        "repair_items": repair_items,
+    }
+
+
 def repair_grouped_queries_with_gt_boxes(
     *,
     sample: dict[str, Any],
