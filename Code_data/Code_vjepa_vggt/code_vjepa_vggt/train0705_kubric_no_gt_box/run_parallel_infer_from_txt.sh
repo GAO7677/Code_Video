@@ -16,7 +16,8 @@ Usage:
     --gpus 0,2,3 \
     [--ctx 8] \
     [--output-frames 49] \
-    [--negative-prompt default|empty|<text>]
+    [--negative-prompt default|empty|<text>] \
+    [--disable-object-branch]
 
 Notes:
   - The txt file will be evenly sharded by the number of GPUs.
@@ -34,6 +35,7 @@ GPU_LIST=""
 CTX="8"
 OUTPUT_FRAMES="49"
 NEGATIVE_PROMPT_SPEC="default"
+DISABLE_OBJECT_BRANCH="0"
 SHARD_ROOT_BASE="/data/gaoya/agent-data/outputs"
 
 while [[ $# -gt 0 ]]; do
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
     --negative-prompt)
       NEGATIVE_PROMPT_SPEC="$2"
       shift 2
+      ;;
+    --disable-object-branch)
+      DISABLE_OBJECT_BRANCH="1"
+      shift
       ;;
     -h|--help)
       usage
@@ -176,6 +182,7 @@ for ((i=0; i<gpu_count; ++i)); do
     OUTPUT_FRAMES="${OUTPUT_FRAMES}" \
     CTX="${CTX}" \
     NEGATIVE_PROMPT="${NEGATIVE_PROMPT_VALUE}" \
+    DISABLE_OBJECT_BRANCH="${DISABLE_OBJECT_BRANCH}" \
     bash "${INNER_SCRIPT}"
   ) &
   pids+=("$!")

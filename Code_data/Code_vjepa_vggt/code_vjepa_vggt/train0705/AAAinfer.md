@@ -211,3 +211,97 @@ PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Vid
 - `infer_stage1b_context_only_no_gt_box_v_newtrain0705_ctx1dupjepa.py` 是为了单帧 context 单独加的兼容脚本。
 - `wan_stage1b_context_only_no_gt_box_vnewtrain0705_ctx1dupjepa_v2v.py` 是对应的批量版本，复用原批量脚本，只替换单帧 JEPA 相关逻辑。
 - `collect_stage1b_metric_table.py` 属于结果汇总，不属于推理脚本，这里不收录。
+
+## 9. Physics-IQ Verified 双卡正式跑法
+
+严格按官方 `Physics-IQ Verified` workflow 跑当前 `train0705 native` 权重，推荐直接走下面这个 shell 入口：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.sh
+```
+
+它内部调用的 Python wrapper 是：
+
+```text
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.py
+```
+
+这个 wrapper 会：
+
+- 直接读取官方 `descriptions_base.csv`
+- 只取 `take-1` 的 198 个 case
+- 直接读取官方 Verified conditioning videos
+- 生成阶段自动对齐到底层 Wan 要求的 `num_frames % 4 == 1`
+- 生成后自动裁成官方要求的精确 `5.0s`
+- 最终生成结果保留在原生目录 `step-*` 或你显式指定的 `--step-output-dir-name`
+- 已有 `mp4 + json` 的样本会自动跳过，只继续未完成样本
+
+推荐用和 Kubric 一样的 `GPU_PAIR=主卡,辅卡` 形式。比如主模型放第一张卡，辅助 object stack 放第二张卡：
+
+```bash
+GPU_PAIR=0,1 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+MODEL_NAME=train_stage1b_diffsynth_native0705_step2500_physiq_verified \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/physicsiq/train_stage1b_diffsynth_native0705 \
+VERIFIED_ROOT=/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified \
+DESCRIPTIONS_FILE=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv \
+FPS=30 \
+HEIGHT=512 \
+WIDTH=896 \
+INPUT_COVER_CROP_HEIGHT=480 \
+INPUT_COVER_CROP_WIDTH=832 \
+NUM_FRAMES=150 \
+CONTEXT_FRAMES=20 \
+SAMPLING_MODE=prefix \
+NUM_INFERENCE_STEPS=40 \
+CFG_SCALE=5.0 \
+SEED=42 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.sh
+```
+
+如果要跑带中文 negative prompt 的版本，并把 method / 子目录后缀也区分开：
+
+```bash
+GPU_PAIR=0,1 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-002500 \
+MODEL_NAME=train_stage1b_diffsynth_native0705_step2500_physiq_verified \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/physicsiq/train_stage1b_diffsynth_native0705 \
+VERIFIED_ROOT=/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified \
+DESCRIPTIONS_FILE=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/physics-IQ-benchmark-main/descriptions/best_practice/descriptions_base.csv \
+FPS=30 \
+HEIGHT=512 \
+WIDTH=896 \
+INPUT_COVER_CROP_HEIGHT=480 \
+INPUT_COVER_CROP_WIDTH=832 \
+NUM_FRAMES=150 \
+CONTEXT_FRAMES=20 \
+SAMPLING_MODE=prefix \
+NUM_INFERENCE_STEPS=40 \
+CFG_SCALE=5.0 \
+SEED=42 \
+NEGATIVE_PROMPT='色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走' \
+STEP_OUTPUT_DIR_NAME=step-002500_withneg \
+METHOD_SUFFIX=withneg \
+RUN_NAME=train_stage1b_diffsynth_native0705_step2500_physiq_verified_withneg-bpp-run_01 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/run_physics_iq_verified_vnewtrain0705_v2v.sh
+```
+
+双卡分工说明：
+
+- 第一张卡：
+  - Wan pipe / DiT / VAE
+  - trainable object branch 里的 `object_pooler` / `object_aux_heads` / `object_adapter`
+- 第二张卡：
+  - `JEPA` adapter
+  - `CoTracker` adapter
+  - `VGGT` adapter
+- 当前 shell 入口在双卡模式下会默认额外传：
+  - `--inference-devices cuda:0,cuda:1`
+  - `--grounding-device cuda:1`
+- 这表示 viewer grounding 也尽量放到辅助卡，减轻主卡显存压力
+
+注意：
+
+- `GPU_PAIR=0,1` 指物理卡 0 和 1；脚本会自动把它们映射成进程内的 `cuda:0,cuda:1`
+- 如果写成 `GPU_PAIR=0,0`，脚本会自动退化成单卡，不再传 `--inference-devices`
+- 禁止使用 `gpu4`

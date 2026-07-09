@@ -275,6 +275,12 @@ def _trim_video_inplace_to_official_duration(
     fps: int,
     duration_seconds: float = 5.0,
 ) -> None:
+    if shutil.which("ffmpeg") is None:
+        print(
+            f"[trim] ffmpeg not found; skipping in-place trim for {video_path} "
+            f"(keeping the generated video as-is)"
+        )
+        return
     temp_path = video_path.with_suffix(".trimmed.mp4")
     command = [
         "ffmpeg",

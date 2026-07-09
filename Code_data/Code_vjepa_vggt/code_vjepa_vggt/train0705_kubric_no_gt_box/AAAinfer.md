@@ -125,6 +125,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 - 每个 shard 用一张单卡启动一个 worker
 - 默认 `negative_prompt=DEFAULT_NEGATIVE_PROMPT`
 - 可以通过命令行覆盖 `ctx / output_frames / negative_prompt`
+- 可以通过 `--disable-object-branch` 直接切到 no-object-branch 消融推理
 
 运行示例：
 
@@ -133,32 +134,15 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
   --input-txt /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
   --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_diffsynth_native0705/run_gpu0235_20260703/checkpoints/step-007000 \
   --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_diffsynth_native0705_0705 \
-  --method-name train_stage1b_diffsynth_native0705_step7000 \
-  --gpus 5,6,7 \
+  --method-name run_gpu0235_20260703_step-007000_steps40_512x896_ctx08_49f_emptynegprompt_noobj \
+  --gpus 3,6,7 \
   --ctx 8 \
   --output-frames 49 \
-  --negative-prompt default
+  --negative-prompt default \
+  --disable-object-branch
 ```
 
-其中：
 
-- `--negative-prompt default`
-  表示使用脚本内部的 `DEFAULT_NEGATIVE_PROMPT`
-- `--negative-prompt empty`
-  表示显式传空串 `""`
-- `--negative-prompt "some text"`
-  表示使用自定义 negative prompt
-
-分片文件会落在：
-
-- `/data/gaoya/agent-data/outputs/<txt_stem>_<step_name>_ctx<ctx>_gpus<gpu_tag>_shards`
-
-如果要明确写出输入预处理参数，也可以加：
-
-```bash
-INPUT_COVER_CROP_WIDTH=832 \
-INPUT_COVER_CROP_HEIGHT=480
-```
 
 ## 4. 单个 GPU pair 顺序跑多组 ctx
 

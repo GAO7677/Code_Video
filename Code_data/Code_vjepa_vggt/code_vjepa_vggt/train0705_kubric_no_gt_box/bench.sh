@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CUDA_VISIBLE_DEVICES=6 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
+# CUDA_VISIBLE_DEVICES=0 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
 # /home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/summarize_generated_folder_metrics.py
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -20,10 +20,10 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  # "physics_iq_with_context"
-  # "physics_iq_without_context"
-  # "pmf_with_context"
-  # "pmf_without_context"
+  "physics_iq_with_context"
+  "physics_iq_without_context"
+  "pmf_with_context"
+  "pmf_without_context"
   "wmreward"
   "videophy2"
   "cosmos_reason1"
