@@ -1766,6 +1766,12 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
 
         if trace_enabled and numeric_trace is not None:
             trace_path = getattr(self, "_numeric_trace_path", None)
+            numeric_trace.append(
+                {
+                    "kind": "pre_decode_latents",
+                    "stats": _tensor_numeric_stats(inputs_shared["latents"]),
+                }
+            )
             if trace_path:
                 trace_file = Path(str(trace_path))
                 trace_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1785,7 +1791,30 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 tile_size=tile_size,
                 tile_stride=tile_stride,
             )
+        if trace_enabled and numeric_trace is not None:
+            numeric_trace.append(
+                {
+                    "kind": "decoded_video",
+                    "stats": _tensor_numeric_stats(video),
+                }
+            )
         if output_type == "quantized":
             video = self.vae_output_to_video(video)
+            if trace_enabled and numeric_trace is not None:
+                numeric_trace.append(
+                    {
+                        "kind": "quantized_video",
+                        "stats": _tensor_numeric_stats(video),
+                    }
+                )
+        if trace_enabled and numeric_trace is not None:
+            trace_path = getattr(self, "_numeric_trace_path", None)
+            if trace_path:
+                trace_file = Path(str(trace_path))
+                trace_file.parent.mkdir(parents=True, exist_ok=True)
+                trace_file.write_text(
+                    json.dumps(numeric_trace, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
         self.load_models_to_device([])
         return video
