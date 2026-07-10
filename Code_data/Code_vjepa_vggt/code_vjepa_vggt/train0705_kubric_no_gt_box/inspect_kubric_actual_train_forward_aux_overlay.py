@@ -112,6 +112,107 @@ def _overlay_timeline_labels(
     return annotated
 
 
+def _annotated_tensor_frames(
+    video_cthw: torch.Tensor,
+    *,
+    title: str,
+    primary_indices: list[int] | None = None,
+    primary_label: str | None = None,
+    secondary_indices: list[int] | None = None,
+    secondary_label: str | None = None,
+    tertiary_indices: list[int] | None = None,
+    tertiary_label: str | None = None,
+) -> np.ndarray:
+    frames = np.stack(
+        [inspectmod.tensor_frame_to_uint8_hwc(video_cthw[:, frame_idx]) for frame_idx in range(int(video_cthw.shape[1]))],
+        axis=0,
+    )
+    return _overlay_timeline_labels(
+        frames,
+        title=title,
+        primary_indices=primary_indices,
+        primary_label=primary_label,
+        secondary_indices=secondary_indices,
+        secondary_label=secondary_label,
+        tertiary_indices=tertiary_indices,
+        tertiary_label=tertiary_label,
+    )
+
+
+def _annotated_frames_bthwc(
+    frames_bthwc_01: torch.Tensor,
+    *,
+    title: str,
+    primary_indices: list[int] | None = None,
+    primary_label: str | None = None,
+    secondary_indices: list[int] | None = None,
+    secondary_label: str | None = None,
+    tertiary_indices: list[int] | None = None,
+    tertiary_label: str | None = None,
+) -> np.ndarray:
+    if int(frames_bthwc_01.shape[0]) != 1:
+        raise ValueError(f"expected batch size 1 for visualization, got {list(frames_bthwc_01.shape)}")
+    frames = (frames_bthwc_01[0].detach().float().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+    return _overlay_timeline_labels(
+        frames,
+        title=title,
+        primary_indices=primary_indices,
+        primary_label=primary_label,
+        secondary_indices=secondary_indices,
+        secondary_label=secondary_label,
+        tertiary_indices=tertiary_indices,
+        tertiary_label=tertiary_label,
+    )
+
+
+def _select_preview_frame_indices(total_frames: int, max_frames: int = 9) -> list[int]:
+    total_frames = max(int(total_frames), 0)
+    max_frames = max(int(max_frames), 1)
+    if total_frames <= 0:
+        return []
+    if total_frames <= max_frames:
+        return list(range(total_frames))
+    indices = np.linspace(0, total_frames - 1, num=max_frames)
+    out: list[int] = []
+    for value in indices:
+        idx = int(round(float(value)))
+        if not out or idx != out[-1]:
+            out.append(idx)
+    while len(out) < max_frames and out[-1] < total_frames - 1:
+        out.append(out[-1] + 1)
+    return out[:max_frames]
+
+
+def _write_contact_sheet_png(
+    path: Path,
+    frames_thwc_u8: np.ndarray,
+    *,
+    max_frames: int = 9,
+    columns: int = 3,
+    gap: int = 8,
+    background_rgb: tuple[int, int, int] = (243, 239, 230),
+) -> Path:
+    frames = np.asarray(frames_thwc_u8, dtype=np.uint8)
+    if frames.ndim != 4 or int(frames.shape[0]) == 0:
+        raise ValueError(f"expected non-empty [T,H,W,C] frames, got {list(frames.shape)}")
+    chosen = _select_preview_frame_indices(int(frames.shape[0]), max_frames=max_frames)
+    selected = frames[chosen]
+    frame_h, frame_w = int(selected.shape[1]), int(selected.shape[2])
+    columns = max(1, min(int(columns), int(selected.shape[0])))
+    rows = int(np.ceil(float(selected.shape[0]) / float(columns)))
+    canvas_h = rows * frame_h + (rows + 1) * gap
+    canvas_w = columns * frame_w + (columns + 1) * gap
+    canvas = np.full((canvas_h, canvas_w, 3), np.asarray(background_rgb, dtype=np.uint8), dtype=np.uint8)
+    for idx, frame in enumerate(selected):
+        row = idx // columns
+        col = idx % columns
+        y0 = gap + row * (frame_h + gap)
+        x0 = gap + col * (frame_w + gap)
+        canvas[y0 : y0 + frame_h, x0 : x0 + frame_w] = frame
+    inspectmod._write_rgb_png(path, canvas)
+    return path
+
+
 def _write_annotated_tensor_video(
     path: Path,
     video_cthw: torch.Tensor,
@@ -125,12 +226,8 @@ def _write_annotated_tensor_video(
     tertiary_indices: list[int] | None = None,
     tertiary_label: str | None = None,
 ) -> Path:
-    frames = np.stack(
-        [inspectmod.tensor_frame_to_uint8_hwc(video_cthw[:, frame_idx]) for frame_idx in range(int(video_cthw.shape[1]))],
-        axis=0,
-    )
-    labeled = _overlay_timeline_labels(
-        frames,
+    labeled = _annotated_tensor_frames(
+        video_cthw,
         title=title,
         primary_indices=primary_indices,
         primary_label=primary_label,
@@ -156,11 +253,8 @@ def _write_annotated_frames_bthwc_video(
     tertiary_indices: list[int] | None = None,
     tertiary_label: str | None = None,
 ) -> Path:
-    if int(frames_bthwc_01.shape[0]) != 1:
-        raise ValueError(f"expected batch size 1 for visualization, got {list(frames_bthwc_01.shape)}")
-    frames = (frames_bthwc_01[0].detach().float().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
-    labeled = _overlay_timeline_labels(
-        frames,
+    labeled = _annotated_frames_bthwc(
+        frames_bthwc_01,
         title=title,
         primary_indices=primary_indices,
         primary_label=primary_label,
@@ -264,6 +358,22 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <p><b>jepa_time_source_indices:</b> {html.escape(str(result["jepa_time_source_indices"]))}</p>
     <p><b>latent_input_source_indices:</b> {html.escape(str(result["latent_input_source_indices"]))}</p>
     <div class="grid">
+      <figure>
+        <img src="{html.escape(result['context_video_grid_png'])}" />
+        <figcaption>Static grid: actual sampled context frames</figcaption>
+      </figure>
+      <figure>
+        <img src="{html.escape(result['input_overlay_grid_png'])}" />
+        <figcaption>Static grid: input overlay with object-colored query points and tracks</figcaption>
+      </figure>
+      <figure>
+        <img src="{html.escape(result['box_overlay_grid_png'])}" />
+        <figcaption>Static grid: aux predicted boxes vs reference boxes</figcaption>
+      </figure>
+      <figure>
+        <img src="{html.escape(result['track_overlay_grid_png'])}" />
+        <figcaption>Static grid: aux predicted track summaries vs reference track summaries</figcaption>
+      </figure>
       <figure>
         <video controls preload="none" playsinline src="{html.escape(result['train_clip_video_mp4'])}"></video>
         <figcaption>Sampled 69-frame train clip</figcaption>
@@ -518,16 +628,18 @@ def _inspect_one(
         image_hw=image_hw,
     )
 
-    context_video_browser = _write_annotated_tensor_video(
-        output_dir / "context_video.mp4",
+    context_video_labeled = _annotated_tensor_frames(
         context_video,
-        fps=int(inspect_fps),
         title="Actual context used in forward",
         primary_indices=context_train_local_indices,
         primary_label="train_local",
         secondary_indices=context_source_frame_indices,
         secondary_label="source",
     )
+    context_video_raw = output_dir / "context_video.mp4"
+    inspectmod.write_mp4(context_video_raw, context_video_labeled, fps=int(inspect_fps))
+    context_video_browser = inspectmod._ensure_browser_video(context_video_raw)
+    context_video_grid = _write_contact_sheet_png(output_dir / "context_video_grid.png", context_video_labeled)
     cotracker_input_video = _resize_video_bthwc(
         debug["frames_bthwc_01"],
         tuple(int(v) for v in debug["cotracker_out"].input_hw),
@@ -658,6 +770,7 @@ def _inspect_one(
     )
     inspectmod.write_mp4(input_overlay_raw, input_overlay_labeled, fps=int(inspect_fps))
     input_overlay_browser = inspectmod._ensure_browser_video(input_overlay_raw)
+    input_overlay_grid = _write_contact_sheet_png(output_dir / "input_prepipe_overlay_grid.png", input_overlay_labeled)
 
     ref_box_xyxy = debug["object_out"].active_box_xyxy[0].detach().float().cpu().numpy()
     pred_box_xyxy = debug["object_aux_out"].pred_box_xyxy[0].detach().float().cpu().numpy()
@@ -683,6 +796,7 @@ def _inspect_one(
     )
     inspectmod.write_mp4(box_overlay_raw, box_overlay_labeled, fps=int(inspect_fps))
     box_overlay_browser = inspectmod._ensure_browser_video(box_overlay_raw)
+    box_overlay_grid = _write_contact_sheet_png(output_dir / "aux_pred_box_overlay_grid.png", box_overlay_labeled)
 
     track_overlay_video = inspectmod._render_ref_pred_track_overlay(
         context_video=context_video,
@@ -702,6 +816,7 @@ def _inspect_one(
     )
     inspectmod.write_mp4(track_overlay_raw, track_overlay_labeled, fps=int(inspect_fps))
     track_overlay_browser = inspectmod._ensure_browser_video(track_overlay_raw)
+    track_overlay_grid = _write_contact_sheet_png(output_dir / "aux_pred_track_overlay_grid.png", track_overlay_labeled)
 
     jepa_time_idx = [int(v) for v in debug["jepa_time_idx"].detach().cpu().tolist()]
     latent_time_idx = [int(v) for v in debug["latent_time_idx"].detach().cpu().tolist()]
@@ -744,6 +859,10 @@ def _inspect_one(
         "context_frame_indices": sample["context_frame_indices"].tolist(),
         "num_context_frames": int(sample["num_context_frames"]),
         "prompt_preview_png": str(prompt_preview_path.name),
+        "context_video_grid_png": str(context_video_grid.name),
+        "input_overlay_grid_png": str(input_overlay_grid.name),
+        "box_overlay_grid_png": str(box_overlay_grid.name),
+        "track_overlay_grid_png": str(track_overlay_grid.name),
         "context_video_mp4": str(context_video_browser.name),
         "cotracker_input_video_mp4": str(cotracker_input_video_browser.name),
         "vggt_input_video_mp4": str(vggt_input_video_browser.name),
@@ -787,7 +906,19 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
       <a href="{html.escape(rel_dir)}/index.html">open case report</a>
     </div>
   </div>
-  <div class="media-grid">
+    <div class="media-grid">
+    <figure>
+      <img src="{html.escape(rel_dir)}/{html.escape(result['context_video_grid_png'])}"></img>
+      <figcaption>Static grid: actual sampled context frames</figcaption>
+    </figure>
+    <figure>
+      <img src="{html.escape(rel_dir)}/{html.escape(result['input_overlay_grid_png'])}"></img>
+      <figcaption>Static grid: object-colored input overlay</figcaption>
+    </figure>
+    <figure>
+      <img src="{html.escape(rel_dir)}/{html.escape(result['track_overlay_grid_png'])}"></img>
+      <figcaption>Static grid: aux track overlay</figcaption>
+    </figure>
     <figure>
       <video controls preload="none" playsinline src="{html.escape(rel_dir)}/{html.escape(result['train_clip_video_mp4'])}"></video>
       <figcaption>Sampled train clip</figcaption>

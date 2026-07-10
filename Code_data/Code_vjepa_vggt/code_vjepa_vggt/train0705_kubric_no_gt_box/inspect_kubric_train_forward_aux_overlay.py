@@ -15,6 +15,7 @@ import torch
 
 from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
+    OBJECT_COLORS,
     draw_box_rgb,
     draw_point_rgb,
     render_track_overlay,
@@ -166,11 +167,11 @@ def _render_prompt_preview(
     prompt_frame_idx = max(0, min(prompt_frame_idx, int(context_video.shape[1]) - 1))
     frame = tensor_frame_to_uint8_hwc(context_video[:, prompt_frame_idx]).copy()
     for obj_idx, track in enumerate(getattr(grounding_sample, "object_tracks", [])):
-        color = REF_BOX_COLOR if obj_idx == 0 else PRED_TRACK_COLOR
+        color = OBJECT_COLORS[obj_idx % len(OBJECT_COLORS)]
         draw_box_rgb(frame, track.box_prompt_xyxy.astype(np.float32), color, f"prompt{obj_idx}")
     for q_idx, point in enumerate(valid_queries_px):
         owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
-        color = REF_TRACK_COLOR if owner < 0 else ((214, 40, 40), (247, 127, 0), (252, 191, 73), (42, 157, 143))[owner % 4]
+        color = QUERY_COLOR if owner < 0 else OBJECT_COLORS[owner % len(OBJECT_COLORS)]
         draw_point_rgb(frame, point.astype(np.float32), color, f"q{q_idx}", radius=6)
     return frame
 

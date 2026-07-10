@@ -255,10 +255,12 @@ def render_track_overlay(
                 color = OBJECT_COLORS[owner % len(OBJECT_COLORS)] if owner >= 0 else QUERY_COLOR
                 draw_point_rgb(frame, point.astype(np.float32), color, f"q{q_idx}", radius=6)
         for q_idx in range(tracks_tk2.shape[1]):
+            owner = query_owner[q_idx] if q_idx < len(query_owner) else -1
+            point_color = OBJECT_COLORS[owner % len(OBJECT_COLORS)] if owner >= 0 else color_rgb
             label = f"{prefix}{q_idx}"
             if float(visibility_tk[t, q_idx]) < 0.5:
                 label += "(inv)"
-            draw_point_rgb(frame, tracks_tk2[t, q_idx].astype(np.float32), color_rgb, label, radius=5)
+            draw_point_rgb(frame, tracks_tk2[t, q_idx].astype(np.float32), point_color, label, radius=5)
         frames.append(frame)
     return np.stack(frames, axis=0)
 
