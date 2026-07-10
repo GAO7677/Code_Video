@@ -2038,6 +2038,12 @@ def wan_parser():
         default=False,
         help="Print sampled context-frame statistics to stdout every optimizer step.",
     )
+    parser.add_argument(
+        "--debug_print_object_regularization",
+        action="store_true",
+        default=False,
+        help="Print object-branch regularization and ratio diagnostics to stdout every optimizer step.",
+    )
     return parser
 
 
@@ -3443,6 +3449,24 @@ def train_loop(
                                 f"sampled_ctx_last_index={int(round(float(ctx_last)))} "
                                 f"sampled_ctx_num_frames={int(round(float(sampled_ctx)))} "
                                 f"jepa_input_frames={int(round(float(jepa_ctx)))}"
+                            )
+                    if args.debug_print_object_regularization and accelerator.is_local_main_process:
+                        if any(key in extra_metrics for key in (
+                            "train/loss_object_context_reg",
+                            "train/loss_object_gate_reg",
+                            "train/object_branch_max_gated_to_x_ratio_l2",
+                        )):
+                            accelerator.print(
+                                "[object-reg] "
+                                f"step={global_step} "
+                                f"loss_main={float(extra_metrics.get('train/loss_main', 0.0)):.6f} "
+                                f"loss_obj_ctx_reg={float(extra_metrics.get('train/loss_object_context_reg', 0.0)):.6f} "
+                                f"loss_obj_gate_reg={float(extra_metrics.get('train/loss_object_gate_reg', 0.0)):.6f} "
+                                f"gate_abs_max={float(extra_metrics.get('train/object_gate_tanh_abs_max', 0.0)):.4f} "
+                                f"max_ratio={float(extra_metrics.get('train/object_branch_max_gated_to_x_ratio_l2', 0.0)):.4f} "
+                                f"pre_guard_max_ratio={float(extra_metrics.get('train/object_branch_max_pre_guard_gated_to_x_ratio_l2', 0.0)):.4f} "
+                                f"guard_layers={int(round(float(extra_metrics.get('train/object_branch_guard_applied_layer_count', 0.0))))} "
+                                f"guard_scale_min={float(extra_metrics.get('train/object_branch_guard_scale_min', 1.0)):.4f}"
                             )
 
                 progress["global_step"] = global_step

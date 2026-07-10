@@ -100,15 +100,21 @@ def _tensor_l2_rms_stats(tensor: torch.Tensor | None) -> dict[str, float | None]
             "rms": None,
         }
     with torch.no_grad():
-        tensor_f32 = tensor.detach().float()
-        if tensor_f32.numel() <= 0:
+        tensor_detached = tensor.detach()
+        if tensor_detached.numel() <= 0:
             return {
                 "l2": 0.0,
                 "rms": 0.0,
             }
+        flat = tensor_detached.reshape(-1)
+        # Keep diagnostics cheap during training-time object-branch tracing:
+        # accumulate into fp32 scalars without materializing a full fp32 copy
+        # of the activation tensor.
+        l2 = torch.linalg.vector_norm(flat, ord=2, dtype=torch.float32)
+        rms = l2 / max(float(flat.numel()) ** 0.5, 1.0)
         return {
-            "l2": float(torch.linalg.vector_norm(tensor_f32).item()),
-            "rms": float(torch.sqrt(torch.mean(tensor_f32.square())).item()),
+            "l2": float(l2.item()),
+            "rms": float(rms.item()),
         }
 
 
