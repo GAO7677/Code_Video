@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import cv2
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -54,6 +56,121 @@ def _write_frames_bthwc_video(path: Path, frames_bthwc_01: torch.Tensor, fps: in
         raise ValueError(f"expected batch size 1 for visualization, got {list(frames_bthwc_01.shape)}")
     video_cthw = (frames_bthwc_01[0].permute(3, 0, 1, 2).contiguous() * 2.0 - 1.0).clamp(-1.0, 1.0)
     return inspectmod._write_tensor_video(path, video_cthw, fps=fps)
+
+
+def _overlay_timeline_labels(
+    frames_thwc_u8: np.ndarray,
+    *,
+    title: str,
+    primary_indices: list[int] | None = None,
+    primary_label: str | None = None,
+    secondary_indices: list[int] | None = None,
+    secondary_label: str | None = None,
+    tertiary_indices: list[int] | None = None,
+    tertiary_label: str | None = None,
+) -> np.ndarray:
+    annotated = np.asarray(frames_thwc_u8, dtype=np.uint8).copy()
+    total_frames = int(annotated.shape[0])
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for frame_idx in range(total_frames):
+        frame = annotated[frame_idx]
+        lines = [str(title)]
+        lines.append(f"frame {frame_idx:02d}/{max(total_frames - 1, 0):02d}")
+
+        for label, values in (
+            (primary_label, primary_indices),
+            (secondary_label, secondary_indices),
+            (tertiary_label, tertiary_indices),
+        ):
+            if not label:
+                continue
+            if values is None or frame_idx >= len(values):
+                lines.append(f"{label}: n/a")
+            else:
+                lines.append(f"{label}: {int(values[frame_idx])}")
+
+        line_height = 22
+        pad = 10
+        box_height = pad * 2 + line_height * len(lines)
+        box_width = min(frame.shape[1] - 12, 330)
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (12, 12), (12 + box_width, 12 + box_height), (0, 0, 0), thickness=-1)
+        cv2.addWeighted(overlay, 0.52, frame, 0.48, 0.0, dst=frame)
+
+        for line_idx, text in enumerate(lines):
+            y = 12 + pad + 16 + line_idx * line_height
+            cv2.putText(
+                frame,
+                text,
+                (22, y),
+                font,
+                0.58,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+    return annotated
+
+
+def _write_annotated_tensor_video(
+    path: Path,
+    video_cthw: torch.Tensor,
+    *,
+    fps: int,
+    title: str,
+    primary_indices: list[int] | None = None,
+    primary_label: str | None = None,
+    secondary_indices: list[int] | None = None,
+    secondary_label: str | None = None,
+    tertiary_indices: list[int] | None = None,
+    tertiary_label: str | None = None,
+) -> Path:
+    frames = np.stack(
+        [inspectmod.tensor_frame_to_uint8_hwc(video_cthw[:, frame_idx]) for frame_idx in range(int(video_cthw.shape[1]))],
+        axis=0,
+    )
+    labeled = _overlay_timeline_labels(
+        frames,
+        title=title,
+        primary_indices=primary_indices,
+        primary_label=primary_label,
+        secondary_indices=secondary_indices,
+        secondary_label=secondary_label,
+        tertiary_indices=tertiary_indices,
+        tertiary_label=tertiary_label,
+    )
+    inspectmod.write_mp4(path, labeled, fps=fps)
+    return inspectmod._ensure_browser_video(path)
+
+
+def _write_annotated_frames_bthwc_video(
+    path: Path,
+    frames_bthwc_01: torch.Tensor,
+    *,
+    fps: int,
+    title: str,
+    primary_indices: list[int] | None = None,
+    primary_label: str | None = None,
+    secondary_indices: list[int] | None = None,
+    secondary_label: str | None = None,
+    tertiary_indices: list[int] | None = None,
+    tertiary_label: str | None = None,
+) -> Path:
+    if int(frames_bthwc_01.shape[0]) != 1:
+        raise ValueError(f"expected batch size 1 for visualization, got {list(frames_bthwc_01.shape)}")
+    frames = (frames_bthwc_01[0].detach().float().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+    labeled = _overlay_timeline_labels(
+        frames,
+        title=title,
+        primary_indices=primary_indices,
+        primary_label=primary_label,
+        secondary_indices=secondary_indices,
+        secondary_label=secondary_label,
+        tertiary_indices=tertiary_indices,
+        tertiary_label=tertiary_label,
+    )
+    inspectmod.write_mp4(path, labeled, fps=fps)
+    return inspectmod._ensure_browser_video(path)
 
 
 def _select_video_frames(video_cthw: torch.Tensor, frame_indices: list[int]) -> torch.Tensor:
@@ -141,6 +258,7 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     <p><b>sampled_ctx_last_index:</b> {int(result["sampled_ctx_last_index"])}</p>
     <p><b>sampled_ctx_num_frames:</b> {int(result["sampled_ctx_num_frames"])}</p>
     <p><b>sampled source frame indices:</b> {html.escape(str(result["context_source_frame_indices"]))}</p>
+    <p><b>timeline labels burned into videos:</b> each frame shows local index plus mapped source index when available.</p>
     <p><b>jepa_time_idx:</b> {html.escape(str(result["jepa_time_idx"]))}</p>
     <p><b>latent_time_idx:</b> {html.escape(str(result["latent_time_idx"]))}</p>
     <p><b>jepa_time_source_indices:</b> {html.escape(str(result["jepa_time_source_indices"]))}</p>
@@ -382,26 +500,48 @@ def _inspect_one(
     context_video = sample["context_video"]
     train_clip_video = sample["video"]
     image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
+    sampled_source_indices = [int(v) for v in sample.get("metadata", {}).get("sampled_frame_indices", [])]
+    train_clip_local_indices = list(range(int(train_clip_video.shape[1])))
+    train_clip_source_indices = [
+        int(sampled_source_indices[idx]) if 0 <= idx < len(sampled_source_indices) else -1
+        for idx in train_clip_local_indices
+    ]
+    context_train_local_indices = [int(v) for v in sample["context_frame_indices"].detach().cpu().tolist()]
+    context_source_frame_indices = [
+        int(sampled_source_indices[idx])
+        for idx in context_train_local_indices
+        if 0 <= int(idx) < len(sampled_source_indices)
+    ]
     grounding_sample = model.viewer_grounding.build_sample(
         frames_tchw_01=((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy(),
         caption=str(sample["caption"]),
         image_hw=image_hw,
     )
 
-    context_video_browser = inspectmod._write_tensor_video(
+    context_video_browser = _write_annotated_tensor_video(
         output_dir / "context_video.mp4",
         context_video,
         fps=int(inspect_fps),
+        title="Actual context used in forward",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
     )
     cotracker_input_video = _resize_video_bthwc(
         debug["frames_bthwc_01"],
         tuple(int(v) for v in debug["cotracker_out"].input_hw),
         align_corners=True,
     )
-    cotracker_input_video_browser = _write_frames_bthwc_video(
+    cotracker_input_video_browser = _write_annotated_frames_bthwc_video(
         output_dir / "cotracker_input_video.mp4",
         cotracker_input_video,
         fps=int(inspect_fps),
+        title="CoTracker resized input",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
     )
     vggt_input_hw = (420, 728)
     if getattr(model, "vggt_adapter", None) is not None and getattr(model.vggt_adapter, "input_hw", None) is not None:
@@ -411,15 +551,33 @@ def _inspect_one(
         vggt_input_hw,
         align_corners=False,
     )
-    vggt_input_video_browser = _write_frames_bthwc_video(
+    vggt_input_video_browser = _write_annotated_frames_bthwc_video(
         output_dir / "vggt_input_video.mp4",
         vggt_input_video,
         fps=int(inspect_fps),
+        title="VGGT resized input",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
     )
-    jepa_padded_video_browser = inspectmod._write_tensor_video(
+    jepa_padded_train_indices = _expand_with_last_index(
+        context_train_local_indices,
+        int(debug["jepa_input_video"].shape[2]),
+    )
+    jepa_padded_source_indices = _expand_with_last_index(
+        context_source_frame_indices,
+        int(debug["jepa_input_video"].shape[2]),
+    )
+    jepa_padded_video_browser = _write_annotated_tensor_video(
         output_dir / "jepa_padded_context_video.mp4",
         debug["jepa_input_video"][0].detach().float().cpu(),
         fps=int(inspect_fps),
+        title="JEPA padded context",
+        primary_indices=jepa_padded_train_indices,
+        primary_label="train_local",
+        secondary_indices=jepa_padded_source_indices,
+        secondary_label="source",
     )
     jepa_crop_size = int(getattr(getattr(model, "jepa_adapter", None), "crop_size", 384))
     jepa_input_video_bthwc_01 = (
@@ -430,15 +588,25 @@ def _inspect_one(
         (jepa_crop_size, jepa_crop_size),
         align_corners=False,
     )
-    jepa_input_video_browser = _write_frames_bthwc_video(
+    jepa_input_video_browser = _write_annotated_frames_bthwc_video(
         output_dir / "jepa_input_video.mp4",
         jepa_resized_input_video,
         fps=int(inspect_fps),
+        title="JEPA resized input",
+        primary_indices=jepa_padded_train_indices,
+        primary_label="train_local",
+        secondary_indices=jepa_padded_source_indices,
+        secondary_label="source",
     )
-    train_clip_video_browser = inspectmod._write_tensor_video(
+    train_clip_video_browser = _write_annotated_tensor_video(
         output_dir / "train_clip_full.mp4",
         train_clip_video,
         fps=int(inspect_fps),
+        title="69-frame train clip",
+        primary_indices=train_clip_local_indices,
+        primary_label="train_local",
+        secondary_indices=train_clip_source_indices,
+        secondary_label="source",
     )
     source_full_video_browser = inspectmod._export_browser_video(
         Path(str(sample["video_path"])),
@@ -480,7 +648,15 @@ def _inspect_one(
         prefix="trk",
     )
     input_overlay_raw = output_dir / "input_prepipe_overlay.mp4"
-    inspectmod.write_mp4(input_overlay_raw, input_overlay_video, fps=int(inspect_fps))
+    input_overlay_labeled = _overlay_timeline_labels(
+        input_overlay_video,
+        title="Input overlay",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
+    )
+    inspectmod.write_mp4(input_overlay_raw, input_overlay_labeled, fps=int(inspect_fps))
     input_overlay_browser = inspectmod._ensure_browser_video(input_overlay_raw)
 
     ref_box_xyxy = debug["object_out"].active_box_xyxy[0].detach().float().cpu().numpy()
@@ -497,7 +673,15 @@ def _inspect_one(
         image_hw=image_hw,
     )
     box_overlay_raw = output_dir / "aux_pred_box_overlay.mp4"
-    inspectmod.write_mp4(box_overlay_raw, box_overlay_video, fps=int(inspect_fps))
+    box_overlay_labeled = _overlay_timeline_labels(
+        box_overlay_video,
+        title="Aux box overlay",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
+    )
+    inspectmod.write_mp4(box_overlay_raw, box_overlay_labeled, fps=int(inspect_fps))
     box_overlay_browser = inspectmod._ensure_browser_video(box_overlay_raw)
 
     track_overlay_video = inspectmod._render_ref_pred_track_overlay(
@@ -508,22 +692,48 @@ def _inspect_one(
         image_hw=image_hw,
     )
     track_overlay_raw = output_dir / "aux_pred_track_overlay.mp4"
-    inspectmod.write_mp4(track_overlay_raw, track_overlay_video, fps=int(inspect_fps))
+    track_overlay_labeled = _overlay_timeline_labels(
+        track_overlay_video,
+        title="Aux track overlay",
+        primary_indices=context_train_local_indices,
+        primary_label="train_local",
+        secondary_indices=context_source_frame_indices,
+        secondary_label="source",
+    )
+    inspectmod.write_mp4(track_overlay_raw, track_overlay_labeled, fps=int(inspect_fps))
     track_overlay_browser = inspectmod._ensure_browser_video(track_overlay_raw)
 
     jepa_time_idx = [int(v) for v in debug["jepa_time_idx"].detach().cpu().tolist()]
     latent_time_idx = [int(v) for v in debug["latent_time_idx"].detach().cpu().tolist()]
     jepa_time_aligned_context = _select_video_frames(context_video, jepa_time_idx)
     latent_time_aligned_context = _select_video_frames(context_video, latent_time_idx)
-    jepa_time_aligned_context_browser = inspectmod._write_tensor_video(
+    jepa_time_train_indices = _source_indices_from_time_idx(context_train_local_indices, jepa_time_idx)
+    jepa_time_source_indices = _source_indices_from_time_idx(context_source_frame_indices, jepa_time_idx)
+    latent_time_train_indices = _source_indices_from_time_idx(context_train_local_indices, latent_time_idx)
+    latent_time_source_indices = _source_indices_from_time_idx(context_source_frame_indices, latent_time_idx)
+    jepa_time_aligned_context_browser = _write_annotated_tensor_video(
         output_dir / "jepa_time_aligned_context.mp4",
         jepa_time_aligned_context,
         fps=int(inspect_fps),
+        title="JEPA time_idx aligned context",
+        primary_indices=jepa_time_idx,
+        primary_label="ctx_local",
+        secondary_indices=jepa_time_train_indices,
+        secondary_label="train_local",
+        tertiary_indices=jepa_time_source_indices,
+        tertiary_label="source",
     )
-    latent_time_aligned_context_browser = inspectmod._write_tensor_video(
+    latent_time_aligned_context_browser = _write_annotated_tensor_video(
         output_dir / "latent_time_aligned_context.mp4",
         latent_time_aligned_context,
         fps=int(inspect_fps),
+        title="Latent time_idx aligned context",
+        primary_indices=latent_time_idx,
+        primary_label="ctx_local",
+        secondary_indices=latent_time_train_indices,
+        secondary_label="train_local",
+        tertiary_indices=latent_time_source_indices,
+        tertiary_label="source",
     )
 
     return {
@@ -701,6 +911,7 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
       actual context-frame sampling policy before running a real object-branch forward.
       Each card includes the sampled train clip, the source full video, the actual sampled context,
       the input box/query/track overlay, and the aux box/track predictions.
+      The generated videos now burn in local/source frame indices so timeline alignment can be checked visually.
       Total cases: {len(results)}.
       Skipped zero-context indices: {html.escape(str(skipped_zero_context))}.
     </p>
