@@ -617,6 +617,13 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
 }
 
 
+def build_family_case_catalog() -> dict[str, list[CaseSpec]]:
+    grouped: dict[str, list[CaseSpec]] = {}
+    for case in sorted(CASE_LIBRARY.values(), key=lambda item: (item.family, item.key)):
+        grouped.setdefault(case.family, []).append(case)
+    return grouped
+
+
 def _init_genesis() -> None:
     global _GS_INITIALIZED
     if _GS_INITIALIZED:

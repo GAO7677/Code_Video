@@ -59,6 +59,41 @@ from diffsynth.diffusion import ModelLogger
 _DUMMY_BOX_XYXY = (0.45, 0.45, 0.55, 0.55)
 
 
+def _summarize_object_branch_trace(trace_layers: list[dict] | None) -> dict[str, float]:
+    if not trace_layers:
+        return {
+            "max_gated_to_x_ratio_l2": 0.0,
+            "mean_gated_to_x_ratio_l2": 0.0,
+            "max_pre_guard_gated_to_x_ratio_l2": 0.0,
+            "mean_pre_guard_gated_to_x_ratio_l2": 0.0,
+            "max_ratio_block_id": -1.0,
+            "guard_applied_layer_count": 0.0,
+            "guard_scale_min": 1.0,
+        }
+    ratios = [float(layer.get("gated_to_x_ratio_l2", 0.0)) for layer in trace_layers]
+    pre_guard_ratios = [
+        float(layer.get("pre_guard_gated_to_x_ratio_l2", layer.get("gated_to_x_ratio_l2", 0.0)))
+        for layer in trace_layers
+    ]
+    max_idx = max(range(len(ratios)), key=ratios.__getitem__)
+    guard_infos = [
+        layer.get("object_ratio_guard", {})
+        for layer in trace_layers
+        if isinstance(layer.get("object_ratio_guard", {}), dict)
+    ]
+    guard_applied = [info for info in guard_infos if bool(info.get("applied", False))]
+    guard_scales = [float(info.get("scale", 1.0)) for info in guard_infos]
+    return {
+        "max_gated_to_x_ratio_l2": float(max(ratios)),
+        "mean_gated_to_x_ratio_l2": float(sum(ratios) / max(len(ratios), 1)),
+        "max_pre_guard_gated_to_x_ratio_l2": float(max(pre_guard_ratios)),
+        "mean_pre_guard_gated_to_x_ratio_l2": float(sum(pre_guard_ratios) / max(len(pre_guard_ratios), 1)),
+        "max_ratio_block_id": float(trace_layers[max_idx].get("block_id", -1)),
+        "guard_applied_layer_count": float(len(guard_applied)),
+        "guard_scale_min": float(min(guard_scales)) if guard_scales else 1.0,
+    }
+
+
 def prepare_jepa_context_video(
     context_video: torch.Tensor,
     *,
@@ -100,6 +135,15 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
     """WanTrainingModule variant that sources object priors from viewer grounding."""
 
     def __init__(self, *args, grounding_config: dict | None = None, **kwargs) -> None:
+        self.lambda_object_gate_reg = float(kwargs.pop("lambda_object_gate_reg", 0.0))
+        self.object_gate_reg_target = float(kwargs.pop("object_gate_reg_target", 0.20))
+        self.object_branch_train_trace = bool(kwargs.pop("object_branch_train_trace", False))
+        self.object_branch_ratio_guard_max_ratio = float(
+            kwargs.pop("object_branch_ratio_guard_max_ratio", 0.0)
+        )
+        self.object_branch_ratio_guard_max_block_id = int(
+            kwargs.pop("object_branch_ratio_guard_max_block_id", -1)
+        )
         self._jepa_tubelet_size = int(kwargs.get("jepa_tubelet_size", 2))
         super().__init__(*args, **kwargs)
         self.viewer_grounding: ViewerGroundingBoxProvider | None = None
@@ -111,6 +155,18 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             color_tolerance=int((grounding_config or {}).get("grounding_gt_mask_color_tolerance", 18)),
         )
         if self.enable_object_branch:
+            active_dit = getattr(self.pipe, "dit", None)
+            if active_dit is not None and hasattr(active_dit, "_object_branch_ratio_guard_max_ratio"):
+                active_dit._object_branch_ratio_guard_max_ratio = (
+                    float(self.object_branch_ratio_guard_max_ratio)
+                    if float(self.object_branch_ratio_guard_max_ratio) > 0.0
+                    else None
+                )
+                active_dit._object_branch_ratio_guard_max_block_id = (
+                    int(self.object_branch_ratio_guard_max_block_id)
+                    if int(self.object_branch_ratio_guard_max_block_id) >= 0
+                    else None
+                )
             cfg = dict(grounding_config or {})
             grounding_device = str(cfg.get("grounding_device") or self.pipe.device)
             self.viewer_grounding = ViewerGroundingBoxProvider(
@@ -145,6 +201,56 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                     cfg.get("grounding_container_suppress_small_iou_threshold", 0.7)
                 ),
             )
+
+    def _compute_object_gate_regularizer(self, pipe) -> tuple[torch.Tensor, dict[str, float]]:
+        gate_abs_means = []
+        gate_abs_maxes = []
+        for block in getattr(pipe.dit, "blocks", []):
+            object_gate = getattr(block, "object_gate", None)
+            if object_gate is None:
+                continue
+            gate_tanh_abs = torch.tanh(object_gate.float()).abs()
+            gate_abs_means.append(gate_tanh_abs.mean())
+            gate_abs_maxes.append(gate_tanh_abs.max())
+        if not gate_abs_means:
+            zero = torch.zeros((), device=pipe.device, dtype=pipe.torch_dtype)
+            return zero, {
+                "train/object_gate_tanh_abs_mean": 0.0,
+                "train/object_gate_tanh_abs_max": 0.0,
+            }
+        gate_abs_mean = torch.stack(gate_abs_means).mean()
+        gate_abs_max = torch.stack(gate_abs_maxes).max()
+        gate_excess = torch.relu(torch.stack(gate_abs_maxes) - float(self.object_gate_reg_target))
+        gate_reg = gate_excess.square().mean().to(device=pipe.device, dtype=pipe.torch_dtype)
+        return gate_reg, {
+            "train/object_gate_tanh_abs_mean": float(gate_abs_mean.detach().item()),
+            "train/object_gate_tanh_abs_max": float(gate_abs_max.detach().item()),
+        }
+
+    def _run_main_loss_with_trace(self, pipe, inputs_shared, inputs_posi, object_context):
+        active_dit = getattr(pipe, "dit", None)
+        trace_layers = None
+        trace_enabled = bool(
+            self.object_branch_train_trace
+            or float(self.object_branch_ratio_guard_max_ratio) > 0.0
+        )
+        if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect") and trace_enabled:
+            active_dit._object_branch_trace_collect = True
+            active_dit._object_branch_trace_buffer = []
+        try:
+            loss_main = flow_match_context_sft_loss(
+                pipe,
+                **inputs_shared,
+                **inputs_posi,
+                object_context=object_context,
+            )
+            if active_dit is not None and hasattr(active_dit, "_object_branch_trace_buffer"):
+                trace_layers = getattr(active_dit, "_object_branch_trace_buffer", None)
+        finally:
+            if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
+                active_dit._object_branch_trace_collect = False
+                active_dit._object_branch_trace_buffer = None
+        return loss_main, trace_layers
 
     # ------------------------------------------------------------------
     # Override 1: query priors come from viewer grounding, not GT boxes.
@@ -259,32 +365,46 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 device=pipe.device,
                 dtype=pipe.torch_dtype,
             )
+            object_gate_reg, gate_metrics = self._compute_object_gate_regularizer(pipe)
             if self.lambda_main > 0.0:
-                loss_main = flow_match_context_sft_loss(
+                loss_main, trace_layers = self._run_main_loss_with_trace(
                     pipe,
-                    **inputs_shared,
-                    **inputs_posi,
-                    object_context=object_context,
+                    inputs_shared,
+                    inputs_posi,
+                    object_context,
                 )
             else:
                 loss_main = object_context.new_zeros(())
+                trace_layers = None
             object_context_reg = object_context.new_zeros(())
+            trace_summary = _summarize_object_branch_trace(trace_layers)
             total = (
                 self.lambda_main * loss_main
                 + self.lambda_object_context_reg * object_context_reg
+                + self.lambda_object_gate_reg * object_gate_reg
             )
             metrics = {
                 "train/loss_total": float(total.detach().item()),
                 "train/loss_main": float(loss_main.detach().item()),
                 "train/loss_object_context_reg": float(object_context_reg.detach().item()),
+                "train/loss_object_gate_reg": float(object_gate_reg.detach().item()),
                 "train/object_count": 0.0,
                 "train/object_latent_tokens_abs_max": 0.0,
                 "train/object_context_abs_max": 0.0,
                 "train/object_context_abs_mean": 0.0,
+                "train/object_branch_max_gated_to_x_ratio_l2": trace_summary["max_gated_to_x_ratio_l2"],
+                "train/object_branch_mean_gated_to_x_ratio_l2": trace_summary["mean_gated_to_x_ratio_l2"],
+                "train/object_branch_max_pre_guard_gated_to_x_ratio_l2": trace_summary["max_pre_guard_gated_to_x_ratio_l2"],
+                "train/object_branch_mean_pre_guard_gated_to_x_ratio_l2": trace_summary["mean_pre_guard_gated_to_x_ratio_l2"],
+                "train/object_branch_max_ratio_block_id": trace_summary["max_ratio_block_id"],
+                "train/object_branch_guard_applied_layer_count": trace_summary["guard_applied_layer_count"],
+                "train/object_branch_guard_scale_min": trace_summary["guard_scale_min"],
+                "train/object_branch_ratio_guard_enabled": 1.0 if float(self.object_branch_ratio_guard_max_ratio) > 0.0 else 0.0,
                 "train/ctx_max_length": ctx_max_length,
                 "train/sampled_ctx_last_index": sampled_ctx_last_index,
                 "train/sampled_ctx_num_frames": 0.0,
             }
+            metrics.update(gate_metrics)
             return total, metrics
 
         context_video = sample["context_video"].unsqueeze(0).to(
@@ -365,20 +485,24 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             object_valid_mask=object_valid_mask,
         )
 
+        object_gate_reg, gate_metrics = self._compute_object_gate_regularizer(pipe)
         if self.lambda_main > 0.0:
-            loss_main = flow_match_context_sft_loss(
+            loss_main, trace_layers = self._run_main_loss_with_trace(
                 pipe,
-                **inputs_shared,
-                **inputs_posi,
-                object_context=object_context,
+                inputs_shared,
+                inputs_posi,
+                object_context,
             )
         else:
             loss_main = object_context.new_zeros(())
+            trace_layers = None
         object_context_reg = object_context.square().mean()
+        trace_summary = _summarize_object_branch_trace(trace_layers)
 
         total = (
             self.lambda_main * loss_main
             + self.lambda_object_context_reg * object_context_reg
+            + self.lambda_object_gate_reg * object_gate_reg
         )
 
         object_context_abs = object_context.detach().abs()
@@ -387,16 +511,26 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/loss_total": float(total.detach().item()),
             "train/loss_main": float(loss_main.detach().item()),
             "train/loss_object_context_reg": float(object_context_reg.detach().item()),
+            "train/loss_object_gate_reg": float(object_gate_reg.detach().item()),
             "train/object_count": float(object_valid_mask.sum().item()),
             "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
             "train/object_context_abs_max": float(object_context_abs.max().item()),
             "train/object_context_abs_mean": float(object_context_abs.mean().item()),
+            "train/object_branch_max_gated_to_x_ratio_l2": trace_summary["max_gated_to_x_ratio_l2"],
+            "train/object_branch_mean_gated_to_x_ratio_l2": trace_summary["mean_gated_to_x_ratio_l2"],
+            "train/object_branch_max_pre_guard_gated_to_x_ratio_l2": trace_summary["max_pre_guard_gated_to_x_ratio_l2"],
+            "train/object_branch_mean_pre_guard_gated_to_x_ratio_l2": trace_summary["mean_pre_guard_gated_to_x_ratio_l2"],
+            "train/object_branch_max_ratio_block_id": trace_summary["max_ratio_block_id"],
+            "train/object_branch_guard_applied_layer_count": trace_summary["guard_applied_layer_count"],
+            "train/object_branch_guard_scale_min": trace_summary["guard_scale_min"],
+            "train/object_branch_ratio_guard_enabled": 1.0 if float(self.object_branch_ratio_guard_max_ratio) > 0.0 else 0.0,
             "train/jepa_input_frames": float(jepa_ctx_fix["jepa_context_frames"]),
             "train/jepa_padding_frames": float(jepa_ctx_fix["padded_context_frames"]),
             "train/ctx_max_length": ctx_max_length,
             "train/sampled_ctx_last_index": sampled_ctx_last_index,
             "train/sampled_ctx_num_frames": float(num_context_frames),
         }
+        metrics.update(gate_metrics)
         return total, metrics
 
 
@@ -480,6 +614,35 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--grounding_gt_mask_min_visible_ratio", type=float, default=0.60)
     group.add_argument("--grounding_gt_mask_min_in_mask_ratio", type=float, default=0.60)
     group.add_argument("--grounding_gt_mask_color_tolerance", type=int, default=18)
+    group.add_argument(
+        "--object_branch_train_trace",
+        action="store_true",
+        help="Enable per-step object-branch ratio diagnostics during training.",
+    )
+    group.add_argument(
+        "--object_branch_ratio_guard_max_ratio",
+        type=float,
+        default=0.0,
+        help="If >0, cap per-block gated object residual L2 ratio to this value during training.",
+    )
+    group.add_argument(
+        "--object_branch_ratio_guard_max_block_id",
+        type=int,
+        default=-1,
+        help="Optional inclusive max block id for the training-time ratio guard; negative means all blocks.",
+    )
+    group.add_argument(
+        "--lambda_object_gate_reg",
+        type=float,
+        default=0.0,
+        help="Weight for penalizing oversized tanh(object_gate) values.",
+    )
+    group.add_argument(
+        "--object_gate_reg_target",
+        type=float,
+        default=0.20,
+        help="No penalty below this tanh(object_gate) magnitude target.",
+    )
 
     kubric_group = parser.add_argument_group("kubric_no_gt_box_dataset")
     kubric_group.add_argument(
@@ -643,6 +806,7 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         lambda_track_anchor_reg=args.lambda_track_anchor_reg,
         lambda_box_anchor_reg=args.lambda_box_anchor_reg,
         lambda_object_context_reg=args.lambda_object_context_reg,
+        lambda_object_gate_reg=args.lambda_object_gate_reg,
         train_object_pooler=args.train_object_pooler,
         train_object_aux_heads=args.train_object_aux_heads,
         train_object_adapter=args.train_object_adapter,
@@ -651,6 +815,10 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         depth_target_state_index=args.depth_target_state_index,
         depth_target_source=args.depth_target_source,
         depth_anything_cache_root=args.depth_anything_cache_root,
+        object_gate_reg_target=args.object_gate_reg_target,
+        object_branch_train_trace=args.object_branch_train_trace,
+        object_branch_ratio_guard_max_ratio=args.object_branch_ratio_guard_max_ratio,
+        object_branch_ratio_guard_max_block_id=args.object_branch_ratio_guard_max_block_id,
         grounding_config=grounding_config,
     )
 
@@ -710,6 +878,17 @@ def _log_stage_summary(accelerator, model: ContextOnlyNoGTBoxWanModule, args: ar
                  f"{len(dit_branch_trainable)} params, {dit_branch_elems:,} elems")
     lines.append(f"  - ObjectConditionAdapter: {len(adapter_trainable)} params, {adapter_elems:,} elems")
     lines.append(f"  - 可训练参数总量: {total_trainable_elems:,} elems")
+    lines.append("稳定化 / 诊断配置:")
+    lines.append(
+        f"  - object_branch_train_trace={bool(args.object_branch_train_trace)} "
+        f"| lambda_object_context_reg={float(args.lambda_object_context_reg):.6g} "
+        f"| lambda_object_gate_reg={float(args.lambda_object_gate_reg):.6g}"
+    )
+    lines.append(
+        f"  - object_gate_reg_target={float(args.object_gate_reg_target):.4f} "
+        f"| object_branch_ratio_guard_max_ratio={float(args.object_branch_ratio_guard_max_ratio):.4f} "
+        f"| object_branch_ratio_guard_max_block_id={int(args.object_branch_ratio_guard_max_block_id)}"
+    )
     lines.append("冻结模块 (frozen):")
     lines.append(f"  - Wan DiT base + LoRA, VAE, Text encoder")
     lines.append(f"  - ObjectTubeProjector (object_pooler): trainable params now = {len(pooler_trainable)}")

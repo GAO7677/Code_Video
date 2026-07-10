@@ -127,6 +127,12 @@ CMD=(
   --lambda_track_aux 0.0
   --lambda_box_aux 0.0
   --lambda_depth_aux 0.0
+  --lambda_object_context_reg 1e-4
+  --lambda_object_gate_reg 5e-3
+  --object_gate_reg_target 0.20
+  --object_branch_train_trace
+  --object_branch_ratio_guard_max_ratio 0.20
+  --object_branch_ratio_guard_max_block_id 4
   --stage1a_init_from "${STAGE1A_CKPT}"
   --grounding_proposal_source gdino_only
   --grounding_motion_score_ratio 0.15
