@@ -151,8 +151,47 @@ def _summary_to_px(track_summary_xydxdy: np.ndarray, image_hw: tuple[int, int]) 
     return center, start
 
 
+def _latent_frame_to_source_indices(full_frames: int, latent_frames: int) -> np.ndarray:
+    if int(latent_frames) <= 0:
+        raise ValueError(f"latent_frames must be positive, got {latent_frames}")
+    if int(full_frames) % int(latent_frames) != 0:
+        raise RuntimeError(
+            f"full_frames={full_frames} must be divisible by latent_frames={latent_frames} "
+            "for stage1a full-token overlay alignment"
+        )
+    group = int(full_frames) // int(latent_frames)
+    return np.asarray([(i + 1) * group - 1 for i in range(int(latent_frames))], dtype=np.int64)
+
+
+def _decode_latent_background_frames(
+    trainer: ContextVideoTrainer,
+    full_latents_sample: torch.Tensor,
+) -> np.ndarray:
+    vae_device = (
+        next(trainer.bundle.vae.model.parameters()).device
+        if hasattr(trainer.bundle.vae, "model")
+        else trainer.device_obj
+    )
+    decode_input = full_latents_sample.unsqueeze(0).to(device=vae_device)
+    with torch.no_grad():
+        if hasattr(trainer.bundle.vae, "decode_framewise"):
+            decoded = trainer.bundle.vae.decode_framewise(decode_input, device=vae_device)
+        else:
+            decoded = trainer.bundle.vae.decode([decode_input])
+            if isinstance(decoded, list):
+                decoded = decoded[0]
+            if decoded.ndim == 4:
+                decoded = decoded.unsqueeze(0)
+    if decoded.ndim != 5:
+        raise RuntimeError(f"unexpected decoded shape: {list(decoded.shape)}")
+    return np.stack(
+        [tensor_frame_to_uint8_hwc(decoded[0, :, frame_idx]) for frame_idx in range(int(decoded.shape[2]))],
+        axis=0,
+    )
+
+
 def _render_box_overlay(
-    context_video: torch.Tensor,
+    background_frames: np.ndarray,
     gt_box_xyxy: np.ndarray,
     gt_box_valid: np.ndarray,
     pred_box_xyxy: np.ndarray,
@@ -160,12 +199,9 @@ def _render_box_overlay(
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
-    latent_frames = int(gt_box_xyxy.shape[0])
-    source_frames = int(context_video.shape[1])
-    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    latent_frames = min(int(gt_box_xyxy.shape[0]), int(background_frames.shape[0]))
     for latent_idx in range(latent_frames):
-        src_idx = int(latent_to_source[latent_idx])
-        frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        frame = np.asarray(background_frames[latent_idx], dtype=np.uint8).copy()
         for obj_idx in range(gt_box_xyxy.shape[1]):
             if bool(gt_box_valid[latent_idx, obj_idx]):
                 draw_box_rgb(
@@ -186,7 +222,7 @@ def _render_box_overlay(
 
 
 def _render_track_overlay(
-    context_video: torch.Tensor,
+    background_frames: np.ndarray,
     gt_track_summary: np.ndarray,
     gt_track_valid: np.ndarray,
     pred_track_summary: np.ndarray,
@@ -194,12 +230,9 @@ def _render_track_overlay(
     image_hw: tuple[int, int],
 ) -> np.ndarray:
     frames: list[np.ndarray] = []
-    latent_frames = int(gt_track_summary.shape[0])
-    source_frames = int(context_video.shape[1])
-    latent_to_source = np.linspace(0, max(source_frames - 1, 0), latent_frames).round().astype(np.int64)
+    latent_frames = min(int(gt_track_summary.shape[0]), int(background_frames.shape[0]))
     for latent_idx in range(latent_frames):
-        src_idx = int(latent_to_source[latent_idx])
-        frame = tensor_frame_to_uint8_hwc(context_video[:, src_idx]).copy()
+        frame = np.asarray(background_frames[latent_idx], dtype=np.uint8).copy()
         for obj_idx in range(gt_track_summary.shape[1]):
             if bool(pred_track_valid[latent_idx, obj_idx]):
                 pred_center, pred_start = _summary_to_px(pred_track_summary[latent_idx, obj_idx], image_hw)
@@ -275,8 +308,14 @@ def _prepare_case(
             "track_iou_loss": None,
         }
     object_aux_out = prepared["object_aux_out"]
-    context_video = batch["context_video"][0]
-    image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
+    full_video = batch["video"][0]
+    image_hw = (int(full_video.shape[-2]), int(full_video.shape[-1]))
+    full_latents_sample = prep.oracle_object_latent_tokens.new_zeros(())
+    if hasattr(trainer, "_encode_video_latents"):
+        full_latents = trainer._encode_video_latents(batch["video"].to(trainer.device_obj))
+        full_latents_sample = full_latents[0]
+    else:
+        raise RuntimeError("trainer does not expose _encode_video_latents for latent-frame visualization")
 
     gt_track_summary = prepared["gt_track_summary"][0].detach().cpu().numpy()
     gt_track_valid = prepared["gt_track_valid"][0].detach().cpu().numpy() > 0.5
@@ -304,12 +343,17 @@ def _prepare_case(
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    box_video = _render_box_overlay(context_video, gt_box_xyxy, gt_box_valid, pred_box_xyxy, pred_box_valid_mask, image_hw)
+    decoded_background = _decode_latent_background_frames(trainer, full_latents_sample)
+    latent_frame_indices = _latent_frame_to_source_indices(int(full_video.shape[1]), int(gt_box_xyxy.shape[0]))
+    if int(decoded_background.shape[0]) != int(gt_box_xyxy.shape[0]):
+        decoded_background = decoded_background[latent_frame_indices]
+
+    box_video = _render_box_overlay(decoded_background, gt_box_xyxy, gt_box_valid, pred_box_xyxy, pred_box_valid_mask, image_hw)
     box_raw = assets_dir / f"{case_stem}__box_overlay.mp4"
     write_mp4(box_raw, box_video, fps=fps)
     box_browser = ensure_browser_video(box_raw)
 
-    track_video = _render_track_overlay(context_video, gt_track_summary, gt_track_valid, pred_track_summary, pred_track_valid_mask, image_hw)
+    track_video = _render_track_overlay(decoded_background, gt_track_summary, gt_track_valid, pred_track_summary, pred_track_valid_mask, image_hw)
     track_raw = assets_dir / f"{case_stem}__track_overlay.mp4"
     write_mp4(track_raw, track_video, fps=fps)
     track_browser = ensure_browser_video(track_raw)
@@ -328,6 +372,8 @@ def _prepare_case(
         "caption": sample["caption"],
         "context_frame_indices": sample["context_frame_indices"].tolist(),
         "checkpoint": str(checkpoint_path),
+        "latent_source_frame_indices": latent_frame_indices.tolist(),
+        "overlay_background": "decoded_full_latent_frames",
         "box_overlay_video": str(box_browser.relative_to(output_dir)),
         "track_overlay_video": str(track_browser.relative_to(output_dir)),
         "depth_panel_video": depth_video_rel,
@@ -377,16 +423,17 @@ def _build_report(results: list[dict[str, Any]], output_dir: Path, checkpoint_pa
     <h2>Case {result['sample_index']}</h2>
     <p><b>Caption:</b> {result['caption']}</p>
     <p><b>Context frames:</b> {result['context_frame_indices']}</p>
+    <p><b>Latent source frames:</b> {result['latent_source_frame_indices']}</p>
     <p><b>Video:</b> {result['video_path']}</p>
     <p><b>Losses:</b> track_aux={result['metrics']['train/loss_track_aux']:.6f}, box_aux={result['metrics']['train/loss_box_aux']:.6f}, depth_aux={result['metrics']['train/loss_depth_aux']:.6f}</p>
     <div class="video-grid">
       <figure>
         <video controls preload="none" playsinline src="{result['track_overlay_video']}"></video>
-        <figcaption>Track aux: GT summary vs Pred summary on source frame</figcaption>
+        <figcaption>Track aux: GT summary vs Pred summary on latent-decoded frames</figcaption>
       </figure>
       <figure>
         <video controls preload="none" playsinline src="{result['box_overlay_video']}"></video>
-        <figcaption>Box aux: GT box(red) vs Pred box(green)</figcaption>
+        <figcaption>Box aux: GT box(red) vs Pred box(green) on latent-decoded frames</figcaption>
       </figure>
       {depth_block}
     </div>
