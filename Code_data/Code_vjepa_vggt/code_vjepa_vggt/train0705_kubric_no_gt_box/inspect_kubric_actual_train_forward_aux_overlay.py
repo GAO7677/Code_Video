@@ -5,6 +5,7 @@ import gc
 import html
 import json
 import random
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,12 +17,6 @@ import torch.nn.functional as F
 
 from code_vjepa_vggt.train0705_kubric_no_gt_box import (
     inspect_kubric_train_forward_aux_overlay as inspectmod,
-)
-from code_vjepa_vggt.train0705 import (
-    infer_stage1b_context_only_no_gt_box_v_newtrain0705 as inferbase,
-)
-from code_vjepa_vggt.train0705_kubric_no_gt_box import (
-    visualize_kubric_actual_train_samples as actualmod,
 )
 from code_vjepa_vggt.train0705_kubric_no_gt_box import (
     train_stage1b_context_only_no_gt_box_v_newtrain_kubric as trainmod,
@@ -297,7 +292,7 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Kubric Actual Train Forward Aux Overlay</title>
+  <title>Kubric Actual Train Object-Branch Middleware Overlay</title>
   <style>
     :root {{
       color-scheme: light;
@@ -343,7 +338,7 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
 </head>
 <body>
   <div class="page">
-    <h1>Kubric Actual Train Forward Aux Overlay</h1>
+    <h1>Kubric Actual Train Object-Branch Middleware Overlay</h1>
     <p><b>Sample key:</b> {html.escape(str(result["sample_key"]))}</p>
     <p><b>Dataset index:</b> {int(result["inspect_index"])}</p>
     <p><b>Caption:</b> {html.escape(str(result["caption"]))}</p>
@@ -438,19 +433,61 @@ def _build_case_page(case_dir: Path, result: dict[str, Any]) -> None:
     (case_dir / "index.html").write_text(html_text, encoding="utf-8")
 
 
+def _prepare_training_inputs(
+    model: trainmod.ContextOnlyNoGTBoxWanModule,
+    raw_sample: dict[str, Any],
+    *,
+    sampling_seed: int,
+) -> tuple[dict[str, Any], tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
+    python_state = random.getstate()
+    try:
+        random.seed(int(sampling_seed))
+        inputs_cpu = model.get_pipeline_inputs(raw_sample)
+    finally:
+        random.setstate(python_state)
+    sampled_raw_cpu = inputs_cpu[0]["raw_sample"]
+    return sampled_raw_cpu, inputs_cpu
+
+
 def _run_forward_debug(
     model: trainmod.ContextOnlyNoGTBoxWanModule,
-    sample: dict[str, Any],
+    inputs_cpu: tuple[dict[str, Any], dict[str, Any], dict[str, Any]],
 ) -> dict[str, Any]:
+    inputs = model.transfer_data_to_device(
+        inputs_cpu,
+        model.pipe.device,
+        model.pipe.torch_dtype,
+    )
+    for unit in model.pipe.units:
+        inputs = model.pipe.unit_runner(unit, model.pipe, *inputs)
+
+    inputs_shared, _inputs_posi, _inputs_nega = inputs
+    sample = inputs_shared["raw_sample"]
+
     context_video = sample["context_video"].unsqueeze(0).to(
         device=model.pipe.device,
         dtype=model.pipe.torch_dtype,
     )
     image_hw = (int(context_video.shape[-2]), int(context_video.shape[-1]))
-    query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = model._build_object_query_priors(
-        sample,
-        image_hw=image_hw,
-    )
+
+    grounding_capture: dict[str, Any] = {}
+    original_build_sample = model.viewer_grounding.build_sample
+
+    def _capturing_build_sample(*args, **kwargs):
+        grounding_sample = original_build_sample(*args, **kwargs)
+        grounding_capture["grounding_sample"] = grounding_sample
+        return grounding_sample
+
+    model.viewer_grounding.build_sample = _capturing_build_sample
+    try:
+        query_points_prior, query_frame_ids, object_valid_mask, box_prior_xyxy = model._build_object_query_priors(
+            sample,
+            image_hw=image_hw,
+        )
+    finally:
+        model.viewer_grounding.build_sample = original_build_sample
+
+    grounding_sample = grounding_capture.get("grounding_sample", None)
     query_points_prior = query_points_prior.to(device=model.pipe.device, dtype=model.pipe.torch_dtype)
     query_frame_ids = query_frame_ids.to(device=model.pipe.device, dtype=model.pipe.torch_dtype)
     object_valid_mask = object_valid_mask.to(device=model.pipe.device, dtype=model.pipe.torch_dtype)
@@ -467,7 +504,7 @@ def _run_forward_debug(
     )
 
     if model.vggt_cache_root:
-        vggt_out = trainmod.load_vggt_cache(sample, model.vggt_cache_root, allow_missing=True)
+        vggt_out = trainmod.load_vggt_cache(sample, model.vggt_cache_root, allow_missing=False)
     elif getattr(model, "vggt_runner", None) is not None or getattr(model, "vggt_adapter", None) is not None:
         vggt_out = model._run_vggt(
             frames_bthwc_01,
@@ -484,7 +521,7 @@ def _run_forward_debug(
         max_objects=model.aux_max_objects,
         points_per_object=model.object_num_queries,
     )
-    context_latents = inferbase._encode_context_latents(model.pipe, sample["context_video"])
+    context_latents = inputs_shared["clean_prefix_latents"]
     jepa_input_video, jepa_ctx_fix = trainmod.prepare_jepa_context_video(
         context_video,
         latent_frames=int(context_latents.shape[2]),
@@ -575,13 +612,17 @@ def _run_forward_debug(
         "jepa_time_idx": jepa_time_idx,
         "latent_time_idx": latent_time_idx,
         "latent_valid_mask": latent_valid_mask,
+        "grounding_sample": grounding_sample,
+        "inputs_shared": inputs_shared,
     }
 
 
 def _offload_unused_pipe_modules(model: trainmod.ContextOnlyNoGTBoxWanModule) -> list[str]:
     unloaded: list[str] = []
     pipe = model.pipe
-    for module_name in ("dit", "text_encoder"):
+    # The object-branch middleware path still executes prompt/text units, so keep
+    # text_encoder resident. DIT is unused here because we stop before loss_main.
+    for module_name in ("dit",):
         module = getattr(pipe, module_name, None)
         if module is None:
             continue
@@ -596,7 +637,9 @@ def _offload_unused_pipe_modules(model: trainmod.ContextOnlyNoGTBoxWanModule) ->
 def _inspect_one(
     *,
     model: trainmod.ContextOnlyNoGTBoxWanModule,
+    raw_sample: dict[str, Any],
     sample: dict[str, Any],
+    inputs_cpu: tuple[dict[str, Any], dict[str, Any], dict[str, Any]],
     output_dir: Path,
     inspect_fps: int,
     inspect_index: int,
@@ -604,7 +647,7 @@ def _inspect_one(
     with torch.no_grad():
         debug = _run_forward_debug(
             model,
-            sample,
+            inputs_cpu,
         )
 
     context_video = sample["context_video"]
@@ -622,11 +665,7 @@ def _inspect_one(
         for idx in context_train_local_indices
         if 0 <= int(idx) < len(sampled_source_indices)
     ]
-    grounding_sample = model.viewer_grounding.build_sample(
-        frames_tchw_01=((context_video.permute(1, 0, 2, 3).float() + 1.0) / 2.0).cpu().numpy(),
-        caption=str(sample["caption"]),
-        image_hw=image_hw,
-    )
+    grounding_sample = debug["grounding_sample"]
 
     context_video_labeled = _annotated_tensor_frames(
         context_video,
@@ -980,7 +1019,7 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Kubric Actual Train Forward Aux Overlay Gallery</title>
+  <title>Kubric Actual Train Object-Branch Middleware Overlay Gallery</title>
   <style>
     :root {{
       color-scheme: light;
@@ -1036,10 +1075,12 @@ def _build_summary_page(output_dir: Path, results: list[dict[str, Any]], skipped
 </head>
 <body>
   <div class="page">
-    <h1>Kubric Actual Train Forward Aux Overlay</h1>
+    <h1>Kubric Actual Train Object-Branch Middleware Overlay</h1>
     <p class="intro">
-      These cases use the current Kubric no-GT-box training dataset configuration and emulate the
-      actual context-frame sampling policy before running a real object-branch forward.
+      These cases use the current Kubric no-GT-box training dataset configuration and execute the
+      actual training-time object-branch middleware path:
+      get_pipeline_inputs -> pipe.units -> clean_prefix_latents -> query priors -> CoTracker/VGGT/JEPA
+      -> object_pooler -> object_adapter / object_aux_heads.
       Each card includes the sampled train clip, the source full video, the actual sampled context,
       the input box/query/track overlay, and the aux box/track predictions.
       The generated videos now burn in local/source frame indices so timeline alignment can be checked visually.
@@ -1079,9 +1120,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--inspect_output_dir",
         type=str,
-        default="/data/gaoya/agent-data/outputs/kubric_actual_train_forward_aux_overlay_20260707",
+        default="/data/gaoya/agent-data/outputs/kubric_actual_train_object_branch_overlay_20260710",
     )
     parser.add_argument("--inspect_fps", type=int, default=30)
+    parser.add_argument(
+        "--inspect_min_object_count",
+        type=int,
+        default=1,
+        help="Keep only cases whose object_count metric is at least this value.",
+    )
     return parser.parse_args()
 
 
@@ -1089,9 +1136,6 @@ def main() -> None:
     args = trainmod.tvn.prepare_args(parse_args())
     output_dir = Path(args.inspect_output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    disabled_vggt_cache_root = output_dir / "_disabled_vggt_cache"
-    disabled_vggt_cache_root.mkdir(parents=True, exist_ok=True)
-    args.vggt_cache_root = str(disabled_vggt_cache_root)
 
     dataset = trainmod.build_dataset(args)
     accelerator = SimpleNamespace(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
@@ -1111,7 +1155,7 @@ def main() -> None:
     inspectmod._load_optional_stage2_weights(model, args.stage2_resume_from)
     _offload_unused_pipe_modules(model)
 
-    torch.nn.Module.train(model, False)
+    torch.nn.Module.train(model, True)
 
     explicit_indices = _parse_index_list(args.inspect_indices)
     if explicit_indices:
@@ -1126,15 +1170,18 @@ def main() -> None:
         if len(results) >= int(args.inspect_num_samples):
             break
         raw_sample = dataset[int(dataset_index)]
-        rng = random.Random(int(args.inspect_seed) * 1000003 + int(dataset_index))
-        sample, context_spec = actualmod._select_actual_context_sample(
+        sampling_seed = int(args.inspect_seed) * 1000003 + int(dataset_index)
+        sample, inputs_cpu = _prepare_training_inputs(
+            model,
             raw_sample,
-            ctx_max_length=int(args.ctx_max_length),
-            min_context_frames=int(args.min_context_frames),
-            context_length_sampling=str(args.context_length_sampling),
-            no_context_ratio=float(args.no_context_ratio),
-            rng=rng,
+            sampling_seed=sampling_seed,
         )
+        context_spec = {
+            "mode": str(inputs_cpu[0]["context_sampling_mode"]),
+            "ctx_max_length": int(inputs_cpu[0]["ctx_max_length"]) if inputs_cpu[0]["ctx_max_length"] is not None else -1,
+            "sampled_ctx_last_index": int(inputs_cpu[0]["sampled_ctx_last_index"]),
+            "sampled_ctx_num_frames": int(inputs_cpu[0]["sampled_ctx_num_frames"]),
+        }
         num_context_frames = int(sample.get("num_context_frames", 0))
         if num_context_frames <= 0 and bool(args.inspect_skip_zero_context):
             skipped_zero_context.append(int(dataset_index))
@@ -1145,11 +1192,17 @@ def main() -> None:
 
         result = _inspect_one(
             model=model,
+            raw_sample=raw_sample,
             sample=sample,
+            inputs_cpu=inputs_cpu,
             output_dir=sample_dir,
             inspect_fps=int(args.inspect_fps),
             inspect_index=int(dataset_index),
         )
+        object_count = int(round(float(result["metrics"].get("train/object_count", 0.0))))
+        if object_count < int(args.inspect_min_object_count):
+            shutil.rmtree(sample_dir, ignore_errors=True)
+            continue
         sampled_source_indices = list(raw_sample.get("metadata", {}).get("sampled_frame_indices", []))
         actual_context_local_indices = sample["context_frame_indices"].tolist()
         context_source_frame_indices = [
