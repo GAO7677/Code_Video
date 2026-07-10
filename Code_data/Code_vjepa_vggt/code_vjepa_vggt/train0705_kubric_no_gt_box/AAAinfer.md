@@ -266,11 +266,11 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 GPU_PAIR=3,3 \
 
-GPU_PAIR="3,3 1,1 2,2" \
+GPU_PAIR="7,7" \
 AUTO_SPLIT_INPUT=1 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-005000 \
-METHOD_NAME=train_stage1b_kubric0708_step5000 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/train_stage1b_kubric0708_regdiag_resume3500_20260710/checkpoints/step-004000/ \
+METHOD_NAME=train_stage1b_kubric0708_regdiag_step004000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
