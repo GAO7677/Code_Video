@@ -85,6 +85,46 @@ def discover_payloads(result_root: Path) -> list[dict[str, Any]]:
     return payloads
 
 
+def resolve_payload_input_json(payload: dict[str, Any]) -> Path | None:
+    for key in ("input_json", "case_json"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        return Path(value).expanduser().resolve()
+    return None
+
+
+def find_batch_manifest_path(result_root: Path) -> Path | None:
+    for candidate_root in (result_root, *result_root.parents):
+        candidate = candidate_root / "batch_manifest.json"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def read_reference_input_jsons(result_root: Path) -> list[Path] | None:
+    manifest_path = find_batch_manifest_path(result_root)
+    if manifest_path is None:
+        return None
+    manifest_payload = load_json(manifest_path)
+    if manifest_payload is None:
+        return None
+    input_json_list_path = manifest_payload.get("input_json_list_path")
+    if not isinstance(input_json_list_path, str) or not input_json_list_path.strip():
+        return None
+    list_path = Path(input_json_list_path).expanduser().resolve()
+    if not list_path.is_file():
+        return None
+
+    reference_paths: list[Path] = []
+    for raw_line in list_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        reference_paths.append(Path(line).expanduser().resolve())
+    return reference_paths
+
+
 def infer_method_name(result_root: Path, payloads: list[dict[str, Any]]) -> str:
     values = []
     for payload in payloads:
@@ -98,10 +138,23 @@ def infer_method_name(result_root: Path, payloads: list[dict[str, Any]]) -> str:
 
 
 def build_row(result_root: Path, payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    reference_input_jsons = read_reference_input_jsons(result_root)
+    if reference_input_jsons is not None:
+        reference_set = set(reference_input_jsons)
+        payloads = [
+            payload
+            for payload in payloads
+            if (resolved_input_json := resolve_payload_input_json(payload)) is not None
+            and resolved_input_json in reference_set
+        ]
+        num_json = len(reference_input_jsons)
+    else:
+        num_json = len(payloads)
+
     row: dict[str, Any] = {
         "method": infer_method_name(result_root, payloads),
         "result_root": str(result_root),
-        "num_json": len(payloads),
+        "num_json": num_json,
     }
     for count_column, mean_column, extractor in METRICS:
         values: list[float] = []

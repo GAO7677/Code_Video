@@ -328,7 +328,7 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
         description="A rolling rigid cylinder side-swipes a soft block for a more lateral motion pattern.",
         sim=SimSpec(
             dt=4e-3,
-            substeps=18,
+            substeps=24,
             horizon=240,
             gravity=(0.0, 0.0, -9.81),
             mpm_lower_bound=(-1.4, -1.2, -0.1),
@@ -991,6 +991,14 @@ def _bsdf_surface(
     )
 
 
+def _rigid_material(*, rho: float, friction: float, coup_friction: float) -> Any:
+    return gs.materials.Rigid(
+        rho=float(rho),
+        friction=float(friction),
+        coup_friction=float(coup_friction),
+    )
+
+
 def _add_fixed_box(
     scene: Any,
     *,
@@ -1002,11 +1010,13 @@ def _add_fixed_box(
     euler: tuple[float, float, float] = (0.0, 0.0, 0.0),
     collision: bool = True,
     surface: Any | None = None,
+    material: Any | None = None,
 ) -> Any:
+    rigid_material = material or _rigid_material(rho=720.0, friction=0.82, coup_friction=0.98)
     if surface is not None and hasattr(surface, "requires_uv") and surface.requires_uv():
         if collision:
             scene.add_entity(
-                material=gs.materials.Rigid(rho=700.0, friction=0.85, coup_friction=1.0),
+                material=rigid_material,
                 morph=gs.morphs.Box(
                     pos=pos,
                     size=size,
@@ -1017,7 +1027,7 @@ def _add_fixed_box(
                 ),
             )
         return scene.add_entity(
-            material=gs.materials.Rigid(rho=700.0, friction=0.85, coup_friction=1.0),
+            material=_rigid_material(rho=720.0, friction=0.82, coup_friction=0.98),
             morph=gs.morphs.Mesh(
                 file=str(_ensure_uv_box_mesh_path()),
                 scale=size,
@@ -1032,7 +1042,7 @@ def _add_fixed_box(
         )
 
     return scene.add_entity(
-        material=gs.materials.Rigid(rho=700.0, friction=0.85, coup_friction=1.0),
+        material=rigid_material,
         morph=gs.morphs.Box(
             pos=pos,
             size=size,
@@ -1057,9 +1067,10 @@ def _add_fixed_cylinder(
     euler: tuple[float, float, float] = (0.0, 0.0, 0.0),
     collision: bool = True,
     surface: Any | None = None,
+    material: Any | None = None,
 ) -> Any:
     return scene.add_entity(
-        material=gs.materials.Rigid(rho=700.0, friction=0.85, coup_friction=1.0),
+        material=material or _rigid_material(rho=735.0, friction=0.80, coup_friction=0.96),
         morph=gs.morphs.Cylinder(
             pos=pos,
             radius=radius,
@@ -1071,6 +1082,15 @@ def _add_fixed_cylinder(
         ),
         surface=surface or _bsdf_surface(color or (0.7, 0.7, 0.7, 1.0), roughness=roughness, metallic=metallic),
     )
+
+
+def _should_add_front_portal(case: CaseSpec) -> bool:
+    # The shallow dataset cameras mostly sit just outside the room and look inward. For those
+    # shots, the decorative front portal reads as a hard occluder instead of a framing element.
+    # Keep it only for genuinely interior viewpoints that are already well inside the doorway.
+    cam_y = float(case.camera.pos[1])
+    lookat_y = float(case.camera.lookat[1])
+    return cam_y > -0.95 and lookat_y > -0.08
 
 
 def _add_room_shell(scene: Any, case: CaseSpec) -> None:
@@ -1139,10 +1159,9 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     _add_fixed_box(scene, pos=(0.00, 2.84, 2.55), size=(5.12, 0.03, 0.22), surface=pale_panel_surface, collision=False)
     _add_fixed_box(scene, pos=(-1.18, 2.81, 1.56), size=(0.72, 0.02, 0.94), surface=pale_panel_surface, collision=False)
     _add_fixed_box(scene, pos=(2.12, 2.81, 1.42), size=(0.54, 0.02, 0.72), surface=dark_panel_surface, collision=False)
-    # The near-camera front portal looks nice for interior viewpoints, but it becomes a hard occluder
-    # for the shallow exterior shots used by many dataset families. Keep it only when the camera is
-    # already inside that portal plane.
-    if case.camera.pos[1] > -1.55:
+    # Keep the near-camera portal only for deep interior views. The default preview cameras are
+    # mostly doorway-adjacent or slightly outside the room, where the portal blocks the action.
+    if _should_add_front_portal(case):
         _add_fixed_box(scene, pos=(-1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
         _add_fixed_box(scene, pos=(1.92, -1.76, 1.10), size=(1.28, 0.04, 2.20), surface=wall_surface, collision=False)
         _add_fixed_box(scene, pos=(0.00, -1.76, 2.42), size=(2.72, 0.04, 0.42), surface=wall_surface, collision=False)
@@ -1312,6 +1331,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
     secondary_soft_surface = _soft_surface(case, secondary=True, vis_mode=mpm_vis_mode)
     rigid_surface = _rigid_surface(case)
     support_surface = _material_surface(mats["wood_mid"], tint_rgb=_rgb(p.wood_mid_color), smooth=True)
+    support_rigid_material = _rigid_material(rho=860.0, friction=0.58, coup_friction=0.90)
 
     if case.motion_profile == "drop":
         entities["soft_block"] = _add_soft_box(
@@ -1392,9 +1412,9 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             surface=primary_soft_surface,
         )
         entities["rigid_cylinder"] = scene.add_entity(
-            material=gs.materials.Rigid(rho=980.0, friction=0.48, coup_friction=0.95),
+            material=_rigid_material(rho=965.0, friction=0.34, coup_friction=0.78),
             morph=gs.morphs.Cylinder(
-                pos=(-0.78, -0.16, 0.16),
+                pos=(-0.86, -0.24, 0.135),
                 radius=0.09,
                 height=0.22,
                 euler=(90.0, 0.0, 0.0),
@@ -1410,6 +1430,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             size=(0.38, 0.26, 0.22),
             euler=(0.0, 0.0, -8.0),
             surface=support_surface,
+            material=support_rigid_material,
             collision=True,
         )
         entities["soft_block"] = _add_soft_box(
@@ -1455,7 +1476,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             surface=primary_soft_surface,
         )
         entities["rigid_sphere_left"] = scene.add_entity(
-            material=gs.materials.Rigid(rho=920.0, friction=0.45, coup_friction=0.90),
+            material=_rigid_material(rho=910.0, friction=0.44, coup_friction=0.88),
             morph=gs.morphs.Sphere(
                 pos=(-0.82, -0.06, 0.30),
                 radius=0.10,
@@ -1463,7 +1484,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             surface=rigid_surface,
         )
         entities["rigid_sphere_right"] = scene.add_entity(
-            material=gs.materials.Rigid(rho=920.0, friction=0.45, coup_friction=0.90),
+            material=_rigid_material(rho=940.0, friction=0.39, coup_friction=0.84),
             morph=gs.morphs.Sphere(
                 pos=(0.88, 0.16, 0.50),
                 radius=0.09,
@@ -1527,6 +1548,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             size=(0.86, 0.46, 0.12),
             euler=(0.0, -18.0, 10.0),
             surface=support_surface,
+            material=support_rigid_material,
             collision=True,
         )
         _add_fixed_box(
@@ -1534,6 +1556,7 @@ def _build_case_entities(scene: Any, case: CaseSpec, mpm_vis_mode: str) -> dict[
             pos=(-0.44, 0.26, 0.09),
             size=(0.20, 0.28, 0.18),
             surface=support_surface,
+            material=_rigid_material(rho=900.0, friction=0.52, coup_friction=0.86),
             collision=True,
         )
         entities["soft_block"] = _add_soft_box(
@@ -1640,7 +1663,7 @@ def _apply_case_initial_conditions(case: CaseSpec, entities: dict[str, Any]) -> 
         entities["rigid_sphere"].set_dofs_velocity((2.55, 0.02, -0.10, 0.0, 6.0, 0.0))
         return
     if case.motion_profile == "cylinder_swipe":
-        entities["rigid_cylinder"].set_dofs_velocity((2.30, 0.46, 0.0, 9.0, 0.0, 0.0))
+        entities["rigid_cylinder"].set_dofs_velocity((2.08, 0.18, 0.0, 6.2, 0.0, 0.0))
         return
     if case.motion_profile == "dual_sphere_press":
         entities["rigid_sphere_left"].set_dofs_velocity((2.45, 0.22, 0.04, 0.0, 6.8, 0.0))

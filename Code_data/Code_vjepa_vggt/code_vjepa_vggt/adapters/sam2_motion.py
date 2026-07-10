@@ -725,6 +725,11 @@ class SAM2MotionTracker:
                     current_anchor_idx = int(prompt_frame_idx)
                     current_box_xyxy = prompt_box_xyxy.astype(np.float32).copy()
                     while _box_valid(current_box_xyxy):
+                        # Skip impossible boundary directions instead of treating them as tracking failures.
+                        if reverse and current_anchor_idx <= 0:
+                            break
+                        if (not reverse) and current_anchor_idx >= num_frames - 1:
+                            break
                         segment_out = self._propagate_segment(
                             predictor=predictor,
                             frame_dir=frame_dir,
