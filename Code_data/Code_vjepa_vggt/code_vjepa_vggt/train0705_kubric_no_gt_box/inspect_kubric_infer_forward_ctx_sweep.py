@@ -466,6 +466,8 @@ def _run_generation(
             random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
             slot_count=int(getattr(model, "aux_max_objects", 0)),
             keep_slot_ids=getattr(model, "_object_context_keep_slot_ids", None),
+            scale_factor=float(getattr(model, "_object_context_scale_factor", 1.0)),
+            token_norm_max=getattr(model, "_object_context_token_norm_max", None),
         )
 
     pipe_kwargs = dict(
@@ -897,6 +899,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Comma-separated slot ids to keep when --object-context-ablation=keep_slot.",
     )
+    parser.add_argument(
+        "--object-context-scale-factor",
+        type=float,
+        default=1.0,
+        help="Optional multiplicative factor applied to the final object_context after ablation.",
+    )
+    parser.add_argument(
+        "--object-context-token-norm-max",
+        type=float,
+        default=None,
+        help="Optional per-token L2 norm clamp applied to the final object_context after ablation.",
+    )
     return parser.parse_args()
 
 
@@ -951,6 +965,8 @@ def main() -> None:
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
             "random_scale": float(cli_args.object_context_random_scale),
+            "scale_factor": float(cli_args.object_context_scale_factor),
+            "token_norm_max": cli_args.object_context_token_norm_max,
             "keep_slot_ids": _parse_optional_int_list(cli_args.object_context_keep_slot_ids),
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
@@ -969,6 +985,8 @@ def main() -> None:
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
+    model._object_context_scale_factor = float(cli_args.object_context_scale_factor)
+    model._object_context_token_norm_max = cli_args.object_context_token_norm_max
     model._object_context_keep_slot_ids = _parse_optional_int_list(cli_args.object_context_keep_slot_ids)
 
     results: list[dict[str, Any]] = []

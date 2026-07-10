@@ -13,6 +13,7 @@ from typing import Any
 
 import imageio.v2 as imageio
 import numpy as np
+import trimesh
 
 
 def _sanitize_user_site_for_genesis() -> None:
@@ -341,7 +342,9 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
             lookat=(0.22, -0.02, 0.26),
             fov=33.0,
         ),
-        mpm_vis_mode="visual",
+        # The Genesis rasterizer currently drops the box-like MPM visual mesh in this shot, while
+        # particle mode renders reliably and makes deformation easier to read.
+        mpm_vis_mode="particle",
         palette=_palette_industrial_cool(),
         scene_theme="industrial_cool",
         surface_key="painted_concrete_floor",
@@ -473,7 +476,7 @@ CASE_LIBRARY: dict[str, CaseSpec] = {
         description="A rigid cylinder approaches from the opposite side with a shallower line, giving a more oblique lateral shove.",
         sim=SimSpec(
             dt=4e-3,
-            substeps=18,
+            substeps=24,
             horizon=240,
             gravity=(0.0, 0.0, -9.81),
             mpm_lower_bound=(-1.4, -1.2, -0.1),
@@ -891,12 +894,96 @@ def _soft_surface(case: CaseSpec, *, secondary: bool = False, vis_mode: str | No
     material_key = case.soft_secondary_material_key if secondary and case.soft_secondary_material_key else case.soft_material_key
     material = _MATERIAL_CATALOG[material_key]
     tint = _mix_rgb(_rgb(material.base_color), _rgb(case.palette.soft_color), 0.78 if not secondary else 0.62)
-    return _bsdf_surface(
-        _rgba(tint),
-        roughness=max(0.62, float(material.roughness)),
+    if vis_mode == "visual":
+        lift = 0.24 if case.scene_theme == "industrial_cool" else 0.18
+        tint = _mix_rgb(tint, (0.96, 0.97, 0.98), lift if not secondary else lift + 0.06)
+    return gs.surfaces.Default(
+        color=_rgba(tint),
+        roughness=max(0.58, float(material.roughness)),
         metallic=0.0,
+        smooth=True,
         vis_mode=vis_mode,
     )
+
+
+def _soft_marker_rgba(
+    points: np.ndarray,
+    *,
+    tint: tuple[float, float, float],
+    accent: tuple[float, float, float],
+) -> np.ndarray:
+    bbox_min = points.min(axis=0)
+    bbox_max = points.max(axis=0)
+    extent = np.maximum(bbox_max - bbox_min, 1e-6)
+    coords = (points - bbox_min) / extent
+    u = coords[:, 0]
+    v = coords[:, 1]
+    w = coords[:, 2]
+
+    base_rgb = _mix_rgb(tint, (0.97, 0.98, 0.99), 0.58)
+    cool_rgb = _mix_rgb(tint, (0.00, 0.92, 1.00), 0.72)
+    warm_rgb = _mix_rgb(accent, (1.00, 0.46, 0.10), 0.62)
+    deep_rgb = _mix_rgb(tint, (0.05, 0.10, 0.24), 0.78)
+    dark_rgb = (0.06, 0.07, 0.09)
+    light_rgb = (0.99, 0.99, 0.99)
+
+    colors = np.tile(np.array(base_rgb, dtype=np.float32), (len(points), 1))
+    cool = np.tile(np.array(cool_rgb, dtype=np.float32), (len(points), 1))
+    warm = np.tile(np.array(warm_rgb, dtype=np.float32), (len(points), 1))
+    deep = np.tile(np.array(deep_rgb, dtype=np.float32), (len(points), 1))
+    dark = np.tile(np.array(dark_rgb, dtype=np.float32), (len(points), 1))
+    light = np.tile(np.array(light_rgb, dtype=np.float32), (len(points), 1))
+
+    left_panel = u < 0.34
+    right_panel = u > 0.68
+    low_panel = v < 0.24
+    top_cap = w > 0.76
+    front_band = np.abs(v - 0.52) < 0.08
+    spine = np.abs(u - 0.50) < 0.05
+    edge_emphasis = (u < 0.06) | (u > 0.94) | (v < 0.06) | (v > 0.94) | (w < 0.06) | (w > 0.94)
+
+    colors[left_panel] = cool[left_panel]
+    colors[right_panel] = warm[right_panel]
+    colors[low_panel] = deep[low_panel] * 0.80 + colors[low_panel] * 0.20
+    colors[top_cap] = light[top_cap]
+    colors[front_band] = colors[front_band] * 0.35 + light[front_band] * 0.65
+    colors[spine] = dark[spine]
+
+    coarse_checker = (np.mod(np.floor(u * 4.0) + np.floor(w * 4.0), 2.0) < 0.5)
+    colors[coarse_checker] = colors[coarse_checker] * 0.78 + light[coarse_checker] * 0.22
+
+    diagonal = np.abs((u * 1.15 + w * 0.85) - 0.92) < 0.09
+    colors[diagonal] = warm[diagonal] * 0.68 + light[diagonal] * 0.32
+
+    colors[edge_emphasis] = colors[edge_emphasis] * 0.30 + dark[edge_emphasis] * 0.70
+
+    rgba = np.concatenate([np.clip(colors, 0.0, 1.0), np.ones((len(points), 1), dtype=np.float32)], axis=1)
+    return np.round(rgba * 255.0).astype(np.uint8)
+
+
+def _apply_soft_visual_markers(case: CaseSpec, entities: dict[str, Any]) -> None:
+    for name, entity in entities.items():
+        if not hasattr(entity, "get_particles_pos") or not hasattr(entity, "vmesh"):
+            continue
+        if entity.vmesh is None or not hasattr(entity.vmesh, "trimesh"):
+            continue
+
+        secondary = "top" in name
+        tint = _rgb(case.palette.soft_color if not secondary else _mix_rgb(_rgb(case.palette.soft_color), _rgb(case.palette.accent_color), 0.24))
+        accent = _mix_rgb(_rgb(case.palette.accent_color), (1.0, 1.0, 1.0), 0.18 if not secondary else 0.32)
+        mesh = entity.vmesh.trimesh
+        vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        vertex_colors = _soft_marker_rgba(vertices, tint=tint, accent=accent)
+        face_colors = None
+        if hasattr(mesh, "faces") and mesh.faces is not None and len(mesh.faces) > 0:
+            faces = np.asarray(mesh.faces, dtype=np.int64)
+            face_points = vertices[faces].mean(axis=1)
+            face_colors = _soft_marker_rgba(face_points, tint=tint, accent=accent)
+        entity.vmesh.trimesh.visual = trimesh.visual.ColorVisuals(
+            mesh=mesh,
+            face_colors=face_colors,
+            vertex_colors=vertex_colors,
+        )
 
 
 def _rigid_surface(case: CaseSpec) -> Any:
@@ -1093,6 +1180,13 @@ def _should_add_front_portal(case: CaseSpec) -> bool:
     return cam_y > -0.95 and lookat_y > -0.08
 
 
+def _should_add_industrial_floor_clutter(case: CaseSpec) -> bool:
+    # The low industrial clutter block is visual-only. For the lateral cylinder swipe families it
+    # sits directly in the action corridor and reads like a collision object, creating a false
+    # "tunneling" impression even when the solver is behaving as configured.
+    return case.motion_profile not in {"cylinder_swipe", "reverse_swipe"}
+
+
 def _add_room_shell(scene: Any, case: CaseSpec) -> None:
     p = case.palette
     mats = _scene_material_keys(case)
@@ -1222,7 +1316,8 @@ def _add_room_shell(scene: Any, case: CaseSpec) -> None:
 
     if case.scene_theme == "industrial_cool":
         _add_fixed_box(scene, pos=(0.00, 2.82, 1.20), size=(0.96, 0.04, 0.56), surface=desk_leg_surface, collision=False)
-        _add_fixed_box(scene, pos=(-0.25, -0.18, 0.05), size=(0.50, 0.18, 0.10), surface=clutter_surface, collision=False)
+        if _should_add_industrial_floor_clutter(case):
+            _add_fixed_box(scene, pos=(-0.25, -0.18, 0.05), size=(0.50, 0.18, 0.10), surface=clutter_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.16, 0.45, 2.30), size=(0.34, 0.14, 0.22), surface=metal_surface, collision=False)
         _add_fixed_box(scene, pos=(-1.92, 1.30, 1.36), size=(0.52, 0.16, 0.52), surface=wall_alt_surface, collision=False)
         _add_fixed_box(scene, pos=(-2.00, 1.18, 1.12), size=(0.14, 0.10, 0.08), surface=metal_accent_surface, collision=False)
@@ -1716,6 +1811,8 @@ def render_case(
     scene, cam = _scene_common(case, camera, mpm_vis_mode)
     entities = _build_case_entities(scene, case, mpm_vis_mode)
     scene.build()
+    if mpm_vis_mode == "visual":
+        _apply_soft_visual_markers(case, entities)
     _apply_case_initial_conditions(case, entities)
 
     preview_frames: list[np.ndarray] = []

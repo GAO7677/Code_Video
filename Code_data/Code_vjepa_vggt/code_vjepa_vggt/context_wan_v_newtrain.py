@@ -93,6 +93,25 @@ def _tensor_numeric_stats(tensor: torch.Tensor | np.ndarray | list | tuple | Non
         }
 
 
+def _tensor_l2_rms_stats(tensor: torch.Tensor | None) -> dict[str, float | None]:
+    if tensor is None:
+        return {
+            "l2": None,
+            "rms": None,
+        }
+    with torch.no_grad():
+        tensor_f32 = tensor.detach().float()
+        if tensor_f32.numel() <= 0:
+            return {
+                "l2": 0.0,
+                "rms": 0.0,
+            }
+        return {
+            "l2": float(torch.linalg.vector_norm(tensor_f32).item()),
+            "rms": float(torch.sqrt(torch.mean(tensor_f32.square())).item()),
+        }
+
+
 def _reinit_linear(module: nn.Module, std: float = 0.02) -> None:
     if not isinstance(module, nn.Linear):
         return
@@ -136,7 +155,8 @@ def enable_object_condition_branch(
         for module in dit.object_embedding.modules():
             _reinit_linear(module)
 
-    for block in dit.blocks:
+    for block_id, block in enumerate(dit.blocks):
+        block._codex_object_block_id = int(block_id)
         block.norm4 = nn.LayerNorm(dim, eps=1e-6).to(
             device=dit.patch_embedding.weight.device,
             dtype=dit.patch_embedding.weight.dtype,
@@ -180,8 +200,63 @@ def enable_object_condition_branch(
         x = self.gate(x, gate_msa, self.self_attn(input_x, freqs))
         x = x + self.cross_attn(self.norm3(x), context)
         if object_context is not None and getattr(self, "object_cross_attn", None) is not None:
+            block_id = int(getattr(self, "_codex_object_block_id", -1))
+            x_before_object = x
             object_delta = self.object_cross_attn(self.norm4(x), object_context)
-            x = x + torch.tanh(self.object_gate) * object_delta
+            object_gate_tanh = torch.tanh(self.object_gate)
+            gated_object_delta = object_gate_tanh * object_delta
+            guard_max_ratio = getattr(dit, "_object_branch_ratio_guard_max_ratio", None)
+            guard_max_block_id = getattr(dit, "_object_branch_ratio_guard_max_block_id", None)
+            guard_enabled = (
+                guard_max_ratio is not None
+                and float(guard_max_ratio) > 0.0
+                and block_id >= 0
+                and (guard_max_block_id is None or int(guard_max_block_id) < 0 or block_id <= int(guard_max_block_id))
+            )
+            x_stats = None
+            object_delta_stats = None
+            pre_guard_gated_delta_stats = None
+            pre_guard_ratio = None
+            guard_applied = False
+            guard_scale = 1.0
+            if guard_enabled or bool(getattr(dit, "_object_branch_trace_collect", False)):
+                x_stats = _tensor_l2_rms_stats(x_before_object)
+                object_delta_stats = _tensor_l2_rms_stats(object_delta)
+                pre_guard_gated_delta_stats = _tensor_l2_rms_stats(gated_object_delta)
+                x_l2 = float(x_stats["l2"] or 0.0)
+                pre_guard_gated_l2 = float(pre_guard_gated_delta_stats["l2"] or 0.0)
+                pre_guard_ratio = float(pre_guard_gated_l2 / max(x_l2, 1.0e-12))
+                if guard_enabled and pre_guard_ratio > float(guard_max_ratio):
+                    guard_scale = float(float(guard_max_ratio) / max(pre_guard_ratio, 1.0e-12))
+                    gated_object_delta = gated_object_delta * guard_scale
+                    guard_applied = True
+            if bool(getattr(dit, "_object_branch_trace_collect", False)):
+                trace_buffer = getattr(dit, "_object_branch_trace_buffer", None)
+                if isinstance(trace_buffer, list):
+                    gated_delta_stats = _tensor_l2_rms_stats(gated_object_delta)
+                    x_l2 = float(x_stats["l2"] or 0.0)
+                    gated_delta_l2 = float(gated_delta_stats["l2"] or 0.0)
+                    trace_buffer.append(
+                        {
+                            "block_id": block_id,
+                            "x_before_object": x_stats,
+                            "object_delta": object_delta_stats,
+                            "pre_guard_gated_object_delta": pre_guard_gated_delta_stats,
+                            "pre_guard_gated_to_x_ratio_l2": pre_guard_ratio,
+                            "gated_object_delta": gated_delta_stats,
+                            "gated_to_x_ratio_l2": float(gated_delta_l2 / max(x_l2, 1.0e-12)),
+                            "object_gate_raw": _tensor_numeric_stats(self.object_gate),
+                            "object_gate_tanh": _tensor_numeric_stats(object_gate_tanh),
+                            "object_ratio_guard": {
+                                "enabled": bool(guard_enabled),
+                                "applied": bool(guard_applied),
+                                "max_ratio": None if guard_max_ratio is None else float(guard_max_ratio),
+                                "max_block_id": None if guard_max_block_id is None else int(guard_max_block_id),
+                                "scale": float(guard_scale),
+                            },
+                        }
+                    )
+            x = x + gated_object_delta
         input_x = modulate(self.norm2(x), shift_mlp, scale_mlp)
         x = self.gate(x, gate_mlp, self.ffn(input_x))
         return x
@@ -190,6 +265,10 @@ def enable_object_condition_branch(
         block.forward = types.MethodType(block_forward, block)
 
     dit._codex_object_branch_enabled = True
+    dit._object_branch_trace_collect = False
+    dit._object_branch_trace_buffer = None
+    dit._object_branch_ratio_guard_max_ratio = None
+    dit._object_branch_ratio_guard_max_block_id = None
     return dit
 
 
@@ -1658,11 +1737,23 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 models["vace"] = self.vace2
 
             timestep = timestep_cpu.unsqueeze(0).to(dtype=self.torch_dtype, device=self.device)
+            active_dit = models.get("dit", None)
+            if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
+                active_dit._object_branch_trace_collect = bool(trace_enabled)
+                active_dit._object_branch_trace_buffer = [] if trace_enabled else None
             noise_pred_posi = self.model_fn(**models, **inputs_shared, **inputs_posi, timestep=timestep)
+            object_branch_trace_layers = None
+            if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
+                object_branch_trace_layers = getattr(active_dit, "_object_branch_trace_buffer", None)
+                active_dit._object_branch_trace_collect = False
+                active_dit._object_branch_trace_buffer = None
             if cfg_scale != 1.0:
                 if cfg_merge:
                     noise_pred_posi, noise_pred_nega = noise_pred_posi.chunk(2, dim=0)
                 else:
+                    if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
+                        active_dit._object_branch_trace_collect = False
+                        active_dit._object_branch_trace_buffer = None
                     noise_pred_nega = self.model_fn(
                         **models,
                         **inputs_shared,
@@ -1757,6 +1848,15 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 latents_before_step,
             )
             if trace_enabled and numeric_trace is not None:
+                if object_branch_trace_layers:
+                    numeric_trace.append(
+                        {
+                            "kind": "object_branch_step",
+                            "step_index": int(progress_id),
+                            "timestep": int(round(float(timestep_cpu.detach().cpu().item()))),
+                            "layers": object_branch_trace_layers,
+                        }
+                    )
                 numeric_trace.append(
                     {
                         "kind": "denoise_step",

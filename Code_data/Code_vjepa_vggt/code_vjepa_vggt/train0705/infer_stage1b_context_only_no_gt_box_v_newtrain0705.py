@@ -620,6 +620,8 @@ def _apply_object_context_ablation(
     random_scale: float = 1.0,
     slot_count: int | None = None,
     keep_slot_ids: list[int] | tuple[int, ...] | None = None,
+    scale_factor: float = 1.0,
+    token_norm_max: float | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, object]]:
     mode_norm = str(mode).strip().lower()
     if object_context is None:
@@ -629,6 +631,8 @@ def _apply_object_context_ablation(
             "disabled_object_branch": True,
             "random_seed": None if random_seed is None else int(random_seed),
             "random_scale": float(random_scale),
+            "scale_factor": float(scale_factor),
+            "token_norm_max": None if token_norm_max is None else float(token_norm_max),
         }
 
     base = object_context.detach().float()
@@ -643,62 +647,90 @@ def _apply_object_context_ablation(
         "random_scale": float(random_scale),
         "slot_count": None if slot_count is None else int(slot_count),
         "keep_slot_ids": None if keep_slot_ids is None else [int(v) for v in keep_slot_ids],
+        "scale_factor": float(scale_factor),
+        "token_norm_max": None if token_norm_max is None else float(token_norm_max),
     }
+    ablation_applied = False
     if mode_norm in ("", "none"):
-        debug["applied"] = False
-        return object_context, debug
-
-    if mode_norm == "zero":
-        ablated = torch.zeros_like(object_context)
-    elif mode_norm == "keep_slot":
-        if slot_count is None or int(slot_count) <= 0:
-            raise ValueError("slot_count must be positive when mode=keep_slot")
-        if not keep_slot_ids:
-            raise ValueError("keep_slot_ids must be non-empty when mode=keep_slot")
-        slot_count = int(slot_count)
-        keep_slot_ids = sorted({int(v) for v in keep_slot_ids})
-        seq_len = int(object_context.shape[1])
-        if seq_len % slot_count != 0:
-            raise ValueError(
-                f"object_context sequence length {seq_len} is not divisible by slot_count={slot_count}"
-            )
-        time_steps = seq_len // slot_count
-        invalid = [slot for slot in keep_slot_ids if slot < 0 or slot >= slot_count]
-        if invalid:
-            raise ValueError(f"keep_slot_ids out of range for slot_count={slot_count}: {invalid}")
-        keep_mask = torch.zeros(
-            (1, time_steps, slot_count, 1),
-            device=object_context.device,
-            dtype=object_context.dtype,
-        )
-        for slot_id in keep_slot_ids:
-            keep_mask[:, :, int(slot_id), :] = 1
-        keep_mask = keep_mask.view(1, seq_len, 1)
-        ablated = object_context * keep_mask
-        debug["time_steps"] = int(time_steps)
-    elif mode_norm == "random":
-        generator = None
-        if random_seed is not None:
-            generator = torch.Generator(device=object_context.device)
-            generator.manual_seed(int(random_seed))
-        random_fp32 = torch.randn(
-            tuple(object_context.shape),
-            device=object_context.device,
-            dtype=torch.float32,
-            generator=generator,
-        )
-        input_mean = float(base.mean().item())
-        input_std = float(base.std(unbiased=False).item())
-        target_std = input_std if np.isfinite(input_std) and input_std > 1.0e-6 else 1.0
-        random_fp32 = random_fp32 * (target_std * float(random_scale)) + input_mean
-        ablated = random_fp32.to(device=object_context.device, dtype=object_context.dtype)
+        ablated = object_context
     else:
-        raise ValueError(f"unsupported object_context ablation mode: {mode}")
+        if mode_norm == "zero":
+            ablated = torch.zeros_like(object_context)
+            ablation_applied = True
+        elif mode_norm == "keep_slot":
+            if slot_count is None or int(slot_count) <= 0:
+                raise ValueError("slot_count must be positive when mode=keep_slot")
+            if not keep_slot_ids:
+                raise ValueError("keep_slot_ids must be non-empty when mode=keep_slot")
+            slot_count = int(slot_count)
+            keep_slot_ids = sorted({int(v) for v in keep_slot_ids})
+            seq_len = int(object_context.shape[1])
+            if seq_len % slot_count != 0:
+                raise ValueError(
+                    f"object_context sequence length {seq_len} is not divisible by slot_count={slot_count}"
+                )
+            time_steps = seq_len // slot_count
+            invalid = [slot for slot in keep_slot_ids if slot < 0 or slot >= slot_count]
+            if invalid:
+                raise ValueError(f"keep_slot_ids out of range for slot_count={slot_count}: {invalid}")
+            keep_mask = torch.zeros(
+                (1, time_steps, slot_count, 1),
+                device=object_context.device,
+                dtype=object_context.dtype,
+            )
+            for slot_id in keep_slot_ids:
+                keep_mask[:, :, int(slot_id), :] = 1
+            keep_mask = keep_mask.view(1, seq_len, 1)
+            ablated = object_context * keep_mask
+            debug["time_steps"] = int(time_steps)
+            ablation_applied = True
+        elif mode_norm == "random":
+            generator = None
+            if random_seed is not None:
+                generator = torch.Generator(device=object_context.device)
+                generator.manual_seed(int(random_seed))
+            random_fp32 = torch.randn(
+                tuple(object_context.shape),
+                device=object_context.device,
+                dtype=torch.float32,
+                generator=generator,
+            )
+            input_mean = float(base.mean().item())
+            input_std = float(base.std(unbiased=False).item())
+            target_std = input_std if np.isfinite(input_std) and input_std > 1.0e-6 else 1.0
+            random_fp32 = random_fp32 * (target_std * float(random_scale)) + input_mean
+            ablated = random_fp32.to(device=object_context.device, dtype=object_context.dtype)
+            ablation_applied = True
+        else:
+            raise ValueError(f"unsupported object_context ablation mode: {mode}")
+
+    postprocess_applied = False
+    if float(scale_factor) != 1.0:
+        ablated = ablated * float(scale_factor)
+        postprocess_applied = True
+
+    token_norm_max_value = None if token_norm_max is None else float(token_norm_max)
+    if token_norm_max_value is not None:
+        if token_norm_max_value <= 0:
+            raise ValueError("token_norm_max must be positive when provided")
+        ablated_fp32 = ablated.float()
+        token_norm = torch.linalg.norm(ablated_fp32, dim=-1, keepdim=True)
+        safe_norm = torch.clamp(token_norm, min=1.0e-12)
+        scale = torch.clamp(token_norm_max_value / safe_norm, max=1.0)
+        ablated = (ablated_fp32 * scale).to(dtype=object_context.dtype)
+        postprocess_applied = True
+        debug["token_norm_pre_max"] = float(token_norm.max().item())
+        debug["token_norm_pre_mean"] = float(token_norm.mean().item())
+        token_norm_post = torch.linalg.norm(ablated.float(), dim=-1, keepdim=True)
+        debug["token_norm_post_max"] = float(token_norm_post.max().item())
+        debug["token_norm_post_mean"] = float(token_norm_post.mean().item())
 
     ablated_fp32 = ablated.detach().float()
     debug.update(
         {
-            "applied": True,
+            "applied": bool(ablation_applied or postprocess_applied),
+            "ablation_applied": bool(ablation_applied),
+            "postprocess_applied": bool(postprocess_applied),
             "output_mean": float(ablated_fp32.mean().item()),
             "output_std": float(ablated_fp32.std(unbiased=False).item()),
             "output_abs_mean": float(ablated_fp32.abs().mean().item()),
@@ -821,6 +853,18 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Std multiplier used when --object-context-ablation=random.",
     )
+    parser.add_argument(
+        "--object-context-scale-factor",
+        type=float,
+        default=1.0,
+        help="Optional multiplicative factor applied to the final object_context after ablation.",
+    )
+    parser.add_argument(
+        "--object-context-token-norm-max",
+        type=float,
+        default=None,
+        help="Optional per-token L2 norm clamp applied to the final object_context after ablation.",
+    )
     add_vjepa_cli_args(parser)
     return parser.parse_args()
 
@@ -863,6 +907,8 @@ def main() -> None:
             mode=str(args.object_context_ablation),
             random_seed=args.object_context_random_seed,
             random_scale=float(args.object_context_random_scale),
+            scale_factor=float(args.object_context_scale_factor),
+            token_norm_max=args.object_context_token_norm_max,
         )
         object_debug["object_context_ablation"] = ablation_debug
         pipe_kwargs = dict(
@@ -909,6 +955,8 @@ def main() -> None:
             "mode": str(args.object_context_ablation),
             "random_seed": args.object_context_random_seed,
             "random_scale": float(args.object_context_random_scale),
+            "scale_factor": float(args.object_context_scale_factor),
+            "token_norm_max": args.object_context_token_norm_max,
         },
         "vjepa": summarize_vjepa_args(args),
     }

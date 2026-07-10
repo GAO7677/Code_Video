@@ -561,6 +561,30 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated slot ids to keep when --object-context-ablation=keep_slot.",
     )
     parser.add_argument(
+        "--object-context-scale-factor",
+        type=float,
+        default=1.0,
+        help="Optional multiplicative factor applied to the final object_context after ablation.",
+    )
+    parser.add_argument(
+        "--object-context-token-norm-max",
+        type=float,
+        default=None,
+        help="Optional per-token L2 norm clamp applied to the final object_context after ablation.",
+    )
+    parser.add_argument(
+        "--object-branch-ratio-guard-max-ratio",
+        type=float,
+        default=None,
+        help="Optional L2 ratio cap for gated object residual vs x_before_object inside Wan blocks.",
+    )
+    parser.add_argument(
+        "--object-branch-ratio-guard-max-block-id",
+        type=int,
+        default=None,
+        help="Apply the optional object-branch ratio guard only up to this Wan block id.",
+    )
+    parser.add_argument(
         "--dump-pipe-inputs-root",
         type=Path,
         default=None,
@@ -700,6 +724,8 @@ def _run_single_case_in_process(
         random_scale=float(getattr(model, "_object_context_random_scale", 1.0)),
         slot_count=int(getattr(model, "aux_max_objects", 0)),
         keep_slot_ids=getattr(model, "_object_context_keep_slot_ids", None),
+        scale_factor=float(getattr(model, "_object_context_scale_factor", 1.0)),
+        token_norm_max=getattr(model, "_object_context_token_norm_max", None),
     )
     object_debug["object_context_ablation"] = ablation_debug
     object_debug["object_context_stats"] = _tensor_numeric_stats(object_context)
@@ -772,6 +798,10 @@ def _run_single_case_in_process(
             "random_seed": getattr(model, "_object_context_random_seed", None),
             "random_scale": float(getattr(model, "_object_context_random_scale", 1.0)),
             "keep_slot_ids": getattr(model, "_object_context_keep_slot_ids", None),
+        },
+        "object_branch_ratio_guard": {
+            "max_ratio": getattr(model.pipe.dit, "_object_branch_ratio_guard_max_ratio", None),
+            "max_block_id": getattr(model.pipe.dit, "_object_branch_ratio_guard_max_block_id", None),
         },
         "model_args": {
             "height": int(height),
@@ -851,9 +881,15 @@ def main() -> None:
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
             "random_scale": float(cli_args.object_context_random_scale),
+            "scale_factor": float(cli_args.object_context_scale_factor),
+            "token_norm_max": cli_args.object_context_token_norm_max,
             "keep_slot_ids": None
             if cli_args.object_context_keep_slot_ids is None
             else [int(part.strip()) for part in str(cli_args.object_context_keep_slot_ids).split(",") if part.strip()],
+        },
+        "object_branch_ratio_guard": {
+            "max_ratio": cli_args.object_branch_ratio_guard_max_ratio,
+            "max_block_id": cli_args.object_branch_ratio_guard_max_block_id,
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
@@ -890,6 +926,8 @@ def main() -> None:
     model._object_context_ablation_mode = str(cli_args.object_context_ablation)
     model._object_context_random_seed = cli_args.object_context_random_seed
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
+    model._object_context_scale_factor = float(cli_args.object_context_scale_factor)
+    model._object_context_token_norm_max = cli_args.object_context_token_norm_max
     model._object_context_keep_slot_ids = (
         None
         if cli_args.object_context_keep_slot_ids is None
@@ -900,6 +938,16 @@ def main() -> None:
     )
     model._dump_numeric_trace_root = (
         None if cli_args.dump_numeric_trace_root is None else str(cli_args.dump_numeric_trace_root)
+    )
+    model.pipe.dit._object_branch_ratio_guard_max_ratio = (
+        None
+        if cli_args.object_branch_ratio_guard_max_ratio is None
+        else float(cli_args.object_branch_ratio_guard_max_ratio)
+    )
+    model.pipe.dit._object_branch_ratio_guard_max_block_id = (
+        None
+        if cli_args.object_branch_ratio_guard_max_block_id is None
+        else int(cli_args.object_branch_ratio_guard_max_block_id)
     )
 
     step_success = 0
