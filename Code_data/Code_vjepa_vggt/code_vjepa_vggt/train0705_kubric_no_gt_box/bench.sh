@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CUDA_VISIBLE_DEVICES=5 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
+# CUDA_VISIBLE_DEVICES=0 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
 
 
 

@@ -11,6 +11,7 @@
 # - output frames: OUTPUT_FRAMES=49
 # - ctx: CTX=8
 # - multiple ctx counts: CTX=1,4,8,12,16,20
+# - auto split input txt across GPU workers: AUTO_SPLIT_INPUT=1
 # - disable object branch ablation: DISABLE_OBJECT_BRANCH=1
 #
 # Direct one-run example:
@@ -19,6 +20,17 @@
 # WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
 # METHOD_NAME=train_stage1b_kubric0708_step1000 \
 # OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708 \
+# OUTPUT_FRAMES=49 \
+# CTX=8 \
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+#
+# Direct auto-split example (3 worker pairs -> 3 shard txt + 3 processes):
+# GPU_PAIR="3,3 5,6 7,7" \
+# AUTO_SPLIT_INPUT=1 \
+# TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt \
+# WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/checkpoints/step-001000 \
+# METHOD_NAME=train_stage1b_kubric0708_step1000 \
+# OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_compare_0708_split \
 # OUTPUT_FRAMES=49 \
 # CTX=8 \
 # bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
@@ -102,6 +114,9 @@ LIMIT="${LIMIT:-}"
 FORCE="${FORCE:-0}"
 OVERWRITE="${OVERWRITE:-0}"
 DISABLE_OBJECT_BRANCH="${DISABLE_OBJECT_BRANCH:-0}"
+AUTO_SPLIT_INPUT="${AUTO_SPLIT_INPUT:-0}"
+SPLIT_WORK_ROOT="${SPLIT_WORK_ROOT:-/data/gaoya/agent-data/cache/kubric_batch_infer_splits}"
+SHARD_RUN_ID="${SHARD_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
 
 if [ "${DISABLE_OBJECT_BRANCH}" = "1" ]; then
   INFER_SCRIPT="${INFER_SCRIPT_NO_OBJECT}"
@@ -221,12 +236,281 @@ normalize_ctx_values() {
   fi
 }
 
+parse_unique_gpu_ids() {
+  local raw_value="$1"
+  local -n out_array="$2"
+  local clean_value
+  local gpu_id
+  local existing_gpu_id
+  out_array=()
+  clean_value="$(echo "${raw_value}" | tr -d '[:space:]')"
+  IFS=',' read -r -a raw_gpu_ids <<< "${clean_value}"
+  for gpu_id in "${raw_gpu_ids[@]}"; do
+    if [ -z "${gpu_id}" ]; then
+      continue
+    fi
+    for existing_gpu_id in "${out_array[@]}"; do
+      if [ "${existing_gpu_id}" = "${gpu_id}" ]; then
+        gpu_id=""
+        break
+      fi
+    done
+    if [ -n "${gpu_id}" ]; then
+      out_array+=("${gpu_id}")
+    fi
+  done
+}
+
+read_list_entries() {
+  local list_path="$1"
+  local -n out_array="$2"
+  local raw_line
+  local line
+  out_array=()
+  while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
+    line="$(echo "${raw_line}" | xargs)"
+    if [ -z "${line}" ]; then
+      continue
+    fi
+    if [[ "${line}" == \#* ]]; then
+      continue
+    fi
+    out_array+=("${line}")
+  done < "${list_path}"
+}
+
+apply_limit_to_entries() {
+  local -n entries_ref="$1"
+  if [ -z "${LIMIT}" ]; then
+    return
+  fi
+  if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: LIMIT 必须是非负整数，收到 ${LIMIT}" >&2
+    exit 1
+  fi
+  entries_ref=("${entries_ref[@]:0:${LIMIT}}")
+}
+
+sanitize_path_tag() {
+  local raw_value="$1"
+  local sanitized
+  sanitized="$(echo "${raw_value}" | sed 's/[^0-9A-Za-z_.-]/_/g')"
+  sanitized="${sanitized#_}"
+  sanitized="${sanitized%_}"
+  if [ -z "${sanitized}" ]; then
+    sanitized="run"
+  fi
+  echo "${sanitized}"
+}
+
+write_split_txt_files() {
+  local input_list_path="$1"
+  local requested_shards="$2"
+  local split_dir="$3"
+  local -n out_split_files="$4"
+  local -n out_split_tags="$5"
+  local -a entries=()
+  local -a local_split_files=()
+  local -a local_split_tags=()
+  local entry_count
+  local shard_count
+  local shard_index
+  local entry_index
+  local shard_file
+  local shard_tag
+
+  read_list_entries "${input_list_path}" entries
+  apply_limit_to_entries entries
+  entry_count="${#entries[@]}"
+  if [ "${entry_count}" -le 0 ]; then
+    echo "ERROR: 输入列表为空: ${input_list_path}" >&2
+    exit 1
+  fi
+
+  shard_count="${requested_shards}"
+  if [ "${shard_count}" -gt "${entry_count}" ]; then
+    shard_count="${entry_count}"
+  fi
+  if [ "${shard_count}" -le 0 ]; then
+    echo "ERROR: shard_count 非法: ${shard_count}" >&2
+    exit 1
+  fi
+
+  mkdir -p "${split_dir}"
+  for ((shard_index = 0; shard_index < shard_count; shard_index++)); do
+    printf -v shard_tag "shard%02dof%02d" "$((shard_index + 1))" "${shard_count}"
+    shard_file="${split_dir}/${shard_tag}.txt"
+    : > "${shard_file}"
+    local_split_files+=("${shard_file}")
+    local_split_tags+=("${shard_tag}")
+  done
+
+  for ((entry_index = 0; entry_index < entry_count; entry_index++)); do
+    shard_index=$((entry_index % shard_count))
+    printf '%s\n' "${entries[entry_index]}" >> "${local_split_files[shard_index]}"
+  done
+
+  out_split_files=("${local_split_files[@]}")
+  out_split_tags=("${local_split_tags[@]}")
+}
+
+build_direct_split_worker_pairs() {
+  local raw_value="$1"
+  local -n out_worker_pairs="$2"
+  local pair_token
+  out_worker_pairs=()
+  read -r -a raw_pair_tokens <<< "${raw_value}"
+  for pair_token in "${raw_pair_tokens[@]}"; do
+    if [ -z "${pair_token}" ]; then
+      continue
+    fi
+    check_gpu_pair_has_faulty_gpu4 "${pair_token}"
+    out_worker_pairs+=("${pair_token}")
+  done
+  if [ "${#out_worker_pairs[@]}" -eq 0 ]; then
+    echo "ERROR: GPU_PAIR 解析后为空: ${raw_value}" >&2
+    exit 1
+  fi
+}
+
+collect_shard_artifact_files() {
+  local search_root="$1"
+  local artifact_prefix="$2"
+  local -n out_array="$3"
+  mapfile -t out_array < <(find "${search_root}" -type f -name "${artifact_prefix}_*_${SHARD_RUN_ID}.json" | sort)
+}
+
+aggregate_sharded_outputs() {
+  local output_root="$1"
+  local -a shard_manifest_files=()
+  local -a shard_summary_files=()
+  local -a shard_result_files=()
+
+  collect_shard_artifact_files "${output_root}" "batch_manifest" shard_manifest_files
+  collect_shard_artifact_files "${output_root}" "summary" shard_summary_files
+  collect_shard_artifact_files "${output_root}" "result" shard_result_files
+
+  if [ "${#shard_result_files[@]}" -eq 0 ]; then
+    echo "ERROR: 未找到 shard result 文件，无法汇总。run_id=${SHARD_RUN_ID}" >&2
+    exit 1
+  fi
+
+  "${PYTHON_BIN}" - "${output_root}" "${SHARD_RUN_ID}" "${INPUT_JSON_LIST_PATH}" "${shard_manifest_files[@]}" -- "${shard_summary_files[@]}" -- "${shard_result_files[@]}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+output_root = Path(argv[0])
+run_id = argv[1]
+input_list_path = argv[2]
+
+sections: list[list[str]] = [[]]
+for token in argv[3:]:
+    if token == "--":
+        sections.append([])
+        continue
+    sections[-1].append(token)
+
+manifest_paths = [Path(p) for p in sections[0]]
+summary_paths = [Path(p) for p in sections[1]] if len(sections) > 1 else []
+result_paths = [Path(p) for p in sections[2]] if len(sections) > 2 else []
+if not result_paths:
+    raise SystemExit(f"no shard result files found for run_id={run_id}")
+
+result_payloads = []
+for path in result_paths:
+    with path.open("r", encoding="utf-8") as handle:
+        result_payloads.append(json.load(handle))
+
+step_output_dir = result_paths[0].parent
+combined_entries = []
+num_total = 0
+num_success = 0
+num_failed = 0
+num_skipped = 0
+method_name = result_payloads[0].get("method")
+checkpoint_dir = result_payloads[0].get("checkpoint_dir")
+shard_tags = []
+for payload in result_payloads:
+    combined_entries.extend(payload.get("entries", []))
+    num_total += int(payload.get("num_total", 0))
+    num_success += int(payload.get("num_success", 0))
+    num_failed += int(payload.get("num_failed", 0))
+    num_skipped += int(payload.get("num_skipped", 0))
+    shard_tag = payload.get("shard_tag")
+    if shard_tag is not None:
+      shard_tags.append(shard_tag)
+
+combined_result = {
+    "checkpoint_dir": checkpoint_dir,
+    "method": method_name,
+    "sharded": True,
+    "shard_run_id": run_id,
+    "shard_tags": shard_tags,
+    "num_total": num_total,
+    "num_success": num_success,
+    "num_failed": num_failed,
+    "num_skipped": num_skipped,
+    "entries": combined_entries,
+}
+with (step_output_dir / "result.json").open("w", encoding="utf-8") as handle:
+    json.dump(combined_result, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+
+summary_payloads = []
+for path in summary_paths:
+    with path.open("r", encoding="utf-8") as handle:
+        summary_payloads.append(json.load(handle))
+
+weights_root = summary_payloads[0].get("weights_root") if summary_payloads else None
+step_name = summary_payloads[0].get("step") if summary_payloads else None
+combined_summary = {
+    "weights_root": weights_root,
+    "output_root": str(output_root),
+    "step": step_name,
+    "sharded": True,
+    "shard_run_id": run_id,
+    "shard_tags": shard_tags,
+    "num_total": num_total,
+    "num_success": num_success,
+    "num_failed": num_failed,
+    "num_skipped": num_skipped,
+}
+with (output_root / "summary.json").open("w", encoding="utf-8") as handle:
+    json.dump(combined_summary, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+
+manifest_payloads = []
+for path in manifest_paths:
+    with path.open("r", encoding="utf-8") as handle:
+        manifest_payloads.append(json.load(handle))
+
+combined_manifest = dict(manifest_payloads[0]) if manifest_payloads else {"input_json_list_path": input_list_path}
+combined_manifest["input_json_list_path"] = input_list_path
+combined_manifest["num_items"] = num_total
+combined_manifest["sharded"] = True
+combined_manifest["shard_run_id"] = run_id
+combined_manifest["shard_tags"] = shard_tags
+combined_manifest["shard_manifests"] = [str(path) for path in manifest_paths]
+combined_manifest["device"] = None
+combined_manifest["aux_device"] = None
+combined_manifest["inference_devices"] = None
+with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
+    json.dump(combined_manifest, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+PY
+}
+
 run_one_inference() {
   local gpu_pair="$1"
   local context_frames="$2"
   local run_output_root="$3"
   local run_model_name="$4"
   local step_output_dir_name="${5:-}"
+  local run_input_json_list_path="${6:-${INPUT_JSON_LIST_PATH}}"
+  local shard_tag="${7:-}"
+  local disable_limit_flag="${8:-0}"
   local launch_visible_gpu_ids
   local launch_inference_devices
   local -a cmd
@@ -241,7 +525,7 @@ run_one_inference() {
     "${PYTHON_BIN}"
     "${INFER_SCRIPT}"
     --weights-root "${WEIGHTS_ROOT}"
-    --input-json-list-path "${INPUT_JSON_LIST_PATH}"
+    --input-json-list-path "${run_input_json_list_path}"
     --model-name "${run_model_name}"
     --output-root "${run_output_root}"
     --height "${HEIGHT}"
@@ -267,7 +551,10 @@ run_one_inference() {
   if [ -n "${step_output_dir_name}" ]; then
     cmd+=(--step-output-dir-name "${step_output_dir_name}")
   fi
-  if [ -n "${LIMIT}" ]; then
+  if [ -n "${shard_tag}" ]; then
+    cmd+=(--shard-tag "${shard_tag}")
+  fi
+  if [ -n "${LIMIT}" ] && [ "${disable_limit_flag}" != "1" ]; then
     cmd+=(--limit "${LIMIT}")
   fi
   if [ "${FORCE}" = "1" ]; then
@@ -281,6 +568,10 @@ run_one_inference() {
   echo "[kubric-batch] cuda_visible_devices=${launch_visible_gpu_ids} inference_devices=${launch_inference_devices}"
   echo "[kubric-batch] disable_object_branch=${DISABLE_OBJECT_BRANCH}"
   echo "[kubric-batch] infer_script=${INFER_SCRIPT}"
+  echo "[kubric-batch] input_json_list_path=${run_input_json_list_path}"
+  if [ -n "${shard_tag}" ]; then
+    echo "[kubric-batch] shard_tag=${shard_tag}"
+  fi
   echo "[kubric-batch] output=${run_output_root}"
   echo "[kubric-batch] model_name=${run_model_name}"
   echo "[kubric-batch] command: ${cmd[*]}"
@@ -308,7 +599,85 @@ run_direct_mode() {
     echo "ERROR: RUN_MODE=direct 时不要设置 INFERENCE_GPU_PAIRS" >&2
     exit 1
   fi
+  if [[ "${VISIBLE_GPU_IDS}" == *" "* ]]; then
+    echo "ERROR: GPU_PAIR 包含多个 worker pair 时，需要设置 AUTO_SPLIT_INPUT=1" >&2
+    exit 1
+  fi
   run_one_inference "${VISIBLE_GPU_IDS}" "${CONTEXT_FRAMES}" "${OUTPUT_ROOT}" "${MODEL_NAME}" "__METHOD_NAME__"
+}
+
+run_direct_auto_split_mode() {
+  if [ -n "${INFERENCE_GPU_PAIRS}" ]; then
+    echo "ERROR: AUTO_SPLIT_INPUT=1 暂不支持与 INFERENCE_GPU_PAIRS 同时使用" >&2
+    exit 1
+  fi
+  if [ ! -f "${INPUT_JSON_LIST_PATH}" ]; then
+    echo "ERROR: 输入列表不存在: ${INPUT_JSON_LIST_PATH}" >&2
+    exit 1
+  fi
+
+  local -a worker_pairs=()
+  local -a split_files=()
+  local -a split_tags=()
+  local -a child_pids=()
+  local -a active_workers=()
+  local pair_source
+  local run_tag
+  local split_dir
+  local shard_index
+  local shard_file
+  local shard_tag
+  local worker_pair
+  local child_pid
+  local status
+  local -a failed_workers=()
+
+  pair_source="${GPU_PAIR:-${VISIBLE_GPU_IDS}}"
+  build_direct_split_worker_pairs "${pair_source}" worker_pairs
+  run_tag="$(sanitize_path_tag "${MODEL_NAME}_${CONTEXT_FRAMES}_${SHARD_RUN_ID}")"
+  split_dir="${SPLIT_WORK_ROOT%/}/${run_tag}"
+  write_split_txt_files "${INPUT_JSON_LIST_PATH}" "${#worker_pairs[@]}" "${split_dir}" split_files split_tags
+
+  echo "[kubric-batch] auto_split_input=1"
+  echo "[kubric-batch] shard_run_id=${SHARD_RUN_ID}"
+  echo "[kubric-batch] split_dir=${split_dir}"
+  echo "[kubric-batch] worker_pairs=${worker_pairs[*]}"
+  if [ "${#split_files[@]}" -eq 0 ]; then
+    echo "ERROR: split txt 生成失败，没有任何 shard 文件" >&2
+    exit 1
+  fi
+
+  for shard_index in "${!split_files[@]}"; do
+    shard_file="${split_files[shard_index]}"
+    shard_tag="${split_tags[shard_index]}_${SHARD_RUN_ID}"
+    worker_pair="${worker_pairs[shard_index]}"
+    echo "[kubric-batch] shard_plan ${split_tags[shard_index]} gpu_pair=${worker_pair} txt=${shard_file}"
+    (
+      run_one_inference "${worker_pair}" "${CONTEXT_FRAMES}" "${OUTPUT_ROOT}" "${MODEL_NAME}" "__METHOD_NAME__" "${shard_file}" "${shard_tag}" "1"
+    ) &
+    child_pids+=("$!")
+    active_workers+=("${worker_pair}:${shard_tag}")
+  done
+
+  for shard_index in "${!child_pids[@]}"; do
+    child_pid="${child_pids[shard_index]}"
+    if wait "${child_pid}"; then
+      echo "[kubric-batch] shard worker done ${active_workers[shard_index]}"
+    else
+      status=$?
+      echo "[kubric-batch] shard worker failed ${active_workers[shard_index]} exit_code=${status}" >&2
+      failed_workers+=("${active_workers[shard_index]}:${status}")
+    fi
+  done
+
+  if [ "${#failed_workers[@]}" -gt 0 ]; then
+    echo "[kubric-batch] failed_workers=${failed_workers[*]}" >&2
+    exit 1
+  fi
+
+  aggregate_sharded_outputs "${OUTPUT_ROOT}"
+  rm -rf "${split_dir}"
+  echo "[kubric-batch] auto-split direct mode done. outputs under ${OUTPUT_ROOT}"
 }
 
 run_sweep_mode() {
@@ -386,9 +755,17 @@ RUN_MODE="$(infer_run_mode)"
 
 case "${RUN_MODE}" in
   direct)
-    run_direct_mode
+    if [ "${AUTO_SPLIT_INPUT}" = "1" ]; then
+      run_direct_auto_split_mode
+    else
+      run_direct_mode
+    fi
     ;;
   sweep)
+    if [ "${AUTO_SPLIT_INPUT}" = "1" ]; then
+      echo "ERROR: AUTO_SPLIT_INPUT=1 当前只支持 RUN_MODE=direct（单个 context 值）" >&2
+      exit 1
+    fi
     run_sweep_mode
     ;;
   *)

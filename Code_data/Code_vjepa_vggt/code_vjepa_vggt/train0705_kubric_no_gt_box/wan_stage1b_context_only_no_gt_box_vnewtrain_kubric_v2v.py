@@ -222,6 +222,16 @@ def _append_method_suffix(method_name: str, suffix: str | None) -> str:
     return f"{method_name}_{suffix_norm}"
 
 
+def _normalize_shard_tag(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    if not value:
+        return None
+    sanitized = re.sub(r"[^0-9A-Za-z_.-]+", "_", value).strip("._-")
+    return sanitized or None
+
+
 def _resolve_step_output_dir_name(
     raw_value: str | None,
     *,
@@ -425,6 +435,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional final result subdirectory name under output-root. Defaults to weights_root.name. Use __METHOD_NAME__ to derive the full method suffix name automatically.",
     )
     parser.add_argument("--method-suffix", type=str, default=None)
+    parser.add_argument(
+        "--shard-tag",
+        type=str,
+        default=None,
+        help="Optional shard tag used to disambiguate batch-level summary filenames during multi-process launches.",
+    )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--aux-device", type=str, default=None)
     parser.add_argument(
@@ -805,6 +821,7 @@ def main() -> None:
     json_paths = core._read_list_file(input_json_list_path)
     if cli_args.limit is not None:
         json_paths = json_paths[: max(0, int(cli_args.limit))]
+    shard_tag = _normalize_shard_tag(cli_args.shard_tag)
 
     output_root.mkdir(parents=True, exist_ok=True)
     resolved_negative_prompt = _resolve_negative_prompt_from_cli(cli_args)
@@ -829,6 +846,7 @@ def main() -> None:
         "device": str(cli_args.device),
         "aux_device": cli_args.aux_device,
         "inference_devices": cli_args.inference_devices,
+        "shard_tag": shard_tag,
         "object_context_ablation": {
             "mode": str(cli_args.object_context_ablation),
             "random_seed": cli_args.object_context_random_seed,
@@ -839,7 +857,8 @@ def main() -> None:
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
-    with (output_root / "batch_manifest.json").open("w", encoding="utf-8") as handle:
+    manifest_name = "batch_manifest.json" if shard_tag is None else f"batch_manifest_{shard_tag}.json"
+    with (output_root / manifest_name).open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
@@ -965,13 +984,15 @@ def main() -> None:
     step_summary = {
         "checkpoint_dir": str(weights_root),
         "method": method_name,
+        "shard_tag": shard_tag,
         "num_total": len(json_paths),
         "num_success": step_success,
         "num_failed": step_failed,
         "num_skipped": step_skipped,
         "entries": step_entries,
     }
-    with (step_output_dir / "result.json").open("w", encoding="utf-8") as handle:
+    step_result_name = "result.json" if shard_tag is None else f"result_{shard_tag}.json"
+    with (step_output_dir / step_result_name).open("w", encoding="utf-8") as handle:
         json.dump(step_summary, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
@@ -979,12 +1000,14 @@ def main() -> None:
         "weights_root": str(weights_root),
         "output_root": str(output_root),
         "step": weights_root.name,
+        "shard_tag": shard_tag,
         "num_total": len(json_paths),
         "num_success": step_success,
         "num_failed": step_failed,
         "num_skipped": step_skipped,
     }
-    with (output_root / "summary.json").open("w", encoding="utf-8") as handle:
+    summary_name = "summary.json" if shard_tag is None else f"summary_{shard_tag}.json"
+    with (output_root / summary_name).open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
 
