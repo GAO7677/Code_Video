@@ -40,6 +40,10 @@ from code_vjepa_free.vjepa_guidance.spectral_guidance import (
 )
 
 
+class ObjectBranchInstabilityError(RuntimeError):
+    """Raised during inference when the object residual guard fires repeatedly."""
+
+
 def _tensor_numeric_stats(tensor: torch.Tensor | np.ndarray | list | tuple | None) -> dict[str, float | int | list[int] | None]:
     if tensor is None:
         return {
@@ -236,6 +240,19 @@ def enable_object_condition_branch(
                     guard_scale = float(float(guard_max_ratio) / max(pre_guard_ratio, 1.0e-12))
                     gated_object_delta = gated_object_delta * guard_scale
                     guard_applied = True
+                    abort_after = getattr(dit, "_object_branch_guard_abort_after_count", None)
+                    if abort_after is not None and int(abort_after) > 0:
+                        abort_count = int(
+                            getattr(dit, "_object_branch_guard_abort_count", 0)
+                        ) + 1
+                        dit._object_branch_guard_abort_count = abort_count
+                        if abort_count >= int(abort_after):
+                            raise ObjectBranchInstabilityError(
+                                "object branch guard triggered repeatedly: "
+                                f"count={abort_count} block={block_id} "
+                                f"pre_guard_ratio={pre_guard_ratio:.6f} "
+                                f"max_ratio={float(guard_max_ratio):.6f}"
+                            )
             if bool(getattr(dit, "_object_branch_trace_collect", False)):
                 trace_buffer = getattr(dit, "_object_branch_trace_buffer", None)
                 if isinstance(trace_buffer, list):
@@ -275,6 +292,8 @@ def enable_object_condition_branch(
     dit._object_branch_trace_buffer = None
     dit._object_branch_ratio_guard_max_ratio = None
     dit._object_branch_ratio_guard_max_block_id = None
+    dit._object_branch_guard_abort_after_count = None
+    dit._object_branch_guard_abort_count = 0
     return dit
 
 
@@ -1758,16 +1777,27 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                     noise_pred_posi, noise_pred_nega = noise_pred_posi.chunk(2, dim=0)
                 else:
                     if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
-                        active_dit._object_branch_trace_collect = False
-                        active_dit._object_branch_trace_buffer = None
+                        active_dit._object_branch_trace_collect = bool(trace_enabled)
+                        active_dit._object_branch_trace_buffer = [] if trace_enabled else None
                     noise_pred_nega = self.model_fn(
                         **models,
                         **inputs_shared,
                         **inputs_nega,
                         timestep=timestep,
                     )
-                noise_pred = noise_pred_nega + cfg_scale * (noise_pred_posi - noise_pred_nega)
+                object_branch_trace_layers_nega = None
+                if active_dit is not None and hasattr(active_dit, "_object_branch_trace_collect"):
+                    object_branch_trace_layers_nega = getattr(
+                        active_dit, "_object_branch_trace_buffer", None
+                    )
+                    active_dit._object_branch_trace_collect = False
+                    active_dit._object_branch_trace_buffer = None
+                cfg_delta = noise_pred_posi - noise_pred_nega
+                noise_pred = noise_pred_nega + cfg_scale * cfg_delta
             else:
+                noise_pred_nega = None
+                cfg_delta = None
+                object_branch_trace_layers_nega = None
                 noise_pred = noise_pred_posi
 
             latents_before_step = inputs_shared["latents"]
@@ -1863,12 +1893,25 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                             "layers": object_branch_trace_layers,
                         }
                     )
+                if object_branch_trace_layers_nega:
+                    numeric_trace.append(
+                        {
+                            "kind": "object_branch_step_negative",
+                            "step_index": int(progress_id),
+                            "timestep": int(round(float(timestep_cpu.detach().cpu().item()))),
+                            "layers": object_branch_trace_layers_nega,
+                        }
+                    )
                 numeric_trace.append(
                     {
                         "kind": "denoise_step",
                         "step_index": int(progress_id),
                         "timestep": int(round(float(timestep_cpu.detach().cpu().item()))),
                         "latents_before": _tensor_numeric_stats(latents_before_step),
+                        "noise_pred_positive": _tensor_numeric_stats(noise_pred_posi),
+                        "noise_pred_negative": _tensor_numeric_stats(noise_pred_nega),
+                        "cfg_delta": _tensor_numeric_stats(cfg_delta),
+                        "cfg_delta_l2": _tensor_l2_rms_stats(cfg_delta),
                         "noise_pred": _tensor_numeric_stats(noise_pred),
                         "latents_after": _tensor_numeric_stats(latents_after_step),
                     }

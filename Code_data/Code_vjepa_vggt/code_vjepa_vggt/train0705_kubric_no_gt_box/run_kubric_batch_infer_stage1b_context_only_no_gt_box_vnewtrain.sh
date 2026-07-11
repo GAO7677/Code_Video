@@ -116,6 +116,9 @@ OVERWRITE="${OVERWRITE:-0}"
 DISABLE_OBJECT_BRANCH="${DISABLE_OBJECT_BRANCH:-0}"
 OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO="${OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO:-}"
 OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID="${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID:-}"
+OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO="${OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO:-}"
+OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS="${OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS:-}"
+OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT="${OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT:-}"
 AUTO_SPLIT_INPUT="${AUTO_SPLIT_INPUT:-0}"
 SPLIT_WORK_ROOT="${SPLIT_WORK_ROOT:-/data/gaoya/agent-data/cache/kubric_batch_infer_splits}"
 SHARD_RUN_ID="${SHARD_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
@@ -570,6 +573,15 @@ run_one_inference() {
   fi
   if [ -n "${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID}" ]; then
     cmd+=(--object-branch-ratio-guard-max-block-id "${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID}")
+  fi
+  if [ -n "${OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO}" ]; then
+    cmd+=(--object-adapter-mlp-residual-max-ratio "${OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO}")
+  fi
+  if [ -n "${OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS}" ]; then
+    cmd+=(--object-branch-auto-fallback-max-active-slots "${OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS}")
+  fi
+  if [ -n "${OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT}" ]; then
+    cmd+=(--object-branch-auto-fallback-trigger-count "${OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT}")
   fi
 
   echo "[kubric-batch] gpu_pair=${gpu_pair} context_frames=${context_frames}"

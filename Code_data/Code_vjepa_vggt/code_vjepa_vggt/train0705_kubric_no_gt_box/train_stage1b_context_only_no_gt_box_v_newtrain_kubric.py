@@ -131,6 +131,47 @@ def prepare_jepa_context_video(
     }
 
 
+def compact_object_context_valid_slots(
+    object_context: torch.Tensor,
+    object_valid_mask: torch.Tensor,
+) -> torch.Tensor | None:
+    """Physically remove invalid slot tokens before object cross-attention."""
+    if object_context.ndim != 3:
+        raise ValueError(
+            f"object_context must be [B,T*O,D], got {list(object_context.shape)}"
+        )
+    if object_valid_mask.ndim != 2:
+        raise ValueError(
+            f"object_valid_mask must be [B,O], got {list(object_valid_mask.shape)}"
+        )
+    batch, sequence_length, dim = object_context.shape
+    if int(object_valid_mask.shape[0]) != int(batch):
+        raise ValueError("object_context and object_valid_mask batch sizes differ")
+    slots = int(object_valid_mask.shape[1])
+    if slots <= 0 or int(sequence_length) % slots != 0:
+        raise ValueError(
+            f"object_context sequence length {sequence_length} is not divisible by slots={slots}"
+        )
+    time_steps = int(sequence_length) // slots
+    valid_ids = [
+        torch.nonzero(object_valid_mask[b] > 0.5, as_tuple=False).flatten()
+        for b in range(int(batch))
+    ]
+    valid_counts = [int(ids.numel()) for ids in valid_ids]
+    if not valid_counts or max(valid_counts) == 0:
+        return None
+    if len(set(valid_counts)) != 1:
+        raise ValueError(
+            "compact object context requires equal valid-slot counts in a batch; "
+            f"got {valid_counts}"
+        )
+    context_bto = object_context.view(int(batch), time_steps, slots, int(dim))
+    compacted = [context_bto[b, :, ids, :] for b, ids in enumerate(valid_ids)]
+    return torch.stack(compacted, dim=0).reshape(
+        int(batch), time_steps * valid_counts[0], int(dim)
+    )
+
+
 class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
     """WanTrainingModule variant that sources object priors from viewer grounding."""
 
@@ -139,10 +180,28 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
         self.object_gate_reg_target = float(kwargs.pop("object_gate_reg_target", 0.20))
         self.object_slot_dropout_prob = float(kwargs.pop("object_slot_dropout_prob", 0.0))
         self.full_slot_loss_weight = float(kwargs.pop("full_slot_loss_weight", 1.0))
+        self.compact_object_context_slots = bool(
+            kwargs.pop("compact_object_context_slots", False)
+        )
+        self.lambda_object_adapter_mlp_reg = float(
+            kwargs.pop("lambda_object_adapter_mlp_reg", 0.0)
+        )
+        self.object_adapter_mlp_reg_target = float(
+            kwargs.pop("object_adapter_mlp_reg_target", 3.0)
+        )
+        self.object_adapter_mlp_residual_max_ratio = float(
+            kwargs.pop("object_adapter_mlp_residual_max_ratio", 0.0)
+        )
         if not 0.0 <= self.object_slot_dropout_prob <= 1.0:
             raise ValueError("object_slot_dropout_prob must be in [0, 1]")
         if self.full_slot_loss_weight <= 0.0:
             raise ValueError("full_slot_loss_weight must be positive")
+        if self.lambda_object_adapter_mlp_reg < 0.0:
+            raise ValueError("lambda_object_adapter_mlp_reg must be non-negative")
+        if self.object_adapter_mlp_reg_target <= 0.0:
+            raise ValueError("object_adapter_mlp_reg_target must be positive")
+        if self.object_adapter_mlp_residual_max_ratio < 0.0:
+            raise ValueError("object_adapter_mlp_residual_max_ratio must be non-negative")
         self.object_branch_train_trace = bool(kwargs.pop("object_branch_train_trace", False))
         self.object_branch_ratio_guard_max_ratio = float(
             kwargs.pop("object_branch_ratio_guard_max_ratio", 0.0)
@@ -161,6 +220,11 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             color_tolerance=int((grounding_config or {}).get("grounding_gt_mask_color_tolerance", 18)),
         )
         if self.enable_object_branch:
+            self.object_adapter.mlp_residual_max_ratio = (
+                float(self.object_adapter_mlp_residual_max_ratio)
+                if float(self.object_adapter_mlp_residual_max_ratio) > 0.0
+                else None
+            )
             active_dit = getattr(self.pipe, "dit", None)
             if active_dit is not None and hasattr(active_dit, "_object_branch_ratio_guard_max_ratio"):
                 active_dit._object_branch_ratio_guard_max_ratio = (
@@ -231,6 +295,25 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
         return gate_reg, {
             "train/object_gate_tanh_abs_mean": float(gate_abs_mean.detach().item()),
             "train/object_gate_tanh_abs_max": float(gate_abs_max.detach().item()),
+        }
+
+    def _consume_object_adapter_mlp_regularizer(self, pipe) -> tuple[torch.Tensor, dict[str, float]]:
+        ratio, diagnostics = self.object_adapter.pop_mlp_diagnostics()
+        if ratio is None:
+            zero = torch.zeros((), device=pipe.device, dtype=pipe.torch_dtype)
+            return zero, {
+                "train/object_adapter_mlp_residual_ratio_mean": 0.0,
+                "train/object_adapter_mlp_residual_ratio_max": 0.0,
+                "train/object_adapter_mlp_cap_applied_fraction": 0.0,
+                "train/object_adapter_mlp_cap_scale_min": 1.0,
+            }
+        excess = torch.relu(ratio - float(self.object_adapter_mlp_reg_target))
+        regularizer = excess.square().mean().to(device=pipe.device, dtype=pipe.torch_dtype)
+        return regularizer, {
+            "train/object_adapter_mlp_residual_ratio_mean": diagnostics["mean_ratio"],
+            "train/object_adapter_mlp_residual_ratio_max": diagnostics["max_ratio"],
+            "train/object_adapter_mlp_cap_applied_fraction": diagnostics["cap_applied_fraction"],
+            "train/object_adapter_mlp_cap_scale_min": diagnostics["cap_scale_min"],
         }
 
     def _run_main_loss_with_trace(self, pipe, inputs_shared, inputs_posi, object_context):
@@ -311,6 +394,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             caption=caption,
             image_hw=(height, width),
         )
+        self._last_grounding_debug = dict(getattr(grounding_sample, "debug", {}) or {})
 
         repair_debug = {"applied": False, "reason": "disabled"}
         if bool(self.gt_mask_query_repair.enabled):
@@ -329,6 +413,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             grounding_sample.grouped_queries_px = repaired_queries_px
             if isinstance(getattr(grounding_sample, "debug", None), dict):
                 grounding_sample.debug["gt_mask_query_repair"] = repair_debug
+                self._last_grounding_debug = dict(grounding_sample.debug)
 
         # grouped_queries_px: [aux_max_objects, object_num_queries, 2] (pixels)
         grouped_queries = torch.from_numpy(grounding_sample.grouped_queries_px).float()
@@ -394,6 +479,13 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 dtype=pipe.torch_dtype,
             )
             object_gate_reg, gate_metrics = self._compute_object_gate_regularizer(pipe)
+            object_adapter_mlp_reg = object_context.new_zeros(())
+            adapter_mlp_metrics = {
+                "train/object_adapter_mlp_residual_ratio_mean": 0.0,
+                "train/object_adapter_mlp_residual_ratio_max": 0.0,
+                "train/object_adapter_mlp_cap_applied_fraction": 0.0,
+                "train/object_adapter_mlp_cap_scale_min": 1.0,
+            }
             if self.lambda_main > 0.0:
                 loss_main, trace_layers = self._run_main_loss_with_trace(
                     pipe,
@@ -410,12 +502,16 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 self.lambda_main * loss_main
                 + self.lambda_object_context_reg * object_context_reg
                 + self.lambda_object_gate_reg * object_gate_reg
+                + self.lambda_object_adapter_mlp_reg * object_adapter_mlp_reg
             )
             metrics = {
                 "train/loss_total": float(total.detach().item()),
                 "train/loss_main": float(loss_main.detach().item()),
                 "train/loss_object_context_reg": float(object_context_reg.detach().item()),
                 "train/loss_object_gate_reg": float(object_gate_reg.detach().item()),
+                "train/loss_object_adapter_mlp_reg": float(
+                    object_adapter_mlp_reg.detach().item()
+                ),
                 "train/object_count": 0.0,
                 "train/object_count_before_dropout": 0.0,
                 "train/object_count_after_dropout": 0.0,
@@ -438,6 +534,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 "train/sampled_ctx_num_frames": 0.0,
             }
             metrics.update(gate_metrics)
+            metrics.update(adapter_mlp_metrics)
             return total, metrics
 
         context_video = sample["context_video"].unsqueeze(0).to(
@@ -518,6 +615,14 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             object_out.object_latent_tokens,
             object_valid_mask=object_valid_mask,
         )
+        object_context_for_dit = (
+            compact_object_context_valid_slots(object_context, object_valid_mask)
+            if self.compact_object_context_slots
+            else object_context
+        )
+        object_adapter_mlp_reg, adapter_mlp_metrics = (
+            self._consume_object_adapter_mlp_regularizer(pipe)
+        )
 
         object_gate_reg, gate_metrics = self._compute_object_gate_regularizer(pipe)
         if self.lambda_main > 0.0:
@@ -525,7 +630,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 pipe,
                 inputs_shared,
                 inputs_posi,
-                object_context,
+                object_context_for_dit,
             )
         else:
             loss_main = object_context.new_zeros(())
@@ -538,6 +643,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             self.lambda_main * main_loss_weight * loss_main
             + self.lambda_object_context_reg * object_context_reg
             + self.lambda_object_gate_reg * object_gate_reg
+            + self.lambda_object_adapter_mlp_reg * object_adapter_mlp_reg
         )
 
         object_context_abs = object_context.detach().abs()
@@ -547,10 +653,17 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/loss_main": float(loss_main.detach().item()),
             "train/loss_object_context_reg": float(object_context_reg.detach().item()),
             "train/loss_object_gate_reg": float(object_gate_reg.detach().item()),
+            "train/loss_object_adapter_mlp_reg": float(
+                object_adapter_mlp_reg.detach().item()
+            ),
             "train/object_count": float(object_valid_mask.sum().item()),
             "train/object_latent_tokens_abs_max": float(object_latent_tokens_abs.max().item()),
             "train/object_context_abs_max": float(object_context_abs.max().item()),
             "train/object_context_abs_mean": float(object_context_abs.mean().item()),
+            "train/object_context_attention_tokens": float(
+                0 if object_context_for_dit is None else object_context_for_dit.shape[1]
+            ),
+            "train/object_context_compact_slots": float(self.compact_object_context_slots),
             "train/object_branch_max_gated_to_x_ratio_l2": trace_summary["max_gated_to_x_ratio_l2"],
             "train/object_branch_mean_gated_to_x_ratio_l2": trace_summary["mean_gated_to_x_ratio_l2"],
             "train/object_branch_max_pre_guard_gated_to_x_ratio_l2": trace_summary["max_pre_guard_gated_to_x_ratio_l2"],
@@ -566,6 +679,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/sampled_ctx_num_frames": float(num_context_frames),
         }
         metrics.update(gate_metrics)
+        metrics.update(adapter_mlp_metrics)
         metrics.update(slot_metrics)
         return total, metrics
 
@@ -690,6 +804,29 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="Main-loss multiplier for undropped samples using every configured object slot.",
+    )
+    group.add_argument(
+        "--compact_object_context_slots",
+        action="store_true",
+        help="Physically remove invalid or dropped slot tokens before DiT cross-attention.",
+    )
+    group.add_argument(
+        "--lambda_object_adapter_mlp_reg",
+        type=float,
+        default=0.0,
+        help="Weight for penalizing ObjectConditionAdapter MLP residual ratios above the target.",
+    )
+    group.add_argument(
+        "--object_adapter_mlp_reg_target",
+        type=float,
+        default=3.0,
+        help="No adapter MLP residual-ratio penalty below this per-token RMS ratio.",
+    )
+    group.add_argument(
+        "--object_adapter_mlp_residual_max_ratio",
+        type=float,
+        default=0.0,
+        help="If >0, cap the adapter MLP residual to this per-token RMS ratio before out_norm.",
     )
 
     kubric_group = parser.add_argument_group("kubric_no_gt_box_dataset")
@@ -866,6 +1003,10 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         object_gate_reg_target=args.object_gate_reg_target,
         object_slot_dropout_prob=args.object_slot_dropout_prob,
         full_slot_loss_weight=args.full_slot_loss_weight,
+        compact_object_context_slots=args.compact_object_context_slots,
+        lambda_object_adapter_mlp_reg=args.lambda_object_adapter_mlp_reg,
+        object_adapter_mlp_reg_target=args.object_adapter_mlp_reg_target,
+        object_adapter_mlp_residual_max_ratio=args.object_adapter_mlp_residual_max_ratio,
         object_branch_train_trace=args.object_branch_train_trace,
         object_branch_ratio_guard_max_ratio=args.object_branch_ratio_guard_max_ratio,
         object_branch_ratio_guard_max_block_id=args.object_branch_ratio_guard_max_block_id,
@@ -942,6 +1083,12 @@ def _log_stage_summary(accelerator, model: ContextOnlyNoGTBoxWanModule, args: ar
     lines.append(
         f"  - object_slot_dropout_prob={float(args.object_slot_dropout_prob):.4f} "
         f"| full_slot_loss_weight={float(args.full_slot_loss_weight):.4f}"
+    )
+    lines.append(
+        f"  - lambda_object_adapter_mlp_reg={float(args.lambda_object_adapter_mlp_reg):.6g} "
+        f"| object_adapter_mlp_reg_target={float(args.object_adapter_mlp_reg_target):.4f} "
+        f"| object_adapter_mlp_residual_max_ratio="
+        f"{float(args.object_adapter_mlp_residual_max_ratio):.4f}"
     )
     lines.append("冻结模块 (frozen):")
     lines.append(f"  - Wan DiT base + LoRA, VAE, Text encoder")

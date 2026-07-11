@@ -32,6 +32,33 @@ class ObjectConditionAdapter(nn.Module):
         self.out_norm = nn.LayerNorm(self.dim)
         gate_init = torch.tensor(float(output_gate_init)).clamp(1.0e-4, 1.0 - 1.0e-4)
         self.output_gate_logit = nn.Parameter(torch.logit(gate_init))
+        self.mlp_residual_max_ratio: float | None = None
+        self._last_mlp_residual_ratio: torch.Tensor | None = None
+        self._last_mlp_cap_scale: torch.Tensor | None = None
+
+    def pop_mlp_diagnostics(self) -> tuple[torch.Tensor | None, dict[str, float]]:
+        ratio = self._last_mlp_residual_ratio
+        scale = self._last_mlp_cap_scale
+        self._last_mlp_residual_ratio = None
+        self._last_mlp_cap_scale = None
+        if ratio is None:
+            return None, {
+                "mean_ratio": 0.0,
+                "max_ratio": 0.0,
+                "cap_applied_fraction": 0.0,
+                "cap_scale_min": 1.0,
+            }
+        ratio_detached = ratio.detach().float()
+        if scale is None:
+            scale_detached = torch.ones_like(ratio_detached)
+        else:
+            scale_detached = scale.detach().float()
+        return ratio, {
+            "mean_ratio": float(ratio_detached.mean().item()),
+            "max_ratio": float(ratio_detached.max().item()),
+            "cap_applied_fraction": float((scale_detached < 0.9999).float().mean().item()),
+            "cap_scale_min": float(scale_detached.min().item()),
+        }
 
     def forward(
         self,
@@ -62,7 +89,19 @@ class ObjectConditionAdapter(nn.Module):
             bbox = bbox_xyxy.to(dtype=x.dtype, device=x.device).clamp(0.0, 1.0)
             x = x + self.bbox_embed(bbox)
         x = self.norm(x)
-        x = x + self.mlp(x)
+        mlp_residual = self.mlp(x)
+        x_rms = x.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
+        mlp_rms = mlp_residual.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
+        mlp_ratio = mlp_rms / x_rms
+        cap_scale = torch.ones_like(mlp_ratio)
+        if self.mlp_residual_max_ratio is not None and float(self.mlp_residual_max_ratio) > 0.0:
+            cap_scale = (
+                float(self.mlp_residual_max_ratio) / mlp_ratio.clamp_min(1.0e-12)
+            ).clamp(max=1.0)
+            mlp_residual = mlp_residual * cap_scale.unsqueeze(-1).to(dtype=mlp_residual.dtype)
+        self._last_mlp_residual_ratio = mlp_ratio
+        self._last_mlp_cap_scale = cap_scale
+        x = x + mlp_residual
         x = self.out_norm(x)
         x = x * torch.sigmoid(self.output_gate_logit).to(dtype=x.dtype, device=x.device)
         if object_valid_mask is not None:

@@ -108,6 +108,7 @@ if _SELECTED_DIFFSYNTH_ROOT:
 
 from code_vjepa_vggt import batch_infer_v_newtrain_from_jsonl as core
 from code_vjepa_vggt.AAAinfer.utils.named_paths import resolve_output_root
+from code_vjepa_vggt.context_wan_v_newtrain import ObjectBranchInstabilityError
 from code_vjepa_vggt.train0705 import infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer0705
 from code_vjepa_vggt.train0705_kubric_no_gt_box import (
     infer_stage1b_context_only_no_gt_box_v_newtrain_kubric as kubric_infer,
@@ -573,6 +574,17 @@ def parse_args() -> argparse.Namespace:
         help="Optional per-token L2 norm clamp applied to the final object_context after ablation.",
     )
     parser.add_argument(
+        "--object-adapter-mlp-residual-max-ratio",
+        type=float,
+        default=None,
+        help="Optional per-token RMS cap for the adapter MLP residual before out_norm.",
+    )
+    parser.add_argument(
+        "--compact-object-context-slots",
+        action="store_true",
+        help="Physically remove invalid slot tokens before DiT object cross-attention.",
+    )
+    parser.add_argument(
         "--object-branch-ratio-guard-max-ratio",
         type=float,
         default=None,
@@ -583,6 +595,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Apply the optional object-branch ratio guard only up to this Wan block id.",
+    )
+    parser.add_argument(
+        "--object-branch-auto-fallback-max-active-slots",
+        type=int,
+        default=None,
+        help="If set, retry with the first N ranked slots when the guard repeatedly triggers.",
+    )
+    parser.add_argument(
+        "--object-branch-auto-fallback-trigger-count",
+        type=int,
+        default=5,
+        help="Abort the initial inference after this many guard triggers before retrying.",
     )
     parser.add_argument(
         "--dump-pipe-inputs-root",
@@ -628,6 +652,7 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         jepa_window_radius=int(cli_args.jepa_window_radius),
         latent_window_radius=int(cli_args.latent_window_radius),
         object_gate_init=float(cli_args.object_gate_init),
+        compact_object_context_slots=bool(cli_args.compact_object_context_slots),
         jepa_ckpt_path=str(cli_args.jepa_ckpt_path),
         jepa_input_size=int(cli_args.jepa_input_size),
         jepa_patch_size=int(cli_args.jepa_patch_size),
@@ -739,6 +764,12 @@ def _run_single_case_in_process(
         pipe._numeric_trace_enabled = False
         pipe._numeric_trace_path = None
     pipe.dit.eval()
+    fallback_debug: dict[str, object] = {
+        "enabled": False,
+        "triggered": False,
+        "reason": None,
+        "keep_slot_ids": None,
+    }
     with torch.no_grad():
         pipe_kwargs = dict(
             prompt=str(input_caption),
@@ -767,7 +798,58 @@ def _run_single_case_in_process(
                 source_video=str(source_video),
                 frame_indices=frame_indices,
             )
-        video = pipe(**pipe_kwargs)
+        fallback_max_slots = getattr(
+            model, "_object_branch_auto_fallback_max_active_slots", None
+        )
+        fallback_trigger_count = int(
+            getattr(model, "_object_branch_auto_fallback_trigger_count", 5)
+        )
+        valid_object_count = int(round(float(object_debug.get("object_valid_count", 0.0))))
+        fallback_enabled = (
+            fallback_max_slots is not None
+            and int(fallback_max_slots) > 0
+            and valid_object_count > int(fallback_max_slots)
+            and str(getattr(model, "_object_context_ablation_mode", "none")).strip().lower()
+            in {"", "none"}
+        )
+        fallback_debug["enabled"] = bool(fallback_enabled)
+        fallback_debug["max_active_slots"] = (
+            None if fallback_max_slots is None else int(fallback_max_slots)
+        )
+        fallback_debug["trigger_count"] = int(fallback_trigger_count)
+        pipe.dit._object_branch_guard_abort_count = 0
+        pipe.dit._object_branch_guard_abort_after_count = (
+            int(fallback_trigger_count) if fallback_enabled else None
+        )
+        try:
+            video = pipe(**pipe_kwargs)
+        except ObjectBranchInstabilityError as exc:
+            keep_slot_ids = list(range(int(fallback_max_slots)))
+            fallback_context, fallback_ablation = infer0705._apply_object_context_ablation(
+                object_context,
+                mode="keep_slot",
+                slot_count=int(getattr(model, "aux_max_objects", 0)),
+                keep_slot_ids=keep_slot_ids,
+            )
+            fallback_debug.update(
+                {
+                    "triggered": True,
+                    "reason": str(exc),
+                    "keep_slot_ids": keep_slot_ids,
+                    "ablation": fallback_ablation,
+                }
+            )
+            logs.append(
+                "[object-fallback] "
+                f"reason={exc} keep_slot_ids={keep_slot_ids}"
+            )
+            pipe.dit._object_branch_guard_abort_after_count = None
+            pipe.dit._object_branch_guard_abort_count = 0
+            pipe_kwargs["object_context"] = fallback_context
+            video = pipe(**pipe_kwargs)
+        finally:
+            pipe.dit._object_branch_guard_abort_after_count = None
+            pipe.dit._object_branch_guard_abort_count = 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_video.parent.mkdir(parents=True, exist_ok=True)
@@ -803,6 +885,8 @@ def _run_single_case_in_process(
             "max_ratio": getattr(model.pipe.dit, "_object_branch_ratio_guard_max_ratio", None),
             "max_block_id": getattr(model.pipe.dit, "_object_branch_ratio_guard_max_block_id", None),
         },
+        "object_branch_auto_fallback": fallback_debug,
+        "object_debug": object_debug,
         "model_args": {
             "height": int(height),
             "width": int(width),
@@ -887,9 +971,15 @@ def main() -> None:
             if cli_args.object_context_keep_slot_ids is None
             else [int(part.strip()) for part in str(cli_args.object_context_keep_slot_ids).split(",") if part.strip()],
         },
+        "object_adapter_mlp_residual_max_ratio": cli_args.object_adapter_mlp_residual_max_ratio,
+        "compact_object_context_slots": bool(cli_args.compact_object_context_slots),
         "object_branch_ratio_guard": {
             "max_ratio": cli_args.object_branch_ratio_guard_max_ratio,
             "max_block_id": cli_args.object_branch_ratio_guard_max_block_id,
+        },
+        "object_branch_auto_fallback": {
+            "max_active_slots": cli_args.object_branch_auto_fallback_max_active_slots,
+            "trigger_count": int(cli_args.object_branch_auto_fallback_trigger_count),
         },
         "vjepa": infer0705.summarize_vjepa_args(cli_args),
     }
@@ -933,6 +1023,14 @@ def main() -> None:
         if cli_args.object_context_keep_slot_ids is None
         else [int(part.strip()) for part in str(cli_args.object_context_keep_slot_ids).split(",") if part.strip()]
     )
+    model._object_branch_auto_fallback_max_active_slots = (
+        None
+        if cli_args.object_branch_auto_fallback_max_active_slots is None
+        else int(cli_args.object_branch_auto_fallback_max_active_slots)
+    )
+    model._object_branch_auto_fallback_trigger_count = int(
+        cli_args.object_branch_auto_fallback_trigger_count
+    )
     model._dump_pipe_inputs_root = (
         None if cli_args.dump_pipe_inputs_root is None else str(cli_args.dump_pipe_inputs_root)
     )
@@ -948,6 +1046,12 @@ def main() -> None:
         None
         if cli_args.object_branch_ratio_guard_max_block_id is None
         else int(cli_args.object_branch_ratio_guard_max_block_id)
+    )
+    model.object_adapter.mlp_residual_max_ratio = (
+        None
+        if cli_args.object_adapter_mlp_residual_max_ratio is None
+        or float(cli_args.object_adapter_mlp_residual_max_ratio) <= 0.0
+        else float(cli_args.object_adapter_mlp_residual_max_ratio)
     )
 
     step_success = 0

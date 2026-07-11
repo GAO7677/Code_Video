@@ -3,8 +3,10 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_context_only_no_gt_box_v_newtrain_kubric import (
     ContextOnlyNoGTBoxWanModule,
+    compact_object_context_valid_slots,
 )
 
 
@@ -59,3 +61,40 @@ def test_gate_regularizer_is_active_below_old_target() -> None:
     assert float(loss) > 0.0
     assert block.object_gate.grad is not None and float(block.object_gate.grad.abs().sum()) > 0.0
     assert metrics["train/object_gate_tanh_abs_max"] > 0.08
+
+
+def test_adapter_mlp_cap_and_regularizer_keep_gradients() -> None:
+    torch.manual_seed(0)
+    adapter = ObjectConditionAdapter(dim=16, num_slots=4, max_time_steps=4)
+    adapter.mlp_residual_max_ratio = 2.0
+    with torch.no_grad():
+        for layer in adapter.mlp:
+            if isinstance(layer, nn.Linear):
+                layer.weight.mul_(20.0)
+    tokens = torch.randn((1, 2, 4, 16), requires_grad=True)
+    output = adapter(tokens, object_valid_mask=torch.ones((1, 4)))
+    ratio, diagnostics = adapter.pop_mlp_diagnostics()
+    assert ratio is not None
+    assert diagnostics["max_ratio"] > 2.0
+    assert diagnostics["cap_applied_fraction"] > 0.0
+    assert diagnostics["cap_scale_min"] < 1.0
+    loss = output.square().mean() + torch.relu(ratio - 1.0).square().mean()
+    loss.backward()
+    assert tokens.grad is not None and float(tokens.grad.abs().sum()) > 0.0
+    assert adapter.mlp[0].weight.grad is not None
+    assert float(adapter.mlp[0].weight.grad.abs().sum()) > 0.0
+
+
+def test_compact_object_context_physically_removes_invalid_slots() -> None:
+    context = torch.arange(1 * 2 * 4 * 3, dtype=torch.float32).view(1, 8, 3)
+    mask = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
+    compacted = compact_object_context_valid_slots(context, mask)
+    assert compacted is not None
+    expected = context.view(1, 2, 4, 3)[:, :, [0, 2], :].reshape(1, 4, 3)
+    assert torch.equal(compacted, expected)
+
+
+def test_compact_object_context_returns_none_without_valid_slots() -> None:
+    context = torch.zeros((1, 8, 3), dtype=torch.float32)
+    mask = torch.zeros((1, 4), dtype=torch.float32)
+    assert compact_object_context_valid_slots(context, mask) is None

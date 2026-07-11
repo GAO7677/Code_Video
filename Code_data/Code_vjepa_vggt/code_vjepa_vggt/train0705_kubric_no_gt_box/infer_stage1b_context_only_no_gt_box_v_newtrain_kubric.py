@@ -107,6 +107,11 @@ def _build_object_context(
         object_out.object_latent_tokens,
         object_valid_mask=object_valid_mask,
     )
+    if bool(getattr(model, "compact_object_context_slots", False)):
+        object_context = trainmod.compact_object_context_valid_slots(
+            object_context,
+            object_valid_mask,
+        )
     debug = {
         "query_points_shape": list(query_points_prior.shape),
         "query_frame_ids_shape": list(query_frame_ids.shape),
@@ -115,10 +120,11 @@ def _build_object_context(
         "box_prior_shape": list(box_prior_xyxy.shape),
         "tracks_shape": list(cotracker_out.tracks.shape),
         "object_latent_tokens_shape": list(object_out.object_latent_tokens.shape),
-        "object_context_shape": list(object_context.shape),
+        "object_context_shape": None if object_context is None else list(object_context.shape),
         "clean_prefix_latents_shape": list(clean_prefix_latents.shape),
         "jepa_patch_tokens_shape": list(jepa_out.patch_tokens.shape),
         "jepa_ctx_fix": jepa_debug,
+        "grounding": dict(getattr(model, "_last_grounding_debug", {}) or {}),
     }
     return object_context, debug
 
