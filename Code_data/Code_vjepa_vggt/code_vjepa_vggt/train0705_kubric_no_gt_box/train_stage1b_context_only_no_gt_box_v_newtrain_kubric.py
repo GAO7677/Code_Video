@@ -137,6 +137,12 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
     def __init__(self, *args, grounding_config: dict | None = None, **kwargs) -> None:
         self.lambda_object_gate_reg = float(kwargs.pop("lambda_object_gate_reg", 0.0))
         self.object_gate_reg_target = float(kwargs.pop("object_gate_reg_target", 0.20))
+        self.object_slot_dropout_prob = float(kwargs.pop("object_slot_dropout_prob", 0.0))
+        self.full_slot_loss_weight = float(kwargs.pop("full_slot_loss_weight", 1.0))
+        if not 0.0 <= self.object_slot_dropout_prob <= 1.0:
+            raise ValueError("object_slot_dropout_prob must be in [0, 1]")
+        if self.full_slot_loss_weight <= 0.0:
+            raise ValueError("full_slot_loss_weight must be positive")
         self.object_branch_train_trace = bool(kwargs.pop("object_branch_train_trace", False))
         self.object_branch_ratio_guard_max_ratio = float(
             kwargs.pop("object_branch_ratio_guard_max_ratio", 0.0)
@@ -251,6 +257,28 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 active_dit._object_branch_trace_collect = False
                 active_dit._object_branch_trace_buffer = None
         return loss_main, trace_layers
+
+    def _apply_object_slot_dropout(self, object_valid_mask: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
+        original_count = int((object_valid_mask > 0.5).sum().item())
+        sampled_mask = object_valid_mask
+        dropout_applied = False
+        if original_count > 1 and self.object_slot_dropout_prob > 0.0:
+            if bool(torch.rand((), device=object_valid_mask.device) < self.object_slot_dropout_prob):
+                valid_ids = torch.nonzero(object_valid_mask[0] > 0.5, as_tuple=False).flatten()
+                keep_count = int(torch.randint(1, original_count, (), device=object_valid_mask.device).item())
+                keep_ids = valid_ids[torch.randperm(original_count, device=object_valid_mask.device)[:keep_count]]
+                sampled_mask = torch.zeros_like(object_valid_mask)
+                sampled_mask[0, keep_ids] = object_valid_mask[0, keep_ids]
+                dropout_applied = True
+        sampled_count = int((sampled_mask > 0.5).sum().item())
+        full_slot_sample = original_count == int(self.aux_max_objects) and sampled_count == original_count
+        return sampled_mask, {
+            "train/object_count_before_dropout": float(original_count),
+            "train/object_count_after_dropout": float(sampled_count),
+            "train/object_slot_dropout_applied": 1.0 if dropout_applied else 0.0,
+            "train/object_full_slot_sample": 1.0 if full_slot_sample else 0.0,
+            "train/object_main_loss_weight": float(self.full_slot_loss_weight if full_slot_sample else 1.0),
+        }
 
     # ------------------------------------------------------------------
     # Override 1: query priors come from viewer grounding, not GT boxes.
@@ -389,6 +417,11 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 "train/loss_object_context_reg": float(object_context_reg.detach().item()),
                 "train/loss_object_gate_reg": float(object_gate_reg.detach().item()),
                 "train/object_count": 0.0,
+                "train/object_count_before_dropout": 0.0,
+                "train/object_count_after_dropout": 0.0,
+                "train/object_slot_dropout_applied": 0.0,
+                "train/object_full_slot_sample": 0.0,
+                "train/object_main_loss_weight": 1.0,
                 "train/object_latent_tokens_abs_max": 0.0,
                 "train/object_context_abs_max": 0.0,
                 "train/object_context_abs_mean": 0.0,
@@ -419,6 +452,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
         query_frame_ids = query_frame_ids.to(device=pipe.device, dtype=pipe.torch_dtype)
         object_valid_mask = object_valid_mask.to(device=pipe.device, dtype=pipe.torch_dtype)
         box_prior_xyxy = box_prior_xyxy.to(device=pipe.device, dtype=pipe.torch_dtype)
+        object_valid_mask, slot_metrics = self._apply_object_slot_dropout(object_valid_mask)
 
         frames_bthwc_01 = (
             (context_video.permute(0, 2, 3, 4, 1).float() + 1.0) / 2.0
@@ -498,9 +532,10 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             trace_layers = None
         object_context_reg = object_context.square().mean()
         trace_summary = _summarize_object_branch_trace(trace_layers)
+        main_loss_weight = float(slot_metrics["train/object_main_loss_weight"])
 
         total = (
-            self.lambda_main * loss_main
+            self.lambda_main * main_loss_weight * loss_main
             + self.lambda_object_context_reg * object_context_reg
             + self.lambda_object_gate_reg * object_gate_reg
         )
@@ -531,6 +566,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/sampled_ctx_num_frames": float(num_context_frames),
         }
         metrics.update(gate_metrics)
+        metrics.update(slot_metrics)
         return total, metrics
 
 
@@ -642,6 +678,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.20,
         help="No penalty below this tanh(object_gate) magnitude target.",
+    )
+    group.add_argument(
+        "--object_slot_dropout_prob",
+        type=float,
+        default=0.0,
+        help="Probability of keeping a random non-empty subset of detected object slots.",
+    )
+    group.add_argument(
+        "--full_slot_loss_weight",
+        type=float,
+        default=1.0,
+        help="Main-loss multiplier for undropped samples using every configured object slot.",
     )
 
     kubric_group = parser.add_argument_group("kubric_no_gt_box_dataset")
@@ -816,6 +864,8 @@ def build_model(args: argparse.Namespace, accelerator) -> ContextOnlyNoGTBoxWanM
         depth_target_source=args.depth_target_source,
         depth_anything_cache_root=args.depth_anything_cache_root,
         object_gate_reg_target=args.object_gate_reg_target,
+        object_slot_dropout_prob=args.object_slot_dropout_prob,
+        full_slot_loss_weight=args.full_slot_loss_weight,
         object_branch_train_trace=args.object_branch_train_trace,
         object_branch_ratio_guard_max_ratio=args.object_branch_ratio_guard_max_ratio,
         object_branch_ratio_guard_max_block_id=args.object_branch_ratio_guard_max_block_id,
@@ -888,6 +938,10 @@ def _log_stage_summary(accelerator, model: ContextOnlyNoGTBoxWanModule, args: ar
         f"  - object_gate_reg_target={float(args.object_gate_reg_target):.4f} "
         f"| object_branch_ratio_guard_max_ratio={float(args.object_branch_ratio_guard_max_ratio):.4f} "
         f"| object_branch_ratio_guard_max_block_id={int(args.object_branch_ratio_guard_max_block_id)}"
+    )
+    lines.append(
+        f"  - object_slot_dropout_prob={float(args.object_slot_dropout_prob):.4f} "
+        f"| full_slot_loss_weight={float(args.full_slot_loss_weight):.4f}"
     )
     lines.append("冻结模块 (frozen):")
     lines.append(f"  - Wan DiT base + LoRA, VAE, Text encoder")

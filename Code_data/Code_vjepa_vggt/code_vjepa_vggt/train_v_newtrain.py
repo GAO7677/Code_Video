@@ -3466,7 +3466,11 @@ def train_loop(
                                 f"max_ratio={float(extra_metrics.get('train/object_branch_max_gated_to_x_ratio_l2', 0.0)):.4f} "
                                 f"pre_guard_max_ratio={float(extra_metrics.get('train/object_branch_max_pre_guard_gated_to_x_ratio_l2', 0.0)):.4f} "
                                 f"guard_layers={int(round(float(extra_metrics.get('train/object_branch_guard_applied_layer_count', 0.0))))} "
-                                f"guard_scale_min={float(extra_metrics.get('train/object_branch_guard_scale_min', 1.0)):.4f}"
+                                f"guard_scale_min={float(extra_metrics.get('train/object_branch_guard_scale_min', 1.0)):.4f} "
+                                f"objects={int(round(float(extra_metrics.get('train/object_count_before_dropout', 0.0))))}"
+                                f"->{int(round(float(extra_metrics.get('train/object_count_after_dropout', 0.0))))} "
+                                f"slot_drop={int(round(float(extra_metrics.get('train/object_slot_dropout_applied', 0.0))))} "
+                                f"main_weight={float(extra_metrics.get('train/object_main_loss_weight', 1.0)):.2f}"
                             )
 
                 progress["global_step"] = global_step

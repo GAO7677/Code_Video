@@ -127,12 +127,15 @@ CMD=(
   --lambda_track_aux 0.0
   --lambda_box_aux 0.0
   --lambda_depth_aux 0.0
-  --lambda_object_context_reg 1e-4
-  --lambda_object_gate_reg 5e-3
-  --object_gate_reg_target 0.20
+  --lambda_object_context_reg 5e-2
+  --lambda_object_gate_reg 1e-1
+  --object_gate_reg_target 0.08
+  --object_slot_dropout_prob 0.35
+  --full_slot_loss_weight 1.5
   --object_branch_train_trace
-  --object_branch_ratio_guard_max_ratio 0.20
-  --object_branch_ratio_guard_max_block_id 4
+  --object_branch_ratio_guard_max_ratio 0.15
+  --object_branch_ratio_guard_max_block_id -1
+  --debug_print_object_regularization
   --stage1a_init_from "${STAGE1A_CKPT}"
   --grounding_proposal_source gdino_only
   --grounding_motion_score_ratio 0.15

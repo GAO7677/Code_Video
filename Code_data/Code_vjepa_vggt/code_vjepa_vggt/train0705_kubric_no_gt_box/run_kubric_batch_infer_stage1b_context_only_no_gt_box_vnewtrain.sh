@@ -114,6 +114,8 @@ LIMIT="${LIMIT:-}"
 FORCE="${FORCE:-0}"
 OVERWRITE="${OVERWRITE:-0}"
 DISABLE_OBJECT_BRANCH="${DISABLE_OBJECT_BRANCH:-0}"
+OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO="${OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO:-}"
+OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID="${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID:-}"
 AUTO_SPLIT_INPUT="${AUTO_SPLIT_INPUT:-0}"
 SPLIT_WORK_ROOT="${SPLIT_WORK_ROOT:-/data/gaoya/agent-data/cache/kubric_batch_infer_splits}"
 SHARD_RUN_ID="${SHARD_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
@@ -562,6 +564,12 @@ run_one_inference() {
   fi
   if [ "${OVERWRITE}" = "1" ]; then
     cmd+=(--overwrite)
+  fi
+  if [ -n "${OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO}" ]; then
+    cmd+=(--object-branch-ratio-guard-max-ratio "${OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO}")
+  fi
+  if [ -n "${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID}" ]; then
+    cmd+=(--object-branch-ratio-guard-max-block-id "${OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID}")
   fi
 
   echo "[kubric-batch] gpu_pair=${gpu_pair} context_frames=${context_frames}"
