@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import numpy as np
 import torch
 from torch import nn
 
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
+from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
+    DetectedObjectTrack,
+    dedupe_object_tracks,
+)
 from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_context_only_no_gt_box_v_newtrain_kubric import (
     ContextOnlyNoGTBoxWanModule,
     compact_object_context_valid_slots,
@@ -85,6 +90,19 @@ def test_adapter_mlp_cap_and_regularizer_keep_gradients() -> None:
     assert float(adapter.mlp[0].weight.grad.abs().sum()) > 0.0
 
 
+def test_adapter_mlp_diagnostics_filter_invalid_slots() -> None:
+    torch.manual_seed(1)
+    adapter = ObjectConditionAdapter(dim=8, num_slots=4, max_time_steps=2)
+    tokens = torch.randn((1, 1, 4, 8))
+    adapter(tokens, object_valid_mask=torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+    ratio, diagnostics = adapter.pop_mlp_diagnostics(
+        torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+    )
+    assert ratio is not None
+    assert ratio.numel() == 1
+    assert diagnostics["mean_ratio"] == float(ratio.detach().float().mean().item())
+
+
 def test_compact_object_context_physically_removes_invalid_slots() -> None:
     context = torch.arange(1 * 2 * 4 * 3, dtype=torch.float32).view(1, 8, 3)
     mask = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
@@ -98,3 +116,43 @@ def test_compact_object_context_returns_none_without_valid_slots() -> None:
     context = torch.zeros((1, 8, 3), dtype=torch.float32)
     mask = torch.zeros((1, 4), dtype=torch.float32)
     assert compact_object_context_valid_slots(context, mask) is None
+
+
+def test_grounding_dedupe_removes_same_phrase_nested_boxes() -> None:
+    masks = np.ones((2, 16, 16), dtype=np.uint8)
+    large = DetectedObjectTrack(
+        box_prompt_xyxy=np.array([10, 10, 50, 50], dtype=np.float32),
+        masks_thw=masks,
+        boxes_t4=np.array([[10, 10, 50, 50], [11, 10, 51, 50]], dtype=np.float32),
+        score=0.45,
+        phrase="ball",
+    )
+    nested = DetectedObjectTrack(
+        box_prompt_xyxy=np.array([18, 18, 43, 43], dtype=np.float32),
+        masks_thw=masks,
+        boxes_t4=np.array([[18, 18, 43, 43], [19, 18, 44, 43]], dtype=np.float32),
+        score=0.40,
+        phrase="ball",
+    )
+    kept = dedupe_object_tracks([large, nested], iou_threshold=0.75)
+    assert len(kept) == 1
+
+
+def test_grounding_dedupe_keeps_nested_boxes_with_different_phrases() -> None:
+    masks = np.ones((2, 16, 16), dtype=np.uint8)
+    outer = DetectedObjectTrack(
+        box_prompt_xyxy=np.array([10, 10, 50, 50], dtype=np.float32),
+        masks_thw=masks,
+        boxes_t4=np.array([[10, 10, 50, 50], [10, 10, 50, 50]], dtype=np.float32),
+        score=0.45,
+        phrase="gripper",
+    )
+    inner = DetectedObjectTrack(
+        box_prompt_xyxy=np.array([18, 18, 43, 43], dtype=np.float32),
+        masks_thw=masks,
+        boxes_t4=np.array([[18, 18, 43, 43], [18, 18, 43, 43]], dtype=np.float32),
+        score=0.40,
+        phrase="ball",
+    )
+    kept = dedupe_object_tracks([outer, inner], iou_threshold=0.75)
+    assert len(kept) == 2

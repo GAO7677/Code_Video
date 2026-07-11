@@ -297,8 +297,12 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             "train/object_gate_tanh_abs_max": float(gate_abs_max.detach().item()),
         }
 
-    def _consume_object_adapter_mlp_regularizer(self, pipe) -> tuple[torch.Tensor, dict[str, float]]:
-        ratio, diagnostics = self.object_adapter.pop_mlp_diagnostics()
+    def _consume_object_adapter_mlp_regularizer(
+        self,
+        pipe,
+        object_valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        ratio, diagnostics = self.object_adapter.pop_mlp_diagnostics(object_valid_mask)
         if ratio is None:
             zero = torch.zeros((), device=pipe.device, dtype=pipe.torch_dtype)
             return zero, {
@@ -621,7 +625,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
             else object_context
         )
         object_adapter_mlp_reg, adapter_mlp_metrics = (
-            self._consume_object_adapter_mlp_regularizer(pipe)
+            self._consume_object_adapter_mlp_regularizer(pipe, object_valid_mask)
         )
 
         object_gate_reg, gate_metrics = self._compute_object_gate_regularizer(pipe)

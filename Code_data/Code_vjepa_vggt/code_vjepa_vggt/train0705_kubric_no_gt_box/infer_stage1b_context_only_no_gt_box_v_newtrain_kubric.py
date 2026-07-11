@@ -131,6 +131,9 @@ def _build_object_context(
 
 def _build_model_args(args):
     model_args = _ORIG_BUILD_MODEL_ARGS(args)
+    model_args.compact_object_context_slots = bool(
+        getattr(args, "compact_object_context_slots", False)
+    )
     return model_args
 
 

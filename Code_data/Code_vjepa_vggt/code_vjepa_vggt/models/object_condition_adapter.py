@@ -36,7 +36,10 @@ class ObjectConditionAdapter(nn.Module):
         self._last_mlp_residual_ratio: torch.Tensor | None = None
         self._last_mlp_cap_scale: torch.Tensor | None = None
 
-    def pop_mlp_diagnostics(self) -> tuple[torch.Tensor | None, dict[str, float]]:
+    def pop_mlp_diagnostics(
+        self,
+        object_valid_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor | None, dict[str, float]]:
         ratio = self._last_mlp_residual_ratio
         scale = self._last_mlp_cap_scale
         self._last_mlp_residual_ratio = None
@@ -48,6 +51,13 @@ class ObjectConditionAdapter(nn.Module):
                 "cap_applied_fraction": 0.0,
                 "cap_scale_min": 1.0,
             }
+        if object_valid_mask is not None:
+            valid = object_valid_mask[:, None, :].to(device=ratio.device) > 0.5
+            valid = valid.expand_as(ratio)
+            if bool(valid.any()):
+                ratio = ratio[valid]
+                if scale is not None:
+                    scale = scale[valid]
         ratio_detached = ratio.detach().float()
         if scale is None:
             scale_detached = torch.ones_like(ratio_detached)

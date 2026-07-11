@@ -643,3 +643,40 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/r
 - 旧文档里 Physics-IQ 指向了旧的 `train0705/...` 脚本路径，当前应使用 `code_phys_papers_compare/.../run_physics_iq_verified_kubric_v2v.py`
 - 旧文档里的双卡 Python 示例是不完整命令，已经替换成完整可执行版本
 - 旧文档没有区分 direct 和 sweep 两种输出目录规则，这里已经按当前脚本真实行为拆开说明
+
+## 11. object branch 彩噪保护
+
+当前 grounding 会额外去除“同 phrase、近中心、高 containment”的嵌套重复框。
+这用于处理 GDINO 将同一个物体检测成两个不同大小 proposal 的情况；不要通过提高
+`aux_max_objects` 来规避重复 proposal，因为那会保留更多背景或重复条件。
+
+对旧 checkpoint 做正式推理时，建议保留全层 ratio guard，并显式启用异常自动回退：
+
+```bash
+GPU_PAIR=7,7 \
+TEST_JSON_TXT=/data/gaoya/agent-data/outputs/query_prior_compare_20260710/physicIQ_026_mask_vs_boxuniform/ablllllll/_single_case_input_json.txt \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v2_resume3500_20260711T042047Z/checkpoints/step-004000 \
+METHOD_NAME=train_stage1b_kubric0708_stability_v2_step4000_dedupe_fallback \
+OUTPUT_ROOT=/data/gaoya/agent-data/outputs/query_prior_compare_20260711/stability_v2_step4000_dedupe_fallback \
+OUTPUT_FRAMES=49 \
+CTX=8 \
+NUM_INFERENCE_STEPS=40 \
+CFG_SCALE=5.0 \
+SEED=42 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO=0.15 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID=-1 \
+OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS=3 \
+OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT=5 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+```
+
+自动回退仅在有效对象数大于 3、并且 object residual guard 连续触发时启用。
+初次前向达到触发阈值后会立即中止，并使用 grounding 排名前 3 的 slot、相同 seed
+重新推理。正常的 1-3 物体 case 不会重跑。
+
+从 stability-v3 开始训练的 checkpoint，推理时还应增加：
+
+```text
+COMPACT_OBJECT_CONTEXT_SLOTS=1
+OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO=3.0
+```

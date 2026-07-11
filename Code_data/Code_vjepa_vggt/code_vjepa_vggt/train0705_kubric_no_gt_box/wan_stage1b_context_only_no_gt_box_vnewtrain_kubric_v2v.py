@@ -1018,6 +1018,7 @@ def main() -> None:
     model._object_context_random_scale = float(cli_args.object_context_random_scale)
     model._object_context_scale_factor = float(cli_args.object_context_scale_factor)
     model._object_context_token_norm_max = cli_args.object_context_token_norm_max
+    model.compact_object_context_slots = bool(cli_args.compact_object_context_slots)
     model._object_context_keep_slot_ids = (
         None
         if cli_args.object_context_keep_slot_ids is None

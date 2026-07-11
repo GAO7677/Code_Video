@@ -141,13 +141,48 @@ def track_similarity_iou(track_a: DetectedObjectTrack, track_b: DetectedObjectTr
     return box_iou_xyxy(box_a, box_b)
 
 
+def _phrase_terms(phrase: str) -> set[str]:
+    normalized = str(phrase).lower().replace("_", " ").replace("-", " ")
+    return {term for term in normalized.split() if term}
+
+
+def track_is_nested_duplicate(
+    track_a: DetectedObjectTrack,
+    track_b: DetectedObjectTrack,
+    *,
+    containment_threshold: float = 0.85,
+) -> bool:
+    """Catch same-class nested boxes that IoU-only dedupe misses."""
+    if not (_phrase_terms(track_a.phrase) & _phrase_terms(track_b.phrase)):
+        return False
+    box_a = np.mean(track_a.boxes_t4.astype(np.float32), axis=0)
+    box_b = np.mean(track_b.boxes_t4.astype(np.float32), axis=0)
+    containment = max(
+        box_containment_ratio_xyxy(box_a, box_b),
+        box_containment_ratio_xyxy(box_b, box_a),
+    )
+    if containment < float(containment_threshold):
+        return False
+    center_a = 0.5 * (box_a[:2] + box_a[2:])
+    center_b = 0.5 * (box_b[:2] + box_b[2:])
+    size_a = np.maximum(box_a[2:] - box_a[:2], 1.0)
+    size_b = np.maximum(box_b[2:] - box_b[:2], 1.0)
+    center_distance = float(np.linalg.norm(center_a - center_b))
+    reference_diagonal = float(max(np.linalg.norm(size_a), np.linalg.norm(size_b), 1.0))
+    return center_distance <= 0.25 * reference_diagonal
+
+
 def dedupe_object_tracks(tracks: list[DetectedObjectTrack], iou_threshold: float) -> list[DetectedObjectTrack]:
     if len(tracks) <= 1:
         return tracks
     ranked = sorted(tracks, key=score_track, reverse=True)
     kept: list[DetectedObjectTrack] = []
     for candidate in ranked:
-        if any(track_similarity_iou(candidate, existing) >= float(iou_threshold) for existing in kept):
+        if any(
+            track_similarity_iou(candidate, existing) >= float(iou_threshold)
+            or track_is_nested_duplicate(candidate, existing)
+            for existing in kept
+        ):
             continue
         kept.append(candidate)
     return kept
@@ -455,7 +490,11 @@ class ViewerGroundingBoxProvider:
             "prompt_text": prompt_text,
             "prompt_frame_idx": int(prompt_frame_idx),
             "raw_candidate_count": int(len(candidate_boxes)),
+            "tracked_candidate_count": int(len(outputs)),
+            "deduped_track_count": int(len(deduped_outputs)),
+            "dedupe_removed_count": int(len(outputs) - len(deduped_outputs)),
             "track_count": int(len(suppressed_outputs)),
+            "container_suppressed_count": int(len(deduped_outputs) - len(suppressed_outputs)),
         }
 
     def _build_grouped_queries(self, tracks: list[DetectedObjectTrack]) -> tuple[np.ndarray, np.ndarray]:
@@ -519,6 +558,18 @@ class ViewerGroundingBoxProvider:
                 "object_count": int(object_valid_mask.sum()),
                 "object_phrases": [track.phrase for track in object_tracks],
                 "object_scores": [float(track.score) for track in object_tracks],
+                "object_track_scores": [float(score_track(track)) for track in object_tracks],
+                "object_prompt_boxes_xyxy": [
+                    [float(value) for value in track.box_prompt_xyxy.tolist()]
+                    for track in object_tracks
+                ],
+                "object_mean_track_boxes_xyxy": [
+                    [
+                        float(value)
+                        for value in np.mean(track.boxes_t4.astype(np.float32), axis=0).tolist()
+                    ]
+                    for track in object_tracks
+                ],
                 "context_boxes_norm": list(context_boxes_norm.shape),
                 "grouped_queries_px": list(grouped_queries_px.shape),
             },
