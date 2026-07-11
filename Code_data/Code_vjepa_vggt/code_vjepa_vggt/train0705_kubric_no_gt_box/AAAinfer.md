@@ -269,13 +269,27 @@ GPU_PAIR=3,3 \
 GPU_PAIR="7,7" \
 AUTO_SPLIT_INPUT=1 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
-WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708/train_stage1b_kubric0708_regdiag_resume3500_20260710/checkpoints/step-005000/ \
-METHOD_NAME=train_stage1b_kubric0708_regdiag_step005000 \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v2_resume3500_20260711T042047Z/checkpoints/step-004000 \
+METHOD_NAME=train_stage1b_kubric0708_stability_v2_step4000 \
 OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
 OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 
+
+GPU_PAIR=7,7 \
+TEST_JSON_TXT=/data/gaoya/agent-data/outputs/query_prior_compare_20260710/physicIQ_026_mask_vs_boxuniform/ablllllll/_single_case_input_json.txt \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v2_resume3500_20260711T042047Z/checkpoints/step-004000 \
+METHOD_NAME=train_stage1b_kubric0708_stability_v2_step4000 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
+OUTPUT_FRAMES=49 \
+CTX=8 \
+NUM_INFERENCE_STEPS=40 \
+CFG_SCALE=5.0 \
+SEED=42 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO=0.15 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID=-1 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
   
 ```
 
