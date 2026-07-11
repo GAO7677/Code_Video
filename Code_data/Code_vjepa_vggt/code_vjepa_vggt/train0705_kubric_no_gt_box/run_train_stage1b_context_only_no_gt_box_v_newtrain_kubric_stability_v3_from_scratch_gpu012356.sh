@@ -9,15 +9,19 @@
 # - full-slot samples are not upweighted, avoiding amplification of rare outliers.
 set -euo pipefail
 
-VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-0,1,2,3,5,6}"
+# UUIDs preserve the original physical GPU 0,1,2,3,5,6 mapping even when the
+# faulty physical GPU4 drops out of NVML and numeric indices are renumbered.
+VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5,GPU-74468333-11e0-dfa6-ef16-584a42fa5a02,GPU-994fb224-27dc-b1e0-759d-0226b0c0d775,GPU-05862376-967b-f129-f129-835daf8158cf,GPU-99e4d61a-1169-14e0-d90c-364fdbe30065,GPU-7f6fbc40-3594-2c34-8557-422621355ff9}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000}"
 SAVE_STEPS="${SAVE_STEPS:-500}"
+MAX_CHECKPOINTS_KEEP="${MAX_CHECKPOINTS_KEEP:-10}"
 WANDB_MODE="${WANDB_MODE:-online}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v3_from_scratch_${RUN_TAG}}"
 WANDB_NAME="${WANDB_NAME:-stage1b_kubric0708_stability_v3_from_scratch_${RUN_TAG}}"
+TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/tmp/stability_v3_${RUN_TAG}}"
 
 IFS=',' read -r -a VISIBLE_GPU_ARRAY <<< "${VISIBLE_GPU_IDS}"
 if [ "${#VISIBLE_GPU_ARRAY[@]}" -lt 6 ]; then
@@ -25,7 +29,7 @@ if [ "${#VISIBLE_GPU_ARRAY[@]}" -lt 6 ]; then
   exit 1
 fi
 for GPU in "${VISIBLE_GPU_ARRAY[@]}"; do
-  if [ "${GPU}" = "4" ]; then
+  if [ "${GPU}" = "4" ] || [ "${GPU}" = "GPU-4a8abb69-6a43-4b79-5713-31979b8d6d75" ]; then
     echo "ERROR: gpu4 故障, 禁止使用。" >&2
     exit 1
   fi
@@ -40,7 +44,7 @@ BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_
 STAGE1A_CKPT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/pybullet0629_teacher_student/stage1a_full_token_old/step_0005000.pt
 WANDB_DIR=/data/gaoya/agent-data/cache/wandb
 
-mkdir -p "${OUTPUT_DIR}" "${WANDB_DIR}"
+mkdir -p "${OUTPUT_DIR}" "${WANDB_DIR}" "${TMP_ROOT}" "${TMP_ROOT}/torchinductor"
 LOG_FILE="${OUTPUT_DIR}/train_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
@@ -49,6 +53,11 @@ CMD=(
   CUDA_VISIBLE_DEVICES="${VISIBLE_GPU_IDS}"
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   WANDB_DIR="${WANDB_DIR}"
+  WANDB__DISABLE_STATS=true
+  TMPDIR="${TMP_ROOT}"
+  TMP="${TMP_ROOT}"
+  TEMP="${TMP_ROOT}"
+  TORCHINDUCTOR_CACHE_DIR="${TMP_ROOT}/torchinductor"
   "${ACCELERATE_BIN}" launch --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16
   "${TRAIN_SCRIPT}"
   --diffsynth_root "${DIFFSYNTH_ROOT}"
@@ -65,7 +74,7 @@ CMD=(
   --max_train_steps "${MAX_TRAIN_STEPS}" --num_epochs 100 --dataset_num_workers 4
   --learning_rate 1e-4 --weight_decay 0.01 --gradient_accumulation_steps 1
   --optimizer_type paged_adamw8bit --max_grad_norm 1.0 --find_unused_parameters
-  --save_steps "${SAVE_STEPS}" --max_checkpoints_keep 20
+  --save_steps "${SAVE_STEPS}" --max_checkpoints_keep "${MAX_CHECKPOINTS_KEEP}"
   --remove_prefix_in_ckpt pipe.dit. --output_path "${OUTPUT_DIR}"
   --lora_base_model dit --lora_target_modules q,k,v,o,ffn.0,ffn.2
   --lora_rank 32 --lora_alpha 32 --lora_checkpoint "${BASE_LORA}"

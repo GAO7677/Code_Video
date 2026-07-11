@@ -11,6 +11,8 @@ OUTPUT_DIR="$2"
 VISIBLE_GPU_IDS="$3"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 STALL_POLLS_MAX="${STALL_POLLS_MAX:-10}"
+MIN_ROOT_AVAIL_GB="${MIN_ROOT_AVAIL_GB:-10}"
+MIN_DATA_AVAIL_GB="${MIN_DATA_AVAIL_GB:-20}"
 STATUS_LOG="${OUTPUT_DIR}/monitor_status.log"
 ALERT_LOG="${OUTPUT_DIR}/monitor_alerts.log"
 
@@ -34,6 +36,7 @@ while true; do
   if [ -n "${train_log}" ]; then
     latest_metric="$(rg '\[object-reg\] step=' "${train_log}" 2>/dev/null | tail -1)"
     if [ -n "${latest_metric}" ]; then
+      latest_metric="$(sed 's/.*\[object-reg\]/[object-reg]/' <<<"${latest_metric}")"
       step="$(sed -n 's/.*\[object-reg\] step=\([0-9][0-9]*\).*/\1/p' <<<"${latest_metric}")"
     fi
     if rg -q 'Traceback|CUDA out of memory|ChildFailedError|Training failed|(^|[^[:alpha:]])NaN([^[:alpha:]]|$)' "${train_log}"; then
@@ -49,13 +52,24 @@ while true; do
   fi
   last_step="${step}"
 
-  gpu_state="$(nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | \
-    awk -F, -v ids="${VISIBLE_GPU_IDS}" '
-      BEGIN { n=split(ids, wanted, ","); for (i=1; i<=n; i++) keep[wanted[i]]=1 }
-      { gsub(/ /, ""); if ($1 in keep) printf "%s:%sMiB/%s%% ", $1, $2, $3 }
-    ')"
-  printf '%s step=%s stall_polls=%s gpu="%s" metric="%s"\n' \
-    "${now}" "${step}" "${stall_polls}" "${gpu_state}" "${latest_metric}" >>"${STATUS_LOG}"
+  gpu_state="$(nvidia-smi -i "${VISIBLE_GPU_IDS}" \
+    --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | \
+    awk -F, '{ gsub(/ /, ""); printf "%s:%sMiB/%s%% ", $1, $2, $3 }')"
+  root_avail_kb="$(df -Pk / | awk 'NR==2 {print $4}')"
+  data_avail_kb="$(df -Pk /data | awk 'NR==2 {print $4}')"
+  printf '%s step=%s stall_polls=%s root_avail_gb=%.1f data_avail_gb=%.1f gpu="%s" metric="%s"\n' \
+    "${now}" "${step}" "${stall_polls}" \
+    "$((root_avail_kb / 1024))e-3" "$((data_avail_kb / 1024))e-3" \
+    "${gpu_state}" "${latest_metric}" >>"${STATUS_LOG}"
+
+  if [ "${root_avail_kb}" -lt "$((MIN_ROOT_AVAIL_GB * 1024 * 1024))" ]; then
+    printf '%s WARN root_disk_low available_kb=%s threshold_gb=%s\n' \
+      "${now}" "${root_avail_kb}" "${MIN_ROOT_AVAIL_GB}" >>"${ALERT_LOG}"
+  fi
+  if [ "${data_avail_kb}" -lt "$((MIN_DATA_AVAIL_GB * 1024 * 1024))" ]; then
+    printf '%s WARN data_disk_low available_kb=%s threshold_gb=%s\n' \
+      "${now}" "${data_avail_kb}" "${MIN_DATA_AVAIL_GB}" >>"${ALERT_LOG}"
+  fi
 
   if [ "${stall_polls}" -ge "${STALL_POLLS_MAX}" ]; then
     printf '%s WARN no_step_progress step=%s polls=%s\n' "${now}" "${step}" "${stall_polls}" >>"${ALERT_LOG}"
