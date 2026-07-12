@@ -173,6 +173,7 @@ OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_kubric_test5_comp
 OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
 ```
 
 这个模式下，统一入口会向底层 Python 传：
@@ -308,6 +309,40 @@ OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO=3.0 \
 OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO=0.30 \
 OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID=-1 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
+
+# v3 temporal_sam2 query repair (GPU 6 single-card full PhysicIQ batch)
+# Use the Python wrapper directly because the unified shell entry does not forward --query-scheme.
+NEGATIVE_PROMPT='色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
+
+CUDA_VISIBLE_DEVICES=6 \
+PYTHONNOUSERSITE=1 \
+PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_v2v_queryscheme.py \
+  --query-scheme temporal_sam2 \
+  --weights-root /data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v3_from_scratch_20260711T144000Z/checkpoints/step-003500 \
+  --input-json-list-path /data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
+  --model-name train_stage1b_kubric0708_stability_v3_from_scratch_step3500_temporal_sam2 \
+  --output-root /data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
+  --step-output-dir-name __METHOD_NAME__ \
+  --method-suffix temporal_sam2 \
+  --inference-devices cuda:0,cuda:0 \
+  --num-frames 49 \
+  --context-frames 8 \
+  --sampling-mode prefix \
+  --num-inference-steps 40 \
+  --cfg-scale 5.0 \
+  --seed 42 \
+  --height 512 \
+  --width 896 \
+  --input-cover-crop-height 512 \
+  --input-cover-crop-width 896 \
+  --fps 30 \
+  --negative-prompt "${NEGATIVE_PROMPT}" \
+  --compact-object-context-slots \
+  --object-adapter-mlp-residual-max-ratio 3.0 \
+  --object-branch-ratio-guard-max-ratio 0.30 \
+  --object-branch-ratio-guard-max-block-id -1
 ```
 
 ### 5.3 单个 GPU pair 顺序 sweep 多组 ctx
