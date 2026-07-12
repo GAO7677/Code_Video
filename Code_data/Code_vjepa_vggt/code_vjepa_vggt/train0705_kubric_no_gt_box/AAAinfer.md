@@ -265,7 +265,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_
 
 
 GPU_PAIR=3,3 \
-
+# v1
 GPU_PAIR="7,7" \
 AUTO_SPLIT_INPUT=1 \
 TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
@@ -276,7 +276,7 @@ OUTPUT_FRAMES=49 \
 CTX=8 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 
-
+# v2
 GPU_PAIR=7,7 \
 TEST_JSON_TXT=/data/gaoya/agent-data/outputs/query_prior_compare_20260710/physicIQ_026_mask_vs_boxuniform/ablllllll/_single_case_input_json.txt \
 WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v2_resume3500_20260711T042047Z/checkpoints/step-004000 \
@@ -290,7 +290,24 @@ SEED=42 \
 OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO=0.15 \
 OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID=-1 \
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
-  
+
+
+# v3
+GPU_PAIR="6,6" \
+TEST_JSON_TXT=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
+WEIGHTS_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_kubric0708_stability_v3_from_scratch_20260711T144000Z/checkpoints/step-003500 \
+METHOD_NAME=train_stage1b_kubric0708_stability_v3_from_scratch_step3500 \
+OUTPUT_ROOT=/data/gaoya/AAA_test_video/0623/test/v2v/train0705_formal_compare/physicIQ/train_stage1b_kubric0708 \
+OUTPUT_FRAMES=49 \
+CTX=8 \
+NUM_INFERENCE_STEPS=40 \
+CFG_SCALE=5.0 \
+SEED=42 \
+COMPACT_OBJECT_CONTEXT_SLOTS=1 \
+OBJECT_ADAPTER_MLP_RESIDUAL_MAX_RATIO=3.0 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_RATIO=0.30 \
+OBJECT_BRANCH_RATIO_GUARD_MAX_BLOCK_ID=-1 \
+bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh
 ```
 
 ### 5.3 单个 GPU pair 顺序 sweep 多组 ctx
