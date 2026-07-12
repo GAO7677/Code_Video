@@ -106,6 +106,7 @@ def _build_object_context(
     object_context = model.object_adapter(
         object_out.object_latent_tokens,
         object_valid_mask=object_valid_mask,
+        bbox_xyxy=object_out.active_box_xyxy,
     )
     if bool(getattr(model, "compact_object_context_slots", False)):
         object_context = trainmod.compact_object_context_valid_slots(

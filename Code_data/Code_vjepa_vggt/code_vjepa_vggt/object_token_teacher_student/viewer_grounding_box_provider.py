@@ -85,7 +85,7 @@ def build_open_vocab_prompt(
 ) -> str:
     parts: list[str] = []
     if include_caption_terms:
-        caption_prompt = build_multi_object_prompt(caption).strip()
+        caption_prompt = str(caption).strip()
         if caption_prompt:
             parts.extend([item.strip() for item in caption_prompt.split(".") if item.strip()])
     if extra_prompt_terms.strip():

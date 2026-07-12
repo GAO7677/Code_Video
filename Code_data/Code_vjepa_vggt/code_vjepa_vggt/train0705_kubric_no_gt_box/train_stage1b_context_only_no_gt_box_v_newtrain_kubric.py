@@ -618,6 +618,7 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
         object_context = self.object_adapter(
             object_out.object_latent_tokens,
             object_valid_mask=object_valid_mask,
+            bbox_xyxy=object_out.active_box_xyxy,
         )
         object_context_for_dit = (
             compact_object_context_valid_slots(object_context, object_valid_mask)

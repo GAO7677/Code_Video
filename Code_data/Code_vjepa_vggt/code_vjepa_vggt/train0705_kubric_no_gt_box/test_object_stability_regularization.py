@@ -7,6 +7,7 @@ from torch import nn
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     DetectedObjectTrack,
+    build_open_vocab_prompt,
     dedupe_object_tracks,
 )
 from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_context_only_no_gt_box_v_newtrain_kubric import (
@@ -101,6 +102,33 @@ def test_adapter_mlp_diagnostics_filter_invalid_slots() -> None:
     assert ratio is not None
     assert ratio.numel() == 1
     assert diagnostics["mean_ratio"] == float(ratio.detach().float().mean().item())
+
+
+def test_adapter_bbox_embedding_receives_gradient() -> None:
+    torch.manual_seed(2)
+    adapter = ObjectConditionAdapter(dim=8, num_slots=2, max_time_steps=2)
+    tokens = torch.randn((1, 2, 2, 8))
+    boxes = torch.rand((1, 2, 2, 4))
+    output = adapter(
+        tokens,
+        object_valid_mask=torch.ones((1, 2)),
+        bbox_xyxy=boxes,
+    )
+    output[..., 0].sum().backward()
+    assert adapter.bbox_embed.weight.grad is not None
+    assert float(adapter.bbox_embed.weight.grad.abs().sum()) > 0.0
+
+
+def test_open_vocab_prompt_keeps_caption_entities_when_enabled() -> None:
+    prompt = build_open_vocab_prompt(
+        "A magnet attracts a block on a rotating platform.",
+        text_prompt="box . block . ball .",
+        extra_prompt_terms="",
+        include_caption_terms=True,
+    )
+    assert "magnet attracts" in prompt.lower()
+    assert "rotating platform" in prompt.lower()
+    assert "box" in prompt.lower()
 
 
 def test_compact_object_context_physically_removes_invalid_slots() -> None:

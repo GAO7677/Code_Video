@@ -524,6 +524,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--grounding-extra-prompt-terms", default="")
     parser.add_argument("--grounding-disable-caption-terms", action="store_true", default=True)
+    parser.add_argument(
+        "--grounding-enable-caption-terms",
+        dest="grounding_disable_caption_terms",
+        action="store_false",
+        help="Include caption-derived nouns in the GroundingDINO prompt.",
+    )
     parser.add_argument("--grounding-gdino-box-threshold", type=float, default=0.20)
     parser.add_argument("--grounding-gdino-text-threshold", type=float, default=0.15)
     parser.add_argument("--grounding-prompt-frame-mode", default="first")
