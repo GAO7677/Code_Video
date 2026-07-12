@@ -47,6 +47,22 @@ echo "[baseline-bench] cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "[baseline-bench] metrics=${METRICS[*]}"
 mkdir -p "${RESULT_DIR}"
 
+SUMMARY_BASENAME="$(basename "${BASELINE_LIST}")"
+SUMMARY_STEM="${SUMMARY_BASENAME%.*}"
+OUTPUT_CSV="${RESULT_DIR}/${SUMMARY_STEM}_metric_summary.csv"
+
+export_summary() {
+  echo "[baseline-bench] start export_csv=${OUTPUT_CSV}"
+  "${PYTHON_BIN}" "${SUMMARY_PY}" \
+    --input-txt "${BASELINE_LIST}" \
+    --output-csv "${OUTPUT_CSV}"
+  echo "[baseline-bench] done export_csv=${OUTPUT_CSV}"
+}
+
+# Keep the CSV synchronized with all metrics that reached disk, including
+# partial runs stopped by a failed metric or an interrupt.
+trap export_summary EXIT
+
 for metric in "${METRICS[@]}"; do
   echo "[baseline-bench] start metric=${metric}"
   EXTRA_ARGS=()
@@ -63,13 +79,7 @@ for metric in "${METRICS[@]}"; do
   echo "[baseline-bench] done metric=${metric}"
 done
 
-SUMMARY_BASENAME="$(basename "${BASELINE_LIST}")"
-SUMMARY_STEM="${SUMMARY_BASENAME%.*}"
-OUTPUT_CSV="${RESULT_DIR}/${SUMMARY_STEM}_metric_summary.csv"
-echo "[baseline-bench] start export_csv=${OUTPUT_CSV}"
-"${PYTHON_BIN}" "${SUMMARY_PY}" \
-  --input-txt "${BASELINE_LIST}" \
-  --output-csv "${OUTPUT_CSV}"
-echo "[baseline-bench] done export_csv=${OUTPUT_CSV}"
+export_summary
+trap - EXIT
 
 echo "[baseline-bench] all metrics completed"

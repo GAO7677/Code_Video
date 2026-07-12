@@ -4,6 +4,8 @@ import argparse
 import csv
 import json
 import math
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -95,11 +97,10 @@ def resolve_payload_input_json(payload: dict[str, Any]) -> Path | None:
 
 
 def find_batch_manifest_path(result_root: Path) -> Path | None:
-    for candidate_root in (result_root, *result_root.parents):
-        candidate = candidate_root / "batch_manifest.json"
-        if candidate.is_file():
-            return candidate
-    return None
+    # Parent manifests are shared by multiple method directories and can be
+    # overwritten by an unrelated partial or single-case inference run.
+    candidate = result_root / "batch_manifest.json"
+    return candidate if candidate.is_file() else None
 
 
 def read_reference_input_jsons(result_root: Path) -> list[Path] | None:
@@ -173,10 +174,16 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     for count_column, mean_column, _ in METRICS:
         fieldnames.append(count_column)
         fieldnames.append(mean_column)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def main() -> None:
