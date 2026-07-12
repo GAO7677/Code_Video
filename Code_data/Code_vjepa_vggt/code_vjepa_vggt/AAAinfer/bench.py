@@ -112,6 +112,12 @@ def parse_args() -> argparse.Namespace:
         "pmf_without_context",
     ]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
+    parser.add_argument(
+        "--input-json-allowlist",
+        type=Path,
+        default=None,
+        help="Optional txt file of input_json paths to evaluate; all other result JSONs are skipped.",
+    )
     parser.add_argument("--output-summary", type=Path, default=None)
     parser.add_argument("--metric", required=True, choices=metric_choices)
     parser.add_argument("--overwrite", action="store_true")
@@ -795,6 +801,14 @@ def main() -> None:
     metric_spec = build_metric_spec(args)
 
     cases, errors = prepare_cases(result_root)
+    if args.input_json_allowlist is not None:
+        allowlist_path = args.input_json_allowlist.expanduser().resolve()
+        allowed_inputs = {
+            Path(line.strip()).expanduser().resolve()
+            for line in allowlist_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        cases = [record for record in cases if record.input_json_path in allowed_inputs]
     if int(args.num_shards) > 1:
         cases = [
             record

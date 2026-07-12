@@ -20,6 +20,7 @@ SUMMARY_PY="${SCRIPT_DIR}/summarize_benchmark_txt_metrics.py"
 RESULT_DIR="${SCRIPT_DIR}/AAAresults"
 BENCH_CUDA_VISIBLE_DEVICES="${BENCH_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 BENCH_METRICS_RAW="${BENCH_METRICS:-}"
+BENCH_INPUT_JSON_ALLOWLIST="${BENCH_INPUT_JSON_ALLOWLIST:-}"
 
 export PYTHONPATH="${PROJECT_ROOT}:${TRY0526_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
@@ -51,6 +52,9 @@ for metric in "${METRICS[@]}"; do
   EXTRA_ARGS=()
   if [[ "${metric}" == "wmreward" ]]; then
     EXTRA_ARGS+=(--wmreward-reset-interval 1000000)
+  fi
+  if [[ -n "${BENCH_INPUT_JSON_ALLOWLIST}" ]]; then
+    EXTRA_ARGS+=(--input-json-allowlist "${BENCH_INPUT_JSON_ALLOWLIST}")
   fi
   "${PYTHON_BIN}" "${BENCH_PY}" \
     --metric "${metric}" \
