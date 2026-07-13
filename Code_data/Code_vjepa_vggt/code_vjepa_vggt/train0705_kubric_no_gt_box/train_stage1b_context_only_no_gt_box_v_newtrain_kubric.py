@@ -45,6 +45,7 @@ import torch
 import code_vjepa_vggt.train_v_newtrain as tvn
 from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.data.kubric_no_gt_box_dataset import KubricNoGTBoxDataset
+from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import PyBulletRawNoGTBoxDataset
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     ViewerGroundingBoxProvider,
@@ -726,7 +727,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for action in parser._actions:
         if action.dest == "dataset_type":
-            action.choices = [*action.choices, "kubric_no_gt_box"]
+            action.choices = [*action.choices, "kubric_no_gt_box", "pybullet_raw_no_gt_box"]
             break
 
     group = parser.add_argument_group("stage1b_no_gt_box")
@@ -890,6 +891,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8,
         help="How many neighboring samples to retry when a decoded video is invalid.",
+    )
+    pybullet_group = parser.add_argument_group("pybullet_raw_no_gt_box_dataset")
+    pybullet_group.add_argument("--pybullet_raw_root", type=str, default=None)
+    pybullet_group.add_argument("--pybullet_raw_split", type=str, default="train")
+    pybullet_group.add_argument(
+        "--pybullet_raw_sampling_strategy",
+        choices=["prefix", "uniform"],
+        default="prefix",
+    )
+    pybullet_group.add_argument("--pybullet_raw_init_scan_limit", type=int, default=None)
+    pybullet_group.add_argument(
+        "--pybullet_raw_window_starts",
+        type=str,
+        default="0",
+        help="Comma-separated raw frame starts for consecutive num_frames windows.",
     )
     return parser
 
@@ -1105,6 +1121,25 @@ def _log_stage_summary(accelerator, model: ContextOnlyNoGTBoxWanModule, args: ar
 
 
 def build_dataset(args: argparse.Namespace):
+    if args.dataset_type == "pybullet_raw_no_gt_box":
+        if not args.pybullet_raw_root:
+            raise ValueError(
+                "--pybullet_raw_root is required when dataset_type=pybullet_raw_no_gt_box"
+            )
+        return PyBulletRawNoGTBoxDataset(
+            root=args.pybullet_raw_root,
+            split=args.pybullet_raw_split,
+            resolution=(args.height, args.width),
+            num_frames=args.num_frames,
+            num_context_frames=args.fixed_num_context_frames,
+            sampling_strategy=args.pybullet_raw_sampling_strategy,
+            window_starts=tuple(
+                int(value.strip())
+                for value in args.pybullet_raw_window_starts.split(",")
+                if value.strip()
+            ),
+            init_scan_limit=args.pybullet_raw_init_scan_limit,
+        )
     if args.dataset_type != "kubric_no_gt_box":
         return tvn.build_dataset(args)
     if not args.kubric_root:

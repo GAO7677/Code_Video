@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import cv2
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("ffprobe wrapper expects a video path", file=sys.stderr)
+        return 2
+
+    video_path = Path(sys.argv[-1]).expanduser().resolve()
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"failed to open video: {video_path}", file=sys.stderr)
+        return 1
+
+    fps = float(cap.get(cv2.CAP_PROP_FPS))
+    frame_count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+
+    if fps <= 0 or frame_count < 0:
+        print(f"invalid video metadata for {video_path}", file=sys.stderr)
+        return 1
+
+    duration = frame_count / fps if fps > 0 else 0.0
+    print(f"{duration:.12f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
