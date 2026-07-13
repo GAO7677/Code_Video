@@ -1800,6 +1800,37 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 object_branch_trace_layers_nega = None
                 noise_pred = noise_pred_posi
 
+            conditioned_residual = getattr(self, "_conditioned_residual_controller", None)
+            conditioned_residual_stats = None
+            if conditioned_residual is not None and object_context is not None:
+                if cfg_merge:
+                    raise ValueError("localized conditioned residual does not support cfg_merge")
+                base_inputs_shared = dict(inputs_shared)
+                base_inputs_shared["object_context"] = None
+                base_noise_pred_posi = self.model_fn(
+                    **models, **base_inputs_shared, **inputs_posi, timestep=timestep
+                )
+                if cfg_scale != 1.0:
+                    base_noise_pred_nega = self.model_fn(
+                        **models, **base_inputs_shared, **inputs_nega, timestep=timestep
+                    )
+                    base_noise_pred = base_noise_pred_nega + cfg_scale * (
+                        base_noise_pred_posi - base_noise_pred_nega
+                    )
+                else:
+                    base_noise_pred = base_noise_pred_posi
+                prefix_latent_frames = 0
+                if inputs_shared.get("clean_prefix_latents") is not None:
+                    prefix_latent_frames = int(inputs_shared["clean_prefix_latents"].shape[2])
+                noise_pred = conditioned_residual.blend(
+                    base_noise_pred,
+                    noise_pred,
+                    step_index=int(progress_id),
+                    total_steps=len(self.scheduler.timesteps),
+                    prefix_latent_frames=prefix_latent_frames,
+                )
+                conditioned_residual_stats = conditioned_residual.step_records[-1]
+
             latents_before_step = inputs_shared["latents"]
 
             if guidance_enabled and progress_id in selected_steps:
@@ -1913,6 +1944,7 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                         "cfg_delta": _tensor_numeric_stats(cfg_delta),
                         "cfg_delta_l2": _tensor_l2_rms_stats(cfg_delta),
                         "noise_pred": _tensor_numeric_stats(noise_pred),
+                        "conditioned_residual": conditioned_residual_stats,
                         "latents_after": _tensor_numeric_stats(latents_after_step),
                     }
                 )

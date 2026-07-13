@@ -73,6 +73,13 @@ def load_json(path: Path) -> dict[str, Any] | None:
     return payload
 
 
+def is_result_payload(payload: dict[str, Any]) -> bool:
+    return any(
+        isinstance(payload.get(key), str) and bool(payload[key].strip())
+        for key in ("input_json", "case_json")
+    )
+
+
 def discover_payloads(result_root: Path) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     if not result_root.is_dir():
@@ -81,7 +88,7 @@ def discover_payloads(result_root: Path) -> list[dict[str, Any]]:
         if json_path.name in EXCLUDED_JSON_NAMES or json_path.name.startswith("eval_summary_"):
             continue
         payload = load_json(json_path)
-        if payload is None:
+        if payload is None or not is_result_payload(payload):
             continue
         payloads.append(payload)
     return payloads
@@ -148,9 +155,7 @@ def build_row(result_root: Path, payloads: list[dict[str, Any]]) -> dict[str, An
             if (resolved_input_json := resolve_payload_input_json(payload)) is not None
             and resolved_input_json in reference_set
         ]
-        num_json = len(reference_input_jsons)
-    else:
-        num_json = len(payloads)
+    num_json = len(payloads)
 
     row: dict[str, Any] = {
         "method": infer_method_name(result_root, payloads),
