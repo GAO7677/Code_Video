@@ -346,6 +346,68 @@ def _sample_motion_profile(rng: np.random.Generator, family: ScenarioFamilySpec)
     }
 
 
+def _sample_heading_deg(
+    rng: np.random.Generator,
+    *,
+    axis: str,
+    angle_deg: float,
+    lateral_jitter: float,
+) -> float:
+    spread_deg = max(angle_deg, 8.0)
+    if axis == "diag":
+        base_deg = float(rng.choice([-42.0, -28.0, 28.0, 42.0]))
+        jitter_deg = spread_deg * float(rng.uniform(0.30, 1.15))
+        return base_deg + float(rng.choice([-1.0, 1.0])) * jitter_deg
+    if axis == "y":
+        base_deg = float(rng.choice([90.0, -90.0]))
+        jitter_deg = spread_deg * float(rng.uniform(0.15, max(0.30, lateral_jitter + 0.20)))
+        return base_deg + float(rng.choice([-1.0, 1.0])) * jitter_deg
+    mode = str(rng.choice(["straight", "bias", "wide"]))
+    if mode == "straight":
+        offset_deg = float(rng.uniform(-0.45, 0.45)) * spread_deg
+    elif mode == "bias":
+        offset_deg = float(rng.choice([-1.0, 1.0])) * spread_deg * float(rng.uniform(0.35, 1.00))
+    else:
+        offset_deg = float(rng.choice([-1.0, 1.0])) * min(55.0, spread_deg * float(rng.uniform(0.85, 1.45)))
+    return offset_deg
+
+
+def _sample_angular_velocity(
+    rng: np.random.Generator,
+    *,
+    spin: float,
+) -> tuple[float, float, float]:
+    if spin <= 0.0:
+        return (0.0, 0.0, 0.0)
+    dominant_axis = int(rng.integers(0, 3))
+    dominant_sign = float(rng.choice([-1.0, 1.0]))
+    dominant_mag = spin * float(rng.uniform(0.55, 1.00))
+    secondary_scale = spin * float(rng.uniform(0.10, 0.42))
+    components = [float(rng.uniform(-secondary_scale, secondary_scale)) for _ in range(3)]
+    components[dominant_axis] = dominant_sign * dominant_mag
+    if rng.random() < 0.45:
+        coupled_axis = int((dominant_axis + int(rng.integers(1, 3))) % 3)
+        coupled_mag = spin * float(rng.uniform(0.18, 0.65))
+        components[coupled_axis] += float(rng.choice([-1.0, 1.0])) * coupled_mag
+    return tuple(float(np.clip(value, -spin, spin)) for value in components)
+
+
+def _sample_orientation_euler(
+    rng: np.random.Generator,
+    *,
+    angle_deg: float,
+) -> tuple[float, float, float]:
+    if angle_deg <= 0.0:
+        return (0.0, 0.0, 0.0)
+    dominant_axis = int(rng.integers(0, 3))
+    dominant_sign = float(rng.choice([-1.0, 1.0]))
+    dominant_mag = angle_deg * float(rng.uniform(0.30, 1.00))
+    secondary_mag = angle_deg * float(rng.uniform(0.12, 0.45))
+    components = [float(rng.uniform(-secondary_mag, secondary_mag)) for _ in range(3)]
+    components[dominant_axis] = dominant_sign * dominant_mag
+    return tuple(components)
+
+
 def _motion_vectors(
     rng: np.random.Generator,
     *,
@@ -355,25 +417,14 @@ def _motion_vectors(
     axis: str = "x",
     lateral_jitter: float = 0.35,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
-    angle = math.radians(angle_deg)
-    vx = speed * math.cos(angle)
-    vy = speed * math.sin(angle) * float(rng.uniform(-lateral_jitter, lateral_jitter))
-    vz = float(rng.uniform(-0.08, 0.04))
-    if axis == "y":
-        vx, vy = vy, vx
-    elif axis == "diag":
-        vx *= float(rng.choice([-1.0, 1.0]))
+    heading_deg = _sample_heading_deg(rng, axis=axis, angle_deg=angle_deg, lateral_jitter=lateral_jitter)
+    heading = math.radians(heading_deg)
+    vx = speed * math.cos(heading)
+    vy = speed * math.sin(heading)
+    vz = float(rng.uniform(-0.10, 0.06))
     linear_velocity = (vx, vy, vz)
-    angular_velocity = (
-        float(rng.uniform(-spin, spin)),
-        float(rng.uniform(-spin, spin)),
-        float(rng.uniform(-spin, spin)),
-    )
-    orientation = (
-        float(rng.uniform(-angle_deg, angle_deg)),
-        float(rng.uniform(-angle_deg, angle_deg)),
-        float(rng.uniform(-angle_deg, angle_deg)),
-    )
+    angular_velocity = _sample_angular_velocity(rng, spin=spin)
+    orientation = _sample_orientation_euler(rng, angle_deg=angle_deg)
     return linear_velocity, angular_velocity, orientation
 
 

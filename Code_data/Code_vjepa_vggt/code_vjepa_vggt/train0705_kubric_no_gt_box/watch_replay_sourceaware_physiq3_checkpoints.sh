@@ -3,6 +3,7 @@ set -u
 
 BASE=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box
 INFER_WRAPPER="${BASE}/run_kubric_batch_infer_stage1b_context_only_no_gt_box_vnewtrain.sh"
+CONDITION_INFER_SCRIPT="${BASE}/wan_stage1b_context_only_no_gt_box_vnewtrain_kubric_condition_ablation_v2v.py"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:?Set CHECKPOINT_ROOT to the training run checkpoints directory}"
 INPUT_LIST="${INPUT_LIST:-/data/gaoya/agent-data/outputs/replay_preserve_step300_physicIQ_025_026_three_cases_20260713/input_jsons.txt}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?Set OUTPUT_ROOT to a temporary validation output directory under /data/gaoya}"
@@ -26,21 +27,39 @@ log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "${WATCH_LOG}"
 }
 
-result_is_complete() {
-  local result_json="$1"
-  [ -f "${result_json}" ] || return 1
-  /home/gaoya/miniconda3/envs/wan-cu128/bin/python - "${result_json}" <<'PY'
+mode_is_complete() {
+  local mode_root="$1"
+  local step_dir="$2"
+  local condition_mode="$3"
+  [ -d "${mode_root}" ] || return 1
+  /home/gaoya/miniconda3/envs/wan-cu128/bin/python - "${mode_root}" "${step_dir}" "${condition_mode}" <<'PY'
 import json
 import sys
+from pathlib import Path
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    result = json.load(handle)
-complete = (
-    int(result.get("num_total", -1)) == 3
-    and int(result.get("num_success", -1)) == 3
-    and int(result.get("num_failed", -1)) == 0
-)
-raise SystemExit(0 if complete else 1)
+mode_root = Path(sys.argv[1])
+expected_checkpoint = str(Path(sys.argv[2]).resolve())
+expected_mode = sys.argv[3]
+for result_path in mode_root.glob("*/result.json"):
+    try:
+        with result_path.open(encoding="utf-8") as handle:
+            result = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        continue
+    entries = result.get("entries", [])
+    complete = (
+        str(Path(result.get("checkpoint_dir", "")).resolve()) == expected_checkpoint
+        and int(result.get("num_total", -1)) == 3
+        and int(result.get("num_success", -1)) == 3
+        and int(result.get("num_failed", -1)) == 0
+        and len(entries) == 3
+        and all(entry.get("condition_mode") == expected_mode for entry in entries)
+        and all(Path(entry.get("output_video", "")).is_file() for entry in entries)
+    )
+    if complete:
+        print(result_path)
+        raise SystemExit(0)
+raise SystemExit(1)
 PY
 }
 
@@ -63,31 +82,34 @@ gpu_is_available() {
   [ -n "${memory_used}" ] && [ "${memory_used}" -lt 2048 ]
 }
 
-run_checkpoint() {
+run_condition_mode() {
   local step_dir="$1"
-  local step_name model_name output_dir tmp_dir
+  local condition_mode="$2"
+  local step_name model_name mode_root tmp_dir
   step_name="$(basename "${step_dir}")"
-  model_name="${MODEL_PREFIX}_${step_name}"
-  output_dir="${OUTPUT_ROOT}/${model_name}_steps40_512x896_ctx08_49f_defaultnegprompt"
-  tmp_dir="${TMP_ROOT}/${step_name}"
+  model_name="${MODEL_PREFIX}_${step_name}_${condition_mode}"
+  mode_root="${OUTPUT_ROOT}/${condition_mode}"
+  tmp_dir="${TMP_ROOT}/${step_name}/${condition_mode}"
 
-  if result_is_complete "${output_dir}/result.json"; then
-    log "skip completed ${step_name}: ${output_dir}"
+  if mode_is_complete "${mode_root}" "${step_dir}" "${condition_mode}" >>"${WATCH_LOG}" 2>&1; then
+    log "skip completed ${step_name} mode=${condition_mode}: ${mode_root}"
     return 0
   fi
   if ! gpu_is_available; then
-    log "defer ${step_name}: GPU pair ${GPU_PAIR} is busy"
+    log "defer ${step_name} mode=${condition_mode}: GPU pair ${GPU_PAIR} is busy"
     return 0
   fi
 
   mkdir -p "${tmp_dir}"
-  log "infer start ${step_name}: checkpoint=${step_dir} output=${output_dir}"
+  log "infer start ${step_name} mode=${condition_mode}: checkpoint=${step_dir} output=${mode_root}"
   if env \
     GPU_PAIR="${GPU_PAIR}" \
     TEST_JSON_TXT="${INPUT_LIST}" \
     WEIGHTS_ROOT="${step_dir}" \
     METHOD_NAME="${model_name}" \
-    OUTPUT_ROOT="${OUTPUT_ROOT}" \
+    OUTPUT_ROOT="${mode_root}" \
+    INFER_SCRIPT_OVERRIDE="${CONDITION_INFER_SCRIPT}" \
+    CONDITION_MODE="${condition_mode}" \
     OUTPUT_FRAMES=49 \
     CTX=8 \
     NUM_INFERENCE_STEPS=40 \
@@ -100,14 +122,22 @@ run_checkpoint() {
     FORCE=1 \
     TMPDIR="${tmp_dir}" TMP="${tmp_dir}" TEMP="${tmp_dir}" \
     bash "${INFER_WRAPPER}" >>"${WATCH_LOG}" 2>&1; then
-    if result_is_complete "${output_dir}/result.json"; then
-      log "infer success ${step_name}: ${output_dir}"
+    if mode_is_complete "${mode_root}" "${step_dir}" "${condition_mode}" >>"${WATCH_LOG}" 2>&1; then
+      log "infer success ${step_name} mode=${condition_mode}: ${mode_root}"
     else
-      log "infer incomplete ${step_name}: wrapper exited 0 without a 3/3 result"
+      log "infer incomplete ${step_name} mode=${condition_mode}: wrapper exited 0 without a valid 3/3 result"
     fi
   else
-    log "infer failed ${step_name}: it will be retried after ${POLL_SECONDS}s"
+    log "infer failed ${step_name} mode=${condition_mode}: it will be retried after ${POLL_SECONDS}s"
   fi
+}
+
+run_checkpoint() {
+  local step_dir="$1"
+  local condition_mode
+  for condition_mode in text_video text_only video_only; do
+    run_condition_mode "${step_dir}" "${condition_mode}"
+  done
 }
 
 if [ "$(wc -l < "${INPUT_LIST}")" -ne 3 ]; then
