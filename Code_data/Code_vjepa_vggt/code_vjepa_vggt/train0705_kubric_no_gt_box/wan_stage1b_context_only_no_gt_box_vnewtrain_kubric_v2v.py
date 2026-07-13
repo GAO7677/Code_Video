@@ -597,6 +597,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional L2 ratio cap for gated object residual vs x_before_object inside Wan blocks.",
     )
     parser.add_argument(
+        "--object-branch-residual-scale",
+        type=float,
+        default=1.0,
+        help="Inference-only multiplier applied to the gated object residual before the ratio guard.",
+    )
+    parser.add_argument(
         "--object-branch-ratio-guard-max-block-id",
         type=int,
         default=None,
@@ -1049,6 +1055,7 @@ def main() -> None:
         if cli_args.object_branch_ratio_guard_max_ratio is None
         else float(cli_args.object_branch_ratio_guard_max_ratio)
     )
+    model.pipe.dit._object_branch_residual_scale = float(cli_args.object_branch_residual_scale)
     model.pipe.dit._object_branch_ratio_guard_max_block_id = (
         None
         if cli_args.object_branch_ratio_guard_max_block_id is None

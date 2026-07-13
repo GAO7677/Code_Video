@@ -215,6 +215,9 @@ def enable_object_condition_branch(
             object_delta = self.object_cross_attn(self.norm4(x), object_context)
             object_gate_tanh = torch.tanh(self.object_gate).to(dtype=object_delta.dtype)
             gated_object_delta = object_gate_tanh * object_delta
+            residual_scale = float(getattr(dit, "_object_branch_residual_scale", 1.0))
+            if residual_scale != 1.0:
+                gated_object_delta = gated_object_delta * residual_scale
             guard_max_ratio = getattr(dit, "_object_branch_ratio_guard_max_ratio", None)
             guard_max_block_id = getattr(dit, "_object_branch_ratio_guard_max_block_id", None)
             guard_enabled = (
@@ -270,6 +273,7 @@ def enable_object_condition_branch(
                             "gated_to_x_ratio_l2": float(gated_delta_l2 / max(x_l2, 1.0e-12)),
                             "object_gate_raw": _tensor_numeric_stats(self.object_gate),
                             "object_gate_tanh": _tensor_numeric_stats(object_gate_tanh),
+                            "object_branch_residual_scale": residual_scale,
                             "object_ratio_guard": {
                                 "enabled": bool(guard_enabled),
                                 "applied": bool(guard_applied),
@@ -292,6 +296,7 @@ def enable_object_condition_branch(
     dit._object_branch_trace_buffer = None
     dit._object_branch_ratio_guard_max_ratio = None
     dit._object_branch_ratio_guard_max_block_id = None
+    dit._object_branch_residual_scale = 1.0
     dit._object_branch_guard_abort_after_count = None
     dit._object_branch_guard_abort_count = 0
     return dit
