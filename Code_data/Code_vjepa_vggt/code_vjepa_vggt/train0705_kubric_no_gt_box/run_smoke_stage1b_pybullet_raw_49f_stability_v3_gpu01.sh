@@ -26,7 +26,7 @@ env \
   --pybullet_raw_root "${RAW_ROOT}" \
   --pybullet_raw_split train \
   --pybullet_raw_sampling_strategy prefix \
-  --pybullet_raw_window_starts 0,20 \
+  --pybullet_raw_window_starts 0 \
   --pybullet_raw_init_scan_limit 4 \
   --height 512 --width 896 --num_frames 49 \
   --fixed_num_context_frames 8 --ctx_max_length 8 \

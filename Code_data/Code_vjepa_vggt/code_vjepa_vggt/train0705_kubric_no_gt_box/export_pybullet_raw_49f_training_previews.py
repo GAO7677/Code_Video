@@ -127,24 +127,17 @@ def main() -> None:
         num_frames=49,
         num_context_frames=8,
         sampling_strategy="prefix",
-        window_starts=(0, 20),
+        window_starts=(0,),
     )
 
     selected: list[int] = []
-    first_f1_video: str | None = None
     seen_families: set[str] = set()
     for idx, record in enumerate(dataset.samples):
         family = record.video_path.parent.parent.name
-        if family == "F1_single_object":
-            if first_f1_video is None:
-                first_f1_video = str(record.video_path)
-            if str(record.video_path) == first_f1_video:
-                selected.append(idx)
-            continue
-        if family not in seen_families and record.window_start == 20:
+        if family not in seen_families and record.window_start == 0:
             selected.append(idx)
             seen_families.add(family)
-        if len(seen_families) == 4 and len(selected) >= 7:
+        if len(seen_families) == 5:
             break
 
     manifest = []
@@ -197,13 +190,13 @@ def main() -> None:
         "# PyBullet Raw 49-Frame Training Data Demo\n\n"
         "## Basic Parameters\n\n"
         "- Source: raw_v1 H.264 videos, 960x540, 90 frames, 30 FPS.\n"
-        "- Windows: 49 consecutive frames at raw starts 0 and 20.\n"
+        "- Window: 49 consecutive frames at raw start 0 (raw frames 0-48).\n"
         "- Training resolution: 896x512 (width x height), stretch resize.\n"
         "- Tensor: [C,T,H,W] = [3,49,512,896], normalized to [-1,1].\n"
         "- Context: local frames 0-7 (8 frames).\n"
         "- Diffusion target timeline: local frames 8-48 (41 frames).\n"
         "- Preview encoding: H.264, yuv420p, CRF 18, 30 FPS.\n"
-        "- Train split: 1200 raw videos x 2 windows = 2400 samples.\n"
+        "- Train split: 1200 raw videos x 1 start-0 window = 1200 samples.\n"
         "- Caption: metadata-driven category + geometry + role + action relation.\n\n"
         "Each case contains the clean 49-frame training video, the exact 8-frame "
         "context video, an annotated timeline, a contact sheet, and sample.json.\n",
