@@ -24,12 +24,12 @@ for _path in (PROJECT_ROOT, TRY0526_ROOT):
     if _path_str not in sys.path:
         sys.path.insert(0, _path_str)
 
-from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
 from physv_eval.official_pdi import OfficialPDIRunner
 from physv_eval.phyground_official import OfficialPhyGroundRunner
 from physv_eval.paths import VPHY_PYTHON
 from physv_eval.proxy_runner import ProxyRunner
-from physv_eval.single_case import cosmos_reason1, pdi, phyground, physics_iq, pmf, proxy, videophy2, wmreward
+from physv_eval.single_case import pdi, phyground, physics_iq, pmf, proxy, videophy2, wmreward
+from physv_eval.vbench_official import OfficialVBenchRunner
 from physv_eval.videophy2_auto import VideoPhy2Runner
 from physv_eval.wmreward_official import WMRewardRunner
 
@@ -52,6 +52,15 @@ DEFAULT_METRICS = (
     "physics_iq_without_context",
     "pmf_with_context",
     "pmf_without_context",
+)
+DEFAULT_VBENCH_DIMENSIONS = (
+    "subject_consistency",
+    "background_consistency",
+    "temporal_flickering",
+    "motion_smoothness",
+    "dynamic_degree",
+    "aesthetic_quality",
+    "imaging_quality",
 )
 OLD_FAMILY_LABELS = {
     "F1_single_object": "F1",
@@ -100,8 +109,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-frames", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260713)
     parser.add_argument("--metrics", default=",".join(DEFAULT_METRICS))
-    parser.add_argument("--vbench-dimensions", default="")
+    parser.add_argument("--vbench-dimensions", default=",".join(DEFAULT_VBENCH_DIMENSIONS))
     parser.add_argument("--vbench2-dimensions", default="")
+    parser.add_argument("--vbench-device", default="cuda")
+    parser.add_argument("--vbench-load-ckpt-from-local", action="store_true")
+    parser.add_argument("--vbench-read-frame", action="store_true")
+    parser.add_argument(
+        "--vbench-imaging-quality-preprocessing-mode",
+        default="longer",
+        choices=["shorter", "longer", "shorter_centercrop", "None"],
+    )
     parser.add_argument("--proxy-device", default="cuda")
     parser.add_argument("--videophy2-device", default="cuda")
     parser.add_argument("--videophy2-task", default="pc", choices=["sa", "pc", "rule"])
@@ -359,6 +376,10 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) ->
         writer.writerows(rows)
 
 
+def _parse_csv_tokens(raw: str) -> list[str]:
+    return [token.strip() for token in raw.split(",") if token.strip()]
+
+
 def _build_metric_specs(requested_metrics: list[str]) -> list[MetricRunSpec]:
     specs = {
         "pdi": MetricRunSpec(name="pdi", setup=_setup_pdi),
@@ -372,10 +393,36 @@ def _build_metric_specs(requested_metrics: list[str]) -> list[MetricRunSpec]:
         "pmf_with_context": MetricRunSpec(name="pmf_with_context", setup=_setup_pmf_with_context),
         "pmf_without_context": MetricRunSpec(name="pmf_without_context", setup=_setup_pmf_without_context),
     }
-    unknown = [name for name in requested_metrics if name not in specs]
+    expanded_specs: list[MetricRunSpec] = []
+    unknown: list[str] = []
+    for name in requested_metrics:
+        if name in specs:
+            expanded_specs.append(specs[name])
+        elif name.startswith("vbench_"):
+            dimension = name[len("vbench_") :]
+            expanded_specs.append(MetricRunSpec(name=name, setup=_make_vbench_setup(dimension)))
+        elif name == "vbench":
+            expanded_specs.append(MetricRunSpec(name="__expand_vbench__", setup=lambda _: ({}, lambda *_: None)))
+        else:
+            unknown.append(name)
     if unknown:
         raise ValueError(f"unsupported metrics: {unknown}")
-    return [specs[name] for name in requested_metrics]
+    return expanded_specs
+
+
+def _expand_requested_metric_specs(args: argparse.Namespace, requested_metrics: list[str]) -> list[MetricRunSpec]:
+    raw_specs = _build_metric_specs(requested_metrics)
+    final_specs: list[MetricRunSpec] = []
+    for spec in raw_specs:
+        if spec.name != "__expand_vbench__":
+            final_specs.append(spec)
+            continue
+        dimensions = _parse_csv_tokens(args.vbench_dimensions)
+        if not dimensions:
+            raise ValueError("metrics includes 'vbench' but --vbench-dimensions is empty")
+        for dimension in dimensions:
+            final_specs.append(MetricRunSpec(name=f"vbench_{dimension}", setup=_make_vbench_setup(dimension)))
+    return final_specs
 
 
 def _setup_pdi(args: argparse.Namespace) -> tuple[dict[str, Any], Callable[[CaseSpec, dict[str, Any], Path], dict[str, Any] | None]]:
@@ -544,6 +591,30 @@ def _setup_pmf_without_context(args: argparse.Namespace) -> tuple[dict[str, Any]
     return {}, run
 
 
+def _make_vbench_setup(
+    dimension: str,
+) -> Callable[[argparse.Namespace], tuple[dict[str, Any], Callable[[CaseSpec, dict[str, Any], Path], dict[str, Any] | None]]]:
+    def _setup(args: argparse.Namespace) -> tuple[dict[str, Any], Callable[[CaseSpec, dict[str, Any], Path], dict[str, Any] | None]]:
+        runner = OfficialVBenchRunner(
+            device=args.vbench_device,
+            load_ckpt_from_local=args.vbench_load_ckpt_from_local,
+            read_frame=args.vbench_read_frame,
+            imaging_quality_preprocessing_mode=args.vbench_imaging_quality_preprocessing_mode,
+        )
+
+        def run(_: CaseSpec, eval_case: dict[str, Any], out_dir: Path) -> dict[str, Any] | None:
+            return runner.score_case(
+                eval_case,
+                dimension=dimension,
+                caption=eval_case["caption"],
+                output_path=out_dir,
+            )
+
+        return {"runner": runner, "dimension": dimension}, run
+
+    return _setup
+
+
 def _cleanup_runtime(runtime: dict[str, Any]) -> None:
     runner = runtime.get("runner")
     if runner is not None:
@@ -585,6 +656,8 @@ def main() -> None:
             "seed": args.seed,
             "context_frames": args.context_frames,
             "metrics": metric_names,
+            "cosmos_python": str(args.cosmos_python),
+            "cosmos_cuda_visible_devices": args.cosmos_cuda_visible_devices,
             "note": (
                 "Reference-based metrics in this script are run in self-reference mode for dataset clips. "
                 "For new cases without an explicit source_video, source_video falls back to the case video itself."
@@ -598,7 +671,7 @@ def main() -> None:
         print(json.dumps({key: len(value) for key, value in dataset_map.items()}, ensure_ascii=False, indent=2))
         return
 
-    metric_specs = _build_metric_specs(metric_names)
+    metric_specs = _expand_requested_metric_specs(args, metric_names)
     case_rows: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
 

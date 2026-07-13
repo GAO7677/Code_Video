@@ -96,8 +96,10 @@ class OpenVidNoGTBoxDataset(Dataset):
             "num_context_frames": self.num_context_frames,
             "metadata": {
                 "dataset_source": "openvid",
+                "sample_key": f"openvid/row_{row_index:06d}",
                 "openvid_row_index": row_index,
                 "source_root": str(self.root),
+                "source_frame_count": self.num_frames,
                 "sampled_frame_count": self.num_frames,
                 "sampled_frame_indices": list(range(self.num_frames)),
             },

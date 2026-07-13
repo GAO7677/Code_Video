@@ -13,6 +13,8 @@ TABLE1_METRIC_ALIASES = {
     "subject_consistency": "subject_consistency",
     "back_cons": "background_consistency",
     "background_consistency": "background_consistency",
+    "temp_flick": "temporal_flickering",
+    "temporal_flickering": "temporal_flickering",
     "moti_smoo": "motion_smoothness",
     "motion_smoothness": "motion_smoothness",
     "dyna_degr": "dynamic_degree",
@@ -21,17 +23,7 @@ TABLE1_METRIC_ALIASES = {
     "aesthetic_quality": "aesthetic_quality",
     "image_qual": "imaging_quality",
     "imaging_quality": "imaging_quality",
-    "table1_all": "table1_all",
 }
-
-TABLE1_METRIC_ORDER = [
-    ("subj_cons", "subject_consistency"),
-    ("back_cons", "background_consistency"),
-    ("image_qual", "imaging_quality"),
-    ("moti_smoo", "motion_smoothness"),
-    ("dyna_degr", "dynamic_degree"),
-    ("aest_qual", "aesthetic_quality"),
-]
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,8 +32,8 @@ def parse_args() -> argparse.Namespace:
         "--dimension",
         required=True,
         help=(
-            "VBench dimension, Table-1 alias, or table1_all. "
-            "Examples: subject_consistency, image_qual, moti_smoo, table1_all"
+            "Single VBench dimension or alias. "
+            "Examples: subject_consistency, image_qual, temp_flick, moti_smoo"
         ),
     )
     parser.add_argument("--input-json", type=Path, default=None, help="Case JSON containing video metadata.")
@@ -80,43 +72,12 @@ def score_case(
 ) -> dict[str, Any]:
     active_runner = runner or OfficialVBenchRunner()
     resolved_dimension = resolve_requested_dimension(dimension)
-    if resolved_dimension == "table1_all":
-        raise ValueError("Use score_case_many(..., dimensions=['table1_all']) or the CLI with --dimension table1_all.")
     return active_runner.score_case(
         case,
         dimension=resolved_dimension,
         caption=caption,
         output_path=output_path,
     )
-
-
-def score_case_many(
-    case: Path | str | dict[str, Any],
-    *,
-    dimensions: list[str] | tuple[str, ...],
-    caption: str | None = None,
-    output_path: Path | None = None,
-    runner: OfficialVBenchRunner | None = None,
-) -> dict[str, Any]:
-    active_runner = runner or OfficialVBenchRunner()
-    requested = [resolve_requested_dimension(name) for name in dimensions]
-    if requested == ["table1_all"]:
-        requested = [dimension for _, dimension in TABLE1_METRIC_ORDER]
-
-    results: dict[str, Any] = {}
-    for alias, canonical in TABLE1_METRIC_ORDER:
-        if canonical not in requested:
-            continue
-        results[alias] = active_runner.score_case(
-            case,
-            dimension=canonical,
-            caption=caption,
-            output_path=output_path,
-        )
-    return {
-        "requested_dimension": "table1_all" if dimensions == ["table1_all"] else list(dimensions),
-        "table1_metrics": results,
-    }
 
 
 def main() -> None:
@@ -130,23 +91,13 @@ def main() -> None:
         read_frame=args.read_frame,
         imaging_quality_preprocessing_mode=args.imaging_quality_preprocessing_mode,
     )
-    resolved_dimension = resolve_requested_dimension(args.dimension)
-    if resolved_dimension == "table1_all":
-        result = score_case_many(
-            case,
-            dimensions=["table1_all"],
-            caption=args.caption,
-            output_path=args.output_path,
-            runner=runner,
-        )
-    else:
-        result = score_case(
-            case,
-            dimension=args.dimension,
-            caption=args.caption,
-            output_path=args.output_path,
-            runner=runner,
-        )
+    result = score_case(
+        case,
+        dimension=args.dimension,
+        caption=args.caption,
+        output_path=args.output_path,
+        runner=runner,
+    )
     emit_result(result_record(case, result), output_json=args.output_json)
 
 
