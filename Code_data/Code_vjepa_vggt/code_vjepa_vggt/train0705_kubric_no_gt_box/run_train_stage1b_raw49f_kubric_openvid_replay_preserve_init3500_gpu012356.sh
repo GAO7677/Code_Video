@@ -7,16 +7,20 @@ set -euo pipefail
 VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5,GPU-74468333-11e0-dfa6-ef16-584a42fa5a02,GPU-994fb224-27dc-b1e0-759d-0226b0c0d775,GPU-05862376-967b-f129-f129-835daf8158cf,GPU-99e4d61a-1169-14e0-d90c-364fdbe30065,GPU-7f6fbc40-3594-2c34-8557-422621355ff9}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-300}"
-SAVE_STEPS="${SAVE_STEPS:-150}"
-MAX_CHECKPOINTS_KEEP="${MAX_CHECKPOINTS_KEEP:-6}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-3500}"
+SAVE_STEPS="${SAVE_STEPS:-500}"
+# Non-positive disables checkpoint pruning in train_v_newtrain.py.
+MAX_CHECKPOINTS_KEEP="${MAX_CHECKPOINTS_KEEP:-0}"
 LEARNING_RATE="${LEARNING_RATE:-2e-5}"
 PYBULLET_RATIO="${PYBULLET_RATIO:-0.30}"
 KUBRIC_RATIO="${KUBRIC_RATIO:-0.30}"
 OPENVID_RATIO="${OPENVID_RATIO:-0.40}"
 OBJECT_BRANCH_DROPOUT_PROB="${OBJECT_BRANCH_DROPOUT_PROB:-0.20}"
+OPENVID_OBJECT_BRANCH_DROPOUT_PROB="${OPENVID_OBJECT_BRANCH_DROPOUT_PROB:-0.50}"
 TEACHER_PRESERVATION_WEIGHT="${TEACHER_PRESERVATION_WEIGHT:-0.05}"
 TEACHER_PRESERVATION_EVERY="${TEACHER_PRESERVATION_EVERY:-4}"
+OPENVID_TEACHER_PRESERVATION_EVERY="${OPENVID_TEACHER_PRESERVATION_EVERY:-1}"
+FIXED_CONTEXT_FRAMES="${FIXED_CONTEXT_FRAMES:-8}"
 WANDB_MODE="${WANDB_MODE:-online}"
 REPORT_TO="${REPORT_TO:-wandb}"
 DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-4}"
@@ -24,10 +28,11 @@ PYBULLET_INIT_SCAN_LIMIT="${PYBULLET_INIT_SCAN_LIMIT:-}"
 KUBRIC_INIT_SCAN_LIMIT="${KUBRIC_INIT_SCAN_LIMIT:-}"
 OPENVID_MAX_SAMPLES="${OPENVID_MAX_SAMPLES:-}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+TMP_TAG="${RUN_TAG:0:16}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_raw49f_kubric_openvid_replay_preserve_init3500_${RUN_TAG}}"
 WANDB_NAME="${WANDB_NAME:-stage1b_raw49f_kubric_openvid_replay_preserve_init3500_${RUN_TAG}}"
-TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/tmp/replay_preserve_${RUN_TAG}}"
+TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/rp_${TMP_TAG}}"
 
 IFS=',' read -r -a VISIBLE_GPU_ARRAY <<< "${VISIBLE_GPU_IDS}"
 if [ "${#VISIBLE_GPU_ARRAY[@]}" -lt 6 ]; then
@@ -83,9 +88,8 @@ CMD=(
   --mixture_kubric_ratio "${KUBRIC_RATIO}"
   --mixture_openvid_ratio "${OPENVID_RATIO}"
   --height 512 --width 896 --num_frames 49
-  --fixed_num_context_frames 8 --ctx_max_length 8
-  --min_context_frames 0 --max_context_ratio 1.0
-  --context_length_sampling short_biased --no_context_ratio 0.0
+  --fixed_num_context_frames "${FIXED_CONTEXT_FRAMES}"
+  --replay_fixed_context_frames "${FIXED_CONTEXT_FRAMES}"
   --max_train_steps "${MAX_TRAIN_STEPS}" --num_epochs 100 --dataset_num_workers "${DATASET_NUM_WORKERS}"
   --learning_rate "${LEARNING_RATE}" --weight_decay 0.01 --gradient_accumulation_steps 1
   --optimizer_type paged_adamw8bit --max_grad_norm 1.0 --find_unused_parameters
@@ -113,8 +117,11 @@ CMD=(
   --object_adapter_mlp_residual_max_ratio 3.0
   --object_slot_dropout_prob 0.35 --full_slot_loss_weight 1.0
   --object_branch_dropout_prob "${OBJECT_BRANCH_DROPOUT_PROB}"
+  --openvid_object_branch_dropout_prob "${OPENVID_OBJECT_BRANCH_DROPOUT_PROB}"
   --lambda_teacher_preservation "${TEACHER_PRESERVATION_WEIGHT}"
   --teacher_preservation_every_n_steps "${TEACHER_PRESERVATION_EVERY}"
+  --openvid_teacher_preservation_every_n_steps "${OPENVID_TEACHER_PRESERVATION_EVERY}"
+  --teacher_preservation_unbiased_interval_scale
   --object_branch_train_trace
   --object_branch_ratio_guard_max_ratio 0.30 --object_branch_ratio_guard_max_block_id -1
   --debug_print_object_regularization
@@ -143,6 +150,7 @@ fi
 
 echo "[train] model-only init=${STAGE1B_INIT}; optimizer/global step start fresh"
 echo "[train] mix=${PYBULLET_RATIO}/${KUBRIC_RATIO}/${OPENVID_RATIO}; raw window=start0, 49f"
+echo "[train] context=fixed-${FIXED_CONTEXT_FRAMES}f; null-object=${OBJECT_BRANCH_DROPOUT_PROB}, openvid-null=${OPENVID_OBJECT_BRANCH_DROPOUT_PROB}"
 echo "[train] output=${OUTPUT_DIR} log=${LOG_FILE}"
 echo "[train] command: ${CMD[*]}"
 exec "${CMD[@]}"

@@ -150,29 +150,102 @@ def _shared_flow_match_predictions(
 class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
     def __init__(self, *args, **kwargs) -> None:
         self.object_branch_dropout_prob = float(kwargs.pop("object_branch_dropout_prob", 0.0))
+        openvid_dropout_prob = kwargs.pop("openvid_object_branch_dropout_prob", None)
+        self.openvid_object_branch_dropout_prob = float(
+            self.object_branch_dropout_prob
+            if openvid_dropout_prob is None
+            else openvid_dropout_prob
+        )
         self.lambda_teacher_preservation = float(kwargs.pop("lambda_teacher_preservation", 0.0))
         self.teacher_preservation_every_n_steps = int(
             kwargs.pop("teacher_preservation_every_n_steps", 1)
         )
+        openvid_teacher_every = kwargs.pop(
+            "openvid_teacher_preservation_every_n_steps", None
+        )
+        self.openvid_teacher_preservation_every_n_steps = int(
+            self.teacher_preservation_every_n_steps
+            if openvid_teacher_every is None
+            else openvid_teacher_every
+        )
+        self.teacher_preservation_unbiased_interval_scale = bool(
+            kwargs.pop("teacher_preservation_unbiased_interval_scale", False)
+        )
+        replay_fixed_context_frames = kwargs.pop("replay_fixed_context_frames", None)
+        self.replay_fixed_context_frames = (
+            None
+            if replay_fixed_context_frames is None
+            else int(replay_fixed_context_frames)
+        )
         if not 0.0 <= self.object_branch_dropout_prob <= 1.0:
             raise ValueError("object_branch_dropout_prob must be in [0, 1]")
+        if not 0.0 <= self.openvid_object_branch_dropout_prob <= 1.0:
+            raise ValueError("openvid_object_branch_dropout_prob must be in [0, 1]")
         if self.lambda_teacher_preservation < 0.0:
             raise ValueError("lambda_teacher_preservation must be non-negative")
         if self.teacher_preservation_every_n_steps <= 0:
             raise ValueError("teacher_preservation_every_n_steps must be positive")
-        self._preservation_forward_count = 0
+        if self.openvid_teacher_preservation_every_n_steps <= 0:
+            raise ValueError(
+                "openvid_teacher_preservation_every_n_steps must be positive"
+            )
+        if (
+            self.replay_fixed_context_frames is not None
+            and self.replay_fixed_context_frames <= 0
+        ):
+            raise ValueError("replay_fixed_context_frames must be positive")
+        self._preservation_forward_counts: dict[str, int] = {}
         self._full_dropout_count = 0
         self._full_dropout_total = 0
+        self._full_dropout_counts_by_source: dict[str, int] = {}
+        self._full_dropout_totals_by_source: dict[str, int] = {}
         self._last_preservation_metrics: dict[str, float] = {}
         super().__init__(*args, **kwargs)
 
+    @staticmethod
+    def _dataset_source(inputs_shared: dict[str, Any]) -> str:
+        raw_sample = inputs_shared.get("raw_sample", {})
+        metadata = raw_sample.get("metadata", {}) if isinstance(raw_sample, dict) else {}
+        return str(metadata.get("dataset_source", "unknown")).strip().lower()
+
+    def sample_context_spec(self, video, raw_sample=None):
+        if self.replay_fixed_context_frames is None:
+            return super().sample_context_spec(video, raw_sample=raw_sample)
+
+        total_frames = len(video)
+        if raw_sample is not None:
+            raw_video = raw_sample.get("video")
+            if isinstance(raw_video, torch.Tensor) and raw_video.ndim >= 2:
+                total_frames = int(raw_video.shape[1])
+        context_frames = int(self.replay_fixed_context_frames)
+        if context_frames >= total_frames:
+            raise ValueError(
+                "replay_fixed_context_frames must leave at least one target frame; "
+                f"got context={context_frames}, total={total_frames}"
+            )
+        return self._finalize_context_spec(
+            "fixed_prefix",
+            list(range(context_frames)),
+            ctx_max_length=context_frames - 1,
+        )
+
     def _run_main_loss_with_trace(self, pipe, inputs_shared, inputs_posi, object_context):
-        self._preservation_forward_count += 1
+        source = self._dataset_source(inputs_shared)
+        source_count = self._preservation_forward_counts.get(source, 0) + 1
+        self._preservation_forward_counts[source] = source_count
+        teacher_interval = (
+            self.openvid_teacher_preservation_every_n_steps
+            if source == "openvid"
+            else self.teacher_preservation_every_n_steps
+        )
         run_teacher = (
             self.lambda_teacher_preservation > 0.0
-            and (self._preservation_forward_count - 1)
-            % self.teacher_preservation_every_n_steps
-            == 0
+            and (source_count - 1) % teacher_interval == 0
+        )
+        preservation_interval_scale = (
+            float(teacher_interval)
+            if run_teacher and self.teacher_preservation_unbiased_interval_scale
+            else 1.0
         )
         active_dit = getattr(pipe, "dit", None)
         trace_layers = None
@@ -203,20 +276,47 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
                 "train/loss_main_unregularized": float(main_loss.detach().item()),
                 "train/loss_teacher_preservation": float(preservation_loss.detach().item()),
                 "train/loss_teacher_preservation_weighted": float(
-                    self.lambda_teacher_preservation * preservation_loss.detach().item()
+                    self.lambda_teacher_preservation
+                    * preservation_interval_scale
+                    * preservation_loss.detach().item()
+                ),
+                "train/teacher_preservation_interval": float(teacher_interval),
+                "train/teacher_preservation_interval_scale": preservation_interval_scale,
+                "train/teacher_preservation_effective_coefficient": float(
+                    self.lambda_teacher_preservation * preservation_interval_scale
+                    if run_teacher
+                    else 0.0
                 ),
             }
         )
         self._last_preservation_metrics = diagnostics
-        return main_loss + self.lambda_teacher_preservation * preservation_loss, trace_layers
+        return (
+            main_loss
+            + self.lambda_teacher_preservation
+            * preservation_interval_scale
+            * preservation_loss,
+            trace_layers,
+        )
 
     def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
+        source = self._dataset_source(inputs_shared)
+        dropout_prob = (
+            self.openvid_object_branch_dropout_prob
+            if source == "openvid"
+            else self.object_branch_dropout_prob
+        )
         full_dropout = bool(
-            self.object_branch_dropout_prob > 0.0
-            and torch.rand((), device=pipe.device) < self.object_branch_dropout_prob
+            dropout_prob > 0.0
+            and torch.rand((), device=pipe.device) < dropout_prob
         )
         self._full_dropout_total += 1
         self._full_dropout_count += int(full_dropout)
+        self._full_dropout_totals_by_source[source] = (
+            self._full_dropout_totals_by_source.get(source, 0) + 1
+        )
+        self._full_dropout_counts_by_source[source] = (
+            self._full_dropout_counts_by_source.get(source, 0) + int(full_dropout)
+        )
         effective_inputs = inputs_shared
         if full_dropout:
             effective_inputs = dict(inputs_shared)
@@ -236,6 +336,17 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
         metrics["train/object_branch_full_dropout_running_fraction"] = (
             self._full_dropout_count / max(self._full_dropout_total, 1)
         )
+        metrics["train/object_branch_source_dropout_probability"] = float(dropout_prob)
+        metrics["train/object_branch_source_dropout_running_fraction"] = (
+            self._full_dropout_counts_by_source[source]
+            / max(self._full_dropout_totals_by_source[source], 1)
+        )
+        metrics["train/openvid_detected_object_mode"] = float(
+            source == "openvid" and not full_dropout
+        )
+        metrics["train/openvid_null_object_mode"] = float(
+            source == "openvid" and full_dropout
+        )
         metrics["train/object_condition_num_context_frames"] = float(
             0 if full_dropout else inputs_shared["raw_sample"].get("num_context_frames", 0)
         )
@@ -243,10 +354,13 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
             inputs_shared["raw_sample"].get("num_context_frames", 0)
         )
 
-        metadata = inputs_shared["raw_sample"].get("metadata", {})
-        source = str(metadata.get("dataset_source", "unknown"))
         source_ids = {"pybullet": 0, "kubric": 1, "openvid": 2}
         metrics["train/dataset_source_id"] = float(source_ids.get(source, -1))
+        metrics["train/replay_fixed_context_frames"] = float(
+            self.replay_fixed_context_frames
+            if self.replay_fixed_context_frames is not None
+            else -1
+        )
         for source_name in source_ids:
             metrics[f"train/dataset_source_{source_name}"] = float(source == source_name)
         return total, metrics
@@ -263,8 +377,18 @@ def build_parser() -> argparse.ArgumentParser:
     regularization = parser.add_argument_group("replay_preservation")
     regularization.add_argument("--stage2_init_from", default=None)
     regularization.add_argument("--object_branch_dropout_prob", type=float, default=0.20)
+    regularization.add_argument(
+        "--openvid_object_branch_dropout_prob", type=float, default=None
+    )
     regularization.add_argument("--lambda_teacher_preservation", type=float, default=0.05)
     regularization.add_argument("--teacher_preservation_every_n_steps", type=int, default=4)
+    regularization.add_argument(
+        "--openvid_teacher_preservation_every_n_steps", type=int, default=None
+    )
+    regularization.add_argument(
+        "--teacher_preservation_unbiased_interval_scale", action="store_true"
+    )
+    regularization.add_argument("--replay_fixed_context_frames", type=int, default=None)
 
     mixture = parser.add_argument_group("replay_mixture")
     mixture.add_argument("--openvid_root", type=str, default=None)
@@ -341,8 +465,16 @@ def build_model(args: argparse.Namespace, accelerator) -> ReplayPreserveNoGTBoxW
             *model_args,
             **model_kwargs,
             object_branch_dropout_prob=args.object_branch_dropout_prob,
+            openvid_object_branch_dropout_prob=args.openvid_object_branch_dropout_prob,
             lambda_teacher_preservation=args.lambda_teacher_preservation,
             teacher_preservation_every_n_steps=args.teacher_preservation_every_n_steps,
+            openvid_teacher_preservation_every_n_steps=(
+                args.openvid_teacher_preservation_every_n_steps
+            ),
+            teacher_preservation_unbiased_interval_scale=(
+                args.teacher_preservation_unbiased_interval_scale
+            ),
+            replay_fixed_context_frames=args.replay_fixed_context_frames,
         )
 
     base.ContextOnlyNoGTBoxWanModule = factory
@@ -414,9 +546,13 @@ def main() -> None:
     base._log_stage_summary(accelerator, model, args)
     accelerator.print(
         "Replay preservation: "
-        f"full_dropout={args.object_branch_dropout_prob:.3f}, "
+        f"physics_dropout={args.object_branch_dropout_prob:.3f}, "
+        f"openvid_dropout={args.openvid_object_branch_dropout_prob}, "
         f"teacher_lambda={args.lambda_teacher_preservation:.4f}, "
-        f"teacher_every={args.teacher_preservation_every_n_steps}"
+        f"teacher_every={args.teacher_preservation_every_n_steps}, "
+        f"openvid_teacher_every={args.openvid_teacher_preservation_every_n_steps}, "
+        f"unbiased_interval_scale={args.teacher_preservation_unbiased_interval_scale}, "
+        f"fixed_context_frames={args.replay_fixed_context_frames}"
     )
     model_logger = ModelLogger(
         tvn.get_checkpoint_dir(args),

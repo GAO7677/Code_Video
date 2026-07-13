@@ -180,7 +180,7 @@ def enable_object_condition_branch(
                 (1, 1, dim),
                 float(object_gate_init),
                 device=dit.patch_embedding.weight.device,
-                dtype=dit.patch_embedding.weight.dtype,
+                dtype=torch.float32,
             )
         )
         if reinitialize_object_branch:
@@ -213,7 +213,7 @@ def enable_object_condition_branch(
             block_id = int(getattr(self, "_codex_object_block_id", -1))
             x_before_object = x
             object_delta = self.object_cross_attn(self.norm4(x), object_context)
-            object_gate_tanh = torch.tanh(self.object_gate)
+            object_gate_tanh = torch.tanh(self.object_gate).to(dtype=object_delta.dtype)
             gated_object_delta = object_gate_tanh * object_delta
             guard_max_ratio = getattr(dit, "_object_branch_ratio_guard_max_ratio", None)
             guard_max_block_id = getattr(dit, "_object_branch_ratio_guard_max_block_id", None)

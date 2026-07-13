@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import importlib
+import importlib.util
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,11 @@ _CUSTOM_DIMENSIONS = {
     "aesthetic_quality",
     "imaging_quality",
 }
+_EXTRA_SITE_PACKAGES = (
+    Path("/home/gaoya/miniconda3/envs/flux/lib/python3.10/site-packages"),
+    Path("/data/gaoya/miniconda3/envs/physxnet_mpm_env/lib/python3.10/site-packages"),
+    Path("/data/gaoya/miniconda3/envs/vjepa2/lib/python3.12/site-packages"),
+)
 
 
 def _normalize_official_result(
@@ -95,10 +101,26 @@ class OfficialVBenchRunner:
         if repo_root_str not in sys.path:
             sys.path.insert(0, repo_root_str)
 
+        self._ensure_optional_metric_deps()
+
         import torch
         from vbench import VBench
 
         return torch, VBench
+
+    def _ensure_optional_metric_deps(self) -> None:
+        needed = [name for name in ("clip", "pyiqa") if importlib.util.find_spec(name) is None]
+        if not needed:
+            return
+        for site_packages in _EXTRA_SITE_PACKAGES:
+            if not site_packages.is_dir():
+                continue
+            site_path = str(site_packages)
+            if site_path not in sys.path:
+                sys.path.append(site_path)
+            needed = [name for name in ("clip", "pyiqa") if importlib.util.find_spec(name) is None]
+            if not needed:
+                return
 
     def _prepare_env(self) -> None:
         os.environ.setdefault("PYTHONNOUSERSITE", "1")

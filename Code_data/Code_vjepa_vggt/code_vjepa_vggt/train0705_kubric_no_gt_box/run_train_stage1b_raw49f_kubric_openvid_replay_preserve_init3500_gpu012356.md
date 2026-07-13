@@ -15,7 +15,9 @@ new W&B run with a fresh optimizer at learning rate `2e-5`.
   distribution and avoids rescanning the full directory tree.
 - OpenVid: 53,500 parquet rows, a random contiguous 49-frame clip per access.
 - Every source is converted to `[C=3,T=49,H=512,W=896]` in `[-1,1]`.
-- Context is the first 8 sampled frames; the remaining 41 frames are targets.
+- Context is explicitly fixed to frames `0..7`; the remaining 41 frames are
+  targets. `replay_fixed_context_frames=8` is a frame count, not a maximum frame
+  index.
 
 The source sampling probabilities are `30% PyBullet / 30% Kubric / 40% OpenVid`.
 Weights are assigned per item as `source_probability / source_length`, so the
@@ -26,11 +28,18 @@ and OpenVid supplies real appearance/background/text replay for TI2V retention.
 ## Retention controls
 
 - Existing non-empty slot dropout remains at `0.35`.
-- Full object-condition dropout is `0.20`. It uses zero object tokens instead of
-  `None`, so the otherwise frozen model still gives gradients to the object branch.
+- PyBullet/Kubric null-object probability is `0.20`; OpenVid uses a source-aware
+  `0.50` probability. Null-object mode uses zero object tokens instead of `None`,
+  so the otherwise frozen model still gives gradients to the object branch.
+- OpenVid's remaining `0.50` detected-object samples run the normal grounding and
+  object-conditioning path, preserving broad real-video object appearance.
 - A no-object Wan forward is used as a frozen teacher at exactly the same noisy
-  latent and timestep as the student. Prediction MSE weight is `0.05`, evaluated
-  every 4 training steps to control memory and runtime overhead.
+  latent and timestep as the student. Prediction MSE weight is `0.05`. OpenVid
+  evaluates it on every sample; PyBullet/Kubric evaluate it every 4 source samples
+  and multiply active losses by 4 for an unbiased expected coefficient.
+- DiT `object_gate` parameters remain FP32 while their forward activations are cast
+  to the object branch dtype. This prevents `2e-5` updates from disappearing at
+  BF16 precision.
 - Existing gate, adapter residual, and per-block object-ratio guards remain active.
 
 ## First training gate
