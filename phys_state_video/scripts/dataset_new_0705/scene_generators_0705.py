@@ -19,6 +19,8 @@ from .object_catalog_0705 import build_object_family_catalog
 
 
 EARTH_GRAVITY = 9.81
+NOMINAL_RENDER_WIDTH = 1280
+NOMINAL_RENDER_HEIGHT = 720
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -476,6 +478,107 @@ def _sample_camera(rng: np.random.Generator, key: str) -> CameraSpec:
     return replace(camera, eye=eye, target=target, yfov_deg=yfov_deg)
 
 
+def _make_projection_camera(camera: CameraSpec, width: int, height: int) -> dict[str, np.ndarray | float]:
+    eye = np.asarray(camera.eye, dtype=np.float64)
+    target = np.asarray(camera.target, dtype=np.float64)
+    up = np.asarray(camera.up, dtype=np.float64)
+    forward = target - eye
+    forward /= np.linalg.norm(forward) + 1e-8
+    right = np.cross(forward, up)
+    right /= np.linalg.norm(right) + 1e-8
+    true_up = np.cross(right, forward)
+    yfov = math.radians(float(camera.yfov_deg))
+    aspect = float(width) / float(height)
+    fx = 0.5 * width / (math.tan(yfov * 0.5) * aspect)
+    fy = 0.5 * height / math.tan(yfov * 0.5)
+    return {
+        "eye": eye,
+        "forward": forward,
+        "right": right,
+        "up": true_up,
+        "fx": fx,
+        "fy": fy,
+        "cx": width * 0.5,
+        "cy": height * 0.5,
+    }
+
+
+def _project_world_point(point_world: tuple[float, float, float] | np.ndarray, camera: dict[str, np.ndarray | float]) -> tuple[np.ndarray | None, float]:
+    point = np.asarray(point_world, dtype=np.float64)
+    delta = point - np.asarray(camera["eye"], dtype=np.float64)
+    x_cam = float(delta @ np.asarray(camera["right"], dtype=np.float64))
+    y_cam = float(delta @ np.asarray(camera["up"], dtype=np.float64))
+    z_cam = float(delta @ np.asarray(camera["forward"], dtype=np.float64))
+    if z_cam <= 1e-6:
+        return None, z_cam
+    u = float(camera["fx"]) * (x_cam / z_cam) + float(camera["cx"])
+    v = float(camera["cy"]) - float(camera["fy"]) * (y_cam / z_cam)
+    return np.asarray([u, v], dtype=np.float32), z_cam
+
+
+def _visibility_score_for_object(
+    obj: ObjectInstanceSpec,
+    camera: CameraSpec,
+    *,
+    width: int = NOMINAL_RENDER_WIDTH,
+    height: int = NOMINAL_RENDER_HEIGHT,
+    horizon_s: float = 1.5,
+) -> float:
+    projection = _make_projection_camera(camera, width=width, height=height)
+    sample_times = (0.0, 0.20, 0.45, 0.75, 1.10, horizon_s)
+    margin_x = width * 0.06
+    margin_y = height * 0.12
+    center_x0 = width * 0.12
+    center_x1 = width * 0.88
+    center_y0 = height * 0.16
+    center_y1 = height * 0.88
+    pos0 = np.asarray(obj.position, dtype=np.float64)
+    vel = np.asarray(obj.linear_velocity, dtype=np.float64)
+    score = 0.0
+    for idx, sample_t in enumerate(sample_times):
+        point = pos0 + vel * float(sample_t)
+        pixel, depth = _project_world_point(point, projection)
+        if pixel is None or depth <= 0.0:
+            score -= 6.0 if idx == 0 else 3.0
+            continue
+        u = float(pixel[0])
+        v = float(pixel[1])
+        in_frame = 0.0 <= u <= width and 0.0 <= v <= height
+        in_safe = margin_x <= u <= (width - margin_x) and margin_y <= v <= (height - margin_y)
+        in_center = center_x0 <= u <= center_x1 and center_y0 <= v <= center_y1
+        if in_frame:
+            score += 1.0
+        else:
+            score -= 4.0 if idx == 0 else 2.0
+        if in_safe:
+            score += 1.0
+        elif idx <= 2:
+            score -= 0.8
+        if in_center:
+            score += 0.6
+    return score
+
+
+def _select_best_camera_for_motion(
+    rng: np.random.Generator,
+    preferred_camera_keys: tuple[str, ...],
+    dynamic_objects: tuple[ObjectInstanceSpec, ...],
+) -> tuple[str, CameraSpec]:
+    camera_keys = list(preferred_camera_keys)
+    rng.shuffle(camera_keys)
+    best_key = camera_keys[0]
+    best_camera = _sample_camera(rng, best_key)
+    best_score = sum(_visibility_score_for_object(obj, best_camera) for obj in dynamic_objects)
+    for key in camera_keys[1:]:
+        candidate_camera = _sample_camera(rng, key)
+        candidate_score = sum(_visibility_score_for_object(obj, candidate_camera) for obj in dynamic_objects)
+        if candidate_score > best_score:
+            best_key = key
+            best_camera = candidate_camera
+            best_score = candidate_score
+    return best_key, best_camera
+
+
 def _material_keys_by_category() -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for key, material in build_material_catalog().items():
@@ -514,7 +617,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         linear_velocity=linear_velocity,
         angular_velocity=angular_velocity,
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (driver,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -525,7 +628,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(driver,),
         tags=("diverse_object", "appearance_randomized", "single_motion", motion["motion_mode"]),
     )

@@ -191,15 +191,8 @@ def _build_prompt_bundle(blueprint: ScenarioBlueprint, width: int, height: int) 
     family_catalog = build_scenario_family_catalog()
     family_spec = family_catalog[blueprint.family_key]
     event_sentence = _capitalize_sentence(_family_event_sentence(blueprint))
-    object_clause = _human_join(visible_objects)
-    setup_sentence = ""
-    if object_clause:
-        object_verb = "appears" if len(visible_objects) == 1 else "appear"
-        setup_sentence = (
-            f"On {surface_text}, {object_clause} {object_verb} with consistent scale and realistic materials."
-        )
-    caption = " ".join(part for part in [setup_sentence, event_sentence] if part)
-    short_caption = f"{family_spec.title}: {event_sentence}"
+    caption = event_sentence
+    short_caption = event_sentence
     grounding_caption = _human_join(visible_objects) if visible_objects else family_spec.title.lower()
     return {
         "caption": caption,

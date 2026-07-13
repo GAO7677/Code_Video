@@ -135,7 +135,7 @@ run_condition_mode() {
 run_checkpoint() {
   local step_dir="$1"
   local condition_mode
-  for condition_mode in text_video text_only video_only; do
+  for condition_mode in text_video text_only video_only no_object_branch; do
     run_condition_mode "${step_dir}" "${condition_mode}"
   done
 }

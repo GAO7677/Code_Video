@@ -33,6 +33,12 @@ _ACTIVE_CASE_DIR: Path | None = None
 _ACTIVE_CASE_STEM: str | None = None
 _ACTIVE_CASE_DEBUG: dict[str, Any] = {}
 _ORIGINAL_RUN_SINGLE = batch._run_single_case_in_process
+_SLOT_COLORS_RGB = (
+    (214, 40, 40),
+    (247, 127, 0),
+    (42, 157, 143),
+    (39, 125, 161),
+)
 
 
 def _make_browser_compatible_mp4(path: Path) -> None:
@@ -83,7 +89,7 @@ def _write_actual_overlay(
     grounding_sample: Any,
     final_query_points: torch.Tensor,
     cotracker_out: Any,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     if _ACTIVE_CASE_DIR is None:
         return None
     valid_slots = [
@@ -114,9 +120,46 @@ def _write_actual_overlay(
         color_rgb=color,
         prefix=_SCHEME,
     )
+    slot_labels = []
+    for slot_idx in valid_slots:
+        track = grounding_sample.object_tracks[slot_idx]
+        color_rgb = np.asarray(
+            _SLOT_COLORS_RGB[slot_idx % len(_SLOT_COLORS_RGB)], dtype=np.float32
+        )
+        masks = np.asarray(track.masks_thw) > 0
+        for frame_idx in range(min(len(overlay), len(masks))):
+            mask = masks[frame_idx]
+            if mask.shape != overlay[frame_idx].shape[:2] or not bool(mask.any()):
+                continue
+            pixels = overlay[frame_idx][mask].astype(np.float32)
+            overlay[frame_idx][mask] = np.clip(
+                pixels * 0.78 + color_rgb * 0.22, 0, 255
+            ).astype(np.uint8)
+        phrase = str(getattr(track, "phrase", "object")).strip() or "object"
+        slot_labels.append(f"s{slot_idx}:{phrase}")
+    slot_summary = ", ".join(slot_labels)
     for frame in overlay:
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], 28), (0, 0, 0), thickness=-1)
-        cv2.putText(frame, f"query scheme: {_SCHEME}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (0, 0), (frame.shape[1], 48), (0, 0, 0), thickness=-1)
+        cv2.putText(
+            frame,
+            f"query scheme: {_SCHEME} | valid slots: {len(valid_slots)}",
+            (10, 19),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.54,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            slot_summary[:120],
+            (10, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
     _ACTIVE_CASE_DIR.mkdir(parents=True, exist_ok=True)
     stem = _ACTIVE_CASE_STEM or "case"
     overlay_path = _ACTIVE_CASE_DIR / f"{stem}_input_prepipe_overlay.mp4"
@@ -124,7 +167,30 @@ def _write_actual_overlay(
     write_mp4(overlay_path, overlay, fps=12)
     _make_browser_compatible_mp4(overlay_path)
     _contact_sheet(overlay, grid_path)
-    return {"overlay_video": str(overlay_path), "overlay_grid": str(grid_path)}
+    return {
+        "overlay_video": str(overlay_path),
+        "overlay_grid": str(grid_path),
+        "valid_slot_count": len(valid_slots),
+        "valid_slot_ids": valid_slots,
+    }
+
+
+def _slot_reports(grounding_sample: Any) -> list[dict[str, Any]]:
+    reports = []
+    valid_mask = np.asarray(grounding_sample.object_valid_mask)
+    for slot_idx, track in enumerate(grounding_sample.object_tracks):
+        masks = np.asarray(track.masks_thw) > 0
+        reports.append(
+            {
+                "slot_id": int(slot_idx),
+                "valid": bool(slot_idx < len(valid_mask) and valid_mask[slot_idx] > 0.5),
+                "phrase": str(getattr(track, "phrase", "")),
+                "score": float(getattr(track, "score", 0.0)),
+                "prompt_box_xyxy": np.asarray(track.box_prompt_xyxy).astype(float).tolist(),
+                "mask_area_pixels_per_frame": [int(mask.sum()) for mask in masks],
+            }
+        )
+    return reports
 
 
 def _build_object_context_with_query_scheme(
@@ -197,6 +263,18 @@ def _build_object_context_with_query_scheme(
         "legacy_valid_slots": [
             int(index) for index, value in enumerate(captured.get("legacy_valid_mask", [])) if value > 0.5
         ],
+        "final_valid_slots": [
+            int(index)
+            for index, value in enumerate(
+                np.asarray(captured["grounding"].object_valid_mask)
+                if "grounding" in captured
+                else []
+            )
+            if value > 0.5
+        ],
+        "slot_reports": (
+            _slot_reports(captured["grounding"]) if "grounding" in captured else []
+        ),
         "temporal_sam2_query_repair": captured.get("repair_debug"),
         "actual_overlay": overlay_paths,
     }
