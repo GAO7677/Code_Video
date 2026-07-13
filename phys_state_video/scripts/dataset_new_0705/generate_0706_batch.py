@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 
 from .render_sim_0705 import render_generated_case
@@ -21,6 +20,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--seed-base", type=int, default=20260706)
     parser.add_argument("--family-pattern", default="balanced")
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append new cases after the largest existing batch index under output-root/cases.",
+    )
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        help="Override the starting global case index. If omitted, starts from 0 unless --append is set.",
+    )
     return parser.parse_args()
 
 
@@ -44,6 +54,25 @@ def _family_plan(num_cases: int, pattern: str) -> list[str]:
     raise ValueError(f"unsupported family pattern: {pattern}")
 
 
+def _detect_next_index(cases_root: Path) -> int:
+    max_idx = -1
+    for case_dir in cases_root.glob("F*/*"):
+        if not case_dir.is_dir():
+            continue
+        suffix = case_dir.name.rsplit("_", 1)[-1]
+        if suffix.isdigit():
+            max_idx = max(max_idx, int(suffix))
+    return max_idx + 1
+
+
+def _load_existing_manifest(output_root: Path) -> list[dict[str, object]]:
+    manifest_path = output_root / "manifest.json"
+    if not manifest_path.exists():
+        return []
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, list) else []
+
+
 def main() -> None:
     args = parse_args()
     output_root = args.output_root
@@ -55,13 +84,22 @@ def main() -> None:
     for path in [cases_root, preview_root, logs_root, reports_root]:
         path.mkdir(parents=True, exist_ok=True)
 
-    family_plan = _family_plan(args.num_cases, args.family_pattern)
-    manifest: list[dict[str, object]] = []
+    if args.start_index is not None:
+        start_index = int(args.start_index)
+    elif args.append:
+        start_index = _detect_next_index(cases_root)
+    else:
+        start_index = 0
+
+    full_family_plan = _family_plan(start_index + args.num_cases, args.family_pattern)
+    family_plan = full_family_plan[start_index : start_index + args.num_cases]
+    manifest: list[dict[str, object]] = _load_existing_manifest(output_root) if (args.append or start_index > 0) else []
     failures: list[dict[str, object]] = []
 
-    for idx, family_key in enumerate(family_plan):
-        case_id = f"0706_{family_key.lower()}_{idx:03d}"
-        seed = args.seed_base + idx * 1009
+    for offset, family_key in enumerate(family_plan):
+        global_idx = start_index + offset
+        case_id = f"0706_{family_key.lower()}_{global_idx:03d}"
+        seed = args.seed_base + global_idx * 1009
         case_root = cases_root / family_key / case_id
         try:
             record = render_generated_case(
@@ -80,7 +118,9 @@ def main() -> None:
                     "output_root": str(case_root),
                     "video": record["video"],
                     "meta": record["meta"],
-                    "states": record["states"],
+                    "caption": record.get("caption", ""),
+                    "short_caption": record.get("short_caption", ""),
+                    "negative_prompt": record.get("negative_prompt", ""),
                 }
             )
         except Exception as exc:  # pragma: no cover - batch guard
@@ -100,10 +140,25 @@ def main() -> None:
         encoding="utf-8",
     )
     (logs_root / "batch_summary.txt").write_text(
-        f"cases={len(manifest)} failures={len(failures)} pattern={args.family_pattern}\n",
+        (
+            f"cases={len(manifest)} failures={len(failures)} pattern={args.family_pattern} "
+            f"start_index={start_index} append={bool(args.append)} width={args.width} height={args.height}\n"
+        ),
         encoding="utf-8",
     )
-    print(json.dumps({"cases": len(manifest), "failures": len(failures), "output_root": str(output_root)}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "cases": len(manifest),
+                "new_cases": len(family_plan),
+                "failures": len(failures),
+                "start_index": start_index,
+                "output_root": str(output_root),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

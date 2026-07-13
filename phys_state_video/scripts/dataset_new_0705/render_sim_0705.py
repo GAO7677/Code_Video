@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 from contextlib import contextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator
 
@@ -19,7 +18,84 @@ from .material_catalog_0705 import (
     build_material_catalog,
     build_surface_catalog,
 )
-from .scene_generators_0705 import generate_scenario_blueprint
+from .object_catalog_0705 import build_object_family_catalog
+from .scene_generators_0705 import build_scenario_family_catalog, generate_scenario_blueprint
+
+
+DEFAULT_NEGATIVE_PROMPT = (
+    "cartoon, anime, illustration, fantasy object behavior, impossible motion, floating objects, "
+    "penetration, severe deformation, duplicated objects, extra objects, abrupt cut, camera shake, "
+    "extreme motion blur, text, watermark, logo, subtitles"
+)
+
+
+MATERIAL_PROMPT_NAMES = {
+    "rubber_red": "red rubber",
+    "rubber_blue": "blue rubber",
+    "painted_metal_teal": "teal painted metal",
+    "painted_metal_yellow": "yellow painted metal",
+    "plastic_orange": "orange plastic",
+    "plastic_white": "white plastic",
+    "wood_plywood": "plywood",
+    "wood_dark": "dark wood",
+    "cardboard_kraft": "kraft cardboard",
+    "leather_brown": "brown leather",
+    "fabric_curtain": "light fabric",
+    "concrete_painted": "painted concrete",
+    "concrete_clean_floor": "clean concrete",
+    "concrete_clean_wall": "light concrete",
+    "floor_wood": "wood floor",
+    "floor_wood_weathered": "weathered wood floor",
+    "wall_beige": "beige wall",
+    "wall_cream": "cream wall",
+}
+
+
+SURFACE_PROMPT_NAMES = {
+    "studio_wood_floor": "a studio-like wood floor",
+    "residential_wood_floor": "a residential wood floor",
+    "dark_wood_floor": "a dark wood floor",
+    "painted_concrete_floor": "a painted concrete floor",
+}
+
+
+MOTION_TAG_PROMPT_NAMES = {
+    "roll": "rolls across the floor",
+    "slide": "slides across the floor",
+    "bounce": "bounces and settles",
+    "spin": "spins while moving forward",
+    "glance": "glances across the scene with a shallow angle",
+    "head_on": "moves straight into the target",
+    "crossing": "crosses the scene before contact",
+    "offset_push": "pushes the target with an offset hit",
+    "domino": "triggers a domino-like interaction",
+    "push_chain": "pushes through a two-step chain reaction",
+    "rolling_chain": "rolls into a two-step chain reaction",
+    "offset_chain": "starts an offset chain reaction",
+    "left_pass": "passes behind the occluder and reappears",
+    "right_pass": "passes behind the occluder and reappears",
+    "cross": "crosses through the occlusion zone and reappears",
+    "double_pass": "creates two visible occlusion phases before reappearing",
+    "drop": "drops after losing support",
+    "topple": "topples after support loss",
+    "slide_off": "slides off the support and lands",
+    "roll_off": "rolls off the support and lands",
+    "shallow_slide": "slides down a shallow ramp",
+    "steep_slide": "slides down a steep ramp",
+    "rollout": "slides down the ramp and rolls out",
+    "high_spin": "spins strongly with limited translation",
+    "reverse_spin": "shows reverse spin while translating",
+    "wobble_spin": "wobbles with strong angular motion",
+    "vertical_drop": "drops vertically and rebounds",
+    "oblique_drop": "drops at an oblique angle and rebounds",
+    "multi_bounce": "bounces multiple times before settling",
+    "crowded_slide": "slides into a cluttered local interaction",
+    "offset_collision": "creates an offset collision in a cluttered setup",
+    "spill": "spills through nearby clutter and support objects",
+    "edge_roll": "rolls toward an edge",
+    "fall_off": "falls off the edge after approaching it",
+    "boundary_slide": "slides near a boundary with fall-off risk",
+}
 
 
 def _legacy_texture_asset(material: MaterialSpec) -> str:
@@ -28,6 +104,120 @@ def _legacy_texture_asset(material: MaterialSpec) -> str:
     if material.texture_path:
         return material.key
     return ""
+
+
+def _human_join(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + f", and {items[-1]}"
+
+
+def _with_article(phrase: str) -> str:
+    if not phrase:
+        return phrase
+    first = phrase[0].lower()
+    article = "an" if first in {"a", "e", "i", "o", "u"} else "a"
+    return f"{article} {phrase}"
+
+
+def _capitalize_sentence(text: str) -> str:
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
+
+
+def _object_prompt_phrase(obj) -> str:
+    material_name = MATERIAL_PROMPT_NAMES.get(obj.material_key, obj.material_key.replace("_", " "))
+    family_name = build_object_family_catalog()[obj.family_key].display_name.lower()
+    return _with_article(f"{material_name} {family_name}")
+
+
+def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
+    motion_tag = next((tag for tag in reversed(blueprint.tags) if tag in MOTION_TAG_PROMPT_NAMES), "")
+    motion_text = MOTION_TAG_PROMPT_NAMES.get(motion_tag, "moves through the scene")
+    role_map = {obj.name: obj for obj in blueprint.objects}
+
+    if blueprint.family_key == "F1":
+        mover = role_map.get("driver_0", blueprint.objects[0])
+        return f"{_object_prompt_phrase(mover)} {motion_text}."
+    if blueprint.family_key == "F2":
+        driver = role_map.get("driver_0", blueprint.objects[0])
+        target = role_map.get("target_0", blueprint.objects[-1])
+        return f"{_object_prompt_phrase(driver)} {motion_text} and hits {_object_prompt_phrase(target)}."
+    if blueprint.family_key == "F3":
+        lead = role_map.get("lead_0", blueprint.objects[0])
+        mid = role_map.get("mid_0", blueprint.objects[1])
+        tail = role_map.get("tail_0", blueprint.objects[-1])
+        return (
+            f"{_object_prompt_phrase(lead)} hits {_object_prompt_phrase(mid)}, "
+            f"which then drives {_object_prompt_phrase(tail)}."
+        )
+    if blueprint.family_key == "F4":
+        movers = [obj for obj in blueprint.objects if obj.role == "dynamic"]
+        occluders = [obj for obj in blueprint.objects if obj.role == "occluder"]
+        mover_text = _human_join([_object_prompt_phrase(obj) for obj in movers])
+        occ_count = len(occluders)
+        return f"{mover_text} {motion_text} behind {occ_count} pillar occluder{'s' if occ_count != 1 else ''}."
+    if blueprint.family_key == "F5":
+        dynamic = role_map.get("drop_0", blueprint.objects[0])
+        return f"{_object_prompt_phrase(dynamic)} {motion_text} after support loss."
+    if blueprint.family_key == "F6":
+        mover = role_map.get("slider_0", blueprint.objects[0])
+        return f"{_object_prompt_phrase(mover)} {motion_text} on a visible ramp."
+    if blueprint.family_key == "F7":
+        mover = role_map.get("spinner_0", blueprint.objects[0])
+        return f"{_object_prompt_phrase(mover)} {motion_text} with rotation dominating translation."
+    if blueprint.family_key == "F8":
+        mover = role_map.get("bouncer_0", blueprint.objects[0])
+        return f"{_object_prompt_phrase(mover)} {motion_text} before coming to rest."
+    if blueprint.family_key == "F9":
+        mover_a = role_map.get("clutter_a", blueprint.objects[0])
+        mover_b = role_map.get("clutter_b", blueprint.objects[1])
+        return f"{_object_prompt_phrase(mover_a)} and {_object_prompt_phrase(mover_b)} collide in a cluttered setup."
+    if blueprint.family_key == "F10":
+        mover = role_map.get("edge_mover", blueprint.objects[0])
+        return f"{_object_prompt_phrase(mover)} {motion_text} near a visible edge."
+    return "Rigid objects move through a realistic indoor physics scene."
+
+
+def _build_prompt_bundle(blueprint: ScenarioBlueprint, width: int, height: int) -> dict[str, object]:
+    dynamic_objects = [obj for obj in blueprint.objects if obj.dynamic]
+    visible_objects = [_object_prompt_phrase(obj) for obj in dynamic_objects[:3]]
+    surface_text = SURFACE_PROMPT_NAMES.get(blueprint.surface_key, blueprint.surface_key.replace("_", " "))
+    family_catalog = build_scenario_family_catalog()
+    family_spec = family_catalog[blueprint.family_key]
+    event_sentence = _capitalize_sentence(_family_event_sentence(blueprint))
+    object_clause = _human_join(visible_objects)
+    setup_sentence = ""
+    if object_clause:
+        object_verb = "appears" if len(visible_objects) == 1 else "appear"
+        setup_sentence = (
+            f"On {surface_text}, {object_clause} {object_verb} with consistent scale and realistic materials."
+        )
+    caption = " ".join(part for part in [setup_sentence, event_sentence] if part)
+    short_caption = f"{family_spec.title}: {event_sentence}"
+    grounding_caption = _human_join(visible_objects) if visible_objects else family_spec.title.lower()
+    return {
+        "caption": caption,
+        "short_caption": short_caption,
+        "grounding_caption": grounding_caption,
+        "input_caption": caption,
+        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+        "prompt_metadata": {
+            "version": "dataset_new_0705_prompt_v2",
+            "family_title": family_spec.title,
+            "family_description": family_spec.description,
+            "surface_text": surface_text,
+            "dynamic_object_count": len(dynamic_objects),
+            "total_object_count": len(blueprint.objects),
+            "tags": list(blueprint.tags),
+            "resolution": [width, height],
+        },
+    }
 
 
 def register_material_assets() -> None:
@@ -759,6 +949,7 @@ def render_blueprint_case(
     payload["surface_key"] = blueprint.surface_key
     payload["lighting_key"] = blueprint.lighting_key
     payload["tags"] = list(blueprint.tags)
+    payload.pop("states", None)
     payload["blueprint"] = {
         "family_key": blueprint.family_key,
         "sample_key": blueprint.sample_key,
@@ -770,7 +961,10 @@ def render_blueprint_case(
     payload["materials"] = {
         obj.name: obj.material_key for obj in blueprint.objects
     }
+    payload.update(_build_prompt_bundle(blueprint, width=width, height=height))
     meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    states_path = output_root / "meta" / f"{scenario.key}_states.npz"
+    states_path.unlink(missing_ok=True)
 
     manifest = {
         "sample_key": blueprint.sample_key,
@@ -779,9 +973,11 @@ def render_blueprint_case(
         "output_root": str(output_root),
         "video": str(output_root / "videos" / f"{scenario.key}.mp4"),
         "meta": str(meta_path),
-        "states": str(output_root / "meta" / f"{scenario.key}_states.npz"),
         "width": width,
         "height": height,
+        "caption": payload["caption"],
+        "short_caption": payload["short_caption"],
+        "negative_prompt": payload["negative_prompt"],
         "hdri_catalog": build_hdri_catalog(),
         "asset_pack": build_indoor_asset_pack_manifest(),
     }
