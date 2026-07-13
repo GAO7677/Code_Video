@@ -1054,12 +1054,13 @@ def main() -> None:
         if cli_args.object_branch_ratio_guard_max_block_id is None
         else int(cli_args.object_branch_ratio_guard_max_block_id)
     )
-    model.object_adapter.mlp_residual_max_ratio = (
-        None
-        if cli_args.object_adapter_mlp_residual_max_ratio is None
-        or float(cli_args.object_adapter_mlp_residual_max_ratio) <= 0.0
-        else float(cli_args.object_adapter_mlp_residual_max_ratio)
-    )
+    if model.object_adapter is not None:
+        model.object_adapter.mlp_residual_max_ratio = (
+            None
+            if cli_args.object_adapter_mlp_residual_max_ratio is None
+            or float(cli_args.object_adapter_mlp_residual_max_ratio) <= 0.0
+            else float(cli_args.object_adapter_mlp_residual_max_ratio)
+        )
 
     step_success = 0
     step_failed = 0
