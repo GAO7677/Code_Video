@@ -99,6 +99,7 @@ class OpenVidNoGTBoxDataset(Dataset):
                 "openvid_row_index": row_index,
                 "source_root": str(self.root),
                 "sampled_frame_count": self.num_frames,
+                "sampled_frame_indices": list(range(self.num_frames)),
             },
         }
 

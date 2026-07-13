@@ -5,7 +5,9 @@ import csv
 import gc
 import json
 import math
+import os
 import random
+import subprocess
 import sys
 import traceback
 from dataclasses import asdict, dataclass
@@ -25,6 +27,7 @@ for _path in (PROJECT_ROOT, TRY0526_ROOT):
 from physv_eval.cosmos_reason1_official import OfficialCosmosReason1Runner
 from physv_eval.official_pdi import OfficialPDIRunner
 from physv_eval.phyground_official import OfficialPhyGroundRunner
+from physv_eval.paths import VPHY_PYTHON
 from physv_eval.proxy_runner import ProxyRunner
 from physv_eval.single_case import cosmos_reason1, pdi, phyground, physics_iq, pmf, proxy, videophy2, wmreward
 from physv_eval.videophy2_auto import VideoPhy2Runner
@@ -105,6 +108,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phyground-general-only", action="store_true", default=True)
     parser.add_argument("--phyground-fps", type=float, default=2.0)
     parser.add_argument("--cosmos-fps", type=int, default=16)
+    parser.add_argument("--cosmos-python", type=Path, default=VPHY_PYTHON)
+    parser.add_argument("--cosmos-cuda-visible-devices", default=None)
     parser.add_argument("--wmreward-cuda-visible-devices", default=None)
     parser.add_argument("--pdi-cuda-visible-devices", default=None)
     parser.add_argument("--phyground-cuda-visible-devices", default=None)
@@ -437,12 +442,52 @@ def _setup_phyground(args: argparse.Namespace) -> tuple[dict[str, Any], Callable
 
 
 def _setup_cosmos_reason1(args: argparse.Namespace) -> tuple[dict[str, Any], Callable[[CaseSpec, dict[str, Any], Path], dict[str, Any] | None]]:
-    runner = OfficialCosmosReason1Runner(fps=args.cosmos_fps)
+    cosmos_python = Path(args.cosmos_python).expanduser().resolve()
+    if not cosmos_python.is_file():
+        raise FileNotFoundError(f"cosmos python not found: {cosmos_python}")
 
-    def run(_: CaseSpec, eval_case: dict[str, Any], __: Path) -> dict[str, Any] | None:
-        return cosmos_reason1.score_case(eval_case, runner=runner)
+    def run(case: CaseSpec, _: dict[str, Any], work_dir: Path) -> dict[str, Any] | None:
+        output_json = work_dir / "cosmos_reason1_result.json"
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            str(cosmos_python),
+            "-m",
+            "physv_eval.single_case.cosmos_reason1",
+            "--video",
+            case.video_path,
+            "--fps",
+            str(args.cosmos_fps),
+            "--output-json",
+            str(output_json),
+        ]
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{TRY0526_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(TRY0526_ROOT)
+        )
+        if args.cosmos_cuda_visible_devices is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(args.cosmos_cuda_visible_devices)
+        completed = subprocess.run(
+            command,
+            cwd=str(TRY0526_ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "cosmos_reason1 subprocess failed\n"
+                f"command: {' '.join(command)}\n"
+                f"returncode: {completed.returncode}\n"
+                f"stdout:\n{completed.stdout[-4000:]}\n"
+                f"stderr:\n{completed.stderr[-4000:]}"
+            )
+        if not output_json.is_file():
+            raise FileNotFoundError(f"cosmos_reason1 output json not found: {output_json}")
+        return json.loads(output_json.read_text(encoding='utf-8'))
 
-    return {"runner": runner}, run
+    return {"runner": None, "python": str(cosmos_python)}, run
 
 
 def _setup_physics_iq_with_context(_: argparse.Namespace) -> tuple[dict[str, Any], Callable[[CaseSpec, dict[str, Any], Path], dict[str, Any] | None]]:
