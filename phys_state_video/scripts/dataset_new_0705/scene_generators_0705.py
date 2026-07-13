@@ -666,7 +666,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         position=(rng.uniform(-0.10, 0.40), rng.uniform(-0.16, 0.18), 0.18 + rng.uniform(-0.02, 0.06)),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-12.0, 12.0)),
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (driver, target))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -677,7 +677,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(driver, target),
         tags=("diverse_object", "appearance_randomized", "two_body_contact", motion["motion_mode"]),
     )
@@ -724,7 +724,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         position=(rng.uniform(0.58, 0.92), rng.uniform(-0.18, 0.18), 0.18),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-10.0, 10.0)),
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (lead, mid, tail))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -735,7 +735,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(lead, mid, tail),
         tags=("diverse_object", "appearance_randomized", "chain_reaction", motion["motion_mode"]),
     )
@@ -804,7 +804,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
                 orientation_euler_deg=(0.0, 0.0, 0.0),
             )
         )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, tuple(movers))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -815,7 +815,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=tuple(movers + occluders),
         tags=("diverse_object", "appearance_randomized", "occlusion", motion["motion_mode"]),
     )
@@ -855,7 +855,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         linear_velocity=drop_linear,
         angular_velocity=drop_angular,
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (dynamic,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -866,7 +866,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(dynamic, support),
         tags=("diverse_object", "appearance_randomized", "support_drop", motion["motion_mode"]),
     )
@@ -907,7 +907,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         linear_velocity=(abs(mover_linear[0]), mover_linear[1], mover_linear[2]),
         angular_velocity=mover_angular,
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -918,7 +918,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(mover, support),
         tags=("diverse_object", "appearance_randomized", "ramp_motion", motion["motion_mode"]),
     )
@@ -947,7 +947,7 @@ def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         linear_velocity=(mover_linear[0] * 0.55, mover_linear[1], mover_linear[2]),
         angular_velocity=(mover_angular[0], mover_angular[1] * 1.2, mover_angular[2]),
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -958,7 +958,7 @@ def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(mover,),
         tags=("diverse_object", "appearance_randomized", "spin_dominant", motion["motion_mode"]),
     )
@@ -987,7 +987,7 @@ def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         linear_velocity=(abs(mover_linear[0]), mover_linear[1], -abs(mover_linear[0]) * 0.08),
         angular_velocity=mover_angular,
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -998,7 +998,7 @@ def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(mover,),
         tags=("diverse_object", "appearance_randomized", "bounce_heavy", motion["motion_mode"]),
     )
@@ -1043,7 +1043,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         position=(rng.uniform(-0.20, 0.20), rng.uniform(-0.08, 0.08), 0.12),
         forced_material_key=str(rng.choice(["wood_plywood", "cardboard_kraft", "concrete_painted"])),
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover_a, mover_b))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -1054,7 +1054,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(mover_a, mover_b, support),
         tags=("diverse_object", "appearance_randomized", "clutter_interaction", motion["motion_mode"]),
     )
@@ -1087,7 +1087,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         position=(rng.uniform(-0.15, 0.15), 0.0, 0.10),
         forced_material_key=str(rng.choice(["wood_dark", "wood_plywood", "cardboard_kraft"])),
     )
-    camera_key = str(rng.choice(family.preferred_camera_keys))
+    camera_key, camera = _select_best_camera_for_motion(rng, family.preferred_camera_keys, (mover,))
     return ScenarioBlueprint(
         family_key=family.key,
         sample_key=sample_key,
@@ -1098,7 +1098,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         camera_key=camera_key,
         surface_key=str(rng.choice(family.preferred_surface_keys)),
         lighting_key=build_camera_catalog()[camera_key].hdri_key,
-        camera=_sample_camera(rng, camera_key),
+        camera=camera,
         objects=(mover, support),
         tags=("diverse_object", "appearance_randomized", "edge_boundary", motion["motion_mode"]),
     )
