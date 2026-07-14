@@ -20,10 +20,15 @@ from diffsynth.diffusion import ModelLogger
 
 
 _PHRASE_ALIAS_GROUPS = (
-    ("ball", "sphere", "round rigid object"),
+    # GroundingDINO commonly labels a low, flat PyBullet puck as ball/sphere.
+    # Keep these in one detector-to-caption group so the tracked instance still
+    # binds when the generated caption uses the more precise word "puck".
+    ("ball", "sphere", "puck", "round rigid object", "flat round rigid object"),
     ("block", "box", "cube", "box shaped rigid object"),
-    ("puck", "flat round rigid object"),
-    ("cylinder", "cylindrical rigid object"),
+    # This is intentionally after the box/cube group. GDINO often emits
+    # "cylinder capsule container" for the low PyBullet puck, while the block
+    # proposal also contains "cylinder" but is resolved by cube/block first.
+    ("cylinder", "capsule", "container", "cylindrical rigid object", "puck", "flat round rigid object"),
     ("capsule", "capsule shaped rigid object"),
     ("person", "man", "woman", "boy", "girl"),
     ("car", "vehicle"),
