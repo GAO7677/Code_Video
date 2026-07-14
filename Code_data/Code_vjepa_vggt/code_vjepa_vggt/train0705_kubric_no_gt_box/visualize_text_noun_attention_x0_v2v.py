@@ -415,9 +415,16 @@ def _heat_overlay(frame: np.ndarray, heat_lowres: np.ndarray, low: float, high: 
 
 
 def _label(frame: np.ndarray, lines: list[str]) -> np.ndarray:
-    out = frame.copy()
-    height = 26 * len(lines) + 8
-    cv2.rectangle(out, (0, 0), (out.shape[1], height), (0, 0, 0), thickness=-1)
+    label_height = 26 * len(lines) + 8
+    out = cv2.copyMakeBorder(
+        frame,
+        label_height,
+        0,
+        0,
+        0,
+        borderType=cv2.BORDER_CONSTANT,
+        value=(0, 0, 0),
+    )
     for index, line in enumerate(lines):
         cv2.putText(
             out,
