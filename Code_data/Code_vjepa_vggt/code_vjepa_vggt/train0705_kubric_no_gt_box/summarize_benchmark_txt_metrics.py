@@ -41,6 +41,13 @@ METRICS: tuple[tuple[str, str, Any], ...] = (
     ("videophy2_score_count", "videophy2_score_mean", lambda payload: to_float(nested_get(payload, "videophy2", "score"))),
     ("phyground_general_avg_count", "phyground_general_avg_mean", lambda payload: to_float(nested_get(payload, "phyground", "general_avg"))),
     ("cosmos_reason1_score_count", "cosmos_reason1_score_mean", lambda payload: to_float(nested_get(payload, "cosmos_reason1", "score"))),
+    ("vbench_subject_consistency_score_count", "vbench_subject_consistency_score_mean", lambda payload: to_float(nested_get(payload, "vbench_subject_consistency", "score"))),
+    ("vbench_background_consistency_score_count", "vbench_background_consistency_score_mean", lambda payload: to_float(nested_get(payload, "vbench_background_consistency", "score"))),
+    ("vbench_temporal_flickering_score_count", "vbench_temporal_flickering_score_mean", lambda payload: to_float(nested_get(payload, "vbench_temporal_flickering", "score"))),
+    ("vbench_motion_smoothness_score_count", "vbench_motion_smoothness_score_mean", lambda payload: to_float(nested_get(payload, "vbench_motion_smoothness", "score"))),
+    ("vbench_dynamic_degree_score_count", "vbench_dynamic_degree_score_mean", lambda payload: to_float(nested_get(payload, "vbench_dynamic_degree", "score"))),
+    ("vbench_aesthetic_quality_score_count", "vbench_aesthetic_quality_score_mean", lambda payload: to_float(nested_get(payload, "vbench_aesthetic_quality", "score"))),
+    ("vbench_imaging_quality_score_count", "vbench_imaging_quality_score_mean", lambda payload: to_float(nested_get(payload, "vbench_imaging_quality", "score"))),
 )
 
 

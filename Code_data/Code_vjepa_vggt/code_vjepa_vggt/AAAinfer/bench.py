@@ -110,6 +110,13 @@ def parse_args() -> argparse.Namespace:
         "physics_iq_without_context",
         "pmf_with_context",
         "pmf_without_context",
+        "vbench_subject_consistency",
+        "vbench_background_consistency",
+        "vbench_temporal_flickering",
+        "vbench_motion_smoothness",
+        "vbench_dynamic_degree",
+        "vbench_aesthetic_quality",
+        "vbench_imaging_quality",
     ]
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
     parser.add_argument(
@@ -145,6 +152,26 @@ def parse_args() -> argparse.Namespace:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--pmf-device", default="cpu", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--vbench-output-root",
+        type=Path,
+        default=Path("/data/gaoya/agent-data/outputs/vbench_single_case/AAAinfer_bench"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--vbench-device", default="cuda", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--vbench-load-ckpt-from-local",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--vbench-read-frame", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--vbench-imaging-quality-preprocessing-mode",
+        default="longer",
+        choices=["shorter", "longer", "shorter_centercrop", "None"],
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--physics-iq-threshold-value", type=int, default=10, help=argparse.SUPPRESS)
     parser.add_argument("--physics-iq-downsample-factor", type=int, default=4, help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -707,6 +734,35 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
 
         return factory
 
+    def build_vbench_metric(dimension: str, metric_name: str) -> Callable[[argparse.Namespace], MetricFunc]:
+        def factory(_: argparse.Namespace) -> MetricFunc:
+            from physv_eval.single_case.vbench import score_case as score_vbench_case
+            from physv_eval.vbench_official import OfficialVBenchRunner
+
+            runner = OfficialVBenchRunner(
+                output_root=args.vbench_output_root.expanduser().resolve() / metric_name,
+                device=str(args.vbench_device),
+                load_ckpt_from_local=bool(args.vbench_load_ckpt_from_local),
+                read_frame=bool(args.vbench_read_frame),
+                imaging_quality_preprocessing_mode=str(args.vbench_imaging_quality_preprocessing_mode),
+            )
+
+            def run(record: CaseRecord) -> dict[str, Any] | None:
+                case = build_case_payload(record)
+                caption = case.get("input_caption") or case.get("caption")
+                output_path = build_method_case_dir(args.vbench_output_root.expanduser().resolve(), record, metric_name)
+                return score_vbench_case(
+                    case,
+                    dimension=dimension,
+                    caption=caption,
+                    output_path=output_path,
+                    runner=runner,
+                )
+
+            return run
+
+        return factory
+
     builders: dict[str, Callable[[argparse.Namespace], MetricFunc]] = {
         "pdi": build_pdi,
         "wmreward": build_wmreward,
@@ -719,6 +775,13 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         "physics_iq_without_context": build_physics_iq_context_metric("without_context", "physics_iq_without_context"),
         "pmf_with_context": build_pmf_context_metric("with_context", "pmf_with_context"),
         "pmf_without_context": build_pmf_context_metric("without_context", "pmf_without_context"),
+        "vbench_subject_consistency": build_vbench_metric("subject_consistency", "vbench_subject_consistency"),
+        "vbench_background_consistency": build_vbench_metric("background_consistency", "vbench_background_consistency"),
+        "vbench_temporal_flickering": build_vbench_metric("temporal_flickering", "vbench_temporal_flickering"),
+        "vbench_motion_smoothness": build_vbench_metric("motion_smoothness", "vbench_motion_smoothness"),
+        "vbench_dynamic_degree": build_vbench_metric("dynamic_degree", "vbench_dynamic_degree"),
+        "vbench_aesthetic_quality": build_vbench_metric("aesthetic_quality", "vbench_aesthetic_quality"),
+        "vbench_imaging_quality": build_vbench_metric("imaging_quality", "vbench_imaging_quality"),
     }
     return MetricSpec(name=args.metric, field=args.metric, builder=builders[args.metric])
 

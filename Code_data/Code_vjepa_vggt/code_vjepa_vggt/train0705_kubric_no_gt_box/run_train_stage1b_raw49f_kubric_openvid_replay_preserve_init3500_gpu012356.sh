@@ -51,7 +51,7 @@ done
 
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
-TRAIN_SCRIPT="${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/train_stage1b_no_gt_box_replay_preserve.py"
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/train_stage1b_no_gt_box_replay_preserve.py}"
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
 BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
