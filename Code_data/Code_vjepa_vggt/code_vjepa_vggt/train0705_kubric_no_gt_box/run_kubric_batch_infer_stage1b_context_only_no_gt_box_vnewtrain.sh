@@ -125,6 +125,7 @@ COMPACT_OBJECT_CONTEXT_SLOTS="${COMPACT_OBJECT_CONTEXT_SLOTS:-0}"
 OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS="${OBJECT_BRANCH_AUTO_FALLBACK_MAX_ACTIVE_SLOTS:-}"
 OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT="${OBJECT_BRANCH_AUTO_FALLBACK_TRIGGER_COUNT:-}"
 CONDITION_MODE="${CONDITION_MODE:-}"
+EXTRA_INFER_ARGS="${EXTRA_INFER_ARGS:-}"
 AUTO_SPLIT_INPUT="${AUTO_SPLIT_INPUT:-0}"
 SPLIT_WORK_ROOT="${SPLIT_WORK_ROOT:-/data/gaoya/agent-data/cache/kubric_batch_infer_splits}"
 SHARD_RUN_ID="${SHARD_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
@@ -606,6 +607,11 @@ run_one_inference() {
   fi
   if [ -n "${DUMP_NUMERIC_TRACE_ROOT}" ]; then
     cmd+=(--dump-numeric-trace-root "${DUMP_NUMERIC_TRACE_ROOT}")
+  fi
+  if [ -n "${EXTRA_INFER_ARGS}" ]; then
+    local -a extra_infer_args
+    read -r -a extra_infer_args <<< "${EXTRA_INFER_ARGS}"
+    cmd+=("${extra_infer_args[@]}")
   fi
 
   echo "[kubric-batch] gpu_pair=${gpu_pair} context_frames=${context_frames}"

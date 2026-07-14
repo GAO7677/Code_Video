@@ -51,6 +51,21 @@ def _pop_option(argv: list[str], name: str, default: str) -> str:
 CAPTURE_SPEC = _pop_option(sys.argv, "--attention-capture-progress-indices", "auto5")
 QUERY_CHUNK = int(_pop_option(sys.argv, "--attention-query-chunk", "256"))
 TOP_LAYERS = int(_pop_option(sys.argv, "--attention-top-layers", "3"))
+SAVE_ALL_ATTENTION_MAPS = bool(
+    int(_pop_option(sys.argv, "--attention-save-all-maps", "0"))
+)
+SHARED_CONTEXT_FUTURE_SCALE = bool(
+    int(_pop_option(sys.argv, "--attention-shared-context-future-scale", "0"))
+)
+BOUNDARY_COPY_ENABLED = bool(
+    int(_pop_option(sys.argv, "--attention-boundary-copy-enabled", "0"))
+)
+BOUNDARY_COPY_SOURCE_LATENT = int(
+    _pop_option(sys.argv, "--attention-boundary-copy-source-latent", "1")
+)
+BOUNDARY_COPY_TARGET_LATENT = int(
+    _pop_option(sys.argv, "--attention-boundary-copy-target-latent", "2")
+)
 FFMPEG = Path(
     _pop_option(
         sys.argv,
@@ -87,7 +102,7 @@ def _capture_indices(spec: str, steps: int) -> list[int]:
     if steps <= 0:
         raise ValueError("sampling_steps must be positive")
     if spec.strip().lower() == "auto5":
-        values = [round((steps - 1) * ratio) for ratio in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        values = [0, steps // 4, steps // 2, (3 * steps) // 4, steps - 1]
     else:
         values = [int(value.strip()) for value in spec.split(",") if value.strip()]
     return sorted({max(0, min(int(value), steps - 1)) for value in values})
@@ -146,10 +161,12 @@ class AttentionRecorder:
         self.capture_indices = set(int(value) for value in capture_indices)
         self.query_chunk = int(query_chunk)
         self.active = False
+        self.intervention_active = False
         self.step_index = -1
         self.grid: tuple[int, int, int] | None = None
         self.maps: dict[tuple[int, int, str], np.ndarray] = {}
         self._original_forwards: list[tuple[Any, Any]] = []
+        self.intervention_calls = 0
 
     def install(self, dit) -> None:
         for layer_id, block in enumerate(dit.blocks):
@@ -160,9 +177,10 @@ class AttentionRecorder:
             original = attn.forward
 
             def wrapped(q, k, v, *, _original=original, _layer_id=layer_id):
-                output = _original(q, k, v)
+                q_for_attention = self.apply_boundary_copy(q)
+                output = _original(q_for_attention, k, v)
                 if self.active:
-                    self.capture(_layer_id, q, k)
+                    self.capture(_layer_id, q_for_attention, k)
                 return output
 
             attn.forward = wrapped
@@ -172,6 +190,26 @@ class AttentionRecorder:
         for module, original in self._original_forwards:
             module.forward = original
         self._original_forwards.clear()
+
+    def apply_boundary_copy(self, q: torch.Tensor) -> torch.Tensor:
+        if not (BOUNDARY_COPY_ENABLED and self.intervention_active):
+            return q
+        if self.grid is None:
+            raise RuntimeError("attention grid was not configured before boundary intervention")
+        frames, grid_h, grid_w = self.grid
+        source = int(BOUNDARY_COPY_SOURCE_LATENT)
+        target = int(BOUNDARY_COPY_TARGET_LATENT)
+        if not (0 <= source < frames and 0 <= target < frames):
+            raise RuntimeError(
+                f"boundary latent indices source={source} target={target} exceed grid frames={frames}"
+            )
+        spatial = int(grid_h * grid_w)
+        source_slice = slice(source * spatial, (source + 1) * spatial)
+        target_slice = slice(target * spatial, (target + 1) * spatial)
+        copied = q.clone()
+        copied[:, target_slice] = q[:, source_slice]
+        self.intervention_calls += 1
+        return copied
 
     @torch.no_grad()
     def capture(self, layer_id: int, q: torch.Tensor, k: torch.Tensor) -> None:
@@ -252,19 +290,22 @@ class ModelFnRecorder:
         selected = step_index in self.capture_indices and step_index < self.total_steps
         latents = kwargs.get("latents")
         dit = kwargs.get("dit")
-        if selected and positive:
+        if positive and (selected or BOUNDARY_COPY_ENABLED):
             patch = tuple(int(value) for value in getattr(dit, "patch_size", (1, 2, 2)))
             self.attention.grid = (
                 int(latents.shape[2]) // patch[0],
                 int(latents.shape[3]) // patch[1],
                 int(latents.shape[4]) // patch[2],
             )
+        self.attention.intervention_active = bool(positive and BOUNDARY_COPY_ENABLED)
+        if selected and positive:
             self.attention.active = True
             self.attention.step_index = int(step_index)
         else:
             self.attention.active = False
         output = self.original(*args, **kwargs)
         self.attention.active = False
+        self.attention.intervention_active = False
         clean_prefix = kwargs.get("clean_prefix_latents")
         clean_prefix_cpu = None if clean_prefix is None else clean_prefix.detach().cpu()
         if selected and positive:
@@ -476,6 +517,47 @@ def _score_layers(
     return rankings, rows
 
 
+def _normalized_spatial_map(array: np.ndarray) -> np.ndarray:
+    flat = np.maximum(array.astype(np.float64).reshape(-1), 0.0)
+    total = float(flat.sum())
+    if total <= 0.0:
+        return np.full_like(flat, 1.0 / float(flat.size))
+    return flat / total
+
+
+def _boundary_metrics(source: np.ndarray, target: np.ndarray) -> dict[str, float]:
+    p = _normalized_spatial_map(source)
+    q = _normalized_spatial_map(target)
+    midpoint = 0.5 * (p + q)
+    eps = 1.0e-12
+    js = 0.5 * float(np.sum(p * np.log((p + eps) / (midpoint + eps))))
+    js += 0.5 * float(np.sum(q * np.log((q + eps) / (midpoint + eps))))
+    cosine = float(np.dot(p, q) / max(np.linalg.norm(p) * np.linalg.norm(q), eps))
+    height, width = source.shape
+    yy, xx = np.mgrid[0:height, 0:width]
+    x_scale = max(width - 1, 1)
+    y_scale = max(height - 1, 1)
+    source_x = float(np.sum(p * xx.reshape(-1)) / x_scale)
+    source_y = float(np.sum(p * yy.reshape(-1)) / y_scale)
+    target_x = float(np.sum(q * xx.reshape(-1)) / x_scale)
+    target_y = float(np.sum(q * yy.reshape(-1)) / y_scale)
+    centroid_jump = math.hypot(target_x - source_x, target_y - source_y)
+    source_mass = float(np.maximum(source.astype(np.float64), 0.0).sum())
+    target_mass = float(np.maximum(target.astype(np.float64), 0.0).sum())
+    return {
+        "js_divergence": js,
+        "cosine_similarity": cosine,
+        "centroid_source_x": source_x,
+        "centroid_source_y": source_y,
+        "centroid_target_x": target_x,
+        "centroid_target_y": target_y,
+        "centroid_jump": centroid_jump,
+        "source_attention_mass": source_mass,
+        "target_attention_mass": target_mass,
+        "target_to_source_mass_ratio": target_mass / max(source_mass, eps),
+    }
+
+
 def _render_outputs(
     *,
     output_dir: Path,
@@ -512,6 +594,65 @@ def _render_outputs(
         writer.writeheader()
         writer.writerows(score_rows)
 
+    boundary_rows: list[dict[str, object]] = []
+    boundary_summary_rows: list[dict[str, object]] = []
+    source_latent = int(BOUNDARY_COPY_SOURCE_LATENT)
+    target_latent = int(BOUNDARY_COPY_TARGET_LATENT)
+    if not (0 <= source_latent < recorder.grid[0] and 0 <= target_latent < recorder.grid[0]):
+        raise RuntimeError(
+            f"boundary metric indices source={source_latent} target={target_latent} "
+            f"exceed attention grid {recorder.grid}"
+        )
+    score_lookup = {
+        (str(row["noun"]), int(row["layer_id"])): row for row in score_rows
+    }
+    for noun in noun_details:
+        for layer_id in range(layer_count):
+            group: list[dict[str, float]] = []
+            for step in capture_indices:
+                raw = recorder.maps[(step, layer_id, noun)].astype(np.float32)
+                metrics = _boundary_metrics(raw[source_latent], raw[target_latent])
+                group.append(metrics)
+                boundary_rows.append(
+                    {
+                        "noun": noun,
+                        "layer_id": layer_id,
+                        "progress_index": step,
+                        "remaining_steps": total_steps - step,
+                        "source_latent_time_index": source_latent,
+                        "target_latent_time_index": target_latent,
+                        **metrics,
+                    }
+                )
+            layer_score = score_lookup[(noun, layer_id)]
+            boundary_summary_rows.append(
+                {
+                    "noun": noun,
+                    "layer_id": layer_id,
+                    "context_top1pct_mean": layer_score["context_top1pct_mean"],
+                    "context_mean": layer_score["context_mean"],
+                    "context_peak": layer_score["context_peak"],
+                    "js_mean": float(np.mean([item["js_divergence"] for item in group])),
+                    "js_max": float(np.max([item["js_divergence"] for item in group])),
+                    "cosine_mean": float(np.mean([item["cosine_similarity"] for item in group])),
+                    "cosine_min": float(np.min([item["cosine_similarity"] for item in group])),
+                    "centroid_jump_mean": float(np.mean([item["centroid_jump"] for item in group])),
+                    "centroid_jump_max": float(np.max([item["centroid_jump"] for item in group])),
+                    "mass_ratio_mean": float(np.mean([item["target_to_source_mass_ratio"] for item in group])),
+                    "mass_ratio_max": float(np.max([item["target_to_source_mass_ratio"] for item in group])),
+                }
+            )
+    boundary_path = output_dir / "boundary_attention_metrics_per_step.csv"
+    with boundary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(boundary_rows[0]))
+        writer.writeheader()
+        writer.writerows(boundary_rows)
+    boundary_summary_path = output_dir / "boundary_attention_metrics_summary.csv"
+    with boundary_summary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(boundary_summary_rows[0]))
+        writer.writeheader()
+        writer.writerows(boundary_summary_rows)
+
     x0_paths: dict[str, str] = {}
     for step_index, frames in sorted(x0_videos.items()):
         remaining = total_steps - int(step_index)
@@ -542,6 +683,21 @@ def _render_outputs(
             context_aligned = _temporal_resize_lowres(averaged, total_frames)[:context_count]
             context_low = float(np.percentile(context_aligned, 2.0))
             context_high = float(np.percentile(context_aligned, 99.0))
+            aligned_by_step = {
+                step: _temporal_resize_lowres(array, total_frames)
+                for step, array in maps_by_step.items()
+            }
+            future_values = np.concatenate(
+                [array[context_count:].reshape(-1) for array in aligned_by_step.values()]
+            )
+            future_low = float(np.percentile(future_values, 2.0))
+            future_high = float(np.percentile(future_values, 99.0))
+            if SHARED_CONTEXT_FUTURE_SCALE:
+                shared_values = np.concatenate(
+                    [context_aligned.reshape(-1), future_values]
+                )
+                context_low = future_low = float(np.percentile(shared_values, 2.0))
+                context_high = future_high = float(np.percentile(shared_values, 99.0))
             context_overlay = []
             for frame_index, (frame, heat) in enumerate(zip(context_frames_bgr, context_aligned)):
                 over = _heat_overlay(frame, heat, context_low, context_high)
@@ -556,15 +712,6 @@ def _render_outputs(
             context_path = noun_dir / f"context_rank{rank}_layer{layer_id:02d}_h264.mp4"
             _write_h264(context_path, context_overlay, fps)
 
-            aligned_by_step = {
-                step: _temporal_resize_lowres(array, total_frames)
-                for step, array in maps_by_step.items()
-            }
-            future_values = np.concatenate(
-                [array[context_count:].reshape(-1) for array in aligned_by_step.values()]
-            )
-            future_low = float(np.percentile(future_values, 2.0))
-            future_high = float(np.percentile(future_values, 99.0))
             future_composite: list[np.ndarray] = []
             for frame_index in range(context_count, total_frames):
                 rows = []
@@ -588,6 +735,35 @@ def _render_outputs(
                 future_composite.append(np.concatenate(rows, axis=0))
             future_path = noun_dir / f"future_x0_rank{rank}_layer{layer_id:02d}_h264.mp4"
             _write_h264(future_path, future_composite, fps)
+
+            boundary_contact_rows = []
+            for step in capture_indices:
+                remaining = total_steps - int(step)
+                source_heat = aligned_by_step[step][context_count - 1]
+                target_heat = aligned_by_step[step][context_count]
+                source_overlay = _heat_overlay(
+                    context_frames_bgr[-1], source_heat, context_low, context_high
+                )
+                target_overlay = _heat_overlay(
+                    x0_videos[step][context_count], target_heat, future_low, future_high
+                )
+                source_overlay = cv2.resize(source_overlay, (448, 256), interpolation=cv2.INTER_AREA)
+                target_overlay = cv2.resize(target_overlay, (448, 256), interpolation=cv2.INTER_AREA)
+                source_overlay = _label(
+                    source_overlay,
+                    [f"noun={noun} layer={layer_id} remaining={remaining}", "context frame 07"],
+                )
+                target_overlay = _label(
+                    target_overlay,
+                    [f"noun={noun} layer={layer_id} remaining={remaining}", "future frame 08"],
+                )
+                boundary_contact_rows.append(np.concatenate([source_overlay, target_overlay], axis=1))
+            boundary_contact = noun_dir / f"boundary_rank{rank}_layer{layer_id:02d}_shared_scale.jpg"
+            cv2.imwrite(
+                str(boundary_contact),
+                np.concatenate(boundary_contact_rows, axis=0),
+                [cv2.IMWRITE_JPEG_QUALITY, 95],
+            )
 
             context_indices = [0, min(3, context_count - 1), context_count - 1]
             context_contact_rows.append(
@@ -625,6 +801,7 @@ def _render_outputs(
                     "score": score_row,
                     "context_video": str(context_path),
                     "future_x0_video": str(future_path),
+                    "boundary_shared_scale_contact": str(boundary_contact),
                     "context_scale": [context_low, context_high],
                     "future_scale": [future_low, future_high],
                 }
@@ -643,6 +820,14 @@ def _render_outputs(
 
     npz_path = output_dir / "selected_top3_attention_maps_fp16.npz"
     np.savez_compressed(npz_path, **selected_raw)
+    all_maps_path = None
+    if SAVE_ALL_ATTENTION_MAPS:
+        all_maps_path = output_dir / "all_attention_maps_fp16.npz"
+        all_raw = {
+            f"{noun}__layer_{layer_id:02d}__progress_{step:02d}": array.astype(np.float16)
+            for (step, layer_id, noun), array in recorder.maps.items()
+        }
+        np.savez_compressed(all_maps_path, **all_raw)
     manifest = {
         "case": case_stem,
         "prompt": prompt,
@@ -657,9 +842,28 @@ def _render_outputs(
         "layer_count": layer_count,
         "top_layer_count": TOP_LAYERS,
         "query_chunk": QUERY_CHUNK,
+        "shared_context_future_scale": SHARED_CONTEXT_FUTURE_SCALE,
+        "boundary_metrics": {
+            "source_latent_time_index": source_latent,
+            "target_latent_time_index": target_latent,
+            "per_step_csv": str(boundary_path),
+            "summary_csv": str(boundary_summary_path),
+            "js_log_base": "natural",
+            "centroid_coordinates": "normalized independently to [0,1] in x and y",
+        },
+        "cross_attention_boundary_intervention": {
+            "enabled": BOUNDARY_COPY_ENABLED,
+            "cfg_branch": "positive_only",
+            "source_latent_time_index": BOUNDARY_COPY_SOURCE_LATENT,
+            "target_latent_time_index": BOUNDARY_COPY_TARGET_LATENT,
+            "scope": "all denoise steps and all DiT text cross-attention layers",
+            "operation": "replace target q rows with source q rows before full text-key attention",
+            "intervention_calls": recorder.intervention_calls,
+        },
         "layer_scores_csv": str(score_path),
         "predicted_x0_videos": x0_paths,
         "raw_selected_maps": str(npz_path),
+        "raw_all_maps": None if all_maps_path is None else str(all_maps_path),
         "nouns": noun_outputs,
     }
     manifest_path = output_dir / "manifest.json"
