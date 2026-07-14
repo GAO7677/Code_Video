@@ -215,7 +215,9 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
         base_rms = (
             object_latent_tokens.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
         )
-        residual_rms = residual.float().square().mean(dim=-1).sqrt()
+        residual_rms = (
+            residual.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
+        )
         ratio = residual_rms / base_rms
         cap_scale = torch.ones_like(ratio)
         if self.entity_residual_max_ratio > 0.0:

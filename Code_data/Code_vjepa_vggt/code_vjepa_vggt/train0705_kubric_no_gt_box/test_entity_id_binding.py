@@ -109,10 +109,11 @@ def test_two_same_noun_entities_get_distinct_id_conditioning_without_collision()
     assert metrics["train/entity_binding_id_collision_count"] == 0.0
 
 
-def test_zero_initialized_projection_receives_gradient() -> None:
+def test_zero_initialized_projection_has_finite_backward_and_optimizer_step() -> None:
     torch.manual_seed(1)
     adapter = _adapter(zero_output=True)
     adapter.train()
+    adapter.entity_residual_max_ratio = 0.1
     adapter.set_entity_binding_context(
         entity_text_by_id=torch.randn((1, 2, 4)),
         entity_text_match_mask=torch.ones((1, 2), dtype=torch.bool),
@@ -125,5 +126,19 @@ def test_zero_initialized_projection_receives_gradient() -> None:
     )
     output[..., 0].square().sum().backward()
 
-    assert adapter.entity_text_up.weight.grad is not None
+    entity_parameters = {
+        name: parameter
+        for name, parameter in adapter.named_parameters()
+        if name.startswith("entity_")
+    }
+    for name, parameter in entity_parameters.items():
+        assert torch.isfinite(parameter).all(), f"non-finite parameter before step: {name}"
+        assert parameter.grad is not None, f"missing gradient: {name}"
+        assert torch.isfinite(parameter.grad).all(), f"non-finite gradient: {name}"
     assert float(adapter.entity_text_up.weight.grad.abs().sum().item()) > 0.0
+
+    optimizer = torch.optim.AdamW(entity_parameters.values(), lr=1.0e-3)
+    optimizer.step()
+    for name, parameter in entity_parameters.items():
+        assert torch.isfinite(parameter).all(), f"non-finite parameter after step: {name}"
+    assert float(adapter.entity_text_up.weight.abs().sum().item()) > 0.0

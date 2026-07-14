@@ -120,10 +120,14 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
         self.entity_binding_randomize_ids = bool(
             kwargs.pop("entity_binding_randomize_ids", True)
         )
+        self.debug_print_entity_binding = bool(
+            kwargs.pop("debug_print_entity_binding", False)
+        )
         super().__init__(*args, **kwargs)
 
         self._entity_binding_runtime: dict[str, Any] | None = None
         self._entity_binding_prepare_metrics: dict[str, float] = {}
+        self._entity_binding_phrase_matches: list[str] = []
         if not self.enable_object_branch or self.object_adapter is None:
             return
 
@@ -205,6 +209,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
         matched_phrases = 0
         matched_spans = 0
         matched_candidates: set[str] = set()
+        self._entity_binding_phrase_matches = []
         for local_index, slot_id in enumerate(valid_slots):
             entity_id = int(randomized_ids[local_index])
             slot_entity_ids[0, slot_id] = entity_id
@@ -214,6 +219,9 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
                 prompt_context=prompt_context,
                 tokenizer=tokenizer,
                 phrase=phrase,
+            )
+            self._entity_binding_phrase_matches.append(
+                f"slot{slot_id}:{phrase!r}->{matched_candidate!r}"
             )
             if pooled is None:
                 continue
@@ -229,7 +237,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             entity_text_match_mask=entity_match_mask,
             slot_entity_ids=slot_entity_ids,
         )
-        self._entity_binding_prepare_metrics = {
+        self._entity_binding_prepare_metrics.update({
             "train/entity_binding_grounding_phrase_count": float(len(phrases)),
             "train/entity_binding_prompt_matched_phrase_count": float(matched_phrases),
             "train/entity_binding_prompt_matched_span_count": float(matched_spans),
@@ -239,8 +247,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             "train/entity_binding_id_randomized": float(
                 self.entity_binding_randomize_ids
             ),
-        }
-
+        })
     def _build_object_query_priors(self, sample: dict, *, image_hw: tuple[int, int]):
         outputs = super()._build_object_query_priors(sample, image_hw=image_hw)
         if self._entity_binding_runtime is not None:
@@ -262,6 +269,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
                 self.entity_binding_randomize_ids
             ),
         }
+        self._entity_binding_phrase_matches = []
         if self.enable_object_branch and self.object_adapter is not None:
             self.entity_bound_adapter.clear_entity_binding_context()
             self.entity_bound_adapter.pop_entity_binding_metrics()
@@ -284,6 +292,17 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             if self.enable_object_branch and self.object_adapter is not None:
                 metrics.update(self.entity_bound_adapter.pop_entity_binding_metrics())
             metrics.update(self._entity_binding_prepare_metrics)
+            if self.debug_print_entity_binding:
+                print(
+                    "[entity-bind] "
+                    f"source={source} "
+                    f"source_enabled={metrics['train/entity_binding_source_enabled']:.0f} "
+                    f"phrases={metrics['train/entity_binding_grounding_phrase_count']:.0f} "
+                    f"prompt_matched={metrics['train/entity_binding_prompt_matched_phrase_count']:.0f} "
+                    f"active_slots={metrics.get('train/entity_binding_matched_slot_count', 0.0):.0f} "
+                    f"slot_dropout={metrics.get('train/entity_binding_dropout_fraction', 0.0):.3f} "
+                    f"bindings={self._entity_binding_phrase_matches}"
+                )
             return total, metrics
         finally:
             self._entity_binding_runtime = None
@@ -316,6 +335,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use slot-order entity IDs instead of a fresh per-sample permutation.",
     )
+    group.add_argument(
+        "--debug_print_entity_binding",
+        action="store_true",
+        help="Print per-batch phrase-to-slot entity binding diagnostics.",
+    )
     return parser
 
 
@@ -340,6 +364,7 @@ def build_model(
             entity_binding_randomize_ids=(
                 not args.disable_entity_binding_id_randomization
             ),
+            debug_print_entity_binding=args.debug_print_entity_binding,
         )
 
     replay.ReplayPreserveNoGTBoxWanModule = entity_factory
