@@ -9,9 +9,9 @@ MIN_FREE_GPU_MIB="${MIN_FREE_GPU_MIB:-44000}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 STABLE_FREE_POLLS="${STABLE_FREE_POLLS:-4}"
 BLOCKING_TMUX_SESSION="${BLOCKING_TMUX_SESSION-mixdataset_physiq_objres_sweep_gpu6_20260713}"
-SMOKE_OUTPUT_ROOT="${SMOKE_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713_smoke2}"
-FULL_OUTPUT_ROOT="${FULL_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713}"
-QUEUE_LOG="${QUEUE_LOG:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713_queue.log}"
+SMOKE_OUTPUT_ROOT="${SMOKE_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/context_guidance_physiq3_step1000_20260713_smoke2}"
+FULL_OUTPUT_ROOT="${FULL_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/context_guidance_physiq3_step1000_20260713}"
+QUEUE_LOG="${QUEUE_LOG:-/data/gaoya/agent-data/outputs/AAA_physv/context_guidance_physiq3_step1000_20260713_queue.log}"
 
 mkdir -p "$(dirname "${QUEUE_LOG}")"
 exec > >(tee -a "${QUEUE_LOG}") 2>&1
