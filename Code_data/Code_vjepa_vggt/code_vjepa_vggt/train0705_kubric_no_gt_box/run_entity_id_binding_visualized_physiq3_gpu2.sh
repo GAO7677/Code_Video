@@ -6,7 +6,7 @@ SCRIPT=${PROJ}/code_vjepa_vggt/train0705_kubric_no_gt_box/wan_stage1b_entity_id_
 DIFFSYNTH=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/entity_id_binding_physiq3_current_20260714}
-INPUT_LIST=${OUTPUT_ROOT}/input_jsons.txt
+INPUT_LIST=${INPUT_LIST:-/data/gaoya/agent-data/outputs/AAA_physv/entity_id_binding_physiq3_current_20260714/input_jsons.txt}
 CHECKPOINT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_raw49f_kubric_openvid_replay_sourceaware_fp32gate_fixedctx8_init3500_save500_keepall_20260713T090024Z/checkpoints/step-003500
 
 env PYTHONNOUSERSITE=1 \
@@ -29,8 +29,10 @@ env PYTHONNOUSERSITE=1 \
   --object-branch-ratio-guard-max-ratio 0.20 \
   --object-branch-ratio-guard-max-block-id -1 \
   --grounding-proposal-source gdino_only \
-  --grounding-text-prompt "box . cube . block . cylinder . capsule . sphere . ball . person . car . vehicle . container ." \
-  --grounding-disable-caption-terms \
+  --grounding-text-prompt "" \
+  --grounding-enable-caption-terms \
+  --grounding-caption-prompt-mode physical_noun_phrases \
+  --grounding-caption-max-phrases 4 --grounding-caption-min-score 4.0 \
   --grounding-gdino-box-threshold 0.20 --grounding-gdino-text-threshold 0.15 \
   --grounding-prompt-frame-mode first --grounding-track-dedupe-iou-threshold 0.75 \
   --grounding-container-suppress-ratio-threshold 0.95 \

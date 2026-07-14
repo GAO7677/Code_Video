@@ -415,6 +415,15 @@ def _build_model_args(args: argparse.Namespace) -> argparse.Namespace:
     model_args.grounding_motion_score_ratio = float(args.grounding_motion_score_ratio)
     model_args.grounding_text_prompt = str(args.grounding_text_prompt)
     model_args.grounding_extra_prompt_terms = str(args.grounding_extra_prompt_terms)
+    model_args.grounding_caption_prompt_mode = str(
+        getattr(args, "grounding_caption_prompt_mode", "known_terms")
+    )
+    model_args.grounding_caption_max_phrases = int(
+        getattr(args, "grounding_caption_max_phrases", 4)
+    )
+    model_args.grounding_caption_min_score = float(
+        getattr(args, "grounding_caption_min_score", 4.0)
+    )
     model_args.grounding_disable_caption_terms = bool(args.grounding_disable_caption_terms)
     model_args.grounding_gdino_box_threshold = float(args.grounding_gdino_box_threshold)
     model_args.grounding_gdino_text_threshold = float(args.grounding_gdino_text_threshold)

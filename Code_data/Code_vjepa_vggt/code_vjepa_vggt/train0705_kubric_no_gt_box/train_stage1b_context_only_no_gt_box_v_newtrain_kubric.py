@@ -271,6 +271,15 @@ class ContextOnlyNoGTBoxWanModule(tvn.WanTrainingModule):
                 container_suppress_small_iou_threshold=float(
                     cfg.get("grounding_container_suppress_small_iou_threshold", 0.7)
                 ),
+                caption_prompt_mode=str(
+                    cfg.get("grounding_caption_prompt_mode", "known_terms")
+                ),
+                caption_max_phrases=int(
+                    cfg.get("grounding_caption_max_phrases", self.aux_max_objects)
+                ),
+                caption_min_score=float(
+                    cfg.get("grounding_caption_min_score", 4.0)
+                ),
             )
 
     def _compute_object_gate_regularizer(self, pipe) -> tuple[torch.Tensor, dict[str, float]]:
@@ -746,6 +755,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     group.add_argument("--grounding_extra_prompt_terms", default="")
     group.add_argument(
+        "--grounding_caption_prompt_mode",
+        choices=["known_terms", "physical_noun_phrases"],
+        default="known_terms",
+    )
+    group.add_argument("--grounding_caption_max_phrases", type=int, default=4)
+    group.add_argument("--grounding_caption_min_score", type=float, default=4.0)
+    group.add_argument(
         "--grounding_disable_caption_terms",
         action="store_true",
         default=True,
@@ -918,6 +934,9 @@ def _grounding_config_from_args(args: argparse.Namespace) -> dict:
         "grounding_motion_score_ratio": args.grounding_motion_score_ratio,
         "grounding_text_prompt": args.grounding_text_prompt,
         "grounding_extra_prompt_terms": args.grounding_extra_prompt_terms,
+        "grounding_caption_prompt_mode": args.grounding_caption_prompt_mode,
+        "grounding_caption_max_phrases": args.grounding_caption_max_phrases,
+        "grounding_caption_min_score": args.grounding_caption_min_score,
         "grounding_disable_caption_terms": args.grounding_disable_caption_terms,
         "grounding_gdino_box_threshold": args.grounding_gdino_box_threshold,
         "grounding_gdino_text_threshold": args.grounding_gdino_text_threshold,

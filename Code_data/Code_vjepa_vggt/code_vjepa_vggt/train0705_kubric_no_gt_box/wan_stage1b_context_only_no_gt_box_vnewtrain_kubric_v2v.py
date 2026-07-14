@@ -523,6 +523,13 @@ def parse_args() -> argparse.Namespace:
         default="box . cube . block . cylinder . capsule . sphere . ball .",
     )
     parser.add_argument("--grounding-extra-prompt-terms", default="")
+    parser.add_argument(
+        "--grounding-caption-prompt-mode",
+        choices=["known_terms", "physical_noun_phrases"],
+        default="known_terms",
+    )
+    parser.add_argument("--grounding-caption-max-phrases", type=int, default=4)
+    parser.add_argument("--grounding-caption-min-score", type=float, default=4.0)
     parser.add_argument("--grounding-disable-caption-terms", action="store_true", default=True)
     parser.add_argument(
         "--grounding-enable-caption-terms",
@@ -683,6 +690,9 @@ def _build_runtime_args(cli_args: argparse.Namespace, checkpoint_dir: Path, outp
         grounding_motion_score_ratio=float(cli_args.grounding_motion_score_ratio),
         grounding_text_prompt=str(cli_args.grounding_text_prompt),
         grounding_extra_prompt_terms=str(cli_args.grounding_extra_prompt_terms),
+        grounding_caption_prompt_mode=str(cli_args.grounding_caption_prompt_mode),
+        grounding_caption_max_phrases=int(cli_args.grounding_caption_max_phrases),
+        grounding_caption_min_score=float(cli_args.grounding_caption_min_score),
         grounding_disable_caption_terms=bool(cli_args.grounding_disable_caption_terms),
         grounding_gdino_box_threshold=float(cli_args.grounding_gdino_box_threshold),
         grounding_gdino_text_threshold=float(cli_args.grounding_gdino_text_threshold),

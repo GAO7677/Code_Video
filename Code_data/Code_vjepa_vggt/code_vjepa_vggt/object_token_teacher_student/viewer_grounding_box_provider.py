@@ -13,6 +13,28 @@ from code_vjepa_vggt.adapters.sam2_motion import (
     build_motion_prompt_boxes,
 )
 from code_vjepa_vggt.utils.object_priors import build_vggt_query_prior
+from code_vjepa_vggt.utils.physical_caption_phrases import (
+    PhysicalNounPhrase,
+    extract_physical_noun_phrases,
+)
+
+
+_PHYSICAL_GROUNDING_HEAD_ALIASES = {
+    "cardstock": ("paper",),
+}
+
+
+def physical_phrase_grounding_queries(phrase: PhysicalNounPhrase) -> list[str]:
+    queries = [phrase.text, *_PHYSICAL_GROUNDING_HEAD_ALIASES.get(phrase.head, ())]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        normalized = str(query).strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(str(query).strip())
+    return deduped
 
 
 @dataclass
@@ -22,6 +44,9 @@ class DetectedObjectTrack:
     boxes_t4: np.ndarray
     score: float
     phrase: str
+    source_phrase: str | None = None
+    caption_span: tuple[int, int] | None = None
+    phrase_head: str | None = None
 
 
 @dataclass
@@ -284,6 +309,9 @@ class ViewerGroundingBoxProvider:
         container_suppress_min_contained: int,
         container_suppress_min_area_ratio: float,
         container_suppress_small_iou_threshold: float,
+        caption_prompt_mode: str = "known_terms",
+        caption_max_phrases: int = 4,
+        caption_min_score: float = 4.0,
     ) -> None:
         self.device = str(device)
         self.segment_len = int(segment_len)
@@ -302,6 +330,15 @@ class ViewerGroundingBoxProvider:
         self.container_suppress_min_contained = int(container_suppress_min_contained)
         self.container_suppress_min_area_ratio = float(container_suppress_min_area_ratio)
         self.container_suppress_small_iou_threshold = float(container_suppress_small_iou_threshold)
+        self.caption_prompt_mode = str(caption_prompt_mode).strip().lower()
+        self.caption_max_phrases = int(caption_max_phrases)
+        self.caption_min_score = float(caption_min_score)
+        if self.caption_prompt_mode not in {"known_terms", "physical_noun_phrases"}:
+            raise ValueError(
+                "caption_prompt_mode must be known_terms or physical_noun_phrases"
+            )
+        if self.caption_max_phrases <= 0:
+            raise ValueError("caption_max_phrases must be positive")
 
         self.tracker = SAM2MotionTracker(
             device=self.device,
@@ -315,7 +352,16 @@ class ViewerGroundingBoxProvider:
             text_threshold=self.gdino_text_threshold,
         )
 
-    def _make_box_fallback_track(self, box_xyxy: np.ndarray, score: float, phrase: str, height: int, width: int, frames: int) -> DetectedObjectTrack | None:
+    def _make_box_fallback_track(
+        self,
+        box_xyxy: np.ndarray,
+        score: float,
+        phrase: str,
+        height: int,
+        width: int,
+        frames: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> DetectedObjectTrack | None:
         fallback_box = np.asarray(box_xyxy, dtype=np.float32)
         x0, y0, x1, y1 = [int(round(v)) for v in fallback_box.tolist()]
         x0 = max(0, min(x0, width - 1))
@@ -333,6 +379,13 @@ class ViewerGroundingBoxProvider:
             boxes_t4=boxes,
             score=float(score),
             phrase=str(phrase),
+            source_phrase=(metadata or {}).get("source_phrase"),
+            caption_span=(
+                tuple(int(value) for value in (metadata or {})["caption_span"])
+                if (metadata or {}).get("caption_span") is not None
+                else None
+            ),
+            phrase_head=(metadata or {}).get("phrase_head"),
         )
 
     def _detect_and_track_objects(
@@ -353,8 +406,14 @@ class ViewerGroundingBoxProvider:
         candidate_boxes: list[np.ndarray] = []
         candidate_scores: list[float] = []
         candidate_phrases: list[str] = []
+        candidate_metadata: list[dict[str, Any]] = []
 
-        def add_candidate(box_xyxy: np.ndarray, score: float, phrase: str) -> None:
+        def add_candidate(
+            box_xyxy: np.ndarray,
+            score: float,
+            phrase: str,
+            metadata: dict[str, Any] | None = None,
+        ) -> None:
             box = np.asarray(box_xyxy, dtype=np.float32)
             if not np.all(np.isfinite(box)):
                 return
@@ -366,12 +425,19 @@ class ViewerGroundingBoxProvider:
                         candidate_boxes[idx] = box
                         candidate_scores[idx] = float(score)
                         candidate_phrases[idx] = str(phrase)
+                        candidate_metadata[idx] = dict(metadata or {})
                     return
-            if len(candidate_boxes) >= self.max_objects:
+            candidate_limit = (
+                self.max_objects * max(self.caption_max_phrases, 1)
+                if self.caption_prompt_mode == "physical_noun_phrases"
+                else self.max_objects
+            )
+            if len(candidate_boxes) >= candidate_limit:
                 return
             candidate_boxes.append(box)
             candidate_scores.append(float(score))
             candidate_phrases.append(str(phrase))
+            candidate_metadata.append(dict(metadata or {}))
 
         def add_motion_candidates() -> None:
             motion_boxes = motion_multi.boxes_xyxy[: self.max_objects]
@@ -385,14 +451,89 @@ class ViewerGroundingBoxProvider:
                     continue
                 add_candidate(box_xyxy, float(score), f"motion_component_{idx}")
 
-        prompt_text = build_open_vocab_prompt(
-            caption,
-            text_prompt=self.text_prompt,
-            extra_prompt_terms=self.extra_prompt_terms,
-            include_caption_terms=self.include_caption_terms,
-        )
+        physical_phrases: list[PhysicalNounPhrase] = []
+        phrase_debug: dict[str, Any] = {
+            "mode": self.caption_prompt_mode,
+            "selected": [],
+            "dropped": [],
+        }
+        if self.include_caption_terms and self.caption_prompt_mode == "physical_noun_phrases":
+            physical_phrases, phrase_debug = extract_physical_noun_phrases(
+                caption,
+                max_phrases=self.caption_max_phrases,
+                min_score=self.caption_min_score,
+            )
+            prompt_text = " . ".join(item.text for item in physical_phrases)
+            prompt_text += " ." if prompt_text else ""
+        else:
+            prompt_text = build_open_vocab_prompt(
+                caption,
+                text_prompt=self.text_prompt,
+                extra_prompt_terms=self.extra_prompt_terms,
+                include_caption_terms=self.include_caption_terms,
+            )
 
         def add_gdino_candidates() -> None:
+            if physical_phrases:
+                detections: list[
+                    tuple[PhysicalNounPhrase, list[tuple[np.ndarray, float, str, str]]]
+                ] = []
+                for phrase_record in physical_phrases:
+                    phrase_candidates: list[tuple[np.ndarray, float, str, str]] = []
+                    for detector_query in physical_phrase_grounding_queries(phrase_record):
+                        detection = self.detector.detect(
+                            frames_tchw_01[prompt_frame_idx],
+                            detector_query,
+                            guidance_box_xyxy=None,
+                        )
+                        for box_xyxy, score, detected_phrase in zip(
+                            detection.boxes_xyxy,
+                            detection.scores,
+                            detection.phrases,
+                        ):
+                            box = np.asarray(box_xyxy, dtype=np.float32)
+                            if any(
+                                box_iou_xyxy(box, existing[0]) >= 0.75
+                                for existing in phrase_candidates
+                            ):
+                                continue
+                            phrase_candidates.append(
+                                (box, float(score), str(detected_phrase), detector_query)
+                            )
+                    phrase_candidates.sort(key=lambda item: item[1], reverse=True)
+                    detections.append((phrase_record, phrase_candidates))
+
+                # Preserve one candidate per phrase before assigning spare slots
+                # to repeated instances such as two visually distinct balls.
+                for candidate_rank in range(self.max_objects):
+                    for phrase_rank, (phrase_record, phrase_candidates) in enumerate(detections):
+                        if candidate_rank >= int(phrase_record.instance_count):
+                            continue
+                        if candidate_rank >= len(phrase_candidates):
+                            continue
+                        box_xyxy, score, detected_phrase, detector_query = phrase_candidates[candidate_rank]
+                        add_candidate(
+                            box_xyxy,
+                            score,
+                            phrase_record.text,
+                            {
+                                "source_phrase": phrase_record.text,
+                                "phrase_head": phrase_record.head,
+                                "caption_span": [
+                                    int(phrase_record.char_start),
+                                    int(phrase_record.char_end),
+                                ],
+                                "phrase_rank": int(phrase_rank),
+                                "candidate_rank": int(candidate_rank),
+                                "instance_count": int(phrase_record.instance_count),
+                                "detector_query": detector_query,
+                                "detected_phrase": detected_phrase,
+                            },
+                        )
+                        if len(candidate_boxes) >= self.max_objects:
+                            return
+                return
+
             detection = self.detector.detect(frames_tchw_01[prompt_frame_idx], prompt_text, guidance_box_xyxy=None)
             for box_xyxy, score, phrase in zip(
                 detection.boxes_xyxy[: self.max_objects],
@@ -420,22 +561,27 @@ class ViewerGroundingBoxProvider:
             track_boxes = np.stack(candidate_boxes, axis=0).astype(np.float32)[: self.max_objects]
             track_scores = np.asarray(candidate_scores, dtype=np.float32)[: self.max_objects]
             track_phrases = candidate_phrases[: self.max_objects]
+            track_metadata = candidate_metadata[: self.max_objects]
         else:
             track_boxes = np.zeros((0, 4), dtype=np.float32)
             track_scores = np.zeros((0,), dtype=np.float32)
             track_phrases = []
+            track_metadata = []
 
         if track_boxes.shape[0] == 0 and proposal_source != "gdino_only":
             motion_box = build_motion_prompt_box(frames_tchw_01, prompt_frame_idx=motion_multi.prompt_frame_idx)
             track_boxes = motion_box[None, :]
             track_scores = np.asarray([1.0], dtype=np.float32)
             track_phrases = ["motion_proxy"]
+            track_metadata = [{}]
             prompt_frame_idx = int(motion_multi.prompt_frame_idx)
 
         outputs: list[DetectedObjectTrack] = []
         height, width = int(frames_tchw_01.shape[-2]), int(frames_tchw_01.shape[-1])
         frames = int(frames_tchw_01.shape[0])
-        for box_xyxy, score, phrase in zip(track_boxes, track_scores, track_phrases):
+        for box_xyxy, score, phrase, metadata in zip(
+            track_boxes, track_scores, track_phrases, track_metadata
+        ):
             try:
                 sam_out = self.tracker.track(
                     frames_tchw_01,
@@ -447,10 +593,11 @@ class ViewerGroundingBoxProvider:
                 fallback_track = self._make_box_fallback_track(
                     np.asarray(box_xyxy, dtype=np.float32),
                     float(score),
-                    f"{phrase}_box_fallback",
+                    str(metadata.get("source_phrase") or f"{phrase}_box_fallback"),
                     height,
                     width,
                     frames,
+                    metadata,
                 )
                 if fallback_track is not None:
                     outputs.append(fallback_track)
@@ -459,10 +606,11 @@ class ViewerGroundingBoxProvider:
                 fallback_track = self._make_box_fallback_track(
                     np.asarray(box_xyxy, dtype=np.float32),
                     float(score),
-                    f"{phrase}_empty_mask_fallback",
+                    str(metadata.get("source_phrase") or f"{phrase}_empty_mask_fallback"),
                     height,
                     width,
                     frames,
+                    metadata,
                 )
                 if fallback_track is not None:
                     outputs.append(fallback_track)
@@ -474,6 +622,13 @@ class ViewerGroundingBoxProvider:
                     boxes_t4=sam_out.boxes_t4.astype(np.float32),
                     score=float(score),
                     phrase=str(phrase),
+                    source_phrase=metadata.get("source_phrase"),
+                    caption_span=(
+                        tuple(int(value) for value in metadata["caption_span"])
+                        if metadata.get("caption_span") is not None
+                        else None
+                    ),
+                    phrase_head=metadata.get("phrase_head"),
                 )
             )
 
@@ -488,6 +643,8 @@ class ViewerGroundingBoxProvider:
         return suppressed_outputs[: self.max_objects], prompt_frame_idx, {
             "proposal_source": proposal_source,
             "prompt_text": prompt_text,
+            "caption_phrase_extraction": phrase_debug,
+            "candidate_metadata": candidate_metadata[: self.max_objects],
             "prompt_frame_idx": int(prompt_frame_idx),
             "raw_candidate_count": int(len(candidate_boxes)),
             "tracked_candidate_count": int(len(outputs)),
