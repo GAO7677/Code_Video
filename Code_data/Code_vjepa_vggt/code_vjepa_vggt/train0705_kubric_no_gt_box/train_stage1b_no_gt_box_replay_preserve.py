@@ -157,6 +157,32 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
             else openvid_dropout_prob
         )
         self.lambda_teacher_preservation = float(kwargs.pop("lambda_teacher_preservation", 0.0))
+        pybullet_teacher_lambda = kwargs.pop(
+            "pybullet_teacher_preservation_lambda", None
+        )
+        kubric_teacher_lambda = kwargs.pop(
+            "kubric_teacher_preservation_lambda", None
+        )
+        openvid_teacher_lambda = kwargs.pop(
+            "openvid_teacher_preservation_lambda", None
+        )
+        self.teacher_preservation_lambdas = {
+            "pybullet": float(
+                self.lambda_teacher_preservation
+                if pybullet_teacher_lambda is None
+                else pybullet_teacher_lambda
+            ),
+            "kubric": float(
+                self.lambda_teacher_preservation
+                if kubric_teacher_lambda is None
+                else kubric_teacher_lambda
+            ),
+            "openvid": float(
+                self.lambda_teacher_preservation
+                if openvid_teacher_lambda is None
+                else openvid_teacher_lambda
+            ),
+        }
         self.teacher_preservation_every_n_steps = int(
             kwargs.pop("teacher_preservation_every_n_steps", 1)
         )
@@ -183,6 +209,11 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
             raise ValueError("openvid_object_branch_dropout_prob must be in [0, 1]")
         if self.lambda_teacher_preservation < 0.0:
             raise ValueError("lambda_teacher_preservation must be non-negative")
+        for source_name, source_lambda in self.teacher_preservation_lambdas.items():
+            if source_lambda < 0.0:
+                raise ValueError(
+                    f"{source_name}_teacher_preservation_lambda must be non-negative"
+                )
         if self.teacher_preservation_every_n_steps <= 0:
             raise ValueError("teacher_preservation_every_n_steps must be positive")
         if self.openvid_teacher_preservation_every_n_steps <= 0:
@@ -231,6 +262,11 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
 
     def _run_main_loss_with_trace(self, pipe, inputs_shared, inputs_posi, object_context):
         source = self._dataset_source(inputs_shared)
+        source_teacher_lambda = float(
+            self.teacher_preservation_lambdas.get(
+                source, self.lambda_teacher_preservation
+            )
+        )
         source_count = self._preservation_forward_counts.get(source, 0) + 1
         self._preservation_forward_counts[source] = source_count
         teacher_interval = (
@@ -239,7 +275,7 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
             else self.teacher_preservation_every_n_steps
         )
         run_teacher = (
-            self.lambda_teacher_preservation > 0.0
+            source_teacher_lambda > 0.0
             and (source_count - 1) % teacher_interval == 0
         )
         preservation_interval_scale = (
@@ -276,14 +312,15 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
                 "train/loss_main_unregularized": float(main_loss.detach().item()),
                 "train/loss_teacher_preservation": float(preservation_loss.detach().item()),
                 "train/loss_teacher_preservation_weighted": float(
-                    self.lambda_teacher_preservation
+                    source_teacher_lambda
                     * preservation_interval_scale
                     * preservation_loss.detach().item()
                 ),
+                "train/teacher_preservation_source_lambda": source_teacher_lambda,
                 "train/teacher_preservation_interval": float(teacher_interval),
                 "train/teacher_preservation_interval_scale": preservation_interval_scale,
                 "train/teacher_preservation_effective_coefficient": float(
-                    self.lambda_teacher_preservation * preservation_interval_scale
+                    source_teacher_lambda * preservation_interval_scale
                     if run_teacher
                     else 0.0
                 ),
@@ -292,7 +329,7 @@ class ReplayPreserveNoGTBoxWanModule(base.ContextOnlyNoGTBoxWanModule):
         self._last_preservation_metrics = diagnostics
         return (
             main_loss
-            + self.lambda_teacher_preservation
+            + source_teacher_lambda
             * preservation_interval_scale
             * preservation_loss,
             trace_layers,
@@ -381,6 +418,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--openvid_object_branch_dropout_prob", type=float, default=None
     )
     regularization.add_argument("--lambda_teacher_preservation", type=float, default=0.05)
+    regularization.add_argument(
+        "--pybullet_teacher_preservation_lambda", type=float, default=None
+    )
+    regularization.add_argument(
+        "--kubric_teacher_preservation_lambda", type=float, default=None
+    )
+    regularization.add_argument(
+        "--openvid_teacher_preservation_lambda", type=float, default=None
+    )
     regularization.add_argument("--teacher_preservation_every_n_steps", type=int, default=4)
     regularization.add_argument(
         "--openvid_teacher_preservation_every_n_steps", type=int, default=None
@@ -467,6 +513,11 @@ def build_model(args: argparse.Namespace, accelerator) -> ReplayPreserveNoGTBoxW
             object_branch_dropout_prob=args.object_branch_dropout_prob,
             openvid_object_branch_dropout_prob=args.openvid_object_branch_dropout_prob,
             lambda_teacher_preservation=args.lambda_teacher_preservation,
+            pybullet_teacher_preservation_lambda=(
+                args.pybullet_teacher_preservation_lambda
+            ),
+            kubric_teacher_preservation_lambda=args.kubric_teacher_preservation_lambda,
+            openvid_teacher_preservation_lambda=args.openvid_teacher_preservation_lambda,
             teacher_preservation_every_n_steps=args.teacher_preservation_every_n_steps,
             openvid_teacher_preservation_every_n_steps=(
                 args.openvid_teacher_preservation_every_n_steps
@@ -548,7 +599,10 @@ def main() -> None:
         "Replay preservation: "
         f"physics_dropout={args.object_branch_dropout_prob:.3f}, "
         f"openvid_dropout={args.openvid_object_branch_dropout_prob}, "
-        f"teacher_lambda={args.lambda_teacher_preservation:.4f}, "
+        f"legacy_teacher_lambda={args.lambda_teacher_preservation:.4f}, "
+        f"pybullet_teacher_lambda={args.pybullet_teacher_preservation_lambda}, "
+        f"kubric_teacher_lambda={args.kubric_teacher_preservation_lambda}, "
+        f"openvid_teacher_lambda={args.openvid_teacher_preservation_lambda}, "
         f"teacher_every={args.teacher_preservation_every_n_steps}, "
         f"openvid_teacher_every={args.openvid_teacher_preservation_every_n_steps}, "
         f"unbiased_interval_scale={args.teacher_preservation_unbiased_interval_scale}, "

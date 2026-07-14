@@ -66,6 +66,33 @@ BOUNDARY_COPY_SOURCE_LATENT = int(
 BOUNDARY_COPY_TARGET_LATENT = int(
     _pop_option(sys.argv, "--attention-boundary-copy-target-latent", "2")
 )
+NOUN_SUPPRESS_NAME = _pop_option(sys.argv, "--attention-noun-suppress-name", "").strip()
+NOUN_SUPPRESS_LAYERS = {
+    int(value.strip())
+    for value in _pop_option(sys.argv, "--attention-noun-suppress-layers", "").split(",")
+    if value.strip()
+}
+NOUN_SUPPRESS_SCALE = float(
+    _pop_option(sys.argv, "--attention-noun-suppress-scale", "1.0")
+)
+NOUN_SUPPRESS_RECT = tuple(
+    float(value.strip())
+    for value in _pop_option(
+        sys.argv, "--attention-noun-suppress-rect", "0.0,1.0,0.0,1.0"
+    ).split(",")
+)
+if len(NOUN_SUPPRESS_RECT) != 4:
+    raise SystemExit("--attention-noun-suppress-rect requires x0,x1,y0,y1")
+if not 0.0 < NOUN_SUPPRESS_SCALE <= 1.0:
+    raise SystemExit("--attention-noun-suppress-scale must be in (0,1]")
+if not (
+    0.0 <= NOUN_SUPPRESS_RECT[0] < NOUN_SUPPRESS_RECT[1] <= 1.0
+    and 0.0 <= NOUN_SUPPRESS_RECT[2] < NOUN_SUPPRESS_RECT[3] <= 1.0
+):
+    raise SystemExit("--attention-noun-suppress-rect must be inside normalized [0,1]")
+NOUN_SUPPRESS_ENABLED = bool(
+    NOUN_SUPPRESS_NAME and NOUN_SUPPRESS_LAYERS and NOUN_SUPPRESS_SCALE < 1.0
+)
 FFMPEG = Path(
     _pop_option(
         sys.argv,
@@ -162,6 +189,7 @@ class AttentionRecorder:
         self.query_chunk = int(query_chunk)
         self.active = False
         self.intervention_active = False
+        self.positive_branch_active = False
         self.step_index = -1
         self.grid: tuple[int, int, int] | None = None
         self.maps: dict[tuple[int, int, str], np.ndarray] = {}
@@ -179,6 +207,9 @@ class AttentionRecorder:
             def wrapped(q, k, v, *, _original=original, _layer_id=layer_id):
                 q_for_attention = self.apply_boundary_copy(q)
                 output = _original(q_for_attention, k, v)
+                output = self.apply_noun_spatial_suppression(
+                    _layer_id, q_for_attention, k, v, output
+                )
                 if self.active:
                     self.capture(_layer_id, q_for_attention, k)
                 return output
@@ -211,6 +242,77 @@ class AttentionRecorder:
         self.intervention_calls += 1
         return copied
 
+    def _noun_suppression_query_mask(self, *, device: torch.device) -> torch.Tensor:
+        if self.grid is None:
+            raise RuntimeError("attention grid was not configured before noun suppression")
+        frames, grid_h, grid_w = self.grid
+        spatial = int(grid_h * grid_w)
+        indices = torch.arange(frames * spatial, device=device)
+        spatial_indices = indices.remainder(spatial)
+        yy = torch.div(spatial_indices, grid_w, rounding_mode="floor")
+        xx = spatial_indices.remainder(grid_w)
+        x_norm = (xx.float() + 0.5) / float(grid_w)
+        y_norm = (yy.float() + 0.5) / float(grid_h)
+        x0, x1, y0, y1 = NOUN_SUPPRESS_RECT
+        return (x_norm >= x0) & (x_norm < x1) & (y_norm >= y0) & (y_norm < y1)
+
+    def _apply_suppression_bias(
+        self,
+        scores: torch.Tensor,
+        *,
+        layer_id: int,
+        query_mask: torch.Tensor | None = None,
+    ) -> None:
+        if not (
+            NOUN_SUPPRESS_ENABLED
+            and self.positive_branch_active
+            and layer_id in NOUN_SUPPRESS_LAYERS
+        ):
+            return
+        details = self.noun_details.get(NOUN_SUPPRESS_NAME)
+        if details is None:
+            raise RuntimeError(f"noun suppression target {NOUN_SUPPRESS_NAME!r} is unavailable")
+        bias = math.log(max(NOUN_SUPPRESS_SCALE, 1.0e-8))
+        for token_position in details["token_positions"]:
+            if query_mask is None:
+                scores[..., int(token_position)] += bias
+            else:
+                scores[:, :, query_mask, int(token_position)] += bias
+
+    @torch.no_grad()
+    def apply_noun_spatial_suppression(
+        self,
+        layer_id: int,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        if not (
+            NOUN_SUPPRESS_ENABLED
+            and self.positive_branch_active
+            and layer_id in NOUN_SUPPRESS_LAYERS
+        ):
+            return output
+        query_mask = self._noun_suppression_query_mask(device=q.device)
+        query_indices = torch.nonzero(query_mask, as_tuple=False).flatten()
+        if int(query_indices.numel()) == 0:
+            return output
+        num_heads = 24
+        head_dim = int(q.shape[-1]) // num_heads
+        selected_q = q.index_select(1, query_indices)
+        queries = selected_q.view(1, -1, num_heads, head_dim).permute(0, 2, 1, 3).float()
+        keys = k.view(1, int(k.shape[1]), num_heads, head_dim).permute(0, 2, 1, 3).float()
+        values = v.view(1, int(v.shape[1]), num_heads, head_dim).permute(0, 2, 1, 3).float()
+        scores = torch.matmul(queries, keys.transpose(-1, -2)) / math.sqrt(float(head_dim))
+        self._apply_suppression_bias(scores, layer_id=layer_id)
+        probabilities = torch.softmax(scores, dim=-1)
+        replacement = torch.matmul(probabilities, values)
+        replacement = replacement.permute(0, 2, 1, 3).reshape(1, -1, int(q.shape[-1]))
+        modified = output.clone()
+        modified[:, query_indices] = replacement.to(dtype=output.dtype)
+        return modified
+
     @torch.no_grad()
     def capture(self, layer_id: int, q: torch.Tensor, k: torch.Tensor) -> None:
         if self.grid is None:
@@ -241,6 +343,16 @@ class AttentionRecorder:
                 .float()
             )
             scores = torch.matmul(queries, key_t) / math.sqrt(float(head_dim))
+            local_suppression_mask = None
+            if NOUN_SUPPRESS_ENABLED and layer_id in NOUN_SUPPRESS_LAYERS:
+                local_suppression_mask = self._noun_suppression_query_mask(
+                    device=q.device
+                )[start:stop]
+            self._apply_suppression_bias(
+                scores,
+                layer_id=layer_id,
+                query_mask=local_suppression_mask,
+            )
             probs = torch.softmax(scores, dim=-1)
             for noun, details in self.noun_details.items():
                 token_ids = torch.as_tensor(
@@ -298,6 +410,7 @@ class ModelFnRecorder:
                 int(latents.shape[4]) // patch[2],
             )
         self.attention.intervention_active = bool(positive and BOUNDARY_COPY_ENABLED)
+        self.attention.positive_branch_active = bool(positive)
         if selected and positive:
             self.attention.active = True
             self.attention.step_index = int(step_index)
@@ -306,6 +419,7 @@ class ModelFnRecorder:
         output = self.original(*args, **kwargs)
         self.attention.active = False
         self.attention.intervention_active = False
+        self.attention.positive_branch_active = False
         clean_prefix = kwargs.get("clean_prefix_latents")
         clean_prefix_cpu = None if clean_prefix is None else clean_prefix.detach().cpu()
         if selected and positive:
@@ -866,6 +980,15 @@ def _render_outputs(
             "scope": "all denoise steps and all DiT text cross-attention layers",
             "operation": "replace target q rows with source q rows before full text-key attention",
             "intervention_calls": recorder.intervention_calls,
+        },
+        "cross_attention_noun_spatial_suppression": {
+            "enabled": NOUN_SUPPRESS_ENABLED,
+            "cfg_branch": "positive_only",
+            "noun": NOUN_SUPPRESS_NAME,
+            "layers": sorted(NOUN_SUPPRESS_LAYERS),
+            "attention_scale": NOUN_SUPPRESS_SCALE,
+            "normalized_rect_x0_x1_y0_y1": list(NOUN_SUPPRESS_RECT),
+            "scope": "all denoise steps and all latent time slices inside the spatial rect",
         },
         "layer_scores_csv": str(score_path),
         "predicted_x0_videos": x0_paths,
