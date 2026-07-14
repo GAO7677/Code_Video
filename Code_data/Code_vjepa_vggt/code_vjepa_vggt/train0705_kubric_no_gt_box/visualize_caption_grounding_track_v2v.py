@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +24,79 @@ from code_vjepa_vggt.inspect_cotracker_vggt_geometry import (
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
     ViewerGroundingBoxProvider,
 )
-from code_vjepa_vggt.train0705_kubric_no_gt_box import (
-    inspect_kubric_train_forward_aux_overlay as inspectmod,
-)
 from code_vjepa_vggt.utils.video_io import (
     preprocess_video_rgb_uint8,
     read_video_prefix,
 )
+
+
+def _ffmpeg_path() -> str:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        candidate = Path(sys.executable).resolve().parent / "ffmpeg"
+        if candidate.is_file():
+            ffmpeg = str(candidate)
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required to write browser-compatible videos")
+    return ffmpeg
+
+
+def _ensure_browser_video(source_path: Path) -> Path:
+    output_path = source_path.with_name(f"{source_path.stem}.browser.mp4")
+    subprocess.run(
+        [
+            _ffmpeg_path(),
+            "-y",
+            "-i",
+            str(source_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return output_path
+
+
+def _export_source_video(source_path: Path, output_path: Path) -> Path:
+    subprocess.run(
+        [
+            _ffmpeg_path(),
+            "-y",
+            "-i",
+            str(source_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return output_path
+
+
+def _write_context_video(path: Path, context_video: torch.Tensor, fps: int) -> Path:
+    frames = np.stack(
+        [
+            tensor_frame_to_uint8_hwc(context_video[:, frame_id])
+            for frame_id in range(int(context_video.shape[1]))
+        ]
+    )
+    write_mp4(path, frames, fps=int(fps))
+    return _ensure_browser_video(path)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -299,11 +368,11 @@ def _run_case(
     )
     overlay_raw = case_dir / "detection_sam2_cotracker_overlay.mp4"
     write_mp4(overlay_raw, overlay_frames, fps=int(args.fps))
-    overlay_browser = inspectmod._ensure_browser_video(overlay_raw)
-    context_browser = inspectmod._write_tensor_video(
+    overlay_browser = _ensure_browser_video(overlay_raw)
+    context_browser = _write_context_video(
         case_dir / "model_input_context.mp4", context_video, fps=int(args.fps)
     )
-    source_browser = inspectmod._export_browser_video(
+    source_browser = _export_source_video(
         source_video, case_dir / "source_video.browser.mp4"
     )
     grid_path = case_dir / "detection_sam2_cotracker_grid.png"
