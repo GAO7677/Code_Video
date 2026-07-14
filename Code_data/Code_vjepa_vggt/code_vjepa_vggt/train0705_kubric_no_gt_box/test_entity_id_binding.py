@@ -7,6 +7,9 @@ from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
     find_subsequence_spans,
 )
+from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay_preserve_entity_id_binding import (
+    _phrase_candidates,
+)
 
 
 def _adapter(*, zero_output: bool) -> EntityIDBindingObjectConditionAdapter:
@@ -35,6 +38,13 @@ def _adapter(*, zero_output: bool) -> EntityIDBindingObjectConditionAdapter:
 
 def test_find_subsequence_spans_returns_repeated_mentions() -> None:
     assert find_subsequence_spans([1, 2, 3, 2, 3, 4], [2, 3]) == [(1, 3), (3, 5)]
+
+
+def test_phrase_candidates_extract_multiword_alias_before_action_suffix() -> None:
+    candidates = _phrase_candidates("round rigid object, enters")
+    assert candidates[0] == "round rigid object enters"
+    assert "round rigid object" in candidates
+    assert "ball" in candidates
 
 
 def test_zero_initialized_binding_preserves_old_adapter_output() -> None:

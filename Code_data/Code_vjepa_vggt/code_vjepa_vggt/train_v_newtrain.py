@@ -1665,6 +1665,11 @@ def wan_parser():
         default=0.0,
         help="Gradient clipping norm. Disabled when <= 0.",
     )
+    parser.add_argument(
+        "--fail_on_nonfinite_train_values",
+        action="store_true",
+        help="Abort before optimizer.step when loss or gradient statistics are non-finite.",
+    )
     for action in parser._actions:
         if action.dest == "dataset_base_path":
             action.required = False
@@ -3411,6 +3416,12 @@ def train_loop(
                 continue
             with accelerator.accumulate(model):
                 loss = model({}, inputs=data) if dataset_load_from_cache else model(data)
+                if args.fail_on_nonfinite_train_values and not bool(
+                    torch.isfinite(loss.detach()).all()
+                ):
+                    raise FloatingPointError(
+                        f"non-finite training loss before backward at global_step={global_step}"
+                    )
                 accelerator.backward(loss)
                 grad_stats = {}
                 if accelerator.sync_gradients:
@@ -3420,6 +3431,23 @@ def train_loop(
                             args.max_grad_norm,
                         )
                     grad_stats = _collect_trainable_grad_stats(accelerator.unwrap_model(model))
+                    if args.fail_on_nonfinite_train_values:
+                        grad_norm = float(grad_stats.get("train/grad_norm", float("nan")))
+                        grad_abs_max = float(
+                            grad_stats.get("train/grad_abs_max", float("nan"))
+                        )
+                        grad_param_count = float(
+                            grad_stats.get("train/grad_param_count", 0.0)
+                        )
+                        if (
+                            not math.isfinite(grad_norm)
+                            or not math.isfinite(grad_abs_max)
+                            or grad_param_count <= 0.0
+                        ):
+                            raise FloatingPointError(
+                                "invalid gradients before optimizer.step at "
+                                f"global_step={global_step}: {grad_stats}"
+                            )
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -3474,7 +3502,14 @@ def train_loop(
                                 f"objects={int(round(float(extra_metrics.get('train/object_count_before_dropout', 0.0))))}"
                                 f"->{int(round(float(extra_metrics.get('train/object_count_after_dropout', 0.0))))} "
                                 f"slot_drop={int(round(float(extra_metrics.get('train/object_slot_dropout_applied', 0.0))))} "
-                                f"main_weight={float(extra_metrics.get('train/object_main_loss_weight', 1.0)):.2f}"
+                                f"main_weight={float(extra_metrics.get('train/object_main_loss_weight', 1.0)):.2f} "
+                                f"grad_norm={float(grad_stats.get('train/grad_norm', 0.0)):.6f} "
+                                f"grad_absmax={float(grad_stats.get('train/grad_abs_max', 0.0)):.6f} "
+                                f"grad_params={int(round(float(grad_stats.get('train/grad_param_count', 0.0))))} "
+                                f"entity_active={int(round(float(extra_metrics.get('train/entity_binding_active', 0.0))))} "
+                                f"entity_matched={int(round(float(extra_metrics.get('train/entity_binding_matched_slot_count', 0.0))))} "
+                                f"entity_ratio_max={float(extra_metrics.get('train/entity_binding_residual_ratio_max', 0.0)):.6f} "
+                                f"entity_drop={float(extra_metrics.get('train/entity_binding_dropout_fraction', 0.0)):.3f}"
                             )
 
                 progress["global_step"] = global_step

@@ -48,9 +48,11 @@ def _phrase_candidates(phrase: str) -> list[str]:
     if not normalized:
         return []
     candidates = [normalized]
-    normalized_words = set(normalized.split())
     for aliases in _PHRASE_ALIAS_GROUPS:
-        if normalized in aliases or normalized_words.intersection(aliases):
+        if any(
+            re.search(rf"\b{re.escape(alias)}\b", normalized)
+            for alias in aliases
+        ):
             candidates.extend(aliases)
     deduped: list[str] = []
     for candidate in candidates:
