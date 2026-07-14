@@ -7,6 +7,8 @@ GPU_PAIR="${GPU_PAIR:-6,6}"
 PRIMARY_GPU="${GPU_PAIR%%,*}"
 MIN_FREE_GPU_MIB="${MIN_FREE_GPU_MIB:-44000}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
+STABLE_FREE_POLLS="${STABLE_FREE_POLLS:-4}"
+BLOCKING_TMUX_SESSION="${BLOCKING_TMUX_SESSION-mixdataset_physiq_objres_sweep_gpu6_20260713}"
 SMOKE_OUTPUT_ROOT="${SMOKE_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713_smoke2}"
 FULL_OUTPUT_ROOT="${FULL_OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713}"
 QUEUE_LOG="${QUEUE_LOG:-/data/gaoya/agent-data/outputs/context_guidance_physiq3_step1000_20260713_queue.log}"
@@ -15,14 +17,26 @@ mkdir -p "$(dirname "${QUEUE_LOG}")"
 exec > >(tee -a "${QUEUE_LOG}") 2>&1
 
 echo "[context-guidance-queue] waiting for GPU ${PRIMARY_GPU}"
+stable_free_count=0
 while true; do
+  if [ -n "${BLOCKING_TMUX_SESSION}" ] && tmux has-session -t "${BLOCKING_TMUX_SESSION}" 2>/dev/null; then
+    echo "[context-guidance-queue] blocking_tmux_active=${BLOCKING_TMUX_SESSION}"
+    stable_free_count=0
+    sleep "${POLL_SECONDS}"
+    continue
+  fi
   free_gpu_mib="$(
     nvidia-smi --id="${PRIMARY_GPU}" --query-gpu=memory.free \
       --format=csv,noheader,nounits | head -n 1 | tr -d '[:space:]'
   )"
-  echo "[context-guidance-queue] free_gpu_mib=${free_gpu_mib}"
+  echo "[context-guidance-queue] free_gpu_mib=${free_gpu_mib} stable=${stable_free_count}/${STABLE_FREE_POLLS}"
   if [ -n "${free_gpu_mib}" ] && [ "${free_gpu_mib}" -ge "${MIN_FREE_GPU_MIB}" ]; then
-    break
+    stable_free_count=$((stable_free_count + 1))
+    if [ "${stable_free_count}" -ge "${STABLE_FREE_POLLS}" ]; then
+      break
+    fi
+  else
+    stable_free_count=0
   fi
   sleep "${POLL_SECONDS}"
 done

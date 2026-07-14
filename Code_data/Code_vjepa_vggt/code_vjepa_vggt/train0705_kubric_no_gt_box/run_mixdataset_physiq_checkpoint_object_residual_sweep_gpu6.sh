@@ -93,8 +93,8 @@ for step in step-001000 step-001500 step-002000; do
 done
 
 echo "[sweep] all inference groups completed; starting metrics"
-CUDA_VISIBLE_DEVICES=6 \
-BENCH_CUDA_VISIBLE_DEVICES=6 \
+CUDA_VISIBLE_DEVICES=0 \
+BENCH_CUDA_VISIBLE_DEVICES=0 \
 bash "${BENCH_SH}" "${EVAL_PHYSIQ}" 2>&1 | tee -a "${RUN_LOG_ROOT}/bench_AAAevalphysiq.log"
 
 echo "[sweep] inference and metrics completed"
