@@ -51,7 +51,7 @@ resampler layers               2
 Wan object blocks              8,11,14,17,20,23
 VGGT                            disabled
 legacy Stage1A checkpoint      disabled
-training timestep IDs          1..999 (zero-weight ID 0 excluded)
+training timestep source IDs   10..999 (BF16-zero-weight endpoint excluded)
 ```
 
 The seven trajectory values `[x,y,dx,dy,t,visibility,confidence]` are compact

@@ -23,6 +23,9 @@ from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.monitor_training_h
     parse_object_reg,
     summarize,
 )
+from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.evaluate_validation_policy import (
+    evaluate_policy,
+)
 
 
 def _inputs():
@@ -310,3 +313,27 @@ def test_health_monitor_parses_and_preserves_entity_cap_activation() -> None:
         stale_seconds=1800.0,
     )
     assert "entity residual cap activated" in payload["warnings"]
+
+
+def test_validation_policy_flags_nonmonotonic_high_scale() -> None:
+    def variant(mae: float, changed: float = 0.05) -> dict[str, object]:
+        return {
+            "future_frames": {
+                "mae_0_1": mae,
+                "changed_pixel_fraction_gt_5_255": changed,
+            }
+        }
+
+    report = evaluate_policy(
+        {
+            "cases": {
+                "case": {
+                    "no_object_context": variant(0.006),
+                    "object_residual_0p75x": variant(0.004),
+                    "object_residual_1p5x": variant(0.007),
+                }
+            }
+        }
+    )
+    assert report["status"] == "warning"
+    assert report["cases"]["case"]["scale_1p5_nonmonotonic_risk"] is True

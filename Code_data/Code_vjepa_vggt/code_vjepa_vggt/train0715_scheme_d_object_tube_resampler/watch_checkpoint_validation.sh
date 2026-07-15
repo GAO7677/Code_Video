@@ -47,15 +47,35 @@ run_variant() {
 
 run_variant baseline none 1.0
 run_variant no_object_context zero 1.0
+run_variant object_residual_0p75x none 0.75
 run_variant object_residual_1p5x none 1.5
 
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
   "${PROJECT}/compare_validation_variants.py" \
   --baseline-dir "${OUTPUT_ROOT}/baseline/results" \
   --variant no_object_context "${OUTPUT_ROOT}/no_object_context/results" \
+  --variant object_residual_0p75x "${OUTPUT_ROOT}/object_residual_0p75x/results" \
   --variant object_residual_1p5x "${OUTPUT_ROOT}/object_residual_1p5x/results" \
   --context-frames 8 \
   --output "${OUTPUT_ROOT}/variant_pixel_metrics.json"
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  "${PROJECT}/evaluate_validation_policy.py" \
+  "${OUTPUT_ROOT}/variant_pixel_metrics.json" \
+  --output "${OUTPUT_ROOT}/validation_policy.json"
+
+step_decimal=$((10#${CHECKPOINT_STEP}))
+if (( step_decimal >= 1000 )); then
+  previous_step=$(printf '%06d' $((step_decimal - 500)))
+  previous_baseline="$(dirname "${OUTPUT_ROOT}")/step-${previous_step}/baseline/results"
+  if compgen -G "${previous_baseline}/*.mp4" > /dev/null; then
+    /home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+      "${PROJECT}/compare_validation_variants.py" \
+      --baseline-dir "${previous_baseline}" \
+      --variant "step-${CHECKPOINT_STEP}_baseline" "${OUTPUT_ROOT}/baseline/results" \
+      --context-frames 8 \
+      --output "${OUTPUT_ROOT}/baseline_drift_vs_step-${previous_step}.json"
+  fi
+fi
 
 printf '%s all checkpoint validation variants completed\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   | tee -a "${OUTPUT_ROOT}/validation_status.log"

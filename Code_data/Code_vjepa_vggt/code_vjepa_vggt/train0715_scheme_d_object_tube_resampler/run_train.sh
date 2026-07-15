@@ -18,6 +18,7 @@ mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" "${WANDB_DIR}"
 LOG_FILE="${OUTPUT_DIR}/train_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
+# Scheduler IDs 0-9 all round to the zero-weight t=1000 endpoint in BF16.
 env \
   PYTHONNOUSERSITE=1 \
   PYTHONPATH="${BASE}:${DIFFSYNTH_ROOT}" \
@@ -39,7 +40,7 @@ env \
     --openvid_root /data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train \
     --mixture_pybullet_ratio 0.30 --mixture_kubric_ratio 0.30 --mixture_openvid_ratio 0.40 \
     --height 512 --width 896 --num_frames 49 \
-    --min_timestep_boundary 0.001 --max_timestep_boundary 1.0 \
+    --min_timestep_boundary 0.01 --max_timestep_boundary 1.0 \
     --fixed_num_context_frames 8 --replay_fixed_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --max_train_steps "${MAX_TRAIN_STEPS:-3500}" --num_epochs 100 \

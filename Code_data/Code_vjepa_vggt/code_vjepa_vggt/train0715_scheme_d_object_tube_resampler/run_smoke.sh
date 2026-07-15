@@ -13,6 +13,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_d_v3_object_
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_smoke_${RUN_TAG}}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}"
 
+# Scheduler IDs 0-9 all round to the zero-weight t=1000 endpoint in BF16.
 env \
   PYTHONNOUSERSITE=1 \
   PYTHONPATH="${BASE}:${DIFFSYNTH_ROOT}" \
@@ -37,7 +38,7 @@ env \
     --mixture_kubric_ratio "${KUBRIC_RATIO:-0.30}" \
     --mixture_openvid_ratio "${OPENVID_RATIO:-0.40}" \
     --height 512 --width 896 --num_frames 49 \
-    --min_timestep_boundary 0.001 --max_timestep_boundary 1.0 \
+    --min_timestep_boundary 0.01 --max_timestep_boundary 1.0 \
     --fixed_num_context_frames 8 --replay_fixed_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --max_train_steps "${MAX_TRAIN_STEPS:-2}" --num_epochs 1 --dataset_num_workers 0 \
