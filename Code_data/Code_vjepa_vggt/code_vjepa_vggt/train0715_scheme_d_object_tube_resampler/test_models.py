@@ -315,6 +315,38 @@ def test_health_monitor_parses_and_preserves_entity_cap_activation() -> None:
     assert "entity residual cap activated" in payload["warnings"]
 
 
+def test_health_monitor_flags_large_residual_trend_only_above_absolute_floor() -> None:
+    stable_small = deque(
+        [
+            {"step": float(step), "loss_main": 0.1, "grad_norm": 0.002, "max_ratio": value}
+            for step, value in enumerate([0.001] * 50 + [0.01] * 50)
+        ],
+        maxlen=100,
+    )
+    stable_payload = summarize(
+        stable_small,
+        log_path=Path("unused.log"),
+        last_progress_time=time.time(),
+        stale_seconds=1800.0,
+    )
+    assert "rolling object residual mean increased by more than 2x" not in stable_payload["warnings"]
+
+    growing = deque(
+        [
+            {"step": float(step), "loss_main": 0.1, "grad_norm": 0.002, "max_ratio": value}
+            for step, value in enumerate([0.01] * 50 + [0.04] * 50)
+        ],
+        maxlen=100,
+    )
+    growing_payload = summarize(
+        growing,
+        log_path=Path("unused.log"),
+        last_progress_time=time.time(),
+        stale_seconds=1800.0,
+    )
+    assert "rolling object residual mean increased by more than 2x" in growing_payload["warnings"]
+
+
 def test_validation_policy_flags_nonmonotonic_high_scale() -> None:
     def variant(mae: float, changed: float = 0.05) -> dict[str, object]:
         return {

@@ -102,8 +102,32 @@ def summarize(
     def rolling_max(key: str) -> float:
         return float(rolling.get(key, {}).get("max", 0.0))
 
+    trends: dict[str, dict[str, float]] = {}
+    midpoint = len(rows) // 2
+    if midpoint > 0:
+        first_half = list(rows)[:midpoint]
+        second_half = list(rows)[midpoint:]
+        for key in ("loss_main", "grad_norm", "max_ratio"):
+            first_values = [row[key] for row in first_half if key in row]
+            second_values = [row[key] for row in second_half if key in row]
+            if first_values and second_values:
+                first_mean = sum(first_values) / len(first_values)
+                second_mean = sum(second_values) / len(second_values)
+                trends[key] = {
+                    "first_half_mean": first_mean,
+                    "second_half_mean": second_mean,
+                    "mean_ratio": second_mean / max(first_mean, 1.0e-12),
+                    "mean_delta": second_mean - first_mean,
+                }
+
     if rolling_max("loss_main") > 10.0:
         critical.append("loss_main exceeded 10")
+    loss_trend = trends.get("loss_main", {})
+    if (
+        loss_trend.get("second_half_mean", 0.0) > 1.0
+        and loss_trend.get("mean_ratio", 0.0) > 3.0
+    ):
+        warnings.append("rolling loss mean increased by more than 3x")
     zero_loss_steps = sum(row.get("loss_main", 0.0) <= 0.0 for row in rows)
     if zero_loss_steps > 1:
         warnings.append(
@@ -111,10 +135,22 @@ def summarize(
         )
     if rolling_max("grad_norm") > 1.05:
         critical.append("post-clip grad_norm exceeded 1.05")
+    grad_trend = trends.get("grad_norm", {})
+    if (
+        grad_trend.get("second_half_mean", 0.0) > 0.01
+        and grad_trend.get("mean_ratio", 0.0) > 2.0
+    ):
+        warnings.append("rolling gradient mean increased by more than 2x")
     if latest.get("grad_norm", 0.0) <= 0.0:
         warnings.append("latest grad_norm is zero")
     if rolling_max("max_ratio") >= 0.15:
         warnings.append("object residual reached half of the 0.30 guard")
+    residual_trend = trends.get("max_ratio", {})
+    if (
+        residual_trend.get("second_half_mean", 0.0) > 0.03
+        and residual_trend.get("mean_ratio", 0.0) > 2.0
+    ):
+        warnings.append("rolling object residual mean increased by more than 2x")
     if any(row.get("guard_layers", 0.0) > 0.0 for row in rows):
         warnings.append("object residual guard activated")
     if any(row.get("adapter_mlp_cap", 0.0) > 0.0 for row in rows):
@@ -138,6 +174,7 @@ def summarize(
         "latest": latest,
         "rolling_window_steps": len(rows),
         "rolling": rolling,
+        "trends": trends,
         "seconds_since_progress": seconds_since_progress,
         "zero_loss_steps": zero_loss_steps,
         "warnings": warnings,
