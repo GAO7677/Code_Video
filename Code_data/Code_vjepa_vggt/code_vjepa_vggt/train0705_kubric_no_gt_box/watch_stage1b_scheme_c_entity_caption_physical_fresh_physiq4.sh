@@ -9,6 +9,7 @@ INFER_SCRIPT="${BASE}/wan_stage1b_scheme_c_entity_caption_physical_v2v.py"
 
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:?Set CHECKPOINT_ROOT to the training run checkpoints directory}"
 INPUT_LIST="${INPUT_LIST:-/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/physiq4_input_jsons.txt}"
+STRICT_INPUT_LIST="${STRICT_INPUT_LIST:-/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/physiq4_input_jsons.txt}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?Set OUTPUT_ROOT under /data/gaoya/agent-data/outputs}"
 MODEL_PREFIX="${MODEL_PREFIX:-stage1b_scheme_c_entity_caption_physical_fresh}"
 GPU_UUID="${GPU_UUID:-GPU-99e4d61a-1169-14e0-d90c-364fdbe30065}"
@@ -52,7 +53,7 @@ result_is_complete() {
   local result_path="$1"
   local expected_checkpoint="$2"
   [ -s "${result_path}" ] || return 1
-  "${PYTHON_BIN}" - "${result_path}" "${expected_checkpoint}" "${INPUT_LIST}" <<'PY'
+  "${PYTHON_BIN}" - "${result_path}" "${expected_checkpoint}" "${INPUT_LIST}" "${STRICT_INPUT_LIST}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -61,11 +62,18 @@ import cv2
 
 result_path = Path(sys.argv[1])
 expected_checkpoint = str(Path(sys.argv[2]).resolve())
-expected_inputs = {
+expected_input_lines = [
     str(Path(line.strip()).resolve())
     for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
     if line.strip()
+]
+expected_inputs = set(expected_input_lines)
+strict_inputs = {
+    str(Path(line.strip()).resolve())
+    for line in Path(sys.argv[4]).read_text(encoding="utf-8").splitlines()
+    if line.strip()
 }
+expected_count = len(expected_input_lines)
 try:
     result = json.loads(result_path.read_text(encoding="utf-8"))
 except (OSError, json.JSONDecodeError):
@@ -73,11 +81,11 @@ except (OSError, json.JSONDecodeError):
 entries = result.get("entries", [])
 if not (
     str(Path(result.get("checkpoint_dir", "")).resolve()) == expected_checkpoint
-    and int(result.get("num_total", -1)) == 4
-    and int(result.get("num_success", -1)) == 4
+    and int(result.get("num_total", -1)) == expected_count
+    and int(result.get("num_success", -1)) == expected_count
     and int(result.get("num_failed", -1)) == 0
     and int(result.get("num_skipped", -1)) == 0
-    and len(entries) == 4
+    and len(entries) == expected_count
     and {
         str(Path(entry.get("input_json", "")).resolve()) for entry in entries
     } == expected_inputs
@@ -85,6 +93,7 @@ if not (
     raise SystemExit(1)
 output_videos = set()
 for entry in entries:
+    input_path = str(Path(entry.get("input_json", "")).resolve())
     video_path = Path(entry.get("output_video", ""))
     if not video_path.is_file() or video_path.stat().st_size <= 0:
         raise SystemExit(1)
@@ -98,25 +107,26 @@ for entry in entries:
     if not ok or frames != 49 or (width, height) != (896, 512):
         raise SystemExit(1)
     binding = entry.get("object_debug", {}).get("entity_id_binding", {})
-    if not binding.get("enabled"):
-        raise SystemExit(1)
-    matched = binding.get("matched", [])
-    unmatched = binding.get("unmatched", [])
-    adapter_metrics = binding.get("adapter_metrics", {})
-    matched_ids = [item.get("entity_id") for item in matched]
-    if (
-        not matched
-        or unmatched
-        or len(set(matched_ids)) != len(matched_ids)
-        or float(adapter_metrics.get("train/entity_binding_active", 0.0)) != 1.0
-        or int(adapter_metrics.get("train/entity_binding_valid_slot_count", -1))
-        != len(matched)
-        or int(adapter_metrics.get("train/entity_binding_matched_slot_count", -1))
-        != len(matched)
-        or int(adapter_metrics.get("train/entity_binding_id_collision_count", -1)) != 0
-    ):
-        raise SystemExit(1)
-if len(output_videos) != 4:
+    if input_path in strict_inputs:
+        if not binding.get("enabled"):
+            raise SystemExit(1)
+        matched = binding.get("matched", [])
+        unmatched = binding.get("unmatched", [])
+        adapter_metrics = binding.get("adapter_metrics", {})
+        matched_ids = [item.get("entity_id") for item in matched]
+        if (
+            not matched
+            or unmatched
+            or len(set(matched_ids)) != len(matched_ids)
+            or float(adapter_metrics.get("train/entity_binding_active", 0.0)) != 1.0
+            or int(adapter_metrics.get("train/entity_binding_valid_slot_count", -1))
+            != len(matched)
+            or int(adapter_metrics.get("train/entity_binding_matched_slot_count", -1))
+            != len(matched)
+            or int(adapter_metrics.get("train/entity_binding_id_collision_count", -1)) != 0
+        ):
+            raise SystemExit(1)
+if len(output_videos) != expected_count:
     raise SystemExit(1)
 print(result_path)
 PY
@@ -159,7 +169,7 @@ run_checkpoint() {
       --num-inference-steps 40 --cfg-scale 5.0 --seed 42 --fps 30 \
       --force >"${run_log}" 2>&1; then
     if result_is_complete "${result_path}" "${step_dir}" >>"${WATCH_LOG}" 2>&1; then
-      log "infer success ${step_name}: 4/4 videos verified at ${output_dir}"
+      log "infer success ${step_name}: ${EXPECTED_COUNT}/${EXPECTED_COUNT} videos verified at ${output_dir}"
     else
       log "infer incomplete ${step_name}: process exited 0 but result verification failed"
     fi
@@ -169,18 +179,33 @@ run_checkpoint() {
   fi
 }
 
-if [ "$(sed '/^[[:space:]]*$/d' "${INPUT_LIST}" | wc -l)" -ne 4 ]; then
-  echo "ERROR: INPUT_LIST must contain exactly four cases: ${INPUT_LIST}" >&2
+EXPECTED_COUNT="$(sed '/^[[:space:]]*$/d' "${INPUT_LIST}" | wc -l)"
+UNIQUE_COUNT="$(sed '/^[[:space:]]*$/d' "${INPUT_LIST}" | sort -u | wc -l)"
+if [ "${EXPECTED_COUNT}" -le 0 ]; then
+  echo "ERROR: INPUT_LIST is empty: ${INPUT_LIST}" >&2
   exit 1
 fi
-for input_json in $(sed '/^[[:space:]]*$/d' "${INPUT_LIST}"); do
+if [ "${EXPECTED_COUNT}" -ne "${UNIQUE_COUNT}" ]; then
+  echo "ERROR: INPUT_LIST contains duplicate paths: ${INPUT_LIST}" >&2
+  exit 1
+fi
+for input_json in $(sed '/^[[:space:]]*$/d' "${INPUT_LIST}" "${STRICT_INPUT_LIST}"); do
   if [ ! -s "${input_json}" ]; then
     echo "ERROR: missing input JSON: ${input_json}" >&2
     exit 1
   fi
 done
+if ! comm -23 \
+  <(sed '/^[[:space:]]*$/d' "${STRICT_INPUT_LIST}" | sort -u) \
+  <(sed '/^[[:space:]]*$/d' "${INPUT_LIST}" | sort -u) \
+  | grep -q .; then
+  :
+else
+  echo "ERROR: STRICT_INPUT_LIST must be a subset of INPUT_LIST" >&2
+  exit 1
+fi
 
-log "watcher start checkpoint_root=${CHECKPOINT_ROOT} gpu_uuid=${GPU_UUID} input_list=${INPUT_LIST}"
+log "watcher start checkpoint_root=${CHECKPOINT_ROOT} gpu_uuid=${GPU_UUID} input_list=${INPUT_LIST} expected_count=${EXPECTED_COUNT} strict_input_list=${STRICT_INPUT_LIST}"
 while true; do
   found=0
   while IFS= read -r step_dir; do
