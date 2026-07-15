@@ -8,6 +8,8 @@ from code_vjepa_vggt.models.object_entity_id_binder import (
 )
 from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
     ObjectTubeResampler,
+    TrajectoryTokenEncoder,
+    fourier_encode,
     parse_block_ids,
     prune_object_cross_attention_blocks,
 )
@@ -40,7 +42,7 @@ def _model(num_output_tokens: int = 4) -> ObjectTubeResampler:
     return ObjectTubeResampler(
         jepa_dim=12,
         latent_dim=6,
-        output_dim=16,
+        output_dim=32,
         hidden_dim=32,
         num_output_tokens=num_output_tokens,
         num_heads=4,
@@ -54,15 +56,16 @@ def _model(num_output_tokens: int = 4) -> ObjectTubeResampler:
 def test_output_shape_and_invalid_slot_mask() -> None:
     model = _model().eval()
     output = model(**_inputs())
-    assert output.object_latent_tokens.shape == (1, 4, 3, 16)
+    assert output.object_latent_tokens.shape == (1, 4, 3, 32)
     assert output.active_track_summary.shape == (1, 4, 3, 6)
     assert output.active_box_xyxy.shape == (1, 4, 3, 4)
     assert torch.count_nonzero(output.object_latent_tokens[:, :, 2]) == 0
     assert torch.isfinite(output.object_latent_tokens).all()
     diagnostics = model.pop_diagnostics()
     assert diagnostics is not None
-    assert diagnostics.source_tokens_per_object == (2 + 4 + 8) * 4
+    assert diagnostics.source_tokens_per_object == (2 + 4) * 4 + 4
     assert diagnostics.output_tokens_per_object == 4
+    assert diagnostics.motion_tokens_per_object == 4
     assert diagnostics.valid_objects == 2
 
 
@@ -94,7 +97,7 @@ def test_visual_inputs_receive_gradients() -> None:
 def test_k_is_configurable() -> None:
     for token_count in (2, 4, 8):
         output = _model(token_count).eval()(**_inputs())
-        assert output.object_latent_tokens.shape == (1, token_count, 3, 16)
+        assert output.object_latent_tokens.shape == (1, token_count, 3, 32)
 
 
 def test_all_invalid_objects_stay_finite_and_zero() -> None:
@@ -104,6 +107,54 @@ def test_all_invalid_objects_stay_finite_and_zero() -> None:
     output = model(**inputs).object_latent_tokens
     assert torch.isfinite(output).all()
     assert torch.count_nonzero(output) == 0
+
+
+def test_motion_encoder_compresses_observations_and_receives_gradients() -> None:
+    torch.manual_seed(9)
+    encoder = TrajectoryTokenEncoder(
+        hidden_dim=32,
+        num_motion_tokens=4,
+        num_heads=4,
+        fourier_bands=3,
+        max_points=4,
+    ).train()
+    state = torch.randn(1, 8, 2, 4, 7, requires_grad=True)
+    state_data = state.detach().clone()
+    state_data[..., :2] = state_data[..., :2].sigmoid()
+    state_data[..., 4:] = state_data[..., 4:].sigmoid()
+    state = state_data.requires_grad_(True)
+    valid = torch.ones(1, 8, 2, 4, dtype=torch.bool)
+    tokens, token_valid, trace = encoder(state, valid)
+    assert tokens.shape == (1, 2, 4, 32)
+    assert token_valid.shape == (1, 2, 4)
+    assert trace["motion_encoded_observations_BO_TP_H"] == [2, 32, 32]
+    tokens.square().mean().backward()
+    assert state.grad is not None
+    assert torch.isfinite(state.grad).all()
+
+
+def test_motion_encoder_all_invalid_is_finite_and_zero() -> None:
+    encoder = TrajectoryTokenEncoder(
+        hidden_dim=32,
+        num_motion_tokens=4,
+        num_heads=4,
+        max_points=4,
+    ).eval()
+    tokens, token_valid, _ = encoder(
+        torch.zeros(1, 8, 2, 4, 7),
+        torch.zeros(1, 8, 2, 4, dtype=torch.bool),
+    )
+    assert torch.isfinite(tokens).all()
+    assert torch.count_nonzero(tokens) == 0
+    assert not bool(token_valid.any())
+
+
+def test_fourier_encoding_preserves_raw_coordinates() -> None:
+    values = torch.tensor([[[0.25, -0.5]]])
+    encoded = fourier_encode(values, num_bands=4)
+    assert encoded.shape[-1] == 2 * (1 + 2 * 4)
+    torch.testing.assert_close(encoded[..., 0], values[..., 0])
+    torch.testing.assert_close(encoded[..., 9], values[..., 1])
 
 
 def test_entity_binding_is_applied_to_every_token_in_its_object_group() -> None:

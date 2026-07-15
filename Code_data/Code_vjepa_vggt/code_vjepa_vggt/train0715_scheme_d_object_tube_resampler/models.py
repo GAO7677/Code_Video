@@ -13,17 +13,187 @@ from code_vjepa_vggt.models.object_tokens import ObjectTokenOutput
 class TubeResamplerDiagnostics:
     source_tokens_per_object: int
     output_tokens_per_object: int
+    motion_tokens_per_object: int
     valid_objects: int
     jepa_frames: int
     latent_frames: int
     track_frames: int
 
 
+def fourier_encode(
+    values: torch.Tensor,
+    *,
+    num_bands: int,
+    max_frequency: float = 8.0,
+) -> torch.Tensor:
+    """Append fixed sinusoidal bands to scalar coordinates."""
+    if num_bands <= 0:
+        return values
+    frequencies = torch.logspace(
+        0.0,
+        torch.log10(values.new_tensor(float(max_frequency))),
+        int(num_bands),
+        device=values.device,
+        dtype=values.dtype,
+    )
+    angles = values.unsqueeze(-1) * frequencies * torch.pi
+    encoded = torch.cat([values.unsqueeze(-1), angles.sin(), angles.cos()], dim=-1)
+    return encoded.flatten(start_dim=-2)
+
+
+def sinusoidal_time_embedding(times: torch.Tensor, dim: int) -> torch.Tensor:
+    """Return a fixed time embedding without a learned 1 -> D expansion."""
+    if dim <= 0:
+        raise ValueError("time embedding dimension must be positive")
+    half = dim // 2
+    if half == 0:
+        return times.unsqueeze(-1)
+    frequencies = torch.exp(
+        torch.arange(half, device=times.device, dtype=times.dtype)
+        * (-torch.log(times.new_tensor(10_000.0)) / max(half - 1, 1))
+    )
+    angles = times.unsqueeze(-1) * frequencies.unsqueeze(0)
+    embedding = torch.cat([angles.sin(), angles.cos()], dim=-1)
+    if embedding.shape[-1] < dim:
+        embedding = F.pad(embedding, (0, dim - embedding.shape[-1]))
+    return embedding
+
+
+class TrajectoryTokenEncoder(nn.Module):
+    """Compress all tracked point observations into a few motion tokens/object."""
+
+    def __init__(
+        self,
+        *,
+        hidden_dim: int,
+        num_motion_tokens: int = 4,
+        num_heads: int = 8,
+        fourier_bands: int = 4,
+        max_points: int = 16,
+    ) -> None:
+        super().__init__()
+        if hidden_dim % num_heads != 0:
+            raise ValueError("hidden_dim must be divisible by motion num_heads")
+        if num_motion_tokens <= 0:
+            raise ValueError("num_motion_tokens must be positive")
+        self.hidden_dim = int(hidden_dim)
+        self.num_motion_tokens = int(num_motion_tokens)
+        self.fourier_bands = int(fourier_bands)
+        self.max_points = int(max_points)
+        # Five geometric scalars each retain their raw value and 2F Fourier
+        # values; visibility and confidence remain explicit scalar channels.
+        input_dim = 5 * (1 + 2 * self.fourier_bands) + 2
+        bottleneck_dim = max(self.hidden_dim // 2, 64)
+        self.input_norm = nn.LayerNorm(input_dim)
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_dim, bottleneck_dim),
+            nn.GELU(),
+            nn.Linear(bottleneck_dim, self.hidden_dim),
+        )
+        self.point_embed = nn.Embedding(self.max_points, self.hidden_dim)
+        self.motion_queries = nn.Parameter(
+            torch.randn(self.num_motion_tokens, self.hidden_dim)
+            / self.hidden_dim**0.5
+        )
+        self.query_norm = nn.LayerNorm(self.hidden_dim)
+        self.source_norm = nn.LayerNorm(self.hidden_dim)
+        self.cross_attn = nn.MultiheadAttention(
+            self.hidden_dim,
+            num_heads,
+            dropout=0.0,
+            batch_first=True,
+        )
+        self.ffn_norm = nn.LayerNorm(self.hidden_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(self.hidden_dim, 2 * self.hidden_dim),
+            nn.GELU(),
+            nn.Linear(2 * self.hidden_dim, self.hidden_dim),
+        )
+        self.output_norm = nn.LayerNorm(self.hidden_dim)
+
+    def forward(
+        self,
+        track_state: torch.Tensor,
+        valid: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, list[int]]]:
+        """
+        Args:
+            track_state: ``[B,T,O,P,7]`` containing x/y, dx/dy, t, vis, conf.
+            valid: ``[B,T,O,P]``.
+
+        Returns:
+            Motion tokens ``[B,O,M,H]`` and validity ``[B,O,M]``.
+        """
+        if track_state.ndim != 5 or int(track_state.shape[-1]) != 7:
+            raise ValueError("track_state must be [B,T,O,P,7]")
+        batch, frames, objects, points = track_state.shape[:4]
+        if points > self.max_points:
+            raise ValueError(f"points={points} exceeds max_points={self.max_points}")
+        geometry = fourier_encode(
+            track_state[..., :5],
+            num_bands=self.fourier_bands,
+        )
+        encoded_input = torch.cat([geometry, track_state[..., 5:]], dim=-1)
+        encoded = self.input_proj(self.input_norm(encoded_input))
+        point_ids = torch.arange(points, device=track_state.device)
+        encoded = encoded + self.point_embed(point_ids).view(
+            1, 1, 1, points, self.hidden_dim
+        )
+        encoded = encoded.permute(0, 2, 1, 3, 4).reshape(
+            batch * objects,
+            frames * points,
+            self.hidden_dim,
+        )
+        source_valid = valid.permute(0, 2, 1, 3).reshape(
+            batch * objects,
+            frames * points,
+        )
+        object_has_motion = source_valid.any(dim=1)
+        if bool((~object_has_motion).any()):
+            source_valid = source_valid.clone()
+            encoded = encoded.clone()
+            source_valid[~object_has_motion, 0] = True
+            encoded[~object_has_motion, 0] = 0.0
+
+        queries = self.motion_queries.unsqueeze(0).expand(batch * objects, -1, -1)
+        delta, _ = self.cross_attn(
+            self.query_norm(queries),
+            self.source_norm(encoded),
+            self.source_norm(encoded),
+            key_padding_mask=~source_valid,
+            need_weights=False,
+        )
+        queries = queries + delta
+        queries = queries + self.ffn(self.ffn_norm(queries))
+        queries = self.output_norm(queries)
+        queries = queries * object_has_motion[:, None, None].to(queries.dtype)
+        tokens = queries.view(
+            batch,
+            objects,
+            self.num_motion_tokens,
+            self.hidden_dim,
+        )
+        token_valid = object_has_motion.view(batch, objects, 1).expand(
+            -1, -1, self.num_motion_tokens
+        )
+        trace = {
+            "motion_fourier_features_B_T_O_P_F": list(encoded_input.shape),
+            "motion_encoded_observations_BO_TP_H": list(encoded.shape),
+            "motion_queries_BO_M_H": [
+                batch * objects,
+                self.num_motion_tokens,
+                self.hidden_dim,
+            ],
+            "motion_tokens_B_O_M_H": list(tokens.shape),
+        }
+        return tokens, token_valid, trace
+
+
 class ObjectTubeResampler(nn.Module):
     """Compress per-object visual and trajectory tubes into fixed learned tokens.
 
     Resampling is independent across objects. Source tokens contain local VAE
-    features, local V-JEPA features, and all tracked point observations. The
+    features, local V-JEPA features, and compressed trajectory tokens. The
     output layout is ``[B, K, O, D]`` so existing object adapters can treat K
     as a learned token-type axis without exposing raw context time to Wan.
     """
@@ -34,10 +204,12 @@ class ObjectTubeResampler(nn.Module):
         jepa_dim: int,
         latent_dim: int,
         output_dim: int,
-        hidden_dim: int = 512,
+        hidden_dim: int = 256,
         num_output_tokens: int = 4,
         num_heads: int = 8,
         num_layers: int = 2,
+        num_motion_tokens: int = 4,
+        motion_fourier_bands: int = 4,
         max_objects: int = 4,
         max_points: int = 16,
         modality_dropout_prob: float = 0.10,
@@ -56,26 +228,33 @@ class ObjectTubeResampler(nn.Module):
         self.output_dim = int(output_dim)
         self.hidden_dim = int(hidden_dim)
         self.num_output_tokens = int(num_output_tokens)
+        self.num_motion_tokens = int(num_motion_tokens)
         self.max_objects = int(max_objects)
         self.max_points = int(max_points)
         self.modality_dropout_prob = float(modality_dropout_prob)
         self.min_box_px = float(min_box_px)
 
-        self.jepa_proj = nn.Linear(self.jepa_dim, self.hidden_dim)
-        self.latent_proj = nn.Linear(self.latent_dim, self.hidden_dim)
-        self.track_proj = nn.Sequential(
-            nn.Linear(6, self.hidden_dim),
+        self.jepa_norm = nn.LayerNorm(self.jepa_dim)
+        self.jepa_proj = nn.Sequential(
+            nn.Linear(self.jepa_dim, self.hidden_dim),
             nn.GELU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
         )
-        self.time_proj = nn.Sequential(
-            nn.Linear(1, self.hidden_dim),
-            nn.SiLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+        self.latent_norm = nn.LayerNorm(self.latent_dim)
+        self.latent_proj = nn.Sequential(
+            nn.Linear(self.latent_dim, self.hidden_dim),
+            nn.GELU(),
+            nn.LayerNorm(self.hidden_dim),
+        )
+        self.motion_encoder = TrajectoryTokenEncoder(
+            hidden_dim=self.hidden_dim,
+            num_motion_tokens=self.num_motion_tokens,
+            num_heads=num_heads,
+            fourier_bands=int(motion_fourier_bands),
+            max_points=self.max_points,
         )
         self.modality_embed = nn.Embedding(3, self.hidden_dim)
         self.point_embed = nn.Embedding(self.max_points, self.hidden_dim)
-        self.slot_embed = nn.Embedding(self.max_objects, self.hidden_dim)
         self.output_queries = nn.Parameter(
             torch.randn(self.num_output_tokens, self.hidden_dim)
             / self.hidden_dim**0.5
@@ -104,7 +283,11 @@ class ObjectTubeResampler(nn.Module):
             ]
         )
         self.output_norm = nn.LayerNorm(self.hidden_dim)
-        self.output_proj = nn.Linear(self.hidden_dim, self.output_dim)
+        self.output_proj = (
+            nn.Identity()
+            if self.hidden_dim == self.output_dim
+            else nn.Linear(self.hidden_dim, self.output_dim)
+        )
         self._last_diagnostics: TubeResamplerDiagnostics | None = None
         self._last_shape_trace: dict[str, list[int]] | None = None
 
@@ -165,32 +348,31 @@ class ObjectTubeResampler(nn.Module):
             batch, frames, objects, points, channels
         )
 
-    def _source_tokens(
+    def _visual_source_tokens(
         self,
         values: torch.Tensor,
         valid: torch.Tensor,
         *,
+        normalization: nn.Module,
         projection: nn.Module,
         modality_id: int,
-        slot_bias: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         batch, frames, objects, points = values.shape[:4]
         if points > self.max_points:
             raise ValueError(f"points={points} exceeds max_points={self.max_points}")
-        projected = projection(values)
+        projected = projection(normalization(values))
         times = torch.linspace(0.0, 1.0, frames, device=values.device, dtype=values.dtype)
-        time_bias = self.time_proj(times[:, None]).view(1, frames, 1, 1, self.hidden_dim)
+        time_bias = sinusoidal_time_embedding(times, self.hidden_dim).view(
+            1, frames, 1, 1, self.hidden_dim
+        )
         point_ids = torch.arange(points, device=values.device)
         point_bias = self.point_embed(point_ids).view(1, 1, 1, points, self.hidden_dim)
         modality_bias = self.modality_embed.weight[modality_id].view(
             1, 1, 1, 1, self.hidden_dim
         )
-        projected = projected + time_bias + point_bias + slot_bias + modality_bias
-        # Keep trajectory observations as an always-available fallback. Only
-        # the two visual modalities are independently dropped.
+        projected = projected + time_bias + point_bias + modality_bias
         if (
             self.training
-            and modality_id in (0, 1)
             and self.modality_dropout_prob > 0.0
         ):
             keep = torch.rand(batch, 1, objects, 1, device=values.device) >= self.modality_dropout_prob
@@ -294,8 +476,6 @@ class ObjectTubeResampler(nn.Module):
                 batch, objects, device=tracks.device, dtype=tracks.dtype
             )
         object_valid = object_valid_mask.to(device=tracks.device) > 0.5
-        slot_ids = torch.arange(objects, device=tracks.device)
-        slot_bias = self.slot_embed(slot_ids).view(1, 1, objects, 1, self.hidden_dim)
 
         latent_grid = context_latents.permute(0, 2, 3, 4, 1).contiguous()
         latent_frames = int(latent_grid.shape[1])
@@ -325,38 +505,53 @@ class ObjectTubeResampler(nn.Module):
         ).clamp(0.0, 1.0)
         delta = torch.zeros_like(xy)
         delta[:, 1:] = xy[:, 1:] - xy[:, :-1]
+        normalized_time = torch.linspace(
+            0.0,
+            1.0,
+            track_frames,
+            device=tracks.device,
+            dtype=tracks.dtype,
+        ).view(1, track_frames, 1, 1, 1)
+        normalized_time = normalized_time.expand(batch, -1, objects, points, -1)
         track_values = torch.cat(
-            [xy, delta, visibility.unsqueeze(-1), confidence.unsqueeze(-1)], dim=-1
+            [
+                xy,
+                delta,
+                normalized_time,
+                visibility.unsqueeze(-1),
+                confidence.unsqueeze(-1),
+            ],
+            dim=-1,
         )
 
         slot_valid = object_valid[:, None, :, None]
         latent_valid = (latent_visibility * latent_confidence > 1.0e-5) & slot_valid
         jepa_valid = (jepa_visibility * jepa_confidence > 1.0e-5) & slot_valid
         track_valid = (visibility * confidence > 1.0e-5) & slot_valid
-        latent_tokens, latent_token_valid = self._source_tokens(
+        latent_tokens, latent_token_valid = self._visual_source_tokens(
             latent_values,
             latent_valid,
+            normalization=self.latent_norm,
             projection=self.latent_proj,
             modality_id=0,
-            slot_bias=slot_bias,
         )
-        jepa_tokens, jepa_token_valid = self._source_tokens(
+        jepa_tokens, jepa_token_valid = self._visual_source_tokens(
             jepa_values,
             jepa_valid,
+            normalization=self.jepa_norm,
             projection=self.jepa_proj,
             modality_id=1,
-            slot_bias=slot_bias,
         )
-        track_tokens, track_token_valid = self._source_tokens(
+        motion_tokens, motion_token_valid, motion_trace = self.motion_encoder(
             track_values,
             track_valid,
-            projection=self.track_proj,
-            modality_id=2,
-            slot_bias=slot_bias,
         )
-        source = torch.cat([latent_tokens, jepa_tokens, track_tokens], dim=2)
+        motion_tokens = motion_tokens + self.modality_embed.weight[2].view(
+            1, 1, 1, self.hidden_dim
+        )
+        source = torch.cat([latent_tokens, jepa_tokens, motion_tokens], dim=2)
         source_valid = torch.cat(
-            [latent_token_valid, jepa_token_valid, track_token_valid], dim=2
+            [latent_token_valid, jepa_token_valid, motion_token_valid], dim=2
         )
         source = source.reshape(batch * objects, source.shape[2], self.hidden_dim)
         source_valid = source_valid.reshape(batch * objects, source_valid.shape[2])
@@ -404,6 +599,7 @@ class ObjectTubeResampler(nn.Module):
         self._last_diagnostics = TubeResamplerDiagnostics(
             source_tokens_per_object=int(source.shape[1]),
             output_tokens_per_object=self.num_output_tokens,
+            motion_tokens_per_object=self.num_motion_tokens,
             valid_objects=int(object_valid.sum().item()),
             jepa_frames=jepa_frames,
             latent_frames=latent_frames,
@@ -420,10 +616,10 @@ class ObjectTubeResampler(nn.Module):
             "08_latent_samples": list(latent_values.shape),
             "09_jepa_tracks": list(jepa_tracks.shape),
             "10_jepa_samples": list(jepa_values.shape),
-            "11_track_state_features": list(track_values.shape),
+            "11_track_state_xy_dxdy_t_vis_conf": list(track_values.shape),
             "12_latent_source_tokens_BO_S_H": list(latent_tokens.shape),
             "13_jepa_source_tokens_BO_S_H": list(jepa_tokens.shape),
-            "14_track_source_tokens_BO_S_H": list(track_tokens.shape),
+            "14_motion_source_tokens_B_O_M_H": list(motion_tokens.shape),
             "15_joined_source_tokens_BO_S_H": [
                 batch,
                 objects,
@@ -440,6 +636,7 @@ class ObjectTubeResampler(nn.Module):
             "19_boundary_track_summary_B_K_O_6": list(track_summary.shape),
             "20_boundary_boxes_B_K_O_4": list(active_boxes.shape),
         }
+        self._last_shape_trace.update(motion_trace)
 
         pooled = output.mean(dim=1)
         zeros = torch.zeros_like(output)

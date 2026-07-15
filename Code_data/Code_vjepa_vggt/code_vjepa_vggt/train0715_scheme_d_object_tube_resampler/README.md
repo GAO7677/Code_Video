@@ -1,31 +1,36 @@
-# Scheme-D Object Tube Resampler
+# Scheme-D v2 Object Tube Resampler
 
 This directory is an independent replacement for the Scheme-C object-token
 builder. Existing Scheme-C source files and checkpoints are not modified.
 
 ## Architecture
 
-For every grounded object slot, the resampler receives three variable-length
-source sequences:
+For every grounded object slot, the resampler receives two visual token
+sequences and one compact motion sequence:
 
 ```text
 Wan VAE samples:    T_latent x P query points
 V-JEPA samples:     T_jepa   x P query points
-CoTracker states:   T_ctx    x P query points
+CoTracker states:   T_ctx x P points -> Fourier trajectory encoder -> M=4 tokens
 ```
 
-Each source token contains modality, normalized time, point-index, and slot
-embeddings. Objects are flattened into the batch dimension before attention,
-so one object's resampler cannot attend another object's source tokens.
+VAE and V-JEPA have independent LayerNorm/projection adapters and remain
+separate token streams because their temporal grids differ. Visual tokens use
+fixed sinusoidal time encodings. CoTracker `[x,y,dx,dy,t]` values use fixed
+Fourier features plus visibility/confidence, then four learned motion queries
+compress all point observations. Objects are flattened into the batch
+dimension before attention, so one object's resampler cannot attend another
+object's source tokens.
 
 `K` learned queries independently compress each object tube:
 
 ```text
-[B, source_time_and_points, O, feature]
+[B, O, 16 VAE + 32 V-JEPA + 4 motion, 256]
     -> per-object cross-attention resampler
-[B, K, O, 4096]
+[B, K, O, 256]
     -> noun phrase + instance-ID residual + bbox side information
-[B, K * O_valid, 4096]
+[B, K * O_valid, 256]
+    -> one direct object projection 256 -> 3072
     -> selected Wan object cross-attention blocks
 ```
 
@@ -36,15 +41,23 @@ context frames                 8
 tracked points per object      8
 maximum objects                4
 learned tokens per object K    4
-resampler hidden dimension     512
+resampler/object dimension     256
+motion tokens per object       4
+motion Fourier bands           4
 resampler layers               2
 Wan object blocks              8,11,14,17,20,23
 VGGT                            disabled
 legacy Stage1A checkpoint      disabled
 ```
 
-The seven scalar track/box values are source features only. They do not replace
-visual VAE/V-JEPA features and are not the final object representation.
+The seven trajectory values `[x,y,dx,dy,t,visibility,confidence]` are compact
+source features only. They do not replace visual VAE/V-JEPA features and do
+not each become a 256-dimensional output token.
+
+Compared with v1, the source sequence decreases from 112 to 52 tokens/object,
+the object memory decreases from 4096 to 256 channels, and the legacy
+`4096 -> 3072 -> 3072` Wan object embedding is replaced by one `256 -> 3072`
+linear projection.
 
 ## Files
 
@@ -85,12 +98,16 @@ MAX_TRAIN_STEPS=3500
 SAVE_STEPS=500
 LEARNING_RATE=1e-5
 TUBE_NUM_TOKENS=4
-TUBE_HIDDEN_DIM=512
+TUBE_HIDDEN_DIM=256
+TUBE_MOTION_TOKENS=4
+TUBE_MOTION_FOURIER_BANDS=4
 OUTPUT_DIR=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/<run>
 ```
 
-`--stage2_resume_from` is supported only for a checkpoint produced by the same
-Scheme-D architecture and the same `K`, hidden dimension, and block IDs.
+`--stage2_resume_from` is supported only for a v2 checkpoint with the same
+`K`, hidden dimension, motion-token count, and block IDs. Scheme-D v1
+checkpoints are intentionally rejected because they contain 512-dimensional
+queries and the legacy two-layer 4096-dimensional object embedding.
 
 ## Inference
 
@@ -107,6 +124,8 @@ Inference architecture variables must match training:
 ```text
 TUBE_NUM_TOKENS
 TUBE_HIDDEN_DIM
+TUBE_MOTION_TOKENS
+TUBE_MOTION_FOURIER_BANDS
 OBJECT_BLOCK_IDS
 ```
 

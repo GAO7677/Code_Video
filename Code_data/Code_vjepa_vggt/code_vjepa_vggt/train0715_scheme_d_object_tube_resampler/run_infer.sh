@@ -19,7 +19,9 @@ env \
   CUDA_VISIBLE_DEVICES="${GPU_PAIR}" \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   SCHEME_D_TUBE_NUM_TOKENS="${TUBE_NUM_TOKENS:-4}" \
-  SCHEME_D_TUBE_HIDDEN_DIM="${TUBE_HIDDEN_DIM:-512}" \
+  SCHEME_D_TUBE_HIDDEN_DIM="${TUBE_HIDDEN_DIM:-256}" \
+  SCHEME_D_TUBE_MOTION_TOKENS="${TUBE_MOTION_TOKENS:-4}" \
+  SCHEME_D_TUBE_MOTION_FOURIER_BANDS="${TUBE_MOTION_FOURIER_BANDS:-4}" \
   SCHEME_D_OBJECT_BLOCK_IDS="${OBJECT_BLOCK_IDS:-8,11,14,17,20,23}" \
   "${PYTHON}" "${PROJECT}/infer.py" \
     --weights-root "${WEIGHTS_ROOT}" \
@@ -32,7 +34,7 @@ env \
     --num-inference-steps "${NUM_INFERENCE_STEPS:-40}" \
     --cfg-scale "${CFG_SCALE:-5.0}" --seed "${SEED:-42}" --fps 30 \
     --object-num-queries 8 --aux-max-objects 4 --object-pooler-latent-dim 48 \
-    --cond-proj-dim 4096 --compact-object-context-slots \
+    --cond-proj-dim 256 --compact-object-context-slots \
     --object-adapter-mlp-residual-max-ratio 3.0 \
     --object-branch-ratio-guard-max-ratio 0.30 \
     --object-branch-ratio-guard-max-block-id -1 \

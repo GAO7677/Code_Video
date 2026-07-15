@@ -33,9 +33,11 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
         self,
         *args,
         tube_num_tokens: int = 4,
-        tube_hidden_dim: int = 512,
+        tube_hidden_dim: int = 256,
         tube_num_heads: int = 8,
         tube_num_layers: int = 2,
+        tube_motion_tokens: int = 4,
+        tube_motion_fourier_bands: int = 4,
         tube_latent_dim: int = 48,
         tube_modality_dropout_prob: float = 0.10,
         object_block_ids: str = "8,11,14,17,20,23",
@@ -47,6 +49,9 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
         # live VGGT. This project never reads that sentinel after construction.
         kwargs["vggt_cache_root"] = "/__scheme_d_vggt_disabled__"
         kwargs["train_vggt"] = False
+        # Build all temporary parent object modules at the final Scheme-D width
+        # instead of allocating the legacy 4096-dimensional adapter first.
+        kwargs["cond_proj_dim"] = int(tube_hidden_dim)
         super().__init__(*args, **kwargs)
         if not self.enable_object_branch:
             return
@@ -58,27 +63,45 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
         old_adapter = self.entity_bound_adapter
         device = next(old_pooler.parameters()).device
         jepa_dim = int(old_pooler.jepa_proj.in_features)
-        output_dim = int(old_adapter.dim)
+        object_dim = int(tube_hidden_dim)
+        text_embedding = getattr(self.pipe.dit, "text_embedding", None)
+        text_linear = (
+            next(
+                (
+                    module
+                    for module in text_embedding.modules()
+                    if isinstance(module, nn.Linear)
+                ),
+                None,
+            )
+            if isinstance(text_embedding, nn.Module)
+            else None
+        )
+        if text_linear is None:
+            raise RuntimeError("cannot infer Wan T5 context dimension")
+        entity_text_dim = int(text_linear.in_features)
 
         self.object_pooler = ObjectTubeResampler(
             jepa_dim=jepa_dim,
             latent_dim=int(tube_latent_dim),
-            output_dim=output_dim,
+            output_dim=object_dim,
             hidden_dim=int(tube_hidden_dim),
             num_output_tokens=int(tube_num_tokens),
             num_heads=int(tube_num_heads),
             num_layers=int(tube_num_layers),
+            num_motion_tokens=int(tube_motion_tokens),
+            motion_fourier_bands=int(tube_motion_fourier_bands),
             max_objects=int(self.aux_max_objects),
             max_points=int(self.object_num_queries),
             modality_dropout_prob=float(tube_modality_dropout_prob),
             min_box_px=float(getattr(old_pooler, "min_box_px", 16.0)),
         ).to(device=device)
         self.object_adapter = EntityIDBindingObjectConditionAdapter(
-            dim=output_dim,
+            dim=object_dim,
             num_slots=int(self.aux_max_objects),
             max_time_steps=max(int(tube_num_tokens), 8),
             output_gate_init=float(torch.sigmoid(old_adapter.output_gate_logit.detach()).item()),
-            entity_text_dim=int(old_adapter.entity_text_dim),
+            entity_text_dim=entity_text_dim,
             entity_bottleneck_dim=int(self.entity_binding_bottleneck_dim),
             entity_gate_init=float(self.entity_binding_gate_init),
             entity_dropout_prob=float(self.entity_binding_dropout_prob),
@@ -90,7 +113,20 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
             else None
         )
         self.object_aux_heads = nn.Identity().to(device=device)
+        old_object_embedding = getattr(self.pipe.dit, "object_embedding", None)
+        old_embedding_param = next(old_object_embedding.parameters(), None)
+        if old_embedding_param is None:
+            raise RuntimeError("Wan object_embedding is not initialized")
+        wan_hidden_dim = int(self.pipe.dit.dim)
+        self.pipe.dit.object_embedding = nn.Sequential(
+            nn.Linear(object_dim, wan_hidden_dim, bias=True)
+        ).to(device=old_embedding_param.device, dtype=torch.float32)
+        nn.init.normal_(self.pipe.dit.object_embedding[0].weight, std=0.02)
+        nn.init.zeros_(self.pipe.dit.object_embedding[0].bias)
+        self.pipe.dit.object_embedding.requires_grad_(bool(self.train_object_dit_branch))
         self.tube_num_tokens = int(tube_num_tokens)
+        self.tube_motion_tokens = int(tube_motion_tokens)
+        self.tube_motion_fourier_bands = int(tube_motion_fourier_bands)
         self.tube_latent_dim = int(tube_latent_dim)
         self.object_block_ids = parse_block_ids(
             object_block_ids,
@@ -155,6 +191,9 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
                     "train/tube_output_tokens_per_object": float(
                         diagnostics.output_tokens_per_object
                     ),
+                    "train/tube_motion_tokens_per_object": float(
+                        diagnostics.motion_tokens_per_object
+                    ),
                     "train/tube_valid_objects": float(diagnostics.valid_objects),
                     "train/tube_jepa_frames": float(diagnostics.jepa_frames),
                     "train/tube_latent_frames": float(diagnostics.latent_frames),
@@ -194,6 +233,9 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
                         inputs_shared.get("input_latents").shape
                     ),
                     "26_t5_text_context": list(inputs_posi.get("context").shape),
+                    "27_wan_object_embedding_weight": list(
+                        self.pipe.dit.object_embedding[0].weight.shape
+                    ),
                 }
             )
             record = {
@@ -218,9 +260,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.description = "Scheme-D learned object-tube resampler training."
     group = parser.add_argument_group("scheme_d_object_tube")
     group.add_argument("--tube_num_tokens", type=int, default=4)
-    group.add_argument("--tube_hidden_dim", type=int, default=512)
+    group.add_argument("--tube_hidden_dim", type=int, default=256)
     group.add_argument("--tube_num_heads", type=int, default=8)
     group.add_argument("--tube_num_layers", type=int, default=2)
+    group.add_argument("--tube_motion_tokens", type=int, default=4)
+    group.add_argument("--tube_motion_fourier_bands", type=int, default=4)
     group.add_argument("--tube_latent_dim", type=int, default=48)
     group.add_argument("--tube_modality_dropout_prob", type=float, default=0.10)
     group.add_argument(
@@ -263,9 +307,13 @@ def build_model(args: argparse.Namespace, accelerator) -> SchemeDObjectTubeWanMo
             ),
             debug_print_entity_binding=getattr(args, "debug_print_entity_binding", False),
             tube_num_tokens=getattr(args, "tube_num_tokens", 4),
-            tube_hidden_dim=getattr(args, "tube_hidden_dim", 512),
+            tube_hidden_dim=getattr(args, "tube_hidden_dim", 256),
             tube_num_heads=getattr(args, "tube_num_heads", 8),
             tube_num_layers=getattr(args, "tube_num_layers", 2),
+            tube_motion_tokens=getattr(args, "tube_motion_tokens", 4),
+            tube_motion_fourier_bands=getattr(
+                args, "tube_motion_fourier_bands", 4
+            ),
             tube_latent_dim=getattr(args, "tube_latent_dim", 48),
             tube_modality_dropout_prob=getattr(
                 args, "tube_modality_dropout_prob", 0.10
@@ -318,9 +366,30 @@ def audit_scheme_d_checkpoint(
             exactly_one(f"blocks.{block_id}.object_gate")
             exactly_one(f"blocks.{block_id}.object_cross_attn.k.weight")
         exactly_one("object_adapter.entity_id_embed.weight")
+        embedding_key = exactly_one("object_embedding.0.weight")
+        embedding_shape = tuple(handle.get_tensor(embedding_key).shape)
+        expected_embedding_shape = (
+            int(model.pipe.dit.dim),
+            int(model.object_pooler.output_dim),
+        )
+        if embedding_shape != expected_embedding_shape:
+            raise RuntimeError(
+                "Scheme-D object embedding mismatch: "
+                f"checkpoint={embedding_shape}, model={expected_embedding_shape}"
+            )
+        legacy_embedding_keys = [
+            key for key in keys if key.endswith("object_embedding.2.weight")
+        ]
+        if legacy_embedding_keys:
+            raise RuntimeError(
+                "Scheme-D v1 checkpoint is incompatible with v2 direct 256 -> Wan "
+                f"projection: {legacy_embedding_keys}"
+            )
     return {
+        "architecture_version": 2,
         "checkpoint": str(checkpoint_path),
         "tube_query_shape": list(query_shape),
+        "object_embedding_shape": list(embedding_shape),
         "object_block_ids": list(model.object_block_ids),
     }
 
@@ -419,8 +488,12 @@ def build_module_report(
     all_trainable = list(model.trainable_modules())
     return {
         "architecture": {
+            "version": 2,
             "tube_tokens_per_object": int(model.tube_num_tokens),
             "tube_hidden_dim": int(model.object_pooler.hidden_dim),
+            "object_memory_dim": int(model.object_pooler.output_dim),
+            "motion_tokens_per_object": int(model.tube_motion_tokens),
+            "motion_fourier_bands": int(model.tube_motion_fourier_bands),
             "maximum_objects": int(model.aux_max_objects),
             "points_per_object": int(model.object_num_queries),
             "active_object_dit_blocks": list(model.object_block_ids),
@@ -509,7 +582,8 @@ def main() -> None:
     replay.base._log_stage_summary(accelerator, model, args)
     accelerator.print(
         "Scheme-D: "
-        f"K={args.tube_num_tokens}, hidden={args.tube_hidden_dim}, "
+        f"v2, K={args.tube_num_tokens}, hidden={args.tube_hidden_dim}, "
+        f"motion_tokens={args.tube_motion_tokens}, "
         f"layers={args.tube_num_layers}, blocks={model.object_block_ids}, "
         "VGGT=disabled, legacy_stage1a=disabled"
     )

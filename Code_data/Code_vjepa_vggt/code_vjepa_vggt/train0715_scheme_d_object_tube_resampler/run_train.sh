@@ -10,7 +10,7 @@ VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5,GPU
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_scheme_d_object_tube_fresh_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_scheme_d_v2_object_tube_fresh_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_${RUN_TAG}}"
 WANDB_DIR=/data/gaoya/agent-data/cache/wandb
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" "${WANDB_DIR}"
@@ -59,9 +59,10 @@ env \
     --cotracker_checkpoint /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth \
     --cotracker_input_h 384 --cotracker_input_w 512 --cotracker_window_len 60 \
     --object_aux_devices "${OBJECT_AUX_DEVICES}" \
-    --object_pooler_latent_dim 48 --cond_proj_dim 4096 --object_gate_init 0.1 \
-    --tube_num_tokens "${TUBE_NUM_TOKENS:-4}" --tube_hidden_dim "${TUBE_HIDDEN_DIM:-512}" \
-    --tube_num_heads 8 --tube_num_layers 2 --tube_latent_dim 48 \
+    --object_pooler_latent_dim 48 --cond_proj_dim 256 --object_gate_init 0.1 \
+    --tube_num_tokens "${TUBE_NUM_TOKENS:-4}" --tube_hidden_dim "${TUBE_HIDDEN_DIM:-256}" \
+    --tube_num_heads 8 --tube_num_layers 2 --tube_motion_tokens "${TUBE_MOTION_TOKENS:-4}" \
+    --tube_motion_fourier_bands "${TUBE_MOTION_FOURIER_BANDS:-4}" --tube_latent_dim 48 \
     --tube_modality_dropout_prob 0.10 --object_block_ids 8,11,14,17,20,23 \
     --lambda_main 1.0 --lambda_object_context_reg 1e-2 \
     --lambda_object_gate_reg 1e-1 --object_gate_reg_target 0.08 \

@@ -9,7 +9,7 @@ ACCELERATE=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 
 GPU_PAIR="${GPU_PAIR:-0,6}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_d_object_tube_smoke_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_d_v2_object_tube_smoke_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_smoke_${RUN_TAG}}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}"
 
@@ -55,8 +55,9 @@ env \
     --cotracker_checkpoint /data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth \
     --cotracker_input_h 384 --cotracker_input_w 512 --cotracker_window_len 60 \
     --object_aux_devices cuda:1 \
-    --object_pooler_latent_dim 48 --cond_proj_dim 4096 --object_gate_init 0.1 \
-    --tube_num_tokens 4 --tube_hidden_dim 512 --tube_num_heads 8 --tube_num_layers 2 \
+    --object_pooler_latent_dim 48 --cond_proj_dim 256 --object_gate_init 0.1 \
+    --tube_num_tokens 4 --tube_hidden_dim 256 --tube_num_heads 8 --tube_num_layers 2 \
+    --tube_motion_tokens 4 --tube_motion_fourier_bands 4 \
     --tube_latent_dim 48 --tube_modality_dropout_prob 0.10 \
     --object_block_ids 8,11,14,17,20,23 \
     --debug_print_tube_shapes --tube_shape_trace_path "${OUTPUT_DIR}/shape_trace.jsonl" \

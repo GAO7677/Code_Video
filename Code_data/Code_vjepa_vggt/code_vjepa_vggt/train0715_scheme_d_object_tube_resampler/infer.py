@@ -28,9 +28,15 @@ _ORIGINAL_OBJECT_BUILDER = kubric_infer._build_object_context
 
 def _install_scheme_d_model_args(model_args) -> None:
     model_args.tube_num_tokens = int(os.environ.get("SCHEME_D_TUBE_NUM_TOKENS", "4"))
-    model_args.tube_hidden_dim = int(os.environ.get("SCHEME_D_TUBE_HIDDEN_DIM", "512"))
+    model_args.tube_hidden_dim = int(os.environ.get("SCHEME_D_TUBE_HIDDEN_DIM", "256"))
     model_args.tube_num_heads = int(os.environ.get("SCHEME_D_TUBE_NUM_HEADS", "8"))
     model_args.tube_num_layers = int(os.environ.get("SCHEME_D_TUBE_NUM_LAYERS", "2"))
+    model_args.tube_motion_tokens = int(
+        os.environ.get("SCHEME_D_TUBE_MOTION_TOKENS", "4")
+    )
+    model_args.tube_motion_fourier_bands = int(
+        os.environ.get("SCHEME_D_TUBE_MOTION_FOURIER_BANDS", "4")
+    )
     model_args.tube_latent_dim = int(os.environ.get("SCHEME_D_TUBE_LATENT_DIM", "48"))
     model_args.tube_modality_dropout_prob = 0.0
     model_args.object_block_ids = os.environ.get(
@@ -122,6 +128,7 @@ def _build_object_context_with_binding(
             debug["tube_resampler"] = {
                 "source_tokens_per_object": diagnostics.source_tokens_per_object,
                 "output_tokens_per_object": diagnostics.output_tokens_per_object,
+                "motion_tokens_per_object": diagnostics.motion_tokens_per_object,
                 "valid_objects": diagnostics.valid_objects,
                 "jepa_frames": diagnostics.jepa_frames,
                 "latent_frames": diagnostics.latent_frames,
