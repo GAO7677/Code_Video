@@ -48,6 +48,7 @@ VJEPA_ROOT = Path("/home/gaoya/Code_Video/vjepa2-main")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--x0-remaining-35", type=Path, default=DEFAULT_INPUT_ROOT / "pred_x0_remaining_35_h264.mp4")
+    parser.add_argument("--x0-remaining-30", type=Path, default=DEFAULT_INPUT_ROOT / "pred_x0_remaining_30_h264.mp4")
     parser.add_argument("--x0-remaining-01", type=Path, default=DEFAULT_INPUT_ROOT / "pred_x0_remaining_01_h264.mp4")
     parser.add_argument("--ground-truth", type=Path, default=DEFAULT_GT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
@@ -348,7 +349,12 @@ def main() -> None:
     args = parse_args()
     if args.num_frames < args.window_size:
         raise ValueError("num_frames must be at least window_size")
-    for path in (args.x0_remaining_35, args.x0_remaining_01, args.ground_truth):
+    for path in (
+        args.x0_remaining_35,
+        args.x0_remaining_30,
+        args.x0_remaining_01,
+        args.ground_truth,
+    ):
         if not path.is_file():
             raise FileNotFoundError(path)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -375,6 +381,7 @@ def main() -> None:
 
     specifications = {
         "x0_remaining_35": (args.x0_remaining_35, args.x0_title_height),
+        "x0_remaining_30": (args.x0_remaining_30, args.x0_title_height),
         "x0_remaining_01": (args.x0_remaining_01, args.x0_title_height),
         "ground_truth": (args.ground_truth, 0),
     }

@@ -19,6 +19,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--descriptions-file", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--ids", type=int, nargs="*", default=DEFAULT_SMOKE_IDS)
+    parser.add_argument(
+        "--image-source",
+        choices=("conditioning-last-frame", "switch-frame"),
+        default="conditioning-last-frame",
+    )
     return parser.parse_args()
 
 
@@ -90,14 +95,41 @@ def main() -> None:
         if not conditioning_path.is_file():
             raise FileNotFoundError(f"conditioning video not found: {conditioning_path}")
 
-        image_path = images_root / f"{benchmark_id:04d}_last_frame.png"
-        metadata = extract_last_frame(conditioning_path, image_path)
+        if args.image_source == "switch-frame":
+            switch_matches = sorted(
+                (dataset_root / "switch-frames").glob(f"{benchmark_id:04d}_*")
+            )
+            if len(switch_matches) != 1:
+                raise RuntimeError(
+                    f"expected one switch frame for {benchmark_id:04d}, got {switch_matches}"
+                )
+            image_path = switch_matches[0]
+            capture = cv2.VideoCapture(str(conditioning_path))
+            metadata = {
+                "conditioning_fps": float(capture.get(cv2.CAP_PROP_FPS)),
+                "conditioning_frames": int(capture.get(cv2.CAP_PROP_FRAME_COUNT)),
+                "conditioning_duration_seconds": float(
+                    capture.get(cv2.CAP_PROP_FRAME_COUNT)
+                    / capture.get(cv2.CAP_PROP_FPS)
+                ),
+                "conditioning_width": int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                "conditioning_height": int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                "conditioning_frame_index": int(
+                    capture.get(cv2.CAP_PROP_FRAME_COUNT)
+                )
+                - 1,
+            }
+            capture.release()
+        else:
+            image_path = images_root / f"{benchmark_id:04d}_last_frame.png"
+            metadata = extract_last_frame(conditioning_path, image_path)
         entry = {
             "benchmark_id": f"{benchmark_id:04d}",
             "scenario": scenario,
             "category": row["category"],
             "prompt": row["description"],
             "prompt_setting": "op",
+            "image_source": args.image_source,
             "conditioning_video": str(conditioning_path),
             "conditioning_image": str(image_path),
             "generated_video_name": row["generated_video_name"],
@@ -118,6 +150,7 @@ def main() -> None:
         "dataset_root": str(dataset_root),
         "descriptions_file": str(descriptions_file),
         "prompt_setting": "op",
+        "image_source": args.image_source,
         "num_items": len(entries),
         "benchmark_ids": [entry["benchmark_id"] for entry in entries],
         "manifest": str(manifest_path),
