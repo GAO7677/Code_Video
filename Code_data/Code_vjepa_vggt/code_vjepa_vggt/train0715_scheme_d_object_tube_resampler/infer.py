@@ -37,6 +37,12 @@ def _install_scheme_d_model_args(model_args) -> None:
     model_args.tube_motion_fourier_bands = int(
         os.environ.get("SCHEME_D_TUBE_MOTION_FOURIER_BANDS", "4")
     )
+    model_args.tube_object_attn_dim = int(
+        os.environ.get("SCHEME_D_TUBE_OBJECT_ATTN_DIM", "256")
+    )
+    model_args.tube_object_attn_heads = int(
+        os.environ.get("SCHEME_D_TUBE_OBJECT_ATTN_HEADS", "8")
+    )
     model_args.tube_latent_dim = int(os.environ.get("SCHEME_D_TUBE_LATENT_DIM", "48"))
     model_args.tube_modality_dropout_prob = 0.0
     model_args.object_block_ids = os.environ.get(

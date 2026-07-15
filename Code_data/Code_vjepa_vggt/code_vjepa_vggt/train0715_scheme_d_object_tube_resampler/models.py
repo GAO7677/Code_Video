@@ -90,7 +90,6 @@ class TrajectoryTokenEncoder(nn.Module):
             nn.GELU(),
             nn.Linear(bottleneck_dim, self.hidden_dim),
         )
-        self.point_embed = nn.Embedding(self.max_points, self.hidden_dim)
         self.motion_queries = nn.Parameter(
             torch.randn(self.num_motion_tokens, self.hidden_dim)
             / self.hidden_dim**0.5
@@ -135,10 +134,6 @@ class TrajectoryTokenEncoder(nn.Module):
         )
         encoded_input = torch.cat([geometry, track_state[..., 5:]], dim=-1)
         encoded = self.input_proj(self.input_norm(encoded_input))
-        point_ids = torch.arange(points, device=track_state.device)
-        encoded = encoded + self.point_embed(point_ids).view(
-            1, 1, 1, points, self.hidden_dim
-        )
         encoded = encoded.permute(0, 2, 1, 3, 4).reshape(
             batch * objects,
             frames * points,
@@ -210,6 +205,7 @@ class ObjectTubeResampler(nn.Module):
         num_layers: int = 2,
         num_motion_tokens: int = 4,
         motion_fourier_bands: int = 4,
+        spatial_fourier_bands: int = 4,
         max_objects: int = 4,
         max_points: int = 16,
         modality_dropout_prob: float = 0.10,
@@ -229,6 +225,7 @@ class ObjectTubeResampler(nn.Module):
         self.hidden_dim = int(hidden_dim)
         self.num_output_tokens = int(num_output_tokens)
         self.num_motion_tokens = int(num_motion_tokens)
+        self.spatial_fourier_bands = int(spatial_fourier_bands)
         self.max_objects = int(max_objects)
         self.max_points = int(max_points)
         self.modality_dropout_prob = float(modality_dropout_prob)
@@ -253,8 +250,10 @@ class ObjectTubeResampler(nn.Module):
             fourier_bands=int(motion_fourier_bands),
             max_points=self.max_points,
         )
+        spatial_dim = 2 * (1 + 2 * self.spatial_fourier_bands)
+        self.spatial_norm = nn.LayerNorm(spatial_dim)
+        self.spatial_proj = nn.Linear(spatial_dim, self.hidden_dim)
         self.modality_embed = nn.Embedding(3, self.hidden_dim)
-        self.point_embed = nn.Embedding(self.max_points, self.hidden_dim)
         self.output_queries = nn.Parameter(
             torch.randn(self.num_output_tokens, self.hidden_dim)
             / self.hidden_dim**0.5
@@ -352,6 +351,7 @@ class ObjectTubeResampler(nn.Module):
         self,
         values: torch.Tensor,
         valid: torch.Tensor,
+        positions_norm: torch.Tensor,
         *,
         normalization: nn.Module,
         projection: nn.Module,
@@ -360,17 +360,22 @@ class ObjectTubeResampler(nn.Module):
         batch, frames, objects, points = values.shape[:4]
         if points > self.max_points:
             raise ValueError(f"points={points} exceeds max_points={self.max_points}")
+        if positions_norm.shape != values.shape[:-1] + (2,):
+            raise ValueError("positions_norm must match values [B,T,O,P,2]")
         projected = projection(normalization(values))
         times = torch.linspace(0.0, 1.0, frames, device=values.device, dtype=values.dtype)
         time_bias = sinusoidal_time_embedding(times, self.hidden_dim).view(
             1, frames, 1, 1, self.hidden_dim
         )
-        point_ids = torch.arange(points, device=values.device)
-        point_bias = self.point_embed(point_ids).view(1, 1, 1, points, self.hidden_dim)
+        spatial_features = fourier_encode(
+            positions_norm,
+            num_bands=self.spatial_fourier_bands,
+        )
+        spatial_bias = self.spatial_proj(self.spatial_norm(spatial_features))
         modality_bias = self.modality_embed.weight[modality_id].view(
             1, 1, 1, 1, self.hidden_dim
         )
-        projected = projected + time_bias + point_bias + modality_bias
+        projected = projected + time_bias + spatial_bias + modality_bias
         if (
             self.training
             and self.modality_dropout_prob > 0.0
@@ -486,6 +491,15 @@ class ObjectTubeResampler(nn.Module):
         latent_values = self._sample_feature_grid(
             latent_grid, latent_tracks, image_hw=track_image_hw
         )
+        latent_positions = torch.stack(
+            [
+                latent_tracks[..., 0]
+                / max(float(track_image_hw[1] - 1), 1.0),
+                latent_tracks[..., 1]
+                / max(float(track_image_hw[0] - 1), 1.0),
+            ],
+            dim=-1,
+        ).clamp(0.0, 1.0)
 
         jepa_frames = int(jepa_patch_tokens.shape[1])
         jepa_ids = self._time_indices(track_frames, jepa_frames, tracks.device)
@@ -495,6 +509,15 @@ class ObjectTubeResampler(nn.Module):
         jepa_values = self._sample_feature_grid(
             jepa_patch_tokens, jepa_tracks, image_hw=track_image_hw
         )
+        jepa_positions = torch.stack(
+            [
+                jepa_tracks[..., 0]
+                / max(float(track_image_hw[1] - 1), 1.0),
+                jepa_tracks[..., 1]
+                / max(float(track_image_hw[0] - 1), 1.0),
+            ],
+            dim=-1,
+        ).clamp(0.0, 1.0)
 
         xy = torch.stack(
             [
@@ -531,6 +554,7 @@ class ObjectTubeResampler(nn.Module):
         latent_tokens, latent_token_valid = self._visual_source_tokens(
             latent_values,
             latent_valid,
+            latent_positions,
             normalization=self.latent_norm,
             projection=self.latent_proj,
             modality_id=0,
@@ -538,6 +562,7 @@ class ObjectTubeResampler(nn.Module):
         jepa_tokens, jepa_token_valid = self._visual_source_tokens(
             jepa_values,
             jepa_valid,
+            jepa_positions,
             normalization=self.jepa_norm,
             projection=self.jepa_proj,
             modality_id=1,
@@ -614,8 +639,10 @@ class ObjectTubeResampler(nn.Module):
             "06_object_valid_mask": list(object_valid_mask.shape),
             "07_latent_tracks": list(latent_tracks.shape),
             "08_latent_samples": list(latent_values.shape),
+            "08b_latent_sample_positions": list(latent_positions.shape),
             "09_jepa_tracks": list(jepa_tracks.shape),
             "10_jepa_samples": list(jepa_values.shape),
+            "10b_jepa_sample_positions": list(jepa_positions.shape),
             "11_track_state_xy_dxdy_t_vis_conf": list(track_values.shape),
             "12_latent_source_tokens_BO_S_H": list(latent_tokens.shape),
             "13_jepa_source_tokens_BO_S_H": list(jepa_tokens.shape),
@@ -658,6 +685,76 @@ class ObjectTubeResampler(nn.Module):
         )
 
 
+class BottleneckObjectCrossAttention(nn.Module):
+    """Cross-attend Wan video queries to compact object memory.
+
+    Video tokens stay at Wan's hidden width while attention runs at a much
+    smaller width. This keeps condition-injection capacity proportional to the
+    256-dimensional object memory instead of allocating a full 3072-wide
+    attention branch at every selected DiT block.
+    """
+
+    def __init__(
+        self,
+        *,
+        query_dim: int,
+        context_dim: int,
+        inner_dim: int = 256,
+        num_heads: int = 8,
+        eps: float = 1.0e-6,
+    ) -> None:
+        super().__init__()
+        if inner_dim % num_heads != 0:
+            raise ValueError("object attention inner_dim must be divisible by num_heads")
+        self.query_dim = int(query_dim)
+        self.context_dim = int(context_dim)
+        self.inner_dim = int(inner_dim)
+        self.num_heads = int(num_heads)
+        self.head_dim = self.inner_dim // self.num_heads
+        self.eps = float(eps)
+        self.q = nn.Linear(self.query_dim, self.inner_dim, bias=False)
+        self.k = nn.Linear(self.context_dim, self.inner_dim, bias=False)
+        self.v = nn.Linear(self.context_dim, self.inner_dim, bias=False)
+        self.o = nn.Linear(self.inner_dim, self.query_dim, bias=False)
+        for module in (self.q, self.k, self.v, self.o):
+            nn.init.xavier_uniform_(module.weight)
+
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch, tokens, _ = tensor.shape
+        return tensor.view(batch, tokens, self.num_heads, self.head_dim).transpose(1, 2)
+
+    def _rms_normalize(self, tensor: torch.Tensor) -> torch.Tensor:
+        scale = tensor.float().square().mean(dim=-1, keepdim=True)
+        scale = torch.rsqrt(scale + self.eps).to(dtype=tensor.dtype)
+        return tensor * scale
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        context: torch.Tensor,
+    ) -> torch.Tensor:
+        if query.ndim != 3 or int(query.shape[-1]) != self.query_dim:
+            raise ValueError(
+                f"query must be [B,N,{self.query_dim}], got {list(query.shape)}"
+            )
+        if context.ndim != 3 or int(context.shape[-1]) != self.context_dim:
+            raise ValueError(
+                f"context must be [B,L,{self.context_dim}], got {list(context.shape)}"
+            )
+        q = self._rms_normalize(self._split_heads(self.q(query)))
+        k = self._rms_normalize(self._split_heads(self.k(context)))
+        v = self._split_heads(self.v(context))
+        attended = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=0.0,
+            is_causal=False,
+        )
+        attended = attended.transpose(1, 2).contiguous().flatten(start_dim=2)
+        return self.o(attended)
+
+
 def parse_block_ids(raw_value: str, *, num_blocks: int) -> tuple[int, ...]:
     block_ids = tuple(
         sorted({int(part.strip()) for part in str(raw_value).split(",") if part.strip()})
@@ -690,4 +787,38 @@ def prune_object_cross_attention_blocks(
         "active_block_ids": sorted(active),
         "active_count": len(active),
         "removed_count": removed,
+    }
+
+
+def install_bottleneck_object_cross_attention(
+    dit: nn.Module,
+    active_block_ids: tuple[int, ...],
+    *,
+    object_dim: int,
+    inner_dim: int = 256,
+    num_heads: int = 8,
+) -> dict[str, int | list[int]]:
+    """Replace active full-width object attention with compact adapters."""
+    layout = prune_object_cross_attention_blocks(dit, active_block_ids)
+    query_dim = int(getattr(dit, "dim"))
+    blocks = list(getattr(dit, "blocks", []))
+    for block_id in layout["active_block_ids"]:
+        block = blocks[int(block_id)]
+        old_module = getattr(block, "object_cross_attn", None)
+        old_param = next(old_module.parameters(), None)
+        if old_param is None:
+            raise RuntimeError(f"object cross-attention missing at block {block_id}")
+        block.object_cross_attn = BottleneckObjectCrossAttention(
+            query_dim=query_dim,
+            context_dim=int(object_dim),
+            inner_dim=int(inner_dim),
+            num_heads=int(num_heads),
+        ).to(device=old_param.device, dtype=torch.float32)
+    # The custom attention consumes 256-dimensional memory directly.
+    dit.object_embedding = None
+    return {
+        **layout,
+        "object_dim": int(object_dim),
+        "attention_inner_dim": int(inner_dim),
+        "attention_heads": int(num_heads),
     }

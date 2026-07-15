@@ -21,8 +21,8 @@ from code_vjepa_vggt.models.object_entity_id_binder import (
 )
 from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
     ObjectTubeResampler,
+    install_bottleneck_object_cross_attention,
     parse_block_ids,
-    prune_object_cross_attention_blocks,
 )
 
 from diffsynth.diffusion import ModelLogger
@@ -38,6 +38,8 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
         tube_num_layers: int = 2,
         tube_motion_tokens: int = 4,
         tube_motion_fourier_bands: int = 4,
+        tube_object_attn_dim: int = 256,
+        tube_object_attn_heads: int = 8,
         tube_latent_dim: int = 48,
         tube_modality_dropout_prob: float = 0.10,
         object_block_ids: str = "8,11,14,17,20,23",
@@ -113,29 +115,26 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
             else None
         )
         self.object_aux_heads = nn.Identity().to(device=device)
-        old_object_embedding = getattr(self.pipe.dit, "object_embedding", None)
-        old_embedding_param = next(old_object_embedding.parameters(), None)
-        if old_embedding_param is None:
-            raise RuntimeError("Wan object_embedding is not initialized")
-        wan_hidden_dim = int(self.pipe.dit.dim)
-        self.pipe.dit.object_embedding = nn.Sequential(
-            nn.Linear(object_dim, wan_hidden_dim, bias=True)
-        ).to(device=old_embedding_param.device, dtype=torch.float32)
-        nn.init.normal_(self.pipe.dit.object_embedding[0].weight, std=0.02)
-        nn.init.zeros_(self.pipe.dit.object_embedding[0].bias)
-        self.pipe.dit.object_embedding.requires_grad_(bool(self.train_object_dit_branch))
         self.tube_num_tokens = int(tube_num_tokens)
         self.tube_motion_tokens = int(tube_motion_tokens)
         self.tube_motion_fourier_bands = int(tube_motion_fourier_bands)
+        self.tube_object_attn_dim = int(tube_object_attn_dim)
+        self.tube_object_attn_heads = int(tube_object_attn_heads)
         self.tube_latent_dim = int(tube_latent_dim)
         self.object_block_ids = parse_block_ids(
             object_block_ids,
             num_blocks=len(self.pipe.dit.blocks),
         )
-        self.object_block_layout = prune_object_cross_attention_blocks(
+        self.object_block_layout = install_bottleneck_object_cross_attention(
             self.pipe.dit,
             self.object_block_ids,
+            object_dim=object_dim,
+            inner_dim=self.tube_object_attn_dim,
+            num_heads=self.tube_object_attn_heads,
         )
+        for name, param in self.pipe.dit.named_parameters():
+            if ".object_cross_attn." in name or ".object_gate" in name or ".norm4." in name:
+                param.requires_grad = bool(self.train_object_dit_branch)
         self.object_pooler.requires_grad_(bool(self.train_object_pooler))
         self.object_adapter.requires_grad_(bool(self.train_object_adapter))
         self.debug_print_tube_shapes = bool(debug_print_tube_shapes)
@@ -233,8 +232,13 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
                         inputs_shared.get("input_latents").shape
                     ),
                     "26_t5_text_context": list(inputs_posi.get("context").shape),
-                    "27_wan_object_embedding_weight": list(
-                        self.pipe.dit.object_embedding[0].weight.shape
+                    "27_object_cross_attn_q_weight": list(
+                        self.pipe.dit.blocks[self.object_block_ids[0]]
+                        .object_cross_attn.q.weight.shape
+                    ),
+                    "28_object_cross_attn_k_weight": list(
+                        self.pipe.dit.blocks[self.object_block_ids[0]]
+                        .object_cross_attn.k.weight.shape
                     ),
                 }
             )
@@ -265,6 +269,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--tube_num_layers", type=int, default=2)
     group.add_argument("--tube_motion_tokens", type=int, default=4)
     group.add_argument("--tube_motion_fourier_bands", type=int, default=4)
+    group.add_argument("--tube_object_attn_dim", type=int, default=256)
+    group.add_argument("--tube_object_attn_heads", type=int, default=8)
     group.add_argument("--tube_latent_dim", type=int, default=48)
     group.add_argument("--tube_modality_dropout_prob", type=float, default=0.10)
     group.add_argument(
@@ -314,6 +320,8 @@ def build_model(args: argparse.Namespace, accelerator) -> SchemeDObjectTubeWanMo
             tube_motion_fourier_bands=getattr(
                 args, "tube_motion_fourier_bands", 4
             ),
+            tube_object_attn_dim=getattr(args, "tube_object_attn_dim", 256),
+            tube_object_attn_heads=getattr(args, "tube_object_attn_heads", 8),
             tube_latent_dim=getattr(args, "tube_latent_dim", 48),
             tube_modality_dropout_prob=getattr(
                 args, "tube_modality_dropout_prob", 0.10
@@ -366,30 +374,41 @@ def audit_scheme_d_checkpoint(
             exactly_one(f"blocks.{block_id}.object_gate")
             exactly_one(f"blocks.{block_id}.object_cross_attn.k.weight")
         exactly_one("object_adapter.entity_id_embed.weight")
-        embedding_key = exactly_one("object_embedding.0.weight")
-        embedding_shape = tuple(handle.get_tensor(embedding_key).shape)
-        expected_embedding_shape = (
-            int(model.pipe.dit.dim),
-            int(model.object_pooler.output_dim),
-        )
-        if embedding_shape != expected_embedding_shape:
-            raise RuntimeError(
-                "Scheme-D object embedding mismatch: "
-                f"checkpoint={embedding_shape}, model={expected_embedding_shape}"
-            )
-        legacy_embedding_keys = [
-            key for key in keys if key.endswith("object_embedding.2.weight")
-        ]
+        legacy_embedding_keys = [key for key in keys if "object_embedding." in key]
         if legacy_embedding_keys:
             raise RuntimeError(
-                "Scheme-D v1 checkpoint is incompatible with v2 direct 256 -> Wan "
-                f"projection: {legacy_embedding_keys}"
+                "Scheme-D v1/v2 checkpoint is incompatible with v3 bottleneck "
+                "object attention; legacy object embedding tensors found: "
+                f"{legacy_embedding_keys}"
+            )
+        q_key = exactly_one(
+            f"blocks.{model.object_block_ids[0]}.object_cross_attn.q.weight"
+        )
+        k_key = exactly_one(
+            f"blocks.{model.object_block_ids[0]}.object_cross_attn.k.weight"
+        )
+        q_shape = tuple(handle.get_tensor(q_key).shape)
+        k_shape = tuple(handle.get_tensor(k_key).shape)
+        expected_q_shape = (
+            int(model.tube_object_attn_dim),
+            int(model.pipe.dit.dim),
+        )
+        expected_k_shape = (
+            int(model.tube_object_attn_dim),
+            int(model.object_pooler.output_dim),
+        )
+        if q_shape != expected_q_shape or k_shape != expected_k_shape:
+            raise RuntimeError(
+                "Scheme-D bottleneck attention mismatch: "
+                f"checkpoint_qk={(q_shape, k_shape)}, "
+                f"model_qk={(expected_q_shape, expected_k_shape)}"
             )
     return {
-        "architecture_version": 2,
+        "architecture_version": 3,
         "checkpoint": str(checkpoint_path),
         "tube_query_shape": list(query_shape),
-        "object_embedding_shape": list(embedding_shape),
+        "object_attention_q_shape": list(q_shape),
+        "object_attention_k_shape": list(k_shape),
         "object_block_ids": list(model.object_block_ids),
     }
 
@@ -488,12 +507,14 @@ def build_module_report(
     all_trainable = list(model.trainable_modules())
     return {
         "architecture": {
-            "version": 2,
+            "version": 3,
             "tube_tokens_per_object": int(model.tube_num_tokens),
             "tube_hidden_dim": int(model.object_pooler.hidden_dim),
             "object_memory_dim": int(model.object_pooler.output_dim),
             "motion_tokens_per_object": int(model.tube_motion_tokens),
             "motion_fourier_bands": int(model.tube_motion_fourier_bands),
+            "object_attention_dim": int(model.tube_object_attn_dim),
+            "object_attention_heads": int(model.tube_object_attn_heads),
             "maximum_objects": int(model.aux_max_objects),
             "points_per_object": int(model.object_num_queries),
             "active_object_dit_blocks": list(model.object_block_ids),
@@ -582,8 +603,9 @@ def main() -> None:
     replay.base._log_stage_summary(accelerator, model, args)
     accelerator.print(
         "Scheme-D: "
-        f"v2, K={args.tube_num_tokens}, hidden={args.tube_hidden_dim}, "
+        f"v3, K={args.tube_num_tokens}, hidden={args.tube_hidden_dim}, "
         f"motion_tokens={args.tube_motion_tokens}, "
+        f"object_attn={args.tube_object_attn_dim}, "
         f"layers={args.tube_num_layers}, blocks={model.object_block_ids}, "
         "VGGT=disabled, legacy_stage1a=disabled"
     )

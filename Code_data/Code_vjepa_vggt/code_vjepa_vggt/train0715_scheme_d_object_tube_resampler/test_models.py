@@ -7,9 +7,11 @@ from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
 )
 from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
+    BottleneckObjectCrossAttention,
     ObjectTubeResampler,
     TrajectoryTokenEncoder,
     fourier_encode,
+    install_bottleneck_object_cross_attention,
     parse_block_ids,
     prune_object_cross_attention_blocks,
 )
@@ -79,6 +81,19 @@ def test_resampling_is_independent_across_slots() -> None:
     second = model(**changed).object_latent_tokens.detach()
     torch.testing.assert_close(first[:, :, 0], second[:, :, 0], rtol=0.0, atol=0.0)
     assert not torch.equal(first[:, :, 1], second[:, :, 1])
+
+
+def test_resampling_is_invariant_to_track_point_order() -> None:
+    model = _model().eval()
+    inputs = _inputs()
+    first = model(**inputs).object_latent_tokens.detach()
+    permutation = torch.tensor([2, 0, 3, 1])
+    changed = dict(inputs)
+    changed["tracks"] = inputs["tracks"][:, :, :, permutation, :]
+    changed["visibility"] = inputs["visibility"][:, :, :, permutation]
+    changed["confidence"] = inputs["confidence"][:, :, :, permutation]
+    second = model(**changed).object_latent_tokens.detach()
+    torch.testing.assert_close(first, second, rtol=1.0e-5, atol=1.0e-5)
 
 
 def test_visual_inputs_receive_gradients() -> None:
@@ -199,6 +214,7 @@ class _Block(nn.Module):
 class _Dit(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.dim = 4
         self.blocks = nn.ModuleList([_Block() for _ in range(6)])
 
 
@@ -215,3 +231,39 @@ def test_prune_object_blocks() -> None:
             assert block.object_cross_attn is None
             assert block.norm4 is None
             assert block.object_gate is None
+
+
+def test_bottleneck_object_attention_shape_and_gradients() -> None:
+    attention = BottleneckObjectCrossAttention(
+        query_dim=32,
+        context_dim=12,
+        inner_dim=16,
+        num_heads=4,
+    ).train()
+    query = torch.randn(2, 11, 32, requires_grad=True)
+    context = torch.randn(2, 5, 12, requires_grad=True)
+    output = attention(query, context)
+    assert output.shape == query.shape
+    output.square().mean().backward()
+    assert query.grad is not None and torch.isfinite(query.grad).all()
+    assert context.grad is not None and torch.isfinite(context.grad).all()
+
+
+def test_install_bottleneck_attention_prunes_and_replaces() -> None:
+    dit = _Dit()
+    summary = install_bottleneck_object_cross_attention(
+        dit,
+        (1, 4),
+        object_dim=3,
+        inner_dim=4,
+        num_heads=2,
+    )
+    assert summary["attention_inner_dim"] == 4
+    assert dit.object_embedding is None
+    for block_id, block in enumerate(dit.blocks):
+        if block_id in (1, 4):
+            assert isinstance(block.object_cross_attn, BottleneckObjectCrossAttention)
+            assert block.object_cross_attn.q.weight.shape == (4, 4)
+            assert block.object_cross_attn.k.weight.shape == (4, 3)
+        else:
+            assert block.object_cross_attn is None

@@ -9,7 +9,7 @@ ACCELERATE=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 
 GPU_PAIR="${GPU_PAIR:-0,6}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_d_v2_object_tube_smoke_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_d_v3_object_tube_smoke_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_smoke_${RUN_TAG}}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}"
 
@@ -37,6 +37,7 @@ env \
     --mixture_kubric_ratio "${KUBRIC_RATIO:-0.30}" \
     --mixture_openvid_ratio "${OPENVID_RATIO:-0.40}" \
     --height 512 --width 896 --num_frames 49 \
+    --min_timestep_boundary 0.001 --max_timestep_boundary 1.0 \
     --fixed_num_context_frames 8 --replay_fixed_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --max_train_steps "${MAX_TRAIN_STEPS:-2}" --num_epochs 1 --dataset_num_workers 0 \
@@ -58,6 +59,7 @@ env \
     --object_pooler_latent_dim 48 --cond_proj_dim 256 --object_gate_init 0.1 \
     --tube_num_tokens 4 --tube_hidden_dim 256 --tube_num_heads 8 --tube_num_layers 2 \
     --tube_motion_tokens 4 --tube_motion_fourier_bands 4 \
+    --tube_object_attn_dim 256 --tube_object_attn_heads 8 \
     --tube_latent_dim 48 --tube_modality_dropout_prob 0.10 \
     --object_block_ids 8,11,14,17,20,23 \
     --debug_print_tube_shapes --tube_shape_trace_path "${OUTPUT_DIR}/shape_trace.jsonl" \
@@ -71,7 +73,8 @@ env \
     --openvid_teacher_preservation_lambda 0.05 \
     --teacher_preservation_every_n_steps 4 --openvid_teacher_preservation_every_n_steps 1 \
     --teacher_preservation_unbiased_interval_scale \
-    --object_branch_train_trace --object_branch_ratio_guard_max_ratio 0.30 \
+    --object_branch_train_trace --debug_print_object_regularization \
+    --object_branch_ratio_guard_max_ratio 0.30 \
     --object_branch_ratio_guard_max_block_id -1 \
     --entity_binding_sources pybullet,kubric --entity_binding_bottleneck_dim 256 \
     --entity_binding_gate_init 0.5 --entity_binding_dropout_prob 0.20 \

@@ -10,8 +10,8 @@ VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5,GPU
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_scheme_d_v2_object_tube_fresh_${RUN_TAG}}"
-TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_stage1b_scheme_d_v3_object_tube_fresh_${RUN_TAG}}"
+TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_d_v3_${RUN_TAG}}"
 WANDB_DIR=/data/gaoya/agent-data/cache/wandb
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" "${WANDB_DIR}"
 
@@ -39,6 +39,7 @@ env \
     --openvid_root /data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train \
     --mixture_pybullet_ratio 0.30 --mixture_kubric_ratio 0.30 --mixture_openvid_ratio 0.40 \
     --height 512 --width 896 --num_frames 49 \
+    --min_timestep_boundary 0.001 --max_timestep_boundary 1.0 \
     --fixed_num_context_frames 8 --replay_fixed_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --max_train_steps "${MAX_TRAIN_STEPS:-3500}" --num_epochs 100 \
@@ -63,6 +64,7 @@ env \
     --tube_num_tokens "${TUBE_NUM_TOKENS:-4}" --tube_hidden_dim "${TUBE_HIDDEN_DIM:-256}" \
     --tube_num_heads 8 --tube_num_layers 2 --tube_motion_tokens "${TUBE_MOTION_TOKENS:-4}" \
     --tube_motion_fourier_bands "${TUBE_MOTION_FOURIER_BANDS:-4}" --tube_latent_dim 48 \
+    --tube_object_attn_dim "${TUBE_OBJECT_ATTN_DIM:-256}" --tube_object_attn_heads 8 \
     --tube_modality_dropout_prob 0.10 --object_block_ids 8,11,14,17,20,23 \
     --lambda_main 1.0 --lambda_object_context_reg 1e-2 \
     --lambda_object_gate_reg 1e-1 --object_gate_reg_target 0.08 \
@@ -74,7 +76,8 @@ env \
     --openvid_teacher_preservation_lambda 0.05 \
     --teacher_preservation_every_n_steps 4 --openvid_teacher_preservation_every_n_steps 1 \
     --teacher_preservation_unbiased_interval_scale \
-    --object_branch_train_trace --object_branch_ratio_guard_max_ratio 0.30 \
+    --object_branch_train_trace --debug_print_object_regularization \
+    --object_branch_ratio_guard_max_ratio 0.30 \
     --object_branch_ratio_guard_max_block_id -1 \
     --entity_binding_sources pybullet,kubric --entity_binding_bottleneck_dim 256 \
     --entity_binding_gate_init 0.5 --entity_binding_dropout_prob 0.20 \
@@ -85,6 +88,6 @@ env \
     --grounding_gdino_box_threshold 0.20 --grounding_gdino_text_threshold 0.15 \
     --grounding_prompt_frame_mode first --sam2_segment_len 8 \
     --report_to wandb --wandb_project vjepa_vggt_wan \
-    --wandb_name "scheme_d_object_tube_fresh_${RUN_TAG}" --wandb_mode online
+    --wandb_name "scheme_d_v3_object_tube_fresh_${RUN_TAG}" --wandb_mode online
 
 echo "training output: ${OUTPUT_DIR}"
