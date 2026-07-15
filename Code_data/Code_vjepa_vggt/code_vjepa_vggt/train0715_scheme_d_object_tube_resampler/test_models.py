@@ -20,6 +20,7 @@ from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
     prune_object_cross_attention_blocks,
 )
 from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.monitor_training_health import (
+    parse_object_reg,
     summarize,
 )
 
@@ -292,3 +293,20 @@ def test_health_monitor_preserves_rolling_entity_warning() -> None:
     )
     assert payload["status"] == "warning"
     assert "entity residual reached half of the 0.50 cap" in payload["warnings"]
+
+
+def test_health_monitor_parses_and_preserves_entity_cap_activation() -> None:
+    row = parse_object_reg(
+        "[object-reg] step=7 loss_main=0.1 grad_norm=0.01 "
+        "entity_ratio_max=0.6 entity_cap=0.500 entity_cap_scale_min=0.8000"
+    )
+    assert row is not None
+    assert row["entity_cap"] == 0.5
+    rows = deque([row, {"step": 8.0, "loss_main": 0.2, "grad_norm": 0.01}], maxlen=100)
+    payload = summarize(
+        rows,
+        log_path=Path("unused.log"),
+        last_progress_time=time.time(),
+        stale_seconds=1800.0,
+    )
+    assert "entity residual cap activated" in payload["warnings"]

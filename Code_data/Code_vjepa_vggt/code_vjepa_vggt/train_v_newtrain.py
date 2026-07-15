@@ -3509,6 +3509,8 @@ def train_loop(
                                 f"entity_active={int(round(float(extra_metrics.get('train/entity_binding_active', 0.0))))} "
                                 f"entity_matched={int(round(float(extra_metrics.get('train/entity_binding_matched_slot_count', 0.0))))} "
                                 f"entity_ratio_max={float(extra_metrics.get('train/entity_binding_residual_ratio_max', 0.0)):.6f} "
+                                f"entity_cap={float(extra_metrics.get('train/entity_binding_cap_applied_fraction', 0.0)):.3f} "
+                                f"entity_cap_scale_min={float(extra_metrics.get('train/entity_binding_cap_scale_min', 1.0)):.4f} "
                                 f"entity_drop={float(extra_metrics.get('train/entity_binding_dropout_fraction', 0.0)):.3f}"
                             )
 

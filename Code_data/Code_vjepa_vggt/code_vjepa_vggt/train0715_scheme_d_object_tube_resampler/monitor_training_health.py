@@ -30,6 +30,8 @@ METRIC_KEYS = (
     "entity_active",
     "entity_matched",
     "entity_ratio_max",
+    "entity_cap",
+    "entity_cap_scale_min",
     "entity_drop",
 )
 
@@ -119,6 +121,8 @@ def summarize(
         warnings.append("object adapter MLP cap activated")
     if rolling_max("entity_ratio_max") >= 0.25:
         warnings.append("entity residual reached half of the 0.50 cap")
+    if any(row.get("entity_cap", 0.0) > 0.0 for row in rows):
+        warnings.append("entity residual cap activated")
     seconds_since_progress = max(time.time() - last_progress_time, 0.0)
     if seconds_since_progress > stale_seconds:
         critical.append(

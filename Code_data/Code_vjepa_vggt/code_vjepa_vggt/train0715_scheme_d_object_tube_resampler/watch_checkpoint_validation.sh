@@ -49,5 +49,13 @@ run_variant baseline none 1.0
 run_variant no_object_context zero 1.0
 run_variant object_residual_1p5x none 1.5
 
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  "${PROJECT}/compare_validation_variants.py" \
+  --baseline-dir "${OUTPUT_ROOT}/baseline/results" \
+  --variant no_object_context "${OUTPUT_ROOT}/no_object_context/results" \
+  --variant object_residual_1p5x "${OUTPUT_ROOT}/object_residual_1p5x/results" \
+  --context-frames 8 \
+  --output "${OUTPUT_ROOT}/variant_pixel_metrics.json"
+
 printf '%s all checkpoint validation variants completed\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   | tee -a "${OUTPUT_ROOT}/validation_status.log"
