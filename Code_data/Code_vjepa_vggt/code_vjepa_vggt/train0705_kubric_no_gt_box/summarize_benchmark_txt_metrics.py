@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-txt", type=Path, required=True)
     parser.add_argument("--output-csv", type=Path, required=True)
+    parser.add_argument("--input-json-allowlist", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -152,7 +153,18 @@ def infer_method_name(result_root: Path, payloads: list[dict[str, Any]]) -> str:
     return result_root.name
 
 
-def build_row(result_root: Path, payloads: list[dict[str, Any]]) -> dict[str, Any]:
+def build_row(
+    result_root: Path,
+    payloads: list[dict[str, Any]],
+    allowed_input_jsons: set[Path] | None = None,
+) -> dict[str, Any]:
+    if allowed_input_jsons is not None:
+        payloads = [
+            payload
+            for payload in payloads
+            if (resolved_input_json := resolve_payload_input_json(payload)) is not None
+            and resolved_input_json in allowed_input_jsons
+        ]
     reference_input_jsons = read_reference_input_jsons(result_root)
     if reference_input_jsons is not None:
         reference_set = set(reference_input_jsons)
@@ -202,11 +214,19 @@ def main() -> None:
     args = parse_args()
     input_txt = args.input_txt.expanduser().resolve()
     output_csv = args.output_csv.expanduser().resolve()
+    allowed_input_jsons = None
+    if args.input_json_allowlist is not None:
+        allowlist_path = args.input_json_allowlist.expanduser().resolve()
+        allowed_input_jsons = {
+            Path(line.strip()).expanduser().resolve()
+            for line in allowlist_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
 
     rows: list[dict[str, Any]] = []
     for result_root in read_result_roots(input_txt):
         payloads = discover_payloads(result_root)
-        rows.append(build_row(result_root, payloads))
+        rows.append(build_row(result_root, payloads, allowed_input_jsons))
 
     write_csv(output_csv, rows)
     print(
@@ -215,6 +235,7 @@ def main() -> None:
                 "input_txt": str(input_txt),
                 "output_csv": str(output_csv),
                 "num_rows": len(rows),
+                "allowlist_size": None if allowed_input_jsons is None else len(allowed_input_jsons),
             },
             ensure_ascii=False,
             indent=2,

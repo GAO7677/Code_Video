@@ -42,7 +42,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline-list", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--input-json-allowlist", type=Path, default=None)
     args = parser.parse_args()
+
+    allowed_input_jsons = None
+    if args.input_json_allowlist is not None:
+        allowed_input_jsons = {
+            Path(line.strip()).expanduser().resolve()
+            for line in args.input_json_allowlist.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
 
     roots = [
         Path(line.strip()).expanduser().resolve()
@@ -63,6 +72,9 @@ def main() -> None:
             payload = load_payload(path)
             if payload is None:
                 continue
+            input_json = Path(payload.get("input_json") or payload.get("case_json")).expanduser().resolve()
+            if allowed_input_jsons is not None and input_json not in allowed_input_jsons:
+                continue
             cases += 1
             absent = [field for field in METRIC_FIELDS if payload.get(field) is None]
             if absent:
@@ -74,6 +86,7 @@ def main() -> None:
         "baseline_list": str(args.baseline_list.resolve()),
         "num_roots": len(roots),
         "num_cases": total_cases,
+        "allowlist_size": None if allowed_input_jsons is None else len(allowed_input_jsons),
         "metric_fields": list(METRIC_FIELDS),
         "num_incomplete_cases": len(missing),
         "complete": not missing,

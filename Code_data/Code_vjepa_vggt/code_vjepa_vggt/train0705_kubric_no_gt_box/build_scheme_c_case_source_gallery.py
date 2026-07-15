@@ -19,6 +19,7 @@ CASE_JSON_IGNORES = {
     "summary.json",
     "gallery_manifest.json",
 }
+DISPLAY_PATH_PREFIX = Path("/data/gaoya")
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,6 +105,14 @@ def binding_summary(payload: dict[str, Any]) -> str:
     return "; ".join(labels)
 
 
+def display_path(path: str | Path) -> str:
+    resolved = Path(path).expanduser().resolve()
+    try:
+        return str(resolved.relative_to(DISPLAY_PATH_PREFIX))
+    except ValueError:
+        return str(resolved)
+
+
 def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict[str, Any]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for metadata_path in root.rglob("*.json"):
@@ -149,6 +158,8 @@ def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict
                     "id": item["variant_id"],
                     "label": item["label"],
                     "video": str(variant_link.relative_to(output_dir)),
+                    "output_path": item["payload"]["_output_video"],
+                    "display_output_path": display_path(item["payload"]["_output_video"]),
                     "metadata": os.path.relpath(item["payload"]["_metadata_path"], output_dir),
                     "binding": binding_summary(item["payload"]),
                 }
@@ -157,9 +168,11 @@ def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict
             {
                 "case": case_stem,
                 "input_json": first_payload["input_json"],
+                "display_input_json": display_path(first_payload["input_json"]),
                 "caption": first_payload.get("input_caption", ""),
                 "source_video": str(source_link.relative_to(output_dir)),
                 "source_path": first_payload["_source_video"],
+                "display_source_path": display_path(first_payload["_source_video"]),
                 "variants": rendered_variants,
             }
         )
@@ -181,7 +194,8 @@ def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict
         figures = [
             "<figure class='source'>"
             f"<video controls preload='metadata' src='{quote(record['source_video'])}'></video>"
-            "<figcaption><strong>Source video</strong><span>original input timeline</span></figcaption>"
+            "<figcaption><strong>Source video</strong><span>original input timeline</span>"
+            f"<code class='path'>{html.escape(record['display_source_path'])}</code></figcaption>"
             "</figure>"
         ]
         for variant in record["variants"]:
@@ -190,6 +204,7 @@ def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict
                 f"<video controls preload='metadata' src='{quote(variant['video'])}'></video>"
                 f"<figcaption><strong>{html.escape(variant['label'])}</strong>"
                 f"<span>{html.escape(variant['binding'])}</span>"
+                f"<code class='path'>{html.escape(variant['display_output_path'])}</code>"
                 f"<a href='{quote(variant['metadata'])}'>metadata</a></figcaption>"
                 "</figure>"
             )
@@ -200,6 +215,7 @@ def write_gallery(root: Path, output_dir: Path, input_list: Path | None) -> dict
             "<div class='actions'><button data-action='play'>Play all</button>"
             "<button data-action='pause'>Pause all</button><button data-action='reset'>Reset</button></div>"
             "</header>"
+            f"<p class='input-path'><strong>Input JSON</strong><code>{html.escape(record['display_input_json'])}</code></p>"
             f"<p class='caption'>{html.escape(record['caption'])}</p>"
             f"<div class='media'>{''.join(figures)}</div>"
             "</section>"
@@ -216,13 +232,13 @@ h1{{font:700 28px "IBM Plex Serif","Noto Serif",serif;margin:0 0 6px}}.summary{{
 .tools{{display:flex;gap:14px;align-items:center;flex-wrap:wrap}}input[type=search]{{width:min(520px,100%);padding:10px 12px;border:1px solid #9da9a3;background:#fff;font:inherit}}
 label{{display:flex;align-items:center;gap:7px;color:var(--muted)}}section{{padding:28px 0 34px;border-bottom:1px solid var(--line)}}section>header{{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:8px}}
 section>header>div:first-child{{display:flex;align-items:baseline;gap:12px;min-width:0}}h2{{font:650 19px "IBM Plex Sans","Noto Sans",sans-serif;margin:0;overflow-wrap:anywhere}}.case-index{{color:var(--accent);font:700 13px monospace}}
-.caption{{max-width:1200px;color:#45504b;margin:0 0 16px;line-height:1.5}}.actions{{display:flex;gap:7px;flex:none}}button{{border:1px solid #8e9b95;background:#fff;padding:7px 10px;color:var(--ink);font:inherit;cursor:pointer}}button:hover{{border-color:var(--accent);color:var(--accent)}}
+.input-path{{display:flex;gap:9px;align-items:baseline;margin:0 0 7px;color:var(--muted);min-width:0}}.input-path strong{{flex:none;font-size:12px;text-transform:uppercase}}.input-path code,.path{{font:12px ui-monospace,"SFMono-Regular",Consolas,monospace;overflow-wrap:anywhere;word-break:break-word;color:#37423d}}.caption{{max-width:1200px;color:#45504b;margin:0 0 16px;line-height:1.5}}.actions{{display:flex;gap:7px;flex:none}}button{{border:1px solid #8e9b95;background:#fff;padding:7px 10px;color:var(--ink);font:inherit;cursor:pointer}}button:hover{{border-color:var(--accent);color:var(--accent)}}
 .media{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}figure{{margin:0;background:var(--panel);border:1px solid var(--line);min-width:0}}figure.source{{border:2px solid var(--source)}}video{{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#111}}
-figcaption{{display:grid;gap:4px;padding:10px 11px;line-height:1.35}}figcaption span{{color:var(--muted);font-size:13px;overflow-wrap:anywhere}}figcaption a{{color:var(--accent);font-size:13px;width:max-content}}
+figcaption{{display:grid;gap:5px;padding:10px 11px;line-height:1.35}}figcaption span{{color:var(--muted);font-size:13px;overflow-wrap:anywhere}}figcaption .path{{padding-top:5px;border-top:1px solid #e4e8e5}}figcaption a{{color:var(--accent);font-size:13px;width:max-content}}
 .empty{{padding:60px 0;color:var(--muted)}}@media(max-width:1100px){{.media{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:700px){{main{{padding:16px 14px 60px}}.media{{grid-template-columns:1fr}}section>header{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><main>
 <div class="top"><h1>Scheme-C Outputs By Source Case</h1>
-<p class="summary">{len(records)} cases / {manifest['num_generated_videos']} generated videos. Source is always first; generated videos are grouped by checkpoint and object residual scale.</p>
+<p class="summary">{len(records)} cases / {manifest['num_generated_videos']} generated videos. Source is always first; generated videos are grouped by checkpoint and object residual scale. Displayed paths omit <code>/data/gaoya/</code>.</p>
 <div class="tools"><input id="search" type="search" placeholder="Filter case name"><label><input id="sync" type="checkbox" checked> Synchronize playback within each case</label></div></div>
 {''.join(sections) if sections else '<p class="empty">No completed output videos found yet.</p>'}
 </main><script>

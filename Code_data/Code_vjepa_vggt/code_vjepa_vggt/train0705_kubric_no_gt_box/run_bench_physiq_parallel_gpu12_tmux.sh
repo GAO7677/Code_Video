@@ -10,6 +10,7 @@ BASELINE_LIST="${BASELINE_LIST:-${BASE}/AAAevalphysiq.txt}"
 SESSION="${SESSION:-bench_physiq_gpu12_multi_20260715}"
 RUN_ROOT="${RUN_ROOT:-/data/gaoya/agent-data/outputs/bench_physiq_gpu12_multi_20260715}"
 SUMMARY_CSV="${BASE}/AAAresults/AAAevalphysiq_metric_summary.csv"
+INPUT_JSON_ALLOWLIST="${INPUT_JSON_ALLOWLIST:-/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt}"
 EXPECTED_WORKERS=8
 
 if tmux has-session -t "${SESSION}" 2>/dev/null; then
@@ -44,7 +45,7 @@ launch_worker 2 g2_vbench_quality "vbench_dynamic_degree,vbench_aesthetic_qualit
 launch_worker 2 g2_pmf "pmf_with_context,pmf_without_context"
 
 tmux new-window -t "${SESSION}" -n coordinator \
-  "while true; do complete=\$(find '${RUN_ROOT}/state' -maxdepth 1 -name '*.complete' -type f | wc -l); failed=\$(find '${RUN_ROOT}/state' -maxdepth 1 -name '*.failed' -type f | wc -l); printf '[coordinator] complete=%s/${EXPECTED_WORKERS} failed=%s\\n' \"\$complete\" \"\$failed\"; if [ \"\$failed\" -gt 0 ]; then exit 1; fi; if [ \"\$complete\" -eq '${EXPECTED_WORKERS}' ]; then break; fi; sleep 30; done; '${PYTHON_BIN}' '${SUMMARY}' --input-txt '${BASELINE_LIST}' --output-csv '${SUMMARY_CSV}' && '${PYTHON_BIN}' '${VERIFY}' --baseline-list '${BASELINE_LIST}' --output '${RUN_ROOT}/verification.json'"
+  "while true; do complete=\$(find '${RUN_ROOT}/state' -maxdepth 1 -name '*.complete' -type f | wc -l); failed=\$(find '${RUN_ROOT}/state' -maxdepth 1 -name '*.failed' -type f | wc -l); printf '[coordinator] complete=%s/${EXPECTED_WORKERS} failed=%s\\n' \"\$complete\" \"\$failed\"; if [ \"\$failed\" -gt 0 ]; then exit 1; fi; if [ \"\$complete\" -eq '${EXPECTED_WORKERS}' ]; then break; fi; sleep 30; done; '${PYTHON_BIN}' '${SUMMARY}' --input-txt '${BASELINE_LIST}' --output-csv '${SUMMARY_CSV}' --input-json-allowlist '${INPUT_JSON_ALLOWLIST}' && '${PYTHON_BIN}' '${VERIFY}' --baseline-list '${BASELINE_LIST}' --output '${RUN_ROOT}/verification.json' --input-json-allowlist '${INPUT_JSON_ALLOWLIST}'"
 tmux kill-window -t "${SESSION}:bootstrap" 2>/dev/null || true
 tmux select-window -t "${SESSION}:coordinator"
 

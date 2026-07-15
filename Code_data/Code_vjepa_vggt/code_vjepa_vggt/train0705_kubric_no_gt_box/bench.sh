@@ -21,6 +21,11 @@ RESULT_DIR="${SCRIPT_DIR}/AAAresults"
 BENCH_CUDA_VISIBLE_DEVICES="${BENCH_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 BENCH_METRICS_RAW="${BENCH_METRICS:-}"
 BENCH_INPUT_JSON_ALLOWLIST="${BENCH_INPUT_JSON_ALLOWLIST:-}"
+DEFAULT_PHYSIQ_INPUT_JSON_ALLOWLIST=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt
+
+if [[ -z "${BENCH_INPUT_JSON_ALLOWLIST}" && "$(basename "${BASELINE_LIST}")" == "AAAevalphysiq.txt" ]]; then
+  BENCH_INPUT_JSON_ALLOWLIST="${DEFAULT_PHYSIQ_INPUT_JSON_ALLOWLIST}"
+fi
 
 export PYTHONPATH="${PROJECT_ROOT}:${TRY0526_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
@@ -52,6 +57,7 @@ echo "[baseline-bench] python=${PYTHON_BIN}"
 echo "[baseline-bench] baseline_list=${BASELINE_LIST}"
 echo "[baseline-bench] cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "[baseline-bench] metrics=${METRICS[*]}"
+echo "[baseline-bench] input_json_allowlist=${BENCH_INPUT_JSON_ALLOWLIST:-<unset>}"
 mkdir -p "${RESULT_DIR}"
 
 SUMMARY_BASENAME="$(basename "${BASELINE_LIST}")"
@@ -59,10 +65,16 @@ SUMMARY_STEM="${SUMMARY_BASENAME%.*}"
 OUTPUT_CSV="${RESULT_DIR}/${SUMMARY_STEM}_metric_summary.csv"
 
 export_summary() {
+  local -a summary_args
   echo "[baseline-bench] start export_csv=${OUTPUT_CSV}"
-  "${PYTHON_BIN}" "${SUMMARY_PY}" \
-    --input-txt "${BASELINE_LIST}" \
+  summary_args=(
+    --input-txt "${BASELINE_LIST}"
     --output-csv "${OUTPUT_CSV}"
+  )
+  if [[ -n "${BENCH_INPUT_JSON_ALLOWLIST}" ]]; then
+    summary_args+=(--input-json-allowlist "${BENCH_INPUT_JSON_ALLOWLIST}")
+  fi
+  "${PYTHON_BIN}" "${SUMMARY_PY}" "${summary_args[@]}"
   echo "[baseline-bench] done export_csv=${OUTPUT_CSV}"
 }
 
