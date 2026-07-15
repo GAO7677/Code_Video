@@ -15,6 +15,7 @@ BON_SUBMISSION=${ROOT}/bon16/submission_5s/${BON_RUN}
 BON_EVAL=${ROOT}/official_eval/bon16
 
 export PYTHONUNBUFFERED=1
+export PATH="/home/gaoya/data/miniconda3/envs/vjepa2/bin:${PATH}"
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 
 count_mp4() { find "$1" -maxdepth 1 -type f -name '*.mp4' | wc -l; }
