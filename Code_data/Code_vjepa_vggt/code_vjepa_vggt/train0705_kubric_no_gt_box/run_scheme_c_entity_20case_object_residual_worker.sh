@@ -15,12 +15,13 @@ PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 PROJ=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 INFER_SCRIPT="${BASE}/wan_stage1b_scheme_c_entity_caption_physical_v2v.py"
-CHECKPOINT_ROOT=/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_raw49f_scheme_c_entity_caption_physical_fresh_20260714T174707Z/checkpoints
-INPUT_LIST=/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/checkpoint_val_20_input_jsons.txt
-STRICT_INPUT_LIST=/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/physiq4_input_jsons.txt
-OUTPUT_ROOT=/data/gaoya/agent-data/outputs/AAA_physv/stage1b_scheme_c_entity_caption_physical_fresh_physiq4_checkpoint_val_20260714T174707Z
-TMP_ROOT=/data/gaoya/agent-data/cache/t/scheme_c_entity_20case_object_residual
-EXPECTED_CASES=20
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/train_stage1b_raw49f_scheme_c_entity_caption_physical_fresh_20260714T174707Z/checkpoints}"
+INPUT_LIST="${INPUT_LIST:-/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/checkpoint_val_20_input_jsons.txt}"
+STRICT_INPUT_LIST="${STRICT_INPUT_LIST:-/data/gaoya/agent-data/cache/stage1b_scheme_c_entity_caption_physical_fresh_val/physiq4_input_jsons.txt}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/stage1b_scheme_c_entity_caption_physical_fresh_physiq4_checkpoint_val_20260714T174707Z}"
+TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_c_entity_20case_object_residual}"
+EXPECTED_CASES="${EXPECTED_CASES:-20}"
+MODEL_PREFIX="${MODEL_PREFIX:-stage1b_scheme_c_entity_caption_physical_fresh}"
 
 case "${STEP}" in
   step-002500|step-003500) ;;
@@ -42,7 +43,7 @@ RESULT_JSON="${COMBO_ROOT}/results/result.json"
 LOG_ROOT="${OUTPUT_ROOT}/_sweep_logs"
 LOG="${LOG_ROOT}/${STEP}_object_residual_${SCALE_TAG}x_gpu${GPU_ID}.log"
 TMP_DIR="${TMP_ROOT}/${STEP}_object_residual_${SCALE_TAG}x"
-MODEL_NAME="stage1b_scheme_c_entity_caption_physical_fresh_${STEP}_object_residual_${SCALE_TAG}x"
+MODEL_NAME="${MODEL_PREFIX}_${STEP}_object_residual_${SCALE_TAG}x"
 
 mkdir -p "${COMBO_ROOT}" "${LOG_ROOT}" "${TMP_DIR}"
 exec > >(tee -a "${LOG}") 2>&1
@@ -96,7 +97,7 @@ env \
     --object-branch-residual-scale "${SCALE}" \
     --force
 
-"${PYTHON_BIN}" - "${RESULT_JSON}" "${CHECKPOINT}" "${INPUT_LIST}" "${STRICT_INPUT_LIST}" <<'PY'
+"${PYTHON_BIN}" - "${RESULT_JSON}" "${CHECKPOINT}" "${INPUT_LIST}" "${STRICT_INPUT_LIST}" "${EXPECTED_CASES}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -115,17 +116,18 @@ strict_inputs = {
     for line in Path(sys.argv[4]).read_text(encoding="utf-8").splitlines()
     if line.strip()
 }
+expected_count = int(sys.argv[5])
 result = json.loads(result_path.read_text(encoding="utf-8"))
 entries = result.get("entries", [])
 if not (
     str(Path(result.get("checkpoint_dir", "")).resolve()) == expected_checkpoint
-    and len(expected_inputs) == 20
-    and len(set(expected_inputs)) == 20
-    and int(result.get("num_total", -1)) == 20
-    and int(result.get("num_success", -1)) == 20
+    and len(expected_inputs) == expected_count
+    and len(set(expected_inputs)) == expected_count
+    and int(result.get("num_total", -1)) == expected_count
+    and int(result.get("num_success", -1)) == expected_count
     and int(result.get("num_failed", -1)) == 0
     and int(result.get("num_skipped", -1)) == 0
-    and len(entries) == 20
+    and len(entries) == expected_count
     and {str(Path(entry.get("input_json", "")).resolve()) for entry in entries}
     == set(expected_inputs)
 ):
@@ -168,9 +170,14 @@ for entry in entries:
     ):
         raise SystemExit(f"strict entity-binding verification failed: {input_path}")
 
-if len(output_videos) != 20:
-    raise SystemExit(f"expected 20 unique output videos, found {len(output_videos)}")
-print(f"verified: {result_path} (20/20 videos; strict entity binding passed)")
+if len(output_videos) != expected_count:
+    raise SystemExit(
+        f"expected {expected_count} unique output videos, found {len(output_videos)}"
+    )
+print(
+    f"verified: {result_path} ({expected_count}/{expected_count} videos; "
+    "strict entity binding passed)"
+)
 PY
 
 printf 'step=%s scale=%s gpu=%s result=%s\n' \
