@@ -133,6 +133,9 @@ def main() -> None:
     break_counts = Counter(
         int(row["layer_id"]) for row in combined if int(row["confirmed_break"])
     )
+    noun_break_counts = Counter(
+        str(row["noun"]) for row in combined if int(row["confirmed_break"])
+    )
     figure, axes = plt.subplots(1, 3, figsize=(16, 4.8), constrained_layout=True)
     for layer in TRACKED_LAYERS:
         rows = [row for row in layer_step_rows if row["layer_id"] == layer]
@@ -219,20 +222,35 @@ def main() -> None:
     )
     for layer, count in break_counts.most_common():
         report_lines.append(f"- Layer {layer}: {count}")
+    if break_counts:
+        layer_pattern = ", ".join(
+            f"L{layer} ({count})" for layer, count in break_counts.most_common(5)
+        )
+        noun_pattern = ", ".join(
+            f"`{noun}` ({count})" for noun, count in noun_break_counts.most_common(5)
+        )
+        report_lines.extend(
+            [
+                "",
+                f"Most recurrent layers in this run: {layer_pattern}.",
+                "",
+                f"Most recurrent noun labels in this run: {noun_pattern}.",
+                "",
+            ]
+        )
+    else:
+        report_lines.extend(
+            [
+                "",
+                "No noun-layer pair met the confirmed-break thresholds in this run.",
+                "",
+            ]
+        )
     report_lines.extend(
         [
-            "",
-            "Layers 8 and 10 are the most recurrent semantic boundary discontinuities. "
-            "Layers 11 and 12 form the next group. Their JS is highest and cosine is "
-            "lowest at the beginning of denoising, then improves toward the final step.",
-            "",
-            "Layers 25 and 26 are different: their distribution shape is often more "
-            "stable, while centroid displacement remains large or grows later. These "
-            "layers look more like spatial relocation than an early semantic reset.",
-            "",
-            "`grabber_tools`, `pipes`, and `tabletop` do not show recurrent confirmed "
-            "breaks under the absolute thresholds. The strongest repeated failures are "
-            "the `block`, `table`, and `tennis_ball` maps in the PhysicIQ 025 cases.",
+            "These counts describe only the manifests under this output root. Compare "
+            "the per-step JS, cosine, and centroid curves before assigning a semantic "
+            "cause to a recurrent layer.",
             "",
             "## Artifacts",
             "",
