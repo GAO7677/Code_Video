@@ -79,30 +79,6 @@ def summarize(
     ]
     if not all(math.isfinite(value) for value in finite_values):
         critical.append("non-finite metric detected")
-    if latest.get("loss_main", 0.0) > 10.0:
-        critical.append("loss_main exceeded 10")
-    zero_loss_steps = sum(row.get("loss_main", 0.0) <= 0.0 for row in rows)
-    if zero_loss_steps > 1:
-        warnings.append(
-            f"{zero_loss_steps} zero-weight main-loss steps in rolling window"
-        )
-    if latest.get("grad_norm", 0.0) > 1.05:
-        critical.append("post-clip grad_norm exceeded 1.05")
-    if latest.get("grad_norm", 0.0) <= 0.0:
-        warnings.append("latest grad_norm is zero")
-    if latest.get("max_ratio", 0.0) >= 0.15:
-        warnings.append("object residual reached half of the 0.30 guard")
-    if latest.get("guard_layers", 0.0) > 0.0:
-        warnings.append("object residual guard activated")
-    if latest.get("adapter_mlp_cap", 0.0) > 0.0:
-        warnings.append("object adapter MLP cap activated")
-    if latest.get("entity_ratio_max", 0.0) >= 0.25:
-        warnings.append("entity residual reached half of the 0.50 cap")
-    seconds_since_progress = max(time.time() - last_progress_time, 0.0)
-    if seconds_since_progress > stale_seconds:
-        critical.append(
-            f"no new optimizer step for {seconds_since_progress:.0f} seconds"
-        )
 
     rolling: dict[str, dict[str, float]] = {}
     for key in (
@@ -120,6 +96,35 @@ def summarize(
                 "mean": sum(values) / len(values),
                 "max": max(values),
             }
+
+    def rolling_max(key: str) -> float:
+        return float(rolling.get(key, {}).get("max", 0.0))
+
+    if rolling_max("loss_main") > 10.0:
+        critical.append("loss_main exceeded 10")
+    zero_loss_steps = sum(row.get("loss_main", 0.0) <= 0.0 for row in rows)
+    if zero_loss_steps > 1:
+        warnings.append(
+            f"{zero_loss_steps} zero-weight main-loss steps in rolling window"
+        )
+    if rolling_max("grad_norm") > 1.05:
+        critical.append("post-clip grad_norm exceeded 1.05")
+    if latest.get("grad_norm", 0.0) <= 0.0:
+        warnings.append("latest grad_norm is zero")
+    if rolling_max("max_ratio") >= 0.15:
+        warnings.append("object residual reached half of the 0.30 guard")
+    if any(row.get("guard_layers", 0.0) > 0.0 for row in rows):
+        warnings.append("object residual guard activated")
+    if any(row.get("adapter_mlp_cap", 0.0) > 0.0 for row in rows):
+        warnings.append("object adapter MLP cap activated")
+    if rolling_max("entity_ratio_max") >= 0.25:
+        warnings.append("entity residual reached half of the 0.50 cap")
+    seconds_since_progress = max(time.time() - last_progress_time, 0.0)
+    if seconds_since_progress > stale_seconds:
+        critical.append(
+            f"no new optimizer step for {seconds_since_progress:.0f} seconds"
+        )
+
     status = "critical" if critical else "warning" if warnings else "healthy"
     return {
         "status": status,

@@ -167,6 +167,7 @@ use full-width object attention and an object embedding absent from v3.
 
 ```bash
 GPU_PAIR=7,7 \
+INFERENCE_DEVICES=cuda:0,cuda:1 \
 WEIGHTS_ROOT=/data/gaoya/agent-data/checkpoints/<run>/checkpoints/step-000500 \
 INPUT_JSON_LIST=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt \
 OUTPUT_ROOT=/data/gaoya/agent-data/outputs/AAA_physv/scheme_d_object_tube_step500 \
@@ -184,6 +185,13 @@ TUBE_OBJECT_ATTN_DIM
 OBJECT_BLOCK_IDS
 ```
 
+For one physical GPU, expose it once and map both runtime roles to the same
+logical device. Repeating an ID in `CUDA_VISIBLE_DEVICES` is invalid on CUDA:
+
+```bash
+GPU_PAIR=4 INFERENCE_DEVICES=cuda:0,cuda:0 ... bash run_infer.sh
+```
+
 ## Checkpoint Contract
 
 A valid Scheme-D checkpoint includes:
@@ -191,14 +199,15 @@ A valid Scheme-D checkpoint includes:
 ```text
 object_pooler.*
 object_adapter.*
-object_embedding.*
 blocks.{8,11,14,17,20,23}.object_cross_attn.*
 blocks.{8,11,14,17,20,23}.norm4.*
 blocks.{8,11,14,17,20,23}.object_gate
 ```
 
-Scheme-C checkpoints do not contain the learned resampler and must not be used
-as Scheme-D resume checkpoints.
+Scheme-D v3 intentionally has no global `object_embedding.*`: bottleneck
+object cross-attention consumes the 256-dimensional object memory directly.
+Scheme-C and Scheme-D v1/v2 checkpoints do not satisfy this contract and must
+not be used as Scheme-D v3 resume checkpoints.
 
 ## Deliberate Exclusion
 

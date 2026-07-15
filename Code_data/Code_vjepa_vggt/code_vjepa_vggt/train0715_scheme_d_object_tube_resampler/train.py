@@ -13,6 +13,7 @@ import torch.nn as nn
 from safetensors import safe_open
 
 import code_vjepa_vggt.train_v_newtrain as tvn
+import code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_context_only_no_gt_box_v_newtrain_kubric as kubric_base
 import code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay_preserve as replay
 import code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay_preserve_entity_id_binding as entity_train
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
@@ -26,6 +27,12 @@ from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
 )
 
 from diffsynth.diffusion import ModelLogger
+
+
+# The existing JSON inference builder swaps its ``trainmod`` reference to this
+# module and expects these data-path helpers on that module.
+prepare_jepa_context_video = kubric_base.prepare_jepa_context_video
+compact_object_context_valid_slots = kubric_base.compact_object_context_valid_slots
 
 
 class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanModule):

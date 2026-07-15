@@ -48,6 +48,18 @@ def _install_scheme_d_model_args(model_args) -> None:
     model_args.object_block_ids = os.environ.get(
         "SCHEME_D_OBJECT_BLOCK_IDS", "8,11,14,17,20,23"
     )
+    # These adapter settings are runtime configuration, not checkpoint tensors.
+    # Keep inference aligned with the formal v3 training contract.
+    model_args.entity_binding_bottleneck_dim = int(
+        os.environ.get("SCHEME_D_ENTITY_BINDING_BOTTLENECK_DIM", "256")
+    )
+    model_args.entity_binding_gate_init = float(
+        os.environ.get("SCHEME_D_ENTITY_BINDING_GATE_INIT", "0.5")
+    )
+    model_args.entity_binding_dropout_prob = 0.0
+    model_args.entity_binding_residual_max_ratio = float(
+        os.environ.get("SCHEME_D_ENTITY_BINDING_RESIDUAL_MAX_RATIO", "0.5")
+    )
     model_args.train_object_pooler = False
     model_args.train_object_adapter = False
     model_args.train_object_dit_branch = False

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import time
+from collections import deque
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -14,6 +18,9 @@ from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
     install_bottleneck_object_cross_attention,
     parse_block_ids,
     prune_object_cross_attention_blocks,
+)
+from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.monitor_training_health import (
+    summarize,
 )
 
 
@@ -267,3 +274,21 @@ def test_install_bottleneck_attention_prunes_and_replaces() -> None:
             assert block.object_cross_attn.k.weight.shape == (4, 3)
         else:
             assert block.object_cross_attn is None
+
+
+def test_health_monitor_preserves_rolling_entity_warning() -> None:
+    rows = deque(
+        [
+            {"step": 1.0, "loss_main": 0.1, "grad_norm": 0.01, "entity_ratio_max": 0.3},
+            {"step": 2.0, "loss_main": 0.2, "grad_norm": 0.01, "entity_ratio_max": 0.0},
+        ],
+        maxlen=100,
+    )
+    payload = summarize(
+        rows,
+        log_path=Path("unused.log"),
+        last_progress_time=time.time(),
+        stale_seconds=1800.0,
+    )
+    assert payload["status"] == "warning"
+    assert "entity residual reached half of the 0.50 cap" in payload["warnings"]
