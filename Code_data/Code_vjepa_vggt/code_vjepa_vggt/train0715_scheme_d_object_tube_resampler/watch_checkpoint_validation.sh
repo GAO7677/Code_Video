@@ -77,5 +77,9 @@ if (( step_decimal >= 1000 )); then
   fi
 fi
 
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  "${PROJECT}/build_validation_contact_sheets.py" \
+  --validation-root "${OUTPUT_ROOT}"
+
 printf '%s all checkpoint validation variants completed\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   | tee -a "${OUTPUT_ROOT}/validation_status.log"

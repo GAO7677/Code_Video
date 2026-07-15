@@ -85,6 +85,7 @@ test_models.py  CPU unit tests for shapes, isolation, gradients, K, and pruning
 monitor_training_health.py  rolling loss/gradient/residual health monitor
 audit_checkpoint.py  finite/shape/update audit without loading Wan
 watch_checkpoint_audits.py  automatically audit each completed step-* bundle
+build_validation_contact_sheets.py  aligned four-variant visual gate
 ```
 
 ## Smoke
