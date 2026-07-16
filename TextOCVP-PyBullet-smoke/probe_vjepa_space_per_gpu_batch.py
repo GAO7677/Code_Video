@@ -31,6 +31,7 @@ def parse_args():
         default="/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth",
     )
     parser.add_argument("--batch-sizes", default="1,2,4,8,12,16,24,32,40,48,64")
+    parser.add_argument("--slot-dim", type=int, default=512)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -55,7 +56,7 @@ def main() -> None:
     core = FeatureSlotDecomposer(
         feature_dim=extractor.feature_dim,
         num_slots=8,
-        slot_dim=256,
+        slot_dim=args.slot_dim,
     ).to(device)
     results = []
     for batch_size in batch_sizes:
@@ -103,4 +104,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

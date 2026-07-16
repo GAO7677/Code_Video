@@ -10,13 +10,12 @@ DATASET_MODE=mixed \
 MASTER_PORT="${MASTER_PORT:-29638}" \
 OUTPUT_DIR="${OUTPUT_DIR}" \
 WANDB_GROUP="vjepa_space_pybullet1_kubric8_${RUN_TAG}" \
+PER_GPU_BATCH_SIZE=48 \
+EFFECTIVE_BATCH_SIZE=96 \
 bash /home/gaoya/Code_Video/TextOCVP-PyBullet-smoke/run_stage1_vjepa_space.sh \
   --index-root /data/gaoya/AAA_test_video/0623_savi/indices_pybullet1200_kubric9600_full_pool \
   --source-sampling-ratio 1:8 \
   --samples-per-epoch 10800 \
-  --per-gpu-batch-size 1 \
-  --effective-batch-size 16 \
   --epochs "${EPOCHS}" \
   --validation-frequency-steps 500 \
   "$@"
-

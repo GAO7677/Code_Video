@@ -32,8 +32,9 @@ native RGB: PyBullet [B,10,3,540,960] or Kubric [B,10,3,432,768]
   -> ImageNet normalize without an intermediate 216x384 resize
   -> frozen V-JEPA2 ViT-G, patch=16, tubelet=2
   -> tokens [B,5,24,24,1408]
-  -> per-token LayerNorm to remove backbone channel-gain scale
-  -> recurrent Slot Attention [B,5,8,256]
+  -> per-token unit-variance normalization after V-JEPA's affine final LayerNorm
+  -> official-style feature projector 1408 -> 1408 -> 512
+  -> recurrent Slot Attention [B,5,8,512]
   -> per-slot spatial feature decoder
   -> masks [B,5,8,24,24,1]
   -> reconstructed tokens [B,5,24,24,1408]
@@ -123,9 +124,9 @@ candidate pool and GPU 5,6:
 bash /home/gaoya/Code_Video/TextOCVP-PyBullet-smoke/run_stage1_vjepa_space_pybullet1_kubric8_gpu56.sh
 ```
 
-### V-JEPA batch capacity on GPU 5,6
+### Historical V-JEPA batch capacity on GPU 5,6
 
-The native-resolution preprocessing path was tested on the two 48 GB GPUs with
+The old direct-feature, 256-dimensional slot path was tested on the two 48 GB GPUs with
 the full frozen V-JEPA forward, slot-model reconstruction loss, DDP backward,
 and optimizer update. The observed DDP boundary is:
 
@@ -134,9 +135,22 @@ per-GPU 112, global 224: pass for five consecutive optimizer steps
 per-GPU 113, global 226: CUDA OOM during backward
 ```
 
-`112` is an absolute measured limit for this exact software and model state,
-not a recommended formal-training value. Use per-GPU `96` (global `192`) when
-maximizing throughput with some allocator headroom, or per-GPU `64` (global
-`128`) for a more conservative long run. Recalculate the learning rate and
-optimizer-step schedule before replacing the launcher's existing effective
-batch setting.
+These numbers no longer apply after adding the official-style feature projector
+and increasing the slot dimension to 512. Re-run the batch probe before choosing
+a formal-training micro-batch.
+
+The reviewed 512-dimensional V-JEPA configuration uses per-GPU batch 48. On GPU
+5,6 this gives a regular global batch of 96. Since each rank receives 5400 unique
+samples per epoch, every epoch has 112 full steps followed by one partial step
+with 24 samples per rank (global batch 48), preserving all 10800 unique samples.
+
+### Known architecture risks
+
+- V-JEPA jointly contextualizes all ten input frames. Its five temporal token
+  slices are not equivalent to TextOCVP's frame-local `h_t`, so an early slot can
+  contain information from later frames in the sampled clip. This is valid for
+  clip decomposition but is not a causal implementation of TextOCVP scene parsing.
+- The current decoder reconstructs normalized V-JEPA features only. Official
+  ExtendedDINOSAUR also reconstructs RGB. Decoder-mask entropy and per-slot usage
+  must therefore be monitored for slot collapse before the decomposition model is
+  accepted for Stage 2.

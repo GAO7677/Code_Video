@@ -154,6 +154,7 @@ class SourceRatioDistributedSampler(Sampler[int]):
 
 def parse_args(space: str) -> TrainConfig:
     default_frames = 10 if space == "vjepa" else 9
+    default_slot_dim = 512 if space == "vjepa" else 256
     default_checkpoint = (
         "/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth"
         if space == "vjepa"
@@ -177,7 +178,7 @@ def parse_args(space: str) -> TrainConfig:
         default="vjepa" if space == "vjepa" else "resize",
     )
     parser.add_argument("--num-slots", type=int, default=8)
-    parser.add_argument("--slot-dim", type=int, default=256)
+    parser.add_argument("--slot-dim", type=int, default=default_slot_dim)
     parser.add_argument("--per-gpu-batch-size", type=int, default=1)
     parser.add_argument("--effective-batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=1000)
@@ -327,11 +328,19 @@ class FeatureSpaceTrainer:
 
         if self.is_main:
             trainable = sum(parameter.numel() for parameter in trainable_parameters)
+            local_samples = len(self.train_sampler)
+            full_local_batches, partial_local_batch = divmod(
+                local_samples, config.per_gpu_batch_size
+            )
             runtime = {
                 "world_size": self.world_size,
                 "global_micro_batch": global_micro_batch,
                 "accumulation_steps": self.accumulation_steps,
                 "effective_batch_size": config.effective_batch_size,
+                "local_samples_per_epoch": local_samples,
+                "full_local_batches_per_epoch": full_local_batches,
+                "partial_local_batch_size": partial_local_batch,
+                "partial_global_batch_size": partial_local_batch * self.world_size,
                 "steps_per_epoch": self.steps_per_epoch,
                 "total_steps": self.total_steps,
                 "warmup_steps": self.warmup_steps,
@@ -410,6 +419,13 @@ class FeatureSpaceTrainer:
             trace = {
                 "video": list(videos.shape),
                 "frozen_features": list(features.shape),
+                "projected_features": [
+                    features.shape[0],
+                    features.shape[1],
+                    features.shape[2],
+                    features.shape[3],
+                    self.config.slot_dim,
+                ],
                 "slots": list(output["slots"].shape),
                 "masks": list(output["masks"].shape),
                 "reconstructed_features": list(output["reconstructed_features"].shape),
@@ -629,9 +645,19 @@ class FeatureSpaceTrainer:
 
 def main(space: str) -> None:
     config = parse_args(space)
+    if config.per_gpu_batch_size <= 0 or config.effective_batch_size <= 0:
+        raise ValueError("batch sizes must be positive")
+    if config.epochs <= 0:
+        raise ValueError("epochs must be positive")
+    if config.validation_frequency_steps <= 0:
+        raise ValueError("validation_frequency_steps must be positive")
     if config.space == "vjepa" and config.num_frames % 2 != 0:
         raise ValueError("V-JEPA tubelet_size=2 requires an even number of frames")
     if config.space == "vae" and (config.num_frames - 1) % 4 != 0:
         raise ValueError("Wan VAE requires num_frames=4n+1, for example 9 or 13")
-    trainer = FeatureSpaceTrainer(config)
-    trainer.run()
+    try:
+        trainer = FeatureSpaceTrainer(config)
+        trainer.run()
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()

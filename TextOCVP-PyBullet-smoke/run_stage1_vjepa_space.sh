@@ -9,6 +9,8 @@ OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/AAA_test_video/0623_savi/experiments/vjepa
 WANDB_GROUP="${WANDB_GROUP:-feature_space_stage1_${RUN_TAG}}"
 MASTER_PORT="${MASTER_PORT:-29631}"
 NPROC="$(awk -F, '{print NF}' <<<"${GPU_IDS}")"
+PER_GPU_BATCH_SIZE="${PER_GPU_BATCH_SIZE:-48}"
+EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-$((PER_GPU_BATCH_SIZE * NPROC))}"
 
 mkdir -p "${OUTPUT_DIR}"
 export CUDA_VISIBLE_DEVICES="${GPU_IDS}"
@@ -23,15 +25,15 @@ export PYTHONNOUSERSITE=1
   --output-dir "${OUTPUT_DIR}" \
   --index-root /data/gaoya/AAA_test_video/0623_savi/indices \
   --dataset-mode "${DATASET_MODE}" \
+  --dataset-preprocess-mode vjepa \
   --num-frames 10 \
-  --image-height 216 \
+  --image-height 384 \
   --image-width 384 \
   --num-slots 8 \
-  --slot-dim 256 \
-  --per-gpu-batch-size 1 \
-  --effective-batch-size 16 \
+  --slot-dim 512 \
+  --per-gpu-batch-size "${PER_GPU_BATCH_SIZE}" \
+  --effective-batch-size "${EFFECTIVE_BATCH_SIZE}" \
   --epochs 1000 \
   --validation-frequency-steps 500 \
   --wandb-group "${WANDB_GROUP}" \
   "$@"
-

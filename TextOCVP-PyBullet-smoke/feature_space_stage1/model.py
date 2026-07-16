@@ -65,7 +65,7 @@ class FeatureSlotDecomposer(nn.Module):
         self,
         feature_dim: int,
         num_slots: int = 8,
-        slot_dim: int = 256,
+        slot_dim: int = 512,
         slot_iterations_first: int = 3,
         slot_iterations: int = 1,
         slot_mlp_hidden: int = 512,
@@ -75,9 +75,15 @@ class FeatureSlotDecomposer(nn.Module):
         self.feature_dim = feature_dim
         self.num_slots = num_slots
         self.slot_dim = slot_dim
+        self.feature_projector = nn.Sequential(
+            nn.LayerNorm(feature_dim),
+            nn.Linear(feature_dim, feature_dim),
+            nn.ReLU(),
+            nn.Linear(feature_dim, slot_dim),
+        )
         self.initializer = get_initializer("LearnedRandom", slot_dim, num_slots)
         self.slot_attention = SlotAttention(
-            dim_feats=feature_dim,
+            dim_feats=slot_dim,
             dim_slots=slot_dim,
             num_slots=num_slots,
             num_iters_first=slot_iterations_first,
@@ -106,25 +112,24 @@ class FeatureSlotDecomposer(nn.Module):
         predicted_slots = self.initializer(batch_size=batch)
         slots_history = []
         reconstruction_history = []
-        objects_history = []
         masks_history = []
         for time_index in range(latent_time):
             tokens = features[:, time_index].reshape(batch, height * width, feature_dim)
+            projected_tokens = self.feature_projector(tokens)
             slots = self.slot_attention(
-                inputs=tokens,
+                inputs=projected_tokens,
                 slots=predicted_slots,
                 step=time_index,
             )
-            predicted_slots = self.transition(slots)
-            reconstruction, objects, masks = self.decoder(slots, height, width)
+            if time_index + 1 < latent_time:
+                predicted_slots = self.transition(slots)
+            reconstruction, _, masks = self.decoder(slots, height, width)
             slots_history.append(slots)
             reconstruction_history.append(reconstruction)
-            objects_history.append(objects)
             masks_history.append(masks)
 
         return {
             "reconstructed_features": torch.stack(reconstruction_history, dim=1),
-            "object_features": torch.stack(objects_history, dim=1),
             "masks": torch.stack(masks_history, dim=1),
             "slots": torch.stack(slots_history, dim=1),
         }
@@ -162,4 +167,3 @@ def feature_space_losses(
         "slot_usage_min": usage.min(dim=1).values,
         "slot_usage_max": usage.max(dim=1).values,
     }
-
