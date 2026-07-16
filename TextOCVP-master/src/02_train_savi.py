@@ -98,7 +98,7 @@ class Trainer(BaseTrainer):
         recons_masks = out_model.get("masks")
 
          # visualitations
-        for k in range(3):
+        for k in range(min(3, videos.shape[0])):
             # output reconstructions and input images
             visualize_recons(
                     imgs=videos[k][:N],

@@ -1,0 +1,12 @@
+{
+    "dataset_name": "PyBullet_Raw",
+    "shuffle_train": true,
+    "shuffle_eval": false,
+    "root": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500",
+    "num_frames": 10,
+    "img_size": [64, 112],
+    "random_start": true,
+    "frame_stride": 1,
+    "sampling_frame_range": [0, 49],
+    "max_samples": null
+}

@@ -42,6 +42,9 @@ def load_data(exp_params, split="train"):
     elif db_name == "CLIPort":
         from data.CLIPort import CLIPort
         dataset = CLIPort(split=split, **db_params)
+    elif db_name == "PyBullet_Raw":
+        from data.PyBullet import PyBullet
+        dataset = PyBullet(split=split, **db_params)
     else:
         raise NotImplementedError(
                 f"""ERROR! Dataset'{db_name}' is not available.
@@ -81,7 +84,7 @@ def unwrap_batch_data(exp_params, batch_data):
     others = {}
     if exp_params["dataset"]["dataset_name"] in [
                 "CATER_Easy", "CATER_Hard",
-                "CLIPort"
+                "CLIPort", "PyBullet_Raw"
             ]:
         videos, caption_info = batch_data
         others = {**others, **caption_info}
@@ -89,5 +92,4 @@ def unwrap_batch_data(exp_params, batch_data):
         dataset_name = exp_params["dataset"]["dataset_name"]
         raise NotImplementedError(f"Dataset {dataset_name} is not supported...")
     return videos, others
-
 
