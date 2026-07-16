@@ -38,7 +38,7 @@ env \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --min_timestep_boundary 0.01 --max_timestep_boundary 1.0 \
     --trainable_models dit --extra_inputs input_image \
-    --phyco_hidden_dim 128 --phyco_block_ids 3,8,13,18,23,28 --phyco_map_downsample 8 \
+    --phyco_hidden_dim 128 --phyco_block_ids 3,8,13,18,23,28 --phyco_map_downsample 16 \
     --max_train_steps "${MAX_TRAIN_STEPS:-2}" --num_epochs 2 \
     --dataset_num_workers 0 --gradient_accumulation_steps 1 \
     --learning_rate 1e-4 --weight_decay 0.01 --optimizer_type paged_adamw8bit \

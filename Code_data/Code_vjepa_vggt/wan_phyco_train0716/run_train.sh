@@ -38,7 +38,7 @@ env \
     --min_timestep_boundary 0.01 --max_timestep_boundary 1.0 \
     --trainable_models dit --extra_inputs input_image \
     --phyco_hidden_dim "${PHYCO_HIDDEN_DIM:-128}" \
-    --phyco_block_ids "${PHYCO_BLOCK_IDS:-3,8,13,18,23,28}" --phyco_map_downsample 8 \
+    --phyco_block_ids "${PHYCO_BLOCK_IDS:-3,8,13,18,23,28}" --phyco_map_downsample 16 \
     --max_train_steps "${MAX_TRAIN_STEPS:-12000}" --num_epochs 100 \
     --dataset_num_workers "${DATASET_NUM_WORKERS:-4}" --gradient_accumulation_steps 1 \
     --learning_rate "${LEARNING_RATE:-1e-4}" --weight_decay 0.01 --optimizer_type paged_adamw8bit \
@@ -49,4 +49,3 @@ env \
     --wandb_name "wan_phyco_train0716_${RUN_TAG}" --wandb_mode online
 
 echo "training output: ${OUTPUT_DIR}"
-

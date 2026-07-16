@@ -64,29 +64,27 @@ class WanPhyCoTrainingModule(tvn.WanTrainingModule):
             dtype=self.pipe.torch_dtype,
         )
         self.pipe.dit._phyco_branch_valid = branch_valid.to(device=self.pipe.device)
-        try:
-            loss = super().forward(data, inputs=inputs)
-            stats = self.phyco_controlnet.pop_stats()
-            metrics = dict(self.last_train_metrics)
-            for branch_name in self.phyco_controlnet.BRANCH_NAMES:
-                selected = [item for item in stats if item.branch_name == branch_name]
-                metrics[f"train/phyco_{branch_name}_active_fraction"] = float(
-                    branch_valid[..., self.phyco_controlnet.BRANCH_NAMES.index(branch_name)]
-                    .float()
-                    .mean()
-                    .item()
-                )
-                metrics[f"train/phyco_{branch_name}_residual_to_hidden_rms_max"] = max(
-                    (item.residual_to_hidden_rms for item in selected),
-                    default=0.0,
-                )
-            metrics["train/phyco_control_map_abs_mean"] = float(maps.float().abs().mean().item())
-            metrics["train/phyco_control_map_abs_max"] = float(maps.float().abs().max().item())
-            self.last_train_metrics = metrics
-            return loss
-        finally:
-            self.pipe.dit._phyco_control_maps = None
-            self.pipe.dit._phyco_branch_valid = None
+        # Keep these tensors attached until backward finishes: Wan gradient
+        # checkpointing recomputes the DiT blocks after this method returns.
+        loss = super().forward(data, inputs=inputs)
+        stats = self.phyco_controlnet.pop_stats()
+        metrics = dict(self.last_train_metrics)
+        for branch_name in self.phyco_controlnet.BRANCH_NAMES:
+            selected = [item for item in stats if item.branch_name == branch_name]
+            metrics[f"train/phyco_{branch_name}_active_fraction"] = float(
+                branch_valid[..., self.phyco_controlnet.BRANCH_NAMES.index(branch_name)]
+                .float()
+                .mean()
+                .item()
+            )
+            metrics[f"train/phyco_{branch_name}_residual_to_hidden_rms_max"] = max(
+                (item.residual_to_hidden_rms for item in selected),
+                default=0.0,
+            )
+        metrics["train/phyco_control_map_abs_mean"] = float(maps.float().abs().mean().item())
+        metrics["train/phyco_control_map_abs_max"] = float(maps.float().abs().max().item())
+        self.last_train_metrics = metrics
+        return loss
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     group = parser.add_argument_group("wan_phyco")
     group.add_argument("--phyco_hidden_dim", type=int, default=128)
     group.add_argument("--phyco_block_ids", default="3,8,13,18,23,28")
-    group.add_argument("--phyco_map_downsample", type=int, default=8)
+    group.add_argument("--phyco_map_downsample", type=int, default=16)
     group.add_argument("--phyco_init_from", default=None)
     return parser
 
@@ -290,4 +288,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

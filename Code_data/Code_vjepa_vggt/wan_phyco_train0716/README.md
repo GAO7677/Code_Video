@@ -13,7 +13,7 @@ three-branch and zero-initialized-residual contract with ControlNet-XS
 bottlenecks:
 
 ```text
-property maps [B, 9, 1, H/8, W/8]
+property maps [B, 9, 1, H/16, W/16]
   rigid       [restitution, friction, valid]
   deformation [lambda, mu, valid]
   force       [strength, direction-x, direction-y]
@@ -35,8 +35,10 @@ trainable and saved.
   samples preserve behavior but produce zero controller gradient.
 
 The formal source ratio matches Scheme-D: PyBullet 0.30, Kubric 0.30, OpenVid
-0.40. At 12000 optimizer steps this samples roughly 3600 PyBullet examples,
-equivalent to three expected passes over the 1200-sample training split.
+0.40. With six DDP workers and one sample per worker, 12000 optimizer steps
+process roughly 72000 global samples. The expected PyBullet share is 21600
+samples, or 18 expected passes over the 1200-sample training split. Use about
+2000 optimizer steps when the target is three expected PyBullet passes.
 
 ## Commands
 
@@ -68,4 +70,3 @@ The method is adapted from PhyCo, whose repository is licensed CC BY-NC 4.0.
 The controller code here is a new Wan/DiffSynth implementation and does not
 copy Cosmos model code. Use is limited to research/non-commercial contexts
 consistent with the upstream license.
-
