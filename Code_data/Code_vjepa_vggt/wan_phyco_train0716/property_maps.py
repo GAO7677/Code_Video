@@ -15,14 +15,23 @@ CHANNEL_NAMES = (
     "restitution",
     "friction",
     "rigid_valid",
-    "neo_hookean_lambda",
-    "neo_hookean_mu",
+    "neo_hookean_mu_norm",
+    "neo_hookean_lambda_norm",
+    "neo_hookean_damping_norm",
     "deformation_valid",
-    "motion_strength",
-    "move_direction_x",
-    "move_direction_y",
+    "action_magnitude_norm",
+    "action_direction_x",
+    "action_direction_y",
+    "action_type",
+    "action_valid",
 )
-BRANCH_SLICES = ((0, 3), (3, 6), (6, 9))
+BRANCH_SLICES = ((0, 3), (3, 7), (7, 12))
+
+VELOCITY_MAGNITUDE_MAX = 5.0
+NEO_HOOKEAN_MU_RANGE = (60.0, 600.0)
+NEO_HOOKEAN_LAMBDA_RANGE = (100.0, 600.0)
+ACTION_TYPE_VELOCITY = -1.0
+ACTION_TYPE_FORCE = 1.0
 
 
 @dataclass(frozen=True)
@@ -35,6 +44,12 @@ class PropertyMapResult:
 def _normalized(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm > 1.0e-8 else np.zeros_like(vector)
+
+
+def _minmax(value: Any, minimum: float, maximum: float) -> float:
+    if value is None or maximum <= minimum:
+        return 0.0
+    return float(np.clip((float(value) - minimum) / (maximum - minimum), 0.0, 1.0))
 
 
 def _draw_circle(array: np.ndarray, center: tuple[float, float], radius: float, values: dict[int, float]) -> None:
@@ -116,9 +131,11 @@ def build_pybullet_property_map(
             0: float(np.clip(item.get("restitution", 0.0), 0.0, 1.0)),
             1: float(np.clip(item.get("friction", metadata.get("floor_friction", 0.0)), 0.0, 1.0)),
             2: 1.0,
-            6: float(np.clip(speed / 2.0, 0.0, 1.0)),
-            7: direction_x,
-            8: direction_y,
+            7: float(np.clip(speed / VELOCITY_MAGNITUDE_MAX, 0.0, 1.0)),
+            8: direction_x,
+            9: direction_y,
+            10: ACTION_TYPE_VELOCITY if direction_norm > 1.0e-8 else 0.0,
+            11: 1.0 if direction_norm > 1.0e-8 else 0.0,
         }
         _draw_circle(maps, (px, py), radius_px, values)
         rigid_count += 1
@@ -130,7 +147,8 @@ def build_pybullet_property_map(
             "source": "pybullet",
             "rigid_object_count": rigid_count,
             "motion_object_count": motion_count,
-            "force_supervision_kind": "initial_velocity_proxy",
+            "action_supervision_kind": "initial_velocity",
+            "velocity_magnitude_max": VELOCITY_MAGNITUDE_MAX,
             "deformation_supervision": False,
         },
     )
@@ -156,10 +174,114 @@ def _sequence_value(container: dict[str, Any], key: str, index: int, default: An
     return default
 
 
-def _soft_value(value: Any, scale: float) -> float:
-    if value is None:
-        return 0.0
-    return float(np.clip(math.log1p(max(float(value), 0.0)) / math.log1p(scale), 0.0, 1.0))
+def _resolve_action_object(
+    object_data: dict[str, Any],
+    entry: dict[str, Any],
+    *,
+    point_key: str,
+) -> tuple[int | None, str]:
+    explicit_names = [str(value) for value in object_data.get("object_name", [])]
+    types = [str(value) for value in object_data.get("type", [])]
+    target = str(entry.get("object_name", ""))
+    if target in explicit_names:
+        return explicit_names.index(target), "object_name"
+    if target in types:
+        return types.index(target), "object_type"
+
+    point = entry.get(point_key)
+    positions = object_data.get("position", [])
+    if isinstance(point, (list, tuple)) and len(point) >= 3 and positions:
+        point_array = np.asarray(point[:3], dtype=np.float32)
+        distances = [
+            float(np.linalg.norm(np.asarray(position[:3], dtype=np.float32) - point_array))
+            for position in positions
+        ]
+        best = int(np.argmin(distances))
+        if distances[best] <= 0.05:
+            return best, "action_point"
+
+    background_types = {
+        "dome",
+        "ground",
+        "ground_plane",
+        "cube_platform",
+        "platform",
+        "pool_table",
+        "wall",
+    }
+    candidates = [index for index, value in enumerate(types) if value not in background_types]
+    if len(candidates) == 1:
+        return candidates[0], "unique_foreground"
+    return None, "unresolved"
+
+
+def _collect_kubric_actions(
+    metadata: dict[str, Any],
+    object_data: dict[str, Any],
+) -> tuple[dict[int, tuple[float, np.ndarray, float]], dict[str, int]]:
+    actions: dict[int, tuple[float, np.ndarray, float]] = {}
+    diagnostics: dict[str, int] = {
+        "velocity_entries": 0,
+        "force_entries": 0,
+        "resolved_entries": 0,
+        "unresolved_entries": 0,
+    }
+    specs = (
+        (
+            "velocity",
+            "applied_velocities_simulator",
+            "applied_velocities_image",
+            "velocity_magnitude",
+            "velocity_vector_world",
+            "velocity_arrow_unit_vector",
+            "velocity_point_world",
+            ACTION_TYPE_VELOCITY,
+        ),
+        (
+            "force",
+            "applied_forces_simulator",
+            "applied_forces_image",
+            "force_magnitude",
+            "force_vector_world",
+            "force_arrow_unit_vector",
+            "force_point_world",
+            ACTION_TYPE_FORCE,
+        ),
+    )
+    for kind, simulator_key, image_key, magnitude_key, vector_key, arrow_key, point_key, action_type in specs:
+        simulator_entries = metadata.get(simulator_key, [])
+        image_entries = metadata.get(image_key, [])
+        if not isinstance(simulator_entries, list):
+            continue
+        diagnostics[f"{kind}_entries"] += len(simulator_entries)
+        for entry_index, entry in enumerate(simulator_entries):
+            if not isinstance(entry, dict):
+                continue
+            object_index, method = _resolve_action_object(object_data, entry, point_key=point_key)
+            if object_index is None:
+                diagnostics["unresolved_entries"] += 1
+                continue
+            image_entry = image_entries[entry_index] if entry_index < len(image_entries) else None
+            direction = entry.get(vector_key, [0.0, 0.0])
+            if isinstance(image_entry, dict):
+                direction = image_entry.get(arrow_key, direction)
+                if arrow_key == "force_arrow_unit_vector" and arrow_key not in image_entry:
+                    start = image_entry.get("image_coordinates")
+                    end = image_entry.get("force_end_image_coordinates")
+                    if isinstance(start, list) and isinstance(end, list):
+                        direction = [end[0] - start[0], end[1] - start[1]]
+            vector = _normalized(np.asarray(direction[:2], dtype=np.float32))
+            magnitude = float(entry.get(magnitude_key, 0.0) or 0.0)
+            if kind == "velocity":
+                magnitude_norm = float(np.clip(magnitude / VELOCITY_MAGNITUDE_MAX, 0.0, 1.0))
+            else:
+                minimum = float(metadata.get("min_force", metadata.get("force_magnitude_min", 0.0)))
+                maximum = float(metadata.get("max_force", metadata.get("force_magnitude_max", 450.0)))
+                magnitude_norm = _minmax(magnitude, minimum, maximum)
+            actions[object_index] = (magnitude_norm, vector, action_type)
+            diagnostics["resolved_entries"] += 1
+            diagnostics[f"binding_{method}"] = diagnostics.get(f"binding_{method}", 0) + 1
+    return actions, diagnostics
 
 
 def build_kubric_property_map(
@@ -173,33 +295,7 @@ def build_kubric_property_map(
     object_data = metadata.get("object_data", {})
     segmentation = _first_video_frame(sample_dir / "segmentation.mp4")
     colors = object_data.get("segmentation_color", [])
-    object_names = [
-        str(value)
-        for value in object_data.get("object_name", object_data.get("type", []))
-    ]
-    force_by_name: dict[str, tuple[float, np.ndarray]] = {}
-    image_entries = metadata.get("applied_velocities_image", [])
-    simulator_entries = metadata.get("applied_velocities_simulator", [])
-    for entry_index, entry in enumerate(simulator_entries if isinstance(simulator_entries, list) else []):
-        if not isinstance(entry, dict):
-            continue
-        name = str(entry.get("object_name", metadata.get("velocity_applied_block", "")))
-        magnitude = float(entry.get("velocity_magnitude", metadata.get("velocity_magnitude", 0.0)) or 0.0)
-        direction = entry.get("velocity_vector_world", metadata.get("velocity_direction_xy", [0.0, 0.0]))
-        if entry_index < len(image_entries) and isinstance(image_entries[entry_index], dict):
-            direction = image_entries[entry_index].get("velocity_arrow_unit_vector", direction)
-        vector = _normalized(np.asarray(direction[:2], dtype=np.float32))
-        if name:
-            force_by_name[name] = (magnitude, vector)
-    fallback_name = str(metadata.get("velocity_applied_block", ""))
-    if fallback_name and fallback_name not in force_by_name:
-        vector = _normalized(
-            np.asarray(
-                metadata.get("velocity_direction_xy", metadata.get("velocity_direction", [0.0, 0.0]))[:2],
-                dtype=np.float32,
-            )
-        )
-        force_by_name[fallback_name] = (float(metadata.get("velocity_magnitude", 0.0) or 0.0), vector)
+    actions, action_diagnostics = _collect_kubric_actions(metadata, object_data)
     maps = np.zeros((len(CHANNEL_NAMES), height, width), dtype=np.float32)
     rigid_count = deform_count = force_count = 0
     for index, color in enumerate(colors):
@@ -222,32 +318,19 @@ def build_kubric_property_map(
             _sequence_value(object_data, "use_neo_hookean", index, False)
         )
         if deformable:
-            maps[3, mask] = _soft_value(lam, 1.0e6)
-            maps[4, mask] = _soft_value(mu, 1.0e6)
-            maps[5, mask] = 1.0
+            maps[3, mask] = _minmax(mu, *NEO_HOOKEAN_MU_RANGE)
+            maps[4, mask] = _minmax(lam, *NEO_HOOKEAN_LAMBDA_RANGE)
+            maps[5, mask] = float(np.clip(float(damping or 0.0), 0.0, 1.0))
+            maps[6, mask] = 1.0
             deform_count += 1
 
-        force = _sequence_value(object_data, "force", index)
-        if force is None:
-            force = _sequence_value(object_data, "applied_force", index)
-        direction = _sequence_value(object_data, "move_dir", index)
-        if direction is None:
-            direction = _sequence_value(object_data, "force_direction", index)
-        if isinstance(force, (list, tuple)) and len(force) >= 2:
-            vector = np.asarray(force[:2], dtype=np.float32)
-            magnitude = float(np.linalg.norm(vector))
-            direction = vector
-        else:
-            magnitude = float(force or 0.0)
-        object_name = object_names[index] if index < len(object_names) else ""
-        if object_name in force_by_name:
-            magnitude, vector = force_by_name[object_name]
-            direction = vector.tolist()
-        if isinstance(direction, (list, tuple, np.ndarray)) and len(direction) >= 2:
-            vector = _normalized(np.asarray(direction[:2], dtype=np.float32))
-            maps[6, mask] = float(np.clip(magnitude / 100.0, 0.0, 1.0))
-            maps[7, mask] = float(vector[0])
-            maps[8, mask] = float(vector[1])
+        if index in actions:
+            magnitude_norm, vector, action_type = actions[index]
+            maps[7, mask] = magnitude_norm
+            maps[8, mask] = float(vector[0])
+            maps[9, mask] = float(vector[1])
+            maps[10, mask] = action_type
+            maps[11, mask] = 1.0
             force_count += 1
     branch_valid = torch.tensor([rigid_count > 0, deform_count > 0, force_count > 0], dtype=torch.bool)
     return PropertyMapResult(
@@ -257,8 +340,12 @@ def build_kubric_property_map(
             "source": "kubric",
             "rigid_object_count": rigid_count,
             "deformable_object_count": deform_count,
-            "force_object_count": force_count,
-            "force_supervision_kind": "metadata",
+            "action_object_count": force_count,
+            "action_supervision_kind": "typed_velocity_or_force",
+            "velocity_magnitude_max": VELOCITY_MAGNITUDE_MAX,
+            "neo_hookean_mu_range": list(NEO_HOOKEAN_MU_RANGE),
+            "neo_hookean_lambda_range": list(NEO_HOOKEAN_LAMBDA_RANGE),
+            **action_diagnostics,
         },
     )
 

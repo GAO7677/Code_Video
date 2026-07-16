@@ -13,10 +13,10 @@ three-branch and zero-initialized-residual contract with ControlNet-XS
 bottlenecks:
 
 ```text
-property maps [B, 9, 1, H/16, W/16]
+property maps [B, 12, 1, H/16, W/16]
   rigid       [restitution, friction, valid]
-  deformation [lambda, mu, valid]
-  force       [strength, direction-x, direction-y]
+  deformation [mu-normalized, lambda-normalized, damping, valid]
+  action      [magnitude-normalized, direction-x, direction-y, type, valid]
     -> independent Conv3D encoders
     -> independent 128-wide residual blocks
     -> zero-initialized projections
@@ -28,9 +28,12 @@ trainable and saved.
 
 ## Data semantics
 
-- PyBullet: direct friction/restitution supervision. Initial velocity provides
-  a movement-direction proxy, not a force magnitude. No deformation labels.
+- PyBullet: direct friction/restitution supervision. Initial velocity is encoded
+  in a shared 0-5 m/s range with action type -1. No deformation labels.
 - PhyCo Kubric: segmentation and metadata supervise all available branches.
+- Kubric deformation uses the PhyCo ranges mu 60-600 and lambda 100-600.
+  Applied velocity uses action type -1; external force uses action type +1 and
+  each scenario's declared min/max force range.
 - OpenVid: zero maps with all branches disabled. Because Wan is frozen, these
   samples preserve behavior but produce zero controller gradient.
 

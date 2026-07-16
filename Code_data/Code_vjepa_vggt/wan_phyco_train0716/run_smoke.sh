@@ -10,6 +10,14 @@ OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/wan_phyco_train0716
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/wan_phyco_train0716/smoke_${RUN_TAG}}"
 VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-5,6}"
 NUM_PROCESSES="${NUM_PROCESSES:-2}"
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29500}"
+MIXTURE_PYBULLET_RATIO="${MIXTURE_PYBULLET_RATIO:-0.30}"
+MIXTURE_KUBRIC_RATIO="${MIXTURE_KUBRIC_RATIO:-0.30}"
+MIXTURE_OPENVID_RATIO="${MIXTURE_OPENVID_RATIO:-0.40}"
+KUBRIC_SCENARIO_ARGS=()
+if [[ -n "${KUBRIC_SCENARIO:-}" ]]; then
+  KUBRIC_SCENARIO_ARGS+=(--kubric_scenario "${KUBRIC_SCENARIO}")
+fi
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" /data/gaoya/agent-data/cache/wandb
 
 env \
@@ -19,7 +27,8 @@ env \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   TMPDIR="${TMP_ROOT}" TMP="${TMP_ROOT}" TEMP="${TMP_ROOT}" \
   WANDB_DIR=/data/gaoya/agent-data/cache/wandb \
-  "${ACCELERATE}" launch --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16 \
+  "${ACCELERATE}" launch --num_processes "${NUM_PROCESSES}" --num_machines 1 \
+  --main_process_port "${MAIN_PROCESS_PORT}" --mixed_precision bf16 \
   "${PROJECT}/train.py" \
     --diffsynth_root "${DIFFSYNTH_ROOT}" \
     --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
@@ -32,7 +41,9 @@ env \
     --kubric_sampling_strategy prefix --kubric_replay_index_num_frames 69 \
     --kubric_replay_index_num_context_frames 20 --kubric_init_scan_limit 8 \
     --openvid_root /data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train --openvid_max_samples 8 \
-    --mixture_pybullet_ratio 0.30 --mixture_kubric_ratio 0.30 --mixture_openvid_ratio 0.40 \
+    --mixture_pybullet_ratio "${MIXTURE_PYBULLET_RATIO}" \
+    --mixture_kubric_ratio "${MIXTURE_KUBRIC_RATIO}" \
+    --mixture_openvid_ratio "${MIXTURE_OPENVID_RATIO}" \
     --height 512 --width 896 --num_frames 49 \
     --fixed_num_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
@@ -46,6 +57,7 @@ env \
     --save_steps 1 --max_checkpoints_keep 0 \
     --remove_prefix_in_ckpt pipe.dit. --output_path "${OUTPUT_DIR}" \
     --report_to wandb --wandb_project vjepa_vggt_wan \
-    --wandb_name "wan_phyco_train0716_smoke_${RUN_TAG}" --wandb_mode disabled
+    --wandb_name "wan_phyco_train0716_smoke_${RUN_TAG}" --wandb_mode disabled \
+    "${KUBRIC_SCENARIO_ARGS[@]}"
 
 echo "smoke output: ${OUTPUT_DIR}"
