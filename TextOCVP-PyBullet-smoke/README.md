@@ -33,3 +33,5 @@ bash /home/gaoya/Code_Video/TextOCVP-PyBullet-smoke/run_smoke.sh
 ```
 
 Large artifacts are written under `/data/gaoya/agent-data/checkpoints`.
+The frozen `t5-small` encoder is loaded from
+`/data/gaoya/agent-data/cache/textocvp/t5-small`.

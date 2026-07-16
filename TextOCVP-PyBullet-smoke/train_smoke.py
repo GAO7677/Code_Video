@@ -22,7 +22,17 @@ from models.Predictors.predictor_wrapper import PredictorWrapper  # noqa: E402
 from models.Predictors.text_cond_OCVP import TextOCVP_T5  # noqa: E402
 from models.SAVi import SAVi  # noqa: E402
 from pybullet_dataset import PyBulletTextOCVPDataset  # noqa: E402
-from transformers import T5Tokenizer  # noqa: E402
+from transformers import T5EncoderModel, T5Tokenizer  # noqa: E402
+
+
+LOCAL_T5 = Path("/data/gaoya/agent-data/cache/textocvp/t5-small")
+
+
+class LocalTextOCVP_T5(TextOCVP_T5):
+    def _instantiate_text_encoder(self) -> None:
+        self.text_encoder = T5EncoderModel.from_pretrained(LOCAL_T5)
+        self.text_encoder.requires_grad_(False)
+        self.t5_token_dim = 512
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,7 +110,7 @@ def build_predictor(slot_dim: int) -> PredictorWrapper:
             "input_buffer_size": 10,
         },
     }
-    predictor = TextOCVP_T5(
+    predictor = LocalTextOCVP_T5(
         slot_dim=slot_dim,
         predictor_params={
             "token_dim": 512,
@@ -208,7 +218,7 @@ def main() -> None:
     for parameter in savi.parameters():
         parameter.requires_grad_(False)
     savi.eval()
-    tokenizer = T5Tokenizer.from_pretrained("t5-small")
+    tokenizer = T5Tokenizer.from_pretrained(LOCAL_T5)
     predictor = build_predictor(args.slot_dim).to(device)
     predictor.train()
     predictor_optimizer = torch.optim.Adam(
@@ -291,4 +301,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
