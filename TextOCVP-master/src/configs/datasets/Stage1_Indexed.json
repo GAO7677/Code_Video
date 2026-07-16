@@ -1,0 +1,12 @@
+{
+    "dataset_name": "Stage1_Indexed",
+    "shuffle_train": true,
+    "shuffle_eval": false,
+    "index_root": "/data/gaoya/AAA_test_video/0623_savi/indices",
+    "dataset_mode": "mixed",
+    "num_frames": 10,
+    "img_size": [216, 384],
+    "frame_stride": 1,
+    "random_start": true,
+    "max_samples": null
+}
