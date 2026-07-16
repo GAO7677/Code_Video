@@ -41,6 +41,7 @@ class TrainConfig:
     num_frames: int
     image_height: int
     image_width: int
+    dataset_preprocess_mode: str
     num_slots: int
     slot_dim: int
     per_gpu_batch_size: int
@@ -52,6 +53,8 @@ class TrainConfig:
     gradient_clip: float
     warmup_ratio: float
     num_workers: int
+    source_sampling_ratio: str | None
+    samples_per_epoch: int | None
     max_train_samples: int | None
     max_valid_samples: int | None
     max_optimizer_steps: int | None
@@ -78,6 +81,77 @@ class StridedDistributedSampler(Sampler[int]):
         return max(0, (remaining + self.world_size - 1) // self.world_size)
 
 
+class SourceRatioDistributedSampler(Sampler[int]):
+    """Sample an exact global source ratio, then shard the sequence across ranks."""
+
+    def __init__(
+        self,
+        dataset: Stage1Indexed,
+        ratio: str,
+        samples_per_epoch: int,
+        rank: int,
+        world_size: int,
+        seed: int,
+    ) -> None:
+        ratio_parts = ratio.split(":")
+        if len(ratio_parts) != 2:
+            raise ValueError("source_sampling_ratio must look like '1:3'")
+        pybullet_weight, kubric_weight = (int(value) for value in ratio_parts)
+        if pybullet_weight <= 0 or kubric_weight <= 0:
+            raise ValueError("source sampling weights must be positive")
+        if samples_per_epoch % (pybullet_weight + kubric_weight) != 0:
+            raise ValueError(
+                f"samples_per_epoch={samples_per_epoch} must divide ratio sum "
+                f"{pybullet_weight + kubric_weight}"
+            )
+        if samples_per_epoch % world_size != 0:
+            raise ValueError("samples_per_epoch must be divisible by world_size")
+        self.source_indices = {
+            source: [
+                index
+                for index, record in enumerate(dataset.records)
+                if record["source"] == source
+            ]
+            for source in ("pybullet", "kubric")
+        }
+        if not all(self.source_indices.values()):
+            raise ValueError("ratio sampler requires both PyBullet and Kubric records")
+        unit = samples_per_epoch // (pybullet_weight + kubric_weight)
+        self.source_counts = {
+            "pybullet": unit * pybullet_weight,
+            "kubric": unit * kubric_weight,
+        }
+        for source, count in self.source_counts.items():
+            if count > len(self.source_indices[source]):
+                raise ValueError(
+                    f"Requested {count} unique {source} samples, pool has "
+                    f"{len(self.source_indices[source])}"
+                )
+        self.samples_per_epoch = samples_per_epoch
+        self.rank = rank
+        self.world_size = world_size
+        self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __iter__(self) -> Iterator[int]:
+        generator = torch.Generator().manual_seed(self.seed + self.epoch)
+        selected = []
+        for source in ("pybullet", "kubric"):
+            pool = self.source_indices[source]
+            permutation = torch.randperm(len(pool), generator=generator)
+            count = self.source_counts[source]
+            selected.extend(pool[index] for index in permutation[:count].tolist())
+        shuffle = torch.randperm(len(selected), generator=generator).tolist()
+        global_indices = [selected[index] for index in shuffle]
+        return iter(global_indices[self.rank::self.world_size])
+
+    def __len__(self) -> int:
+        return self.samples_per_epoch // self.world_size
+
+
 def parse_args(space: str) -> TrainConfig:
     default_frames = 10 if space == "vjepa" else 9
     default_checkpoint = (
@@ -97,6 +171,11 @@ def parse_args(space: str) -> TrainConfig:
     parser.add_argument("--num-frames", type=int, default=default_frames)
     parser.add_argument("--image-height", type=int, default=216)
     parser.add_argument("--image-width", type=int, default=384)
+    parser.add_argument(
+        "--dataset-preprocess-mode",
+        choices=("resize", "vjepa"),
+        default="vjepa" if space == "vjepa" else "resize",
+    )
     parser.add_argument("--num-slots", type=int, default=8)
     parser.add_argument("--slot-dim", type=int, default=256)
     parser.add_argument("--per-gpu-batch-size", type=int, default=1)
@@ -108,6 +187,8 @@ def parse_args(space: str) -> TrainConfig:
     parser.add_argument("--gradient-clip", type=float, default=0.05)
     parser.add_argument("--warmup-ratio", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--source-sampling-ratio", default=None)
+    parser.add_argument("--samples-per-epoch", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-valid-samples", type=int, default=None)
     parser.add_argument("--max-optimizer-steps", type=int, default=None)
@@ -125,9 +206,10 @@ def setup_distributed() -> tuple[int, int, int, torch.device]:
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
     if world_size > 1:
-        dist.init_process_group(backend="nccl")
-    return rank, local_rank, world_size, torch.device("cuda", local_rank)
+        dist.init_process_group(backend="nccl", device_id=device)
+    return rank, local_rank, world_size, device
 
 
 def seed_everything(seed: int, rank: int) -> None:
@@ -274,6 +356,7 @@ class FeatureSpaceTrainer:
             "dataset_mode": self.config.dataset_mode,
             "num_frames": self.config.num_frames,
             "img_size": (self.config.image_height, self.config.image_width),
+            "preprocess_mode": self.config.dataset_preprocess_mode,
             "frame_stride": 1,
             "random_start": True,
         }
@@ -283,14 +366,26 @@ class FeatureSpaceTrainer:
         valid_set = Stage1Indexed(
             split="valid", max_samples=self.config.max_valid_samples, **dataset_kwargs
         )
-        self.train_sampler = DistributedSampler(
-            train_set,
-            num_replicas=self.world_size,
-            rank=self.rank,
-            shuffle=True,
-            seed=self.config.seed,
-            drop_last=False,
-        )
+        if self.config.source_sampling_ratio is not None:
+            if self.config.samples_per_epoch is None:
+                raise ValueError("--samples-per-epoch is required with a source ratio")
+            self.train_sampler = SourceRatioDistributedSampler(
+                train_set,
+                ratio=self.config.source_sampling_ratio,
+                samples_per_epoch=self.config.samples_per_epoch,
+                rank=self.rank,
+                world_size=self.world_size,
+                seed=self.config.seed,
+            )
+        else:
+            self.train_sampler = DistributedSampler(
+                train_set,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                seed=self.config.seed,
+                drop_last=False,
+            )
         valid_sampler = StridedDistributedSampler(valid_set, self.rank, self.world_size)
         loader_kwargs = {
             "batch_size": self.config.per_gpu_batch_size,

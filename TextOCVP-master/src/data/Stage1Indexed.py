@@ -28,6 +28,9 @@ class Stage1Indexed(Dataset):
         img_size=(216, 384),
         frame_stride=1,
         random_start=True,
+        preprocess_mode="resize",
+        vjepa_short_side=438,
+        vjepa_crop_size=384,
         max_samples=None,
         **kwargs,
     ):
@@ -42,6 +45,11 @@ class Stage1Indexed(Dataset):
         self.img_size = tuple(int(value) for value in img_size)
         self.frame_stride = int(frame_stride)
         self.random_start = bool(random_start) and split == "train"
+        if preprocess_mode not in {"resize", "vjepa"}:
+            raise ValueError(f"Unsupported preprocess_mode={preprocess_mode!r}")
+        self.preprocess_mode = preprocess_mode
+        self.vjepa_short_side = int(vjepa_short_side)
+        self.vjepa_crop_size = int(vjepa_crop_size)
         index_path = Path(index_root).resolve() / dataset_mode / self.SPLIT_FILES[split]
         if not index_path.is_file():
             raise FileNotFoundError(f"Stage 1 index does not exist: {index_path}")
@@ -76,18 +84,44 @@ class Stage1Indexed(Dataset):
         frame_ids = start + np.arange(self.num_frames) * self.frame_stride
         frames = torch.from_numpy(reader.get_batch(frame_ids).asnumpy()).float()
         frames = frames.permute(0, 3, 1, 2).div_(255.0)
-        frames = F.interpolate(
-            frames,
-            size=self.img_size,
-            mode="bilinear",
-            align_corners=False,
-            antialias=True,
-        )
+        source_height, source_width = frames.shape[-2:]
+        resized_shape = None
+        if self.preprocess_mode == "vjepa":
+            scale = self.vjepa_short_side / min(source_height, source_width)
+            resized_height = max(self.vjepa_crop_size, round(source_height * scale))
+            resized_width = max(self.vjepa_crop_size, round(source_width * scale))
+            frames = F.interpolate(
+                frames,
+                size=(resized_height, resized_width),
+                mode="bicubic",
+                align_corners=False,
+                antialias=True,
+            )
+            top = (resized_height - self.vjepa_crop_size) // 2
+            left = (resized_width - self.vjepa_crop_size) // 2
+            frames = frames[
+                :,
+                :,
+                top:top + self.vjepa_crop_size,
+                left:left + self.vjepa_crop_size,
+            ]
+            resized_shape = [resized_height, resized_width]
+        else:
+            frames = F.interpolate(
+                frames,
+                size=self.img_size,
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
         metadata = {
             **record,
             "start_frame": start,
             "frame_ids": frame_ids.tolist(),
-            "training_shape": [self.num_frames, 3, *self.img_size],
+            "source_resolution_hw": [source_height, source_width],
+            "preprocess_mode": self.preprocess_mode,
+            "resized_resolution_hw": resized_shape,
+            "training_shape": list(frames.shape),
         }
         return frames, metadata
 

@@ -26,14 +26,17 @@ MLP, and per-slot feature decoder are trained.
 ### V-JEPA
 
 ```text
-RGB [B,10,3,216,384]
-  -> replicate-pad height to 224 and ImageNet normalize
+native RGB: PyBullet [B,10,3,540,960] or Kubric [B,10,3,432,768]
+  -> dataset preserves aspect ratio and resizes short side to 438
+  -> dataset center crops to [B,10,3,384,384]
+  -> ImageNet normalize without an intermediate 216x384 resize
   -> frozen V-JEPA2 ViT-G, patch=16, tubelet=2
-  -> tokens [B,5,14,24,1408]
+  -> tokens [B,5,24,24,1408]
+  -> per-token LayerNorm to remove backbone channel-gain scale
   -> recurrent Slot Attention [B,5,8,256]
   -> per-slot spatial feature decoder
-  -> masks [B,5,8,14,24,1]
-  -> reconstructed tokens [B,5,14,24,1408]
+  -> masks [B,5,8,24,24,1]
+  -> reconstructed tokens [B,5,24,24,1408]
   -> loss = feature MSE + 0.1 * cosine distance
 ```
 
@@ -112,3 +115,28 @@ bash /home/gaoya/Code_Video/TextOCVP-PyBullet-smoke/run_stage1_vae_space.sh \
 Formal four-GPU commands are the same launchers without smoke overrides. The
 default formal effective batch is 16 and validation/checkpoint interval is 500
 optimizer steps.
+
+The dedicated PyBullet:Kubric `1:8` V-JEPA launcher uses the full 1200+9600
+candidate pool and GPU 5,6:
+
+```bash
+bash /home/gaoya/Code_Video/TextOCVP-PyBullet-smoke/run_stage1_vjepa_space_pybullet1_kubric8_gpu56.sh
+```
+
+### V-JEPA batch capacity on GPU 5,6
+
+The native-resolution preprocessing path was tested on the two 48 GB GPUs with
+the full frozen V-JEPA forward, slot-model reconstruction loss, DDP backward,
+and optimizer update. The observed DDP boundary is:
+
+```text
+per-GPU 112, global 224: pass for five consecutive optimizer steps
+per-GPU 113, global 226: CUDA OOM during backward
+```
+
+`112` is an absolute measured limit for this exact software and model state,
+not a recommended formal-training value. Use per-GPU `96` (global `192`) when
+maximizing throughput with some allocator headroom, or per-GPU `64` (global
+`128`) for a more conservative long run. Recalculate the learning rate and
+optimizer-step schedule before replacing the launcher's existing effective
+batch setting.

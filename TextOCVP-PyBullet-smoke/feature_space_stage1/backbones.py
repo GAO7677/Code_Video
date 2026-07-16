@@ -29,6 +29,32 @@ def _pad_to_multiple(video: torch.Tensor, multiple: int = 16) -> torch.Tensor:
     return padded.view(*leading_shape, channels, target_height, target_width)
 
 
+def _resize_short_side_center_crop(
+    video: torch.Tensor,
+    short_side: int = 438,
+    crop_size: int = 384,
+) -> torch.Tensor:
+    """Apply the official V-JEPA aspect-preserving resize and center crop."""
+    height, width = video.shape[-2:]
+    scale = short_side / min(height, width)
+    resized_height = max(crop_size, round(height * scale))
+    resized_width = max(crop_size, round(width * scale))
+    leading_shape = video.shape[:-3]
+    channels = video.shape[-3]
+    flattened = video.reshape(-1, channels, height, width)
+    resized = F.interpolate(
+        flattened,
+        size=(resized_height, resized_width),
+        mode="bicubic",
+        align_corners=False,
+        antialias=True,
+    )
+    top = (resized_height - crop_size) // 2
+    left = (resized_width - crop_size) // 2
+    cropped = resized[:, :, top:top + crop_size, left:left + crop_size]
+    return cropped.view(*leading_shape, channels, crop_size, crop_size)
+
+
 class FrozenVJEPA2Extractor(nn.Module):
     feature_dim = 1408
     temporal_stride = 2
@@ -40,13 +66,13 @@ class FrozenVJEPA2Extractor(nn.Module):
         from src.models.vision_transformer import vit_giant_xformers
 
         model = vit_giant_xformers(
-            img_size=(224, 384),
+            img_size=(384, 384),
             patch_size=16,
             num_frames=num_frames,
             tubelet_size=2,
             use_sdpa=True,
             use_rope=True,
-            use_SiLU=False,
+            use_silu=False,
             wide_SiLU=True,
             uniform_power=False,
             handle_nonsquare_inputs=True,
@@ -82,7 +108,9 @@ class FrozenVJEPA2Extractor(nn.Module):
 
     @torch.no_grad()
     def forward(self, video_btchw: torch.Tensor) -> torch.Tensor:
-        video = _pad_to_multiple(video_btchw.to(self.device, non_blocking=True))
+        video = video_btchw.to(self.device, non_blocking=True)
+        if video.shape[-2:] != (384, 384):
+            video = _resize_short_side_center_crop(video)
         video = video.permute(0, 2, 1, 3, 4)
         video = (video - self.image_mean) / self.image_std
         video = video.to(torch.bfloat16)
@@ -96,9 +124,10 @@ class FrozenVJEPA2Extractor(nn.Module):
             raise RuntimeError(
                 f"Unexpected V-JEPA tokens {tuple(tokens.shape)}; expected N={expected_tokens}"
             )
-        return tokens.view(
+        features = tokens.view(
             batch, latent_time, latent_height, latent_width, self.feature_dim
         ).float()
+        return F.layer_norm(features, (self.feature_dim,))
 
 
 class FrozenWanVAEExtractor(nn.Module):
