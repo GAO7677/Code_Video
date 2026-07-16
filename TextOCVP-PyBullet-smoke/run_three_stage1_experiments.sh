@@ -6,17 +6,20 @@ PROJECT=/home/gaoya/Code_Video/TextOCVP-PyBullet-smoke
 INDEX_ROOT=/data/gaoya/AAA_test_video/0623_savi/indices
 PROBE_ROOT=/data/gaoya/AAA_test_video/0623_savi/outputs/memory_probe
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-RUN_ROOT="${RUN_ROOT:-/data/gaoya/AAA_test_video/0623_savi/experiments/comparison_3way_216x384_slot256_${RUN_TAG}}"
+RUN_ROOT="${RUN_ROOT:-/data/gaoya/AAA_test_video/0623_savi/experiments/comparison_3way_216x384_slot256_accum2_val500_${RUN_TAG}}"
 WANDB_PROJECT="${WANDB_PROJECT:-textocvp_savi_stage1}"
 WANDB_GROUP="${WANDB_GROUP:-$(basename "${RUN_ROOT}")}"
+EFFECTIVE_BATCH="${EFFECTIVE_BATCH:-16}"
+VALIDATION_FREQUENCY_STEPS="${VALIDATION_FREQUENCY_STEPS:-500}"
+EPOCHS="${EPOCHS:-1000}"
 
 if [[ ! -f "${PROBE_ROOT}/selected_micro_global_batch.txt" ]]; then
   echo "Missing successful memory-probe selection" >&2
   exit 1
 fi
 MICRO_BATCH="$(<"${PROBE_ROOT}/selected_micro_global_batch.txt")"
-if (( 64 % MICRO_BATCH != 0 )); then
-  echo "Selected micro batch ${MICRO_BATCH} does not divide effective batch 64" >&2
+if (( EFFECTIVE_BATCH % MICRO_BATCH != 0 )); then
+  echo "Selected micro batch ${MICRO_BATCH} does not divide effective batch ${EFFECTIVE_BATCH}" >&2
   exit 1
 fi
 
@@ -25,10 +28,11 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 printf '%s\n' \
   "gpus=0,1,2,3" \
   "micro_global_batch=${MICRO_BATCH}" \
-  "accumulation_steps=$((64 / MICRO_BATCH))" \
-  "effective_global_batch=64" \
-  "epochs=1000" \
-  "validation_frequency_steps=1000" \
+  "accumulation_steps=$((EFFECTIVE_BATCH / MICRO_BATCH))" \
+  "effective_global_batch=${EFFECTIVE_BATCH}" \
+  "epochs=${EPOCHS}" \
+  "validation_frequency_steps=${VALIDATION_FREQUENCY_STEPS}" \
+  "checkpoint_frequency_steps=${VALIDATION_FREQUENCY_STEPS}" \
   "resolution_hw=216,384" \
   "num_slots=8" \
   "slot_dim=256" \
@@ -44,9 +48,9 @@ for mode in pybullet kubric mixed; do
     --output-dir "${RUN_ROOT}/${mode}" \
     --gpus 0,1,2,3 \
     --micro-global-batch-size "${MICRO_BATCH}" \
-    --effective-batch-size 64 \
-    --epochs 1000 \
-    --validation-frequency-steps 1000 \
+    --effective-batch-size "${EFFECTIVE_BATCH}" \
+    --epochs "${EPOCHS}" \
+    --validation-frequency-steps "${VALIDATION_FREQUENCY_STEPS}" \
     --wandb-project "${WANDB_PROJECT}" \
     --wandb-group "${WANDB_GROUP}" \
     2>&1 | tee "${RUN_ROOT}/${mode}.launch.log"

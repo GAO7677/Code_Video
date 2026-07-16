@@ -65,7 +65,8 @@ def prepare_config(args):
     model["decoder"]["decoder_params"]["resolution"] = [216, 384]
     steps_per_epoch = (1200 + args.effective_batch_size - 1) // args.effective_batch_size
     total_steps = steps_per_epoch * args.epochs
-    warmup_steps = min(2000, max(100, total_steps // 10))
+    # Keep warmup at 10% of optimizer steps when effective batch size changes.
+    warmup_steps = max(100, total_steps // 10)
     params["training"].update(
         {
             "num_epochs": args.epochs,
