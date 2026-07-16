@@ -8,7 +8,7 @@ ACCELERATE=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/wan_phyco_train0716/smoke_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/wan_phyco_train0716/smoke_${RUN_TAG}}"
-VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-6,7}"
+VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-5,6}"
 NUM_PROCESSES="${NUM_PROCESSES:-2}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" /data/gaoya/agent-data/cache/wandb
 
@@ -49,4 +49,3 @@ env \
     --wandb_name "wan_phyco_train0716_smoke_${RUN_TAG}" --wandb_mode disabled
 
 echo "smoke output: ${OUTPUT_DIR}"
-

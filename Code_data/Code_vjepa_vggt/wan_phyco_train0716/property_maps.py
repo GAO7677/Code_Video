@@ -173,7 +173,10 @@ def build_kubric_property_map(
     object_data = metadata.get("object_data", {})
     segmentation = _first_video_frame(sample_dir / "segmentation.mp4")
     colors = object_data.get("segmentation_color", [])
-    object_names = [str(value) for value in object_data.get("type", [])]
+    object_names = [
+        str(value)
+        for value in object_data.get("object_name", object_data.get("type", []))
+    ]
     force_by_name: dict[str, tuple[float, np.ndarray]] = {}
     image_entries = metadata.get("applied_velocities_image", [])
     simulator_entries = metadata.get("applied_velocities_simulator", [])
