@@ -278,10 +278,13 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
         object_valid_mask: torch.Tensor | None = None,
         bbox_xyxy: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        bound_tokens = self.apply_entity_binding(
-            object_latent_tokens,
-            object_valid_mask=object_valid_mask,
-        )
+        if str(getattr(self, "_input_ablation", "none")).strip().lower() in {"zero_entity", "zero_all"}:
+            bound_tokens = object_latent_tokens
+        else:
+            bound_tokens = self.apply_entity_binding(
+                object_latent_tokens,
+                object_valid_mask=object_valid_mask,
+            )
         return super().forward(
             bound_tokens,
             object_valid_mask=object_valid_mask,

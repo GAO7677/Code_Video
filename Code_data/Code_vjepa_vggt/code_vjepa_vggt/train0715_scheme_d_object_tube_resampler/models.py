@@ -574,6 +574,16 @@ class ObjectTubeResampler(nn.Module):
         motion_tokens = motion_tokens + self.modality_embed.weight[2].view(
             1, 1, 1, self.hidden_dim
         )
+        # Inference-only source ablations. Keep token validity and geometry
+        # unchanged so this isolates feature contribution rather than slot
+        # discovery or tracking behavior.
+        input_ablation = str(getattr(self, "_input_ablation", "none")).strip().lower()
+        if input_ablation in {"zero_vae", "zero_all"}:
+            latent_tokens = torch.zeros_like(latent_tokens)
+        if input_ablation in {"zero_jepa", "zero_all"}:
+            jepa_tokens = torch.zeros_like(jepa_tokens)
+        if input_ablation in {"zero_motion", "zero_all"}:
+            motion_tokens = torch.zeros_like(motion_tokens)
         source = torch.cat([latent_tokens, jepa_tokens, motion_tokens], dim=2)
         source_valid = torch.cat(
             [latent_token_valid, jepa_token_valid, motion_token_valid], dim=2

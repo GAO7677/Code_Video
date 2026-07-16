@@ -65,6 +65,20 @@ def _install_scheme_d_model_args(model_args) -> None:
     model_args.train_object_dit_branch = False
 
 
+def _configure_scheme_d_ablation(model) -> None:
+    """Apply input-source ablations without changing detection/tracking."""
+    mode = os.environ.get("SCHEME_D_OBJECT_INPUT_ABLATION", "none").strip().lower()
+    allowed = {"none", "zero_vae", "zero_jepa", "zero_motion", "zero_entity", "zero_all"}
+    if mode not in allowed:
+        raise ValueError(
+            f"unsupported SCHEME_D_OBJECT_INPUT_ABLATION={mode!r}; "
+            f"expected one of {sorted(allowed)}"
+        )
+    model.object_pooler._input_ablation = mode
+    model.object_adapter._input_ablation = mode
+    model._scheme_d_object_input_ablation = mode
+
+
 def _build_runtime_model(args):
     infer_base.apply_vjepa_preset_if_requested(args)
     model_args = _build_model_args(args)
@@ -81,6 +95,7 @@ def _build_runtime_model(args):
         if aux_module is not None and hasattr(aux_module, "device_obj"):
             aux_module.device_obj = target_device
     model.eval()
+    _configure_scheme_d_ablation(model)
     infer_base.configure_runtime_pipe_vjepa(model.pipe, args)
     return model, model_args, {
         "stage1a_info": {
