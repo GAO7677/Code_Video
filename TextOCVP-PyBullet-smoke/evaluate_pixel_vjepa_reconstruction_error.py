@@ -399,6 +399,7 @@ def main() -> None:
 
     summary = {
         "mode": args.mode,
+        "evaluation_gpu": args.gpu,
         "checkpoint": str(args.checkpoint.resolve()),
         "checkpoint_step": (
             int(match.group(1))

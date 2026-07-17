@@ -30,6 +30,12 @@ def fmt(value: float) -> str:
     return "n/a" if not math.isfinite(value) else f"{value:.6f}"
 
 
+def ratio(numerator: float, denominator: float) -> float:
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        return float("nan")
+    return numerator / max(denominator, 1e-12)
+
+
 def main() -> None:
     args = parse_args()
     pixel = json.loads((args.root / "pixel" / "pixel_summary.json").read_text())
@@ -74,16 +80,10 @@ def main() -> None:
             "kubric_dynamic": finite_mean(kubric_pixel, "dynamic_loss"),
             "kubric_static": finite_mean(kubric_pixel, "static_geometry_loss"),
             "kubric_background": finite_mean(kubric_pixel, "background_loss"),
-            "kubric_dynamic_to_background": finite_mean(
-                kubric_pixel, "dynamic_to_background_ratio"
-            ),
             "physiq_global": finite_mean(physiq_pixel, "global_loss"),
             "physiq_motion_proxy": finite_mean(physiq_pixel, "motion_proxy_loss"),
             "physiq_non_motion_proxy": finite_mean(
                 physiq_pixel, "non_motion_proxy_loss"
-            ),
-            "physiq_motion_to_non_motion": finite_mean(
-                physiq_pixel, "motion_to_non_motion_ratio"
             ),
         },
         "vjepa": {
@@ -91,19 +91,23 @@ def main() -> None:
             "kubric_dynamic": finite_mean(kubric_vjepa, "dynamic_loss"),
             "kubric_static": finite_mean(kubric_vjepa, "static_geometry_loss"),
             "kubric_background": finite_mean(kubric_vjepa, "background_loss"),
-            "kubric_dynamic_to_background": finite_mean(
-                kubric_vjepa, "dynamic_to_background_ratio"
-            ),
             "physiq_global": finite_mean(physiq_vjepa, "global_loss"),
             "physiq_motion_proxy": finite_mean(physiq_vjepa, "motion_proxy_loss"),
             "physiq_non_motion_proxy": finite_mean(
                 physiq_vjepa, "non_motion_proxy_loss"
             ),
-            "physiq_motion_to_non_motion": finite_mean(
-                physiq_vjepa, "motion_to_non_motion_ratio"
-            ),
         },
     }
+    for metrics in aggregate.values():
+        metrics["kubric_dynamic_to_background"] = ratio(
+            metrics["kubric_dynamic"], metrics["kubric_background"]
+        )
+        metrics["kubric_dynamic_to_static"] = ratio(
+            metrics["kubric_dynamic"], metrics["kubric_static"]
+        )
+        metrics["physiq_motion_to_non_motion"] = ratio(
+            metrics["physiq_motion_proxy"], metrics["physiq_non_motion_proxy"]
+        )
     (args.root / "aggregate_metrics.json").write_text(
         json.dumps(aggregate, indent=2), encoding="utf-8"
     )
@@ -122,10 +126,10 @@ def main() -> None:
 
 ## Aggregate metrics
 
-| Space | Kubric global | dynamic | static geometry | background | dynamic/background | PhysicIQ global | motion proxy | non-motion proxy | motion/non-motion |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Pixel | {fmt(aggregate['pixel']['kubric_global'])} | {fmt(aggregate['pixel']['kubric_dynamic'])} | {fmt(aggregate['pixel']['kubric_static'])} | {fmt(aggregate['pixel']['kubric_background'])} | {fmt(aggregate['pixel']['kubric_dynamic_to_background'])} | {fmt(aggregate['pixel']['physiq_global'])} | {fmt(aggregate['pixel']['physiq_motion_proxy'])} | {fmt(aggregate['pixel']['physiq_non_motion_proxy'])} | {fmt(aggregate['pixel']['physiq_motion_to_non_motion'])} |
-| V-JEPA | {fmt(aggregate['vjepa']['kubric_global'])} | {fmt(aggregate['vjepa']['kubric_dynamic'])} | {fmt(aggregate['vjepa']['kubric_static'])} | {fmt(aggregate['vjepa']['kubric_background'])} | {fmt(aggregate['vjepa']['kubric_dynamic_to_background'])} | {fmt(aggregate['vjepa']['physiq_global'])} | {fmt(aggregate['vjepa']['physiq_motion_proxy'])} | {fmt(aggregate['vjepa']['physiq_non_motion_proxy'])} | {fmt(aggregate['vjepa']['physiq_motion_to_non_motion'])} |
+| Space | Kubric global | dynamic | static geometry | background | dynamic/background | dynamic/static | PhysicIQ global | motion proxy | non-motion proxy | motion/non-motion |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Pixel | {fmt(aggregate['pixel']['kubric_global'])} | {fmt(aggregate['pixel']['kubric_dynamic'])} | {fmt(aggregate['pixel']['kubric_static'])} | {fmt(aggregate['pixel']['kubric_background'])} | {fmt(aggregate['pixel']['kubric_dynamic_to_background'])} | {fmt(aggregate['pixel']['kubric_dynamic_to_static'])} | {fmt(aggregate['pixel']['physiq_global'])} | {fmt(aggregate['pixel']['physiq_motion_proxy'])} | {fmt(aggregate['pixel']['physiq_non_motion_proxy'])} | {fmt(aggregate['pixel']['physiq_motion_to_non_motion'])} |
+| V-JEPA | {fmt(aggregate['vjepa']['kubric_global'])} | {fmt(aggregate['vjepa']['kubric_dynamic'])} | {fmt(aggregate['vjepa']['kubric_static'])} | {fmt(aggregate['vjepa']['kubric_background'])} | {fmt(aggregate['vjepa']['kubric_dynamic_to_background'])} | {fmt(aggregate['vjepa']['kubric_dynamic_to_static'])} | {fmt(aggregate['vjepa']['physiq_global'])} | {fmt(aggregate['vjepa']['physiq_motion_proxy'])} | {fmt(aggregate['vjepa']['physiq_non_motion_proxy'])} | {fmt(aggregate['vjepa']['physiq_motion_to_non_motion'])} |
 
 The numeric scales between Pixel and V-JEPA are not directly comparable because they measure different target spaces. Compare region ratios within each row.
 """
