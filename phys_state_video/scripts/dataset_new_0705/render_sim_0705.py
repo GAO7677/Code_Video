@@ -1040,6 +1040,7 @@ def render_blueprint_case(
         "object_phrases": payload["object_phrases"],
         "dynamic_object_phrases": payload["dynamic_object_phrases"],
         "static_object_phrases": payload["static_object_phrases"],
+        "object_phrase_details": payload["object_phrase_details"],
         "negative_prompt": payload["negative_prompt"],
         "hdri_catalog": build_hdri_catalog(),
         "asset_pack": build_indoor_asset_pack_manifest(),
