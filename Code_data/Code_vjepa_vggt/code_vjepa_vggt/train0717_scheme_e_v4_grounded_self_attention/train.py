@@ -44,9 +44,15 @@ class SchemeEV4GroundedWanModule(scheme_d.SchemeDObjectTubeWanModule):
         spatial_bias_dropout_prob: float = 0.25,
         evidence_rms_reference: float = 0.01,
         evidence_active_threshold: float = 1.0e-3,
+        grounded_metrics_trace_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self.grounded_metrics_trace_path = (
+            None
+            if grounded_metrics_trace_path is None
+            else Path(grounded_metrics_trace_path).expanduser().resolve()
+        )
         if not self.enable_object_branch:
             return
         text_embedding = getattr(self.pipe.dit, "text_embedding", None)
@@ -87,6 +93,7 @@ class SchemeEV4GroundedWanModule(scheme_d.SchemeDObjectTubeWanModule):
         self._v4_pooler_capture: dict[str, torch.Tensor] | None = None
         self._v4_grounding_sample = None
         self._v4_last_metrics: dict[str, float] = {}
+        self._v4_last_binding: list[dict[str, Any]] = []
         self._v4_pooler_hook = self.object_pooler.register_forward_hook(
             self._capture_pooler_output,
             with_kwargs=True,
@@ -297,6 +304,25 @@ class SchemeEV4GroundedWanModule(scheme_d.SchemeDObjectTubeWanModule):
         object_context,
     ):
         condition = self._build_grounded_condition(pipe, inputs_shared, inputs_posi)
+        tracks = list(
+            getattr(self._v4_grounding_sample, "object_tracks", []) or []
+        )
+        self._v4_last_binding = []
+        for slot_id in range(int(condition.valid_mask.shape[1])):
+            track = tracks[slot_id] if slot_id < len(tracks) else None
+            self._v4_last_binding.append(
+                {
+                    "slot_id": slot_id,
+                    "phrase": str(getattr(track, "phrase", "")),
+                    "valid": bool(condition.valid_mask[0, slot_id].item()),
+                    "noun_matched": bool(
+                        condition.noun_matched_mask[0, slot_id].item()
+                    ),
+                    "evidence_confidence": float(
+                        condition.evidence_confidence[0, slot_id].detach().item()
+                    ),
+                }
+            )
         diffusion_loss = kubric_base.flow_match_context_sft_loss(
             pipe,
             **inputs_shared,
@@ -372,12 +398,32 @@ class SchemeEV4GroundedWanModule(scheme_d.SchemeDObjectTubeWanModule):
         self._v4_pooler_capture = None
         self._v4_grounding_sample = None
         self._v4_last_metrics = {}
+        self._v4_last_binding = []
         total, metrics = super()._compute_object_losses(
             pipe,
             inputs_shared,
             inputs_posi,
         )
         metrics.update(self._v4_last_metrics)
+        if self.grounded_metrics_trace_path is not None:
+            rank = int(os.environ.get("LOCAL_RANK", "0"))
+            base_path = self.grounded_metrics_trace_path
+            rank_path = base_path.with_name(
+                f"{base_path.stem}.rank{rank}{base_path.suffix or '.jsonl'}"
+            )
+            raw_sample = inputs_shared.get("raw_sample", {})
+            record = {
+                "forward_index": int(self._tube_forward_index),
+                "rank": rank,
+                "dataset_source": self._dataset_source(inputs_shared),
+                "video_path": str(raw_sample.get("video_path", "")),
+                "caption": str(raw_sample.get("caption", "")),
+                "slots": self._v4_last_binding,
+                "metrics": {key: float(value) for key, value in metrics.items()},
+            }
+            rank_path.parent.mkdir(parents=True, exist_ok=True)
+            with rank_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return total, metrics
 
 
@@ -393,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--spatial_bias_dropout_prob", type=float, default=0.25)
     group.add_argument("--evidence_rms_reference", type=float, default=0.01)
     group.add_argument("--evidence_active_threshold", type=float, default=1.0e-3)
+    group.add_argument("--grounded_metrics_trace_path", default=None)
     return parser
 
 
@@ -424,6 +471,9 @@ def build_model(args: argparse.Namespace, accelerator) -> SchemeEV4GroundedWanMo
             spatial_bias_dropout_prob=getattr(args, "spatial_bias_dropout_prob", 0.25),
             evidence_rms_reference=getattr(args, "evidence_rms_reference", 0.01),
             evidence_active_threshold=getattr(args, "evidence_active_threshold", 1.0e-3),
+            grounded_metrics_trace_path=getattr(
+                args, "grounded_metrics_trace_path", None
+            ),
         )
 
     replay.ReplayPreserveNoGTBoxWanModule = factory

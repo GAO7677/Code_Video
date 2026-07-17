@@ -9,9 +9,16 @@ ACCELERATE=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 MAIN_GPU_IDS="${MAIN_GPU_IDS:-5,6}"
 AUX_GPU_IDS="${AUX_GPU_IDS:-2,3}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:2,cuda:3}"
+NUM_PROCESSES="${NUM_PROCESSES:-2}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_e_v4_grounded_smoke_gpu56_aux23_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_e_v4_smoke_${RUN_TAG}}"
+MIXTURE_PYBULLET_RATIO="${MIXTURE_PYBULLET_RATIO:-1.0}"
+MIXTURE_KUBRIC_RATIO="${MIXTURE_KUBRIC_RATIO:-0.0}"
+MIXTURE_OPENVID_RATIO="${MIXTURE_OPENVID_RATIO:-0.0}"
+OPTIMIZER_TYPE="${OPTIMIZER_TYPE:-adamw}"
+SAVE_STEPS="${SAVE_STEPS:-2}"
+REPORT_TO="${REPORT_TO:-none}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}"
 
 LOG_FILE="${OUTPUT_DIR}/smoke.log"
@@ -23,7 +30,7 @@ env \
   CUDA_VISIBLE_DEVICES="${MAIN_GPU_IDS},${AUX_GPU_IDS}" \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   TMPDIR="${TMP_ROOT}" TMP="${TMP_ROOT}" TEMP="${TMP_ROOT}" \
-  "${ACCELERATE}" launch --num_processes 2 --num_machines 1 --mixed_precision bf16 \
+  "${ACCELERATE}" launch --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16 \
   "${PROJECT}/train.py" \
     --diffsynth_root "${DIFFSYNTH_ROOT}" \
     --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
@@ -36,16 +43,18 @@ env \
     --kubric_replay_index_num_context_frames 20 \
     --openvid_root /data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train \
     --openvid_max_samples 1 \
-    --mixture_pybullet_ratio 1.0 --mixture_kubric_ratio 0.0 --mixture_openvid_ratio 0.0 \
+    --mixture_pybullet_ratio "${MIXTURE_PYBULLET_RATIO}" \
+    --mixture_kubric_ratio "${MIXTURE_KUBRIC_RATIO}" \
+    --mixture_openvid_ratio "${MIXTURE_OPENVID_RATIO}" \
     --height 512 --width 896 --num_frames 49 \
     --min_timestep_boundary 0.01 --max_timestep_boundary 1.0 \
     --fixed_num_context_frames 8 --replay_fixed_context_frames 8 --ctx_max_length 8 \
     --min_context_frames 0 --max_context_ratio 1.0 --no_context_ratio 0.0 \
     --max_train_steps "${MAX_TRAIN_STEPS:-2}" --num_epochs 2 \
     --dataset_num_workers 0 --learning_rate 1e-5 --weight_decay 0.01 \
-    --gradient_accumulation_steps 1 --optimizer_type adamw --max_grad_norm 1.0 \
+    --gradient_accumulation_steps 1 --optimizer_type "${OPTIMIZER_TYPE}" --max_grad_norm 1.0 \
     --find_unused_parameters --fail_on_nonfinite_train_values \
-    --save_steps 2 --max_checkpoints_keep 0 \
+    --save_steps "${SAVE_STEPS}" --max_checkpoints_keep 0 \
     --remove_prefix_in_ckpt pipe.dit. --output_path "${OUTPUT_DIR}" \
     --lora_base_model dit --lora_target_modules q,k,v,o,ffn.0,ffn.2 \
     --lora_rank 32 --lora_alpha 32 \
@@ -81,6 +90,7 @@ env \
     --grounding_gdino_box_threshold 0.20 --grounding_gdino_text_threshold 0.15 \
     --grounding_prompt_frame_mode first --sam2_segment_len 8 \
     --debug_print_tube_shapes --tube_shape_trace_path "${OUTPUT_DIR}/shape_trace.jsonl" \
-    --report_to none
+    --grounded_metrics_trace_path "${OUTPUT_DIR}/grounded_metrics.jsonl" \
+    --report_to "${REPORT_TO}"
 
 echo "smoke output: ${OUTPUT_DIR}"

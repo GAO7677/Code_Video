@@ -29,10 +29,15 @@ def parse_args():
         "--mixed-precision", choices=("none", "bf16"), default="none"
     )
     parser.add_argument("--effective-batch-size", type=int, default=64)
+    parser.add_argument("--image-height", type=int, default=216)
+    parser.add_argument("--image-width", type=int, default=384)
+    parser.add_argument("--num-slots", type=int, default=8)
+    parser.add_argument("--slot-dim", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--validation-frequency-steps", type=int, default=1000)
     parser.add_argument("--dataset-max-samples", type=int, default=None)
     parser.add_argument("--max-optimizer-steps", type=int, default=None)
+    parser.add_argument("--warmup-steps", type=int, default=None)
     parser.add_argument("--mask-loss-weight", type=float, default=0.0)
     parser.add_argument("--mask-loss-warmup-steps", type=int, default=500)
     parser.add_argument("--mask-max-instances", type=int, default=6)
@@ -67,7 +72,7 @@ def prepare_config(args):
             "index_root": str(args.index_root.resolve()),
             "dataset_mode": args.dataset_mode,
             "num_frames": 10,
-            "img_size": [216, 384],
+            "img_size": [args.image_height, args.image_width],
             "frame_stride": 1,
             "random_start": True,
             "max_samples": args.dataset_max_samples,
@@ -78,10 +83,16 @@ def prepare_config(args):
         }
     )
     model = params["model"]["model_params"]
-    model["num_slots"] = 8
-    model["slot_dim"] = 256
-    model["encoder"]["encoder_params"]["resolution"] = [216, 384]
-    model["decoder"]["decoder_params"]["resolution"] = [216, 384]
+    model["num_slots"] = args.num_slots
+    model["slot_dim"] = args.slot_dim
+    model["encoder"]["encoder_params"]["resolution"] = [
+        args.image_height,
+        args.image_width,
+    ]
+    model["decoder"]["decoder_params"]["resolution"] = [
+        args.image_height,
+        args.image_width,
+    ]
     train_index = args.index_root.resolve() / args.dataset_mode / "train.jsonl"
     if not train_index.is_file():
         raise FileNotFoundError(f"Training index not found: {train_index}")
@@ -94,7 +105,13 @@ def prepare_config(args):
     planned_steps = steps_per_epoch * args.epochs
     total_steps = min(planned_steps, args.max_optimizer_steps or planned_steps)
     # Keep warmup at 10% of optimizer steps when effective batch size changes.
-    warmup_steps = max(100, total_steps // 10)
+    warmup_steps = (
+        int(args.warmup_steps)
+        if args.warmup_steps is not None
+        else max(100, total_steps // 10)
+    )
+    if warmup_steps < 0:
+        raise ValueError("--warmup-steps must be non-negative")
     if args.distributed:
         if args.per_gpu_batch_size is None:
             raise ValueError("--per-gpu-batch-size is required with --distributed")

@@ -214,7 +214,11 @@ def main() -> None:
     device = torch.device(f"cuda:{args.gpu}")
     config = json.loads(args.config.read_text(encoding="utf-8"))
     preprocess_mode = "resize" if args.mode == "pixel" else "vjepa"
-    img_size = (216, 384) if args.mode == "pixel" else (384, 384)
+    img_size = (
+        tuple(int(value) for value in config["dataset"]["img_size"])
+        if args.mode == "pixel"
+        else (384, 384)
+    )
     validation = Stage1Indexed(
         index_root=args.index_root,
         dataset_mode="kubric",
