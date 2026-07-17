@@ -424,7 +424,7 @@ def main() -> None:
         "validation_seed": args.seed,
         "validation_indices": validation_indices,
         "model_input_policy": (
-            "bilinear resize to 216x384"
+            f"bilinear resize to {img_size[0]}x{img_size[1]}"
             if args.mode == "pixel"
             else "resize short side to 438 then center crop to 384x384"
         ),
