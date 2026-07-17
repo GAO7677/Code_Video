@@ -72,6 +72,8 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
     motion_path = input_root / "motion_metrics.json"
     motion_payload = _read_json(motion_path) if motion_path.exists() else {"records": []}
     motion_by_case = {str(item["case_id"]): item for item in motion_payload.get("records", [])}
+    filter_summary_path = input_root / "motion_filter_summary.json"
+    filter_summary = _read_json(filter_summary_path) if filter_summary_path.exists() else {}
 
     cases: list[dict] = []
     family_counter: collections.Counter[str] = collections.Counter()
@@ -108,10 +110,18 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         camera_key = str(meta.get("blueprint", {}).get("camera_key", ""))
         surface_key = str(meta.get("surface_key", ""))
         motion_metrics = motion_by_case.get(case_id, {})
+        attached_motion_metrics = item.get("motion_metrics", {})
         object_motion = motion_metrics.get("motion_object_diag_pct_per_second")
+        filter_metric = str(attached_motion_metrics.get("filter_metric", filter_summary.get("filter_metric", "motion_vbench_top_diag_pct_per_second")))
+        filter_value = attached_motion_metrics.get("filter_value", motion_metrics.get(filter_metric))
+        filter_status = str(attached_motion_metrics.get("filter_status", ""))
         motion_status = "unscored"
-        if object_motion is not None:
-            motion_status = "drop_lt1" if float(object_motion) < 1.0 else "keep_ge1"
+        if filter_status == "drop_lt_threshold":
+            motion_status = "drop_lt1"
+        elif filter_status == "keep_ge_threshold":
+            motion_status = "keep_ge1"
+        elif filter_value is not None:
+            motion_status = "drop_lt1" if float(filter_value) < 1.0 else "keep_ge1"
         direction_mode = str(
             meta.get("blueprint", {}).get("metadata", {}).get(
                 "direction_mode",
@@ -137,6 +147,8 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
             "motion_object": object_motion,
             "motion_object_energy": motion_metrics.get("motion_object_energy"),
             "motion_vbench_top": motion_metrics.get("motion_vbench_top_diag_pct_per_second"),
+            "motion_filter_metric": filter_metric,
+            "motion_filter_value": filter_value,
             "moving_area_ratio": motion_metrics.get("moving_area_ratio"),
             "motion_presence_ratio": motion_metrics.get("motion_presence_ratio"),
             "motion_level": str(motion_metrics.get("relative_motion_level", "")),
@@ -191,6 +203,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         "motion_level_thresholds": motion_payload.get("relative_level_thresholds", {}),
         "motion_summary": motion_payload.get("summary", {}),
         "motion_primary_metric": motion_payload.get("primary_metric", ""),
+        "motion_filter_summary": filter_summary,
         "direction_counter": dict(direction_counter),
         "dynamic_count_counter": dict(dynamic_count_counter),
         "total_count_counter": dict(total_count_counter),
@@ -231,6 +244,10 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
             f"HIGH ≥ {float(high_min):.4f} %diag/s"
         )
     motion_summary = stats.get("motion_summary", {})
+    filter_summary = stats.get("motion_filter_summary", {})
+    filter_metric = str(filter_summary.get("filter_metric", "motion_vbench_top_diag_pct_per_second"))
+    filter_metric_label = "vbench top5" if filter_metric == "motion_vbench_top_diag_pct_per_second" else filter_metric
+    filter_rule = str(filter_summary.get("filter_rule", f"{filter_metric} >= 1.0"))
     object_mean = motion_summary.get("motion_object_diag_pct_per_second_mean", motion_summary.get("motion_object_mean"))
     object_min = motion_summary.get("motion_object_diag_pct_per_second_min")
     object_max = motion_summary.get("motion_object_diag_pct_per_second_max")
@@ -274,8 +291,8 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
             "Motion Filter 计数",
             ["规则", "Case 数"],
             [
-                ["KEEP: motion_object ≥ 1%", str(motion_status_counts["keep_ge1"])],
-                ["DROP: motion_object < 1%", str(motion_status_counts["drop_lt1"])],
+                [f"KEEP: {filter_metric_label} ≥ 1%", str(motion_status_counts["keep_ge1"])],
+                [f"DROP: {filter_metric_label} < 1%", str(motion_status_counts["drop_lt1"])],
                 ["UNSCORED", str(motion_status_counts["unscored"])],
             ],
         ),
@@ -308,10 +325,11 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
         motion_detail = ""
         if case["motion_degree"] is not None:
             object_motion = float(case["motion_object"]) if case["motion_object"] is not None else 0.0
+            filter_value = float(case["motion_filter_value"]) if case["motion_filter_value"] is not None else object_motion
             status_text = "DROP <1%" if case["motion_status"] == "drop_lt1" else "KEEP ≥1%"
             motion_badge = (
                 f"<span class=\"motion-badge {html.escape(case['motion_status'])}\">"
-                f"object {object_motion:.3f}%diag/s · {html.escape(status_text)}</span>"
+                f"{html.escape(filter_metric_label)} {filter_value:.3f}%diag/s · {html.escape(status_text)}</span>"
             )
             motion_detail = (
                 f"<div><strong>object motion</strong><span>{object_motion:.4f}% diag/s</span></div>"
@@ -698,8 +716,8 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
       <div class="eyebrow">rigid dataset · local overview</div>
       <h1>{html.escape(page_title)}</h1>
       <p class="subtitle">
-        这个页面把当前正式数据集的视频和运动强度指标放到同一个入口里。主过滤指标是 object-centric optical-flow motion：
-        <strong>motion_object_diag_pct_per_second</strong>，低于 1% 的样本会被标为 DROP 候选；旧的全图均值也保留在卡片中用于对照。
+        这个页面把当前正式数据集的视频和运动强度指标放到同一个入口里。当前过滤规则是
+        <strong>{html.escape(filter_rule)}</strong>；低于阈值的样本会被标为 DROP 候选，object motion 和旧的全图均值也保留在卡片中用于对照。
       </p>
       <div class="summary">
         <div class="summary-box"><strong>总 Case 数</strong><span>{stats["case_count"]}</span></div>
@@ -724,7 +742,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
       <div class="filter-block">
         <div class="filter-label">
           <span>Motion Filter</span>
-          <span class="threshold-note">{html.escape(motion_summary_note)}</span>
+          <span class="threshold-note">{html.escape(filter_rule)} · {html.escape(motion_summary_note)}</span>
         </div>
         <div class="filters">{"".join(motion_status_buttons)}</div>
       </div>
