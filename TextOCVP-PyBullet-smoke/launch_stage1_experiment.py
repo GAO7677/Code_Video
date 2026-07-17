@@ -21,7 +21,13 @@ def parse_args():
     parser.add_argument("--index-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--gpus", default="0,1,2,3")
-    parser.add_argument("--micro-global-batch-size", type=int, required=True)
+    parser.add_argument("--micro-global-batch-size", type=int, default=None)
+    parser.add_argument("--distributed", action="store_true")
+    parser.add_argument("--per-gpu-batch-size", type=int, default=None)
+    parser.add_argument("--master-port", type=int, default=29641)
+    parser.add_argument(
+        "--mixed-precision", choices=("none", "bf16"), default="none"
+    )
     parser.add_argument("--effective-batch-size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--validation-frequency-steps", type=int, default=1000)
@@ -85,14 +91,27 @@ def prepare_config(args):
     steps_per_epoch = (
         dataset_size + args.effective_batch_size - 1
     ) // args.effective_batch_size
-    total_steps = steps_per_epoch * args.epochs
+    planned_steps = steps_per_epoch * args.epochs
+    total_steps = min(planned_steps, args.max_optimizer_steps or planned_steps)
     # Keep warmup at 10% of optimizer steps when effective batch size changes.
     warmup_steps = max(100, total_steps // 10)
+    if args.distributed:
+        if args.per_gpu_batch_size is None:
+            raise ValueError("--per-gpu-batch-size is required with --distributed")
+        configured_batch_size = int(args.per_gpu_batch_size)
+    else:
+        if args.micro_global_batch_size is None:
+            raise ValueError(
+                "--micro-global-batch-size is required without --distributed"
+            )
+        configured_batch_size = int(args.micro_global_batch_size)
     params["training"].update(
         {
             "num_epochs": args.epochs,
-            "batch_size": args.micro_global_batch_size,
+            "batch_size": configured_batch_size,
             "effective_batch_size": args.effective_batch_size,
+            "distributed": args.distributed,
+            "mixed_precision": args.mixed_precision,
             "validation_frequency_steps": args.validation_frequency_steps,
             "scheduler_steps": max(1, total_steps - warmup_steps),
             "save_frequency": args.epochs + 1,
@@ -130,12 +149,25 @@ def main():
     env["PYTHONNOUSERSITE"] = "1"
     env.setdefault("WANDB_MODE", "online")
     env.setdefault("WANDB_SILENT", "false")
-    command = [
-        sys.executable,
-        str(TRAINER),
-        "--exp-directory",
-        str(args.output_dir),
-    ]
+    if args.distributed:
+        nproc = len([item for item in args.gpus.split(",") if item.strip()])
+        command = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            f"--nproc_per_node={nproc}",
+            f"--master_port={args.master_port}",
+            str(TRAINER),
+            "--exp-directory",
+            str(args.output_dir),
+        ]
+    else:
+        command = [
+            sys.executable,
+            str(TRAINER),
+            "--exp-directory",
+            str(args.output_dir),
+        ]
     if args.max_optimizer_steps is not None:
         command.extend(["--max-optimizer-steps", str(args.max_optimizer_steps)])
     print(f"config={config_path}", flush=True)
