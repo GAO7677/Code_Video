@@ -22,6 +22,12 @@ from code_vjepa_vggt.train0717_scheme_e_object_joint_self_attention.models impor
 from diffsynth.diffusion import ModelLogger
 
 
+# Scheme-D's JSON-native inference builder swaps its train-module reference to
+# this module and resolves these helpers dynamically.
+prepare_jepa_context_video = scheme_d.prepare_jepa_context_video
+compact_object_context_valid_slots = scheme_d.compact_object_context_valid_slots
+
+
 class SchemeEObjectJointSelfAttentionWanModule(scheme_d.SchemeDObjectTubeWanModule):
     def __init__(
         self,

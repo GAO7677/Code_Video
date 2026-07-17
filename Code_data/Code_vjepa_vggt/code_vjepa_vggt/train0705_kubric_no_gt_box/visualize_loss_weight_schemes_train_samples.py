@@ -161,6 +161,18 @@ def heat_overlay(frame: np.ndarray, values: np.ndarray, scale: float) -> np.ndar
     return cv2.addWeighted(frame, 0.48, heat, 0.52, 0.0)
 
 
+def weight_overlay(frame: np.ndarray, weights: np.ndarray, delta_scale: float) -> np.ndarray:
+    delta = np.clip((weights - 1.0) / max(delta_scale, 1.0e-8), -1.0, 1.0)
+    strength = np.abs(delta)[..., None]
+    white = np.full((*delta.shape, 3), 255.0, dtype=np.float32)
+    blue = np.asarray([38.0, 91.0, 214.0], dtype=np.float32)
+    red = np.asarray([220.0, 48.0, 36.0], dtype=np.float32)
+    endpoint = np.where((delta >= 0.0)[..., None], red, blue)
+    heat = white * (1.0 - strength) + endpoint * strength
+    heat = cv2.resize(heat.astype(np.uint8), (384, 384), interpolation=cv2.INTER_NEAREST)
+    return cv2.addWeighted(frame, 0.48, heat, 0.52, 0.0)
+
+
 def write_h264(path: Path, frames: list[np.ndarray]) -> None:
     height, width = frames[0].shape[:2]
     with tempfile.TemporaryDirectory(dir=path.parent) as temp_dir:
@@ -207,7 +219,10 @@ def process_case(family: str, family_dir: str, sample: str, args: argparse.Names
     }
     weights = {name: normalized_weight(value, valid) for name, value in raw_weights.items()}
     weighted_losses = {name: weight * np.nan_to_num(surprise, nan=0.0) for name, weight in weights.items()}
-    shared_scale = float(np.quantile(np.concatenate([value[valid] for value in weighted_losses.values()]), 0.99))
+    shared_loss_scale = float(np.quantile(np.concatenate([value[valid] for value in weighted_losses.values()]), 0.99))
+    shared_weight_delta_scale = max(
+        float(np.max(np.abs(value[valid] - 1.0))) for value in weights.values()
+    )
 
     input_video_path = case_dir / "video.mp4"
     if not input_video_path.exists():
@@ -216,26 +231,38 @@ def process_case(family: str, family_dir: str, sample: str, args: argparse.Names
     frame_indices = np.asarray(metrics["frame_indices"], dtype=np.int64)
     frames = reader.get_batch(frame_indices).asnumpy()
     frames = np.stack([cv2.resize(frame, (384, 384), interpolation=cv2.INTER_AREA) for frame in frames])
-    rendered = []
-    selected_rows = []
+    rendered_weights = []
+    rendered_losses = []
+    selected_weight_rows = []
+    selected_loss_rows = []
     selected = {8, 16, 24, 32, 40, 48}
     names = tuple(weights)
     for frame_id, frame in enumerate(frames):
         token_t = min(frame_id // 2, surprise.shape[0] - 1)
-        panels = [add_header(frame, f"{family} {sample} | frame {frame_id:02d}")]
+        weight_panels = [add_header(frame, f"{family} {sample} | source frame {frame_id:02d}")]
+        loss_panels = [add_header(frame, f"{family} {sample} | source frame {frame_id:02d}")]
         for name in names:
-            view = heat_overlay(frame, weighted_losses[name][token_t], shared_scale)
             mean_weight = float(weights[name][valid].mean())
             mean_loss = float(weighted_losses[name][valid].mean())
-            panels.append(add_header(view, f"{name} | mean w={mean_weight:.2f} weighted loss={mean_loss:.4f}"))
-        row = np.concatenate(panels, axis=1)
-        rendered.append(row)
+            weight_view = weight_overlay(frame, weights[name][token_t], shared_weight_delta_scale)
+            loss_view = heat_overlay(frame, weighted_losses[name][token_t], shared_loss_scale)
+            weight_panels.append(add_header(weight_view, f"{name} | normalized mask weight | mean={mean_weight:.2f}"))
+            loss_panels.append(add_header(loss_view, f"{name} | final weighted loss | mean={mean_loss:.4f}"))
+        weight_row = np.concatenate(weight_panels, axis=1)
+        loss_row = np.concatenate(loss_panels, axis=1)
+        rendered_weights.append(weight_row)
+        rendered_losses.append(loss_row)
         if frame_id in selected:
-            selected_rows.append(row)
-    output_video_path = output_dir / "loss_weight_schemes_overlay_h264.mp4"
-    write_h264(output_video_path, rendered)
-    contact_path = output_dir / "loss_weight_schemes_contact.jpg"
-    cv2.imwrite(str(contact_path), cv2.cvtColor(np.concatenate(selected_rows, axis=0), cv2.COLOR_RGB2BGR))
+            selected_weight_rows.append(weight_row)
+            selected_loss_rows.append(loss_row)
+    weight_video_path = output_dir / "mask_weight_overlay_h264.mp4"
+    loss_video_path = output_dir / "final_weighted_loss_overlay_h264.mp4"
+    write_h264(weight_video_path, rendered_weights)
+    write_h264(loss_video_path, rendered_losses)
+    weight_contact_path = output_dir / "mask_weight_contact.jpg"
+    loss_contact_path = output_dir / "final_weighted_loss_contact.jpg"
+    cv2.imwrite(str(weight_contact_path), cv2.cvtColor(np.concatenate(selected_weight_rows, axis=0), cv2.COLOR_RGB2BGR))
+    cv2.imwrite(str(loss_contact_path), cv2.cvtColor(np.concatenate(selected_loss_rows, axis=0), cv2.COLOR_RGB2BGR))
     np.savez_compressed(
         output_dir / "weight_maps.npz",
         object_mask=object_mask.astype(np.uint8),
@@ -264,8 +291,12 @@ def process_case(family: str, family_dir: str, sample: str, args: argparse.Names
         "weight_ranges": {
             name: [float(value[valid].min()), float(value[valid].max())] for name, value in weights.items()
         },
-        "video": str(output_video_path),
-        "contact": str(contact_path),
+        "shared_loss_scale": shared_loss_scale,
+        "shared_weight_delta_scale": shared_weight_delta_scale,
+        "weight_video": str(weight_video_path),
+        "loss_video": str(loss_video_path),
+        "weight_contact": str(weight_contact_path),
+        "loss_contact": str(loss_contact_path),
         "event_score_max": float(event_scores.max()),
     }
     (output_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -275,17 +306,24 @@ def process_case(family: str, family_dir: str, sample: str, args: argparse.Names
 def build_gallery(reports: list[dict], output_dir: Path) -> None:
     cards = []
     for report in reports:
-        rel = Path(report["video"]).relative_to(output_dir)
+        weight_rel = Path(report["weight_video"]).relative_to(output_dir)
+        loss_rel = Path(report["loss_video"]).relative_to(output_dir)
         cards.append(
             f"<article><h2>{report['family']} / {report['sample']}</h2>"
             f"<p>{report['template']} | areas: object={report['areas']['object']:.1%}, "
             f"event={report['areas']['event']:.1%}, hard={report['areas']['hard']:.1%}</p>"
-            f"<video controls loop muted preload='metadata' src='{rel.as_posix()}'></video>"
-            f"<p><code>{rel.as_posix()}</code></p></article>"
+            f"<h3>Normalized mask weight</h3>"
+            f"<p>Blue: suppressed (w &lt; 1); white: unchanged (w = 1); red: emphasized (w &gt; 1).</p>"
+            f"<video controls loop muted preload='metadata' src='{weight_rel.as_posix()}'></video>"
+            f"<p><code>{weight_rel.as_posix()}</code></p>"
+            f"<h3>Final weighted loss</h3>"
+            f"<p>normalized weight × raw V-JEPA patch reconstruction loss.</p>"
+            f"<video controls loop muted preload='metadata' src='{loss_rel.as_posix()}'></video>"
+            f"<p><code>{loss_rel.as_posix()}</code></p></article>"
         )
     html = """<!doctype html><html><head><meta charset='utf-8'><title>Loss weighting heatmaps</title>
 <style>body{font-family:Georgia,serif;background:#eee7d8;color:#17231d;margin:0}main{max-width:1500px;margin:auto;padding:28px}article{background:#fffaf0;border:1px solid #b9aa8c;padding:18px;margin:22px 0}video{width:100%;background:#111}code{font-size:13px}h1,h2{font-family:Verdana,sans-serif}</style></head><body><main>
-<h1>Training-data loss weighting overlays</h1><p>Columns: source, uniform, object-only, object+event, object+event+V-JEPA-hard. Shared color scale within each case.</p>""" + "".join(cards) + "</main></body></html>"
+<h1>Training-data loss weighting overlays</h1><p>Mask weights and final weighted losses are shown in separate videos. Columns: source, uniform, object-only, object+event, object+event+V-JEPA-hard. Each video uses a shared color scale across its four schemes.</p>""" + "".join(cards) + "</main></body></html>"
     (output_dir / "index.html").write_text(html)
     (output_dir / "gallery_manifest.json").write_text(json.dumps({"cases": reports}, indent=2) + "\n")
 

@@ -148,6 +148,22 @@ def write_h264(path, frames, fps):
         writer.close()
 
 
+def make_skipped_panel(shape, lines):
+    panel = np.full(shape, 34, dtype=np.uint8)
+    for index, line in enumerate(lines):
+        cv2.putText(
+            panel,
+            line,
+            (28, 168 + index * 34),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.76 if index == 0 else 0.58,
+            (238, 238, 238),
+            2 if index == 0 else 1,
+            cv2.LINE_AA,
+        )
+    return panel
+
+
 def render_sample(dataset, index, args):
     video, metadata = dataset[index]
     targets = metadata.pop("_mask_targets")
@@ -205,8 +221,14 @@ def render_sample(dataset, index, args):
             dynamic_fraction = float(dynamic.mean())
             static_fraction = float(static.mean())
         else:
-            target_panel = np.zeros_like(frame)
-            heatmap = np.zeros_like(frame)
+            target_panel = make_skipped_panel(
+                frame.shape,
+                ["MASK LOSS SKIPPED", "No PyBullet segmentation target"],
+            )
+            heatmap = make_skipped_panel(
+                frame.shape,
+                ["COEFFICIENT MAP = 0", "Feature reconstruction loss still active"],
+            )
             overlay = frame.copy()
             dynamic_fraction = 0.0
             static_fraction = 0.0
@@ -238,6 +260,8 @@ def render_sample(dataset, index, args):
         / "vjepa_mask_loss_weight_overlay.mp4"
     )
     write_h264(args.output_dir / relative_path, output_frames, args.fps)
+    relative_poster = relative_path.with_name("poster.jpg")
+    imageio.imwrite(args.output_dir / relative_poster, output_frames[0], quality=92)
     return {
         **metadata,
         "mode": mode,
@@ -249,6 +273,7 @@ def render_sample(dataset, index, args):
         "mean_dynamic_fraction": float(np.mean(dynamic_fractions)),
         "mean_static_fraction": float(np.mean(static_fractions)),
         "output_video": relative_path.as_posix(),
+        "poster": relative_poster.as_posix(),
     }
 
 
@@ -264,7 +289,7 @@ def build_index(output_dir, reports, args):
               <p><code>{html.escape(report['video_path'])}</code></p>
               <p>dynamic coefficient={report['dynamic_coefficient']:.3f}; static={report['static_coefficient']:.3f}; background={report['background_coefficient']:.3f}; unused-slot={report['unused_slot_coefficient']:.3f}</p>
               <p>mean latent occupancy: dynamic={report['mean_dynamic_fraction'] * 100:.2f}%; static={report['mean_static_fraction'] * 100:.2f}%</p>
-              <video controls loop muted preload="metadata" src="{html.escape(report['output_video'])}"></video>
+              <video controls loop muted playsinline preload="auto" poster="{html.escape(report['poster'])}" src="{html.escape(report['output_video'])}?v=2"></video>
             </article>
             """
         )

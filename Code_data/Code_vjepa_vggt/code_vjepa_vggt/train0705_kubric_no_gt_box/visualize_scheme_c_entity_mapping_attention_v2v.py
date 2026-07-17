@@ -865,7 +865,11 @@ def _run_single_case_with_entity_mapping(*args, **kwargs):
     original_set_binding_context = entity_adapter.set_entity_binding_context
 
     def intercepted_set_binding_context(
-        *, entity_text_by_id, entity_text_match_mask, slot_entity_ids
+        *,
+        entity_text_by_id,
+        entity_text_match_mask,
+        slot_entity_ids,
+        text_token_entity_ids=None,
     ):
         routed_ids = slot_entity_ids
         if SWAP_SLOT_ENTITY_IDS:
@@ -885,6 +889,7 @@ def _run_single_case_with_entity_mapping(*args, **kwargs):
             entity_text_by_id=entity_text_by_id,
             entity_text_match_mask=entity_text_match_mask,
             slot_entity_ids=routed_ids,
+            text_token_entity_ids=text_token_entity_ids,
         )
 
     entity_adapter.set_entity_binding_context = intercepted_set_binding_context

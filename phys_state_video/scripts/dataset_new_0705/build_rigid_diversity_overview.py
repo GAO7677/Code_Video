@@ -77,6 +77,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
     surface_counter: collections.Counter[str] = collections.Counter()
     camera_counter: collections.Counter[str] = collections.Counter()
     motion_counter: collections.Counter[str] = collections.Counter()
+    direction_counter: collections.Counter[str] = collections.Counter()
     dynamic_count_counter: collections.Counter[str] = collections.Counter()
     total_count_counter: collections.Counter[str] = collections.Counter()
 
@@ -101,6 +102,12 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         motion_tag = str(meta.get("tags", ["unknown"])[-1]) if meta.get("tags") else "unknown"
         camera_key = str(meta.get("blueprint", {}).get("camera_key", ""))
         surface_key = str(meta.get("surface_key", ""))
+        direction_mode = str(
+            meta.get("blueprint", {}).get("metadata", {}).get(
+                "direction_mode",
+                item.get("direction_mode", "legacy_unlabeled"),
+            )
+        )
 
         case = {
             "case_id": case_id,
@@ -114,6 +121,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
             "surface_key": surface_key,
             "lighting_key": str(meta.get("lighting_key", "")),
             "motion_tag": motion_tag,
+            "direction_mode": direction_mode,
             "resolution": meta.get("resolution", []),
             "duration_s": float(meta.get("duration_s", 0.0)),
             "pre_roll_s": float(meta.get("pre_roll_s", 0.0)),
@@ -130,6 +138,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         surface_counter[surface_key] += 1
         camera_counter[camera_key] += 1
         motion_counter[motion_tag] += 1
+        direction_counter[direction_mode] += 1
         dynamic_count_counter[str(len(dynamic_objects))] += 1
         total_count_counter[str(len(meta.get("objects", [])))] += 1
         for material_key in material_map.values():
@@ -149,6 +158,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         "surface_counter": dict(surface_counter),
         "camera_counter": dict(camera_counter),
         "motion_counter": dict(motion_counter),
+        "direction_counter": dict(direction_counter),
         "dynamic_count_counter": dict(dynamic_count_counter),
         "total_count_counter": dict(total_count_counter),
         "family_examples": family_examples,
@@ -185,6 +195,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
             ["属性", "计数"],
             [[f"surface:{key}", str(value)] for key, value in sorted(stats["surface_counter"].items())]
             + [[f"camera:{key}", str(value)] for key, value in sorted(stats["camera_counter"].items())]
+            + [[f"direction:{key}", str(value)] for key, value in sorted(stats["direction_counter"].items())]
             + [[f"motion:{key}", str(value)] for key, value in sorted(stats["motion_counter"].items(), key=lambda item: (-item[1], item[0]))],
         ),
     ]
@@ -225,6 +236,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
                   <span>seed {case['seed']}</span>
                   <span>{html.escape(case['surface_key'])}</span>
                   <span>{html.escape(case['camera_key'])}</span>
+                  <span>{html.escape(case['direction_mode'])}</span>
                   <span>{html.escape(case['motion_tag'])}</span>
                 </div>
               </div>

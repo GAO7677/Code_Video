@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
 from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
+    attach_entity_text_binding_adapter,
     find_subsequence_spans,
 )
 from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay_preserve_entity_id_binding import (
@@ -106,6 +108,14 @@ def test_same_entity_id_is_injected_into_object_slot_and_text_span() -> None:
     torch.testing.assert_close(routed_text[:, 2], text[:, 2])
     assert not torch.allclose(routed_text[:, 1], routed_text[:, 3])
     assert not torch.allclose(object_tokens[:, :, 0], object_tokens[:, :, 1])
+
+
+def test_pipeline_adapter_reference_does_not_duplicate_checkpoint_keys() -> None:
+    pipe = nn.Module()
+    adapter = _adapter(zero_output=True)
+    attach_entity_text_binding_adapter(pipe, adapter)
+    assert not list(pipe.state_dict())
+    assert pipe._entity_text_binding_adapter_ref() is adapter
 
 
 def test_zero_initialized_binding_preserves_old_adapter_output() -> None:
