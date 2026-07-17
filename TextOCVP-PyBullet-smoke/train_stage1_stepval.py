@@ -27,6 +27,17 @@ from data.load_data import unwrap_batch_data  # noqa: E402
 from lib.logger import Logger, print_  # noqa: E402
 from lib.setup_model import save_checkpoint  # noqa: E402
 import lib.utils as utils  # noqa: E402
+from feature_space_stage1.mask_loss import MaskLossWeights, compute_mask_loss  # noqa: E402
+
+
+MASK_TARGET_KEYS = (
+    "dynamic_instance_masks",
+    "dynamic_instance_valid",
+    "dynamic_union_mask",
+    "static_geometry_mask",
+    "mask_supervision_valid",
+    "instance_supervision_valid",
+)
 
 
 class StepValidationTrainer(BaseTrainer):
@@ -35,6 +46,20 @@ class StepValidationTrainer(BaseTrainer):
         training = self.exp_params["training"]
         self.effective_batch_size = int(training["effective_batch_size"])
         self.validation_frequency = int(training["validation_frequency_steps"])
+        self.mask_loss_weight = float(training.get("mask_loss_weight", 0.0))
+        self.mask_loss_warmup_steps = int(training.get("mask_loss_warmup_steps", 500))
+        self.mask_loss_weights = MaskLossWeights(
+            union=float(training.get("mask_union_weight", 0.20)),
+            instance=float(training.get("mask_instance_weight", 0.10)),
+            static=float(training.get("mask_static_weight", 0.02)),
+            background=float(training.get("mask_background_weight", 0.01)),
+            unused=float(training.get("mask_unused_weight", 0.01)),
+            focal_bce=float(training.get("mask_focal_bce_weight", 0.25)),
+        )
+        if self.mask_loss_weight < 0 or self.mask_loss_warmup_steps < 0:
+            raise ValueError("mask loss weight and warmup steps must be non-negative")
+        if self.mask_loss_weight > 0 and not self.exp_params["dataset"].get("load_masks", False):
+            raise ValueError("mask loss requires dataset.load_masks=true")
         self.max_optimizer_steps = max_optimizer_steps
         self.global_step = 0
         self.best_val_loss = math.inf
@@ -69,34 +94,92 @@ class StepValidationTrainer(BaseTrainer):
             self.wandb_run.define_metric("val/*", step_metric="global_step")
             self.wandb_run.define_metric("monitor/*", step_metric="global_step")
 
-    def _forward_per_sample_loss(self, batch_data):
+    def _mask_loss_ramp(self):
+        if self.mask_loss_weight <= 0:
+            return 0.0
+        if self.mask_loss_warmup_steps == 0:
+            return 1.0
+        return min(1.0, self.global_step / self.mask_loss_warmup_steps)
+
+    def _forward_per_sample_loss(self, batch_data, mask_ramp=None):
         videos, others = unwrap_batch_data(self.exp_params, batch_data)
         metadata = others.pop("metadata", None)
         sources = others.pop("sources", None)
+        mask_targets = {
+            key: others.pop(key)
+            for key in MASK_TARGET_KEYS
+            if key in others
+        }
         videos = videos.to(self.device, non_blocking=True)
         output = self.model(x=videos, num_imgs=videos.shape[1], **others)
         reconstruction = output["recons_imgs"].clamp(0, 1)
         target = videos.clamp(0, 1)
-        per_sample = F.mse_loss(reconstruction, target, reduction="none").mean((1, 2, 3, 4))
-        return per_sample, sources, metadata
+        reconstruction_mse = F.mse_loss(
+            reconstruction, target, reduction="none"
+        ).mean((1, 2, 3, 4))
+        components = {"reconstruction_mse": reconstruction_mse}
+        total = reconstruction_mse
+        if self.mask_loss_weight > 0:
+            missing = [key for key in MASK_TARGET_KEYS if key not in mask_targets]
+            if missing:
+                raise KeyError(f"Mask loss is enabled but batch is missing targets: {missing}")
+            mask_targets = {
+                key: value.to(self.device, non_blocking=True)
+                for key, value in mask_targets.items()
+            }
+            mask_losses = compute_mask_loss(
+                predicted_masks=output["masks"],
+                weights=self.mask_loss_weights,
+                **mask_targets,
+            )
+            ramp = self._mask_loss_ramp() if mask_ramp is None else float(mask_ramp)
+            mask_scaled = self.mask_loss_weight * ramp * mask_losses["mask_total"]
+            total = total + mask_scaled
+            components.update(
+                {
+                    "mask_loss": mask_losses["mask_total"],
+                    "mask_loss_scaled": mask_scaled,
+                    "mask_union": mask_losses["mask_union"],
+                    "mask_instance": mask_losses["mask_instance"],
+                    "mask_static": mask_losses["mask_static"],
+                    "mask_background": mask_losses["mask_background"],
+                    "mask_unused": mask_losses["mask_unused"],
+                    "mask_supervision_rate": mask_losses["mask_supervision_rate"],
+                    "mask_instance_supervision_rate": mask_losses[
+                        "mask_instance_supervision_rate"
+                    ],
+                    "mask_loss_ramp": torch.full_like(total, ramp),
+                }
+            )
+        components["loss_total"] = total
+        return total, sources, metadata, components
 
     @torch.no_grad()
     def validate_monitor(self):
         self.model.eval()
-        losses_by_source = defaultdict(list)
-        all_losses = []
+        values_by_metric = defaultdict(list)
+        values_by_source = defaultdict(lambda: defaultdict(list))
         for batch_data in tqdm(self.valid_loader, desc=f"validate step {self.global_step}"):
-            per_sample, sources, _ = self._forward_per_sample_loss(batch_data)
-            values = per_sample.detach().cpu().tolist()
-            all_losses.extend(values)
-            if sources is not None:
-                for source, value in zip(sources, values):
-                    losses_by_source[source].append(value)
+            _, sources, _, components = self._forward_per_sample_loss(
+                batch_data, mask_ramp=1.0
+            )
+            for name, tensor in components.items():
+                values = tensor.detach().float().cpu().tolist()
+                values_by_metric[name].extend(values)
+                if sources is not None:
+                    for source, value in zip(sources, values):
+                        values_by_source[source][name].append(value)
         self.model.train()
-        aggregate = float(sum(all_losses) / len(all_losses))
+        aggregate = {
+            name: float(sum(values) / len(values))
+            for name, values in sorted(values_by_metric.items())
+        }
         source_metrics = {
-            source: float(sum(values) / len(values))
-            for source, values in sorted(losses_by_source.items())
+            source: {
+                name: float(sum(values) / len(values))
+                for name, values in sorted(metrics.items())
+            }
+            for source, metrics in sorted(values_by_source.items())
         }
         return aggregate, source_metrics
 
@@ -138,7 +221,9 @@ class StepValidationTrainer(BaseTrainer):
             if self.recent_step_losses
             else float("nan")
         )
-        val_loss, source_metrics = self.validate_monitor()
+        val_metrics, source_metrics = self.validate_monitor()
+        val_loss = val_metrics["loss_total"]
+        val_reconstruction = val_metrics["reconstruction_mse"]
         improved = val_loss < self.best_val_loss
         if improved:
             self.best_val_loss = val_loss
@@ -162,21 +247,29 @@ class StepValidationTrainer(BaseTrainer):
             "epoch": epoch,
             "train_loss_recent": train_loss,
             "val_loss": val_loss,
-            "val_psnr": -10.0 * math.log10(max(val_loss, 1e-12)),
+            "val_reconstruction_mse": val_reconstruction,
+            "val_psnr": -10.0 * math.log10(max(val_reconstruction, 1e-12)),
             "generalization_gap": val_loss - train_loss,
             "best_val_loss": self.best_val_loss,
             "no_improvement_count": self.no_improvement_count,
             "overfit_warning": overfit_warning,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
-            "val_loss_pybullet": source_metrics.get("pybullet", float("nan")),
-            "val_loss_kubric": source_metrics.get("kubric", float("nan")),
+            "val_loss_pybullet": source_metrics.get("pybullet", {}).get(
+                "loss_total", float("nan")
+            ),
+            "val_loss_kubric": source_metrics.get("kubric", {}).get(
+                "loss_total", float("nan")
+            ),
         }
+        for name, value in val_metrics.items():
+            record[f"val_{name}"] = value
         self._append_metrics(record)
         self.writer.log_full_dictionary(record, step=self.global_step, plot_name="Step Monitor")
         if self.wandb_run is not None:
             wandb_metrics = {
                 "global_step": self.global_step,
-                "val/reconstruction_mse": val_loss,
+                "val/loss_total": val_loss,
+                "val/reconstruction_mse": val_reconstruction,
                 "val/psnr": record["val_psnr"],
                 "val/generalization_gap": record["generalization_gap"],
                 "monitor/best_val_mse": self.best_val_loss,
@@ -186,11 +279,15 @@ class StepValidationTrainer(BaseTrainer):
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 "train/epoch": epoch,
             }
-            for source, value in source_metrics.items():
+            for source, metrics in source_metrics.items():
+                value = metrics["reconstruction_mse"]
                 wandb_metrics[f"val/{source}_reconstruction_mse"] = value
+                wandb_metrics[f"val/{source}_loss_total"] = metrics["loss_total"]
                 wandb_metrics[f"val/{source}_psnr"] = -10.0 * math.log10(
                     max(value, 1e-12)
                 )
+            for name, value in val_metrics.items():
+                wandb_metrics[f"val/{name}"] = value
             self.wandb_run.log(wandb_metrics, step=self.global_step)
             self.wandb_run.summary["best_val_mse"] = self.best_val_loss
         print_(json.dumps(record, ensure_ascii=True))
@@ -218,16 +315,17 @@ class StepValidationTrainer(BaseTrainer):
         stop = False
         for epoch in range(num_epochs):
             accumulation_samples = 0
-            accumulation_loss_sum = 0.0
+            accumulation_component_sums = defaultdict(float)
             progress = tqdm(self.train_loader, desc=f"epoch {epoch + 1}/{num_epochs}")
             for batch_index, batch_data in enumerate(progress):
-                per_sample, _, _ = self._forward_per_sample_loss(batch_data)
+                per_sample, _, _, components = self._forward_per_sample_loss(batch_data)
                 micro_samples = int(per_sample.shape[0])
                 loss = per_sample.mean()
                 scaled_loss = loss * (micro_samples / self.effective_batch_size)
                 scaled_loss.backward()
                 accumulation_samples += micro_samples
-                accumulation_loss_sum += float(loss.detach()) * micro_samples
+                for name, tensor in components.items():
+                    accumulation_component_sums[name] += float(tensor.detach().sum())
                 last_batch = batch_index + 1 == len(self.train_loader)
                 if accumulation_samples < self.effective_batch_size and not last_batch:
                     continue
@@ -250,18 +348,28 @@ class StepValidationTrainer(BaseTrainer):
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 self.global_step += 1
-                step_loss = accumulation_loss_sum / accumulation_samples
+                step_metrics = {
+                    name: value / accumulation_samples
+                    for name, value in accumulation_component_sums.items()
+                }
+                step_loss = step_metrics["loss_total"]
                 self.recent_step_losses.append(step_loss)
                 self.writer.add_scalar(
                     name="Train Loss/optimizer_step",
                     val=step_loss,
                     step=self.global_step,
                 )
+                for name, value in step_metrics.items():
+                    self.writer.add_scalar(
+                        name=f"Train Components/{name}",
+                        val=value,
+                        step=self.global_step,
+                    )
                 if self.wandb_run is not None:
                     self.wandb_run.log(
                         {
                             "global_step": self.global_step,
-                            "train/reconstruction_mse": step_loss,
+                            **{f"train/{name}": value for name, value in step_metrics.items()},
                             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                             "train/epoch": epoch + 1,
                             "train/accumulated_samples": accumulation_samples,
@@ -270,7 +378,7 @@ class StepValidationTrainer(BaseTrainer):
                     )
                 progress.set_postfix(step=self.global_step, loss=f"{step_loss:.5f}")
                 accumulation_samples = 0
-                accumulation_loss_sum = 0.0
+                accumulation_component_sums.clear()
 
                 if self.global_step % self.validation_frequency == 0:
                     self.validate_save_and_monitor(epoch=epoch, save_regular=True)

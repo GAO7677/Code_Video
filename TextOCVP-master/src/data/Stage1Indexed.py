@@ -69,14 +69,19 @@ class Stage1Indexed(Dataset):
         self.mask_temporal_stride = int(mask_temporal_stride)
         self.mask_spatial_stride = int(mask_spatial_stride)
         if self.load_masks:
-            if self.preprocess_mode != "vjepa":
-                raise ValueError("Mask supervision currently requires preprocess_mode='vjepa'")
             if self.max_mask_instances < 1:
                 raise ValueError("max_mask_instances must be positive")
             if self.num_frames % self.mask_temporal_stride != 0:
-                raise ValueError("num_frames must divide mask_temporal_stride")
-            if self.vjepa_crop_size % self.mask_spatial_stride != 0:
-                raise ValueError("vjepa_crop_size must divide mask_spatial_stride")
+                raise ValueError("num_frames must be divisible by mask_temporal_stride")
+            mask_height, mask_width = self._mask_preprocess_size()
+            if (
+                mask_height % self.mask_spatial_stride != 0
+                or mask_width % self.mask_spatial_stride != 0
+            ):
+                raise ValueError(
+                    "mask preprocessing size must be divisible by mask_spatial_stride: "
+                    f"size={(mask_height, mask_width)}, stride={self.mask_spatial_stride}"
+                )
         index_path = Path(index_root).resolve() / dataset_mode / self.SPLIT_FILES[split]
         if not index_path.is_file():
             raise FileNotFoundError(f"Stage 1 index does not exist: {index_path}")
@@ -93,23 +98,34 @@ class Stage1Indexed(Dataset):
 
     def _empty_mask_targets(self):
         latent_time = self.num_frames // self.mask_temporal_stride
-        latent_size = self.vjepa_crop_size // self.mask_spatial_stride
+        mask_height, mask_width = self._mask_preprocess_size()
+        latent_height = mask_height // self.mask_spatial_stride
+        latent_width = mask_width // self.mask_spatial_stride
         return {
             "dynamic_instance_masks": torch.zeros(
-                latent_time, self.max_mask_instances, latent_size, latent_size
+                latent_time, self.max_mask_instances, latent_height, latent_width
             ),
             "dynamic_instance_valid": torch.zeros(
                 self.max_mask_instances, dtype=torch.bool
             ),
-            "dynamic_union_mask": torch.zeros(latent_time, 1, latent_size, latent_size),
+            "dynamic_union_mask": torch.zeros(
+                latent_time, 1, latent_height, latent_width
+            ),
             "static_geometry_mask": torch.zeros(
-                latent_time, 1, latent_size, latent_size
+                latent_time, 1, latent_height, latent_width
             ),
             "mask_supervision_valid": torch.tensor(False),
             "instance_supervision_valid": torch.tensor(False),
         }
 
+    def _mask_preprocess_size(self):
+        if self.preprocess_mode == "vjepa":
+            return self.vjepa_crop_size, self.vjepa_crop_size
+        return self.img_size
+
     def _preprocess_segmentation(self, frames):
+        if self.preprocess_mode == "resize":
+            return F.interpolate(frames, size=self.img_size, mode="nearest")
         source_height, source_width = frames.shape[-2:]
         scale = self.vjepa_short_side / min(source_height, source_width)
         resized_height = max(self.vjepa_crop_size, round(source_height * scale))

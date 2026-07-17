@@ -19,14 +19,12 @@ from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
 )
 
 
-class BottleneckObjectJointSelfAttention(nn.Module):
-    """Jointly self-attend projected video and object tokens at low width.
+class MaskedBottleneckObjectJointAttention(nn.Module):
+    """Block-sparse joint attention with no added video-to-video path.
 
-    The original Wan self-attention remains untouched. This adapter processes
-    ``[video; object]`` jointly and returns only the video-token residual.
-    A zero object context produces an exact zero residual, preserving object
-    branch dropout semantics even though the adapter also contains video-video
-    attention.
+    Object queries first read ``[video; object]``. Video queries then read only
+    the updated object memory. This is equivalent to a masked joint-attention
+    pattern, but avoids materializing the prohibited ``N x N`` video block.
     """
 
     def __init__(
@@ -52,6 +50,7 @@ class BottleneckObjectJointSelfAttention(nn.Module):
         self.object_in = nn.Linear(self.object_dim, self.inner_dim, bias=False)
         self.video_norm = nn.LayerNorm(self.inner_dim, eps=self.eps)
         self.object_norm = nn.LayerNorm(self.inner_dim, eps=self.eps)
+        self.object_update_norm = nn.LayerNorm(self.inner_dim, eps=self.eps)
         self.modality_embed = nn.Parameter(torch.zeros(2, self.inner_dim))
         self.q = nn.Linear(self.inner_dim, self.inner_dim, bias=False)
         self.k = nn.Linear(self.inner_dim, self.inner_dim, bias=False)
@@ -80,6 +79,24 @@ class BottleneckObjectJointSelfAttention(nn.Module):
         scale = tensor.float().square().mean(dim=-1, keepdim=True)
         return tensor * torch.rsqrt(scale + self.eps).to(dtype=tensor.dtype)
 
+    def _attend(
+        self,
+        queries: torch.Tensor,
+        key_values: torch.Tensor,
+    ) -> torch.Tensor:
+        q = self._rms_normalize(self._split_heads(self.q(queries)))
+        k = self._rms_normalize(self._split_heads(self.k(key_values)))
+        v = self._split_heads(self.v(key_values))
+        attended = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=0.0,
+            is_causal=False,
+        )
+        attended = attended.transpose(1, 2).contiguous().flatten(start_dim=2)
+        return self.o(attended)
+
     def forward(self, video: torch.Tensor, objects: torch.Tensor) -> torch.Tensor:
         if video.ndim != 3 or int(video.shape[-1]) != self.video_dim:
             raise ValueError(
@@ -92,38 +109,54 @@ class BottleneckObjectJointSelfAttention(nn.Module):
         if int(video.shape[0]) != int(objects.shape[0]):
             raise ValueError("video and object batch dimensions differ")
 
+        object_present = objects.detach().abs().amax(dim=(1, 2)) > 0
+        active_batch_items = int(object_present.sum().item())
+        if active_batch_items == 0:
+            output = torch.zeros_like(video)
+            self._last_trace = {
+                "video_shape": list(video.shape),
+                "object_shape": list(objects.shape),
+                "joint_shape": [
+                    int(video.shape[0]),
+                    int(video.shape[1]) + int(objects.shape[1]),
+                    self.inner_dim,
+                ],
+                "output_shape": list(output.shape),
+                "active_batch_items": 0,
+                "object_update_attention_pairs": 0,
+                "video_read_attention_pairs": 0,
+                "prohibited_video_video_attention_pairs": 0,
+            }
+            return output
+
         video_tokens = self.video_norm(self.video_in(video))
         object_tokens = self.object_norm(self.object_in(objects))
         video_tokens = video_tokens + self.modality_embed[0].view(1, 1, -1)
         object_tokens = object_tokens + self.modality_embed[1].view(1, 1, -1)
         joint = torch.cat([video_tokens, object_tokens], dim=1)
 
-        q = self._rms_normalize(self._split_heads(self.q(joint)))
-        k = self._rms_normalize(self._split_heads(self.k(joint)))
-        v = self._split_heads(self.v(joint))
-        attended = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            dropout_p=0.0,
-            is_causal=False,
-        )
-        attended = attended.transpose(1, 2).contiguous().flatten(start_dim=2)
-        attended = self.o(attended)
-        video_delta = self.video_out(attended[:, : video.shape[1]])
+        object_update = self._attend(object_tokens, joint)
+        updated_objects = self.object_update_norm(object_tokens + object_update)
+        video_from_objects = self._attend(video_tokens, updated_objects)
+        video_delta = self.video_out(video_from_objects)
 
         # Full object dropout supplies zero memory. Suppress the complete joint
         # adapter in that case so it cannot become an object-independent video
         # branch. Detaching only the binary presence decision preserves normal
         # gradients for non-zero object contexts.
-        object_present = objects.detach().abs().amax(dim=(1, 2)) > 0
         video_delta = video_delta * object_present[:, None, None].to(video_delta.dtype)
+        video_tokens_count = int(video.shape[1])
+        object_tokens_count = int(objects.shape[1])
         self._last_trace = {
             "video_shape": list(video.shape),
             "object_shape": list(objects.shape),
             "joint_shape": list(joint.shape),
             "output_shape": list(video_delta.shape),
-            "active_batch_items": int(object_present.sum().item()),
+            "active_batch_items": active_batch_items,
+            "object_update_attention_pairs": object_tokens_count
+            * (video_tokens_count + object_tokens_count),
+            "video_read_attention_pairs": video_tokens_count * object_tokens_count,
+            "prohibited_video_video_attention_pairs": 0,
         }
         return video_delta
 
@@ -191,7 +224,7 @@ def _add_gated_object_residual(
             trace_buffer.append(
                 {
                     "block_id": block_id,
-                    "injection_type": "gated_object_joint_self_attention",
+                    "injection_type": "gated_masked_object_joint_attention",
                     "injection_position": "after_wan_self_attention_before_text_cross_attention",
                     "x_before_object": x_stats,
                     "object_delta": object_delta_stats,
@@ -261,7 +294,7 @@ def install_bottleneck_object_joint_self_attention(
     num_heads: int = 8,
     gate_init: float = 0.0,
 ) -> dict[str, int | float | list[int] | str]:
-    """Replace Scheme-D cross-attention with gated joint self-attention."""
+    """Replace Scheme-D cross-attention with gated masked joint attention."""
     blocks = list(getattr(dit, "blocks", []))
     active = parse_block_ids(
         ",".join(map(str, active_block_ids)),
@@ -275,7 +308,7 @@ def install_bottleneck_object_joint_self_attention(
         old_param = next(old_module.parameters(), None)
         if old_param is None:
             raise RuntimeError(f"object attention missing at block {block_id}")
-        block.object_cross_attn = BottleneckObjectJointSelfAttention(
+        block.object_cross_attn = MaskedBottleneckObjectJointAttention(
             video_dim=video_dim,
             object_dim=int(object_dim),
             inner_dim=int(inner_dim),
@@ -288,10 +321,16 @@ def install_bottleneck_object_joint_self_attention(
     install_joint_self_attention_forward(dit)
     return {
         **layout,
-        "injection_type": "gated_object_joint_self_attention",
+        "injection_type": "gated_masked_object_joint_attention",
         "injection_position": "after_wan_self_attention_before_text_cross_attention",
         "object_dim": int(object_dim),
         "attention_inner_dim": int(inner_dim),
         "attention_heads": int(num_heads),
         "gate_init": float(gate_init),
+        "attention_mask_policy": "object_reads_video_and_object_then_video_reads_object_only",
     }
+
+
+# Keep the old import name for lightweight tooling while checkpoints use the
+# v3-only object_update_norm key to reject the previous unrestricted adapter.
+BottleneckObjectJointSelfAttention = MaskedBottleneckObjectJointAttention

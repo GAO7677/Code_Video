@@ -91,7 +91,8 @@ def compute_mask_loss(
     """Compute clip-level object-mask supervision on the V-JEPA latent grid.
 
     Args:
-        predicted_masks: SAVi masks [B,T,S,H,W,1] or [B,T,S,H,W].
+        predicted_masks: SAVi masks [B,T,S,H,W,1], [B,T,S,1,H,W], or
+            [B,T,S,H,W].
         dynamic_instance_masks: Soft patch occupancy [B,T,K,H,W].
         dynamic_instance_valid: Valid dynamic instances [B,K].
         dynamic_union_mask: Dynamic foreground occupancy [B,T,1,H,W].
@@ -104,11 +105,15 @@ def compute_mask_loss(
     """
     weights = weights or MaskLossWeights()
     if predicted_masks.ndim == 6:
-        if predicted_masks.shape[-1] != 1:
+        if predicted_masks.shape[-1] == 1:
+            predicted_masks = predicted_masks.squeeze(-1)
+        elif predicted_masks.shape[3] == 1:
+            predicted_masks = predicted_masks.squeeze(3)
+        else:
             raise ValueError(
-                f"Expected singleton mask channel, got {tuple(predicted_masks.shape)}"
+                "Expected a singleton channel at axis 3 or -1, got "
+                f"{tuple(predicted_masks.shape)}"
             )
-        predicted_masks = predicted_masks.squeeze(-1)
     if predicted_masks.ndim != 5:
         raise ValueError(
             f"Expected predicted masks [B,T,S,H,W], got {tuple(predicted_masks.shape)}"

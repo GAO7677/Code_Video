@@ -1,10 +1,10 @@
-# Scheme-E Gated Object Joint Self-Attention
+# Scheme-E Gated Masked Object Joint Attention
 
 Scheme-E keeps Scheme-D's per-object tube resampler and entity binding, but
-replaces the independent Wan object cross-attention residual with a GLIGEN-like
-low-width joint self-attention adapter.
+replaces the independent Wan object cross-attention residual with a low-width,
+block-sparse masked joint-attention adapter.
 
-Architecture version 2 routes each sample-local entity ID to both sides of the
+Architecture version 3 routes each sample-local entity ID to both sides of the
 binding: the tracked object slot and one explicit noun-phrase span in the
 positive T5 context. Repeated nouns consume distinct spans in prompt order.
 
@@ -13,20 +13,20 @@ positive T5 context. Repeated nouns consume distinct spans in prompt order.
 ```text
 Wan native self-attention (frozen)
   -> project video 3072 -> 256
-  -> concatenate [video tokens; object tokens]
-  -> joint self-attention at width 256
-  -> retain video-token output only
+  -> object queries read [video tokens; object tokens]
+  -> update compact object memory
+  -> video queries read updated object tokens only
   -> project 256 -> 3072
   -> scalar tanh gate, initialized to zero
   -> Wan text cross-attention (frozen)
   -> Wan FFN (frozen)
 ```
 
-The adapter is installed only in blocks `8,14,20`. Object tokens do not use
-Wan's video 3D RoPE; their existing entity, visual, trajectory, and geometry
-encodings remain additive inputs to joint attention. A zero object context
-produces an exact zero adapter residual, so full object dropout remains a true
-object-branch dropout rather than training an unconditional extra video path.
+The adapter is installed only in blocks `8,14,20`. The added branch has no
+video-to-video attention edges: every path from an added video residual passes
+through compact object memory. Its attention complexity is
+`O(M*(N+M) + N*M)` instead of `O((N+M)^2)`. A zero object context exits before
+attention and produces an exact zero adapter residual.
 
 ## Trainable Modules
 
@@ -45,8 +45,8 @@ Wan DiT, base LoRA, VAE, T5, V-JEPA, CoTracker, GroundingDINO, and SAM2 remain
 frozen. Despite the compatibility parameter name `object_cross_attn`, the
 actual module class is `BottleneckObjectJointSelfAttention`.
 
-Scheme-D, Scheme-E v1, and Scheme-E v2 Stage1B checkpoints are intentionally
-incompatible.
+Scheme-D and Scheme-E v1/v2/v3 Stage1B checkpoints are intentionally
+incompatible with each other.
 Scheme-E starts from the same frozen Wan base LoRA or resumes a Scheme-E
 checkpoint with matching dimensions and block IDs.
 

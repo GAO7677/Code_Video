@@ -10,7 +10,7 @@ VISIBLE_GPU_IDS="${VISIBLE_GPU_IDS:-GPU-34579b7b-23fc-35ea-539f-1eac72fb7fa5,GPU
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:4,cuda:4,cuda:5,cuda:5}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_stage1b_scheme_e_joint_self_attn_fresh_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_stage1b_scheme_e_masked_joint_attn_fresh_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_e_${RUN_TAG}}"
 WANDB_DIR=/data/gaoya/agent-data/cache/wandb
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}" "${WANDB_DIR}"
@@ -86,7 +86,6 @@ env \
     --grounding_gdino_box_threshold 0.20 --grounding_gdino_text_threshold 0.15 \
     --grounding_prompt_frame_mode first --sam2_segment_len 8 \
     --report_to wandb --wandb_project vjepa_vggt_wan \
-    --wandb_name "scheme_e_joint_self_attn_fresh_${RUN_TAG}" --wandb_mode online
+    --wandb_name "scheme_e_masked_joint_attn_fresh_${RUN_TAG}" --wandb_mode online
 
 echo "training output: ${OUTPUT_DIR}"
-

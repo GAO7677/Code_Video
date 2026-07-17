@@ -9,7 +9,7 @@ ACCELERATE=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
 GPU_PAIR="${GPU_PAIR:-0,6}"
 OBJECT_AUX_DEVICES="${OBJECT_AUX_DEVICES:-cuda:1,cuda:1}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_e_joint_self_attn_smoke_${RUN_TAG}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/scheme_e_masked_joint_attn_smoke_${RUN_TAG}}"
 TMP_ROOT="${TMP_ROOT:-/data/gaoya/agent-data/cache/t/scheme_e_smoke_${RUN_TAG}}"
 mkdir -p "${OUTPUT_DIR}" "${TMP_ROOT}"
 

@@ -10,8 +10,8 @@ PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 : "${INPUT_JSON_LIST:?Set INPUT_JSON_LIST to a txt file containing input JSON paths}"
 GPU_PAIR="${GPU_PAIR:-7}"
 INFERENCE_DEVICES="${INFERENCE_DEVICES:-cuda:0,cuda:0}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/scheme_e_joint_self_attn}"
-MODEL_NAME="${MODEL_NAME:-scheme_e_joint_self_attn_$(basename "${WEIGHTS_ROOT}")}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/AAA_physv/scheme_e_masked_joint_attn}"
+MODEL_NAME="${MODEL_NAME:-scheme_e_masked_joint_attn_$(basename "${WEIGHTS_ROOT}")}"
 
 env \
   PYTHONNOUSERSITE=1 \

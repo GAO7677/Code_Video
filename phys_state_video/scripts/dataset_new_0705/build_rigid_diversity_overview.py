@@ -69,6 +69,9 @@ def _table_html(title: str, headers: list[str], rows: list[list[str]]) -> str:
 def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
     manifest_path = input_root / "manifest.json"
     manifest = _read_json(manifest_path)
+    motion_path = input_root / "motion_metrics.json"
+    motion_payload = _read_json(motion_path) if motion_path.exists() else {"records": []}
+    motion_by_case = {str(item["case_id"]): item for item in motion_payload.get("records", [])}
 
     cases: list[dict] = []
     family_counter: collections.Counter[str] = collections.Counter()
@@ -77,6 +80,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
     surface_counter: collections.Counter[str] = collections.Counter()
     camera_counter: collections.Counter[str] = collections.Counter()
     motion_counter: collections.Counter[str] = collections.Counter()
+    motion_level_counter: collections.Counter[str] = collections.Counter()
     direction_counter: collections.Counter[str] = collections.Counter()
     dynamic_count_counter: collections.Counter[str] = collections.Counter()
     total_count_counter: collections.Counter[str] = collections.Counter()
@@ -102,6 +106,7 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         motion_tag = str(meta.get("tags", ["unknown"])[-1]) if meta.get("tags") else "unknown"
         camera_key = str(meta.get("blueprint", {}).get("camera_key", ""))
         surface_key = str(meta.get("surface_key", ""))
+        motion_metrics = motion_by_case.get(case_id, {})
         direction_mode = str(
             meta.get("blueprint", {}).get("metadata", {}).get(
                 "direction_mode",
@@ -122,6 +127,9 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
             "lighting_key": str(meta.get("lighting_key", "")),
             "motion_tag": motion_tag,
             "direction_mode": direction_mode,
+            "motion_degree": motion_metrics.get("motion_degree_diag_pct_per_second"),
+            "motion_active": motion_metrics.get("motion_active_diag_pct_per_second"),
+            "motion_level": str(motion_metrics.get("relative_motion_level", "")),
             "resolution": meta.get("resolution", []),
             "duration_s": float(meta.get("duration_s", 0.0)),
             "pre_roll_s": float(meta.get("pre_roll_s", 0.0)),
@@ -138,6 +146,8 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         surface_counter[surface_key] += 1
         camera_counter[camera_key] += 1
         motion_counter[motion_tag] += 1
+        if case["motion_level"]:
+            motion_level_counter[case["motion_level"]] += 1
         direction_counter[direction_mode] += 1
         dynamic_count_counter[str(len(dynamic_objects))] += 1
         total_count_counter[str(len(meta.get("objects", [])))] += 1
@@ -148,7 +158,13 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
 
         family_examples.setdefault(family_key, case)
 
-    cases.sort(key=lambda item: (item["family_key"], item["case_id"]))
+    cases.sort(
+        key=lambda item: (
+            int(item["family_key"][1:]),
+            -float(item["motion_degree"]) if item["motion_degree"] is not None else float("inf"),
+            item["case_id"],
+        )
+    )
 
     stats = {
         "case_count": len(cases),
@@ -158,6 +174,8 @@ def load_dataset(input_root: Path) -> tuple[list[dict], dict[str, object]]:
         "surface_counter": dict(surface_counter),
         "camera_counter": dict(camera_counter),
         "motion_counter": dict(motion_counter),
+        "motion_level_counter": dict(motion_level_counter),
+        "motion_level_thresholds": motion_payload.get("relative_level_thresholds", {}),
         "direction_counter": dict(direction_counter),
         "dynamic_count_counter": dict(dynamic_count_counter),
         "total_count_counter": dict(total_count_counter),
@@ -171,7 +189,25 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
     family_buttons = ['<button class="chip active" data-family="ALL">ALL</button>']
     for family_key in sorted(family_counts.keys(), key=lambda value: (len(value), value)):
         family_buttons.append(
-            f'<button class="chip" data-family="{html.escape(family_key)}">{html.escape(family_key)} · {family_counts[family_key]}</button>'
+            f'<button class="chip family-chip" data-family="{html.escape(family_key)}">{html.escape(family_key)} · {family_counts[family_key]}</button>'
+        )
+    family_buttons[0] = '<button class="chip family-chip active" data-family="ALL">ALL</button>'
+
+    motion_counts = collections.Counter(case["motion_level"] for case in cases if case["motion_level"])
+    motion_buttons = ['<button class="chip motion-chip active" data-motion="ALL">ALL</button>']
+    for level in ("low", "medium", "high"):
+        motion_buttons.append(
+            f'<button class="chip motion-chip {level}" data-motion="{level}">{level.upper()} · {motion_counts[level]}</button>'
+        )
+    thresholds = stats.get("motion_level_thresholds", {})
+    low_max = thresholds.get("low_max")
+    high_min = thresholds.get("high_min")
+    threshold_note = "Motion metrics not available"
+    if low_max is not None and high_min is not None:
+        threshold_note = (
+            f"LOW ≤ {float(low_max):.4f} · "
+            f"MEDIUM {float(low_max):.4f}–{float(high_min):.4f} · "
+            f"HIGH ≥ {float(high_min):.4f} %diag/s"
         )
 
     summary_tables = [
@@ -198,6 +234,11 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
             + [[f"direction:{key}", str(value)] for key, value in sorted(stats["direction_counter"].items())]
             + [[f"motion:{key}", str(value)] for key, value in sorted(stats["motion_counter"].items(), key=lambda item: (-item[1], item[0]))],
         ),
+        _table_html(
+            "Motion Degree 阈值分布",
+            ["等级", "Case 数"],
+            [[level.upper(), str(motion_counts[level])] for level in ("low", "medium", "high")],
+        ),
     ]
 
     family_examples = [stats["family_examples"][key] for key in sorted(stats["family_examples"].keys(), key=lambda value: (len(value), value))]
@@ -223,9 +264,20 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
         object_lines = "".join(f"<li>{html.escape(line)}</li>" for line in case["objects"])
         material_text = ", ".join(case["material_keys"]) if case["material_keys"] else "-"
         resolution_text = "x".join(str(v) for v in case["resolution"]) if case["resolution"] else "-"
+        motion_badge = ""
+        motion_detail = ""
+        if case["motion_degree"] is not None:
+            motion_badge = (
+                f"<span>motion {float(case['motion_degree']):.3f}%diag/s"
+                f" · {html.escape(case['motion_level'])}</span>"
+            )
+            motion_detail = (
+                f"<div><strong>motion degree</strong><span>{float(case['motion_degree']):.4f}% diag/s</span></div>"
+                f"<div><strong>active motion</strong><span>{float(case['motion_active']):.4f}% diag/s</span></div>"
+            )
         cards.append(
             f"""
-            <article class="card" data-family="{html.escape(case['family_key'])}">
+            <article class="card" data-family="{html.escape(case['family_key'])}" data-motion-level="{html.escape(case['motion_level'] or 'unscored')}">
               <div class="card-top">
                 <div>
                   <div class="eyebrow">{html.escape(case['family_key'])} · {html.escape(case['case_id'])}</div>
@@ -238,6 +290,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
                   <span>{html.escape(case['camera_key'])}</span>
                   <span>{html.escape(case['direction_mode'])}</span>
                   <span>{html.escape(case['motion_tag'])}</span>
+                  {motion_badge}
                 </div>
               </div>
               <video controls preload="metadata" playsinline>
@@ -248,6 +301,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
                 <div><strong>duration</strong><span>{case['duration_s']:.2f}s</span></div>
                 <div><strong>dynamic objs</strong><span>{case['dynamic_count']}</span></div>
                 <div><strong>total objs</strong><span>{case['total_count']}</span></div>
+                {motion_detail}
               </div>
               <div class="meta-line"><strong>materials</strong><span>{html.escape(material_text)}</span></div>
               <div class="tags">{tags_html}</div>
@@ -353,6 +407,30 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
       gap: 10px;
       margin-top: 18px;
     }}
+    .filter-block {{
+      margin-top: 16px;
+    }}
+    .filter-block + .filter-block {{
+      margin-top: 12px;
+    }}
+    .filter-label {{
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--accent-cool);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+    }}
+    .threshold-note {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+    }}
     .chip {{
       border: 0;
       border-radius: 999px;
@@ -368,6 +446,9 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
       color: #fffaf2;
       box-shadow: none;
     }}
+    .motion-chip.low.active {{ background: #426d7a; }}
+    .motion-chip.medium.active {{ background: #9a6b2f; }}
+    .motion-chip.high.active {{ background: #9a4636; }}
     .stats-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -440,7 +521,7 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
       flex-direction: column;
       gap: 14px;
     }}
-    .card.hidden, .example-card.hidden {{
+    .card.hidden, .example-card.hidden, .example-grid.hidden {{
       display: none;
     }}
     .card-top {{
@@ -563,10 +644,19 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
         <div class="summary-box"><strong>Family 数</strong><span>{len(stats["family_counter"])}</span></div>
         <div class="summary-box"><strong>Object Family 覆盖</strong><span>{len(stats["object_family_counter"])}</span></div>
         <div class="summary-box"><strong>Material 覆盖</strong><span>{len(stats["material_counter"])}</span></div>
+        <div class="summary-box"><strong>当前可见视频</strong><span id="visible-count">{stats["case_count"]}</span></div>
         <div class="summary-box"><strong>访问端口</strong><span>{port}</span></div>
       </div>
-      <div class="filters">
-        {"".join(family_buttons)}
+      <div class="filter-block">
+        <div class="filter-label"><span>Family</span></div>
+        <div class="filters">{"".join(family_buttons)}</div>
+      </div>
+      <div class="filter-block">
+        <div class="filter-label">
+          <span>Motion Degree</span>
+          <span class="threshold-note">{html.escape(threshold_note)}</span>
+        </div>
+        <div class="filters">{"".join(motion_buttons)}</div>
       </div>
     </section>
     <section class="stats-grid">
@@ -581,24 +671,38 @@ def build_page(cases: list[dict], stats: dict[str, object], output_root: Path, p
     <p class="footer">刷新页面前如果有新 case 落盘，重新运行本脚本即可更新统计和视频索引。</p>
   </main>
   <script>
-    const chips = Array.from(document.querySelectorAll('.chip'));
+    const familyChips = Array.from(document.querySelectorAll('.family-chip'));
+    const motionChips = Array.from(document.querySelectorAll('.motion-chip'));
     const cards = Array.from(document.querySelectorAll('.card'));
     const examples = Array.from(document.querySelectorAll('.example-card'));
-    function setFamily(family) {{
-      chips.forEach((chip) => {{
-        chip.classList.toggle('active', chip.dataset.family === family);
+    const exampleGrid = document.querySelector('#example-grid');
+    let activeFamily = 'ALL';
+    let activeMotion = 'ALL';
+    function applyFilters() {{
+      familyChips.forEach((chip) => {{
+        chip.classList.toggle('active', chip.dataset.family === activeFamily);
+      }});
+      motionChips.forEach((chip) => {{
+        chip.classList.toggle('active', chip.dataset.motion === activeMotion);
       }});
       cards.forEach((card) => {{
-        const visible = family === 'ALL' || card.dataset.family === family;
+        const familyVisible = activeFamily === 'ALL' || card.dataset.family === activeFamily;
+        const motionVisible = activeMotion === 'ALL' || card.dataset.motionLevel === activeMotion;
+        const visible = familyVisible && motionVisible;
         card.classList.toggle('hidden', !visible);
       }});
+      document.querySelector('#visible-count').textContent = cards.filter((card) => !card.classList.contains('hidden')).length;
       examples.forEach((card) => {{
-        const visible = family === 'ALL' || card.dataset.family === family;
+        const visible = activeMotion === 'ALL' && (activeFamily === 'ALL' || card.dataset.family === activeFamily);
         card.classList.toggle('hidden', !visible);
       }});
+      exampleGrid.classList.toggle('hidden', activeMotion !== 'ALL');
     }}
-    chips.forEach((chip) => {{
-      chip.addEventListener('click', () => setFamily(chip.dataset.family));
+    familyChips.forEach((chip) => {{
+      chip.addEventListener('click', () => {{ activeFamily = chip.dataset.family; applyFilters(); }});
+    }});
+    motionChips.forEach((chip) => {{
+      chip.addEventListener('click', () => {{ activeMotion = chip.dataset.motion; applyFilters(); }});
     }});
   </script>
 </body>

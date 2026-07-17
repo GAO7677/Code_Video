@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train Scheme-E object tokens through gated joint self-attention."""
+"""Train Scheme-E object tokens through gated masked joint attention."""
 from __future__ import annotations
 
 import argparse
@@ -95,7 +95,7 @@ class SchemeEObjectJointSelfAttentionWanModule(scheme_d.SchemeDObjectTubeWanModu
 
 def build_parser() -> argparse.ArgumentParser:
     parser = scheme_d.build_parser()
-    parser.description = "Scheme-E gated object joint self-attention training."
+    parser.description = "Scheme-E gated masked object joint-attention training."
     parser.set_defaults(object_block_ids="8,14,20")
     group = parser.add_argument_group("scheme_e_joint_self_attention")
     group.add_argument(
@@ -191,6 +191,7 @@ def audit_scheme_e_checkpoint(
             exactly_one(f"blocks.{block_id}.object_gate")
             exactly_one(f"blocks.{block_id}.object_cross_attn.video_in.weight")
             exactly_one(f"blocks.{block_id}.object_cross_attn.object_in.weight")
+            exactly_one(f"blocks.{block_id}.object_cross_attn.object_update_norm.weight")
             exactly_one(f"blocks.{block_id}.object_cross_attn.q.weight")
         exactly_one("object_adapter.entity_id_embed.weight")
         exactly_one("object_adapter.entity_text_context_up.weight")
@@ -217,8 +218,8 @@ def audit_scheme_e_checkpoint(
                 f"model={(expected_video, expected_object)}"
             )
     return {
-        "architecture": "scheme_e_gated_object_joint_self_attention",
-        "architecture_version": 2,
+        "architecture": "scheme_e_gated_masked_object_joint_attention",
+        "architecture_version": 3,
         "checkpoint": str(checkpoint_path),
         "tube_query_shape": list(query_shape),
         "video_projection_shape": list(video_in_shape),
@@ -256,10 +257,14 @@ def build_module_report(
     report = scheme_d.build_module_report(model, args)
     report["architecture"].update(
         {
-            "name": "scheme_e_gated_object_joint_self_attention",
-            "version": 2,
-            "injection_type": "joint_self_attention",
+            "name": "scheme_e_gated_masked_object_joint_attention",
+            "version": 3,
+            "injection_type": "masked_joint_attention",
             "injection_position": "after_wan_self_attention_before_text_cross_attention",
+            "attention_mask_policy": (
+                "object_reads_video_and_object_then_video_reads_object_only"
+            ),
+            "added_video_to_video_attention": False,
             "joint_gate_init": float(model.joint_gate_init),
             "symmetric_text_object_entity_id_binding": True,
             "active_object_dit_blocks": list(model.object_block_ids),
@@ -309,7 +314,7 @@ def main() -> None:
     replay.base._log_stage_summary(accelerator, model, args)
     accelerator.print(
         "Scheme-E: "
-        f"joint-self-attention, K={args.tube_num_tokens}, "
+        f"masked-joint-attention, K={args.tube_num_tokens}, "
         f"hidden={args.tube_hidden_dim}, joint_dim={args.tube_object_attn_dim}, "
         f"blocks={model.object_block_ids}, gate_init={args.joint_gate_init}"
     )

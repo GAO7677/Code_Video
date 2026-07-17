@@ -21,6 +21,10 @@ def test_joint_attention_shape_and_object_gradients() -> None:
     objects = torch.randn(2, 5, 12, requires_grad=True)
     output = module(video, objects)
     assert output.shape == video.shape
+    trace = module.pop_trace()
+    assert trace["object_update_attention_pairs"] == 5 * (11 + 5)
+    assert trace["video_read_attention_pairs"] == 11 * 5
+    assert trace["prohibited_video_video_attention_pairs"] == 0
     output.square().mean().backward()
     assert video.grad is not None and torch.isfinite(video.grad).all()
     assert objects.grad is not None and torch.isfinite(objects.grad).all()
@@ -104,10 +108,11 @@ def test_install_prunes_blocks_and_uses_scalar_zero_gate() -> None:
         gate_init=0.0,
     )
     assert report["active_block_ids"] == [1, 3]
-    assert report["injection_type"] == "gated_object_joint_self_attention"
+    assert report["injection_type"] == "gated_masked_object_joint_attention"
     for block_id, block in enumerate(dit.blocks):
         if block_id in (1, 3):
             assert isinstance(block.object_cross_attn, BottleneckObjectJointSelfAttention)
+            assert block.object_cross_attn.object_update_norm is not None
             assert tuple(block.object_gate.shape) == (1,)
             assert float(block.object_gate.item()) == 0.0
         else:
@@ -156,4 +161,3 @@ def test_nonzero_gate_backpropagates_to_joint_adapter() -> None:
     output.square().mean().backward()
     assert block.object_cross_attn.object_in.weight.grad is not None
     assert torch.isfinite(block.object_cross_attn.object_in.weight.grad).all()
-

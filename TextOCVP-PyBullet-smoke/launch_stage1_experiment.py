@@ -27,6 +27,15 @@ def parse_args():
     parser.add_argument("--validation-frequency-steps", type=int, default=1000)
     parser.add_argument("--dataset-max-samples", type=int, default=None)
     parser.add_argument("--max-optimizer-steps", type=int, default=None)
+    parser.add_argument("--mask-loss-weight", type=float, default=0.0)
+    parser.add_argument("--mask-loss-warmup-steps", type=int, default=500)
+    parser.add_argument("--mask-max-instances", type=int, default=6)
+    parser.add_argument("--mask-union-weight", type=float, default=0.20)
+    parser.add_argument("--mask-instance-weight", type=float, default=0.10)
+    parser.add_argument("--mask-static-weight", type=float, default=0.02)
+    parser.add_argument("--mask-background-weight", type=float, default=0.01)
+    parser.add_argument("--mask-unused-weight", type=float, default=0.01)
+    parser.add_argument("--mask-focal-bce-weight", type=float, default=0.25)
     parser.add_argument("--wandb-project", default="textocvp_savi_stage1")
     parser.add_argument("--wandb-group", default=None)
     parser.add_argument("--disable-wandb", action="store_true")
@@ -56,6 +65,10 @@ def prepare_config(args):
             "frame_stride": 1,
             "random_start": True,
             "max_samples": args.dataset_max_samples,
+            "load_masks": args.mask_loss_weight > 0,
+            "max_mask_instances": args.mask_max_instances,
+            "mask_temporal_stride": 1,
+            "mask_spatial_stride": 1,
         }
     )
     model = params["model"]["model_params"]
@@ -63,7 +76,15 @@ def prepare_config(args):
     model["slot_dim"] = 256
     model["encoder"]["encoder_params"]["resolution"] = [216, 384]
     model["decoder"]["decoder_params"]["resolution"] = [216, 384]
-    steps_per_epoch = (1200 + args.effective_batch_size - 1) // args.effective_batch_size
+    train_index = args.index_root.resolve() / args.dataset_mode / "train.jsonl"
+    if not train_index.is_file():
+        raise FileNotFoundError(f"Training index not found: {train_index}")
+    dataset_size = sum(1 for line in train_index.read_text(encoding="utf-8").splitlines() if line)
+    if args.dataset_max_samples is not None:
+        dataset_size = min(dataset_size, int(args.dataset_max_samples))
+    steps_per_epoch = (
+        dataset_size + args.effective_batch_size - 1
+    ) // args.effective_batch_size
     total_steps = steps_per_epoch * args.epochs
     # Keep warmup at 10% of optimizer steps when effective batch size changes.
     warmup_steps = max(100, total_steps // 10)
@@ -76,8 +97,18 @@ def prepare_config(args):
             "scheduler_steps": max(1, total_steps - warmup_steps),
             "save_frequency": args.epochs + 1,
             "warmup_steps": warmup_steps,
+            "dataset_size": dataset_size,
+            "optimizer_steps_per_epoch": steps_per_epoch,
             "overfit_patience_validations": 3,
             "overfit_relative_degradation": 0.02,
+            "mask_loss_weight": args.mask_loss_weight,
+            "mask_loss_warmup_steps": args.mask_loss_warmup_steps,
+            "mask_union_weight": args.mask_union_weight,
+            "mask_instance_weight": args.mask_instance_weight,
+            "mask_static_weight": args.mask_static_weight,
+            "mask_background_weight": args.mask_background_weight,
+            "mask_unused_weight": args.mask_unused_weight,
+            "mask_focal_bce_weight": args.mask_focal_bce_weight,
         }
     )
     params["wandb"] = {
