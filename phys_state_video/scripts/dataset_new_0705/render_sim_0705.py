@@ -8,7 +8,10 @@ from typing import Iterator
 
 import numpy as np
 
-import generate_sim_preview_gallery as legacy
+try:
+    from .. import generate_sim_preview_gallery as legacy
+except ImportError:  # pragma: no cover - keeps direct script execution working.
+    import generate_sim_preview_gallery as legacy
 
 from .common_specs import CameraSpec, MaterialSpec, ScenarioBlueprint
 from .material_catalog_0705 import (
@@ -140,6 +143,35 @@ def _object_prompt_phrase(obj) -> str:
     return _with_article(f"{material_name} {family_name}")
 
 
+def build_object_phrase_bundle(blueprint: ScenarioBlueprint) -> dict[str, object]:
+    """Build machine-friendly noun phrase annotations for every scene object."""
+    family_catalog = build_object_family_catalog()
+    details: list[dict[str, object]] = []
+    for obj in blueprint.objects:
+        family_name = family_catalog[obj.family_key].display_name.lower()
+        material_name = MATERIAL_PROMPT_NAMES.get(obj.material_key, obj.material_key.replace("_", " "))
+        phrase = _with_article(f"{material_name} {family_name}")
+        details.append(
+            {
+                "name": obj.name,
+                "role": obj.role,
+                "dynamic": bool(obj.dynamic),
+                "family_key": obj.family_key,
+                "object_noun": family_name,
+                "material_key": obj.material_key,
+                "material_phrase": material_name,
+                "object_phrase": phrase,
+            }
+        )
+    return {
+        "object_nouns": [str(item["object_noun"]) for item in details],
+        "object_phrases": [str(item["object_phrase"]) for item in details],
+        "dynamic_object_phrases": [str(item["object_phrase"]) for item in details if item["dynamic"]],
+        "static_object_phrases": [str(item["object_phrase"]) for item in details if not item["dynamic"]],
+        "object_phrase_details": details,
+    }
+
+
 def _family_event_sentence(blueprint: ScenarioBlueprint) -> str:
     motion_tag = next((tag for tag in reversed(blueprint.tags) if tag in MOTION_TAG_PROMPT_NAMES), "")
     motion_text = MOTION_TAG_PROMPT_NAMES.get(motion_tag, "moves through the scene")
@@ -198,11 +230,13 @@ def _build_prompt_bundle(blueprint: ScenarioBlueprint, width: int, height: int) 
     caption = event_sentence
     short_caption = event_sentence
     grounding_caption = _human_join(visible_objects) if visible_objects else family_spec.title.lower()
+    phrase_bundle = build_object_phrase_bundle(blueprint)
     return {
         "caption": caption,
         "short_caption": short_caption,
         "grounding_caption": grounding_caption,
         "input_caption": caption,
+        **phrase_bundle,
         "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
         "prompt_metadata": {
             "version": "dataset_new_0705_prompt_v2",
@@ -960,7 +994,33 @@ def render_blueprint_case(
         obj.name: obj.material_key for obj in blueprint.objects
     }
     payload.update(_build_prompt_bundle(blueprint, width=width, height=height))
+    phrase_by_name = {
+        str(item["name"]): item for item in payload.get("object_phrase_details", [])
+        if isinstance(item, dict)
+    }
+    for obj_payload in payload.get("objects", []):
+        if not isinstance(obj_payload, dict):
+            continue
+        phrase_detail = phrase_by_name.get(str(obj_payload.get("name", "")))
+        if not phrase_detail:
+            continue
+        obj_payload["family_key"] = phrase_detail["family_key"]
+        obj_payload["object_noun"] = phrase_detail["object_noun"]
+        obj_payload["material_key"] = phrase_detail["material_key"]
+        obj_payload["material_phrase"] = phrase_detail["material_phrase"]
+        obj_payload["object_phrase"] = phrase_detail["object_phrase"]
     meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    object_phrase_path = output_root / "meta" / f"{scenario.key}_object_phrases.json"
+    object_phrase_payload = {
+        "case_id": blueprint.sample_key,
+        "family_key": blueprint.family_key,
+        "object_nouns": payload["object_nouns"],
+        "object_phrases": payload["object_phrases"],
+        "dynamic_object_phrases": payload["dynamic_object_phrases"],
+        "static_object_phrases": payload["static_object_phrases"],
+        "object_phrase_details": payload["object_phrase_details"],
+    }
+    object_phrase_path.write_text(json.dumps(object_phrase_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     states_path = output_root / "meta" / f"{scenario.key}_states.npz"
     states_path.unlink(missing_ok=True)
 
@@ -971,10 +1031,15 @@ def render_blueprint_case(
         "output_root": str(output_root),
         "video": str(output_root / "videos" / f"{scenario.key}.mp4"),
         "meta": str(meta_path),
+        "object_phrases_path": str(object_phrase_path),
         "width": width,
         "height": height,
         "caption": payload["caption"],
         "short_caption": payload["short_caption"],
+        "object_nouns": payload["object_nouns"],
+        "object_phrases": payload["object_phrases"],
+        "dynamic_object_phrases": payload["dynamic_object_phrases"],
+        "static_object_phrases": payload["static_object_phrases"],
         "negative_prompt": payload["negative_prompt"],
         "hdri_catalog": build_hdri_catalog(),
         "asset_pack": build_indoor_asset_pack_manifest(),

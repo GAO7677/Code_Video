@@ -31,6 +31,8 @@ class MotionDegreeTests(unittest.TestCase):
         metrics = compute_motion_from_gray_frames(frames, fps=30.0)
         self.assertLess(float(metrics["motion_global_px_per_frame"]), 1e-8)
         self.assertLess(float(metrics["motion_degree_diag_pct_per_second"]), 1e-8)
+        self.assertLess(float(metrics["motion_object_diag_pct_per_second"]), 1e-8)
+        self.assertLess(float(metrics["moving_area_ratio"]), 1e-8)
 
     def test_translating_object_has_positive_motion(self) -> None:
         metrics = compute_motion_from_gray_frames(self._moving_square(1), fps=30.0)
@@ -39,6 +41,13 @@ class MotionDegreeTests(unittest.TestCase):
             float(metrics["motion_active_diag_pct_per_second"]),
             float(metrics["motion_degree_diag_pct_per_second"]),
         )
+        self.assertGreater(
+            float(metrics["motion_object_diag_pct_per_second"]),
+            float(metrics["motion_degree_diag_pct_per_second"]),
+        )
+        self.assertGreater(float(metrics["moving_area_ratio"]), 0.0)
+        self.assertLess(float(metrics["moving_area_ratio"]), 1.0)
+        self.assertGreater(float(metrics["motion_vbench_top_diag_pct_per_second"]), 0.0)
 
     def test_left_and_right_motion_have_similar_magnitude(self) -> None:
         left = compute_motion_from_gray_frames(self._moving_square(-1), fps=30.0)
@@ -69,6 +78,10 @@ class MotionDegreeTests(unittest.TestCase):
         self.assertLess(
             float(metrics["motion_residual_px_per_frame"]),
             0.35 * float(metrics["motion_global_px_per_frame"]),
+        )
+        self.assertLess(
+            float(metrics["motion_object_diag_pct_per_second"]),
+            float(metrics["motion_degree_diag_pct_per_second"]),
         )
 
 

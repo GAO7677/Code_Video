@@ -16,6 +16,7 @@ from scripts.dataset_new_0705.scene_generators_0705 import (
     generate_scenario_blueprint,
     validate_blueprint_physics,
 )
+from scripts.dataset_new_0705.render_sim_0705 import build_object_phrase_bundle
 
 
 class DatasetNew0705PhysicsTests(unittest.TestCase):
@@ -77,6 +78,17 @@ class DatasetNew0705PhysicsTests(unittest.TestCase):
             for obj in blueprint.objects:
                 if obj.dynamic:
                     self.assertEqual(obj.linear_velocity[:2], (0.0, 0.0))
+
+    def test_object_phrase_bundle_covers_dynamic_and_static_objects(self) -> None:
+        blueprint = generate_scenario_blueprint("F4", "object_phrases", 20260718)
+        bundle = build_object_phrase_bundle(blueprint)
+        self.assertEqual(len(bundle["object_phrases"]), len(blueprint.objects))
+        self.assertEqual(
+            len(bundle["dynamic_object_phrases"]) + len(bundle["static_object_phrases"]),
+            len(blueprint.objects),
+        )
+        self.assertGreater(len(bundle["static_object_phrases"]), 0)
+        self.assertEqual(len(bundle["object_phrase_details"]), len(blueprint.objects))
 
 
 if __name__ == "__main__":

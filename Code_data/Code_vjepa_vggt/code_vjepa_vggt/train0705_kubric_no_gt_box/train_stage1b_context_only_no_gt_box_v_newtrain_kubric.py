@@ -45,6 +45,7 @@ import torch
 import code_vjepa_vggt.train_v_newtrain as tvn
 from code_vjepa_vggt.context_wan_v_newtrain import flow_match_context_sft_loss
 from code_vjepa_vggt.data.kubric_no_gt_box_dataset import KubricNoGTBoxDataset
+from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import PyBullet0713NoGTBoxDataset
 from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import PyBulletRawNoGTBoxDataset
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
 from code_vjepa_vggt.object_token_teacher_student.viewer_grounding_box_provider import (
@@ -736,7 +737,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     for action in parser._actions:
         if action.dest == "dataset_type":
-            action.choices = [*action.choices, "kubric_no_gt_box", "pybullet_raw_no_gt_box"]
+            action.choices = [
+                *action.choices,
+                "kubric_no_gt_box",
+                "pybullet_raw_no_gt_box",
+                "pybullet0713_no_gt_box",
+            ]
             break
 
     group = parser.add_argument_group("stage1b_no_gt_box")
@@ -923,6 +929,29 @@ def build_parser() -> argparse.ArgumentParser:
         default="0",
         help="Comma-separated raw frame starts for consecutive num_frames windows.",
     )
+    pybullet0713_group = parser.add_argument_group("pybullet0713_no_gt_box_dataset")
+    pybullet0713_group.add_argument("--pybullet0713_root", type=str, default=None)
+    pybullet0713_group.add_argument(
+        "--pybullet0713_split",
+        type=str,
+        default="train",
+        choices=["train", "val", "test", "all"],
+    )
+    pybullet0713_group.add_argument(
+        "--pybullet0713_sampling_strategy",
+        choices=["prefix", "uniform"],
+        default="prefix",
+    )
+    pybullet0713_group.add_argument("--pybullet0713_init_scan_limit", type=int, default=None)
+    pybullet0713_group.add_argument(
+        "--pybullet0713_family",
+        action="append",
+        default=None,
+        help="Optional F-family filter such as F1/F4/F10; may be passed multiple times.",
+    )
+    pybullet0713_group.add_argument("--pybullet0713_split_train_ratio", type=float, default=0.9)
+    pybullet0713_group.add_argument("--pybullet0713_split_val_ratio", type=float, default=0.05)
+    pybullet0713_group.add_argument("--pybullet0713_max_retry_samples", type=int, default=8)
     return parser
 
 
@@ -1140,6 +1169,24 @@ def _log_stage_summary(accelerator, model: ContextOnlyNoGTBoxWanModule, args: ar
 
 
 def build_dataset(args: argparse.Namespace):
+    if args.dataset_type == "pybullet0713_no_gt_box":
+        if not args.pybullet0713_root:
+            raise ValueError(
+                "--pybullet0713_root is required when dataset_type=pybullet0713_no_gt_box"
+            )
+        return PyBullet0713NoGTBoxDataset(
+            root=args.pybullet0713_root,
+            split=args.pybullet0713_split,
+            resolution=(args.height, args.width),
+            num_frames=args.num_frames,
+            num_context_frames=args.fixed_num_context_frames,
+            sampling_strategy=args.pybullet0713_sampling_strategy,
+            families=args.pybullet0713_family,
+            init_scan_limit=args.pybullet0713_init_scan_limit,
+            split_train_ratio=args.pybullet0713_split_train_ratio,
+            split_val_ratio=args.pybullet0713_split_val_ratio,
+            max_retry_samples=args.pybullet0713_max_retry_samples,
+        )
     if args.dataset_type == "pybullet_raw_no_gt_box":
         if not args.pybullet_raw_root:
             raise ValueError(

@@ -118,8 +118,13 @@ def main() -> None:
                     "output_root": str(case_root),
                     "video": record["video"],
                     "meta": record["meta"],
+                    "object_phrases_path": record.get("object_phrases_path", ""),
                     "caption": record.get("caption", ""),
                     "short_caption": record.get("short_caption", ""),
+                    "object_nouns": record.get("object_nouns", []),
+                    "object_phrases": record.get("object_phrases", []),
+                    "dynamic_object_phrases": record.get("dynamic_object_phrases", []),
+                    "static_object_phrases": record.get("static_object_phrases", []),
                     "negative_prompt": record.get("negative_prompt", ""),
                 }
             )

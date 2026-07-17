@@ -22,6 +22,7 @@ from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
     OpenVidNoGTBoxDataset,
     WeightedNoGTBoxMixture,
 )
+from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import PyBullet0713NoGTBoxDataset
 from code_vjepa_vggt.data.pybullet_raw_no_gt_box_dataset import PyBulletRawNoGTBoxDataset
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
 
@@ -441,6 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
     mixture.add_argument("--openvid_max_samples", type=int, default=None)
     mixture.add_argument("--kubric_replay_index_num_frames", type=int, default=69)
     mixture.add_argument("--kubric_replay_index_num_context_frames", type=int, default=20)
+    mixture.add_argument("--replay_pybullet_dataset", choices=["raw", "0713"], default="raw")
     mixture.add_argument("--mixture_pybullet_ratio", type=float, default=0.30)
     mixture.add_argument("--mixture_kubric_ratio", type=float, default=0.30)
     mixture.add_argument("--mixture_openvid_ratio", type=float, default=0.40)
@@ -450,24 +452,49 @@ def build_parser() -> argparse.ArgumentParser:
 def build_dataset(args: argparse.Namespace):
     if args.dataset_type != "replay_preserve_mix":
         return base.build_dataset(args)
-    if not args.pybullet_raw_root or not args.kubric_root or not args.openvid_root:
-        raise ValueError("replay_preserve_mix requires pybullet_raw_root, kubric_root, and openvid_root")
+    if not args.kubric_root or not args.openvid_root:
+        raise ValueError("replay_preserve_mix requires kubric_root and openvid_root")
 
     resolution = (args.height, args.width)
-    pybullet = PyBulletRawNoGTBoxDataset(
-        root=args.pybullet_raw_root,
-        split=args.pybullet_raw_split,
-        resolution=resolution,
-        num_frames=args.num_frames,
-        num_context_frames=args.fixed_num_context_frames,
-        sampling_strategy=args.pybullet_raw_sampling_strategy,
-        window_starts=tuple(
-            int(value.strip())
-            for value in args.pybullet_raw_window_starts.split(",")
-            if value.strip()
-        ),
-        init_scan_limit=args.pybullet_raw_init_scan_limit,
-    )
+    if args.replay_pybullet_dataset == "0713":
+        if not args.pybullet0713_root:
+            raise ValueError(
+                "replay_preserve_mix with --replay_pybullet_dataset 0713 requires "
+                "--pybullet0713_root"
+            )
+        pybullet = PyBullet0713NoGTBoxDataset(
+            root=args.pybullet0713_root,
+            split=args.pybullet0713_split,
+            resolution=resolution,
+            num_frames=args.num_frames,
+            num_context_frames=args.fixed_num_context_frames,
+            sampling_strategy=args.pybullet0713_sampling_strategy,
+            families=args.pybullet0713_family,
+            init_scan_limit=args.pybullet0713_init_scan_limit,
+            split_train_ratio=args.pybullet0713_split_train_ratio,
+            split_val_ratio=args.pybullet0713_split_val_ratio,
+            max_retry_samples=args.pybullet0713_max_retry_samples,
+        )
+    else:
+        if not args.pybullet_raw_root:
+            raise ValueError(
+                "replay_preserve_mix with --replay_pybullet_dataset raw requires "
+                "--pybullet_raw_root"
+            )
+        pybullet = PyBulletRawNoGTBoxDataset(
+            root=args.pybullet_raw_root,
+            split=args.pybullet_raw_split,
+            resolution=resolution,
+            num_frames=args.num_frames,
+            num_context_frames=args.fixed_num_context_frames,
+            sampling_strategy=args.pybullet_raw_sampling_strategy,
+            window_starts=tuple(
+                int(value.strip())
+                for value in args.pybullet_raw_window_starts.split(",")
+                if value.strip()
+            ),
+            init_scan_limit=args.pybullet_raw_init_scan_limit,
+        )
     kubric = KubricReplayNoGTBoxDataset(
         root=args.kubric_root,
         split=args.kubric_split,
