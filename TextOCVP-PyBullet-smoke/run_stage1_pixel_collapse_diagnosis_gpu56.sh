@@ -8,10 +8,12 @@ RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 ROOT="${ROOT:-/data/gaoya/agent-data/checkpoints/savi_pixel_collapse_diagnosis_gpu56_${RUN_TAG}}"
 WANDB_GROUP="${WANDB_GROUP:-savi_pixel_collapse_diagnosis_${RUN_TAG}}"
 MAX_STEPS="${MAX_STEPS:-4000}"
+PER_GPU_BATCH="${PER_GPU_BATCH:-64}"
+EFFECTIVE_BATCH_SIZE="${EFFECTIVE_BATCH_SIZE:-128}"
 
 mkdir -p "${ROOT}"
-printf 'RUN_TAG=%s\nROOT=%s\nWANDB_GROUP=%s\n' \
-  "${RUN_TAG}" "${ROOT}" "${WANDB_GROUP}" > "${ROOT}/run_manifest.env"
+printf 'RUN_TAG=%s\nROOT=%s\nWANDB_GROUP=%s\nPER_GPU_BATCH=%s\nEFFECTIVE_BATCH_SIZE=%s\n' \
+  "${RUN_TAG}" "${ROOT}" "${WANDB_GROUP}" "${PER_GPU_BATCH}" "${EFFECTIVE_BATCH_SIZE}" > "${ROOT}/run_manifest.env"
 
 run_control() {
   local name="$1"
@@ -28,7 +30,7 @@ run_control() {
     --gpus 5,6 \
     --distributed \
     --per-gpu-batch-size "${per_gpu_batch}" \
-    --effective-batch-size 64 \
+    --effective-batch-size "${EFFECTIVE_BATCH_SIZE}" \
     --mixed-precision bf16 \
     --master-port 29661 \
     --image-height "${height}" \
@@ -45,7 +47,7 @@ run_control() {
   echo "[$(date -u +%FT%TZ)] completed ${name}"
 }
 
-run_control phase1a_lowres64_pure_mse 64 64 32
-run_control phase1b_highres216x384_pure_mse 216 384 4
+run_control phase1a_lowres64_pure_mse 64 64 "${PER_GPU_BATCH}"
+run_control phase1b_highres216x384_pure_mse 216 384 "${PER_GPU_BATCH}"
 
 echo "[$(date -u +%FT%TZ)] Phase 1 controls completed"

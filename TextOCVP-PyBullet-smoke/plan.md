@@ -11,13 +11,15 @@ checkpoint and use the same fixed Kubric-9600 train/validation indices.
 - Dataset: `/data/gaoya/agent-data/datasets/savi_indices_kubric9600`
 - Frames: 10 consecutive frames, stride 1
 - Slots: 8, slot dimension 256
-- Effective batch size: 64
+- Effective batch size: 128
 - Precision: BF16 DDP on GPUs 5 and 6
 - Seed: 14
 - Validation and checkpoint interval: 500 optimizer steps
 - Diagnostic checkpoints: every 500 steps through step 4000
 - Validation set: the fixed 150-sample monitor split
 - Reconstruction audit: fixed seed-42 Kubric val-10 plus the four PhysicIQ cases
+- Per-GPU batch size: 64 on both 64x64 and 216x384 controls
+- Gradient accumulation: 1 on both controls, preserving effective global batch 128
 
 Success requires all of the following, not only lower global MSE:
 
@@ -52,7 +54,7 @@ Run these controls sequentially on both GPUs 5/6.
 - Mask supervision: disabled
 - Warmup: 2000 steps
 - Maximum steps: 4000
-- Per-GPU batch: 32, accumulation: 1 (maximum at effective batch 64)
+- Per-GPU batch: 64, accumulation: 1
 
 Purpose: determine whether SAVi can learn non-collapsed decomposition on this
 dataset at the original architecture's spatial scale.
@@ -64,7 +66,7 @@ dataset at the original architecture's spatial scale.
 - Mask supervision: disabled
 - Warmup: 2000 steps
 - Maximum steps: 4000
-- Per-GPU batch: 4, accumulation: 8
+- Per-GPU batch: 64, accumulation: 1
 
 Purpose: isolate the effect of high resolution by comparing against 1A, and
 isolate the added mask loss by comparing against the existing baseline.
@@ -142,7 +144,7 @@ entropy, and per-instance segmentation quality.
 
 - [x] Existing Pixel/V-JEPA reconstruction audit completed.
 - [x] Phase 0 old sessions stopped and GPUs 0-3 released.
-- [x] Phase 1A launched on GPUs 5/6.
+- [x] Phase 1A launched on GPUs 5/6 with per-GPU batch 64.
 - [ ] Phase 1A step-4000 audit completed.
 - [ ] Phase 1B launched on GPUs 5/6.
 - [ ] Phase 1B step-4000 audit completed.
