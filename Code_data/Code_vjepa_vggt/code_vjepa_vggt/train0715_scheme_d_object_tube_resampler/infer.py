@@ -173,7 +173,7 @@ def _build_object_context_with_binding(
         return object_context, debug
     finally:
         model._build_object_query_priors = original_query_builder
-        model.object_adapter.clear_entity_binding_context()
+        model.object_adapter.clear_entity_object_context()
 
 
 def _install_runtime_hooks() -> None:

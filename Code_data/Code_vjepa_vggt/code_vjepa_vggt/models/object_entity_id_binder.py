@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import weakref
 
 import torch
 import torch.nn as nn
 
 from code_vjepa_vggt.models.object_condition_adapter import ObjectConditionAdapter
+
+
+def attach_entity_text_binding_adapter(pipe, adapter: nn.Module) -> None:
+    """Expose the adapter to inference without registering a duplicate module."""
+    object.__setattr__(
+        pipe,
+        "_entity_text_binding_adapter_ref",
+        weakref.ref(adapter),
+    )
 
 
 def find_subsequence_spans(
@@ -82,9 +92,15 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
             self.dim,
             bias=False,
         )
+        self.entity_text_context_up = nn.Linear(
+            self.entity_bottleneck_dim,
+            self.entity_text_dim,
+            bias=False,
+        )
         # Exact old-model behavior at initialization while entity_text_up still
         # receives gradients through the nonzero gate.
         nn.init.zeros_(self.entity_text_up.weight)
+        nn.init.zeros_(self.entity_text_context_up.weight)
         self.entity_binding_gate = nn.Parameter(
             torch.tensor(float(entity_gate_init), dtype=torch.float32)
         )
@@ -92,6 +108,9 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
         self._entity_text_by_id: torch.Tensor | None = None
         self._entity_text_match_mask: torch.Tensor | None = None
         self._slot_entity_ids: torch.Tensor | None = None
+        self._text_token_entity_ids: torch.Tensor | None = None
+        self._entity_keep_by_id: torch.Tensor | None = None
+        self._last_entity_text_binding_metrics = self._empty_text_binding_metrics()
         self._last_entity_binding_metrics = self._empty_binding_metrics()
 
     @staticmethod
@@ -108,6 +127,18 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
             "train/entity_binding_residual_ratio_max": 0.0,
             "train/entity_binding_cap_applied_fraction": 0.0,
             "train/entity_binding_cap_scale_min": 1.0,
+            **EntityIDBindingObjectConditionAdapter._empty_text_binding_metrics(),
+        }
+
+    @staticmethod
+    def _empty_text_binding_metrics() -> dict[str, float]:
+        return {
+            "train/entity_text_binding_active": 0.0,
+            "train/entity_text_binding_active_token_count": 0.0,
+            "train/entity_text_binding_residual_ratio_mean": 0.0,
+            "train/entity_text_binding_residual_ratio_max": 0.0,
+            "train/entity_text_binding_cap_applied_fraction": 0.0,
+            "train/entity_text_binding_cap_scale_min": 1.0,
         }
 
     def set_entity_binding_context(
@@ -116,6 +147,7 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
         entity_text_by_id: torch.Tensor,
         entity_text_match_mask: torch.Tensor,
         slot_entity_ids: torch.Tensor,
+        text_token_entity_ids: torch.Tensor | None = None,
     ) -> None:
         if entity_text_by_id.ndim != 3:
             raise ValueError("entity_text_by_id must be [B,E,D]")
@@ -133,16 +165,137 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
         self._entity_text_by_id = entity_text_by_id.detach()
         self._entity_text_match_mask = entity_text_match_mask.detach()
         self._slot_entity_ids = slot_entity_ids.detach().long()
+        if text_token_entity_ids is not None:
+            if text_token_entity_ids.ndim != 2 or int(text_token_entity_ids.shape[0]) != int(
+                entity_text_by_id.shape[0]
+            ):
+                raise ValueError("text_token_entity_ids must be [B,L]")
+            self._text_token_entity_ids = text_token_entity_ids.detach().long()
+        else:
+            self._text_token_entity_ids = None
+        keep_by_id = entity_text_match_mask.detach().bool()
+        if self.training and self.entity_dropout_prob > 0.0:
+            keep_by_id = keep_by_id & (
+                torch.rand(keep_by_id.shape, device=keep_by_id.device)
+                >= self.entity_dropout_prob
+            )
+        self._entity_keep_by_id = keep_by_id
 
-    def clear_entity_binding_context(self) -> None:
+    def restrict_entity_binding_to_valid_slots(
+        self,
+        object_valid_mask: torch.Tensor,
+    ) -> None:
+        """Remove text/object bindings for slots dropped after grounding."""
+        slot_entity_ids = self._slot_entity_ids
+        keep_by_id = self._entity_keep_by_id
+        if slot_entity_ids is None or keep_by_id is None:
+            return
+        if tuple(object_valid_mask.shape) != tuple(slot_entity_ids.shape):
+            raise ValueError("object_valid_mask must match slot_entity_ids")
+        valid_ids = slot_entity_ids >= 0
+        active_ids = torch.zeros_like(keep_by_id, dtype=torch.bool)
+        for batch_id in range(int(slot_entity_ids.shape[0])):
+            ids = slot_entity_ids[batch_id][
+                valid_ids[batch_id]
+                & (object_valid_mask[batch_id].to(slot_entity_ids.device) > 0.5)
+            ]
+            if int(ids.numel()) > 0:
+                active_ids[batch_id, ids] = True
+        self._entity_keep_by_id = keep_by_id & active_ids
+
+    def clear_entity_object_context(self) -> None:
+        """Clear object-side tensors while retaining text routing for inference."""
         self._entity_text_by_id = None
         self._entity_text_match_mask = None
         self._slot_entity_ids = None
 
+    def clear_entity_binding_context(self) -> None:
+        self.clear_entity_object_context()
+        self._text_token_entity_ids = None
+        self._entity_keep_by_id = None
+
     def pop_entity_binding_metrics(self) -> dict[str, float]:
         metrics = dict(self._last_entity_binding_metrics)
+        metrics.update(self._last_entity_text_binding_metrics)
         self._last_entity_binding_metrics = self._empty_binding_metrics()
+        self._last_entity_text_binding_metrics = self._empty_text_binding_metrics()
         return metrics
+
+    def apply_entity_ids_to_text_context(
+        self,
+        text_context: torch.Tensor,
+    ) -> torch.Tensor:
+        """Add the same sample-local entity IDs to their routed T5 noun spans."""
+        token_entity_ids = self._text_token_entity_ids
+        keep_by_id = self._entity_keep_by_id
+        if token_entity_ids is None or keep_by_id is None:
+            self._last_entity_text_binding_metrics = self._empty_text_binding_metrics()
+            return text_context
+        if text_context.ndim != 3 or int(text_context.shape[-1]) != self.entity_text_dim:
+            raise ValueError(
+                f"text_context must be [B,L,{self.entity_text_dim}], got {list(text_context.shape)}"
+            )
+        if tuple(token_entity_ids.shape) != tuple(text_context.shape[:2]):
+            raise ValueError(
+                "text_token_entity_ids must match the text context batch/sequence dimensions"
+            )
+
+        entity_count = int(keep_by_id.shape[1])
+        valid_ids = (token_entity_ids >= 0) & (token_entity_ids < entity_count)
+        safe_ids = token_entity_ids.clamp(min=0, max=max(entity_count - 1, 0))
+        token_keep = torch.gather(
+            keep_by_id.to(device=safe_ids.device),
+            dim=1,
+            index=safe_ids,
+        )
+        active = valid_ids & token_keep
+        id_hidden = self.entity_id_embed(
+            safe_ids.to(device=self.entity_id_embed.weight.device)
+        )
+        residual = self.entity_text_context_up(id_hidden).to(
+            device=text_context.device,
+            dtype=text_context.dtype,
+        )
+        residual = residual * active[:, :, None].to(residual.dtype)
+
+        base_rms = text_context.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
+        residual_rms = residual.float().square().mean(dim=-1).clamp_min(1.0e-12).sqrt()
+        ratio = residual_rms / base_rms
+        cap_scale = torch.ones_like(ratio)
+        if self.entity_residual_max_ratio > 0.0:
+            cap_scale = (
+                self.entity_residual_max_ratio / ratio.clamp_min(1.0e-12)
+            ).clamp(max=1.0)
+            residual = residual * cap_scale.unsqueeze(-1).to(residual.dtype)
+        gate = torch.tanh(self.entity_binding_gate.float()).to(
+            device=residual.device,
+            dtype=residual.dtype,
+        )
+        output = text_context + gate * residual
+
+        if bool(active.any()):
+            active_ratio = ratio[active]
+            active_scale = cap_scale[active]
+            metrics = {
+                "train/entity_text_binding_active": 1.0,
+                "train/entity_text_binding_active_token_count": float(active.sum().item()),
+                "train/entity_text_binding_residual_ratio_mean": float(
+                    active_ratio.detach().mean().item()
+                ),
+                "train/entity_text_binding_residual_ratio_max": float(
+                    active_ratio.detach().max().item()
+                ),
+                "train/entity_text_binding_cap_applied_fraction": float(
+                    (active_scale.detach() < 0.9999).float().mean().item()
+                ),
+                "train/entity_text_binding_cap_scale_min": float(
+                    active_scale.detach().min().item()
+                ),
+            }
+        else:
+            metrics = self._empty_text_binding_metrics()
+        self._last_entity_text_binding_metrics = metrics
+        return output
 
     def apply_entity_binding(
         self,
@@ -183,14 +336,16 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
             valid_slots = torch.ones_like(slot_match, dtype=torch.bool)
         active_slots = slot_match & valid_slots
 
-        keep_slots = active_slots
-        dropped_slots = torch.zeros_like(active_slots)
-        if self.training and self.entity_dropout_prob > 0.0 and bool(active_slots.any()):
-            dropped_slots = (
-                torch.rand(active_slots.shape, device=active_slots.device)
-                < self.entity_dropout_prob
-            ) & active_slots
-            keep_slots = active_slots & ~dropped_slots
+        keep_by_id = self._entity_keep_by_id
+        if keep_by_id is None:
+            keep_slots = active_slots
+        else:
+            keep_slots = active_slots & torch.gather(
+                keep_by_id.to(device=safe_ids.device),
+                dim=1,
+                index=safe_ids,
+            )
+        dropped_slots = active_slots & ~keep_slots
 
         normalized_text = self.entity_text_norm(
             slot_text.to(
@@ -268,6 +423,7 @@ class EntityIDBindingObjectConditionAdapter(ObjectConditionAdapter):
             "train/entity_binding_residual_ratio_max": ratio_max,
             "train/entity_binding_cap_applied_fraction": cap_fraction,
             "train/entity_binding_cap_scale_min": cap_scale_min,
+            **self._last_entity_text_binding_metrics,
         }
         return output
 

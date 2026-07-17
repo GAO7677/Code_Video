@@ -23,6 +23,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from .backbones import build_frozen_extractor
+from .mask_loss import MaskLossWeights, compute_mask_loss
 from .model import FeatureSlotDecomposer, feature_space_losses
 
 
@@ -58,6 +59,15 @@ class TrainConfig:
     max_train_samples: int | None
     max_valid_samples: int | None
     max_optimizer_steps: int | None
+    mask_loss_weight: float
+    mask_loss_warmup_steps: int
+    mask_max_instances: int
+    mask_union_weight: float
+    mask_instance_weight: float
+    mask_static_weight: float
+    mask_background_weight: float
+    mask_unused_weight: float
+    mask_focal_bce_weight: float
     seed: int
     wandb_project: str
     wandb_group: str | None
@@ -193,6 +203,20 @@ def parse_args(space: str) -> TrainConfig:
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-valid-samples", type=int, default=None)
     parser.add_argument("--max-optimizer-steps", type=int, default=None)
+    parser.add_argument(
+        "--mask-loss-weight",
+        type=float,
+        default=0.0,
+        help="Global mask-loss multiplier; zero preserves the original training objective.",
+    )
+    parser.add_argument("--mask-loss-warmup-steps", type=int, default=500)
+    parser.add_argument("--mask-max-instances", type=int, default=6)
+    parser.add_argument("--mask-union-weight", type=float, default=0.20)
+    parser.add_argument("--mask-instance-weight", type=float, default=0.10)
+    parser.add_argument("--mask-static-weight", type=float, default=0.02)
+    parser.add_argument("--mask-background-weight", type=float, default=0.01)
+    parser.add_argument("--mask-unused-weight", type=float, default=0.01)
+    parser.add_argument("--mask-focal-bce-weight", type=float, default=0.25)
     parser.add_argument("--seed", type=int, default=14)
     parser.add_argument("--wandb-project", default="textocvp_feature_space_stage1")
     parser.add_argument("--wandb-group", default=None)
@@ -233,7 +257,7 @@ def unwrap_model(model: torch.nn.Module) -> FeatureSlotDecomposer:
 
 
 class FeatureSpaceTrainer:
-    metric_names = (
+    base_metric_names = (
         "loss",
         "feature_mse",
         "feature_cosine",
@@ -241,9 +265,24 @@ class FeatureSpaceTrainer:
         "slot_usage_min",
         "slot_usage_max",
     )
+    mask_metric_names = (
+        "mask_loss",
+        "mask_loss_scaled",
+        "mask_union",
+        "mask_instance",
+        "mask_static",
+        "mask_background",
+        "mask_unused",
+        "mask_supervision_rate",
+        "mask_instance_supervision_rate",
+        "mask_loss_ramp",
+    )
 
     def __init__(self, config: TrainConfig) -> None:
         self.config = config
+        self.metric_names = self.base_metric_names + (
+            self.mask_metric_names if config.mask_loss_weight > 0 else ()
+        )
         self.rank, self.local_rank, self.world_size, self.device = setup_distributed()
         seed_everything(config.seed, self.rank)
         self.is_main = self.rank == 0
@@ -368,6 +407,10 @@ class FeatureSpaceTrainer:
             "preprocess_mode": self.config.dataset_preprocess_mode,
             "frame_stride": 1,
             "random_start": True,
+            "load_masks": self.config.mask_loss_weight > 0,
+            "max_mask_instances": self.config.mask_max_instances,
+            "mask_temporal_stride": 2,
+            "mask_spatial_stride": 16,
         }
         train_set = Stage1Indexed(
             split="train", max_samples=self.config.max_train_samples, **dataset_kwargs
@@ -410,11 +453,78 @@ class FeatureSpaceTrainer:
             valid_set, sampler=valid_sampler, drop_last=False, **loader_kwargs
         )
 
-    def _forward(self, videos: torch.Tensor) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    def _mask_loss_ramp(self) -> float:
+        if self.config.mask_loss_weight <= 0:
+            return 0.0
+        if self.config.mask_loss_warmup_steps <= 0:
+            return 1.0
+        return min(1.0, self.global_step / self.config.mask_loss_warmup_steps)
+
+    def _compute_losses(
+        self,
+        output: dict[str, torch.Tensor],
+        features: torch.Tensor,
+        info: dict,
+        mask_ramp: float | None = None,
+    ) -> dict[str, torch.Tensor]:
+        losses = feature_space_losses(output, features, self.config.space)
+        if self.config.mask_loss_weight <= 0:
+            return losses
+        required = (
+            "dynamic_instance_masks",
+            "dynamic_instance_valid",
+            "dynamic_union_mask",
+            "static_geometry_mask",
+            "mask_supervision_valid",
+            "instance_supervision_valid",
+        )
+        missing = [key for key in required if key not in info]
+        if missing:
+            raise KeyError(f"Mask loss is enabled but batch is missing targets: {missing}")
+        targets = {
+            key: info[key].to(self.device, non_blocking=True)
+            for key in required
+        }
+        mask_losses = compute_mask_loss(
+            predicted_masks=output["masks"],
+            weights=MaskLossWeights(
+                union=self.config.mask_union_weight,
+                instance=self.config.mask_instance_weight,
+                static=self.config.mask_static_weight,
+                background=self.config.mask_background_weight,
+                unused=self.config.mask_unused_weight,
+                focal_bce=self.config.mask_focal_bce_weight,
+            ),
+            **targets,
+        )
+        ramp = self._mask_loss_ramp() if mask_ramp is None else float(mask_ramp)
+        scaled = self.config.mask_loss_weight * ramp * mask_losses["mask_total"]
+        losses["total"] = losses["total"] + scaled
+        losses.update(
+            {
+                "mask_loss": mask_losses["mask_total"],
+                "mask_loss_scaled": scaled,
+                "mask_union": mask_losses["mask_union"],
+                "mask_instance": mask_losses["mask_instance"],
+                "mask_static": mask_losses["mask_static"],
+                "mask_background": mask_losses["mask_background"],
+                "mask_unused": mask_losses["mask_unused"],
+                "mask_supervision_rate": mask_losses["mask_supervision_rate"],
+                "mask_instance_supervision_rate": mask_losses[
+                    "mask_instance_supervision_rate"
+                ],
+                "mask_loss_ramp": torch.full_like(losses["total"], ramp),
+            }
+        )
+        return losses
+
+    def _forward(
+        self, videos: torch.Tensor, info: dict
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         features = self.extractor(videos)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             output = self.decomposer(features)
-        losses = feature_space_losses(output, features, self.config.space)
+        losses = self._compute_losses(output, features, info)
         if self.is_main and not (self.output_dir / "shape_trace.json").exists():
             trace = {
                 "video": list(videos.shape),
@@ -430,6 +540,18 @@ class FeatureSpaceTrainer:
                 "masks": list(output["masks"].shape),
                 "reconstructed_features": list(output["reconstructed_features"].shape),
             }
+            if self.config.mask_loss_weight > 0:
+                trace["mask_targets"] = {
+                    key: list(info[key].shape)
+                    for key in (
+                        "dynamic_instance_masks",
+                        "dynamic_instance_valid",
+                        "dynamic_union_mask",
+                        "static_geometry_mask",
+                        "mask_supervision_valid",
+                        "instance_supervision_valid",
+                    )
+                }
             (self.output_dir / "shape_trace.json").write_text(
                 json.dumps(trace, indent=2), encoding="utf-8"
             )
@@ -453,7 +575,9 @@ class FeatureSpaceTrainer:
             features = self.extractor(videos)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 output = core(features)
-            losses = feature_space_losses(output, features, self.config.space)
+            # Validation always uses the full objective so checkpoint scores remain
+            # comparable while the training-only mask ramp changes.
+            losses = self._compute_losses(output, features, info, mask_ramp=1.0)
             batch_size = videos.shape[0]
             for name, key in zip(self.metric_names, ("total", *self.metric_names[1:])):
                 values = losses[key].detach().float().cpu()
@@ -572,7 +696,7 @@ class FeatureSpaceTrainer:
                 desc=f"epoch {epoch + 1}/{self.config.epochs}",
                 disable=not self.is_main,
             )
-            for batch_index, (videos, _) in enumerate(progress):
+            for batch_index, (videos, info) in enumerate(progress):
                 update_now = (batch_index + 1) % self.accumulation_steps == 0
                 sync_context = (
                     nullcontext()
@@ -580,7 +704,7 @@ class FeatureSpaceTrainer:
                     else self.decomposer.no_sync()
                 )
                 with sync_context:
-                    losses, _ = self._forward(videos)
+                    losses, _ = self._forward(videos, info)
                     (losses["total"].mean() / self.accumulation_steps).backward()
                 for key, value in losses.items():
                     accumulation[key].append(value.detach())
@@ -651,6 +775,28 @@ def main(space: str) -> None:
         raise ValueError("epochs must be positive")
     if config.validation_frequency_steps <= 0:
         raise ValueError("validation_frequency_steps must be positive")
+    if config.mask_loss_weight < 0:
+        raise ValueError("mask_loss_weight must be non-negative")
+    if config.mask_loss_warmup_steps < 0:
+        raise ValueError("mask_loss_warmup_steps must be non-negative")
+    component_weights = (
+        config.mask_union_weight,
+        config.mask_instance_weight,
+        config.mask_static_weight,
+        config.mask_background_weight,
+        config.mask_unused_weight,
+        config.mask_focal_bce_weight,
+    )
+    if any(value < 0 for value in component_weights):
+        raise ValueError("mask-loss component weights must be non-negative")
+    if config.mask_loss_weight > 0:
+        if config.space != "vjepa":
+            raise ValueError("mask loss is currently implemented for V-JEPA space only")
+        if config.mask_max_instances > config.num_slots - 2:
+            raise ValueError(
+                "mask_max_instances must leave one static and one background slot; "
+                f"got instances={config.mask_max_instances}, slots={config.num_slots}"
+            )
     if config.space == "vjepa" and config.num_frames % 2 != 0:
         raise ValueError("V-JEPA tubelet_size=2 requires an even number of frames")
     if config.space == "vae" and (config.num_frames - 1) % 4 != 0:

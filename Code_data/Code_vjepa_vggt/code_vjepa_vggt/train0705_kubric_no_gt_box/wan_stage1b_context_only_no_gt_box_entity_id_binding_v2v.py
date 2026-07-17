@@ -20,6 +20,7 @@ import torch
 
 from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
+    attach_entity_text_binding_adapter,
     upgrade_object_condition_adapter,
 )
 from code_vjepa_vggt.train0705 import (
@@ -51,6 +52,7 @@ def _build_entity_bound_model(args, accelerator):
             entity_residual_max_ratio=0.1,
             trainable=bool(getattr(model, "train_object_adapter", False)),
         )
+        attach_entity_text_binding_adapter(model.pipe, model.object_adapter)
     return model
 
 
@@ -109,6 +111,12 @@ def _install_binding_for_grounded_slots(
         dtype=torch.long,
         device=prompt_context.device,
     )
+    text_token_entity_ids = torch.full(
+        (1, int(prompt_context.shape[1])),
+        -1,
+        dtype=torch.long,
+        device=prompt_context.device,
+    )
     valid_slots = [
         int(slot)
         for slot in torch.nonzero(
@@ -118,29 +126,36 @@ def _install_binding_for_grounded_slots(
     ]
     matched: list[dict[str, object]] = []
     unmatched: list[dict[str, object]] = []
+    used_spans: set[tuple[int, int]] = set()
     for entity_id, slot_id in enumerate(valid_slots):
         slot_entity_ids[0, slot_id] = int(entity_id)
         phrase = phrases[slot_id] if slot_id < len(phrases) else ""
-        pooled, span_count, candidate = binding_train._pool_phrase_from_prompt_context(
-            prompt_token_ids=prompt_token_ids,
-            prompt_context=prompt_context,
-            tokenizer=model.pipe.tokenizer,
-            phrase=phrase,
+        pooled, span_count, candidate, matched_span = (
+            binding_train._pool_unique_phrase_span_from_prompt_context(
+                prompt_token_ids=prompt_token_ids,
+                prompt_context=prompt_context,
+                tokenizer=model.pipe.tokenizer,
+                phrase=phrase,
+                used_spans=used_spans,
+            )
         )
         record = {
             "entity_id": int(entity_id),
             "slot_id": int(slot_id),
             "grounding_phrase": str(phrase),
         }
-        if pooled is None:
+        if pooled is None or matched_span is None:
             unmatched.append(record)
             continue
         entity_text_by_id[0, entity_id] = pooled[0]
         entity_match_mask[0, entity_id] = True
+        start, end = matched_span
+        text_token_entity_ids[0, start:end] = int(entity_id)
         record.update(
             {
                 "matched_candidate": candidate,
                 "prompt_span_count": int(span_count),
+                "selected_prompt_span": [int(start), int(end)],
             }
         )
         matched.append(record)
@@ -149,6 +164,7 @@ def _install_binding_for_grounded_slots(
         entity_text_by_id=entity_text_by_id,
         entity_text_match_mask=entity_match_mask,
         slot_entity_ids=slot_entity_ids,
+        text_token_entity_ids=text_token_entity_ids,
     )
     return {
         "enabled": True,
@@ -156,6 +172,7 @@ def _install_binding_for_grounded_slots(
         "matched": matched,
         "unmatched": unmatched,
         "slot_entity_ids": slot_entity_ids.detach().cpu().tolist(),
+        "text_token_entity_ids": text_token_entity_ids.detach().cpu().tolist(),
     }
 
 
@@ -208,7 +225,7 @@ def _build_object_context_with_entity_binding(
         return object_context, debug
     finally:
         model._build_object_query_priors = original_query_builder
-        adapter.clear_entity_binding_context()
+        adapter.clear_entity_object_context()
 
 
 def _install_entity_runtime_hooks() -> None:

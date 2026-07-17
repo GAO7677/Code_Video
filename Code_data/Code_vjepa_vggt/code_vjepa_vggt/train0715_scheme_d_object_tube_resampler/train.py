@@ -19,6 +19,7 @@ import code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
 from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
+    attach_entity_text_binding_adapter,
 )
 from code_vjepa_vggt.train0715_scheme_d_object_tube_resampler.models import (
     ObjectTubeResampler,
@@ -116,6 +117,7 @@ class SchemeDObjectTubeWanModule(entity_train.EntityIDBindingReplayPreserveWanMo
             entity_dropout_prob=float(self.entity_binding_dropout_prob),
             entity_residual_max_ratio=float(self.entity_binding_residual_max_ratio),
         ).to(device=device)
+        attach_entity_text_binding_adapter(self.pipe, self.object_adapter)
         self.object_adapter.mlp_residual_max_ratio = (
             float(self.object_adapter_mlp_residual_max_ratio)
             if float(self.object_adapter_mlp_residual_max_ratio) > 0.0

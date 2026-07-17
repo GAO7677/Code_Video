@@ -109,7 +109,7 @@ _MATERIAL_CATALOG = build_material_catalog()
 _LIGHTING_CATALOG = build_lighting_catalog()
 _SURFACE_CATALOG = build_surface_catalog()
 _HDRI_CATALOG = build_hdri_catalog()
-_UV_ASSET_ROOT = Path("/data/gaoya/agent-data/outputs/dataset_new_0705/assets/genesis_uv_primitives")
+_UV_ASSET_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0713pybullet/assets/genesis_uv_primitives")
 
 _UNIT_BOX_UV_OBJ = """# unit box with per-face UVs
 v -0.5 -0.5 0.5

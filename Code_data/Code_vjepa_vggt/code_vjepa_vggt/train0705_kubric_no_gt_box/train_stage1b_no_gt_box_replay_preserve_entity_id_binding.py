@@ -12,6 +12,7 @@ import code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay
 from code_vjepa_vggt.headonly_val_loss import HeadOnlyValConfig
 from code_vjepa_vggt.models.object_entity_id_binder import (
     EntityIDBindingObjectConditionAdapter,
+    attach_entity_text_binding_adapter,
     find_subsequence_spans,
     upgrade_object_condition_adapter,
 )
@@ -98,6 +99,30 @@ def _pool_phrase_from_prompt_context(
     return None, 0, None
 
 
+def _pool_unique_phrase_span_from_prompt_context(
+    *,
+    prompt_token_ids: list[int],
+    prompt_context: torch.Tensor,
+    tokenizer,
+    phrase: str,
+    used_spans: set[tuple[int, int]],
+) -> tuple[torch.Tensor | None, int, str | None, tuple[int, int] | None]:
+    """Bind one grounded slot to one previously unused noun-phrase span."""
+    for candidate in _phrase_candidates(phrase):
+        candidate_ids = _tokenize_without_padding(tokenizer, candidate)
+        spans = find_subsequence_spans(prompt_token_ids, candidate_ids)
+        selected = next((span for span in spans if span not in used_spans), None)
+        if selected is None:
+            continue
+        start, end = selected
+        if start < 0 or end > int(prompt_context.shape[1]) or start >= end:
+            continue
+        used_spans.add(selected)
+        pooled = prompt_context[:, start:end, :].mean(dim=1)
+        return pooled, len(spans), candidate, selected
+    return None, 0, None, None
+
+
 class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModule):
     def __init__(self, *args, **kwargs) -> None:
         self.entity_binding_enabled = bool(kwargs.pop("entity_binding_enabled", True))
@@ -141,6 +166,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             entity_residual_max_ratio=self.entity_binding_residual_max_ratio,
             trainable=bool(self.train_object_adapter),
         )
+        attach_entity_text_binding_adapter(self.pipe, self.object_adapter)
 
     @property
     def entity_bound_adapter(self) -> EntityIDBindingObjectConditionAdapter:
@@ -208,29 +234,41 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             device=prompt_context.device,
             dtype=torch.long,
         )
+        text_token_entity_ids = torch.full(
+            (1, int(prompt_context.shape[1])),
+            -1,
+            device=prompt_context.device,
+            dtype=torch.long,
+        )
         matched_phrases = 0
         matched_spans = 0
         matched_candidates: set[str] = set()
+        used_spans: set[tuple[int, int]] = set()
         self._entity_binding_phrase_matches = []
         for local_index, slot_id in enumerate(valid_slots):
             entity_id = int(randomized_ids[local_index])
             slot_entity_ids[0, slot_id] = entity_id
             phrase = phrases[slot_id] if slot_id < len(phrases) else ""
-            pooled, span_count, matched_candidate = _pool_phrase_from_prompt_context(
-                prompt_token_ids=prompt_token_ids,
-                prompt_context=prompt_context,
-                tokenizer=tokenizer,
-                phrase=phrase,
+            pooled, span_count, matched_candidate, matched_span = (
+                _pool_unique_phrase_span_from_prompt_context(
+                    prompt_token_ids=prompt_token_ids,
+                    prompt_context=prompt_context,
+                    tokenizer=tokenizer,
+                    phrase=phrase,
+                    used_spans=used_spans,
+                )
             )
             self._entity_binding_phrase_matches.append(
-                f"slot{slot_id}:{phrase!r}->{matched_candidate!r}"
+                f"slot{slot_id}:{phrase!r}->{matched_candidate!r}@{matched_span!r}"
             )
-            if pooled is None:
+            if pooled is None or matched_span is None:
                 continue
             entity_text_by_id[0, entity_id] = pooled[0]
             entity_match_mask[0, entity_id] = True
+            start, end = matched_span
+            text_token_entity_ids[0, start:end] = entity_id
             matched_phrases += 1
-            matched_spans += int(span_count)
+            matched_spans += 1
             if matched_candidate is not None:
                 matched_candidates.add(matched_candidate)
 
@@ -238,11 +276,15 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             entity_text_by_id=entity_text_by_id,
             entity_text_match_mask=entity_match_mask,
             slot_entity_ids=slot_entity_ids,
+            text_token_entity_ids=text_token_entity_ids,
         )
         self._entity_binding_prepare_metrics.update({
             "train/entity_binding_grounding_phrase_count": float(len(phrases)),
             "train/entity_binding_prompt_matched_phrase_count": float(matched_phrases),
             "train/entity_binding_prompt_matched_span_count": float(matched_spans),
+            "train/entity_binding_prompt_routed_token_count": float(
+                (text_token_entity_ids >= 0).sum().item()
+            ),
             "train/entity_binding_prompt_unique_candidate_count": float(
                 len(matched_candidates)
             ),
@@ -250,6 +292,18 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
                 self.entity_binding_randomize_ids
             ),
         })
+
+    def _apply_object_slot_dropout(self, object_valid_mask: torch.Tensor):
+        sampled_mask, metrics = super()._apply_object_slot_dropout(object_valid_mask)
+        runtime = self._entity_binding_runtime
+        if runtime is not None and self.enable_object_branch and self.object_adapter is not None:
+            self.entity_bound_adapter.restrict_entity_binding_to_valid_slots(sampled_mask)
+            inputs_posi = runtime["inputs_posi"]
+            inputs_posi["context"] = self.entity_bound_adapter.apply_entity_ids_to_text_context(
+                inputs_posi["context"]
+            )
+        return sampled_mask, metrics
+
     def _build_object_query_priors(self, sample: dict, *, image_hw: tuple[int, int]):
         outputs = super()._build_object_query_priors(sample, image_hw=image_hw)
         if self._entity_binding_runtime is not None:
@@ -266,6 +320,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
             "train/entity_binding_grounding_phrase_count": 0.0,
             "train/entity_binding_prompt_matched_phrase_count": 0.0,
             "train/entity_binding_prompt_matched_span_count": 0.0,
+            "train/entity_binding_prompt_routed_token_count": 0.0,
             "train/entity_binding_prompt_unique_candidate_count": 0.0,
             "train/entity_binding_id_randomized": float(
                 self.entity_binding_randomize_ids
@@ -280,6 +335,7 @@ class EntityIDBindingReplayPreserveWanModule(replay.ReplayPreserveNoGTBoxWanModu
         if source_enabled and "context" in inputs_posi:
             self._entity_binding_runtime = {
                 "prompt_context": inputs_posi["context"],
+                "inputs_posi": inputs_posi,
                 "prompt": str(sample.get("caption", "")),
                 "tokenizer": pipe.tokenizer,
             }

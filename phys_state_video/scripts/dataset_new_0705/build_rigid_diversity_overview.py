@@ -10,7 +10,7 @@ from pathlib import Path
 from .scene_generators_0705 import generate_scenario_blueprint
 
 
-DEFAULT_INPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0713pybullet_multifamily_balanced_viscaption")
+DEFAULT_INPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0713pybullet")
 DEFAULT_OUTPUT_ROOT = DEFAULT_INPUT_ROOT
 DEFAULT_PORT = 18831
 

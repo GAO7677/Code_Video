@@ -19,7 +19,11 @@ from .material_catalog_0705 import (
     build_surface_catalog,
 )
 from .object_catalog_0705 import build_object_family_catalog
-from .scene_generators_0705 import build_scenario_family_catalog, generate_scenario_blueprint
+from .scene_generators_0705 import (
+    build_scenario_family_catalog,
+    generate_scenario_blueprint,
+    validate_blueprint_physics,
+)
 
 
 DEFAULT_NEGATIVE_PROMPT = (
@@ -382,6 +386,7 @@ def _legacy_object_spec_from_blueprint_object(obj) -> legacy.ObjectSpec:
 
 
 def blueprint_to_legacy_scenario(blueprint: ScenarioBlueprint, seed: int) -> legacy.ScenarioSpec:
+    validate_blueprint_physics(blueprint)
     surfaces = build_surface_catalog()
     surface = surfaces[blueprint.surface_key]
     family_label = f"{blueprint.family_key} v2"
@@ -987,8 +992,14 @@ def render_generated_case(
     width: int = 1280,
     height: int = 720,
     scene_style: str = "indoor_realistic",
+    direction_mode: str = "auto",
 ) -> dict:
-    blueprint = generate_scenario_blueprint(family_key=family_key, sample_key=sample_key, seed=seed)
+    blueprint = generate_scenario_blueprint(
+        family_key=family_key,
+        sample_key=sample_key,
+        seed=seed,
+        direction_mode=direction_mode,
+    )
     return render_blueprint_case(
         blueprint=blueprint,
         seed=seed,

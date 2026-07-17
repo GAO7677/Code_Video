@@ -8,7 +8,7 @@ from .common_specs import LightingSpec, MaterialSpec, RangeSpec, SurfaceThemeSpe
 TEXTURE_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/textures")
 HDRI_ROOT = Path("/data/gaoya/dataset/blender_render_assets/polyhaven_v1/hdris")
 LEGACY_TEXTURE_ROOT = Path("/data/gaoya/dataset/textures/polyhaven_wood")
-INDOOR_ASSET_PACK_ROOT = Path("/data/gaoya/agent-data/outputs/dataset_new_0705/assets")
+INDOOR_ASSET_PACK_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0713pybullet/assets")
 
 
 def build_material_catalog() -> dict[str, MaterialSpec]:

@@ -8,6 +8,7 @@ from code_vjepa_vggt.models.object_entity_id_binder import (
     find_subsequence_spans,
 )
 from code_vjepa_vggt.train0705_kubric_no_gt_box.train_stage1b_no_gt_box_replay_preserve_entity_id_binding import (
+    _pool_unique_phrase_span_from_prompt_context,
     _phrase_candidates,
 )
 
@@ -27,6 +28,7 @@ def _adapter(*, zero_output: bool) -> EntityIDBindingObjectConditionAdapter:
         with torch.no_grad():
             adapter.entity_text_down.weight.copy_(torch.eye(4))
             adapter.entity_text_up.weight.copy_(torch.eye(4))
+            adapter.entity_text_context_up.weight.copy_(torch.eye(4))
             adapter.entity_id_embed.weight.copy_(
                 torch.tensor(
                     [[0.5, 0.0, 0.0, 0.0], [0.0, 0.75, 0.0, 0.0]]
@@ -45,6 +47,65 @@ def test_phrase_candidates_extract_multiword_alias_before_action_suffix() -> Non
     assert candidates[0] == "round rigid object enters"
     assert "round rigid object" in candidates
     assert "ball" in candidates
+
+
+class _WordTokenizer:
+    _ids = {
+        "ball": 2,
+        "sphere": 2,
+        "puck": 2,
+        "round rigid object": 2,
+        "flat round rigid object": 2,
+    }
+
+    def __call__(self, text, **kwargs):
+        return torch.tensor([[self._ids.get(str(text), 99)]])
+
+
+def test_repeated_nouns_route_to_distinct_spans() -> None:
+    tokenizer = _WordTokenizer()
+    context = torch.arange(20, dtype=torch.float32).view(1, 5, 4)
+    used: set[tuple[int, int]] = set()
+    first = _pool_unique_phrase_span_from_prompt_context(
+        prompt_token_ids=[7, 2, 8, 2, 9],
+        prompt_context=context,
+        tokenizer=tokenizer,
+        phrase="ball",
+        used_spans=used,
+    )
+    second = _pool_unique_phrase_span_from_prompt_context(
+        prompt_token_ids=[7, 2, 8, 2, 9],
+        prompt_context=context,
+        tokenizer=tokenizer,
+        phrase="ball",
+        used_spans=used,
+    )
+    assert first[3] == (1, 2)
+    assert second[3] == (3, 4)
+    torch.testing.assert_close(first[0], context[:, 1])
+    torch.testing.assert_close(second[0], context[:, 3])
+
+
+def test_same_entity_id_is_injected_into_object_slot_and_text_span() -> None:
+    adapter = _adapter(zero_output=False)
+    adapter.set_entity_binding_context(
+        entity_text_by_id=torch.tensor(
+            [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]]
+        ),
+        entity_text_match_mask=torch.ones((1, 2), dtype=torch.bool),
+        slot_entity_ids=torch.tensor([[1, 0]]),
+        text_token_entity_ids=torch.tensor([[-1, 1, -1, 0]]),
+    )
+    text = torch.ones((1, 4, 4))
+    routed_text = adapter.apply_entity_ids_to_text_context(text)
+    object_tokens = adapter.apply_entity_binding(
+        torch.ones((1, 1, 2, 4)),
+        object_valid_mask=torch.ones((1, 2)),
+    )
+    torch.testing.assert_close(routed_text[:, 0], text[:, 0])
+    torch.testing.assert_close(routed_text[:, 2], text[:, 2])
+    assert not torch.allclose(routed_text[:, 1], routed_text[:, 3])
+    assert not torch.allclose(object_tokens[:, :, 0], object_tokens[:, :, 1])
 
 
 def test_zero_initialized_binding_preserves_old_adapter_output() -> None:
@@ -128,13 +189,15 @@ def test_zero_initialized_projection_has_finite_backward_and_optimizer_step() ->
         entity_text_by_id=torch.randn((1, 2, 4)),
         entity_text_match_mask=torch.ones((1, 2), dtype=torch.bool),
         slot_entity_ids=torch.tensor([[0, 1]]),
+        text_token_entity_ids=torch.tensor([[0, 1]]),
     )
     tokens = torch.randn((1, 2, 2, 4), requires_grad=True)
     output = adapter(
         tokens,
         object_valid_mask=torch.ones((1, 2)),
     )
-    output[..., 0].square().sum().backward()
+    text_output = adapter.apply_entity_ids_to_text_context(torch.randn((1, 2, 4)))
+    (output[..., 0].square().sum() + text_output.square().sum()).backward()
 
     entity_parameters = {
         name: parameter
@@ -146,6 +209,7 @@ def test_zero_initialized_projection_has_finite_backward_and_optimizer_step() ->
         assert parameter.grad is not None, f"missing gradient: {name}"
         assert torch.isfinite(parameter.grad).all(), f"non-finite gradient: {name}"
     assert float(adapter.entity_text_up.weight.grad.abs().sum().item()) > 0.0
+    assert float(adapter.entity_text_context_up.weight.grad.abs().sum().item()) > 0.0
 
     optimizer = torch.optim.AdamW(entity_parameters.values(), lr=1.0e-3)
     optimizer.step()

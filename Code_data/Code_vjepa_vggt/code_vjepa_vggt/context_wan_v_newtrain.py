@@ -1679,6 +1679,20 @@ class ContextAwareWanVideoPipeline(WanVideoPipeline):
                 inputs_posi,
                 inputs_nega,
             )
+        entity_text_adapter_ref = getattr(self, "_entity_text_binding_adapter_ref", None)
+        entity_text_adapter = (
+            entity_text_adapter_ref()
+            if entity_text_adapter_ref is not None
+            else None
+        )
+        if (
+            entity_text_adapter is not None
+            and "context" in inputs_posi
+            and hasattr(entity_text_adapter, "apply_entity_ids_to_text_context")
+        ):
+            inputs_posi["context"] = entity_text_adapter.apply_entity_ids_to_text_context(
+                inputs_posi["context"]
+            )
 
         selected_steps: set[int] = set()
         active_model_names = self.in_iteration_models

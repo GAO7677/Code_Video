@@ -21,6 +21,7 @@ from .object_catalog_0705 import build_object_family_catalog
 EARTH_GRAVITY = 9.81
 NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
+DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -430,6 +431,95 @@ def _motion_vectors(
     return linear_velocity, angular_velocity, orientation
 
 
+def _collision_vertical_extent(obj: ObjectInstanceSpec) -> float:
+    """Return the world-space vertical half-extent of the PyBullet collision shape."""
+    size = obj.size
+    roll, pitch, _ = (math.radians(value) for value in obj.orientation_euler_deg)
+    vertical_axis = (
+        -math.sin(pitch),
+        math.cos(pitch) * math.sin(roll),
+        math.cos(pitch) * math.cos(roll),
+    )
+    ax, ay, az = (abs(value) for value in vertical_axis)
+
+    if obj.shape in {"sphere", "ellipsoid"}:
+        if "radius" in size:
+            return float(size["radius"])
+        return float(max(size["rx"], size["ry"], size["rz"]))
+    if obj.shape in {"box", "rounded_box", "wedge"}:
+        return float(ax * size["hx"] + ay * size["hy"] + az * size["hz"])
+    if obj.shape in {"cylinder", "puck", "wheel_thick", "spool", "cone_frustum"}:
+        radius = size.get(
+            "radius",
+            size.get("flange_radius", max(size.get("r_top", 0.0), size.get("r_base", 0.0))),
+        )
+        height = size.get("height", size.get("width"))
+        radial_extent = float(radius) * math.sqrt(ax * ax + ay * ay)
+        return radial_extent + 0.5 * float(height) * az
+    if obj.shape == "capsule":
+        return float(size["radius"]) + 0.5 * float(size["height"]) * az
+    if obj.shape == "dumbbell":
+        return float(size["weight_radius"]) + 0.5 * float(size["length"]) * az
+    raise ValueError(f"unsupported collision shape for grounding: {obj.shape}")
+
+
+def validate_blueprint_physics(blueprint: ScenarioBlueprint) -> None:
+    if not math.isclose(float(blueprint.gravity), EARTH_GRAVITY, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f"{blueprint.sample_key}: all dynamic objects require gravity {EARTH_GRAVITY}, "
+            f"got {blueprint.gravity}"
+        )
+
+    for obj in blueprint.objects:
+        if obj.dynamic:
+            if obj.mass <= 0.0:
+                raise ValueError(f"{blueprint.sample_key}/{obj.name}: dynamic object mass must be positive")
+            continue
+
+        expected_z = _collision_vertical_extent(obj)
+        if obj.mass != 0.0:
+            raise ValueError(f"{blueprint.sample_key}/{obj.name}: static object mass must be zero")
+        if not math.isclose(float(obj.position[2]), expected_z, rel_tol=0.0, abs_tol=1e-7):
+            raise ValueError(
+                f"{blueprint.sample_key}/{obj.name}: static object must touch the ground; "
+                f"center_z={obj.position[2]:.8f}, required={expected_z:.8f}"
+            )
+
+
+def _set_blueprint_direction(blueprint: ScenarioBlueprint, direction_mode: str) -> ScenarioBlueprint:
+    if direction_mode not in DIRECTION_MODES:
+        raise ValueError(f"unsupported direction_mode={direction_mode}")
+    if direction_mode == "vertical" and blueprint.family_key not in {"F5", "F8"}:
+        raise ValueError(f"vertical direction is only supported for F5/F8, got {blueprint.family_key}")
+
+    objects = blueprint.objects
+    if direction_mode == "right_to_left":
+        objects = tuple(
+            replace(
+                obj,
+                position=(-obj.position[0], obj.position[1], obj.position[2]),
+                orientation_euler_deg=(
+                    obj.orientation_euler_deg[0],
+                    -obj.orientation_euler_deg[1],
+                    -obj.orientation_euler_deg[2],
+                ),
+                linear_velocity=(-obj.linear_velocity[0], obj.linear_velocity[1], obj.linear_velocity[2]),
+                angular_velocity=(obj.angular_velocity[0], -obj.angular_velocity[1], -obj.angular_velocity[2]),
+            )
+            for obj in objects
+        )
+    elif direction_mode == "vertical":
+        objects = tuple(
+            replace(obj, linear_velocity=(0.0, 0.0, obj.linear_velocity[2])) if obj.dynamic else obj
+            for obj in objects
+        )
+
+    direction_tag = f"direction_{direction_mode}"
+    tags = blueprint.tags[:-1] + (direction_tag,) + blueprint.tags[-1:] if blueprint.tags else (direction_tag,)
+    metadata = {**blueprint.metadata, "direction_mode": direction_mode}
+    return replace(blueprint, objects=objects, tags=tags, metadata=metadata)
+
+
 def _sample_object(
     rng: np.random.Generator,
     family: ObjectFamilySpec,
@@ -445,7 +535,8 @@ def _sample_object(
     forced_material_key: str | None = None,
 ) -> ObjectInstanceSpec:
     material_key = forced_material_key or _pick_material_key(rng, family, material_keys_by_category)
-    return ObjectInstanceSpec(
+    is_dynamic = family.dynamic_default if dynamic is None else dynamic
+    obj = ObjectInstanceSpec(
         name=name,
         family_key=family.key,
         shape=family.shape,
@@ -458,13 +549,18 @@ def _sample_object(
         angular_damping=_sample_range(rng, family.angular_damping_range),
         material_key=material_key,
         color=_color_from_material_key(material_key),
-        dynamic=family.dynamic_default if dynamic is None else dynamic,
-        role=role or ("dynamic" if (family.dynamic_default if dynamic is None else dynamic) else family.semantic_role),
+        dynamic=is_dynamic,
+        role=role or ("dynamic" if is_dynamic else family.semantic_role),
         position=position,
         orientation_euler_deg=orientation_euler_deg,
         linear_velocity=linear_velocity,
         angular_velocity=angular_velocity,
     )
+    if obj.dynamic:
+        return obj
+
+    grounded_position = (obj.position[0], obj.position[1], _collision_vertical_extent(obj))
+    return replace(obj, mass=0.0, position=grounded_position)
 
 
 def _sample_camera(rng: np.random.Generator, key: str) -> CameraSpec:
@@ -1122,11 +1218,17 @@ def generate_scenario_blueprint(
     family_key: str,
     sample_key: str,
     seed: int,
+    direction_mode: str = "auto",
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
+    if direction_mode == "auto":
+        direction_mode = "left_to_right" if seed % 2 == 0 else "right_to_left"
     rng = np.random.default_rng(seed)
-    return FAMILY_GENERATORS[family_key](rng, sample_key)
+    blueprint = FAMILY_GENERATORS[family_key](rng, sample_key)
+    blueprint = _set_blueprint_direction(blueprint, direction_mode)
+    validate_blueprint_physics(blueprint)
+    return blueprint
 
 
 def preview_diversity_report(num_samples_per_family: int = 6) -> dict[str, dict[str, object]]:
