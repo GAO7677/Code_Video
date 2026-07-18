@@ -41,13 +41,14 @@
 - 第一批：ToyDataset 全部 50 个 base case，覆盖单物体 F1、双物体碰撞 F2 和三物体链式碰撞 F3。
 - 第二批：仅在第一批完成并选出稳定候选后，按需运行 150 个 appearance/shape variants，测试 layer/step 对背景、颜色和形状变化的鲁棒性。
 - 每个样本按实际对象数独立采样对象区域，再加 background；不假定所有 case 都有两个物体。
+- 如果对象在 frame 0 完全不可见，则无法作为官方 TI2V 首帧 query；保留该 case 的其他区域，并记录 `not_visible_at_query_frame`，不得改用后续帧冒充首帧协议。
 - 单 case 选 layer/step 只用于可视化，不允许在批量统计中按样本或按对象分别挑最优配置。
 
 ## 4. 扫描空间
 
 - Layers：`[0, 5, 11, 17, 23, 29]`。
 - Scheduler：UniPC、50 steps、shift 5.0。
-- Step indices：`[0, 12, 24, 36, 49]`；结果同时保存真实 scheduler timestep 和 `sigma=timestep/1000`。
+- Step indices：`[0, 12, 24, 36, 49]`；结果同时保存真实 scheduler integer timestep 和 scheduler 的浮点 sigma，不从整数 timestep 反推 sigma。
 - 一次 DiT forward 同时处理 6 个 layer，因此每个样本只需要 5 次主 forward。
 - 如果最佳配置落在 layer 或 step 扫描边界，第二轮在邻域加密；否则不扩大扫描。
 
@@ -58,7 +59,7 @@
 - PCK@8、PCK@16、PCK@32、PCK@64。
 - mean/median endpoint error。
 - 以 DiT token stride 32 归一化的误差。
-- GT token rank、GT 邻域 attention mass、top-1 margin、attention entropy。
+- GT token rank、GT token probability、top-1 margin、目标帧空间匹配 entropy。
 
 PCK@8 低于 Wan 的空间 token stride，只作为辅助指标。主要点对应指标为 PCK@32、median error 和相对静态 baseline 的提升。
 
@@ -72,8 +73,8 @@ PCK@8 低于 Wan 的空间 token stride，只作为辅助指标。主要点对�
 
 汇总时分别报告：
 
-- `moving_object`：GT 总位移大于 16 px 的对象点。
-- `low_motion_object`：GT 总位移不超过 16 px 的对象点。
+- `moving_object`：对象点相对 query 的整段最大可见位移中位数大于 16 px。
+- `low_motion_object`：对象点相对 query 的整段最大可见位移中位数不超过 16 px。
 - `background`。
 
 layer/step 的主要排序分数只使用 `moving_object`，背景仅用于检查位置编码和相机稳定性。
