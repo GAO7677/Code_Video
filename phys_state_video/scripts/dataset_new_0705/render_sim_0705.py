@@ -520,6 +520,7 @@ class RealismPreviewRenderer:
         width: int,
         height: int,
         scene_style: str = "indoor_realistic",
+        capture_instance_masks: bool = False,
     ) -> None:
         materials = build_material_catalog()
         surfaces = build_surface_catalog()
@@ -552,6 +553,10 @@ class RealismPreviewRenderer:
         )
         self.renderer = legacy.pyrender.OffscreenRenderer(width, height)
         self.nodes: dict[str, legacy.pyrender.Node] = {}
+        self.capture_instance_masks = capture_instance_masks
+        self.mask_frames: list[np.ndarray] = []
+        self.instance_ids: dict[str, int] = {}
+        self._seg_node_map: dict[legacy.pyrender.Node, tuple[int, int, int]] = {}
         self.shadow_strength = lighting.shadow_strength
 
     def _add_simple_stage(self, materials, surface, lighting) -> None:
@@ -887,6 +892,11 @@ class RealismPreviewRenderer:
             pose=legacy._tr(obj.position[0], obj.position[1], obj.position[2]),
         )
         self.nodes[obj.name] = node
+        instance_id = len(self.instance_ids) + 1
+        if instance_id > 255:
+            raise ValueError("instance mask export supports at most 255 objects")
+        self.instance_ids[obj.name] = instance_id
+        self._seg_node_map[node] = (instance_id, 0, 0)
 
     def update_pose(self, name: str, pos: list[float], quat: list[float]) -> None:
         self.scene.set_pose(self.nodes[name], pose=legacy._pb_pose(pos, quat))
@@ -894,6 +904,13 @@ class RealismPreviewRenderer:
     def render(self):
         flags = legacy.RenderFlags.SHADOWS_SPOT if self.shadow_strength > 0.1 else 0
         color, _ = self.renderer.render(self.scene, flags=flags)
+        if self.capture_instance_masks:
+            segmentation, _ = self.renderer.render(
+                self.scene,
+                flags=legacy.RenderFlags.SEG,
+                seg_node_map=self._seg_node_map,
+            )
+            self.mask_frames.append(np.asarray(segmentation[..., 0], dtype=np.uint8))
         return color
 
     def cleanup(self) -> None:
@@ -941,6 +958,40 @@ def override_legacy_runtime(
         legacy.IMG_H = old_state["IMG_H"]
 
 
+def _write_instance_mask_outputs(
+    *,
+    output_root: Path,
+    sample_key: str,
+    mask_frames: list[np.ndarray],
+    instance_ids: dict[str, int],
+) -> None:
+    if not mask_frames:
+        raise RuntimeError(f"no instance masks were captured for {sample_key}")
+
+    mask_dir = output_root / "masks"
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    mask_ids = np.stack(mask_frames).astype(np.uint8, copy=False)
+    np.savez_compressed(
+        mask_dir / f"{sample_key}_instance_ids.npz",
+        instance_ids=mask_ids,
+        object_names=np.asarray(list(instance_ids), dtype=np.str_),
+        object_ids=np.asarray(list(instance_ids.values()), dtype=np.uint8),
+    )
+
+    # BGR colors are used here because the shared video writer consumes OpenCV frames.
+    palette_bgr = np.asarray(
+        [
+            [0, 0, 0],
+            [76, 76, 230],
+            [204, 153, 51],
+            [102, 204, 76],
+        ],
+        dtype=np.uint8,
+    )
+    preview_frames = [palette_bgr[np.minimum(frame, len(palette_bgr) - 1)] for frame in mask_ids]
+    legacy._write_video_h264(mask_dir / f"{sample_key}_instance_mask.mp4", preview_frames)
+
+
 def render_blueprint_case(
     *,
     blueprint: ScenarioBlueprint,
@@ -949,6 +1000,8 @@ def render_blueprint_case(
     width: int = 1280,
     height: int = 720,
     scene_style: str = "indoor_realistic",
+    export_instance_masks: bool = False,
+    preserve_states: bool = False,
 ) -> dict:
     output_root.mkdir(parents=True, exist_ok=True)
     register_material_assets()
@@ -964,9 +1017,17 @@ def render_blueprint_case(
                 width=width,
                 height=height,
                 scene_style=scene_style,
+                capture_instance_masks=export_instance_masks,
             )
             try:
                 meta = legacy.run_scenario(renderer, scenario, overlay_text=False)
+                if export_instance_masks:
+                    _write_instance_mask_outputs(
+                        output_root=output_root,
+                        sample_key=scenario.key,
+                        mask_frames=renderer.mask_frames,
+                        instance_ids=renderer.instance_ids,
+                    )
             finally:
                 renderer.cleanup()
         finally:
@@ -981,7 +1042,8 @@ def render_blueprint_case(
     payload["surface_key"] = blueprint.surface_key
     payload["lighting_key"] = blueprint.lighting_key
     payload["tags"] = list(blueprint.tags)
-    payload.pop("states", None)
+    if not preserve_states:
+        payload.pop("states", None)
     payload["blueprint"] = {
         "family_key": blueprint.family_key,
         "sample_key": blueprint.sample_key,
@@ -993,6 +1055,14 @@ def render_blueprint_case(
     payload["materials"] = {
         obj.name: obj.material_key for obj in blueprint.objects
     }
+    if export_instance_masks:
+        payload["instance_masks"] = {
+            "format": "uint8_instance_id",
+            "background_id": 0,
+            "instance_id_map": {obj.name: index + 1 for index, obj in enumerate(blueprint.objects)},
+            "ids": str(output_root / "masks" / f"{scenario.key}_instance_ids.npz"),
+            "preview_video": str(output_root / "masks" / f"{scenario.key}_instance_mask.mp4"),
+        }
     payload.update(_build_prompt_bundle(blueprint, width=width, height=height))
     phrase_by_name = {
         str(item["name"]): item for item in payload.get("object_phrase_details", [])
@@ -1022,7 +1092,8 @@ def render_blueprint_case(
     }
     object_phrase_path.write_text(json.dumps(object_phrase_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     states_path = output_root / "meta" / f"{scenario.key}_states.npz"
-    states_path.unlink(missing_ok=True)
+    if not preserve_states:
+        states_path.unlink(missing_ok=True)
 
     manifest = {
         "sample_key": blueprint.sample_key,
@@ -1030,6 +1101,22 @@ def render_blueprint_case(
         "seed": seed,
         "output_root": str(output_root),
         "video": str(output_root / "videos" / f"{scenario.key}.mp4"),
+        "mask_video": (
+            str(output_root / "masks" / f"{scenario.key}_instance_mask.mp4")
+            if export_instance_masks
+            else None
+        ),
+        "mask_ids": (
+            str(output_root / "masks" / f"{scenario.key}_instance_ids.npz")
+            if export_instance_masks
+            else None
+        ),
+        "instance_id_map": (
+            {obj.name: index + 1 for index, obj in enumerate(blueprint.objects)}
+            if export_instance_masks
+            else {}
+        ),
+        "states": str(states_path) if preserve_states else None,
         "meta": str(meta_path),
         "object_phrases_path": str(object_phrase_path),
         "width": width,
