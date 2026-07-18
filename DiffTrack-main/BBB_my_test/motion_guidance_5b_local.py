@@ -61,6 +61,8 @@ def main(args):
 
     with open(prompt_path, "r", encoding="utf-8") as file:
         prompts = file.readlines()
+    if args.max_prompts is not None:
+        prompts = prompts[: args.max_prompts]
 
     for i, prompt in enumerate(prompts):
         seed = 42
@@ -108,6 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--cfg_scale", type=float, default=6, help="Scale for CFG attention visualization")
     parser.add_argument("--pag_layers", type=int, nargs="+")
     parser.add_argument("--pag_timestep", type=float, default=float("inf"))
+    parser.add_argument("--max_prompts", type=int, default=None)
 
     args = parser.parse_args()
 

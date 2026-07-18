@@ -102,3 +102,30 @@ PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main/diffusers/src:/home/gaoya/Code_
 Each region produces the sampled mask image, separate CoTracker and Q/K videos,
 an overlay comparison video, raw tracks, visibility, and PCK/error metrics under
 `/data/gaoya/agent-data/outputs/difftrack_0718toy/region_tracks`.
+
+Rerun the same query points with the paper's frame-wise VAE and 13-frame chunk
+protocol (frame 0 plus 12 target frames, no temporal interpolation):
+
+```bash
+PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main/diffusers/src:/home/gaoya/Code_Video/DiffTrack-main \
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  AAA_my_test/rerun_region_tracks_framewise.py \
+  --source-result /data/gaoya/agent-data/outputs/difftrack_0718toy/region_tracks/case_019_wheel_hits_block_base/layer17_step49 \
+  --layer 17 \
+  --matching-timestep 49 \
+  --inverse-step 49 \
+  --chunk-len 13 \
+  --device cuda:0
+```
+
+Build and serve the local result dashboard:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python \
+  AAA_my_test/build_region_dashboard.py \
+  --result-dir /data/gaoya/agent-data/outputs/difftrack_0718toy/region_tracks_framewise/case_019_wheel_hits_block_base/layer17_step49
+
+python3 -m http.server 8765 \
+  --bind 0.0.0.0 \
+  --directory /data/gaoya/agent-data/outputs/difftrack_0718toy/region_tracks_framewise/case_019_wheel_hits_block_base/layer17_step49
+```
