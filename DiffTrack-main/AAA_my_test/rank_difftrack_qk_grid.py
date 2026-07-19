@@ -195,11 +195,18 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def write_report(path: Path, best: list[dict], layers: list[int], steps: list[int]) -> None:
+def write_report(
+    path: Path,
+    best: list[dict],
+    summary: list[dict],
+    layers: list[int],
+    steps: list[int],
+    common_case_count: int,
+) -> None:
     lines = [
         "# DiffTrack-compatible Q/K layer × step 搜索",
         "",
-        f"搜索 layers={layers}、steps={steps}。匹配严格使用双向 Q/K、逐方向空间 softmax、多头平均、`corr_to_matches` 和 `grid_sample`。主结果为物体中心点 pooled PCK；当前只有 4 个 case，排名属于探索性结果。",
+        f"搜索 layers={layers}、steps={steps}。匹配严格使用双向 Q/K、逐方向空间 softmax、多头平均、`corr_to_matches` 和 `grid_sample`。主结果为物体中心点 pooled PCK；统计使用四模型共同完成的 {common_case_count} 个 case。",
         "",
         "## 物体中心点最佳组合",
         "",
@@ -241,12 +248,42 @@ def write_report(path: Path, best: list[dict], layers: list[int], steps: list[in
             )
             values.append(f"L{row['layer']}/S{row['step_index']} ({row[metric]:.1f}%)")
         lines.append(f"| {model} | " + " | ".join(values) + " |")
+    generated = [
+        row
+        for row in summary
+        if row["scope"] == "object_centers" and row["model"] in ("stage1b", "lora", "baseline")
+    ]
+    lines.extend(
+        [
+            "",
+            "## 三种生成模型统一组合",
+            "",
+            "对 Stage1b、LoRA、baseline 的物体中心点 PCK 做模型等权平均；该表用于必须固定一个 layer/step 的场景。",
+            "",
+            "| metric | best layer/step | model-balanced score |",
+            "|---|---:|---:|",
+        ]
+    )
+    for metric in (*[f"pck{x}" for x in THRESHOLDS], "mean_pck"):
+        candidates = []
+        for layer in layers:
+            for step in steps:
+                selected = [
+                    row
+                    for row in generated
+                    if row["layer"] == layer and row["step_index"] == step
+                ]
+                candidates.append(
+                    (float(np.mean([row[metric] for row in selected])), layer, step)
+                )
+        score, layer, step = max(candidates)
+        lines.append(f"| {metric} | L{layer}/S{step} | {score:.1f}% |")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 HTML = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DiffTrack Q/K grid search</title><style>
 :root{--paper:#eee7d6;--ink:#18211d;--card:#fffaf0;--line:#b8ae99;--rust:#b64a30;--green:#176654;--muted:#66716b}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 3% 0,#d4714838,transparent 34rem),radial-gradient(circle at 97% 5%,#4c94793d,transparent 34rem),var(--paper);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1450px,calc(100% - 26px));margin:auto;padding:30px 0 60px}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}h1{font-size:clamp(42px,6vw,80px);line-height:.92;letter-spacing:-.045em;margin:4px 0 13px}.eyebrow{color:var(--rust);font-weight:900;letter-spacing:.15em;font-size:12px}.lead{max-width:980px;color:var(--muted);line-height:1.6}.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:22px 0}label{font-size:11px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}select{display:block;width:100%;margin-top:5px;padding:10px;border:1px solid var(--ink);background:var(--card);font-weight:800}.hero,.matrix{background:var(--card);border:1px solid var(--line);padding:16px}.hero strong{font:700 42px Georgia;color:var(--green)}.hero span{display:block;color:var(--muted);margin-top:5px}.matrix{margin-top:12px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid var(--line);padding:10px;text-align:right}th:first-child{text-align:left}.note{margin-top:14px;color:var(--muted);line-height:1.55}@media(max-width:720px){.controls{grid-template-columns:1fr}}
-</style></head><body><main><div class="eyebrow">DIFFTRACK-COMPATIBLE · 6 LAYERS × 5 DENOISING STEPS</div><h1>Where correspondence<br>actually concentrates</h1><p class="lead">严格使用双向 Q/K、空间 softmax、多头平均、corr_to_matches 与 grid_sample。切换模型、采样范围和 PCK 半径查看 layer×step 矩阵。</p><section class="controls"><label>Model<select id="model"></select></label><label>Scope<select id="scope"></select></label><label>Metric<select id="metric"></select></label></section><section class="hero" id="hero"></section><section class="matrix" id="matrix"></section><p class="note">主分析建议使用 object_centers；all_centers 会包含容易匹配的静态背景。仅 4 个 case，最优组合属于探索性结果，不等于已获得统计显著性。</p></main><script id="payload" type="application/json">__PAYLOAD__</script><script>
+</style></head><body><main><div class="eyebrow">DIFFTRACK-COMPATIBLE · 6 LAYERS × 5 DENOISING STEPS</div><h1>Where correspondence<br>actually concentrates</h1><p class="lead">严格使用双向 Q/K、空间 softmax、多头平均、corr_to_matches 与 grid_sample。切换模型、采样范围和 PCK 半径查看 layer×step 矩阵。</p><section class="controls"><label>Model<select id="model"></select></label><label>Scope<select id="scope"></select></label><label>Metric<select id="metric"></select></label></section><section class="hero" id="hero"></section><section class="matrix" id="matrix"></section><p class="note">主分析使用 object_centers；all_centers 会包含容易匹配的静态背景。排名只使用四个模型共同完成的 case 交集。</p></main><script id="payload" type="application/json">__PAYLOAD__</script><script>
 const d=JSON.parse(document.getElementById('payload').textContent),M=document.getElementById('model'),S=document.getElementById('scope'),K=document.getElementById('metric');M.innerHTML=d.models.map(x=>`<option>${x}</option>`).join('');S.innerHTML=d.scopes.map(x=>`<option>${x}</option>`).join('');K.innerHTML=d.metrics.map(x=>`<option>${x}</option>`).join('');S.value='object_centers';K.value='pck32';function render(){const rows=d.summary.filter(x=>x.model===M.value&&x.scope===S.value),metric=K.value,best=rows.reduce((a,b)=>b[metric]>a[metric]?b:a),head=`<table><tr><th>Layer</th>${d.steps.map(x=>`<th>S${x}</th>`).join('')}</tr>`,body=d.layers.map(l=>`<tr><th>L${l}</th>${d.steps.map(s=>{const r=rows.find(x=>x.layer===l&&x.step_index===s),v=r[metric],a=Math.max(0,Math.min(1,v/100));return `<td style="background:rgba(23,102,84,${.05+.72*a})">${v.toFixed(1)}%</td>`}).join('')}</tr>`).join('');document.getElementById('matrix').innerHTML=head+body+'</table>';document.getElementById('hero').innerHTML=`<strong>L${best.layer}/S${best.step_index} · ${best[metric].toFixed(1)}%</strong><span>${M.value} · ${S.value} · ${metric} · ${best.comparisons} comparisons · mean error ${best.mean_error_px.toFixed(1)}px</span>`}for(const e of [M,S,K])e.addEventListener('change',render);render();
 </script></body></html>'''
 
@@ -257,6 +294,18 @@ def main() -> None:
     output = (args.output_dir or (root / "grid_ranking")).resolve()
     output.mkdir(parents=True, exist_ok=True)
     rows, layers, steps = collect_rows(root, args.cache_root.resolve())
+    completed_by_model = {
+        model: {
+            path.name
+            for path in (root / model / "cases").glob("case_*")
+            if (path / "complete.json").is_file()
+        }
+        for model in MODELS
+    }
+    common_cases = set.intersection(*completed_by_model.values())
+    if not common_cases:
+        raise RuntimeError("the four models have no commonly completed cases")
+    rows = [row for row in rows if row["case_key"] in common_cases]
     summary = aggregate(rows)
     best = best_rows(summary)
     write_csv(output / "per_case_metrics.csv", rows)
@@ -264,7 +313,28 @@ def main() -> None:
     (output / "ranking.json").write_text(
         json.dumps(best, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    write_report(output / "RESULTS.md", best, layers, steps)
+    (output / "coverage.json").write_text(
+        json.dumps(
+            {
+                "common_case_count": len(common_cases),
+                "common_cases": sorted(common_cases),
+                "completed_by_model": {
+                    model: len(cases) for model, cases in completed_by_model.items()
+                },
+                "excluded_noncommon_by_model": {
+                    model: sorted(cases - common_cases)
+                    for model, cases in completed_by_model.items()
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_report(
+        output / "RESULTS.md", best, summary, layers, steps, len(common_cases)
+    )
     payload = json.dumps(
         {
             "models": list(MODELS),

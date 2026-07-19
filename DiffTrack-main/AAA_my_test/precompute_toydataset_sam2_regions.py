@@ -51,14 +51,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--object-erode-px", type=int, default=11)
     parser.add_argument("--background-erode-px", type=int, default=31)
     parser.add_argument("--case-keys", nargs="*", default=None)
+    parser.add_argument("--worker-id", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def load_cases(dataset_root: Path, selected: list[str] | None) -> list[dict]:
+def load_cases(
+    dataset_root: Path,
+    selected: list[str] | None,
+    worker_id: int,
+    num_workers: int,
+) -> list[dict]:
     selected_set = set(selected or [])
     cases = []
-    for path in sorted((dataset_root / "cases").glob("case_*/case_manifest.json")):
+    for case_index, path in enumerate(
+        sorted((dataset_root / "cases").glob("case_*/case_manifest.json"))
+    ):
+        if case_index % int(num_workers) != int(worker_id):
+            continue
         payload = json.loads(path.read_text(encoding="utf-8"))
         case_key = str(payload["case_key"])
         if selected_set and case_key not in selected_set:
@@ -219,7 +230,12 @@ def main() -> None:
     args = parse_args()
     cache_root = args.cache_root.expanduser().resolve()
     cache_root.mkdir(parents=True, exist_ok=True)
-    cases = load_cases(args.dataset_root.expanduser().resolve(), args.case_keys)
+    cases = load_cases(
+        args.dataset_root.expanduser().resolve(),
+        args.case_keys,
+        int(args.worker_id),
+        int(args.num_workers),
+    )
     provider = build_provider(str(args.device), int(args.points_per_region))
     failures = []
     for index, case in enumerate(cases, start=1):

@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-step-index", type=int, default=39)
     parser.add_argument("--analysis-layers", type=int, nargs="+", default=None)
     parser.add_argument("--analysis-step-indices", type=int, nargs="+", default=None)
+    parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -63,6 +64,8 @@ def command_for(model: str, args: argparse.Namespace, worker_id: int) -> list[st
     ]
     if args.overwrite:
         common.append("--overwrite")
+    if args.no_video:
+        common.append("--analysis-no-video")
     if model == "stage1b":
         return [
             str(PYTHON),
@@ -78,7 +81,7 @@ def command_for(model: str, args: argparse.Namespace, worker_id: int) -> list[st
             str(PYTHON),
             str(HERE / "analyze_wan_gt_toy_worker.py"),
             "--video-field", "source_video",
-            "--vae-encode-mode", "whole_video",
+            "--vae-encode-mode", "framewise_anchors",
             "--query-coordinate-mode", "cache",
             "--allow-short-gt",
             "--device", "cuda:0",
