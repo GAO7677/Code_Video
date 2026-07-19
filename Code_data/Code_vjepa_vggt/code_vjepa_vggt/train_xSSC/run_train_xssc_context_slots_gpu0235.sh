@@ -7,6 +7,9 @@ NUM_PROCESSES="${NUM_PROCESSES:-4}"
 RESUME="${RESUME:-none}"
 NUM_FRAMES="${NUM_FRAMES:-24}"
 FIXED_NUM_CONTEXT_FRAMES="${FIXED_NUM_CONTEXT_FRAMES:-8}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
+OBJECT_LORA_RANK="${OBJECT_LORA_RANK:-32}"
+OBJECT_LORA_ALPHA="${OBJECT_LORA_ALPHA:-32}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-20000}"
 NUM_EPOCHS="${NUM_EPOCHS:-100}"
 HEIGHT="${HEIGHT:-512}"
@@ -17,6 +20,11 @@ WANDB_NAME="${WANDB_NAME:-xssc_ctx_slots_wan22_5b_gpu0235}"
 
 if [[ ",${GPU_SET}," == *",4,"* ]]; then
   echo "ERROR: gpu4 is unavailable; GPU_SET=${GPU_SET}" >&2
+  exit 1
+fi
+
+if [ "${FIXED_NUM_CONTEXT_FRAMES}" -ne 8 ]; then
+  echo "ERROR: xSSC training requires FIXED_NUM_CONTEXT_FRAMES=8" >&2
   exit 1
 fi
 
@@ -62,6 +70,9 @@ CMD=(
   --xssc_checkpoint "${XSSC_CHECKPOINT}"
   --xssc_input_size 256
   --xssc_max_time_steps 64
+  --object_lora_rank "${OBJECT_LORA_RANK}"
+  --object_lora_alpha "${OBJECT_LORA_ALPHA}"
+  --object_lora_dropout 0.0
   --dataset_type phys_state_episode
   --phys_state_root "${DATASET_ROOT}"
   --phys_state_split train
@@ -69,6 +80,8 @@ CMD=(
   --width "${WIDTH}"
   --num_frames "${NUM_FRAMES}"
   --fixed_num_context_frames "${FIXED_NUM_CONTEXT_FRAMES}"
+  --train_batch_size "${TRAIN_BATCH_SIZE}"
+  --no_context_ratio 0.0
   --max_train_steps "${MAX_TRAIN_STEPS}"
   --num_epochs "${NUM_EPOCHS}"
   --dataset_num_workers "${DATASET_NUM_WORKERS}"
@@ -77,7 +90,6 @@ CMD=(
   --gradient_accumulation_steps 1
   --optimizer_type paged_adamw8bit
   --max_grad_norm 1.0
-  --find_unused_parameters
   --save_steps 500
   --max_checkpoints_keep 10
   --remove_prefix_in_ckpt pipe.dit.
@@ -100,8 +112,10 @@ CMD=(
 CMD+=("${RESUME_ARGS[@]}")
 
 echo "[launch] GPU_SET=${GPU_SET} NUM_PROCESSES=${NUM_PROCESSES}"
+echo "[launch] per-GPU batch=${TRAIN_BATCH_SIZE} global batch=$((TRAIN_BATCH_SIZE * NUM_PROCESSES))"
 echo "[launch] xSSC=${XSSC_CHECKPOINT}"
-echo "[launch] default object token shape=[B,$((FIXED_NUM_CONTEXT_FRAMES * 7)),3072]"
+echo "[launch] object token shape=[B,$((FIXED_NUM_CONTEXT_FRAMES * 7)),3072]"
+echo "[launch] object cross-attention LoRA rank=${OBJECT_LORA_RANK} alpha=${OBJECT_LORA_ALPHA}"
 echo "[launch] output=${OUTPUT_DIR}"
 echo "[launch] command: ${CMD[*]}"
 exec "${CMD[@]}"

@@ -9,10 +9,12 @@ ObjectAuxHeads, and ObjectConditionAdapter) with:
                   -> LayerNorm + Linear(256, Wan dim) + time embedding
                   -> [B, Tc * 7, Wan dim] -> object cross-attention
 
-Only the slot projection, time embedding, and Wan object cross-attention branch
+The object cross-attention base weights are initialized from Wan's text
+cross-attention with the frozen physical-state LoRA baked in, then frozen. Only
+its Q/K/V/O LoRA adapters, the slot projection, time embedding, and object gates
 are trainable. The Wan base, physical-state LoRA, xSSC, and DINO backbone stay
-frozen. Only context frames are passed to xSSC, so no future information leaks
-into the conditioning path.
+frozen. Exactly eight context frames are passed to xSSC, so no future information
+leaks into the conditioning path.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from peft import LoraConfig, inject_adapter_in_model
 
 # Importing train_v_newtrain installs the DiffSynth path shim selected by the
 # --diffsynth_root command-line argument.
@@ -37,6 +40,123 @@ from diffsynth.diffusion import ModelLogger
 
 XSSC_IMAGENET_MEAN = (123.675, 116.28, 103.53)
 XSSC_IMAGENET_STD = (58.395, 57.12, 57.375)
+XSSC_NUM_CONTEXT_FRAMES = 8
+
+
+def _unwrap_linear(module: nn.Module) -> nn.Linear:
+    base_layer = getattr(module, "base_layer", module)
+    if not isinstance(base_layer, nn.Linear):
+        raise TypeError(f"Expected Linear or PEFT-wrapped Linear, got {type(module)!r}")
+    return base_layer
+
+
+def _effective_linear_weight(module: nn.Module) -> torch.Tensor:
+    """Return base weight plus any active, unmerged frozen PEFT adapters."""
+    base_layer = _unwrap_linear(module)
+    weight = base_layer.weight.detach().clone()
+    if not hasattr(module, "get_delta_weight") or bool(getattr(module, "disable_adapters", False)):
+        return weight
+    merged_adapters = set(getattr(module, "merged_adapters", ()))
+    for adapter_name in getattr(module, "active_adapters", ()):
+        if adapter_name not in merged_adapters:
+            weight.add_(module.get_delta_weight(adapter_name).to(weight))
+    return weight
+
+
+def _initialize_object_attention_from_text(block: nn.Module) -> None:
+    """Copy effective text cross-attention weights into the new object branch."""
+    with torch.no_grad():
+        for name in ("q", "k", "v", "o"):
+            source_module = getattr(block.cross_attn, name)
+            source = _unwrap_linear(source_module)
+            target = _unwrap_linear(getattr(block.object_cross_attn, name))
+            target.weight.copy_(_effective_linear_weight(source_module))
+            if target.bias is not None:
+                if source.bias is None:
+                    target.bias.zero_()
+                else:
+                    target.bias.copy_(source.bias)
+        block.object_cross_attn.norm_q.load_state_dict(block.cross_attn.norm_q.state_dict())
+        block.object_cross_attn.norm_k.load_state_dict(block.cross_attn.norm_k.state_dict())
+        block.norm4.load_state_dict(block.norm3.state_dict())
+
+
+def _inject_object_attention_lora(
+    block: nn.Module,
+    *,
+    rank: int,
+    alpha: float,
+    dropout: float,
+) -> None:
+    config = LoraConfig(
+        r=int(rank),
+        lora_alpha=float(alpha),
+        lora_dropout=float(dropout),
+        target_modules=["q", "k", "v", "o"],
+        bias="none",
+    )
+    block.object_cross_attn = inject_adapter_in_model(config, block.object_cross_attn)
+
+
+def _is_trainable_object_dit_parameter(name: str) -> bool:
+    is_object_lora = ".object_cross_attn." in name and (
+        ".lora_A." in name or ".lora_B." in name
+    )
+    return is_object_lora or ".object_gate" in name
+
+
+def merge_batched_pipeline_dicts(dicts: list[dict]) -> dict:
+    """Merge independently preprocessed samples into a true tensor batch."""
+    merged = {}
+    for key in dicts[0]:
+        values = [item[key] for item in dicts]
+        if all(isinstance(value, torch.Tensor) for value in values):
+            first = values[0]
+            can_concat = all(
+                value.ndim > 0
+                and int(value.shape[0]) == 1
+                and tuple(value.shape[1:]) == tuple(first.shape[1:])
+                for value in values
+            )
+            if can_concat:
+                merged[key] = torch.cat(values, dim=0)
+            elif all(
+                value.shape == first.shape and torch.equal(value, first)
+                for value in values[1:]
+            ):
+                merged[key] = first
+            else:
+                raise ValueError(
+                    f"Cannot batch tensor input {key!r}: "
+                    f"{[tuple(value.shape) for value in values]}"
+                )
+        else:
+            merged[key] = values[0]
+    return merged
+
+
+class GroupedBatchDataset(torch.utils.data.Dataset):
+    """Group raw samples while retaining the parent's batch-size-one DataLoader."""
+
+    def __init__(self, dataset, batch_size: int) -> None:
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {self.batch_size}")
+        if len(self.dataset) <= 0:
+            raise ValueError("Cannot batch an empty dataset")
+        self.sample_weights = None
+        self.load_from_cache = False
+
+    def __len__(self) -> int:
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
+    def __getitem__(self, index: int) -> list[dict]:
+        start = int(index) * self.batch_size
+        return [
+            self.dataset[(start + offset) % len(self.dataset)]
+            for offset in range(self.batch_size)
+        ]
 
 
 def _load_xssc_model(
@@ -59,10 +179,25 @@ def _load_xssc_model(
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
+    import timm
+
     from object_centric_bench.util import Config, build_from_config
 
     cfg = Config.fromfile(config)
-    model = build_from_config(cfg.model)
+    # DINO2ViT hard-codes pretrained=True, but the official xSSC checkpoint
+    # contains the complete DINO state. Build the architecture offline and then
+    # strictly restore every parameter from that checkpoint.
+    original_create_model = timm.create_model
+
+    def create_model_offline(*args, **kwargs):
+        kwargs["pretrained"] = False
+        return original_create_model(*args, **kwargs)
+
+    timm.create_model = create_model_offline
+    try:
+        model = build_from_config(cfg.model)
+    finally:
+        timm.create_model = original_create_model
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if isinstance(state, dict) and isinstance(state.get("state_dict"), dict):
         state = state["state_dict"]
@@ -94,6 +229,9 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         xssc_checkpoint: str,
         xssc_input_size: int = 256,
         xssc_max_time_steps: int = 64,
+        object_lora_rank: int = 32,
+        object_lora_alpha: float = 32.0,
+        object_lora_dropout: float = 0.0,
         object_gate_init: float = 0.1,
         lambda_main: float = 1.0,
         lambda_object_context_reg: float = 0.0,
@@ -107,6 +245,7 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         kwargs["train_object_aux_heads"] = False
         kwargs["train_object_adapter"] = False
         kwargs["train_object_dit_branch"] = False
+        kwargs["no_context_ratio"] = 0.0
         super().__init__(
             *args,
             object_gate_init=object_gate_init,
@@ -120,6 +259,20 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         self.lambda_object_context_reg = float(lambda_object_context_reg)
         self.xssc_input_size = int(xssc_input_size)
         self.xssc_max_time_steps = int(xssc_max_time_steps)
+        self.object_lora_rank = int(object_lora_rank)
+        self.object_lora_alpha = float(object_lora_alpha)
+        self.object_lora_dropout = float(object_lora_dropout)
+        if self.fixed_num_context_frames != XSSC_NUM_CONTEXT_FRAMES:
+            raise ValueError(
+                "xSSC training requires exactly "
+                f"{XSSC_NUM_CONTEXT_FRAMES} context frames, got {self.fixed_num_context_frames}"
+            )
+        if self.object_lora_rank <= 0:
+            raise ValueError(f"object_lora_rank must be positive, got {self.object_lora_rank}")
+        if not 0.0 <= self.object_lora_dropout < 1.0:
+            raise ValueError(
+                f"object_lora_dropout must be in [0, 1), got {self.object_lora_dropout}"
+            )
 
         dit = enable_object_condition_branch(
             self.pipe.dit,
@@ -129,12 +282,16 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         # xSSC tokens are projected directly to dit.dim, so the old text-dimension
         # object_embedding would be both redundant and shape-incompatible.
         dit.object_embedding = None
-        for name, param in dit.named_parameters():
-            is_object_branch = any(
-                token in name
-                for token in (".object_cross_attn.", ".object_gate", ".norm4.")
+        for block in dit.blocks:
+            _initialize_object_attention_from_text(block)
+            _inject_object_attention_lora(
+                block,
+                rank=self.object_lora_rank,
+                alpha=self.object_lora_alpha,
+                dropout=self.object_lora_dropout,
             )
-            param.requires_grad = is_object_branch
+        for name, param in dit.named_parameters():
+            param.requires_grad = _is_trainable_object_dit_parameter(name)
 
         model_device = dit.patch_embedding.weight.device
         model_dtype = dit.patch_embedding.weight.dtype
@@ -165,6 +322,59 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         self.xssc.eval()
         return self
 
+    def _prepare_pipeline_sample(self, sample):
+        inputs = self.get_pipeline_inputs(sample)
+        inputs = self.transfer_data_to_device(
+            inputs, self.pipe.device, self.pipe.torch_dtype
+        )
+        for unit in self.pipe.units:
+            inputs = self.pipe.unit_runner(unit, self.pipe, *inputs)
+        return inputs
+
+    def _forward_sample_batch(self, samples: list[dict]) -> torch.Tensor:
+        prepared = [self._prepare_pipeline_sample(sample) for sample in samples]
+        shared = merge_batched_pipeline_dicts([item[0] for item in prepared])
+        positive = merge_batched_pipeline_dicts([item[1] for item in prepared])
+        raw_samples = [item[0]["raw_sample"] for item in prepared]
+        shared["raw_sample"] = dict(raw_samples[0])
+        shared["raw_sample"]["context_video"] = torch.stack(
+            [sample["context_video"] for sample in raw_samples], dim=0
+        )
+        shared["raw_sample"]["num_context_frames"] = XSSC_NUM_CONTEXT_FRAMES
+        batch_size = int(shared["input_latents"].shape[0])
+        if batch_size != len(samples):
+            raise RuntimeError(
+                f"Prepared latent batch mismatch: got {batch_size}, expected {len(samples)}"
+            )
+        loss, metrics = self._compute_object_losses(self.pipe, shared, positive)
+        metrics["train/batch_size_per_gpu"] = float(batch_size)
+        self.last_train_metrics = metrics
+        return loss
+
+    def forward(self, data, inputs=None):
+        if isinstance(data, list):
+            if inputs is not None:
+                raise ValueError("Batched raw samples cannot be combined with prepared inputs")
+            return self._forward_sample_batch(data)
+        return super().forward(data, inputs=inputs)
+
+    def sample_context_spec(self, video, raw_sample=None):
+        if raw_sample is None or "context_video" not in raw_sample:
+            raise ValueError("xSSC training requires raw_sample.context_video")
+        context_video = raw_sample["context_video"]
+        if not isinstance(context_video, torch.Tensor) or context_video.ndim < 2:
+            raise TypeError("raw_sample.context_video must be a [C,T,H,W] tensor")
+        time_steps = int(context_video.shape[1])
+        if time_steps != XSSC_NUM_CONTEXT_FRAMES:
+            raise ValueError(
+                f"Expected {XSSC_NUM_CONTEXT_FRAMES} context frames, got {time_steps}"
+            )
+        return self._finalize_context_spec(
+            "fixed_full_context",
+            range(XSSC_NUM_CONTEXT_FRAMES),
+            ctx_max_length=XSSC_NUM_CONTEXT_FRAMES - 1,
+        )
+
     def trainable_modules(self) -> list[nn.Parameter]:
         params = list(self.slot_norm.parameters())
         params.extend(self.slot_projector.parameters())
@@ -172,7 +382,7 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         params.extend(
             param
             for name, param in self.pipe.dit.named_parameters()
-            if any(token in name for token in (".object_cross_attn.", ".object_gate", ".norm4."))
+            if _is_trainable_object_dit_parameter(name)
         )
         unique: list[nn.Parameter] = []
         seen: set[int] = set()
@@ -195,7 +405,7 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         frames = F.interpolate(
             frames,
             size=(self.xssc_input_size, self.xssc_input_size),
-            mode="bicubic",
+            mode="bilinear",
             align_corners=False,
             antialias=True,
         )
@@ -214,8 +424,8 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         autocast_enabled = flat_video.device.type == "cuda"
         with torch.autocast(device_type=flat_video.device.type, dtype=torch.bfloat16, enabled=autocast_enabled):
             feature = self.xssc.encode_backbone(flat_video).detach()
-            encoded = feature.permute(0, 2, 3, 1).flatten(1, 2)
-            encoded = self.xssc.encode_posit_embed(encoded)
+            encoded = feature.permute(0, 2, 3, 1)
+            encoded = self.xssc.encode_posit_embed(encoded).flatten(1, 2)
             encoded = self.xssc.encode_project(encoded)
             encoded = encoded.view(batch, time_steps, encoded.shape[1], encoded.shape[2])
 
@@ -254,8 +464,25 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
 
     def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
         sample = inputs_shared["raw_sample"]
-        num_context_frames = max(1, int(sample["num_context_frames"]))
-        context_video = sample["context_video"][:, :num_context_frames].unsqueeze(0)
+        num_context_frames = int(sample["num_context_frames"])
+        if num_context_frames != XSSC_NUM_CONTEXT_FRAMES:
+            raise ValueError(
+                f"Expected {XSSC_NUM_CONTEXT_FRAMES} sampled context frames, "
+                f"got {num_context_frames}"
+            )
+        context_video = sample["context_video"]
+        if context_video.ndim == 4:
+            context_video = context_video.unsqueeze(0)
+        elif context_video.ndim != 5:
+            raise ValueError(
+                "context_video must be [C,T,H,W] or [B,C,T,H,W], "
+                f"got shape={tuple(context_video.shape)}"
+            )
+        if int(context_video.shape[2]) != XSSC_NUM_CONTEXT_FRAMES:
+            raise ValueError(
+                f"Expected context_video T={XSSC_NUM_CONTEXT_FRAMES}, "
+                f"got shape={tuple(context_video.shape)}"
+            )
         context_video = context_video.to(device=pipe.device, dtype=pipe.torch_dtype)
         object_context, slots = self._build_object_context(context_video)
 
@@ -308,6 +535,10 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--xssc_checkpoint", required=True)
     group.add_argument("--xssc_input_size", type=int, default=256)
     group.add_argument("--xssc_max_time_steps", type=int, default=64)
+    group.add_argument("--object_lora_rank", type=int, default=32)
+    group.add_argument("--object_lora_alpha", type=float, default=32.0)
+    group.add_argument("--object_lora_dropout", type=float, default=0.0)
+    group.add_argument("--train_batch_size", type=int, default=1)
     return parser
 
 
@@ -356,17 +587,26 @@ def build_model(args: argparse.Namespace, accelerator) -> XSSCContextSlotsWanMod
         xssc_checkpoint=args.xssc_checkpoint,
         xssc_input_size=args.xssc_input_size,
         xssc_max_time_steps=args.xssc_max_time_steps,
+        object_lora_rank=args.object_lora_rank,
+        object_lora_alpha=args.object_lora_alpha,
+        object_lora_dropout=args.object_lora_dropout,
     )
 
 
 def _log_stage_summary(accelerator, model: XSSCContextSlotsWanModule, args: argparse.Namespace) -> None:
     if not accelerator.is_main_process:
         return
-    dit_params = [
+    object_lora_params = [
         param
         for name, param in model.pipe.dit.named_parameters()
         if param.requires_grad
-        and any(token in name for token in (".object_cross_attn.", ".object_gate", ".norm4."))
+        and ".object_cross_attn." in name
+        and (".lora_A." in name or ".lora_B." in name)
+    ]
+    object_gate_params = [
+        param
+        for name, param in model.pipe.dit.named_parameters()
+        if param.requires_grad and ".object_gate" in name
     ]
     projector_params = list(model.slot_norm.parameters()) + list(model.slot_projector.parameters())
     projector_params += list(model.time_embedding.parameters())
@@ -378,10 +618,16 @@ def _log_stage_summary(accelerator, model: XSSCContextSlotsWanModule, args: argp
         f"Frozen Wan base: {args.wan_root}",
         f"Frozen physical-state LoRA: {args.lora_checkpoint}",
         f"Frozen xSSC checkpoint: {args.xssc_checkpoint}",
-        f"xSSC shape: [B, Tc, {model.xssc_num_slots}, {model.xssc_slot_dim}]",
-        f"Object token shape: [B, Tc*{model.xssc_num_slots}, {model.pipe.dit.dim}]",
+        "Context policy: fixed full 8-frame context (text-only disabled)",
+        f"Per-GPU training batch size: {args.train_batch_size}",
+        f"xSSC shape: [B, 8, {model.xssc_num_slots}, {model.xssc_slot_dim}]",
+        f"Object token shape: [B, {8 * model.xssc_num_slots}, {model.pipe.dit.dim}]",
+        "Object attention base: text cross-attention + physical LoRA, baked and frozen",
+        f"Object LoRA: rank={model.object_lora_rank}, alpha={model.object_lora_alpha:g}, "
+        f"dropout={model.object_lora_dropout:g}",
         f"Trainable projector/time params: {sum(p.numel() for p in projector_params):,}",
-        f"Trainable DiT object-branch params: {sum(p.numel() for p in dit_params):,}",
+        f"Trainable object-attention LoRA params: {sum(p.numel() for p in object_lora_params):,}",
+        f"Trainable object-gate params: {sum(p.numel() for p in object_gate_params):,}",
         f"Total trainable params: {total:,}",
         "Legacy Stage1A/Grounding/CoTracker/VGGT/JEPA modules: not constructed",
         "=" * 78,
@@ -392,11 +638,20 @@ def _log_stage_summary(accelerator, model: XSSCContextSlotsWanModule, args: argp
 def main() -> None:
     parser = build_parser()
     args = tvn.prepare_args(parser.parse_args())
+    if int(args.fixed_num_context_frames) != XSSC_NUM_CONTEXT_FRAMES:
+        parser.error(
+            f"--fixed_num_context_frames must be {XSSC_NUM_CONTEXT_FRAMES} for xSSC training"
+        )
+    if int(args.train_batch_size) <= 0:
+        parser.error("--train_batch_size must be positive")
+    args.no_context_ratio = 0.0
     previous_handlers = tvn.install_interrupt_handlers()
     accelerator = tvn.build_accelerator(args)
     tvn.init_trackers(accelerator, args)
 
     dataset = tvn.build_dataset(args)
+    if int(args.train_batch_size) > 1:
+        dataset = GroupedBatchDataset(dataset, args.train_batch_size)
     headonly_val_config = tvn.build_headonly_val_config(args)
     headonly_val_dataset = tvn.build_headonly_val_dataset(args, headonly_val_config)
     headonly_val_dataloader = tvn.build_headonly_val_dataloader(headonly_val_dataset, args)
@@ -407,8 +662,20 @@ def main() -> None:
             model,
             tvn.resolve_lora_checkpoint_for_resume(args.stage2_resume_from),
             include_prefixes=("slot_norm.", "slot_projector.", "time_embedding."),
-            include_substrings=(".object_cross_attn.", ".object_gate", ".norm4."),
+            include_substrings=(".object_cross_attn.", ".object_gate"),
         )
+        expected_resume_count = sum(
+            1 for _, param in model.named_parameters() if param.requires_grad
+        )
+        if (
+            resume_info["loaded_count"] != expected_resume_count
+            or resume_info["skipped_shape_mismatch"]
+        ):
+            raise RuntimeError(
+                "Incomplete or incompatible xSSC object-LoRA resume checkpoint: "
+                f"loaded={resume_info['loaded_count']}/{expected_resume_count}, "
+                f"shape_mismatch={len(resume_info['skipped_shape_mismatch'])}"
+            )
         if accelerator.is_main_process:
             accelerator.print(
                 "Loaded xSSC-object resume weights: "
