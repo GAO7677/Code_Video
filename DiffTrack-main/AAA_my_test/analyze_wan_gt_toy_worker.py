@@ -17,8 +17,10 @@ import traceback
 from pathlib import Path
 
 import imageio.v2 as imageio
+import cv2
 import numpy as np
 import torch
+from PIL import Image
 
 
 CODE_ROOT = Path("/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt")
@@ -32,8 +34,8 @@ from code_vjepa_vggt.AAAinfer import wan_openvid_0613pybullet_lorav2v as target
 
 from AAA_my_test import analyze_stage1b_kubric_generation as probe
 from AAA_my_test.run_lorav2v_toy_analysis_worker import (
-    load_cases,
     load_cotracker,
+    map_cache_points_to_cover_crop,
     run_cotracker,
 )
 from AAA_my_test.sam2_region_query_utils import (
@@ -81,8 +83,64 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-visualize-layer", type=int, default=17)
     parser.add_argument("--analysis-visualize-step-index", type=int, default=None)
     parser.add_argument("--analysis-heatmap-query-index", type=int, default=0)
+    parser.add_argument(
+        "--video-field",
+        choices=("video", "source_video"),
+        default="video",
+        help="Dataset base field used as the GT video.",
+    )
+    parser.add_argument(
+        "--vae-encode-mode",
+        choices=("whole_video", "framewise_anchors"),
+        default="whole_video",
+        help="Encode all 25 frames causally, or independently encode the seven DiT anchor frames.",
+    )
+    parser.add_argument(
+        "--query-coordinate-mode",
+        choices=("cache", "cover_crop"),
+        default="cache",
+        help="Use stretch-cache coordinates or map them into Wan's center cover-crop coordinates.",
+    )
+    parser.add_argument(
+        "--save-attention-probabilities",
+        action="store_true",
+        help="Save the captured per-query spatial attention probabilities.",
+    )
+    parser.add_argument(
+        "--allow-short-gt",
+        action="store_true",
+        help="Use the longest available 4n+1 prefix when the GT is shorter than num-frames.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
+
+
+def load_cases(dataset_root: Path, case_keys: list[str] | None, video_field: str) -> list[dict]:
+    selected = set(case_keys or [])
+    cases = []
+    for manifest_path in sorted((dataset_root / "cases").glob("case_*/case_manifest.json")):
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        case_key = str(payload["case_key"])
+        if selected and case_key not in selected:
+            continue
+        base = payload["base"]
+        video_path = Path(base[video_field])
+        context_path = Path(base["video"])
+        caption = str(base.get("caption") or base.get("short_caption") or "").strip()
+        if not video_path.is_file() or not context_path.is_file() or not caption:
+            raise RuntimeError(f"invalid dataset entry: {manifest_path}")
+        cases.append(
+            {
+                "case_key": case_key,
+                "manifest": str(manifest_path),
+                "video": str(video_path),
+                "context_video": str(context_path),
+                "caption": caption,
+            }
+        )
+    if not cases:
+        raise RuntimeError(f"no cases found under {dataset_root}")
+    return cases
 
 
 def prepare_conditioning(
@@ -173,16 +231,42 @@ def prepare_conditioning(
     return inputs_shared, inputs_posi
 
 
-def encode_gt_video(pipe, frames: list) -> torch.Tensor:
+def encode_gt_video(pipe, frames: list, mode: str) -> torch.Tensor:
     pipe.load_models_to_device(["vae"])
-    video = pipe.preprocess_video(frames)
-    return pipe.vae.encode(
-        video,
-        device=pipe.device,
-        tiled=True,
-        tile_size=(30, 52),
-        tile_stride=(15, 26),
-    ).to(dtype=pipe.torch_dtype, device=pipe.device)
+    if mode == "framewise_anchors":
+        video = pipe.preprocess_video([frames[index] for index in range(0, len(frames), 4)])
+        latents = pipe.vae.encode_framewise(video, device=pipe.device)
+    else:
+        video = pipe.preprocess_video(frames)
+        latents = pipe.vae.encode(
+            video,
+            device=pipe.device,
+            tiled=True,
+            tile_size=(30, 52),
+            tile_stride=(15, 26),
+        )
+    return latents.to(dtype=pipe.torch_dtype, device=pipe.device)
+
+
+def load_video_prefix(path: Path, count: int, height: int, width: int, mode: str) -> list[Image.Image]:
+    if mode == "cover_crop":
+        return target.core.load_context_frames(
+            context_path=path,
+            context_frames=count,
+            height=height,
+            width=width,
+            resize_mode="crop",
+        )
+    capture = cv2.VideoCapture(str(path))
+    frames = []
+    while len(frames) < count:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        frames.append(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+    capture.release()
+    return frames
 
 
 def save_gt_video(frames: list, path: Path, fps: int, quality: int) -> None:
@@ -194,7 +278,7 @@ def save_gt_video(frames: list, path: Path, fps: int, quality: int) -> None:
         writer.close()
 
 
-def validate_geometry(args, gt_latents: torch.Tensor, inputs_shared: dict) -> int:
+def validate_geometry(args, gt_latents: torch.Tensor, inputs_shared: dict, pixel_frames: int) -> int:
     noise = inputs_shared["noise"]
     clean_prefix = inputs_shared.get("clean_prefix_latents")
     if clean_prefix is None:
@@ -204,8 +288,12 @@ def validate_geometry(args, gt_latents: torch.Tensor, inputs_shared: dict) -> in
     prefix_len = int(clean_prefix.shape[2])
     if prefix_len != 2:
         raise RuntimeError(f"expected 8 context frames -> 2 clean latents, got {prefix_len}")
-    if int(gt_latents.shape[2]) != 7:
-        raise RuntimeError(f"expected 25 GT frames -> 7 latents, got {gt_latents.shape[2]}")
+    expected_latents = (int(pixel_frames) - 1) // 4 + 1
+    if int(gt_latents.shape[2]) != expected_latents:
+        raise RuntimeError(
+            f"expected {pixel_frames} GT frames -> {expected_latents} latents, "
+            f"got {gt_latents.shape[2]}"
+        )
     if (int(args.height), int(args.width)) != (512, 896):
         raise RuntimeError("formal SAM2 cache requires Wan analysis geometry 512x896")
     return prefix_len
@@ -214,19 +302,36 @@ def validate_geometry(args, gt_latents: torch.Tensor, inputs_shared: dict) -> in
 def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     probe.seed_everything(int(args.seed))
     video_path = Path(case["video"])
+    context_path = Path(case["context_video"])
     prompt = str(case["caption"])
-    gt_frames = target.core.load_context_frames(
-        context_path=video_path,
-        context_frames=int(args.num_frames),
-        height=int(args.height),
-        width=int(args.width),
-        resize_mode="crop",
+    gt_frames = load_video_prefix(
+        video_path,
+        int(args.num_frames),
+        int(args.height),
+        int(args.width),
+        str(args.query_coordinate_mode),
     )
     if len(gt_frames) != int(args.num_frames):
-        raise RuntimeError(f"loaded {len(gt_frames)}/{args.num_frames} GT frames")
-    context = gt_frames[: int(args.context_frames)]
+        if not args.allow_short_gt or len(gt_frames) < 9:
+            raise RuntimeError(f"loaded {len(gt_frames)}/{args.num_frames} GT frames")
+        valid_length = ((len(gt_frames) - 1) // 4) * 4 + 1
+        gt_frames = gt_frames[:valid_length]
+    context = load_video_prefix(
+        context_path,
+        int(args.context_frames),
+        int(args.height),
+        int(args.width),
+        str(args.query_coordinate_mode),
+    )
     region_cache = load_region_cache(Path(args.analysis_region_cache_root), case["case_key"])
     query_points = region_cache.query_points
+    if args.query_coordinate_mode == "cover_crop":
+        query_points = map_cache_points_to_cover_crop(
+            query_points,
+            context_path,
+            region_cache.context_frame_rgb.shape[:2],
+            (int(args.height), int(args.width)),
+        )
     if region_cache.context_frame_rgb.shape[:2] != (int(args.height), int(args.width)):
         raise RuntimeError(f"SAM2 cache geometry mismatch: {region_cache.context_frame_rgb.shape[:2]}")
 
@@ -237,20 +342,20 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     if invalid_steps:
         raise ValueError(f"invalid analysis steps: {invalid_steps}")
 
-    gt_latents = encode_gt_video(pipe, gt_frames)
+    gt_latents = encode_gt_video(pipe, gt_frames, str(args.vae_encode_mode))
     inputs_shared, inputs_posi = prepare_conditioning(
         pipe,
         prompt=prompt,
         context_video=context,
         height=int(args.height),
         width=int(args.width),
-        num_frames=int(args.num_frames),
+        num_frames=len(gt_frames),
         sampling_steps=int(args.sampling_steps),
         sigma_shift=float(args.sigma_shift),
         cfg_scale=float(args.cfg_scale),
         seed=int(args.seed),
     )
-    prefix_len = validate_geometry(args, gt_latents, inputs_shared)
+    prefix_len = validate_geometry(args, gt_latents, inputs_shared, len(gt_frames))
     clean_prefix = inputs_shared["clean_prefix_latents"]
     noise = inputs_shared["noise"]
 
@@ -337,6 +442,14 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
             row.update(region_metadata(region))
             rows.append(row)
     probe.save_records(output_dir, records)
+    if args.save_attention_probabilities:
+        np.savez_compressed(
+            output_dir / "attention_probabilities.npz",
+            **{
+                f"{record.method}_layer{record.layer:02d}_step{record.step_index:03d}_probabilities": record.probabilities
+                for record in records
+            },
+        )
     (output_dir / "metrics.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -393,8 +506,12 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         "checkpoint": str(lora_path) if lora_path is not None else None,
         "wan_root": str(Path(args.wan_root).resolve()),
         "prompt": prompt,
-        "context_video": str(video_path),
+        "gt_video": str(video_path),
+        "context_video": str(context_path),
         "analysis_protocol": "Wan_GT_VAE_clean_prefix_fixed_noise_single_forward",
+        "vae_encode_mode": str(args.vae_encode_mode),
+        "video_field": str(args.video_field),
+        "query_coordinate_mode": str(args.query_coordinate_mode),
         "capture_location": "video_self_attention_post_rmsnorm_post_3d_rope_pre_flash_attention",
         "cfg_branch": "positive_conditional_only",
         "query_mode": "sam2_regions",
@@ -408,6 +525,7 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         "scheduler_timesteps": [float(value) for value in pipe.scheduler.timesteps.detach().float().cpu()],
         "scheduler_sigmas": [float(value) for value in pipe.scheduler.sigmas.detach().float().cpu()],
         "gt_pixel_frames": len(gt_frames),
+        "requested_gt_pixel_frames": int(args.num_frames),
         "context_pixel_frames": len(context),
         "context_source_frame_indices": list(range(len(context))),
         "clean_prefix_latents": int(reference.clean_prefix_latents),
@@ -445,9 +563,9 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.worker_id < args.num_workers:
         raise ValueError("worker-id must be in [0, num-workers)")
-    if int(args.num_frames) != 25 or int(args.context_frames) != 8:
-        raise ValueError("controlled Wan comparison requires 25 GT frames and 8 context frames")
-    cases = load_cases(args.dataset_root.resolve(), args.case_keys)
+    if int(args.num_frames) % 4 != 1 or int(args.context_frames) != 8:
+        raise ValueError("controlled Wan comparison requires 4n+1 GT frames and 8 context frames")
+    cases = load_cases(args.dataset_root.resolve(), args.case_keys, str(args.video_field))
     assigned = cases[args.worker_id :: args.num_workers]
     output_root = args.output_dir.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
