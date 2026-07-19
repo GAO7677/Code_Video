@@ -73,7 +73,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-layers", type=int, nargs="+", default=[0, 5, 11, 17, 23, 29])
     parser.add_argument("--analysis-step-indices", type=int, nargs="+", default=None)
     parser.add_argument("--analysis-region-cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
-    parser.add_argument("--analysis-matching-mode", choices=("q_to_k", "symmetric"), default="q_to_k")
+    parser.add_argument(
+        "--analysis-matching-mode",
+        choices=("difftrack", "q_to_k", "symmetric"),
+        default="difftrack",
+    )
     parser.add_argument("--analysis-hidden-temperature", type=float, default=0.07)
     parser.add_argument("--analysis-no-hidden", action="store_true")
     parser.add_argument(
@@ -352,6 +356,11 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         ),
         "query_regions": [region_metadata(region) for region in region_cache.regions],
         "matching_mode": str(args.analysis_matching_mode),
+        "matching_implementation": (
+            probe.DIFFTRACK_MATCHING_IMPLEMENTATION
+            if str(args.analysis_matching_mode) == "difftrack"
+            else "AAA_my_test.GenerationCapture.direct_token_argmax"
+        ),
         "weights_root": None if args.base_model_only else str(args.weights_root.resolve()),
         "checkpoint": None if lora_path is None else str(lora_path),
         "context_video": str(context_path),

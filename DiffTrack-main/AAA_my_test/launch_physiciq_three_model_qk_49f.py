@@ -32,11 +32,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--analysis-layer", type=int, default=23)
+    parser.add_argument("--analysis-step-index", type=int, default=39)
+    parser.add_argument("--analysis-layers", type=int, nargs="+", default=None)
+    parser.add_argument("--analysis-step-indices", type=int, nargs="+", default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
 def command_for(model: str, args: argparse.Namespace, worker_id: int) -> list[str]:
+    layers = args.analysis_layers or [args.analysis_layer]
+    steps = args.analysis_step_indices or [args.analysis_step_index]
+    visualize_layer = args.analysis_layer if args.analysis_layer in layers else layers[-1]
+    visualize_step = args.analysis_step_index if args.analysis_step_index in steps else steps[-1]
     common = [
         "--dataset-root", str(args.dataset_root.resolve()),
         "--analysis-region-cache-root", str(args.cache_root.resolve()),
@@ -46,10 +54,11 @@ def command_for(model: str, args: argparse.Namespace, worker_id: int) -> list[st
         "--num-frames", "49",
         "--context-frames", "8",
         "--sampling-steps", "40",
-        "--analysis-layers", "23",
-        "--analysis-step-indices", "39",
-        "--analysis-visualize-layer", "23",
-        "--analysis-visualize-step-index", "39",
+        "--analysis-layers", *[str(value) for value in layers],
+        "--analysis-step-indices", *[str(value) for value in steps],
+        "--analysis-visualize-layer", str(visualize_layer),
+        "--analysis-visualize-step-index", str(visualize_step),
+        "--analysis-matching-mode", "difftrack",
         "--analysis-no-hidden",
     ]
     if args.overwrite:

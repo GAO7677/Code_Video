@@ -40,6 +40,10 @@ from AAA_my_test.sam2_region_query_utils import (
     load_region_cache,
     save_region_query_visualizations,
 )
+from AAA_my_test.difftrack_qk_matching import (
+    IMPLEMENTATION as DIFFTRACK_MATCHING_IMPLEMENTATION,
+    match_query_points as difftrack_match_query_points,
+)
 
 
 base = kubric_infer.base
@@ -111,9 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--analysis-matching-mode",
-        choices=("q_to_k", "symmetric"),
-        default="q_to_k",
-        help="Use the requested query-to-key affinity or average it with K-to-Q.",
+        choices=("difftrack", "q_to_k", "symmetric"),
+        default="difftrack",
+        help="Default reproduces DiffTrack's symmetric dense map and grid sampling.",
     )
     parser.add_argument(
         "--analysis-no-hidden",
@@ -445,8 +449,10 @@ class GenerationCapture:
         source_indices = token_indices(
             self.query_points, height, width, self.pixel_height, self.pixel_width, q.device
         )
-        source_q = q_frames[query_time, source_indices].float()
-        source_k = k_frames[query_time, source_indices].float()
+        source_q_frame = q_frames[query_time].float()
+        source_k_frame = k_frames[query_time].float()
+        source_q = source_q_frame[source_indices]
+        source_k = source_k_frame[source_indices]
         predictions = np.full((time, len(source_indices), 2), np.nan, dtype=np.float32)
         probabilities = np.full((time, len(source_indices), spatial), np.nan, dtype=np.float32)
         predictions[query_time] = self.query_points.numpy()
@@ -454,6 +460,19 @@ class GenerationCapture:
         for target_time in range(self.current_prefix, time):
             target_q = q_frames[target_time].float()
             target_k = k_frames[target_time].float()
+            if self.matching_mode == "difftrack":
+                matched, probability = difftrack_match_query_points(
+                    source_q_frame,
+                    source_k_frame,
+                    target_q,
+                    target_k,
+                    self.query_points,
+                    (height, width),
+                    (self.pixel_height, self.pixel_width),
+                )
+                predictions[target_time] = matched.cpu().numpy()
+                probabilities[target_time] = probability.cpu().numpy()
+                continue
             scores = torch.einsum("phd,shd->hps", source_q, target_k) / scale
             probability = scores.softmax(dim=-1).mean(dim=0)
             if self.matching_mode == "symmetric":
@@ -993,6 +1012,11 @@ def main() -> None:
         "query_mode": str(args.analysis_query_mode),
         "query_sampling": query_manifest,
         "matching_mode": str(args.analysis_matching_mode),
+        "matching_implementation": (
+            DIFFTRACK_MATCHING_IMPLEMENTATION
+            if str(args.analysis_matching_mode) == "difftrack"
+            else "AAA_my_test.GenerationCapture.direct_token_argmax"
+        ),
         "checkpoint": str(checkpoint_path),
         "context_video": str(context_path),
         "prompt": str(args.prompt),

@@ -266,6 +266,11 @@ def process_case(
         ),
         "query_regions": [region_metadata(region) for region in region_cache.regions],
         "matching_mode": str(args.analysis_matching_mode),
+        "matching_implementation": (
+            analysis.DIFFTRACK_MATCHING_IMPLEMENTATION
+            if str(args.analysis_matching_mode) == "difftrack"
+            else "AAA_my_test.GenerationCapture.direct_token_argmax"
+        ),
         "checkpoint": str(checkpoint_path),
         "context_video": str(context_path),
         "prompt": prompt,
