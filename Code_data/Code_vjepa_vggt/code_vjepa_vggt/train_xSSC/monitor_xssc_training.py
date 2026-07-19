@@ -18,7 +18,6 @@ KEYS = (
     "loss_main",
     "loss_obj_ctx_reg",
     "gate_abs_max",
-    "max_ratio",
     "slot_drop",
     "grad_norm",
     "grad_absmax",

@@ -547,6 +547,21 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         total = self.lambda_main * loss_main + self.lambda_object_context_reg * object_context_reg
         context_abs = object_context.detach().abs()
         slot_abs = slots.detach().abs()
+        gate_abs_means = []
+        gate_abs_maxes = []
+        for block in self.pipe.dit.blocks:
+            object_gate = getattr(block, "object_gate", None)
+            if object_gate is None:
+                continue
+            gate_abs = torch.tanh(object_gate.detach().float()).abs()
+            gate_abs_means.append(gate_abs.mean())
+            gate_abs_maxes.append(gate_abs.max())
+        gate_abs_mean = (
+            float(torch.stack(gate_abs_means).mean().item()) if gate_abs_means else 0.0
+        )
+        gate_abs_max = (
+            float(torch.stack(gate_abs_maxes).max().item()) if gate_abs_maxes else 0.0
+        )
         metrics = {
             "train/loss_total": float(total.detach().item()),
             "train/loss_main": float(loss_main.detach().item()),
@@ -562,6 +577,8 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
             "train/object_count_after_dropout": self._last_retained_slots_per_sample,
             "train/object_context_abs_max": float(context_abs.max().item()),
             "train/object_context_abs_mean": float(context_abs.mean().item()),
+            "train/object_gate_tanh_abs_mean": gate_abs_mean,
+            "train/object_gate_tanh_abs_max": gate_abs_max,
         }
         return total, metrics
 

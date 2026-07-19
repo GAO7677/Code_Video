@@ -14,6 +14,7 @@ OUTPUT_BASE="${OUTPUT_BASE:-/data/gaoya/agent-data/outputs/xssc_checkpoint_infer
 POLL_SECONDS="${POLL_SECONDS:-60}"
 IDLE_MEMORY_MIB="${IDLE_MEMORY_MIB:-1200}"
 IDLE_UTIL_PERCENT="${IDLE_UTIL_PERCENT:-10}"
+MAX_RETRIES="${MAX_RETRIES:-3}"
 EXCLUDE_GPU_IDS=",${EXCLUDE_GPU_IDS:-0,2,3,4,5},"
 
 mkdir -p "${OUTPUT_BASE}"
@@ -41,7 +42,15 @@ while true; do
     found_ready=1
     step_name="$(basename "${checkpoint_dir}")"
     output_root="${OUTPUT_BASE}/${step_name}"
-    [[ -f "${output_root}/.validated" || -f "${output_root}/.failed" ]] && continue
+    [[ -f "${output_root}/.validated" ]] && continue
+    attempts_file="${output_root}/attempts.txt"
+    attempts=0
+    if [[ -s "${attempts_file}" ]]; then
+      attempts="$(<"${attempts_file}")"
+    fi
+    if (( attempts >= MAX_RETRIES )); then
+      continue
+    fi
 
     gpu="$(select_idle_gpu || true)"
     if [[ -z "${gpu}" ]]; then
@@ -67,11 +76,14 @@ while true; do
         --input-json-list "${INPUT_JSON_LIST}" \
         --report "${output_root}/health_report.json" \
         2>&1 | tee -a "${output_root}/inference.log"; then
+      rm -f "${output_root}/.failed" "${attempts_file}"
       touch "${output_root}/.validated"
       status=completed
     else
+      attempts=$((attempts + 1))
+      printf '%s\n' "${attempts}" > "${attempts_file}"
       touch "${output_root}/.failed"
-      status=failed
+      status="failed attempt ${attempts}/${MAX_RETRIES}"
     fi
     printf '%s %s %s on GPU %s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${status}" "${step_name}" "${gpu}" \
