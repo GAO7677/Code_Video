@@ -12,6 +12,10 @@ from pathlib import Path
 OUTPUTS_ROOT = Path("/data/gaoya/agent-data/outputs")
 DEFAULT_STAGE1B = OUTPUTS_ROOT / "stage1b_kubric_step004000_sam2_regions_steps40"
 DEFAULT_LORA = OUTPUTS_ROOT / "wan_openvid_0613pybullet_lora_step000500_sam2_regions_steps40"
+DEFAULT_GT = (
+    OUTPUTS_ROOT
+    / "difftrack_0718toy_case50_sam2_regions/cogvideox_2b_steps_0_10_20_29_39"
+)
 DEFAULT_OUTPUT = OUTPUTS_ROOT / "sam2_region_generation_comparison"
 
 
@@ -19,33 +23,63 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage1b-root", type=Path, default=DEFAULT_STAGE1B)
     parser.add_argument("--lora-root", type=Path, default=DEFAULT_LORA)
+    parser.add_argument("--gt-root", type=Path, default=DEFAULT_GT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
 
 
-def load_model_payload(name: str, label: str, root: Path, asset_name: str) -> dict:
+def load_model_payload(
+    name: str,
+    label: str,
+    root: Path,
+    asset_name: str,
+    *,
+    video_file: str = "generated.mp4",
+    secondary_method: str = "hidden",
+    secondary_label: str = "Hidden",
+    supports_heatmaps: bool = True,
+    token_stride: int = 32,
+) -> dict:
     cases = []
-    for case_dir in sorted((root / "cases").glob("case_*")):
+    case_parent = root / "cases" if (root / "cases").is_dir() else root
+    for case_dir in sorted(case_parent.glob("case_*")):
         manifest_path = case_dir / "manifest.json"
         metrics_path = case_dir / "metrics.json"
         if not manifest_path.is_file() or not metrics_path.is_file():
             continue
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        display_layers = [
+            layer for layer in manifest["layers"] if layer in (0, 5, 11, 17, 23, 29)
+        ]
+        metrics = [row for row in metrics if int(row["layer"]) in display_layers]
         cases.append(
             {
                 "case_key": case_dir.name,
                 "prompt": manifest["prompt"],
                 "regions": manifest["query_regions"],
-                "layers": manifest["layers"],
+                "layers": display_layers,
                 "steps": manifest["step_indices"],
                 "metrics": metrics,
-                "asset_root": f"{asset_name}/cases/{case_dir.name}",
+                "asset_root": (
+                    f"{asset_name}/cases/{case_dir.name}"
+                    if case_parent.name == "cases"
+                    else f"{asset_name}/{case_dir.name}"
+                ),
             }
         )
     if len(cases) != 50:
         raise RuntimeError(f"{name}: expected 50 complete cases, got {len(cases)}")
-    return {"name": name, "label": label, "cases": cases}
+    return {
+        "name": name,
+        "label": label,
+        "video_file": video_file,
+        "secondary_method": secondary_method,
+        "secondary_label": secondary_label,
+        "supports_heatmaps": supports_heatmaps,
+        "token_stride": token_stride,
+        "cases": cases,
+    }
 
 
 def link_assets(output_dir: Path, name: str, target: Path) -> None:
@@ -66,9 +100,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta n
 <section class="controls"><label>Model<select id="model"></select></label><label>Case<select id="case"></select></label><label>Region<select id="region"></select></label><label>View<select id="view"><option value="tracks">Tracks</option><option value="heatmaps">Heatmaps</option></select></label></section>
 <section class="viewer"><div class="viewer-head"><div><h2 id="title"></h2><p id="prompt"></p></div><a id="manifest">manifest.json</a></div><div class="media" id="media"></div></section>
 <section class="metrics" id="metrics"></section><section class="tables"><article class="viewer matrix"><h3>Q/K PCK@32</h3><div id="qk-table"></div></article><article class="viewer matrix"><h3>Hidden PCK@32</h3><div id="hidden-table"></div></article></section>
-<p class="note">主指标使用 PCK@32，因为 DiT 空间 token stride 为 32px；PCK@8 受 token-center 量化误差主导。默认可视化层/步为 L17/S39，矩阵包含 L0/5/11/17/23/29 与 S0/10/20/29/39。</p>
+<p class="note" id="protocol-note"></p>
 </main><script id="payload" type="application/json">__PAYLOAD__</script><script>
-const data=JSON.parse(document.getElementById('payload').textContent);const modelEl=document.getElementById('model'),caseEl=document.getElementById('case'),regionEl=document.getElementById('region'),viewEl=document.getElementById('view');const fmt=(x,n=2)=>x==null?'NA':Number(x).toFixed(n);modelEl.innerHTML=data.models.map((m,i)=>`<option value="${i}">${m.label}</option>`).join('');function currentModel(){return data.models[Number(modelEl.value)||0]}function currentCase(){return currentModel().cases[Number(caseEl.value)||0]}function currentRegion(){return currentCase().regions[Number(regionEl.value)||0]}function resetCases(){caseEl.innerHTML=currentModel().cases.map((c,i)=>`<option value="${i}">${c.case_key}</option>`).join('');caseEl.value=0;resetRegions()}function resetRegions(){regionEl.innerHTML=currentCase().regions.map((r,i)=>`<option value="${i}">${r.region_name}${r.region_phrase?' · '+r.region_phrase:''}</option>`).join('');regionEl.value=0;render()}function row(method,layer,step){const r=currentRegion();return currentCase().metrics.find(x=>x.region_name===r.region_name&&x.method===method&&x.layer===layer&&x.step_index===step)}function card(label,r,key,suffix=''){return `<article class="card metric"><span>${label}</span><b>${fmt(r?.[key])}${suffix}</b><small>L17 / S39 · ${r?.comparisons??0} matches</small></article>`}function matrix(method){const c=currentCase(),layers=c.layers,steps=c.steps;let h='<table><tr><th>Layer</th>'+steps.map(s=>`<th>S${s}</th>`).join('')+'</tr>';for(const l of layers){h+=`<tr><th>L${l}</th>`+steps.map(s=>{const r=row(method,l,s),v=r?.pck32??0,a=Math.max(0,Math.min(1,v/100));return `<td style="background:rgba(18,107,88,${.06+.68*a})">${fmt(v)}%</td>`}).join('')+'</tr>'}return h+'</table>'}function render(){const m=currentModel(),c=currentCase(),r=currentRegion(),base=c.asset_root,dir=`${base}/regions/${r.region_name}`,heat=viewEl.value==='heatmaps',tag=`L17_S039`;document.getElementById('title').textContent=`${m.label} · ${c.case_key} · ${r.region_name}`;document.getElementById('prompt').textContent=r.region_phrase?`${r.region_phrase} | ${c.prompt}`:c.prompt;document.getElementById('manifest').href=`${base}/manifest.json`;document.getElementById('media').innerHTML=heat?`<article class="panel"><h3>SAM2 mask + query</h3><img src="${dir}/mask_points.png"></article><article class="panel"><h3>Q/K heatmap</h3><img src="${dir}/heatmap_qk_${tag}.png"></article><article class="panel"><h3>Hidden heatmap</h3><img src="${dir}/heatmap_hidden_${tag}.png"></article>`:`<article class="panel"><h3>Generated video</h3><video controls muted loop src="${base}/generated.mp4"></video></article><article class="panel"><h3>Q/K + CoTracker</h3><video controls muted loop src="${dir}/tracks_qk_${tag}.mp4"></video></article><article class="panel"><h3>Hidden + CoTracker</h3><video controls muted loop src="${dir}/tracks_hidden_${tag}.mp4"></video></article>`;const q=row('qk',17,39),h=row('hidden',17,39);document.getElementById('metrics').innerHTML=card('Q/K PCK@32',q,'pck32','%')+card('Q/K mean error',q,'mean_error_px','px')+card('Hidden PCK@32',h,'pck32','%')+card('GT attention prob.',q,'mean_gt_probability');document.getElementById('qk-table').innerHTML=matrix('qk');document.getElementById('hidden-table').innerHTML=matrix('hidden')}modelEl.addEventListener('change',resetCases);caseEl.addEventListener('change',resetRegions);regionEl.addEventListener('change',render);viewEl.addEventListener('change',render);resetCases();
+const data=JSON.parse(document.getElementById('payload').textContent);const modelEl=document.getElementById('model'),caseEl=document.getElementById('case'),regionEl=document.getElementById('region'),viewEl=document.getElementById('view');const fmt=(x,n=2)=>x==null?'NA':Number(x).toFixed(n);modelEl.innerHTML=data.models.map((m,i)=>`<option value="${i}">${m.label}</option>`).join('');function currentModel(){return data.models[Number(modelEl.value)||0]}function currentCase(){return currentModel().cases[Number(caseEl.value)||0]}function currentRegion(){return currentCase().regions[Number(regionEl.value)||0]}function resetCases(){caseEl.innerHTML=currentModel().cases.map((c,i)=>`<option value="${i}">${c.case_key}</option>`).join('');caseEl.value=0;resetRegions()}function resetRegions(){regionEl.innerHTML=currentCase().regions.map((r,i)=>`<option value="${i}">${r.region_name}${r.region_phrase?' · '+r.region_phrase:''}</option>`).join('');regionEl.value=0;render()}function row(method,layer,step){const r=currentRegion();return currentCase().metrics.find(x=>x.region_name===r.region_name&&x.method===method&&x.layer===layer&&x.step_index===step)}function card(label,r,key,suffix=''){return `<article class="card metric"><span>${label}</span><b>${fmt(r?.[key])}${suffix}</b><small>L17 / S39 · ${r?.comparisons??0} matches</small></article>`}function matrix(method){const c=currentCase(),layers=c.layers,steps=c.steps;let h='<table><tr><th>Layer</th>'+steps.map(s=>`<th>S${s}</th>`).join('')+'</tr>';for(const l of layers){h+=`<tr><th>L${l}</th>`+steps.map(s=>{const r=row(method,l,s),v=r?.pck32??0,a=Math.max(0,Math.min(1,v/100));return `<td style="background:rgba(18,107,88,${.06+.68*a})">${fmt(v)}%</td>`}).join('')+'</tr>'}return h+'</table>'}function render(){const m=currentModel(),c=currentCase(),r=currentRegion(),base=c.asset_root,dir=`${base}/regions/${r.region_name}`,canHeat=viewEl.value==='heatmaps'&&m.supports_heatmaps,tag=`L17_S039`,secondary=m.secondary_method;document.getElementById('title').textContent=`${m.label} · ${c.case_key} · ${r.region_name}`;document.getElementById('prompt').textContent=r.region_phrase?`${r.region_phrase} | ${c.prompt}`:c.prompt;document.getElementById('manifest').href=`${base}/manifest.json`;document.getElementById('media').innerHTML=canHeat?`<article class="panel"><h3>SAM2 mask + query</h3><img src="${dir}/mask_points.png"></article><article class="panel"><h3>Q/K heatmap</h3><img src="${dir}/heatmap_qk_${tag}.png"></article><article class="panel"><h3>${m.secondary_label} heatmap</h3><img src="${dir}/heatmap_${secondary}_${tag}.png"></article>`:`<article class="panel"><h3>${m.name==='gt'?'GT shifted video':'Generated video'}</h3><video controls muted loop src="${base}/${m.video_file}"></video></article><article class="panel"><h3>Q/K + CoTracker</h3><video controls muted loop src="${dir}/tracks_qk_${tag}.mp4"></video></article><article class="panel"><h3>${m.secondary_label} + CoTracker</h3><video controls muted loop src="${dir}/tracks_${secondary}_${tag}.mp4"></video></article>`;const q=row('qk',17,39),h=row(secondary,17,39);document.getElementById('metrics').innerHTML=card('Q/K PCK@32',q,'pck32','%')+card('Q/K mean error',q,'mean_error_px','px')+card(`${m.secondary_label} PCK@32`,h,'pck32','%')+card(`${m.secondary_label} error`,h,'mean_error_px','px');document.getElementById('qk-table').innerHTML=matrix('qk');document.getElementById('hidden-table').previousElementSibling.textContent=`${m.secondary_label} PCK@32`;document.getElementById('hidden-table').innerHTML=matrix(secondary);document.getElementById('protocol-note').textContent=m.name==='gt'?'GT real 使用 CogVideoX-2B DiffTrack inversion：源 frame 4 作为模型首帧，49 帧，空间 token stride=16px；PCK@16 是一-token指标，PCK@32 是两-token指标。该结果用于 GT 视频参考，不应与 Wan 的绝对 layer 编号作同构解释。':'Wan2.2 生成分析：前8帧编码为2个 clean latents，query 对齐源 frame 4，空间 token stride=32px，因此 PCK@32 是一-token主指标。'}modelEl.addEventListener('change',resetCases);caseEl.addEventListener('change',resetRegions);regionEl.addEventListener('change',render);viewEl.addEventListener('change',render);resetCases();
 </script></body></html>'''
 
 
@@ -76,14 +110,27 @@ def main() -> None:
     args = parse_args()
     stage1b = args.stage1b_root.expanduser().resolve()
     lora = args.lora_root.expanduser().resolve()
+    gt = args.gt_root.expanduser().resolve()
     output = args.output_dir.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     link_assets(output, "stage1b", stage1b)
     link_assets(output, "lora", lora)
+    link_assets(output, "gt", gt)
     payload = {
         "models": [
             load_model_payload("stage1b", "Stage1b step-004000", stage1b, "stage1b"),
             load_model_payload("lora", "LoRA step-000500", lora, "lora"),
+            load_model_payload(
+                "gt",
+                "GT real · CogVideoX-2B",
+                gt,
+                "gt",
+                video_file="gt_shifted.mp4",
+                secondary_method="feature",
+                secondary_label="Feature",
+                supports_heatmaps=False,
+                token_stride=16,
+            ),
         ]
     }
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")

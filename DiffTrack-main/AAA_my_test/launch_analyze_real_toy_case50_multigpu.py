@@ -28,12 +28,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--track-dir",
         type=Path,
-        default=Path("/data/gaoya/agent-data/outputs/difftrack_0718toy_case50_base/tracks"),
+        default=Path("/data/gaoya/agent-data/outputs/difftrack_0718toy_case50_sam2_regions/tracks"),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/data/gaoya/agent-data/outputs/difftrack_0718toy_case50_base/cogvideox_2b_gpu012_20260719"),
+        default=Path(
+            "/data/gaoya/agent-data/outputs/difftrack_0718toy_case50_sam2_regions/"
+            "cogvideox_2b_steps_0_10_20_29_39"
+        ),
     )
     parser.add_argument(
         "--model-path",
@@ -48,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", default="0,1,2")
     parser.add_argument("--model", choices=["cogvideox_t2v_2b", "cogvideox_t2v_5b"], default="cogvideox_t2v_2b")
     parser.add_argument("--num-inference-steps", type=int, default=50)
+    parser.add_argument("--inverse-steps", nargs="+", type=int, default=[0, 10, 20, 29, 39])
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -100,6 +104,8 @@ def main() -> int:
             f"cuda:{gpu_id}",
             "--num-inference-steps",
             str(args.num_inference_steps),
+            "--inverse-steps",
+            *[str(value) for value in args.inverse_steps],
             "--start",
             str(start),
             "--end",

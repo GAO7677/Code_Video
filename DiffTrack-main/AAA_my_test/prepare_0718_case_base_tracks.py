@@ -76,7 +76,8 @@ def make_region_queries(
                 f"{case_key}/{region.region_name}: expected {points_per_region} cached points"
             )
         regions.append(region.__dict__.copy())
-    return torch.cat((torch.zeros_like(xy[:, :1]), xy), dim=-1).unsqueeze(0)
+    queries = torch.cat((torch.zeros_like(xy[:, :1]), xy), dim=-1).unsqueeze(0)
+    return queries, regions
 
 
 def load_case_videos(dataset_root: Path) -> list[dict[str, str]]:

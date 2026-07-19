@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import cv2
+import imageio.v2 as imageio
 import numpy as np
 import pandas as pd
 import torch
@@ -24,7 +25,11 @@ sys.path.insert(0, str(REPO_ROOT))
 import diffusers
 from diffusers import CogVideoXPipeline
 from utils.confidence_attention_score import ConfidenceAttentionScore
-from utils.evaluation import MatchingEvaluator
+from AAA_my_test.sam2_region_query_utils import (
+    RegionQueryCache,
+    load_region_cache,
+    save_region_query_visualizations,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--matching-accuracy", action="store_true")
     parser.add_argument("--conf-attn-score", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--visualize-layer", type=int, default=17)
+    parser.add_argument("--visualize-step", type=int, default=39)
     return parser.parse_args()
 
 
@@ -61,20 +68,110 @@ def seed_everything(seed: int, device: str) -> torch.Generator:
     return generator
 
 
-def read_video(path: Path, num_frames: int, height: int, width: int) -> torch.Tensor:
+def read_video(
+    path: Path,
+    num_frames: int,
+    height: int,
+    width: int,
+    source_start_frame: int,
+) -> torch.Tensor:
     capture = cv2.VideoCapture(str(path))
     frames = []
     while len(frames) < num_frames:
         ok, frame = capture.read()
         if not ok:
             break
-        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        frame_index = int(capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        if frame_index >= source_start_frame:
+            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     capture.release()
-    if len(frames) != num_frames:
-        raise ValueError(f"{path} contains {len(frames)} frames, expected at least {num_frames}")
+    if not frames:
+        raise ValueError(f"{path} has no frames at or after {source_start_frame}")
+    while len(frames) < num_frames:
+        frames.append(frames[-1].copy())
     video = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float()
     video = F.interpolate(video, size=(256, 256), mode="bilinear", align_corners=False)
     return F.interpolate(video, size=(height, width), mode="bilinear", align_corners=False)
+
+
+class RegionMatchingEvaluator:
+    """DiffTrack evaluator with independent object/background metrics."""
+
+    metric_names = ("mean_error_px", "pck8", "pck16", "pck32")
+
+    def __init__(
+        self,
+        timestep_num: int,
+        layer_num: int,
+        gt_tracks: torch.Tensor,
+        gt_visibility: torch.Tensor,
+        regions: list[dict],
+        visualize_layer: int,
+        visualize_step: int,
+    ) -> None:
+        self.pck = torch.zeros([layer_num, timestep_num])
+        self.gt_tracks = gt_tracks
+        self.gt_visibility = gt_visibility.bool()
+        self.regions = regions
+        self.values = {
+            name: np.full((len(regions), layer_num, timestep_num), np.nan, dtype=np.float32)
+            for name in self.metric_names
+        }
+        self.comparisons = np.zeros((len(regions), layer_num, timestep_num), dtype=np.int64)
+        self.visualize_layer = int(visualize_layer)
+        self.visualize_step = int(visualize_step)
+        self.visualized_tracks: np.ndarray | None = None
+
+    def update(self, pred_tracks: torch.Tensor, layer: int, timestep_idx: int) -> None:
+        error = torch.linalg.norm(pred_tracks - self.gt_tracks, dim=-1)
+        valid_all = self.gt_visibility.clone()
+        valid_all[:, 0] = False
+        values = error[valid_all]
+        self.pck[layer, timestep_idx] = (
+            (values < 8).float().mean() * 100 if values.numel() else 0.0
+        )
+        for region_index, region in enumerate(self.regions):
+            point_slice = slice(int(region["point_start"]), int(region["point_end"]))
+            valid = valid_all[:, :, point_slice]
+            region_error = error[:, :, point_slice][valid]
+            self.comparisons[region_index, layer, timestep_idx] = int(region_error.numel())
+            if not region_error.numel():
+                continue
+            self.values["mean_error_px"][region_index, layer, timestep_idx] = float(
+                region_error.mean().item()
+            )
+            for threshold in (8, 16, 32):
+                self.values[f"pck{threshold}"][region_index, layer, timestep_idx] = float(
+                    (region_error <= threshold).float().mean().item() * 100
+                )
+        if layer == self.visualize_layer and timestep_idx == self.visualize_step:
+            self.visualized_tracks = pred_tracks[0].detach().float().cpu().numpy()
+
+    def metric_rows(self, descriptor: str, steps: list[int]) -> list[dict]:
+        rows = []
+        for region_index, region in enumerate(self.regions):
+            for layer in range(self.pck.shape[0]):
+                for step in steps:
+                    comparisons = int(self.comparisons[region_index, layer, step])
+                    row = {
+                        "method": descriptor,
+                        "layer": layer,
+                        "step_index": step,
+                        "comparisons": comparisons,
+                        **{key: region.get(key) for key in (
+                            "region_name",
+                            "region_type",
+                            "region_phrase",
+                            "region_slot",
+                            "point_start",
+                            "point_end",
+                        )},
+                    }
+                    for metric in self.metric_names:
+                        value = self.values[metric][region_index, layer, step]
+                        row[metric] = None if np.isnan(value) else float(value)
+                    rows.append(row)
+        return rows
 
 
 def load_pipeline(args: argparse.Namespace) -> CogVideoXPipeline:
@@ -124,8 +221,8 @@ def atomic_write_text(path: Path, content: str) -> None:
 def save_checkpoint(
     save_dir: Path,
     completed_steps: list[int],
-    qk_evaluator: MatchingEvaluator | None,
-    feat_evaluator: MatchingEvaluator | None,
+    qk_evaluator: RegionMatchingEvaluator | None,
+    feat_evaluator: RegionMatchingEvaluator | None,
     score: ConfidenceAttentionScore | None,
 ) -> None:
     state_path = save_dir / "step_state.npz"
@@ -134,6 +231,15 @@ def save_checkpoint(
     if qk_evaluator is not None and feat_evaluator is not None:
         arrays["qk_pck"] = qk_evaluator.pck.cpu().numpy()
         arrays["feature_pck"] = feat_evaluator.pck.cpu().numpy()
+        arrays["qk_comparisons"] = qk_evaluator.comparisons
+        arrays["feature_comparisons"] = feat_evaluator.comparisons
+        for metric in RegionMatchingEvaluator.metric_names:
+            arrays[f"qk_{metric}"] = qk_evaluator.values[metric]
+            arrays[f"feature_{metric}"] = feat_evaluator.values[metric]
+        if qk_evaluator.visualized_tracks is not None:
+            arrays["qk_visualized_tracks"] = qk_evaluator.visualized_tracks
+        if feat_evaluator.visualized_tracks is not None:
+            arrays["feature_visualized_tracks"] = feat_evaluator.visualized_tracks
     with temporary_state.open("wb") as handle:
         np.savez_compressed(handle, **arrays)
     os.replace(temporary_state, state_path)
@@ -151,8 +257,8 @@ def save_checkpoint(
 
 def restore_checkpoint(
     save_dir: Path,
-    qk_evaluator: MatchingEvaluator | None,
-    feat_evaluator: MatchingEvaluator | None,
+    qk_evaluator: RegionMatchingEvaluator | None,
+    feat_evaluator: RegionMatchingEvaluator | None,
     score: ConfidenceAttentionScore | None,
 ) -> list[int]:
     state_path = save_dir / "step_state.npz"
@@ -162,6 +268,16 @@ def restore_checkpoint(
     if qk_evaluator is not None and feat_evaluator is not None:
         qk_evaluator.pck.copy_(torch.from_numpy(state["qk_pck"]))
         feat_evaluator.pck.copy_(torch.from_numpy(state["feature_pck"]))
+        if "qk_comparisons" in state:
+            qk_evaluator.comparisons[...] = state["qk_comparisons"]
+            feat_evaluator.comparisons[...] = state["feature_comparisons"]
+            for metric in RegionMatchingEvaluator.metric_names:
+                qk_evaluator.values[metric][...] = state[f"qk_{metric}"]
+                feat_evaluator.values[metric][...] = state[f"feature_{metric}"]
+            if "qk_visualized_tracks" in state:
+                qk_evaluator.visualized_tracks = state["qk_visualized_tracks"].copy()
+            if "feature_visualized_tracks" in state:
+                feat_evaluator.visualized_tracks = state["feature_visualized_tracks"].copy()
     if score is not None:
         for filename, attribute in (
             ("confidence_score.csv", "attention_max_df"),
@@ -171,6 +287,78 @@ def restore_checkpoint(
             if path.exists():
                 setattr(score, attribute, pd.read_csv(path, index_col=[0, 1]))
     return [int(step) for step in state["completed_steps"]]
+
+
+def resize_region_cache(cache: RegionQueryCache, height: int, width: int) -> RegionQueryCache:
+    source_h, source_w = cache.context_frame_rgb.shape[:2]
+    points = cache.query_points.copy()
+    points[:, 0] *= width / source_w
+    points[:, 1] *= height / source_h
+    masks = np.stack(
+        [
+            cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+            for mask in cache.masks_rhw
+        ]
+    ).astype(np.uint8)
+    frame = cv2.resize(cache.context_frame_rgb, (width, height), interpolation=cv2.INTER_LINEAR)
+    metadata = dict(cache.metadata)
+    metadata.update({"height": height, "width": width, "resize_mode": "DiffTrack_256_then_480x720"})
+    return RegionQueryCache(cache.case_key, points, masks, cache.regions, frame, metadata)
+
+
+def save_input_video(video_tchw: torch.Tensor, path: Path, fps: int = 30) -> None:
+    writer = imageio.get_writer(path, fps=fps, quality=6)
+    for frame in video_tchw:
+        writer.append_data(frame.permute(1, 2, 0).clamp(0, 255).byte().cpu().numpy())
+    writer.close()
+
+
+def point_colors(count: int) -> list[tuple[int, int, int]]:
+    colors = []
+    for index in range(count):
+        hue = int(round(179 * index / max(count, 1)))
+        bgr = cv2.cvtColor(np.uint8([[[hue, 220, 250]]]), cv2.COLOR_HSV2BGR)[0, 0]
+        colors.append(tuple(int(value) for value in bgr))
+    return colors
+
+
+def draw_region_track_video(
+    video_tchw: torch.Tensor,
+    predicted: np.ndarray,
+    target: np.ndarray,
+    visibility: np.ndarray,
+    region: dict,
+    descriptor: str,
+    output_path: Path,
+    fps: int = 30,
+) -> None:
+    point_slice = slice(int(region["point_start"]), int(region["point_end"]))
+    pred = predicted[:, point_slice]
+    gt = target[:, point_slice]
+    visible = visibility[:, point_slice].astype(bool)
+    frames = video_tchw.permute(0, 2, 3, 1).clamp(0, 255).byte().cpu().numpy()
+    colors = point_colors(pred.shape[1])
+    writer = imageio.get_writer(output_path, fps=fps, quality=6)
+    for frame_index, frame in enumerate(frames):
+        canvas = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        for point_index, color in enumerate(colors):
+            for previous in range(1, frame_index + 1):
+                if not np.isfinite(pred[previous - 1 : previous + 1, point_index]).all():
+                    continue
+                p0 = tuple(np.rint(pred[previous - 1, point_index]).astype(int))
+                p1 = tuple(np.rint(pred[previous, point_index]).astype(int))
+                cv2.line(canvas, p0, p1, color, 1, cv2.LINE_AA)
+            if np.isfinite(pred[frame_index, point_index]).all():
+                point = tuple(np.rint(pred[frame_index, point_index]).astype(int))
+                cv2.rectangle(canvas, (point[0] - 4, point[1] - 4), (point[0] + 4, point[1] + 4), color, 2)
+            if visible[frame_index, point_index]:
+                point = tuple(np.rint(gt[frame_index, point_index]).astype(int))
+                cv2.circle(canvas, point, 4, color, -1, cv2.LINE_AA)
+        label = f"GT CogVideoX {descriptor} L17 S39 | circle=CoTracker square=match"
+        cv2.putText(canvas, label, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 0, 0), 3)
+        cv2.putText(canvas, label, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1)
+        writer.append_data(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
+    writer.close()
 
 
 def main() -> None:
@@ -192,7 +380,7 @@ def main() -> None:
     ):
         raise ValueError("Analysis geometry must match the prepared CoTracker tracks")
 
-    steps = args.inverse_steps or list(range(args.num_inference_steps))
+    steps = args.inverse_steps or [0, 10, 20, 29, 39]
     invalid_steps = [step for step in steps if not 0 <= step < args.num_inference_steps]
     if invalid_steps:
         raise ValueError(f"Invalid inverse steps: {invalid_steps}")
@@ -211,11 +399,29 @@ def main() -> None:
         save_dir.mkdir(parents=True, exist_ok=True)
 
         video_path = args.dataset_root / sample["canonical_video"]
-        video = read_video(video_path, args.num_frames, args.height, args.width).unsqueeze(0)
+        source_start_frame = int(manifest.get("source_start_frame", 0))
+        video_single = read_video(
+            video_path,
+            args.num_frames,
+            args.height,
+            args.width,
+            source_start_frame,
+        )
+        video = video_single.unsqueeze(0)
         track_data = np.load(args.track_dir / sample["tracks"])
         gt_tracks = torch.from_numpy(track_data["tracks"]).unsqueeze(0).to(args.device)
         gt_visibility = torch.from_numpy(track_data["visibility"]).unsqueeze(0).to(args.device)
         query_coords = torch.from_numpy(track_data["queries"][:, 1:]).unsqueeze(0).to(args.device)
+        regions = list(sample.get("regions") or [])
+        if not regions:
+            raise ValueError(f"{sample_id}: region metadata missing from tracks manifest")
+        cache = resize_region_cache(
+            load_region_cache(Path(manifest["region_cache_root"]), sample_id),
+            args.height,
+            args.width,
+        )
+        query_visual_files = save_region_query_visualizations(save_dir, cache)
+        save_input_video(video_single, save_dir / "gt_shifted.mp4")
 
         params = {
             "trajectory": args.matching_accuracy,
@@ -227,12 +433,28 @@ def main() -> None:
             "query_coords": query_coords,
         }
         qk_evaluator = (
-            MatchingEvaluator(args.num_inference_steps, layer_count, gt_tracks, gt_visibility)
+            RegionMatchingEvaluator(
+                args.num_inference_steps,
+                layer_count,
+                gt_tracks,
+                gt_visibility,
+                regions,
+                args.visualize_layer,
+                args.visualize_step,
+            )
             if args.matching_accuracy
             else None
         )
         feat_evaluator = (
-            MatchingEvaluator(args.num_inference_steps, layer_count, gt_tracks, gt_visibility)
+            RegionMatchingEvaluator(
+                args.num_inference_steps,
+                layer_count,
+                gt_tracks,
+                gt_visibility,
+                regions,
+                args.visualize_layer,
+                args.visualize_step,
+            )
             if args.matching_accuracy
             else None
         )
@@ -269,8 +491,8 @@ def main() -> None:
                     conf_attn_score=score,
                     qk_acc_evaluator=qk_evaluator,
                     feat_acc_evaluator=feat_evaluator,
-                    vis_timesteps=[steps[-1]],
-                    vis_layers=[layer_count // 2],
+                    vis_timesteps=[int(args.visualize_step)],
+                    vis_layers=[int(args.visualize_layer)],
                     output_type="latent",
                     params=params,
                     video=video,
@@ -281,15 +503,83 @@ def main() -> None:
             save_checkpoint(save_dir, completed_steps, qk_evaluator, feat_evaluator, score)
             print(f"{sample_id}: inverse step {inverse_step}/{args.num_inference_steps - 1}")
 
+        rows = []
         if qk_evaluator is not None and feat_evaluator is not None:
             write_matrix(save_dir / "qk_pck8.txt", qk_evaluator.pck, steps)
             write_matrix(save_dir / "feature_pck8.txt", feat_evaluator.pck, steps)
             summary_rows.extend(best_pck_rows(sample_id, "qk", qk_evaluator.pck, steps))
             summary_rows.extend(best_pck_rows(sample_id, "feature", feat_evaluator.pck, steps))
+            rows = qk_evaluator.metric_rows("qk", steps)
+            rows.extend(feat_evaluator.metric_rows("feature", steps))
+            atomic_write_text(
+                save_dir / "metrics.json",
+                json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
+            )
+            if qk_evaluator.visualized_tracks is None or feat_evaluator.visualized_tracks is None:
+                raise RuntimeError(
+                    f"{sample_id}: missing L{args.visualize_layer}/S{args.visualize_step} tracks"
+                )
+            np.savez_compressed(
+                save_dir / "predicted_tracks.npz",
+                qk=qk_evaluator.visualized_tracks,
+                feature=feat_evaluator.visualized_tracks,
+                cotracker=gt_tracks[0].detach().float().cpu().numpy(),
+                visibility=gt_visibility[0].detach().bool().cpu().numpy(),
+            )
+            target_np = gt_tracks[0].detach().float().cpu().numpy()
+            visibility_np = gt_visibility[0].detach().bool().cpu().numpy()
+            for region in regions:
+                region_dir = save_dir / "regions" / region["region_name"]
+                region_dir.mkdir(parents=True, exist_ok=True)
+                draw_region_track_video(
+                    video_single,
+                    qk_evaluator.visualized_tracks,
+                    target_np,
+                    visibility_np,
+                    region,
+                    "Q/K",
+                    region_dir / f"tracks_qk_L{args.visualize_layer:02d}_S{args.visualize_step:03d}.mp4",
+                )
+                draw_region_track_video(
+                    video_single,
+                    feat_evaluator.visualized_tracks,
+                    target_np,
+                    visibility_np,
+                    region,
+                    "feature",
+                    region_dir / f"tracks_feature_L{args.visualize_layer:02d}_S{args.visualize_step:03d}.mp4",
+                )
         if score is not None:
             score.attention_max_df.to_csv(save_dir / "confidence_score.csv")
             score.attention_sum_df.to_csv(save_dir / "attention_score.csv")
 
+        case_manifest = json.loads(Path(sample["case_manifest"]).read_text(encoding="utf-8"))
+        run_manifest = {
+            "case_key": sample_id,
+            "case_manifest": sample["case_manifest"],
+            "model": args.model,
+            "model_path": str(args.model_path),
+            "prompt": case_manifest["base"]["caption"],
+            "context_video": str(video_path),
+            "analysis_protocol": "CogVideoX_DiffTrack_GT_inversion_source_frame4_to_future",
+            "source_start_frame": source_start_frame,
+            "query_pixel_frame": 0,
+            "query_source_pixel_frame": source_start_frame,
+            "query_mode": "sam2_regions",
+            "query_regions": regions,
+            "layers": list(range(layer_count)),
+            "step_indices": steps,
+            "sampling_steps": int(args.num_inference_steps),
+            "height": int(args.height),
+            "width": int(args.width),
+            "num_frames": int(args.num_frames),
+            "seed": int(args.seed),
+            "files": ["gt_shifted.mp4", *query_visual_files],
+        }
+        atomic_write_text(
+            save_dir / "manifest.json",
+            json.dumps(run_manifest, ensure_ascii=False, indent=2) + "\n",
+        )
         atomic_write_text(
             complete_marker,
             json.dumps(
@@ -299,6 +589,7 @@ def main() -> None:
                     "inverse_steps": steps,
                     "model": args.model,
                     "seed": args.seed,
+                    "metric_row_count": len(rows) if qk_evaluator is not None else 0,
                 },
                 indent=2,
             )
