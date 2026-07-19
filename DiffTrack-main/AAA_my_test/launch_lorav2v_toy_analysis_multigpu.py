@@ -13,7 +13,7 @@ from pathlib import Path
 
 WORKER = Path(__file__).with_name("run_lorav2v_toy_analysis_worker.py")
 DEFAULT_OUTPUT = Path(
-    "/data/gaoya/agent-data/outputs/wan_openvid_0613pybullet_lorav2v_step000500_analysis"
+    "/data/gaoya/agent-data/outputs/wan_openvid_0613pybullet_lora_step000500_sam2_regions_steps40"
 )
 
 

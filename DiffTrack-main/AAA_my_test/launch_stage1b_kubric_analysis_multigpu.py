@@ -13,7 +13,7 @@ from pathlib import Path
 
 WORKER = Path(__file__).with_name("run_stage1b_kubric_analysis_worker.py")
 DEFAULT_OUTPUT = Path(
-    "/data/gaoya/agent-data/outputs/stage1b_kubric_generation_analysis_step004000"
+    "/data/gaoya/agent-data/outputs/stage1b_kubric_step004000_sam2_regions_steps40"
 )
 DEFAULT_CHECKPOINT = Path(
     "/data/gaoya/AAA_test_video/0623/train/train0624/checkpoints/"
