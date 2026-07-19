@@ -1,192 +1,99 @@
 #!/usr/bin/env python3
-"""Aggregate Stage1b ToyDataset correspondence metrics into a static dashboard."""
+"""Build a combined Stage1b/LoRA SAM2-region correspondence dashboard."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-from collections import defaultdict
+import os
 from pathlib import Path
 
 
-DEFAULT_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/stage1b_kubric_generation_analysis_step004000"
-)
-METRICS = (
-    "mean_error_px",
-    "pck8",
-    "pck16",
-    "pck32",
-    "pck_one_token",
-    "top1_gt_rate",
-    "mean_gt_rank",
-    "mean_gt_probability",
-    "normalized_entropy",
-)
+OUTPUTS_ROOT = Path("/data/gaoya/agent-data/outputs")
+DEFAULT_STAGE1B = OUTPUTS_ROOT / "stage1b_kubric_step004000_sam2_regions_steps40"
+DEFAULT_LORA = OUTPUTS_ROOT / "wan_openvid_0613pybullet_lora_step000500_sam2_regions_steps40"
+DEFAULT_OUTPUT = OUTPUTS_ROOT / "sam2_region_generation_comparison"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--stage1b-root", type=Path, default=DEFAULT_STAGE1B)
+    parser.add_argument("--lora-root", type=Path, default=DEFAULT_LORA)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
 
 
-def aggregate_rows(case_payloads: list[dict]) -> list[dict]:
-    accumulators = defaultdict(lambda: defaultdict(float))
-    for case in case_payloads:
-        for row in case["rows"]:
-            key = (
-                row["method"],
-                int(row["layer"]),
-                int(row["step_index"]),
-                float(row["timestep"]),
-                None if row["sigma"] is None else float(row["sigma"]),
-            )
-            comparisons = int(row.get("comparisons", 0))
-            accumulator = accumulators[key]
-            accumulator["comparisons"] += comparisons
-            accumulator["cases"] += 1
-            for metric in METRICS:
-                accumulator[metric] += float(row.get(metric, 0.0)) * comparisons
-    output = []
-    for key, accumulator in accumulators.items():
-        comparisons = int(accumulator["comparisons"])
-        row = {
-            "method": key[0],
-            "layer": key[1],
-            "step_index": key[2],
-            "timestep": key[3],
-            "sigma": key[4],
-            "cases": int(accumulator["cases"]),
-            "comparisons": comparisons,
-        }
-        for metric in METRICS:
-            row[metric] = accumulator[metric] / comparisons if comparisons else None
-        output.append(row)
-    return sorted(output, key=lambda row: (row["method"], row["layer"], row["step_index"]))
+def load_model_payload(name: str, label: str, root: Path, asset_name: str) -> dict:
+    cases = []
+    for case_dir in sorted((root / "cases").glob("case_*")):
+        manifest_path = case_dir / "manifest.json"
+        metrics_path = case_dir / "metrics.json"
+        if not manifest_path.is_file() or not metrics_path.is_file():
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        cases.append(
+            {
+                "case_key": case_dir.name,
+                "prompt": manifest["prompt"],
+                "regions": manifest["query_regions"],
+                "layers": manifest["layers"],
+                "steps": manifest["step_indices"],
+                "metrics": metrics,
+                "asset_root": f"{asset_name}/cases/{case_dir.name}",
+            }
+        )
+    if len(cases) != 50:
+        raise RuntimeError(f"{name}: expected 50 complete cases, got {len(cases)}")
+    return {"name": name, "label": label, "cases": cases}
 
 
-def find_row(rows: list[dict], method: str, layer: int, step: int) -> dict:
-    matches = [
-        row
-        for row in rows
-        if row["method"] == method
-        and int(row["layer"]) == layer
-        and int(row["step_index"]) == step
-    ]
-    if len(matches) != 1:
-        raise ValueError(f"expected one row for {method}/L{layer}/S{step}, got {len(matches)}")
-    return matches[0]
+def link_assets(output_dir: Path, name: str, target: Path) -> None:
+    link = output_dir / name
+    if link.is_symlink():
+        if link.resolve() == target.resolve():
+            return
+        link.unlink()
+    elif link.exists():
+        raise FileExistsError(f"dashboard asset path exists and is not a symlink: {link}")
+    os.symlink(target.resolve(), link, target_is_directory=True)
 
 
-def write_csv(path: Path, rows: list[dict]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+HTML = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAM2 Region Correspondence</title><style>
+:root{--ink:#14201d;--paper:#eee8da;--card:#fffdf8;--line:#cfc4af;--accent:#c5482e;--green:#126b58;--muted:#68716d;--shadow:0 18px 48px #1f2b261c}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 8% 0,#ecaa7d55,transparent 35rem),radial-gradient(circle at 92% 10%,#70ad9844,transparent 32rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1500px,calc(100% - 28px));margin:auto;padding:34px 0 70px}h1,h2,h3{font-family:Georgia,"Noto Serif CJK SC",serif;margin:0}h1{font-size:clamp(44px,6.5vw,88px);line-height:.9;letter-spacing:-.05em}.eyebrow{color:var(--accent);font-size:12px;font-weight:900;letter-spacing:.17em;text-transform:uppercase}.lead{max-width:980px;color:var(--muted);line-height:1.65}.controls{display:grid;grid-template-columns:1fr 1.6fr 1fr 1fr;gap:10px;margin:25px 0 12px}label{font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}select{display:block;width:100%;margin-top:5px;padding:11px;border:1px solid var(--ink);background:var(--card);font-weight:800}.viewer,.card{background:#fffdf8e8;border:1px solid var(--line);box-shadow:var(--shadow);border-radius:4px 22px 4px 4px;padding:16px}.viewer-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:13px}.viewer-head p{color:var(--muted);margin:6px 0}.media{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:10px}.panel{background:#101816;color:#fff;border-radius:3px 16px 3px 3px;padding:8px;min-width:0}.panel h3{font-size:16px;margin:4px 4px 9px}.panel video,.panel img{display:block;width:100%;background:#080c0b}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}.metric span{font-size:11px;color:var(--muted);text-transform:uppercase}.metric b{display:block;font:700 29px/1 Georgia;margin:9px 0 5px}.tables{display:grid;grid-template-columns:1fr 1fr;gap:12px}.matrix{overflow:auto}.matrix h3{margin-bottom:10px}.matrix table{border-collapse:collapse;width:100%;background:var(--card)}th,td{border:1px solid var(--line);padding:7px 9px;text-align:right;font-size:12px}th:first-child,td:first-child{text-align:left}.note{font-size:12px;color:var(--muted);margin-top:18px}@media(max-width:900px){.controls,.media,.metrics,.tables{grid-template-columns:1fr}.viewer-head{display:block}}
+</style></head><body><main><header><div class="eyebrow">Wan2.2-TI2V-5B · 40 denoising steps</div><h1>Object-wise<br>Correspondence Atlas</h1><p class="lead">query 来自最后一个 clean-context latent 对齐的像素帧 4。GroundingDINO 按物体短语分配独立框，SAM2 传播 mask；每个 object/background 区域独立抽取 8 个点。圆为 CoTracker，方框为 Q/K 或 hidden 匹配。</p></header>
+<section class="controls"><label>Model<select id="model"></select></label><label>Case<select id="case"></select></label><label>Region<select id="region"></select></label><label>View<select id="view"><option value="tracks">Tracks</option><option value="heatmaps">Heatmaps</option></select></label></section>
+<section class="viewer"><div class="viewer-head"><div><h2 id="title"></h2><p id="prompt"></p></div><a id="manifest">manifest.json</a></div><div class="media" id="media"></div></section>
+<section class="metrics" id="metrics"></section><section class="tables"><article class="viewer matrix"><h3>Q/K PCK@32</h3><div id="qk-table"></div></article><article class="viewer matrix"><h3>Hidden PCK@32</h3><div id="hidden-table"></div></article></section>
+<p class="note">主指标使用 PCK@32，因为 DiT 空间 token stride 为 32px；PCK@8 受 token-center 量化误差主导。默认可视化层/步为 L17/S39，矩阵包含 L0/5/11/17/23/29 与 S0/10/20/29/39。</p>
+</main><script id="payload" type="application/json">__PAYLOAD__</script><script>
+const data=JSON.parse(document.getElementById('payload').textContent);const modelEl=document.getElementById('model'),caseEl=document.getElementById('case'),regionEl=document.getElementById('region'),viewEl=document.getElementById('view');const fmt=(x,n=2)=>x==null?'NA':Number(x).toFixed(n);modelEl.innerHTML=data.models.map((m,i)=>`<option value="${i}">${m.label}</option>`).join('');function currentModel(){return data.models[Number(modelEl.value)||0]}function currentCase(){return currentModel().cases[Number(caseEl.value)||0]}function currentRegion(){return currentCase().regions[Number(regionEl.value)||0]}function resetCases(){caseEl.innerHTML=currentModel().cases.map((c,i)=>`<option value="${i}">${c.case_key}</option>`).join('');caseEl.value=0;resetRegions()}function resetRegions(){regionEl.innerHTML=currentCase().regions.map((r,i)=>`<option value="${i}">${r.region_name}${r.region_phrase?' · '+r.region_phrase:''}</option>`).join('');regionEl.value=0;render()}function row(method,layer,step){const r=currentRegion();return currentCase().metrics.find(x=>x.region_name===r.region_name&&x.method===method&&x.layer===layer&&x.step_index===step)}function card(label,r,key,suffix=''){return `<article class="card metric"><span>${label}</span><b>${fmt(r?.[key])}${suffix}</b><small>L17 / S39 · ${r?.comparisons??0} matches</small></article>`}function matrix(method){const c=currentCase(),layers=c.layers,steps=c.steps;let h='<table><tr><th>Layer</th>'+steps.map(s=>`<th>S${s}</th>`).join('')+'</tr>';for(const l of layers){h+=`<tr><th>L${l}</th>`+steps.map(s=>{const r=row(method,l,s),v=r?.pck32??0,a=Math.max(0,Math.min(1,v/100));return `<td style="background:rgba(18,107,88,${.06+.68*a})">${fmt(v)}%</td>`}).join('')+'</tr>'}return h+'</table>'}function render(){const m=currentModel(),c=currentCase(),r=currentRegion(),base=c.asset_root,dir=`${base}/regions/${r.region_name}`,heat=viewEl.value==='heatmaps',tag=`L17_S039`;document.getElementById('title').textContent=`${m.label} · ${c.case_key} · ${r.region_name}`;document.getElementById('prompt').textContent=r.region_phrase?`${r.region_phrase} | ${c.prompt}`:c.prompt;document.getElementById('manifest').href=`${base}/manifest.json`;document.getElementById('media').innerHTML=heat?`<article class="panel"><h3>SAM2 mask + query</h3><img src="${dir}/mask_points.png"></article><article class="panel"><h3>Q/K heatmap</h3><img src="${dir}/heatmap_qk_${tag}.png"></article><article class="panel"><h3>Hidden heatmap</h3><img src="${dir}/heatmap_hidden_${tag}.png"></article>`:`<article class="panel"><h3>Generated video</h3><video controls muted loop src="${base}/generated.mp4"></video></article><article class="panel"><h3>Q/K + CoTracker</h3><video controls muted loop src="${dir}/tracks_qk_${tag}.mp4"></video></article><article class="panel"><h3>Hidden + CoTracker</h3><video controls muted loop src="${dir}/tracks_hidden_${tag}.mp4"></video></article>`;const q=row('qk',17,39),h=row('hidden',17,39);document.getElementById('metrics').innerHTML=card('Q/K PCK@32',q,'pck32','%')+card('Q/K mean error',q,'mean_error_px','px')+card('Hidden PCK@32',h,'pck32','%')+card('GT attention prob.',q,'mean_gt_probability');document.getElementById('qk-table').innerHTML=matrix('qk');document.getElementById('hidden-table').innerHTML=matrix('hidden')}modelEl.addEventListener('change',resetCases);caseEl.addEventListener('change',resetRegions);regionEl.addEventListener('change',render);viewEl.addEventListener('change',render);resetCases();
+</script></body></html>'''
 
 
 def main() -> None:
     args = parse_args()
-    root = args.root.expanduser().resolve()
-    case_payloads = []
-    for case_dir in sorted((root / "cases").glob("case_*")):
-        manifest = json.loads((case_dir / "manifest.json").read_text(encoding="utf-8"))
-        rows = json.loads((case_dir / "metrics.json").read_text(encoding="utf-8"))
-        case_payloads.append(
-            {
-                "case_key": case_dir.name,
-                "prompt": manifest["prompt"],
-                "context_video": manifest["context_video"],
-                "rows": rows,
-                "qk_l29_s19": find_row(rows, "qk", 29, 19),
-                "qk_l17_s19": find_row(rows, "qk", 17, 19),
-                "hidden_l29_s14": find_row(rows, "hidden", 29, 14),
-                "generated": f"cases/{case_dir.name}/generated.mp4",
-                "qk_track": f"cases/{case_dir.name}/tracks_qk_L17_S019.mp4",
-                "hidden_track": f"cases/{case_dir.name}/tracks_hidden_L17_S019.mp4",
-                "qk_heatmap": f"cases/{case_dir.name}/heatmap_qk_L17_S019.png",
-                "hidden_heatmap": f"cases/{case_dir.name}/heatmap_hidden_L17_S019.png",
-            }
-        )
-    if len(case_payloads) != 50:
-        raise RuntimeError(f"expected 50 completed cases, got {len(case_payloads)}")
-
-    aggregate = aggregate_rows(case_payloads)
-    best_qk = max(
-        (row for row in aggregate if row["method"] == "qk"),
-        key=lambda row: (row["pck32"], -row["mean_error_px"]),
-    )
-    best_hidden = max(
-        (row for row in aggregate if row["method"] == "hidden"),
-        key=lambda row: (row["pck32"], -row["mean_error_px"]),
-    )
-    summary = {
-        "case_count": len(case_payloads),
-        "record_count": sum(len(case["rows"]) for case in case_payloads),
-        "checkpoint": "step-004000",
-        "context": "first 8 pixel frames encoded as 2 clean latent frames",
-        "token_grid": [7, 16, 28],
-        "best_qk": best_qk,
-        "best_hidden": best_hidden,
-        "aggregate": aggregate,
-        "cases": [{key: value for key, value in case.items() if key != "rows"} for case in case_payloads],
+    stage1b = args.stage1b_root.expanduser().resolve()
+    lora = args.lora_root.expanduser().resolve()
+    output = args.output_dir.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    link_assets(output, "stage1b", stage1b)
+    link_assets(output, "lora", lora)
+    payload = {
+        "models": [
+            load_model_payload("stage1b", "Stage1b step-004000", stage1b, "stage1b"),
+            load_model_payload("lora", "LoRA step-000500", lora, "lora"),
+        ]
     }
-    (root / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    (output / "dashboard_data.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    write_csv(root / "aggregate_metrics.csv", aggregate)
-
-    report = f"""# Stage1b Kubric step-004000 generation analysis
-
-- Cases: {len(case_payloads)}
-- Records: {summary['record_count']}
-- Context: first 8 pixel frames, encoded by the actual generation path into 2 clean latent frames
-- Token grid: 7 x 16 x 28
-- Query: latent index 1
-- Future targets: latent indices 2-6
-
-## Best Q/K
-
-- Layer: {best_qk['layer']}
-- Denoising step: {best_qk['step_index']}
-- Timestep / sigma: {best_qk['timestep']:.0f} / {best_qk['sigma']:.4f}
-- Mean error: {best_qk['mean_error_px']:.2f}px
-- PCK@32: {best_qk['pck32']:.2f}%
-- GT top-1 rate: {best_qk['top1_gt_rate']:.2f}%
-- Mean GT rank: {best_qk['mean_gt_rank']:.2f}
-
-## Best hidden baseline
-
-- Layer: {best_hidden['layer']}
-- Denoising step: {best_hidden['step_index']}
-- Timestep / sigma: {best_hidden['timestep']:.0f} / {best_hidden['sigma']:.4f}
-- Mean error: {best_hidden['mean_error_px']:.2f}px
-- PCK@32: {best_hidden['pck32']:.2f}%
-- GT top-1 rate: {best_hidden['top1_gt_rate']:.2f}%
-
-`PCK@32` is the meaningful token-scale metric for this 32-pixel token grid. `PCK@8` is dominated by token-center quantization and should not be used to compare layers.
-"""
-    (root / "aggregate_report.md").write_text(report, encoding="utf-8")
-
-    payload = json.dumps(summary, ensure_ascii=False).replace("</", "<\\/")
-    html = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stage1b step-004000 · Context-to-Future Atlas</title><style>
-:root{--ink:#17211e;--muted:#67716d;--paper:#efe9dc;--card:#fffdf7;--line:#d3c8b3;--red:#c44a32;--green:#137863;--blue:#216fa4;--shadow:0 18px 50px #2b352f1f}*{box-sizing:border-box}
-body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#e9a77b55,transparent 33rem),radial-gradient(circle at 92% 18%,#62a99544,transparent 32rem),var(--paper);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1500px,calc(100% - 28px));margin:auto;padding:34px 0 70px}h1,h2,h3{font-family:Georgia,"Noto Serif CJK SC",serif;margin:0}h1{font-size:clamp(46px,7vw,92px);line-height:.9;letter-spacing:-.055em}.lead{max-width:900px;color:var(--muted);line-height:1.7}.cards{display:grid;grid-template-columns:1.4fr repeat(3,1fr);gap:13px;margin:25px 0}.card,.viewer{background:#fffdf7e8;border:1px solid var(--line);box-shadow:var(--shadow);border-radius:4px 22px 4px 4px;padding:18px}.verdict{background:#182521;color:#fff}.verdict p{color:#c9d4cf}.metric span{font-size:11px;text-transform:uppercase;color:var(--muted)}.metric b{display:block;font:600 35px/1 Georgia;margin:10px 0 6px}.controls{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:26px 0 13px}select{width:100%;padding:12px;border:1px solid var(--ink);background:var(--card);font-weight:700}.viewer-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:14px}.viewer-head p{color:var(--muted);margin:5px 0}.videos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.panel{background:#121a18;color:#fff;padding:8px;border-radius:3px 15px 3px 3px}.panel h3{font-size:17px;margin:4px 4px 9px}.panel video,.panel img{width:100%;display:block;background:#090d0c}.case-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}.case-metrics .card{box-shadow:none}.case-metrics b{font-size:23px}.matrix{overflow:auto;margin-top:15px}.matrix table{width:100%;border-collapse:collapse;background:var(--card)}th,td{padding:8px 10px;border:1px solid var(--line);text-align:right;font-size:12px}th:first-child,td:first-child{text-align:left}.foot{color:var(--muted);margin-top:25px;font-size:12px}@media(max-width:900px){.cards,.videos,.case-metrics,.controls{grid-template-columns:1fr}.viewer-head{display:block}}
-</style></head><body><main><header><div style="color:var(--red);font-weight:800;letter-spacing:.18em;text-transform:uppercase;font-size:12px">Wan2.2-TI2V-5B · Stage1b step-004000</div><h1>Context → Future<br>Correspondence Atlas</h1><p class="lead">50 个 ToyDataset base case；完整视频前 8 帧作为 context。Q/K 捕获位置是 self-attention 的 RMSNorm + 3D RoPE 之后、FlashAttention 之前，只统计 conditional 分支。</p></header>
-<section class="cards"><article class="card verdict"><h2>最佳 Q/K 集中在最后一层、低噪声阶段</h2><p id="verdict"></p></article><article class="card metric"><span>Best Q/K PCK@32</span><b id="best-pck"></b><small>L29 / step19</small></article><article class="card metric"><span>Mean error</span><b id="best-error"></b><small>3641 visible matches</small></article><article class="card metric"><span>GT top-1</span><b id="best-top1"></b><small>正确 token 排名第一</small></article></section>
-<section class="controls"><label>Case<select id="case"></select></label><label>View<select id="view"><option value="tracks">轨迹对照</option><option value="heatmaps">相关性热图</option></select></label></section>
-<section class="viewer"><div class="viewer-head"><div><h2 id="case-title"></h2><p id="prompt"></p></div><a id="manifest" href="#">manifest</a></div><div class="videos" id="videos"></div><div class="case-metrics" id="case-metrics"></div></section>
-<section class="viewer matrix"><h2>Q/K PCK@32 layer × step</h2><div id="matrix"></div></section><p class="foot">32px 是该 DiT token grid 的空间步长，因此 PCK@32 是主定位指标；PCK@8 受 token 中心量化下限支配。</p>
-</main><script id="payload" type="application/json">__PAYLOAD__</script><script>
-const d=JSON.parse(document.getElementById('payload').textContent),fmt=(x,n=2)=>Number(x).toFixed(n);document.getElementById('best-pck').textContent=fmt(d.best_qk.pck32)+'%';document.getElementById('best-error').textContent=fmt(d.best_qk.mean_error_px)+'px';document.getElementById('best-top1').textContent=fmt(d.best_qk.top1_gt_rate)+'%';document.getElementById('verdict').textContent=`L${d.best_qk.layer} / step ${d.best_qk.step_index} / sigma ${fmt(d.best_qk.sigma,4)}：PCK@32 ${fmt(d.best_qk.pck32)}%，平均误差 ${fmt(d.best_qk.mean_error_px)}px。`;
-const cs=document.getElementById('case'),view=document.getElementById('view');cs.innerHTML=d.cases.map((c,i)=>`<option value="${i}">${c.case_key}</option>`).join('');function metric(title,r){return `<article class="card"><h3>${title}</h3><p><b>${fmt(r.pck32)}%</b> PCK@32 · <b>${fmt(r.mean_error_px)}px</b> error</p><p>GT top-1 ${fmt(r.top1_gt_rate)}% · rank ${fmt(r.mean_gt_rank)}</p></article>`}function render(){const c=d.cases[Number(cs.value)||0],heat=view.value==='heatmaps';document.getElementById('case-title').textContent=c.case_key;document.getElementById('prompt').textContent=c.prompt;document.getElementById('manifest').href=`cases/${c.case_key}/manifest.json`;document.getElementById('videos').innerHTML=heat?`<article class="panel"><h3>Q/K L17 S19 heatmap</h3><img src="${c.qk_heatmap}"></article><article class="panel"><h3>Hidden L17 S19 heatmap</h3><img src="${c.hidden_heatmap}"></article>`:`<article class="panel"><h3>Generated</h3><video controls muted loop src="${c.generated}"></video></article><article class="panel"><h3>Q/K L17 S19</h3><video controls muted loop src="${c.qk_track}"></video></article><article class="panel"><h3>Hidden L17 S19</h3><video controls muted loop src="${c.hidden_track}"></video></article>`;document.getElementById('case-metrics').innerHTML=metric('Q/K L29 S19',c.qk_l29_s19)+metric('Q/K L17 S19',c.qk_l17_s19)+metric('Hidden L29 S14',c.hidden_l29_s14)}cs.addEventListener('change',render);view.addEventListener('change',render);render();
-const layers=[0,5,11,17,23,29],steps=[0,5,10,14,19],rows=d.aggregate.filter(x=>x.method==='qk');let h='<table><tr><th>Layer</th>'+steps.map(s=>`<th>S${s}</th>`).join('')+'</tr>';for(const l of layers){h+=`<tr><th>L${l}</th>`+steps.map(s=>{const r=rows.find(x=>x.layer===l&&x.step_index===s),a=Math.max(0,Math.min(1,r.pck32/100));return `<td style="background:rgba(19,120,99,${.08+.65*a})">${fmt(r.pck32)}%</td>`}).join('')+'</tr>'}h+='</table>';document.getElementById('matrix').innerHTML=h;
-</script></body></html>'''.replace("__PAYLOAD__", payload)
-    (root / "index.html").write_text(html, encoding="utf-8")
-    print(f"dashboard: {root / 'index.html'}")
+    (output / "index.html").write_text(
+        HTML.replace("__PAYLOAD__", serialized), encoding="utf-8"
+    )
+    print(f"dashboard: {output / 'index.html'}")
 
 
 if __name__ == "__main__":
