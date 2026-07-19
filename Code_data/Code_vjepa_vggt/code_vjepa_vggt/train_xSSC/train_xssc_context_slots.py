@@ -34,6 +34,14 @@ from code_vjepa_vggt.context_wan_v_newtrain import (
     enable_object_condition_branch,
     flow_match_context_sft_loss,
 )
+from code_vjepa_vggt.data.mixed_replay_no_gt_box_dataset import (
+    KubricReplayNoGTBoxDataset,
+    OpenVidNoGTBoxDataset,
+    WeightedNoGTBoxMixture,
+)
+from code_vjepa_vggt.data.pybullet0713_no_gt_box_dataset import (
+    PyBullet0713NoGTBoxDataset,
+)
 
 from diffsynth.diffusion import ModelLogger
 
@@ -41,6 +49,9 @@ from diffsynth.diffusion import ModelLogger
 XSSC_IMAGENET_MEAN = (123.675, 116.28, 103.53)
 XSSC_IMAGENET_STD = (58.395, 57.12, 57.375)
 XSSC_NUM_CONTEXT_FRAMES = 8
+DEFAULT_XSSC_ROOT = "/home/gaoya/Code_Video/xSSC-main"
+DEFAULT_XSSC_CONFIG = f"{DEFAULT_XSSC_ROOT}/config-randsfq/rsfq2_r-ytvis.py"
+DEFAULT_XSSC_CHECKPOINT = "/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth"
 
 
 def _unwrap_linear(module: nn.Module) -> nn.Linear:
@@ -145,8 +156,23 @@ class GroupedBatchDataset(torch.utils.data.Dataset):
             raise ValueError(f"batch_size must be positive, got {self.batch_size}")
         if len(self.dataset) <= 0:
             raise ValueError("Cannot batch an empty dataset")
+        source_weights = getattr(self.dataset, "sample_weights", None)
         self.sample_weights = None
+        if source_weights is not None:
+            self.sample_weights = [
+                sum(
+                    float(source_weights[(start + offset) % len(self.dataset)])
+                    for offset in range(self.batch_size)
+                )
+                for start in range(0, len(self.dataset), self.batch_size)
+            ]
         self.load_from_cache = False
+        self.dataset_stats = {
+            "kind": "grouped_batch",
+            "per_gpu_batch_size": self.batch_size,
+            "num_groups": len(self),
+            "source": getattr(self.dataset, "dataset_stats", None),
+        }
 
     def __len__(self) -> int:
         return (len(self.dataset) + self.batch_size - 1) // self.batch_size
@@ -232,6 +258,7 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         object_lora_rank: int = 32,
         object_lora_alpha: float = 32.0,
         object_lora_dropout: float = 0.0,
+        xssc_slot_track_dropout: float = 0.0,
         object_gate_init: float = 0.1,
         lambda_main: float = 1.0,
         lambda_object_context_reg: float = 0.0,
@@ -262,6 +289,9 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         self.object_lora_rank = int(object_lora_rank)
         self.object_lora_alpha = float(object_lora_alpha)
         self.object_lora_dropout = float(object_lora_dropout)
+        self.xssc_slot_track_dropout = float(xssc_slot_track_dropout)
+        self._last_slot_dropout_fraction = 0.0
+        self._last_retained_slots_per_sample = float(self.xssc_num_slots) if hasattr(self, "xssc_num_slots") else 0.0
         if self.fixed_num_context_frames != XSSC_NUM_CONTEXT_FRAMES:
             raise ValueError(
                 "xSSC training requires exactly "
@@ -272,6 +302,11 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         if not 0.0 <= self.object_lora_dropout < 1.0:
             raise ValueError(
                 f"object_lora_dropout must be in [0, 1), got {self.object_lora_dropout}"
+            )
+        if not 0.0 <= self.xssc_slot_track_dropout < 1.0:
+            raise ValueError(
+                "xssc_slot_track_dropout must be in [0, 1), got "
+                f"{self.xssc_slot_track_dropout}"
             )
 
         dit = enable_object_condition_branch(
@@ -303,6 +338,7 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         )
         if self.xssc_slot_dim != 256:
             raise ValueError(f"Expected 256-d xSSC slots, got {self.xssc_slot_dim}")
+        self._last_retained_slots_per_sample = float(self.xssc_num_slots)
 
         hidden_dim = int(dit.dim)
         self.slot_norm = nn.LayerNorm(self.xssc_slot_dim)
@@ -459,6 +495,21 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
         time_ids = torch.arange(time_steps, device=tokens.device)
         time_tokens = self.time_embedding(time_ids).view(1, time_steps, 1, -1)
         tokens = tokens + time_tokens.to(dtype=tokens.dtype)
+        if self.training and self.xssc_slot_track_dropout > 0.0:
+            batch, _, num_slots, _ = tokens.shape
+            keep = torch.rand(batch, num_slots, device=tokens.device) >= self.xssc_slot_track_dropout
+            empty_rows = ~keep.any(dim=1)
+            if bool(empty_rows.any()):
+                replacement = torch.randint(num_slots, (int(empty_rows.sum().item()),), device=tokens.device)
+                keep[empty_rows] = False
+                keep[empty_rows, replacement] = True
+            keep_scale = keep.to(dtype=tokens.dtype) / (1.0 - self.xssc_slot_track_dropout)
+            tokens = tokens * keep_scale[:, None, :, None]
+            self._last_slot_dropout_fraction = float((~keep).float().mean().item())
+            self._last_retained_slots_per_sample = float(keep.float().sum(dim=1).mean().item())
+        else:
+            self._last_slot_dropout_fraction = 0.0
+            self._last_retained_slots_per_sample = float(tokens.shape[2])
         batch, _, num_slots, hidden_dim = tokens.shape
         return tokens.reshape(batch, time_steps * num_slots, hidden_dim), slots
 
@@ -504,6 +555,11 @@ class XSSCContextSlotsWanModule(tvn.WanTrainingModule):
             "train/xssc_slots_per_frame": float(self.xssc_num_slots),
             "train/xssc_token_count": float(object_context.shape[1]),
             "train/xssc_slot_abs_mean": float(slot_abs.mean().item()),
+            "train/xssc_slot_dropout_fraction": self._last_slot_dropout_fraction,
+            "train/xssc_retained_slots_per_sample": self._last_retained_slots_per_sample,
+            "train/object_slot_dropout_applied": float(self._last_slot_dropout_fraction > 0.0),
+            "train/object_count_before_dropout": float(self.xssc_num_slots),
+            "train/object_count_after_dropout": self._last_retained_slots_per_sample,
             "train/object_context_abs_max": float(context_abs.max().item()),
             "train/object_context_abs_mean": float(context_abs.mean().item()),
         }
@@ -530,16 +586,90 @@ def build_parser() -> argparse.ArgumentParser:
     parser = tvn.wan_parser()
     parser.description = "Train Wan2.2 with frozen context-only xSSC slots."
     group = parser.add_argument_group("xssc_context_slots")
-    group.add_argument("--xssc_root", required=True)
-    group.add_argument("--xssc_config", required=True)
-    group.add_argument("--xssc_checkpoint", required=True)
+    group.add_argument("--xssc_root", default=DEFAULT_XSSC_ROOT)
+    group.add_argument("--xssc_config", default=DEFAULT_XSSC_CONFIG)
+    group.add_argument("--xssc_checkpoint", default=DEFAULT_XSSC_CHECKPOINT)
     group.add_argument("--xssc_input_size", type=int, default=256)
     group.add_argument("--xssc_max_time_steps", type=int, default=64)
     group.add_argument("--object_lora_rank", type=int, default=32)
     group.add_argument("--object_lora_alpha", type=float, default=32.0)
     group.add_argument("--object_lora_dropout", type=float, default=0.0)
+    group.add_argument("--xssc_slot_track_dropout", type=float, default=0.0)
     group.add_argument("--train_batch_size", type=int, default=1)
+    for action in parser._actions:
+        if action.dest == "dataset_type" and "xssc_replay_mix" not in action.choices:
+            action.choices = [*action.choices, "xssc_replay_mix"]
+            break
+    dataset = parser.add_argument_group("xssc_replay_mix")
+    dataset.add_argument("--pybullet0713_root", type=str, default=None)
+    dataset.add_argument("--pybullet0713_split", default="train", choices=["train", "val", "test", "all"])
+    dataset.add_argument("--pybullet0713_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
+    dataset.add_argument("--pybullet0713_init_scan_limit", type=int, default=None)
+    dataset.add_argument("--pybullet0713_family", action="append", default=None)
+    dataset.add_argument("--kubric_root", type=str, default=None)
+    dataset.add_argument("--kubric_split", default="train", choices=["train", "val", "test", "all"])
+    dataset.add_argument("--kubric_sampling_strategy", default="prefix", choices=["prefix", "uniform"])
+    dataset.add_argument("--kubric_init_scan_limit", type=int, default=None)
+    dataset.add_argument("--kubric_cache_root", default="/data/gaoya/agent-data/cache/kubric_no_gt_box_dataset")
+    dataset.add_argument("--kubric_replay_index_num_frames", type=int, default=69)
+    dataset.add_argument("--kubric_replay_index_num_context_frames", type=int, default=20)
+    dataset.add_argument("--openvid_root", type=str, default=None)
+    dataset.add_argument("--openvid_max_samples", type=int, default=None)
+    dataset.add_argument("--mixture_pybullet_ratio", type=float, default=0.30)
+    dataset.add_argument("--mixture_kubric_ratio", type=float, default=0.30)
+    dataset.add_argument("--mixture_openvid_ratio", type=float, default=0.40)
     return parser
+
+
+def build_dataset(args: argparse.Namespace):
+    if args.dataset_type != "xssc_replay_mix":
+        return tvn.build_dataset(args)
+    if not args.pybullet0713_root or not args.kubric_root or not args.openvid_root:
+        raise ValueError(
+            "xssc_replay_mix requires --pybullet0713_root, --kubric_root, and --openvid_root"
+        )
+    if (int(args.num_frames) - 1) % 4 != 0:
+        raise ValueError("xssc_replay_mix num_frames must satisfy 4n+1")
+    resolution = (int(args.height), int(args.width))
+    pybullet = PyBullet0713NoGTBoxDataset(
+        root=args.pybullet0713_root,
+        split=args.pybullet0713_split,
+        resolution=resolution,
+        num_frames=args.num_frames,
+        num_context_frames=args.fixed_num_context_frames,
+        sampling_strategy=args.pybullet0713_sampling_strategy,
+        families=args.pybullet0713_family,
+        init_scan_limit=args.pybullet0713_init_scan_limit,
+    )
+    kubric = KubricReplayNoGTBoxDataset(
+        root=args.kubric_root,
+        split=args.kubric_split,
+        resolution=resolution,
+        num_frames=args.num_frames,
+        num_context_frames=args.fixed_num_context_frames,
+        index_num_frames=args.kubric_replay_index_num_frames,
+        index_num_context_frames=args.kubric_replay_index_num_context_frames,
+        sampling_strategy=args.kubric_sampling_strategy,
+        seed=42,
+        init_scan_limit=args.kubric_init_scan_limit,
+        cache_root=args.kubric_cache_root,
+    )
+    openvid = OpenVidNoGTBoxDataset(
+        root=args.openvid_root,
+        resolution=resolution,
+        num_frames=args.num_frames,
+        num_context_frames=args.fixed_num_context_frames,
+        max_samples=args.openvid_max_samples,
+    )
+    return WeightedNoGTBoxMixture(
+        datasets=(pybullet, kubric, openvid),
+        source_names=("pybullet", "kubric", "openvid"),
+        source_probabilities=(
+            args.mixture_pybullet_ratio,
+            args.mixture_kubric_ratio,
+            args.mixture_openvid_ratio,
+        ),
+    )
 
 
 def build_model(args: argparse.Namespace, accelerator) -> XSSCContextSlotsWanModule:
@@ -590,6 +720,7 @@ def build_model(args: argparse.Namespace, accelerator) -> XSSCContextSlotsWanMod
         object_lora_rank=args.object_lora_rank,
         object_lora_alpha=args.object_lora_alpha,
         object_lora_dropout=args.object_lora_dropout,
+        xssc_slot_track_dropout=args.xssc_slot_track_dropout,
     )
 
 
@@ -625,6 +756,8 @@ def _log_stage_summary(accelerator, model: XSSCContextSlotsWanModule, args: argp
         "Object attention base: text cross-attention + physical LoRA, baked and frozen",
         f"Object LoRA: rank={model.object_lora_rank}, alpha={model.object_lora_alpha:g}, "
         f"dropout={model.object_lora_dropout:g}",
+        f"xSSC slot-track dropout: {model.xssc_slot_track_dropout:g} "
+        "(same slot mask across all 8 context frames)",
         f"Trainable projector/time params: {sum(p.numel() for p in projector_params):,}",
         f"Trainable object-attention LoRA params: {sum(p.numel() for p in object_lora_params):,}",
         f"Trainable object-gate params: {sum(p.numel() for p in object_gate_params):,}",
@@ -649,7 +782,7 @@ def main() -> None:
     accelerator = tvn.build_accelerator(args)
     tvn.init_trackers(accelerator, args)
 
-    dataset = tvn.build_dataset(args)
+    dataset = build_dataset(args)
     if int(args.train_batch_size) > 1:
         dataset = GroupedBatchDataset(dataset, args.train_batch_size)
     headonly_val_config = tvn.build_headonly_val_config(args)

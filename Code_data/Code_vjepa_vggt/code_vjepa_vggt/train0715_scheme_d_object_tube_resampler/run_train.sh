@@ -31,8 +31,9 @@ env \
     --diffsynth_root "${DIFFSYNTH_ROOT}" \
     --wan_root /data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B \
     --dataset_type replay_preserve_mix \
-    --pybullet_raw_root /data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500 \
-    --pybullet_raw_split train --pybullet_raw_sampling_strategy prefix --pybullet_raw_window_starts 0 \
+    --replay_pybullet_dataset 0713 \
+    --pybullet0713_root /data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5 \
+    --pybullet0713_split train --pybullet0713_sampling_strategy prefix \
     --kubric_root /data/gaoya/dataset/nnsriram97-phyco_kubric --kubric_split train \
     --kubric_cache_root /data/gaoya/agent-data/cache/kubric_no_gt_box_dataset \
     --kubric_sampling_strategy prefix --kubric_replay_index_num_frames 69 \

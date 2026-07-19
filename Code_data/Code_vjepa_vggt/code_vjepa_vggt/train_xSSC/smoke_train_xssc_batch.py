@@ -28,7 +28,7 @@ def main() -> None:
     if accelerator.num_processes != 1:
         raise RuntimeError("Run this memory smoke on one GPU without accelerate launch")
 
-    dataset = train_xssc.tvn.build_dataset(args)
+    dataset = train_xssc.build_dataset(args)
     model = train_xssc.build_model(args, accelerator)
     model.to(accelerator.device)
     model.train()

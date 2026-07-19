@@ -5,18 +5,22 @@ set -euo pipefail
 GPU_SET="${GPU_SET:-0,2,3,5}"
 NUM_PROCESSES="${NUM_PROCESSES:-4}"
 RESUME="${RESUME:-none}"
-NUM_FRAMES="${NUM_FRAMES:-24}"
+NUM_FRAMES="${NUM_FRAMES:-49}"
 FIXED_NUM_CONTEXT_FRAMES="${FIXED_NUM_CONTEXT_FRAMES:-8}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
 OBJECT_LORA_RANK="${OBJECT_LORA_RANK:-32}"
 OBJECT_LORA_ALPHA="${OBJECT_LORA_ALPHA:-32}"
+OBJECT_LORA_DROPOUT="${OBJECT_LORA_DROPOUT:-0.05}"
+XSSC_SLOT_TRACK_DROPOUT="${XSSC_SLOT_TRACK_DROPOUT:-0.10}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-20000}"
+SAVE_STEPS="${SAVE_STEPS:-500}"
 NUM_EPOCHS="${NUM_EPOCHS:-100}"
 HEIGHT="${HEIGHT:-512}"
 WIDTH="${WIDTH:-896}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_PROJECT="${WANDB_PROJECT:-xssc_wan_physics}"
-WANDB_NAME="${WANDB_NAME:-xssc_ctx_slots_wan22_5b_gpu0235}"
+RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
+WANDB_NAME="${WANDB_NAME:-xssc_mix49_${RUN_TAG}}"
 
 if [[ ",${GPU_SET}," == *",4,"* ]]; then
   echo "ERROR: gpu4 is unavailable; GPU_SET=${GPU_SET}" >&2
@@ -38,12 +42,16 @@ XSSC_CHECKPOINT=/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
 BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors
-DATASET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/episodes_v1/industrial_s1_scale2_256x144_s8_f16_n6_h264_batch1500
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_xssc_context_slots/wan22_5b_gpu0235}"
+PYBULLET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5
+KUBRIC_ROOT=/data/gaoya/dataset/nnsriram97-phyco_kubric
+OPENVID_ROOT=/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train
+OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_xssc_context_slots/wan22_5b_mix49_${RUN_TAG}}"
 DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-0}"
 CACHE_ROOT=/data/gaoya/agent-data/cache/xssc_wan
+LOG_FILE="${LOG_FILE:-${OUTPUT_DIR}/train.log}"
 
 mkdir -p "${OUTPUT_DIR}" "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/torch" "${CACHE_ROOT}/xdg"
+exec > >(tee -a "${LOG_FILE}") 2>&1
 
 RESUME_ARGS=()
 if [ "${RESUME}" != "none" ]; then
@@ -72,10 +80,22 @@ CMD=(
   --xssc_max_time_steps 64
   --object_lora_rank "${OBJECT_LORA_RANK}"
   --object_lora_alpha "${OBJECT_LORA_ALPHA}"
-  --object_lora_dropout 0.0
-  --dataset_type phys_state_episode
-  --phys_state_root "${DATASET_ROOT}"
-  --phys_state_split train
+  --object_lora_dropout "${OBJECT_LORA_DROPOUT}"
+  --xssc_slot_track_dropout "${XSSC_SLOT_TRACK_DROPOUT}"
+  --dataset_type xssc_replay_mix
+  --pybullet0713_root "${PYBULLET_ROOT}"
+  --pybullet0713_split train
+  --pybullet0713_sampling_strategy prefix
+  --kubric_root "${KUBRIC_ROOT}"
+  --kubric_split train
+  --kubric_sampling_strategy prefix
+  --kubric_cache_root /data/gaoya/agent-data/cache/kubric_no_gt_box_dataset
+  --kubric_replay_index_num_frames 69
+  --kubric_replay_index_num_context_frames 20
+  --openvid_root "${OPENVID_ROOT}"
+  --mixture_pybullet_ratio 0.30
+  --mixture_kubric_ratio 0.30
+  --mixture_openvid_ratio 0.40
   --height "${HEIGHT}"
   --width "${WIDTH}"
   --num_frames "${NUM_FRAMES}"
@@ -90,7 +110,7 @@ CMD=(
   --gradient_accumulation_steps 1
   --optimizer_type paged_adamw8bit
   --max_grad_norm 1.0
-  --save_steps 500
+  --save_steps "${SAVE_STEPS}"
   --max_checkpoints_keep 10
   --remove_prefix_in_ckpt pipe.dit.
   --output_path "${OUTPUT_DIR}"
@@ -107,15 +127,20 @@ CMD=(
   --wandb_project "${WANDB_PROJECT}"
   --wandb_name "${WANDB_NAME}"
   --wandb_mode "${WANDB_MODE}"
+  --fail_on_nonfinite_train_values
+  --debug_print_object_regularization
 )
 
 CMD+=("${RESUME_ARGS[@]}")
 
 echo "[launch] GPU_SET=${GPU_SET} NUM_PROCESSES=${NUM_PROCESSES}"
 echo "[launch] per-GPU batch=${TRAIN_BATCH_SIZE} global batch=$((TRAIN_BATCH_SIZE * NUM_PROCESSES))"
+echo "[launch] data=30% 0717-PyBullet + 30% Kubric + 40% OpenVid, frames=${NUM_FRAMES}, ctx=${FIXED_NUM_CONTEXT_FRAMES}"
 echo "[launch] xSSC=${XSSC_CHECKPOINT}"
 echo "[launch] object token shape=[B,$((FIXED_NUM_CONTEXT_FRAMES * 7)),3072]"
 echo "[launch] object cross-attention LoRA rank=${OBJECT_LORA_RANK} alpha=${OBJECT_LORA_ALPHA}"
+echo "[launch] dropout: slot-track=${XSSC_SLOT_TRACK_DROPOUT} object-LoRA=${OBJECT_LORA_DROPOUT}"
 echo "[launch] output=${OUTPUT_DIR}"
+echo "[launch] log=${LOG_FILE}"
 echo "[launch] command: ${CMD[*]}"
 exec "${CMD[@]}"
