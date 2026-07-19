@@ -31,7 +31,7 @@ def select_center_queries(
         slot = region.get("region_slot")
         if slot is None:
             target = np.array([width / 2.0, height / 2.0], dtype=np.float32)
-            mask_slot = 2
+            mask_slot = len(masks) - 1
         else:
             mask_slot = int(slot)
             ys, xs = np.nonzero(masks[mask_slot])
