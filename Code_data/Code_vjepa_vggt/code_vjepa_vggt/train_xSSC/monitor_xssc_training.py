@@ -13,7 +13,17 @@ from pathlib import Path
 
 
 NUMBER = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
-KEYS = ("step", "loss_main", "loss_obj_ctx_reg", "gate_abs_max", "max_ratio", "grad_norm", "grad_absmax", "grad_params")
+KEYS = (
+    "step",
+    "loss_main",
+    "loss_obj_ctx_reg",
+    "gate_abs_max",
+    "max_ratio",
+    "slot_drop",
+    "grad_norm",
+    "grad_absmax",
+    "grad_params",
+)
 
 
 def parse_line(line: str) -> dict[str, float] | None:
@@ -24,6 +34,10 @@ def parse_line(line: str) -> dict[str, float] | None:
         match = re.search(rf"\b{key}=({NUMBER})", line)
         if match:
             row[key] = float(match.group(1))
+    objects = re.search(r"objects=(\d+)->(\d+)", line)
+    if objects:
+        row["objects_before"] = float(objects.group(1))
+        row["objects_after"] = float(objects.group(2))
     return row if "step" in row else None
 
 
@@ -80,7 +94,15 @@ def main() -> None:
             if stale > args.stale_seconds:
                 critical.append(f"no optimizer step for {stale:.0f} seconds")
             rolling = {}
-            for key in ("loss_main", "loss_obj_ctx_reg", "grad_norm", "grad_absmax", "gate_abs_max"):
+            for key in (
+                "loss_main",
+                "loss_obj_ctx_reg",
+                "grad_norm",
+                "grad_absmax",
+                "gate_abs_max",
+                "slot_drop",
+                "objects_after",
+            ):
                 values = [row[key] for row in rows if key in row]
                 if values:
                     rolling[key] = {"min": min(values), "mean": sum(values) / len(values), "max": max(values)}
