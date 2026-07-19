@@ -76,6 +76,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-matching-mode", choices=("q_to_k", "symmetric"), default="q_to_k")
     parser.add_argument("--analysis-hidden-temperature", type=float, default=0.07)
     parser.add_argument("--analysis-no-hidden", action="store_true")
+    parser.add_argument(
+        "--analysis-no-cotracker",
+        action="store_true",
+        help="Skip CoTracker on generated video; useful for Q/K-only visualization.",
+    )
+    parser.add_argument(
+        "--analysis-query-coordinate-mode",
+        choices=("cache", "cover_crop"),
+        default="cache",
+        help="Map stretch-cache points into the pipeline's cover-cropped input coordinates.",
+    )
     parser.add_argument("--analysis-no-video", action="store_true")
     parser.add_argument("--analysis-visualize-layer", type=int, default=17)
     parser.add_argument("--analysis-visualize-step-index", type=int, default=None)
@@ -146,6 +157,33 @@ def run_cotracker(
     return tracks, visibility[0].float().cpu().numpy() > 0.5
 
 
+def map_cache_points_to_cover_crop(
+    points: np.ndarray,
+    context_path: Path,
+    cache_hw: tuple[int, int],
+    target_hw: tuple[int, int],
+) -> np.ndarray:
+    capture = cv2.VideoCapture(str(context_path))
+    source_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    source_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    capture.release()
+    if source_width <= 0 or source_height <= 0:
+        raise RuntimeError(f"cannot read context geometry: {context_path}")
+    cache_height, cache_width = cache_hw
+    target_height, target_width = target_hw
+    source_xy = points.astype(np.float32).copy()
+    source_xy[:, 0] *= source_width / cache_width
+    source_xy[:, 1] *= source_height / cache_height
+    scale = max(target_width / source_width, target_height / source_height)
+    resized_width = source_width * scale
+    resized_height = source_height * scale
+    source_xy[:, 0] = source_xy[:, 0] * scale - (resized_width - target_width) / 2.0
+    source_xy[:, 1] = source_xy[:, 1] * scale - (resized_height - target_height) / 2.0
+    source_xy[:, 0] = np.clip(source_xy[:, 0], 0, target_width - 1)
+    source_xy[:, 1] = np.clip(source_xy[:, 1], 0, target_height - 1)
+    return source_xy
+
+
 def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     probe.seed_everything(int(args.seed))
     context_path = Path(case["video"])
@@ -159,6 +197,13 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     )
     region_cache = load_region_cache(Path(args.analysis_region_cache_root), case["case_key"])
     query_points = region_cache.query_points
+    if args.analysis_query_coordinate_mode == "cover_crop":
+        query_points = map_cache_points_to_cover_crop(
+            query_points,
+            context_path,
+            region_cache.context_frame_rgb.shape[:2],
+            (int(args.height), int(args.width)),
+        )
     layers = sorted(set(int(value) for value in args.analysis_layers))
     steps = args.analysis_step_indices or probe.evenly_spaced_steps(int(args.sampling_steps))
     steps = sorted(set(int(value) for value in steps))
@@ -212,16 +257,19 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         "query_points.png",
         *save_region_query_visualizations(output_dir, region_cache),
     ]
-    gt_tracks, gt_visibility = run_cotracker(
-        cotracker, generated_frames, query_points, query_pixel_frame, str(args.device)
-    )
-    np.savez_compressed(
-        output_dir / "cotracker_pseudo_gt.npz",
-        tracks=gt_tracks,
-        visibility=gt_visibility,
-        query_points=query_points,
-        latent_anchor_frames=anchors,
-    )
+    gt_tracks = None
+    gt_visibility = None
+    if not args.analysis_no_cotracker:
+        gt_tracks, gt_visibility = run_cotracker(
+            cotracker, generated_frames, query_points, query_pixel_frame, str(args.device)
+        )
+        np.savez_compressed(
+            output_dir / "cotracker_pseudo_gt.npz",
+            tracks=gt_tracks,
+            visibility=gt_visibility,
+            query_points=query_points,
+            latent_anchor_frames=anchors,
+        )
     rows = []
     for region in region_cache.regions:
         point_slice = slice(region.point_start, region.point_end)
@@ -231,8 +279,8 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
             )
             row = probe.evaluate_record(
                 sliced_record,
-                gt_tracks[:, point_slice],
-                gt_visibility[:, point_slice],
+                None if gt_tracks is None else gt_tracks[:, point_slice],
+                None if gt_visibility is None else gt_visibility[:, point_slice],
                 anchors,
                 (int(args.height), int(args.width)),
             )
@@ -278,8 +326,8 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
                     generated_frames,
                     anchors,
                     sliced_match,
-                    gt_tracks[:, point_slice],
-                    gt_visibility[:, point_slice],
+                    None if gt_tracks is None else gt_tracks[:, point_slice],
+                    None if gt_visibility is None else gt_visibility[:, point_slice],
                     output_dir / track_name,
                     int(args.fps),
                 )
@@ -325,6 +373,7 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         "future_latent_indices": list(range(reference.clean_prefix_latents, reference.grid[0])),
         "latent_anchor_pixel_frames": anchors.tolist(),
         "query_points": query_points.tolist(),
+        "query_coordinate_mode": str(args.analysis_query_coordinate_mode),
         "height": int(args.height),
         "width": int(args.width),
         "cfg_scale": float(args.cfg_scale),
@@ -362,7 +411,7 @@ def main() -> None:
     pipe = target.core.build_pipeline(
         Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"), str(args.device), lora_path
     )
-    cotracker = load_cotracker(str(args.device))
+    cotracker = None if args.analysis_no_cotracker else load_cotracker(str(args.device))
     summary = {"worker_id": args.worker_id, "assigned_cases": [case["case_key"] for case in assigned], "completed": []}
     summary_path = output_root / f"worker_{args.worker_id:02d}.json"
     for index, case in enumerate(assigned, start=1):

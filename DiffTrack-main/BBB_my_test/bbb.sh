@@ -2,7 +2,7 @@
 
 cd /home/gaoya/Code_Video/DiffTrack-main
 export PYTHONPATH=/home/gaoya/Code_Video/DiffTrack-main/diffusers/src:/home/gaoya/Code_Video/DiffTrack-main
-TXT_PROMPTS=/home/gaoya/Code_Video/DiffTrack-main/dataset/bbb.txt
+TXT_PROMPTS=/home/gaoya/Code_Video/DiffTrack-main/BBB_my_test/bbb.txt
 TXT_TAG=bbb
 BASELINE_OUTPUT_DIR=/data/gaoya/agent-data/outputs/difftrack/$TXT_TAG/baseline
 PAG_OUTPUT_DIR=/data/gaoya/agent-data/outputs/difftrack/$TXT_TAG/pag

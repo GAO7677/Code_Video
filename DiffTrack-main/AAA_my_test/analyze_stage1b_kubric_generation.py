@@ -688,9 +688,14 @@ def draw_track_video(
                 if gt is not None and visibility is not None and visibility[latent_time, point_index]:
                     point = tuple(np.rint(gt[latent_time, point_index]).astype(int))
                     cv2.circle(canvas, point, 4, color, -1, cv2.LINE_AA)
+            marker_label = (
+                "circle=CoTracker square=match"
+                if gt is not None
+                else "square=Q/K argmax"
+            )
             label = (
                 f"{record.method} L{record.layer} S{record.step_index} | "
-                f"latent {latent_time} / pixel {int(anchors[latent_time])} | circle=CoTracker square=match"
+                f"latent {latent_time} / pixel {int(anchors[latent_time])} | {marker_label}"
             )
             cv2.putText(canvas, label, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 0, 0), 3)
             cv2.putText(canvas, label, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1)
