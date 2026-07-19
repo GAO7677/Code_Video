@@ -12,7 +12,7 @@ import json
 import math
 import random
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,11 @@ for repo_root in (CODE_ROOT, DIFFSYNTH_ROOT):
 from diffsynth.utils.data import save_video
 from code_vjepa_vggt.train0705_kubric_no_gt_box import (
     infer_stage1b_context_only_no_gt_box_v_newtrain_kubric as kubric_infer,
+)
+from AAA_my_test.sam2_region_query_utils import (
+    DEFAULT_CACHE_ROOT,
+    load_region_cache,
+    save_region_query_visualizations,
 )
 
 
@@ -73,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Zero-based denoising steps. Default: five evenly spaced steps.",
     )
     parser.add_argument(
+        "--analysis-query-mode",
+        choices=("sam2_regions", "grid", "json"),
+        default="sam2_regions",
+        help="Query-point source: SAM2 object/background regions, uniform grid, or JSON file.",
+    )
+    parser.add_argument(
         "--analysis-query-grid",
         type=int,
         nargs=2,
@@ -85,6 +96,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="JSON file containing [[x, y], ...] in generated-video pixels.",
+    )
+    parser.add_argument(
+        "--analysis-points-per-region",
+        type=int,
+        default=8,
+        help="Expected number of cached points per object/background region.",
+    )
+    parser.add_argument(
+        "--analysis-region-cache-root",
+        type=Path,
+        default=DEFAULT_CACHE_ROOT,
+        help="Precomputed GroundingDINO + SAM2 region cache.",
     )
     parser.add_argument(
         "--analysis-matching-mode",
@@ -153,8 +176,35 @@ def evenly_spaced_steps(count: int) -> list[int]:
     return sorted({int(round(value)) for value in np.linspace(0, count - 1, min(5, count))})
 
 
-def load_query_points(args: argparse.Namespace, height: int, width: int) -> np.ndarray:
-    if args.analysis_query_points_json is not None:
+def load_query_points(
+    args: argparse.Namespace,
+    height: int,
+    width: int,
+    *,
+    case_key: str | None = None,
+) -> tuple[np.ndarray, dict[str, Any] | None]:
+    query_mode = "json" if args.analysis_query_points_json is not None else str(args.analysis_query_mode)
+    if query_mode == "sam2_regions":
+        if not case_key:
+            raise ValueError("SAM2 query mode requires a ToyDataset case key")
+        sampling = load_region_cache(Path(args.analysis_region_cache_root), case_key)
+        if sampling.context_frame_rgb.shape[:2] != (int(height), int(width)):
+            raise ValueError(
+                f"cached SAM2 resolution {sampling.context_frame_rgb.shape[:2]} "
+                f"does not match {(height, width)}"
+            )
+        expected = int(args.analysis_points_per_region)
+        if any(region.point_end - region.point_start != expected for region in sampling.regions):
+            raise ValueError(f"{case_key}: cache does not contain {expected} points per region")
+        payload = {
+            "mode": "sam2_regions",
+            "regions": [region.__dict__ for region in sampling.regions],
+            "sampling_frame_index": int(sampling.metadata["query_context_frame"]),
+            "debug": dict(sampling.metadata),
+            "sampling": sampling,
+        }
+        return sampling.query_points, payload
+    if query_mode == "json":
         payload = json.loads(args.analysis_query_points_json.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
             payload = payload.get("query_points", payload.get("points"))
@@ -173,7 +223,7 @@ def load_query_points(args: argparse.Namespace, height: int, width: int) -> np.n
         raise ValueError("query points contain non-finite values")
     points[:, 0] = np.clip(points[:, 0], 0, width - 1)
     points[:, 1] = np.clip(points[:, 1], 0, height - 1)
-    return points
+    return points, {"mode": query_mode}
 
 
 def tensor_video_to_uint8(video: Any) -> np.ndarray:
@@ -232,6 +282,18 @@ class MatchRecord:
     query_latent_index: int
     predictions: np.ndarray
     probabilities: np.ndarray
+
+
+def slice_match_record(record: MatchRecord, point_start: int, point_end: int) -> MatchRecord:
+    if not 0 <= point_start < point_end <= record.predictions.shape[1]:
+        raise ValueError(
+            f"invalid point slice [{point_start}:{point_end}] for {record.predictions.shape[1]} points"
+        )
+    return replace(
+        record,
+        predictions=record.predictions[:, point_start:point_end],
+        probabilities=record.probabilities[:, point_start:point_end],
+    )
 
 
 class GenerationCapture:
@@ -693,6 +755,7 @@ def write_report(
         f"- Full DiT token grid: {manifest['token_grid']}",
         f"- Query latent index: {manifest['query_latent_index']}",
         f"- Future latent indices: {manifest['future_latent_indices']}",
+        f"- Query mode: `{manifest.get('query_mode', 'grid')}`",
         f"- Matching mode: `{manifest['matching_mode']}`",
         "",
         "## 指标",
@@ -772,7 +835,13 @@ def main() -> None:
     )
     context_video = base.preprocess_video_rgb_uint8(frames, (int(args.height), int(args.width)))
     context_pil = base._tensor_video_to_pil_list(context_video)
-    query_points = load_query_points(args, int(args.height), int(args.width))
+    case_key = context_path.parents[2].name
+    query_points, query_debug = load_query_points(
+        args,
+        int(args.height),
+        int(args.width),
+        case_key=case_key,
+    )
 
     with torch.inference_mode():
         object_context_raw, object_debug = kubric_infer._build_object_context(
@@ -834,6 +903,11 @@ def main() -> None:
     if not args.analysis_no_video:
         save_video(video, str(output_dir / generated_video_name), fps=int(args.fps), quality=int(args.quality))
     draw_query_points(generated_frames[query_pixel_frame], query_points, output_dir / "query_points.png")
+    query_visual_files = ["query_points.png"]
+    if query_debug and query_debug.get("mode") == "sam2_regions":
+        query_visual_files.extend(
+            save_region_query_visualizations(output_dir, query_debug["sampling"])
+        )
 
     gt_tracks = None
     gt_visibility = None
@@ -874,7 +948,7 @@ def main() -> None:
         if args.analysis_visualize_step_index is not None
         else step_indices[-1]
     )
-    visual_files = ["query_points.png"]
+    visual_files = list(dict.fromkeys(query_visual_files))
     if not args.analysis_no_video:
         visual_files.insert(0, generated_video_name)
     for method in ("qk", "hidden"):
@@ -904,10 +978,15 @@ def main() -> None:
             visual_files.append(track_name)
 
     checkpoint_path = Path(base.tvn._resolve_checkpoint_file(args.checkpoint)).resolve()
+    query_manifest = None
+    if query_debug is not None:
+        query_manifest = {key: value for key, value in query_debug.items() if key != "sampling"}
     manifest = {
         "analysis_protocol": "last_clean_context_latent_to_future_latents",
         "capture_location": "video_self_attention_post_rmsnorm_post_3d_rope_pre_flash_attention",
         "cfg_branch": "positive_conditional_first_call_only",
+        "query_mode": str(args.analysis_query_mode),
+        "query_sampling": query_manifest,
         "matching_mode": str(args.analysis_matching_mode),
         "checkpoint": str(checkpoint_path),
         "context_video": str(context_path),

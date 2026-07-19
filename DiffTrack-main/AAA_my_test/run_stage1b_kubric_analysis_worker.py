@@ -13,6 +13,11 @@ import numpy as np
 import torch
 
 from AAA_my_test import analyze_stage1b_kubric_generation as analysis
+from AAA_my_test.sam2_region_query_utils import (
+    load_region_cache,
+    region_metadata,
+    save_region_query_visualizations,
+)
 
 
 DEFAULT_DATASET_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0718ToyDataset")
@@ -78,7 +83,8 @@ def process_case(
         frames, (int(args.height), int(args.width))
     )
     context_pil = analysis.base._tensor_video_to_pil_list(context_video)
-    query_points = analysis.load_query_points(args, int(args.height), int(args.width))
+    region_cache = load_region_cache(Path(args.analysis_region_cache_root), case["case_key"])
+    query_points = region_cache.query_points
     layers = sorted(set(int(layer) for layer in args.analysis_layers))
     step_indices = args.analysis_step_indices or analysis.evenly_spaced_steps(
         int(args.sampling_steps)
@@ -142,6 +148,11 @@ def process_case(
     generated_frames = analysis.tensor_video_to_uint8(video)
     anchors = analysis.latent_anchor_frames(reference_record.grid[0], len(generated_frames))
     query_pixel_frame = int(anchors[reference_record.query_latent_index])
+    cached_query_frame = int(region_cache.metadata["query_context_frame"])
+    if query_pixel_frame != cached_query_frame:
+        raise RuntimeError(
+            f"query frame mismatch: DiT={query_pixel_frame}, SAM2 cache={cached_query_frame}"
+        )
 
     generated_video_name = "generated.mp4"
     if not args.analysis_no_video:
@@ -154,6 +165,10 @@ def process_case(
     analysis.draw_query_points(
         generated_frames[query_pixel_frame], query_points, output_dir / "query_points.png"
     )
+    query_visual_files = [
+        "query_points.png",
+        *save_region_query_visualizations(output_dir, region_cache),
+    ]
 
     gt_tracks = None
     gt_visibility = None
@@ -169,16 +184,22 @@ def process_case(
             latent_anchor_frames=anchors,
         )
 
-    rows = [
-        analysis.evaluate_record(
-            record,
-            gt_tracks,
-            gt_visibility,
-            anchors,
-            (int(args.height), int(args.width)),
-        )
-        for record in records
-    ]
+    rows = []
+    for region in region_cache.regions:
+        point_slice = slice(region.point_start, region.point_end)
+        for record in records:
+            sliced_record = analysis.slice_match_record(
+                record, region.point_start, region.point_end
+            )
+            row = analysis.evaluate_record(
+                sliced_record,
+                None if gt_tracks is None else gt_tracks[:, point_slice],
+                None if gt_visibility is None else gt_visibility[:, point_slice],
+                anchors,
+                (int(args.height), int(args.width)),
+            )
+            row.update(region_metadata(region))
+            rows.append(row)
     analysis.save_records(output_dir, records)
     (output_dir / "metrics.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -194,38 +215,41 @@ def process_case(
         if args.analysis_visualize_step_index is not None
         else step_indices[-1]
     )
-    visual_files = ["query_points.png"]
+    visual_files = list(dict.fromkeys(query_visual_files))
     if not args.analysis_no_video:
         visual_files.insert(0, generated_video_name)
-    for method in ("qk", "hidden"):
-        match = capture.records.get((method, visualize_layer, visualize_step))
-        if match is None:
-            continue
-        heatmap_name = (
-            f"heatmap_{method}_L{visualize_layer:02d}_S{visualize_step:03d}.png"
-        )
-        analysis.save_heatmap_montage(
-            generated_frames,
-            anchors,
-            match,
-            int(args.analysis_heatmap_query_index),
-            output_dir / heatmap_name,
-        )
-        visual_files.append(heatmap_name)
-        if not args.analysis_no_video:
-            track_name = (
-                f"tracks_{method}_L{visualize_layer:02d}_S{visualize_step:03d}.mp4"
+    for region in region_cache.regions:
+        point_slice = slice(region.point_start, region.point_end)
+        for method in ("qk", "hidden"):
+            match = capture.records.get((method, visualize_layer, visualize_step))
+            if match is None:
+                continue
+            sliced_match = analysis.slice_match_record(
+                match, region.point_start, region.point_end
             )
-            analysis.draw_track_video(
-                generated_frames,
-                anchors,
-                match,
-                gt_tracks,
-                gt_visibility,
-                output_dir / track_name,
-                int(args.fps),
+            heatmap_name = (
+                f"regions/{region.region_name}/heatmap_{method}_"
+                f"L{visualize_layer:02d}_S{visualize_step:03d}.png"
             )
-            visual_files.append(track_name)
+            analysis.save_heatmap_montage(
+                generated_frames, anchors, sliced_match, 0, output_dir / heatmap_name
+            )
+            visual_files.append(heatmap_name)
+            if not args.analysis_no_video:
+                track_name = (
+                    f"regions/{region.region_name}/tracks_{method}_"
+                    f"L{visualize_layer:02d}_S{visualize_step:03d}.mp4"
+                )
+                analysis.draw_track_video(
+                    generated_frames,
+                    anchors,
+                    sliced_match,
+                    None if gt_tracks is None else gt_tracks[:, point_slice],
+                    None if gt_visibility is None else gt_visibility[:, point_slice],
+                    output_dir / track_name,
+                    int(args.fps),
+                )
+                visual_files.append(track_name)
 
     checkpoint_path = Path(
         analysis.base.tvn._resolve_checkpoint_file(args.checkpoint)
@@ -236,6 +260,11 @@ def process_case(
         "analysis_protocol": "last_clean_context_latent_to_future_latents",
         "capture_location": "video_self_attention_post_rmsnorm_post_3d_rope_pre_flash_attention",
         "cfg_branch": "positive_conditional_first_call_only",
+        "query_mode": "sam2_regions",
+        "query_region_cache": str(
+            (Path(args.analysis_region_cache_root) / case["case_key"]).resolve()
+        ),
+        "query_regions": [region_metadata(region) for region in region_cache.regions],
         "matching_mode": str(args.analysis_matching_mode),
         "checkpoint": str(checkpoint_path),
         "context_video": str(context_path),
@@ -289,6 +318,7 @@ def process_case(
                 "case_key": case["case_key"],
                 "checkpoint": str(checkpoint_path),
                 "record_count": len(records),
+                "metric_row_count": len(rows),
             },
             ensure_ascii=False,
             indent=2,
@@ -311,7 +341,6 @@ def main() -> None:
     assigned = [case for index, case in enumerate(cases) if index % args.num_workers == args.worker_id]
     if not assigned:
         raise RuntimeError(f"worker {args.worker_id} has no assigned cases")
-
     analysis.kubric_infer.base.t0705 = analysis.trainmod
     analysis.kubric_infer.base._build_object_context = analysis.kubric_infer._build_object_context
     analysis.kubric_infer.base._build_model_args = analysis.kubric_infer._build_model_args

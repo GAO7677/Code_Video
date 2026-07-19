@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", nargs="+", default=["0", "1", "2", "3"])
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--sampling-steps", type=int, default=20)
+    parser.add_argument("--sampling-steps", type=int, default=40)
     parser.add_argument("--num-frames", type=int, default=24)
     parser.add_argument("--case-keys", nargs="*", default=None)
     parser.add_argument("--overwrite", action="store_true")
