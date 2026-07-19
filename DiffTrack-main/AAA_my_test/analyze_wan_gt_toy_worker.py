@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Persistent worker for raw-physics Wan LoRA context-to-future analysis."""
+"""Probe ToyDataset GT videos with Wan2.2-TI2V-5B Q/K and hidden states.
+
+The first eight pixel frames are encoded as the clean context prefix.  The full
+25-frame GT video is encoded with the same Wan VAE, and only its future latents
+are noised independently at the requested scheduler steps before one positive
+conditional Transformer forward pass.
+"""
 
 from __future__ import annotations
 
 import argparse
 import gc
 import json
-import random
 import sys
 import traceback
 from pathlib import Path
 
-import cv2
+import imageio.v2 as imageio
 import numpy as np
 import torch
 
@@ -23,10 +28,14 @@ for path in (TRAIN0419_ROOT, DIFFSYNTH_ROOT, CODE_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-# Import the target wrapper first so its intended DiffSynth implementation is fixed.
 from code_vjepa_vggt.AAAinfer import wan_openvid_0613pybullet_lorav2v as target
 
 from AAA_my_test import analyze_stage1b_kubric_generation as probe
+from AAA_my_test.run_lorav2v_toy_analysis_worker import (
+    load_cases,
+    load_cotracker,
+    run_cotracker,
+)
 from AAA_my_test.sam2_region_query_utils import (
     DEFAULT_CACHE_ROOT,
     load_region_cache,
@@ -36,36 +45,28 @@ from AAA_my_test.sam2_region_query_utils import (
 
 
 DEFAULT_DATASET_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0718ToyDataset")
-DEFAULT_WEIGHTS_ROOT = Path(
-    "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/"
-    "raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500"
-)
+DEFAULT_WAN_ROOT = Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B")
 DEFAULT_OUTPUT_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/wan_openvid_0613pybullet_lorav2v_step000500_analysis"
+    "/data/gaoya/agent-data/outputs/wan22_ti2v_5b_gt_real_sam2_regions_steps40"
 )
-COTRACKER_ROOT = Path("/home/gaoya/Code_Video/co-tracker-main")
-COTRACKER_CHECKPOINT = Path("/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights-root", type=Path, default=DEFAULT_WEIGHTS_ROOT)
-    parser.add_argument(
-        "--base-model-only",
-        action="store_true",
-        help="Load the original Wan2.2-TI2V-5B without applying the LoRA checkpoint.",
-    )
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
+    parser.add_argument("--wan-root", type=Path, default=DEFAULT_WAN_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--lora-weights-root", type=Path, default=None)
     parser.add_argument("--worker-id", type=int, required=True)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--case-keys", nargs="*", default=None)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--width", type=int, default=896)
-    parser.add_argument("--num-frames", type=int, default=24)
+    parser.add_argument("--num-frames", type=int, default=25)
     parser.add_argument("--context-frames", type=int, default=8)
     parser.add_argument("--sampling-steps", type=int, default=40)
+    parser.add_argument("--sigma-shift", type=float, default=5.0)
     parser.add_argument("--cfg-scale", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--fps", type=int, default=30)
@@ -84,85 +85,175 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_cases(dataset_root: Path, case_keys: list[str] | None) -> list[dict]:
-    selected = set(case_keys or [])
-    cases = []
-    for manifest_path in sorted((dataset_root / "cases").glob("case_*/case_manifest.json")):
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        case_key = str(payload["case_key"])
-        if selected and case_key not in selected:
-            continue
-        base = payload["base"]
-        video = Path(base["video"])
-        caption = str(base.get("caption") or base.get("short_caption") or "").strip()
-        if not video.is_file() or not caption:
-            raise RuntimeError(f"invalid ToyDataset base entry: {manifest_path}")
-        cases.append(
-            {
-                "case_key": case_key,
-                "manifest": str(manifest_path),
-                "video": str(video),
-                "caption": caption,
-            }
+def prepare_conditioning(
+    pipe,
+    *,
+    prompt: str,
+    context_video: list,
+    height: int,
+    width: int,
+    num_frames: int,
+    sampling_steps: int,
+    sigma_shift: float,
+    cfg_scale: float,
+    seed: int,
+) -> tuple[dict, dict]:
+    """Run standard Wan pipeline units without entering the denoising loop."""
+    pipe.scheduler.set_timesteps(
+        sampling_steps,
+        denoising_strength=1.0,
+        shift=sigma_shift,
+    )
+    inputs_posi = {
+        "prompt": prompt,
+        "vap_prompt": " ",
+        "tea_cache_l1_thresh": None,
+        "tea_cache_model_id": "",
+        "num_inference_steps": sampling_steps,
+    }
+    inputs_nega = {
+        "negative_prompt": "",
+        "negative_vap_prompt": " ",
+        "tea_cache_l1_thresh": None,
+        "tea_cache_model_id": "",
+        "num_inference_steps": sampling_steps,
+    }
+    inputs_shared = {
+        "input_image": context_video[0],
+        "end_image": None,
+        "input_video": None,
+        "context_video": context_video,
+        "denoising_strength": 1.0,
+        "control_video": None,
+        "reference_image": None,
+        "camera_control_direction": None,
+        "camera_control_speed": 1 / 54,
+        "camera_control_origin": (0, 0.532139961, 0.946026558, 0.5, 0.5, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0),
+        "vace_video": None,
+        "vace_video_mask": None,
+        "vace_reference_image": None,
+        "vace_scale": 1.0,
+        "seed": seed,
+        "rand_device": "cpu",
+        "height": height,
+        "width": width,
+        "num_frames": num_frames,
+        "cfg_scale": cfg_scale,
+        "cfg_merge": False,
+        "sigma_shift": sigma_shift,
+        "motion_bucket_id": None,
+        "longcat_video": None,
+        "tiled": True,
+        "tile_size": (30, 52),
+        "tile_stride": (15, 26),
+        "sliding_window_size": None,
+        "sliding_window_stride": None,
+        "input_audio": None,
+        "audio_sample_rate": 16000,
+        "s2v_pose_video": None,
+        "audio_embeds": None,
+        "s2v_pose_latents": None,
+        "motion_video": None,
+        "animate_pose_video": None,
+        "animate_face_video": None,
+        "animate_inpaint_video": None,
+        "animate_mask_video": None,
+        "vap_video": None,
+        "wantodance_music_path": None,
+        "wantodance_reference_image": None,
+        "wantodance_fps": 30.0,
+        "wantodance_keyframes": None,
+        "wantodance_keyframes_mask": None,
+        "framewise_decoding": False,
+    }
+    for unit in pipe.units:
+        inputs_shared, inputs_posi, inputs_nega = pipe.unit_runner(
+            unit, pipe, inputs_shared, inputs_posi, inputs_nega
         )
-    if not cases:
-        raise RuntimeError(f"no cases found under {dataset_root}")
-    return cases
+    return inputs_shared, inputs_posi
 
 
-def load_cotracker(device: str):
-    if str(COTRACKER_ROOT) not in sys.path:
-        sys.path.insert(0, str(COTRACKER_ROOT))
-    from cotracker.predictor import CoTrackerPredictor
+def encode_gt_video(pipe, frames: list) -> torch.Tensor:
+    pipe.load_models_to_device(["vae"])
+    video = pipe.preprocess_video(frames)
+    return pipe.vae.encode(
+        video,
+        device=pipe.device,
+        tiled=True,
+        tile_size=(30, 52),
+        tile_stride=(15, 26),
+    ).to(dtype=pipe.torch_dtype, device=pipe.device)
 
-    return CoTrackerPredictor(
-        checkpoint=str(COTRACKER_CHECKPOINT), offline=True, v2=False, window_len=60
-    ).to(device).eval().requires_grad_(False)
+
+def save_gt_video(frames: list, path: Path, fps: int, quality: int) -> None:
+    writer = imageio.get_writer(path, fps=fps, quality=quality)
+    try:
+        for frame in frames:
+            writer.append_data(np.asarray(frame.convert("RGB"), dtype=np.uint8))
+    finally:
+        writer.close()
 
 
-def run_cotracker(
-    model,
-    frames: np.ndarray,
-    query_points: np.ndarray,
-    query_pixel_frame: int,
-    device: str,
-) -> tuple[np.ndarray, np.ndarray]:
-    input_height, input_width = 384, 512
-    native_height, native_width = frames.shape[1:3]
-    video = torch.from_numpy(frames).float().div(255.0).permute(0, 3, 1, 2)
-    video = torch.nn.functional.interpolate(
-        video, size=(input_height, input_width), mode="bilinear", align_corners=True
-    ).unsqueeze(0).to(device)
-    points = torch.from_numpy(query_points).float().to(device)
-    points[:, 0] *= input_width / native_width
-    points[:, 1] *= input_height / native_height
-    frame_ids = torch.full((len(points), 1), float(query_pixel_frame), device=device)
-    queries = torch.cat((frame_ids, points), dim=-1).unsqueeze(0)
-    with torch.inference_mode():
-        tracks, visibility = model(video, queries=queries, backward_tracking=False)
-    tracks = tracks[0].float().cpu().numpy()
-    tracks[..., 0] *= max(native_width - 1, 1) / max(input_width - 1, 1)
-    tracks[..., 1] *= max(native_height - 1, 1) / max(input_height - 1, 1)
-    return tracks, visibility[0].float().cpu().numpy() > 0.5
+def validate_geometry(args, gt_latents: torch.Tensor, inputs_shared: dict) -> int:
+    noise = inputs_shared["noise"]
+    clean_prefix = inputs_shared.get("clean_prefix_latents")
+    if clean_prefix is None:
+        raise RuntimeError("context pipeline did not produce clean_prefix_latents")
+    if gt_latents.shape != noise.shape:
+        raise RuntimeError(f"GT/noise latent shape mismatch: {gt_latents.shape} vs {noise.shape}")
+    prefix_len = int(clean_prefix.shape[2])
+    if prefix_len != 2:
+        raise RuntimeError(f"expected 8 context frames -> 2 clean latents, got {prefix_len}")
+    if int(gt_latents.shape[2]) != 7:
+        raise RuntimeError(f"expected 25 GT frames -> 7 latents, got {gt_latents.shape[2]}")
+    if (int(args.height), int(args.width)) != (512, 896):
+        raise RuntimeError("formal SAM2 cache requires Wan analysis geometry 512x896")
+    return prefix_len
 
 
 def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     probe.seed_everything(int(args.seed))
-    context_path = Path(case["video"])
+    video_path = Path(case["video"])
     prompt = str(case["caption"])
-    context = target.core.load_context_frames(
-        context_path=context_path,
-        context_frames=int(args.context_frames),
+    gt_frames = target.core.load_context_frames(
+        context_path=video_path,
+        context_frames=int(args.num_frames),
         height=int(args.height),
         width=int(args.width),
         resize_mode="crop",
     )
+    if len(gt_frames) != int(args.num_frames):
+        raise RuntimeError(f"loaded {len(gt_frames)}/{args.num_frames} GT frames")
+    context = gt_frames[: int(args.context_frames)]
     region_cache = load_region_cache(Path(args.analysis_region_cache_root), case["case_key"])
     query_points = region_cache.query_points
+    if region_cache.context_frame_rgb.shape[:2] != (int(args.height), int(args.width)):
+        raise RuntimeError(f"SAM2 cache geometry mismatch: {region_cache.context_frame_rgb.shape[:2]}")
+
     layers = sorted(set(int(value) for value in args.analysis_layers))
-    steps = args.analysis_step_indices or probe.evenly_spaced_steps(int(args.sampling_steps))
+    steps = args.analysis_step_indices or [0, 10, 20, 29, 39]
     steps = sorted(set(int(value) for value in steps))
-    aligned_num_frames = target.core.align_generation_num_frames(int(args.num_frames))
+    invalid_steps = [step for step in steps if not 0 <= step < int(args.sampling_steps)]
+    if invalid_steps:
+        raise ValueError(f"invalid analysis steps: {invalid_steps}")
+
+    gt_latents = encode_gt_video(pipe, gt_frames)
+    inputs_shared, inputs_posi = prepare_conditioning(
+        pipe,
+        prompt=prompt,
+        context_video=context,
+        height=int(args.height),
+        width=int(args.width),
+        num_frames=int(args.num_frames),
+        sampling_steps=int(args.sampling_steps),
+        sigma_shift=float(args.sigma_shift),
+        cfg_scale=float(args.cfg_scale),
+        seed=int(args.seed),
+    )
+    prefix_len = validate_geometry(args, gt_latents, inputs_shared)
+    clean_prefix = inputs_shared["clean_prefix_latents"]
+    noise = inputs_shared["noise"]
+
     capture = probe.GenerationCapture(
         pipe=pipe,
         layers=layers,
@@ -173,22 +264,29 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         capture_hidden=not bool(args.analysis_no_hidden),
         hidden_temperature=float(args.analysis_hidden_temperature),
     )
+    pipe.load_models_to_device(pipe.in_iteration_models)
+    models = {name: getattr(pipe, name) for name in pipe.in_iteration_models}
     capture.install()
     try:
         with torch.inference_mode():
-            video = pipe(
-                prompt=prompt,
-                negative_prompt="",
-                input_image=context[0],
-                context_video=context,
-                height=int(args.height),
-                width=int(args.width),
-                num_frames=aligned_num_frames,
-                seed=int(args.seed),
-                cfg_scale=float(args.cfg_scale),
-                num_inference_steps=int(args.sampling_steps),
-                tiled=True,
-            )
+            for step_index in steps:
+                timestep = pipe.scheduler.timesteps[step_index].unsqueeze(0).to(
+                    dtype=pipe.torch_dtype, device=pipe.device
+                )
+                noised_gt = gt_latents.clone()
+                noised_gt[:, :, prefix_len:] = pipe.scheduler.add_noise(
+                    gt_latents[:, :, prefix_len:],
+                    noise[:, :, prefix_len:],
+                    timestep,
+                )
+                noised_gt[:, :, :prefix_len] = clean_prefix
+                inputs_shared["latents"] = noised_gt
+                pipe.model_fn(
+                    **models,
+                    **inputs_shared,
+                    **inputs_posi,
+                    timestep=timestep,
+                )
     finally:
         capture.remove()
 
@@ -197,23 +295,24 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     if len(records) != expected:
         raise RuntimeError(f"captured {len(records)}/{expected} records")
     reference = records[0]
-    generated_frames = probe.tensor_video_to_uint8(video)
-    anchors = probe.latent_anchor_frames(reference.grid[0], len(generated_frames))
+    anchors = probe.latent_anchor_frames(reference.grid[0], len(gt_frames))
     query_pixel_frame = int(anchors[reference.query_latent_index])
     cached_query_frame = int(region_cache.metadata["query_context_frame"])
     if query_pixel_frame != cached_query_frame:
         raise RuntimeError(
-            f"query frame mismatch: DiT={query_pixel_frame}, SAM2 cache={cached_query_frame}"
+            f"query frame mismatch: Wan={query_pixel_frame}, SAM2={cached_query_frame}"
         )
+
+    frame_array = np.stack([np.asarray(frame.convert("RGB"), dtype=np.uint8) for frame in gt_frames])
     if not args.analysis_no_video:
-        probe.save_video(video, str(output_dir / "generated.mp4"), fps=int(args.fps), quality=int(args.quality))
-    probe.draw_query_points(generated_frames[query_pixel_frame], query_points, output_dir / "query_points.png")
+        save_gt_video(gt_frames, output_dir / "gt.mp4", int(args.fps), int(args.quality))
+    probe.draw_query_points(frame_array[query_pixel_frame], query_points, output_dir / "query_points.png")
     query_visual_files = [
         "query_points.png",
         *save_region_query_visualizations(output_dir, region_cache),
     ]
     gt_tracks, gt_visibility = run_cotracker(
-        cotracker, generated_frames, query_points, query_pixel_frame, str(args.device)
+        cotracker, frame_array, query_points, query_pixel_frame, str(args.device)
     )
     np.savez_compressed(
         output_dir / "cotracker_pseudo_gt.npz",
@@ -222,13 +321,12 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         query_points=query_points,
         latent_anchor_frames=anchors,
     )
+
     rows = []
     for region in region_cache.regions:
         point_slice = slice(region.point_start, region.point_end)
         for record in records:
-            sliced_record = probe.slice_match_record(
-                record, region.point_start, region.point_end
-            )
+            sliced_record = probe.slice_match_record(record, region.point_start, region.point_end)
             row = probe.evaluate_record(
                 sliced_record,
                 gt_tracks[:, point_slice],
@@ -242,6 +340,7 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     (output_dir / "metrics.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
     visualize_step = (
         int(args.analysis_visualize_step_index)
         if args.analysis_visualize_step_index is not None
@@ -249,24 +348,20 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
     )
     visual_files = list(dict.fromkeys(query_visual_files))
     if not args.analysis_no_video:
-        visual_files.insert(0, "generated.mp4")
+        visual_files.insert(0, "gt.mp4")
     for region in region_cache.regions:
         point_slice = slice(region.point_start, region.point_end)
         for method in ("qk", "hidden"):
-            match = capture.records.get(
-                (method, int(args.analysis_visualize_layer), visualize_step)
-            )
+            match = capture.records.get((method, int(args.analysis_visualize_layer), visualize_step))
             if match is None:
                 continue
-            sliced_match = probe.slice_match_record(
-                match, region.point_start, region.point_end
-            )
+            sliced_match = probe.slice_match_record(match, region.point_start, region.point_end)
             heatmap_name = (
                 f"regions/{region.region_name}/heatmap_{method}_"
                 f"L{args.analysis_visualize_layer:02d}_S{visualize_step:03d}.png"
             )
             probe.save_heatmap_montage(
-                generated_frames, anchors, sliced_match, 0, output_dir / heatmap_name
+                frame_array, anchors, sliced_match, 0, output_dir / heatmap_name
             )
             visual_files.append(heatmap_name)
             if not args.analysis_no_video:
@@ -275,7 +370,7 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
                     f"L{args.analysis_visualize_layer:02d}_S{visualize_step:03d}.mp4"
                 )
                 probe.draw_track_video(
-                    generated_frames,
+                    frame_array,
                     anchors,
                     sliced_match,
                     gt_tracks[:, point_slice],
@@ -284,38 +379,35 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
                     int(args.fps),
                 )
                 visual_files.append(track_name)
-    lora_path = None if args.base_model_only else target._resolve_lora_path(args.weights_root)
-    model_name = (
-        "wan2.2_ti2v_5b_baseline"
-        if args.base_model_only
-        else "wan_openvid_0613pybullet_lorav2v"
+
+    lora_path = (
+        target._resolve_lora_path(args.lora_weights_root)
+        if args.lora_weights_root is not None
+        else None
     )
     manifest = {
         "case_key": case["case_key"],
         "case_manifest": case["manifest"],
-        "model": model_name,
-        "conditioning_mode": "context_aware",
-        "analysis_protocol": "last_clean_context_latent_to_future_latents",
+        "model": "Wan2.2-TI2V-5B",
+        "model_variant": "lora" if lora_path is not None else "base",
+        "checkpoint": str(lora_path) if lora_path is not None else None,
+        "wan_root": str(Path(args.wan_root).resolve()),
+        "prompt": prompt,
+        "context_video": str(video_path),
+        "analysis_protocol": "Wan_GT_VAE_clean_prefix_fixed_noise_single_forward",
         "capture_location": "video_self_attention_post_rmsnorm_post_3d_rope_pre_flash_attention",
-        "cfg_branch": "positive_conditional_first_call_only",
+        "cfg_branch": "positive_conditional_only",
         "query_mode": "sam2_regions",
-        "query_region_cache": str(
-            (Path(args.analysis_region_cache_root) / case["case_key"]).resolve()
-        ),
+        "query_region_cache": str((Path(args.analysis_region_cache_root) / case["case_key"]).resolve()),
         "query_regions": [region_metadata(region) for region in region_cache.regions],
         "matching_mode": str(args.analysis_matching_mode),
-        "weights_root": None if args.base_model_only else str(args.weights_root.resolve()),
-        "checkpoint": None if lora_path is None else str(lora_path),
-        "context_video": str(context_path),
-        "prompt": prompt,
         "seed": int(args.seed),
         "sampling_steps": int(args.sampling_steps),
         "layers": layers,
         "step_indices": steps,
         "scheduler_timesteps": [float(value) for value in pipe.scheduler.timesteps.detach().float().cpu()],
         "scheduler_sigmas": [float(value) for value in pipe.scheduler.sigmas.detach().float().cpu()],
-        "requested_num_frames": int(args.num_frames),
-        "generated_pixel_frames": int(len(generated_frames)),
+        "gt_pixel_frames": len(gt_frames),
         "context_pixel_frames": len(context),
         "context_source_frame_indices": list(range(len(context))),
         "clean_prefix_latents": int(reference.clean_prefix_latents),
@@ -327,8 +419,6 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         "query_points": query_points.tolist(),
         "height": int(args.height),
         "width": int(args.width),
-        "cfg_scale": float(args.cfg_scale),
-        "object_branch_enabled": False,
         "files": visual_files,
     }
     (output_dir / "manifest.json").write_text(
@@ -339,7 +429,8 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         json.dumps(
             {
                 "case_key": case["case_key"],
-                "checkpoint": None if lora_path is None else str(lora_path),
+                "model": manifest["model"],
+                "model_variant": manifest["model_variant"],
                 "record_count": len(records),
                 "metric_row_count": len(rows),
             },
@@ -354,16 +445,24 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.worker_id < args.num_workers:
         raise ValueError("worker-id must be in [0, num-workers)")
+    if int(args.num_frames) != 25 or int(args.context_frames) != 8:
+        raise ValueError("controlled Wan comparison requires 25 GT frames and 8 context frames")
     cases = load_cases(args.dataset_root.resolve(), args.case_keys)
     assigned = cases[args.worker_id :: args.num_workers]
     output_root = args.output_dir.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    lora_path = None if args.base_model_only else target._resolve_lora_path(args.weights_root)
-    pipe = target.core.build_pipeline(
-        Path("/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B"), str(args.device), lora_path
+    lora_path = (
+        target._resolve_lora_path(args.lora_weights_root)
+        if args.lora_weights_root is not None
+        else None
     )
+    pipe = target.core.build_pipeline(args.wan_root.resolve(), str(args.device), lora_path)
     cotracker = load_cotracker(str(args.device))
-    summary = {"worker_id": args.worker_id, "assigned_cases": [case["case_key"] for case in assigned], "completed": []}
+    summary = {
+        "worker_id": args.worker_id,
+        "assigned_cases": [case["case_key"] for case in assigned],
+        "completed": [],
+    }
     summary_path = output_root / f"worker_{args.worker_id:02d}.json"
     for index, case in enumerate(assigned, start=1):
         case_output = output_root / "cases" / case["case_key"]
@@ -379,7 +478,9 @@ def main() -> None:
             (case_output / "error.txt").write_text(traceback.format_exc(), encoding="utf-8")
             raise
         summary["completed"].append(case["case_key"])
-        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         gc.collect()
         torch.cuda.empty_cache()
         print(f"[{index}/{len(assigned)}] complete {case['case_key']}", flush=True)
