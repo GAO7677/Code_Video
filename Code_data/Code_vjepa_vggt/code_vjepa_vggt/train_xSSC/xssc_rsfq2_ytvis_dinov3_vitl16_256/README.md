@@ -142,3 +142,15 @@ Smoke artifacts are stored outside the source tree:
 /data/gaoya/agent-data/checkpoints/xssc_slot512_formal_smoke/rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512/42/run_summary.json
 /data/gaoya/agent-data/outputs/xssc_slot512_formal_smoke/ytvis_hq_val_all_loss.json
 ```
+
+### Training batch viewer
+
+Reconstruct a per-rank batch with the formal sampler, temporal/spatial
+transforms, worker seeds, and collate function:
+
+```bash
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python visualize_training_batch.py \
+  --epoch 52 --rank 0 --world-size 4 --batch-index 0 \
+  --data-dir /data/gaoya/dataset \
+  --output-dir /data/gaoya/agent-data/outputs/xssc_training_batch_epoch52_rank0_batch0
+```

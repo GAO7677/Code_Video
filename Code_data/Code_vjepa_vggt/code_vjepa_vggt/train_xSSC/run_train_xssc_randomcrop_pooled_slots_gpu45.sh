@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Train Wan2.2 with random-cropped, context-pooled RandSFQ2 slots on GPUs 0,2,3,5.
+# Train Wan2.2 with random-cropped, context-pooled RandSFQ2 slots on GPUs 4,5.
 set -euo pipefail
 
-GPU_SET="${GPU_SET:-0,2,3,5}"
-NUM_PROCESSES="${NUM_PROCESSES:-4}"
+GPU_SET="${GPU_SET:-4,5}"
+NUM_PROCESSES="${NUM_PROCESSES:-2}"
 RESUME="${RESUME:-none}"
 NUM_FRAMES="${NUM_FRAMES:-49}"
 FIXED_NUM_CONTEXT_FRAMES="${FIXED_NUM_CONTEXT_FRAMES:-8}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
+GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-2}"
 OBJECT_LORA_RANK="${OBJECT_LORA_RANK:-32}"
 OBJECT_LORA_ALPHA="${OBJECT_LORA_ALPHA:-32}"
 OBJECT_LORA_DROPOUT="${OBJECT_LORA_DROPOUT:-0.05}"
@@ -20,21 +21,16 @@ WIDTH="${WIDTH:-896}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_PROJECT="${WANDB_PROJECT:-xssc_wan_physics}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
-WANDB_NAME="${WANDB_NAME:-xssc_randomcrop_pooled_mix49_${RUN_TAG}}"
+WANDB_NAME="${WANDB_NAME:-xssc_randomcrop_pooled_gpu45_mix49_${RUN_TAG}}"
 
-if [[ ",${GPU_SET}," == *",4,"* ]]; then
-  echo "ERROR: gpu4 is unavailable; GPU_SET=${GPU_SET}" >&2
+if [ "${NUM_PROCESSES}" -ne 2 ]; then
+  echo "ERROR: this gpu45 launcher expects NUM_PROCESSES=2, got ${NUM_PROCESSES}" >&2
   exit 1
 fi
 
 if [ "${FIXED_NUM_CONTEXT_FRAMES}" -ne 8 ]; then
   echo "ERROR: xSSC training requires FIXED_NUM_CONTEXT_FRAMES=8" >&2
   exit 1
-fi
-
-ACCELERATE_LAUNCH_ARGS=(launch --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16)
-if [ "${NUM_PROCESSES}" -gt 1 ]; then
-  ACCELERATE_LAUNCH_ARGS=(launch --multi_gpu --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16)
 fi
 
 ACCELERATE_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate
@@ -50,7 +46,8 @@ BASE_LORA=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_
 PYBULLET_ROOT=/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5
 KUBRIC_ROOT=/data/gaoya/dataset/nnsriram97-phyco_kubric
 OPENVID_ROOT=/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train
-OUTPUT_DIR="${OUTPUT_DIR:-/data/gaoya/agent-data/checkpoints/train_xssc_randomcrop_pooled_slots/wan22_5b_mix49_${RUN_TAG}}"
+OUTPUT_BASE="${OUTPUT_BASE:-/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/offcial_xSSC}"
+OUTPUT_DIR="${OUTPUT_DIR:-${OUTPUT_BASE}/xssc_randomcrop_pooled_gpu45_mix49_${RUN_TAG}}"
 DATASET_NUM_WORKERS="${DATASET_NUM_WORKERS:-0}"
 CACHE_ROOT=/data/gaoya/agent-data/cache/xssc_wan
 LOG_FILE="${LOG_FILE:-${OUTPUT_DIR}/train.log}"
@@ -74,7 +71,7 @@ CMD=(
   HF_HOME="${CACHE_ROOT}/huggingface"
   TORCH_HOME="${CACHE_ROOT}/torch"
   XDG_CACHE_HOME="${CACHE_ROOT}/xdg"
-  "${ACCELERATE_BIN}" "${ACCELERATE_LAUNCH_ARGS[@]}"
+  "${ACCELERATE_BIN}" launch --multi_gpu --num_processes "${NUM_PROCESSES}" --num_machines 1 --mixed_precision bf16
   "${TRAIN_SCRIPT}"
   --diffsynth_root "${DIFFSYNTH_ROOT}"
   --wan_root "${WAN_ROOT}"
@@ -114,7 +111,7 @@ CMD=(
   --dataset_num_workers "${DATASET_NUM_WORKERS}"
   --learning_rate 1e-4
   --weight_decay 0.01
-  --gradient_accumulation_steps 1
+  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS}"
   --optimizer_type paged_adamw8bit
   --max_grad_norm 1.0
   --save_steps "${SAVE_STEPS}"
@@ -141,7 +138,7 @@ CMD=(
 CMD+=("${RESUME_ARGS[@]}")
 
 echo "[launch] GPU_SET=${GPU_SET} NUM_PROCESSES=${NUM_PROCESSES}"
-echo "[launch] per-GPU batch=${TRAIN_BATCH_SIZE} global batch=$((TRAIN_BATCH_SIZE * NUM_PROCESSES))"
+echo "[launch] per-GPU batch=${TRAIN_BATCH_SIZE} grad_accum=${GRADIENT_ACCUMULATION_STEPS} effective batch=$((TRAIN_BATCH_SIZE * NUM_PROCESSES * GRADIENT_ACCUMULATION_STEPS))"
 echo "[launch] data=30% 0717-PyBullet + 30% Kubric + 40% OpenVid, frames=${NUM_FRAMES}, ctx=${FIXED_NUM_CONTEXT_FRAMES}"
 echo "[launch] xSSC=${XSSC_CHECKPOINT}"
 echo "[launch] xSSC crop: train=random eval=center"
