@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/Genera1Z/xSSC.git",
+  "commit": "90a0ef1c3cc02c05e7a6abcee7b1adeaca107967",
+  "target_experiment": "config-randsfq/rsfq2_r-ytvis.py",
+  "snapshot_subdirectory": "upstream"
+}

@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# CUDA_VISIBLE_DEVICES=7 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
+# 统计结果
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq.txt
 
 
-
-# CUDA_VISIBLE_DEVICES=5 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAeval.txt
-
-
-
-# /home/gaoya/miniconda3/envs/wan-cu128/bin/python /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705/summarize_generated_folder_metrics.py
+# 计算指标+统计结果
+# BENCH_RUN_METRICS=1 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq1.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRY0526_ROOT="/home/gaoya/Code_Video/Code_data/Code_try0526"
@@ -20,6 +17,7 @@ SUMMARY_PY="${SCRIPT_DIR}/summarize_benchmark_txt_metrics.py"
 RESULT_DIR="${SCRIPT_DIR}/AAAresults"
 BENCH_CUDA_VISIBLE_DEVICES="${BENCH_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 BENCH_METRICS_RAW="${BENCH_METRICS:-}"
+BENCH_RUN_METRICS="${BENCH_RUN_METRICS:-0}"
 BENCH_INPUT_JSON_ALLOWLIST="${BENCH_INPUT_JSON_ALLOWLIST:-}"
 DEFAULT_PHYSIQ_INPUT_JSON_ALLOWLIST=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt
 
@@ -40,13 +38,13 @@ METRICS=(
   "wmreward"
   "videophy2"
   "cosmos_reason1"
-  # "vbench_subject_consistency"
-  # "vbench_background_consistency"
-  # "vbench_temporal_flickering"
-  # "vbench_motion_smoothness"
-  # "vbench_dynamic_degree"
-  # "vbench_aesthetic_quality"
-  # "vbench_imaging_quality"
+  "vbench_subject_consistency"
+  "vbench_background_consistency"
+  "vbench_temporal_flickering"
+  "vbench_motion_smoothness"
+  "vbench_dynamic_degree"
+  "vbench_aesthetic_quality"
+  "vbench_imaging_quality"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then
@@ -57,6 +55,7 @@ echo "[baseline-bench] python=${PYTHON_BIN}"
 echo "[baseline-bench] baseline_list=${BASELINE_LIST}"
 echo "[baseline-bench] cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "[baseline-bench] metrics=${METRICS[*]}"
+echo "[baseline-bench] run_metrics=${BENCH_RUN_METRICS}"
 echo "[baseline-bench] input_json_allowlist=${BENCH_INPUT_JSON_ALLOWLIST:-<unset>}"
 mkdir -p "${RESULT_DIR}"
 
@@ -77,6 +76,13 @@ export_summary() {
   "${PYTHON_BIN}" "${SUMMARY_PY}" "${summary_args[@]}"
   echo "[baseline-bench] done export_csv=${OUTPUT_CSV}"
 }
+
+if [[ "${BENCH_RUN_METRICS}" != "1" ]]; then
+  echo "[baseline-bench] summary-only mode; skip metric checks/runs"
+  export_summary
+  echo "[baseline-bench] summary completed"
+  exit 0
+fi
 
 # Keep the CSV synchronized with all metrics that reached disk, including
 # partial runs stopped by a failed metric or an interrupt.
