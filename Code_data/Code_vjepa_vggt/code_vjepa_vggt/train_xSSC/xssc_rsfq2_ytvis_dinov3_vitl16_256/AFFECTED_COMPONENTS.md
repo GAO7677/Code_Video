@@ -49,3 +49,10 @@
 - Reconstruction objective and object-discovery metrics
 - Frozen visual backbone policy
 - 50,000 steps, batch size 8, Adam, learning rate `5e-5`, and grad clip `0.05`
+
+## Optional Slot-512 Variant
+
+`rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512.py` is an independent enhanced
+configuration. It changes the slot bottleneck from 256 to 512, scales the
+transition from four to eight heads while retaining a 64-dimensional head,
+and leaves the slot-256 controlled-comparison configuration untouched.

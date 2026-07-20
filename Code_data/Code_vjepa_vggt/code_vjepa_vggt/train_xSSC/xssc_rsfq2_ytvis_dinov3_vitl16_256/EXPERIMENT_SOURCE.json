@@ -9,5 +9,7 @@
   "patch_grid": [16, 16],
   "feature_dim": 1024,
   "slot_dim": 256,
-  "num_slots": 7
+  "num_slots": 7,
+  "enhanced_slot_config": "upstream/config-randsfq/rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512.py",
+  "enhanced_slot_dim": 512
 }

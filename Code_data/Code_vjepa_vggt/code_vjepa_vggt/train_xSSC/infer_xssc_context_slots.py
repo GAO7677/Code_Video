@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from code_vjepa_vggt.train0705 import (
     infer_stage1b_context_only_no_gt_box_v_newtrain0705 as infer_base,
@@ -18,6 +19,104 @@ from code_vjepa_vggt.train_xSSC import train_xssc_context_slots as train
 
 
 _ORIGINAL_BUILD_MODEL_ARGS = infer_base._build_model_args
+
+
+def _normalize_xssc_frames(frames: torch.Tensor, model) -> torch.Tensor:
+    frames = (frames + 1.0).mul(127.5).clamp(0.0, 255.0)
+    mean = frames.new_tensor(train.XSSC_IMAGENET_MEAN).view(1, 3, 1, 1)
+    std = frames.new_tensor(train.XSSC_IMAGENET_STD).view(1, 3, 1, 1)
+    return (frames - mean) / std
+
+
+def _preprocess_xssc_with_mode(
+    model,
+    context_video: torch.Tensor,
+    *,
+    mode: str,
+) -> tuple[torch.Tensor, dict[str, object]]:
+    mode_norm = str(mode).strip().lower()
+    aliases = {
+        "": "center_crop",
+        "center": "center_crop",
+        "center_crop": "center_crop",
+        "left": "left_crop",
+        "left_crop": "left_crop",
+        "right": "right_crop",
+        "right_crop": "right_crop",
+        "pad": "resize_pad_square",
+        "letterbox": "resize_pad_square",
+        "resize_pad": "resize_pad_square",
+        "resize_pad_square": "resize_pad_square",
+    }
+    if mode_norm not in aliases:
+        raise ValueError(
+            "Unsupported XSSC_PREPROCESS_MODE="
+            f"{mode}. Expected center_crop, left_crop, right_crop, resize_pad_square."
+        )
+    mode_norm = aliases[mode_norm]
+    frames = context_video.permute(0, 2, 1, 3, 4).float()
+    batch, time_steps, channels, height, width = frames.shape
+    input_size = int(model.xssc_input_size)
+    debug: dict[str, object] = {
+        "mode": mode_norm,
+        "input_context_shape": list(context_video.shape),
+        "source_hw_after_wan_cover_crop": [int(height), int(width)],
+        "xssc_input_size": input_size,
+    }
+    if mode_norm == "center_crop":
+        xssc_video = model._preprocess_xssc(context_video)
+        debug["crop_yxhw"] = [
+            int((int(height) - min(int(height), int(width))) // 2),
+            int((int(width) - min(int(height), int(width))) // 2),
+            int(min(int(height), int(width))),
+            int(min(int(height), int(width))),
+        ]
+        return xssc_video, debug
+
+    if mode_norm in {"left_crop", "right_crop"}:
+        crop_size = min(int(height), int(width))
+        top = (int(height) - crop_size) // 2
+        left = 0 if mode_norm == "left_crop" else int(width) - crop_size
+        cropped = frames[..., top : top + crop_size, left : left + crop_size]
+        flat = cropped.reshape(batch * time_steps, channels, crop_size, crop_size)
+        flat = F.interpolate(
+            flat,
+            size=(input_size, input_size),
+            mode="bilinear",
+            align_corners=False,
+            antialias=True,
+        )
+        flat = _normalize_xssc_frames(flat, model)
+        debug["crop_yxhw"] = [int(top), int(left), int(crop_size), int(crop_size)]
+        return flat.view(batch, time_steps, channels, input_size, input_size), debug
+
+    flat = frames.reshape(batch * time_steps, channels, int(height), int(width))
+    scale = min(input_size / float(height), input_size / float(width))
+    resized_h = max(1, int(round(float(height) * scale)))
+    resized_w = max(1, int(round(float(width) * scale)))
+    resized = F.interpolate(
+        flat,
+        size=(resized_h, resized_w),
+        mode="bilinear",
+        align_corners=False,
+        antialias=True,
+    )
+    padded = resized.new_full(
+        (batch * time_steps, channels, input_size, input_size),
+        -1.0,
+    )
+    pad_top = (input_size - resized_h) // 2
+    pad_left = (input_size - resized_w) // 2
+    padded[:, :, pad_top : pad_top + resized_h, pad_left : pad_left + resized_w] = resized
+    padded = _normalize_xssc_frames(padded, model)
+    debug.update(
+        {
+            "resize_hw": [int(resized_h), int(resized_w)],
+            "pad_top_left": [int(pad_top), int(pad_left)],
+            "pad_value_before_imagenet_norm": "black(-1 in [-1,1], 0 in uint8)",
+        }
+    )
+    return padded.view(batch, time_steps, channels, input_size, input_size), debug
 
 
 def _get_slot_perturb_config() -> dict[str, object]:
@@ -190,7 +289,12 @@ def _build_object_context(
         device=pipe.device,
         dtype=pipe.torch_dtype,
     )
-    xssc_video = model._preprocess_xssc(context_video)
+    preprocess_mode = os.environ.get("XSSC_PREPROCESS_MODE", "center_crop")
+    xssc_video, preprocess_debug = _preprocess_xssc_with_mode(
+        model,
+        context_video,
+        mode=preprocess_mode,
+    )
     slots = model._extract_xssc_slots(xssc_video)
     perturb_config = _get_slot_perturb_config()
     slots, perturb_debug = _apply_slot_perturbation(slots, **perturb_config)
@@ -220,6 +324,7 @@ def _build_object_context(
         "xssc_slots_abs_mean": float(slots_float.abs().mean().item()),
         "object_context_abs_mean": float(context_float.abs().mean().item()),
         "object_context_abs_max": float(context_float.abs().max().item()),
+        "xssc_preprocess": preprocess_debug,
         "xssc_slot_perturbation": perturb_debug,
     }
     if not debug["xssc_slots_finite"] or not debug["object_context_finite"]:

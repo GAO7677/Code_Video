@@ -15,6 +15,8 @@ backbone family and the dimensions that must follow from that replacement.
 - YTVIS-2022 config: `upstream/config-randsfq/rsfq2_r-ytvis.py`
 - YTVIS-HQ config:
   `upstream/config-randsfq/rsfq2_r-ytvis_hq-dinov3_vitl16_256.py`
+- YTVIS-HQ slot-512 enhanced config:
+  `upstream/config-randsfq/rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512.py`
 
 Meta's official DINOv3 implementation is vendored under `third_party/dinov3`.
 The local Hugging Face LVD-1689M checkpoint is converted in memory into the Meta
@@ -91,3 +93,47 @@ bash run_train_rsfq2_ytvis_hq_dinov3_vitl16_256.sh
 
 YTVIS-HQ checkpoints default to
 `/data/gaoya/agent-data/checkpoints/xssc_rsfq2_ytvis_hq_dinov3_vitl16_256`.
+
+## Slot-512 Enhanced Variant
+
+The slot-512 config keeps the slot-256 config unchanged for controlled
+DINOv2/DINOv3 comparisons. It centralizes all ablation controls at the top of
+the config, uses 512-dimensional slots, and scales the transition to eight
+64-dimensional heads. The 1024-dimensional decoder is unchanged except for
+the slot projection from 512 to 1024.
+
+```bash
+DATA_DIR=/data/gaoya/dataset \
+GPU_ID=0 \
+bash run_train_rsfq2_ytvis_hq_dinov3_vitl16_256_slot512.sh
+```
+
+Slot-512 checkpoints default to
+`/data/gaoya/agent-data/checkpoints/xssc_rsfq2_ytvis_hq_dinov3_vitl16_256_slot512`.
+
+### Four-GPU smoke train and validation
+
+The enhanced config uses a per-GPU batch size of 128. The DDP smoke launcher
+runs one complete BF16 optimizer step on four GPUs (global batch 512), averages
+gradients through DDP, clips the synchronized gradient norm, and saves the
+non-backbone state:
+
+```bash
+GPU_IDS=0,1,2,3 bash run_smoke_train_slot512_ddp_4gpu.sh
+```
+
+The matching inference launcher reconstructs the frozen LVD-1689M backbone,
+strictly checks every non-backbone checkpoint key, and evaluates all 280
+variable-length YTVIS-HQ validation videos:
+
+```bash
+GPU_IDS=0,1,2,3 bash run_infer_val_slot512_ddp_4gpu.sh
+```
+
+Smoke artifacts are stored outside the source tree:
+
+```text
+/data/gaoya/agent-data/checkpoints/xssc_slot512_ddp_smoke/slot512_smoke_nonbackbone.pth
+/data/gaoya/agent-data/checkpoints/xssc_slot512_ddp_smoke/slot512_smoke_nonbackbone.json
+/data/gaoya/agent-data/outputs/xssc_slot512_ddp_smoke/ytvis_hq_val_all_loss.json
+```
