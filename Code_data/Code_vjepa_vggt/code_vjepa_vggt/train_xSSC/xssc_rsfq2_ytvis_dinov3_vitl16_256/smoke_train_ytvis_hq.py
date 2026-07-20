@@ -34,6 +34,8 @@ def main():
     )
     cfg = Config.fromfile(config_file)
     cfg.dataset_t.base_dir = args.data_dir
+    # A one-batch smoke does not need the full-dataset scan used for temporal rebalancing.
+    cfg.dataset_t.ts = None
     dataset = build_from_config(cfg.dataset_t)
     loader = DataLoader(
         dataset,
@@ -78,6 +80,7 @@ def main():
         "config": str(config_file),
         "dataset": str(args.data_dir / cfg.dataset_t.data_file),
         "dataset_samples": len(dataset),
+        "temporal_rebalancing_scan": False,
         "batch_size": args.batch_size,
         "video_shape": list(video.shape),
         "segment_shape": list(batch["segment"].shape),

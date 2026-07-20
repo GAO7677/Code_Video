@@ -62,21 +62,21 @@ lr = 2e-4 / 4  # scale with batch_size
 
 ### datum
 
-DINOV3_SAT_MEAN = [[[109.65]], [[104.805]], [[75.48]]]
-DINOV3_SAT_STD = [[[54.315]], [[39.78]], [[36.465]]]
+IMAGENET_MEAN = [[[123.675]], [[116.28]], [[103.53]]]
+IMAGENET_STD = [[[58.395]], [[57.12]], [[57.375]]]
 transform_t = [
     # the following 2 == RandomResizedCrop: better than max sized random crop
     dict(type=RandomCrop, keys=["video", "segment"], size=None, scale=[0.75, 1]),
     dict(type=Resize, keys=["video"], size=resolut0, interp="bilinear"),
     dict(type=Resize, keys=["segment"], size=resolut0, interp="nearest-exact", c=0),
     dict(type=RandomFlip, keys=["video", "segment"], dims=[-1], p=0.5),
-    dict(type=Normalize, keys=["video"], mean=[DINOV3_SAT_MEAN], std=[DINOV3_SAT_STD]),
+    dict(type=Normalize, keys=["video"], mean=[IMAGENET_MEAN], std=[IMAGENET_STD]),
 ]
 transform_v = [
     dict(type=CenterCrop, keys=["video", "segment"], size=None),
     dict(type=Resize, keys=["video"], size=resolut0, interp="bilinear"),
     dict(type=Resize, keys=["segment"], size=resolut0, interp="nearest-exact", c=0),
-    dict(type=Normalize, keys=["video"], mean=[DINOV3_SAT_MEAN], std=[DINOV3_SAT_STD]),
+    dict(type=Normalize, keys=["video"], mean=[IMAGENET_MEAN], std=[IMAGENET_STD]),
 ]
 dataset_t = dict(
     type=YTVIS,

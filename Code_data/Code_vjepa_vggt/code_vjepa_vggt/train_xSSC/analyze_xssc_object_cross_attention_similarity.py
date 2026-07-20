@@ -144,7 +144,36 @@ def _plot_pca(maps: np.ndarray, path: Path, stage: str) -> None:
     plt.close(fig)
 
 
-def _load_stage_maps(npz_path: Path) -> dict[str, np.ndarray]:
+def _load_stage_maps(attention_dir: Path) -> tuple[dict[str, np.ndarray], dict[str, int], str]:
+    summary_path = attention_dir / "summary.json"
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        layer_npz_name = summary.get("layer_maps_npz")
+        best_layers = summary.get("best_layers_by_stage") or {}
+        if layer_npz_name and best_layers:
+            npz_path = attention_dir / str(layer_npz_name)
+            stages: dict[str, np.ndarray] = {}
+            selected_layers: dict[str, int] = {}
+            with np.load(npz_path) as payload:
+                for stage in STAGES:
+                    row = best_layers.get(stage)
+                    if row is None:
+                        continue
+                    layer_id = int(row["layer"])
+                    arrays = []
+                    slot_id = 0
+                    while f"{stage}_layer{layer_id:02d}_slot{slot_id:02d}" in payload:
+                        arrays.append(
+                            payload[f"{stage}_layer{layer_id:02d}_slot{slot_id:02d}"].astype(np.float32)
+                        )
+                        slot_id += 1
+                    if arrays:
+                        stages[stage] = np.stack(arrays, axis=0)
+                        selected_layers[stage] = layer_id
+            if "all" in stages:
+                return stages, selected_layers, "selected_layer"
+
+    npz_path = attention_dir / "xssc_object_cross_attention_maps_fp16.npz"
     with np.load(npz_path) as payload:
         stages: dict[str, np.ndarray] = {}
         for stage in STAGES:
@@ -157,7 +186,7 @@ def _load_stage_maps(npz_path: Path) -> dict[str, np.ndarray]:
                 stages[stage] = np.stack(arrays, axis=0)
     if "all" not in stages:
         raise RuntimeError(f"{npz_path} does not contain all_slotXX maps")
-    return stages
+    return stages, {}, "layer_mean"
 
 
 def _analyze_stage(stage: str, maps: np.ndarray) -> tuple[dict[str, float | str], list[dict[str, float | int | str]], np.ndarray]:
@@ -230,11 +259,20 @@ def _analyze_stage(stage: str, maps: np.ndarray) -> tuple[dict[str, float | str]
 def _write_html_section(attention_dir: Path, summary: dict[str, object]) -> None:
     index_path = attention_dir / "index.html"
     page = index_path.read_text(encoding="utf-8")
+    if "video,img{" not in page:
+        page = page.replace("video{width:100%;background:#000;display:block}", "video,img{width:100%;max-width:100%;height:auto;background:#000;display:block}")
+    if ".grid>*{" not in page:
+        page = page.replace(".grid{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px}", ".grid{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px;align-items:start}.grid>*{min-width:0}")
+    if "figure{margin:0;background:#fff;border:1px solid #d7d2c8;border-radius:4px;padding:8px;min-width:0;overflow:hidden}" not in page:
+        page = page.replace("figure{margin:0;background:#fff;border:1px solid #d7d2c8;border-radius:4px;padding:8px}", "figure{margin:0;background:#fff;border:1px solid #d7d2c8;border-radius:4px;padding:8px;min-width:0;overflow:hidden}")
     marker_start = "<!-- object-attention-similarity:start -->"
     marker_end = "<!-- object-attention-similarity:end -->"
     if marker_start in page and marker_end in page:
         before = page.split(marker_start, 1)[0]
         after = page.split(marker_end, 1)[1]
+    elif "<section><h2>Selected Layers</h2>" in page:
+        before, after = page.split("<section><h2>Selected Layers</h2>", 1)
+        after = "<section><h2>Selected Layers</h2>" + after
     else:
         before = page.replace("<section><h2>early</h2>", marker_start + "\n<section><h2>early</h2>", 1).split(marker_start, 1)[0]
         after = page.split("<section><h2>early</h2>", 1)[1]
@@ -255,7 +293,7 @@ def _write_html_section(attention_dir: Path, summary: dict[str, object]) -> None
     section = f"""{marker_start}
 <section>
 <h2>Slot Similarity Analysis</h2>
-<p>Raw cosine measures overall attention-vector similarity; centered cosine subtracts each frame map mean and is more sensitive to spatial attention-shape differences.</p>
+    <p>Raw cosine measures overall attention-vector similarity; centered cosine subtracts each frame map mean and is more sensitive to spatial attention-shape differences. These charts use the selected best layer for each denoising stage when layer-wise maps are available.</p>
 <div class='grid'>
 <figure><img src='similarity/stage_similarity_bars.png'><figcaption>stage-level similarity summary</figcaption></figure>
 <figure><img src='similarity/all_adjacent_slot_to_slot_centered_cosine.png'><figcaption>all-stage adjacent slot-to-slot centered cosine</figcaption></figure>
@@ -274,7 +312,7 @@ def _write_html_section(attention_dir: Path, summary: dict[str, object]) -> None
     if "table{" not in page:
         page = page.replace(
             "</style>",
-            "table{width:100%;border-collapse:collapse;background:#fff;margin-top:12px}"
+            "table{width:100%;border-collapse:collapse;background:#fff;margin-top:12px;display:block;overflow-x:auto;white-space:nowrap}"
             "th,td{border:1px solid #d7d2c8;padding:7px;text-align:left}"
             "th{background:#ece7dc}</style>",
         )
@@ -288,11 +326,10 @@ def main() -> None:
     args = parser.parse_args()
 
     attention_dir = args.attention_dir.expanduser().resolve()
-    npz_path = attention_dir / "xssc_object_cross_attention_maps_fp16.npz"
     output_dir = attention_dir / "similarity"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    stages = _load_stage_maps(npz_path)
+    stages, selected_layers, map_source = _load_stage_maps(attention_dir)
     stage_rows: list[dict[str, float | str]] = []
     slot_rows: list[dict[str, float | int | str]] = []
     matrix_paths: dict[str, str] = {}
@@ -332,7 +369,8 @@ def main() -> None:
 
     summary = {
         "attention_dir": str(attention_dir),
-        "maps_npz": str(npz_path),
+        "map_source": map_source,
+        "selected_layers": selected_layers,
         "stage_rows": stage_rows,
         "slot_rows": slot_rows,
         "matrix_pngs": matrix_paths,

@@ -201,6 +201,8 @@ class XSSCObjectCrossAttentionRecorder:
         self.sums: dict[str, np.ndarray] = {}
         self.counts: dict[str, int] = {}
         self.layer_calls: dict[str, int] = {}
+        self.layer_sums: dict[str, np.ndarray] = {}
+        self.layer_counts: dict[str, np.ndarray] = {}
         self.key_count: int | None = None
         self.num_heads_by_layer: dict[int, int] = {}
 
@@ -267,6 +269,24 @@ class XSSCObjectCrossAttentionRecorder:
             self.layer_calls[stage] = 0
         return self.sums[stage]
 
+    def _ensure_layer_accumulator(self, stage: str) -> np.ndarray:
+        if self.grid is None:
+            raise RuntimeError("attention grid is missing")
+        frames, grid_h, grid_w = self.grid
+        if stage not in self.layer_sums:
+            self.layer_sums[stage] = np.zeros(
+                (
+                    self.layer_count,
+                    self.slot_count,
+                    frames,
+                    grid_h,
+                    grid_w,
+                ),
+                dtype=np.float64,
+            )
+            self.layer_counts[stage] = np.zeros((self.layer_count,), dtype=np.int64)
+        return self.layer_sums[stage]
+
     @torch.no_grad()
     def capture(self, *, layer_id: int, q: torch.Tensor, k: torch.Tensor, num_heads: int) -> None:
         if self.grid is None:
@@ -326,6 +346,8 @@ class XSSCObjectCrossAttentionRecorder:
             self._ensure_accumulator(stage)[:] += array
             self.counts[stage] += 1
             self.layer_calls[stage] += 1
+            self._ensure_layer_accumulator(stage)[int(layer_id)] += array
+            self.layer_counts[stage][int(layer_id)] += 1
         del flat, array
 
     def averaged(self) -> dict[str, np.ndarray]:
@@ -333,6 +355,13 @@ class XSSCObjectCrossAttentionRecorder:
         for stage, value in self.sums.items():
             count = max(1, int(self.counts.get(stage, 0)))
             output[stage] = (value / float(count)).astype(np.float32)
+        return output
+
+    def averaged_by_layer(self) -> dict[str, np.ndarray]:
+        output: dict[str, np.ndarray] = {}
+        for stage, value in self.layer_sums.items():
+            counts = np.maximum(self.layer_counts[stage].astype(np.float64), 1.0)
+            output[stage] = (value / counts[:, None, None, None, None]).astype(np.float32)
         return output
 
 
@@ -383,6 +412,119 @@ class ModelFnObjectAttentionScope:
             self.call_index += 1
 
 
+def _centered_cosine_matrix(x: np.ndarray) -> np.ndarray:
+    flat = x.astype(np.float64).reshape(x.shape[0], -1)
+    flat = flat - flat.mean(axis=1, keepdims=True)
+    flat = flat / np.maximum(np.linalg.norm(flat, axis=1, keepdims=True), 1.0e-12)
+    return flat @ flat.T
+
+
+def _offdiag_mean(matrix: np.ndarray) -> float:
+    if matrix.shape[0] <= 1:
+        return 0.0
+    mask = ~np.eye(matrix.shape[0], dtype=bool)
+    return float(matrix[mask].mean())
+
+
+def _layer_saliency_rows(layer_maps: dict[str, np.ndarray]) -> list[dict[str, float | int | str]]:
+    rows: list[dict[str, float | int | str]] = []
+    for stage, maps in layer_maps.items():
+        for layer_id in range(int(maps.shape[0])):
+            layer = maps[layer_id].astype(np.float32)
+            mean_value = float(layer.mean())
+            std_value = float(layer.std())
+            peak_to_mean = float(layer.max() / max(mean_value, 1.0e-12))
+            cv = float(std_value / max(mean_value, 1.0e-12))
+            centered_cross = []
+            for frame_id in range(int(layer.shape[1])):
+                centered_cross.append(_offdiag_mean(_centered_cosine_matrix(layer[:, frame_id])))
+            cross_slot_centered_mean = float(np.mean(centered_cross))
+            slot_separation = float(1.0 - cross_slot_centered_mean)
+            score = float(cv * slot_separation)
+            rows.append(
+                {
+                    "stage": stage,
+                    "layer": int(layer_id),
+                    "score": score,
+                    "coefficient_of_variation": cv,
+                    "peak_to_mean": peak_to_mean,
+                    "cross_slot_centered_mean": cross_slot_centered_mean,
+                    "slot_separation": slot_separation,
+                    "raw_mean": mean_value,
+                    "raw_std": std_value,
+                    "raw_min": float(layer.min()),
+                    "raw_max": float(layer.max()),
+                }
+            )
+    return rows
+
+
+def _best_layers_by_stage(rows: list[dict[str, float | int | str]]) -> dict[str, dict[str, float | int | str]]:
+    best: dict[str, dict[str, float | int | str]] = {}
+    for row in rows:
+        stage = str(row["stage"])
+        previous = best.get(stage)
+        if previous is None or float(row["score"]) > float(previous["score"]):
+            best[stage] = row
+    return best
+
+
+def _write_layer_ranking_csv(path: Path, rows: list[dict[str, float | int | str]]) -> None:
+    import csv
+
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ordered = sorted(rows, key=lambda item: (str(item["stage"]), -float(item["score"])))
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(ordered[0].keys()))
+        writer.writeheader()
+        writer.writerows(ordered)
+
+
+def _render_stage_slot_videos(
+    *,
+    frames: list[np.ndarray],
+    fps: int,
+    stage_dir: Path,
+    maps: np.ndarray,
+    stage_label: str,
+    recorder: XSSCObjectCrossAttentionRecorder,
+    layer_id: int | None = None,
+) -> list[dict[str, str | int]]:
+    stage_videos: list[dict[str, str | int]] = []
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    for slot_id in range(int(maps.shape[0])):
+        lowres = maps[slot_id].astype(np.float32)
+        aligned = _temporal_resize_lowres(lowres, len(frames))
+        low, high = np.percentile(aligned, [2.0, 99.0]).tolist()
+        rendered: list[np.ndarray] = []
+        for frame_id, frame in enumerate(frames):
+            overlay = _heat_overlay(frame, aligned[frame_id], float(low), float(high))
+            layer_text = "layer-mean" if layer_id is None else f"layer {layer_id:02d}"
+            rendered.append(
+                _label(
+                    overlay,
+                    [
+                        f"xSSC object cross-attn | {stage_label} | {layer_text} | slot {slot_id:02d}",
+                        f"generated frame={frame_id:02d} | ctx_pool={recorder.ctx_pool}",
+                    ],
+                )
+            )
+        layer_part = "mean" if layer_id is None else f"layer{int(layer_id):02d}"
+        video_name = f"slot{slot_id:02d}_{stage_label}_{layer_part}_object_cross_attention.mp4"
+        video_path = stage_dir / video_name
+        _write_h264(video_path, rendered, fps=fps)
+        stage_videos.append(
+            {
+                "slot": int(slot_id),
+                "layer": -1 if layer_id is None else int(layer_id),
+                "video": f"{stage_dir.name}/{video_name}",
+            }
+        )
+    return stage_videos
+
+
 def _write_slot_overlays(
     *,
     output_dir: Path,
@@ -395,47 +537,75 @@ def _write_slot_overlays(
     fps_out = int(fps) if int(fps) > 0 else int(round(measured_fps))
     output_dir.mkdir(parents=True, exist_ok=True)
     averaged = recorder.averaged()
+    layer_maps = recorder.averaged_by_layer()
     if not averaged:
         raise RuntimeError("no object cross-attention maps were captured")
 
     raw_maps: dict[str, np.ndarray] = {}
+    layer_raw_maps: dict[str, np.ndarray] = {}
     stage_cards: list[str] = []
+    best_layer_cards: list[str] = []
     videos_by_stage: dict[str, list[dict[str, str | int]]] = {}
+    best_layer_videos_by_stage: dict[str, list[dict[str, str | int]]] = {}
+    layer_rows = _layer_saliency_rows(layer_maps)
+    best_layers = _best_layers_by_stage(layer_rows)
+    ranking_csv = output_dir / "layer_saliency_ranking.csv"
+    _write_layer_ranking_csv(ranking_csv, layer_rows)
+
     for stage in ("early", "middle", "late", "all"):
         if stage not in averaged:
             continue
-        stage_videos: list[dict[str, str | int]] = []
         maps = averaged[stage]
-        stage_dir = output_dir / stage
-        stage_dir.mkdir(parents=True, exist_ok=True)
         for slot_id in range(int(maps.shape[0])):
-            lowres = maps[slot_id].astype(np.float32)
-            raw_maps[f"{stage}_slot{slot_id:02d}"] = lowres.astype(np.float16)
-            aligned = _temporal_resize_lowres(lowres, len(frames))
-            low, high = np.percentile(aligned, [2.0, 99.0]).tolist()
-            rendered: list[np.ndarray] = []
-            for frame_id, frame in enumerate(frames):
-                overlay = _heat_overlay(
-                    frame, aligned[frame_id], float(low), float(high)
-                )
-                rendered.append(
-                    _label(
-                        overlay,
-                        [
-                            f"xSSC object cross-attn | {stage} | slot {slot_id:02d}",
-                            f"generated frame={frame_id:02d} | ctx_pool={recorder.ctx_pool}",
-                        ],
-                    )
-                )
-            video_name = f"slot{slot_id:02d}_{stage}_object_cross_attention.mp4"
-            video_path = stage_dir / video_name
-            _write_h264(video_path, rendered, fps=fps_out)
-            stage_videos.append(
-                {
-                    "slot": int(slot_id),
-                    "video": f"{stage}/{video_name}",
-                }
+            raw_maps[f"{stage}_slot{slot_id:02d}"] = maps[slot_id].astype(np.float16)
+        if stage in layer_maps:
+            for layer_id in range(int(layer_maps[stage].shape[0])):
+                for slot_id in range(int(layer_maps[stage].shape[1])):
+                    layer_raw_maps[
+                        f"{stage}_layer{layer_id:02d}_slot{slot_id:02d}"
+                    ] = layer_maps[stage][layer_id, slot_id].astype(np.float16)
+
+        best_row = best_layers.get(stage)
+        if best_row is not None:
+            best_layer_id = int(best_row["layer"])
+            best_stage_dir = output_dir / f"{stage}_best_layer{best_layer_id:02d}"
+            best_stage_videos = _render_stage_slot_videos(
+                frames=frames,
+                fps=fps_out,
+                stage_dir=best_stage_dir,
+                maps=layer_maps[stage][best_layer_id],
+                stage_label=f"{stage}_best",
+                recorder=recorder,
+                layer_id=best_layer_id,
             )
+            best_layer_videos_by_stage[stage] = best_stage_videos
+            best_figures = "".join(
+                "<figure>"
+                f"<video controls muted loop src='{html.escape(str(item['video']))}'></video>"
+                f"<figcaption>slot {int(item['slot']):02d}</figcaption>"
+                "</figure>"
+                for item in best_stage_videos
+            )
+            best_layer_cards.append(
+                "<section>"
+                f"<h2>{html.escape(stage)} best layer {best_layer_id:02d}</h2>"
+                f"<p>saliency score={float(best_row['score']):.6f}; "
+                f"CV={float(best_row['coefficient_of_variation']):.6f}; "
+                f"peak/mean={float(best_row['peak_to_mean']):.4f}; "
+                f"cross-slot centered mean={float(best_row['cross_slot_centered_mean']):.4f}</p>"
+                f"<div class='grid'>{best_figures}</div></section>"
+            )
+
+        stage_dir = output_dir / stage
+        stage_videos = _render_stage_slot_videos(
+            frames=frames,
+            fps=fps_out,
+            stage_dir=stage_dir,
+            maps=maps,
+            stage_label=stage,
+            recorder=recorder,
+            layer_id=None,
+        )
         videos_by_stage[stage] = stage_videos
         figures = "".join(
             "<figure>"
@@ -448,6 +618,8 @@ def _write_slot_overlays(
 
     npz_path = output_dir / "xssc_object_cross_attention_maps_fp16.npz"
     np.savez_compressed(npz_path, **raw_maps)
+    layer_npz_path = output_dir / "xssc_object_cross_attention_layer_maps_fp16.npz"
+    np.savez_compressed(layer_npz_path, **layer_raw_maps)
     summary = {
         "case": Path(str(result.get("input_json", "case"))).stem,
         "input_json": result.get("input_json"),
@@ -466,7 +638,15 @@ def _write_slot_overlays(
         "capture_counts": recorder.counts,
         "layer_calls": recorder.layer_calls,
         "maps_npz": npz_path.name,
+        "layer_maps_npz": layer_npz_path.name,
+        "layer_saliency_ranking_csv": ranking_csv.name,
+        "layer_saliency_metric": (
+            "score = coefficient_of_variation * (1 - mean cross-slot centered cosine); "
+            "higher means spatially sharper and more slot-separated attention maps"
+        ),
+        "best_layers_by_stage": best_layers,
         "videos_by_stage": videos_by_stage,
+        "best_layer_videos_by_stage": best_layer_videos_by_stage,
         "note": (
             "Maps are Wan DiT video-query attention to xSSC object K/V tokens; "
             "the ctx tokens for each slot are pooled before visualization."
@@ -482,9 +662,10 @@ body{{margin:0;background:#f4f2ee;color:#1e211d;font:14px Arial,sans-serif}}
 main{{max-width:1800px;margin:auto;padding:22px}}
 h1,h2{{letter-spacing:0;margin:12px 0}}
 section{{border-top:1px solid #c9c5bb;padding-top:16px;margin-top:18px}}
-.grid{{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px}}
-figure{{margin:0;background:#fff;border:1px solid #d7d2c8;border-radius:4px;padding:8px}}
-video{{width:100%;background:#000;display:block}}
+.grid{{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px;align-items:start}}
+.grid>*{{min-width:0}}
+figure{{margin:0;background:#fff;border:1px solid #d7d2c8;border-radius:4px;padding:8px;min-width:0;overflow:hidden}}
+video,img{{width:100%;max-width:100%;height:auto;background:#000;display:block}}
 figcaption{{padding-top:6px}}
 @media(max-width:1100px){{.grid{{grid-template-columns:repeat(2,minmax(220px,1fr))}}}}
 @media(max-width:650px){{.grid{{grid-template-columns:1fr}}}}
@@ -494,7 +675,11 @@ figcaption{{padding-top:6px}}
 object keys: {summary['key_count']} = {recorder.ctx_steps} ctx steps x {recorder.slot_count} slots;
 ctx pooling: {html.escape(recorder.ctx_pool)}.</p>
 <p><a href='../{html.escape(Path(str(output_video)).name)}'>generated video</a> |
-<a href='summary.json'>summary JSON</a> | <a href='{html.escape(npz_path.name)}'>raw fp16 maps</a></p>
+<a href='summary.json'>summary JSON</a> | <a href='{html.escape(ranking_csv.name)}'>layer ranking CSV</a> |
+<a href='{html.escape(layer_npz_path.name)}'>layer fp16 maps</a> | <a href='{html.escape(npz_path.name)}'>layer-mean fp16 maps</a></p>
+<section><h2>Selected Layers</h2><p>The videos below use the automatically selected layer for each denoising stage. The old layer-mean videos are kept below only as a reference.</p></section>
+{''.join(best_layer_cards)}
+<section><h2>Layer-Mean Reference</h2><p>These videos average all object cross-attention layers and can blur layer-specific slot routing.</p></section>
 {''.join(stage_cards)}
 </main></body></html>"""
     (output_dir / "index.html").write_text(page, encoding="utf-8")

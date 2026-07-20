@@ -13,7 +13,7 @@ import torch.nn as nn
 _EXPERIMENT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DINOV3_ROOT = _EXPERIMENT_ROOT / "third_party" / "dinov3"
 DEFAULT_DINOV3_CHECKPOINT = Path(
-    "/data/gaoya/ckpt/facebook-dinov3-vitl16-pretrain-sat493m/model.safetensors"
+    "/data/gaoya/ckpt/facebook-dinov3-vitl16-pretrain-lvd1689m/model.safetensors"
 )
 
 
@@ -46,8 +46,8 @@ class DINO3ViT(nn.Module):
 
         from dinov3.hub.backbones import Weights, dinov3_vitl16
 
-        model = dinov3_vitl16(pretrained=False, weights=Weights.SAT493M)
-        load_report = self._load_huggingface_sat_weights(model, checkpoint)
+        model = dinov3_vitl16(pretrained=False, weights=Weights.LVD1689M)
+        load_report = self._load_huggingface_weights(model, checkpoint)
 
         self.model = model
         self.in_size = int(in_size)
@@ -67,7 +67,7 @@ class DINO3ViT(nn.Module):
             )
 
     @staticmethod
-    def _load_huggingface_sat_weights(model: nn.Module, checkpoint: Path) -> dict:
+    def _load_huggingface_weights(model: nn.Module, checkpoint: Path) -> dict:
         target = model.state_dict()
         consumed = set()
 
@@ -148,6 +148,7 @@ class DINO3ViT(nn.Module):
 
         return {
             "format": "huggingface_safetensors",
+            "pretraining": "LVD1689M",
             "source_tensor_count": len(consumed),
             "source_tensor_count_expected": 415,
             "all_source_tensors_consumed": len(consumed) == 415,
