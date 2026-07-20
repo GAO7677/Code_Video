@@ -20,6 +20,103 @@ from code_vjepa_vggt.train_xSSC import train_xssc_context_slots as train
 _ORIGINAL_BUILD_MODEL_ARGS = infer_base._build_model_args
 
 
+def _get_slot_perturb_config() -> dict[str, object]:
+    mode = os.environ.get("XSSC_SLOT_PERTURB", "none").strip().lower()
+    seed_text = os.environ.get("XSSC_SLOT_PERTURB_SEED", "").strip()
+    return {
+        "mode": mode,
+        "seed": None if not seed_text else int(seed_text),
+        "noise_std": float(os.environ.get("XSSC_SLOT_NOISE_STD", "1.0")),
+        "drop_prob": float(os.environ.get("XSSC_SLOT_DROP_PROB", "0.5")),
+    }
+
+
+def _apply_slot_perturbation(
+    slots: torch.Tensor,
+    *,
+    mode: str,
+    seed: int | None,
+    noise_std: float,
+    drop_prob: float,
+) -> tuple[torch.Tensor, dict[str, object]]:
+    mode_norm = str(mode).strip().lower()
+    before = slots.detach().float()
+    debug: dict[str, object] = {
+        "mode": mode_norm,
+        "seed": None if seed is None else int(seed),
+        "noise_std": float(noise_std),
+        "drop_prob": float(drop_prob),
+        "input_abs_mean": float(before.abs().mean().item()),
+        "input_abs_max": float(before.abs().max().item()),
+    }
+    if mode_norm in ("", "none"):
+        debug["applied"] = False
+        return slots, debug
+
+    generator = None
+    if seed is not None:
+        generator = torch.Generator(device=slots.device)
+        generator.manual_seed(int(seed))
+
+    if mode_norm == "zero":
+        perturbed = torch.zeros_like(slots)
+    elif mode_norm == "noise":
+        noise = torch.randn(
+            tuple(slots.shape),
+            device=slots.device,
+            dtype=torch.float32,
+            generator=generator,
+        )
+        input_std = before.std(unbiased=False).clamp_min(1.0e-6)
+        noise = noise * (input_std * float(noise_std))
+        perturbed = (slots.float() + noise).to(dtype=slots.dtype)
+    elif mode_norm == "shuffle_time":
+        time_steps = int(slots.shape[1])
+        order = torch.randperm(time_steps, device=slots.device, generator=generator)
+        perturbed = slots[:, order]
+        debug["time_order"] = [int(v) for v in order.detach().cpu().tolist()]
+    elif mode_norm == "shuffle_slot":
+        slot_count = int(slots.shape[2])
+        order = torch.randperm(slot_count, device=slots.device, generator=generator)
+        perturbed = slots[:, :, order]
+        debug["slot_order"] = [int(v) for v in order.detach().cpu().tolist()]
+    elif mode_norm == "drop_slot":
+        if not 0.0 <= float(drop_prob) < 1.0:
+            raise ValueError(f"XSSC_SLOT_DROP_PROB must be in [0, 1), got {drop_prob}")
+        keep = torch.rand(
+            (int(slots.shape[0]), int(slots.shape[2])),
+            device=slots.device,
+            generator=generator,
+        ) >= float(drop_prob)
+        empty_rows = ~keep.any(dim=1)
+        if bool(empty_rows.any()):
+            replacement = torch.randint(
+                int(slots.shape[2]),
+                (int(empty_rows.sum().item()),),
+                device=slots.device,
+                generator=generator,
+            )
+            keep[empty_rows, replacement] = True
+        perturbed = slots * keep[:, None, :, None].to(dtype=slots.dtype)
+        debug["actual_drop_fraction"] = float((~keep).float().mean().item())
+    else:
+        raise ValueError(
+            "Unsupported XSSC_SLOT_PERTURB mode: "
+            f"{mode}. Expected none, zero, noise, shuffle_time, shuffle_slot, or drop_slot."
+        )
+
+    after = perturbed.detach().float()
+    debug.update(
+        {
+            "applied": True,
+            "output_abs_mean": float(after.abs().mean().item()),
+            "output_abs_max": float(after.abs().max().item()),
+            "mean_abs_delta": float((after - before).abs().mean().item()),
+        }
+    )
+    return perturbed, debug
+
+
 def _build_model_args(args):
     model_args = _ORIGINAL_BUILD_MODEL_ARGS(args)
     model_args.xssc_root = os.environ.get("XSSC_ROOT", train.DEFAULT_XSSC_ROOT)
@@ -93,7 +190,23 @@ def _build_object_context(
         device=pipe.device,
         dtype=pipe.torch_dtype,
     )
-    object_context, slots = model._build_object_context(context_video)
+    xssc_video = model._preprocess_xssc(context_video)
+    slots = model._extract_xssc_slots(xssc_video)
+    perturb_config = _get_slot_perturb_config()
+    slots, perturb_debug = _apply_slot_perturbation(slots, **perturb_config)
+    time_steps = int(slots.shape[1])
+    if time_steps > model.xssc_max_time_steps:
+        raise ValueError(
+            f"Context length {time_steps} exceeds xssc_max_time_steps={model.xssc_max_time_steps}"
+        )
+    target_dtype = model.slot_norm.weight.dtype
+    slots_for_projection = slots.to(device=model.slot_norm.weight.device, dtype=target_dtype)
+    tokens = model.slot_projector(model.slot_norm(slots_for_projection))
+    time_ids = torch.arange(time_steps, device=tokens.device)
+    time_tokens = model.time_embedding(time_ids).view(1, time_steps, 1, -1)
+    tokens = tokens + time_tokens.to(dtype=tokens.dtype)
+    batch, _, num_slots, hidden_dim = tokens.shape
+    object_context = tokens.reshape(batch, time_steps * num_slots, hidden_dim)
     slots_float = slots.detach().float()
     context_float = object_context.detach().float()
     debug = {
@@ -107,6 +220,7 @@ def _build_object_context(
         "xssc_slots_abs_mean": float(slots_float.abs().mean().item()),
         "object_context_abs_mean": float(context_float.abs().mean().item()),
         "object_context_abs_max": float(context_float.abs().max().item()),
+        "xssc_slot_perturbation": perturb_debug,
     }
     if not debug["xssc_slots_finite"] or not debug["object_context_finite"]:
         raise FloatingPointError(f"non-finite xSSC conditioning values: {debug}")

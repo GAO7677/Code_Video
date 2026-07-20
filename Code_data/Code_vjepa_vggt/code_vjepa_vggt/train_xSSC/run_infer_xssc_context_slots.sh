@@ -17,7 +17,18 @@ PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 XSSC_ROOT="${XSSC_ROOT:-/home/gaoya/Code_Video/xSSC-main}"
 XSSC_CONFIG="${XSSC_CONFIG:-${XSSC_ROOT}/config-randsfq/rsfq2_r-ytvis.py}"
 XSSC_CHECKPOINT="${XSSC_CHECKPOINT:-/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth}"
-TRACE_ROOT="${TRACE_ROOT:-${OUTPUT_ROOT}/numeric_traces/$(basename "${CHECKPOINT_DIR}")}"
+TRACE_ROOT="${TRACE_ROOT:-${OUTPUT_ROOT}/numeric_traces/$(basename "${CHECKPOINT_DIR}")}" 
+
+EXTRA_ARGS=()
+if [ -n "${STEP_OUTPUT_DIR_NAME:-}" ]; then
+  EXTRA_ARGS+=(--step-output-dir-name "${STEP_OUTPUT_DIR_NAME}")
+fi
+if [ -n "${SHARD_TAG:-}" ]; then
+  EXTRA_ARGS+=(--shard-tag "${SHARD_TAG}")
+fi
+if [ "${NEGATIVE_PROMPT+x}" = x ]; then
+  EXTRA_ARGS+=(--negative-prompt "${NEGATIVE_PROMPT}")
+fi
 
 mkdir -p "${OUTPUT_ROOT}" "${TRACE_ROOT}"
 exec env \
@@ -42,4 +53,5 @@ exec env \
   --sampling-mode prefix \
   --num-inference-steps "${NUM_INFERENCE_STEPS}" \
   --dump-numeric-trace-root "${TRACE_ROOT}" \
-  --force
+  --force \
+  "${EXTRA_ARGS[@]}"
