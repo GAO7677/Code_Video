@@ -15,7 +15,6 @@ from object_centric_bench.datum import (
 )
 from object_centric_bench.learn import (
     Adam,
-    GradScaler,
     ClipGradNorm,
     MSELoss,
     mBO,
@@ -29,7 +28,6 @@ from object_centric_bench.learn import (
 from object_centric_bench.model import (
     RandSFQ2,
     Sequential,
-    DINO3ViT,
     Identity,
     MLP,
     NormalShared,
@@ -42,6 +40,7 @@ from object_centric_bench.model import (
     TransformerDecoder,
     TransformerDecoderLayer,
 )
+from object_centric_bench.model.dinov3_backbone import DINO3ViT
 from object_centric_bench.util import Compose, ComposeNoStar
 from object_centric_bench.util_model import interpolat_argmax_attent
 
@@ -88,12 +87,23 @@ emb_dim = slot_dim
 vfm_dim = backbone_feature_dim
 
 total_step = 50000  # 100000 better
+max_step = total_step
+gpu_ids = [0, 1, 2, 3]
+expected_world_size = len(gpu_ids)
+amp_dtype = "bfloat16"
+distributed_backend = "nccl"
+distributed_timeout_minutes = 60
+train_sampler_drop_last = False
+train_loader_drop_last = False
+cudnn_benchmark = False
+cudnn_deterministic = True
+use_deterministic_algorithms = True
 num_validation_runs = 40
 warmup_fraction = 0.05
 final_lr_ratio = 1e-3
 save_since_fraction = 0.5
 val_interval = total_step // num_validation_runs
-batch_size_t = 128  # per GPU; 4-GPU DDP global batch = 512
+batch_size_t = 96  # per GPU; 4-GPU DDP global batch = 384
 batch_size_v = 1
 num_work = 4
 lr = 2e-4 / 4  # scale with batch_size
@@ -246,7 +256,6 @@ freez = [r"^m\.encode_backbone\..*"]
 
 param_groups = None
 optimiz = dict(type=Adam, params=param_groups, lr=lr)
-gscale = dict(type=GradScaler)
 gclip = dict(type=ClipGradNorm, max_norm=gradient_clip_norm)
 
 loss_fn_t = loss_fn_v = dict(

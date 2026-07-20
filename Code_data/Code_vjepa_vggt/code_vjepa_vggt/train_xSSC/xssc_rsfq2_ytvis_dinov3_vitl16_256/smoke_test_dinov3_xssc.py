@@ -26,7 +26,9 @@ def main():
     from object_centric_bench.model import ModelWrap
     from object_centric_bench.util import Config, build_from_config
 
-    cfg = Config.fromfile(ROOT / "upstream/config-randsfq/rsfq2_r-ytvis.py")
+    cfg = Config.fromfile(
+        ROOT / "upstream/config-randsfq/rsfq2_r-ytvis_hq-dinov3_vitl16_256.py"
+    )
     model = build_from_config(cfg.model)
     model = ModelWrap(model, cfg.model_imap, cfg.model_omap)
     model.freez(cfg.freez, verbose=False)

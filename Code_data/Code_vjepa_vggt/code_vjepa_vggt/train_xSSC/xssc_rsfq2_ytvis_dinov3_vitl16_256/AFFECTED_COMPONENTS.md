@@ -55,4 +55,6 @@
 `rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512.py` is an independent enhanced
 configuration. It changes the slot bottleneck from 256 to 512, scales the
 transition from four to eight heads while retaining a 64-dimensional head,
-and leaves the slot-256 controlled-comparison configuration untouched.
+and leaves the slot-256 controlled-comparison configuration untouched. The
+complete enhanced model has 383,933,440 parameters, of which 80,779,264 are
+trainable after freezing the 303,154,176-parameter DINOv3 backbone.

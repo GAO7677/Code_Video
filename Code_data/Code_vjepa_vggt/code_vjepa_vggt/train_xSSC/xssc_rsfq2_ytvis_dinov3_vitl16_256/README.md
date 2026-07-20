@@ -104,19 +104,24 @@ the slot projection from 512 to 1024.
 
 ```bash
 DATA_DIR=/data/gaoya/dataset \
-GPU_ID=0 \
+GPU_IDS=0,1,2,3 \
+WANDB_PROJECT=<project> \
 bash run_train_rsfq2_ytvis_hq_dinov3_vitl16_256_slot512.sh
 ```
 
 Slot-512 checkpoints default to
-`/data/gaoya/agent-data/checkpoints/xssc_rsfq2_ytvis_hq_dinov3_vitl16_256_slot512`.
+`/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC`.
+The rank-0 trainer writes per-step reconstruction loss, pre-clip gradient norm,
+clip coefficient, learning rate, and peak reserved memory to W&B and
+`step_metrics.jsonl`. Full validation reconstruction loss and segmentation
+metrics are logged every 1,250 optimizer steps.
 
 ### Four-GPU smoke train and validation
 
-The enhanced config uses a per-GPU batch size of 128. The DDP smoke launcher
-runs one complete BF16 optimizer step on four GPUs (global batch 512), averages
-gradients through DDP, clips the synchronized gradient norm, and saves the
-non-backbone state:
+The enhanced config uses a per-GPU batch size of 96. The DDP smoke launcher
+runs the formal BF16 trainer for 10 optimizer steps on four GPUs (global batch
+384), averages gradients through DDP, clips the synchronized gradient norm,
+runs the full validation set, and saves the complete final checkpoint:
 
 ```bash
 GPU_IDS=0,1,2,3 bash run_smoke_train_slot512_ddp_4gpu.sh
@@ -133,7 +138,7 @@ GPU_IDS=0,1,2,3 bash run_infer_val_slot512_ddp_4gpu.sh
 Smoke artifacts are stored outside the source tree:
 
 ```text
-/data/gaoya/agent-data/checkpoints/xssc_slot512_ddp_smoke/slot512_smoke_nonbackbone.pth
-/data/gaoya/agent-data/checkpoints/xssc_slot512_ddp_smoke/slot512_smoke_nonbackbone.json
-/data/gaoya/agent-data/outputs/xssc_slot512_ddp_smoke/ytvis_hq_val_all_loss.json
+/data/gaoya/agent-data/checkpoints/xssc_slot512_formal_smoke/rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512/42/last.pth
+/data/gaoya/agent-data/checkpoints/xssc_slot512_formal_smoke/rsfq2_r-ytvis_hq-dinov3_vitl16_256-slot512/42/run_summary.json
+/data/gaoya/agent-data/outputs/xssc_slot512_formal_smoke/ytvis_hq_val_all_loss.json
 ```

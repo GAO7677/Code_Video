@@ -298,6 +298,40 @@ def _build_object_context(
     slots = model._extract_xssc_slots(xssc_video)
     perturb_config = _get_slot_perturb_config()
     slots, perturb_debug = _apply_slot_perturbation(slots, **perturb_config)
+    temporal_mode = os.environ.get("XSSC_SLOT_TEMPORAL_MODE", "full").strip().lower()
+    original_time_steps = int(slots.shape[1])
+    if temporal_mode in ("", "full"):
+        time_ids = torch.arange(original_time_steps, device=model.time_embedding.weight.device)
+        temporal_debug = {
+            "mode": "full",
+            "input_time_steps": original_time_steps,
+            "selected_time_indices": list(range(original_time_steps)),
+            "time_embedding_ids": list(range(original_time_steps)),
+        }
+    elif temporal_mode == "last_time0":
+        slots = slots[:, -1:, :, :]
+        time_ids = torch.zeros(1, device=model.time_embedding.weight.device, dtype=torch.long)
+        temporal_debug = {
+            "mode": temporal_mode,
+            "input_time_steps": original_time_steps,
+            "selected_time_indices": [original_time_steps - 1],
+            "time_embedding_ids": [0],
+        }
+    elif temporal_mode == "last_time7":
+        slots = slots[:, -1:, :, :]
+        time_id = min(train.XSSC_NUM_CONTEXT_FRAMES - 1, model.xssc_max_time_steps - 1)
+        time_ids = torch.tensor([time_id], device=model.time_embedding.weight.device, dtype=torch.long)
+        temporal_debug = {
+            "mode": temporal_mode,
+            "input_time_steps": original_time_steps,
+            "selected_time_indices": [original_time_steps - 1],
+            "time_embedding_ids": [int(time_id)],
+        }
+    else:
+        raise ValueError(
+            "Unsupported XSSC_SLOT_TEMPORAL_MODE: "
+            f"{temporal_mode}. Expected full, last_time0, or last_time7."
+        )
     time_steps = int(slots.shape[1])
     if time_steps > model.xssc_max_time_steps:
         raise ValueError(
@@ -306,7 +340,7 @@ def _build_object_context(
     target_dtype = model.slot_norm.weight.dtype
     slots_for_projection = slots.to(device=model.slot_norm.weight.device, dtype=target_dtype)
     tokens = model.slot_projector(model.slot_norm(slots_for_projection))
-    time_ids = torch.arange(time_steps, device=tokens.device)
+    time_ids = time_ids.to(device=tokens.device)
     time_tokens = model.time_embedding(time_ids).view(1, time_steps, 1, -1)
     tokens = tokens + time_tokens.to(dtype=tokens.dtype)
     batch, _, num_slots, hidden_dim = tokens.shape
@@ -326,6 +360,7 @@ def _build_object_context(
         "object_context_abs_max": float(context_float.abs().max().item()),
         "xssc_preprocess": preprocess_debug,
         "xssc_slot_perturbation": perturb_debug,
+        "xssc_slot_temporal_mode": temporal_debug,
     }
     if not debug["xssc_slots_finite"] or not debug["object_context_finite"]:
         raise FloatingPointError(f"non-finite xSSC conditioning values: {debug}")

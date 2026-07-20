@@ -31,7 +31,6 @@ from .basic import (
     Identity,
     DINO2ViT,
 )
-from .dinov3_backbone import DINO3ViT
 from .ocl import (
     SlotAttention,
     NormalShared,

@@ -29,7 +29,6 @@ from object_centric_bench.learn import (
 from object_centric_bench.model import (
     RandSFQ2,
     Sequential,
-    DINO3ViT,
     Identity,
     MLP,
     NormalShared,
@@ -42,6 +41,7 @@ from object_centric_bench.model import (
     TransformerDecoder,
     TransformerDecoderLayer,
 )
+from object_centric_bench.model.dinov3_backbone import DINO3ViT
 from object_centric_bench.util import Compose, ComposeNoStar
 from object_centric_bench.util_model import interpolat_argmax_attent
 

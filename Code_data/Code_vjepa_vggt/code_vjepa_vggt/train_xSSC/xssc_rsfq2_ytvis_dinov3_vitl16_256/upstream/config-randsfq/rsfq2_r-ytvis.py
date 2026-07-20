@@ -29,7 +29,8 @@ from object_centric_bench.learn import (
 from object_centric_bench.model import (
     RandSFQ2,
     Sequential,
-    DINO3ViT,
+    Interpolate,
+    DINO2ViT,
     Identity,
     MLP,
     NormalShared,
@@ -51,7 +52,7 @@ max_num = 6 + 1
 resolut0 = [256, 256]
 resolut1 = [16, 16]
 emb_dim = 256
-vfm_dim = 1024
+vfm_dim = 384
 
 total_step = 50000  # 100000 better
 val_interval = total_step // 40
@@ -110,10 +111,11 @@ model = dict(
     encode_backbone=dict(
         type=Sequential,
         modules=[
+            dict(type=Interpolate, scale_factor=0.875, interp="bicubic"),
             dict(
-                type=DINO3ViT,
-                model_name="dinov3_vitl16",
-                in_size=resolut0[0],
+                type=DINO2ViT,
+                model_name="vit_small_patch14_reg4_dinov2.lvd142m",
+                in_size=int(resolut0[0] * 0.875),
                 rearrange=True,
                 norm_out=False,
             ),
