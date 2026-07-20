@@ -15,7 +15,6 @@ from PIL import Image
 
 from code_vjepa_vggt.train_xSSC import train_xssc_context_slots as train
 from code_vjepa_vggt.utils.video_io import (
-    preprocess_video_rgb_uint8,
     read_video_prefix,
 )
 
@@ -49,6 +48,62 @@ def _overlay(frame: np.ndarray, heatmap: np.ndarray, alpha: float) -> np.ndarray
     mask = np.clip(heatmap[..., None], 0.0, 1.0)
     out = base * (1.0 - alpha * mask) + color * (alpha * mask)
     return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+
+
+def _cover_crop_to_tensor(
+    frames: np.ndarray,
+    *,
+    target_hw: tuple[int, int],
+    cover_crop_hw: tuple[int, int],
+) -> tuple[torch.Tensor, dict[str, int | float | list[int]]]:
+    tensor = torch.from_numpy(frames).permute(0, 3, 1, 2).float()
+    _, _, src_h, src_w = tensor.shape
+    crop_h, crop_w = int(cover_crop_hw[0]), int(cover_crop_hw[1])
+    out_h, out_w = int(target_hw[0]), int(target_hw[1])
+    scale = max(crop_h / float(src_h), crop_w / float(src_w))
+    resized_h = max(crop_h, int(round(src_h * scale)))
+    resized_w = max(crop_w, int(round(src_w * scale)))
+    resized = F.interpolate(
+        tensor,
+        size=(resized_h, resized_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+    crop_top = max(0, (resized_h - crop_h) // 2)
+    crop_left = max(0, (resized_w - crop_w) // 2)
+    cropped = resized[:, :, crop_top : crop_top + crop_h, crop_left : crop_left + crop_w]
+    if (crop_h, crop_w) != (out_h, out_w):
+        cropped = F.interpolate(cropped, size=(out_h, out_w), mode="bilinear", align_corners=False)
+    cropped = cropped / 255.0 * 2.0 - 1.0
+    metadata = {
+        "source_hw": [int(src_h), int(src_w)],
+        "target_hw": [out_h, out_w],
+        "cover_crop_hw": [crop_h, crop_w],
+        "cover_scale": float(scale),
+        "resized_hw": [int(resized_h), int(resized_w)],
+        "cover_crop_yxhw_in_resized": [int(crop_top), int(crop_left), crop_h, crop_w],
+    }
+    return cropped.permute(1, 0, 2, 3).contiguous(), metadata
+
+
+def _project_preprocessed_box_to_source(
+    *,
+    box_yxhw: tuple[int, int, int, int],
+    preprocess: dict[str, int | float | list[int]],
+) -> tuple[int, int, int, int]:
+    box_y, box_x, box_h, box_w = [int(v) for v in box_yxhw]
+    crop_y, crop_x, _, _ = [int(v) for v in preprocess["cover_crop_yxhw_in_resized"]]  # type: ignore[index]
+    scale = float(preprocess["cover_scale"])
+    src_h, src_w = [int(v) for v in preprocess["source_hw"]]  # type: ignore[index]
+    y0 = int(round((crop_y + box_y) / scale))
+    x0 = int(round((crop_x + box_x) / scale))
+    y1 = int(round((crop_y + box_y + box_h) / scale))
+    x1 = int(round((crop_x + box_x + box_w) / scale))
+    y0 = max(0, min(src_h, y0))
+    y1 = max(0, min(src_h, y1))
+    x0 = max(0, min(src_w, x0))
+    x1 = max(0, min(src_w, x1))
+    return y0, x0, max(0, y1 - y0), max(0, x1 - x0)
 
 
 def _preprocess_xssc(context_video: torch.Tensor, input_size: int) -> torch.Tensor:
@@ -132,19 +187,32 @@ def main() -> None:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--height", type=int, default=512)
     parser.add_argument("--width", type=int, default=896)
+    parser.add_argument("--input-cover-crop-height", type=int, default=512)
+    parser.add_argument("--input-cover-crop-width", type=int, default=896)
     parser.add_argument("--context-frames", type=int, default=train.XSSC_NUM_CONTEXT_FRAMES)
     parser.add_argument("--alpha", type=float, default=0.55)
     parser.add_argument("--fps", type=int, default=8)
+    parser.add_argument(
+        "--overlay-video",
+        type=Path,
+        default=None,
+        help="Optional generated video to receive the slot overlays. When omitted, overlays source frames.",
+    )
+    parser.add_argument(
+        "--overlay-name",
+        default=None,
+        help="Optional label written to metadata, e.g. clean/zero/noise/shuffle_slot.",
+    )
     args = parser.parse_args()
 
     case_json = args.case_json.expanduser().resolve()
     payload = json.loads(case_json.read_text(encoding="utf-8"))
     video_path = _resolve_video_path(payload, case_json)
     frames, frame_indices = read_video_prefix(video_path, int(args.context_frames))
-    context_video_single = preprocess_video_rgb_uint8(
+    context_video_single, preprocess_metadata = _cover_crop_to_tensor(
         frames,
-        out_hw=(int(args.height), int(args.width)),
-        value_range="minus_one_to_one",
+        target_hw=(int(args.height), int(args.width)),
+        cover_crop_hw=(int(args.input_cover_crop_height), int(args.input_cover_crop_width)),
     )
     context_video = context_video_single.unsqueeze(0).to(
         device=torch.device(args.device),
@@ -165,8 +233,16 @@ def main() -> None:
 
     slots, attention = _extract_slots_and_attention(model, context_video)
     attention = attention[0].float().cpu()
-    frame_uint8 = ((context_video_single.permute(1, 2, 3, 0).float() + 1.0) * 127.5)
-    frame_uint8 = frame_uint8.clamp(0, 255).byte().cpu().numpy()
+    if args.overlay_video is None:
+        overlay_frame_uint8 = frames.astype(np.uint8)
+        overlay_space = "source_video"
+    else:
+        overlay_frame_uint8 = iio.imread(args.overlay_video.expanduser().resolve()).astype(np.uint8)
+        if overlay_frame_uint8.ndim != 4 or overlay_frame_uint8.shape[-1] != 3:
+            raise ValueError(
+                f"overlay video must decode to [T,H,W,3], got {overlay_frame_uint8.shape}"
+            )
+        overlay_space = "generated_video"
 
     output_dir = args.output_dir.expanduser().resolve()
     frames_dir = output_dir / "frames"
@@ -178,35 +254,79 @@ def main() -> None:
     crop_size = min(target_h, target_w)
     top = (target_h - crop_size) // 2
     left = (target_w - crop_size) // 2
+    overlay_h, overlay_w = int(overlay_frame_uint8.shape[1]), int(overlay_frame_uint8.shape[2])
+    if args.overlay_video is None:
+        overlay_top, overlay_left, overlay_crop_h, overlay_crop_w = _project_preprocessed_box_to_source(
+            box_yxhw=(top, left, crop_size, crop_size),
+            preprocess=preprocess_metadata,
+        )
+    else:
+        if (overlay_h, overlay_w) != (target_h, target_w):
+            raise ValueError(
+                "generated overlay video resolution must match Wan output "
+                f"{(target_h, target_w)}, got {(overlay_h, overlay_w)}"
+            )
+        overlay_top, overlay_left, overlay_crop_h, overlay_crop_w = top, left, crop_size, crop_size
+    overlay_count = min(int(attention.shape[0]), int(overlay_frame_uint8.shape[0]))
     metadata = {
         "case_json": str(case_json),
         "source_video": str(video_path),
+        "overlay_video": None if args.overlay_video is None else str(args.overlay_video.expanduser().resolve()),
+        "overlay_name": args.overlay_name,
+        "overlay_space": overlay_space,
         "frame_indices": [int(v) for v in frame_indices.tolist()],
         "attention_shape": list(attention.shape),
         "slots_shape": list(slots.shape),
-        "overlay_size": [target_h, target_w],
-        "xssc_crop_box_yxhw": [top, left, crop_size, crop_size],
+        "overlay_size": [overlay_h, overlay_w],
+        "preprocess": preprocess_metadata,
+        "xssc_crop_box_yxhw_in_preprocessed": [top, left, crop_size, crop_size],
+        "xssc_crop_box_yxhw_in_overlay": [
+            overlay_top,
+            overlay_left,
+            overlay_crop_h,
+            overlay_crop_w,
+        ],
+        "time_axis": {
+            "type": "context_to_generated_prefix" if args.overlay_video is not None else "context_frames",
+            "overlay_frame_count": int(overlay_frame_uint8.shape[0]),
+            "attention_frame_count": int(attention.shape[0]),
+            "strictly_aligned_overlay_frames": int(overlay_count),
+            "note": (
+                "For generated-video overlays, xSSC slot attention has 8 context-frame "
+                "steps aligned to generated frames 0..7. Later generated frames are left "
+                "unoverlaid because there is no per-generated-frame xSSC attention."
+                if args.overlay_video is not None
+                else "xSSC slot attention has 8 context-frame steps aligned to frame_indices, not 49 generated/latent frames."
+            ),
+        },
         "slot_videos": {},
     }
 
     for slot_id in range(int(num_slots)):
         slot_frames = []
-        for frame_id in range(int(args.context_frames)):
-            heat = attention[frame_id, slot_id].unsqueeze(0).unsqueeze(0)
-            heat = F.interpolate(
-                heat,
-                size=(crop_size, crop_size),
-                mode="bilinear",
-                align_corners=False,
-            )[0, 0].numpy()
-            full_heat = np.zeros((target_h, target_w), dtype=np.float32)
-            full_heat[top : top + crop_size, left : left + crop_size] = heat
-            full_heat = full_heat - float(full_heat.min())
-            if float(full_heat.max()) > 1.0e-8:
-                full_heat = full_heat / float(full_heat.max())
-            overlaid = _overlay(frame_uint8[frame_id], full_heat, alpha=float(args.alpha))
-            frame_path = frames_dir / f"slot{slot_id:02d}_frame{frame_id:02d}.jpg"
-            Image.fromarray(overlaid).save(frame_path, quality=95)
+        for frame_id in range(int(overlay_frame_uint8.shape[0])):
+            if frame_id < overlay_count:
+                heat = attention[frame_id, slot_id].unsqueeze(0).unsqueeze(0)
+                heat = F.interpolate(
+                    heat,
+                    size=(overlay_crop_h, overlay_crop_w),
+                    mode="bilinear",
+                    align_corners=False,
+                )[0, 0].numpy()
+                full_heat = np.zeros((overlay_h, overlay_w), dtype=np.float32)
+                full_heat[
+                    overlay_top : overlay_top + overlay_crop_h,
+                    overlay_left : overlay_left + overlay_crop_w,
+                ] = heat
+                full_heat = full_heat - float(full_heat.min())
+                if float(full_heat.max()) > 1.0e-8:
+                    full_heat = full_heat / float(full_heat.max())
+                overlaid = _overlay(overlay_frame_uint8[frame_id], full_heat, alpha=float(args.alpha))
+            else:
+                overlaid = overlay_frame_uint8[frame_id]
+            if frame_id < overlay_count:
+                frame_path = frames_dir / f"slot{slot_id:02d}_frame{frame_id:02d}.jpg"
+                Image.fromarray(overlaid).save(frame_path, quality=95)
             slot_frames.append(overlaid)
         video_path_out = videos_dir / f"slot{slot_id:02d}_attention_overlay.mp4"
         iio.imwrite(video_path_out, np.stack(slot_frames, axis=0), fps=int(args.fps), codec="libx264")

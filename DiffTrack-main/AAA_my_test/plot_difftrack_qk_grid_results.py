@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +39,12 @@ MODEL_COLORS = {
     "stage1b": "#c2410c",
     "lora": "#0f766e",
     "baseline": "#2563eb",
+}
+MODEL_LABELS = {
+    "gt": "GT",
+    "stage1b": "Stage1b",
+    "lora": "LoRA",
+    "baseline": "Baseline",
 }
 
 
@@ -81,6 +86,21 @@ def generated_average(
     if len(selected) != len(GENERATED_MODELS):
         raise RuntimeError(f"Missing generated rows for L{layer}/S{step}/{metric}")
     return sum(selected) / len(selected)
+
+
+def model_metric(
+    rows: list[dict[str, Any]], model: str, layer: int, step: int, metric: str
+) -> float:
+    selected = [
+        row[metric]
+        for row in rows
+        if row["model"] == model
+        and row["layer"] == layer
+        and row["step"] == step
+    ]
+    if len(selected) != 1:
+        raise RuntimeError(f"Expected one row for {model}/L{layer}/S{step}/{metric}")
+    return selected[0]
 
 
 def style_axis(axis: Any) -> None:
@@ -296,6 +316,140 @@ def plot_model_envelopes(
     return plot_data
 
 
+def top_model_combinations(
+    rows: list[dict[str, Any]], model: str
+) -> list[tuple[int, int]]:
+    candidates = []
+    for layer in LAYERS:
+        for step in STEPS:
+            score = model_metric(rows, model, layer, step, "mean_pck")
+            error = model_metric(rows, model, layer, step, "mean_error_px")
+            candidates.append((score, -error, -layer, -step, layer, step))
+    candidates.sort(reverse=True)
+    return [(layer, step) for _, _, _, _, layer, step in candidates[:3]]
+
+
+def plot_single_model_detail(
+    data: dict[str, list[dict[str, Any]]], model: str, output: Path
+) -> dict[str, Any]:
+    figure, axes = plt.subplots(2, 2, figsize=(14, 9.3), sharey="row")
+    rank_colors = ("#0f766e", "#c2410c", "#2563eb")
+    plot_data: dict[str, Any] = {}
+
+    for column, (dataset, rows) in enumerate(data.items()):
+        step_axis = axes[0, column]
+        radius_axis = axes[1, column]
+        layer_curves: dict[str, list[float]] = {}
+
+        for layer in LAYERS:
+            values = [
+                model_metric(rows, model, layer, step, "pck32") for step in STEPS
+            ]
+            layer_curves[str(layer)] = values
+            step_axis.plot(
+                STEPS,
+                values,
+                marker="o",
+                markersize=5,
+                linewidth=2,
+                color=LAYER_COLORS[layer],
+                label=f"L{layer}",
+            )
+
+        best_by_step = []
+        for step_index, step in enumerate(STEPS):
+            best_layer = max(
+                LAYERS, key=lambda layer: layer_curves[str(layer)][step_index]
+            )
+            best_value = layer_curves[str(best_layer)][step_index]
+            best_by_step.append({
+                "step": step,
+                "layer": best_layer,
+                "pck32": best_value,
+            })
+            step_axis.scatter(
+                [step],
+                [best_value],
+                s=100,
+                facecolors="none",
+                edgecolors="#111827",
+                linewidths=1.5,
+                zorder=5,
+            )
+            step_axis.annotate(
+                f"L{best_layer}",
+                (step, best_value),
+                xytext=(0, 8),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8,
+                fontweight="bold",
+                color="#111827",
+            )
+
+        style_axis(step_axis)
+        step_axis.set_title(dataset, loc="left", fontsize=15, fontweight="bold")
+        step_axis.set_xlabel("Denoising step index")
+        step_axis.set_xticks(STEPS)
+        step_axis.set_ylim(0, 100)
+        if column == 0:
+            step_axis.set_ylabel("Object-center PCK@32 (%)")
+        else:
+            step_axis.legend(ncol=2, frameon=False, loc="lower right")
+
+        radius_profiles: dict[str, Any] = {}
+        for rank, ((layer, step), color) in enumerate(
+            zip(top_model_combinations(rows, model), rank_colors, strict=True), start=1
+        ):
+            values = [
+                model_metric(rows, model, layer, step, f"pck{radius}")
+                for radius in RADII
+            ]
+            radius_profiles[f"top{rank}"] = {
+                "layer": layer,
+                "step": step,
+                "values": values,
+            }
+            radius_axis.plot(
+                RADII,
+                values,
+                marker="o",
+                markersize=6,
+                linewidth=2.4,
+                color=color,
+                label=f"Top-{rank}: L{layer}/S{step}",
+            )
+
+        style_axis(radius_axis)
+        radius_axis.set_title(
+            f"{dataset}: model-specific mean-PCK Top-3",
+            loc="left",
+            fontsize=12,
+            fontweight="bold",
+        )
+        radius_axis.set_xlabel("PCK radius (pixels)")
+        radius_axis.set_xticks(RADII)
+        radius_axis.set_ylim(0, 100)
+        radius_axis.legend(frameon=False, loc="upper left")
+        if column == 0:
+            radius_axis.set_ylabel("Object-center PCK (%)")
+
+        plot_data[dataset] = {
+            "layer_step_curves": layer_curves,
+            "best_by_step": best_by_step,
+            "radius_profiles": radius_profiles,
+        }
+
+    add_figure_heading(
+        figure,
+        f"{MODEL_LABELS[model]}: correspondence readout by layer and scale",
+        "Top: each curve fixes one layer; rings mark the best layer per step. Bottom: this model's own mean-PCK Top-3.",
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.88), h_pad=3.0)
+    save_figure(figure, output)
+    return plot_data
+
+
 def main() -> None:
     args = parse_args()
     output = args.output_dir.resolve()
@@ -311,6 +465,12 @@ def main() -> None:
         "model_envelopes": plot_model_envelopes(
             data, output / "pck32_best_layer_model_envelopes.png"
         ),
+        "per_model": {
+            model: plot_single_model_detail(
+                data, model, output / f"{model}_correspondence_curves.png"
+            )
+            for model in MODELS
+        },
     }
     (output / "curve_data.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

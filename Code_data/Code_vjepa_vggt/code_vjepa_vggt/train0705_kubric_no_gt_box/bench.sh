@@ -40,13 +40,13 @@ METRICS=(
   "wmreward"
   "videophy2"
   "cosmos_reason1"
-  "vbench_subject_consistency"
-  "vbench_background_consistency"
-  "vbench_temporal_flickering"
-  "vbench_motion_smoothness"
-  "vbench_dynamic_degree"
-  "vbench_aesthetic_quality"
-  "vbench_imaging_quality"
+  # "vbench_subject_consistency"
+  # "vbench_background_consistency"
+  # "vbench_temporal_flickering"
+  # "vbench_motion_smoothness"
+  # "vbench_dynamic_degree"
+  # "vbench_aesthetic_quality"
+  # "vbench_imaging_quality"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then
