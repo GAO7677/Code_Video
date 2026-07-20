@@ -128,6 +128,23 @@ def metric_means(metrics):
     return means
 
 
+def checkpoint_path(save_path, step):
+    return save_path / f"step-{step:06d}.pth"
+
+
+def save_checkpoint(model, save_path, step):
+    save_file = checkpoint_path(save_path, step)
+    temporary_file = save_file.with_suffix(f"{save_file.suffix}.tmp")
+    model.save(temporary_file)
+    os.replace(temporary_file, save_file)
+    size_gib = save_file.stat().st_size / 1024**3
+    print(
+        f"[checkpoint] step={step} file={save_file} size_gib={size_gib:.3f}",
+        flush=True,
+    )
+    return save_file
+
+
 def run_after_epoch_callbacks(callbacks, pack):
     for callback in callbacks:
         if callback.__class__.__name__ in ("AverageLog", "HandleLog"):
@@ -275,6 +292,12 @@ def train_epoch(pack, sampler, epoch):
                 lr=pack.last_lr,
             )
 
+        if pack.step_count % pack.checkpoint_interval == 0:
+            dist.barrier()
+            if pack.rank == 0:
+                save_checkpoint(pack.model, pack.save_path, pack.step_count)
+            dist.barrier()
+
     run_after_epoch_callbacks(pack.callback_t, pack)
     if pack.rank == 0:
         elapsed = time.time() - start_time
@@ -319,6 +342,11 @@ def main():
     if not 1 <= max_step <= cfg.total_step:
         raise ValueError(
             f"max_step must be in [1, {cfg.total_step}], got {max_step}"
+        )
+    checkpoint_interval = int(cfg.checkpoint_interval)
+    if checkpoint_interval <= 0:
+        raise ValueError(
+            f"checkpoint_interval must be positive, got {checkpoint_interval}"
         )
 
     save_path = (args.save_dir / config_file.stem / str(args.seed)).resolve()
@@ -422,6 +450,8 @@ def main():
     pack.callback_v = callback_v
     pack.total_step = cfg.total_step
     pack.max_step = max_step
+    pack.checkpoint_interval = checkpoint_interval
+    pack.save_path = save_path
     pack.val_interval = cfg.val_interval
     pack.step_count = 0
     pack.last_gradient_norm = None
@@ -452,8 +482,13 @@ def main():
     )
     dist.all_reduce(peak_reserved, op=dist.ReduceOp.MAX)
     if rank == 0:
-        final_checkpoint = save_path / "last.pth"
-        model.save(final_checkpoint)
+        if pack.step_count % checkpoint_interval == 0:
+            final_checkpoint = checkpoint_path(save_path, pack.step_count)
+        else:
+            final_checkpoint = save_path / "last.pth"
+            temporary_file = final_checkpoint.with_suffix(".pth.tmp")
+            model.save(temporary_file)
+            os.replace(temporary_file, final_checkpoint)
         summary = {
             "config": str(config_file),
             "gpu_ids": cfg.gpu_ids,
@@ -463,6 +498,7 @@ def main():
             "total_step": cfg.total_step,
             "max_step": max_step,
             "completed_step": pack.step_count,
+            "checkpoint_interval": checkpoint_interval,
             "amp_dtype": cfg.amp_dtype,
             "last_lr": pack.last_lr,
             "last_gradient_l2_norm_before_clip": pack.last_gradient_norm,

@@ -23,7 +23,6 @@ from object_centric_bench.learn import (
     CbLinearCosine,
     Callback,
     AverageLog,
-    SaveModel,
 )
 from object_centric_bench.model import (
     RandSFQ2,
@@ -101,7 +100,7 @@ use_deterministic_algorithms = True
 num_validation_runs = 40
 warmup_fraction = 0.05
 final_lr_ratio = 1e-3
-save_since_fraction = 0.5
+checkpoint_interval = 1000
 val_interval = total_step // num_validation_runs
 batch_size_t = 96  # per GPU; 4-GPU DDP global batch = 384
 batch_size_v = 1
@@ -317,5 +316,4 @@ callback_t = [
 callback_v = [
     dict(type=Callback, before_step=before_step[:1], after_forward=after_forward),
     callback_t[1],
-    dict(type=SaveModel, save_dir=..., since_step=total_step * save_since_fraction),
 ]
