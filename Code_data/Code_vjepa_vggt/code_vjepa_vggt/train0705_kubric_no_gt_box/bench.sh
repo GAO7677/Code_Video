@@ -5,7 +5,7 @@ set -euo pipefail
 
 
 # 计算指标+统计结果
-# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=6 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq1.txt
+# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=4 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq1.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRY0526_ROOT="/home/gaoya/Code_Video/Code_data/Code_try0526"
@@ -31,11 +31,11 @@ if [[ -n "${BENCH_CUDA_VISIBLE_DEVICES}" ]]; then
 fi
 
 METRICS=(
-  # "physics_iq_with_context"
-  # "physics_iq_without_context"
-  # "pmf_with_context"
-  # "pmf_without_context"
-  # "wmreward"
+  "physics_iq_with_context"
+  "physics_iq_without_context"
+  "pmf_with_context"
+  "pmf_without_context"
+  "wmreward"
 
   # "vbench_subject_consistency"
   # "vbench_background_consistency"
@@ -44,8 +44,8 @@ METRICS=(
   # "vbench_dynamic_degree"
   # "vbench_aesthetic_quality"
   # "vbench_imaging_quality"
-  "videophy2"
-  "cosmos_reason1"
+  # "videophy2"
+  # "cosmos_reason1"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then
