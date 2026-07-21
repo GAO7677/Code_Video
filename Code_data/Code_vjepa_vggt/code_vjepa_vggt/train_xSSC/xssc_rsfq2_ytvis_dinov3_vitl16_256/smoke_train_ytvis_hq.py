@@ -45,8 +45,9 @@ def main():
     config_file = config_file.resolve()
     cfg = Config.fromfile(config_file)
     cfg.dataset_t.base_dir = args.data_dir
-    # A one-batch smoke does not need the full-dataset scan used for temporal rebalancing.
-    cfg.dataset_t.ts = None
+    # A one-batch smoke does not need the optional YTVIS temporal rebalance scan.
+    if "ts" in cfg.dataset_t:
+        cfg.dataset_t.ts = None
     dataset = build_from_config(cfg.dataset_t)
     loader = DataLoader(
         dataset,
@@ -136,6 +137,7 @@ def main():
         "batch_size": args.batch_size,
         "video_shape": list(video.shape),
         "segment_shape": list(batch["segment"].shape),
+        "bbox_shape": list(batch["bbox"].shape) if "bbox" in batch else None,
         "video_dtype": str(video.dtype),
         "amp_dtype": args.amp_dtype,
         "loss": float(loss.detach().float().item()),
