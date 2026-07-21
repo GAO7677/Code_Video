@@ -17,6 +17,7 @@ DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/
 METHOD_LABELS = {
     "formal_mix49_b2_dropout_metrics_20260719T204359Z": "full ctx slots",
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": "randomcrop pooled slots",
+    "xssc_centercrop_pooled_gpu0123_mix49_formal_centercrop_pooled_gpu0123_20260721T073149Z": "centercrop pooled slots",
     "full_ctx_weight_self_mean_repeat_tokens": "full ctx weight / self mean-repeat tokens",
     "full_ctx_weight_self_mean_repeat_avg_time_tokens": "full ctx weight / self mean-repeat tokens + mean time",
     "full_ctx_weight_self_mean_one_frame_tokens": "full ctx weight / self mean one-frame tokens",
@@ -35,6 +36,10 @@ METHOD_DESCRIPTIONS = {
     ),
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": (
         "Training uses random crop. xSSC slots are averaged over ctx time, "
+        "then projected as 7 pooled object tokens."
+    ),
+    "xssc_centercrop_pooled_gpu0123_mix49_formal_centercrop_pooled_gpu0123_20260721T073149Z": (
+        "Training uses center crop. xSSC slots are averaged over ctx time, "
         "then projected as 7 pooled object tokens."
     ),
     "full_ctx_weight_self_mean_repeat_tokens": (
