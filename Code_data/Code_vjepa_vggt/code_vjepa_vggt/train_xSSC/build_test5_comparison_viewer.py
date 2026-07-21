@@ -17,6 +17,9 @@ DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/
 METHOD_LABELS = {
     "formal_mix49_b2_dropout_metrics_20260719T204359Z": "full ctx slots",
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": "randomcrop pooled slots",
+    "full_ctx_weight_self_mean_repeat_tokens": "full ctx weight / self mean-repeat tokens",
+    "full_ctx_weight_random_pooled_tokens_no_time": "full ctx weight / pooled tokens no time",
+    "full_ctx_weight_random_pooled_tokens_with_time": "full ctx weight / pooled tokens + time",
 }
 
 
