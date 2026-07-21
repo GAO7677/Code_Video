@@ -93,7 +93,7 @@ while true; do
         "${checkpoint_dir}" "${TARGET_GPU}" "${output_root}" \
         2>&1 | tee "${output_root}/inference.log" && \
       "${PYTHON}" "${PROJECT}/validate_xssc_inference.py" \
-        --output-root "${output_root}/${step_name}" \
+        --output-root "${output_root}" \
         --input-json-list "${INPUT_JSON_LIST}" \
         --report "${output_root}/health_report.json" \
         2>&1 | tee -a "${output_root}/inference.log"; then

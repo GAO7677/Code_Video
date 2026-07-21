@@ -113,7 +113,9 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ctx-frames", type=int, default=8)
     parser.add_argument("--feature-batch", type=int, default=24)
-    parser.add_argument("--decoder-batch", type=int, default=16)
+    # Keep this equal to ctx_frames so the full sequence's first decoder chunk
+    # is numerically identical to a standalone ctx8 decoder call under BF16.
+    parser.add_argument("--decoder-batch", type=int, default=8)
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument("--skip-smoke", action="store_true")
     parser.add_argument("--skip-render", action="store_true")
@@ -441,32 +443,67 @@ def direct_attention(model, normalized, device, seed):
     return output[-1][0].detach().float().cpu()
 
 
+@torch.inference_mode()
+def reference_attention_from_feature(model, feature, device, seed):
+    """Run the unchunked official recurrence/decoder from one cached feature tensor."""
+    feature_gpu = feature.to(device, non_blocking=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        encoded = feature_gpu.permute(0, 2, 3, 1)
+        encoded = model.encode_posit_embed(encoded).flatten(1, 2)
+        encoded = model.encode_project(encoded)[None]
+        set_seed(seed)
+        slots = None
+        for frame_id in range(len(feature)):
+            if frame_id == 0:
+                query = model.initializ(1)
+            else:
+                query = model.transit(slots, encoded[:, : frame_id + 1])
+            slots_i, _ = model.aggregat(
+                encoded[:, frame_id],
+                query,
+                num_iter=None if frame_id == 0 else 1,
+            )
+            slots = slots_i[:, None] if slots is None else torch.cat((slots, slots_i[:, None]), dim=1)
+        clue = feature_gpu.permute(0, 2, 3, 1).flatten(1, 2)[None]
+        _, attention, _ = model.decode(clue, slots)
+    height, width = feature.shape[-2:]
+    attention = attention[0].reshape(len(feature), attention.shape[2], height, width)
+    return attention.detach().float().cpu()
+
+
 def smoke_validate(model, feature, normalized, device, seed, ctx_frames, decoder_batch):
     count = min(ctx_frames, len(feature))
     custom_attention, _ = attention_from_feature(
         model, feature[:count], device, seed, decoder_batch
     )
     direct = direct_attention(model, normalized[:count], device, seed)
+    reference = reference_attention_from_feature(model, feature[:count], device, seed)
     custom_labels = custom_attention.argmax(1)
     direct_labels = direct.argmax(1)
+    reference_labels = reference.argmax(1)
     label_agreement = float((custom_labels == direct_labels).float().mean())
     max_abs = float((custom_attention - direct).abs().max())
+    reference_label_agreement = float((custom_labels == reference_labels).float().mean())
+    reference_max_abs = float((custom_attention - reference).abs().max())
 
     full_attention, _ = attention_from_feature(
         model, feature, device, seed, decoder_batch
     )
     prefix_labels = full_attention[:count].argmax(1)
     prefix_agreement = float((prefix_labels == custom_labels).float().mean())
-    if label_agreement != 1.0 or prefix_agreement != 1.0:
+    if reference_label_agreement != 1.0 or prefix_agreement != 1.0:
         raise RuntimeError(
             "smoke mismatch: "
-            f"direct={label_agreement}, full_prefix={prefix_agreement}, max_abs={max_abs}"
+            f"reference={reference_label_agreement}, full_prefix={prefix_agreement}, "
+            f"reference_max_abs={reference_max_abs}"
         )
     return {
         "frames": count,
-        "custom_vs_direct_label_agreement": label_agreement,
-        "custom_vs_direct_attention_max_abs": max_abs,
+        "chunked_vs_cached_reference_label_agreement": reference_label_agreement,
+        "chunked_vs_cached_reference_attention_max_abs": reference_max_abs,
         "full_prefix_vs_ctx_label_agreement": prefix_agreement,
+        "independent_backbone_rerun_label_agreement": label_agreement,
+        "independent_backbone_rerun_attention_max_abs": max_abs,
     }
 
 

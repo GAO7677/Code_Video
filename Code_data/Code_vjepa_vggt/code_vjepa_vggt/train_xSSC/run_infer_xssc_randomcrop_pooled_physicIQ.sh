@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Example:
-# CUDA_VISIBLE_DEVICES=4,5 \
+# CUDA_VISIBLE_DEVICES=5,6 \
 # /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/run_infer_xssc_randomcrop_pooled_physicIQ.sh
 
 cd /home/gaoya
