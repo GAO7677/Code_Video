@@ -927,14 +927,16 @@ def main() -> None:
             f"--context-frames={oracle_infer.train.XSSC_NUM_CONTEXT_FRAMES}, "
             f"got {cli_args.context_frames}"
         )
-    if int(cli_args.num_frames) != int(cli_args.xssc_oracle_video_frames):
+    if int(cli_args.num_frames) <= 0:
+        raise ValueError(f"--num-frames must be positive, got {cli_args.num_frames}")
+    if int(cli_args.xssc_oracle_video_frames) <= 0:
         raise ValueError(
-            "--num-frames must match --xssc-oracle-video-frames for Scheme A oracle "
-            f"inference, got {cli_args.num_frames} vs {cli_args.xssc_oracle_video_frames}"
+            "--xssc-oracle-video-frames is the max source-video frames read for slots "
+            f"and must be positive, got {cli_args.xssc_oracle_video_frames}"
         )
-    if (int(cli_args.xssc_oracle_video_frames) - 1) % int(cli_args.xssc_vae_temporal_stride) != 0:
+    if int(cli_args.xssc_vae_temporal_stride) <= 0:
         raise ValueError(
-            "--xssc-oracle-video-frames must satisfy 1 + n * --xssc-vae-temporal-stride"
+            f"--xssc-vae-temporal-stride must be positive, got {cli_args.xssc_vae_temporal_stride}"
         )
     _configure_oracle_environment(cli_args)
 

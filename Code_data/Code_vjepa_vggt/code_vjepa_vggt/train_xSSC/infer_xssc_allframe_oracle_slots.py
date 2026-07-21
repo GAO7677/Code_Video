@@ -228,25 +228,27 @@ def _load_oracle_video_single(
     video_path: str,
     reference_video_single: torch.Tensor,
 ) -> tuple[torch.Tensor, dict[str, object]]:
-    num_frames = int(
+    max_frames = int(
         os.environ.get("XSSC_ORACLE_VIDEO_FRAMES", str(model.xssc_oracle_video_frames))
     )
     sampling_mode = os.environ.get("XSSC_ORACLE_SAMPLING_MODE", "prefix").strip().lower()
     path = Path(video_path).expanduser().resolve()
     if sampling_mode == "uniform":
-        frames, frame_indices = read_video_uniform(path, num_frames)
+        frames, frame_indices = read_video_uniform(path, max_frames)
     elif sampling_mode in ("", "prefix"):
-        frames, frame_indices = read_video_prefix(path, num_frames)
+        frames, frame_indices = read_video_prefix(path, max_frames)
     else:
         raise ValueError(
             "Unsupported XSSC_ORACLE_SAMPLING_MODE="
             f"{sampling_mode}. Expected prefix or uniform."
         )
-    if int(frames.shape[0]) != num_frames:
-        raise RuntimeError(
-            f"oracle source video {path} provided {int(frames.shape[0])} frames, "
-            f"expected {num_frames}"
-        )
+    actual_frames = int(frames.shape[0])
+    if actual_frames <= 0:
+        raise RuntimeError(f"oracle source video {path} does not provide any readable frames")
+    if actual_frames > max_frames:
+        frames = frames[:max_frames]
+        frame_indices = frame_indices[:max_frames]
+        actual_frames = int(frames.shape[0])
 
     height = int(reference_video_single.shape[-2])
     width = int(reference_video_single.shape[-1])
@@ -276,7 +278,10 @@ def _load_oracle_video_single(
 
     debug = {
         "source_video": str(path),
-        "num_frames": num_frames,
+        "max_frames": max_frames,
+        "actual_frames": actual_frames,
+        "read_policy": "from_frame0_use_all_available_up_to_max_frames",
+        "used_max_frame_budget": bool(actual_frames == max_frames),
         "sampling_mode": "prefix" if sampling_mode == "" else sampling_mode,
         "sampled_frame_indices": [int(v) for v in frame_indices.tolist()],
         "resize_mode": "cover_crop" if resize_mode == "" else resize_mode,
@@ -284,6 +289,20 @@ def _load_oracle_video_single(
         "output_shape": list(oracle_video.shape),
     }
     return oracle_video, debug
+
+
+def _align_slots_to_latent_time_partial(slots: torch.Tensor, stride: int) -> torch.Tensor:
+    """Wan latent-time slot pooling that allows the last chunk to contain < stride frames."""
+    time_steps = int(slots.shape[1])
+    stride = int(stride)
+    if time_steps <= 0:
+        raise ValueError("Cannot align zero xSSC time steps")
+    if stride <= 0:
+        raise ValueError(f"stride must be positive, got {stride}")
+    chunks = [slots[:, :1]]
+    for start in range(1, time_steps, stride):
+        chunks.append(slots[:, start : min(start + stride, time_steps)].mean(dim=1, keepdim=True))
+    return torch.cat(chunks, dim=1)
 
 
 def _build_model_args(args):
@@ -383,12 +402,15 @@ def _build_object_context(
     perturb_config = _get_slot_perturb_config()
     slots, perturb_debug = _apply_slot_perturbation(slots, **perturb_config)
     original_time_steps = int(slots.shape[1])
-    if original_time_steps != int(model.xssc_oracle_video_frames):
+    max_oracle_steps = int(model.xssc_oracle_video_frames)
+    if original_time_steps <= 0 or original_time_steps > max_oracle_steps:
         raise ValueError(
-            f"Expected oracle xSSC slots T={model.xssc_oracle_video_frames}, "
-            f"got {original_time_steps}"
+            f"Expected oracle xSSC slots T in [1, {max_oracle_steps}], got {original_time_steps}"
         )
-    latent_slots = model._align_slots_to_latent_time(slots)
+    latent_slots = _align_slots_to_latent_time_partial(
+        slots,
+        stride=int(model.xssc_vae_temporal_stride),
+    )
     latent_time_steps = int(latent_slots.shape[1])
     if latent_time_steps > model.xssc_max_time_steps:
         raise ValueError(
@@ -417,7 +439,13 @@ def _build_object_context(
         "xssc_latent_slots_shape": list(latent_slots.shape),
         "object_context_shape": list(object_context.shape),
         "object_valid_count": float(model.xssc_num_slots),
+        "xssc_oracle_max_video_frames": max_oracle_steps,
+        "xssc_oracle_actual_video_frames": original_time_steps,
         "wan_vae_temporal_stride": int(model.xssc_vae_temporal_stride),
+        "partial_last_latent_chunk": bool(
+            original_time_steps > 1
+            and (original_time_steps - 1) % int(model.xssc_vae_temporal_stride) != 0
+        ),
         "latent_time_embedding_ids": [int(v) for v in time_ids.detach().cpu().tolist()],
         "xssc_slots_finite": bool(torch.isfinite(slots_float).all().item()),
         "xssc_latent_slots_finite": bool(torch.isfinite(latent_slots_float).all().item()),
