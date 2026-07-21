@@ -11,6 +11,7 @@ PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 CHECKPOINT_ROOT="${RUN_ROOT}/checkpoints"
 INPUT_JSON_LIST="${INPUT_JSON_LIST:-/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt}"
 OUTPUT_BASE="${OUTPUT_BASE:-/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/test_5/$(basename "${RUN_ROOT}")}"
+VIEWER_ROOT="${VIEWER_ROOT:-$(dirname "${OUTPUT_BASE}")}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
 IDLE_MEMORY_MIB="${IDLE_MEMORY_MIB:-1200}"
 IDLE_UTIL_PERCENT="${IDLE_UTIL_PERCENT:-10}"
@@ -85,6 +86,9 @@ while true; do
         --input-json-list "${INPUT_JSON_LIST}" \
         --report "${output_root}/health_report.json" \
         2>&1 | tee -a "${output_root}/inference.log"; then
+      "${PYTHON}" "${PROJECT}/build_test5_comparison_viewer.py" \
+        --root "${VIEWER_ROOT}" \
+        2>&1 | tee -a "${output_root}/inference.log"
       rm -f "${output_root}/.failed" "${attempts_file}"
       touch "${output_root}/.validated"
       status=completed
