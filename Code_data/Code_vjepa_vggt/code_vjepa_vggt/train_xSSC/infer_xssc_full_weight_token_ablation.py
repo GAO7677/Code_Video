@@ -30,6 +30,17 @@ def _normalize_ablation_mode(mode: str) -> str:
         "full_mean_repeat": "full_mean_repeat",
         "self_mean_repeat": "full_mean_repeat",
         "full_self_mean_repeat": "full_mean_repeat",
+        "full_mean_repeat_avg_time": "full_mean_repeat_avg_time",
+        "self_mean_repeat_avg_time": "full_mean_repeat_avg_time",
+        "full_self_mean_repeat_avg_time": "full_mean_repeat_avg_time",
+        "self_mean_repeat_mean_time": "full_mean_repeat_avg_time",
+        "full_mean_one_frame": "full_mean_one_frame",
+        "self_mean_one_frame": "full_mean_one_frame",
+        "full_self_mean_one_frame": "full_mean_one_frame",
+        "full_mean_one_frame_avg_time": "full_mean_one_frame_avg_time",
+        "self_mean_one_frame_avg_time": "full_mean_one_frame_avg_time",
+        "full_self_mean_one_frame_avg_time": "full_mean_one_frame_avg_time",
+        "self_mean_one_frame_mean_time": "full_mean_one_frame_avg_time",
         "pooled_no_time": "pooled_project_repeat_no_time",
         "pooled_project_repeat_no_time": "pooled_project_repeat_no_time",
         "random_pooled_no_time": "pooled_project_repeat_no_time",
@@ -44,7 +55,9 @@ def _normalize_ablation_mode(mode: str) -> str:
         raise ValueError(
             "Unsupported XSSC_TOKEN_ABLATION_MODE="
             f"{mode!r}. Expected full, full_mean_repeat, "
-            "pooled_project_repeat_no_time, or pooled_project_repeat_with_time."
+            "full_mean_repeat_avg_time, full_mean_one_frame, "
+            "full_mean_one_frame_avg_time, pooled_project_repeat_no_time, "
+            "or pooled_project_repeat_with_time."
         )
     return aliases[normalized]
 
@@ -422,7 +435,15 @@ def _build_object_context(
         "input_slots_shape": list(slots_for_projection.shape),
         "uses_full_checkpoint_for_generation": True,
         "uses_full_time_embedding": token_ablation_mode
-        in ("full", "full_mean_repeat", "pooled_project_repeat_with_time"),
+        in (
+            "full",
+            "full_mean_repeat",
+            "full_mean_repeat_avg_time",
+            "full_mean_one_frame",
+            "full_mean_one_frame_avg_time",
+            "pooled_project_repeat_with_time",
+        ),
+        "time_embedding_mode": "original",
         "pooled_projector_checkpoint": None,
     }
     if token_ablation_mode == "full":
@@ -437,6 +458,40 @@ def _build_object_context(
                 "projector_source": "full_ctx_checkpoint",
                 "pooled_slots_shape": list(pooled_slots.shape),
                 "repeated_slots_shape": list(slots_for_projection.shape),
+            }
+        )
+    elif token_ablation_mode == "full_mean_repeat_avg_time":
+        pooled_slots = slots_for_projection.mean(dim=1, keepdim=True)
+        slots_for_projection = pooled_slots.expand(-1, time_steps, -1, -1)
+        tokens = model.slot_projector(model.slot_norm(slots_for_projection))
+        token_ablation_debug.update(
+            {
+                "projector_source": "full_ctx_checkpoint",
+                "time_embedding_mode": "mean_repeat",
+                "pooled_slots_shape": list(pooled_slots.shape),
+                "repeated_slots_shape": list(slots_for_projection.shape),
+            }
+        )
+    elif token_ablation_mode == "full_mean_one_frame":
+        pooled_slots = slots_for_projection.mean(dim=1, keepdim=True)
+        tokens = model.slot_projector(model.slot_norm(pooled_slots))
+        token_ablation_debug.update(
+            {
+                "projector_source": "full_ctx_checkpoint",
+                "time_embedding_mode": "first",
+                "pooled_slots_shape": list(pooled_slots.shape),
+                "one_frame_tokens_shape": list(tokens.shape),
+            }
+        )
+    elif token_ablation_mode == "full_mean_one_frame_avg_time":
+        pooled_slots = slots_for_projection.mean(dim=1, keepdim=True)
+        tokens = model.slot_projector(model.slot_norm(pooled_slots))
+        token_ablation_debug.update(
+            {
+                "projector_source": "full_ctx_checkpoint",
+                "time_embedding_mode": "mean_one_frame",
+                "pooled_slots_shape": list(pooled_slots.shape),
+                "one_frame_tokens_shape": list(tokens.shape),
             }
         )
     elif token_ablation_mode in (
@@ -459,11 +514,26 @@ def _build_object_context(
     else:
         raise AssertionError(f"unhandled token_ablation_mode={token_ablation_mode}")
     time_ids = time_ids.to(device=tokens.device)
+    token_time_steps = int(tokens.shape[1])
     if token_ablation_debug["uses_full_time_embedding"]:
-        time_tokens = model.time_embedding(time_ids).view(1, time_steps, 1, -1)
+        time_tokens = model.time_embedding(time_ids).view(1, int(time_ids.numel()), 1, -1)
+        if token_ablation_debug["time_embedding_mode"] in ("mean_repeat", "mean_one_frame"):
+            mean_time_tokens = time_tokens.mean(dim=1, keepdim=True)
+            time_tokens = mean_time_tokens.expand(-1, token_time_steps, -1, -1)
+            token_ablation_debug.update(
+                {
+                    "mean_time_tokens_shape": list(mean_time_tokens.shape),
+                    "repeated_time_tokens_shape": list(time_tokens.shape),
+                }
+            )
+        else:
+            time_tokens = time_tokens[:, :token_time_steps]
+            token_ablation_debug["time_embedding_ids_applied"] = [
+                int(v) for v in time_ids[:token_time_steps].detach().cpu().tolist()
+            ]
         tokens = tokens + time_tokens.to(dtype=tokens.dtype)
     batch, _, num_slots, hidden_dim = tokens.shape
-    object_context = tokens.reshape(batch, time_steps * num_slots, hidden_dim)
+    object_context = tokens.reshape(batch, token_time_steps * num_slots, hidden_dim)
     slots_float = slots.detach().float()
     context_float = object_context.detach().float()
     debug = {

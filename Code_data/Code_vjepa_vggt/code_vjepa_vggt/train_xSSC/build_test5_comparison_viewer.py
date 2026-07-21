@@ -18,8 +18,47 @@ METHOD_LABELS = {
     "formal_mix49_b2_dropout_metrics_20260719T204359Z": "full ctx slots",
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": "randomcrop pooled slots",
     "full_ctx_weight_self_mean_repeat_tokens": "full ctx weight / self mean-repeat tokens",
+    "full_ctx_weight_self_mean_repeat_avg_time_tokens": "full ctx weight / self mean-repeat tokens + mean time",
+    "full_ctx_weight_self_mean_one_frame_tokens": "full ctx weight / self mean one-frame tokens",
+    "full_ctx_weight_self_mean_one_frame_avg_time_tokens": "full ctx weight / self mean one-frame tokens + mean time",
     "full_ctx_weight_random_pooled_tokens_no_time": "full ctx weight / pooled tokens no time",
     "full_ctx_weight_random_pooled_tokens_with_time": "full ctx weight / pooled tokens + time",
+}
+
+
+METHOD_DESCRIPTIONS = {
+    "formal_mix49_b2_dropout_metrics_20260719T204359Z": (
+        "Frozen xSSC extracts all 8 ctx frames x 7 slots. "
+        "Full ctx projector + per-frame time embedding -> 56 object tokens."
+    ),
+    "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": (
+        "Training uses random crop. xSSC slots are averaged over ctx time, "
+        "then projected as 7 pooled object tokens."
+    ),
+    "full_ctx_weight_self_mean_repeat_tokens": (
+        "Full ctx slots are averaged over 8 ctx frames, repeated to 8 frames, "
+        "then projected with full ctx weights and original per-frame time embedding."
+    ),
+    "full_ctx_weight_self_mean_repeat_avg_time_tokens": (
+        "Full ctx slots are averaged over 8 ctx frames and repeated to 8 frames. "
+        "time_embedding[0:8] is also averaged and repeated."
+    ),
+    "full_ctx_weight_self_mean_one_frame_tokens": (
+        "Full ctx slots are averaged over 8 ctx frames and kept as one frame. "
+        "Full ctx projector + time_embedding[0] -> 7 object tokens."
+    ),
+    "full_ctx_weight_self_mean_one_frame_avg_time_tokens": (
+        "Full ctx slots are averaged over 8 ctx frames and kept as one frame. "
+        "Adds mean(time_embedding[0:8]) -> 7 object tokens."
+    ),
+    "full_ctx_weight_random_pooled_tokens_no_time": (
+        "Uses randomcrop pooled checkpoint projector on time-averaged slots, "
+        "repeats projected tokens to 8 frames, no full ctx time embedding."
+    ),
+    "full_ctx_weight_random_pooled_tokens_with_time": (
+        "Uses randomcrop pooled checkpoint projector on time-averaged slots, "
+        "repeats projected tokens to 8 frames, adds full ctx per-frame time embedding."
+    ),
 }
 
 
@@ -52,6 +91,10 @@ def method_label(method: str) -> str:
     return METHOD_LABELS.get(method, method)
 
 
+def method_description(method: str) -> str:
+    return METHOD_DESCRIPTIONS.get(method, "")
+
+
 def step_sort_key(step: str) -> tuple[int, str]:
     digits = "".join(ch for ch in step if ch.isdigit())
     return (int(digits) if digits else -1, step)
@@ -76,6 +119,7 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, 
         record = {
             "method": method,
             "method_label": method_label(method),
+            "method_description": method_description(method),
             "step": inner_step or outer_step,
             "case_stem": video_path.stem,
             "video": str(video_path),
@@ -127,7 +171,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
         first = rows[0]
         representative_ctx = next((row.get("input_ctx") for row in rows if row.get("input_ctx")), None)
         matrix: dict[tuple[str, str], dict[str, Any]] = {
-            (row["method_label"], row["step"]): row for row in rows
+            (row["method"], row["step"]): row for row in rows
         }
         ctx_html = ""
         if representative_ctx:
@@ -141,10 +185,19 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
             )
         header_cells = "".join(f"<th>{html.escape(step)}</th>" for step in global_steps)
         method_rows = []
-        for method in global_methods:
+        for method_label_text in global_methods:
+            method_key = next(
+                (
+                    record["method"]
+                    for record in records
+                    if record["method_label"] == method_label_text
+                ),
+                method_label_text,
+            )
+            description = method_description(method_key)
             cells = []
             for step in global_steps:
-                record = matrix.get((method, step))
+                record = matrix.get((method_key, step))
                 if record is None:
                     cells.append('<td><div class="missing">missing</div></td>')
                     continue
@@ -160,7 +213,10 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
             method_rows.append(
                 f"""
                 <tr>
-                  <th class="method">{html.escape(method)}</th>
+                  <th class="method">
+                    <div class="method-name">{html.escape(method_label_text)}</div>
+                    <div class="method-desc">{html.escape(description)}</div>
+                  </th>
                   {''.join(cells)}
                 </tr>
                 """
@@ -175,7 +231,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
                 <table class="matrix">
                   <thead>
                     <tr>
-                      <th class="method">method / weight</th>
+                      <th class="method">method / processing</th>
                       {header_cells}
                     </tr>
                   </thead>
@@ -250,7 +306,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     }}
     table.matrix {{
       width: 100%;
-      min-width: {max(920, 190 + 300 * max(1, len(global_steps)))}px;
+      min-width: {max(1040, 280 + 300 * max(1, len(global_steps)))}px;
       border-collapse: collapse;
       table-layout: fixed;
     }}
@@ -268,7 +324,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
       text-align: left;
     }}
     th.method {{
-      width: 170px;
+      width: 260px;
       position: sticky;
       left: 0;
       z-index: 2;
@@ -280,6 +336,21 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     }}
     tbody th.method {{
       background: #1c222c;
+    }}
+    .method-name {{
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: #f0f4fb;
+      overflow-wrap: anywhere;
+    }}
+    .method-desc {{
+      margin-top: 7px;
+      font-size: 11px;
+      font-weight: 450;
+      line-height: 1.42;
+      color: #aeb8c8;
+      overflow-wrap: anywhere;
     }}
     video, img {{
       display: block;
