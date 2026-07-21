@@ -49,6 +49,15 @@ def _normalize_ablation_mode(mode: str) -> str:
         "pooled_project_repeat_with_time": "pooled_project_repeat_with_time",
         "random_pooled_with_time": "pooled_project_repeat_with_time",
         "b": "pooled_project_repeat_with_time",
+        "zero_slot": "zero_slot_tokens",
+        "zero_slots": "zero_slot_tokens",
+        "zero_slot_tokens": "zero_slot_tokens",
+        "slot_zero": "zero_slot_tokens",
+        "slot_tokens_zero": "zero_slot_tokens",
+        "zero_time": "zero_time_embedding",
+        "zero_time_embedding": "zero_time_embedding",
+        "time_zero": "zero_time_embedding",
+        "time_embedding_zero": "zero_time_embedding",
     }
     normalized = str(mode).strip().lower()
     if normalized not in aliases:
@@ -57,7 +66,8 @@ def _normalize_ablation_mode(mode: str) -> str:
             f"{mode!r}. Expected full, full_mean_repeat, "
             "full_mean_repeat_avg_time, full_mean_one_frame, "
             "full_mean_one_frame_avg_time, pooled_project_repeat_no_time, "
-            "or pooled_project_repeat_with_time."
+            "pooled_project_repeat_with_time, zero_slot_tokens, "
+            "or zero_time_embedding."
         )
     return aliases[normalized]
 
@@ -442,6 +452,7 @@ def _build_object_context(
             "full_mean_one_frame",
             "full_mean_one_frame_avg_time",
             "pooled_project_repeat_with_time",
+            "zero_slot_tokens",
         ),
         "time_embedding_mode": "original",
         "pooled_projector_checkpoint": None,
@@ -449,6 +460,31 @@ def _build_object_context(
     if token_ablation_mode == "full":
         tokens = model.slot_projector(model.slot_norm(slots_for_projection))
         token_ablation_debug["projector_source"] = "full_ctx_checkpoint"
+    elif token_ablation_mode == "zero_slot_tokens":
+        hidden_dim = int(model.slot_projector.out_features)
+        tokens = slots_for_projection.new_zeros(
+            (
+                int(slots_for_projection.shape[0]),
+                time_steps,
+                int(slots_for_projection.shape[2]),
+                hidden_dim,
+            )
+        )
+        token_ablation_debug.update(
+            {
+                "projector_source": "zeroed_after_projector",
+                "slot_token_mode": "zero",
+                "zero_slot_tokens_shape": list(tokens.shape),
+            }
+        )
+    elif token_ablation_mode == "zero_time_embedding":
+        tokens = model.slot_projector(model.slot_norm(slots_for_projection))
+        token_ablation_debug.update(
+            {
+                "projector_source": "full_ctx_checkpoint",
+                "time_embedding_mode": "zero",
+            }
+        )
     elif token_ablation_mode == "full_mean_repeat":
         pooled_slots = slots_for_projection.mean(dim=1, keepdim=True)
         slots_for_projection = pooled_slots.expand(-1, time_steps, -1, -1)
