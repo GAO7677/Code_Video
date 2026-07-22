@@ -283,17 +283,10 @@ class XSSCVACEContextConditioner(nn.Module):
         *,
         target_frames: int,
     ) -> torch.Tensor:
-        """Group raw-frame visibility mask to Wan latent time by chunk mean."""
-        chunks = [frame_mask[:, :1]]
-        for start in range(1, int(frame_mask.shape[1]), self.temporal_stride):
-            chunks.append(frame_mask[:, start : start + self.temporal_stride].mean(dim=1, keepdim=True))
-        aligned = torch.cat(chunks, dim=1)
-        if aligned.shape[1] < target_frames:
-            repeat = aligned[:, -1:].expand(-1, target_frames - aligned.shape[1])
-            aligned = torch.cat([aligned, repeat], dim=1)
-        elif aligned.shape[1] > target_frames:
-            aligned = aligned[:, :target_frames]
-        return aligned
+        """Resize raw-frame visibility mask to latent time like official VACE."""
+        mask = frame_mask[:, None, :, None, None].float()
+        mask = F.interpolate(mask, size=(target_frames, 1, 1), mode="nearest-exact")
+        return mask[:, 0, :, 0, 0].to(dtype=frame_mask.dtype)
 
     def _prepare_reference_slots(
         self,
@@ -397,29 +390,31 @@ class XSSCVACEContextConditioner(nn.Module):
         frame_mask = torch.zeros(batch, raw_frames, device=slots.device, dtype=slots.dtype)
         frame_mask[:, :visible_frames] = 1
 
-        visible_slots = slots * frame_mask[:, :, None, None]
         video_slots = self._group_slots_to_latent_time(
-            visible_slots,
+            slots,
             target_frames=video_target_frames,
         )
-        video_visible_mask = self._group_frame_mask_to_latent_time(
+        vace_slot_mask = self._group_frame_mask_to_latent_time(
             frame_mask,
             target_frames=video_target_frames,
         ).to(device=slots.device, dtype=dtype)
-        reactive_video, assignment = self._slots_to_dense(
+        vace_slot, assignment = self._slots_to_dense(
             video_slots,
             target_height=target_height,
             target_width=target_width,
             dtype=dtype,
         )
-        visible_mask_5d = video_visible_mask[:, None, :, None, None]
-        reactive_video = reactive_video * visible_mask_5d
-        inactive_video = self.future_placeholder.to(
-            device=reactive_video.device,
-            dtype=reactive_video.dtype,
+        vace_slot_mask_5d = vace_slot_mask[:, None, :, None, None]
+        placeholder = self.future_placeholder.to(
+            device=vace_slot.device,
+            dtype=vace_slot.dtype,
         ).expand(batch, -1, video_target_frames, target_height, target_width)
-        inactive_video = inactive_video * (1 - visible_mask_5d)
-        vace_video_latents = torch.cat([inactive_video, reactive_video], dim=1)
+        vace_slot = vace_slot * vace_slot_mask_5d + placeholder * (1 - vace_slot_mask_5d)
+
+        # Official VACE equivalent with xSSC slots replacing vace_video.
+        inactive = vace_slot * (1 - vace_slot_mask_5d) + 0 * vace_slot_mask_5d
+        reactive = vace_slot * vace_slot_mask_5d + 0 * (1 - vace_slot_mask_5d)
+        vace_video_latents = torch.cat([inactive, reactive], dim=1)
 
         if reference_frames > 0:
             reference_slots = self._prepare_reference_slots(
@@ -440,7 +435,7 @@ class XSSCVACEContextConditioner(nn.Module):
             vace_video_latents.to(dtype=self.video_norm.weight.dtype)
         ).to(dtype=dtype)
 
-        video_mask_latents = video_visible_mask[:, None, :, None, None].expand(
+        video_mask_latents = vace_slot_mask[:, None, :, None, None].expand(
             batch,
             self.vace_mask_dim,
             video_target_frames,
@@ -472,7 +467,7 @@ class XSSCVACEContextConditioner(nn.Module):
                 "xssc_condition_video_latent_frames": float(video_target_frames),
                 "xssc_condition_visible_raw_frames": float(visible_frames),
                 "xssc_condition_slots": float(slots.shape[2]),
-                "xssc_condition_video_mask_mean": float(video_visible_mask.float().mean().detach().cpu()),
+                "xssc_condition_video_mask_mean": float(vace_slot_mask.float().mean().detach().cpu()),
                 "xssc_assignment_usage_entropy": float(entropy.detach().cpu()),
                 "xssc_assignment_max_prob": float(assignment.max(dim=-1).values.mean().detach().cpu()),
             }

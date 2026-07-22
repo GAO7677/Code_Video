@@ -44,8 +44,11 @@ training video [49 frames]
   -> Wan VAE-style temporal grouping:
        reference ctx clip 9 frames -> 3 reference latent steps
        target video 49 frames -> 13 video latent steps
-       future slot content is replaced by a placeholder before condition injection
+       future slot content is replaced by a placeholder before the official inactive/reactive split
   -> learned coordinate query competes over 7 slots
+  -> official VACE split with vace_video replaced by vace_slot:
+       inactive = vace_slot * (1 - vace_slot_mask)
+       reactive = vace_slot * vace_slot_mask
   -> inactive/reactive xSSC condition [B,32,Tz+3,Hvae,Wvae]
   -> mask channels [B,64,Tz+3,Hvae,Wvae], reference mask = 0, ctx visible, future masked
   -> dense VACE context [B,96,Tz+3,Hvae,Wvae]
@@ -62,6 +65,7 @@ xssc_conditioner.slot_key
 xssc_conditioner.slot_value
 xssc_conditioner.coord_query
 xssc_conditioner.video_norm
+xssc_conditioner.future_placeholder
 ```
 
 官方 xSSC 本身不会训练。
