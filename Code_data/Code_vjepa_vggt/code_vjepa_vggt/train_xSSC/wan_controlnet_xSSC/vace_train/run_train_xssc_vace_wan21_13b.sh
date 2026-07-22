@@ -32,10 +32,10 @@ accelerate launch "${TRAIN_SCRIPT}" \
   --xssc_config "${XSSC_CONFIG}" \
   --xssc_checkpoint "${XSSC_CHECKPOINT}" \
   --xssc_condition_frames "${XSSC_CONDITION_FRAMES:-8}" \
+  --xssc_reference_frames "${XSSC_REFERENCE_FRAMES:-8}" \
   --xssc_input_size "${XSSC_INPUT_SIZE:-256}" \
   --xssc_vae_temporal_stride "${XSSC_VAE_TEMPORAL_STRIDE:-4}" \
   --xssc_slot_dropout "${XSSC_SLOT_DROPOUT:-0.0}" \
   --xssc_query_dim "${XSSC_QUERY_DIM:-256}" \
   --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS:-1}" \
   --use_gradient_checkpointing_offload
-

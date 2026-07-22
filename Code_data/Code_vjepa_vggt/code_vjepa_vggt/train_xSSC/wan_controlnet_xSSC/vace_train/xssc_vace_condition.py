@@ -3,12 +3,18 @@
 This file only changes the condition source for DiffSynth's Wan VACE branch.
 It keeps the official VACE model and its residual injection path unchanged:
 
-    video ctx frames -> frozen xSSC slots -> dense vace_context
+    video ctx frames -> frozen xSSC slots -> xSSC vace_video + mask
     vace_context -> official VaceWanModel -> block-wise residual hints
 
 The adapter emits a VACE-compatible tensor shaped ``[B, 96, Tz, Hvae, Wvae]``.
-The 96 channels deliberately match DiffSynth's official VACE input channel
-count so that the copied VACE training scripts remain close to upstream.
+The channel split deliberately follows DiffSynth's official VACE condition:
+32 channels are the "vace video" condition and 64 channels are mask channels.
+Here the 32-channel vace video is not RGB/VAE control-video latent; it is a
+dense sequence generated from frozen xSSC slots.
+
+When ctx video is used as VACE reference, each ctx frame is encoded as an
+independent one-frame reference latent and prepended to both the denoising
+latent sequence and the xSSC VACE condition sequence.
 """
 from __future__ import annotations
 
@@ -97,6 +103,7 @@ class XSSCVACEContextConditioner(nn.Module):
         xssc_condition_frames: int = DEFAULT_XSSC_CONTEXT_FRAMES,
         temporal_stride: int = DEFAULT_WAN_VAE_TEMPORAL_STRIDE,
         vace_in_dim: int = 96,
+        vace_video_dim: int = 32,
         query_dim: int = 256,
         slot_dropout: float = 0.0,
         device: torch.device | str = "cpu",
@@ -107,6 +114,8 @@ class XSSCVACEContextConditioner(nn.Module):
         self.xssc_condition_frames = int(xssc_condition_frames)
         self.temporal_stride = int(temporal_stride)
         self.vace_in_dim = int(vace_in_dim)
+        self.vace_video_dim = int(vace_video_dim)
+        self.vace_mask_dim = self.vace_in_dim - self.vace_video_dim
         self.query_dim = int(query_dim)
         self.slot_dropout = float(slot_dropout)
         if self.xssc_condition_frames <= 0:
@@ -115,6 +124,10 @@ class XSSCVACEContextConditioner(nn.Module):
             raise ValueError("--xssc_vae_temporal_stride must be positive")
         if not 0.0 <= self.slot_dropout < 1.0:
             raise ValueError("--xssc_slot_dropout must be in [0, 1)")
+        if self.vace_video_dim <= 0 or self.vace_video_dim >= self.vace_in_dim:
+            raise ValueError(
+                f"vace_video_dim must be in (0, {self.vace_in_dim}), got {self.vace_video_dim}"
+            )
 
         self.xssc, self.xssc_slot_dim, self.xssc_num_slots = load_xssc_model(
             xssc_root=xssc_root,
@@ -127,19 +140,19 @@ class XSSCVACEContextConditioner(nn.Module):
 
         self.slot_norm = nn.LayerNorm(self.xssc_slot_dim)
         self.slot_key = nn.Linear(self.xssc_slot_dim, self.query_dim, bias=False)
-        self.slot_value = nn.Linear(self.xssc_slot_dim, self.vace_in_dim, bias=False)
+        self.slot_value = nn.Linear(self.xssc_slot_dim, self.vace_video_dim, bias=False)
         self.coord_query = nn.Sequential(
             nn.Linear(4, self.query_dim),
             nn.SiLU(),
             nn.Linear(self.query_dim, self.query_dim),
         )
-        self.output_norm = nn.GroupNorm(1, self.vace_in_dim)
+        self.video_norm = nn.GroupNorm(1, self.vace_video_dim)
         for module in (
             self.slot_norm,
             self.slot_key,
             self.slot_value,
             self.coord_query,
-            self.output_norm,
+            self.video_norm,
         ):
             module.to(device=device, dtype=dtype)
         self.xssc.to(device=device)
@@ -209,17 +222,42 @@ class XSSCVACEContextConditioner(nn.Module):
             raise RuntimeError("xSSC received zero frames")
         return slots
 
-    def align_slots_to_latent_time(self, slots: torch.Tensor, target_frames: int) -> torch.Tensor:
-        """Wan VAE-style grouping for visible ctx, then repeat last condition."""
+    def align_slots_to_latent_time(
+        self,
+        slots: torch.Tensor,
+        *,
+        target_frames: int,
+        reference_frames: int = 0,
+    ) -> torch.Tensor:
+        """Wan VAE-style grouping plus optional ctx-reference time positions."""
+        reference_frames = int(reference_frames)
+        if reference_frames < 0:
+            raise ValueError(f"reference_frames must be non-negative, got {reference_frames}")
+        video_target_frames = int(target_frames) - reference_frames
+        if video_target_frames <= 0:
+            raise ValueError(
+                f"target_frames={target_frames} must exceed reference_frames={reference_frames}"
+            )
         chunks = [slots[:, :1]]
         for start in range(1, int(slots.shape[1]), self.temporal_stride):
             chunks.append(slots[:, start : start + self.temporal_stride].mean(dim=1, keepdim=True))
         aligned = torch.cat(chunks, dim=1)
-        if aligned.shape[1] < target_frames:
-            repeat = aligned[:, -1:].expand(-1, target_frames - aligned.shape[1], -1, -1)
+        if aligned.shape[1] < video_target_frames:
+            repeat = aligned[:, -1:].expand(-1, video_target_frames - aligned.shape[1], -1, -1)
             aligned = torch.cat([aligned, repeat], dim=1)
-        elif aligned.shape[1] > target_frames:
-            aligned = aligned[:, :target_frames]
+        elif aligned.shape[1] > video_target_frames:
+            aligned = aligned[:, :video_target_frames]
+        if reference_frames > 0:
+            reference_slots = slots[:, : min(reference_frames, slots.shape[1])]
+            if reference_slots.shape[1] < reference_frames:
+                repeat = reference_slots[:, -1:].expand(
+                    -1,
+                    reference_frames - reference_slots.shape[1],
+                    -1,
+                    -1,
+                )
+                reference_slots = torch.cat([reference_slots, repeat], dim=1)
+            aligned = torch.cat([reference_slots, aligned], dim=1)
         return aligned
 
     def _coordinate_query(self, frames: int, height: int, width: int, device, dtype) -> torch.Tensor:
@@ -238,9 +276,14 @@ class XSSCVACEContextConditioner(nn.Module):
         target_frames: int,
         target_height: int,
         target_width: int,
+        reference_frames: int = 0,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        slots = self.align_slots_to_latent_time(slots, target_frames)
+        slots = self.align_slots_to_latent_time(
+            slots,
+            target_frames=target_frames,
+            reference_frames=reference_frames,
+        )
         slots = slots.to(device=self.slot_norm.weight.device, dtype=self.slot_norm.weight.dtype)
         if self.training and self.slot_dropout > 0.0:
             keep = torch.rand(slots.shape[:3], device=slots.device) >= self.slot_dropout
@@ -273,27 +316,42 @@ class XSSCVACEContextConditioner(nn.Module):
         )
         logits = torch.einsum("thwd,btkd->bthwk", queries, keys) * (self.query_dim ** -0.5)
         assignment = torch.softmax(logits, dim=-1)
-        dense = torch.einsum("bthwk,btkc->bthwc", assignment, values)
-        dense = dense.permute(0, 4, 1, 2, 3).contiguous()
-        dense = self.output_norm(dense.to(dtype=self.output_norm.weight.dtype)).to(dtype=dtype)
+        vace_video = torch.einsum("bthwk,btkc->bthwc", assignment, values)
+        vace_video = vace_video.permute(0, 4, 1, 2, 3).contiguous()
+        vace_video = self.video_norm(vace_video.to(dtype=self.video_norm.weight.dtype)).to(dtype=dtype)
+
+        mask = torch.ones(
+            vace_video.shape[0],
+            self.vace_mask_dim,
+            target_frames,
+            target_height,
+            target_width,
+            device=vace_video.device,
+            dtype=dtype,
+        )
+        if reference_frames > 0:
+            mask[:, :, :reference_frames] = 0
+        vace_context = torch.cat([vace_video, mask], dim=1)
 
         usage = assignment.mean(dim=(0, 1, 2, 3))
         entropy = -(usage * usage.clamp_min(1e-8).log()).sum()
         self.last_stats.update(
             {
                 "xssc_condition_latent_frames": float(target_frames),
+                "xssc_condition_reference_frames": float(reference_frames),
                 "xssc_condition_slots": float(slots.shape[2]),
                 "xssc_assignment_usage_entropy": float(entropy.detach().cpu()),
                 "xssc_assignment_max_prob": float(assignment.max(dim=-1).values.mean().detach().cpu()),
             }
         )
-        return dense
+        return vace_context
 
     def forward(
         self,
         *,
         video: torch.Tensor,
         latent_like: torch.Tensor,
+        reference_frames: int = 0,
         output_dtype: torch.dtype,
     ) -> torch.Tensor:
         if video.ndim != 5:
@@ -316,8 +374,80 @@ class XSSCVACEContextConditioner(nn.Module):
             target_frames=target_frames,
             target_height=target_height,
             target_width=target_width,
+            reference_frames=reference_frames,
             dtype=output_dtype,
         )
+
+
+class XSSCVACEReferenceVideoEmbedder(PipelineUnit):
+    """Input-video embedder with per-frame ctx reference semantics."""
+
+    def __init__(self):
+        super().__init__(
+            input_params=(
+                "input_video",
+                "noise",
+                "tiled",
+                "tile_size",
+                "tile_stride",
+                "vace_reference_image",
+                "framewise_decoding",
+            ),
+            output_params=("latents", "input_latents"),
+            onload_model_names=("vae",),
+        )
+
+    def process(
+        self,
+        pipe,
+        input_video,
+        noise,
+        tiled,
+        tile_size,
+        tile_stride,
+        vace_reference_image,
+        framewise_decoding,
+    ):
+        if input_video is None:
+            return {"latents": noise}
+
+        pipe.load_models_to_device(self.onload_model_names)
+        input_video = pipe.preprocess_video(input_video)
+        if framewise_decoding:
+            input_latents = pipe.vae.encode_framewise(input_video, device=pipe.device)
+        else:
+            input_latents = pipe.vae.encode(
+                input_video,
+                device=pipe.device,
+                tiled=tiled,
+                tile_size=tile_size,
+                tile_stride=tile_stride,
+            ).to(dtype=pipe.torch_dtype, device=pipe.device)
+
+        if vace_reference_image is not None:
+            if not isinstance(vace_reference_image, list):
+                vace_reference_image = [vace_reference_image]
+            reference_video = pipe.preprocess_video(vace_reference_image)
+            reference_latents = pipe.vae.encode_framewise(
+                reference_video,
+                device=pipe.device,
+            ).to(dtype=pipe.torch_dtype, device=pipe.device)
+            input_latents = torch.cat([reference_latents, input_latents], dim=2)
+
+        if pipe.scheduler.training:
+            if noise.shape != input_latents.shape:
+                raise ValueError(
+                    "xSSC-VACE noise/input_latents shape mismatch after reference-video "
+                    f"prepend: noise={tuple(noise.shape)}, input_latents={tuple(input_latents.shape)}"
+                )
+            return {"latents": noise, "input_latents": input_latents}
+
+        latents = pipe.scheduler.add_noise(
+            input_latents,
+            noise,
+            timestep=pipe.scheduler.timesteps[0],
+        )
+        return {"latents": latents}
 
 
 class XSSCVACEContextUnit(PipelineUnit):
@@ -325,19 +455,26 @@ class XSSCVACEContextUnit(PipelineUnit):
 
     def __init__(self, conditioner: XSSCVACEContextConditioner):
         super().__init__(
-            input_params=("input_video", "input_latents", "latents", "vace_scale"),
+            input_params=("input_video", "input_latents", "latents", "vace_reference_image", "vace_scale"),
             output_params=("vace_context", "vace_scale"),
         )
         self.conditioner = conditioner
 
-    def process(self, pipe, input_video, input_latents, latents, vace_scale):
+    def process(self, pipe, input_video, input_latents, latents, vace_reference_image, vace_scale):
         if input_video is None:
             return {"vace_context": None, "vace_scale": vace_scale}
         latent_like = input_latents if input_latents is not None else latents
+        if vace_reference_image is None:
+            reference_frames = 0
+        elif isinstance(vace_reference_image, list):
+            reference_frames = len(vace_reference_image)
+        else:
+            reference_frames = 1
         video = pipe.preprocess_video(input_video, torch_dtype=torch.float32, device=pipe.device)
         vace_context = self.conditioner(
             video=video,
             latent_like=latent_like,
+            reference_frames=reference_frames,
             output_dtype=pipe.torch_dtype,
         )
         return {"vace_context": vace_context, "vace_scale": vace_scale}

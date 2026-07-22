@@ -4,6 +4,7 @@ This is copied from DiffSynth's Wan training entry point at the level of the
 training loop, but the VACE condition unit is replaced locally:
 
     input video first N ctx frames -> frozen official xSSC -> vace_context
+    input video first N ctx frames -> VACE reference-video latents
 
 The official VACE model and its residual hint injection remain unchanged.  This
 version intentionally does not add custom per-layer xSSC hooks.
@@ -37,6 +38,7 @@ from xssc_vace_condition import (  # noqa: E402
     DEFAULT_WAN_VAE_TEMPORAL_STRIDE,
     XSSCVACEContextConditioner,
     XSSCVACEContextUnit,
+    XSSCVACEReferenceVideoEmbedder,
 )
 
 from diffsynth.core import UnifiedDataset  # noqa: E402
@@ -64,6 +66,7 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
         xssc_checkpoint: str = DEFAULT_XSSC_CHECKPOINT,
         xssc_input_size: int = 256,
         xssc_condition_frames: int = DEFAULT_XSSC_CONTEXT_FRAMES,
+        xssc_reference_frames: int = DEFAULT_XSSC_CONTEXT_FRAMES,
         xssc_vae_temporal_stride: int = DEFAULT_WAN_VAE_TEMPORAL_STRIDE,
         xssc_slot_dropout: float = 0.0,
         xssc_query_dim: int = 256,
@@ -79,6 +82,14 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
             raise ValueError(
                 "The loaded Wan pipeline has no VACE model. Use a VACE model id, "
                 "for example Wan-AI/Wan2.1-VACE-1.3B."
+            )
+        self.xssc_reference_frames = int(xssc_reference_frames)
+        if self.xssc_reference_frames < 0:
+            raise ValueError("--xssc_reference_frames must be non-negative")
+        if self.xssc_reference_frames > int(xssc_condition_frames):
+            raise ValueError(
+                "--xssc_reference_frames cannot exceed --xssc_condition_frames when "
+                "using ctx video as the reference video."
             )
 
         vace_patch = self.pipe.vace.vace_patch_embedding
@@ -98,16 +109,25 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
             device=device,
             dtype=dtype,
         )
-        self._replace_official_vace_unit()
+        self._replace_pipeline_units()
 
-    def _replace_official_vace_unit(self) -> None:
-        replaced = False
+    def _replace_pipeline_units(self) -> None:
+        replaced_vace = False
+        replaced_embedder = False
         for index, unit in enumerate(self.pipe.units):
+            if unit.__class__.__name__ == "WanVideoUnit_InputVideoEmbedder":
+                self.pipe.units[index] = XSSCVACEReferenceVideoEmbedder()
+                replaced_embedder = True
             if unit.__class__.__name__ == "WanVideoUnit_VACE":
                 self.pipe.units[index] = XSSCVACEContextUnit(self.xssc_conditioner)
-                replaced = True
-        if not replaced:
+                replaced_vace = True
+        if not replaced_vace:
             raise RuntimeError("Could not find WanVideoUnit_VACE in the pipeline units")
+        if self.xssc_reference_frames > 1 and not replaced_embedder:
+            raise RuntimeError(
+                "Could not find WanVideoUnit_InputVideoEmbedder; multi-frame ctx "
+                "reference requires the xSSC-VACE reference-video embedder."
+            )
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -116,10 +136,18 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
 
     def get_pipeline_inputs(self, data):
         inputs_shared, inputs_posi, inputs_nega = super().get_pipeline_inputs(data)
-        # The copied official VACE scripts pass vace_reference_image as data.
-        # For xSSC-VACE condition training we keep the first version ctx-only
-        # and do not add reference frames to the latent time axis.
-        inputs_shared["vace_reference_image"] = None
+        # Keep VACE's official reference marker, but source it only from ctx video.
+        # A list means each ctx frame is prepended as one independent reference
+        # latent by XSSCVACEReferenceVideoEmbedder.
+        if self.xssc_reference_frames > 0:
+            if len(data["video"]) < self.xssc_reference_frames:
+                raise ValueError(
+                    f"Need at least {self.xssc_reference_frames} frames for ctx reference, "
+                    f"got {len(data['video'])}"
+                )
+            inputs_shared["vace_reference_image"] = data["video"][: self.xssc_reference_frames]
+        else:
+            inputs_shared["vace_reference_image"] = None
         return inputs_shared, inputs_posi, inputs_nega
 
 
@@ -130,6 +158,7 @@ def add_xssc_vace_args(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     group.add_argument("--xssc_checkpoint", default=DEFAULT_XSSC_CHECKPOINT)
     group.add_argument("--xssc_input_size", type=int, default=256)
     group.add_argument("--xssc_condition_frames", type=int, default=DEFAULT_XSSC_CONTEXT_FRAMES)
+    group.add_argument("--xssc_reference_frames", type=int, default=DEFAULT_XSSC_CONTEXT_FRAMES)
     group.add_argument("--xssc_vae_temporal_stride", type=int, default=DEFAULT_WAN_VAE_TEMPORAL_STRIDE)
     group.add_argument("--xssc_slot_dropout", type=float, default=0.0)
     group.add_argument("--xssc_query_dim", type=int, default=256)
@@ -194,6 +223,7 @@ def build_model(args, accelerator):
         xssc_checkpoint=args.xssc_checkpoint,
         xssc_input_size=args.xssc_input_size,
         xssc_condition_frames=args.xssc_condition_frames,
+        xssc_reference_frames=args.xssc_reference_frames,
         xssc_vae_temporal_stride=args.xssc_vae_temporal_stride,
         xssc_slot_dropout=args.xssc_slot_dropout,
         xssc_query_dim=args.xssc_query_dim,
@@ -230,4 +260,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
