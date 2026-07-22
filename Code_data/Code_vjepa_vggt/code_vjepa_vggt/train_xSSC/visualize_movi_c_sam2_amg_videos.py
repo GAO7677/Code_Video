@@ -43,12 +43,22 @@ def parse_args():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--fps", type=float, default=12.0)
     parser.add_argument("--max-selected", type=int, default=11)
-    parser.add_argument("--min-area-ratio", type=float, default=0.001)
-    parser.add_argument("--max-area-ratio", type=float, default=0.70)
-    parser.add_argument("--background-area-ratio", type=float, default=0.15)
-    parser.add_argument("--background-span-ratio", type=float, default=0.85)
-    parser.add_argument("--duplicate-iou", type=float, default=0.80)
-    parser.add_argument("--duplicate-containment", type=float, default=0.92)
+    parser.add_argument("--min-area-ratio", type=float, default=0.004)
+    parser.add_argument("--max-area-ratio", type=float, default=0.35)
+    parser.add_argument("--min-bbox-side", type=float, default=7.0)
+    parser.add_argument("--background-area-ratio", type=float, default=0.06)
+    parser.add_argument("--background-span-ratio", type=float, default=0.75)
+    parser.add_argument("--border-area-ratio", type=float, default=0.025)
+    parser.add_argument("--border-occupancy-ratio", type=float, default=0.18)
+    parser.add_argument("--opposite-edge-area-ratio", type=float, default=0.04)
+    parser.add_argument("--shadow-min-area-ratio", type=float, default=0.03)
+    parser.add_argument("--shadow-max-luminance-ratio", type=float, default=0.55)
+    parser.add_argument(
+        "--shadow-max-chromaticity-distance", type=float, default=0.10
+    )
+    parser.add_argument("--shadow-max-gradient-mean", type=float, default=20.0)
+    parser.add_argument("--duplicate-iou", type=float, default=0.70)
+    parser.add_argument("--duplicate-containment", type=float, default=0.85)
     return parser.parse_args()
 
 
@@ -153,7 +163,7 @@ def main():
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
                 annotations = generator.generate(image)
             selected = select_xssc_candidates(
-                annotations, image.shape[0] * image.shape[1], args
+                annotations, image.shape[0] * image.shape[1], args, image=image
             )
             raw_overlay = overlay_masks(image, annotations)
             selected_overlay = draw_selected_boxes(
