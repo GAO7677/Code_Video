@@ -52,6 +52,8 @@ def main() -> None:
     try:
         dataset = train_xssc.base.build_dataset(args)
         model = train_xssc.build_model(args, accelerator)
+        if getattr(args, "xssc_filter_empty_amg", False):
+            model.set_empty_amg_resample_dataset(dataset)
         model.to(accelerator.device)
         model.train()
         optimizer = train_xssc.tvn._build_optimizer(
@@ -71,7 +73,7 @@ def main() -> None:
 
         optimizer.zero_grad(set_to_none=True)
         started = time.perf_counter()
-        loss = model._forward_sample_batch(samples)
+        loss = model(samples)
         accelerator.backward(loss)
         grad_norm = accelerator.clip_grad_norm_(
             model.trainable_modules(),

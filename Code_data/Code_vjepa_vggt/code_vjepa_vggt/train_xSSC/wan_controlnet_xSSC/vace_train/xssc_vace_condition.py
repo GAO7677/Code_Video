@@ -12,9 +12,9 @@ The channel split deliberately follows DiffSynth's official VACE condition:
 channels.  Here those inactive/reactive latents are not VAE-encoded RGB/depth
 videos; they are dense latent-like maps generated from frozen xSSC slots.
 
-When ctx video is used as VACE reference, ctx frames are padded to a Wan
-VAE-friendly length and encoded as one short video, then prepended to both the
-denoising latent sequence and the xSSC VACE condition sequence.
+When ctx video is used as VACE reference, the ctx clip is encoded as one short
+video, then prepended to both the denoising latent sequence and the xSSC VACE
+condition sequence.
 """
 from __future__ import annotations
 
@@ -42,18 +42,6 @@ def wan_latent_frame_count(num_frames: int) -> int:
     if num_frames <= 0:
         return 0
     return (num_frames + DEFAULT_WAN_VAE_TEMPORAL_STRIDE - 1) // DEFAULT_WAN_VAE_TEMPORAL_STRIDE
-
-
-def pad_frame_count_to_wan_vae(num_frames: int) -> int:
-    """Pad a ctx clip to ``4n+1`` frames so Wan VAE keeps the tail context."""
-    num_frames = int(num_frames)
-    if num_frames <= 0:
-        return 0
-    remainder = num_frames % DEFAULT_WAN_VAE_TEMPORAL_STRIDE
-    target_remainder = 1
-    if remainder == target_remainder:
-        return num_frames
-    return num_frames + ((target_remainder - remainder) % DEFAULT_WAN_VAE_TEMPORAL_STRIDE)
 
 
 def reference_latent_frame_count(vace_reference_image) -> int:

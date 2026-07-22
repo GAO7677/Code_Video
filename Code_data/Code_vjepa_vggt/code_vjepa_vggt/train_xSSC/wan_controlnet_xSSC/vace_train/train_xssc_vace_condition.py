@@ -4,7 +4,7 @@ This is copied from DiffSynth's Wan training entry point at the level of the
 training loop, but the VACE condition unit is replaced locally:
 
     full input video -> frozen official xSSC -> ctx-visible/future-masked vace_context
-    input video first N ctx frames -> padded short VACE reference-video latents
+    input video first N ctx frames -> short VACE reference-video latents
 
 The official VACE model and its residual hint injection remain unchanged.  This
 version intentionally does not add custom per-layer xSSC hooks.
@@ -40,7 +40,6 @@ from xssc_vace_condition import (  # noqa: E402
     XSSCVACEContextConditioner,
     XSSCVACEContextUnit,
     XSSCVACEReferenceVideoEmbedder,
-    pad_frame_count_to_wan_vae,
 )
 
 from diffsynth.core import UnifiedDataset  # noqa: E402
@@ -148,7 +147,7 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
     def get_pipeline_inputs(self, data):
         inputs_shared, inputs_posi, inputs_nega = super().get_pipeline_inputs(data)
         # Keep VACE's official reference marker, but source it only from ctx video.
-        # The ctx clip is padded to 4n+1 frames and VAE-encoded as one short video.
+        # The ctx clip is VAE-encoded as one short video; ctx8 maps to 2 latent steps.
         if self.xssc_reference_frames > 0:
             if len(data["video"]) < self.xssc_reference_frames:
                 raise ValueError(
@@ -156,9 +155,6 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
                     f"got {len(data['video'])}"
                 )
             reference_video = list(data["video"][: self.xssc_reference_frames])
-            padded_frames = pad_frame_count_to_wan_vae(len(reference_video))
-            if padded_frames > len(reference_video):
-                reference_video.extend([reference_video[-1]] * (padded_frames - len(reference_video)))
             inputs_shared["vace_reference_image"] = reference_video
         else:
             inputs_shared["vace_reference_image"] = None

@@ -62,6 +62,29 @@ DINOV3_XSSC_SLOT_DIM = 512
 DINOV3_XSSC_NUM_SLOTS = 11
 
 
+class EmptyAMGConditionError(RuntimeError):
+    """Raised when AMG filtering leaves a training sample without any boxes."""
+
+    def __init__(self, counts: list[int]) -> None:
+        self.counts = [int(value) for value in counts]
+        self.bad_indices = [
+            index for index, value in enumerate(self.counts) if int(value) <= 0
+        ]
+        super().__init__(
+            "empty AMG xSSC condition for batch indices "
+            f"{self.bad_indices}; selected_counts={self.counts}"
+        )
+
+
+def _count_nonempty_boxes(item_boxes: np.ndarray) -> int:
+    if item_boxes.size == 0:
+        return 0
+    frame0 = np.asarray(item_boxes[0], dtype=np.float32)
+    wh = frame0[:, 2:4] - frame0[:, 0:2]
+    valid = (wh[:, 0] > 0.0) & (wh[:, 1] > 0.0)
+    return int(valid.sum())
+
+
 def _set_parser_default(parser: argparse.ArgumentParser, dest: str, value) -> None:
     for action in parser._actions:
         if action.dest == dest:
@@ -220,6 +243,7 @@ class AMGBoxBuilder:
         self.cache_dir = None if cache_dir is None else Path(cache_dir).expanduser().resolve()
         self.filter_args = filter_args
         self._generator = None
+        self.last_selected_counts: list[int] = []
         if self.cache_dir is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -268,11 +292,14 @@ class AMGBoxBuilder:
         device = video.device
         num_frames = int(video.shape[1])
         boxes = []
+        selected_counts = []
         generator = None
         for image in _normalized_xssc_first_frames_to_uint8(video):
             cache_path = self._cache_key(image, num_slots, num_frames)
             if cache_path is not None and cache_path.is_file():
-                boxes.append(np.load(cache_path).astype(np.float32))
+                item_boxes = np.load(cache_path).astype(np.float32)
+                selected_counts.append(_count_nonempty_boxes(item_boxes))
+                boxes.append(item_boxes)
                 continue
             if generator is None:
                 generator = self._get_generator(device)
@@ -296,6 +323,7 @@ class AMGBoxBuilder:
             else:
                 masks = np.zeros((0, image.shape[0], image.shape[1]), dtype=bool)
             item_boxes = masks_to_repeated_boxes(masks, num_slots, num_frames)
+            selected_counts.append(_count_nonempty_boxes(item_boxes))
             if cache_path is not None:
                 temp_path = cache_path.with_suffix(f".{os.getpid()}.tmp")
                 try:
@@ -305,6 +333,7 @@ class AMGBoxBuilder:
                 except OSError:
                     pass
             boxes.append(item_boxes)
+        self.last_selected_counts = selected_counts
         return torch.from_numpy(np.stack(boxes, axis=0)).to(device=device, dtype=torch.float32)
 
 
@@ -324,6 +353,8 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         xssc_sam2_config: str = DEFAULT_SAM2_CONFIG,
         xssc_sam2_checkpoint: str = DEFAULT_SAM2_CHECKPOINT,
         xssc_amg_filter_args: argparse.Namespace | None = None,
+        xssc_filter_empty_amg: bool = False,
+        xssc_empty_amg_max_resample_attempts: int = 20,
         xssc_input_size: int = 256,
         xssc_max_time_steps: int = 64,
         object_lora_rank: int = 32,
@@ -361,6 +392,14 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         self.object_lora_dropout = float(object_lora_dropout)
         self.xssc_slot_track_dropout = float(xssc_slot_track_dropout)
         self.xssc_box_source = str(xssc_box_source)
+        self.xssc_filter_empty_amg = bool(xssc_filter_empty_amg)
+        self.xssc_empty_amg_max_resample_attempts = int(
+            xssc_empty_amg_max_resample_attempts
+        )
+        self.xssc_empty_amg_resample_dataset = None
+        self._xssc_empty_amg_resample_cdf = None
+        self._last_xssc_amg_selected_counts: list[int] = []
+        self._last_empty_amg_resample_count = 0
         self._last_slot_dropout_fraction = 0.0
         self._last_retained_slots_per_sample = 0.0
 
@@ -385,6 +424,11 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             )
         if self.xssc_box_source not in {"amg", "zeros"}:
             raise ValueError(f"unsupported xssc_box_source={self.xssc_box_source!r}")
+        if self.xssc_empty_amg_max_resample_attempts < 0:
+            raise ValueError(
+                "xssc_empty_amg_max_resample_attempts must be non-negative, got "
+                f"{self.xssc_empty_amg_max_resample_attempts}"
+            )
 
         dit = base.enable_object_condition_branch(
             self.pipe.dit,
@@ -437,16 +481,48 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         self.slot_projector.to(device=model_device, dtype=model_dtype)
         self.time_embedding.to(device=model_device, dtype=model_dtype)
 
+    def set_empty_amg_resample_dataset(self, dataset) -> None:
+        self.xssc_empty_amg_resample_dataset = dataset
+        sample_weights = getattr(dataset, "sample_weights", None)
+        if sample_weights is None:
+            self._xssc_empty_amg_resample_cdf = None
+            return
+        weights = torch.as_tensor(sample_weights, dtype=torch.float64)
+        if weights.ndim != 1 or int(weights.numel()) != len(dataset):
+            raise ValueError("dataset.sample_weights must be a 1D vector matching dataset length")
+        total = float(weights.sum().item())
+        if total <= 0.0:
+            raise ValueError("dataset.sample_weights must have positive sum")
+        self._xssc_empty_amg_resample_cdf = torch.cumsum(weights, dim=0)
+
+    def _sample_empty_amg_replacement(self) -> dict:
+        dataset = self.xssc_empty_amg_resample_dataset
+        if dataset is None:
+            raise RuntimeError("empty AMG resampling requested but no dataset is attached")
+        if self._xssc_empty_amg_resample_cdf is not None:
+            cdf = self._xssc_empty_amg_resample_cdf
+            draw = torch.rand((), dtype=torch.float64) * cdf[-1]
+            index = int(torch.searchsorted(cdf, draw, right=False).item())
+            index = min(index, len(dataset) - 1)
+        else:
+            index = int(torch.randint(len(dataset), (1,)).item())
+        return dataset[index]
+
     def _build_xssc_boxes(self, xssc_video: torch.Tensor) -> torch.Tensor:
         if self.xssc_box_source == "zeros":
             batch, time_steps = int(xssc_video.shape[0]), int(xssc_video.shape[1])
             return xssc_video.new_zeros(batch, time_steps, self.xssc_num_slots, 4)
         if self.xssc_box_builder is None:
             raise RuntimeError("xSSC AMG box builder is not initialized")
-        return self.xssc_box_builder(xssc_video, self.xssc_num_slots).to(
+        boxes = self.xssc_box_builder(xssc_video, self.xssc_num_slots).to(
             device=xssc_video.device,
             dtype=torch.float32,
         )
+        self._last_xssc_amg_selected_counts = list(self.xssc_box_builder.last_selected_counts)
+        if self.training and self.xssc_filter_empty_amg:
+            if any(count <= 0 for count in self._last_xssc_amg_selected_counts):
+                raise EmptyAMGConditionError(self._last_xssc_amg_selected_counts)
+        return boxes
 
     @torch.no_grad()
     def _extract_xssc_slots(self, video: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
@@ -522,6 +598,54 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         batch, _, num_slots, hidden_dim = tokens.shape
         return tokens.reshape(batch, time_steps * num_slots, hidden_dim), slots
 
+    def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
+        total, metrics = super()._compute_object_losses(pipe, inputs_shared, inputs_posi)
+        counts = self._last_xssc_amg_selected_counts
+        if counts:
+            values = [float(value) for value in counts]
+            metrics["train/xssc_amg_selected_masks_min"] = float(min(values))
+            metrics["train/xssc_amg_selected_masks_mean"] = float(sum(values) / len(values))
+            metrics["train/xssc_amg_selected_masks_max"] = float(max(values))
+        metrics["train/xssc_filter_empty_amg"] = float(self.xssc_filter_empty_amg)
+        metrics["train/xssc_empty_amg_resample_count"] = float(
+            self._last_empty_amg_resample_count
+        )
+        return total, metrics
+
+    def _forward_sample_batch_with_empty_amg_filter(self, samples: list[dict]) -> torch.Tensor:
+        current = list(samples)
+        resample_count = 0
+        max_attempts = self.xssc_empty_amg_max_resample_attempts
+        while True:
+            self._last_empty_amg_resample_count = resample_count
+            try:
+                return self._forward_sample_batch(current)
+            except EmptyAMGConditionError as exc:
+                if not self.training or not self.xssc_filter_empty_amg:
+                    raise
+                if resample_count >= max_attempts:
+                    raise RuntimeError(
+                        "Exceeded empty-AMG resample budget: "
+                        f"attempts={resample_count}, max_attempts={max_attempts}, "
+                        f"last_selected_counts={exc.counts}"
+                    ) from exc
+                for bad_index in exc.bad_indices:
+                    current[bad_index] = self._sample_empty_amg_replacement()
+                    resample_count += 1
+                    if resample_count >= max_attempts:
+                        break
+
+    def forward(self, data, inputs=None):
+        if (
+            self.training
+            and self.xssc_filter_empty_amg
+            and inputs is None
+            and self.xssc_box_source == "amg"
+        ):
+            samples = data if isinstance(data, list) else [data]
+            return self._forward_sample_batch_with_empty_amg_filter(samples)
+        return super().forward(data, inputs=inputs)
+
 
 def _amg_filter_args_from_args(args: argparse.Namespace) -> argparse.Namespace:
     return SimpleNamespace(
@@ -573,6 +697,13 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--xssc_amg_shadow_max_gradient_mean", type=float, default=20.0)
     group.add_argument("--xssc_amg_duplicate_iou", type=float, default=0.70)
     group.add_argument("--xssc_amg_duplicate_containment", type=float, default=0.85)
+    group.add_argument(
+        "--xssc_filter_empty_amg",
+        action="store_true",
+        default=False,
+        help="During training, discard and resample samples whose AMG filters select no masks.",
+    )
+    group.add_argument("--xssc_empty_amg_max_resample_attempts", type=int, default=20)
     return parser
 
 
@@ -631,6 +762,8 @@ def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlots
         xssc_sam2_config=args.xssc_sam2_config,
         xssc_sam2_checkpoint=args.xssc_sam2_checkpoint,
         xssc_amg_filter_args=_amg_filter_args_from_args(args),
+        xssc_filter_empty_amg=args.xssc_filter_empty_amg,
+        xssc_empty_amg_max_resample_attempts=args.xssc_empty_amg_max_resample_attempts,
         xssc_input_size=args.xssc_input_size,
         xssc_max_time_steps=args.xssc_max_time_steps,
         object_lora_rank=args.object_lora_rank,
@@ -701,12 +834,15 @@ def main() -> None:
     tvn.init_trackers(accelerator, args)
 
     dataset = base.build_dataset(args)
+    raw_train_dataset = dataset
     if int(args.train_batch_size) > 1:
         dataset = base.GroupedBatchDataset(dataset, args.train_batch_size)
     headonly_val_config = tvn.build_headonly_val_config(args)
     headonly_val_dataset = tvn.build_headonly_val_dataset(args, headonly_val_config)
     headonly_val_dataloader = tvn.build_headonly_val_dataloader(headonly_val_dataset, args)
     model = build_model(args, accelerator)
+    if args.xssc_filter_empty_amg:
+        model.set_empty_amg_resample_dataset(raw_train_dataset)
 
     if args.stage2_resume_from is not None:
         resume_info = tvn._load_filtered_checkpoint_into_model(
