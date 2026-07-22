@@ -3,7 +3,7 @@
 This file only changes the condition source for DiffSynth's Wan VACE branch.
 It keeps the official VACE model and its residual injection path unchanged:
 
-    full video -> frozen xSSC slots -> ctx-visible/future-masked xSSC VACE condition
+    full video -> frozen xSSC slots -> official VACE-style ctx/future mask condition
     vace_context -> official VaceWanModel -> block-wise residual hints
 
 The adapter emits a VACE-compatible tensor shaped ``[B, 96, Tz, Hvae, Wvae]``.
@@ -283,7 +283,7 @@ class XSSCVACEContextConditioner(nn.Module):
         *,
         target_frames: int,
     ) -> torch.Tensor:
-        """Resize raw-frame visibility mask to latent time like official VACE."""
+        """Resize raw-frame VACE mask to latent time like official VACE."""
         mask = frame_mask[:, None, :, None, None].float()
         mask = F.interpolate(mask, size=(target_frames, 1, 1), mode="nearest-exact")
         return mask[:, 0, :, 0, 0].to(dtype=frame_mask.dtype)
@@ -387,8 +387,9 @@ class XSSCVACEContextConditioner(nn.Module):
         batch = int(slots.shape[0])
         raw_frames = int(slots.shape[1])
         visible_frames = min(self.xssc_condition_frames, raw_frames)
-        frame_mask = torch.zeros(batch, raw_frames, device=slots.device, dtype=slots.dtype)
-        frame_mask[:, :visible_frames] = 1
+        # Match VACE extension masks: source/ctx=0, generated/future=1.
+        frame_mask = torch.ones(batch, raw_frames, device=slots.device, dtype=slots.dtype)
+        frame_mask[:, :visible_frames] = 0
 
         video_slots = self._group_slots_to_latent_time(
             slots,
@@ -409,7 +410,7 @@ class XSSCVACEContextConditioner(nn.Module):
             device=vace_slot.device,
             dtype=vace_slot.dtype,
         ).expand(batch, -1, video_target_frames, target_height, target_width)
-        vace_slot = vace_slot * vace_slot_mask_5d + placeholder * (1 - vace_slot_mask_5d)
+        vace_slot = vace_slot * (1 - vace_slot_mask_5d) + placeholder * vace_slot_mask_5d
 
         # Official VACE equivalent with xSSC slots replacing vace_video.
         inactive = vace_slot * (1 - vace_slot_mask_5d) + 0 * vace_slot_mask_5d

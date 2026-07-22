@@ -40,7 +40,7 @@ training video [49 frames]
   -> VACE reference video = padded ctx frames, encoded as one short video
   -> frozen official xSSC / RandSFQ2 runs on the full 49-frame training video
   -> slots [B,49,7,256]
-  -> raw-frame mask: ctx frames 0..7 visible, future frames masked
+  -> raw-frame VACE mask: ctx frames 0..7 are known/source mask=0, future frames are generated/placeholder mask=1
   -> Wan VAE-style temporal grouping:
        reference ctx clip 9 frames -> 3 reference latent steps
        target video 49 frames -> 13 video latent steps
@@ -50,7 +50,7 @@ training video [49 frames]
        inactive = vace_slot * (1 - vace_slot_mask)
        reactive = vace_slot * vace_slot_mask
   -> inactive/reactive xSSC condition [B,32,Tz+3,Hvae,Wvae]
-  -> mask channels [B,64,Tz+3,Hvae,Wvae], reference mask = 0, ctx visible, future masked
+  -> mask channels [B,64,Tz+3,Hvae,Wvae], reference mask = 0, ctx/source mask = 0, future/generated mask = 1
   -> dense VACE context [B,96,Tz+3,Hvae,Wvae]
   -> official VaceWanModel
   -> official Wan VACE residual hint injection
@@ -85,7 +85,7 @@ vace_video / vace_video_mask / vace_reference_image
 ```text
 full video
 -> frozen xSSC slots
--> ctx-visible/future-masked slots-to-dense xSSC VACE condition
+-> official VACE-style ctx-known/future-generated slots-to-dense xSSC VACE condition
 -> vace_context [B,96,Tz+3,Hvae,Wvae]
 ```
 
@@ -113,7 +113,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC
 
 1. 当前脚本使用官方 `UnifiedDataset`，要求 metadata 至少能提供 `video` 和 `prompt`。
 2. 当前使用 `ctx frames 0..7` 构造 reference video，并 repeat-pad 到 9 帧后整段 VAE 编码；49 帧训练时会得到 3 个 reference latent。
-3. 默认 `xSSC_CONDITION_FRAMES=8` 表示 ctx 可见帧数；xSSC 会抽取完整 49 帧 slots，但 future slot 内容在 VACE 条件中会被 mask 成 placeholder，避免把未来状态泄漏给 VACE。
+3. 默认 `xSSC_CONDITION_FRAMES=8` 表示 ctx/source 帧数；xSSC 会抽取完整 49 帧 slots，但 future slot 内容在 VACE 条件中会被替换成 placeholder，且 mask=1，避免把未来状态泄漏给 VACE。
 4. 默认保存完整训练模块 trainable keys；不要使用官方 VACE 脚本里的 `--remove_prefix_in_ckpt pipe.vace.`，否则 xSSC conditioner 权重会和 VACE 权重加载逻辑不一致。
 5. 第一版条件 map 是 learned coordinate query over slots，不是每个 Wan layer 用 hidden query 重新算 assignment。
 6. xSSC-VACE 的 `vace_video` 不是 RGB/深度/softedge 视频，而是由 xSSC slots 生成的 inactive/reactive 32 通道时序条件；后 64 通道保持 VACE mask 语义。
