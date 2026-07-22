@@ -472,6 +472,15 @@ def parse_args() -> argparse.Namespace:
         help="Preprocess mode for the 49-frame oracle video before xSSC.",
     )
     parser.add_argument("--xssc-preprocess-mode", default="center_crop")
+    parser.add_argument(
+        "--xssc-latent-slot-mode",
+        choices=["mean_latent_align", "first_frame_repeat_latent"],
+        default="mean_latent_align",
+        help=(
+            "How to convert frozen xSSC slots to Wan latent-time slots. "
+            "first_frame_repeat_latent repeats slots[:,0] across the latent time axis."
+        ),
+    )
     parser.add_argument("--object-lora-rank", type=int, default=32)
     parser.add_argument("--object-lora-alpha", type=float, default=32.0)
     parser.add_argument("--jepa-ckpt-path", default="/data/gaoya/ckpt/facebook-vjepa2-vitg-fpc64-384/original/model.pth")
@@ -696,6 +705,7 @@ def _configure_oracle_environment(cli_args: argparse.Namespace) -> None:
     os.environ["XSSC_ORACLE_SAMPLING_MODE"] = str(cli_args.xssc_oracle_sampling_mode)
     os.environ["XSSC_ORACLE_VIDEO_RESIZE_MODE"] = str(cli_args.xssc_oracle_video_resize_mode)
     os.environ["XSSC_PREPROCESS_MODE"] = str(cli_args.xssc_preprocess_mode)
+    os.environ["XSSC_LATENT_SLOT_MODE"] = str(cli_args.xssc_latent_slot_mode)
 
 
 def _run_single_case_in_process(
@@ -1028,9 +1038,10 @@ def main() -> None:
             "oracle_sampling_mode": str(cli_args.xssc_oracle_sampling_mode),
             "oracle_video_resize_mode": str(cli_args.xssc_oracle_video_resize_mode),
             "xssc_preprocess_mode": str(cli_args.xssc_preprocess_mode),
+            "latent_slot_mode": str(cli_args.xssc_latent_slot_mode),
             "object_lora_rank": int(cli_args.object_lora_rank),
             "object_lora_alpha": float(cli_args.object_lora_alpha),
-            "uses_future_slots": True,
+            "uses_future_slots": str(cli_args.xssc_latent_slot_mode) != "first_frame_repeat_latent",
         },
     }
     manifest_name = "batch_manifest.json" if shard_tag is None else f"batch_manifest_{shard_tag}.json"

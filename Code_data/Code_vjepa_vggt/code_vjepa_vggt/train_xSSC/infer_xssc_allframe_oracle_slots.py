@@ -305,6 +305,51 @@ def _align_slots_to_latent_time_partial(slots: torch.Tensor, stride: int) -> tor
     return torch.cat(chunks, dim=1)
 
 
+def _latent_time_steps_for_partial_align(time_steps: int, stride: int) -> int:
+    if time_steps <= 0:
+        raise ValueError("Cannot align zero xSSC time steps")
+    if stride <= 0:
+        raise ValueError(f"stride must be positive, got {stride}")
+    return 1 + max(0, (time_steps - 2) // stride + 1)
+
+
+def _make_latent_slots(slots: torch.Tensor, stride: int, mode: str) -> tuple[torch.Tensor, dict[str, object]]:
+    mode_norm = str(mode).strip().lower()
+    aliases = {
+        "": "mean_latent_align",
+        "allframe_oracle_mean_latent_align": "mean_latent_align",
+        "mean": "mean_latent_align",
+        "mean_latent_align": "mean_latent_align",
+        "first": "first_frame_repeat_latent",
+        "first_frame": "first_frame_repeat_latent",
+        "first_frame_repeat": "first_frame_repeat_latent",
+        "first_frame_repeat_latent": "first_frame_repeat_latent",
+    }
+    if mode_norm not in aliases:
+        raise ValueError(
+            "Unsupported XSSC_LATENT_SLOT_MODE="
+            f"{mode}. Expected mean_latent_align or first_frame_repeat_latent."
+        )
+    mode_norm = aliases[mode_norm]
+    if mode_norm == "mean_latent_align":
+        latent_slots = _align_slots_to_latent_time_partial(slots, stride=stride)
+        return latent_slots, {
+            "mode": mode_norm,
+            "source_time_index": None,
+            "description": "ctx/oracle slots are mean pooled into Wan latent-time chunks",
+        }
+    latent_time_steps = _latent_time_steps_for_partial_align(
+        time_steps=int(slots.shape[1]),
+        stride=int(stride),
+    )
+    latent_slots = slots[:, :1].expand(-1, latent_time_steps, -1, -1).contiguous()
+    return latent_slots, {
+        "mode": mode_norm,
+        "source_time_index": 0,
+        "description": "the first xSSC frame's 7 slots are repeated for every Wan latent time step",
+    }
+
+
 def _build_model_args(args):
     model_args = _ORIGINAL_BUILD_MODEL_ARGS(args)
     model_args.xssc_root = os.environ.get("XSSC_ROOT", train.DEFAULT_XSSC_ROOT)
@@ -407,9 +452,11 @@ def _build_object_context(
         raise ValueError(
             f"Expected oracle xSSC slots T in [1, {max_oracle_steps}], got {original_time_steps}"
         )
-    latent_slots = _align_slots_to_latent_time_partial(
+    latent_slot_mode = os.environ.get("XSSC_LATENT_SLOT_MODE", "mean_latent_align")
+    latent_slots, latent_slot_debug = _make_latent_slots(
         slots,
         stride=int(model.xssc_vae_temporal_stride),
+        mode=latent_slot_mode,
     )
     latent_time_steps = int(latent_slots.shape[1])
     if latent_time_steps > model.xssc_max_time_steps:
@@ -431,12 +478,13 @@ def _build_object_context(
     context_float = object_context.detach().float()
     debug = {
         "enabled": True,
-        "mode": "allframe_oracle_mean_latent_align",
+        "mode": "allframe_oracle_" + str(latent_slot_debug["mode"]),
         "context_video_shape": list(context_video_single.shape),
         "oracle_video": oracle_video_debug,
         "oracle_video_shape": list(oracle_video.shape),
         "xssc_slots_shape": list(slots.shape),
         "xssc_latent_slots_shape": list(latent_slots.shape),
+        "xssc_latent_slot_mode": latent_slot_debug,
         "object_context_shape": list(object_context.shape),
         "object_valid_count": float(model.xssc_num_slots),
         "xssc_oracle_max_video_frames": max_oracle_steps,

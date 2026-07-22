@@ -16,6 +16,8 @@ DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/
 
 METHOD_LABELS = {
     "formal_mix49_b2_dropout_metrics_20260719T204359Z": "full ctx slots",
+    "train_xssc_allframe_oracle_slots": "all-frame oracle slots",
+    "train_xssc_allframe_oracle_first_frame_repeat_slots": "all-frame oracle / first-frame slots repeated",
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": "randomcrop pooled slots",
     "xssc_centercrop_pooled_gpu0123_mix49_formal_centercrop_pooled_gpu0123_20260721T073149Z": "centercrop pooled slots",
     "full_ctx_weight_self_mean_repeat_tokens": "full ctx weight / self mean-repeat tokens",
@@ -33,6 +35,14 @@ METHOD_DESCRIPTIONS = {
     "formal_mix49_b2_dropout_metrics_20260719T204359Z": (
         "Frozen xSSC extracts all 8 ctx frames x 7 slots. "
         "Full ctx projector + per-frame time embedding -> 56 object tokens."
+    ),
+    "train_xssc_allframe_oracle_slots": (
+        "Frozen xSSC extracts up to 49 source frames x 7 slots. "
+        "Slots are mean-aligned to Wan latent time, then projected as oracle object tokens."
+    ),
+    "train_xssc_allframe_oracle_first_frame_repeat_slots": (
+        "Frozen xSSC still reads up to 49 source frames, but every latent-time object token "
+        "uses the first frame's 7 slots repeated across time."
     ),
     "xssc_randomcrop_pooled_gpu45_mix49_formal_randomcrop_pooled_gpu45_20260720T110031Z": (
         "Training uses random crop. xSSC slots are averaged over ctx time, "
@@ -96,7 +106,7 @@ def short_path(value: str | None) -> str:
 
 
 def source_key(meta: dict[str, Any], video_path: Path) -> str:
-    source = meta.get("source_video") or meta.get("input_video") or meta.get("input_json")
+    source = meta.get("input_json") or meta.get("source_video") or meta.get("input_video")
     if source:
         return str(source)
     return video_path.stem
@@ -134,6 +144,7 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, 
         meta = read_json(json_path)
         debug = meta.get("object_debug", {}) if isinstance(meta.get("object_debug"), dict) else {}
         temporal = debug.get("xssc_slot_temporal_mode", {}) if isinstance(debug.get("xssc_slot_temporal_mode"), dict) else {}
+        latent_slot_mode = debug.get("xssc_latent_slot_mode", {}) if isinstance(debug.get("xssc_latent_slot_mode"), dict) else {}
         preprocess = debug.get("xssc_preprocess", {}) if isinstance(debug.get("xssc_preprocess"), dict) else {}
         record = {
             "method": method,
@@ -149,6 +160,7 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, 
             "object_context_shape": debug.get("object_context_shape"),
             "xssc_slots_shape": debug.get("xssc_slots_shape"),
             "temporal_mode": temporal.get("mode"),
+            "latent_slot_mode": latent_slot_mode.get("mode"),
             "preprocess_mode": preprocess.get("mode"),
             "ckpt": meta.get("ckpt"),
         }
@@ -168,6 +180,8 @@ def render_debug(record: dict[str, Any]) -> str:
         bits.append(f"slots={record['xssc_slots_shape']}")
     if record.get("temporal_mode"):
         bits.append(f"temporal={record['temporal_mode']}")
+    if record.get("latent_slot_mode"):
+        bits.append(f"latent_slot={record['latent_slot_mode']}")
     if record.get("preprocess_mode"):
         bits.append(f"crop={record['preprocess_mode']}")
     return html.escape(" · ".join(bits))
@@ -193,12 +207,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     all_method_keys = sorted({record["method"] for record in records})
     global_method_keys = [method for method in preferred_method_keys if method in all_method_keys]
     global_method_keys.extend(method for method in all_method_keys if method not in global_method_keys)
-    main_method_keys = [method for method in global_method_keys if not is_ablation_method(method)]
-    ablation_method_keys = [method for method in global_method_keys if is_ablation_method(method)]
-    main_steps = sorted(
-        {record["step"] for record in records if not is_ablation_method(record["method"])},
-        key=step_sort_key,
-    )
+    all_steps = sorted({record["step"] for record in records}, key=step_sort_key)
 
     sections = []
     for source, rows in grouped.items():
@@ -213,20 +222,23 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
                 f"""
                 <div class="ctx-strip">
                   <img src="{rel(Path(representative_ctx), root)}" alt="input context">
-                  <div><code>{html.escape(str(first.get("input_json") or ""))}</code></div>
+                  <div>
+                    <div><strong>input_json</strong>: <code>{html.escape(str(first.get("input_json") or ""))}</code></div>
+                    <div><strong>source_video</strong>: <code>{html.escape(str(first.get("source_video") or ""))}</code></div>
+                  </div>
                 </div>
                 """
             )
-        header_cells = "".join(f"<th>{html.escape(step)}</th>" for step in main_steps)
+        header_cells = "".join(f"<th>{html.escape(step)}</th>" for step in all_steps)
         method_rows = []
-        for method_key in main_method_keys:
+        for method_key in global_method_keys:
             method_label_text = method_label(method_key)
             description = method_description(method_key)
             cells = []
-            for step in main_steps:
+            for step in all_steps:
                 record = matrix.get((method_key, step))
                 if record is None:
-                    cells.append('<td><div class="missing">missing</div></td>')
+                    cells.append('<td><div class="missing">-</div></td>')
                     continue
                 cells.append(
                     f"""
@@ -246,33 +258,6 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
                 </tr>
                 """
             )
-        ablation_headers = []
-        ablation_cells = []
-        for method_key in ablation_method_keys:
-            method_records = sorted(
-                [row for row in rows if row["method"] == method_key],
-                key=lambda item: (step_sort_key(item["step"]), item["case_stem"]),
-            )
-            if not method_records:
-                continue
-            method_label_text = method_label(method_key)
-            description = method_description(method_key)
-            result_cards = "".join(render_video_card(record, root) for record in method_records)
-            ablation_headers.append(
-                f"""
-                <th class="ablation-method">
-                  <div class="method-name">{html.escape(method_label_text)}</div>
-                  <div class="method-desc">{html.escape(description)}</div>
-                </th>
-                """
-            )
-            ablation_cells.append(
-                f"""
-                <td class="result-cell">
-                  <div class="result-strip">{result_cards}</div>
-                </td>
-                """
-            )
         main_table_html = ""
         if method_rows:
             main_table_html = f"""
@@ -290,25 +275,6 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
                 </table>
               </div>
             """
-        ablation_table_html = ""
-        if ablation_cells:
-            ablation_table_html = f"""
-              <div class="subhead">ablation experiments</div>
-              <div class="matrix-wrap">
-                <table class="matrix ablation">
-                  <thead>
-                    <tr>
-                      {''.join(ablation_headers)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      {''.join(ablation_cells)}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            """
         sections.append(
             f"""
             <section data-case="{html.escape(short_path(source).lower())}">
@@ -316,7 +282,6 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
               <div class="source"><code>{html.escape(source)}</code></div>
               {ctx_html}
               {main_table_html}
-              {ablation_table_html}
             </section>
             """
         )
@@ -383,12 +348,9 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     }}
     table.matrix {{
       width: 100%;
-      min-width: {max(1040, 280 + 300 * max(1, len(main_steps)))}px;
+      min-width: {max(1040, 280 + 300 * max(1, len(all_steps)))}px;
       border-collapse: collapse;
       table-layout: fixed;
-    }}
-    table.matrix.ablation {{
-      min-width: {max(1040, 320 * max(1, len(ablation_method_keys)))}px;
     }}
     th, td {{
       border-right: 1px solid #2a3038;
@@ -417,11 +379,6 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     tbody th.method {{
       background: #1c222c;
     }}
-    th.ablation-method {{
-      min-width: 280px;
-      background: #1c222c;
-      vertical-align: top;
-    }}
     .method-name {{
       font-size: 12px;
       font-weight: 700;
@@ -437,24 +394,8 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
       color: #aeb8c8;
       overflow-wrap: anywhere;
     }}
-    .subhead {{
-      margin: 4px 0 -2px;
-      color: #d8e0ec;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }}
     .result-card {{
       min-width: 0;
-    }}
-    .result-strip {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 0;
-    }}
-    .result-cell {{
-      padding: 0;
     }}
     video, img {{
       display: block;
@@ -475,7 +416,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
       border-top: 1px solid #2a3038;
     }}
     .missing {{
-      min-height: 190px;
+      min-height: 160px;
       display: grid;
       place-items: center;
       color: #7f8999;
@@ -493,7 +434,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
 </head>
 <body>
   <header>
-    <h1>xSSC test_5 comparison grouped by source video</h1>
+    <h1>xSSC test_5 comparison grouped by case</h1>
     <div class="summary">{len(grouped)} source groups · {len(records)} videos · {method_summary}</div>
   </header>
   <main>
