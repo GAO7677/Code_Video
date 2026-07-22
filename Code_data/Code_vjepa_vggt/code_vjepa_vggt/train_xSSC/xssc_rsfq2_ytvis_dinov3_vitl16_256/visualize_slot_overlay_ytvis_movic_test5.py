@@ -69,7 +69,11 @@ def parse_args():
     parser.add_argument("--test5-file", type=Path, default=Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt"))
     parser.add_argument("--output-dir", type=Path, default=Path("/data/gaoya/agent-data/outputs/xssc_slot_overlay_ytvis_movic_test5_compare"))
     parser.add_argument("--num-cases-per-source", type=int, default=3)
-    parser.add_argument("--max-frames", type=int, default=6)
+    parser.add_argument("--num-ytvis-cases", type=int, default=None)
+    parser.add_argument("--num-movic-cases", type=int, default=None)
+    parser.add_argument("--num-test5-cases", type=int, default=None, help="Number of test_5 entries; use 0 for all entries.")
+    parser.add_argument("--max-frames", type=int, default=6, help="Maximum frames per case; use 0 for full videos.")
+    parser.add_argument("--external-resize-mode", choices=("crop", "padding"), default="crop")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--amp-dtype", choices=("bfloat16", "float16"), default="bfloat16")
@@ -91,6 +95,8 @@ def parse_args():
     parser.add_argument("--shadow-max-gradient-mean", type=float, default=20.0)
     parser.add_argument("--duplicate-iou", type=float, default=0.70)
     parser.add_argument("--duplicate-containment", type=float, default=0.85)
+    parser.add_argument("--extra-movic-checkpoint", type=Path, default=None)
+    parser.add_argument("--extra-movic-label", default=None)
     return parser.parse_args()
 
 
@@ -123,12 +129,33 @@ def resize_frames(frames, size=256):
     return np.stack(out, axis=0)
 
 
-def read_video_clip(path, max_frames):
+def resize_pad_frames(frames, size=256):
+    out = []
+    for frame in frames:
+        height, width = frame.shape[:2]
+        scale = min(size / width, size / height)
+        new_width = max(1, int(round(width * scale)))
+        new_height = max(1, int(round(height * scale)))
+        resized = Image.fromarray(frame).resize(
+            (new_width, new_height), Image.Resampling.BILINEAR
+        )
+        canvas = Image.new("RGB", (size, size), (0, 0, 0))
+        canvas.paste(resized, ((size - new_width) // 2, (size - new_height) // 2))
+        out.append(np.asarray(canvas))
+    return np.stack(out, axis=0)
+
+
+def read_video_clip(path, max_frames, resize_mode):
     frames = iio.imread(path, plugin="pyav")
     if frames.ndim == 3:
         frames = frames[None]
-    frames = frames[:max_frames, :, :, :3]
-    frames = resize_frames(center_crop_square(frames))
+    if max_frames and max_frames > 0:
+        frames = frames[:max_frames]
+    frames = frames[:, :, :, :3]
+    if resize_mode == "padding":
+        frames = resize_pad_frames(frames)
+    else:
+        frames = resize_frames(center_crop_square(frames))
     return frames.astype(np.uint8), normalize_rgb_frames(frames.astype(np.uint8))
 
 
@@ -208,16 +235,19 @@ def sample_dataset_cases(name, config_file, data_dir, n, seed):
     return cases
 
 
-def sample_test5_cases(test5_file, n, max_frames):
+def sample_test5_cases(test5_file, n, max_frames, resize_mode):
     cases = []
-    for line in test5_file.read_text().splitlines()[:n]:
+    lines = [line.strip() for line in test5_file.read_text().splitlines() if line.strip()]
+    if n is not None and n > 0:
+        lines = lines[:n]
+    for position, line in enumerate(lines, start=1):
         json_path = Path(line.strip())
         payload = json.loads(json_path.read_text())
-        rgb, video = read_video_clip(payload["source_video"], max_frames)
+        rgb, video = read_video_clip(payload["source_video"], max_frames, resize_mode)
         cases.append(
             {
                 "source": "test5",
-                "case_id": json_path.stem,
+                "case_id": f"test5_{position:03d}_{json_path.stem}",
                 "source_key": payload["source_video"],
                 "rgb": rgb,
                 "video": video,
@@ -294,11 +324,11 @@ def build_html(metadata):
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>
-*{{box-sizing:border-box}}:root{{color-scheme:dark}}body{{margin:0;background:#101214;color:#f4f5f6;font:14px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:4;background:rgba(16,18,20,.98);border-bottom:1px solid #34383d}}.bar{{max-width:1900px;margin:auto;padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}}h1{{font-size:18px;margin:0 auto 0 0}}select,input,button{{height:34px;border:1px solid #4b525a;border-radius:5px;background:#202429;color:#f5f6f7;font:inherit}}select{{padding:0 28px 0 9px}}button{{width:34px;cursor:pointer}}#frameSlider{{min-width:220px;flex:0 1 420px;accent-color:#38bdf8}}#counter{{min-width:96px;color:#c4c9cf}}main{{max-width:1900px;margin:auto;padding:16px}}.meta{{display:flex;gap:16px;padding-bottom:14px;color:#aeb5bd;white-space:nowrap;overflow:auto}}.wrap{{overflow:auto}}.grid{{display:grid;grid-template-columns:repeat(5,minmax(230px,1fr));gap:12px;min-width:1180px}}figure{{margin:0}}img{{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:#050607;border:1px solid #34383d;border-radius:4px}}figcaption{{padding:7px 2px 0;min-height:50px;color:#c4c9cf}}strong{{display:block;color:#f3f4f6;margin-bottom:2px}}.note{{margin-top:14px;color:#aeb5bd;line-height:1.45}}.metric{{color:#7dd3fc;font-size:12px}}
+*{{box-sizing:border-box}}:root{{color-scheme:dark}}body{{margin:0;background:#101214;color:#f4f5f6;font:14px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:4;background:rgba(16,18,20,.98);border-bottom:1px solid #34383d}}.bar{{max-width:2200px;margin:auto;padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}}h1{{font-size:18px;margin:0 auto 0 0}}select,input,button{{height:34px;border:1px solid #4b525a;border-radius:5px;background:#202429;color:#f5f6f7;font:inherit}}select{{padding:0 28px 0 9px}}button{{width:34px;cursor:pointer}}#frameSlider{{min-width:220px;flex:0 1 420px;accent-color:#38bdf8}}#counter{{min-width:96px;color:#c4c9cf}}main{{max-width:2200px;margin:auto;padding:16px}}.meta{{display:flex;gap:16px;padding-bottom:14px;color:#aeb5bd;white-space:nowrap;overflow:auto}}.wrap{{overflow:auto}}.grid{{display:grid;grid-template-columns:repeat(var(--panel-count,5),minmax(230px,1fr));gap:12px;min-width:calc(var(--panel-count,5) * 242px)}}figure{{margin:0}}img{{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:#050607;border:1px solid #34383d;border-radius:4px}}figcaption{{padding:7px 2px 0;min-height:50px;color:#c4c9cf}}strong{{display:block;color:#f3f4f6;margin-bottom:2px}}.note{{margin-top:14px;color:#aeb5bd;line-height:1.45}}.metric{{color:#7dd3fc;font-size:12px}}
 </style></head><body><header><div class="bar"><h1>{title}</h1><select id="caseSelect"></select><button id="prev" title="Previous frame">&#8249;</button><button id="next" title="Next frame">&#8250;</button><input id="frameSlider" type="range" min="0" max="0" step="1" value="0"><span id="counter"></span></div></header><main><div id="meta" class="meta"></div><div class="wrap"><section id="grid" class="grid"></section></div><p class="note">MOVi-C checkpoints use bbox-conditioned initialization. In this page their boxes come from filtered SAM2 AMG frame-0 masks converted to pseudo boxes; YTVIS-HQ checkpoints are unconditioned.</p></main>
 <script>
 const DATA={data};const sel=document.getElementById('caseSelect');const slider=document.getElementById('frameSlider');const counter=document.getElementById('counter');const grid=document.getElementById('grid');const meta=document.getElementById('meta');let frame=0;
-function pat(p,i){{return p.replace('{{frame}}',String(i).padStart(4,'0'))}}function cur(){{return DATA.cases[Number(sel.value)]}}function update(){{const c=cur();frame=Math.max(0,Math.min(frame,c.frames-1));slider.value=String(frame);counter.textContent=`${{frame+1}} / ${{c.frames}}`;Array.from(grid.querySelectorAll('img')).forEach((img,i)=>{{img.src=pat(img.dataset.pattern,frame)}})}}function render(){{const c=cur();frame=0;slider.max=String(c.frames-1);meta.innerHTML=`<span>${{c.source}}</span><span>${{c.case_id}}</span><span>AMG selected ${{c.amg.selected_mask_count}} / raw ${{c.amg.raw_mask_count}}</span><span>${{c.source_key}}</span>`;grid.innerHTML=[`<figure><img data-pattern="${{c.original_pattern}}"><figcaption><strong>Original</strong><span class="metric">effective 256 center crop</span></figcaption></figure>`,...c.models.map(m=>`<figure><img data-pattern="${{m.frame_pattern}}"><figcaption><strong>${{m.label}}</strong><span class="metric">${{m.slots}} slots | ${{m.condition}}</span></figcaption></figure>`)].join('');update()}}DATA.cases.forEach((c,i)=>{{const o=document.createElement('option');o.value=String(i);o.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.source}} | ${{c.case_id}}`;sel.appendChild(o)}});sel.addEventListener('change',render);slider.addEventListener('input',()=>{{frame=Number(slider.value);update()}});document.getElementById('prev').addEventListener('click',()=>{{frame--;update()}});document.getElementById('next').addEventListener('click',()=>{{frame++;update()}});render();
+function pat(p,i){{return p.replace('{{frame}}',String(i).padStart(4,'0'))}}function cur(){{return DATA.cases[Number(sel.value)]}}function update(){{const c=cur();frame=Math.max(0,Math.min(frame,c.frames-1));slider.value=String(frame);counter.textContent=`${{frame+1}} / ${{c.frames}}`;Array.from(grid.querySelectorAll('img')).forEach((img,i)=>{{img.src=pat(img.dataset.pattern,frame)}})}}function render(){{const c=cur();frame=0;slider.max=String(c.frames-1);grid.style.setProperty('--panel-count',String(c.models.length+1));meta.innerHTML=`<span>${{c.source}}</span><span>${{c.case_id}}</span><span>AMG selected ${{c.amg.selected_mask_count}} / raw ${{c.amg.raw_mask_count}}</span><span>${{c.source_key}}</span>`;grid.innerHTML=[`<figure><img data-pattern="${{c.original_pattern}}"><figcaption><strong>Original</strong><span class="metric">effective 256 center crop</span></figcaption></figure>`,...c.models.map(m=>`<figure><img data-pattern="${{m.frame_pattern}}"><figcaption><strong>${{m.label}}</strong><span class="metric">${{m.slots}} slots | ${{m.condition}}</span></figcaption></figure>`)].join('');update()}}DATA.cases.forEach((c,i)=>{{const o=document.createElement('option');o.value=String(i);o.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.source}} | ${{c.case_id}}`;sel.appendChild(o)}});sel.addEventListener('change',render);slider.addEventListener('input',()=>{{frame=Number(slider.value);update()}});document.getElementById('prev').addEventListener('click',()=>{{frame--;update()}});document.getElementById('next').addEventListener('click',()=>{{frame++;update()}});render();
 </script></body></html>"""
 
 
@@ -321,14 +351,44 @@ def main():
         (f"movi_latest_{latest_movi.stem[-6:]}", "movic", MOVIC_CONFIG, latest_movi),
         (f"movi_best_{best_movi.stem[-6:]}", "movic", MOVIC_CONFIG, best_movi),
     ]
+    if args.extra_movic_checkpoint is not None:
+        extra_checkpoint = args.extra_movic_checkpoint.resolve()
+        extra_label = args.extra_movic_label or f"movi_extra_{extra_checkpoint.stem[-6:]}"
+        specs.append((extra_label, "movic", MOVIC_CONFIG, extra_checkpoint))
     for _, _, _, ckpt in specs:
         if not ckpt.is_file():
             raise FileNotFoundError(ckpt)
 
+    num_ytvis = args.num_cases_per_source if args.num_ytvis_cases is None else args.num_ytvis_cases
+    num_movic = args.num_cases_per_source if args.num_movic_cases is None else args.num_movic_cases
+    num_test5 = args.num_cases_per_source if args.num_test5_cases is None else args.num_test5_cases
     cases = []
-    cases.extend(sample_dataset_cases("ytvis_hq_val", YTVIS_CONFIG, args.data_dir, args.num_cases_per_source, args.seed))
-    cases.extend(sample_dataset_cases("movi_c_val", MOVIC_CONFIG, args.data_dir, args.num_cases_per_source, args.seed + 7))
-    cases.extend(sample_test5_cases(args.test5_file, args.num_cases_per_source, args.max_frames))
+    if num_ytvis:
+        cases.extend(sample_dataset_cases("ytvis_hq_val", YTVIS_CONFIG, args.data_dir, num_ytvis, args.seed))
+    if num_movic:
+        cases.extend(sample_dataset_cases("movi_c_val", MOVIC_CONFIG, args.data_dir, num_movic, args.seed + 7))
+    if num_test5 is not None:
+        cases.extend(
+            sample_test5_cases(
+                args.test5_file,
+                num_test5,
+                args.max_frames,
+                args.external_resize_mode,
+            )
+        )
+
+    sam2_generator = build_sam2_generator(args, device)
+    for position, case in enumerate(cases, start=1):
+        amg_bbox, amg_meta = make_amg_condition(case, sam2_generator, args, 11)
+        case["amg_bbox"] = amg_bbox
+        case["amg_meta"] = amg_meta
+        print(
+            f"[amg] {position}/{len(cases)} {case['case_id']} "
+            f"raw={amg_meta['raw_mask_count']} selected={amg_meta['selected_mask_count']}",
+            flush=True,
+        )
+    del sam2_generator
+    torch.cuda.empty_cache()
 
     rendered_cases = []
     models = {}
@@ -339,7 +399,7 @@ def main():
 
     for ci, case in enumerate(cases, start=1):
         case_dir = out_dir / "cases" / case["case_id"]
-        rgb = case["rgb"][: args.max_frames]
+        rgb = case["rgb"] if args.max_frames <= 0 else case["rgb"][: args.max_frames]
         video = case["video"][:, : len(rgb)]
         for frame_id, frame in enumerate(rgb):
             save_webp(case_dir / "original" / f"{frame_id:04d}.webp", frame, args.quality)
@@ -347,10 +407,7 @@ def main():
         for label, family, cfg_path, model, slots in [(k, *v) for k, v in models.items()]:
             batch = {"video": video}
             if family == "movic":
-                bbox = case.get("bbox")
-                if bbox is None:
-                    bbox = make_zero_bbox(video.shape[0], video.shape[1], slots)
-                batch["bbox"] = bbox[:, : video.shape[1]]
+                batch["bbox"] = case["amg_bbox"][:, : video.shape[1]]
             labels = infer(model, batch, device, amp_dtype)
             for frame_id, frame in enumerate(rgb):
                 save_webp(case_dir / label / f"{frame_id:04d}.webp", overlay(frame, labels[frame_id]), args.quality)
@@ -359,6 +416,7 @@ def main():
                     "label": label,
                     "config": cfg_path.name,
                     "slots": int(labels.shape[1]) if labels.ndim == 4 else slots,
+                    "condition": "AMG pseudo boxes" if family == "movic" else "unconditioned",
                     "frame_pattern": f"cases/{case['case_id']}/{label}/{{frame}}.webp",
                 }
             )
@@ -369,6 +427,7 @@ def main():
                 "case_id": case["case_id"],
                 "source_key": case["source_key"],
                 "frames": len(rgb),
+                "amg": case["amg_meta"],
                 "original_pattern": f"cases/{case['case_id']}/original/{{frame}}.webp",
                 "models": model_rows,
             }
@@ -378,8 +437,12 @@ def main():
         "title": "xSSC DINOv3 All-slot Overlay Comparison",
         "seed": args.seed,
         "max_frames": args.max_frames,
+        "external_resize_mode": args.external_resize_mode,
         "checkpoints": [{"label": label, "config": str(cfg), "checkpoint": str(ckpt)} for label, _, cfg, ckpt in specs],
         "movi_best_policy": best_policy,
+        "movi_condition": "Filtered SAM2 AMG masks on frame 0 are converted to pseudo boxes and passed as MOVi-C xSSC bbox condition.",
+        "sam2_config": str(args.sam2_config.resolve()),
+        "sam2_checkpoint": str(args.sam2_checkpoint.resolve()),
         "cases": rendered_cases,
     }
     (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -390,7 +453,9 @@ def main():
         "- Sources: YTVIS-HQ val, MOVi-C val, and source videos from test_5.txt.\n"
         "- Checkpoints: YTVIS-HQ step-004000, YTVIS-HQ step-015000, MOVi-C latest, MOVi-C best.\n"
         f"- MOVi-C best policy: {best_policy}\n"
-        "- MOVi-C checkpoints use bbox-conditioned initialization. For YTVIS-HQ and test_5 inputs, zero bbox placeholders are used.\n\n"
+        "- MOVi-C checkpoints use bbox-conditioned initialization. Here the condition comes from filtered SAM2 AMG frame-0 masks converted to pseudo boxes.\n"
+        "- YTVIS-HQ checkpoints are unconditioned and do not consume boxes.\n\n"
+        f"- External video resize mode: {args.external_resize_mode}.\n\n"
         "Serve locally from this directory with:\n\n"
         "```bash\n"
         f"cd {out_dir} && python3 -m http.server 8897 --bind 0.0.0.0\n"

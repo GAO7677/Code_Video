@@ -53,7 +53,7 @@ OBJECT_ATTN_QUERY_CHUNK = int(_pop_option(sys.argv, "--scheme-a-attn-query-chunk
 OBJECT_ATTN_SLOT_COUNT = int(_pop_option(sys.argv, "--scheme-a-attn-slots", "7"))
 OBJECT_ATTN_TEMPORAL_AGGS = [
     part.strip().lower()
-    for part in _pop_option(sys.argv, "--scheme-a-attn-temporal-aggs", "aligned,sum,max").split(",")
+    for part in _pop_option(sys.argv, "--scheme-a-attn-temporal-aggs", "slot_compete").split(",")
     if part.strip()
 ]
 OBJECT_ATTN_SELECTED_LAYERS = [
@@ -65,8 +65,8 @@ OBJECT_ATTN_PERCENTILE = float(_pop_option(sys.argv, "--scheme-a-attn-percentile
 OBJECT_ATTN_BEST_STAGE = _pop_option(sys.argv, "--scheme-a-attn-best-stage", "all").strip().lower()
 
 for mode in OBJECT_ATTN_TEMPORAL_AGGS:
-    if mode not in {"aligned", "sum", "max"}:
-        raise SystemExit("--scheme-a-attn-temporal-aggs supports aligned,sum,max")
+    if mode not in {"aligned", "sum", "max", "slot_compete"}:
+        raise SystemExit("--scheme-a-attn-temporal-aggs supports slot_compete,aligned,sum,max")
 if OBJECT_ATTN_BEST_STAGE not in {"early", "middle", "late", "all"}:
     raise SystemExit("--scheme-a-attn-best-stage must be early, middle, late, or all")
 
@@ -342,22 +342,29 @@ class SchemeAObjectCrossAttentionRecorder:
                 .float()
             )
             scores = torch.matmul(queries, key_t) / math.sqrt(float(head_dim))
-            probs = torch.softmax(scores, dim=-1)
-            grouped = probs.view(1, int(num_heads), stop - start, key_time_steps, self.slot_count)
-            if "sum" in outputs:
-                outputs["sum"].append(grouped.sum(dim=3).mean(dim=(0, 1)).cpu())
-            if "max" in outputs:
-                outputs["max"].append(grouped.max(dim=3).values.mean(dim=(0, 1)).cpu())
-            if "aligned" in outputs:
-                query_ids = torch.arange(start, stop, device=grouped.device)
-                query_frames = query_ids.div(pixels_per_frame, rounding_mode="floor")
-                key_ids = self._query_frame_to_key_time(query_frames, key_time_steps)
-                gather_index = key_ids.view(1, 1, stop - start, 1, 1).expand(
-                    1, int(num_heads), stop - start, 1, self.slot_count
-                )
-                aligned = grouped.gather(dim=3, index=gather_index).squeeze(3)
-                outputs["aligned"].append(aligned.mean(dim=(0, 1)).cpu())
-            del scores, probs, grouped, queries
+            grouped_scores = scores.view(1, int(num_heads), stop - start, key_time_steps, self.slot_count)
+            query_ids = torch.arange(start, stop, device=grouped_scores.device)
+            query_frames = query_ids.div(pixels_per_frame, rounding_mode="floor")
+            key_ids = self._query_frame_to_key_time(query_frames, key_time_steps)
+            gather_index = key_ids.view(1, 1, stop - start, 1, 1).expand(
+                1, int(num_heads), stop - start, 1, self.slot_count
+            )
+            if "slot_compete" in outputs:
+                aligned_scores = grouped_scores.gather(dim=3, index=gather_index).squeeze(3)
+                slot_compete = torch.softmax(aligned_scores, dim=-1)
+                outputs["slot_compete"].append(slot_compete.mean(dim=(0, 1)).cpu())
+            if "sum" in outputs or "max" in outputs or "aligned" in outputs:
+                probs = torch.softmax(scores, dim=-1)
+                grouped = probs.view(1, int(num_heads), stop - start, key_time_steps, self.slot_count)
+                if "sum" in outputs:
+                    outputs["sum"].append(grouped.sum(dim=3).mean(dim=(0, 1)).cpu())
+                if "max" in outputs:
+                    outputs["max"].append(grouped.max(dim=3).values.mean(dim=(0, 1)).cpu())
+                if "aligned" in outputs:
+                    aligned = grouped.gather(dim=3, index=gather_index).squeeze(3)
+                    outputs["aligned"].append(aligned.mean(dim=(0, 1)).cpu())
+                del probs, grouped
+            del scores, grouped_scores, queries
 
         for mode, chunks in outputs.items():
             if not chunks:
@@ -867,10 +874,13 @@ def _write_slot_overlays(
         "selected_maps_npz": npz_path.name,
         "rendered": rendered,
         "note": (
-            "Maps are Wan DiT video-query attention to Scheme A xSSC object K/V tokens. "
-            "aligned uses the slot token at the corresponding Wan latent time; sum/max pool "
-            "all latent-time tokens for the same slot. Overlays show regions above the "
-            "requested percentile threshold."
+            "Maps are Wan DiT video-query responses to Scheme A xSSC object K/V tokens. "
+            "slot_compete is the preferred visualization: for each video query at a Wan latent "
+            "time, it takes only the seven slot keys from the corresponding latent time and "
+            "applies a softmax over slots, so the seven slot assignment maps sum to one per "
+            "query before averaging over heads and denoising steps. aligned/sum/max are kept "
+            "only for legacy comparisons. Overlays show regions above the requested percentile "
+            "threshold within each slot map."
         ),
     }
     summary_path = output_dir / "summary.json"
@@ -892,7 +902,7 @@ def _write_slot_overlays(
 </div>
 </section>"""
 
-    page = f"""<!doctype html><html><head><meta charset='utf-8'><title>Scheme A object cross-attention percentile masks</title>
+    page = f"""<!doctype html><html><head><meta charset='utf-8'><title>Scheme A object cross-attention slot assignment masks</title>
 <style>
 body{{margin:0;background:#101216;color:#edf1f7;font:14px Arial,sans-serif}}
 main{{max-width:1900px;margin:auto;padding:22px}}
@@ -913,11 +923,13 @@ code{{color:#dce7ff}}
 @media(max-width:650px){{.grid{{grid-template-columns:1fr}}}}
 @media(max-width:650px){{.pca-grid{{grid-template-columns:1fr}}}}
 </style></head><body><main>
-<h1>Scheme A Slot K/V Object Cross-Attention Percentile Masks</h1>
+<h1>Scheme A Slot K/V Object Cross-Attention Assignment Masks</h1>
 <p>Overlay target: final generated video. Latent grid: {html.escape(str(summary['latent_grid']))};
 object keys: {summary['key_count']} = {summary['key_time_steps']} latent steps x {summary['slot_count']} slots;
 threshold: p{OBJECT_ATTN_PERCENTILE:g}; selected layers: {html.escape(str(OBJECT_ATTN_SELECTED_LAYERS))};
 best stage: {html.escape(OBJECT_ATTN_BEST_STAGE)}.</p>
+<p><code>slot_compete</code> normalizes each query over the 7 slots from the corresponding latent time,
+so it visualizes slot assignment/competition rather than raw attention mass over all object tokens.</p>
 <p><a href='../{html.escape(Path(str(output_video)).name)}'>generated video</a> |
 <a href='summary.json'>summary JSON</a> | <a href='{html.escape(ranking_csv.name)}'>layer ranking CSV</a> |
 <a href='{html.escape(npz_path.name)}'>selected fp16 maps</a></p>
