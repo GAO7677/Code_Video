@@ -147,7 +147,7 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
     def get_pipeline_inputs(self, data):
         inputs_shared, inputs_posi, inputs_nega = super().get_pipeline_inputs(data)
         # Keep VACE's official reference marker, but source it only from ctx video.
-        # The ctx clip is VAE-encoded as one short video; ctx8 maps to 2 latent steps.
+        # The ctx clip is VAE-encoded as one short video; ctx9 maps to 3 latent steps.
         if self.xssc_reference_frames > 0:
             if len(data["video"]) < self.xssc_reference_frames:
                 raise ValueError(

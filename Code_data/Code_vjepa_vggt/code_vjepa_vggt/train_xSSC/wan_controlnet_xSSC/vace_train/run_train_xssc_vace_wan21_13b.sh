@@ -8,7 +8,7 @@ TRAIN_SCRIPT="${SCRIPT_DIR}/train_xssc_vace_condition.py"
 
 DATASET_BASE_PATH="${DATASET_BASE_PATH:-data/diffsynth_example_dataset/wanvideo/Wan2.1-VACE-1.3B}"
 DATASET_METADATA_PATH="${DATASET_METADATA_PATH:-${DATASET_BASE_PATH}/metadata.csv}"
-OUTPUT_PATH="${OUTPUT_PATH:-/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/wan_vace_xssc_condition/wan21_13b_ctx8}"
+OUTPUT_PATH="${OUTPUT_PATH:-/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/wan_vace_xssc_condition/wan21_13b_ctx9}"
 
 XSSC_ROOT="${XSSC_ROOT:-/home/gaoya/Code_Video/xSSC-main}"
 XSSC_CONFIG="${XSSC_CONFIG:-${XSSC_ROOT}/config-randsfq/rsfq2_r-ytvis.py}"
@@ -31,8 +31,8 @@ accelerate launch "${TRAIN_SCRIPT}" \
   --xssc_root "${XSSC_ROOT}" \
   --xssc_config "${XSSC_CONFIG}" \
   --xssc_checkpoint "${XSSC_CHECKPOINT}" \
-  --xssc_condition_frames "${XSSC_CONDITION_FRAMES:-8}" \
-  --xssc_reference_frames "${XSSC_REFERENCE_FRAMES:-8}" \
+  --xssc_condition_frames "${XSSC_CONDITION_FRAMES:-9}" \
+  --xssc_reference_frames "${XSSC_REFERENCE_FRAMES:-9}" \
   --xssc_input_size "${XSSC_INPUT_SIZE:-256}" \
   --xssc_vae_temporal_stride "${XSSC_VAE_TEMPORAL_STRIDE:-4}" \
   --xssc_slot_dropout "${XSSC_SLOT_DROPOUT:-0.0}" \
