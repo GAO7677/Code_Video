@@ -318,6 +318,7 @@ def html_page(cases: list[dict], metadata: dict) -> str:
               <div class="meta">
                 <span>index {case['index']}</span>
                 <span>source {html.escape(case['source'])}</span>
+                <span>train video {case['train_video_shape']}</span>
                 <span>raw {case['raw_shape']}</span>
                 <span>xSSC {case['xssc_shape']}</span>
                 <span>boxes {case['box_shape']}</span>
@@ -327,6 +328,7 @@ def html_page(cases: list[dict], metadata: dict) -> str:
               </div>
               <img class="strip" src="{case['strip']}" alt="preprocess strip for {safe_title}">
               <div class="videos">
+                <figure><video src="{case['train_video']}" controls muted loop></video><figcaption>Wan train video</figcaption></figure>
                 <figure><video src="{case['raw_video']}" controls muted loop></video><figcaption>dataset context RGB</figcaption></figure>
                 <figure><video src="{case['crop_video']}" controls muted loop></video><figcaption>center-cropped context</figcaption></figure>
                 <figure><video src="{case['xssc_video']}" controls muted loop></video><figcaption>xSSC 256 input</figcaption></figure>
@@ -353,11 +355,12 @@ def html_page(cases: list[dict], metadata: dict) -> str:
     .meta {{ display:flex; flex-wrap:wrap; gap:8px; color:#bac2cb; margin:0 0 12px; }}
     .meta span {{ border:1px solid #3b424a; border-radius:6px; padding:5px 8px; background:#191d21; }}
     .strip {{ width:100%; height:auto; display:block; background:#000; border:1px solid #343a40; }}
-    .videos {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:12px; }}
+    .videos {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-top:12px; }}
     figure {{ margin:0; min-width:0; }}
     video {{ display:block; width:100%; background:#000; border:1px solid #343a40; }}
     figcaption {{ padding:6px 2px; color:#b8c0c9; font-size:12px; }}
-    @media(max-width:1100px) {{ .videos {{ grid-template-columns:repeat(2,1fr); }} }}
+    @media(max-width:1300px) {{ .videos {{ grid-template-columns:repeat(3,1fr); }} }}
+    @media(max-width:900px) {{ .videos {{ grid-template-columns:repeat(2,1fr); }} }}
     @media(max-width:650px) {{ main {{ padding:10px; }} .videos {{ grid-template-columns:1fr; }} }}
   </style>
 </head>
@@ -406,6 +409,10 @@ def main() -> None:
         context_video = sample["context_video"]
         if context_video.ndim != 4:
             raise ValueError(f"context_video must be [C,T,H,W], got {tuple(context_video.shape)}")
+        train_video = sample.get("video", context_video)
+        if not isinstance(train_video, torch.Tensor) or train_video.ndim != 4:
+            raise ValueError(f"video must be [C,T,H,W], got {type(train_video)!r}")
+        train_rgb = to_uint8_video(train_video)
         raw_rgb = to_uint8_video(context_video)
         xssc_video, cropped_rgb, xssc_rgb, crop_info = preprocess_xssc_exact(
             context_video,
@@ -442,6 +449,7 @@ def main() -> None:
 
         case_dir = asset_root / f"case_{position:02d}_index_{int(index):06d}"
         write_image(case_dir / "pipeline_frame0.webp", strip, args.webp_quality)
+        write_video(case_dir / "wan_train_video.mp4", train_rgb, args.fps)
         write_video(case_dir / "raw_context.mp4", raw_rgb, args.fps)
         write_video(case_dir / "center_crop.mp4", cropped_rgb, args.fps)
         write_video(case_dir / "xssc_input_256.mp4", xssc_rgb, args.fps)
@@ -454,6 +462,7 @@ def main() -> None:
             "title": title,
             "index": int(index),
             "source": source,
+            "train_video_shape": list(train_video.shape),
             "raw_shape": list(context_video.shape),
             "xssc_shape": list(xssc_video.shape),
             "box_shape": list(boxes.shape),
@@ -463,6 +472,7 @@ def main() -> None:
             "crop_info": crop_info,
             "metadata": metadata,
             "strip": str((case_dir / "pipeline_frame0.webp").relative_to(output_dir)),
+            "train_video": str((case_dir / "wan_train_video.mp4").relative_to(output_dir)),
             "raw_video": str((case_dir / "raw_context.mp4").relative_to(output_dir)),
             "crop_video": str((case_dir / "center_crop.mp4").relative_to(output_dir)),
             "xssc_video": str((case_dir / "xssc_input_256.mp4").relative_to(output_dir)),

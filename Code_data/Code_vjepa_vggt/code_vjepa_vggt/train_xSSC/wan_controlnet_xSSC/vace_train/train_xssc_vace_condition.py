@@ -3,8 +3,8 @@
 This is copied from DiffSynth's Wan training entry point at the level of the
 training loop, but the VACE condition unit is replaced locally:
 
-    input video first N ctx frames -> frozen official xSSC -> vace_context
-    input video first N ctx frames -> VACE reference-video latents
+    full input video -> frozen official xSSC -> ctx-visible/future-masked vace_context
+    input video first N ctx frames -> padded short VACE reference-video latents
 
 The official VACE model and its residual hint injection remain unchanged.  This
 version intentionally does not add custom per-layer xSSC hooks.
@@ -36,9 +36,11 @@ from xssc_vace_condition import (  # noqa: E402
     DEFAULT_XSSC_CONTEXT_FRAMES,
     DEFAULT_XSSC_ROOT,
     DEFAULT_WAN_VAE_TEMPORAL_STRIDE,
+    XSSCVACENoiseInitializer,
     XSSCVACEContextConditioner,
     XSSCVACEContextUnit,
     XSSCVACEReferenceVideoEmbedder,
+    pad_frame_count_to_wan_vae,
 )
 
 from diffsynth.core import UnifiedDataset  # noqa: E402
@@ -114,7 +116,11 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
     def _replace_pipeline_units(self) -> None:
         replaced_vace = False
         replaced_embedder = False
+        replaced_noise = False
         for index, unit in enumerate(self.pipe.units):
+            if unit.__class__.__name__ == "WanVideoUnit_NoiseInitializer":
+                self.pipe.units[index] = XSSCVACENoiseInitializer()
+                replaced_noise = True
             if unit.__class__.__name__ == "WanVideoUnit_InputVideoEmbedder":
                 self.pipe.units[index] = XSSCVACEReferenceVideoEmbedder()
                 replaced_embedder = True
@@ -123,7 +129,12 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
                 replaced_vace = True
         if not replaced_vace:
             raise RuntimeError("Could not find WanVideoUnit_VACE in the pipeline units")
-        if self.xssc_reference_frames > 1 and not replaced_embedder:
+        if self.xssc_reference_frames > 0 and not replaced_noise:
+            raise RuntimeError(
+                "Could not find WanVideoUnit_NoiseInitializer; whole-clip ctx "
+                "reference requires the xSSC-VACE noise initializer."
+            )
+        if self.xssc_reference_frames > 0 and not replaced_embedder:
             raise RuntimeError(
                 "Could not find WanVideoUnit_InputVideoEmbedder; multi-frame ctx "
                 "reference requires the xSSC-VACE reference-video embedder."
@@ -137,15 +148,18 @@ class XSSCVACEWanTrainingModule(WanTrainingModule):
     def get_pipeline_inputs(self, data):
         inputs_shared, inputs_posi, inputs_nega = super().get_pipeline_inputs(data)
         # Keep VACE's official reference marker, but source it only from ctx video.
-        # A list means each ctx frame is prepended as one independent reference
-        # latent by XSSCVACEReferenceVideoEmbedder.
+        # The ctx clip is padded to 4n+1 frames and VAE-encoded as one short video.
         if self.xssc_reference_frames > 0:
             if len(data["video"]) < self.xssc_reference_frames:
                 raise ValueError(
                     f"Need at least {self.xssc_reference_frames} frames for ctx reference, "
                     f"got {len(data['video'])}"
                 )
-            inputs_shared["vace_reference_image"] = data["video"][: self.xssc_reference_frames]
+            reference_video = list(data["video"][: self.xssc_reference_frames])
+            padded_frames = pad_frame_count_to_wan_vae(len(reference_video))
+            if padded_frames > len(reference_video):
+                reference_video.extend([reference_video[-1]] * (padded_frames - len(reference_video)))
+            inputs_shared["vace_reference_image"] = reference_video
         else:
             inputs_shared["vace_reference_image"] = None
         return inputs_shared, inputs_posi, inputs_nega

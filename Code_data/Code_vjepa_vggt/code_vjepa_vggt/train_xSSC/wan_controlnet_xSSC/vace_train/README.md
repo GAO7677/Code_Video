@@ -36,21 +36,19 @@ upstream_vace_scripts/
 
 ```text
 training video [49 frames]
-  -> take ctx first 8 frames
-  -> frozen official xSSC / RandSFQ2
-  -> slots [B,8,7,256]
-  -> VACE reference video = ctx frames 0..7
-  -> each ctx reference frame is VAE-encoded as one independent reference latent
-  -> Wan VAE temporal grouping:
-       ctx frames 0..7 -> reference condition slots 0..7
-       frame 0 -> latent condition 0
-       frame 1..4 mean -> latent condition 1
-       frame 5..7 mean -> latent condition 2
-       future latent steps repeat last ctx condition
+  -> ctx first 8 frames are padded to 9 frames
+  -> VACE reference video = padded ctx frames, encoded as one short video
+  -> frozen official xSSC / RandSFQ2 runs on the full 49-frame training video
+  -> slots [B,49,7,256]
+  -> raw-frame mask: ctx frames 0..7 visible, future frames masked
+  -> Wan VAE-style temporal grouping:
+       reference ctx clip 9 frames -> 3 reference latent steps
+       target video 49 frames -> 13 video latent steps
+       future slot content is replaced by a placeholder before condition injection
   -> learned coordinate query competes over 7 slots
-  -> xSSC vace_video condition [B,32,Tz+8,Hvae,Wvae]
-  -> mask channels [B,64,Tz+8,Hvae,Wvae], reference mask = 0, video mask = 1
-  -> dense VACE context [B,96,Tz+8,Hvae,Wvae]
+  -> inactive/reactive xSSC condition [B,32,Tz+3,Hvae,Wvae]
+  -> mask channels [B,64,Tz+3,Hvae,Wvae], reference mask = 0, ctx visible, future masked
+  -> dense VACE context [B,96,Tz+3,Hvae,Wvae]
   -> official VaceWanModel
   -> official Wan VACE residual hint injection
 ```
@@ -81,10 +79,10 @@ vace_video / vace_video_mask / vace_reference_image
 本实验改成：
 
 ```text
-video ctx frames
+full video
 -> frozen xSSC slots
--> learned slots-to-dense xSSC vace_video condition
--> vace_context [B,96,Tz+8,Hvae,Wvae]
+-> ctx-visible/future-masked slots-to-dense xSSC VACE condition
+-> vace_context [B,96,Tz+3,Hvae,Wvae]
 ```
 
 VACE 分支结构和 Wan block residual 注入方式保持官方版本。
@@ -110,8 +108,8 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC
 ## 重要注意
 
 1. 当前脚本使用官方 `UnifiedDataset`，要求 metadata 至少能提供 `video` 和 `prompt`。
-2. 当前使用 `ctx frames 0..7` 作为 `vace_reference_image` 列表；每帧独立编码成一个 reference latent，避免未来泄漏，并与官方 VACE reference 分支的一帧一 latent 语义保持一致。
-3. 默认 `xSSC_CONDITION_FRAMES=8`，xSSC 不读取未来帧。
+2. 当前使用 `ctx frames 0..7` 构造 reference video，并 repeat-pad 到 9 帧后整段 VAE 编码；49 帧训练时会得到 3 个 reference latent。
+3. 默认 `xSSC_CONDITION_FRAMES=8` 表示 ctx 可见帧数；xSSC 会抽取完整 49 帧 slots，但 future slot 内容在 VACE 条件中会被 mask 成 placeholder，避免把未来状态泄漏给 VACE。
 4. 默认保存完整训练模块 trainable keys；不要使用官方 VACE 脚本里的 `--remove_prefix_in_ckpt pipe.vace.`，否则 xSSC conditioner 权重会和 VACE 权重加载逻辑不一致。
 5. 第一版条件 map 是 learned coordinate query over slots，不是每个 Wan layer 用 hidden query 重新算 assignment。
-6. xSSC-VACE 的 `vace_video` 不是 RGB/深度/softedge 视频，而是由 xSSC slots 生成的 32 通道时序条件；后 64 通道保持 VACE mask 语义。
+6. xSSC-VACE 的 `vace_video` 不是 RGB/深度/softedge 视频，而是由 xSSC slots 生成的 inactive/reactive 32 通道时序条件；后 64 通道保持 VACE mask 语义。
