@@ -172,6 +172,23 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, 
     return records, dict(sorted(grouped.items(), key=lambda item: short_path(item[0])))
 
 
+def filter_records(
+    records: list[dict[str, Any]],
+    *,
+    include_methods: list[str] | None,
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    if include_methods:
+        include_set = set(include_methods)
+        records = [record for record in records if record["method"] in include_set]
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        key = record.get("input_json") or record.get("source_video") or record["case_stem"]
+        grouped[str(key)].append(record)
+    for rows in grouped.values():
+        rows.sort(key=lambda item: (item["case_stem"], item["method_label"], step_sort_key(item["step"])))
+    return records, dict(sorted(grouped.items(), key=lambda item: short_path(item[0])))
+
+
 def render_debug(record: dict[str, Any]) -> str:
     bits = []
     if record.get("object_context_shape"):
@@ -449,8 +466,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--output-name", default="index.html")
+    parser.add_argument(
+        "--include-method",
+        action="append",
+        default=None,
+        help="Only include this raw method directory name. Can be repeated.",
+    )
     args = parser.parse_args()
     records, grouped = collect(args.root)
+    records, grouped = filter_records(records, include_methods=args.include_method)
     manifest = {"root": str(args.root), "num_videos": len(records), "num_source_groups": len(grouped), "records": records}
     (args.root / "viewer_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (args.root / args.output_name).write_text(render(args.root, records, grouped), encoding="utf-8")
