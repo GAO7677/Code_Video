@@ -112,6 +112,30 @@ def source_key(meta: dict[str, Any], video_path: Path) -> str:
     return video_path.stem
 
 
+def make_gt_link(source_video: str | None, case_stem: str, root: Path) -> str | None:
+    if not source_video:
+        return None
+    source_path = Path(source_video)
+    if not source_path.is_file():
+        return None
+    link_dir = root / "_gt_videos"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    suffix = source_path.suffix or ".mp4"
+    link_path = link_dir / f"{case_stem}{suffix}"
+    if link_path.exists() or link_path.is_symlink():
+        try:
+            if link_path.resolve() == source_path.resolve():
+                return str(link_path)
+            link_path.unlink()
+        except OSError:
+            return None
+    try:
+        link_path.symlink_to(source_path)
+    except OSError:
+        return None
+    return str(link_path)
+
+
 def method_label(method: str) -> str:
     return METHOD_LABELS.get(method, method)
 
@@ -214,6 +238,19 @@ def render_video_card(record: dict[str, Any], root: Path) -> str:
     """
 
 
+def render_gt_card(source_video: str | None, case_stem: str, root: Path) -> str:
+    gt_link = make_gt_link(source_video, case_stem, root)
+    if not gt_link:
+        return '<div class="missing">GT/source video missing</div>'
+    return f"""
+    <div class="gt-card">
+      <video src="{rel(Path(gt_link), root)}" controls loop muted playsinline></video>
+      <div class="meta">GT/source video</div>
+      <div class="meta small"><code>{html.escape(str(source_video or ""))}</code></div>
+    </div>
+    """
+
+
 def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[dict[str, Any]]]) -> str:
     method_counts: dict[str, int] = defaultdict(int)
     step_counts: dict[str, int] = defaultdict(int)
@@ -230,6 +267,8 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
     for source, rows in grouped.items():
         first = rows[0]
         representative_ctx = next((row.get("input_ctx") for row in rows if row.get("input_ctx")), None)
+        source_video = next((row.get("source_video") for row in rows if row.get("source_video")), None)
+        case_stem = first.get("case_stem") or Path(short_path(source)).stem
         matrix: dict[tuple[str, str], dict[str, Any]] = {
             (row["method"], row["step"]): row for row in rows
         }
@@ -246,6 +285,12 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
                 </div>
                 """
             )
+        gt_html = f"""
+              <div class="gt-strip">
+                <h3>GT / source video</h3>
+                {render_gt_card(source_video, str(case_stem), root)}
+              </div>
+            """
         header_cells = "".join(f"<th>{html.escape(step)}</th>" for step in all_steps)
         method_rows = []
         for method_key in global_method_keys:
@@ -298,6 +343,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
               <h2>{html.escape(short_path(source))}</h2>
               <div class="source"><code>{html.escape(source)}</code></div>
               {ctx_html}
+              {gt_html}
               {main_table_html}
             </section>
             """
@@ -356,6 +402,27 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
       font-size: 12px;
       line-height: 1.45;
       overflow-wrap: anywhere;
+    }}
+    .gt-strip {{
+      display: grid;
+      grid-template-columns: minmax(160px, 220px) minmax(260px, 520px);
+      gap: 12px;
+      align-items: start;
+      border: 1px solid #2a3038;
+      border-radius: 8px;
+      background: #171b22;
+      padding: 10px;
+    }}
+    .gt-strip h3 {{
+      margin: 0;
+      font-size: 13px;
+      font-weight: 680;
+      color: #f0f4fb;
+    }}
+    .gt-card {{
+      min-width: 0;
+      border: 1px solid #2a3038;
+      background: #101216;
     }}
     .matrix-wrap {{
       overflow-x: auto;
@@ -446,6 +513,7 @@ def render(root: Path, records: list[dict[str, Any]], grouped: dict[str, list[di
       main {{ padding: 14px; }}
       .ctx-strip {{ grid-template-columns: 1fr; }}
       .ctx-strip img {{ border-right: 0; border-bottom: 1px solid #2a3038; }}
+      .gt-strip {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
