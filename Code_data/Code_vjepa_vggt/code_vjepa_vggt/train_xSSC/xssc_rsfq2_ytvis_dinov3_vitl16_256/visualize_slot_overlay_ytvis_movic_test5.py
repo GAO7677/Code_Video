@@ -95,6 +95,7 @@ def parse_args():
     parser.add_argument("--shadow-max-gradient-mean", type=float, default=20.0)
     parser.add_argument("--duplicate-iou", type=float, default=0.70)
     parser.add_argument("--duplicate-containment", type=float, default=0.85)
+    parser.add_argument("--movi-latest-checkpoint", type=Path, default=None)
     parser.add_argument("--extra-movic-checkpoint", type=Path, default=None)
     parser.add_argument("--extra-movic-label", default=None)
     return parser.parse_args()
@@ -343,7 +344,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     movi_steps = sorted(MOVIC_CKPT_DIR.glob("step-*.pth"))
-    latest_movi = movi_steps[-1]
+    latest_movi = (
+        args.movi_latest_checkpoint.resolve()
+        if args.movi_latest_checkpoint is not None
+        else movi_steps[-1]
+    )
     best_movi, best_policy = select_best_movi_checkpoint(movi_steps)
     specs = [
         ("ytvis_step4000", "ytvis", YTVIS_CONFIG, YTVIS_CKPT_DIR / "step-004000.pth"),
