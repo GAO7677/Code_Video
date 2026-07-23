@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-frames", type=int, default=16)
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--refresh-page-only",
+        action="store_true",
+        help="Rebuild page metadata from cached FFT results without loading DINOv3.",
+    )
     return parser.parse_args()
 
 
@@ -241,6 +246,61 @@ def relative_path(path: Path, root: Path) -> str:
     return str(path.relative_to(root))
 
 
+def stage_case_videos(cases: list[dict], output_dir: Path) -> dict[str, str]:
+    videos_dir = output_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    videos = {}
+    for case in cases:
+        source_paths = {
+            Path(case[mode]["source_key"]).resolve()
+            for mode in ("crop", "padding")
+        }
+        if len(source_paths) != 1:
+            raise ValueError(f"crop/padding source mismatch for {case['case_id']}: {source_paths}")
+        source_path = source_paths.pop()
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Missing source video for {case['case_id']}: {source_path}")
+
+        suffix = source_path.suffix or ".mp4"
+        video_link = videos_dir / f"{case['case_id']}{suffix}"
+        if video_link.is_symlink():
+            if video_link.resolve() != source_path:
+                raise FileExistsError(f"Video link points to an unexpected source: {video_link}")
+        elif video_link.exists():
+            raise FileExistsError(f"Refusing to replace existing video artifact: {video_link}")
+        else:
+            video_link.symlink_to(source_path)
+        videos[case["case_id"]] = relative_path(video_link, output_dir)
+    return videos
+
+
+def load_cached_entries(cases: list[dict], output_dir: Path) -> dict:
+    entries = {"average": {"crop": {}, "padding": {}}}
+    for case in cases:
+        case_id = case["case_id"]
+        entries[case_id] = {"crop": {}, "padding": {}}
+        for mode in ("crop", "padding"):
+            output_path = output_dir / "cases" / case_id / mode / "dinov3_feature_3dfft.png"
+            if not output_path.is_file() or not output_path.with_suffix(".json").is_file():
+                raise FileNotFoundError(f"Cached FFT result is incomplete: {output_path}")
+            summary = json.loads(output_path.with_suffix(".json").read_text(encoding="utf-8"))
+            entries[case_id][mode] = {
+                "chart": relative_path(output_path, output_dir),
+                "metrics": summary,
+            }
+
+    for mode in ("crop", "padding"):
+        output_path = output_dir / "averages" / mode / "dinov3_feature_3dfft.png"
+        if not output_path.is_file() or not output_path.with_suffix(".json").is_file():
+            raise FileNotFoundError(f"Cached average FFT result is incomplete: {output_path}")
+        summary = json.loads(output_path.with_suffix(".json").read_text(encoding="utf-8"))
+        entries["average"][mode] = {
+            "chart": relative_path(output_path, output_dir),
+            "metrics": summary,
+        }
+    return entries
+
+
 def build_html(metadata: dict) -> str:
     data = json.dumps(metadata, separators=(",", ":"))
     return f"""<!doctype html>
@@ -257,6 +317,9 @@ h1{{font-size:20px;margin:0 auto 1px 0;letter-spacing:0}}
 label{{display:grid;gap:5px;color:#666;font-size:12px;font-weight:650}}
 select{{min-width:210px;height:36px;border:1px solid #aaa;border-radius:5px;background:#fff;padding:0 10px}}
 main{{max-width:1440px;margin:auto;padding:20px}}
+.video-panel{{margin:0 auto 20px;max-width:760px}}
+.video-panel h2{{font-size:15px;margin:0 0 8px;letter-spacing:0}}
+video{{display:block;width:100%;max-height:52vh;background:#111}}
 .figure{{border:1px solid #d4d4d4;border-radius:6px;overflow:hidden}}
 img{{display:block;width:100%;height:auto}}
 table{{width:100%;margin-top:18px;border-collapse:collapse;font-variant-numeric:tabular-nums}}
@@ -273,6 +336,10 @@ thead th{{background:#f5f5f4;color:#444;font-size:12px}}
   <label>Cases<select id="case"></select></label>
 </div></header>
 <main>
+  <section id="video-panel" class="video-panel" hidden>
+    <h2>Source video</h2>
+    <video id="source-video" controls playsinline preload="metadata"></video>
+  </section>
   <figure class="figure"><img id="chart" alt="DINOv3 3D FFT chart"></figure>
   <table><thead><tr><th>Scope</th><th>Channels</th><th>Grid</th><th>ft=0 energy</th><th>dynamic ft energy</th><th>temporal centroid</th><th>low temporal</th><th>high temporal</th><th>spatial centroid</th><th>high spatial</th></tr></thead><tbody id="metrics"></tbody></table>
   <div class="method">DINOv3 features `[T,1024,16,16]` are mean-centered and Hann-windowed, then 3D FFT is applied over `[T,H,W]` per channel. Energy is summed over channels; the channel axis itself is not Fourier transformed.</div>
@@ -283,10 +350,24 @@ const mode=document.getElementById('mode');
 const caseSelect=document.getElementById('case');
 const chart=document.getElementById('chart');
 const metrics=document.getElementById('metrics');
+const videoPanel=document.getElementById('video-panel');
+const sourceVideo=document.getElementById('source-video');
 DATA.cases.forEach(item=>{{const option=document.createElement('option');option.value=item.id;option.textContent=item.label;caseSelect.appendChild(option);}});
 function render(){{
   const entry=DATA.entries[caseSelect.value][mode.value];
+  const selectedCase=DATA.cases.find(item=>item.id===caseSelect.value);
   chart.src=entry.chart;
+  if(selectedCase.video){{
+    videoPanel.hidden=false;
+    if(sourceVideo.dataset.src!==selectedCase.video){{
+      sourceVideo.dataset.src=selectedCase.video;
+      sourceVideo.src=selectedCase.video;
+      sourceVideo.load();
+    }}
+  }}else{{
+    sourceVideo.pause();
+    videoPanel.hidden=true;
+  }}
   const m=entry.metrics;
   metrics.innerHTML=`<tr><td>${{caseSelect.value==='average' ? m.case_count + '-case average' : m.frames + ' frames'}}</td><td>${{m.channels}}</td><td>${{m.grid_h}}x${{m.grid_w}}</td><td>${{m.static_ft0_energy_ratio.toFixed(4)}}</td><td>${{m.dynamic_ft_nonzero_energy_ratio.toFixed(4)}}</td><td>${{m.temporal_centroid_cycles_per_frame.toFixed(4)}}</td><td>${{m.low_temporal_energy_0_0_to_0_10.toFixed(4)}}</td><td>${{m.high_temporal_energy_ge_0_25.toFixed(4)}}</td><td>${{m.spatial_centroid_cycles_per_patch.toFixed(4)}}</td><td>${{m.high_spatial_energy_ge_0_30.toFixed(4)}}</td></tr>`;
 }}
@@ -306,54 +387,65 @@ def main() -> None:
     combined = json.loads((viewer_dir / "combined_metadata.json").read_text(encoding="utf-8"))
     cases = combined["cases"][: args.max_cases] if args.max_cases > 0 else combined["cases"]
 
-    device = torch.device(args.device)
-    if device.type == "cuda":
-        torch.cuda.set_device(device)
-    amp_dtype = getattr(torch, args.amp_dtype)
-    backbone = DINO3ViT(rearrange=True, norm_out=False).to(device).eval()
+    if args.refresh_page_only:
+        entries = load_cached_entries(cases, output_dir)
+    else:
+        device = torch.device(args.device)
+        if device.type == "cuda":
+            torch.cuda.set_device(device)
+        amp_dtype = getattr(torch, args.amp_dtype)
+        backbone = DINO3ViT(rearrange=True, norm_out=False).to(device).eval()
 
-    entries = {"average": {"crop": {}, "padding": {}}}
-    grouped: dict[str, list[tuple[dict, dict[str, np.ndarray]]]] = {"crop": [], "padding": []}
-    for case in cases:
-        entries[case["case_id"]] = {"crop": {}, "padding": {}}
+        entries = {"average": {"crop": {}, "padding": {}}}
+        grouped: dict[str, list[tuple[dict, dict[str, np.ndarray]]]] = {"crop": [], "padding": []}
+        for case in cases:
+            entries[case["case_id"]] = {"crop": {}, "padding": {}}
 
-    for case_index, case in enumerate(cases, start=1):
-        case_id = case["case_id"]
-        for mode, source_key in (("crop", "crop_dir"), ("padding", "padding_dir")):
-            output_path = output_dir / "cases" / case_id / mode / "dinov3_feature_3dfft.png"
-            complete = output_path.is_file() and output_path.with_suffix(".json").is_file() and output_path.with_suffix(".npz").is_file()
-            if complete and not args.force:
-                summary, arrays = load_result(output_path)
-            else:
-                frame_root = outputs_root / combined[source_key] / "cases" / case_id / "original"
-                rgb = read_frame_sequence(frame_root, int(case["frames"]))
-                video = normalize_rgb_frames(rgb)
-                features = extract_dinov3_features(backbone, video, device, amp_dtype, args.batch_frames)
-                summary, arrays = analyze_3dfft(features)
-                summary.update({"case_id": case_id, "mode": mode, "backbone": "dinov3_vitl16_lvd1689m", "feature_shape": list(features.shape)})
-                plot_3dfft(arrays, summary, output_path, f"{case_id} | {mode} | DINOv3 feature 3D FFT")
-                save_result(output_path, summary, arrays)
-            grouped[mode].append((summary, arrays))
-            entries[case_id][mode] = {"chart": relative_path(output_path, output_dir), "metrics": summary}
-            print(f"[case] {case_index}/{len(cases)} {case_id} {mode}", flush=True)
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
+        for case_index, case in enumerate(cases, start=1):
+            case_id = case["case_id"]
+            for mode, source_key in (("crop", "crop_dir"), ("padding", "padding_dir")):
+                output_path = output_dir / "cases" / case_id / mode / "dinov3_feature_3dfft.png"
+                complete = output_path.is_file() and output_path.with_suffix(".json").is_file() and output_path.with_suffix(".npz").is_file()
+                if complete and not args.force:
+                    summary, arrays = load_result(output_path)
+                else:
+                    frame_root = outputs_root / combined[source_key] / "cases" / case_id / "original"
+                    rgb = read_frame_sequence(frame_root, int(case["frames"]))
+                    video = normalize_rgb_frames(rgb)
+                    features = extract_dinov3_features(backbone, video, device, amp_dtype, args.batch_frames)
+                    summary, arrays = analyze_3dfft(features)
+                    summary.update({"case_id": case_id, "mode": mode, "backbone": "dinov3_vitl16_lvd1689m", "feature_shape": list(features.shape)})
+                    plot_3dfft(arrays, summary, output_path, f"{case_id} | {mode} | DINOv3 feature 3D FFT")
+                    save_result(output_path, summary, arrays)
+                grouped[mode].append((summary, arrays))
+                entries[case_id][mode] = {"chart": relative_path(output_path, output_dir), "metrics": summary}
+                print(f"[case] {case_index}/{len(cases)} {case_id} {mode}", flush=True)
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
 
-    for mode in ("crop", "padding"):
-        summary, arrays = average_results(grouped[mode])
-        output_path = output_dir / "averages" / mode / "dinov3_feature_3dfft.png"
-        plot_3dfft(arrays, summary, output_path, f"{len(cases)}-case average | {mode} | DINOv3 feature 3D FFT")
-        save_result(output_path, summary, arrays)
-        entries["average"][mode] = {"chart": relative_path(output_path, output_dir), "metrics": summary}
+        for mode in ("crop", "padding"):
+            summary, arrays = average_results(grouped[mode])
+            output_path = output_dir / "averages" / mode / "dinov3_feature_3dfft.png"
+            plot_3dfft(arrays, summary, output_path, f"{len(cases)}-case average | {mode} | DINOv3 feature 3D FFT")
+            save_result(output_path, summary, arrays)
+            entries["average"][mode] = {"chart": relative_path(output_path, output_dir), "metrics": summary}
 
+    video_paths = stage_case_videos(cases, output_dir)
     metadata = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "method": (
             "Frozen DINOv3 ViT-L/16 patch features are extracted for every frame. "
             "Each channel's [T,16,16] feature volume is transformed with 3D FFT over time and patch grid; energy is summed over channels."
         ),
-        "cases": [{"id": "average", "label": f"{len(cases)}-case average"}]
-        + [{"id": case["case_id"], "label": f"{index:02d} | {case['case_id']}"} for index, case in enumerate(cases, 1)],
+        "cases": [{"id": "average", "label": f"{len(cases)}-case average", "video": None}]
+        + [
+            {
+                "id": case["case_id"],
+                "label": f"{index:02d} | {case['case_id']}",
+                "video": video_paths[case["case_id"]],
+            }
+            for index, case in enumerate(cases, 1)
+        ],
         "entries": entries,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
