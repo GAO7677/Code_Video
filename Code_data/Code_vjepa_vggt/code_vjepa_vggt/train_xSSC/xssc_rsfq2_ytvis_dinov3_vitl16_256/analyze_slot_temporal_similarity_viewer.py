@@ -155,6 +155,41 @@ def latest_checkpoint(directory: Path) -> Path:
     return max(checkpoints, key=checkpoint_step)
 
 
+def write_within_frame_similarity(
+    slots: np.ndarray,
+    output_path: Path,
+    common_metadata: dict,
+) -> dict:
+    normalized = F.normalize(torch.from_numpy(slots).float(), dim=-1).numpy()
+    matrices = np.einsum(
+        "tsc,tuc->tsu", normalized, normalized, optimize=True
+    ).astype(np.float32)
+    _, num_slots, _ = matrices.shape
+    off_diagonal = ~np.eye(num_slots, dtype=bool)
+    off_diagonal_values = matrices[:, off_diagonal]
+    frame_means = off_diagonal_values.mean(axis=1)
+    summary = {
+        **common_metadata,
+        "frames": int(matrices.shape[0]),
+        "slots": int(num_slots),
+        "offdiag_mean": float(off_diagonal_values.mean()),
+        "offdiag_std": float(off_diagonal_values.std()),
+        "offdiag_min": float(off_diagonal_values.min()),
+        "offdiag_max": float(off_diagonal_values.max()),
+    }
+    payload = {
+        "metadata": summary,
+        "frame_offdiag_mean": np.round(frame_means, 6).tolist(),
+        "similarity": np.round(matrices, 6).tolist(),
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
 def load_specs(
     viewer_dir: Path,
     outputs_root: Path,
@@ -549,6 +584,8 @@ def main() -> None:
 
     temporal_root = viewer_dir / "temporal_similarity"
     temporal_cases: dict[str, dict] = {}
+    within_frame_root = viewer_dir / "within_frame_similarity"
+    within_frame_cases: dict[str, dict] = {}
     model_rows = [
         {
             "label": spec["label"],
@@ -573,6 +610,7 @@ def main() -> None:
         for case_index, case in enumerate(cases, start=1):
             case_id = case["case_id"]
             temporal_cases.setdefault(case_id, {"crop": [], "padding": []})
+            within_frame_cases.setdefault(case_id, {"crop": [], "padding": []})
             for mode, source_key in (
                 ("crop", "crop_dir"),
                 ("padding", "padding_dir"),
@@ -592,13 +630,26 @@ def main() -> None:
                     frequency_path.is_file()
                     and frequency_metrics_path.is_file()
                 )
-                if temporal_complete and frequency_complete and not args.force:
+                within_frame_path = (
+                    within_frame_root / "cases" / case_id / mode
+                    / f"{spec['label']}.json"
+                )
+                within_frame_complete = within_frame_path.is_file()
+                all_complete = (
+                    temporal_complete
+                    and frequency_complete
+                    and within_frame_complete
+                )
+                if all_complete and not args.force:
                     summary = json.loads(
                         metrics_path.read_text(encoding="utf-8")
                     )
                     frequency_summary = json.loads(
                         frequency_metrics_path.read_text(encoding="utf-8")
                     )
+                    within_frame_summary = json.loads(
+                        within_frame_path.read_text(encoding="utf-8")
+                    )["metadata"]
                 else:
                     frame_root = (
                         outputs_root
@@ -663,6 +714,16 @@ def main() -> None:
                         frequency_summary = json.loads(
                             frequency_metrics_path.read_text(encoding="utf-8")
                         )
+                    if not within_frame_complete or args.force:
+                        within_frame_summary = write_within_frame_similarity(
+                            slots,
+                            within_frame_path,
+                            common_metadata,
+                        )
+                    else:
+                        within_frame_summary = json.loads(
+                            within_frame_path.read_text(encoding="utf-8")
+                        )["metadata"]
                 temporal_cases[case_id][mode].append(
                     {
                         "label": spec["label"],
@@ -673,6 +734,16 @@ def main() -> None:
                             frequency_path.relative_to(viewer_dir)
                         ),
                         "frequency_metrics": frequency_summary,
+                    }
+                )
+                within_frame_cases[case_id][mode].append(
+                    {
+                        "label": spec["label"],
+                        "aliases": spec["aliases"],
+                        "data": str(
+                            within_frame_path.relative_to(viewer_dir)
+                        ),
+                        "metrics": within_frame_summary,
                     }
                 )
                 print(
@@ -701,6 +772,17 @@ def main() -> None:
         ),
         "models": model_rows,
         "cases": temporal_cases,
+    }
+    metadata["within_frame_similarity"] = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "method": (
+            "Pairwise cosine similarity between every final xSSC slotz "
+            "embedding within the same frame. The diagonal is self-similarity; "
+            "off-diagonal values measure slot redundancy."
+        ),
+        "value_range": [-1.0, 1.0],
+        "models": model_rows,
+        "cases": within_frame_cases,
     }
     combined_path.write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
