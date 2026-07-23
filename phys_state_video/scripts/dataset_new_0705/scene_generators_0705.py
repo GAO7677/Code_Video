@@ -22,6 +22,7 @@ EARTH_GRAVITY = 9.81
 NOMINAL_RENDER_WIDTH = 1280
 NOMINAL_RENDER_HEIGHT = 720
 DIRECTION_MODES = {"left_to_right", "right_to_left", "vertical"}
+DEFAULT_CAMERA_DISTANCE_SCALE = 0.88
 
 
 def build_camera_catalog() -> dict[str, CameraSpec]:
@@ -336,6 +337,12 @@ def _family_sizes(rng: np.random.Generator, family: ObjectFamilySpec) -> dict[st
     return {name: _sample_range(rng, spec) for name, spec in family.size_ranges.items()}
 
 
+def _scale_size_dict(size: dict[str, float], size_scale: float) -> dict[str, float]:
+    if math.isclose(size_scale, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        return dict(size)
+    return {name: float(value) * size_scale for name, value in size.items()}
+
+
 def _sample_motion_profile(rng: np.random.Generator, family: ScenarioFamilySpec) -> dict[str, float | str]:
     speed_min, speed_max = family.speed_range
     spin_min, spin_max = family.spin_range
@@ -533,6 +540,7 @@ def _sample_object(
     linear_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
     angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
     forced_material_key: str | None = None,
+    size_scale: float = 1.0,
 ) -> ObjectInstanceSpec:
     material_key = forced_material_key or _pick_material_key(rng, family, material_keys_by_category)
     is_dynamic = family.dynamic_default if dynamic is None else dynamic
@@ -541,7 +549,7 @@ def _sample_object(
         family_key=family.key,
         shape=family.shape,
         semantic_role=family.semantic_role,
-        size=_family_sizes(rng, family),
+        size=_scale_size_dict(_family_sizes(rng, family), size_scale),
         mass=_sample_range(rng, family.mass_range),
         friction=_sample_range(rng, family.friction_range),
         restitution=_sample_range(rng, family.restitution_range),
@@ -564,14 +572,36 @@ def _sample_object(
 
 
 def _sample_camera(rng: np.random.Generator, key: str) -> CameraSpec:
+    return _sample_camera_with_distance_scale(rng, key, camera_distance_scale=DEFAULT_CAMERA_DISTANCE_SCALE)
+
+
+def _sample_camera_with_distance_scale(
+    rng: np.random.Generator,
+    key: str,
+    *,
+    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
+) -> CameraSpec:
     camera = build_camera_catalog()[key]
     eye = tuple(float(base + rng.uniform(-jitter, jitter)) for base, jitter in zip(camera.eye, camera.jitter_eye_xyz))
     target = tuple(
         float(base + rng.uniform(-jitter, jitter))
         for base, jitter in zip(camera.target, camera.jitter_target_xyz)
     )
+    if not math.isclose(camera_distance_scale, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        eye = _scale_camera_eye_towards_target(eye, target, camera_distance_scale)
     yfov_deg = float(camera.yfov_deg + rng.uniform(-camera.jitter_fov_deg, camera.jitter_fov_deg))
     return replace(camera, eye=eye, target=target, yfov_deg=yfov_deg)
+
+
+def _scale_camera_eye_towards_target(
+    eye: tuple[float, float, float],
+    target: tuple[float, float, float],
+    camera_distance_scale: float,
+) -> tuple[float, float, float]:
+    eye_arr = np.asarray(eye, dtype=np.float64)
+    target_arr = np.asarray(target, dtype=np.float64)
+    scaled_eye = target_arr + (eye_arr - target_arr) * float(camera_distance_scale)
+    return tuple(float(value) for value in scaled_eye)
 
 
 def _make_projection_camera(camera: CameraSpec, width: int, height: int) -> dict[str, np.ndarray | float]:
@@ -659,14 +689,16 @@ def _select_best_camera_for_motion(
     rng: np.random.Generator,
     preferred_camera_keys: tuple[str, ...],
     dynamic_objects: tuple[ObjectInstanceSpec, ...],
+    *,
+    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
 ) -> tuple[str, CameraSpec]:
     camera_keys = list(preferred_camera_keys)
     rng.shuffle(camera_keys)
     best_key = camera_keys[0]
-    best_camera = _sample_camera(rng, best_key)
+    best_camera = _sample_camera_with_distance_scale(rng, best_key, camera_distance_scale=camera_distance_scale)
     best_score = sum(_visibility_score_for_object(obj, best_camera) for obj in dynamic_objects)
     for key in camera_keys[1:]:
-        candidate_camera = _sample_camera(rng, key)
+        candidate_camera = _sample_camera_with_distance_scale(rng, key, camera_distance_scale=camera_distance_scale)
         candidate_score = sum(_visibility_score_for_object(obj, candidate_camera) for obj in dynamic_objects)
         if candidate_score > best_score:
             best_key = key
@@ -689,7 +721,7 @@ def _allowed_material_keys(family: ObjectFamilySpec, material_keys_by_category: 
     return keys
 
 
-def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f1(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F1"]
     material_keys = _material_keys_by_category()
@@ -708,6 +740,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         driver_family,
         name="driver_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-2.0 + rng.uniform(-0.25, 0.10), rng.uniform(-0.55, 0.55), 0.18 + rng.uniform(-0.03, 0.10)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(orientation, driver_family.orientation_jitter_deg)),
         linear_velocity=linear_velocity,
@@ -730,7 +763,7 @@ def _make_f1(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f2(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F2"]
     material_keys = _material_keys_by_category()
@@ -749,6 +782,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         driver_family,
         name="driver_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-2.10 + rng.uniform(-0.25, 0.08), rng.uniform(-0.50, 0.50), 0.16 + rng.uniform(-0.04, 0.06)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(driver_orientation, driver_family.orientation_jitter_deg)),
         linear_velocity=driver_linear,
@@ -759,6 +793,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         target_family,
         name="target_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(rng.uniform(-0.10, 0.40), rng.uniform(-0.16, 0.18), 0.18 + rng.uniform(-0.02, 0.06)),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-12.0, 12.0)),
     )
@@ -779,7 +814,7 @@ def _make_f2(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f3(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F3"]
     material_keys = _material_keys_by_category()
@@ -799,6 +834,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         lead_family,
         name="lead_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-2.20 + rng.uniform(-0.18, 0.06), rng.uniform(-0.18, 0.18), 0.17 + rng.uniform(-0.03, 0.04)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(lead_orientation, lead_family.orientation_jitter_deg)),
         linear_velocity=lead_linear,
@@ -809,6 +845,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mid_family,
         name="mid_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(rng.uniform(-0.30, -0.02), rng.uniform(-0.18, 0.18), 0.18),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-10.0, 10.0)),
     )
@@ -817,6 +854,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         tail_family,
         name="tail_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(rng.uniform(0.58, 0.92), rng.uniform(-0.18, 0.18), 0.18),
         orientation_euler_deg=(0.0, 0.0, rng.uniform(-10.0, 10.0)),
     )
@@ -837,7 +875,7 @@ def _make_f3(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f4(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F4"]
     material_keys = _material_keys_by_category()
@@ -868,6 +906,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
                 mover_family,
                 name=f"mover_{idx}",
                 material_keys_by_category=material_keys,
+                size_scale=size_scale,
                 position=(start_x + rng.uniform(-0.18, 0.12), rng.uniform(0.50, 0.92), 0.17),
                 orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
                 linear_velocity=(direction * abs(mover_linear[0]), mover_linear[1], mover_linear[2]),
@@ -881,6 +920,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
             occluder_family,
             name="occluder_left",
             material_keys_by_category=material_keys,
+            size_scale=size_scale,
             dynamic=False,
             role="occluder",
             position=(-0.18, -0.05, 0.50),
@@ -894,6 +934,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
                 occluder_family,
                 name="occluder_right",
                 material_keys_by_category=material_keys,
+                size_scale=size_scale,
                 dynamic=False,
                 role="occluder",
                 position=(0.18, -0.05, 0.50),
@@ -917,7 +958,7 @@ def _make_f4(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f5(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F5"]
     material_keys = _material_keys_by_category()
@@ -929,6 +970,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         support_family,
         name="support_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         dynamic=False,
         role="support",
         position=(rng.uniform(-0.08, 0.20), 0.0, 0.16),
@@ -946,6 +988,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         dynamic_family,
         name="drop_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(rng.uniform(-0.28, 0.00), 0.0, rng.uniform(0.64, 1.18)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(drop_orientation, dynamic_family.orientation_jitter_deg)),
         linear_velocity=drop_linear,
@@ -968,7 +1011,7 @@ def _make_f5(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f6(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F6"]
     material_keys = _material_keys_by_category()
@@ -980,6 +1023,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         support_family,
         name="ramp_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         dynamic=False,
         role="support",
         position=(0.0, 0.0, 0.12),
@@ -998,6 +1042,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_family,
         name="slider_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-1.6 + rng.uniform(-0.2, 0.1), rng.uniform(-0.08, 0.16), 0.55 + rng.uniform(0.0, 0.22)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
         linear_velocity=(abs(mover_linear[0]), mover_linear[1], mover_linear[2]),
@@ -1020,7 +1065,7 @@ def _make_f6(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f7(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F7"]
     material_keys = _material_keys_by_category()
@@ -1038,6 +1083,7 @@ def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_family,
         name="spinner_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-1.3 + rng.uniform(-0.15, 0.15), rng.uniform(-0.10, 0.10), 0.22 + rng.uniform(-0.04, 0.06)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
         linear_velocity=(mover_linear[0] * 0.55, mover_linear[1], mover_linear[2]),
@@ -1060,7 +1106,7 @@ def _make_f7(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f8(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F8"]
     material_keys = _material_keys_by_category()
@@ -1078,6 +1124,7 @@ def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_family,
         name="bouncer_0",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-1.0 + rng.uniform(-0.15, 0.15), rng.uniform(-0.15, 0.15), 1.05 + rng.uniform(0.0, 0.30)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_orientation, mover_family.orientation_jitter_deg)),
         linear_velocity=(abs(mover_linear[0]), mover_linear[1], -abs(mover_linear[0]) * 0.08),
@@ -1100,7 +1147,7 @@ def _make_f8(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f9(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F9"]
     material_keys = _material_keys_by_category()
@@ -1114,6 +1161,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_a_family,
         name="clutter_a",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-1.6 + rng.uniform(-0.2, 0.1), rng.uniform(-0.25, 0.25), 0.18 + rng.uniform(-0.05, 0.08)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_a_ori, mover_a_family.orientation_jitter_deg)),
         linear_velocity=mover_a_lin,
@@ -1124,6 +1172,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_b_family,
         name="clutter_b",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(rng.uniform(-0.3, 0.5), rng.uniform(-0.2, 0.2), 0.18 + rng.uniform(-0.05, 0.08)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_b_ori, mover_b_family.orientation_jitter_deg)),
         linear_velocity=mover_b_lin,
@@ -1134,6 +1183,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         object_families[str(rng.choice(["slab_box", "stack_box"]))],
         name="clutter_support",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         dynamic=False,
         role="support",
         position=(rng.uniform(-0.20, 0.20), rng.uniform(-0.08, 0.08), 0.12),
@@ -1156,7 +1206,7 @@ def _make_f9(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
     )
 
 
-def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
+def _make_f10(rng: np.random.Generator, sample_key: str, size_scale: float = 1.0) -> ScenarioBlueprint:
     object_families = build_object_family_catalog()
     family = build_scenario_family_catalog()["F10"]
     material_keys = _material_keys_by_category()
@@ -1168,6 +1218,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         mover_family,
         name="edge_mover",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         position=(-1.5 + rng.uniform(-0.2, 0.1), rng.uniform(-0.10, 0.10), 0.18 + rng.uniform(-0.04, 0.06)),
         orientation_euler_deg=tuple(float(o + rng.uniform(-a, a)) for o, a in zip(mover_ori, mover_family.orientation_jitter_deg)),
         linear_velocity=mover_lin,
@@ -1178,6 +1229,7 @@ def _make_f10(rng: np.random.Generator, sample_key: str) -> ScenarioBlueprint:
         object_families[str(rng.choice(["slab_box", "stack_box", "platform_block"]))],
         name="edge_support",
         material_keys_by_category=material_keys,
+        size_scale=size_scale,
         dynamic=False,
         role="support",
         position=(rng.uniform(-0.15, 0.15), 0.0, 0.10),
@@ -1219,19 +1271,48 @@ def generate_scenario_blueprint(
     sample_key: str,
     seed: int,
     direction_mode: str = "auto",
+    size_scale: float = 1.0,
+    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
 ) -> ScenarioBlueprint:
     if family_key not in FAMILY_GENERATORS:
         raise KeyError(f"unsupported family_key={family_key}")
+    if size_scale <= 0.0:
+        raise ValueError(f"size_scale must be positive, got {size_scale}")
+    if camera_distance_scale <= 0.0:
+        raise ValueError(f"camera_distance_scale must be positive, got {camera_distance_scale}")
     if direction_mode == "auto":
         direction_mode = "left_to_right" if seed % 2 == 0 else "right_to_left"
     rng = np.random.default_rng(seed)
-    blueprint = FAMILY_GENERATORS[family_key](rng, sample_key)
+    blueprint = FAMILY_GENERATORS[family_key](rng, sample_key, size_scale)
+    blueprint = replace(
+        blueprint,
+        metadata={
+            **blueprint.metadata,
+            "size_scale": float(size_scale),
+            "camera_distance_scale": float(camera_distance_scale),
+        },
+    )
+    if not math.isclose(camera_distance_scale, 1.0, rel_tol=0.0, abs_tol=1e-9):
+        adjusted_camera = replace(
+            blueprint.camera,
+            eye=_scale_camera_eye_towards_target(
+                blueprint.camera.eye,
+                blueprint.camera.target,
+                camera_distance_scale,
+            ),
+        )
+        blueprint = replace(blueprint, camera=adjusted_camera)
     blueprint = _set_blueprint_direction(blueprint, direction_mode)
     validate_blueprint_physics(blueprint)
     return blueprint
 
 
-def preview_diversity_report(num_samples_per_family: int = 6) -> dict[str, dict[str, object]]:
+def preview_diversity_report(
+    num_samples_per_family: int = 6,
+    *,
+    size_scale: float = 1.0,
+    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
+) -> dict[str, dict[str, object]]:
     report: dict[str, dict[str, object]] = {}
     for family_key in sorted(FAMILY_GENERATORS):
         object_keys: set[str] = set()
@@ -1243,6 +1324,8 @@ def preview_diversity_report(num_samples_per_family: int = 6) -> dict[str, dict[
                 family_key=family_key,
                 sample_key=f"{family_key.lower()}_preview_{idx:03d}",
                 seed=20260705 + idx * 1009,
+                size_scale=size_scale,
+                camera_distance_scale=camera_distance_scale,
             )
             camera_keys.add(blueprint.camera_key)
             for obj in blueprint.objects:

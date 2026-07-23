@@ -23,6 +23,7 @@ from .material_catalog_0705 import (
 )
 from .object_catalog_0705 import build_object_family_catalog
 from .scene_generators_0705 import (
+    DEFAULT_CAMERA_DISTANCE_SCALE,
     build_scenario_family_catalog,
     generate_scenario_blueprint,
     validate_blueprint_physics,
@@ -1042,6 +1043,8 @@ def render_blueprint_case(
     payload["surface_key"] = blueprint.surface_key
     payload["lighting_key"] = blueprint.lighting_key
     payload["tags"] = list(blueprint.tags)
+    payload["size_scale"] = float(blueprint.metadata.get("size_scale", 1.0))
+    payload["camera_distance_scale"] = float(blueprint.metadata.get("camera_distance_scale", 1.0))
     if not preserve_states:
         payload.pop("states", None)
     payload["blueprint"] = {
@@ -1121,6 +1124,8 @@ def render_blueprint_case(
         "object_phrases_path": str(object_phrase_path),
         "width": width,
         "height": height,
+        "size_scale": float(blueprint.metadata.get("size_scale", 1.0)),
+        "camera_distance_scale": float(blueprint.metadata.get("camera_distance_scale", 1.0)),
         "caption": payload["caption"],
         "short_caption": payload["short_caption"],
         "object_nouns": payload["object_nouns"],
@@ -1146,12 +1151,16 @@ def render_generated_case(
     height: int = 720,
     scene_style: str = "indoor_realistic",
     direction_mode: str = "auto",
+    size_scale: float = 1.0,
+    camera_distance_scale: float = DEFAULT_CAMERA_DISTANCE_SCALE,
 ) -> dict:
     blueprint = generate_scenario_blueprint(
         family_key=family_key,
         sample_key=sample_key,
         seed=seed,
         direction_mode=direction_mode,
+        size_scale=size_scale,
+        camera_distance_scale=camera_distance_scale,
     )
     return render_blueprint_case(
         blueprint=blueprint,

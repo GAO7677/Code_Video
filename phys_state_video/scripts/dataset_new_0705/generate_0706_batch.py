@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 from .render_sim_0705 import render_generated_case
-from .scene_generators_0705 import build_scenario_family_catalog, preview_diversity_report
+from .scene_generators_0705 import (
+    DEFAULT_CAMERA_DISTANCE_SCALE,
+    build_scenario_family_catalog,
+    preview_diversity_report,
+)
 
 
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0706pybullet")
@@ -20,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--seed-base", type=int, default=20260706)
     parser.add_argument("--family-pattern", default="balanced")
+    parser.add_argument("--size-scale", type=float, default=1.0)
+    parser.add_argument("--camera-distance-scale", type=float, default=DEFAULT_CAMERA_DISTANCE_SCALE)
     parser.add_argument(
         "--append",
         action="store_true",
@@ -109,12 +115,16 @@ def main() -> None:
                 output_root=case_root,
                 width=args.width,
                 height=args.height,
+                size_scale=args.size_scale,
+                camera_distance_scale=args.camera_distance_scale,
             )
             manifest.append(
                 {
                     "case_id": case_id,
                     "family_key": family_key,
                     "seed": seed,
+                    "size_scale": args.size_scale,
+                    "camera_distance_scale": args.camera_distance_scale,
                     "output_root": str(case_root),
                     "video": record["video"],
                     "meta": record["meta"],
@@ -147,7 +157,8 @@ def main() -> None:
     (logs_root / "batch_summary.txt").write_text(
         (
             f"cases={len(manifest)} failures={len(failures)} pattern={args.family_pattern} "
-            f"start_index={start_index} append={bool(args.append)} width={args.width} height={args.height}\n"
+            f"start_index={start_index} append={bool(args.append)} width={args.width} height={args.height} "
+            f"size_scale={args.size_scale} camera_distance_scale={args.camera_distance_scale}\n"
         ),
         encoding="utf-8",
     )

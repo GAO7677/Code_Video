@@ -13,7 +13,11 @@ import numpy as np
 from .backfill_motion_metrics import _compact_motion_metrics
 from .compute_motion_degree import compute_video_motion
 from .render_sim_0705 import render_generated_case
-from .scene_generators_0705 import build_scenario_family_catalog, preview_diversity_report
+from .scene_generators_0705 import (
+    DEFAULT_CAMERA_DISTANCE_SCALE,
+    build_scenario_family_catalog,
+    preview_diversity_report,
+)
 
 
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5")
@@ -32,6 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--family-pattern", default="balanced")
     parser.add_argument("--scene-style", default="indoor_realistic")
     parser.add_argument("--direction-mode", default="auto")
+    parser.add_argument("--size-scale", type=float, default=1.0)
+    parser.add_argument("--camera-distance-scale", type=float, default=DEFAULT_CAMERA_DISTANCE_SCALE)
     parser.add_argument("--analysis-width", type=int, default=320)
     parser.add_argument("--top-flow-percent", type=float, default=0.05)
     parser.add_argument("--min-motion-px", type=float, default=0.05)
@@ -180,6 +186,8 @@ def _case_manifest_record(
         "object_phrase_details": case_manifest.get("object_phrase_details", []),
         "motion_metrics": motion_metrics,
         "negative_prompt": case_manifest.get("negative_prompt", ""),
+        "size_scale": case_manifest.get("size_scale", 1.0),
+        "camera_distance_scale": case_manifest.get("camera_distance_scale", 1.0),
     }
 
 
@@ -333,6 +341,8 @@ def main() -> None:
                 height=args.height,
                 scene_style=args.scene_style,
                 direction_mode=args.direction_mode,
+                size_scale=args.size_scale,
+                camera_distance_scale=args.camera_distance_scale,
             )
             motion = compute_video_motion(
                 Path(record["video"]),

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .render_sim_0705 import render_generated_case
+from .scene_generators_0705 import DEFAULT_CAMERA_DISTANCE_SCALE
 
 
 DEFAULT_OUTPUT_ROOT = Path("/data/gaoya/agent-data/outputs/dataset_new_0705_preview_case")
@@ -19,6 +20,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--size-scale", type=float, default=1.0)
+    parser.add_argument("--camera-distance-scale", type=float, default=DEFAULT_CAMERA_DISTANCE_SCALE)
     return parser.parse_args()
 
 
@@ -31,6 +34,8 @@ def main() -> None:
         output_root=args.output_root,
         width=args.width,
         height=args.height,
+        size_scale=args.size_scale,
+        camera_distance_scale=args.camera_distance_scale,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 

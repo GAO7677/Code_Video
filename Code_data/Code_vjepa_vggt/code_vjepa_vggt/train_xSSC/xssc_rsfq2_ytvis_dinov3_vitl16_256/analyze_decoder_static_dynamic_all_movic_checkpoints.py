@@ -47,6 +47,12 @@ DEFAULT_CONFIG = (
     "rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000.py"
 )
 OUTPUT_NAME = "decoder_static_dynamic_all_movic_checkpoints"
+OFFICIAL_LABEL = "official_dinov2_movic_42_0035"
+OFFICIAL_DISPLAY = "Official DINOv2 MOVi-C 42-0035"
+OFFICIAL_CHECKPOINT = Path(
+    "/data/gaoya/agent-data/weights/xssc_official_archive_rsfq2/"
+    "rsfq2_c-movi_c/42-0035.pth"
+)
 METRIC_FIELDS = (
     "static_adjacent",
     "dynamic_adjacent",
@@ -215,7 +221,7 @@ def analyze_all(
     num_slots = int(cfg.max_num)
     input_cache = {}
     for case_index, case in enumerate(cases, start=1):
-        for mode in ("crop", "padding"):
+        for mode in ("crop",):
             input_cache[(case["case_id"], mode)] = read_case_inputs(
                 case, mode, combined, args.outputs_root, num_slots
             )
@@ -236,7 +242,7 @@ def analyze_all(
         )
         for case_index, case in enumerate(cases, start=1):
             case_id = case["case_id"]
-            for mode in ("crop", "padding"):
+            for mode in ("crop",):
                 output_path = (
                     output_root / "cases" / case_id / mode / f"{label}.png"
                 )
@@ -289,7 +295,7 @@ def collect_records(
         label = f"movi_step_{step:06d}"
         for case in cases:
             case_id = case["case_id"]
-            for mode in ("crop", "padding"):
+            for mode in ("crop",):
                 chart = output_root / "cases" / case_id / mode / f"{label}.png"
                 metrics_path = chart.with_suffix(".json")
                 if not chart.is_file() or not metrics_path.is_file():
@@ -299,6 +305,8 @@ def collect_records(
                 summary = json.loads(metrics_path.read_text())
                 records.append(
                     {
+                        "series_key": label,
+                        "display_label": f"DINOv3 step-{step:06d}",
                         "step": step,
                         "label": label,
                         "checkpoint": str(checkpoint),
@@ -309,22 +317,69 @@ def collect_records(
                         "partition": summary["partition"],
                     }
                 )
+    official_root = output_root.parent / "decoder_static_dynamic"
+    for case in cases:
+        case_id = case["case_id"]
+        chart = (
+            official_root
+            / "cases"
+            / case_id
+            / "crop"
+            / f"{OFFICIAL_LABEL}.png"
+        )
+        metrics_path = chart.with_suffix(".json")
+        if not chart.is_file() or not metrics_path.is_file():
+            raise FileNotFoundError(f"Missing official artifact: {metrics_path}")
+        summary = json.loads(metrics_path.read_text())
+        records.append(
+            {
+                "series_key": OFFICIAL_LABEL,
+                "display_label": OFFICIAL_DISPLAY,
+                "step": None,
+                "label": OFFICIAL_LABEL,
+                "checkpoint": str(OFFICIAL_CHECKPOINT),
+                "case_id": case_id,
+                "mode": "crop",
+                "chart": (
+                    Path("..")
+                    / "decoder_static_dynamic"
+                    / "cases"
+                    / case_id
+                    / "crop"
+                    / f"{OFFICIAL_LABEL}.png"
+                ).as_posix(),
+                "metrics": summary_metrics(summary),
+                "partition": summary["partition"],
+            }
+        )
     return records
 
 
 def aggregate_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
-    keys = sorted({(record["step"], record["mode"]) for record in records})
-    for step, mode in keys:
+    keys = [OFFICIAL_LABEL] + [
+        f"movi_step_{step:06d}"
+        for step in sorted(
+            {
+                int(record["step"])
+                for record in records
+                if record["step"] is not None
+            }
+        )
+    ]
+    for series_key in keys:
         selected = [
             record
             for record in records
-            if record["step"] == step and record["mode"] == mode
+            if record["series_key"] == series_key
         ]
         row: dict[str, Any] = {
-            "step": step,
-            "mode": mode,
+            "series_key": series_key,
+            "label": selected[0]["display_label"],
+            "step": selected[0]["step"],
             "cases": len(selected),
+            "static_dim": int(selected[0]["partition"]["static_dim"]),
+            "dynamic_dim": int(selected[0]["partition"]["dynamic_dim"]),
         }
         for field in METRIC_FIELDS:
             values = np.asarray(
@@ -350,76 +405,101 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def plot_trends(rows: list[dict[str, Any]], output_path: Path) -> None:
     fig, axes = plt.subplots(3, 2, figsize=(14, 12), dpi=150)
     colors = {"static": "#15803d", "dynamic": "#dc2626"}
-    styles = {"crop": "-", "padding": "--"}
-    for mode in ("crop", "padding"):
-        selected = sorted(
-            (row for row in rows if row["mode"] == mode),
-            key=lambda row: row["step"],
+    official = next(row for row in rows if row["series_key"] == OFFICIAL_LABEL)
+    selected = sorted(
+        (row for row in rows if row["step"] is not None),
+        key=lambda row: row["step"],
+    )
+    steps = [row["step"] for row in selected]
+
+    def reference(axis: Any, field: str, color: str, label: str) -> None:
+        axis.axhline(
+            official[field],
+            linestyle=":",
+            linewidth=1.7,
+            color=color,
+            alpha=0.9,
+            label=f"official {label}",
         )
-        steps = [row["step"] for row in selected]
-        for partition in ("static", "dynamic"):
-            axes[0, 0].plot(
-                steps,
-                [row[f"{partition}_adjacent"] for row in selected],
-                styles[mode],
-                color=colors[partition],
-                label=f"{partition} {mode}",
-            )
-            axes[0, 1].plot(
-                steps,
-                [row[f"{partition}_frame0_final"] for row in selected],
-                styles[mode],
-                color=colors[partition],
-                label=f"{partition} {mode}",
-            )
-            axes[1, 0].plot(
-                steps,
-                [row[f"{partition}_dc_ratio"] for row in selected],
-                styles[mode],
-                color=colors[partition],
-                label=f"{partition} {mode}",
-            )
-        axes[1, 1].plot(
+
+    for partition in ("static", "dynamic"):
+        axes[0, 0].plot(
             steps,
-            [row["full_mse"] for row in selected],
-            styles[mode],
-            label=f"full {mode}",
+            [row[f"{partition}_adjacent"] for row in selected],
+            color=colors[partition],
+            label=f"DINOv3 {partition}",
         )
+        reference(
+            axes[0, 0],
+            f"{partition}_adjacent",
+            colors[partition],
+            partition,
+        )
+        axes[0, 1].plot(
+            steps,
+            [row[f"{partition}_frame0_final"] for row in selected],
+            color=colors[partition],
+            label=f"DINOv3 {partition}",
+        )
+        reference(
+            axes[0, 1],
+            f"{partition}_frame0_final",
+            colors[partition],
+            partition,
+        )
+        axes[1, 0].plot(
+            steps,
+            [row[f"{partition}_dc_ratio"] for row in selected],
+            color=colors[partition],
+            label=f"DINOv3 {partition}",
+        )
+        reference(
+            axes[1, 0],
+            f"{partition}_dc_ratio",
+            colors[partition],
+            partition,
+        )
+
+    axes[1, 1].plot(
+        steps,
+        [row["full_mse"] for row in selected],
+        color="#2563eb",
+        label="DINOv3 full",
+    )
+    reference(axes[1, 1], "full_mse", "#2563eb", "full")
+
+    for field, color, label in (
+        ("dynamic_freeze_delta", "#dc2626", "freeze dynamic"),
+        ("static_freeze_delta", "#15803d", "freeze static"),
+    ):
         axes[2, 0].plot(
             steps,
-            [row["dynamic_freeze_delta"] for row in selected],
-            styles[mode],
-            color="#dc2626",
-            label=f"freeze dynamic {mode}",
+            [row[field] for row in selected],
+            color=color,
+            label=f"DINOv3 {label}",
         )
-        axes[2, 0].plot(
-            steps,
-            [row["static_freeze_delta"] for row in selected],
-            styles[mode],
-            color="#15803d",
-            label=f"freeze static {mode}",
-        )
+        reference(axes[2, 0], field, color, label)
+
+    for field, color, label in (
+        ("full_temporal_delta_rms", "#2563eb", "full"),
+        (
+            "dynamic_frozen_temporal_delta_rms",
+            "#dc2626",
+            "dynamic frozen",
+        ),
+        (
+            "static_frozen_temporal_delta_rms",
+            "#15803d",
+            "static frozen",
+        ),
+    ):
         axes[2, 1].plot(
             steps,
-            [row["full_temporal_delta_rms"] for row in selected],
-            styles[mode],
-            color="#2563eb",
-            label=f"full {mode}",
+            [row[field] for row in selected],
+            color=color,
+            label=f"DINOv3 {label}",
         )
-        axes[2, 1].plot(
-            steps,
-            [row["dynamic_frozen_temporal_delta_rms"] for row in selected],
-            styles[mode],
-            color="#dc2626",
-            label=f"dynamic frozen {mode}",
-        )
-        axes[2, 1].plot(
-            steps,
-            [row["static_frozen_temporal_delta_rms"] for row in selected],
-            styles[mode],
-            color="#15803d",
-            label=f"static frozen {mode}",
-        )
+        reference(axes[2, 1], field, color, label)
 
     titles = (
         "Adjacent projected-memory cosine",
@@ -444,8 +524,8 @@ def plot_trends(rows: list[dict[str, Any]], output_path: Path) -> None:
         axis.grid(alpha=0.22)
         axis.legend(fontsize=8, ncol=2)
     fig.suptitle(
-        "MOVi-C DINOv3 decoder static/dynamic evolution\n"
-        "solid=center crop, dashed=padding"
+        "MOVi-C decoder static/dynamic evolution (center crop only)\n"
+        "solid=DINOv3 checkpoints, dotted=official DINOv2 MOVi-C 42-0035"
     )
     fig.tight_layout(rect=(0, 0, 1, 0.965))
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -465,61 +545,61 @@ header{background:#17202a;color:#fff;padding:18px 24px}header h1{font-size:22px;
 main{max-width:1500px;margin:auto;padding:20px 24px 40px}h2{font-size:17px;margin:25px 0 10px}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));border:1px solid var(--line);background:#fff}
 .metric{padding:14px;border-right:1px solid var(--line)}.metric:last-child{border:0}.metric b{display:block;font-size:20px}.metric span,.note{color:var(--muted)}
-.controls{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;margin:12px 0}select,button{padding:8px;border:1px solid #98a3af;background:#fff}
-.modes{display:flex}.modes button{min-width:85px}.modes button.active{background:#17202a;color:#fff}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}select{padding:8px;border:1px solid #98a3af;background:#fff}
 img{display:block;width:100%;border:1px solid var(--line);background:#fff}
 table{width:100%;border-collapse:collapse;background:#fff;font-variant-numeric:tabular-nums}th,td{padding:7px 9px;border:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}
-a{color:#93c5fd}@media(max-width:800px){.metrics{grid-template-columns:1fr 1fr}.controls{grid-template-columns:1fr}.modes{width:100%}.modes button{flex:1}}
+a{color:#93c5fd}@media(max-width:800px){.metrics{grid-template-columns:1fr 1fr}.controls{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1>MOVi-C DINOv3 Decoder Static / Dynamic Evolution</h1><p>All step-016000 through step-038000 checkpoints, using the exact existing six-panel analysis. <a href="../">Back to comparison viewer</a></p></header>
+<header><h1>MOVi-C Decoder Static / Dynamic Evolution</h1><p>Center crop only: official DINOv2 MOVi-C 42-0035 and DINOv3 step-016000 through step-038000. <a href="../">Back to comparison viewer</a></p></header>
 <main><div class="metrics">
- <div class="metric"><span>Checkpoints</span><b id="checkpoint-count">-</b></div>
+ <div class="metric"><span>Model states</span><b id="series-count">-</b></div>
  <div class="metric"><span>Cases</span><b id="case-count">-</b></div>
  <div class="metric"><span>Analyses</span><b id="analysis-count">-</b></div>
- <div class="metric"><span>Decoder split</span><b>768 + 256</b></div>
+ <div class="metric"><span>Decoder splits</span><b>288+96 / 768+256</b></div>
 </div>
 <h2>Checkpoint trends</h2><img src="assets/checkpoint_trends.png" alt="checkpoint trends">
-<p class="note">Adjacent/frame-0 similarities and spectra describe the projected decoder memory. Freeze ablations run the full four-layer decoder with one partition replaced by its per-slot temporal mean.</p>
+<p class="note">Solid lines are DINOv3 checkpoints; dotted lines are the official DINOv2 MOVi-C reference. Freeze ablations run the full four-layer decoder with one partition replaced by its per-slot temporal mean.</p>
 <h2>Case analysis</h2><div class="controls">
- <select id="case-select"></select><select id="step-select"></select>
- <div class="modes"><button id="crop-button" class="active">Crop</button><button id="padding-button">Padding</button></div>
+ <select id="case-select"></select><select id="series-select"></select>
 </div><p id="detail" class="note"></p><img id="chart" alt="decoder static dynamic analysis">
-<h2>Checkpoint means</h2><table><thead><tr><th>Step</th><th>Mode</th><th>Static adjacent</th><th>Dynamic adjacent</th><th>Static frame0-final</th><th>Dynamic frame0-final</th><th>Full MSE</th><th>Freeze dynamic ΔMSE</th><th>Freeze static ΔMSE</th></tr></thead><tbody id="summary-body"></tbody></table>
+<h2>Model-state means</h2><table><thead><tr><th>Model state</th><th>Split</th><th>Static adjacent</th><th>Dynamic adjacent</th><th>Static frame0-final</th><th>Dynamic frame0-final</th><th>Full MSE</th><th>Freeze dynamic ΔMSE</th><th>Freeze static ΔMSE</th></tr></thead><tbody id="summary-body"></tbody></table>
 </main><script>
-let DATA=null;let mode="crop";const caseSelect=document.getElementById("case-select");const stepSelect=document.getElementById("step-select");
+let DATA=null;const caseSelect=document.getElementById("case-select");const seriesSelect=document.getElementById("series-select");
 const chart=document.getElementById("chart");const detail=document.getElementById("detail");
 function option(value,label){const node=document.createElement("option");node.value=value;node.textContent=label;return node}
-function key(step,caseId,mode){return `${step}|${caseId}|${mode}`}
-function update(){const item=DATA.record_index[key(Number(stepSelect.value),caseSelect.value,mode)];chart.src=item.chart;const m=item.metrics;detail.textContent=`${item.label} | ${item.case_id} | ${mode} | static adj ${m.static_adjacent.toFixed(5)} | dynamic adj ${m.dynamic_adjacent.toFixed(5)} | full MSE ${m.full_mse.toFixed(2)}`}
-function setMode(value){mode=value;document.getElementById("crop-button").classList.toggle("active",mode==="crop");document.getElementById("padding-button").classList.toggle("active",mode==="padding");update()}
-fetch("metadata.json").then(r=>r.json()).then(data=>{DATA=data;document.getElementById("checkpoint-count").textContent=data.steps.length;document.getElementById("case-count").textContent=data.cases.length;document.getElementById("analysis-count").textContent=data.records.length;
-data.cases.forEach(c=>caseSelect.appendChild(option(c.case_id,c.case_id)));data.steps.forEach(s=>stepSelect.appendChild(option(s,`step-${String(s).padStart(6,"0")}`)));
-data.summary.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td>${r.step}</td><td>${r.mode}</td><td>${r.static_adjacent.toFixed(5)}</td><td>${r.dynamic_adjacent.toFixed(5)}</td><td>${r.static_frame0_final.toFixed(5)}</td><td>${r.dynamic_frame0_final.toFixed(5)}</td><td>${r.full_mse.toFixed(2)}</td><td>${r.dynamic_freeze_delta.toFixed(2)}</td><td>${r.static_freeze_delta.toFixed(2)}</td>`;document.getElementById("summary-body").appendChild(tr)});update()});
-caseSelect.addEventListener("change",update);stepSelect.addEventListener("change",update);document.getElementById("crop-button").addEventListener("click",()=>setMode("crop"));document.getElementById("padding-button").addEventListener("click",()=>setMode("padding"));
+function key(seriesKey,caseId){return `${seriesKey}|${caseId}`}
+function update(){const item=DATA.record_index[key(seriesSelect.value,caseSelect.value)];chart.src=item.chart;const m=item.metrics;detail.textContent=`${item.display_label} | ${item.case_id} | split ${item.partition.static_dim}+${item.partition.dynamic_dim} | static adj ${m.static_adjacent.toFixed(5)} | dynamic adj ${m.dynamic_adjacent.toFixed(5)} | full MSE ${m.full_mse.toFixed(2)}`}
+fetch("metadata.json").then(r=>r.json()).then(data=>{DATA=data;document.getElementById("series-count").textContent=data.series.length;document.getElementById("case-count").textContent=data.cases.length;document.getElementById("analysis-count").textContent=data.records.length;
+data.cases.forEach(c=>caseSelect.appendChild(option(c.case_id,c.case_id)));data.series.forEach(s=>seriesSelect.appendChild(option(s.series_key,s.label)));
+data.summary.forEach(r=>{const tr=document.createElement("tr");tr.innerHTML=`<td>${r.label}</td><td>${r.static_dim}+${r.dynamic_dim}</td><td>${r.static_adjacent.toFixed(5)}</td><td>${r.dynamic_adjacent.toFixed(5)}</td><td>${r.static_frame0_final.toFixed(5)}</td><td>${r.dynamic_frame0_final.toFixed(5)}</td><td>${r.full_mse.toFixed(2)}</td><td>${r.dynamic_freeze_delta.toFixed(2)}</td><td>${r.static_freeze_delta.toFixed(2)}</td>`;document.getElementById("summary-body").appendChild(tr)});update()});
+caseSelect.addEventListener("change",update);seriesSelect.addEventListener("change",update);
 </script></body></html>"""
     (output_root / "index.html").write_text(page)
 
 
 def write_readme(output_root: Path, metadata: dict[str, Any]) -> None:
-    text = f"""# MOVi-C DINOv3 decoder static/dynamic checkpoint evolution
+    text = f"""# MOVi-C decoder static/dynamic checkpoint evolution
 
-- Checkpoints: {len(metadata['steps'])} (`step-{metadata['steps'][0]:06d}` to
+- Model states: {len(metadata['series'])} (official DINOv2 plus
+  {len(metadata['steps'])} DINOv3 checkpoints, `step-{metadata['steps'][0]:06d}` to
   `step-{metadata['steps'][-1]:06d}`)
 - Cases: {len(metadata['cases'])}
-- Modes: center crop and padding
+- Preprocessing: center crop only
 - Total analyses: {len(metadata['records'])}
 
 The implementation imports `analyze_case` from
 `analyze_decoder_static_dynamic_viewer.py`, so the projected-memory metrics,
 frequency analysis, all-mask decoding and static/dynamic temporal-mean freeze
-ablations are identical to the existing comparison viewer.
+ablations are identical to the existing comparison viewer. The official
+DINOv2 MOVi-C results reuse the exact existing 22 center-crop artifacts from
+the parent comparison; DINOv3 uses the 23 MOVi-C transfer checkpoints.
 
 Artifacts:
-- `index.html`: interactive checkpoint/case/mode viewer
-- `metadata.json`: complete records and checkpoint summaries
-- `summary.csv`: checkpoint mean metrics
+- `index.html`: interactive model-state/case viewer
+- `metadata.json`: complete records and model-state summaries
+- `summary.csv`: model-state mean metrics
 - `assets/checkpoint_trends.png`: aggregate evolution curves
-- `cases/`: one six-panel PNG and JSON per checkpoint/case/mode
+- `cases/`: one six-panel PNG and JSON per DINOv3 checkpoint/case
 """
     (output_root / "README.md").write_text(text)
 
@@ -551,20 +631,34 @@ def build_report(
     records = collect_records(cases, checkpoints, output_root)
     summary = aggregate_records(records)
     record_index = {
-        f"{record['step']}|{record['case_id']}|{record['mode']}": record
+        f"{record['series_key']}|{record['case_id']}": record
         for record in records
     }
+    series = [
+        {
+            "series_key": row["series_key"],
+            "label": row["label"],
+            "step": row["step"],
+            "static_dim": row["static_dim"],
+            "dynamic_dim": row["dynamic_dim"],
+        }
+        for row in summary
+    ]
     metadata = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "method": (
             "Exact analyze_case implementation from "
-            "analyze_decoder_static_dynamic_viewer.py. Decoder project2 is "
-            "split 768 static + 256 dynamic; all-mask ablations freeze one "
-            "partition to its per-slot temporal mean before the full decoder."
+            "analyze_decoder_static_dynamic_viewer.py, using center-crop "
+            "inputs only. Official DINOv2 project2 is split 288 static + 96 "
+            "dynamic; DINOv3 project2 is split 768 static + 256 dynamic. "
+            "All-mask ablations freeze one partition to its per-slot temporal "
+            "mean before the full decoder."
         ),
+        "official_checkpoint": str(OFFICIAL_CHECKPOINT),
         "checkpoint_dir": str(args.checkpoint_dir.resolve()),
         "config": str(args.config.resolve()),
         "steps": [checkpoint_step(path) for path in checkpoints],
+        "series": series,
         "cases": [
             {"case_id": case["case_id"], "frames": int(case["frames"])}
             for case in cases
@@ -602,7 +696,8 @@ def main() -> None:
     output_root = args.viewer_dir / OUTPUT_NAME
     print(
         f"[setup] checkpoints={len(checkpoints)} cases={len(cases)} "
-        f"analyses={len(checkpoints) * len(cases) * 2}",
+        f"dinov3_analyses={len(checkpoints) * len(cases)} "
+        f"visible_analyses={(len(checkpoints) + 1) * len(cases)}",
         flush=True,
     )
     if args.stage in ("analyze", "all"):
