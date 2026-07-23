@@ -1,0 +1,16 @@
+{
+  "xssc_repository": "https://github.com/Genera1Z/xSSC.git",
+  "xssc_commit": "90a0ef1c3cc02c05e7a6abcee7b1adeaca107967",
+  "dinov3_repository": "https://github.com/facebookresearch/dinov3.git",
+  "dinov3_commit": "6876159a11b4df116f30f667f8c9888617df0751",
+  "dinov3_checkpoint": "/data/gaoya/ckpt/facebook-dinov3-vits16-pretrain-lvd1689m/model.safetensors",
+  "dinov3_pretraining": "LVD1689M",
+  "input_resolution": [256, 256],
+  "patch_grid": [16, 16],
+  "feature_dim": 384,
+  "slot_dim": 256,
+  "num_slots": 11,
+  "decoder_static_dim": 288,
+  "decoder_dynamic_dim": 96,
+  "config": "upstream/config-randsfq/rsfq2_c-movi_c-dinov3_vits16_256-official_dims.py"
+}

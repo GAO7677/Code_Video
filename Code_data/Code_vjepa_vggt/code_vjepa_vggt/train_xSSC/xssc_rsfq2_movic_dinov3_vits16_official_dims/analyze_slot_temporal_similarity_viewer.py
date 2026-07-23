@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+"""Add temporal slot-embedding similarity plots to the crop/padding viewer."""
+
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import re
+import sys
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from scipy.optimize import linear_sum_assignment
+import torch
+import torch.nn.functional as F
+
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "third_party/dinov3"))
+sys.path.insert(0, str(ROOT / "upstream"))
+
+DEFAULT_VIEWER_DIR = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "xssc_slot_overlay_test5_crop_padding_compare_plus24000"
+)
+DEFAULT_OUTPUTS_ROOT = Path("/data/gaoya/agent-data/outputs")
+DEFAULT_MOVIC_CKPT_DIR = Path(
+    "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/"
+    "restart_save1000_20260720T140029Z/"
+    "movi_c_transfer15000_b64_acc3_20260721T134713Z/"
+    "rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42"
+)
+DEFAULT_MOVIC_CONFIG = (
+    ROOT
+    / "upstream/config-randsfq/"
+    "rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000.py"
+)
+IMAGENET_MEAN = torch.tensor([123.675, 116.28, 103.53]).view(1, 1, 3, 1, 1)
+IMAGENET_STD = torch.tensor([58.395, 57.12, 57.375]).view(1, 1, 3, 1, 1)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--viewer-dir", type=Path, default=DEFAULT_VIEWER_DIR)
+    parser.add_argument("--outputs-root", type=Path, default=DEFAULT_OUTPUTS_ROOT)
+    parser.add_argument("--device", default="cuda:2")
+    parser.add_argument(
+        "--amp-dtype", choices=("bfloat16", "float16"), default="bfloat16"
+    )
+    parser.add_argument(
+        "--latest-movic-checkpoint",
+        type=Path,
+        default=None,
+        help="Defaults to the highest numbered checkpoint present at startup.",
+    )
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--max-cases", type=int, default=0)
+    return parser.parse_args()
+
+
+def normalize_rgb_frames(frames: np.ndarray) -> torch.Tensor:
+    video = torch.from_numpy(frames).permute(0, 3, 1, 2).float()[None]
+    return (video - IMAGENET_MEAN) / IMAGENET_STD
+
+
+def read_frame_sequence(frame_root: Path, frame_count: int) -> np.ndarray:
+    frames = []
+    for frame_id in range(frame_count):
+        path = frame_root / f"{frame_id:04d}.webp"
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        frames.append(np.asarray(Image.open(path).convert("RGB")))
+    return np.stack(frames, axis=0).astype(np.uint8)
+
+
+def boxes_from_metadata(
+    amg: dict,
+    num_slots: int,
+    frame_count: int,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    boxes = np.zeros((1, frame_count, num_slots, 4), dtype=np.float32)
+    for slot_id, xywh in enumerate(amg.get("selected_boxes_xywh", [])[:num_slots]):
+        x, y, box_w, box_h = [float(value) for value in xywh]
+        boxes[0, :, slot_id] = np.asarray(
+            [x / width, y / height, (x + box_w) / width, (y + box_h) / height],
+            dtype=np.float32,
+        )
+    return torch.from_numpy(boxes)
+
+
+def load_checkpoint(model, checkpoint: Path) -> None:
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    incompatible = model.load_state_dict(state, strict=False)
+    missing = [
+        key
+        for key in incompatible.missing_keys
+        if not key.startswith("m.encode_backbone.")
+    ]
+    if missing or incompatible.unexpected_keys:
+        raise RuntimeError(
+            f"checkpoint mismatch {checkpoint}: "
+            f"missing={missing}, unexpected={incompatible.unexpected_keys}"
+        )
+
+
+def build_model(config_file: Path, checkpoint: Path, device: torch.device):
+    from object_centric_bench.model import ModelWrap
+    from object_centric_bench.util import Config, build_from_config
+
+    cfg = Config.fromfile(config_file)
+    model = build_from_config(cfg.model)
+    model = ModelWrap(model, cfg.model_imap, cfg.model_omap)
+    model.freez(cfg.freez, verbose=False)
+    load_checkpoint(model, checkpoint)
+    return cfg, model.to(device).eval()
+
+
+def infer_slots(
+    model,
+    video: torch.Tensor,
+    boxes: torch.Tensor | None,
+    device: torch.device,
+    amp_dtype: torch.dtype,
+) -> np.ndarray:
+    batch = {"video": video.to(device, non_blocking=True)}
+    if boxes is not None:
+        batch["bbox"] = boxes.to(device, non_blocking=True)
+    with torch.inference_mode(), torch.autocast(
+        "cuda", dtype=amp_dtype, enabled=device.type == "cuda"
+    ):
+        output = model(batch=batch)
+    slots = output["slotz"][0].detach().float().cpu()
+    if slots.ndim != 3:
+        raise RuntimeError(f"expected slotz [T,S,C], got {tuple(slots.shape)}")
+    return slots.numpy()
+
+
+def checkpoint_step(path: Path) -> int:
+    match = re.search(r"step-(\d+)", path.stem)
+    return int(match.group(1)) if match else -1
+
+
+def latest_checkpoint(directory: Path) -> Path:
+    checkpoints = list(directory.glob("step-*.pth"))
+    if not checkpoints:
+        raise FileNotFoundError(f"no step checkpoints under {directory}")
+    return max(checkpoints, key=checkpoint_step)
+
+
+def write_within_frame_similarity(
+    slots: np.ndarray,
+    output_path: Path,
+    common_metadata: dict,
+) -> dict:
+    normalized = F.normalize(torch.from_numpy(slots).float(), dim=-1).numpy()
+    matrices = np.einsum(
+        "tsc,tuc->tsu", normalized, normalized, optimize=True
+    ).astype(np.float32)
+    _, num_slots, _ = matrices.shape
+    off_diagonal = ~np.eye(num_slots, dtype=bool)
+    off_diagonal_values = matrices[:, off_diagonal]
+    frame_means = off_diagonal_values.mean(axis=1)
+    summary = {
+        **common_metadata,
+        "frames": int(matrices.shape[0]),
+        "slots": int(num_slots),
+        "offdiag_mean": float(off_diagonal_values.mean()),
+        "offdiag_std": float(off_diagonal_values.std()),
+        "offdiag_min": float(off_diagonal_values.min()),
+        "offdiag_max": float(off_diagonal_values.max()),
+    }
+    payload = {
+        "metadata": summary,
+        "frame_offdiag_mean": np.round(frame_means, 6).tolist(),
+        "similarity": np.round(matrices, 6).tolist(),
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
+def load_specs(
+    viewer_dir: Path,
+    outputs_root: Path,
+    latest_movic_checkpoint: Path | None,
+) -> list[dict]:
+    combined = json.loads(
+        (viewer_dir / "combined_metadata.json").read_text(encoding="utf-8")
+    )
+    crop_metadata = json.loads(
+        (outputs_root / combined["crop_dir"] / "metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    unique: dict[str, dict] = {}
+    for item in crop_metadata["checkpoints"]:
+        checkpoint = Path(item["checkpoint"]).resolve()
+        key = str(checkpoint)
+        if key in unique:
+            unique[key]["aliases"].append(item["label"])
+            continue
+        config = Path(item["config"])
+        if not config.is_absolute():
+            config = ROOT / "upstream/config-randsfq" / config
+        unique[key] = {
+            "label": item["label"],
+            "aliases": [item["label"]],
+            "config": config.resolve(),
+            "checkpoint": checkpoint,
+        }
+
+    latest = (
+        latest_movic_checkpoint.resolve()
+        if latest_movic_checkpoint is not None
+        else latest_checkpoint(DEFAULT_MOVIC_CKPT_DIR)
+    )
+    if str(latest) not in unique:
+        step = checkpoint_step(latest)
+        unique[str(latest)] = {
+            "label": f"movi_current_{step:06d}",
+            "aliases": [f"movi_current_{step:06d}"],
+            "config": DEFAULT_MOVIC_CONFIG.resolve(),
+            "checkpoint": latest,
+        }
+    specs = list(unique.values())
+    for spec in specs:
+        if not spec["config"].is_file():
+            raise FileNotFoundError(spec["config"])
+        if not spec["checkpoint"].is_file():
+            raise FileNotFoundError(spec["checkpoint"])
+        spec["conditioned"] = "c-movi" in spec["config"].stem
+    return specs
+
+
+def cosine_metrics(slots: np.ndarray) -> tuple[dict, dict[str, np.ndarray]]:
+    normalized = F.normalize(torch.from_numpy(slots).float(), dim=-1).numpy()
+    time_steps, num_slots, _ = normalized.shape
+    adjacent_same = np.sum(normalized[:-1] * normalized[1:], axis=-1)
+    adjacent_fixed_mean = adjacent_same.mean(axis=1)
+    adjacent_matched_mean = []
+    adjacent_identity_rate = []
+    for frame_id in range(time_steps - 1):
+        cross = normalized[frame_id] @ normalized[frame_id + 1].T
+        rows, cols = linear_sum_assignment(-cross)
+        adjacent_matched_mean.append(float(cross[rows, cols].mean()))
+        adjacent_identity_rate.append(float(np.mean(cols == rows)))
+
+    time_matrix = np.einsum(
+        "tsc,usc->tus", normalized, normalized, optimize=True
+    ).mean(axis=-1)
+    frame0_fixed = time_matrix[0]
+    frame0_matched = []
+    for frame_id in range(time_steps):
+        cross = normalized[0] @ normalized[frame_id].T
+        rows, cols = linear_sum_assignment(-cross)
+        frame0_matched.append(float(cross[rows, cols].mean()))
+
+    arrays = {
+        "adjacent_same": adjacent_same.T,
+        "adjacent_fixed_mean": np.asarray(adjacent_fixed_mean),
+        "adjacent_matched_mean": np.asarray(adjacent_matched_mean),
+        "adjacent_identity_rate": np.asarray(adjacent_identity_rate),
+        "frame0_fixed_mean": np.asarray(frame0_fixed),
+        "frame0_matched_mean": np.asarray(frame0_matched),
+        "time_matrix": np.asarray(time_matrix),
+    }
+    summary = {
+        "frames": int(time_steps),
+        "slots": int(num_slots),
+        "slot_dim": int(slots.shape[-1]),
+        "adjacent_fixed_mean": float(arrays["adjacent_fixed_mean"].mean()),
+        "adjacent_matched_mean": float(arrays["adjacent_matched_mean"].mean()),
+        "adjacent_identity_rate": float(arrays["adjacent_identity_rate"].mean()),
+        "frame0_final_fixed": float(arrays["frame0_fixed_mean"][-1]),
+        "frame0_final_matched": float(arrays["frame0_matched_mean"][-1]),
+        "minimum_fixed_adjacent": float(arrays["adjacent_same"].min()),
+    }
+    return summary, arrays
+
+
+def _off_diagonal_mean(matrix: np.ndarray) -> float:
+    mask = ~np.eye(matrix.shape[0], dtype=bool)
+    return float(matrix[mask].mean())
+
+
+def frequency_metrics(slots: np.ndarray) -> tuple[dict, dict[str, np.ndarray]]:
+    values = slots.astype(np.float64)
+    time_steps, num_slots, _ = values.shape
+    raw_fft = np.fft.rfft(values, axis=0)
+    raw_power = np.abs(raw_fft) ** 2
+    dc_energy_ratio = float(
+        raw_power[0].sum() / max(raw_power.sum(), np.finfo(np.float64).eps)
+    )
+
+    centered = values - values.mean(axis=0, keepdims=True)
+    window = np.hanning(time_steps)[:, None, None]
+    spectrum = np.fft.rfft(centered * window, axis=0)[1:]
+    frequencies = np.fft.rfftfreq(time_steps, d=1.0)[1:]
+    amplitude = np.abs(spectrum)
+    power = amplitude**2
+
+    slot_power = power.sum(axis=-1).T
+    slot_relative_power = slot_power / np.maximum(
+        slot_power.sum(axis=-1, keepdims=True), np.finfo(np.float64).eps
+    )
+    normalized_slot_power = slot_power / np.maximum(
+        np.linalg.norm(slot_power, axis=-1, keepdims=True),
+        np.finfo(np.float64).eps,
+    )
+    amplitude_similarity = normalized_slot_power @ normalized_slot_power.T
+
+    phase_coherence = np.eye(num_slots, dtype=np.float64)
+    unit_phase = spectrum / np.maximum(amplitude, np.finfo(np.float64).eps)
+    for slot_a in range(num_slots):
+        for slot_b in range(slot_a + 1, num_slots):
+            weights = amplitude[:, slot_a] * amplitude[:, slot_b]
+            phase_delta = (
+                unit_phase[:, slot_a] * unit_phase[:, slot_b].conjugate()
+            )
+            coherence = np.abs((weights * phase_delta).sum()) / max(
+                weights.sum(), np.finfo(np.float64).eps
+            )
+            phase_coherence[slot_a, slot_b] = coherence
+            phase_coherence[slot_b, slot_a] = coherence
+
+    global_power = power.sum(axis=(1, 2))
+    global_relative_power = global_power / max(
+        global_power.sum(), np.finfo(np.float64).eps
+    )
+    spectral_centroid = float((frequencies * global_relative_power).sum())
+    dominant_frequency = float(frequencies[int(global_power.argmax())])
+    low_frequency_energy_ratio = float(
+        global_relative_power[frequencies <= 0.10].sum()
+    )
+    high_frequency_energy_ratio = float(
+        global_relative_power[frequencies >= 0.25].sum()
+    )
+
+    arrays = {
+        "frequencies": frequencies,
+        "slot_relative_power": slot_relative_power,
+        "amplitude_similarity": amplitude_similarity,
+        "phase_coherence": phase_coherence,
+        "global_relative_power": global_relative_power,
+    }
+    summary = {
+        "frames": int(time_steps),
+        "slots": int(num_slots),
+        "slot_dim": int(slots.shape[-1]),
+        "dc_energy_ratio": dc_energy_ratio,
+        "amplitude_similarity_offdiag_mean": _off_diagonal_mean(
+            amplitude_similarity
+        ),
+        "phase_coherence_offdiag_mean": _off_diagonal_mean(phase_coherence),
+        "spectral_centroid_cycles_per_frame": spectral_centroid,
+        "dominant_frequency_cycles_per_frame": dominant_frequency,
+        "low_frequency_energy_ratio_le_0_10": low_frequency_energy_ratio,
+        "high_frequency_energy_ratio_ge_0_25": high_frequency_energy_ratio,
+    }
+    return summary, arrays
+
+
+def plot_similarity(
+    arrays: dict[str, np.ndarray],
+    summary: dict,
+    output_path: Path,
+    title: str,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(13.4, 8.2), dpi=145)
+    heat = axes[0, 0].imshow(
+        arrays["adjacent_same"],
+        aspect="auto",
+        interpolation="nearest",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[0, 0].set_title("Adjacent-frame cosine by fixed slot ID")
+    axes[0, 0].set_xlabel("transition t -> t+1")
+    axes[0, 0].set_ylabel("slot ID")
+    fig.colorbar(heat, ax=axes[0, 0], fraction=0.046, pad=0.04)
+
+    x_adjacent = np.arange(1, len(arrays["adjacent_fixed_mean"]) + 1)
+    axes[0, 1].plot(
+        x_adjacent,
+        arrays["adjacent_fixed_mean"],
+        label="fixed slot ID",
+        linewidth=1.8,
+    )
+    axes[0, 1].plot(
+        x_adjacent,
+        arrays["adjacent_matched_mean"],
+        label="Hungarian matched",
+        linewidth=1.8,
+    )
+    axes[0, 1].set_title(
+        "Adjacent-frame mean "
+        f"(ID retention {summary['adjacent_identity_rate']:.1%})"
+    )
+    axes[0, 1].set_xlabel("destination frame")
+    axes[0, 1].set_ylabel("cosine similarity")
+    axes[0, 1].set_ylim(-0.05, 1.02)
+    axes[0, 1].grid(alpha=0.22)
+    axes[0, 1].legend(loc="lower left")
+
+    x_time = np.arange(len(arrays["frame0_fixed_mean"]))
+    axes[1, 0].plot(
+        x_time,
+        arrays["frame0_fixed_mean"],
+        label="fixed slot ID",
+        linewidth=1.8,
+    )
+    axes[1, 0].plot(
+        x_time,
+        arrays["frame0_matched_mean"],
+        label="Hungarian matched",
+        linewidth=1.8,
+    )
+    axes[1, 0].set_title("Similarity to frame 0")
+    axes[1, 0].set_xlabel("frame")
+    axes[1, 0].set_ylabel("cosine similarity")
+    axes[1, 0].set_ylim(-0.05, 1.02)
+    axes[1, 0].grid(alpha=0.22)
+    axes[1, 0].legend(loc="lower left")
+
+    matrix = axes[1, 1].imshow(
+        arrays["time_matrix"],
+        aspect="auto",
+        interpolation="nearest",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[1, 1].set_title("All-frame fixed-ID mean cosine")
+    axes[1, 1].set_xlabel("frame")
+    axes[1, 1].set_ylabel("frame")
+    fig.colorbar(matrix, ax=axes[1, 1], fraction=0.046, pad=0.04)
+
+    fig.suptitle(title, fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
+def plot_frequency_similarity(
+    arrays: dict[str, np.ndarray],
+    summary: dict,
+    output_path: Path,
+    title: str,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(13.4, 8.2), dpi=145)
+    frequencies = arrays["frequencies"]
+    relative_power = arrays["slot_relative_power"]
+    relative_db = 10.0 * np.log10(
+        np.maximum(
+            relative_power
+            / np.maximum(relative_power.max(axis=1, keepdims=True), 1e-12),
+            1e-4,
+        )
+    )
+    spectrum_heat = axes[0, 0].imshow(
+        relative_db,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="magma",
+        vmin=-40.0,
+        vmax=0.0,
+        extent=[
+            float(frequencies[0]),
+            float(frequencies[-1]),
+            relative_db.shape[0] - 0.5,
+            -0.5,
+        ],
+    )
+    axes[0, 0].set_title("Per-slot dynamic amplitude spectrum")
+    axes[0, 0].set_xlabel("frequency (cycles/frame)")
+    axes[0, 0].set_ylabel("slot ID")
+    fig.colorbar(
+        spectrum_heat,
+        ax=axes[0, 0],
+        fraction=0.046,
+        pad=0.04,
+        label="relative power (dB)",
+    )
+
+    amplitude_heat = axes[0, 1].imshow(
+        arrays["amplitude_similarity"],
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[0, 1].set_title(
+        "Slot amplitude-spectrum cosine "
+        f"(off-diag {summary['amplitude_similarity_offdiag_mean']:.3f})"
+    )
+    axes[0, 1].set_xlabel("slot ID")
+    axes[0, 1].set_ylabel("slot ID")
+    fig.colorbar(amplitude_heat, ax=axes[0, 1], fraction=0.046, pad=0.04)
+
+    phase_heat = axes[1, 0].imshow(
+        arrays["phase_coherence"],
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[1, 0].set_title(
+        "Amplitude-weighted phase coherence "
+        f"(off-diag {summary['phase_coherence_offdiag_mean']:.3f})"
+    )
+    axes[1, 0].set_xlabel("slot ID")
+    axes[1, 0].set_ylabel("slot ID")
+    fig.colorbar(phase_heat, ax=axes[1, 0], fraction=0.046, pad=0.04)
+
+    axes[1, 1].plot(
+        frequencies,
+        arrays["global_relative_power"],
+        color="#2563eb",
+        linewidth=1.8,
+    )
+    axes[1, 1].axvspan(
+        frequencies[0], min(0.10, frequencies[-1]), color="#16a34a", alpha=0.12
+    )
+    if frequencies[-1] >= 0.25:
+        axes[1, 1].axvspan(
+            0.25, frequencies[-1], color="#dc2626", alpha=0.10
+        )
+    axes[1, 1].axvline(
+        summary["spectral_centroid_cycles_per_frame"],
+        color="#d97706",
+        linestyle="--",
+        linewidth=1.5,
+        label=(
+            "centroid "
+            f"{summary['spectral_centroid_cycles_per_frame']:.3f}"
+        ),
+    )
+    axes[1, 1].set_title(
+        "Global dynamic power spectrum "
+        f"(DC energy {summary['dc_energy_ratio']:.1%})"
+    )
+    axes[1, 1].set_xlabel("frequency (cycles/frame)")
+    axes[1, 1].set_ylabel("relative dynamic power")
+    axes[1, 1].grid(alpha=0.22)
+    axes[1, 1].legend(loc="upper right")
+
+    fig.suptitle(title, fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
+def main() -> None:
+    args = parse_args()
+    viewer_dir = args.viewer_dir.resolve()
+    outputs_root = args.outputs_root.resolve()
+    combined_path = viewer_dir / "combined_metadata.json"
+    metadata = json.loads(combined_path.read_text(encoding="utf-8"))
+    cases = metadata["cases"]
+    if args.max_cases > 0:
+        cases = cases[: args.max_cases]
+
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("CUDA device requested but CUDA is unavailable")
+    device = torch.device(args.device)
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+    amp_dtype = getattr(torch, args.amp_dtype)
+    specs = load_specs(
+        viewer_dir, outputs_root, args.latest_movic_checkpoint
+    )
+
+    temporal_root = viewer_dir / "temporal_similarity"
+    temporal_cases: dict[str, dict] = {}
+    within_frame_root = viewer_dir / "within_frame_similarity"
+    within_frame_cases: dict[str, dict] = {}
+    model_rows = [
+        {
+            "label": spec["label"],
+            "aliases": spec["aliases"],
+            "config": str(spec["config"]),
+            "checkpoint": str(spec["checkpoint"]),
+            "conditioned": spec["conditioned"],
+        }
+        for spec in specs
+    ]
+
+    for model_index, spec in enumerate(specs, start=1):
+        cfg, model = build_model(
+            spec["config"], spec["checkpoint"], device
+        )
+        num_slots = int(cfg.max_num)
+        print(
+            f"[model] {model_index}/{len(specs)} {spec['label']} "
+            f"slots={num_slots} checkpoint={spec['checkpoint']}",
+            flush=True,
+        )
+        for case_index, case in enumerate(cases, start=1):
+            case_id = case["case_id"]
+            temporal_cases.setdefault(case_id, {"crop": [], "padding": []})
+            within_frame_cases.setdefault(case_id, {"crop": [], "padding": []})
+            for mode, source_key in (
+                ("crop", "crop_dir"),
+                ("padding", "padding_dir"),
+            ):
+                output_path = (
+                    temporal_root / "cases" / case_id / mode
+                    / f"{spec['label']}.png"
+                )
+                metrics_path = output_path.with_suffix(".json")
+                frequency_path = (
+                    viewer_dir / "frequency_similarity" / "cases" / case_id
+                    / mode / f"{spec['label']}.png"
+                )
+                frequency_metrics_path = frequency_path.with_suffix(".json")
+                temporal_complete = output_path.is_file() and metrics_path.is_file()
+                frequency_complete = (
+                    frequency_path.is_file()
+                    and frequency_metrics_path.is_file()
+                )
+                within_frame_path = (
+                    within_frame_root / "cases" / case_id / mode
+                    / f"{spec['label']}.json"
+                )
+                within_frame_complete = within_frame_path.is_file()
+                all_complete = (
+                    temporal_complete
+                    and frequency_complete
+                    and within_frame_complete
+                )
+                if all_complete and not args.force:
+                    summary = json.loads(
+                        metrics_path.read_text(encoding="utf-8")
+                    )
+                    frequency_summary = json.loads(
+                        frequency_metrics_path.read_text(encoding="utf-8")
+                    )
+                    within_frame_summary = json.loads(
+                        within_frame_path.read_text(encoding="utf-8")
+                    )["metadata"]
+                else:
+                    frame_root = (
+                        outputs_root
+                        / metadata[source_key]
+                        / "cases"
+                        / case_id
+                        / "original"
+                    )
+                    rgb = read_frame_sequence(frame_root, int(case["frames"]))
+                    video = normalize_rgb_frames(rgb)
+                    boxes = None
+                    if spec["conditioned"]:
+                        boxes = boxes_from_metadata(
+                            case[mode]["amg"],
+                            num_slots,
+                            len(rgb),
+                            rgb.shape[1],
+                            rgb.shape[2],
+                        )
+                    slots = infer_slots(
+                        model, video, boxes, device, amp_dtype
+                    )
+                    common_metadata = {
+                        "case_id": case_id,
+                        "mode": mode,
+                        "label": spec["label"],
+                        "checkpoint": str(spec["checkpoint"]),
+                    }
+                    if not temporal_complete or args.force:
+                        summary, arrays = cosine_metrics(slots)
+                        summary.update(common_metadata)
+                        plot_similarity(
+                            arrays,
+                            summary,
+                            output_path,
+                            f"{case_id} | {mode} | {spec['label']}",
+                        )
+                        metrics_path.write_text(
+                            json.dumps(summary, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        summary = json.loads(
+                            metrics_path.read_text(encoding="utf-8")
+                        )
+                    if not frequency_complete or args.force:
+                        frequency_summary, frequency_arrays = frequency_metrics(
+                            slots
+                        )
+                        frequency_summary.update(common_metadata)
+                        plot_frequency_similarity(
+                            frequency_arrays,
+                            frequency_summary,
+                            frequency_path,
+                            f"{case_id} | {mode} | {spec['label']}",
+                        )
+                        frequency_metrics_path.write_text(
+                            json.dumps(frequency_summary, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        frequency_summary = json.loads(
+                            frequency_metrics_path.read_text(encoding="utf-8")
+                        )
+                    if not within_frame_complete or args.force:
+                        within_frame_summary = write_within_frame_similarity(
+                            slots,
+                            within_frame_path,
+                            common_metadata,
+                        )
+                    else:
+                        within_frame_summary = json.loads(
+                            within_frame_path.read_text(encoding="utf-8")
+                        )["metadata"]
+                temporal_cases[case_id][mode].append(
+                    {
+                        "label": spec["label"],
+                        "aliases": spec["aliases"],
+                        "chart": str(output_path.relative_to(viewer_dir)),
+                        "metrics": summary,
+                        "frequency_chart": str(
+                            frequency_path.relative_to(viewer_dir)
+                        ),
+                        "frequency_metrics": frequency_summary,
+                    }
+                )
+                within_frame_cases[case_id][mode].append(
+                    {
+                        "label": spec["label"],
+                        "aliases": spec["aliases"],
+                        "data": str(
+                            within_frame_path.relative_to(viewer_dir)
+                        ),
+                        "metrics": within_frame_summary,
+                    }
+                )
+                print(
+                    f"[infer] model={model_index}/{len(specs)} "
+                    f"case={case_index}/{len(cases)} {case_id} {mode}",
+                    flush=True,
+                )
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    metadata["temporal_similarity"] = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "method": (
+            "Cosine similarity on final xSSC slotz embeddings. Fixed-ID curves "
+            "retain the original slot index; matched curves use independent "
+            "Hungarian maximum-cosine matching for each frame pair."
+        ),
+        "frequency_method": (
+            "Each slot embedding channel is temporally mean-centered, Hann "
+            "windowed, and transformed with rFFT. Amplitude similarity is "
+            "cosine similarity between slot power spectra; phase similarity "
+            "is amplitude-weighted phase-locking coherence between slots."
+        ),
+        "models": model_rows,
+        "cases": temporal_cases,
+    }
+    metadata["within_frame_similarity"] = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "method": (
+            "Pairwise cosine similarity between every final xSSC slotz "
+            "embedding within the same frame. The diagonal is self-similarity; "
+            "off-diagonal values measure slot redundancy."
+        ),
+        "value_range": [-1.0, 1.0],
+        "models": model_rows,
+        "cases": within_frame_cases,
+    }
+    combined_path.write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {
+                "viewer_dir": str(viewer_dir),
+                "models": len(specs),
+                "cases": len(cases),
+                "latest_movic_checkpoint": str(
+                    max(
+                        (
+                            spec["checkpoint"]
+                            for spec in specs
+                            if "transfer15000" in str(spec["config"])
+                        ),
+                        key=checkpoint_step,
+                    )
+                ),
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
