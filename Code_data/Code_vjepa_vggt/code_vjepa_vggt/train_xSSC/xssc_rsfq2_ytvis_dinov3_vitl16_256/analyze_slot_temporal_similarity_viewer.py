@@ -254,6 +254,88 @@ def cosine_metrics(slots: np.ndarray) -> tuple[dict, dict[str, np.ndarray]]:
     return summary, arrays
 
 
+def _off_diagonal_mean(matrix: np.ndarray) -> float:
+    mask = ~np.eye(matrix.shape[0], dtype=bool)
+    return float(matrix[mask].mean())
+
+
+def frequency_metrics(slots: np.ndarray) -> tuple[dict, dict[str, np.ndarray]]:
+    values = slots.astype(np.float64)
+    time_steps, num_slots, _ = values.shape
+    raw_fft = np.fft.rfft(values, axis=0)
+    raw_power = np.abs(raw_fft) ** 2
+    dc_energy_ratio = float(
+        raw_power[0].sum() / max(raw_power.sum(), np.finfo(np.float64).eps)
+    )
+
+    centered = values - values.mean(axis=0, keepdims=True)
+    window = np.hanning(time_steps)[:, None, None]
+    spectrum = np.fft.rfft(centered * window, axis=0)[1:]
+    frequencies = np.fft.rfftfreq(time_steps, d=1.0)[1:]
+    amplitude = np.abs(spectrum)
+    power = amplitude**2
+
+    slot_power = power.sum(axis=-1).T
+    slot_relative_power = slot_power / np.maximum(
+        slot_power.sum(axis=-1, keepdims=True), np.finfo(np.float64).eps
+    )
+    normalized_slot_power = slot_power / np.maximum(
+        np.linalg.norm(slot_power, axis=-1, keepdims=True),
+        np.finfo(np.float64).eps,
+    )
+    amplitude_similarity = normalized_slot_power @ normalized_slot_power.T
+
+    phase_coherence = np.eye(num_slots, dtype=np.float64)
+    unit_phase = spectrum / np.maximum(amplitude, np.finfo(np.float64).eps)
+    for slot_a in range(num_slots):
+        for slot_b in range(slot_a + 1, num_slots):
+            weights = amplitude[:, slot_a] * amplitude[:, slot_b]
+            phase_delta = (
+                unit_phase[:, slot_a] * unit_phase[:, slot_b].conjugate()
+            )
+            coherence = np.abs((weights * phase_delta).sum()) / max(
+                weights.sum(), np.finfo(np.float64).eps
+            )
+            phase_coherence[slot_a, slot_b] = coherence
+            phase_coherence[slot_b, slot_a] = coherence
+
+    global_power = power.sum(axis=(1, 2))
+    global_relative_power = global_power / max(
+        global_power.sum(), np.finfo(np.float64).eps
+    )
+    spectral_centroid = float((frequencies * global_relative_power).sum())
+    dominant_frequency = float(frequencies[int(global_power.argmax())])
+    low_frequency_energy_ratio = float(
+        global_relative_power[frequencies <= 0.10].sum()
+    )
+    high_frequency_energy_ratio = float(
+        global_relative_power[frequencies >= 0.25].sum()
+    )
+
+    arrays = {
+        "frequencies": frequencies,
+        "slot_relative_power": slot_relative_power,
+        "amplitude_similarity": amplitude_similarity,
+        "phase_coherence": phase_coherence,
+        "global_relative_power": global_relative_power,
+    }
+    summary = {
+        "frames": int(time_steps),
+        "slots": int(num_slots),
+        "slot_dim": int(slots.shape[-1]),
+        "dc_energy_ratio": dc_energy_ratio,
+        "amplitude_similarity_offdiag_mean": _off_diagonal_mean(
+            amplitude_similarity
+        ),
+        "phase_coherence_offdiag_mean": _off_diagonal_mean(phase_coherence),
+        "spectral_centroid_cycles_per_frame": spectral_centroid,
+        "dominant_frequency_cycles_per_frame": dominant_frequency,
+        "low_frequency_energy_ratio_le_0_10": low_frequency_energy_ratio,
+        "high_frequency_energy_ratio_ge_0_25": high_frequency_energy_ratio,
+    }
+    return summary, arrays
+
+
 def plot_similarity(
     arrays: dict[str, np.ndarray],
     summary: dict,
@@ -337,6 +419,114 @@ def plot_similarity(
     plt.close(fig)
 
 
+def plot_frequency_similarity(
+    arrays: dict[str, np.ndarray],
+    summary: dict,
+    output_path: Path,
+    title: str,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(13.4, 8.2), dpi=145)
+    frequencies = arrays["frequencies"]
+    relative_power = arrays["slot_relative_power"]
+    relative_db = 10.0 * np.log10(
+        np.maximum(
+            relative_power
+            / np.maximum(relative_power.max(axis=1, keepdims=True), 1e-12),
+            1e-4,
+        )
+    )
+    spectrum_heat = axes[0, 0].imshow(
+        relative_db,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="magma",
+        vmin=-40.0,
+        vmax=0.0,
+        extent=[
+            float(frequencies[0]),
+            float(frequencies[-1]),
+            relative_db.shape[0] - 0.5,
+            -0.5,
+        ],
+    )
+    axes[0, 0].set_title("Per-slot dynamic amplitude spectrum")
+    axes[0, 0].set_xlabel("frequency (cycles/frame)")
+    axes[0, 0].set_ylabel("slot ID")
+    fig.colorbar(
+        spectrum_heat,
+        ax=axes[0, 0],
+        fraction=0.046,
+        pad=0.04,
+        label="relative power (dB)",
+    )
+
+    amplitude_heat = axes[0, 1].imshow(
+        arrays["amplitude_similarity"],
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[0, 1].set_title(
+        "Slot amplitude-spectrum cosine "
+        f"(off-diag {summary['amplitude_similarity_offdiag_mean']:.3f})"
+    )
+    axes[0, 1].set_xlabel("slot ID")
+    axes[0, 1].set_ylabel("slot ID")
+    fig.colorbar(amplitude_heat, ax=axes[0, 1], fraction=0.046, pad=0.04)
+
+    phase_heat = axes[1, 0].imshow(
+        arrays["phase_coherence"],
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    axes[1, 0].set_title(
+        "Amplitude-weighted phase coherence "
+        f"(off-diag {summary['phase_coherence_offdiag_mean']:.3f})"
+    )
+    axes[1, 0].set_xlabel("slot ID")
+    axes[1, 0].set_ylabel("slot ID")
+    fig.colorbar(phase_heat, ax=axes[1, 0], fraction=0.046, pad=0.04)
+
+    axes[1, 1].plot(
+        frequencies,
+        arrays["global_relative_power"],
+        color="#2563eb",
+        linewidth=1.8,
+    )
+    axes[1, 1].axvspan(
+        frequencies[0], min(0.10, frequencies[-1]), color="#16a34a", alpha=0.12
+    )
+    if frequencies[-1] >= 0.25:
+        axes[1, 1].axvspan(
+            0.25, frequencies[-1], color="#dc2626", alpha=0.10
+        )
+    axes[1, 1].axvline(
+        summary["spectral_centroid_cycles_per_frame"],
+        color="#d97706",
+        linestyle="--",
+        linewidth=1.5,
+        label=(
+            "centroid "
+            f"{summary['spectral_centroid_cycles_per_frame']:.3f}"
+        ),
+    )
+    axes[1, 1].set_title(
+        "Global dynamic power spectrum "
+        f"(DC energy {summary['dc_energy_ratio']:.1%})"
+    )
+    axes[1, 1].set_xlabel("frequency (cycles/frame)")
+    axes[1, 1].set_ylabel("relative dynamic power")
+    axes[1, 1].grid(alpha=0.22)
+    axes[1, 1].legend(loc="upper right")
+
+    fig.suptitle(title, fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     viewer_dir = args.viewer_dir.resolve()
@@ -392,9 +582,22 @@ def main() -> None:
                     / f"{spec['label']}.png"
                 )
                 metrics_path = output_path.with_suffix(".json")
-                if output_path.is_file() and metrics_path.is_file() and not args.force:
+                frequency_path = (
+                    viewer_dir / "frequency_similarity" / "cases" / case_id
+                    / mode / f"{spec['label']}.png"
+                )
+                frequency_metrics_path = frequency_path.with_suffix(".json")
+                temporal_complete = output_path.is_file() and metrics_path.is_file()
+                frequency_complete = (
+                    frequency_path.is_file()
+                    and frequency_metrics_path.is_file()
+                )
+                if temporal_complete and frequency_complete and not args.force:
                     summary = json.loads(
                         metrics_path.read_text(encoding="utf-8")
+                    )
+                    frequency_summary = json.loads(
+                        frequency_metrics_path.read_text(encoding="utf-8")
                     )
                 else:
                     frame_root = (
@@ -418,31 +621,58 @@ def main() -> None:
                     slots = infer_slots(
                         model, video, boxes, device, amp_dtype
                     )
-                    summary, arrays = cosine_metrics(slots)
-                    summary.update(
-                        {
-                            "case_id": case_id,
-                            "mode": mode,
-                            "label": spec["label"],
-                            "checkpoint": str(spec["checkpoint"]),
-                        }
-                    )
-                    plot_similarity(
-                        arrays,
-                        summary,
-                        output_path,
-                        f"{case_id} | {mode} | {spec['label']}",
-                    )
-                    metrics_path.write_text(
-                        json.dumps(summary, indent=2) + "\n",
-                        encoding="utf-8",
-                    )
+                    common_metadata = {
+                        "case_id": case_id,
+                        "mode": mode,
+                        "label": spec["label"],
+                        "checkpoint": str(spec["checkpoint"]),
+                    }
+                    if not temporal_complete or args.force:
+                        summary, arrays = cosine_metrics(slots)
+                        summary.update(common_metadata)
+                        plot_similarity(
+                            arrays,
+                            summary,
+                            output_path,
+                            f"{case_id} | {mode} | {spec['label']}",
+                        )
+                        metrics_path.write_text(
+                            json.dumps(summary, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        summary = json.loads(
+                            metrics_path.read_text(encoding="utf-8")
+                        )
+                    if not frequency_complete or args.force:
+                        frequency_summary, frequency_arrays = frequency_metrics(
+                            slots
+                        )
+                        frequency_summary.update(common_metadata)
+                        plot_frequency_similarity(
+                            frequency_arrays,
+                            frequency_summary,
+                            frequency_path,
+                            f"{case_id} | {mode} | {spec['label']}",
+                        )
+                        frequency_metrics_path.write_text(
+                            json.dumps(frequency_summary, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                    else:
+                        frequency_summary = json.loads(
+                            frequency_metrics_path.read_text(encoding="utf-8")
+                        )
                 temporal_cases[case_id][mode].append(
                     {
                         "label": spec["label"],
                         "aliases": spec["aliases"],
                         "chart": str(output_path.relative_to(viewer_dir)),
                         "metrics": summary,
+                        "frequency_chart": str(
+                            frequency_path.relative_to(viewer_dir)
+                        ),
+                        "frequency_metrics": frequency_summary,
                     }
                 )
                 print(
@@ -462,6 +692,12 @@ def main() -> None:
             "Cosine similarity on final xSSC slotz embeddings. Fixed-ID curves "
             "retain the original slot index; matched curves use independent "
             "Hungarian maximum-cosine matching for each frame pair."
+        ),
+        "frequency_method": (
+            "Each slot embedding channel is temporally mean-centered, Hann "
+            "windowed, and transformed with rFFT. Amplitude similarity is "
+            "cosine similarity between slot power spectra; phase similarity "
+            "is amplitude-weighted phase-locking coherence between slots."
         ),
         "models": model_rows,
         "cases": temporal_cases,
