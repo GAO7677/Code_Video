@@ -214,11 +214,13 @@ main{{max-width:2400px;margin:auto;padding:16px}}
 .rowTitle{{margin:12px 0 8px;font-weight:700;color:#d8dde2}}
 .scroller{{overflow-x:auto;border:1px solid #2b3137;background:#15181b;padding:10px}}
 .grid{{display:grid;grid-template-columns:repeat(var(--panel-count,6),minmax(230px,1fr));gap:12px;min-width:calc(var(--panel-count,6) * 242px)}}
+.similarityGrid{{display:grid;grid-template-columns:repeat(var(--panel-count,6),minmax(520px,1fr));gap:12px;min-width:calc(var(--panel-count,6) * 532px)}}
 figure{{margin:0;background:#1c2024;border:1px solid #313840;border-radius:6px;overflow:hidden}}
 figcaption{{padding:8px 10px;color:#c4c9cf;min-height:52px}}
 strong{{display:block;color:#f3f4f6;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .metric{{color:#7dd3fc;font-size:12px}}
 img,video{{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:#050607;border-bottom:1px solid #313840}}
+img.similarity{{aspect-ratio:auto}}
 </style>
 </head>
 <body>
@@ -243,6 +245,8 @@ img,video{{display:block;width:100%;aspect-ratio:1;object-fit:contain;background
     <div class="scroller"><div id="cropFrameGrid" class="grid"></div></div>
     <div class="rowTitle">Video</div>
     <div class="scroller"><div id="cropVideoGrid" class="grid"></div></div>
+    <div class="rowTitle">Slot Embedding Temporal Similarity</div>
+    <div class="scroller"><div id="cropSimilarityGrid" class="similarityGrid"></div></div>
   </section>
   <section class="mode">
     <div class="modeTitle"><h2>Resize + Padding</h2><span>aspect-ratio preserving preprocessing</span></div>
@@ -250,6 +254,8 @@ img,video{{display:block;width:100%;aspect-ratio:1;object-fit:contain;background
     <div class="scroller"><div id="paddingFrameGrid" class="grid"></div></div>
     <div class="rowTitle">Video</div>
     <div class="scroller"><div id="paddingVideoGrid" class="grid"></div></div>
+    <div class="rowTitle">Slot Embedding Temporal Similarity</div>
+    <div class="scroller"><div id="paddingSimilarityGrid" class="similarityGrid"></div></div>
   </section>
 </main>
 <script>
@@ -275,13 +281,15 @@ function setText(el,text){{el.textContent=text;}}
 function makeCaption(label,detail){{const cap=document.createElement('figcaption');const strong=document.createElement('strong');strong.textContent=label;const span=document.createElement('span');span.className='metric';span.textContent=detail;cap.appendChild(strong);cap.appendChild(span);return cap;}}
 function makeFramePanel(mode,item){{const fig=document.createElement('figure');const img=document.createElement('img');img.dataset.pattern=item.pattern;img.dataset.mode=mode;img.alt=item.label;fig.appendChild(img);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
 function makeVideoPanel(mode,item,caseId){{const fig=document.createElement('figure');const video=document.createElement('video');video.src=videoUrl(caseId,mode,item.label);video.muted=true;video.playsInline=true;video.preload='metadata';video.dataset.label=item.label;fig.appendChild(video);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
+function makeSimilarityPanel(item){{const fig=document.createElement('figure');const img=document.createElement('img');img.src=item.chart;img.className='similarity';img.alt=`${{item.label}} temporal slot similarity`;fig.appendChild(img);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
 function panelItems(c,mode){{return [{{label:'original',detail:'input frames',pattern:c[mode].original_pattern || c[mode].originalPattern || c[mode].original_pattern}}].concat(c[mode].models.map(m=>({{label:m.label,detail:`${{m.slots}} slots | ${{m.condition}}`,pattern:m.frame_pattern}})));}}
+function similarityItems(c,mode){{const root=DATA.temporal_similarity?.cases?.[c.case_id]?.[mode] || [];return root.map(item=>({{label:item.label,chart:item.chart,detail:`fixed adj ${{item.metrics.adjacent_fixed_mean.toFixed(4)}} | matched ${{item.metrics.adjacent_matched_mean.toFixed(4)}} | ID ${{(item.metrics.adjacent_identity_rate*100).toFixed(1)}}%`}}));}}
 function fillGrid(grid,items,makePanel){{grid.style.setProperty('--panel-count',String(items.length));grid.replaceChildren(...items.map(makePanel));}}
 function updateFrames(){{const c=currentCase();frameIndex=Math.max(0,Math.min(frameIndex,c.frames-1));slider.value=String(frameIndex);counter.textContent=`${{frameIndex+1}} / ${{c.frames}}`;for(const img of document.querySelectorAll('img[data-pattern]')){{img.src=frameUrl(img.dataset.mode,{{pattern:img.dataset.pattern}},frameIndex);}}}}
 function pauseVideos(){{for(const v of allVideos())v.pause();videosPlaying=false;videoPlay.textContent='Video Play';videoStatus.textContent='paused';}}
 async function playVideos(){{const videos=allVideos();if(videos.length===0)return;let t=videos[0].ended?0:videos[0].currentTime;for(const v of videos){{if(v.ended)v.currentTime=0;else if(Math.abs(v.currentTime-t)>0.08)v.currentTime=t;}}videosPlaying=true;videoPlay.textContent='Pause';videoStatus.textContent='playing';await Promise.allSettled(videos.map(v=>v.play()));}}
 function restartVideos(){{for(const v of allVideos())v.currentTime=0;if(videosPlaying)playVideos();}}
-function render(){{pauseVideos();const c=currentCase();frameIndex=0;slider.max=String(c.frames-1);setText(caseMeta,`${{caseIndex+1}} / ${{DATA.cases.length}}   ${{c.case_id}}   ${{c.frames}} frames`);for(const mode of ['crop','padding']){{const items=panelItems(c,mode);fillGrid(document.getElementById(`${{mode}}FrameGrid`),items,item=>makeFramePanel(mode,item));fillGrid(document.getElementById(`${{mode}}VideoGrid`),items,item=>makeVideoPanel(mode,item,c.case_id));}}for(const v of allVideos()){{v.addEventListener('ended',()=>{{if(allVideos().every(x=>x.paused||x.ended))pauseVideos();}});}}updateFrames();}}
+function render(){{pauseVideos();const c=currentCase();frameIndex=0;slider.max=String(c.frames-1);setText(caseMeta,`${{caseIndex+1}} / ${{DATA.cases.length}}   ${{c.case_id}}   ${{c.frames}} frames`);for(const mode of ['crop','padding']){{const items=panelItems(c,mode);fillGrid(document.getElementById(`${{mode}}FrameGrid`),items,item=>makeFramePanel(mode,item));fillGrid(document.getElementById(`${{mode}}VideoGrid`),items,item=>makeVideoPanel(mode,item,c.case_id));const similarity=similarityItems(c,mode);fillGrid(document.getElementById(`${{mode}}SimilarityGrid`),similarity,makeSimilarityPanel);}}for(const v of allVideos()){{v.addEventListener('ended',()=>{{if(allVideos().every(x=>x.paused||x.ended))pauseVideos();}});}}updateFrames();}}
 DATA.cases.forEach((c,i)=>{{const option=document.createElement('option');option.value=String(i);option.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.case_id}}`;caseSelect.appendChild(option);}});
 caseSelect.addEventListener('change',()=>{{caseIndex=Number(caseSelect.value);render();}});
 slider.addEventListener('input',()=>{{frameIndex=Number(slider.value);updateFrames();}});
@@ -297,12 +305,31 @@ render();
 """
 
 
-def write_readme(viewer_dir: Path, stats: dict, fps: float) -> None:
+def write_readme(
+    viewer_dir: Path, stats: dict, fps: float, metadata: dict
+) -> None:
+    temporal = metadata.get("temporal_similarity")
+    temporal_text = ""
+    if temporal:
+        temporal_text = (
+            "\n## Temporal slot similarity\n\n"
+            f"{temporal['method']}\n\n"
+            "Each model panel includes fixed-ID adjacent similarity, "
+            "Hungarian-matched adjacent similarity, drift from frame 0, "
+            "and an all-frame fixed-ID similarity matrix.\n\n"
+            "Checkpoints:\n\n"
+            + "".join(
+                f"- `{item['label']}`: `{item['checkpoint']}`\n"
+                for item in temporal["models"]
+            )
+            + "\n"
+        )
     text = (
         "# xSSC crop/padding frame and video viewer\n\n"
         "This viewer is built from existing all-slot overlay webp frames. It shows a manual frame-slider row and a separate mp4 video row for each preprocessing mode.\n\n"
         f"- Video fps: {fps:g}\n"
         f"- Video encode stats: {stats}\n\n"
+        f"{temporal_text}"
         "Serve the outputs root with:\n\n"
         "```bash\n"
         "cd /data/gaoya/agent-data/outputs && python3 -m http.server 8897 --bind 0.0.0.0\n"
@@ -328,7 +355,7 @@ def main() -> None:
             args.force_videos,
         )
     (viewer_dir / "index.html").write_text(build_html(metadata, args.fps), encoding="utf-8")
-    write_readme(viewer_dir, stats, args.fps)
+    write_readme(viewer_dir, stats, args.fps, metadata)
     print(
         json.dumps(
             {
