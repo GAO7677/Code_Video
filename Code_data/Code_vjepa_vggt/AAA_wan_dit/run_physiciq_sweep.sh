@@ -56,9 +56,9 @@ run_worker() {
   local block_id
   for block_id in "${BLOCK_IDS_ARRAY[@]}"; do
     run_if_assigned wan_lora whole_block "${block_id}"
-    run_if_assigned wan_lora self_attn "${block_id}"
+    run_if_assigned wan_lora self_attn_zero "${block_id}"
     run_if_assigned xssc whole_block "${block_id}"
-    run_if_assigned xssc self_attn "${block_id}"
+    run_if_assigned xssc self_attn_zero "${block_id}"
     if [[ "${INCLUDE_OBJECT_CROSS_ATTN}" == "1" ]]; then
       run_if_assigned xssc object_cross_attn "${block_id}"
     fi

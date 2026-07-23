@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
-from dit_ablation import DiTAblationSpec, install_dit_ablation
+from dit_ablation import (
+    DiTAblationSpec,
+    annotate_result_files,
+    install_dit_ablation,
+)
 
 
 class AddOne(nn.Module):
@@ -46,13 +54,13 @@ def main() -> None:
     )
     assert torch.equal(run_block(whole), torch.ones(1, 2, 3))
 
-    self_attn = FakeDiT()
+    self_attn_zero = FakeDiT()
     install_dit_ablation(
-        self_attn,
-        DiTAblationSpec("self_attn", 7),
+        self_attn_zero,
+        DiTAblationSpec("self_attn_zero", 7),
     )
-    self_attn_out = run_block(self_attn)
-    assert torch.all(self_attn_out < baseline)
+    self_attn_zero_out = run_block(self_attn_zero)
+    assert torch.all(self_attn_zero_out < baseline)
 
     object_attn = FakeDiT()
     install_dit_ablation(
@@ -66,6 +74,34 @@ def main() -> None:
     metadata = install_dit_ablation(untouched, DiTAblationSpec())
     assert torch.equal(run_block(untouched), baseline)
     assert metadata["disabled_module"] is None
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_root = Path(temporary_directory)
+        json_path = output_root / "summary.json"
+        jsonl_path = output_root / "per_case.jsonl"
+        json_path.write_text(
+            json.dumps({"status": "complete"}),
+            encoding="utf-8",
+        )
+        jsonl_path.write_text(
+            json.dumps({"case": "case_000"}) + "\n",
+            encoding="utf-8",
+        )
+        zero_metadata = self_attn_zero._aaa_wan_dit_ablation
+        negative_prompt = "low quality, artifacts"
+        counts = annotate_result_files(
+            [output_root],
+            zero_metadata,
+            negative_prompt=negative_prompt,
+        )
+        annotated_json = json.loads(json_path.read_text(encoding="utf-8"))
+        annotated_jsonl = json.loads(jsonl_path.read_text(encoding="utf-8"))
+        assert counts == {"json_files": 1, "jsonl_files": 1}
+        assert annotated_json["dit_ablation"] == zero_metadata
+        assert annotated_jsonl["dit_ablation"] == zero_metadata
+        assert annotated_json["negative_prompt"] == negative_prompt
+        assert annotated_jsonl["negative_prompt"] == negative_prompt
+
     print("dit_ablation tests passed")
 
 

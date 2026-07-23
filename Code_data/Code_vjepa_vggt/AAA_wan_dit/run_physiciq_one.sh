@@ -7,13 +7,13 @@ set -euo pipefail
 # Examples:
 #   bash run_physiciq_one.sh wan_lora baseline none 0
 #   bash run_physiciq_one.sh wan_lora whole_block 7 0
-#   bash run_physiciq_one.sh xssc self_attn 12 1
+#   bash run_physiciq_one.sh xssc self_attn_zero 12 1
 #   bash run_physiciq_one.sh xssc object_cross_attn 12 1
 
 if [[ "$#" -ne 4 ]]; then
   echo "Usage: $0 MODEL MODE BLOCK GPU_ID" >&2
   echo "MODEL: wan_lora | xssc" >&2
-  echo "MODE: baseline | whole_block | self_attn | object_cross_attn" >&2
+  echo "MODE: baseline | whole_block | self_attn_zero | object_cross_attn" >&2
   echo "BLOCK: none for baseline, otherwise 0-29" >&2
   exit 2
 fi
@@ -30,7 +30,7 @@ TRAIN0419_ROOT=/home/gaoya/Code_Video/Code_data/Code_train/train_0419
 PYTHON="${PYTHON:-/home/gaoya/miniconda3/envs/wan-cu128/bin/python}"
 
 INPUT_LIST="${INPUT_LIST:-/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt}"
-OUTPUT_BASE="${OUTPUT_BASE:-/data/gaoya/agent-data/outputs/wan_dit_block_ablation/physicIQ}"
+OUTPUT_BASE="${OUTPUT_BASE:-/data/gaoya/AAA_test_video/0623/test/v2v_wan}"
 WAN_ROOT="${WAN_ROOT:-/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B}"
 WAN_LORA_ROOT="${WAN_LORA_ROOT:-/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500}"
 XSSC_WEIGHTS_ROOT="${XSSC_WEIGHTS_ROOT:-/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/offcial_xSSC/train_xssc_context_slots/checkpoints/step-001500}"
@@ -46,7 +46,15 @@ NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-40}"
 CFG_SCALE="${CFG_SCALE:-5.0}"
 FPS="${FPS:-30}"
 SEED="${SEED:-42}"
+LIMIT="${LIMIT:-}"
 NEGATIVE_PROMPT="${NEGATIVE_PROMPT:-模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理}"
+
+if [[ -n "${LIMIT}" ]]; then
+  if [[ ! "${LIMIT}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "LIMIT must be a positive integer, got ${LIMIT}" >&2
+    exit 2
+  fi
+fi
 
 case "${MODEL}" in
   wan_lora|xssc) ;;
@@ -65,7 +73,7 @@ case "${ABLATION_MODE}" in
     ABLATION_TAG=baseline
     ABLATION_ARGS=(--dit-ablation-mode baseline)
     ;;
-  whole_block|self_attn|object_cross_attn)
+  whole_block|self_attn_zero|object_cross_attn)
     if [[ ! "${BLOCK_TEXT}" =~ ^([0-9]|[12][0-9])$ ]]; then
       echo "BLOCK must be an integer in [0, 29], got ${BLOCK_TEXT}" >&2
       exit 2
@@ -94,12 +102,22 @@ fi
 
 EXPERIMENT_ROOT="${OUTPUT_BASE}/${MODEL}/${ABLATION_TAG}"
 mkdir -p "${EXPERIMENT_ROOT}"
+EFFECTIVE_INPUT_LIST="${INPUT_LIST}"
+if [[ -n "${LIMIT}" ]]; then
+  EFFECTIVE_INPUT_LIST="${EXPERIMENT_ROOT}/input_first_${LIMIT}.txt"
+  sed -n "1,${LIMIT}p" "${INPUT_LIST}" > "${EFFECTIVE_INPUT_LIST}"
+  if [[ ! -s "${EFFECTIVE_INPUT_LIST}" ]]; then
+    echo "Limited input list is empty: ${EFFECTIVE_INPUT_LIST}" >&2
+    exit 2
+  fi
+fi
 {
   echo "model=${MODEL}"
   echo "ablation_mode=${ABLATION_MODE}"
   echo "block=${BLOCK_TEXT}"
   echo "gpu_id=${GPU_ID}"
   echo "input_list=${INPUT_LIST}"
+  echo "effective_input_list=${EFFECTIVE_INPUT_LIST}"
   echo "wan_root=${WAN_ROOT}"
   echo "wan_lora_root=${WAN_LORA_ROOT}"
   echo "xssc_weights_root=${XSSC_WEIGHTS_ROOT}"
@@ -115,6 +133,7 @@ mkdir -p "${EXPERIMENT_ROOT}"
   echo "cfg_scale=${CFG_SCALE}"
   echo "fps=${FPS}"
   echo "seed=${SEED}"
+  echo "limit=${LIMIT:-all}"
   echo "negative_prompt=${NEGATIVE_PROMPT}"
 } > "${EXPERIMENT_ROOT}/ablation_config.txt"
 
@@ -129,7 +148,7 @@ if [[ "${MODEL}" == "wan_lora" ]]; then
     "${PYTHON}" "${SCRIPT_DIR}/infer_wan_lora_dit_ablation.py" \
     "${ABLATION_ARGS[@]}" \
     --weights-root "${WAN_LORA_ROOT}" \
-    --input-json-list-path "${INPUT_LIST}" \
+    --input-json-list-path "${EFFECTIVE_INPUT_LIST}" \
     --model-name "wan_lora_${ABLATION_TAG}" \
     --wan-root "${WAN_ROOT}" \
     --output-root "${EXPERIMENT_ROOT}" \
@@ -157,7 +176,7 @@ exec env "${COMMON_ENV[@]}" \
   "${PYTHON}" "${SCRIPT_DIR}/infer_xssc_dit_ablation.py" \
   "${ABLATION_ARGS[@]}" \
   --weights-root "${XSSC_WEIGHTS_ROOT}" \
-  --input-json-list-path "${INPUT_LIST}" \
+  --input-json-list-path "${EFFECTIVE_INPUT_LIST}" \
   --model-name "xssc_${ABLATION_TAG}" \
   --output-root "${EXPERIMENT_ROOT}" \
   --step-output-dir-name results \

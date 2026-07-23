@@ -16,7 +16,7 @@ steps, CFG 5.0, seed 42, and context-aware video conditioning by default.
 
 - `baseline`: no DiT ablation.
 - `whole_block`: target block returns its input, `x_out = x_in`.
-- `self_attn`: target self-attention returns `zeros_like(query)`.
+- `self_attn_zero`: target self-attention returns `zeros_like(query)`.
 - `object_cross_attn`: target xSSC object cross-attention returns
   `zeros_like(query)`; valid only for `xssc`.
 
@@ -26,7 +26,7 @@ Wan2.2-TI2V-5B has 30 blocks, indexed from 0 through 29.
 
 ```bash
 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_physiciq_one.sh \
-  wan_lora self_attn 12 0
+  wan_lora self_attn_zero 12 0
 ```
 
 ```bash
@@ -44,7 +44,7 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_physiciq_o
 Default outputs are written under:
 
 ```text
-/data/gaoya/agent-data/outputs/wan_dit_block_ablation/physicIQ
+/data/gaoya/AAA_test_video/0623/test/v2v_wan
 ```
 
 Set `OUTPUT_BASE` to override this root.
@@ -70,3 +70,5 @@ bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_physiciq_s
 
 The full default sweep produces 152 configurations and, for the current 67
 PhysicIQ cases, up to 10,184 videos. Existing complete outputs are skipped.
+Every generated JSON/JSONL artifact records the exact mode and block under
+the top-level `dit_ablation` field.

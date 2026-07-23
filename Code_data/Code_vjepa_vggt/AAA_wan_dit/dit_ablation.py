@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import types
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -12,7 +14,7 @@ import torch
 ABLATION_MODES = (
     "baseline",
     "whole_block",
-    "self_attn",
+    "self_attn_zero",
     "object_cross_attn",
 )
 
@@ -85,7 +87,7 @@ def install_dit_ablation(
         if spec.mode == "whole_block":
             disabled_module = f"blocks.{spec.block_id}"
             _replace_forward(block, _whole_block_identity)
-        elif spec.mode == "self_attn":
+        elif spec.mode == "self_attn_zero":
             self_attn = getattr(block, "self_attn", None)
             if self_attn is None:
                 raise AttributeError(f"Wan block {spec.block_id} has no self_attn")
@@ -102,14 +104,92 @@ def install_dit_ablation(
             _replace_forward(object_cross_attn, _attention_zero)
 
     metadata = asdict(spec)
+    if spec.mode == "self_attn_zero":
+        attention_semantics = "self_attention_output=zeros_like(query)"
+    elif spec.mode == "object_cross_attn":
+        attention_semantics = "object_cross_attention_output=zeros_like(query)"
+    else:
+        attention_semantics = None
     metadata.update(
         {
             "tag": spec.tag,
             "num_dit_blocks": num_blocks,
             "disabled_module": disabled_module,
             "whole_block_semantics": "x_out=x_in",
-            "attention_semantics": "attention_output=zeros_like(query)",
+            "attention_semantics": attention_semantics,
         }
     )
     dit._aaa_wan_dit_ablation = metadata
     return metadata
+
+
+def cli_value(args: list[str], option: str) -> str | None:
+    try:
+        index = args.index(option)
+    except ValueError:
+        return None
+    if index + 1 >= len(args):
+        raise ValueError(f"{option} requires a value")
+    return args[index + 1]
+
+
+def cli_path(args: list[str], option: str) -> Path | None:
+    value = cli_value(args, option)
+    if value is None:
+        return None
+    return Path(value).expanduser().resolve()
+
+
+def annotate_result_files(
+    roots: list[Path | None],
+    metadata: dict[str, object],
+    *,
+    negative_prompt: str | None = None,
+) -> dict[str, int]:
+    """Add the exact ablation spec to generated JSON and JSONL artifacts."""
+    json_paths: set[Path] = set()
+    jsonl_paths: set[Path] = set()
+    for root in roots:
+        if root is None or not root.is_dir():
+            continue
+        json_paths.update(root.rglob("*.json"))
+        jsonl_paths.update(root.rglob("*.jsonl"))
+
+    json_count = 0
+    for path in sorted(json_paths):
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            continue
+        payload["dit_ablation"] = metadata
+        if negative_prompt is not None:
+            payload["negative_prompt"] = negative_prompt
+        temporary_path = path.with_suffix(path.suffix + ".tmp")
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        temporary_path.replace(path)
+        json_count += 1
+
+    jsonl_count = 0
+    for path in sorted(jsonl_paths):
+        annotated_lines: list[str] = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                payload = json.loads(stripped)
+                if isinstance(payload, dict):
+                    payload["dit_ablation"] = metadata
+                    if negative_prompt is not None:
+                        payload["negative_prompt"] = negative_prompt
+                annotated_lines.append(json.dumps(payload, ensure_ascii=False))
+        temporary_path = path.with_suffix(path.suffix + ".tmp")
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            for line in annotated_lines:
+                handle.write(line + "\n")
+        temporary_path.replace(path)
+        jsonl_count += 1
+
+    return {"json_files": json_count, "jsonl_files": jsonl_count}
