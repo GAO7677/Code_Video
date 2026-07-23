@@ -249,6 +249,8 @@ img.similarity{{aspect-ratio:auto}}
     <div class="scroller"><div id="cropSimilarityGrid" class="similarityGrid"></div></div>
     <div class="rowTitle">Slot Embedding Frequency Similarity</div>
     <div class="scroller"><div id="cropFrequencyGrid" class="similarityGrid"></div></div>
+    <div class="rowTitle">Decoder Static / Dynamic Analysis</div>
+    <div class="scroller"><div id="cropDecoderGrid" class="similarityGrid"></div></div>
   </section>
   <section class="mode">
     <div class="modeTitle"><h2>Resize + Padding</h2><span>aspect-ratio preserving preprocessing</span></div>
@@ -260,6 +262,8 @@ img.similarity{{aspect-ratio:auto}}
     <div class="scroller"><div id="paddingSimilarityGrid" class="similarityGrid"></div></div>
     <div class="rowTitle">Slot Embedding Frequency Similarity</div>
     <div class="scroller"><div id="paddingFrequencyGrid" class="similarityGrid"></div></div>
+    <div class="rowTitle">Decoder Static / Dynamic Analysis</div>
+    <div class="scroller"><div id="paddingDecoderGrid" class="similarityGrid"></div></div>
   </section>
 </main>
 <script>
@@ -287,14 +291,16 @@ function makeFramePanel(mode,item){{const fig=document.createElement('figure');c
 function makeVideoPanel(mode,item,caseId){{const fig=document.createElement('figure');const video=document.createElement('video');video.src=videoUrl(caseId,mode,item.label);video.muted=true;video.playsInline=true;video.preload='metadata';video.dataset.label=item.label;fig.appendChild(video);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
 function makeSimilarityPanel(item){{const fig=document.createElement('figure');const img=document.createElement('img');img.src=item.chart;img.className='similarity';img.alt=`${{item.label}} temporal slot similarity`;fig.appendChild(img);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
 function makeFrequencyPanel(item){{const fig=document.createElement('figure');const img=document.createElement('img');img.src=item.frequencyChart;img.className='similarity';img.alt=`${{item.label}} frequency slot similarity`;fig.appendChild(img);fig.appendChild(makeCaption(item.label,item.frequencyDetail));return fig;}}
+function makeDecoderPanel(item){{const fig=document.createElement('figure');const img=document.createElement('img');img.src=item.chart;img.className='similarity';img.alt=`${{item.label}} decoder static dynamic analysis`;fig.appendChild(img);fig.appendChild(makeCaption(item.label,item.detail));return fig;}}
 function panelItems(c,mode){{return [{{label:'original',detail:'input frames',pattern:c[mode].original_pattern || c[mode].originalPattern || c[mode].original_pattern}}].concat(c[mode].models.map(m=>({{label:m.label,detail:`${{m.slots}} slots | ${{m.condition}}`,pattern:m.frame_pattern}})));}}
 function similarityItems(c,mode){{const root=DATA.temporal_similarity?.cases?.[c.case_id]?.[mode] || [];return root.map(item=>({{label:item.label,chart:item.chart,detail:`fixed adj ${{item.metrics.adjacent_fixed_mean.toFixed(4)}} | matched ${{item.metrics.adjacent_matched_mean.toFixed(4)}} | ID ${{(item.metrics.adjacent_identity_rate*100).toFixed(1)}}%`,frequencyChart:item.frequency_chart,frequencyDetail:`amplitude ${{item.frequency_metrics.amplitude_similarity_offdiag_mean.toFixed(4)}} | phase ${{item.frequency_metrics.phase_coherence_offdiag_mean.toFixed(4)}} | centroid ${{item.frequency_metrics.spectral_centroid_cycles_per_frame.toFixed(4)}} cyc/frame`}}));}}
+function decoderItems(c,mode){{const root=DATA.decoder_static_dynamic?.cases?.[c.case_id]?.[mode] || [];return root.map(item=>{{const m=item.metrics;return {{label:item.label,chart:item.chart,detail:`static adj ${{m.static.temporal.adjacent_fixed_mean.toFixed(4)}} | dynamic adj ${{m.dynamic.temporal.adjacent_fixed_mean.toFixed(4)}} | masked MSE ${{m.decoder.full.mse_to_target.toFixed(2)}}`}};}});}}
 function fillGrid(grid,items,makePanel){{grid.style.setProperty('--panel-count',String(items.length));grid.replaceChildren(...items.map(makePanel));}}
 function updateFrames(){{const c=currentCase();frameIndex=Math.max(0,Math.min(frameIndex,c.frames-1));slider.value=String(frameIndex);counter.textContent=`${{frameIndex+1}} / ${{c.frames}}`;for(const img of document.querySelectorAll('img[data-pattern]')){{img.src=frameUrl(img.dataset.mode,{{pattern:img.dataset.pattern}},frameIndex);}}}}
 function pauseVideos(){{for(const v of allVideos())v.pause();videosPlaying=false;videoPlay.textContent='Video Play';videoStatus.textContent='paused';}}
 async function playVideos(){{const videos=allVideos();if(videos.length===0)return;let t=videos[0].ended?0:videos[0].currentTime;for(const v of videos){{if(v.ended)v.currentTime=0;else if(Math.abs(v.currentTime-t)>0.08)v.currentTime=t;}}videosPlaying=true;videoPlay.textContent='Pause';videoStatus.textContent='playing';await Promise.allSettled(videos.map(v=>v.play()));}}
 function restartVideos(){{for(const v of allVideos())v.currentTime=0;if(videosPlaying)playVideos();}}
-function render(){{pauseVideos();const c=currentCase();frameIndex=0;slider.max=String(c.frames-1);setText(caseMeta,`${{caseIndex+1}} / ${{DATA.cases.length}}   ${{c.case_id}}   ${{c.frames}} frames`);for(const mode of ['crop','padding']){{const items=panelItems(c,mode);fillGrid(document.getElementById(`${{mode}}FrameGrid`),items,item=>makeFramePanel(mode,item));fillGrid(document.getElementById(`${{mode}}VideoGrid`),items,item=>makeVideoPanel(mode,item,c.case_id));const similarity=similarityItems(c,mode);fillGrid(document.getElementById(`${{mode}}SimilarityGrid`),similarity,makeSimilarityPanel);fillGrid(document.getElementById(`${{mode}}FrequencyGrid`),similarity,makeFrequencyPanel);}}for(const v of allVideos()){{v.addEventListener('ended',()=>{{if(allVideos().every(x=>x.paused||x.ended))pauseVideos();}});}}updateFrames();}}
+function render(){{pauseVideos();const c=currentCase();frameIndex=0;slider.max=String(c.frames-1);setText(caseMeta,`${{caseIndex+1}} / ${{DATA.cases.length}}   ${{c.case_id}}   ${{c.frames}} frames`);for(const mode of ['crop','padding']){{const items=panelItems(c,mode);fillGrid(document.getElementById(`${{mode}}FrameGrid`),items,item=>makeFramePanel(mode,item));fillGrid(document.getElementById(`${{mode}}VideoGrid`),items,item=>makeVideoPanel(mode,item,c.case_id));const similarity=similarityItems(c,mode);fillGrid(document.getElementById(`${{mode}}SimilarityGrid`),similarity,makeSimilarityPanel);fillGrid(document.getElementById(`${{mode}}FrequencyGrid`),similarity,makeFrequencyPanel);const decoder=decoderItems(c,mode);fillGrid(document.getElementById(`${{mode}}DecoderGrid`),decoder,makeDecoderPanel);}}for(const v of allVideos()){{v.addEventListener('ended',()=>{{if(allVideos().every(x=>x.paused||x.ended))pauseVideos();}});}}updateFrames();}}
 DATA.cases.forEach((c,i)=>{{const option=document.createElement('option');option.value=String(i);option.textContent=`${{String(i+1).padStart(2,'0')}} | ${{c.case_id}}`;caseSelect.appendChild(option);}});
 caseSelect.addEventListener('change',()=>{{caseIndex=Number(caseSelect.value);render();}});
 slider.addEventListener('input',()=>{{frameIndex=Number(slider.value);updateFrames();}});
@@ -332,6 +338,15 @@ def write_readme(
                 for item in temporal["models"]
             )
             + "\n"
+        )
+    decoder = metadata.get("decoder_static_dynamic")
+    if decoder:
+        temporal_text += (
+            "\n## Decoder static/dynamic analysis\n\n"
+            f"{decoder['method']}\n\n"
+            "Each panel compares temporal and frequency behavior of the "
+            "projected static/dynamic partitions, plus deterministic all-mask "
+            "decoder reconstructions with either partition frozen.\n\n"
         )
     text = (
         "# xSSC crop/padding frame and video viewer\n\n"

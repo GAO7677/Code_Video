@@ -37,15 +37,15 @@ METRICS=(
   "pmf_without_context"
   "wmreward"
 
-  # "vbench_subject_consistency"
-  # "vbench_background_consistency"
-  # "vbench_temporal_flickering"
-  # "vbench_motion_smoothness"
-  # "vbench_dynamic_degree"
-  # "vbench_aesthetic_quality"
-  # "vbench_imaging_quality"
-  # "videophy2"
-  # "cosmos_reason1"
+  "vbench_subject_consistency"
+  "vbench_background_consistency"
+  "vbench_temporal_flickering"
+  "vbench_motion_smoothness"
+  "vbench_dynamic_degree"
+  "vbench_aesthetic_quality"
+  "vbench_imaging_quality"
+  "videophy2"
+  "cosmos_reason1"
 )
 
 if [[ -n "${BENCH_METRICS_RAW}" ]]; then

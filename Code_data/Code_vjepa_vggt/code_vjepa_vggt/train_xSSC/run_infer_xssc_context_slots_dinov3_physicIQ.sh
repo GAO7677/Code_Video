@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Example:
+# Run:
 # CUDA_VISIBLE_DEVICES=2,3 \
-# /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/run_infer_xssc_context_slots_dinov3_physicIQ.sh
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/run_infer_xssc_context_slots_dinov3_physicIQ.sh
 #
-# Override the default/latest checkpoint:
-# WEIGHTS_ROOT=/path/to/checkpoints/step-001000 CUDA_VISIBLE_DEVICES=2 bash "$0"
+# Run with a specific checkpoint:
+# WEIGHTS_ROOT=/data/gaoya/agent-data/checkpoints/train_xssc_context_slots_dinov3/formal_gpu01_20260722T143309Z/checkpoints/step-001000 \
+# CUDA_VISIBLE_DEVICES=2,3 \
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/run_infer_xssc_context_slots_dinov3_physicIQ.sh
 
 cd /home/gaoya
 
