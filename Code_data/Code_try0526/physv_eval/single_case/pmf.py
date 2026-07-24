@@ -30,7 +30,7 @@ if str(PHYSINONE_ROOT) not in sys.path:
     sys.path.insert(0, str(PHYSINONE_ROOT))
 
 from pmf import compute_pmf
-from pmf.core import _ensure_5d_b_t_c_h_w, align_pred_to_gt
+from pmf.core import _ensure_5d_b_t_c_h_w
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,11 +164,15 @@ def score_case(
 
     gt_for_pmf = _ensure_5d_b_t_c_h_w(gt_tensor).to(device)
     pred_for_pmf = _ensure_5d_b_t_c_h_w(pred_tensor).to(device)
-    pred_aligned = align_pred_to_gt(pred_for_pmf, gt_for_pmf)
+    if pred_for_pmf.shape[:2] != gt_for_pmf.shape[:2]:
+        raise RuntimeError(
+            "Timestamp alignment must produce matching batch/time dimensions, "
+            f"got pred={tuple(pred_for_pmf.shape)} and gt={tuple(gt_for_pmf.shape)}"
+        )
     score_tensor = compute_pmf(gt_tensor, pred_tensor, device=device)
     pmf_score = float(score_tensor.squeeze().detach().cpu().item())
 
-    pred_used_frames = _tensor_b_t_c_h_w_to_bgr_frames(pred_aligned)
+    pred_used_frames = _tensor_b_t_c_h_w_to_bgr_frames(pred_for_pmf)
     gt_used_frames = _tensor_b_t_c_h_w_to_bgr_frames(gt_for_pmf)
 
     aligned_dir = (

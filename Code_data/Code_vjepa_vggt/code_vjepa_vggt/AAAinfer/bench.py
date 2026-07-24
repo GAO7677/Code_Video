@@ -129,7 +129,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metric", required=True, choices=metric_choices)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--videophy2-task", default="pc", choices=["sa", "pc", "rule"])
+    parser.add_argument(
+        "--videophy2-task",
+        default="generated_only_sa_pc_joint",
+        choices=["sa", "pc", "rule", "generated_only_sa_pc_joint"],
+    )
     parser.add_argument("--videophy2-caption", default=None)
     parser.add_argument("--phyground-general-only", action="store_true")
     parser.add_argument("--pdi-caption", default="ball")

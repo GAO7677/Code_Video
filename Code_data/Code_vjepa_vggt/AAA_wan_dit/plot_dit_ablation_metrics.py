@@ -170,10 +170,28 @@ METRICS = (
         nested_score("vbench_imaging_quality", "score"),
     ),
     Metric(
-        "videophy2",
-        "VideoPhy2",
+        "videophy2_sa",
+        "VideoPhy2 SA (generated only)",
         "higher",
-        nested_score("videophy2", "score"),
+        nested_score("videophy2", "sa_score"),
+    ),
+    Metric(
+        "videophy2_pc",
+        "VideoPhy2 PC (generated only)",
+        "higher",
+        nested_score("videophy2", "pc_score"),
+    ),
+    Metric(
+        "videophy2_joint_rate",
+        "VideoPhy2 joint rate (generated only)",
+        "higher",
+        nested_score("videophy2", "joint_pass"),
+    ),
+    Metric(
+        "videophy2_pc_raw",
+        "VideoPhy2 PC raw (full video)",
+        "higher",
+        nested_score("videophy2", "pc_raw_score"),
     ),
     Metric(
         "cosmos_reason1",

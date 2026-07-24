@@ -13,17 +13,36 @@ from typing import Any
 
 
 METHOD_PATTERN = re.compile(
-    r"^(whole_block|self_attn_zero|object_cross_attn)_block(\d{2})$"
+    r"^(whole_block|self_attn_zero|object_cross_attn|"
+    r"text_cross_attn_zero|ffn_zero|lora_off)_block(\d{2})$"
 )
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
+    "physrvg": "PhysRVG",
 }
 MODE_LABELS = {
     "baseline": "Baseline",
     "whole_block": "Whole block bypass",
     "self_attn_zero": "Self-attention output = 0",
     "object_cross_attn": "Object cross-attention output = 0",
+    "text_cross_attn_zero": "Text cross-attention output = 0",
+    "ffn_zero": "FFN output = 0",
+    "lora_off": "LoRA disabled",
+}
+MODE_ORDER = {
+    mode: index
+    for index, mode in enumerate(
+        (
+            "baseline",
+            "whole_block",
+            "self_attn_zero",
+            "object_cross_attn",
+            "text_cross_attn_zero",
+            "ffn_zero",
+            "lora_off",
+        )
+    )
 }
 
 
@@ -123,10 +142,32 @@ METRICS = (
         ("vbench_imaging_quality", "score"),
     ),
     MetricDefinition(
-        "videophy2",
-        "VideoPhy2",
+        "videophy2_sa",
+        "VideoPhy2 SA · gen",
         "higher",
-        ("videophy2", "score"),
+        ("videophy2", "sa_score"),
+        2,
+    ),
+    MetricDefinition(
+        "videophy2_pc",
+        "VideoPhy2 PC · gen",
+        "higher",
+        ("videophy2", "pc_score"),
+        2,
+    ),
+    MetricDefinition(
+        "videophy2_joint",
+        "VideoPhy2 joint · gen",
+        "higher",
+        ("videophy2", "joint_pass"),
+        0,
+    ),
+    MetricDefinition(
+        "videophy2_pc_raw",
+        "VideoPhy2 PC · raw",
+        "higher",
+        ("videophy2", "pc_raw_score"),
+        2,
     ),
     MetricDefinition(
         "cosmos_reason1",
@@ -163,14 +204,10 @@ class Method:
     @property
     def sort_key(self) -> tuple[int, int, int]:
         block_order = -1 if self.block_id is None else self.block_id
-        model_order = 0 if self.model == "wan_lora" else 1
-        mode_order = {
-            "baseline": 0,
-            "whole_block": 1,
-            "self_attn_zero": 2,
-            "object_cross_attn": 3,
-        }[self.mode]
-        return block_order, model_order, mode_order
+        model_order = {"wan_lora": 0, "xssc": 1, "physrvg": 2}.get(
+            self.model, 99
+        )
+        return block_order, model_order, MODE_ORDER[self.mode]
 
 
 def parse_args() -> argparse.Namespace:
@@ -179,6 +216,12 @@ def parse_args() -> argparse.Namespace:
         "--result-root",
         type=Path,
         default=Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan"),
+    )
+    parser.add_argument(
+        "--input-txt",
+        type=Path,
+        default=None,
+        help="Optional txt containing one result leaf directory per line.",
     )
     parser.add_argument("--output-dir", type=Path, default=None)
     return parser.parse_args()
@@ -263,6 +306,59 @@ def discover_methods(root: Path) -> list[Method]:
     return sorted(methods, key=lambda method: method.sort_key)
 
 
+def infer_model(result_dir: Path) -> str:
+    path_parts = {part.lower() for part in result_dir.parts}
+    if "wan_lora" in path_parts:
+        return "wan_lora"
+    if "xssc" in path_parts:
+        return "xssc"
+    if "phyrvg" in path_parts or "physrvg" in path_parts:
+        return "physrvg"
+    raise ValueError(f"Cannot infer model from result directory: {result_dir}")
+
+
+def infer_config(result_dir: Path) -> tuple[str, int | None, str]:
+    for candidate in (result_dir, *result_dir.parents):
+        if candidate.name == "baseline":
+            return "baseline", None, candidate.name
+        match = METHOD_PATTERN.fullmatch(candidate.name)
+        if match is not None:
+            return match.group(1), int(match.group(2)), candidate.name
+    raise ValueError(f"Cannot infer ablation config from result directory: {result_dir}")
+
+
+def discover_methods_from_txt(path: Path) -> list[Method]:
+    result_dirs = [
+        Path(line.strip()).expanduser().resolve()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not result_dirs:
+        raise ValueError(f"No result directories found in {path}")
+    if len(result_dirs) != len(set(result_dirs)):
+        raise ValueError(f"Duplicate result directories found in {path}")
+
+    methods: list[Method] = []
+    method_ids: set[str] = set()
+    for result_dir in result_dirs:
+        model = infer_model(result_dir)
+        mode, block_id, config_name = infer_config(result_dir)
+        method_id = f"{model}/{config_name}"
+        if method_id in method_ids:
+            raise ValueError(f"Duplicate method inferred from {path}: {method_id}")
+        method_ids.add(method_id)
+        methods.append(
+            Method(
+                method_id=method_id,
+                model=model,
+                mode=mode,
+                block_id=block_id,
+                result_dir=result_dir,
+            )
+        )
+    return sorted(methods, key=lambda method: method.sort_key)
+
+
 def load_case_reference(
     *,
     root: Path,
@@ -332,6 +428,12 @@ def build_manifest(
     output_dir: Path,
     methods: list[Method],
 ) -> dict[str, object]:
+    models = {method.model for method in methods}
+    title = (
+        "PhysRVG DiT Block Ablation Comparison"
+        if models == {"physrvg"}
+        else "Wan DiT Block Ablation Comparison"
+    )
     case_names = sorted(
         {
             video_path.stem
@@ -371,7 +473,7 @@ def build_manifest(
         )
 
     return {
-        "title": "Wan DiT Block Ablation Comparison",
+        "title": title,
         "root": str(root),
         "num_cases": len(cases),
         "num_methods": len(methods),
@@ -559,6 +661,7 @@ INDEX_HTML = """<!doctype html>
     }
     .method[data-model="wan_lora"] { border-top: 3px solid var(--blue); }
     .method[data-model="xssc"] { border-top: 3px solid var(--green); }
+    .method[data-model="physrvg"] { border-top: 3px solid var(--orange); }
     .method-head {
       min-height: 66px;
       padding: 10px 12px;
@@ -569,6 +672,7 @@ INDEX_HTML = """<!doctype html>
     .tag { color: var(--muted); font-size: 11px; }
     .tag.model { color: var(--blue); font-weight: 700; }
     .method[data-model="xssc"] .tag.model { color: var(--green); }
+    .method[data-model="physrvg"] .tag.model { color: var(--orange); }
     video {
       display: block;
       width: 100%;
@@ -672,7 +776,7 @@ INDEX_HTML = """<!doctype html>
 <body>
   <header class="topbar">
     <div class="title">
-      <h1>Wan DiT Block Ablation</h1>
+      <h1 id="galleryTitle">DiT Block Ablation</h1>
       <p id="datasetSummary">Loading comparison manifest...</p>
     </div>
     <div class="case-controls">
@@ -912,6 +1016,8 @@ INDEX_HTML = """<!doctype html>
       .then(manifest => {
         state.manifest = manifest;
         state.filteredIndices = manifest.cases.map((_, index) => index);
+        document.title = manifest.title;
+        document.getElementById("galleryTitle").textContent = manifest.title;
         const hashMatch = location.hash.match(/case=(\\d+)/);
         if (hashMatch) state.caseIndex = Math.max(0, Math.min(manifest.num_cases - 1, Number(hashMatch[1]) - 1));
         document.getElementById("datasetSummary").textContent =
@@ -928,12 +1034,26 @@ INDEX_HTML = """<!doctype html>
 def main() -> None:
     args = parse_args()
     root = args.result_root.expanduser().resolve()
+    input_txt = (
+        args.input_txt.expanduser().resolve() if args.input_txt is not None else None
+    )
+    if input_txt is None:
+        default_physrvg_list = root / "rvg_leaf_folders.txt"
+        if root.name.lower() in {"phyrvg", "physrvg"} and default_physrvg_list.is_file():
+            input_txt = default_physrvg_list
     output_dir = (
         args.output_dir.expanduser().resolve()
         if args.output_dir is not None
         else root / "_gallery"
     )
-    methods = discover_methods(root)
+    methods = (
+        discover_methods_from_txt(input_txt)
+        if input_txt is not None
+        else discover_methods(root)
+    )
+    if not methods:
+        source = input_txt if input_txt is not None else root
+        raise RuntimeError(f"No ablation methods found from {source}")
     manifest = build_manifest(root, output_dir, methods)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "manifest.json").write_text(
@@ -947,6 +1067,7 @@ def main() -> None:
                 "output_dir": str(output_dir),
                 "num_cases": manifest["num_cases"],
                 "num_methods": manifest["num_methods"],
+                "input_txt": None if input_txt is None else str(input_txt),
             },
             ensure_ascii=False,
         )

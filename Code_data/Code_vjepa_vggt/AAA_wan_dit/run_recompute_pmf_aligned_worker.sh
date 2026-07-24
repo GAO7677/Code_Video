@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-if [[ "$#" -ne 4 ]]; then
-  echo "Usage: $0 WORKER_NAME RUN_ROOT INPUT_ALLOWLIST START_GATE" >&2
+if [[ "$#" -ne 6 ]]; then
+  echo "Usage: $0 WORKER_NAME RUN_ROOT INPUT_ALLOWLIST START_GATE PRIOR_STATE_DIR PRIOR_WORKERS" >&2
   exit 2
 fi
 
@@ -10,6 +10,8 @@ WORKER_NAME="$1"
 RUN_ROOT="$2"
 INPUT_ALLOWLIST="$3"
 START_GATE="$4"
+PRIOR_STATE_DIR="$5"
+PRIOR_WORKERS="$6"
 
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 BENCH_PY=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py
@@ -51,9 +53,20 @@ while true; do
     break
   fi
 
-  IFS=$'\t' read -r task_id metric result_root <<< "${task}"
+  IFS=$'\t' read -r task_id metric result_root require_prior_complete <<< "${task}"
   summary_path="${SUMMARY_DIR}/${task_id}.json"
   echo "[pmf-worker] task=${task_id} metric=${metric} root=${result_root}"
+
+  if [[ "${require_prior_complete}" == "1" ]]; then
+    while true; do
+      prior_done="$(find "${PRIOR_STATE_DIR}" -maxdepth 1 -type f -name 'g*_cpu*.complete' 2>/dev/null | wc -l)"
+      if [[ "${prior_done}" -ge "${PRIOR_WORKERS}" ]]; then
+        break
+      fi
+      echo "[pmf-worker] waiting for prior PhyRVG CPU workers: ${prior_done}/${PRIOR_WORKERS}"
+      sleep 60
+    done
+  fi
 
   set +e
   TOKENIZERS_PARALLELISM=false \
