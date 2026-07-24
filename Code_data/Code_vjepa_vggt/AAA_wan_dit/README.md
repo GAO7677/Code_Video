@@ -3,6 +3,41 @@
 This directory contains runtime-only DiT ablation scripts. Existing Wan,
 DiffSynth, LoRA, xSSC training, and inference source files are not modified.
 
+## PhysRVG
+
+PhysRVG ablations use the official model-loading order: the Wan2.2 TI2V 5B
+base, full PhysRVG DiT checkpoint, then official rank-32 LoRA. Evaluation is
+matched to the previous xSSC ablation run at 512x896, 49 output frames, 40
+denoising steps, guidance scale 5, seed 42, and 30 fps. The one intentional
+difference is that PhysRVG keeps its official `do_cfg=False` behavior. Every
+PhysicIQ JSON uses its own `input_caption` and all eight frames from its
+`input_video`; context frames use aspect-preserving resize plus center crop.
+
+Supported PhysRVG modes:
+
+- `baseline`: no ablation.
+- `whole_block`: the selected block returns its input.
+- `self_attn_zero`: `attn1` output is zero.
+- `text_cross_attn_zero`: `attn2` output is zero.
+- `ffn_zero`: FFN output is zero.
+- `lora_off`: disable all ten official LoRA modules in the selected block.
+
+One-case checks:
+
+```bash
+LIMIT=1 bash run_physrvg_physiciq_one.sh baseline none 0
+LIMIT=1 bash run_physrvg_physiciq_one.sh self_attn_zero 5 0
+```
+
+Recommended sparse-layer sweep:
+
+```bash
+LIMIT=1 GPU_IDS=0,1 bash run_physrvg_physiciq_sweep.sh
+```
+
+The default sparse layers are `0 5 11 17 19 29`. Remove `LIMIT=1` only after
+the pilot outputs have been checked.
+
 ## Models
 
 - `wan_lora`: Wan2.2-TI2V-5B plus the physical-state LoRA at step 500.
