@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,24 +21,55 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-from build_v2v_wan_case_gallery import MODEL_LABELS, MODE_LABELS, Method, discover_methods
-
-
 DEFAULT_ROOT = Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan")
 DEFAULT_ALLOWLIST = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt"
 )
 DEFAULT_OUTPUT_DIR = DEFAULT_ROOT / "_metric_plots"
-BLOCK_IDS = (0, 5, 11, 17, 19, 29)
-PLOT_MODES = ("whole_block", "self_attn_zero", "object_cross_attn")
+METHOD_PATTERN = re.compile(
+    r"^(whole_block|self_attn_zero|object_cross_attn|"
+    r"text_cross_attn_zero|ffn_zero|lora_off)_block(\d{2})$"
+)
+MODEL_LABELS = {
+    "wan_lora": "Wan+LoRA",
+    "xssc": "Wan+xSSC",
+    "physrvg": "PhysRVG",
+}
+MODE_LABELS = {
+    "baseline": "Baseline",
+    "whole_block": "Whole block bypass",
+    "self_attn_zero": "Self-attention output = 0",
+    "object_cross_attn": "Object cross-attention output = 0",
+    "text_cross_attn_zero": "Text cross-attention output = 0",
+    "ffn_zero": "FFN output = 0",
+    "lora_off": "LoRA disabled",
+}
+MODE_ORDER = {
+    mode: index
+    for index, mode in enumerate(
+        (
+            "baseline",
+            "whole_block",
+            "self_attn_zero",
+            "object_cross_attn",
+            "text_cross_attn_zero",
+            "ffn_zero",
+            "lora_off",
+        )
+    )
+}
 MODEL_STYLES = {
     "wan_lora": {"linestyle": "--", "marker": "o"},
     "xssc": {"linestyle": "-", "marker": "s"},
+    "physrvg": {"linestyle": "-", "marker": "D"},
 }
 MODE_COLORS = {
     "whole_block": "#E41A1C",
     "self_attn_zero": "#2166D1",
     "object_cross_attn": "#009E73",
+    "text_cross_attn_zero": "#7B2CBF",
+    "ffn_zero": "#E67E22",
+    "lora_off": "#5D6D7E",
 }
 
 
@@ -161,6 +193,23 @@ class MetricStat:
     complete: bool
 
 
+@dataclass(frozen=True)
+class Method:
+    method_id: str
+    model: str
+    mode: str
+    block_id: int | None
+    result_dir: Path
+
+    @property
+    def sort_key(self) -> tuple[int, int, int]:
+        model_order = {"wan_lora": 0, "xssc": 1, "physrvg": 2}.get(
+            self.model, 99
+        )
+        block_order = -1 if self.block_id is None else self.block_id
+        return model_order, block_order, MODE_ORDER[self.mode]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -168,11 +217,105 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--result-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument(
+        "--input-txt",
+        type=Path,
+        default=None,
+        help=(
+            "Optional txt containing one result leaf directory per line. "
+            "When set, only listed directories are plotted."
+        ),
+    )
     parser.add_argument("--input-json-allowlist", type=Path, default=DEFAULT_ALLOWLIST)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--expected-cases", type=int, default=67)
     parser.add_argument("--dpi", type=int, default=180)
     return parser.parse_args()
+
+
+def discover_methods(root: Path) -> list[Method]:
+    methods: list[Method] = []
+    for model in ("wan_lora", "xssc"):
+        model_root = root / model
+        if not model_root.is_dir():
+            continue
+        for config_dir in sorted(path for path in model_root.iterdir() if path.is_dir()):
+            if config_dir.name.startswith("_"):
+                continue
+            if config_dir.name == "baseline":
+                mode = "baseline"
+                block_id = None
+            else:
+                match = METHOD_PATTERN.fullmatch(config_dir.name)
+                if match is None:
+                    continue
+                mode = match.group(1)
+                block_id = int(match.group(2))
+            result_dir = config_dir if model == "wan_lora" else config_dir / "results"
+            if result_dir.is_dir():
+                methods.append(
+                    Method(
+                        method_id=f"{model}/{config_dir.name}",
+                        model=model,
+                        mode=mode,
+                        block_id=block_id,
+                        result_dir=result_dir.resolve(),
+                    )
+                )
+    return sorted(methods, key=lambda method: method.sort_key)
+
+
+def infer_model(result_dir: Path) -> str:
+    path_parts = {part.lower() for part in result_dir.parts}
+    if "wan_lora" in path_parts:
+        return "wan_lora"
+    if "xssc" in path_parts:
+        return "xssc"
+    if "phyrvg" in path_parts or "physrvg" in path_parts:
+        return "physrvg"
+    raise ValueError(f"Cannot infer model from result directory: {result_dir}")
+
+
+def infer_config(result_dir: Path) -> tuple[str, int | None, str]:
+    for candidate in (result_dir, *result_dir.parents):
+        if candidate.name == "baseline":
+            return "baseline", None, candidate.name
+        match = METHOD_PATTERN.fullmatch(candidate.name)
+        if match is not None:
+            return match.group(1), int(match.group(2)), candidate.name
+    raise ValueError(f"Cannot infer ablation config from result directory: {result_dir}")
+
+
+def discover_methods_from_txt(path: Path) -> list[Method]:
+    result_dirs = [
+        Path(line.strip()).expanduser().resolve()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not result_dirs:
+        raise ValueError(f"No result directories found in {path}")
+    if len(result_dirs) != len(set(result_dirs)):
+        raise ValueError(f"Duplicate result directories found in {path}")
+
+    methods: list[Method] = []
+    method_ids: set[str] = set()
+    for result_dir in result_dirs:
+        model = infer_model(result_dir)
+        mode, block_id, config_name = infer_config(result_dir)
+        method_id = f"{model}/{config_name}"
+        if method_id in method_ids:
+            raise ValueError(f"Duplicate method inferred from {path}: {method_id}")
+        method_ids.add(method_id)
+        methods.append(
+            Method(
+                method_id=method_id,
+                model=model,
+                mode=mode,
+                block_id=block_id,
+                result_dir=result_dir,
+            )
+        )
+    return sorted(methods, key=lambda method: method.sort_key)
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
@@ -318,8 +461,25 @@ def plot_metrics(
     model: str,
 ) -> dict[str, dict[str, int]]:
     indexed = stat_index(stats)
-    x_positions = np.arange(len(BLOCK_IDS) + 1)
-    x_labels = ("Baseline",) + tuple(str(block_id) for block_id in BLOCK_IDS)
+    model_methods = [method for method in {stat.method for stat in stats} if method.model == model]
+    block_ids = sorted(
+        {
+            method.block_id
+            for method in model_methods
+            if method.block_id is not None
+        }
+    )
+    plot_modes = sorted(
+        {method.mode for method in model_methods if method.mode != "baseline"},
+        key=MODE_ORDER.__getitem__,
+    )
+    available_points = {
+        (method.mode, method.block_id)
+        for method in model_methods
+        if method.block_id is not None
+    }
+    x_positions = np.arange(len(block_ids) + 1)
+    x_labels = ("Baseline",) + tuple(str(block_id) for block_id in block_ids)
     fig, axes = plt.subplots(7, 2, figsize=(19, 32), constrained_layout=False)
     axes_flat = list(axes.flat)
     completeness: dict[str, dict[str, int]] = {}
@@ -329,19 +489,20 @@ def plot_metrics(
         total_ablation_points = 0
         baseline = indexed.get((model, "baseline", None, metric.key))
         baseline_value = complete_value(baseline)
-        for mode in PLOT_MODES:
-            if model == "wan_lora" and mode == "object_cross_attn":
-                continue
+        for mode in plot_modes:
             # Baseline is shown independently and must not connect to layer 0.
             values = [np.nan]
-            for block_id in BLOCK_IDS:
+            for block_id in block_ids:
                 stat = indexed.get((model, mode, block_id, metric.key))
-                total_ablation_points += 1
+                if (mode, block_id) in available_points:
+                    total_ablation_points += 1
                 if stat is not None and stat.complete:
                     plotted_ablation_points += 1
                 values.append(complete_value(stat))
             if np.isfinite(values).any():
-                style = MODEL_STYLES[model]
+                style = MODEL_STYLES.get(
+                    model, {"linestyle": "-", "marker": "o"}
+                )
                 axis.plot(
                     x_positions,
                     values,
@@ -403,24 +564,13 @@ def plot_metrics(
         Line2D(
             [0],
             [0],
-            color=MODE_COLORS["whole_block"],
+            color=MODE_COLORS[mode],
             linewidth=3,
-            label="Whole block bypass",
-        ),
-        Line2D(
-            [0],
-            [0],
-            color=MODE_COLORS["self_attn_zero"],
-            linewidth=3,
-            label="Self-attention output = 0",
-        ),
-        Line2D(
-            [0],
-            [0],
-            color=MODE_COLORS["object_cross_attn"],
-            linewidth=3,
-            label="Object cross-attention output = 0",
-        ),
+            label=MODE_LABELS[mode],
+        )
+        for mode in plot_modes
+    ]
+    legend_handles.append(
         Line2D(
             [0],
             [0],
@@ -430,14 +580,8 @@ def plot_metrics(
             markersize=14,
             linestyle="None",
             label=f"{MODEL_LABELS[model]} baseline",
-        ),
-    ]
-    if model == "wan_lora":
-        legend_handles = [
-            handle
-            for handle in legend_handles
-            if handle.get_label() != "Object cross-attention output = 0"
-        ]
+        )
+    )
     fig.suptitle(
         f"{MODEL_LABELS[model]} DiT Block Ablation Metrics",
         fontsize=24,
@@ -481,8 +625,16 @@ def plot_metrics(
 def main() -> None:
     args = parse_args()
     result_root = args.result_root.expanduser().resolve()
+    input_txt = (
+        args.input_txt.expanduser().resolve() if args.input_txt is not None else None
+    )
     allowlist_path = args.input_json_allowlist.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    if args.output_dir is not None:
+        output_dir = args.output_dir.expanduser().resolve()
+    elif input_txt is not None:
+        output_dir = input_txt.parent / "_metric_plots" / input_txt.stem
+    else:
+        output_dir = DEFAULT_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     allowed_input_jsons = read_allowlist(allowlist_path)
@@ -492,57 +644,54 @@ def main() -> None:
             f"but --expected-cases={args.expected_cases}"
         )
 
-    methods = discover_methods(result_root)
+    methods = (
+        discover_methods_from_txt(input_txt)
+        if input_txt is not None
+        else discover_methods(result_root)
+    )
     if not methods:
-        raise RuntimeError(f"No ablation methods found under {result_root}")
+        source = input_txt if input_txt is not None else result_root
+        raise RuntimeError(f"No ablation methods found from {source}")
 
     stats = compute_stats(methods, allowed_input_jsons, args.expected_cases)
+    missing_result_dirs = [
+        str(method.result_dir) for method in methods if not method.result_dir.is_dir()
+    ]
     csv_path = output_dir / "dit_ablation_metric_stats.csv"
-    lora_png_path = output_dir / "dit_ablation_wan_lora_all_metrics.png"
-    lora_pdf_path = output_dir / "dit_ablation_wan_lora_all_metrics.pdf"
-    xssc_png_path = output_dir / "dit_ablation_xssc_all_metrics.png"
-    xssc_pdf_path = output_dir / "dit_ablation_xssc_all_metrics.pdf"
     manifest_path = output_dir / "dit_ablation_metric_plot_manifest.json"
 
     write_stats_csv(csv_path, stats, args.expected_cases)
-    lora_completeness = plot_metrics(
-        lora_png_path,
-        lora_pdf_path,
-        stats,
-        args.expected_cases,
-        args.dpi,
-        "wan_lora",
+    model_ids = sorted(
+        {method.model for method in methods},
+        key=lambda model: {"wan_lora": 0, "xssc": 1, "physrvg": 2}.get(model, 99),
     )
-    xssc_completeness = plot_metrics(
-        xssc_png_path,
-        xssc_pdf_path,
-        stats,
-        args.expected_cases,
-        args.dpi,
-        "xssc",
-    )
+    plots: dict[str, dict[str, str]] = {}
+    metric_completeness: dict[str, dict[str, dict[str, int]]] = {}
+    for model in model_ids:
+        png_path = output_dir / f"dit_ablation_{model}_all_metrics.png"
+        pdf_path = output_dir / f"dit_ablation_{model}_all_metrics.pdf"
+        metric_completeness[model] = plot_metrics(
+            png_path,
+            pdf_path,
+            stats,
+            args.expected_cases,
+            args.dpi,
+            model,
+        )
+        plots[model] = {"png": str(png_path), "pdf": str(pdf_path)}
+
     manifest = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "result_root": str(result_root),
+        "input_txt": None if input_txt is None else str(input_txt),
         "input_json_allowlist": str(allowlist_path),
         "expected_cases": args.expected_cases,
         "num_methods": len(methods),
+        "missing_result_dirs": missing_result_dirs,
         "num_metrics": len(METRICS),
         "stats_csv": str(csv_path),
-        "plots": {
-            "wan_lora": {
-                "png": str(lora_png_path),
-                "pdf": str(lora_pdf_path),
-            },
-            "xssc": {
-                "png": str(xssc_png_path),
-                "pdf": str(xssc_pdf_path),
-            },
-        },
-        "metric_completeness": {
-            "wan_lora": lora_completeness,
-            "xssc": xssc_completeness,
-        },
+        "plots": plots,
+        "metric_completeness": metric_completeness,
     }
     manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
@@ -550,11 +699,10 @@ def main() -> None:
     )
 
     print(f"Methods: {len(methods)}")
+    print(f"Missing result directories: {len(missing_result_dirs)}")
     print(f"Allowed cases: {len(allowed_input_jsons)}")
-    for model, completeness in (
-        ("wan_lora", lora_completeness),
-        ("xssc", xssc_completeness),
-    ):
+    for model in model_ids:
+        completeness = metric_completeness[model]
         print(f"[{MODEL_LABELS[model]}]")
         for metric in METRICS:
             progress = completeness[metric.key]
@@ -564,10 +712,9 @@ def main() -> None:
                 f"{progress['expected_ablation_points']} complete ablation points"
             )
     print(f"Stats CSV: {csv_path}")
-    print(f"Wan+LoRA PNG: {lora_png_path}")
-    print(f"Wan+LoRA PDF: {lora_pdf_path}")
-    print(f"Wan+xSSC PNG: {xssc_png_path}")
-    print(f"Wan+xSSC PDF: {xssc_pdf_path}")
+    for model in model_ids:
+        print(f"{MODEL_LABELS[model]} PNG: {plots[model]['png']}")
+        print(f"{MODEL_LABELS[model]} PDF: {plots[model]['pdf']}")
     print(f"Manifest: {manifest_path}")
 
 

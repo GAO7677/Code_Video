@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 METHOD_PATTERN = re.compile(
@@ -23,6 +25,116 @@ MODE_LABELS = {
     "self_attn_zero": "Self-attention output = 0",
     "object_cross_attn": "Object cross-attention output = 0",
 }
+
+
+@dataclass(frozen=True)
+class MetricDefinition:
+    key: str
+    label: str
+    direction: str
+    value_path: tuple[str, ...]
+    decimals: int = 4
+
+    def extract(self, payload: dict[str, Any]) -> float | None:
+        value: Any = payload
+        for key in self.value_path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+
+
+METRICS = (
+    MetricDefinition(
+        "physics_iq_with_context",
+        "Physics-IQ · ctx",
+        "higher",
+        ("physics_iq_with_context", "score"),
+        2,
+    ),
+    MetricDefinition(
+        "physics_iq_without_context",
+        "Physics-IQ · no ctx",
+        "higher",
+        ("physics_iq_without_context", "score"),
+        2,
+    ),
+    MetricDefinition(
+        "pmf_with_context",
+        "PMF · ctx",
+        "higher",
+        ("pmf_with_context", "score"),
+    ),
+    MetricDefinition(
+        "pmf_without_context",
+        "PMF · no ctx",
+        "higher",
+        ("pmf_without_context", "score"),
+    ),
+    MetricDefinition(
+        "wmreward",
+        "WMReward surprise",
+        "lower",
+        ("wmreward", "surprise"),
+    ),
+    MetricDefinition(
+        "vbench_subject_consistency",
+        "Subject consistency",
+        "higher",
+        ("vbench_subject_consistency", "score"),
+    ),
+    MetricDefinition(
+        "vbench_background_consistency",
+        "Background consistency",
+        "higher",
+        ("vbench_background_consistency", "score"),
+    ),
+    MetricDefinition(
+        "vbench_temporal_flickering",
+        "Temporal flickering",
+        "higher",
+        ("vbench_temporal_flickering", "score"),
+    ),
+    MetricDefinition(
+        "vbench_motion_smoothness",
+        "Motion smoothness",
+        "higher",
+        ("vbench_motion_smoothness", "score"),
+    ),
+    MetricDefinition(
+        "vbench_dynamic_degree",
+        "Dynamic degree",
+        "higher",
+        ("vbench_dynamic_degree", "score"),
+    ),
+    MetricDefinition(
+        "vbench_aesthetic_quality",
+        "Aesthetic quality",
+        "higher",
+        ("vbench_aesthetic_quality", "score"),
+    ),
+    MetricDefinition(
+        "vbench_imaging_quality",
+        "Imaging quality",
+        "higher",
+        ("vbench_imaging_quality", "score"),
+    ),
+    MetricDefinition(
+        "videophy2",
+        "VideoPhy2",
+        "higher",
+        ("videophy2", "score"),
+    ),
+    MetricDefinition(
+        "cosmos_reason1",
+        "Cosmos-Reason1",
+        "higher",
+        ("cosmos_reason1", "score"),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +186,50 @@ def parse_args() -> argparse.Namespace:
 
 def relative(path: Path, root: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def load_json(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def load_metrics(path: Path) -> dict[str, float]:
+    payload = load_json(path)
+    if payload is None:
+        return {}
+    return {
+        metric.key: value
+        for metric in METRICS
+        if (value := metric.extract(payload)) is not None
+    }
+
+
+def mark_best_metrics(outputs: dict[str, dict[str, object]]) -> None:
+    for output in outputs.values():
+        output["best_metrics"] = []
+
+    for metric in METRICS:
+        candidates = [
+            (output, value)
+            for output in outputs.values()
+            if isinstance((metrics := output.get("metrics")), dict)
+            and isinstance((value := metrics.get(metric.key)), (int, float))
+        ]
+        if len(candidates) < 2:
+            continue
+        best_value = (
+            min(value for _, value in candidates)
+            if metric.direction == "lower"
+            else max(value for _, value in candidates)
+        )
+        for output, value in candidates:
+            if math.isclose(value, best_value, rel_tol=1e-9, abs_tol=1e-12):
+                best_metrics = output["best_metrics"]
+                assert isinstance(best_metrics, list)
+                best_metrics.append(metric.key)
 
 
 def discover_methods(root: Path) -> list[Method]:
@@ -202,7 +358,9 @@ def build_manifest(
             outputs[method.method_id] = {
                 "video": relative(video_path, root) if video_path.is_file() else None,
                 "json": relative(json_path, root) if json_path.is_file() else None,
+                "metrics": load_metrics(json_path) if json_path.is_file() else {},
             }
+        mark_best_metrics(outputs)
         cases.append(
             {
                 "name": case_name,
@@ -217,6 +375,15 @@ def build_manifest(
         "root": str(root),
         "num_cases": len(cases),
         "num_methods": len(methods),
+        "metrics": [
+            {
+                "key": metric.key,
+                "label": metric.label,
+                "direction": metric.direction,
+                "decimals": metric.decimals,
+            }
+            for metric in METRICS
+        ],
         "methods": [
             {
                 "id": method.method_id,
@@ -409,6 +576,69 @@ INDEX_HTML = """<!doctype html>
       object-fit: contain;
       background: #0b0f0d;
     }
+    .metrics-panel {
+      padding: 9px 10px 10px;
+      border-top: 1px solid var(--line);
+      background: #f8faf9;
+    }
+    .metrics-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-top: 1px solid #dce4df;
+      border-left: 1px solid #dce4df;
+    }
+    .metric-row {
+      min-width: 0;
+      min-height: 43px;
+      padding: 6px 7px;
+      border-right: 1px solid #dce4df;
+      border-bottom: 1px solid #dce4df;
+      background: #fff;
+    }
+    .metric-row.best {
+      padding-left: 5px;
+      border-left: 3px solid #168653;
+      background: #e8f6ee;
+    }
+    .metric-label {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .metric-value-line {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      margin-top: 3px;
+    }
+    .metric-value {
+      color: #27352e;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+    .metric-row.missing .metric-value { color: #a1aaa5; font-weight: 500; }
+    .metric-row.best .metric-value { color: #0d6f40; }
+    .best-badge {
+      color: #0d6f40;
+      font-size: 8px;
+      font-weight: 800;
+    }
     .method-footer {
       display: flex;
       justify-content: space-between;
@@ -578,6 +808,50 @@ INDEX_HTML = """<!doctype html>
           } else {
             addText(card, "div", "missing", "Missing video");
           }
+
+          const metricsPanel = document.createElement("div");
+          metricsPanel.className = "metrics-panel";
+          const metricsHead = document.createElement("div");
+          metricsHead.className = "metrics-head";
+          addText(metricsHead, "span", "", "Case metrics");
+          const outputMetrics = output && output.metrics ? output.metrics : {};
+          const availableMetricCount = state.manifest.metrics
+            .filter(metric => Number.isFinite(outputMetrics[metric.key])).length;
+          addText(
+            metricsHead,
+            "span",
+            "",
+            `${availableMetricCount}/${state.manifest.metrics.length} available`
+          );
+          metricsPanel.appendChild(metricsHead);
+          const metricGrid = document.createElement("div");
+          metricGrid.className = "metric-grid";
+          const bestMetrics = new Set(
+            output && Array.isArray(output.best_metrics) ? output.best_metrics : []
+          );
+          state.manifest.metrics.forEach(metric => {
+            const value = outputMetrics[metric.key];
+            const hasValue = Number.isFinite(value);
+            const isBest = hasValue && bestMetrics.has(metric.key);
+            const row = document.createElement("div");
+            row.className = `metric-row${isBest ? " best" : ""}${hasValue ? "" : " missing"}`;
+            const direction = metric.direction === "lower" ? "↓" : "↑";
+            row.title = `${metric.label}: ${metric.direction} is better`;
+            addText(row, "span", "metric-label", `${metric.label} ${direction}`);
+            const valueLine = document.createElement("div");
+            valueLine.className = "metric-value-line";
+            addText(
+              valueLine,
+              "span",
+              "metric-value",
+              hasValue ? Number(value).toFixed(metric.decimals) : "—"
+            );
+            if (isBest) addText(valueLine, "span", "best-badge", "BEST");
+            row.appendChild(valueLine);
+            metricGrid.appendChild(row);
+          });
+          metricsPanel.appendChild(metricGrid);
+          card.appendChild(metricsPanel);
 
           const footer = document.createElement("div");
           footer.className = "method-footer";

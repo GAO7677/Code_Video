@@ -20,7 +20,7 @@ from .physics_iq import (
     _read_video,
     _resize_frames,
     _resolve_context_frames,
-    _truncate_frames,
+    _sample_frame_indices,
     _write_video,
 )
 
@@ -142,14 +142,25 @@ def score_case(
     source_frames_all, source_fps = _read_video(metadata_source)
     output_frames_clipped = _clip_frames(output_frames_all, output_start_frame, label="output_video")
     source_frames_clipped = _clip_frames(source_frames_all, source_start_frame, label="source_video")
-    source_frames_clipped = _truncate_frames(source_frames_clipped, len(output_frames_clipped))
 
-    output_h, output_w = output_frames_clipped[0].shape[:2]
+    output_duration = len(output_frames_clipped) / output_fps
+    source_duration = len(source_frames_clipped) / source_fps
+    compare_duration = min(output_duration, source_duration)
+    compare_fps = min(output_fps, source_fps)
+    compare_count = max(1, int(np.floor(compare_duration * compare_fps + 1e-6)))
+    timestamps = np.arange(compare_count, dtype=np.float32) / float(compare_fps)
+
+    output_indices = _sample_frame_indices(len(output_frames_clipped), output_fps, timestamps)
+    source_indices = _sample_frame_indices(len(source_frames_clipped), source_fps, timestamps)
+    sampled_output_frames = [output_frames_clipped[int(idx)] for idx in output_indices]
+    sampled_source_frames = [source_frames_clipped[int(idx)] for idx in source_indices]
+
+    output_h, output_w = sampled_output_frames[0].shape[:2]
     output_size = (output_w, output_h)
-    source_frames_resized = _resize_frames(source_frames_clipped, output_size)
+    sampled_source_frames_resized = _resize_frames(sampled_source_frames, output_size)
 
-    pred_tensor = _bgr_frames_to_video_tensor(output_frames_clipped)
-    gt_tensor = _bgr_frames_to_video_tensor(source_frames_resized)
+    pred_tensor = _bgr_frames_to_video_tensor(sampled_output_frames)
+    gt_tensor = _bgr_frames_to_video_tensor(sampled_source_frames_resized)
 
     gt_for_pmf = _ensure_5d_b_t_c_h_w(gt_tensor).to(device)
     pred_for_pmf = _ensure_5d_b_t_c_h_w(pred_tensor).to(device)
@@ -168,7 +179,6 @@ def score_case(
     pred_used_path = aligned_dir / "pred_used_for_pmf.mp4"
     gt_used_path = aligned_dir / "gt_used_for_pmf.mp4"
     compare_side_by_side_path = aligned_dir / "compare_side_by_side.mp4"
-    compare_fps = min(float(output_fps), float(source_fps))
     _write_video(pred_used_frames, pred_used_path, compare_fps)
     _write_video(gt_used_frames, gt_used_path, compare_fps)
     _write_video(_build_side_by_side_frames(pred_used_frames, gt_used_frames), compare_side_by_side_path, compare_fps)
@@ -186,7 +196,9 @@ def score_case(
         "output_start_frame": int(output_start_frame),
         "source_start_frame": int(source_start_frame),
         "output_frames_after_context_clip": int(len(output_frames_clipped)),
-        "source_frames_after_context_clip": int(len(source_frames_resized)),
+        "source_frames_after_context_clip": int(len(source_frames_clipped)),
+        "num_frames_compared": int(compare_count),
+        "compare_duration_sec": round(float(compare_duration), 6),
         "pred_used_for_pmf": str(pred_used_path),
         "gt_used_for_pmf": str(gt_used_path),
         "compare_side_by_side": str(compare_side_by_side_path),
@@ -196,15 +208,17 @@ def score_case(
         "output_fps": round(float(output_fps), 6),
         "source_fps": round(float(source_fps), 6),
         "compare_fps": round(float(compare_fps), 6),
+        "output_duration_sec": round(float(output_duration), 6),
+        "source_duration_sec": round(float(source_duration), 6),
         "output_spatial_size": [int(output_w), int(output_h)],
         "source_aligned_size": [int(output_w), int(output_h)],
         "used_shape": [int(used_frame_count), int(used_shape[0]), int(used_shape[1]), int(used_shape[2])],
-        "frame_alignment": "pmf_internal_align_pred_to_gt_after_optional_context_clip",
+        "frame_alignment": "timestamp_resample_to_common_duration_before_pmf",
         "spatial_alignment": "resize_source_to_output_before_pmf",
         "notes": (
             "PhysInOne PMF similarity score. Higher is better. The scorer optionally drops the first "
-            "context_frames from both videos, resizes the source to the output spatial size, then applies "
-            "the official PMF implementation."
+            "context_frames from both videos, samples both streams at shared timestamps over their common "
+            "duration, resizes the source to the output spatial size, then applies the official PMF implementation."
         ),
     }
 
