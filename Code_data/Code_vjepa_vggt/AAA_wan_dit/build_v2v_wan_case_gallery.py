@@ -107,7 +107,75 @@ def discover_methods(root: Path) -> list[Method]:
     return sorted(methods, key=lambda method: method.sort_key)
 
 
-def build_manifest(root: Path, methods: list[Method]) -> dict[str, object]:
+def load_case_reference(
+    *,
+    root: Path,
+    output_dir: Path,
+    case_name: str,
+    methods: list[Method],
+) -> dict[str, str | None]:
+    prompt: str | None = None
+    source_video: Path | None = None
+    source_json: Path | None = None
+    for method in methods:
+        result_json = method.result_dir / f"{case_name}.json"
+        if not result_json.is_file():
+            continue
+        try:
+            payload = json.loads(result_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        value = payload.get("input_caption")
+        if prompt is None and isinstance(value, str) and value.strip():
+            prompt = value.strip()
+        value = payload.get("source_video")
+        if source_video is None and isinstance(value, str):
+            candidate = Path(value).expanduser().resolve()
+            if candidate.is_file():
+                source_video = candidate
+        value = payload.get("input_json")
+        if source_json is None and isinstance(value, str):
+            candidate = Path(value).expanduser().resolve()
+            if candidate.is_file():
+                source_json = candidate
+                try:
+                    source_payload = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    source_payload = {}
+                source_prompt = source_payload.get("input_caption")
+                if prompt is None and isinstance(source_prompt, str) and source_prompt.strip():
+                    prompt = source_prompt.strip()
+                source_value = source_payload.get("source_video")
+                if source_video is None and isinstance(source_value, str):
+                    source_candidate = Path(source_value).expanduser().resolve()
+                    if source_candidate.is_file():
+                        source_video = source_candidate
+        if prompt is not None and source_video is not None and source_json is not None:
+            break
+
+    gt_url: str | None = None
+    if source_video is not None:
+        gt_dir = output_dir / "gt"
+        gt_dir.mkdir(parents=True, exist_ok=True)
+        gt_link = gt_dir / f"{case_name}{source_video.suffix.lower()}"
+        if gt_link.is_symlink() and gt_link.resolve() != source_video:
+            gt_link.unlink()
+        if not gt_link.exists():
+            gt_link.symlink_to(source_video)
+        gt_url = gt_link.absolute().relative_to(root.absolute()).as_posix()
+
+    return {
+        "prompt": prompt,
+        "gt_video": gt_url,
+        "source_json": str(source_json) if source_json is not None else None,
+    }
+
+
+def build_manifest(
+    root: Path,
+    output_dir: Path,
+    methods: list[Method],
+) -> dict[str, object]:
     case_names = sorted(
         {
             video_path.stem
@@ -117,6 +185,12 @@ def build_manifest(root: Path, methods: list[Method]) -> dict[str, object]:
     )
     cases: list[dict[str, object]] = []
     for case_name in case_names:
+        reference = load_case_reference(
+            root=root,
+            output_dir=output_dir,
+            case_name=case_name,
+            methods=methods,
+        )
         outputs: dict[str, dict[str, str | None]] = {}
         input_image: str | None = None
         for method in methods:
@@ -133,6 +207,7 @@ def build_manifest(root: Path, methods: list[Method]) -> dict[str, object]:
             {
                 "name": case_name,
                 "input_image": input_image,
+                **reference,
                 "outputs": outputs,
             }
         )
@@ -250,6 +325,41 @@ INDEX_HTML = """<!doctype html>
     }
     .case-meta { margin-top: 8px; color: var(--muted); font-size: 13px; }
     .search-wrap input { border-color: #9eb1a7; }
+    .reference {
+      display: grid;
+      grid-template-columns: minmax(320px, 520px) minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 16px;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+    }
+    .reference-media { min-width: 0; }
+    .reference-label {
+      margin-bottom: 8px;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .reference video {
+      border-radius: 4px;
+      border: 1px solid #18241e;
+    }
+    .prompt-panel {
+      min-width: 0;
+      padding: 4px 6px;
+    }
+    .prompt-panel h3 { margin: 0 0 10px; font-size: 14px; }
+    .prompt-panel p {
+      margin: 0;
+      color: #34463d;
+      font-size: 15px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
     .groups { display: grid; gap: 22px; margin-top: 18px; }
     .group { min-width: 0; }
     .group-head {
@@ -323,6 +433,7 @@ INDEX_HTML = """<!doctype html>
       .topbar { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
       .case-summary { grid-template-columns: 1fr; }
+      .reference { grid-template-columns: 1fr; }
       .method-grid { grid-template-columns: 1fr; }
       .page { padding: 14px 12px 28px; }
     }
@@ -354,6 +465,7 @@ INDEX_HTML = """<!doctype html>
         <input id="caseSearch" type="search" placeholder="Search cases" aria-label="Search cases">
       </div>
     </section>
+    <section class="reference" id="reference"></section>
     <div class="groups" id="groups"></div>
   </main>
   <script>
@@ -390,6 +502,7 @@ INDEX_HTML = """<!doctype html>
       if (!state.filteredIndices.length) {
         document.getElementById("caseName").textContent = "No matching cases";
         document.getElementById("caseMeta").textContent = "";
+        document.getElementById("reference").replaceChildren();
         groupsRoot.replaceChildren();
         return;
       }
@@ -401,6 +514,27 @@ INDEX_HTML = """<!doctype html>
       select.value = String(state.caseIndex);
       history.replaceState(null, "", `#case=${manifestIndex + 1}`);
       groupsRoot.replaceChildren();
+      const reference = document.getElementById("reference");
+      reference.replaceChildren();
+      const referenceMedia = document.createElement("div");
+      referenceMedia.className = "reference-media";
+      addText(referenceMedia, "div", "reference-label", "Ground truth / Source video");
+      if (item.gt_video) {
+        const gtVideo = document.createElement("video");
+        gtVideo.controls = true;
+        gtVideo.preload = "metadata";
+        gtVideo.playsInline = true;
+        gtVideo.src = `../${item.gt_video}`;
+        referenceMedia.appendChild(gtVideo);
+      } else {
+        addText(referenceMedia, "div", "missing", "Missing GT video");
+      }
+      reference.appendChild(referenceMedia);
+      const promptPanel = document.createElement("div");
+      promptPanel.className = "prompt-panel";
+      addText(promptPanel, "h3", "", "Prompt");
+      addText(promptPanel, "p", "", item.prompt || "Prompt unavailable");
+      reference.appendChild(promptPanel);
 
       const grouped = new Map();
       state.manifest.methods.forEach(method => {
@@ -526,7 +660,7 @@ def main() -> None:
         else root / "_gallery"
     )
     methods = discover_methods(root)
-    manifest = build_manifest(root, methods)
+    manifest = build_manifest(root, output_dir, methods)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
