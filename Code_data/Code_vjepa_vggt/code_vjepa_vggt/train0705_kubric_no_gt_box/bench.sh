@@ -5,7 +5,9 @@ set -euo pipefail
 
 
 # 计算指标+统计结果
-# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=4 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq1.txt
+# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=4 bash \
+#   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh \
+#   /data/gaoya/AAA_test_video/0623/test/v2v_wan/leaf_folders.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TRY0526_ROOT="/home/gaoya/Code_Video/Code_data/Code_try0526"
