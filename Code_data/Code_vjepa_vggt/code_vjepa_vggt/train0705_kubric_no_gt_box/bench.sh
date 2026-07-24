@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # 统计结果
-# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/AAAevalphysiq1.txt
+# bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh /data/gaoya/AAA_test_video/0623/test/v2v_wan/leaf_folders.txt
 
 
 # 计算指标+统计结果
-# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=4 bash \
+# BENCH_RUN_METRICS=1 CUDA_VISIBLE_DEVICES=4,5,1 bash \
 #   /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/bench.sh \
 #   /data/gaoya/AAA_test_video/0623/test/v2v_wan/leaf_folders.txt
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,7 +16,7 @@ PYTHON_BIN="${PYTHON_BIN:-/home/gaoya/miniconda3/envs/wan-cu128/bin/python}"
 BENCH_PY="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/bench.py"
 BASELINE_LIST="${1:-${SCRIPT_DIR}/baseline.txt}"
 SUMMARY_PY="${SCRIPT_DIR}/summarize_benchmark_txt_metrics.py"
-RESULT_DIR="${SCRIPT_DIR}/AAAresults"
+RESULT_DIR="${BENCH_RESULT_DIR:-${SCRIPT_DIR}/AAAresults}"
 BENCH_CUDA_VISIBLE_DEVICES="${BENCH_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 BENCH_METRICS_RAW="${BENCH_METRICS:-}"
 BENCH_RUN_METRICS="${BENCH_RUN_METRICS:-0}"
