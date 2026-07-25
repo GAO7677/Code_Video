@@ -748,7 +748,8 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         official_repo_root = args.physics_iq_official_repo.expanduser().resolve()
 
         def run(record: CaseRecord) -> dict[str, Any] | None:
-            case, context_frames_override = build_context_metric_case_payload(record)
+            case = build_case_payload(record)
+            context_frames_override = resolve_context_frames_override(record)
             context_frames = 8 if context_frames_override is None else int(context_frames_override)
             aligned_video_dir = build_method_case_dir(
                 output_root,

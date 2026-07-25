@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   bash run_physiciq_one.sh MODEL MODE BLOCK GPU_ID
+#   bash run_physiciq_one.sh MODEL MODE BLOCK GPU_ID [HEAD]
 #
 # Examples:
 #   bash run_physiciq_one.sh wan_lora baseline none 0
@@ -10,10 +10,10 @@ set -euo pipefail
 #   bash run_physiciq_one.sh xssc self_attn_zero 12 1
 #   bash run_physiciq_one.sh xssc object_cross_attn 12 1
 
-if [[ "$#" -ne 4 ]]; then
-  echo "Usage: $0 MODEL MODE BLOCK GPU_ID" >&2
+if [[ "$#" -lt 4 || "$#" -gt 5 ]]; then
+  echo "Usage: $0 MODEL MODE BLOCK GPU_ID [HEAD]" >&2
   echo "MODEL: wan_lora | xssc" >&2
-  echo "MODE: baseline | whole_block | self_attn_zero | object_cross_attn" >&2
+  echo "MODE: baseline | whole_block | self_attn_zero | self_attn_head_zero | object_cross_attn" >&2
   echo "BLOCK: none for baseline, otherwise 0-29" >&2
   exit 2
 fi
@@ -22,6 +22,7 @@ MODEL="$1"
 ABLATION_MODE="$2"
 BLOCK_TEXT="$3"
 GPU_ID="$4"
+HEAD_TEXT="${5:-none}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
@@ -66,8 +67,8 @@ esac
 
 case "${ABLATION_MODE}" in
   baseline)
-    if [[ "${BLOCK_TEXT}" != "none" ]]; then
-      echo "baseline requires BLOCK=none" >&2
+    if [[ "${BLOCK_TEXT}" != "none" || "${HEAD_TEXT}" != "none" ]]; then
+      echo "baseline requires BLOCK=none and HEAD=none" >&2
       exit 2
     fi
     ABLATION_TAG=baseline
@@ -82,11 +83,33 @@ case "${ABLATION_MODE}" in
       echo "object_cross_attn is only valid for MODEL=xssc" >&2
       exit 2
     fi
+    if [[ "${HEAD_TEXT}" != "none" ]]; then
+      echo "${ABLATION_MODE} requires HEAD=none" >&2
+      exit 2
+    fi
     printf -v BLOCK_PADDED "%02d" "$((10#${BLOCK_TEXT}))"
     ABLATION_TAG="${ABLATION_MODE}_block${BLOCK_PADDED}"
     ABLATION_ARGS=(
       --dit-ablation-mode "${ABLATION_MODE}"
       --dit-ablation-block "${BLOCK_TEXT}"
+    )
+    ;;
+  self_attn_head_zero)
+    if [[ ! "${BLOCK_TEXT}" =~ ^([0-9]|[12][0-9])$ ]]; then
+      echo "BLOCK must be an integer in [0, 29], got ${BLOCK_TEXT}" >&2
+      exit 2
+    fi
+    if [[ ! "${HEAD_TEXT}" =~ ^([0-9]|1[0-9]|2[0-3])$ ]]; then
+      echo "HEAD must be an integer in [0, 23], got ${HEAD_TEXT}" >&2
+      exit 2
+    fi
+    printf -v BLOCK_PADDED "%02d" "$((10#${BLOCK_TEXT}))"
+    printf -v HEAD_PADDED "%02d" "$((10#${HEAD_TEXT}))"
+    ABLATION_TAG="${ABLATION_MODE}_block${BLOCK_PADDED}_head${HEAD_PADDED}"
+    ABLATION_ARGS=(
+      --dit-ablation-mode "${ABLATION_MODE}"
+      --dit-ablation-block "${BLOCK_TEXT}"
+      --dit-ablation-head "${HEAD_TEXT}"
     )
     ;;
   *)
@@ -115,6 +138,7 @@ fi
   echo "model=${MODEL}"
   echo "ablation_mode=${ABLATION_MODE}"
   echo "block=${BLOCK_TEXT}"
+  echo "head=${HEAD_TEXT}"
   echo "gpu_id=${GPU_ID}"
   echo "input_list=${INPUT_LIST}"
   echo "effective_input_list=${EFFECTIVE_INPUT_LIST}"

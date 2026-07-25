@@ -32,6 +32,7 @@ class FakeAttention(torch.nn.Module):
     def __init__(self, increment: float) -> None:
         super().__init__()
         self.increment = increment
+        self.heads = 3
         self.to_q = FakeLoraLinear(0.01)
         self.to_k = FakeLoraLinear(0.01)
         self.to_v = FakeLoraLinear(0.01)
@@ -105,6 +106,24 @@ def test_whole_block() -> None:
     assert get_ablation_call_count(model) == 1
 
 
+def test_single_head_zero() -> None:
+    model = FakeDiT()
+    metadata = install_physrvg_ablation(
+        model,
+        PhysRVGAblationSpec("self_attn_head_zero", 17, 1),
+    )
+    projection = model.blocks[17].attn1.to_out[0]
+    projection_input = torch.arange(12, dtype=torch.float32).reshape(1, 2, 6)
+    output = projection(projection_input)
+    expected = projection_input.reshape(1, 2, 3, 2).clone()
+    expected[..., 1, :] = 0
+    expected = expected.reshape_as(projection_input) + 0.01
+    assert torch.allclose(output, expected)
+    assert get_ablation_call_count(model) == 1
+    assert metadata["head_id"] == 1
+    assert metadata["num_attention_heads"] == 3
+
+
 def test_lora_off_and_peft_unwrap() -> None:
     model = FakePeft()
     metadata = install_physrvg_ablation(
@@ -130,6 +149,7 @@ def test_baseline() -> None:
 if __name__ == "__main__":
     test_module_ablations()
     test_whole_block()
+    test_single_head_zero()
     test_lora_off_and_peft_unwrap()
     test_baseline()
     print("PhysRVG ablation tests passed")

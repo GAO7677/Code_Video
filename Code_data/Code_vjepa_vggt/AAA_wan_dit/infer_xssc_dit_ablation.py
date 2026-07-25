@@ -15,6 +15,7 @@ from dit_ablation import (
     annotate_result_files,
     cli_path,
     cli_value,
+    get_dit_head_ablation_call_count,
     install_dit_ablation,
 )
 
@@ -27,10 +28,12 @@ def _extract_ablation_args() -> tuple[DiTAblationSpec, list[str]]:
         default="baseline",
     )
     parser.add_argument("--dit-ablation-block", type=int, default=None)
+    parser.add_argument("--dit-ablation-head", type=int, default=None)
     args, remaining = parser.parse_known_args(sys.argv[1:])
     spec = DiTAblationSpec(
         mode=str(args.dit_ablation_mode),
         block_id=args.dit_ablation_block,
+        head_id=args.dit_ablation_head,
     )
     return spec, remaining
 
@@ -42,12 +45,14 @@ def main() -> None:
     negative_prompt = cli_value(remaining, "--negative-prompt")
     original_build_runtime_model = base._build_runtime_model
     installed_metadata: dict[str, object] | None = None
+    installed_dit = None
 
     def build_runtime_model_with_ablation(args):
-        nonlocal installed_metadata
+        nonlocal installed_metadata, installed_dit
         model, model_args, load_info = original_build_runtime_model(args)
         metadata = install_dit_ablation(model.pipe.dit, spec)
         installed_metadata = metadata
+        installed_dit = model.pipe.dit
         model._aaa_wan_dit_ablation = metadata
         print(f"[dit_ablation] {json.dumps(metadata, sort_keys=True)}", flush=True)
         return model, model_args, load_info
@@ -58,6 +63,8 @@ def main() -> None:
         base.main()
     finally:
         if installed_metadata is not None:
+            observed_calls = get_dit_head_ablation_call_count(installed_dit)
+            installed_metadata["observed_target_forward_calls"] = observed_calls
             counts = annotate_result_files(
                 [output_root],
                 installed_metadata,

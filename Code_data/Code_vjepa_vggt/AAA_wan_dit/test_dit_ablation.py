@@ -12,6 +12,7 @@ import torch.nn as nn
 from dit_ablation import (
     DiTAblationSpec,
     annotate_result_files,
+    get_dit_head_ablation_call_count,
     install_dit_ablation,
 )
 
@@ -31,6 +32,13 @@ class FakeBlock(nn.Module):
         x = x + self.self_attn(x)
         x = x + self.object_cross_attn(x)
         return x + 1
+
+
+class FakeHeadSelfAttention(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.num_heads = 3
+        self.o = nn.Identity()
 
 
 class FakeDiT(nn.Module):
@@ -69,6 +77,21 @@ def main() -> None:
     )
     object_attn_out = run_block(object_attn)
     assert torch.all(object_attn_out < baseline)
+
+    head_zero = FakeDiT()
+    head_zero.blocks[7].self_attn = FakeHeadSelfAttention()
+    metadata = install_dit_ablation(
+        head_zero,
+        DiTAblationSpec("self_attn_head_zero", 7, 1),
+    )
+    projection_input = torch.arange(12, dtype=torch.float32).reshape(1, 2, 6)
+    projection_output = head_zero.blocks[7].self_attn.o(projection_input)
+    expected = projection_input.reshape(1, 2, 3, 2).clone()
+    expected[..., 1, :] = 0
+    assert torch.equal(projection_output, expected.reshape_as(projection_input))
+    assert get_dit_head_ablation_call_count(head_zero) == 1
+    assert metadata["head_id"] == 1
+    assert metadata["num_attention_heads"] == 3
 
     untouched = FakeDiT()
     metadata = install_dit_ablation(untouched, DiTAblationSpec())

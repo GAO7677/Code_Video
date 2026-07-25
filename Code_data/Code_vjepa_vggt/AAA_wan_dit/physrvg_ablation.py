@@ -13,6 +13,7 @@ ABLATION_MODES = (
     "baseline",
     "whole_block",
     "self_attn_zero",
+    "self_attn_head_zero",
     "text_cross_attn_zero",
     "ffn_zero",
     "lora_off",
@@ -36,6 +37,7 @@ EXPECTED_LORA_MODULES = (
 class PhysRVGAblationSpec:
     mode: str = "baseline"
     block_id: int | None = None
+    head_id: int | None = None
 
     def validate(self, num_blocks: int) -> None:
         if self.mode not in ABLATION_MODES:
@@ -43,8 +45,8 @@ class PhysRVGAblationSpec:
                 f"Unsupported ablation mode {self.mode!r}; expected one of {ABLATION_MODES}"
             )
         if self.mode == "baseline":
-            if self.block_id is not None:
-                raise ValueError("baseline must not specify a block id")
+            if self.block_id is not None or self.head_id is not None:
+                raise ValueError("baseline must not specify block/head ids")
             return
         if self.block_id is None:
             raise ValueError(f"{self.mode} requires a block id")
@@ -52,11 +54,20 @@ class PhysRVGAblationSpec:
             raise ValueError(
                 f"block id must be in [0, {num_blocks - 1}], got {self.block_id}"
             )
+        if self.mode == "self_attn_head_zero":
+            if self.head_id is None:
+                raise ValueError("self_attn_head_zero requires a head id")
+        elif self.head_id is not None:
+            raise ValueError(f"{self.mode} must not specify a head id")
 
     @property
     def tag(self) -> str:
         if self.mode == "baseline":
             return "baseline"
+        if self.mode == "self_attn_head_zero":
+            return (
+                f"{self.mode}_block{self.block_id:02d}_head{self.head_id:02d}"
+            )
         return f"{self.mode}_block{self.block_id:02d}"
 
 
@@ -124,6 +135,50 @@ def _replace_block_with_identity(
     block.forward = types.MethodType(identity_forward, block)
 
 
+def _zero_projection_input_head(
+    projection: torch.nn.Module,
+    *,
+    num_heads: int,
+    head_id: int,
+    counter: _ForwardCounter,
+) -> None:
+    if not 0 <= head_id < num_heads:
+        raise ValueError(f"head id must be in [0, {num_heads - 1}], got {head_id}")
+    if hasattr(projection, "_physrvg_ablation_original_forward"):
+        raise RuntimeError(
+            f"Ablation already installed on {type(projection).__name__}"
+        )
+    original_forward = projection.forward
+    projection._physrvg_ablation_original_forward = original_forward
+
+    def forward_with_head_zero(
+        self: torch.nn.Module,
+        hidden_states: torch.Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        del self
+        if hidden_states.shape[-1] % num_heads != 0:
+            raise RuntimeError(
+                f"attention width {hidden_states.shape[-1]} is not divisible "
+                f"by {num_heads} heads"
+            )
+        head_dim = hidden_states.shape[-1] // num_heads
+        per_head = hidden_states.reshape(
+            *hidden_states.shape[:-1], num_heads, head_dim
+        ).clone()
+        per_head[..., head_id, :] = 0
+        counter.count += 1
+        return original_forward(
+            per_head.reshape_as(hidden_states), *args, **kwargs
+        )
+
+    projection.forward = types.MethodType(
+        forward_with_head_zero,
+        projection,
+    )
+
+
 def _disable_block_lora(
     block: torch.nn.Module,
     counter: _ForwardCounter,
@@ -175,6 +230,7 @@ def install_physrvg_ablation(
     disabled_module: str | None = None
     disabled_lora_modules: list[str] = []
     semantics: str | None = None
+    num_heads: int | None = None
 
     if spec.mode != "baseline":
         block = blocks[spec.block_id]
@@ -187,6 +243,20 @@ def install_physrvg_ablation(
             disabled_module = f"{block_prefix}.attn1"
             semantics = "attn1_output=zeros_like(attn1_input)"
             _replace_with_zero(block.attn1, counter)
+        elif spec.mode == "self_attn_head_zero":
+            num_heads = int(block.attn1.heads)
+            disabled_module = (
+                f"{block_prefix}.attn1.attention_output_head[{spec.head_id}]"
+            )
+            semantics = (
+                "selected_attn1_head_output_zero_before_to_out_projection"
+            )
+            _zero_projection_input_head(
+                block.attn1.to_out[0],
+                num_heads=num_heads,
+                head_id=int(spec.head_id),
+                counter=counter,
+            )
         elif spec.mode == "text_cross_attn_zero":
             disabled_module = f"{block_prefix}.attn2"
             semantics = "attn2_output=zeros_like(attn2_input)"
@@ -209,6 +279,7 @@ def install_physrvg_ablation(
             "disabled_module": disabled_module,
             "disabled_lora_modules": disabled_lora_modules,
             "semantics": semantics,
+            "num_attention_heads": num_heads,
             "installation_point": "after_full_dit_and_lora_load",
         }
     )

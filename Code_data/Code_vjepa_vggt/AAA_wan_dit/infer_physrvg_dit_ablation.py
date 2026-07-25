@@ -51,6 +51,7 @@ def _extract_ablation_args(
         default="baseline",
     )
     parser.add_argument("--physrvg-ablation-block", type=int, default=None)
+    parser.add_argument("--physrvg-ablation-head", type=int, default=None)
     parser.add_argument("--expected-context-frames", type=int, default=8)
     parser.add_argument(
         "--physrvg-root",
@@ -61,6 +62,7 @@ def _extract_ablation_args(
     spec = PhysRVGAblationSpec(
         mode=str(args.physrvg_ablation_mode),
         block_id=args.physrvg_ablation_block,
+        head_id=args.physrvg_ablation_head,
     )
     spec.validate(30)
     if args.expected_context_frames != MATCHED_XSSC_CONFIG["context_frames"]:

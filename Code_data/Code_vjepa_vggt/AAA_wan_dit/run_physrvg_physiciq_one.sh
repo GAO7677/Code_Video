@@ -5,11 +5,11 @@ set -euo pipefail
 # LIMIT=1 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_physrvg_physiciq_one.sh baseline none 0
 # LIMIT=1 bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_physrvg_physiciq_one.sh self_attn_zero 5 0
 #
-# Usage: run_physrvg_physiciq_one.sh MODE BLOCK GPU_ID
+# Usage: run_physrvg_physiciq_one.sh MODE BLOCK GPU_ID [HEAD]
 
-if [[ "$#" -ne 3 ]]; then
-  echo "Usage: $0 MODE BLOCK GPU_ID" >&2
-  echo "MODE: baseline | whole_block | self_attn_zero | text_cross_attn_zero | ffn_zero | lora_off" >&2
+if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
+  echo "Usage: $0 MODE BLOCK GPU_ID [HEAD]" >&2
+  echo "MODE: baseline | whole_block | self_attn_zero | self_attn_head_zero | text_cross_attn_zero | ffn_zero | lora_off" >&2
   echo "BLOCK: none for baseline, otherwise 0-29" >&2
   exit 2
 fi
@@ -17,6 +17,7 @@ fi
 MODE="$1"
 BLOCK_TEXT="$2"
 GPU_ID="$3"
+HEAD_TEXT="${4:-none}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHYSRVG_ROOT="${PHYSRVG_ROOT:-/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/PhysRVG-main}"
@@ -43,8 +44,8 @@ NEGATIVE_PROMPT="模糊，低质量，变形，伪影，文字，水印，过曝
 
 case "${MODE}" in
   baseline)
-    if [[ "${BLOCK_TEXT}" != "none" ]]; then
-      echo "baseline requires BLOCK=none" >&2
+    if [[ "${BLOCK_TEXT}" != "none" || "${HEAD_TEXT}" != "none" ]]; then
+      echo "baseline requires BLOCK=none and HEAD=none" >&2
       exit 2
     fi
     TAG=baseline
@@ -55,11 +56,33 @@ case "${MODE}" in
       echo "BLOCK must be an integer in [0, 29], got ${BLOCK_TEXT}" >&2
       exit 2
     fi
+    if [[ "${HEAD_TEXT}" != "none" ]]; then
+      echo "${MODE} requires HEAD=none" >&2
+      exit 2
+    fi
     printf -v BLOCK_PADDED "%02d" "$((10#${BLOCK_TEXT}))"
     TAG="${MODE}_block${BLOCK_PADDED}"
     ABLATION_ARGS=(
       --physrvg-ablation-mode "${MODE}"
       --physrvg-ablation-block "${BLOCK_TEXT}"
+    )
+    ;;
+  self_attn_head_zero)
+    if [[ ! "${BLOCK_TEXT}" =~ ^([0-9]|[12][0-9])$ ]]; then
+      echo "BLOCK must be an integer in [0, 29], got ${BLOCK_TEXT}" >&2
+      exit 2
+    fi
+    if [[ ! "${HEAD_TEXT}" =~ ^([0-9]|1[0-9]|2[0-3])$ ]]; then
+      echo "HEAD must be an integer in [0, 23], got ${HEAD_TEXT}" >&2
+      exit 2
+    fi
+    printf -v BLOCK_PADDED "%02d" "$((10#${BLOCK_TEXT}))"
+    printf -v HEAD_PADDED "%02d" "$((10#${HEAD_TEXT}))"
+    TAG="${MODE}_block${BLOCK_PADDED}_head${HEAD_PADDED}"
+    ABLATION_ARGS=(
+      --physrvg-ablation-mode "${MODE}"
+      --physrvg-ablation-block "${BLOCK_TEXT}"
+      --physrvg-ablation-head "${HEAD_TEXT}"
     )
     ;;
   *)
@@ -97,6 +120,7 @@ fi
   echo "model=PhysRVG"
   echo "ablation_mode=${MODE}"
   echo "block=${BLOCK_TEXT}"
+  echo "head=${HEAD_TEXT}"
   echo "gpu_id=${GPU_ID}"
   echo "input_list=${INPUT_LIST}"
   echo "effective_input_list=${EFFECTIVE_INPUT_LIST}"

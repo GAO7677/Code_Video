@@ -142,7 +142,11 @@ def _resolve_benchmark_view(
         for match in pattern.finditer(hint):
             candidates.append((int(match.group(1)), match.group(2), hint))
 
-    valid = {(case_id, view): index[(case_id, view)] for case_id, view, _ in candidates if (case_id, view) in index}
+    valid = {
+        (case_id, view): index[(case_id, view)]
+        for case_id, view, _ in candidates
+        if (case_id, view) in index
+    }
     if len(valid) == 1:
         return next(iter(valid.values()))
     if not valid:
@@ -235,6 +239,33 @@ def _component_scores(metrics: Mapping[str, Any]) -> dict[str, float]:
     return {**raw, **scores}
 
 
+def _export_scored_inputs(frames: Any, output_dir: Path, fps: int) -> dict[str, str]:
+    scored_dir = output_dir / "scored_inputs"
+    scored_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "scored_generated_video": scored_dir / "generated_video.mp4",
+        "scored_take1_video": scored_dir / "take1_video.mp4",
+        "scored_take2_video": scored_dir / "take2_video.mp4",
+        "scored_generated_mask": scored_dir / "generated_mask.mp4",
+        "scored_take1_mask": scored_dir / "take1_mask.mp4",
+        "scored_take2_mask": scored_dir / "take2_mask.mp4",
+    }
+    _write_video(list(frames.generated), paths["scored_generated_video"], float(fps))
+    _write_video(list(frames.real_v1), paths["scored_take1_video"], float(fps))
+    _write_video(list(frames.real_v2), paths["scored_take2_video"], float(fps))
+    for key, mask_frames in (
+        ("scored_generated_mask", frames.mask_generated),
+        ("scored_take1_mask", frames.mask_v1),
+        ("scored_take2_mask", frames.mask_v2),
+    ):
+        visible_masks = [
+            np.repeat(mask[:, :, None], 3, axis=2).astype(np.float32)
+            for mask in mask_frames
+        ]
+        _write_video(visible_masks, paths[key], float(fps))
+    return {key: str(path) for key, path in paths.items()}
+
+
 def score_case(
     case: EvalCase | Path | str | Mapping[str, Any],
     *,
@@ -323,6 +354,7 @@ def score_case(
     if frames is None:
         raise RuntimeError(f"Could not load official reference frames: {real1_path}")
     metrics = compute_view_metrics(frames)
+    scored_input_paths = _export_scored_inputs(frames, output_dir, fps)
     components = _component_scores(metrics)
     component_score_keys = (
         "score_spatiotemporal_iou",
@@ -333,6 +365,16 @@ def score_case(
     score_01 = float(np.mean([components[key] for key in component_score_keys]))
     score_100 = round(score_01 * 100.0, 2)
     duration_sec = frame_count / float(fps)
+    protocol_gaps = []
+    if frame_count != expected_official_frames:
+        protocol_gaps.append(
+            f"generated future is {duration_sec:.3f}s, official protocol requires exactly 5s"
+        )
+    protocol_gaps.extend(
+        [
+            "only one camera view is available; official score averages left, center, and right",
+        ]
+    )
 
     return {
         "score": score_100,
@@ -355,13 +397,15 @@ def score_case(
         "fps": int(fps),
         "views_compared": 1,
         "official_views_required": 3,
-        "official_runs_required": 4,
+        "leaderboard_minimum_runs": 1,
+        "recommended_runs": 4,
         "generated_only_video": str(generated_path),
         "generated_mask": str(generated_mask_path),
         "take1_reference_video": str(real1_path),
         "take2_reference_video": str(real2_path),
         "take1_reference_mask": str(mask1_path),
         "take2_reference_mask": str(mask2_path),
+        **scored_input_paths,
         "threshold_value": int(threshold_value),
         **{key: round(float(value), 8) for key, value in components.items()},
         "score_formula": (
@@ -373,11 +417,7 @@ def score_case(
             "physiq.calculate_and_write_metrics_to_csv.load_view",
             "physiq.calculate_and_write_metrics_to_csv.compute_view_metrics",
         ],
-        "protocol_gaps": [
-            f"generated future is {duration_sec:.3f}s, official protocol requires exactly 5s",
-            "only one camera view is available; official score averages left, center, and right",
-            "this result is one generation run; leaderboard reporting uses four independent runs",
-        ],
+        "protocol_gaps": protocol_gaps,
         "notes": (
             "Diagnostic score using the official Physics-IQ Verified per-view component formula "
             "and two-take physical-variance normalization. It is not a Physics-IQ Verified "
