@@ -227,6 +227,71 @@ def _short_interpretation(role: str, row: dict[str, Any]) -> str:
     return f"{ball}；相对位置或混合路由{direction}"
 
 
+def _build_records(
+    structural: dict[int, list[tuple[int, np.ndarray]]],
+    ball_scores: dict[int, list[tuple[int, np.ndarray, np.ndarray]]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for head in sorted(structural):
+        step5 = np.stack(
+            [row for step, row in structural[head] if step == 5]
+        ).mean(0)
+        step35 = np.stack(
+            [row for step, row in structural[head] if step == 35]
+        ).mean(0)
+        overall = np.stack([row for _, row in structural[head]]).mean(0)
+        tags = _tags(overall)
+        role = _role_name(tags)
+        ball5 = np.mean(
+            [cross for step, _, cross in ball_scores[head] if step == 5]
+        )
+        ball35 = np.mean(
+            [cross for step, _, cross in ball_scores[head] if step == 35]
+        )
+        all_ball = np.mean(
+            [all_value for _, all_value, _ in ball_scores[head]]
+        )
+        record = {
+            "head": head,
+            "role": role,
+            "tags": tags,
+            "same_frame_step5": float(step5[1]),
+            "same_frame_step35": float(step35[1]),
+            "aligned_cross_time_step5": float(step5[4]),
+            "aligned_cross_time_step35": float(step35[4]),
+            "first_frame_mass": float(overall[2]),
+            "history_bias": float(overall[8] - overall[9]),
+            "entropy": float(overall[0]),
+            "all_ball_trajectory_enrichment": float(all_ball),
+            "cross_ball_step5": float(ball5),
+            "cross_ball_step35": float(ball35),
+        }
+        record["interpretation"] = _short_interpretation(role, record)
+        records.append(record)
+
+    by_ball = sorted(
+        records, key=lambda row: row["cross_ball_step35"], reverse=True
+    )
+    for rank, record in enumerate(by_ball, start=1):
+        record["cross_ball_step35_rank"] = rank
+    return records
+
+
+def _markdown_rows(records: list[dict[str, Any]]) -> str:
+    rows = []
+    for row in records:
+        rows.append(
+            f"| {row['head']:02d} | {row['role']} | "
+            f"{row['same_frame_step5']:.1%}→{row['same_frame_step35']:.1%} | "
+            f"{row['aligned_cross_time_step5']:.1%}→"
+            f"{row['aligned_cross_time_step35']:.1%} | "
+            f"{row['first_frame_mass']:.1%} | {row['history_bias']:+.1%} | "
+            f"{row['cross_ball_step5']:.2f}×→{row['cross_ball_step35']:.2f}× "
+            f"(#{row['cross_ball_step35_rank']}) | {row['interpretation']} |"
+        )
+    return "\n".join(rows)
+
+
 def main() -> None:
     args = parse_args()
     root = args.root.expanduser().resolve()
@@ -238,6 +303,12 @@ def main() -> None:
 
     structural: dict[int, list[tuple[int, np.ndarray]]] = {}
     ball_scores: dict[int, list[tuple[int, np.ndarray, np.ndarray]]] = {}
+    model_structural: dict[
+        str, dict[int, list[tuple[int, np.ndarray]]]
+    ] = {}
+    model_ball_scores: dict[
+        str, dict[int, list[tuple[int, np.ndarray, np.ndarray]]]
+    ] = {}
     trajectories: dict[str, Any] = {}
     for summary_path in summary_paths:
         summary = _read_json(summary_path)
@@ -285,46 +356,20 @@ def main() -> None:
                 ball_scores.setdefault(head, []).append(
                     (step, all_ball[head], cross_ball[head])
                 )
+                model_structural.setdefault(model, {}).setdefault(head, []).append(
+                    (step, per_head[head])
+                )
+                model_ball_scores.setdefault(model, {}).setdefault(head, []).append(
+                    (step, all_ball[head], cross_ball[head])
+                )
 
-    records: list[dict[str, Any]] = []
-    for head in sorted(structural):
-        step5 = np.stack([row for step, row in structural[head] if step == 5]).mean(0)
-        step35 = np.stack(
-            [row for step, row in structural[head] if step == 35]
-        ).mean(0)
-        overall = np.stack([row for _, row in structural[head]]).mean(0)
-        tags = _tags(overall)
-        role = _role_name(tags)
-        ball5 = np.mean(
-            [cross for step, _, cross in ball_scores[head] if step == 5]
+    records = _build_records(structural, ball_scores)
+    per_model_records = {
+        model: _build_records(
+            model_structural[model], model_ball_scores[model]
         )
-        ball35 = np.mean(
-            [cross for step, _, cross in ball_scores[head] if step == 35]
-        )
-        all_ball = np.mean([all_value for _, all_value, _ in ball_scores[head]])
-        record = {
-            "head": head,
-            "role": role,
-            "tags": tags,
-            "same_frame_step5": float(step5[1]),
-            "same_frame_step35": float(step35[1]),
-            "aligned_cross_time_step5": float(step5[4]),
-            "aligned_cross_time_step35": float(step35[4]),
-            "first_frame_mass": float(overall[2]),
-            "history_bias": float(overall[8] - overall[9]),
-            "entropy": float(overall[0]),
-            "all_ball_trajectory_enrichment": float(all_ball),
-            "cross_ball_step5": float(ball5),
-            "cross_ball_step35": float(ball35),
-        }
-        record["interpretation"] = _short_interpretation(role, record)
-        records.append(record)
-
-    by_ball = sorted(
-        records, key=lambda row: row["cross_ball_step35"], reverse=True
-    )
-    for rank, record in enumerate(by_ball, start=1):
-        record["cross_ball_step35_rank"] = rank
+        for model in sorted(model_structural)
+    }
 
     csv_path = output_dir / "all_head_moving_ball_analysis.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -349,17 +394,6 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    table_rows = []
-    for row in records:
-        table_rows.append(
-            f"| {row['head']:02d} | {row['role']} | "
-            f"{row['same_frame_step5']:.1%}→{row['same_frame_step35']:.1%} | "
-            f"{row['aligned_cross_time_step5']:.1%}→"
-            f"{row['aligned_cross_time_step35']:.1%} | "
-            f"{row['first_frame_mass']:.1%} | {row['history_bias']:+.1%} | "
-            f"{row['cross_ball_step5']:.2f}×→{row['cross_ball_step35']:.2f}× "
-            f"(#{row['cross_ball_step35_rank']}) | {row['interpretation']} |"
-        )
     markdown = f"""# Block 17 Moving-Ball Head Analysis
 
 Case: `{args.case}`. Values are averaged across Wan+LoRA, xSSC, and PhysRVG.
@@ -369,7 +403,7 @@ to the query ball itself.
 
 | Head | Role | Same-frame | Aligned cross-time | First-frame | History bias | Cross-time ball trajectory | Interpretation |
 |---:|---|---:|---:|---:|---:|---:|---|
-{chr(10).join(table_rows)}
+{_markdown_rows(records)}
 
 ## Reading Notes
 
@@ -385,10 +419,68 @@ to the query ball itself.
 """
     markdown_path = output_dir / "all_head_moving_ball_analysis.md"
     markdown_path.write_text(markdown, encoding="utf-8")
+
+    per_model_sections = []
+    for model, model_records in per_model_records.items():
+        per_model_sections.append(
+            f"""## {model}
+
+| Head | Role | Same-frame | Aligned cross-time | First-frame | History bias | Cross-time ball trajectory | Interpretation |
+|---:|---|---:|---:|---:|---:|---:|---|
+{_markdown_rows(model_records)}
+"""
+        )
+    per_model_markdown = f"""# Per-Model Block 17 Moving-Ball Analysis
+
+Case: `{args.case}`. Each section is ranked independently within its model.
+The cross-time ball metric excludes the current latent frame.
+
+{chr(10).join(per_model_sections)}
+## Important Limitation
+
+Wan+LoRA produces a second moving ball after roughly frame 12, while xSSC and
+PhysRVG keep the ball near the support for most later frames. Therefore the
+Wan+LoRA score is the stronger test of actual spatial displacement; high xSSC or
+PhysRVG scores may partly measure repeated attention to a nearly fixed location.
+
+All scores use the saved 512-bin pooled matrices, not exact per-token Q/K rows.
+"""
+    per_model_markdown_path = output_dir / "per_model_moving_ball_analysis.md"
+    per_model_markdown_path.write_text(
+        per_model_markdown, encoding="utf-8"
+    )
+
+    per_model_json_path = output_dir / "per_model_moving_ball_analysis.json"
+    per_model_json_path.write_text(
+        json.dumps(
+            {
+                "case": args.case,
+                "trajectories": trajectories,
+                "models": per_model_records,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    per_model_csv_path = output_dir / "per_model_moving_ball_analysis.csv"
+    with per_model_csv_path.open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        fieldnames = ["model"] + list(records[0])
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for model, model_records in per_model_records.items():
+            for record in model_records:
+                writer.writerow({"model": model, **record})
     print(
         json.dumps(
             {
                 "markdown": str(markdown_path),
+                "per_model_markdown": str(per_model_markdown_path),
+                "per_model_csv": str(per_model_csv_path),
+                "per_model_json": str(per_model_json_path),
                 "csv": str(csv_path),
                 "json": str(json_path),
                 "heads": len(records),
