@@ -479,7 +479,9 @@ def plot_metrics(
     model: str,
 ) -> dict[str, dict[str, int]]:
     indexed = stat_index(stats)
-    model_methods = [method for method in {stat.method for stat in stats} if method.model == model]
+    model_methods = [
+        method for method in {stat.method for stat in stats} if method.model == model
+    ]
     block_ids = sorted(
         {
             method.block_id
@@ -498,8 +500,15 @@ def plot_metrics(
     }
     x_positions = np.arange(len(block_ids) + 1)
     x_labels = ("Baseline",) + tuple(str(block_id) for block_id in block_ids)
-    fig, axes = plt.subplots(7, 2, figsize=(19, 32), constrained_layout=False)
-    axes_flat = list(axes.flat)
+    num_columns = 2
+    num_rows = math.ceil(len(METRICS) / num_columns)
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(19, 4.5 * num_rows),
+        constrained_layout=False,
+    )
+    axes_flat = list(np.atleast_1d(axes).flat)
     completeness: dict[str, dict[str, int]] = {}
 
     for axis, metric in zip(axes_flat, METRICS):
@@ -534,15 +543,13 @@ def plot_metrics(
                 )
 
         if np.isfinite(baseline_value):
-            axis.scatter(
-                [0],
-                [baseline_value],
-                marker="*",
-                s=260,
-                facecolor="#FFFFFF" if model == "wan_lora" else "#FFD166",
-                edgecolor="#202020",
-                linewidth=1.6,
-                zorder=5,
+            axis.axhline(
+                baseline_value,
+                color="#202020",
+                linestyle="--",
+                linewidth=2,
+                alpha=0.9,
+                zorder=1,
             )
 
         completeness[metric.key] = {
@@ -593,10 +600,8 @@ def plot_metrics(
             [0],
             [0],
             color="#202020",
-            marker="*",
-            markerfacecolor="#FFFFFF" if model == "wan_lora" else "#FFD166",
-            markersize=14,
-            linestyle="None",
+            linewidth=2,
+            linestyle="--",
             label=f"{MODEL_LABELS[model]} baseline",
         )
     )
