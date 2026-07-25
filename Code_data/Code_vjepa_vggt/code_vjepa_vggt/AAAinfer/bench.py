@@ -108,6 +108,7 @@ def parse_args() -> argparse.Namespace:
         "physics_iq",
         "physics_iq_with_context",
         "physics_iq_without_context",
+        "physics_iq_verified_proxy",
         "pmf_with_context",
         "pmf_without_context",
         "vbench_subject_consistency",
@@ -147,6 +148,27 @@ def parse_args() -> argparse.Namespace:
         "--physics-iq-output-root",
         type=Path,
         default=Path("/tmp/gaoya/physics_iq_single_case/AAAinfer_bench"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--physics-iq-verified-output-root",
+        type=Path,
+        default=Path("/tmp/gaoya/physics_iq_verified_proxy/AAAinfer_bench"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--physics-iq-verified-dataset-root",
+        type=Path,
+        default=Path("/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--physics-iq-official-repo",
+        type=Path,
+        default=Path(
+            "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/"
+            "code_phys_papers_compare/google-deepmind-physics-iq-benchmark"
+        ),
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -716,6 +738,35 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
 
         return factory
 
+    def build_physics_iq_verified_proxy(_: argparse.Namespace) -> MetricFunc:
+        from physv_eval.single_case.physics_iq_verified_proxy import (
+            score_case as score_physics_iq_verified_proxy_case,
+        )
+
+        output_root = args.physics_iq_verified_output_root.expanduser().resolve()
+        benchmark_root = args.physics_iq_verified_dataset_root.expanduser().resolve()
+        official_repo_root = args.physics_iq_official_repo.expanduser().resolve()
+
+        def run(record: CaseRecord) -> dict[str, Any] | None:
+            case, context_frames_override = build_context_metric_case_payload(record)
+            context_frames = 8 if context_frames_override is None else int(context_frames_override)
+            aligned_video_dir = build_method_case_dir(
+                output_root,
+                record,
+                "physics_iq_verified_proxy",
+            )
+            return score_physics_iq_verified_proxy_case(
+                case,
+                benchmark_hint=record.input_json_path,
+                context_frames=context_frames,
+                benchmark_root=benchmark_root,
+                official_repo_root=official_repo_root,
+                threshold_value=int(args.physics_iq_threshold_value),
+                aligned_video_dir=aligned_video_dir,
+            )
+
+        return run
+
     def build_pmf_context_metric(context_mode: str, metric_name: str) -> Callable[[argparse.Namespace], MetricFunc]:
         def factory(_: argparse.Namespace) -> MetricFunc:
             from physv_eval.single_case.pmf import score_case as score_pmf_case
@@ -777,6 +828,7 @@ def build_metric_spec(args: argparse.Namespace) -> MetricSpec:
         "physics_iq": build_physics_iq,
         "physics_iq_with_context": build_physics_iq_context_metric("with_context", "physics_iq_with_context"),
         "physics_iq_without_context": build_physics_iq_context_metric("without_context", "physics_iq_without_context"),
+        "physics_iq_verified_proxy": build_physics_iq_verified_proxy,
         "pmf_with_context": build_pmf_context_metric("with_context", "pmf_with_context"),
         "pmf_without_context": build_pmf_context_metric("without_context", "pmf_without_context"),
         "vbench_subject_consistency": build_vbench_metric("subject_consistency", "vbench_subject_consistency"),
