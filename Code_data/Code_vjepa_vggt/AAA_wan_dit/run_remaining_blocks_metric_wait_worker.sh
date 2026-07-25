@@ -20,7 +20,7 @@ while [[ ! -f "${READY_FILE}" ]]; do
   sleep 20
 done
 
-bash "${SCRIPT_DIR}/run_bench_v2v_wan_queue_worker.sh" \
+bash "${SCRIPT_DIR}/run_remaining_blocks_queue_worker.sh" \
   "${GPU_ID}" "${KIND}" "${WORKER_NAME}" "${RUN_ROOT}/metrics" "${INPUT_LIST}"
 
 touch "${RUN_ROOT}/metrics/state/${STATE_PREFIX}_${WORKER_NAME}.stage_complete"

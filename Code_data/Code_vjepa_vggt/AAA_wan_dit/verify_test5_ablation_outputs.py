@@ -38,11 +38,28 @@ def main() -> None:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--block", required=True)
     parser.add_argument("--head", default="none")
+    parser.add_argument("--expected-cases", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     config_root = args.config_root.expanduser().resolve()
-    inputs = read_inputs(args.input_list.expanduser().resolve())
+    if args.expected_cases <= 0:
+        raise ValueError("--expected-cases must be positive")
+    inputs = [
+        Path(line.strip()).expanduser().resolve()
+        for line in args.input_list.expanduser().resolve().read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if (
+        len(inputs) != args.expected_cases
+        or len({entry.stem for entry in inputs}) != args.expected_cases
+    ):
+        raise ValueError(
+            f"expected exactly {args.expected_cases} unique input JSONs, "
+            f"got {len(inputs)}"
+        )
     expected_block = None if args.block == "none" else int(args.block)
     expected_head = None if args.head == "none" else int(args.head)
     metadata_key = "physrvg_ablation" if args.model == "physrvg" else "dit_ablation"
@@ -78,7 +95,11 @@ def main() -> None:
                     f"{json_path} num_attention_heads="
                     f"{metadata.get('num_attention_heads')!r}, expected 24"
                 )
-            expected_calls = 40 if args.model == "physrvg" else 400
+            expected_calls = (
+                40
+                if args.model == "physrvg"
+                else args.expected_cases * 40 * 2
+            )
             if metadata.get("observed_target_forward_calls") != expected_calls:
                 raise RuntimeError(
                     f"{json_path} observed_target_forward_calls="

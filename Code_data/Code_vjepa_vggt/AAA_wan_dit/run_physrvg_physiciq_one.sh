@@ -30,17 +30,17 @@ DIT_CHECKPOINT="${DIT_CHECKPOINT:-/data/gaoya/ckpt/HappyP4nda-PhysRVG/dit/diffus
 LORA_CHECKPOINT="${LORA_CHECKPOINT:-/data/gaoya/ckpt/HappyP4nda-PhysRVG/lora/checkpoint}"
 
 # Matched to the previous xSSC ablation run, except PhysRVG keeps CFG disabled.
-HEIGHT=512
-WIDTH=896
-NUM_FRAMES=49
-CONTEXT_FRAMES=8
-NUM_INFERENCE_STEPS=40
-GUIDANCE_SCALE=5.0
-DO_CFG=0
-FPS=30
-SEED=42
+HEIGHT="${HEIGHT:-512}"
+WIDTH="${WIDTH:-896}"
+NUM_FRAMES="${NUM_FRAMES:-49}"
+CONTEXT_FRAMES="${CONTEXT_FRAMES:-8}"
+NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS:-40}"
+GUIDANCE_SCALE="${GUIDANCE_SCALE:-5.0}"
+DO_CFG="${DO_CFG:-0}"
+FPS="${FPS:-30}"
+SEED="${SEED:-42}"
 LIMIT="${LIMIT:-}"
-NEGATIVE_PROMPT="模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+NEGATIVE_PROMPT="${NEGATIVE_PROMPT:-模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理}"
 
 case "${MODE}" in
   baseline)

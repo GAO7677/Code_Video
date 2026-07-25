@@ -12,12 +12,21 @@ RUN_ROOT="$3"
 OUTPUT_BASE="$4"
 INPUT_LIST="$5"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${SCRIPT_DIR}/remaining_blocks_experiment.env"
 MANAGER="${SCRIPT_DIR}/manage_remaining_block_pipeline.py"
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 QUEUE="${RUN_ROOT}/generation/queue.tsv"
 CURSOR="${RUN_ROOT}/generation/cursor"
 LOCK="${RUN_ROOT}/generation/queue.lock"
 LOG="${RUN_ROOT}/generation/logs/${WORKER_NAME}.log"
+
+if [[ ! -s "${CONFIG}" ]]; then
+  echo "Missing experiment config: ${CONFIG}" >&2
+  exit 2
+fi
+set -a
+source "${CONFIG}"
+set +a
 
 mkdir -p "$(dirname -- "${LOG}")" "${RUN_ROOT}/generation/state" \
   "${RUN_ROOT}/generation/validations"
@@ -48,11 +57,36 @@ while true; do
 
   set +e
   if [[ "${model}" == "physrvg" ]]; then
-    INPUT_LIST="${INPUT_LIST}" OUTPUT_BASE="${OUTPUT_BASE}/PhyRVG" \
+    PYTHON="${PHYSRVG_PYTHON}" \
+    INPUT_LIST="${INPUT_LIST}" \
+    OUTPUT_BASE="${OUTPUT_BASE}/PhyRVG" \
+    PHYSRVG_ROOT="${PHYSRVG_ROOT}" \
+    MODEL_ID="${PHYSRVG_MODEL_ID}" \
+    DIT_CHECKPOINT="${PHYSRVG_DIT_CHECKPOINT}" \
+    LORA_CHECKPOINT="${PHYSRVG_LORA_CHECKPOINT}" \
+    LIMIT="" \
       bash "${SCRIPT_DIR}/run_physrvg_physiciq_one.sh" \
       "${mode}" "${block}" "${GPU_ID}"
   else
-    INPUT_LIST="${INPUT_LIST}" OUTPUT_BASE="${OUTPUT_BASE}" \
+    PYTHON="${WAN_PYTHON}" \
+    INPUT_LIST="${INPUT_LIST}" \
+    OUTPUT_BASE="${OUTPUT_BASE}" \
+    WAN_ROOT="${WAN_ROOT}" \
+    WAN_LORA_ROOT="${WAN_LORA_ROOT}" \
+    XSSC_WEIGHTS_ROOT="${XSSC_WEIGHTS_ROOT}" \
+    XSSC_ROOT="${XSSC_ROOT}" \
+    XSSC_CONFIG="${XSSC_CONFIG}" \
+    XSSC_CHECKPOINT="${XSSC_CHECKPOINT}" \
+    HEIGHT="${HEIGHT}" \
+    WIDTH="${WIDTH}" \
+    NUM_FRAMES="${NUM_FRAMES}" \
+    CONTEXT_FRAMES="${CONTEXT_FRAMES}" \
+    NUM_INFERENCE_STEPS="${NUM_INFERENCE_STEPS}" \
+    CFG_SCALE="${CFG_SCALE}" \
+    FPS="${FPS}" \
+    SEED="${SEED}" \
+    LIMIT="" \
+    NEGATIVE_PROMPT="${NEGATIVE_PROMPT}" \
       bash "${SCRIPT_DIR}/run_physiciq_one.sh" \
       "${model}" "${mode}" "${block}" "${GPU_ID}"
   fi

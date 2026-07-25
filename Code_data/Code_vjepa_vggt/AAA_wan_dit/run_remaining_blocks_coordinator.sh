@@ -20,6 +20,8 @@ SUMMARY=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train07
 PLOT="${SCRIPT_DIR}/run_plot_dit_ablation_metrics.sh"
 METRICS="${RUN_ROOT}/metrics"
 
+trap 'touch "${RUN_ROOT}/pipeline.failed"' ERR
+
 wait_count() {
   local pattern="$1" expected="$2" label="$3" directory="$4" count
   while true; do
@@ -80,6 +82,7 @@ if [[ -s "${METRICS}/queues/retry.tsv" ]]; then
   wait_count 'retry_*.stage_complete' "${NUM_GPU}" "retry_workers" "${METRICS}/state"
 else
   touch "${RUN_ROOT}/retry.not_needed"
+  touch "${RUN_ROOT}/retry.ready"
 fi
 
 "${PYTHON_BIN}" "${MANAGER}" verify-all \

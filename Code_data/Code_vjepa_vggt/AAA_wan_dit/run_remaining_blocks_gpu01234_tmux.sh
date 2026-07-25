@@ -5,13 +5,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${SCRIPT_DIR}/remaining_blocks_experiment.env"
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 MANAGER="${SCRIPT_DIR}/manage_remaining_block_pipeline.py"
 GEN_WORKER="${SCRIPT_DIR}/run_remaining_blocks_generation_worker.sh"
 METRIC_WORKER="${SCRIPT_DIR}/run_remaining_blocks_metric_wait_worker.sh"
 COORDINATOR="${SCRIPT_DIR}/run_remaining_blocks_coordinator.sh"
-OUTPUT_BASE=/data/gaoya/AAA_test_video/0623/test/v2v_wan
-INPUT_LIST=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt
+if [[ ! -s "${CONFIG}" ]]; then
+  echo "Missing experiment config: ${CONFIG}" >&2
+  exit 2
+fi
+set -a
+source "${CONFIG}"
+set +a
+
 RUN_ROOT="${OUTPUT_BASE}/_remaining_blocks_pipeline"
 SESSION="${SESSION:-wan_dit_remaining_blocks_gpu01234}"
 GPUS=(0 1 2 3 4)

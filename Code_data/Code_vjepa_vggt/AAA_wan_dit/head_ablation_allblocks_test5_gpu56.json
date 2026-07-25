@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "wan_head_allblocks_test5_gpu56",
+    "tmux_session": "wan_head_allblocks_test5_gpu56",
+    "gpus": [5, 6],
+    "generation_workers_per_gpu": 1,
+    "retry_failed_generation": 1,
+    "skip_verified_outputs": true,
+    "clean_incomplete_config_before_retry": true,
+    "minimum_free_disk_gb": 40
+  },
+  "input": {
+    "list_path": "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt",
+    "deduplicate": true,
+    "max_cases": null,
+    "expected_unique_cases": 20
+  },
+  "output": {
+    "base_dir": "/data/gaoya/AAA_test_video/0623/test/v2v_wan_test5",
+    "run_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan_test5/_pipeline"
+  },
+  "sweep": {
+    "mode": "self_attn_head_zero",
+    "models": ["wan_lora", "xssc", "physrvg"],
+    "blocks": {
+      "start": 0,
+      "stop": 29,
+      "step": 1
+    },
+    "heads": {
+      "start": 0,
+      "stop": 23,
+      "step": 1
+    }
+  },
+  "inference": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "cfg_scale": 5.0,
+    "guidance_scale": 5.0,
+    "physrvg_do_cfg": 0,
+    "fps": 30,
+    "seed": 42,
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+  },
+  "checkpoints": {
+    "wan_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+    "wan_lora_root": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500",
+    "xssc_weights_root": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/offcial_xSSC/train_xssc_context_slots/checkpoints/step-001500",
+    "xssc_root": "/home/gaoya/Code_Video/xSSC-main",
+    "xssc_config": "/home/gaoya/Code_Video/xSSC-main/config-randsfq/rsfq2_r-ytvis.py",
+    "xssc_checkpoint": "/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth",
+    "physrvg_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_phys_papers_compare/PhysRVG-main",
+    "physrvg_model_id": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/Wan2.2-TI2V-5B-Diffusers",
+    "physrvg_dit_checkpoint": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/dit/diffusion_pytorch_model.safetensors",
+    "physrvg_lora_checkpoint": "/data/gaoya/ckpt/HappyP4nda-PhysRVG/lora/checkpoint"
+  },
+  "metrics": {
+    "groups": {
+      "cpu": [
+        "physics_iq_with_context",
+        "physics_iq_without_context",
+        "pmf_with_context",
+        "pmf_without_context"
+      ],
+      "gpu_common": [
+        "wmreward",
+        "vbench_subject_consistency",
+        "vbench_background_consistency",
+        "vbench_temporal_flickering",
+        "vbench_motion_smoothness",
+        "vbench_dynamic_degree",
+        "vbench_aesthetic_quality",
+        "vbench_imaging_quality"
+      ],
+      "videophy2": ["videophy2"],
+      "cosmos": ["cosmos_reason1"]
+    },
+    "workers_per_gpu": {
+      "cpu": 8,
+      "gpu_common": 3,
+      "videophy2": 2,
+      "cosmos": 1
+    }
+  }
+}
