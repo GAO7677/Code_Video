@@ -85,9 +85,9 @@ copy_task_summaries "${RUN_ROOT}/queues/cosmos.tsv" cosmos_reason1
   --input-json-allowlist "${INPUT_ALLOWLIST}"
 
 INPUT_JSON_ALLOWLIST="${INPUT_ALLOWLIST}" EXPECTED_CASES=67 \
-  bash "${PLOT}" "${PRIMARY_LIST}" "${RESULT_BASE}/_metric_plots"
+  bash "${PLOT}" "${PRIMARY_LIST}" "${RESULT_BASE}/_metric_plots/leaf_folders"
 INPUT_JSON_ALLOWLIST="${INPUT_ALLOWLIST}" EXPECTED_CASES=67 \
-  bash "${PLOT}" "${PHYRVG_LIST}" "${RESULT_BASE}/PhyRVG/_metric_plots"
+  bash "${PLOT}" "${PHYRVG_LIST}" "${RESULT_BASE}/PhyRVG/_metric_plots/rvg_leaf_folders"
 "${PYTHON_BIN}" "${GALLERY}" \
   --result-root "${RESULT_BASE}" \
   --output-dir "${RESULT_BASE}/_gallery"
