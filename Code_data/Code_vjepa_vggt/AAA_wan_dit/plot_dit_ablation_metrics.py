@@ -110,6 +110,12 @@ METRICS = (
         nested_score("physics_iq_without_context", "score"),
     ),
     Metric(
+        "physics_iq_verified_proxy",
+        "Physics-IQ Verified proxy",
+        "higher",
+        nested_score("physics_iq_verified_proxy", "score"),
+    ),
+    Metric(
         "pmf_with_context",
         "PMF with context",
         "higher",
