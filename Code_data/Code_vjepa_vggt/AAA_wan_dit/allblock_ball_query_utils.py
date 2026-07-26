@@ -17,7 +17,12 @@ from self_attention_matrix import (
     install_diffsynth_block_recorder,
     parse_step_numbers,
 )
-from moving_query_attention import MovingQueryFeatureRecorder, moving_query_coords
+from moving_query_attention import (
+    MovingQueryFeatureRecorder,
+    MovingQueryMapRecorder,
+    explicit_moving_query_coords,
+    moving_query_coords,
+)
 
 
 def parse_block_ids(text: str) -> tuple[int, ...]:
@@ -72,24 +77,43 @@ def build_case_recorder_group(
     output_root: Path,
     case_key: str,
     query_map: dict[str, dict[str, Any]],
+    map_heads_text: str | None = None,
 ) -> BallQueryRecorderGroup:
     if case_key not in query_map:
         raise KeyError(f"query map has no entry for case {case_key}")
     item = query_map[case_key]
     blocks = parse_block_ids(blocks_text)
     steps = parse_step_numbers(steps_text)
-    coords = moving_query_coords(
-        item["trajectory"],
-        frame_shape=tuple(int(value) for value in item["frame_shape"]),
+    if "query_coords_per_time" in item:
+        coords = explicit_moving_query_coords(item["query_coords_per_time"])
+    else:
+        coords = moving_query_coords(
+            item["trajectory"],
+            frame_shape=tuple(int(value) for value in item["frame_shape"]),
+        )
+    selected_heads = (
+        tuple(int(value) for value in map_heads_text.split(","))
+        if map_heads_text
+        else None
+    )
+    recorder_class = (
+        MovingQueryMapRecorder
+        if selected_heads is not None
+        else MovingQueryFeatureRecorder
     )
     return BallQueryRecorderGroup(
         [
-            MovingQueryFeatureRecorder(
+            recorder_class(
                 config=MatrixCaptureConfig(block_id=block, step_numbers=steps),
                 model_label=model_label,
                 output_root=output_root / f"block{block:02d}" / "matrices",
                 query_coords=coords,
                 query_preview=Path(item["preview"]),
+                **(
+                    {"selected_heads": selected_heads}
+                    if selected_heads is not None
+                    else {}
+                ),
             )
             for block in blocks
         ]

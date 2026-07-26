@@ -46,6 +46,9 @@ ATTENTION_ARGS=(
   --attention-query-video-frame 8
   --attention-query-preview "${PLACEHOLDER_PREVIEW}"
 )
+if [[ -n "${ATTENTION_MAP_HEADS:-}" ]]; then
+  ATTENTION_ARGS+=(--attention-map-heads "${ATTENTION_MAP_HEADS}")
+fi
 
 if [[ "${MODEL}" == "wan_lora" ]]; then
   env PYTHONNOUSERSITE=1 \

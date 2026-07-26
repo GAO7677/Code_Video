@@ -55,6 +55,39 @@ def moving_query_coords(
     return tuple(coords)
 
 
+def explicit_moving_query_coords(
+    coords_per_time: list[list[list[int]]],
+    *,
+    grid: tuple[int, int, int] = (13, 16, 28),
+) -> tuple[tuple[int, int, int], ...]:
+    times, grid_h, grid_w = grid
+    if len(coords_per_time) != times:
+        raise ValueError(
+            f"query_coords_per_time has {len(coords_per_time)} entries, expected {times}"
+        )
+    coords: list[tuple[int, int, int]] = []
+    for time, entries in enumerate(coords_per_time):
+        if not entries:
+            raise ValueError(f"latent time {time} has no query tokens")
+        for raw in entries:
+            if len(raw) == 2:
+                row, column = (int(value) for value in raw)
+            elif len(raw) == 3:
+                raw_time, row, column = (int(value) for value in raw)
+                if raw_time != time:
+                    raise ValueError(
+                        f"query coordinate time {raw_time} does not match group {time}"
+                    )
+            else:
+                raise ValueError(f"invalid query coordinate: {raw}")
+            if not (0 <= row < grid_h and 0 <= column < grid_w):
+                raise ValueError(
+                    f"query coordinate {(time, row, column)} outside grid {grid}"
+                )
+            coords.append((time, row, column))
+    return tuple(coords)
+
+
 @torch.no_grad()
 def moving_query_features(
     q: torch.Tensor,
@@ -76,22 +109,18 @@ def moving_query_features(
         grouped.setdefault(int(coord[0]), []).append(coord)
     if tuple(sorted(grouped)) != tuple(range(times)):
         raise ValueError("moving queries must cover every latent time")
-    per_time = {len(coords) for coords in grouped.values()}
-    if len(per_time) != 1:
-        raise ValueError("each latent time must use the same number of queries")
-
-    ordered = tuple(coord for time in range(times) for coord in grouped[time])
-    indices = torch.tensor(
-        _query_indices(ordered, grid), device=q_heads.device, dtype=torch.long
-    )
-    queries_per_time = len(grouped[0])
-    query = q_heads.index_select(1, indices).reshape(
-        heads, times, queries_per_time, head_dim
-    )
-    scores = torch.einsum("htqd,hkd->htqk", query, k_heads)
-    probabilities = torch.softmax(
-        scores.float() * (1.0 / math.sqrt(float(head_dim))), dim=-1
-    ).mean(dim=2)
+    probability_rows = []
+    scale = 1.0 / math.sqrt(float(head_dim))
+    for time in range(times):
+        indices = torch.tensor(
+            _query_indices(tuple(grouped[time]), grid),
+            device=q_heads.device,
+            dtype=torch.long,
+        )
+        query = q_heads.index_select(1, indices)
+        scores = torch.einsum("hqd,hkd->hqk", query, k_heads)
+        probability_rows.append(torch.softmax(scores.float() * scale, dim=-1).mean(dim=1))
+    probabilities = torch.stack(probability_rows, dim=1)
 
     key_ids = torch.arange(token_count, device=q_heads.device)
     key_times = torch.div(key_ids, grid_h * grid_w, rounding_mode="floor")
@@ -108,13 +137,16 @@ def moving_query_features(
         coords = grouped[time]
         rows = [coord[1] for coord in coords]
         columns = [coord[2] for coord in coords]
+        spatial_ids = torch.tensor(
+            [row * grid_w + column for row, column in zip(rows, columns)],
+            device=q_heads.device,
+        )
+        key_spatial_ids = key_rows * grid_w + key_columns
+        selected_spatial = (
+            key_spatial_ids[:, None] == spatial_ids[None, :]
+        ).any(dim=1)
         trajectory_mask[time] = (
-            (key_times == time)
-            & (key_rows[:, None] == torch.tensor(rows, device=q_heads.device)).any(1)
-            & (
-                key_columns[:, None]
-                == torch.tensor(columns, device=q_heads.device)
-            ).any(1)
+            (key_times == time) & selected_spatial
         )
         local_mask[time] = (
             (key_times == time)
@@ -123,14 +155,7 @@ def moving_query_features(
             & (key_columns >= max(0, min(columns) - 1))
             & (key_columns < min(grid_w, max(columns) + 2))
         )
-        aligned_mask[time] = (
-            (key_times != time)
-            & (key_rows[:, None] == torch.tensor(rows, device=q_heads.device)).any(1)
-            & (
-                key_columns[:, None]
-                == torch.tensor(columns, device=q_heads.device)
-            ).any(1)
-        )
+        aligned_mask[time] = (key_times != time) & selected_spatial
 
     values: dict[str, list[torch.Tensor]] = {name: [] for name in FEATURE_NAMES}
     for query_time in range(times):
@@ -172,6 +197,54 @@ def moving_query_features(
         name: torch.stack(items, dim=1).mean(1).cpu().numpy().astype(np.float32)
         for name, items in values.items()
     }
+
+
+@torch.no_grad()
+def moving_query_attention_maps(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    num_heads: int,
+    query_coords: tuple[tuple[int, int, int], ...],
+    grid: tuple[int, int, int],
+    selected_heads: tuple[int, ...],
+) -> np.ndarray:
+    q_heads = _as_heads(q.detach(), num_heads=num_heads)
+    k_heads = _as_heads(k.detach(), num_heads=num_heads)
+    heads, token_count, head_dim = (int(value) for value in q_heads.shape)
+    times, grid_h, grid_w = grid
+    if token_count != times * grid_h * grid_w:
+        raise ValueError(f"Q/K have {token_count} tokens, expected grid {grid}")
+    if max(selected_heads) >= heads:
+        raise ValueError(f"selected head outside 0..{heads - 1}")
+    grouped = {
+        time: tuple(coord for coord in query_coords if coord[0] == time)
+        for time in range(times)
+    }
+    if any(not coords for coords in grouped.values()):
+        raise ValueError("moving map queries must cover every latent time")
+    scale = 1.0 / math.sqrt(float(head_dim))
+    rows = []
+    for time in range(times):
+        indices = torch.tensor(
+            _query_indices(grouped[time], grid),
+            device=q_heads.device,
+            dtype=torch.long,
+        )
+        query = q_heads.index_select(1, indices)
+        scores = torch.einsum("hqd,hkd->hqk", query, k_heads)
+        rows.append(torch.softmax(scores.float() * scale, dim=-1).mean(dim=1))
+    probabilities = torch.stack(rows, dim=1)
+    head_index = torch.tensor(
+        selected_heads, device=q_heads.device, dtype=torch.long
+    )
+    return (
+        probabilities.index_select(0, head_index)
+        .reshape(len(selected_heads), times, times, grid_h, grid_w)
+        .cpu()
+        .numpy()
+        .astype(np.float16)
+    )
 
 
 class MovingQueryFeatureRecorder:
@@ -253,7 +326,13 @@ class MovingQueryFeatureRecorder:
             "case": self.case_key,
             "block_id": int(self.config.block_id),
             "latent_grid": list(self.grid),
-            "query_sampling": "2x2 moving-object tokens at every latent time",
+            "query_sampling": (
+                "per-frame moving-object tokens; count may vary by latent time"
+            ),
+            "query_tokens_per_time": [
+                sum(1 for coord in self.query_coords if int(coord[0]) == time)
+                for time in range(int(self.grid[0]))
+            ],
             "query_time_reduction": "features computed per query time, then mean over 13 times",
             "softmax": "exact over all key tokens",
             "query_coords": [list(coord) for coord in self.query_coords],
@@ -266,4 +345,78 @@ class MovingQueryFeatureRecorder:
             encoding="utf-8",
         )
         print(f"[moving-query-attn] wrote {path}", flush=True)
+        return path
+
+
+class MovingQueryMapRecorder(MovingQueryFeatureRecorder):
+    def __init__(self, *, selected_heads: tuple[int, ...], **kwargs) -> None:
+        super().__init__(**kwargs)
+        if not selected_heads or len(set(selected_heads)) != len(selected_heads):
+            raise ValueError("selected map heads must be non-empty and unique")
+        self.selected_heads = tuple(int(head) for head in selected_heads)
+        self.captures: dict[int, np.ndarray] = {}
+
+    @torch.no_grad()
+    def capture(self, *, q: torch.Tensor, k: torch.Tensor, num_heads: int) -> None:
+        step = self.current_step
+        if not self.active or step is None or step not in self.config.step_numbers:
+            return
+        if self.grid is None:
+            raise RuntimeError("latent grid is not configured")
+        self.captures[int(step)] = moving_query_attention_maps(
+            q,
+            k,
+            num_heads=num_heads,
+            query_coords=self.query_coords,
+            grid=self.grid,
+            selected_heads=self.selected_heads,
+        )
+
+    def finalize_case(self) -> Path:
+        if self.case_key is None or self.grid is None:
+            raise RuntimeError("case/grid missing")
+        missing = sorted(set(self.config.step_numbers) - set(self.captures))
+        if missing:
+            raise RuntimeError(f"missing moving-query maps for steps {missing}")
+        case_dir = self.output_root / self.model_label / self.case_key
+        case_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.query_preview, case_dir / "moving_query_preview.jpg")
+        entries = []
+        for step in self.config.step_numbers:
+            step_dir = case_dir / f"step_{step:02d}"
+            step_dir.mkdir(exist_ok=True)
+            name = f"block{self.config.block_id:02d}_moving_query_maps.npz"
+            np.savez_compressed(
+                step_dir / name,
+                attention=self.captures[int(step)],
+                selected_heads=np.asarray(self.selected_heads, dtype=np.int64),
+                query_coords=np.asarray(self.query_coords, dtype=np.int64),
+            )
+            entries.append(
+                {
+                    "step_number_one_based": int(step),
+                    "directory": step_dir.name,
+                    "maps_npz": name,
+                }
+            )
+        summary = {
+            "model": self.model_label,
+            "case": self.case_key,
+            "block_id": int(self.config.block_id),
+            "latent_grid": list(self.grid),
+            "selected_heads": list(self.selected_heads),
+            "attention_shape": (
+                "selected_head, query_time, key_time, key_row, key_column"
+            ),
+            "query_sampling": "moving-object tokens at every latent time",
+            "softmax": "exact over all key tokens",
+            "query_coords": [list(coord) for coord in self.query_coords],
+            "steps": entries,
+        }
+        path = case_dir / "summary.json"
+        path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[moving-query-map] wrote {path}", flush=True)
         return path
