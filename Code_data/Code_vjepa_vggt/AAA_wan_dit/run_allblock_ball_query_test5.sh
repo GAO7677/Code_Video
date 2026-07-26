@@ -15,6 +15,7 @@ PHYSRVG_PYTHON=/data/gaoya/miniconda3/envs/vjepa2/bin/python
 
 MODEL="${MODEL:?set MODEL to wan_lora, xssc, or physrvg}"
 GPU="${GPU:?set GPU to one physical GPU id}"
+SEED="${SEED:-42}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_dit_ball_query_attention/test5_allblocks_stability}"
 QUERY_ROOT="${QUERY_ROOT:-${OUTPUT_ROOT}/query_map}"
 QUERY_MAP="${QUERY_MAP:-${QUERY_ROOT}/motion_query_map.json}"
@@ -68,7 +69,7 @@ if [[ "${MODEL}" == "wan_lora" ]]; then
     --device cuda --height 512 --width 896 --num-frames 49 \
     --context-frames 8 --conditioning-mode context_aware \
     --context-resize-mode crop --num-inference-steps 40 --cfg-scale 5.0 \
-    --fps 30 --seed 42 --negative-prompt "${NEGATIVE_PROMPT}" --overwrite
+    --fps 30 --seed "${SEED}" --negative-prompt "${NEGATIVE_PROMPT}" --overwrite
 elif [[ "${MODEL}" == "xssc" ]]; then
   env PYTHONNOUSERSITE=1 \
     PYTHONPATH="${PROJECT_ROOT}:${DIFFSYNTH_ROOT}:${TRAIN0419_ROOT}" \
@@ -85,7 +86,7 @@ elif [[ "${MODEL}" == "xssc" ]]; then
     --device cuda:0 --aux-device cuda:0 --inference-devices cuda:0,cuda:0 \
     --height 512 --width 896 --num-frames 49 --context-frames 8 \
     --sampling-mode prefix --num-inference-steps 40 --cfg-scale 5.0 \
-    --fps 30 --seed 42 --negative-prompt "${NEGATIVE_PROMPT}" --overwrite
+    --fps 30 --seed "${SEED}" --negative-prompt "${NEGATIVE_PROMPT}" --overwrite
 elif [[ "${MODEL}" == "physrvg" ]]; then
   env PYTHONNOUSERSITE=1 CUDA_VISIBLE_DEVICES="${GPU}" \
     PYTHONPATH="${PHYSRVG_ROOT}:${SCRIPT_DIR}" \
@@ -97,7 +98,7 @@ elif [[ "${MODEL}" == "physrvg" ]]; then
     --model-id "${MODEL_ID}" --dit-checkpoint "${DIT_CHECKPOINT}" \
     --lora-checkpoint "${LORA_CHECKPOINT}" --device cuda:0 \
     --height 512 --width 896 --num-frames 49 --fps 30 \
-    --num-inference-steps 40 --guidance-scale 5.0 --seed 42 --force
+    --num-inference-steps 40 --guidance-scale 5.0 --seed "${SEED}" --force
 else
   echo "unsupported MODEL=${MODEL}" >&2
   exit 2

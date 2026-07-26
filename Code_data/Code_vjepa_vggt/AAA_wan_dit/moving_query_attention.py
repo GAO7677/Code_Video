@@ -388,6 +388,132 @@ class MovingQueryFeatureRecorder:
         return path
 
 
+class PairedQueryFeatureRecorder(MovingQueryFeatureRecorder):
+    def __init__(
+        self,
+        *,
+        anchor_coords: tuple[tuple[int, int, int], ...],
+        **kwargs,
+    ) -> None:
+        kwargs.pop("query_mode", None)
+        super().__init__(query_mode="paired", **kwargs)
+        self.anchor_coords = anchor_coords
+        self.captures: dict[
+            int, dict[str, dict[str, np.ndarray] | None]
+        ] = {}
+
+    def set_grid(self, grid: tuple[int, int, int]) -> None:
+        super().set_grid(grid)
+        if self.anchor_coords:
+            _query_indices(self.anchor_coords, grid)
+
+    @torch.no_grad()
+    def capture(self, *, q: torch.Tensor, k: torch.Tensor, num_heads: int) -> None:
+        step = self.current_step
+        if not self.active or step is None or step not in self.config.step_numbers:
+            return
+        if self.grid is None:
+            raise RuntimeError("latent grid is not configured")
+        moving = moving_query_features(
+            q,
+            k,
+            num_heads=num_heads,
+            query_coords=self.query_coords,
+            trajectory_coords=self.trajectory_coords,
+            grid=self.grid,
+        )
+        anchor = (
+            moving_query_features(
+                q,
+                k,
+                num_heads=num_heads,
+                query_coords=self.anchor_coords,
+                trajectory_coords=self.trajectory_coords,
+                grid=self.grid,
+            )
+            if self.anchor_coords
+            else None
+        )
+        self.captures[int(step)] = {
+            "moving": moving,
+            "anchor_t2": anchor,
+        }
+
+    def finalize_case(self) -> Path:
+        if self.case_key is None or self.grid is None:
+            raise RuntimeError("case/grid missing")
+        missing = sorted(set(self.config.step_numbers) - set(self.captures))
+        if missing:
+            raise RuntimeError(f"missing paired-query captures for steps {missing}")
+        case_dir = self.output_root / self.model_label / self.case_key
+        case_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.query_preview, case_dir / "query_preview.jpg")
+        steps = tuple(int(step) for step in self.config.step_numbers)
+        arrays: dict[str, np.ndarray] = {
+            "steps_one_based": np.asarray(steps, dtype=np.int16),
+            "moving_query_coords": np.asarray(
+                self.query_coords, dtype=np.int16
+            ),
+            "anchor_t2_query_coords": np.asarray(
+                self.anchor_coords, dtype=np.int16
+            ).reshape(-1, 3),
+            "trajectory_coords": np.asarray(
+                self.trajectory_coords, dtype=np.int16
+            ),
+            "anchor_t2_valid": np.asarray(
+                bool(self.anchor_coords), dtype=np.bool_
+            ),
+        }
+        for protocol in ("moving", "anchor_t2"):
+            for feature in FEATURE_NAMES:
+                if protocol == "anchor_t2" and not self.anchor_coords:
+                    heads = len(self.captures[steps[0]]["moving"][feature])
+                    values = np.full(
+                        (len(steps), heads), np.nan, dtype=np.float32
+                    )
+                else:
+                    values = np.stack(
+                        [
+                            self.captures[step][protocol][feature]
+                            for step in steps
+                        ],
+                        axis=0,
+                    ).astype(np.float32)
+                arrays[f"{protocol}__{feature}"] = values
+        name = f"block{self.config.block_id:02d}_paired_query_features.npz"
+        np.savez_compressed(case_dir / name, **arrays)
+        summary = {
+            "model": self.model_label,
+            "case": self.case_key,
+            "block_id": int(self.config.block_id),
+            "latent_grid": list(self.grid),
+            "query_mode": "paired",
+            "protocols": ["moving", "anchor_t2"],
+            "steps_one_based": list(steps),
+            "moving_query_tokens_per_time": [
+                sum(1 for coord in self.query_coords if int(coord[0]) == time)
+                for time in range(int(self.grid[0]))
+            ],
+            "anchor_t2_valid": bool(self.anchor_coords),
+            "anchor_t2_query_coords": [
+                list(coord) for coord in self.anchor_coords
+            ],
+            "trajectory_coords": [
+                list(coord) for coord in self.trajectory_coords
+            ],
+            "softmax": "exact over all key tokens",
+            "feature_npz": name,
+            "case_metadata": self.case_metadata,
+        }
+        path = case_dir / "summary.json"
+        path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[paired-query-attn] wrote {path}", flush=True)
+        return path
+
+
 class MovingQueryMapRecorder(MovingQueryFeatureRecorder):
     def __init__(self, *, selected_heads: tuple[int, ...], **kwargs) -> None:
         super().__init__(**kwargs)

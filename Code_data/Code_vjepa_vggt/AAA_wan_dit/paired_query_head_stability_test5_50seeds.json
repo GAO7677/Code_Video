@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "experiment_name": "paired_query_head_stability_test5_50seeds",
+  "status": "running_preflight",
+  "purpose": "Measure head-role stability across random seeds and compare anchor-t2 query with moving-object query on paired model outputs.",
+  "input": {
+    "json_list": "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt",
+    "raw_nonempty_lines": 22,
+    "deduplicate_by_resolved_json_path": true,
+    "deduplicate_order": "first occurrence",
+    "expected_unique_cases": 20,
+    "context_frames": 8
+  },
+  "seed_sampling": {
+    "population_min_inclusive": 0,
+    "population_max_inclusive": 100000,
+    "count": 50,
+    "without_replacement": true,
+    "selection_rng": "python_random_mt19937",
+    "selection_seed": 42,
+    "seeds": [
+      851,
+      3278,
+      3478,
+      3905,
+      4165,
+      11395,
+      12156,
+      12280,
+      12676,
+      13396,
+      13434,
+      14592,
+      18289,
+      20379,
+      20926,
+      26062,
+      28221,
+      28657,
+      28893,
+      29256,
+      30495,
+      32098,
+      36048,
+      36421,
+      36463,
+      44118,
+      44597,
+      47052,
+      49797,
+      54987,
+      55302,
+      55392,
+      58878,
+      66237,
+      71426,
+      71482,
+      73563,
+      77236,
+      77397,
+      78907,
+      83810,
+      85181,
+      88696,
+      91506,
+      91924,
+      93850,
+      96530,
+      97080,
+      97196,
+      99458
+    ]
+  },
+  "models": {
+    "wan_lora": {
+      "capture_entrypoint": "capture_allblocks_wan_lora_ball_query.py",
+      "base_runner": "run_allblock_ball_query_test5.sh"
+    },
+    "xssc": {
+      "capture_entrypoint": "capture_allblocks_xssc_ball_query.py",
+      "base_runner": "run_allblock_ball_query_test5.sh"
+    },
+    "physrvg": {
+      "capture_entrypoint": "capture_allblocks_physrvg_ball_query.py",
+      "base_runner": "run_allblock_ball_query_test5.sh"
+    }
+  },
+  "paired_protocols": {
+    "capture_in_same_replay": true,
+    "moving_query": {
+      "query": "model-specific object tokens at every visible latent time",
+      "trajectory_keys": "model-specific object tokens at every visible latent time"
+    },
+    "anchor_t2": {
+      "video_frame": 8,
+      "latent_time": 2,
+      "query": "model-specific object tokens only at latent t=2",
+      "trajectory_keys": "model-specific object tokens at every visible latent time"
+    },
+    "missing_anchor_policy": {
+      "anchor_t2": "mark invalid and exclude from fixed-query and paired comparison; do not fall back to another frame",
+      "moving_query": "retain if at least one visible latent time exists"
+    }
+  },
+  "two_pass_pipeline": {
+    "required": true,
+    "pass_1": [
+      "generate each model-case-seed video",
+      "locate the moving object on that exact generated video",
+      "write seed-specific query coordinates and localization metadata"
+    ],
+    "localization": {
+      "detector": "GroundingDINO",
+      "detector_anchor_frames": [
+        0,
+        8,
+        24,
+        40,
+        48
+      ],
+      "mask_tracker": "SAM2",
+      "gap_repair": "CoTracker for bounded internal gaps only",
+      "fallback_track_max_area_ratio": 6.0,
+      "reuse_seed42_query_map": false
+    },
+    "pass_2": [
+      "replay the same model-case-seed inference deterministically",
+      "verify replay video MD5 against pass-1 video",
+      "capture moving-query and anchor-t2 features in the same replay"
+    ]
+  },
+  "inference": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "fps": 30,
+    "num_inference_steps": 40,
+    "cfg_scale": 5.0,
+    "context_resize_mode": "crop",
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+  },
+  "attention_capture": {
+    "blocks": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29
+    ],
+    "heads": 24,
+    "denoise_steps_one_based": [
+      5,
+      15,
+      25,
+      35
+    ],
+    "softmax": "exact over all 5824 key tokens",
+    "features": [
+      "entropy",
+      "same_frame_mass",
+      "local_mass",
+      "first_frame_mass",
+      "history_bias",
+      "mean_time_distance",
+      "aligned_enrichment",
+      "cross_ball_enrichment"
+    ]
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds",
+    "feature_layout": "one NPZ per model-case-seed-block, containing both protocols and all four denoise steps",
+    "expected_max_feature_packages": 90000,
+    "keep_pass_1_videos": true,
+    "keep_duplicate_replay_videos": false,
+    "keep_localization_metadata": true,
+    "keep_all_masks": false,
+    "localization_preview_sampling": {
+      "per_model_seed": 3,
+      "always_include_invalid_anchor": true
+    }
+  },
+  "analysis": {
+    "classify_models_separately": true,
+    "classify_protocols_separately": true,
+    "roles": {
+      "S": "within-frame spatial",
+      "T": "moving-object trajectory",
+      "P": "fixed-position temporal",
+      "C": "history/context",
+      "G": "global aggregation"
+    },
+    "stability_views": [
+      "within-case consistency across 50 seeds",
+      "across-case consistency after seed aggregation",
+      "joint consistency across valid case-seed samples"
+    ],
+    "paired_comparison": {
+      "sample_set": "intersection where both protocols are valid for the same model-case-seed",
+      "outputs": [
+        "per-head role agreement matrix",
+        "per-head role transition counts",
+        "fixed-minus-moving consistency delta",
+        "paired bootstrap 95 percent confidence interval over case-seed samples"
+      ],
+      "bootstrap_resamples": 2000,
+      "bootstrap_seed": 42
+    }
+  },
+  "scale": {
+    "model_case_seed_samples": 3000,
+    "generation_pass_inferences": 3000,
+    "attention_replay_inferences": 3000,
+    "total_inferences": 6000,
+    "maximum_protocol_feature_arrays_before_packing": 720000
+  },
+  "execution": {
+    "launch_immediately": true,
+    "started_at_utc": "2026-07-26T17:50:14Z",
+    "tmux_session": "wan_paired_query_50seeds",
+    "gpu_workers": {
+      "wan_lora": 4,
+      "xssc": 5,
+      "physrvg": 6
+    },
+    "required_preflight": [
+      "validate config and seed uniqueness",
+      "run one paired-protocol synthetic unit test",
+      "run one real case on each model",
+      "verify packed feature schema",
+      "verify deterministic replay MD5",
+      "estimate disk use and wall-clock time before full launch"
+    ]
+  }
+}

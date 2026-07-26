@@ -21,6 +21,7 @@ from moving_query_attention import (
     MovingQueryFeatureRecorder,
     MovingQueryMapAndFullRecorder,
     MovingQueryMapRecorder,
+    PairedQueryFeatureRecorder,
     explicit_moving_query_coords,
     moving_query_coords,
 )
@@ -98,10 +99,17 @@ def build_case_recorder_group(
         )
     if query_mode == "moving":
         coords = trajectory_coords
+        anchor_coords: tuple[tuple[int, int, int], ...] = ()
     elif query_mode == "anchor_t2":
         coords = tuple(coord for coord in trajectory_coords if coord[0] == 2)
+        anchor_coords = coords
         if not coords:
             raise ValueError(f"{case_key} has no visible object query at latent t=2")
+    elif query_mode == "paired":
+        coords = trajectory_coords
+        anchor_coords = tuple(
+            coord for coord in trajectory_coords if coord[0] == 2
+        )
     else:
         raise ValueError(f"unsupported query mode: {query_mode}")
     selected_heads = (
@@ -117,6 +125,8 @@ def build_case_recorder_group(
         recorder_class = MovingQueryMapAndFullRecorder
     elif selected_heads is not None:
         recorder_class = MovingQueryMapRecorder
+    elif query_mode == "paired":
+        recorder_class = PairedQueryFeatureRecorder
     else:
         recorder_class = MovingQueryFeatureRecorder
     return BallQueryRecorderGroup(
@@ -129,6 +139,11 @@ def build_case_recorder_group(
                 trajectory_coords=trajectory_coords,
                 query_mode=query_mode,
                 query_preview=Path(item["preview"]),
+                **(
+                    {"anchor_coords": anchor_coords}
+                    if query_mode == "paired"
+                    else {}
+                ),
                 **(
                     {"selected_heads": selected_heads}
                     if selected_heads is not None
