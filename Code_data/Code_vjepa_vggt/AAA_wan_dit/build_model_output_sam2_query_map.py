@@ -283,6 +283,12 @@ def _compose_track_masks(
     winner_phrase = tracks[winner_index][1].phrase
     candidate_masks = [item[2].masks_thw.astype(np.uint8) for item in tracks]
     candidate_valid = [_valid_track_frames(masks) for masks in candidate_masks]
+    winner_areas = candidate_masks[winner_index].reshape(
+        len(candidate_masks[winner_index]), -1
+    ).sum(axis=1)
+    winner_reference_area = float(
+        np.median(winner_areas[candidate_valid[winner_index]])
+    )
     fallback_order = sorted(
         range(len(tracks)),
         key=lambda index: tracks[index][0],
@@ -302,6 +308,12 @@ def _compose_track_masks(
                 ):
                     continue
                 if candidate_valid[candidate_index][frame_idx]:
+                    fallback_area = float(
+                        candidate_masks[candidate_index][frame_idx].sum()
+                    )
+                    area_ratio = fallback_area / max(winner_reference_area, 1.0)
+                    if not 0.05 <= area_ratio <= 6.0:
+                        continue
                     chosen = candidate_index
                     break
         if chosen is None:
@@ -325,6 +337,28 @@ def _repair_masks_with_cotracker(
 ) -> tuple[np.ndarray, list[int], list[int]]:
     if not unresolved_frames:
         return masks, source_per_frame, unresolved_frames
+    repairable_frames = []
+    persistent_unresolved = []
+    unresolved_set = set(unresolved_frames)
+    for frame_idx in unresolved_frames:
+        start = frame_idx
+        while start - 1 in unresolved_set:
+            start -= 1
+        end = frame_idx
+        while end + 1 in unresolved_set:
+            end += 1
+        is_bounded_gap = (
+            start > 0
+            and end + 1 < len(masks)
+            and int(masks[start - 1].sum()) > 0
+            and int(masks[end + 1].sum()) > 0
+        )
+        if is_bounded_gap:
+            repairable_frames.append(frame_idx)
+        else:
+            persistent_unresolved.append(frame_idx)
+    if not repairable_frames:
+        return masks, source_per_frame, sorted(persistent_unresolved)
     valid_frames = [index for index, mask in enumerate(masks) if int(mask.sum()) > 0]
     if not valid_frames:
         return masks, source_per_frame, unresolved_frames
@@ -368,7 +402,7 @@ def _repair_masks_with_cotracker(
     anchor_center = np.median(query_points, axis=0)
     repaired = masks.copy()
     remaining = []
-    for frame_idx in unresolved_frames:
+    for frame_idx in repairable_frames:
         visible = visibility[frame_idx] > 0.5
         source_code = -2
         if not np.any(visible):
@@ -404,7 +438,7 @@ def _repair_masks_with_cotracker(
             continue
         repaired[frame_idx] = shifted
         source_per_frame[frame_idx] = source_code
-    return repaired, source_per_frame, remaining
+    return repaired, source_per_frame, sorted(persistent_unresolved + remaining)
 
 
 def _query_tokens(
@@ -664,11 +698,7 @@ def main() -> None:
             tracks, winner_index
         )
         if unresolved_frames:
-            print(
-                f"[sam2-query-map] {args.model} {case}: CoTracker repairs "
-                f"{len(unresolved_frames)} unresolved SAM2 frames",
-                flush=True,
-            )
+            unresolved_before_repair = len(unresolved_frames)
             composite_masks, source_per_frame, unresolved_frames = (
                 _repair_masks_with_cotracker(
                     composite_masks,
@@ -680,6 +710,13 @@ def main() -> None:
                     num_queries=args.cotracker_num_queries,
                 )
             )
+            repaired_count = unresolved_before_repair - len(unresolved_frames)
+            if repaired_count:
+                print(
+                    f"[sam2-query-map] {args.model} {case}: CoTracker repaired "
+                    f"{repaired_count} bounded-gap SAM2 frames",
+                    flush=True,
+                )
         unresolved_latent_frames = [
             frame_idx
             for frame_idx in (4 * time for time in range(LATENT_TIMES))

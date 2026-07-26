@@ -30,25 +30,45 @@ STEPS = (5, 15, 25, 35)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--query-map", type=Path, required=True)
+    query_group = parser.add_mutually_exclusive_group(required=True)
+    query_group.add_argument("--query-map", type=Path)
+    query_group.add_argument(
+        "--query-map-root",
+        type=Path,
+        help="Directory containing <model>/query_map.json for each model.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
 
 def _trajectory_tokens(item: dict[str, Any]) -> list[np.ndarray]:
+    if "query_coords_per_time" in item:
+        return [
+            np.asarray(coords, dtype=np.int64).reshape(-1, 3)
+            for coords in item["query_coords_per_time"]
+        ]
     shape = tuple(int(value) for value in item["frame_shape"])
-    return [
-        _circle_tokens(
-            latent_t=time,
-            circle=np.asarray(
-                [point["cx"], point["cy"], max(16.0, min(48.0, point["radius"]))],
-                dtype=np.float64,
-            ),
-            frame_shape=shape,
-            grid=(13, 16, 28),
+    output = []
+    for time, point in enumerate(item["trajectory"]):
+        if not point.get("valid", True):
+            output.append(np.empty((0, 3), dtype=np.int64))
+            continue
+        output.append(
+            _circle_tokens(
+                latent_t=time,
+                circle=np.asarray(
+                    [
+                        point["cx"],
+                        point["cy"],
+                        max(16.0, min(48.0, point["radius"])),
+                    ],
+                    dtype=np.float64,
+                ),
+                frame_shape=shape,
+                grid=(13, 16, 28),
+            )
         )
-        for time, point in enumerate(item["trajectory"])
-    ]
+    return output
 
 
 def _case_group(case: str) -> str:
@@ -64,7 +84,7 @@ def _read_case_block(
     model: str,
     case: str,
     block: int,
-    trajectory: list[np.ndarray],
+    trajectory: list[np.ndarray] | None,
 ) -> dict[str, Any]:
     summary_path = (
         root / f"block{block:02d}" / "matrices" / model / case / "summary.json"
@@ -92,6 +112,10 @@ def _read_case_block(
                 }
             cosine = float("nan")
         else:
+            if trajectory is None:
+                raise ValueError(
+                    f"{summary_path}: legacy matrix capture requires query trajectory"
+                )
             matrix_path = summary_path.parent / entry["directory"] / entry["matrix_npz"]
             with np.load(matrix_path) as arrays:
                 attention = arrays["attention"]
@@ -246,16 +270,31 @@ def _block_rows(model: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def main() -> None:
     args = parse_args()
     root = args.root.expanduser().resolve()
-    query_payload = json.loads(
-        args.query_map.expanduser().resolve().read_text(encoding="utf-8")
-    )
-    cases = list(query_payload["cases"])
+    if args.query_map_root is not None:
+        query_root = args.query_map_root.expanduser().resolve()
+        query_payloads = {
+            model: json.loads(
+                (query_root / model / "query_map.json").read_text(encoding="utf-8")
+            )
+            for model in MODELS
+        }
+    else:
+        query_payload = json.loads(
+            args.query_map.expanduser().resolve().read_text(encoding="utf-8")
+        )
+        query_payloads = {model: query_payload for model in MODELS}
+    cases = list(query_payloads[MODELS[0]]["cases"])
+    expected_cases = set(cases)
+    for model, payload in query_payloads.items():
+        if set(payload["cases"]) != expected_cases:
+            raise ValueError(f"{model} query map has a different case set")
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     all_rows = []
     all_block_rows = []
     report_sections = []
     for model in MODELS:
+        query_payload = query_payloads[model]
         records = {}
         for case in cases:
             trajectory = _trajectory_tokens(query_payload["cases"][case])

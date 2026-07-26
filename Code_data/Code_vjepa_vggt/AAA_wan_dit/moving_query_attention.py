@@ -191,11 +191,11 @@ def moving_query_features(
         )
         values["aligned_enrichment"].append(
             probability[:, aligned].sum(1)
-            / (float(aligned.sum()) / token_count)
+            / (max(float(aligned.sum()), 1.0) / token_count)
         )
         values["cross_ball_enrichment"].append(
             probability[:, cross_trajectory].sum(1)
-            / (float(cross_trajectory.sum()) / token_count)
+            / (max(float(cross_trajectory.sum()), 1.0) / token_count)
         )
     return {
         name: torch.stack(items, dim=1).mean(1).cpu().numpy().astype(np.float32)
