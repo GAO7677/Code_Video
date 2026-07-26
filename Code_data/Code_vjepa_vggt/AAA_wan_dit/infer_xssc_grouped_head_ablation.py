@@ -64,7 +64,8 @@ def main() -> None:
     finally:
         if installed_metadata is not None:
             observed = get_dit_head_ablation_call_count(installed_dit)
-            expected = len(targets) * inference_steps
+            # DiffSynth evaluates conditional and unconditional branches separately.
+            expected = len(targets) * inference_steps * 2
             installed_metadata.update(
                 {
                     "observed_target_forward_calls": observed,

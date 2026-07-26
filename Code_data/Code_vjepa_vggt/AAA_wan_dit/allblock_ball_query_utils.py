@@ -17,6 +17,7 @@ from self_attention_matrix import (
     install_diffsynth_block_recorder,
     parse_step_numbers,
 )
+from moving_query_attention import MovingQueryFeatureRecorder, moving_query_coords
 
 
 def parse_block_ids(text: str) -> tuple[int, ...]:
@@ -75,14 +76,23 @@ def build_case_recorder_group(
     if case_key not in query_map:
         raise KeyError(f"query map has no entry for case {case_key}")
     item = query_map[case_key]
-    return build_recorder_group(
-        blocks_text=blocks_text,
-        steps_text=steps_text,
-        model_label=model_label,
-        output_root=output_root,
-        query_coords_text=str(item["query_coords_text"]),
-        query_video_frame=int(item.get("query_video_frame", 8)),
-        query_preview=Path(item["preview"]).expanduser().resolve(),
+    blocks = parse_block_ids(blocks_text)
+    steps = parse_step_numbers(steps_text)
+    coords = moving_query_coords(
+        item["trajectory"],
+        frame_shape=tuple(int(value) for value in item["frame_shape"]),
+    )
+    return BallQueryRecorderGroup(
+        [
+            MovingQueryFeatureRecorder(
+                config=MatrixCaptureConfig(block_id=block, step_numbers=steps),
+                model_label=model_label,
+                output_root=output_root / f"block{block:02d}" / "matrices",
+                query_coords=coords,
+                query_preview=Path(item["preview"]),
+            )
+            for block in blocks
+        ]
     )
 
 

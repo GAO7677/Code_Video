@@ -39,6 +39,15 @@ run_worker() {
       echo "[${worker}] skip ${model}/${category}"
       continue
     fi
+    if "${PYTHON}" "${VERIFY}" \
+      --output-root "${output_root}" --model "${model}" \
+      --category "${category}" > "${log}.precheck" 2>&1; then
+      cat "${log}.precheck" >> "${log}"
+      printf 'model=%s\ncategory=%s\ngpu=%s\nreused_existing=true\n' \
+        "${model}" "${category}" "${gpu}" > "${complete}"
+      echo "[${worker}] reuse validated ${model}/${category}"
+      continue
+    fi
     echo "[${worker}] run ${model}/${category} on GPU ${gpu}"
     if OUTPUT_BASE="${OUTPUT_BASE}" \
       bash "${RUN_ONE}" "${model}" "${category}" "${gpu}" > "${log}" 2>&1 \

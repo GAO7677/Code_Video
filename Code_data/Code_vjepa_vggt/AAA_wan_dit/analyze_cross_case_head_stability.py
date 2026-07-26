@@ -72,13 +72,33 @@ def _read_case_block(
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     samples = []
     for entry in summary["steps"]:
-        matrix_path = summary_path.parent / entry["directory"] / entry["matrix_npz"]
-        with np.load(matrix_path) as arrays:
-            attention = arrays["attention"]
-            query_coords = arrays["query_coords"]
-        features, cosine = _feature_rows(
-            attention, query_coords=query_coords, trajectory_tokens=trajectory
-        )
+        if "features_npz" in entry:
+            matrix_path = (
+                summary_path.parent / entry["directory"] / entry["features_npz"]
+            )
+            with np.load(matrix_path) as arrays:
+                features = {
+                    name: arrays[name]
+                    for name in (
+                        "entropy",
+                        "same_frame_mass",
+                        "local_mass",
+                        "first_frame_mass",
+                        "history_bias",
+                        "mean_time_distance",
+                        "aligned_enrichment",
+                        "cross_ball_enrichment",
+                    )
+                }
+            cosine = float("nan")
+        else:
+            matrix_path = summary_path.parent / entry["directory"] / entry["matrix_npz"]
+            with np.load(matrix_path) as arrays:
+                attention = arrays["attention"]
+                query_coords = arrays["query_coords"]
+            features, cosine = _feature_rows(
+                attention, query_coords=query_coords, trajectory_tokens=trajectory
+            )
         scores = _role_scores(features)
         samples.append(
             {

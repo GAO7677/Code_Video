@@ -49,13 +49,18 @@ def main() -> None:
         {"block_id": int(item["block_id"]), "head_id": int(item["head_id"])}
         for item in metadata.get("targets", [])
     ]
+    expected_calls = 240 if args.model == "physrvg" else 480
     checks = {
         "mode": metadata.get("mode") == "self_attn_grouped_head_zero",
         "category": metadata.get("category") == args.category,
         "targets": actual_targets == expected_targets,
         "num_targets": metadata.get("num_targets") == 6,
-        "observed_calls": metadata.get("observed_target_forward_calls") == 240,
-        "expected_calls": metadata.get("expected_target_forward_calls") == 240,
+        "observed_calls": (
+            metadata.get("observed_target_forward_calls") == expected_calls
+        ),
+        "expected_calls": (
+            metadata.get("expected_target_forward_calls") == expected_calls
+        ),
         "call_count_ok": metadata.get("target_forward_call_count_ok") is True,
     }
     probe = subprocess.check_output(
