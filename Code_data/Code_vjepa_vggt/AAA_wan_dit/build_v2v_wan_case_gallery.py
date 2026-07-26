@@ -82,6 +82,13 @@ METRICS = (
         2,
     ),
     MetricDefinition(
+        "physics_iq_verified_proxy",
+        "Physics-IQ · verified proxy",
+        "higher",
+        ("physics_iq_verified_proxy", "score"),
+        2,
+    ),
+    MetricDefinition(
         "pmf_with_context",
         "PMF · ctx",
         "higher",
@@ -680,68 +687,86 @@ INDEX_HTML = """<!doctype html>
       object-fit: contain;
       background: #0b0f0d;
     }
-    .metrics-panel {
-      padding: 9px 10px 10px;
-      border-top: 1px solid var(--line);
-      background: #f8faf9;
+    .metric-summary {
+      margin-top: 18px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
     }
-    .metrics-head {
+    .metric-summary-head {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 7px;
+      gap: 12px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .metric-summary-head h3 { margin: 0; font-size: 15px; }
+    .metric-summary-head span {
       color: var(--muted);
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
+      font-size: 11px;
     }
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      border-top: 1px solid #dce4df;
-      border-left: 1px solid #dce4df;
+    .metric-table-wrap {
+      width: 100%;
+      overflow-x: auto;
     }
-    .metric-row {
-      min-width: 0;
-      min-height: 43px;
-      padding: 6px 7px;
+    .metric-table {
+      width: max-content;
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 9px;
+    }
+    .metric-table th,
+    .metric-table td {
+      min-width: 82px;
+      max-width: 82px;
+      padding: 2px 4px;
       border-right: 1px solid #dce4df;
       border-bottom: 1px solid #dce4df;
-      background: #fff;
-    }
-    .metric-row.best {
-      padding-left: 5px;
-      border-left: 3px solid #168653;
-      background: #e8f6ee;
-    }
-    .metric-label {
-      display: block;
-      overflow: hidden;
-      color: var(--muted);
-      font-size: 9px;
+      text-align: center;
+      vertical-align: middle;
       line-height: 1.25;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
-    .metric-value-line {
-      display: flex;
-      align-items: baseline;
-      gap: 5px;
-      margin-top: 3px;
+    .metric-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      height: 54px;
+      color: #34463d;
+      background: #eef3f0;
+      font-weight: 700;
+      line-height: 1.2;
+      padding: 4px;
     }
-    .metric-value {
-      color: #27352e;
-      font-size: 12px;
-      font-variant-numeric: tabular-nums;
+    .metric-table .method-name-cell {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      min-width: 210px;
+      max-width: 210px;
+      text-align: left;
+      color: #34463d;
+      background: #f8faf9;
       font-weight: 700;
     }
-    .metric-row.missing .metric-value { color: #a1aaa5; font-weight: 500; }
-    .metric-row.best .metric-value { color: #0d6f40; }
-    .best-badge {
+    .metric-table thead .method-name-cell {
+      z-index: 4;
+      background: #e4ebe7;
+    }
+    .metric-table td {
+      color: #27352e;
+      background: #fff;
+      font-variant-numeric: tabular-nums;
+    }
+    .metric-table td.missing { color: #a1aaa5; }
+    .metric-table td.best {
       color: #0d6f40;
-      font-size: 8px;
       font-weight: 800;
+      background: #dff3e8;
+      box-shadow: inset 0 0 0 2px #168653;
     }
     .method-footer {
       display: flex;
@@ -801,6 +826,7 @@ INDEX_HTML = """<!doctype html>
     </section>
     <section class="reference" id="reference"></section>
     <div class="groups" id="groups"></div>
+    <section class="metric-summary" id="metricSummary"></section>
   </main>
   <script>
     const state = { manifest: null, caseIndex: 0, filteredIndices: [] };
@@ -837,6 +863,7 @@ INDEX_HTML = """<!doctype html>
         document.getElementById("caseName").textContent = "No matching cases";
         document.getElementById("caseMeta").textContent = "";
         document.getElementById("reference").replaceChildren();
+        document.getElementById("metricSummary").replaceChildren();
         groupsRoot.replaceChildren();
         return;
       }
@@ -869,6 +896,60 @@ INDEX_HTML = """<!doctype html>
       addText(promptPanel, "h3", "", "Prompt");
       addText(promptPanel, "p", "", item.prompt || "Prompt unavailable");
       reference.appendChild(promptPanel);
+
+      const metricSummary = document.getElementById("metricSummary");
+      metricSummary.replaceChildren();
+      const summaryHead = document.createElement("div");
+      summaryHead.className = "metric-summary-head";
+      addText(summaryHead, "h3", "", "Case metric comparison");
+      addText(summaryHead, "span", "", "Best value per metric is highlighted");
+      metricSummary.appendChild(summaryHead);
+      const tableWrap = document.createElement("div");
+      tableWrap.className = "metric-table-wrap";
+      const table = document.createElement("table");
+      table.className = "metric-table";
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      addText(headerRow, "th", "method-name-cell", "Method");
+      state.manifest.metrics.forEach(metric => {
+        const direction = metric.direction === "lower" ? "↓" : "↑";
+        const cell = addText(headerRow, "th", "", `${metric.label} ${direction}`);
+        cell.title = `${metric.direction} is better`;
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      state.manifest.methods.forEach(method => {
+        const row = document.createElement("tr");
+        const methodName = addText(
+          row,
+          "th",
+          "method-name-cell",
+          method.label
+        );
+        methodName.title = method.id;
+        const output = item.outputs[method.id];
+        const outputMetrics = output && output.metrics ? output.metrics : {};
+        const bestMetrics = new Set(
+          output && Array.isArray(output.best_metrics) ? output.best_metrics : []
+        );
+        state.manifest.metrics.forEach(metric => {
+          const value = outputMetrics[metric.key];
+          const hasValue = Number.isFinite(value);
+          const isBest = hasValue && bestMetrics.has(metric.key);
+          const cell = addText(
+            row,
+            "td",
+            `${isBest ? "best" : ""}${hasValue ? "" : " missing"}`.trim(),
+            hasValue ? Number(value).toFixed(metric.decimals) : "—"
+          );
+          cell.title = `${method.label} · ${metric.label}`;
+        });
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody);
+      tableWrap.appendChild(table);
+      metricSummary.appendChild(tableWrap);
 
       const grouped = new Map();
       state.manifest.methods.forEach(method => {
@@ -912,50 +993,6 @@ INDEX_HTML = """<!doctype html>
           } else {
             addText(card, "div", "missing", "Missing video");
           }
-
-          const metricsPanel = document.createElement("div");
-          metricsPanel.className = "metrics-panel";
-          const metricsHead = document.createElement("div");
-          metricsHead.className = "metrics-head";
-          addText(metricsHead, "span", "", "Case metrics");
-          const outputMetrics = output && output.metrics ? output.metrics : {};
-          const availableMetricCount = state.manifest.metrics
-            .filter(metric => Number.isFinite(outputMetrics[metric.key])).length;
-          addText(
-            metricsHead,
-            "span",
-            "",
-            `${availableMetricCount}/${state.manifest.metrics.length} available`
-          );
-          metricsPanel.appendChild(metricsHead);
-          const metricGrid = document.createElement("div");
-          metricGrid.className = "metric-grid";
-          const bestMetrics = new Set(
-            output && Array.isArray(output.best_metrics) ? output.best_metrics : []
-          );
-          state.manifest.metrics.forEach(metric => {
-            const value = outputMetrics[metric.key];
-            const hasValue = Number.isFinite(value);
-            const isBest = hasValue && bestMetrics.has(metric.key);
-            const row = document.createElement("div");
-            row.className = `metric-row${isBest ? " best" : ""}${hasValue ? "" : " missing"}`;
-            const direction = metric.direction === "lower" ? "↓" : "↑";
-            row.title = `${metric.label}: ${metric.direction} is better`;
-            addText(row, "span", "metric-label", `${metric.label} ${direction}`);
-            const valueLine = document.createElement("div");
-            valueLine.className = "metric-value-line";
-            addText(
-              valueLine,
-              "span",
-              "metric-value",
-              hasValue ? Number(value).toFixed(metric.decimals) : "—"
-            );
-            if (isBest) addText(valueLine, "span", "best-badge", "BEST");
-            row.appendChild(valueLine);
-            metricGrid.appendChild(row);
-          });
-          metricsPanel.appendChild(metricGrid);
-          card.appendChild(metricsPanel);
 
           const footer = document.createElement("div");
           footer.className = "method-footer";

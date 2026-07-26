@@ -20,6 +20,25 @@ MODEL_LABELS = {
     "physrvg": "PhysRVG",
 }
 MODEL_ORDER = {name: index for index, name in enumerate(MODEL_LABELS)}
+METRICS = (
+    ("physics_iq_with_context", "Physics-IQ · ctx", "higher", ("physics_iq_with_context", "score"), 2),
+    ("physics_iq_without_context", "Physics-IQ · no ctx", "higher", ("physics_iq_without_context", "score"), 2),
+    ("pmf_with_context", "PMF · ctx", "higher", ("pmf_with_context", "score"), 4),
+    ("pmf_without_context", "PMF · no ctx", "higher", ("pmf_without_context", "score"), 4),
+    ("wmreward", "WMReward surprise", "lower", ("wmreward", "surprise"), 4),
+    ("vbench_subject_consistency", "Subject consistency", "higher", ("vbench_subject_consistency", "score"), 4),
+    ("vbench_background_consistency", "Background consistency", "higher", ("vbench_background_consistency", "score"), 4),
+    ("vbench_temporal_flickering", "Temporal flickering", "higher", ("vbench_temporal_flickering", "score"), 4),
+    ("vbench_motion_smoothness", "Motion smoothness", "higher", ("vbench_motion_smoothness", "score"), 4),
+    ("vbench_dynamic_degree", "Dynamic degree", "higher", ("vbench_dynamic_degree", "score"), 4),
+    ("vbench_aesthetic_quality", "Aesthetic quality", "higher", ("vbench_aesthetic_quality", "score"), 4),
+    ("vbench_imaging_quality", "Imaging quality", "higher", ("vbench_imaging_quality", "score"), 4),
+    ("videophy2_sa", "VideoPhy2 SA", "higher", ("videophy2", "sa_score"), 2),
+    ("videophy2_pc", "VideoPhy2 PC", "higher", ("videophy2", "pc_score"), 2),
+    ("videophy2_joint", "VideoPhy2 joint", "higher", ("videophy2", "joint_pass"), 0),
+    ("videophy2_pc_raw", "VideoPhy2 PC raw", "higher", ("videophy2", "pc_raw_score"), 2),
+    ("cosmos_reason1", "Cosmos-Reason1", "higher", ("cosmos_reason1", "score"), 4),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +74,24 @@ def slug(value: str) -> str:
     return result
 
 
-def build_manifest(root: Path) -> dict[str, object]:
+def load_metrics(path: Path) -> dict[str, float]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = load_json(path)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    result: dict[str, float] = {}
+    for key, _label, _direction, value_path, _decimals in METRICS:
+        value: object = payload
+        for part in value_path:
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            result[key] = float(value)
+    return result
+
+
+def build_manifest(root: Path, *, static: bool = False) -> dict[str, object]:
     run_root = root / "_pipeline"
     input_list = run_root / "input_unique.txt"
     completed = run_root / "generation" / "completed.tsv"
@@ -81,7 +117,11 @@ def build_manifest(root: Path) -> dict[str, object]:
             "slug": slug(source.stem),
             "prompt": payload.get("input_caption", ""),
             "source_video": (
-                data_url(Path(source_video))
+                (
+                    f"/_gallery/sources/{quote(slug(source.stem))}.mp4"
+                    if static
+                    else data_url(Path(source_video))
+                )
                 if isinstance(source_video, str)
                 and Path(source_video).is_file()
                 else None
@@ -120,6 +160,7 @@ def build_manifest(root: Path) -> dict[str, object]:
                 continue
             input_json = record.get("input_json")
             output_video = record.get("output_video")
+            output_json = record.get("output_json")
             case = case_by_input.get(str(Path(str(input_json)).resolve()))
             video = Path(str(output_video))
             if case is None or not video.is_file() or video.stat().st_size == 0:
@@ -127,7 +168,16 @@ def build_manifest(root: Path) -> dict[str, object]:
             case["outputs"].append(
                 {
                     **config,
-                    "video": data_url(video),
+                    "video": (
+                        "/" + quote(
+                            video.resolve().relative_to(root).as_posix(),
+                            safe="/",
+                        )
+                        if static
+                        else data_url(video)
+                    ),
+                    "metrics": load_metrics(Path(str(output_json))),
+                    "best_metrics": [],
                 }
             )
 
@@ -146,13 +196,82 @@ def build_manifest(root: Path) -> dict[str, object]:
                 int(item["head"]),
             )
         )
+        outputs = case["outputs"]
+        for key, _label, direction, _value_path, _decimals in METRICS:
+            available = [
+                (index, output["metrics"].get(key))
+                for index, output in enumerate(outputs)
+                if isinstance(output.get("metrics"), dict)
+                and isinstance(output["metrics"].get(key), (int, float))
+            ]
+            if not available:
+                continue
+            best = (
+                min(value for _index, value in available)
+                if direction == "lower"
+                else max(value for _index, value in available)
+            )
+            for index, value in available:
+                if value == best:
+                    outputs[index]["best_metrics"].append(key)
     return {
         "cases": cases,
         "configurations": configurations,
+        "metrics": [
+            {
+                "key": key,
+                "label": label,
+                "direction": direction,
+                "decimals": decimals,
+            }
+            for key, label, direction, _value_path, decimals in METRICS
+        ],
         "num_cases": len(cases),
         "num_completed_configurations": len(configurations),
         "num_available_videos": sum(len(case["outputs"]) for case in cases),
     }
+
+
+def materialize_static_gallery(root: Path) -> dict[str, object]:
+    """Write a pyport-compatible snapshot below ROOT/_gallery."""
+    manifest = build_manifest(root, static=True)
+    gallery_dir = root / "_gallery"
+    gallery_dir.mkdir(parents=True, exist_ok=True)
+    (gallery_dir / "index.html").write_text(
+        case_html(""), encoding="utf-8"
+    )
+    (gallery_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    for case in manifest["cases"]:
+        case_dir = gallery_dir / "case" / str(case["slug"])
+        case_dir.mkdir(parents=True, exist_ok=True)
+        (case_dir / "index.html").write_text(
+            case_html(str(case["slug"])), encoding="utf-8"
+        )
+
+    sources_dir = gallery_dir / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    input_list = root / "_pipeline" / "input_unique.txt"
+    for line in input_list.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        source_json = Path(line.strip()).expanduser().resolve()
+        payload = load_json(source_json)
+        source_video = payload.get("source_video")
+        if not isinstance(source_video, str):
+            continue
+        target = Path(source_video).expanduser().resolve()
+        if not target.is_file():
+            continue
+        link = sources_dir / f"{slug(source_json.stem)}.mp4"
+        if link.is_symlink() and link.resolve() == target:
+            continue
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(target)
+    return manifest
 
 
 def index_html(manifest: dict[str, object]) -> str:
@@ -186,34 +305,41 @@ def case_html(case_slug: str) -> str:
 <style>
 :root{{--bg:#eef1ef;--surface:#fff;--text:#17201b;--muted:#65716b;--line:#cbd4cf;--nav:#18382a}}
 *{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--text);font:14px Arial,sans-serif;letter-spacing:0}}
-header{{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:center;padding:11px 18px;background:var(--nav);color:#fff}}
+header{{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:minmax(260px,1fr) minmax(360px,720px) auto;gap:12px;align-items:center;padding:11px 18px;background:var(--nav);color:#fff}}
 h1{{margin:0;font-size:18px;overflow-wrap:anywhere}} #status{{margin-top:3px;color:#bdd1c5;font-size:12px}}
-.nav{{display:flex;gap:7px}} a,button{{min-height:36px;padding:8px 11px;border:1px solid #557765;border-radius:4px;color:#fff;background:#24503a;text-decoration:none;cursor:pointer}}
+.case-nav{{display:grid;grid-template-columns:40px minmax(0,1fr) 40px;gap:7px}} .nav{{display:flex;gap:7px}} a,button,select{{min-height:36px;padding:8px 11px;border:1px solid #557765;border-radius:4px}} a,button{{color:#fff;background:#24503a;text-decoration:none;cursor:pointer}} select{{min-width:0;background:#fff;color:var(--text)}}
 main{{max-width:2200px;margin:auto;padding:18px 18px 42px}} .case-meta{{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:16px;align-items:start}}
 h2{{margin:0;font-size:20px;overflow-wrap:anywhere}} .prompt{{color:var(--muted);line-height:1.5}} video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#080b09}}
 .model{{margin-top:26px;border-top:3px solid #285f99;padding-top:12px}} .model[data-model=xssc]{{border-color:#24734f}} .model[data-model=physrvg]{{border-color:#a65325}}
 .model h3{{margin:0 0 12px;font-size:19px}} .block{{margin:0 0 22px}} .block h4{{margin:0;padding:8px 10px;background:#dfe7e2;border:1px solid var(--line);font-size:15px}}
 .heads{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-top:0}}
 .cell{{min-width:0;padding:6px;background:var(--surface)}} .label{{margin-bottom:5px;color:#405149;font-size:11px;font-weight:700}}
-.empty{{padding:30px;background:white;border:1px solid var(--line);color:var(--muted)}} @media(max-width:1100px){{.heads{{grid-template-columns:repeat(3,minmax(0,1fr))}}.case-meta{{grid-template-columns:1fr}}}}
+.empty{{padding:30px;background:white;border:1px solid var(--line);color:var(--muted)}}
+.metrics{{margin-top:28px;background:#fff;border:1px solid var(--line)}} .metrics-head{{display:flex;justify-content:space-between;gap:12px;padding:10px;border-bottom:1px solid var(--line)}} .metrics-head h3{{margin:0;font-size:16px}} .metrics-head span{{color:var(--muted);font-size:11px}}
+.table-wrap{{overflow:auto;max-height:720px}} table{{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:10px}} th,td{{min-width:86px;padding:5px;border-right:1px solid #dce4df;border-bottom:1px solid #dce4df;text-align:center;white-space:nowrap}} thead th{{position:sticky;top:0;z-index:2;background:#e5ece8}} th.method{{position:sticky;left:0;z-index:1;min-width:190px;text-align:left;background:#f4f7f5}} thead th.method{{z-index:3;background:#dce7e1}} td.best{{color:#075d37;background:#dff3e7;font-weight:700}} td.missing{{color:#a1aaa5}}
+@media(max-width:1100px){{header{{grid-template-columns:1fr}}.heads{{grid-template-columns:repeat(3,minmax(0,1fr))}}.case-meta{{grid-template-columns:1fr}}}}
 @media(max-width:650px){{header{{grid-template-columns:1fr}}.heads{{grid-template-columns:1fr}}}}
 </style></head><body>
 <header><div><h1 id="title">Loading...</h1><div id="status"></div></div>
-<nav class="nav"><a id="prev" title="Previous case">←</a><a href="../../">Cases</a><a id="next" title="Next case">→</a><button id="refresh">Refresh</button></nav></header>
-<main><section class="case-meta"><div><h2 id="name"></h2><p class="prompt" id="prompt"></p></div><div id="source"></div></section><div id="models"></div></main>
+<div class="case-nav"><button id="prev" title="Previous case">←</button><select id="caseSelect"></select><button id="next" title="Next case">→</button></div>
+<nav class="nav"><button id="playAll">Play all</button><button id="restartAll">Restart all</button><button id="refresh">Refresh</button></nav></header>
+<main><section class="case-meta"><div><h2 id="name"></h2><p class="prompt" id="prompt"></p></div><div id="source"></div></section><div id="models"></div><section class="metrics" id="metrics"></section></main>
 <script>
-const CASE_SLUG={json.dumps(case_slug)};
+const INITIAL_CASE_SLUG={json.dumps(case_slug)};
+const MANIFEST_URL=INITIAL_CASE_SLUG?"../../manifest.json":"./manifest.json";
 const MODEL_ORDER=["wan_lora","xssc","physrvg"];
 const MODEL_LABELS={{wan_lora:"Wan+LoRA",xssc:"Wan+xSSC",physrvg:"PhysRVG"}};
+let activeSlug=INITIAL_CASE_SLUG;
 function video(url){{const v=document.createElement("video");v.controls=true;v.preload="none";v.playsInline=true;v.src=url;return v}}
+function add(parent,tag,className,text){{const node=document.createElement(tag);node.className=className;node.textContent=text;parent.appendChild(node);return node}}
 async function render(){{
- const data=await fetch("../../manifest.json?t="+Date.now(),{{cache:"no-store"}}).then(r=>r.json());
- const index=data.cases.findIndex(c=>c.slug===CASE_SLUG); if(index<0)throw new Error("Case not found");
+ const data=await fetch(MANIFEST_URL+"?t="+Date.now(),{{cache:"no-store"}}).then(r=>r.json());
+ if(!activeSlug){{const match=location.hash.match(/case=([^&]+)/);activeSlug=match?decodeURIComponent(match[1]):data.cases[0].slug}}
+ let index=data.cases.findIndex(c=>c.slug===activeSlug);if(index<0){{index=0;activeSlug=data.cases[0].slug}}
  const item=data.cases[index]; document.title="Head Ablation · "+item.name; document.getElementById("title").textContent=item.name;
  document.getElementById("name").textContent=item.name; document.getElementById("prompt").textContent=item.prompt||"";
  document.getElementById("status").textContent=data.num_completed_configurations+" completed configurations · "+item.outputs.length+" videos";
- document.getElementById("prev").href="../"+data.cases[(index-1+data.cases.length)%data.cases.length].slug+"/";
- document.getElementById("next").href="../"+data.cases[(index+1)%data.cases.length].slug+"/";
+ const select=document.getElementById("caseSelect");select.replaceChildren();data.cases.forEach((c,i)=>{{const option=document.createElement("option");option.value=c.slug;option.textContent=(i+1)+". "+c.name;select.appendChild(option)}});select.value=item.slug;
  const source=document.getElementById("source");source.replaceChildren();if(item.source_video)source.appendChild(video(item.source_video));
  const models=document.getElementById("models");models.replaceChildren();
  MODEL_ORDER.forEach(model=>{{const outputs=item.outputs.filter(o=>o.model===model);if(!outputs.length)return;
@@ -227,8 +353,18 @@ async function render(){{
    group.appendChild(grid);section.appendChild(group)}});
   models.appendChild(section)}});
  if(!models.children.length){{const empty=document.createElement("div");empty.className="empty";empty.textContent="No completed configurations yet";models.appendChild(empty)}}
+ const metrics=document.getElementById("metrics");metrics.replaceChildren();const mh=document.createElement("div");mh.className="metrics-head";add(mh,"h3","","Case metric comparison");add(mh,"span","","↑ higher is better · ↓ lower is better · best value highlighted");metrics.appendChild(mh);
+ const wrap=document.createElement("div");wrap.className="table-wrap";const table=document.createElement("table");const thead=document.createElement("thead");const hr=document.createElement("tr");add(hr,"th","method","Configuration");data.metrics.forEach(metric=>add(hr,"th","",metric.label+" "+(metric.direction==="lower"?"↓":"↑")));thead.appendChild(hr);table.appendChild(thead);
+ const tbody=document.createElement("tbody");item.outputs.forEach(out=>{{const row=document.createElement("tr");add(row,"th","method",MODEL_LABELS[out.model]+" · B"+String(out.block).padStart(2,"0")+" · H"+String(out.head).padStart(2,"0"));const best=new Set(out.best_metrics||[]);
+  data.metrics.forEach(metric=>{{const value=out.metrics?out.metrics[metric.key]:null;const valid=Number.isFinite(value);add(row,"td",(valid&&best.has(metric.key)?"best ":"")+(valid?"":"missing"),valid?Number(value).toFixed(metric.decimals):"—")}});tbody.appendChild(row)}});
+ table.appendChild(tbody);wrap.appendChild(table);metrics.appendChild(wrap);
+ history.replaceState(null,"","#case="+encodeURIComponent(item.slug));
 }}
-document.getElementById("refresh").onclick=()=>render();setInterval(()=>render().catch(()=>{{}}),30000);render();
+function move(delta){{fetch(MANIFEST_URL+"?t="+Date.now(),{{cache:"no-store"}}).then(r=>r.json()).then(data=>{{const i=data.cases.findIndex(c=>c.slug===activeSlug);activeSlug=data.cases[(i+delta+data.cases.length)%data.cases.length].slug;render()}})}}
+function allVideos(){{return Array.from(document.querySelectorAll("video"))}}
+document.getElementById("playAll").onclick=()=>allVideos().forEach(item=>item.play().catch(()=>{{}}));
+document.getElementById("restartAll").onclick=()=>allVideos().forEach(item=>{{item.currentTime=0;item.play().catch(()=>{{}})}});
+document.getElementById("prev").onclick=()=>move(-1);document.getElementById("next").onclick=()=>move(1);document.getElementById("caseSelect").onchange=e=>{{activeSlug=e.target.value;render()}};document.getElementById("refresh").onclick=()=>render();setInterval(()=>render().catch(()=>{{}}),30000);render();
 </script></body></html>"""
 
 
@@ -260,7 +396,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
         if path in {"/_gallery", "/_gallery/"}:
-            self.send_html(index_html(self.server.build_manifest()))  # type: ignore[attr-defined]
+            self.send_html(case_html(""))
             return
         match = re.fullmatch(r"/_gallery/case/([^/]+)/?", path)
         if match:
@@ -281,6 +417,7 @@ def main() -> None:
         return build_manifest(root)
 
     first = live_manifest()
+    materialize_static_gallery(root)
     print(
         json.dumps(
             {
