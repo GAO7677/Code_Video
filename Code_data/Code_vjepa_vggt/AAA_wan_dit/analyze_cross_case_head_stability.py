@@ -283,11 +283,25 @@ def main() -> None:
             args.query_map.expanduser().resolve().read_text(encoding="utf-8")
         )
         query_payloads = {model: query_payload for model in MODELS}
-    cases = list(query_payloads[MODELS[0]]["cases"])
-    expected_cases = set(cases)
+    model_cases = {}
     for model, payload in query_payloads.items():
-        if set(payload["cases"]) != expected_cases:
-            raise ValueError(f"{model} query map has a different case set")
+        available_root = root / "block00" / "matrices" / model
+        available_cases = (
+            {path.name for path in available_root.iterdir() if path.is_dir()}
+            if available_root.is_dir()
+            else set()
+        )
+        unknown_cases = available_cases - set(payload["cases"])
+        if unknown_cases:
+            raise ValueError(
+                f"{model} attention has cases absent from query map: "
+                f"{sorted(unknown_cases)}"
+            )
+        model_cases[model] = [
+            case for case in payload["cases"] if case in available_cases
+        ]
+        if not model_cases[model]:
+            raise ValueError(f"{model} attention contains no analyzable cases")
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     all_rows = []
@@ -295,6 +309,7 @@ def main() -> None:
     report_sections = []
     for model in MODELS:
         query_payload = query_payloads[model]
+        cases = model_cases[model]
         records = {}
         for case in cases:
             trajectory = _trajectory_tokens(query_payload["cases"][case])
@@ -345,6 +360,7 @@ def main() -> None:
         report_sections.append(
             f"""## {model}
 
+- Case 数量：{len(cases)}
 - 稳定/中等/不稳定：{verdicts['稳定']}/{verdicts['中等']}/{verdicts['不稳定']}
 - 主角色数量：{dict(sorted(role_counts.items()))}
 - 跨 case 一致率均值/中位数：{np.mean([r['cross_case_consistency'] for r in rows]):.3f}/{np.median([r['cross_case_consistency'] for r in rows]):.3f}
@@ -369,7 +385,8 @@ def main() -> None:
         writer.writerows(all_block_rows)
     report = f"""# test_5 全 Block/Head 跨 Case 稳定性
 
-共 {len(cases)} 个唯一 case；每个模型独立统计 30 blocks × 24 heads。每个 case
+Case 数量：{", ".join(f"{model}={len(model_cases[model])}" for model in MODELS)}；
+每个模型独立统计 30 blocks × 24 heads。每个 case
 先聚合去噪步 5/15/25/35 的角色得分，再统计同一 `(block, head)` 在不同 case
 上的主角色一致率。稳定要求一致率至少 70%，且角色分数中位 margin 至少 0.10。
 
@@ -384,7 +401,11 @@ def main() -> None:
     )
     (output_dir / "cross_case_head_stability.json").write_text(
         json.dumps(
-            {"cases": cases, "role_labels": ROLE_LABELS, "heads": all_rows},
+            {
+                "cases": model_cases,
+                "role_labels": ROLE_LABELS,
+                "heads": all_rows,
+            },
             ensure_ascii=False,
             indent=2,
         )

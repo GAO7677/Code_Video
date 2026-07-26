@@ -80,6 +80,7 @@ def build_case_recorder_group(
     query_map: dict[str, dict[str, Any]],
     map_heads_text: str | None = None,
     capture_full_matrix: bool = False,
+    query_mode: str = "moving",
 ) -> BallQueryRecorderGroup:
     if case_key not in query_map:
         raise KeyError(f"query map has no entry for case {case_key}")
@@ -87,12 +88,22 @@ def build_case_recorder_group(
     blocks = parse_block_ids(blocks_text)
     steps = parse_step_numbers(steps_text)
     if "query_coords_per_time" in item:
-        coords = explicit_moving_query_coords(item["query_coords_per_time"])
+        trajectory_coords = explicit_moving_query_coords(
+            item["query_coords_per_time"]
+        )
     else:
-        coords = moving_query_coords(
+        trajectory_coords = moving_query_coords(
             item["trajectory"],
             frame_shape=tuple(int(value) for value in item["frame_shape"]),
         )
+    if query_mode == "moving":
+        coords = trajectory_coords
+    elif query_mode == "anchor_t2":
+        coords = tuple(coord for coord in trajectory_coords if coord[0] == 2)
+        if not coords:
+            raise ValueError(f"{case_key} has no visible object query at latent t=2")
+    else:
+        raise ValueError(f"unsupported query mode: {query_mode}")
     selected_heads = (
         tuple(int(value) for value in map_heads_text.split(","))
         if map_heads_text
@@ -100,6 +111,8 @@ def build_case_recorder_group(
     )
     if capture_full_matrix and selected_heads is None:
         raise ValueError("full matrix capture requires selected map heads")
+    if query_mode != "moving" and selected_heads is not None:
+        raise ValueError("attention map capture currently requires moving query mode")
     if capture_full_matrix:
         recorder_class = MovingQueryMapAndFullRecorder
     elif selected_heads is not None:
@@ -113,6 +126,8 @@ def build_case_recorder_group(
                 model_label=model_label,
                 output_root=output_root / f"block{block:02d}" / "matrices",
                 query_coords=coords,
+                trajectory_coords=trajectory_coords,
+                query_mode=query_mode,
                 query_preview=Path(item["preview"]),
                 **(
                     {"selected_heads": selected_heads}

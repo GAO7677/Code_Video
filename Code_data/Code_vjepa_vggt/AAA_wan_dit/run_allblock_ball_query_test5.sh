@@ -21,6 +21,7 @@ QUERY_MAP="${QUERY_MAP:-${QUERY_ROOT}/motion_query_map.json}"
 INPUT_LIST="${INPUT_LIST:-${QUERY_ROOT}/test_5_unique.txt}"
 BLOCKS="${BLOCKS:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29}"
 STEPS="${STEPS:-5,15,25,35}"
+QUERY_MODE="${QUERY_MODE:-moving}"
 
 WAN_ROOT=/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B
 WAN_LORA_ROOT=/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500
@@ -42,6 +43,7 @@ ATTENTION_ARGS=(
   --attention-blocks "${BLOCKS}"
   --attention-steps "${STEPS}"
   --attention-query-map "${QUERY_MAP}"
+  --attention-query-mode "${QUERY_MODE}"
   --attention-query-coords "2:6:13,2:6:14,2:7:13,2:7:14"
   --attention-query-video-frame 8
   --attention-query-preview "${PLACEHOLDER_PREVIEW}"

@@ -33,6 +33,7 @@ def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--attention-query-video-frame", type=int, required=True)
     parser.add_argument("--attention-query-preview", type=Path, required=True)
     parser.add_argument("--attention-query-map", type=Path)
+    parser.add_argument("--attention-query-mode", default="moving")
     parser.add_argument("--attention-map-heads")
     parser.add_argument(
         "--physrvg-root",
@@ -88,6 +89,7 @@ def main() -> None:
                 case_key=input_json.stem,
                 query_map=query_map,
                 map_heads_text=custom.attention_map_heads,
+                query_mode=custom.attention_query_mode,
             )
             if query_map is not None
             else default_group

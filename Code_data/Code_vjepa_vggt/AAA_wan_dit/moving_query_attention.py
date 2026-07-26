@@ -97,6 +97,7 @@ def moving_query_features(
     *,
     num_heads: int,
     query_coords: tuple[tuple[int, int, int], ...],
+    trajectory_coords: tuple[tuple[int, int, int], ...] | None = None,
     grid: tuple[int, int, int],
 ) -> dict[str, np.ndarray]:
     q_heads = _as_heads(q.detach(), num_heads=num_heads)
@@ -109,6 +110,9 @@ def moving_query_features(
     grouped: dict[int, list[tuple[int, int, int]]] = {}
     for coord in query_coords:
         grouped.setdefault(int(coord[0]), []).append(coord)
+    trajectory_grouped: dict[int, list[tuple[int, int, int]]] = {}
+    for coord in trajectory_coords or query_coords:
+        trajectory_grouped.setdefault(int(coord[0]), []).append(coord)
     valid_times = tuple(sorted(grouped))
     if not valid_times:
         raise ValueError("moving queries contain no visible latent times")
@@ -137,6 +141,20 @@ def moving_query_features(
     )
     local_mask = torch.zeros_like(trajectory_mask)
     aligned_mask = torch.zeros_like(trajectory_mask)
+    key_spatial_ids = key_rows * grid_w + key_columns
+    for time, coords in trajectory_grouped.items():
+        rows = [coord[1] for coord in coords]
+        columns = [coord[2] for coord in coords]
+        spatial_ids = torch.tensor(
+            [row * grid_w + column for row, column in zip(rows, columns)],
+            device=q_heads.device,
+        )
+        selected_spatial = (
+            key_spatial_ids[:, None] == spatial_ids[None, :]
+        ).any(dim=1)
+        trajectory_mask[time] = (
+            (key_times == time) & selected_spatial
+        )
     for time in valid_times:
         coords = grouped[time]
         rows = [coord[1] for coord in coords]
@@ -145,13 +163,9 @@ def moving_query_features(
             [row * grid_w + column for row, column in zip(rows, columns)],
             device=q_heads.device,
         )
-        key_spatial_ids = key_rows * grid_w + key_columns
         selected_spatial = (
             key_spatial_ids[:, None] == spatial_ids[None, :]
         ).any(dim=1)
-        trajectory_mask[time] = (
-            (key_times == time) & selected_spatial
-        )
         local_mask[time] = (
             (key_times == time)
             & (key_rows >= max(0, min(rows) - 1))
@@ -259,6 +273,8 @@ class MovingQueryFeatureRecorder:
         model_label: str,
         output_root: Path,
         query_coords: tuple[tuple[int, int, int], ...],
+        trajectory_coords: tuple[tuple[int, int, int], ...] | None = None,
+        query_mode: str = "moving",
         query_preview: Path,
     ) -> None:
         config.validate()
@@ -266,6 +282,8 @@ class MovingQueryFeatureRecorder:
         self.model_label = model_label
         self.output_root = output_root.expanduser().resolve()
         self.query_coords = query_coords
+        self.trajectory_coords = trajectory_coords or query_coords
+        self.query_mode = str(query_mode)
         self.query_preview = query_preview.expanduser().resolve()
         self.grid: tuple[int, int, int] | None = None
         self.active = False
@@ -282,6 +300,7 @@ class MovingQueryFeatureRecorder:
     def set_grid(self, grid: tuple[int, int, int]) -> None:
         candidate = tuple(int(value) for value in grid)
         _query_indices(self.query_coords, candidate)
+        _query_indices(self.trajectory_coords, candidate)
         self.grid = candidate
 
     @torch.no_grad()
@@ -296,6 +315,7 @@ class MovingQueryFeatureRecorder:
             k,
             num_heads=num_heads,
             query_coords=self.query_coords,
+            trajectory_coords=self.trajectory_coords,
             grid=self.grid,
         )
 
@@ -317,6 +337,9 @@ class MovingQueryFeatureRecorder:
                 step_dir / name,
                 **self.captures[int(step)],
                 query_coords=np.asarray(self.query_coords, dtype=np.int64),
+                trajectory_coords=np.asarray(
+                    self.trajectory_coords, dtype=np.int64
+                ),
             )
             entries.append(
                 {
@@ -330,8 +353,11 @@ class MovingQueryFeatureRecorder:
             "case": self.case_key,
             "block_id": int(self.config.block_id),
             "latent_grid": list(self.grid),
+            "query_mode": self.query_mode,
             "query_sampling": (
-                "per-frame moving-object tokens; count may vary by latent time"
+                "single latent-t=2 object anchor"
+                if self.query_mode == "anchor_t2"
+                else "per-frame moving-object tokens; count may vary by latent time"
             ),
             "query_tokens_per_time": [
                 sum(1 for coord in self.query_coords if int(coord[0]) == time)
@@ -347,6 +373,9 @@ class MovingQueryFeatureRecorder:
             ],
             "softmax": "exact over all key tokens",
             "query_coords": [list(coord) for coord in self.query_coords],
+            "trajectory_coords": [
+                list(coord) for coord in self.trajectory_coords
+            ],
             "case_metadata": self.case_metadata,
             "steps": entries,
         }
