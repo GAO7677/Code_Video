@@ -224,6 +224,7 @@ class BallQuerySelfAttentionRecorder:
         query_video_frame: int,
         query_preview: Path | None = None,
         grid: tuple[int, int, int] | None = None,
+        render_images: bool = True,
     ) -> None:
         config.validate()
         self.config = config
@@ -235,6 +236,7 @@ class BallQuerySelfAttentionRecorder:
             query_preview.expanduser().resolve() if query_preview is not None else None
         )
         self.grid = grid
+        self.render_images = bool(render_images)
         self.active = False
         self.current_step: int | None = None
         self.case_key: str | None = None
@@ -337,31 +339,33 @@ class BallQuerySelfAttentionRecorder:
                 ),
                 query_coords=np.asarray(self.query_coords, dtype=np.int64),
             )
-            _, low, high = _display_limits(attention)
             head_images: list[str] = []
-            for head in range(int(metadata["num_heads"])):
-                image_name = f"head_{head:02d}_ball_query_attention.png"
-                _render_head(
-                    attention=attention[head],
-                    output_path=step_dir / image_name,
+            contact_name = None
+            if self.render_images:
+                _, low, high = _display_limits(attention)
+                for head in range(int(metadata["num_heads"])):
+                    image_name = f"head_{head:02d}_ball_query_attention.png"
+                    _render_head(
+                        attention=attention[head],
+                        output_path=step_dir / image_name,
+                        title=(
+                            f"{self.model_label} | Block {self.config.block_id} | "
+                            f"ball query | denoise step {step} | head {head:02d}"
+                        ),
+                        query_coords=self.query_coords,
+                        low=low,
+                        high=high,
+                    )
+                    head_images.append(image_name)
+                contact_name = "all_heads_ball_query_attention.png"
+                _render_contact(
+                    attention=attention,
+                    output_path=step_dir / contact_name,
                     title=(
                         f"{self.model_label} | Block {self.config.block_id} | "
-                        f"ball query | denoise step {step} | head {head:02d}"
+                        f"ball query | denoise step {step} | temporal sum"
                     ),
-                    query_coords=self.query_coords,
-                    low=low,
-                    high=high,
                 )
-                head_images.append(image_name)
-            contact_name = "all_heads_ball_query_attention.png"
-            _render_contact(
-                attention=attention,
-                output_path=step_dir / contact_name,
-                title=(
-                    f"{self.model_label} | Block {self.config.block_id} | "
-                    f"ball query | denoise step {step} | temporal sum"
-                ),
-            )
             step_entries.append(
                 {
                     "step_number_one_based": int(step),
@@ -386,6 +390,7 @@ class BallQuerySelfAttentionRecorder:
             "query_reduction": "mean attention probability over four ball patches",
             "key_layout": "13 latent frames, each with a 16x28 spatial grid",
             "query_preview": preview_name,
+            "render_images": self.render_images,
             "case_metadata": self.case_metadata,
             "steps": step_entries,
         }
@@ -394,9 +399,67 @@ class BallQuerySelfAttentionRecorder:
             json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        _write_case_html(case_dir, summary)
+        if self.render_images:
+            _write_case_html(case_dir, summary)
         print(f"[ball-query-attn] wrote {summary_path}", flush=True)
         return summary_path
+
+
+class BallQueryRecorderGroup:
+    """Synchronize multiple block recorders under one denoising-step scope."""
+
+    def __init__(self, recorders: list[BallQuerySelfAttentionRecorder]) -> None:
+        if not recorders:
+            raise ValueError("recorder group must be non-empty")
+        expected_steps = tuple(recorders[0].config.step_numbers)
+        if any(tuple(recorder.config.step_numbers) != expected_steps for recorder in recorders):
+            raise ValueError("all recorders must capture the same denoising steps")
+        block_ids = [int(recorder.config.block_id) for recorder in recorders]
+        if len(set(block_ids)) != len(block_ids):
+            raise ValueError("recorder group contains duplicate block ids")
+        self.recorders = recorders
+        self.config = recorders[0].config
+
+    @property
+    def active(self) -> bool:
+        return all(recorder.active for recorder in self.recorders)
+
+    @active.setter
+    def active(self, value: bool) -> None:
+        for recorder in self.recorders:
+            recorder.active = bool(value)
+
+    @property
+    def current_step(self) -> int | None:
+        return self.recorders[0].current_step
+
+    @current_step.setter
+    def current_step(self, value: int | None) -> None:
+        for recorder in self.recorders:
+            recorder.current_step = value
+
+    def begin_case(
+        self,
+        case_key: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        for recorder in self.recorders:
+            recorder.begin_case(case_key, metadata=metadata)
+
+    def set_grid(self, grid: tuple[int, int, int]) -> None:
+        for recorder in self.recorders:
+            recorder.set_grid(grid)
+
+    def set_case_key(self, case_key: str) -> None:
+        for recorder in self.recorders:
+            recorder.case_key = str(case_key)
+
+    def finalize_case(self) -> dict[int, Path]:
+        return {
+            int(recorder.config.block_id): recorder.finalize_case()
+            for recorder in self.recorders
+        }
 
 
 def _write_case_html(case_dir: Path, summary: dict[str, Any]) -> None:

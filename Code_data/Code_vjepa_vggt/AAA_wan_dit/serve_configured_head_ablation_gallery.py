@@ -20,6 +20,23 @@ MODEL_LABELS = {
     "physrvg": "PhysRVG",
 }
 MODEL_ORDER = {name: index for index, name in enumerate(MODEL_LABELS)}
+BASELINE_ROOTS = {
+    "wan_lora": (
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan_test5/wan_lora/baseline"),
+        Path("/data/gaoya/agent-data/outputs/wan_dit_block17_self_attention/test5_first5/generated/wan_lora"),
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan/wan_lora/baseline"),
+    ),
+    "xssc": (
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan_test5/xssc/baseline/results"),
+        Path("/data/gaoya/agent-data/outputs/wan_dit_block17_self_attention/test5_first5/generated/xssc/results"),
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc/baseline/results"),
+    ),
+    "physrvg": (
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan_test5/PhyRVG/baseline"),
+        Path("/data/gaoya/agent-data/outputs/wan_dit_block17_self_attention/test5_first5/generated/physrvg/input_first5_unique/physRVG_steps40_512x896_08_49f"),
+        Path("/data/gaoya/AAA_test_video/0623/test/v2v_wan/PhyRVG/baseline/physicIQ/physRVG_steps40_512x896_08_49f"),
+    ),
+}
 METRICS = (
     ("physics_iq_with_context", "Physics-IQ · ctx", "higher", ("physics_iq_with_context", "score"), 2),
     ("physics_iq_without_context", "Physics-IQ · no ctx", "higher", ("physics_iq_without_context", "score"), 2),
@@ -52,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8916)
+    parser.add_argument("--build-only", action="store_true")
     return parser.parse_args()
 
 
@@ -89,6 +107,20 @@ def load_metrics(path: Path) -> dict[str, float]:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             result[key] = float(value)
     return result
+
+
+def baseline_path(model: str, case_name: str) -> Path | None:
+    for root in BASELINE_ROOTS[model]:
+        candidate = root / f"{case_name}.mp4"
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            return candidate
+        matches = list(root.glob(f"*/{case_name}.mp4"))
+        if len(matches) == 1 and matches[0].stat().st_size > 0:
+            return matches[0]
+        matches = list(root.glob(f"*/*/{case_name}.mp4"))
+        if len(matches) == 1 and matches[0].stat().st_size > 0:
+            return matches[0]
+    return None
 
 
 def build_manifest(root: Path, *, static: bool = False) -> dict[str, object]:
@@ -139,6 +171,39 @@ def build_manifest(root: Path, *, static: bool = False) -> dict[str, object]:
                 completed_rows.append(fields)
 
     configurations: list[dict[str, object]] = []
+    for model in MODEL_LABELS:
+        if not any(
+            baseline_path(model, str(case["name"])) is not None
+            for case in cases
+        ):
+            continue
+        config = {
+            "task_id": f"baseline-{model}",
+            "model": model,
+            "model_label": MODEL_LABELS[model],
+            "block": None,
+            "head": None,
+            "baseline": True,
+        }
+        configurations.append(config)
+        for case in cases:
+            video = baseline_path(model, str(case["name"]))
+            if video is None:
+                continue
+            case["outputs"].append(
+                {
+                    **config,
+                    "video": (
+                        f"/_gallery/baselines/{model}/"
+                        f"{quote(str(case['slug']))}.mp4"
+                        if static
+                        else data_url(video)
+                    ),
+                    "metrics": load_metrics(video.with_suffix(".json")),
+                    "best_metrics": [],
+                }
+            )
+
     for task_id, model, block, head, *_ in completed_rows:
         validation_path = validations / f"{task_id}.json"
         if not validation_path.is_file():
@@ -181,19 +246,83 @@ def build_manifest(root: Path, *, static: bool = False) -> dict[str, object]:
                 }
             )
 
+    priority_root = root / "_priority_case"
+    priority_completed = priority_root / "completed.tsv"
+    existing_keys = {
+        (item["model"], item["block"], item["head"])
+        for item in configurations
+        if not item.get("baseline")
+    }
+    if priority_completed.is_file():
+        for line in priority_completed.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) < 4:
+                continue
+            task_id, model, block, head = fields[:4]
+            key = (model, int(block), int(head))
+            if key in existing_keys:
+                continue
+            validation_path = priority_root / "validations" / f"{task_id}.json"
+            if not validation_path.is_file():
+                continue
+            validation = load_json(validation_path)
+            config = {
+                "task_id": task_id,
+                "model": model,
+                "model_label": MODEL_LABELS.get(model, model),
+                "block": int(block),
+                "head": int(head),
+                "priority_case_only": True,
+            }
+            configurations.append(config)
+            existing_keys.add(key)
+            records = validation.get("records", [])
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                input_json = record.get("input_json")
+                output_video = Path(str(record.get("output_video")))
+                output_json = Path(str(record.get("output_json")))
+                case = case_by_input.get(str(Path(str(input_json)).resolve()))
+                if (
+                    case is None
+                    or not output_video.is_file()
+                    or output_video.stat().st_size == 0
+                ):
+                    continue
+                case["outputs"].append(
+                    {
+                        **config,
+                        "video": (
+                            "/" + quote(
+                                output_video.resolve()
+                                .relative_to(root)
+                                .as_posix(),
+                                safe="/",
+                            )
+                            if static
+                            else data_url(output_video)
+                        ),
+                        "metrics": load_metrics(output_json),
+                        "best_metrics": [],
+                    }
+                )
+
     configurations.sort(
         key=lambda item: (
             MODEL_ORDER.get(str(item["model"]), 99),
-            int(item["block"]),
-            int(item["head"]),
+            -1 if item["block"] is None else int(item["block"]),
+            -1 if item["head"] is None else int(item["head"]),
         )
     )
     for case in cases:
         case["outputs"].sort(
             key=lambda item: (
                 MODEL_ORDER.get(str(item["model"]), 99),
-                int(item["block"]),
-                int(item["head"]),
+                -1 if item["block"] is None else int(item["block"]),
+                -1 if item["head"] is None else int(item["head"]),
             )
         )
         outputs = case["outputs"]
@@ -271,6 +400,20 @@ def materialize_static_gallery(root: Path) -> dict[str, object]:
         if link.exists() or link.is_symlink():
             link.unlink()
         link.symlink_to(target)
+
+    for model in MODEL_LABELS:
+        baseline_dir = gallery_dir / "baselines" / model
+        baseline_dir.mkdir(parents=True, exist_ok=True)
+        for case in manifest["cases"]:
+            target = baseline_path(model, str(case["name"]))
+            if target is None:
+                continue
+            link = baseline_dir / f"{case['slug']}.mp4"
+            if link.is_symlink() and link.resolve() == target:
+                continue
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            link.symlink_to(target)
     return manifest
 
 
@@ -342,20 +485,22 @@ async function render(){{
  const select=document.getElementById("caseSelect");select.replaceChildren();data.cases.forEach((c,i)=>{{const option=document.createElement("option");option.value=c.slug;option.textContent=(i+1)+". "+c.name;select.appendChild(option)}});select.value=item.slug;
  const source=document.getElementById("source");source.replaceChildren();if(item.source_video)source.appendChild(video(item.source_video));
  const models=document.getElementById("models");models.replaceChildren();
- MODEL_ORDER.forEach(model=>{{const outputs=item.outputs.filter(o=>o.model===model);if(!outputs.length)return;
+ MODEL_ORDER.forEach(model=>{{const outputs=item.outputs.filter(o=>o.model===model);const baseline=outputs.find(o=>o.baseline);const ablations=outputs.filter(o=>!o.baseline);
   const section=document.createElement("section");section.className="model";section.dataset.model=model;
   const h3=document.createElement("h3");h3.textContent=MODEL_LABELS[model];section.appendChild(h3);
-  [...new Set(outputs.map(o=>o.block))].sort((a,b)=>a-b).forEach(block=>{{
+  const baselineGroup=document.createElement("section");baselineGroup.className="block";const baselineTitle=document.createElement("h4");baselineTitle.textContent="Baseline · no ablation";baselineGroup.appendChild(baselineTitle);
+  const baselineGrid=document.createElement("div");baselineGrid.className="heads";if(baseline){{const cell=document.createElement("div");cell.className="cell";const label=document.createElement("div");label.className="label";label.textContent="Baseline";cell.append(label,video(baseline.video));baselineGrid.appendChild(cell)}}else{{const pending=document.createElement("div");pending.className="empty";pending.textContent="Pending baseline";baselineGrid.appendChild(pending)}}baselineGroup.appendChild(baselineGrid);section.appendChild(baselineGroup);
+  [...new Set(ablations.map(o=>o.block))].sort((a,b)=>a-b).forEach(block=>{{
    const group=document.createElement("section");group.className="block";const h4=document.createElement("h4");h4.textContent="Block "+String(block).padStart(2,"0");group.appendChild(h4);
    const grid=document.createElement("div");grid.className="heads";
-   outputs.filter(o=>o.block===block).sort((a,b)=>a.head-b.head).forEach(out=>{{const cell=document.createElement("div");cell.className="cell";
+   ablations.filter(o=>o.block===block).sort((a,b)=>a.head-b.head).forEach(out=>{{const cell=document.createElement("div");cell.className="cell";
     const label=document.createElement("div");label.className="label";label.textContent="Head "+String(out.head).padStart(2,"0")+" = 0";cell.append(label,video(out.video));grid.appendChild(cell)}});
    group.appendChild(grid);section.appendChild(group)}});
   models.appendChild(section)}});
  if(!models.children.length){{const empty=document.createElement("div");empty.className="empty";empty.textContent="No completed configurations yet";models.appendChild(empty)}}
  const metrics=document.getElementById("metrics");metrics.replaceChildren();const mh=document.createElement("div");mh.className="metrics-head";add(mh,"h3","","Case metric comparison");add(mh,"span","","↑ higher is better · ↓ lower is better · best value highlighted");metrics.appendChild(mh);
  const wrap=document.createElement("div");wrap.className="table-wrap";const table=document.createElement("table");const thead=document.createElement("thead");const hr=document.createElement("tr");add(hr,"th","method","Configuration");data.metrics.forEach(metric=>add(hr,"th","",metric.label+" "+(metric.direction==="lower"?"↓":"↑")));thead.appendChild(hr);table.appendChild(thead);
- const tbody=document.createElement("tbody");item.outputs.forEach(out=>{{const row=document.createElement("tr");add(row,"th","method",MODEL_LABELS[out.model]+" · B"+String(out.block).padStart(2,"0")+" · H"+String(out.head).padStart(2,"0"));const best=new Set(out.best_metrics||[]);
+ const tbody=document.createElement("tbody");item.outputs.forEach(out=>{{const row=document.createElement("tr");add(row,"th","method",out.baseline?MODEL_LABELS[out.model]+" · Baseline":MODEL_LABELS[out.model]+" · B"+String(out.block).padStart(2,"0")+" · H"+String(out.head).padStart(2,"0"));const best=new Set(out.best_metrics||[]);
   data.metrics.forEach(metric=>{{const value=out.metrics?out.metrics[metric.key]:null;const valid=Number.isFinite(value);add(row,"td",(valid&&best.has(metric.key)?"best ":"")+(valid?"":"missing"),valid?Number(value).toFixed(metric.decimals):"—")}});tbody.appendChild(row)}});
  table.appendChild(tbody);wrap.appendChild(table);metrics.appendChild(wrap);
  history.replaceState(null,"","#case="+encodeURIComponent(item.slug));
@@ -418,6 +563,21 @@ def main() -> None:
 
     first = live_manifest()
     materialize_static_gallery(root)
+    if args.build_only:
+        print(
+            json.dumps(
+                {
+                    "gallery": str(root / "_gallery" / "index.html"),
+                    "cases": first["num_cases"],
+                    "completed_configurations": first[
+                        "num_completed_configurations"
+                    ],
+                    "videos": first["num_available_videos"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
     print(
         json.dumps(
             {

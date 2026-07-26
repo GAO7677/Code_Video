@@ -33,9 +33,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--multiblock-root", type=Path, required=True)
     parser.add_argument("--block17-root", type=Path, required=True)
+    parser.add_argument("--generated-root", type=Path)
     parser.add_argument("--case", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--blocks", default="0,5,11,17,19,29")
+    parser.add_argument("--models", default="wan_lora,xssc,physrvg")
     return parser.parse_args()
 
 
@@ -155,10 +157,26 @@ def main() -> None:
     args = parse_args()
     multiblock_root = args.multiblock_root.expanduser().resolve()
     block17_root = args.block17_root.expanduser().resolve()
+    generated_root = (
+        args.generated_root.expanduser().resolve()
+        if args.generated_root is not None
+        else None
+    )
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     blocks = [int(value) for value in args.blocks.split(",") if value.strip()]
-    models = ("wan_lora", "xssc", "physrvg")
+    models = tuple(
+        value.strip() for value in args.models.split(",") if value.strip()
+    )
+    supported_models = {"wan_lora", "xssc", "physrvg"}
+    if not models or len(set(models)) != len(models):
+        raise ValueError("model list must be non-empty and unique")
+    if not set(models).issubset(supported_models):
+        raise ValueError(
+            f"unsupported models {sorted(set(models) - supported_models)}"
+        )
+    sample_count = len(models) * 4
+    stable_sample_count = math.ceil((2.0 / 3.0) * sample_count)
 
     block_roots = {
         block: (
@@ -171,7 +189,16 @@ def main() -> None:
 
     trajectories: dict[str, tuple[list[np.ndarray], tuple[int, int]]] = {}
     for model in models:
-        video = _generated_video(block17_root / "matrices", model, args.case)
+        if generated_root is None:
+            video = _generated_video(block17_root / "matrices", model, args.case)
+        else:
+            matches = sorted((generated_root / model).glob(f"**/{args.case}.mp4"))
+            if len(matches) != 1:
+                raise RuntimeError(
+                    f"expected one generated video for {model}/{args.case}, "
+                    f"found {matches}"
+                )
+            video = matches[0]
         trajectory, frame_shape = _track_latent_ball(video, temporal_tokens=13)
         grid = (13, 16, 28)
         trajectories[model] = (
@@ -235,12 +262,51 @@ def main() -> None:
         }
         aggregate_scores = _role_scores(aggregate_features)
         roles = list(ROLE_LABELS)
+        model_aggregate_labels = {}
+        for model in models:
+            model_samples = [
+                sample for sample in samples if sample["model"] == model
+            ]
+            model_features = {
+                key: np.stack(
+                    [sample["features"][key] for sample in model_samples]
+                ).mean(0)
+                for key in aggregate_features
+            }
+            model_aggregate_labels[model] = _sample_labels(
+                _role_scores(model_features)
+            )
+        step_aggregate_labels = {}
+        for step in (5, 15, 25, 35):
+            step_samples = [
+                sample for sample in samples if sample["step"] == step
+            ]
+            step_features = {
+                key: np.stack(
+                    [sample["features"][key] for sample in step_samples]
+                ).mean(0)
+                for key in aggregate_features
+            }
+            step_aggregate_labels[step] = _sample_labels(
+                _role_scores(step_features)
+            )
         score_matrix = np.stack(
             [aggregate_scores[role] for role in roles], axis=1
         )
-        margins = np.sort(score_matrix, axis=1)[:, -1] - np.sort(
-            score_matrix, axis=1
-        )[:, -2]
+        score_order = np.argsort(score_matrix, axis=1)
+        aggregate_primary = [
+            roles[int(index)] for index in score_order[:, -1]
+        ]
+        aggregate_secondary = [
+            roles[int(index)] for index in score_order[:, -2]
+        ]
+        primary_scores = np.take_along_axis(
+            score_matrix, score_order[:, -1:], axis=1
+        )[:, 0]
+        secondary_scores = np.take_along_axis(
+            score_matrix, score_order[:, -2:-1], axis=1
+        )[:, 0]
+        margins = primary_scores - secondary_scores
         labels_by_sample = np.asarray([sample["labels"] for sample in samples])
         modal_labels = []
         stability = []
@@ -276,6 +342,29 @@ def main() -> None:
             }
         )
         for head in range(heads):
+            primary_role = aggregate_primary[head]
+            secondary_role = aggregate_secondary[head]
+            aggregate_stability = float(
+                np.mean(labels_by_sample[:, head] == primary_role)
+            )
+            model_modes = [
+                model_aggregate_labels[model][head] for model in models
+            ]
+            step_modes = [
+                step_aggregate_labels[step][head] for step in (5, 15, 25, 35)
+            ]
+            model_consistency = float(
+                np.mean(np.asarray(model_modes) == primary_role)
+            )
+            step_consistency = float(
+                np.mean(np.asarray(step_modes) == primary_role)
+            )
+            if aggregate_stability >= (2.0 / 3.0) and margins[head] >= 0.10:
+                classification = f"明确{primary_role}"
+            elif aggregate_stability >= 0.50:
+                classification = f"{primary_role}/{secondary_role}混合"
+            else:
+                classification = f"不稳定{primary_role}/{secondary_role}混合"
             row = {
                 "block": block,
                 "head": head,
@@ -283,6 +372,16 @@ def main() -> None:
                 "role_label": ROLE_LABELS[modal_labels[head]],
                 "role_stability": stability[head],
                 "role_margin": float(margins[head]),
+                "aggregate_primary_role": primary_role,
+                "aggregate_primary_role_label": ROLE_LABELS[primary_role],
+                "aggregate_primary_score": float(primary_scores[head]),
+                "aggregate_secondary_role": secondary_role,
+                "aggregate_secondary_role_label": ROLE_LABELS[secondary_role],
+                "aggregate_secondary_score": float(secondary_scores[head]),
+                "aggregate_role_stability": aggregate_stability,
+                "model_role_consistency": model_consistency,
+                "step_role_consistency": step_consistency,
+                "classification": classification,
             }
             row.update(
                 {
@@ -353,20 +452,35 @@ def main() -> None:
                 )
                 + " |"
             )
+        all_head_rows = [
+            f"| H{record['head']:02d} | {record['classification']} | "
+            f"{record['aggregate_primary_role']} "
+            f"{record['aggregate_primary_score']:.2f} | "
+            f"{record['aggregate_secondary_role']} "
+            f"{record['aggregate_secondary_score']:.2f} | "
+            f"{record['aggregate_role_stability']:.0%} | "
+            f"{record['model_role_consistency']:.0%} | "
+            f"{record['step_role_consistency']:.0%} |"
+            for record in current
+        ]
         detail_sections.append(
             f"""## Block {row['block']:02d}
 
 | 功能 | 得分最高的 Head |
 |---|---|
 {chr(10).join(role_rows)}
+
+| Head | 分类 | 主角色 | 次角色 | 样本稳定性 | 模型一致性 | 去噪步一致性 |
+|---:|---|---:|---:|---:|---:|---:|
+{chr(10).join(all_head_rows)}
 """
         )
 
     markdown = f"""# Multi-Block Exact Ball-Query Head Specialization
 
-Case: `{args.case}`. Blocks: `{blocks}`. Each sample uses the exact mean
+Case: `{args.case}`. Models: `{list(models)}`. Blocks: `{blocks}`. Each sample uses the exact mean
 attention from four moving-ball query patches to all 5824 key tokens. Statistics
-cover three models and denoise steps 5/15/25/35.
+cover the listed model(s) and denoise steps 5/15/25/35.
 
 | Block | Role types | Stable heads | Median stability | Head cosine | Role margin | Relative clarity | Verdict |
 |---:|---:|---:|---:|---:|---:|---:|---|
@@ -374,8 +488,13 @@ cover three models and denoise steps 5/15/25/35.
 
 `Head cosine` is mean pairwise cosine similarity between the 24 attention maps;
 lower means less redundancy. `Stable heads` retain the same dominant role in at
-least 8 of 12 model/step samples. Relative clarity is a heuristic normalized to
+least {stable_sample_count} of {sample_count} model/step samples. Relative clarity is a heuristic normalized to
 Block 17 and should be read together with the raw columns.
+
+Classification uses the highest aggregate rank-based role score. `明确` requires
+at least {stable_sample_count}/{sample_count} samples to agree and a primary-secondary score margin of at least
+0.10. Other heads are explicitly marked as mixed or unstable; these labels are
+descriptive heuristics rather than causal proofs of head function.
 
 {chr(10).join(detail_sections)}
 """
