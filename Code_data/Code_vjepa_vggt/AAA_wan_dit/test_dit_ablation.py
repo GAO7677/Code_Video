@@ -14,6 +14,7 @@ from dit_ablation import (
     annotate_result_files,
     get_dit_head_ablation_call_count,
     install_dit_ablation,
+    install_grouped_head_ablation,
 )
 
 
@@ -92,6 +93,27 @@ def main() -> None:
     assert get_dit_head_ablation_call_count(head_zero) == 1
     assert metadata["head_id"] == 1
     assert metadata["num_attention_heads"] == 3
+
+    grouped = FakeDiT()
+    grouped.blocks[2].self_attn = FakeHeadSelfAttention()
+    grouped.blocks[7].self_attn = FakeHeadSelfAttention()
+    metadata = install_grouped_head_ablation(
+        grouped,
+        category="T",
+        targets=[(2, 0), (7, 2)],
+    )
+    projection_input = torch.arange(12, dtype=torch.float32).reshape(1, 2, 6)
+    output_2 = grouped.blocks[2].self_attn.o(projection_input)
+    output_7 = grouped.blocks[7].self_attn.o(projection_input)
+    expected_2 = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_2[..., 0, :] = 0
+    expected_7 = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_7[..., 2, :] = 0
+    assert torch.equal(output_2, expected_2.reshape_as(projection_input))
+    assert torch.equal(output_7, expected_7.reshape_as(projection_input))
+    assert get_dit_head_ablation_call_count(grouped) == 2
+    assert metadata["category"] == "T"
+    assert metadata["num_targets"] == 2
 
     untouched = FakeDiT()
     metadata = install_dit_ablation(untouched, DiTAblationSpec())

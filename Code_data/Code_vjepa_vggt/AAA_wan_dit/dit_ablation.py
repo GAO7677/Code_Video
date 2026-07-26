@@ -214,6 +214,84 @@ def get_dit_head_ablation_call_count(dit: torch.nn.Module) -> int | None:
     return int(counter.count)
 
 
+def install_grouped_head_ablation(
+    dit: torch.nn.Module,
+    *,
+    category: str,
+    targets: list[tuple[int, int]],
+    expected_num_blocks: int | None = 30,
+) -> dict[str, object]:
+    """Zero one selected self-attention head in each target block."""
+
+    blocks = getattr(dit, "blocks", None)
+    if blocks is None:
+        raise TypeError("Expected Wan DiT with a .blocks collection")
+    num_blocks = len(blocks)
+    if expected_num_blocks is not None and num_blocks != expected_num_blocks:
+        raise ValueError(
+            f"Expected {expected_num_blocks} Wan DiT blocks, found {num_blocks}"
+        )
+    normalized_category = category.strip().upper()
+    if normalized_category not in {"S", "T", "P", "C", "G"}:
+        raise ValueError(f"Unsupported grouped head category {category!r}")
+    if not targets:
+        raise ValueError("Grouped head ablation requires at least one target")
+    normalized_targets = [(int(block), int(head)) for block, head in targets]
+    if len(normalized_targets) != len(set(normalized_targets)):
+        raise ValueError("Grouped head ablation targets contain duplicates")
+    block_ids = [block for block, _ in normalized_targets]
+    if len(block_ids) != len(set(block_ids)):
+        raise ValueError("Grouped head ablation allows one head per block")
+
+    counter = _ForwardCounter()
+    target_metadata = []
+    for block_id, head_id in normalized_targets:
+        if not 0 <= block_id < num_blocks:
+            raise ValueError(
+                f"block id must be in [0, {num_blocks - 1}], got {block_id}"
+            )
+        self_attn = getattr(blocks[block_id], "self_attn", None)
+        if self_attn is None:
+            raise AttributeError(f"Wan block {block_id} has no self_attn")
+        num_heads = int(getattr(self_attn, "num_heads"))
+        if not 0 <= head_id < num_heads:
+            raise ValueError(
+                f"head id must be in [0, {num_heads - 1}], got {head_id}"
+            )
+        _zero_projection_input_head(
+            self_attn.o,
+            num_heads=num_heads,
+            head_id=head_id,
+            counter=counter,
+        )
+        target_metadata.append(
+            {
+                "block_id": block_id,
+                "head_id": head_id,
+                "num_attention_heads": num_heads,
+                "disabled_module": (
+                    f"blocks.{block_id}.self_attn.attn_output_head[{head_id}]"
+                ),
+            }
+        )
+
+    metadata: dict[str, object] = {
+        "mode": "self_attn_grouped_head_zero",
+        "category": normalized_category,
+        "tag": f"self_attn_grouped_head_zero_category_{normalized_category.lower()}",
+        "targets": target_metadata,
+        "num_targets": len(target_metadata),
+        "num_dit_blocks": num_blocks,
+        "attention_semantics": (
+            "selected_self_attention_head_outputs_zero_before_output_projection"
+        ),
+        "installation_point": "self_attention_output_projection_input",
+    }
+    dit._aaa_wan_dit_ablation = metadata
+    dit._aaa_wan_dit_head_ablation_counter = counter
+    return metadata
+
+
 def cli_value(args: list[str], option: str) -> str | None:
     try:
         index = args.index(option)

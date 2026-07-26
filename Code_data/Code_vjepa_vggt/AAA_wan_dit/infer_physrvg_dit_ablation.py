@@ -14,8 +14,10 @@ from physrvg_ablation import (
     ABLATION_MODES,
     PhysRVGAblationSpec,
     get_ablation_call_count,
+    install_grouped_physrvg_head_ablation,
     install_physrvg_ablation,
 )
+from grouped_head_targets import CATEGORY_TARGETS, targets_for_category
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -43,7 +45,14 @@ MATCHED_XSSC_CONFIG = {
 
 def _extract_ablation_args(
     argv: list[str],
-) -> tuple[PhysRVGAblationSpec, int, Path, list[str]]:
+) -> tuple[
+    PhysRVGAblationSpec,
+    str | None,
+    list[tuple[int, int]],
+    int,
+    Path,
+    list[str],
+]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--physrvg-ablation-mode",
@@ -52,6 +61,11 @@ def _extract_ablation_args(
     )
     parser.add_argument("--physrvg-ablation-block", type=int, default=None)
     parser.add_argument("--physrvg-ablation-head", type=int, default=None)
+    parser.add_argument(
+        "--physrvg-grouped-head-category",
+        choices=tuple(CATEGORY_TARGETS),
+        default=None,
+    )
     parser.add_argument("--expected-context-frames", type=int, default=8)
     parser.add_argument(
         "--physrvg-root",
@@ -65,12 +79,29 @@ def _extract_ablation_args(
         head_id=args.physrvg_ablation_head,
     )
     spec.validate(30)
+    grouped_category = args.physrvg_grouped_head_category
+    if grouped_category is not None and spec.mode != "baseline":
+        raise ValueError(
+            "Grouped Head category cannot be combined with a standard ablation"
+        )
+    grouped_targets = (
+        []
+        if grouped_category is None
+        else targets_for_category(str(grouped_category))
+    )
     if args.expected_context_frames != MATCHED_XSSC_CONFIG["context_frames"]:
         raise ValueError(
             "--expected-context-frames must remain "
             f"{MATCHED_XSSC_CONFIG['context_frames']}"
         )
-    return spec, int(args.expected_context_frames), args.physrvg_root, remaining
+    return (
+        spec,
+        grouped_category,
+        grouped_targets,
+        int(args.expected_context_frames),
+        args.physrvg_root,
+        remaining,
+    )
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
@@ -136,9 +167,14 @@ def _completed_failure_count(output_root: Path) -> int:
 
 
 def main() -> None:
-    spec, expected_context_frames, physrvg_root, remaining = _extract_ablation_args(
-        sys.argv[1:]
-    )
+    (
+        spec,
+        grouped_category,
+        grouped_targets,
+        expected_context_frames,
+        physrvg_root,
+        remaining,
+    ) = _extract_ablation_args(sys.argv[1:])
     physrvg_root = physrvg_root.expanduser().resolve()
     if not physrvg_root.is_dir():
         raise FileNotFoundError(f"PhysRVG root not found: {physrvg_root}")
@@ -160,7 +196,14 @@ def main() -> None:
     def load_pipe_with_ablation(args: argparse.Namespace):
         # Official order: base Wan -> full PhysRVG DiT -> PhysRVG LoRA -> device.
         pipe = original_load_pipe(args)
-        metadata = install_physrvg_ablation(pipe.transformer, spec)
+        if grouped_category is None:
+            metadata = install_physrvg_ablation(pipe.transformer, spec)
+        else:
+            metadata = install_grouped_physrvg_head_ablation(
+                pipe.transformer,
+                category=str(grouped_category),
+                targets=grouped_targets,
+            )
         state["metadata"] = metadata
         print(
             f"[physrvg_ablation] {json.dumps(metadata, sort_keys=True)}",
@@ -217,7 +260,13 @@ def main() -> None:
                 None if before is None or after is None else int(after - before)
             )
             expected_calls = (
-                None if spec.mode == "baseline" else int(args.num_inference_steps)
+                (
+                    len(grouped_targets) * int(args.num_inference_steps)
+                    if grouped_category is not None
+                    else None
+                    if spec.mode == "baseline"
+                    else int(args.num_inference_steps)
+                )
             )
             call_count_ok = (
                 None

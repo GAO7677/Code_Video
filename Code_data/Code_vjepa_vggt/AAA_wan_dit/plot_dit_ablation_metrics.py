@@ -254,6 +254,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--expected-cases", type=int, default=67)
     parser.add_argument("--dpi", type=int, default=180)
+    parser.add_argument(
+        "--complete-only",
+        action="store_true",
+        help="Write and plot only metric records complete for all expected cases.",
+    )
     return parser.parse_args()
 
 
@@ -415,7 +420,12 @@ def compute_stats(
     return stats
 
 
-def write_stats_csv(path: Path, stats: list[MetricStat], expected_cases: int) -> None:
+def write_stats_csv(
+    path: Path,
+    stats: list[MetricStat],
+    expected_cases: int,
+    complete_only: bool = False,
+) -> None:
     fieldnames = (
         "method_id",
         "model",
@@ -435,6 +445,8 @@ def write_stats_csv(path: Path, stats: list[MetricStat], expected_cases: int) ->
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for stat in stats:
+            if complete_only and not stat.complete:
+                continue
             writer.writerow(
                 {
                     "method_id": stat.method.method_id,
@@ -483,6 +495,7 @@ def plot_metrics(
     expected_cases: int,
     dpi: int,
     model: str,
+    metrics: tuple[Metric, ...] = METRICS,
 ) -> dict[str, dict[str, int]]:
     indexed = stat_index(stats)
     model_methods = [
@@ -507,7 +520,7 @@ def plot_metrics(
     x_positions = np.arange(len(block_ids) + 1)
     x_labels = ("Baseline",) + tuple(str(block_id) for block_id in block_ids)
     num_columns = 2
-    num_rows = math.ceil(len(METRICS) / num_columns)
+    num_rows = math.ceil(len(metrics) / num_columns)
     fig, axes = plt.subplots(
         num_rows,
         num_columns,
@@ -517,7 +530,7 @@ def plot_metrics(
     axes_flat = list(np.atleast_1d(axes).flat)
     completeness: dict[str, dict[str, int]] = {}
 
-    for axis, metric in zip(axes_flat, METRICS):
+    for axis, metric in zip(axes_flat, metrics):
         plotted_ablation_points = 0
         total_ablation_points = 0
         baseline = indexed.get((model, "baseline", None, metric.key))
@@ -588,7 +601,7 @@ def plot_metrics(
                 fontsize=11,
             )
 
-    for axis in axes_flat[len(METRICS) :]:
+    for axis in axes_flat[len(metrics) :]:
         axis.axis("off")
 
     legend_handles = [
@@ -689,7 +702,23 @@ def main() -> None:
     csv_path = output_dir / "dit_ablation_metric_stats.csv"
     manifest_path = output_dir / "dit_ablation_metric_plot_manifest.json"
 
-    write_stats_csv(csv_path, stats, args.expected_cases)
+    write_stats_csv(
+        csv_path,
+        stats,
+        args.expected_cases,
+        complete_only=args.complete_only,
+    )
+    plotted_metrics = (
+        tuple(
+            metric
+            for metric in METRICS
+            if any(stat.metric.key == metric.key and stat.complete for stat in stats)
+        )
+        if args.complete_only
+        else METRICS
+    )
+    if not plotted_metrics:
+        raise RuntimeError("No metric has a complete result point yet")
     model_ids = sorted(
         {method.model for method in methods},
         key=lambda model: {"wan_lora": 0, "xssc": 1, "physrvg": 2}.get(model, 99),
@@ -706,6 +735,7 @@ def main() -> None:
             args.expected_cases,
             args.dpi,
             model,
+            plotted_metrics,
         )
         plots[model] = {"png": str(png_path), "pdf": str(pdf_path)}
 
@@ -717,7 +747,9 @@ def main() -> None:
         "expected_cases": args.expected_cases,
         "num_methods": len(methods),
         "missing_result_dirs": missing_result_dirs,
-        "num_metrics": len(METRICS),
+        "num_metrics": len(plotted_metrics),
+        "complete_only": args.complete_only,
+        "plotted_metrics": [metric.key for metric in plotted_metrics],
         "stats_csv": str(csv_path),
         "plots": plots,
         "metric_completeness": metric_completeness,
@@ -733,7 +765,7 @@ def main() -> None:
     for model in model_ids:
         completeness = metric_completeness[model]
         print(f"[{MODEL_LABELS[model]}]")
-        for metric in METRICS:
+        for metric in plotted_metrics:
             progress = completeness[metric.key]
             print(
                 f"{metric.key}: "

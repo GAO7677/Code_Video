@@ -469,7 +469,6 @@ def build_manifest(
                 "json": relative(json_path, root) if json_path.is_file() else None,
                 "metrics": load_metrics(json_path) if json_path.is_file() else {},
             }
-        mark_best_metrics(outputs)
         cases.append(
             {
                 "name": case_name,
@@ -478,6 +477,30 @@ def build_manifest(
                 "outputs": outputs,
             }
         )
+
+    complete_metric_keys: dict[str, set[str]] = {}
+    for method in methods:
+        complete_metric_keys[method.method_id] = {
+            metric.key
+            for metric in METRICS
+            if all(
+                isinstance(
+                    case["outputs"][method.method_id]["metrics"].get(metric.key),
+                    (int, float),
+                )
+                for case in cases
+            )
+        }
+    for case in cases:
+        outputs = case["outputs"]
+        for method in methods:
+            output = outputs[method.method_id]
+            output["metrics"] = {
+                key: value
+                for key, value in output["metrics"].items()
+                if key in complete_metric_keys[method.method_id]
+            }
+        mark_best_metrics(outputs)
 
     return {
         "title": title,

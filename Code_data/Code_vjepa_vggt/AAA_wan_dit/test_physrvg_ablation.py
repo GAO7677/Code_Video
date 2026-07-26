@@ -8,6 +8,7 @@ from physrvg_ablation import (
     EXPECTED_LORA_MODULES,
     PhysRVGAblationSpec,
     get_ablation_call_count,
+    install_grouped_physrvg_head_ablation,
     install_physrvg_ablation,
 )
 
@@ -139,6 +140,31 @@ def test_lora_off_and_peft_unwrap() -> None:
     assert get_ablation_call_count(model) == 1
 
 
+def test_grouped_head_zero() -> None:
+    model = FakeDiT()
+    metadata = install_grouped_physrvg_head_ablation(
+        model,
+        category="C",
+        targets=[(0, 0), (29, 2)],
+    )
+    projection_input = torch.arange(12, dtype=torch.float32).reshape(1, 2, 6)
+    output_0 = model.blocks[0].attn1.to_out[0](projection_input)
+    output_29 = model.blocks[29].attn1.to_out[0](projection_input)
+    expected_0 = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_0[..., 0, :] = 0
+    expected_29 = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_29[..., 2, :] = 0
+    assert torch.allclose(
+        output_0, expected_0.reshape_as(projection_input) + 0.01
+    )
+    assert torch.allclose(
+        output_29, expected_29.reshape_as(projection_input) + 0.01
+    )
+    assert get_ablation_call_count(model) == 2
+    assert metadata["category"] == "C"
+    assert metadata["num_targets"] == 2
+
+
 def test_baseline() -> None:
     model = FakeDiT()
     metadata = install_physrvg_ablation(model, PhysRVGAblationSpec())
@@ -150,6 +176,7 @@ if __name__ == "__main__":
     test_module_ablations()
     test_whole_block()
     test_single_head_zero()
+    test_grouped_head_zero()
     test_lora_off_and_peft_unwrap()
     test_baseline()
     print("PhysRVG ablation tests passed")
