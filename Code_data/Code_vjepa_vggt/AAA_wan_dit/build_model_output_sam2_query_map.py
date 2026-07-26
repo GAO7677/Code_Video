@@ -25,11 +25,14 @@ from typing import Any
 
 import cv2
 import numpy as np
+import torch
 
+from code_vjepa_vggt.adapters.cotracker_adapter import CoTrackerAdapter
 from code_vjepa_vggt.adapters.sam2_motion import (
     GroundingDINOTextDetector,
     SAM2MotionTracker,
 )
+from code_vjepa_vggt.utils.object_priors import sample_points_from_mask
 
 
 TARGET_HEIGHT = 512
@@ -84,6 +87,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-threshold", type=float, default=0.15)
     parser.add_argument("--token-overlap-threshold", type=float, default=0.10)
     parser.add_argument("--max-query-tokens", type=int, default=8)
+    parser.add_argument(
+        "--cotracker-checkpoint",
+        default="/data/gaoya/ckpt/facebook-cotracker3/scaled_offline.pth",
+    )
+    parser.add_argument("--cotracker-num-queries", type=int, default=8)
     parser.add_argument("--case", action="append", default=[])
     return parser.parse_args()
 
@@ -305,6 +313,100 @@ def _compose_track_masks(
     return composite, source_per_frame, unresolved
 
 
+def _repair_masks_with_cotracker(
+    masks: np.ndarray,
+    source_per_frame: list[int],
+    unresolved_frames: list[int],
+    *,
+    frames_rgb: np.ndarray,
+    device: str,
+    checkpoint: str,
+    num_queries: int,
+) -> tuple[np.ndarray, list[int], list[int]]:
+    if not unresolved_frames:
+        return masks, source_per_frame, unresolved_frames
+    valid_frames = [index for index, mask in enumerate(masks) if int(mask.sum()) > 0]
+    if not valid_frames:
+        return masks, source_per_frame, unresolved_frames
+    anchor_idx = min(valid_frames)
+    anchor_mask = masks[anchor_idx]
+    query_points = sample_points_from_mask(
+        anchor_mask, num_queries, avoid_edges=True
+    )
+    if query_points.shape[0] == 0:
+        return masks, source_per_frame, unresolved_frames
+
+    adapter = CoTrackerAdapter(
+        checkpoint_path=checkpoint,
+        num_queries=int(query_points.shape[0]),
+        device=device,
+        input_hw=(384, 512),
+        window_len=60,
+    )
+    frames = (
+        torch.from_numpy(frames_rgb)
+        .float()
+        .div(255.0)
+        .unsqueeze(0)
+        .to(device=device)
+    )
+    queries = torch.from_numpy(query_points).float().unsqueeze(0).to(device=device)
+    frame_ids = torch.full(
+        (1, int(query_points.shape[0]), 1),
+        float(anchor_idx),
+        dtype=torch.float32,
+        device=device,
+    )
+    output = adapter(
+        frames,
+        query_points_prior=queries,
+        query_frame_ids=frame_ids,
+        query_image_hw=(TARGET_HEIGHT, TARGET_WIDTH),
+    )
+    tracks = output.tracks[0].detach().float().cpu().numpy()
+    visibility = output.visibility[0].detach().float().cpu().numpy()
+    anchor_center = np.median(query_points, axis=0)
+    repaired = masks.copy()
+    remaining = []
+    for frame_idx in unresolved_frames:
+        visible = visibility[frame_idx] > 0.5
+        source_code = -2
+        if not np.any(visible):
+            points = tracks[frame_idx]
+            usable = (
+                np.isfinite(points).all(axis=1)
+                & (points[:, 0] >= 0.0)
+                & (points[:, 0] < TARGET_WIDTH)
+                & (points[:, 1] >= 0.0)
+                & (points[:, 1] < TARGET_HEIGHT)
+            )
+            if not np.any(usable):
+                remaining.append(frame_idx)
+                continue
+            visible = usable
+            source_code = -3
+        if not np.any(visible):
+            remaining.append(frame_idx)
+            continue
+        center = np.median(tracks[frame_idx, visible], axis=0)
+        dx, dy = (float(value) for value in center - anchor_center)
+        transform = np.asarray([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float32)
+        shifted = cv2.warpAffine(
+            anchor_mask.astype(np.uint8),
+            transform,
+            (TARGET_WIDTH, TARGET_HEIGHT),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+        if int(shifted.sum()) <= 0:
+            remaining.append(frame_idx)
+            continue
+        repaired[frame_idx] = shifted
+        source_per_frame[frame_idx] = source_code
+    return repaired, source_per_frame, remaining
+
+
 def _query_tokens(
     masks: np.ndarray,
     overlap_threshold: float,
@@ -315,6 +417,20 @@ def _query_tokens(
     for latent_t in range(LATENT_TIMES):
         frame_idx = min(4 * latent_t, len(masks) - 1)
         mask = masks[frame_idx].astype(np.float32)
+        if int(mask.sum()) <= 0:
+            coords_per_time.append([])
+            trajectory.append(
+                {
+                    "cx": None,
+                    "cy": None,
+                    "radius": None,
+                    "area": 0.0,
+                    "energy": 0.0,
+                    "video_frame": frame_idx,
+                    "valid": False,
+                }
+            )
+            continue
         pooled = cv2.resize(
             mask,
             (GRID_WIDTH, GRID_HEIGHT),
@@ -341,6 +457,7 @@ def _query_tokens(
                 "area": float(mask.sum()),
                 "energy": float(pooled.max()),
                 "video_frame": frame_idx,
+                "valid": True,
             }
         )
     return coords_per_time, trajectory
@@ -435,6 +552,36 @@ img,video{{display:block;max-width:100%;margin:8px 0}} h2{{font-size:18px}}
     (output_dir / "index.html").write_text(page, encoding="utf-8")
 
 
+def _query_map_payload(
+    *,
+    model: str,
+    input_list: Path,
+    video_root: Path,
+    cases: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "input_list": str(input_list),
+        "video_root": str(video_root),
+        "target_shape": [TARGET_HEIGHT, TARGET_WIDTH],
+        "grid": [LATENT_TIMES, GRID_HEIGHT, GRID_WIDTH],
+        "query_method": (
+            "model-output GroundingDINO anchors + full-video SAM2 masks "
+            "+ CoTracker gap repair"
+        ),
+        "cases": cases,
+    }
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def main() -> None:
     args = parse_args()
     input_list = args.input_list.expanduser().resolve()
@@ -462,10 +609,23 @@ def main() -> None:
         enable_text_prompt=False,
     )
     raw_anchors = [int(value) for value in args.anchor_frames.split(",") if value]
+    partial_path = output_dir / "query_map.partial.json"
+    final_path = output_dir / "query_map.json"
+    resume_path = final_path if final_path.is_file() else partial_path
     cases: dict[str, Any] = {}
+    if resume_path.is_file():
+        resume_payload = json.loads(resume_path.read_text(encoding="utf-8"))
+        cases = dict(resume_payload.get("cases") or {})
+        print(
+            f"[sam2-query-map] resume {args.model}: {len(cases)} completed cases",
+            flush=True,
+        )
     for json_path in json_paths:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         case = json_path.stem
+        if case in cases:
+            print(f"[sam2-query-map] {args.model} {case}: skip completed", flush=True)
+            continue
         video_path = _find_video(video_root, case)
         frames_rgb = _read_video(video_path, args.max_frames)
         frames_tchw_01 = frames_rgb.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
@@ -503,15 +663,33 @@ def main() -> None:
         composite_masks, source_per_frame, unresolved_frames = _compose_track_masks(
             tracks, winner_index
         )
+        if unresolved_frames:
+            print(
+                f"[sam2-query-map] {args.model} {case}: CoTracker repairs "
+                f"{len(unresolved_frames)} unresolved SAM2 frames",
+                flush=True,
+            )
+            composite_masks, source_per_frame, unresolved_frames = (
+                _repair_masks_with_cotracker(
+                    composite_masks,
+                    source_per_frame,
+                    unresolved_frames,
+                    frames_rgb=frames_rgb,
+                    device=args.device,
+                    checkpoint=args.cotracker_checkpoint,
+                    num_queries=args.cotracker_num_queries,
+                )
+            )
         unresolved_latent_frames = [
             frame_idx
             for frame_idx in (4 * time for time in range(LATENT_TIMES))
             if frame_idx in unresolved_frames
         ]
         if unresolved_latent_frames:
-            raise RuntimeError(
-                f"{case} has unresolved target masks at latent source frames "
-                f"{unresolved_latent_frames}"
+            print(
+                f"[sam2-query-map] {args.model} {case}: skip no-visible-query "
+                f"frames {unresolved_latent_frames}",
+                flush=True,
             )
         coords_per_time, trajectory = _query_tokens(
             composite_masks,
@@ -551,7 +729,14 @@ def main() -> None:
             "winner_candidate_index": winner_index,
             "track_source_per_frame": source_per_frame,
             "fallback_frame_count": sum(
-                int(index != winner_index) for index in source_per_frame
+                int(index >= 0 and index != winner_index)
+                for index in source_per_frame
+            ),
+            "cotracker_repair_frame_count": sum(
+                int(index == -2) for index in source_per_frame
+            ),
+            "cotracker_low_visibility_repair_frame_count": sum(
+                int(index == -3) for index in source_per_frame
             ),
             "unresolved_frames": unresolved_frames,
             "query_coords_per_time": coords_per_time,
@@ -576,23 +761,25 @@ def main() -> None:
             f"score={quality['score']:.3f}",
             flush=True,
         )
+        _write_json_atomic(
+            partial_path,
+            _query_map_payload(
+                model=args.model,
+                input_list=input_list,
+                video_root=video_root,
+                cases=cases,
+            ),
+        )
 
-    result = {
-        "model": args.model,
-        "input_list": str(input_list),
-        "video_root": str(video_root),
-        "target_shape": [TARGET_HEIGHT, TARGET_WIDTH],
-        "grid": [LATENT_TIMES, GRID_HEIGHT, GRID_WIDTH],
-        "query_method": "model-output GroundingDINO anchors + full-video SAM2 masks",
-        "cases": cases,
-    }
-    map_path = output_dir / "query_map.json"
-    map_path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    result = _query_map_payload(
+        model=args.model,
+        input_list=input_list,
+        video_root=video_root,
+        cases=cases,
     )
+    _write_json_atomic(final_path, result)
     _write_gallery(output_dir, args.model, cases)
-    print(json.dumps({"cases": len(cases), "query_map": str(map_path)}))
+    print(json.dumps({"cases": len(cases), "query_map": str(final_path)}))
 
 
 if __name__ == "__main__":

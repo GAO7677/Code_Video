@@ -19,6 +19,7 @@ from self_attention_matrix import (
 )
 from moving_query_attention import (
     MovingQueryFeatureRecorder,
+    MovingQueryMapAndFullRecorder,
     MovingQueryMapRecorder,
     explicit_moving_query_coords,
     moving_query_coords,
@@ -78,6 +79,7 @@ def build_case_recorder_group(
     case_key: str,
     query_map: dict[str, dict[str, Any]],
     map_heads_text: str | None = None,
+    capture_full_matrix: bool = False,
 ) -> BallQueryRecorderGroup:
     if case_key not in query_map:
         raise KeyError(f"query map has no entry for case {case_key}")
@@ -96,11 +98,14 @@ def build_case_recorder_group(
         if map_heads_text
         else None
     )
-    recorder_class = (
-        MovingQueryMapRecorder
-        if selected_heads is not None
-        else MovingQueryFeatureRecorder
-    )
+    if capture_full_matrix and selected_heads is None:
+        raise ValueError("full matrix capture requires selected map heads")
+    if capture_full_matrix:
+        recorder_class = MovingQueryMapAndFullRecorder
+    elif selected_heads is not None:
+        recorder_class = MovingQueryMapRecorder
+    else:
+        recorder_class = MovingQueryFeatureRecorder
     return BallQueryRecorderGroup(
         [
             recorder_class(

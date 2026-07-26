@@ -49,6 +49,9 @@ ATTENTION_ARGS=(
 if [[ -n "${ATTENTION_MAP_HEADS:-}" ]]; then
   ATTENTION_ARGS+=(--attention-map-heads "${ATTENTION_MAP_HEADS}")
 fi
+if [[ "${ATTENTION_FULL_MATRIX:-0}" == "1" ]]; then
+  ATTENTION_ARGS+=(--attention-full-matrix)
+fi
 
 if [[ "${MODEL}" == "wan_lora" ]]; then
   env PYTHONNOUSERSITE=1 \

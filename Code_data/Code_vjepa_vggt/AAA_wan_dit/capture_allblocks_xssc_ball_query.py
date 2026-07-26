@@ -26,6 +26,7 @@ def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--attention-query-preview", type=Path, required=True)
     parser.add_argument("--attention-query-map", type=Path)
     parser.add_argument("--attention-map-heads")
+    parser.add_argument("--attention-full-matrix", action="store_true")
     return parser.parse_known_args(argv)
 
 
@@ -57,6 +58,7 @@ def main() -> None:
                 case_key=case_key,
                 query_map=query_map,
                 map_heads_text=custom.attention_map_heads,
+                capture_full_matrix=bool(custom.attention_full_matrix),
             )
             if query_map is not None
             else build_recorder_group(

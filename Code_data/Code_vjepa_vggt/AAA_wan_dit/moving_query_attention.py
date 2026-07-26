@@ -13,7 +13,11 @@ import numpy as np
 import torch
 
 from ball_query_attention import _query_indices
-from self_attention_matrix import MatrixCaptureConfig, _as_heads
+from self_attention_matrix import (
+    MatrixCaptureConfig,
+    _as_heads,
+    pool_full_attention_matrix,
+)
 
 
 FEATURE_NAMES = (
@@ -67,8 +71,6 @@ def explicit_moving_query_coords(
         )
     coords: list[tuple[int, int, int]] = []
     for time, entries in enumerate(coords_per_time):
-        if not entries:
-            raise ValueError(f"latent time {time} has no query tokens")
         for raw in entries:
             if len(raw) == 2:
                 row, column = (int(value) for value in raw)
@@ -107,11 +109,12 @@ def moving_query_features(
     grouped: dict[int, list[tuple[int, int, int]]] = {}
     for coord in query_coords:
         grouped.setdefault(int(coord[0]), []).append(coord)
-    if tuple(sorted(grouped)) != tuple(range(times)):
-        raise ValueError("moving queries must cover every latent time")
-    probability_rows = []
+    valid_times = tuple(sorted(grouped))
+    if not valid_times:
+        raise ValueError("moving queries contain no visible latent times")
+    probabilities = {}
     scale = 1.0 / math.sqrt(float(head_dim))
-    for time in range(times):
+    for time in valid_times:
         indices = torch.tensor(
             _query_indices(tuple(grouped[time]), grid),
             device=q_heads.device,
@@ -119,8 +122,9 @@ def moving_query_features(
         )
         query = q_heads.index_select(1, indices)
         scores = torch.einsum("hqd,hkd->hqk", query, k_heads)
-        probability_rows.append(torch.softmax(scores.float() * scale, dim=-1).mean(dim=1))
-    probabilities = torch.stack(probability_rows, dim=1)
+        probabilities[time] = torch.softmax(
+            scores.float() * scale, dim=-1
+        ).mean(dim=1)
 
     key_ids = torch.arange(token_count, device=q_heads.device)
     key_times = torch.div(key_ids, grid_h * grid_w, rounding_mode="floor")
@@ -133,7 +137,7 @@ def moving_query_features(
     )
     local_mask = torch.zeros_like(trajectory_mask)
     aligned_mask = torch.zeros_like(trajectory_mask)
-    for time in range(times):
+    for time in valid_times:
         coords = grouped[time]
         rows = [coord[1] for coord in coords]
         columns = [coord[2] for coord in coords]
@@ -158,8 +162,8 @@ def moving_query_features(
         aligned_mask[time] = (key_times != time) & selected_spatial
 
     values: dict[str, list[torch.Tensor]] = {name: [] for name in FEATURE_NAMES}
-    for query_time in range(times):
-        probability = probabilities[:, query_time]
+    for query_time in valid_times:
+        probability = probabilities[query_time]
         same = key_times == query_time
         first = key_times == 0
         past = key_times < query_time
@@ -333,7 +337,14 @@ class MovingQueryFeatureRecorder:
                 sum(1 for coord in self.query_coords if int(coord[0]) == time)
                 for time in range(int(self.grid[0]))
             ],
-            "query_time_reduction": "features computed per query time, then mean over 13 times",
+            "query_time_reduction": (
+                "features computed per visible query time, then mean over valid times"
+            ),
+            "valid_query_times": [
+                time
+                for time in range(int(self.grid[0]))
+                if any(int(coord[0]) == time for coord in self.query_coords)
+            ],
             "softmax": "exact over all key tokens",
             "query_coords": [list(coord) for coord in self.query_coords],
             "case_metadata": self.case_metadata,
@@ -419,4 +430,59 @@ class MovingQueryMapRecorder(MovingQueryFeatureRecorder):
             encoding="utf-8",
         )
         print(f"[moving-query-map] wrote {path}", flush=True)
+        return path
+
+
+class MovingQueryMapAndFullRecorder(MovingQueryMapRecorder):
+    """Capture moving-query maps and the pooled full QK matrix in one forward."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.full_captures: dict[int, dict[str, Any]] = {}
+
+    def begin_case(self, case_key: str, *, metadata: dict[str, Any] | None = None) -> None:
+        super().begin_case(case_key, metadata=metadata)
+        self.full_captures = {}
+
+    @torch.no_grad()
+    def capture(self, *, q: torch.Tensor, k: torch.Tensor, num_heads: int) -> None:
+        step = self.current_step
+        if not self.active or step is None or step not in self.config.step_numbers:
+            return
+        super().capture(q=q, k=k, num_heads=num_heads)
+        block_mean, key_mass, metadata = pool_full_attention_matrix(
+            q,
+            k,
+            num_heads=int(num_heads),
+            output_bins=int(self.config.output_bins),
+            query_chunk=int(self.config.query_chunk),
+        )
+        self.full_captures[int(step)] = {
+            "block_mean": block_mean,
+            "key_mass": key_mass,
+            "metadata": metadata,
+        }
+
+    def finalize_case(self) -> Path:
+        path = super().finalize_case()
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        for entry in summary["steps"]:
+            step = int(entry["step_number_one_based"])
+            capture = self.full_captures[step]
+            name = f"block{self.config.block_id:02d}_all_heads_token_matrix.npz"
+            np.savez_compressed(
+                path.parent / entry["directory"] / name,
+                block_mean=capture["block_mean"].astype(np.float32),
+                key_mass=capture["key_mass"].astype(np.float32),
+            )
+            entry["full_matrix_npz"] = name
+            entry["full_matrix_metadata"] = capture["metadata"]
+        summary["full_matrix_capture"] = (
+            "same Q/K forward as moving-query maps; pooled to configured bins"
+        )
+        path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[moving-query-map+full] updated {path}", flush=True)
         return path

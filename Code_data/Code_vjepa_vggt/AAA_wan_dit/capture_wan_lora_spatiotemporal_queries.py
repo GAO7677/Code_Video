@@ -19,7 +19,7 @@ from spatiotemporal_query_attention import ExactSpatiotemporalQueryRecorder
 
 
 def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--attention-output-root", type=Path, required=True)
     parser.add_argument("--attention-block", type=int, default=17)
     parser.add_argument("--attention-steps", default="5,15,25,35")
