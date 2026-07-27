@@ -13,6 +13,7 @@ from dit_ablation import (
     DiTAblationSpec,
     annotate_result_files,
     get_dit_head_ablation_call_count,
+    install_dynamic_grouped_head_ablator,
     install_dit_ablation,
     install_grouped_head_ablation,
 )
@@ -132,6 +133,44 @@ def main() -> None:
     assert metadata["category"] == "PREV_A"
     assert metadata["num_targets"] == 2
     assert metadata["num_target_blocks"] == 1
+
+    dynamic = FakeDiT()
+    for block in dynamic.blocks:
+        block.self_attn = FakeHeadSelfAttention()
+    controller = install_dynamic_grouped_head_ablator(dynamic)
+    baseline_metadata = controller.set_targets(category=None, targets=[])
+    baseline_output = dynamic.blocks[2].self_attn.o(projection_input)
+    assert torch.equal(baseline_output, projection_input)
+    assert controller.call_count == 0
+    assert baseline_metadata["mode"] == "baseline"
+
+    dynamic_s = controller.set_targets(
+        category="S",
+        targets=[(2, 0), (2, 2)],
+    )
+    dynamic_s_output = dynamic.blocks[2].self_attn.o(projection_input)
+    assert torch.equal(
+        dynamic_s_output,
+        expected_multi.reshape_as(projection_input),
+    )
+    assert controller.call_count == 2
+    assert dynamic_s["num_targets"] == 2
+
+    dynamic_t = controller.set_targets(category="T", targets=[(2, 1)])
+    dynamic_t_output = dynamic.blocks[2].self_attn.o(projection_input)
+    expected_dynamic_t = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_dynamic_t[..., 1, :] = 0
+    assert torch.equal(
+        dynamic_t_output,
+        expected_dynamic_t.reshape_as(projection_input),
+    )
+    assert controller.call_count == 1
+    assert dynamic_t["category"] == "T"
+
+    controller.set_targets(category=None, targets=[])
+    restored_output = dynamic.blocks[2].self_attn.o(projection_input)
+    assert torch.equal(restored_output, projection_input)
+    assert controller.call_count == 0
 
     untouched = FakeDiT()
     metadata = install_dit_ablation(untouched, DiTAblationSpec())
