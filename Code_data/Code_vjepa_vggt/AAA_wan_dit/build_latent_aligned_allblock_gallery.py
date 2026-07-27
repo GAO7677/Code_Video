@@ -31,6 +31,15 @@ GALLERY_FEATURE_NAMES = FEATURE_NAMES + (
     "adjacent_frame_mass",
     "adjacent_trajectory_enrichment",
 )
+GALLERY_ROLE_LABELS = {
+    **ROLE_LABELS,
+    "ST": "帧内空间与相邻轨迹联合",
+}
+ST_MIN_SCORE = 0.70
+ST_MIN_BALANCE = 0.80
+PREVIOUS_MIN_MASS = 0.05
+PREVIOUS_MIN_SHARE = 0.80
+PREVIOUS_MIN_CONSISTENCY = 0.80
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,14 +60,57 @@ def _classify(features: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     roles = list(ROLE_LABELS)
     matrix = np.stack([scores[role] for role in roles], axis=1)
     order = np.argsort(matrix, axis=1)
+    primary = np.asarray(
+        [roles[int(value)] for value in order[:, -1]], dtype=object
+    )
+    secondary = np.asarray(
+        [roles[int(value)] for value in order[:, -2]], dtype=object
+    )
+    margin = (
+        np.take_along_axis(matrix, order[:, -1:], axis=1)[:, 0]
+        - np.take_along_axis(matrix, order[:, -2:-1], axis=1)[:, 0]
+    )
+    st_score = (
+        2.0
+        * scores["S"]
+        * scores["T_adj"]
+        / np.maximum(scores["S"] + scores["T_adj"], 1.0e-30)
+    )
+    scores["ST"] = st_score
+    balance = np.minimum(scores["S"], scores["T_adj"]) / np.maximum(
+        np.maximum(scores["S"], scores["T_adj"]), 1.0e-30
+    )
+    competitor_labels = ("P", "C", "G", "T")
+    competitor_values = np.stack(
+        [
+            scores["P"],
+            scores["C"],
+            scores["G"],
+            scores["T_long"],
+        ],
+        axis=1,
+    )
+    competitor_order = np.argmax(competitor_values, axis=1)
+    competitor_score = np.take_along_axis(
+        competitor_values, competitor_order[:, None], axis=1
+    )[:, 0]
+    st_mask = (
+        (scores["S"] >= ST_MIN_SCORE)
+        & (scores["T_adj"] >= ST_MIN_SCORE)
+        & (balance >= ST_MIN_BALANCE)
+        & (scores["T_adj"] > scores["T_long"])
+        & (st_score > competitor_score)
+    )
+    primary[st_mask] = "ST"
+    secondary[st_mask] = np.asarray(competitor_labels, dtype=object)[
+        competitor_order[st_mask]
+    ]
+    margin[st_mask] = st_score[st_mask] - competitor_score[st_mask]
     return {
         "scores": scores,
-        "primary": np.asarray([roles[int(value)] for value in order[:, -1]]),
-        "secondary": np.asarray([roles[int(value)] for value in order[:, -2]]),
-        "margin": (
-            np.take_along_axis(matrix, order[:, -1:], axis=1)[:, 0]
-            - np.take_along_axis(matrix, order[:, -2:-1], axis=1)[:, 0]
-        ),
+        "primary": primary,
+        "secondary": secondary,
+        "margin": margin,
     }
 
 
@@ -247,31 +299,17 @@ def _role_record(
     secondary = str(result["secondary"][head])
     scores = {
         role: float(result["scores"][role][head])
-        for role in (*ROLE_LABELS, "T_adj", "T_long")
+        for role in (*GALLERY_ROLE_LABELS, "T_adj", "T_long")
     }
-    display_primary = primary
-    if (
-        primary == "S"
-        and scores["T_adj"] >= 0.8
-        and scores["S"] - scores["T_adj"] <= 0.1
-    ):
-        display_primary = "S+T_adj"
-    elif (
-        primary == "T"
-        and scores["T_adj"] >= scores["T_long"]
-        and scores["S"] >= 0.8
-        and scores["T_adj"] - scores["S"] <= 0.1
-    ):
-        display_primary = "T_adj+S"
     return {
         "block": block,
         "head": head,
         "protocol": protocol,
         "primary": primary,
-        "display_primary": display_primary,
-        "primary_name": ROLE_LABELS[primary],
+        "display_primary": primary,
+        "primary_name": GALLERY_ROLE_LABELS[primary],
         "secondary": secondary,
-        "secondary_name": ROLE_LABELS[secondary],
+        "secondary_name": GALLERY_ROLE_LABELS[secondary],
         "margin": float(result["margin"][head]),
         "features": {
             name: float(result["features"][name][head])
@@ -338,6 +376,132 @@ def _all_token_s_records(
     return records
 
 
+def _previous_trajectory_metrics(
+    attention: np.ndarray,
+    *,
+    query_coords: np.ndarray,
+    valid_query_times: np.ndarray,
+) -> dict[str, np.ndarray]:
+    if attention.shape != (24, 13, 13, 16, 28):
+        raise ValueError(f"unexpected track attention shape: {attention.shape}")
+    token_count = int(np.prod(GRID))
+    previous_mass = []
+    next_mass = []
+    previous_enrichment = []
+    next_enrichment = []
+    previous_wins = []
+    for query_time in range(1, GRID[0] - 1):
+        if not (
+            valid_query_times[query_time - 1]
+            and valid_query_times[query_time]
+            and valid_query_times[query_time + 1]
+        ):
+            continue
+        previous_coords = query_coords[
+            query_coords[:, 0] == query_time - 1
+        ]
+        next_coords = query_coords[query_coords[:, 0] == query_time + 1]
+        previous = attention[
+            :,
+            query_time,
+            query_time - 1,
+            previous_coords[:, 1],
+            previous_coords[:, 2],
+        ].sum(1)
+        following = attention[
+            :,
+            query_time,
+            query_time + 1,
+            next_coords[:, 1],
+            next_coords[:, 2],
+        ].sum(1)
+        previous_enriched = previous / (
+            len(previous_coords) / token_count
+        )
+        next_enriched = following / (len(next_coords) / token_count)
+        previous_mass.append(previous)
+        next_mass.append(following)
+        previous_enrichment.append(previous_enriched)
+        next_enrichment.append(next_enriched)
+        previous_wins.append(previous_enriched > next_enriched)
+    if not previous_mass:
+        raise ValueError("track has no query times with both adjacent keys")
+    previous_mass_mean = np.stack(previous_mass).mean(0)
+    next_mass_mean = np.stack(next_mass).mean(0)
+    previous_enrichment_mean = np.stack(previous_enrichment).mean(0)
+    next_enrichment_mean = np.stack(next_enrichment).mean(0)
+    previous_share = previous_enrichment_mean / np.maximum(
+        previous_enrichment_mean + next_enrichment_mean, 1.0e-30
+    )
+    consistency = np.stack(previous_wins).mean(0)
+    return {
+        "previous_mass": previous_mass_mean,
+        "next_mass": next_mass_mean,
+        "previous_enrichment": previous_enrichment_mean,
+        "next_enrichment": next_enrichment_mean,
+        "previous_share": previous_share,
+        "consistency": consistency,
+    }
+
+
+def _previous_trajectory_records(
+    *,
+    block: int,
+    metrics_a: dict[str, np.ndarray],
+    metrics_b: dict[str, np.ndarray],
+) -> list[dict[str, Any]]:
+    records = []
+    for head in range(24):
+        qualifies = []
+        for metrics in (metrics_a, metrics_b):
+            qualifies.append(
+                bool(
+                    metrics["previous_mass"][head] >= PREVIOUS_MIN_MASS
+                    and metrics["previous_share"][head] >= PREVIOUS_MIN_SHARE
+                    and metrics["consistency"][head]
+                    >= PREVIOUS_MIN_CONSISTENCY
+                )
+            )
+        if not any(qualifies):
+            continue
+        stable_both = all(qualifies)
+        active_metrics = [
+            metrics
+            for metrics, active in zip((metrics_a, metrics_b), qualifies)
+            if active
+        ]
+        confidence = min(
+            float(
+                (2.0 * metrics["previous_share"][head] - 1.0)
+                * metrics["consistency"][head]
+            )
+            for metrics in active_metrics
+        )
+        scope = "A+B" if stable_both else ("A-only" if qualifies[0] else "B-only")
+        features = {}
+        for label, metrics in (("A", metrics_a), ("B", metrics_b)):
+            for name, values in metrics.items():
+                features[f"{label}_{name}"] = float(values[head])
+        records.append(
+            {
+                "block": block,
+                "head": head,
+                "protocol": "previous_trajectory",
+                "primary": "TP",
+                "display_primary": f"T_prev {scope}",
+                "primary_name": "只回看前一 latent 时刻的同一物体轨迹",
+                "secondary": "non-TP",
+                "secondary_name": "不满足前向轨迹协议",
+                "margin": confidence,
+                "stable_both": stable_both,
+                "scope": scope,
+                "features": features,
+                "scores": {"T_prev": confidence},
+            }
+        )
+    return records
+
+
 def _page(metadata: dict[str, Any]) -> str:
     payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
     return f"""<!doctype html>
@@ -362,6 +526,8 @@ label{{display:grid;gap:5px;font-weight:700}} select,input[type=range]{{min-widt
 .head-card h2{{font-size:17px;margin:0 0 7px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}} .head-card h3{{font-size:12px;margin:0 0 5px;line-height:1.3}}
 .badge{{display:inline-block;border:1px solid #aeb6b1;border-radius:4px;padding:2px 5px;font-size:11px;font-weight:700;background:#f2f4f2}}
 .role-S{{background:#e2f3e9;border-color:#72ad88}} .role-T{{background:#e2eef8;border-color:#739fbe}}
+.role-ST{{background:#dff2ef;border-color:#3f9d8a}}
+.role-TP{{background:#e8e3f7;border-color:#8979b8}}
 .role-P{{background:#fff0cc;border-color:#c6a24d}} .role-C{{background:#f8e2df;border-color:#bd7f76}} .role-G{{background:#e9e9e9;border-color:#999}}
 .head-panels{{display:grid;grid-template-columns:repeat(6,minmax(170px,1fr));gap:6px;align-items:start}}
 .matrix{{aspect-ratio:1}}
@@ -544,8 +710,11 @@ h1{{font-size:21px;margin:0 0 5px}} p{{margin:4px 0;line-height:1.4}} main{{padd
 select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-variant-numeric:tabular-nums}}
 .head-grid{{display:grid;grid-template-columns:1fr;gap:10px}} .head-card{{background:#fff;border:1px solid var(--line);border-radius:5px;padding:9px;min-width:0}}
 .head-card h2{{font-size:16px;margin:0 0 7px;display:flex;align-items:center;flex-wrap:wrap;gap:5px}}
+.head-card a{{color:var(--accent);font-size:12px;text-decoration:none}} .head-card a:hover{{text-decoration:underline}}
 .badge{{border:1px solid #aeb6b1;border-radius:4px;padding:2px 5px;font-size:11px;background:#f2f4f2}}
 .role-S{{background:#e2f3e9;border-color:#72ad88}} .role-T{{background:#e2eef8;border-color:#739fbe}}
+.role-ST{{background:#dff2ef;border-color:#3f9d8a}}
+.role-TP{{background:#e8e3f7;border-color:#8979b8}}
 .role-P{{background:#fff0cc;border-color:#c6a24d}} .role-C{{background:#f8e2df;border-color:#bd7f76}} .role-G{{background:#e9e9e9;border-color:#999}}
 .head-panels{{display:grid;grid-template-columns:repeat(6,minmax(170px,1fr));gap:6px;align-items:start}}
 .head-card h3{{font-size:12px;margin:0 0 4px}} canvas,.full-matrix{{display:block;width:100%;height:auto;background:#111;image-rendering:pixelated}}
@@ -558,7 +727,7 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
 <body>
 <header>
 <h1>按 Head 类别跨 Block 分组</h1>
-<p>同一协议、同一主类别的 Head 集中展示；按主类别相对最强竞争类别的分差 Δ 降序。S 与相邻轨迹传播接近时标为 S+T_adj。</p>
+<p>同一协议、同一主类别的 Head 集中展示；按主类别相对最强竞争类别的分差 Δ 降序。ST 表示同时关注当前帧局部物体与相邻 latent 时刻同一物体轨迹。</p>
 <p>All-token S 对全部5824个 query等权统计；逐 query移除 exact-self并重新归一化，当平均同帧质量大于平均其他单帧质量时归入 S_all。</p>
 <a class="page-link" href="index.html">返回按 Block 查看</a>
 <div class="controls">
@@ -567,9 +736,10 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
     <option value="moving_A">Moving ball A</option>
     <option value="moving_B">Moving ball B</option>
     <option value="all_token" selected>All-token S</option>
+    <option value="previous_trajectory">Previous trajectory</option>
   </select></label>
   <label>主类别<select id="category">
-    <option value="S" selected>S · 帧内空间</option><option value="T">T · 球轨迹传播</option>
+    <option value="S" selected>S · 帧内空间</option><option value="ST">ST · 帧内+相邻轨迹</option><option value="TP">T_prev · 前一时刻轨迹</option><option value="T">T · 球轨迹传播</option>
     <option value="P">P · 固定位置时间对齐</option><option value="C">C · 首帧/历史上下文</option>
     <option value="G">G · 全局聚合</option>
   </select></label>
@@ -583,6 +753,9 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
 const META={payload}, FIXED_QUERY_TIME=2, FIXED_B_QUERY_TIME=3;
 const protocolEl=document.getElementById("protocol"),categoryEl=document.getElementById("category");
 const latentEl=document.getElementById("latent"),phaseEl=document.getElementById("phase"),gridEl=document.getElementById("headGrid");
+const urlParams=new URLSearchParams(window.location.search);
+if([...protocolEl.options].some(option=>option.value===urlParams.get("protocol")))protocolEl.value=urlParams.get("protocol");
+if([...categoryEl.options].some(option=>option.value===urlParams.get("category")))categoryEl.value=urlParams.get("category");
 const cache=new Map(),imageCache=new Map(),visibleCards=new Set();let observer,renderEpoch=0;
 async function loadBlock(block){{
   if(cache.has(block))return cache.get(block);
@@ -620,7 +793,9 @@ function cardHtml(record){{
   const b=record.block,h=record.head,f=role(b,h,"fixed_A"),a=role(b,h,"moving_A"),m=role(b,h,"moving_B"),bs=String(b).padStart(2,"0"),hs=String(h).padStart(2,"0");
   const current=record.protocol==="all_token"?`<span class="badge role-S">All-token: S_all</span>`:"";
   const evidence=record.protocol==="all_token"?`<span class="badge">same=${{record.features.same_frame_nonself_mass.toFixed(3)}} · other=${{record.features.other_frame_mean_mass.toFixed(3)}} · E=${{record.features.same_frame_enrichment.toFixed(2)}}</span>`:"";
-  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} ${{current}}<span class="badge role-${{f.primary}}">Fixed A: ${{f.display_primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.display_primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.display_primary}}</span><span class="badge">当前协议 Δ=${{record.margin.toFixed(3)}}</span>${{evidence}}</h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
+  const previous=record.protocol==="previous_trajectory"?`<span class="badge role-TP">${{record.display_primary}}</span><span class="badge">A: mass=${{record.features.A_previous_mass.toFixed(3)}} share=${{record.features.A_previous_share.toFixed(3)}} · B: mass=${{record.features.B_previous_mass.toFixed(3)}} share=${{record.features.B_previous_share.toFixed(3)}}</span>`:"";
+  const detail=b===3&&h===20?`<a href="head_details/block03_head20/">查看全部Q时刻</a>`:"";
+  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} ${{current}}${{previous}}<span class="badge role-${{f.primary}}">Fixed A: ${{f.display_primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.display_primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.display_primary}}</span><span class="badge">当前协议 Δ=${{record.margin.toFixed(3)}}</span>${{evidence}}${{detail}}</h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
 }}
 function cardBody(block,head){{
   const b=String(block).padStart(2,"0"),h=String(head).padStart(2,"0");
@@ -651,9 +826,9 @@ async function renderCard(card,epoch){{
 function renderVisible(){{const epoch=++renderEpoch;for(const card of visibleCards)renderCard(card,epoch);}}
 function buildGroup(){{
   if(observer)observer.disconnect();visibleCards.clear();const protocol=protocolEl.value;
-  if(protocol==="all_token"){{categoryEl.value="S";categoryEl.disabled=true;}}else{{categoryEl.disabled=false;}}
+  if(protocol==="all_token"){{categoryEl.value="S";categoryEl.disabled=true;}}else if(protocol==="previous_trajectory"){{categoryEl.value="TP";categoryEl.disabled=true;}}else{{categoryEl.disabled=false;}}
   const category=categoryEl.value;
-  const rows=META.roles.filter(x=>x.protocol===protocol&&x.primary===category).sort((a,b)=>b.margin-a.margin||a.block-b.block||a.head-b.head);
+  const rows=META.roles.filter(x=>x.protocol===protocol&&x.primary===category).sort((a,b)=>(protocol==="previous_trajectory"?Number(b.stable_both)-Number(a.stable_both):0)||b.margin-a.margin||a.block-b.block||a.head-b.head);
   document.getElementById("count").textContent=`${{rows.length}} 个 Head`;gridEl.innerHTML=rows.map(cardHtml).join("");
   observer=new IntersectionObserver(entries=>{{for(const entry of entries){{if(entry.isIntersecting){{visibleCards.add(entry.target);renderCard(entry.target,renderEpoch);}}else visibleCards.delete(entry.target);}}}},{{rootMargin:"800px 0px"}});
   gridEl.querySelectorAll(".head-card").forEach(card=>observer.observe(card));
@@ -769,6 +944,14 @@ def main() -> None:
         fixed_a, fixed_b, moving, temporal, results = _block_data(
             attention, query_coords, valid_query_times
         )
+        previous_metrics = [
+            _previous_trajectory_metrics(
+                attention[track],
+                query_coords=query_coords[track],
+                valid_query_times=valid_query_times[track],
+            )
+            for track in range(2)
+        ]
         prefix = data_dir / f"block{block:02d}"
         _write_float32(prefix.with_name(prefix.name + "_fixed_A.f32"), fixed_a)
         _write_float32(prefix.with_name(prefix.name + "_fixed_B.f32"), fixed_b)
@@ -801,6 +984,13 @@ def main() -> None:
                 time_matrix=all_token_temporal,
                 exact_self_mass=exact_self_mass,
                 same_frame_win_rate=same_frame_win_rate,
+            )
+        )
+        roles.extend(
+            _previous_trajectory_records(
+                block=block,
+                metrics_a=previous_metrics[0],
+                metrics_b=previous_metrics[1],
             )
         )
 
@@ -849,6 +1039,30 @@ def main() -> None:
             "confidence": "(same_frame-other_frame)/(same_frame+other_frame)",
             "sorting": "confidence descending",
         },
+        "object_role_protocol": {
+            "roles": GALLERY_ROLE_LABELS,
+            "st_role": {
+                "name": GALLERY_ROLE_LABELS["ST"],
+                "minimum_s_score": ST_MIN_SCORE,
+                "minimum_t_adj_score": ST_MIN_SCORE,
+                "minimum_balance": ST_MIN_BALANCE,
+                "requires_t_adj_greater_than_t_long": True,
+                "score": "harmonic_mean(S, T_adj)",
+                "competition": "max(P, C, G, T_long)",
+            },
+        },
+        "previous_trajectory_protocol": {
+            "query_times": (
+                "only query times where q-1, q, and q+1 are all valid"
+            ),
+            "comparison": (
+                "same-object trajectory-token enrichment at K=q-1 versus K=q+1"
+            ),
+            "minimum_previous_mass": PREVIOUS_MIN_MASS,
+            "minimum_previous_share": PREVIOUS_MIN_SHARE,
+            "minimum_consistency": PREVIOUS_MIN_CONSISTENCY,
+            "stable_both": "criteria pass independently for ball A and ball B",
+        },
         "overlay_background": {
             "type": "final_generated_video_frames",
             "video": str(generated_video),
@@ -882,6 +1096,52 @@ def main() -> None:
         writer.writeheader()
         for row in roles:
             writer.writerow({key: row[key] for key in writer.fieldnames})
+    previous_rows = [
+        row for row in roles if row["protocol"] == "previous_trajectory"
+    ]
+    with (output / "previous_trajectory_heads.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        fieldnames = [
+            "block",
+            "head",
+            "scope",
+            "stable_both",
+            "confidence",
+            "A_previous_mass",
+            "A_previous_share",
+            "A_consistency",
+            "B_previous_mass",
+            "B_previous_share",
+            "B_consistency",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in sorted(
+            previous_rows,
+            key=lambda value: (
+                -int(value["stable_both"]),
+                -float(value["margin"]),
+                int(value["block"]),
+                int(value["head"]),
+            ),
+        ):
+            features = row["features"]
+            writer.writerow(
+                {
+                    "block": row["block"],
+                    "head": row["head"],
+                    "scope": row["scope"],
+                    "stable_both": row["stable_both"],
+                    "confidence": row["margin"],
+                    "A_previous_mass": features["A_previous_mass"],
+                    "A_previous_share": features["A_previous_share"],
+                    "A_consistency": features["A_consistency"],
+                    "B_previous_mass": features["B_previous_mass"],
+                    "B_previous_share": features["B_previous_share"],
+                    "B_consistency": features["B_consistency"],
+                }
+            )
     (output / "index.html").write_text(_page(metadata), encoding="utf-8")
     (output / "grouped_by_role.html").write_text(
         _grouped_page(metadata), encoding="utf-8"
