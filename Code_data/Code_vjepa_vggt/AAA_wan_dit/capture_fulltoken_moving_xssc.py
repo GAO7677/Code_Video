@@ -19,6 +19,7 @@ def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--attention-steps", default="5,15,25,35")
     parser.add_argument("--attention-query-map", type=Path, required=True)
     parser.add_argument("--attention-query-chunk", type=int, default=64)
+    parser.add_argument("--attention-compact-storage", action="store_true")
     parser.add_argument(
         "--attention-case-filter",
         help="Optional comma-separated case stems; other cases run without capture.",
@@ -56,6 +57,7 @@ def main() -> None:
             case_key=provisional_key,
             query_map=query_map,
             query_chunk=custom.attention_query_chunk,
+            compact_storage=custom.attention_compact_storage,
         )
         group.begin_case(
             provisional_key,

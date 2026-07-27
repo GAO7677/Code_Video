@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run PhysRVG and capture exact compact full-token trajectory statistics."""
+"""Run PhysRVG while capturing selected-head all-token QK matrices."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from pathlib import Path
 
 from accelerate.utils import set_seed
 
-from allblock_ball_query_utils import load_case_query_map
-from fulltoken_moving_utils import build_fulltoken_moving_group
+from selected_qk_utils import build_selected_qk_group, load_selection
 from self_attention_matrix import PhysRVGAttentionProcessorRecorder
 
 
@@ -23,12 +22,11 @@ DEFAULT_PHYSRVG_ROOT = Path(
 
 def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--attention-output-root", type=Path, required=True)
-    parser.add_argument("--attention-blocks", required=True)
-    parser.add_argument("--attention-steps", default="5,15,25,35")
-    parser.add_argument("--attention-query-map", type=Path, required=True)
-    parser.add_argument("--attention-query-chunk", type=int, default=64)
-    parser.add_argument("--attention-compact-storage", action="store_true")
+    parser.add_argument("--qk-output-root", type=Path, required=True)
+    parser.add_argument("--qk-selection", type=Path, required=True)
+    parser.add_argument("--qk-steps", default="5,15,25,35")
+    parser.add_argument("--qk-output-bins", type=int, default=512)
+    parser.add_argument("--qk-query-chunk", type=int, default=64)
     parser.add_argument(
         "--physrvg-root",
         type=Path,
@@ -40,31 +38,30 @@ def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 def main() -> None:
     custom, remaining = _extract_args(sys.argv[1:])
     physrvg_root = custom.physrvg_root.expanduser().resolve()
-    if not physrvg_root.is_dir():
-        raise FileNotFoundError(f"PhysRVG root not found: {physrvg_root}")
     sys.path.insert(0, str(physrvg_root))
 
     import batch_infer_from_input_json_lists as base
     from fastvideo.models.wan_v2v import model_wan_v2v as model_module
 
-    query_map = load_case_query_map(custom.attention_query_map)
+    selection = load_selection(custom.qk_selection)
     active_processors = []
     original_run_case = base._run_single_case
 
-    def run_case_with_recorders(**kwargs):
+    def run_case_with_qk(**kwargs):
         input_json = Path(kwargs["input_json_path"]).expanduser().resolve()
         pipe = kwargs["pipe"]
         args = kwargs["args"]
-        group = build_fulltoken_moving_group(
-            blocks_text=custom.attention_blocks,
-            steps_text=custom.attention_steps,
+        group = build_selected_qk_group(
+            selection=selection,
             model_label="physrvg",
-            output_root=custom.attention_output_root,
             case_key=input_json.stem,
-            query_map=query_map,
-            query_chunk=custom.attention_query_chunk,
-            compact_storage=custom.attention_compact_storage,
+            steps_text=custom.qk_steps,
+            output_root=custom.qk_output_root,
+            output_bins=custom.qk_output_bins,
+            query_chunk=custom.qk_query_chunk,
         )
+        if group is None:
+            return original_run_case(**kwargs)
         processors = [
             PhysRVGAttentionProcessorRecorder(
                 recorder=recorder,
@@ -100,18 +97,14 @@ def main() -> None:
         try:
             result = original_run_case(**kwargs)
             if result[0]:
-                summaries = group.finalize_case()
-                print(
-                    f"[fulltoken-moving] wrote {len(summaries)} block summaries",
-                    flush=True,
-                )
+                group.finalize_case()
             return result
         finally:
             for processor in reversed(processors):
                 processor.restore()
             active_processors.clear()
 
-    base._run_single_case = run_case_with_recorders
+    base._run_single_case = run_case_with_qk
     sys.argv = [sys.argv[0], *remaining]
     try:
         base.main()

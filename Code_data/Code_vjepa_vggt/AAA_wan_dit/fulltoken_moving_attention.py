@@ -54,9 +54,6 @@ def _group_coords(
         point = (int(row), int(column))
         if point not in grouped[int(time)]:
             grouped[int(time)].append(point)
-    if any(not points for points in grouped):
-        missing = [index for index, points in enumerate(grouped) if not points]
-        raise ValueError(f"trajectory has no object tokens at latent times {missing}")
     return tuple(tuple(points) for points in grouped)
 
 
@@ -68,7 +65,17 @@ def _matched_shuffle(
     output = []
     times = len(grouped)
     for target_time, target in enumerate(grouped):
-        source = grouped[(target_time + 1) % times]
+        if not target:
+            output.append(())
+            continue
+        source = next(
+            (
+                grouped[(target_time + offset) % times]
+                for offset in range(1, times + 1)
+                if grouped[(target_time + offset) % times]
+            ),
+            target,
+        )
         count = len(target)
         output.append(tuple(source[index % len(source)] for index in range(count)))
     return tuple(output)
@@ -242,6 +249,11 @@ def fulltoken_moving_statistics(
         full_features[:, feature_index] = full_by_time[:, use, feature_index].mean(dim=1)
 
     grouped = _group_coords(trajectory_coords, grid=grid)
+    trajectory_valid_times = torch.tensor(
+        [bool(points) for points in grouped],
+        device=device,
+        dtype=torch.bool,
+    )
     shifted = tuple(
         tuple(((row + grid_h // 2) % grid_h, (column + grid_w // 2) % grid_w)
               for row, column in points)
@@ -271,6 +283,8 @@ def fulltoken_moving_statistics(
 
     for query_time in range(times):
         query_indices = trajectory[query_time]
+        if not int(query_indices.numel()):
+            continue
         probabilities = torch.softmax(
             torch.matmul(q_heads.index_select(1, query_indices), k_t).float() * scale,
             dim=-1,
@@ -292,6 +306,8 @@ def fulltoken_moving_statistics(
                 (shift[key_time], shift_enrichment),
                 (shuffle[key_time], shuffle_enrichment),
             ):
+                if not int(indices.numel()):
+                    continue
                 mass = probabilities.index_select(2, indices).sum(dim=-1).mean(dim=1)
                 conditional = mass / key_time_mass
                 target[:, query_time, key_time] = conditional / (
@@ -321,10 +337,19 @@ def fulltoken_moving_statistics(
             ).abs().view(1, times)
         ).sum(dim=1)
         offdiag = torch.arange(times, device=device) != query_time
-        traj = trajectory_enrichment[:, query_time, offdiag].mean(dim=1)
-        shift_value = shift_enrichment[:, query_time, offdiag].mean(dim=1)
-        shuffle_value = shuffle_enrichment[:, query_time, offdiag].mean(dim=1)
-        fixed_value = fixed_enrichment[:, query_time, offdiag].mean(dim=1)
+        traj = torch.nanmean(
+            trajectory_enrichment[:, query_time, offdiag], dim=1
+        )
+        shift_value = torch.nanmean(
+            shift_enrichment[:, query_time, offdiag], dim=1
+        )
+        shuffle_value = torch.nanmean(
+            shuffle_enrichment[:, query_time, offdiag], dim=1
+        )
+        matched_key_times = offdiag & trajectory_valid_times
+        fixed_value = fixed_enrichment[
+            :, query_time, matched_key_times
+        ].mean(dim=1)
         selectivity = torch.log2(
             (traj.clamp_min(1.0e-8))
             / ((0.5 * (shift_value + shuffle_value)).clamp_min(1.0e-8))
@@ -345,14 +370,15 @@ def fulltoken_moving_statistics(
             dim=-1,
         )
 
-    object_features = object_by_time.mean(dim=1)
+    object_features = torch.nanmean(object_by_time, dim=1)
     predicted_times = torch.arange(times, device=device) >= min(2, times)
     for name in ("context_enrichment", "history_bias"):
         feature_index = OBJECT_FEATURE_NAMES.index(name)
-        object_features[:, feature_index] = object_by_time[
-            :, predicted_times, feature_index
-        ].mean(dim=1)
+        object_features[:, feature_index] = torch.nanmean(
+            object_by_time[:, predicted_times, feature_index], dim=1
+        )
     return {
+        "trajectory_valid_times": trajectory_valid_times.cpu().numpy(),
         "temporal_matrix": temporal_matrix.cpu().numpy().astype(np.float32),
         "full_features": full_features.cpu().numpy().astype(np.float32),
         "full_features_by_query_time": full_by_time.cpu().numpy().astype(np.float32),
@@ -377,6 +403,7 @@ class FullTokenMovingRecorder:
         output_root: Path,
         trajectory_coords: tuple[tuple[int, int, int], ...],
         query_preview: Path,
+        compact_storage: bool = False,
     ) -> None:
         config.validate()
         self.config = config
@@ -384,6 +411,7 @@ class FullTokenMovingRecorder:
         self.output_root = output_root.expanduser().resolve()
         self.trajectory_coords = trajectory_coords
         self.query_preview = query_preview.expanduser().resolve()
+        self.compact_storage = bool(compact_storage)
         self.grid: tuple[int, int, int] | None = None
         self.active = False
         self.current_step: int | None = None
@@ -440,7 +468,16 @@ class FullTokenMovingRecorder:
             "full_feature_names": np.asarray(FULL_FEATURE_NAMES),
             "object_feature_names": np.asarray(OBJECT_FEATURE_NAMES),
         }
-        for key in self.captures[steps[0]]:
+        stored_keys = (
+            {
+                "trajectory_valid_times",
+                "full_features",
+                "object_features_by_query_time",
+            }
+            if self.compact_storage
+            else set(self.captures[steps[0]])
+        )
+        for key in stored_keys:
             arrays[key] = np.stack(
                 [self.captures[step][key] for step in steps], axis=0
             )
@@ -453,6 +490,8 @@ class FullTokenMovingRecorder:
             "steps_one_based": list(steps),
             "latent_grid": list(self.grid),
             "query_chunk": int(self.config.query_chunk),
+            "compact_storage": self.compact_storage,
+            "stored_array_keys": sorted(stored_keys),
             "softmax": "exact over all key tokens for every query token",
             "full_token_temporal_matrix": "raw attention mass; every query-time row sums to one",
             "trajectory_nulls": {
@@ -460,6 +499,13 @@ class FullTokenMovingRecorder:
                 "shuffle": "one-step cyclic time shuffle with matched token count",
             },
             "trajectory_coords": [list(coord) for coord in self.trajectory_coords],
+            "trajectory_valid_times": [
+                bool(any(coord[0] == time for coord in self.trajectory_coords))
+                for time in range(self.grid[0])
+            ],
+            "trajectory_valid_time_count": len(
+                {coord[0] for coord in self.trajectory_coords}
+            ),
             "query_tokens_per_time": [
                 sum(1 for coord in self.trajectory_coords if coord[0] == time)
                 for time in range(self.grid[0])

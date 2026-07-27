@@ -21,6 +21,7 @@ def build_fulltoken_moving_group(
     case_key: str,
     query_map: dict,
     query_chunk: int,
+    compact_storage: bool = False,
 ) -> BallQueryRecorderGroup:
     if case_key not in query_map:
         raise KeyError(f"query map has no entry for case {case_key}")
@@ -45,6 +46,7 @@ def build_fulltoken_moving_group(
             output_root=output_root / f"block{block:02d}" / "matrices",
             trajectory_coords=coords,
             query_preview=Path(item["preview"]),
+            compact_storage=compact_storage,
         )
         for block in blocks
     ]

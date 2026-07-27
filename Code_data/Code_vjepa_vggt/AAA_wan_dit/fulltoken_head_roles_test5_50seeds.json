@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "experiment_name": "fulltoken_head_roles_test5_50seeds",
+  "input": {
+    "json_list": "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt",
+    "expected_unique_cases": 20,
+    "preserve_first_occurrence_order": true
+  },
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "seeds": [
+    851,
+    3278,
+    3478,
+    3905,
+    4165,
+    11395,
+    12156,
+    12280,
+    12676,
+    13396,
+    13434,
+    14592,
+    18289,
+    20379,
+    20926,
+    26062,
+    28221,
+    28657,
+    28893,
+    29256,
+    30495,
+    32098,
+    36048,
+    36421,
+    36463,
+    44118,
+    44597,
+    47052,
+    49797,
+    54987,
+    55302,
+    55392,
+    58878,
+    66237,
+    71426,
+    71482,
+    73563,
+    77236,
+    77397,
+    78907,
+    83810,
+    85181,
+    88696,
+    91506,
+    91924,
+    93850,
+    96530,
+    97080,
+    97196,
+    99458
+  ],
+  "capture": {
+    "blocks": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29",
+    "steps_one_based": "5,15,25,35",
+    "query_chunk": 64,
+    "expected_heads": 24,
+    "latent_grid": [
+      13,
+      16,
+      28
+    ],
+    "exact_softmax_over_all_tokens": true
+  },
+  "trajectory_validity": {
+    "minimum_visible_latent_times": 8,
+    "minimum_track_valid_ratio": 0.8,
+    "invalid_policy": "retain full-token S/C/G evidence; exclude trajectory-dependent T/P evidence"
+  },
+  "execution": {
+    "gpus": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "workers_per_gpu": 1,
+    "gpu_start_memory_threshold_mib": 4096,
+    "poll_seconds": 60,
+    "max_attempts_per_job": 5,
+    "tmux_session": "wan_fulltoken_head_roles_50seeds"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds",
+    "prerequisite_root": "/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds",
+    "keep_prerequisite_videos": true,
+    "keep_duplicate_replay_videos": false,
+    "batch_feature_storage": "classification arrays only; selected raw-QK/softmax matrices stored separately",
+    "estimated_compact_capture_gib": 8
+  },
+  "analysis": {
+    "roles": [
+      "S",
+      "T",
+      "P",
+      "C",
+      "G",
+      "M"
+    ],
+    "denoise_step_consistency_threshold": 0.75,
+    "winner_margin_threshold": 0.08,
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 42,
+    "selected_raw_qk_heads_per_role": 3,
+    "raw_qk_policy": "capture only aggregate top heads on representative model-case-seed samples"
+  }
+}

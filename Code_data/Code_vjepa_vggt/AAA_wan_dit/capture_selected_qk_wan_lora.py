@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Wan+LoRA and capture exact compact full-token trajectory statistics."""
+"""Run Wan+LoRA while capturing selected-head all-token QK matrices."""
 
 from __future__ import annotations
 
@@ -8,19 +8,18 @@ import json
 import sys
 from pathlib import Path
 
-from allblock_ball_query_utils import install_diffsynth_group, load_case_query_map
-from fulltoken_moving_utils import build_fulltoken_moving_group
+from allblock_ball_query_utils import install_diffsynth_group
+from selected_qk_utils import build_selected_qk_group, load_selection
 from self_attention_matrix import DiffSynthAttentionScope
 
 
 def _extract_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--attention-output-root", type=Path, required=True)
-    parser.add_argument("--attention-blocks", required=True)
-    parser.add_argument("--attention-steps", default="5,15,25,35")
-    parser.add_argument("--attention-query-map", type=Path, required=True)
-    parser.add_argument("--attention-query-chunk", type=int, default=64)
-    parser.add_argument("--attention-compact-storage", action="store_true")
+    parser.add_argument("--qk-output-root", type=Path, required=True)
+    parser.add_argument("--qk-selection", type=Path, required=True)
+    parser.add_argument("--qk-steps", default="5,15,25,35")
+    parser.add_argument("--qk-output-bins", type=int, default=512)
+    parser.add_argument("--qk-query-chunk", type=int, default=64)
     return parser.parse_known_args(argv)
 
 
@@ -46,27 +45,28 @@ def _case_map(input_list: Path) -> dict[Path, str]:
 
 def main() -> None:
     custom, remaining = _extract_args(sys.argv[1:])
-    query_map = load_case_query_map(custom.attention_query_map)
+    selection = load_selection(custom.qk_selection)
     mapping = _case_map(_cli_path(remaining, "--input-json-list-path"))
 
     from code_vjepa_vggt.AAAinfer import wan_openvid_0613pybullet_lorav2v as base
 
     original_generate = base.core.generate_one_video
 
-    def generate_with_attention(*args, **kwargs):
+    def generate_with_qk(*args, **kwargs):
         pipe = kwargs["pipe"]
         context_path = Path(kwargs["context_path"]).expanduser().resolve()
         case_key = mapping.get(context_path, context_path.parent.name)
-        group = build_fulltoken_moving_group(
-            blocks_text=custom.attention_blocks,
-            steps_text=custom.attention_steps,
+        group = build_selected_qk_group(
+            selection=selection,
             model_label="wan_lora",
-            output_root=custom.attention_output_root,
             case_key=case_key,
-            query_map=query_map,
-            query_chunk=custom.attention_query_chunk,
-            compact_storage=custom.attention_compact_storage,
+            steps_text=custom.qk_steps,
+            output_root=custom.qk_output_root,
+            output_bins=custom.qk_output_bins,
+            query_chunk=custom.qk_query_chunk,
         )
+        if group is None:
+            return original_generate(*args, **kwargs)
         group.begin_case(case_key, metadata={"input_video": str(context_path)})
         restore_blocks = install_diffsynth_group(pipe.dit, group)
         scope = DiffSynthAttentionScope(
@@ -83,7 +83,7 @@ def main() -> None:
         group.finalize_case()
         return result
 
-    base.core.generate_one_video = generate_with_attention
+    base.core.generate_one_video = generate_with_qk
     sys.argv = [sys.argv[0], *remaining]
     base.main()
 

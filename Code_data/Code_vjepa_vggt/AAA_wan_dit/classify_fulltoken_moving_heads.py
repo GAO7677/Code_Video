@@ -79,16 +79,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--expected-blocks", type=int, default=30)
     parser.add_argument("--top-per-role", type=int, default=2)
+    parser.add_argument(
+        "--qk-root",
+        type=Path,
+        help="Optional selected-head all-token QK capture root.",
+    )
     return parser.parse_args()
 
 
 def _rank(values: np.ndarray) -> np.ndarray:
     flat = np.asarray(values, dtype=np.float64).reshape(-1)
-    order = np.argsort(flat, kind="stable")
-    ranks = np.empty_like(flat, dtype=np.float64)
-    ranks[order] = np.arange(len(flat), dtype=np.float64)
-    if len(flat) > 1:
-        ranks /= float(len(flat) - 1)
+    finite = np.isfinite(flat)
+    ranks = np.full_like(flat, np.nan, dtype=np.float64)
+    order = np.flatnonzero(finite)[
+        np.argsort(flat[finite], kind="stable")
+    ]
+    ranks[order] = np.arange(len(order), dtype=np.float64)
+    if len(order) > 1:
+        ranks[order] /= float(len(order) - 1)
+    elif len(order) == 1:
+        ranks[order] = 0.5
     return ranks.reshape(values.shape).astype(np.float32)
 
 
@@ -142,13 +152,15 @@ def _load_sample(
     object_by_time = np.stack(
         [item["object_by_time"] for item in blocks], axis=1
     )
-    obj = object_by_time.mean(axis=3)
+    with np.errstate(invalid="ignore"):
+        obj = np.nanmean(object_by_time, axis=3)
     object_names = blocks[0]["object_names"]
     for name in ("context_enrichment", "history_bias"):
         feature_index = object_names.index(name)
-        obj[..., feature_index] = object_by_time[
-            ..., 2:, feature_index
-        ].mean(axis=3)
+        with np.errstate(invalid="ignore"):
+            obj[..., feature_index] = np.nanmean(
+                object_by_time[..., 2:, feature_index], axis=3
+            )
     return {
         "model": model,
         "case": case,
@@ -161,7 +173,11 @@ def _load_sample(
     }
 
 
-def _classify(sample: dict[str, Any]) -> dict[str, Any]:
+def _classify(
+    sample: dict[str, Any],
+    *,
+    trajectory_valid: bool = True,
+) -> dict[str, Any]:
     full_index = {name: index for index, name in enumerate(sample["full_names"])}
     object_index = {
         name: index for index, name in enumerate(sample["object_names"])
@@ -193,6 +209,12 @@ def _classify(sample: dict[str, Any]) -> dict[str, Any]:
             )
         )
     score_steps_array = np.stack(score_steps, axis=0)
+    if not trajectory_valid:
+        score_steps_array[..., ROLES.index("T")] = -np.inf
+        score_steps_array[..., ROLES.index("P")] = -np.inf
+    score_steps_array = np.where(
+        np.isfinite(score_steps_array), score_steps_array, -np.inf
+    )
     mean_scores = score_steps_array.mean(axis=0)
     winner = mean_scores.argmax(axis=-1)
     sorted_scores = np.sort(mean_scores, axis=-1)
@@ -209,7 +231,8 @@ def _classify(sample: dict[str, Any]) -> dict[str, Any]:
         "margin": margin,
         "consistency": consistency,
         "full_mean": full.mean(axis=0),
-        "object_mean": obj.mean(axis=0),
+        "object_mean": np.nanmean(obj, axis=0),
+        "trajectory_valid": bool(trajectory_valid),
     }
 
 
@@ -307,6 +330,83 @@ def _render_head_evidence(
         fontsize=13,
     )
     fig.savefig(output, dpi=140)
+    plt.close(fig)
+
+
+def _render_qk_evidence(
+    *,
+    qk_root: Path,
+    model: str,
+    case: str,
+    role: str,
+    block: int,
+    head: int,
+    output: Path,
+) -> None:
+    path = (
+        qk_root
+        / model
+        / f"block{block:02d}"
+        / "matrices"
+        / model
+        / case
+        / f"block{block:02d}_selected_qk.npz"
+    )
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    data = np.load(path, allow_pickle=False)
+    selected = data["selected_heads"].astype(int).tolist()
+    if head not in selected:
+        raise ValueError(f"{path} does not contain head {head}; has {selected}")
+    head_index = selected.index(head)
+    steps = data["steps_one_based"].astype(int)
+    raw = data["raw_qk_mean"][:, head_index].astype(np.float32)
+    attention = data["softmax_attention_mass"][:, head_index].astype(np.float32)
+    log_attention = np.log10(np.maximum(attention, 1.0e-8))
+    raw_limit = max(float(np.percentile(np.abs(raw), 99.5)), 1.0e-6)
+    attention_min = float(np.percentile(log_attention, 2.0))
+    attention_max = float(np.percentile(log_attention, 99.5))
+    if attention_max <= attention_min:
+        attention_max = attention_min + 1.0
+
+    fig, axes = plt.subplots(
+        len(steps), 2, figsize=(10.8, 2.9 * len(steps)), constrained_layout=True
+    )
+    bins = int(raw.shape[-1])
+    boundaries = [time * bins / 13.0 - 0.5 for time in range(1, 13)]
+    for row, step in enumerate(steps):
+        raw_image = axes[row, 0].imshow(
+            raw[row],
+            cmap="coolwarm",
+            vmin=-raw_limit,
+            vmax=raw_limit,
+            interpolation="nearest",
+            aspect="equal",
+        )
+        attention_image = axes[row, 1].imshow(
+            log_attention[row],
+            cmap="magma",
+            vmin=attention_min,
+            vmax=attention_max,
+            interpolation="nearest",
+            aspect="equal",
+        )
+        axes[row, 0].set_title(f"step {step}: raw QK / sqrt(d)")
+        axes[row, 1].set_title(f"step {step}: log10 softmax attention mass")
+        for axis in axes[row]:
+            for boundary in boundaries:
+                axis.axhline(boundary, color="white", linewidth=0.18, alpha=0.45)
+                axis.axvline(boundary, color="white", linewidth=0.18, alpha=0.45)
+            axis.set_xlabel("pooled key-token bin")
+            axis.set_ylabel("pooled query-token bin")
+        fig.colorbar(raw_image, ax=axes[row, 0], fraction=0.046)
+        fig.colorbar(attention_image, ax=axes[row, 1], fraction=0.046)
+    fig.suptitle(
+        f"{MODEL_NAMES[model]} | {role} | block {block:02d}, head {head:02d} | "
+        "all 5824 Q/K tokens -> 512x512",
+        fontsize=13,
+    )
+    fig.savefig(output, dpi=145)
     plt.close(fig)
 
 
@@ -425,6 +525,38 @@ def main() -> None:
                 }
                 top_payload[role].append(row)
                 evidence_rows.append(row)
+        qk_figures = ""
+        if args.qk_root is not None:
+            qk_items = []
+            for role in ROLES:
+                row = top_payload[role][0]
+                qk_image = output_dir / (
+                    f"{slug}__{role}_b{row['block']:02d}_h{row['head']:02d}"
+                    "__alltoken_qk.png"
+                )
+                _render_qk_evidence(
+                    qk_root=args.qk_root.expanduser().resolve(),
+                    model=model,
+                    case=case,
+                    role=role,
+                    block=int(row["block"]),
+                    head=int(row["head"]),
+                    output=qk_image,
+                )
+                row["qk_image"] = qk_image.name
+                qk_items.append(
+                    "<figure>"
+                    f"<a href='{html.escape(qk_image.name)}'>"
+                    f"<img loading='lazy' src='{html.escape(qk_image.name)}'></a>"
+                    f"<figcaption>{role} · B{row['block']:02d} "
+                    f"H{row['head']:02d} · all-token QK</figcaption></figure>"
+                )
+            qk_figures = (
+                "<h3>全部 5824 个 Q/K token 的矩阵</h3>"
+                "<p>左列为 raw QK，右列为 softmax attention；白线分隔 13 个 "
+                "latent 时间段。点击查看原图。</p>"
+                f"<div class='evidence-row'>{''.join(qk_items)}</div>"
+            )
         video, preview, query_payload = _copy_media(
             output_dir=output_dir,
             query_root=args.query_root.expanduser().resolve(),
@@ -483,6 +615,7 @@ def main() -> None:
 <p class="counts">{html.escape(count_text)}</p>
 <a href="{html.escape(role_grid.name)}"><img class="role-grid" loading="lazy" src="{html.escape(role_grid.name)}"></a>
 <div class="evidence-row">{evidence_figures}</div>
+{qk_figures}
 <div class="table-wrap"><table>
 <thead><tr><th>类</th><th>Head</th><th>分数</th><th>4步一致率</th>
 <th>局部富集</th><th>轨迹/null log2</th><th>固定位置富集</th>
