@@ -16,7 +16,7 @@ from ball_query_attention import _query_indices
 from self_attention_matrix import (
     MatrixCaptureConfig,
     _as_heads,
-    pool_full_attention_matrix,
+    pool_full_attention_matrix_with_temporal,
 )
 
 
@@ -150,12 +150,18 @@ class TwoBallAttentionRecorder:
             "pooling all 5824 Q/K tokens to 512 bins",
             flush=True,
         )
-        block_mean, key_mass, full_metadata = pool_full_attention_matrix(
+        (
+            block_mean,
+            key_mass,
+            full_metadata,
+            temporal_statistics,
+        ) = pool_full_attention_matrix_with_temporal(
             q,
             k,
             num_heads=int(num_heads),
             output_bins=int(self.config.output_bins),
             query_chunk=int(self.config.query_chunk),
+            temporal_grid=self.grid,
         )
         self.captures[int(step)] = {
             "attention": attention,
@@ -163,6 +169,7 @@ class TwoBallAttentionRecorder:
             "block_mean": block_mean,
             "key_mass": key_mass,
             "full_metadata": full_metadata,
+            "temporal_statistics": temporal_statistics,
         }
 
     def finalize_case(self) -> Path:
@@ -202,6 +209,12 @@ class TwoBallAttentionRecorder:
                 step_dir / full_name,
                 block_mean=capture["block_mean"].astype(np.float32),
                 key_mass=capture["key_mass"].astype(np.float32),
+                **{
+                    name: values.astype(np.float32)
+                    for name, values in capture[
+                        "temporal_statistics"
+                    ].items()
+                },
             )
             entries.append(
                 {

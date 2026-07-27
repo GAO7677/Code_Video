@@ -16,6 +16,7 @@ import numpy as np
 from analyze_multiblock_ball_query_heads import (
     ROLE_LABELS,
     _feature_rows,
+    _rank01,
     _role_scores,
 )
 from moving_query_attention import FEATURE_NAMES
@@ -26,6 +27,10 @@ MODEL = "wan_lora"
 GRID = (13, 16, 28)
 FIXED_QUERY_TIME = 2
 FIXED_B_QUERY_TIME = 3
+GALLERY_FEATURE_NAMES = FEATURE_NAMES + (
+    "adjacent_frame_mass",
+    "adjacent_trajectory_enrichment",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +43,11 @@ def parse_args() -> argparse.Namespace:
 
 def _classify(features: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     scores = _role_scores(features)
+    scores["T_long"] = scores["T"].copy()
+    scores["T_adj"] = 0.7 * _rank01(
+        features["adjacent_trajectory_enrichment"]
+    ) + 0.3 * _rank01(features["adjacent_frame_mass"])
+    scores["T"] = np.maximum(scores["T_long"], scores["T_adj"])
     roles = list(ROLE_LABELS)
     matrix = np.stack([scores[role] for role in roles], axis=1)
     order = np.argsort(matrix, axis=1)
@@ -64,6 +74,38 @@ def _trajectory_tokens(query_coords: np.ndarray) -> list[np.ndarray]:
     return output
 
 
+def _adjacent_features(
+    attention: np.ndarray,
+    *,
+    query_time: int,
+    trajectory_tokens: list[np.ndarray],
+) -> dict[str, np.ndarray]:
+    heads, frames, grid_h, grid_w = attention.shape
+    token_count = frames * grid_h * grid_w
+    adjacent_times = [
+        time
+        for time in (query_time - 1, query_time + 1)
+        if 0 <= time < frames and len(trajectory_tokens[time])
+    ]
+    if not adjacent_times:
+        zeros = np.zeros(heads, dtype=np.float64)
+        return {
+            "adjacent_frame_mass": zeros,
+            "adjacent_trajectory_enrichment": zeros.copy(),
+        }
+    temporal = attention.sum(axis=(2, 3)).astype(np.float64)
+    trajectory_ids = np.unique(
+        np.concatenate([trajectory_tokens[time] for time in adjacent_times])
+    )
+    flat = attention.reshape(heads, token_count).astype(np.float64)
+    trajectory_mass = flat[:, trajectory_ids].sum(1)
+    return {
+        "adjacent_frame_mass": temporal[:, adjacent_times].sum(1),
+        "adjacent_trajectory_enrichment": trajectory_mass
+        / (len(trajectory_ids) / token_count),
+    }
+
+
 def _moving_features(
     attention: np.ndarray,
     query_coords: np.ndarray,
@@ -78,12 +120,19 @@ def _moving_features(
             query_coords=current_coords,
             trajectory_tokens=trajectory_tokens,
         )
+        features.update(
+            _adjacent_features(
+                attention[:, query_time],
+                query_time=int(query_time),
+                trajectory_tokens=trajectory_tokens,
+            )
+        )
         rows.append(features)
     if not rows:
         raise ValueError("moving track has no valid query times")
     return {
         name: np.stack([row[name] for row in rows]).mean(axis=0)
-        for name in FEATURE_NAMES
+        for name in GALLERY_FEATURE_NAMES
     }
 
 
@@ -103,6 +152,13 @@ def _block_data(
         attention[0, :, FIXED_QUERY_TIME],
         query_coords=fixed_coords,
         trajectory_tokens=_trajectory_tokens(query_coords[0]),
+    )
+    fixed_features.update(
+        _adjacent_features(
+            attention[0, :, FIXED_QUERY_TIME],
+            query_time=FIXED_QUERY_TIME,
+            trajectory_tokens=_trajectory_tokens(query_coords[0]),
+        )
     )
     moving_features = [
         _moving_features(
@@ -189,24 +245,97 @@ def _role_record(
 ) -> dict[str, Any]:
     primary = str(result["primary"][head])
     secondary = str(result["secondary"][head])
+    scores = {
+        role: float(result["scores"][role][head])
+        for role in (*ROLE_LABELS, "T_adj", "T_long")
+    }
+    display_primary = primary
+    if (
+        primary == "S"
+        and scores["T_adj"] >= 0.8
+        and scores["S"] - scores["T_adj"] <= 0.1
+    ):
+        display_primary = "S+T_adj"
+    elif (
+        primary == "T"
+        and scores["T_adj"] >= scores["T_long"]
+        and scores["S"] >= 0.8
+        and scores["T_adj"] - scores["S"] <= 0.1
+    ):
+        display_primary = "T_adj+S"
     return {
         "block": block,
         "head": head,
         "protocol": protocol,
         "primary": primary,
+        "display_primary": display_primary,
         "primary_name": ROLE_LABELS[primary],
         "secondary": secondary,
         "secondary_name": ROLE_LABELS[secondary],
         "margin": float(result["margin"][head]),
         "features": {
             name: float(result["features"][name][head])
-            for name in FEATURE_NAMES
+            for name in GALLERY_FEATURE_NAMES
         },
-        "scores": {
-            role: float(result["scores"][role][head])
-            for role in ROLE_LABELS
-        },
+        "scores": scores,
     }
+
+
+def _all_token_s_records(
+    *,
+    block: int,
+    time_matrix: np.ndarray,
+    exact_self_mass: np.ndarray,
+    same_frame_win_rate: np.ndarray,
+) -> list[dict[str, Any]]:
+    if time_matrix.shape != (24, 13, 13):
+        raise ValueError(f"unexpected all-token time matrix: {time_matrix.shape}")
+    if exact_self_mass.shape != (24, 13):
+        raise ValueError(f"unexpected exact-self shape: {exact_self_mass.shape}")
+    if same_frame_win_rate.shape != (24, 13):
+        raise ValueError(
+            f"unexpected same-frame win-rate shape: {same_frame_win_rate.shape}"
+        )
+    records = []
+    for head in range(24):
+        matrix = time_matrix[head].astype(np.float64)
+        diagonal = np.diag(matrix)
+        same = float(diagonal.mean())
+        other = float(
+            (matrix.sum() - diagonal.sum())
+            / (matrix.shape[0] * (matrix.shape[1] - 1))
+        )
+        if same <= other:
+            continue
+        enrichment = same / max(other, 1.0e-30)
+        confidence = (same - other) / max(same + other, 1.0e-30)
+        records.append(
+            {
+                "block": block,
+                "head": head,
+                "protocol": "all_token",
+                "primary": "S",
+                "display_primary": "S_all",
+                "primary_name": "全部时空 query 的帧内空间偏好",
+                "secondary": "non-S",
+                "secondary_name": "未在此二分类协议中细分",
+                "margin": confidence,
+                "features": {
+                    "same_frame_nonself_mass": same,
+                    "other_frame_mean_mass": other,
+                    "same_frame_enrichment": enrichment,
+                    "same_frame_win_rate": float(
+                        same_frame_win_rate[head].mean()
+                    ),
+                    "exact_self_mass": float(exact_self_mass[head].mean()),
+                },
+                "scores": {
+                    "S_all": confidence,
+                    "same_frame_enrichment": enrichment,
+                },
+            }
+        )
+    return records
 
 
 def _page(metadata: dict[str, Any]) -> str:
@@ -268,15 +397,16 @@ const cache=new Map();
 async function loadBlock(block){{
   if(cache.has(block)) return cache.get(block);
   const prefix=`data/block${{String(block).padStart(2,"0")}}`;
-  const [fa,fb,ma,mb,ta,tb]=await Promise.all([
+  const [fa,fb,ma,mb,ta,tb,at]=await Promise.all([
     fetch(prefix+"_fixed_A.f32").then(r=>r.arrayBuffer()),
     fetch(prefix+"_fixed_B.f32").then(r=>r.arrayBuffer()),
     fetch(prefix+"_moving_A.f32").then(r=>r.arrayBuffer()),
     fetch(prefix+"_moving_B.f32").then(r=>r.arrayBuffer()),
     fetch(prefix+"_temporal_A.f32").then(r=>r.arrayBuffer()),
-    fetch(prefix+"_temporal_B.f32").then(r=>r.arrayBuffer())
+    fetch(prefix+"_temporal_B.f32").then(r=>r.arrayBuffer()),
+    fetch(prefix+"_all_token_temporal.f32").then(r=>r.arrayBuffer())
   ]);
-  const value={{fixedA:new Float32Array(fa),fixedB:new Float32Array(fb),movingA:new Float32Array(ma),movingB:new Float32Array(mb),temporalA:new Float32Array(ta),temporalB:new Float32Array(tb)}};
+  const value={{fixedA:new Float32Array(fa),fixedB:new Float32Array(fb),movingA:new Float32Array(ma),movingB:new Float32Array(mb),temporalA:new Float32Array(ta),temporalB:new Float32Array(tb),allTokenTemporal:new Float32Array(at)}};
   cache.set(block,value); return value;
 }}
 function turbo(x){{
@@ -341,9 +471,9 @@ function buildHeadCards(block){{
     const f=role(block,h,"fixed_A"),ma=role(block,h,"moving_A"),mb=role(block,h,"moving_B");
     html+=`<article class="head-card">
       <h2>Block ${{String(block).padStart(2,"0")}} · Head ${{String(h).padStart(2,"0")}}
-        <span class="badge role-${{f.primary}}" title="${{f.primary_name}}">Fixed A: ${{f.primary}}</span>
-        <span class="badge role-${{ma.primary}}" title="${{ma.primary_name}}">Moving A: ${{ma.primary}}</span>
-        <span class="badge role-${{mb.primary}}" title="${{mb.primary_name}}">Moving B: ${{mb.primary}}</span>
+        <span class="badge role-${{f.primary}}" title="${{f.primary_name}}">Fixed A: ${{f.display_primary}}</span>
+        <span class="badge role-${{ma.primary}}" title="${{ma.primary_name}}">Moving A: ${{ma.display_primary}}</span>
+        <span class="badge role-${{mb.primary}}" title="${{mb.primary_name}}">Moving B: ${{mb.display_primary}}</span>
       </h2>
       <div class="head-panels">
         <div><h3>Fixed ball A Q(t=2) → K(t)</h3><canvas id="fixed-${{h}}" width="896" height="512"></canvas><div class="legend"></div></div>
@@ -351,6 +481,7 @@ function buildHeadCards(block){{
         <div><h3>Moving ball B Q(t) → K(t)</h3><canvas id="moving-b-${{h}}" width="896" height="512"></canvas><div class="legend"></div></div>
         <div><h3>Ball A Q-time × K-time</h3><canvas class="matrix" id="matrix-a-${{h}}" width="520" height="520"></canvas><div class="legend"></div></div>
         <div><h3>Ball B Q-time × K-time</h3><canvas class="matrix" id="matrix-b-${{h}}" width="520" height="520"></canvas><div class="legend"></div></div>
+        <div><h3>All-token Q-time × K-time · exact-self removed</h3><canvas class="matrix" id="matrix-all-${{h}}" width="520" height="520"></canvas><div class="legend"></div></div>
         <div><h3>All-token Q→K · 5824→512 bins</h3><img class="full-matrix" loading="lazy" src="full_qk/block${{String(block).padStart(2,"0")}}/head${{String(h).padStart(2,"0")}}.png"></div>
       </div>
       <div class="fixed-strip"><h3>Fixed ball A Q(t=2) → all K frames · t0…t12 concatenated</h3><canvas id="fixed-strip-${{h}}" width="1456" height="88"></canvas><div class="legend"></div></div>
@@ -381,6 +512,7 @@ async function render(){{
     drawOverlay(document.getElementById(`moving-b-${{head}}`),image,data.movingB,headBase+t*16*28,blo,bhi,META.track_query_coords[1],t);
     drawMatrix(document.getElementById(`matrix-a-${{head}}`),data.temporalA,head*169,true);
     drawMatrix(document.getElementById(`matrix-b-${{head}}`),data.temporalB,head*169,false);
+    drawMatrix(document.getElementById(`matrix-all-${{head}}`),data.allTokenTemporal,head*169,false);
     drawFixedStrip(document.getElementById(`fixed-strip-${{head}}`),data.fixedA,headBase,flo,fhi,FIXED_QUERY_TIME);
     drawFixedStrip(document.getElementById(`fixed-b-strip-${{head}}`),data.fixedB,headBase,fblo,fbhi,FIXED_B_QUERY_TIME);
   }}
@@ -426,16 +558,18 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
 <body>
 <header>
 <h1>按 Head 类别跨 Block 分组</h1>
-<p>同一协议、同一主类别的 Head 集中展示；按 Block、Head 编号排序。Canvas 在滚动到附近时才绘制。</p>
+<p>同一协议、同一主类别的 Head 集中展示；按主类别相对最强竞争类别的分差 Δ 降序。S 与相邻轨迹传播接近时标为 S+T_adj。</p>
+<p>All-token S 对全部5824个 query等权统计；逐 query移除 exact-self并重新归一化，当平均同帧质量大于平均其他单帧质量时归入 S_all。</p>
 <a class="page-link" href="index.html">返回按 Block 查看</a>
 <div class="controls">
   <label>分类协议<select id="protocol">
     <option value="fixed_A">Fixed ball A</option>
-    <option value="moving_A" selected>Moving ball A</option>
+    <option value="moving_A">Moving ball A</option>
     <option value="moving_B">Moving ball B</option>
+    <option value="all_token" selected>All-token S</option>
   </select></label>
   <label>主类别<select id="category">
-    <option value="S">S · 帧内空间</option><option value="T" selected>T · 球轨迹传播</option>
+    <option value="S" selected>S · 帧内空间</option><option value="T">T · 球轨迹传播</option>
     <option value="P">P · 固定位置时间对齐</option><option value="C">C · 首帧/历史上下文</option>
     <option value="G">G · 全局聚合</option>
   </select></label>
@@ -453,8 +587,8 @@ const cache=new Map(),imageCache=new Map(),visibleCards=new Set();let observer,r
 async function loadBlock(block){{
   if(cache.has(block))return cache.get(block);
   const p=`data/block${{String(block).padStart(2,"0")}}`;
-  const buffers=await Promise.all(["fixed_A","fixed_B","moving_A","moving_B","temporal_A","temporal_B"].map(name=>fetch(`${{p}}_${{name}}.f32`).then(r=>r.arrayBuffer())));
-  const value={{fixedA:new Float32Array(buffers[0]),fixedB:new Float32Array(buffers[1]),movingA:new Float32Array(buffers[2]),movingB:new Float32Array(buffers[3]),temporalA:new Float32Array(buffers[4]),temporalB:new Float32Array(buffers[5])}};
+  const buffers=await Promise.all(["fixed_A","fixed_B","moving_A","moving_B","temporal_A","temporal_B","all_token_temporal"].map(name=>fetch(`${{p}}_${{name}}.f32`).then(r=>r.arrayBuffer())));
+  const value={{fixedA:new Float32Array(buffers[0]),fixedB:new Float32Array(buffers[1]),movingA:new Float32Array(buffers[2]),movingB:new Float32Array(buffers[3]),temporalA:new Float32Array(buffers[4]),temporalB:new Float32Array(buffers[5]),allTokenTemporal:new Float32Array(buffers[6])}};
   cache.set(block,value);return value;
 }}
 async function loadFrame(index){{
@@ -484,7 +618,9 @@ function drawStrip(canvas,array,base,lo,hi,queryTime){{
 }}
 function cardHtml(record){{
   const b=record.block,h=record.head,f=role(b,h,"fixed_A"),a=role(b,h,"moving_A"),m=role(b,h,"moving_B"),bs=String(b).padStart(2,"0"),hs=String(h).padStart(2,"0");
-  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} <span class="badge role-${{f.primary}}">Fixed A: ${{f.primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.primary}}</span></h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
+  const current=record.protocol==="all_token"?`<span class="badge role-S">All-token: S_all</span>`:"";
+  const evidence=record.protocol==="all_token"?`<span class="badge">same=${{record.features.same_frame_nonself_mass.toFixed(3)}} · other=${{record.features.other_frame_mean_mass.toFixed(3)}} · E=${{record.features.same_frame_enrichment.toFixed(2)}}</span>`:"";
+  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} ${{current}}<span class="badge role-${{f.primary}}">Fixed A: ${{f.display_primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.display_primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.display_primary}}</span><span class="badge">当前协议 Δ=${{record.margin.toFixed(3)}}</span>${{evidence}}</h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
 }}
 function cardBody(block,head){{
   const b=String(block).padStart(2,"0"),h=String(head).padStart(2,"0");
@@ -494,6 +630,7 @@ function cardBody(block,head){{
   <div><h3>Moving B</h3><canvas data-kind="movingB" width="896" height="512"></canvas><div class="legend"></div></div>
   <div><h3>Ball A Q-time × K-time</h3><canvas class="matrix" data-kind="temporalA" width="520" height="520"></canvas><div class="legend"></div></div>
   <div><h3>Ball B Q-time × K-time</h3><canvas class="matrix" data-kind="temporalB" width="520" height="520"></canvas><div class="legend"></div></div>
+  <div><h3>All-token Q-time × K-time · exact-self removed</h3><canvas class="matrix" data-kind="allTokenTemporal" width="520" height="520"></canvas><div class="legend"></div></div>
   <div><h3>All-token Q→K</h3><img class="full-matrix" loading="lazy" src="full_qk/block${{b}}/head${{h}}.png"></div></div>
   <div class="fixed-strip"><h3>Fixed ball A Q(t=2) → all K frames · t0…t12 concatenated</h3><canvas data-kind="stripA" width="1456" height="88"></canvas><div class="legend"></div></div>
   <div class="fixed-strip"><h3>Fixed ball B Q(t=3) → all K frames · t0…t12 concatenated</h3><canvas data-kind="stripB" width="1456" height="88"></canvas><div class="legend"></div></div>`;
@@ -507,13 +644,16 @@ async function renderCard(card,epoch){{
   drawOverlay(card.querySelector('[data-kind="movingA"]'),image,data.movingA,base+t*448,alo,ahi,META.track_query_coords[0],t);
   drawOverlay(card.querySelector('[data-kind="movingB"]'),image,data.movingB,base+t*448,blo,bhi,META.track_query_coords[1],t);
   drawMatrix(card.querySelector('[data-kind="temporalA"]'),data.temporalA,head*169,true);drawMatrix(card.querySelector('[data-kind="temporalB"]'),data.temporalB,head*169,false);
+  drawMatrix(card.querySelector('[data-kind="allTokenTemporal"]'),data.allTokenTemporal,head*169,false);
   drawStrip(card.querySelector('[data-kind="stripA"]'),data.fixedA,base,flo,fhi,FIXED_QUERY_TIME);
   drawStrip(card.querySelector('[data-kind="stripB"]'),data.fixedB,base,fblo,fbhi,FIXED_B_QUERY_TIME);
 }}
 function renderVisible(){{const epoch=++renderEpoch;for(const card of visibleCards)renderCard(card,epoch);}}
 function buildGroup(){{
-  if(observer)observer.disconnect();visibleCards.clear();const protocol=protocolEl.value,category=categoryEl.value;
-  const rows=META.roles.filter(x=>x.protocol===protocol&&x.primary===category).sort((a,b)=>a.block-b.block||a.head-b.head);
+  if(observer)observer.disconnect();visibleCards.clear();const protocol=protocolEl.value;
+  if(protocol==="all_token"){{categoryEl.value="S";categoryEl.disabled=true;}}else{{categoryEl.disabled=false;}}
+  const category=categoryEl.value;
+  const rows=META.roles.filter(x=>x.protocol===protocol&&x.primary===category).sort((a,b)=>b.margin-a.margin||a.block-b.block||a.head-b.head);
   document.getElementById("count").textContent=`${{rows.length}} 个 Head`;gridEl.innerHTML=rows.map(cardHtml).join("");
   observer=new IntersectionObserver(entries=>{{for(const entry of entries){{if(entry.isIntersecting){{visibleCards.add(entry.target);renderCard(entry.target,renderEpoch);}}else visibleCards.delete(entry.target);}}}},{{rootMargin:"800px 0px"}});
   gridEl.querySelectorAll(".head-card").forEach(card=>observer.observe(card));
@@ -596,6 +736,24 @@ def main() -> None:
         )
         with np.load(full_path) as arrays:
             key_mass = arrays["key_mass"].astype(np.float32)
+            required = {
+                "time_matrix_no_exact_self",
+                "exact_self_mass",
+                "same_frame_win_rate",
+            }
+            missing = required.difference(arrays.files)
+            if missing:
+                raise ValueError(
+                    f"{full_path} lacks all-token temporal statistics: "
+                    f"{sorted(missing)}"
+                )
+            all_token_temporal = arrays[
+                "time_matrix_no_exact_self"
+            ].astype(np.float32)
+            exact_self_mass = arrays["exact_self_mass"].astype(np.float32)
+            same_frame_win_rate = arrays[
+                "same_frame_win_rate"
+            ].astype(np.float32)
         if not np.array_equal(selected_heads, np.arange(24)):
             raise ValueError(f"{npz_path} does not contain heads 0..23 in order")
         if query_coords_ref is None:
@@ -618,6 +776,10 @@ def main() -> None:
         _write_float32(prefix.with_name(prefix.name + "_moving_B.f32"), moving[1])
         _write_float32(prefix.with_name(prefix.name + "_temporal_A.f32"), temporal[0])
         _write_float32(prefix.with_name(prefix.name + "_temporal_B.f32"), temporal[1])
+        _write_float32(
+            prefix.with_name(prefix.name + "_all_token_temporal.f32"),
+            all_token_temporal,
+        )
         _render_full_matrix_images(
             key_mass, block=block, output_dir=full_qk_output
         )
@@ -633,6 +795,14 @@ def main() -> None:
                         result=result,
                     )
                 )
+        roles.extend(
+            _all_token_s_records(
+                block=block,
+                time_matrix=all_token_temporal,
+                exact_self_mass=exact_self_mass,
+                same_frame_win_rate=same_frame_win_rate,
+            )
+        )
 
     assert query_coords_ref is not None and valid_query_times_ref is not None
     metadata = {
@@ -668,6 +838,16 @@ def main() -> None:
             "softmax": "exact over all 5824 key tokens",
             "pooling": "contiguous_token_block_mean converted to key mass",
             "display_scale": "per-head log10 with 1.0/99.8 percentile clipping",
+        },
+        "all_token_s_protocol": {
+            "query_sampling": "none; all 5824 query tokens are equally weighted",
+            "exact_self": "removed per query, then remaining attention renormalized",
+            "time_matrix_shape": [24, 13, 13],
+            "same_frame": "mean diagonal mass over all query times",
+            "other_frame": "mean mass of one off-diagonal key time",
+            "decision": "S_all iff same_frame > other_frame",
+            "confidence": "(same_frame-other_frame)/(same_frame+other_frame)",
+            "sorting": "confidence descending",
         },
         "overlay_background": {
             "type": "final_generated_video_frames",

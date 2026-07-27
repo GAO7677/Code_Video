@@ -71,14 +71,20 @@ def _as_heads(
 
 
 @torch.no_grad()
-def pool_full_attention_matrix(
+def _pool_full_attention_matrix(
     q: torch.Tensor,
     k: torch.Tensor,
     *,
     num_heads: int,
     output_bins: int,
     query_chunk: int,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    temporal_grid: tuple[int, int, int] | None,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    dict[str, Any],
+    dict[str, np.ndarray] | None,
+]:
     """Compute exact softmax over all keys, then pool every query/key token.
 
     The returned block_mean is the mean attention value for every query-bin and
@@ -105,6 +111,38 @@ def pool_full_attention_matrix(
     )
     scale = 1.0 / math.sqrt(float(head_dim))
 
+    temporal_sum = None
+    exact_self_sum = None
+    same_frame_wins = None
+    key_time_ids = None
+    tokens_per_frame = None
+    temporal_frames = None
+    if temporal_grid is not None:
+        temporal_frames, grid_h, grid_w = (
+            int(value) for value in temporal_grid
+        )
+        tokens_per_frame = grid_h * grid_w
+        if temporal_frames * tokens_per_frame != token_count:
+            raise ValueError(
+                f"temporal grid {temporal_grid} has "
+                f"{temporal_frames * tokens_per_frame} tokens, "
+                f"expected {token_count}"
+            )
+        key_time_ids = torch.div(
+            token_ids, tokens_per_frame, rounding_mode="floor"
+        )
+        temporal_sum = torch.zeros(
+            (heads, temporal_frames, temporal_frames),
+            device=device,
+            dtype=torch.float32,
+        )
+        exact_self_sum = torch.zeros(
+            (heads, temporal_frames), device=device, dtype=torch.float32
+        )
+        same_frame_wins = torch.zeros(
+            (heads, temporal_frames), device=device, dtype=torch.float32
+        )
+
     k_t = k_heads.transpose(-1, -2)
     for start in range(0, token_count, int(query_chunk)):
         stop = min(start + int(query_chunk), token_count)
@@ -121,6 +159,59 @@ def pool_full_attention_matrix(
         )
         key_pooled.scatter_add_(2, key_index, probabilities)
         pooled_sum.index_add_(1, token_bins[start:stop], key_pooled)
+
+        if temporal_sum is not None:
+            assert key_time_ids is not None
+            assert tokens_per_frame is not None
+            assert temporal_frames is not None
+            assert exact_self_sum is not None
+            assert same_frame_wins is not None
+            query_ids = token_ids[start:stop]
+            query_times = torch.div(
+                query_ids, tokens_per_frame, rounding_mode="floor"
+            )
+            key_temporal = torch.zeros(
+                (heads, chunk, temporal_frames),
+                device=device,
+                dtype=torch.float32,
+            )
+            temporal_index = key_time_ids.view(
+                1, 1, token_count
+            ).expand(heads, chunk, token_count)
+            key_temporal.scatter_add_(2, temporal_index, probabilities)
+            exact_self = probabilities.gather(
+                2,
+                query_ids.view(1, chunk, 1).expand(heads, chunk, 1),
+            ).squeeze(2)
+            chunk_ids = torch.arange(chunk, device=device)
+            key_temporal[
+                :, chunk_ids, query_times
+            ] -= exact_self
+            key_temporal /= (1.0 - exact_self).clamp_min(1.0e-12).unsqueeze(2)
+            same_mass = key_temporal[
+                :, chunk_ids, query_times
+            ]
+            other_temporal = key_temporal.clone()
+            other_temporal[
+                :, chunk_ids, query_times
+            ] = -1.0
+            wins = same_mass > other_temporal.max(dim=2).values
+            temporal_sum.index_add_(1, query_times, key_temporal)
+            exact_self_sum.index_add_(1, query_times, exact_self)
+            same_frame_wins.index_add_(
+                1, query_times, wins.to(torch.float32)
+            )
+            del (
+                query_ids,
+                query_times,
+                key_temporal,
+                temporal_index,
+                exact_self,
+                same_mass,
+                other_temporal,
+                wins,
+                chunk_ids,
+            )
 
         del scores, probabilities, key_pooled, key_index, query
 
@@ -143,11 +234,71 @@ def pool_full_attention_matrix(
         "query_sampling": "none",
         "pooling": "contiguous_token_block_mean",
     }
+    temporal_statistics = None
+    if temporal_sum is not None:
+        assert exact_self_sum is not None
+        assert same_frame_wins is not None
+        assert tokens_per_frame is not None
+        denominator = float(tokens_per_frame)
+        temporal_statistics = {
+            "time_matrix_no_exact_self": (
+                temporal_sum / denominator
+            ).cpu().numpy().astype(np.float32),
+            "exact_self_mass": (
+                exact_self_sum / denominator
+            ).cpu().numpy().astype(np.float32),
+            "same_frame_win_rate": (
+                same_frame_wins / denominator
+            ).cpu().numpy().astype(np.float32),
+        }
+
     return (
         block_mean.cpu().numpy().astype(np.float32),
         key_mass.cpu().numpy().astype(np.float32),
         metadata,
+        temporal_statistics,
     )
+
+
+def pool_full_attention_matrix(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    num_heads: int,
+    output_bins: int,
+    query_chunk: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    block_mean, key_mass, metadata, _ = _pool_full_attention_matrix(
+        q,
+        k,
+        num_heads=num_heads,
+        output_bins=output_bins,
+        query_chunk=query_chunk,
+        temporal_grid=None,
+    )
+    return block_mean, key_mass, metadata
+
+
+def pool_full_attention_matrix_with_temporal(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    *,
+    num_heads: int,
+    output_bins: int,
+    query_chunk: int,
+    temporal_grid: tuple[int, int, int],
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
+    block_mean, key_mass, metadata, temporal = _pool_full_attention_matrix(
+        q,
+        k,
+        num_heads=num_heads,
+        output_bins=output_bins,
+        query_chunk=query_chunk,
+        temporal_grid=temporal_grid,
+    )
+    if temporal is None:
+        raise RuntimeError("temporal attention statistics were not produced")
+    return block_mean, key_mass, metadata, temporal
 
 
 def _frame_boundaries(
