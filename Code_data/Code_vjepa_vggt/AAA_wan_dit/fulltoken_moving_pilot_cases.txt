@@ -1,0 +1,3 @@
+/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/0613pybullet_sample_000301_w000.json
+/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/phyco_kubric_ball_drop_soft_v4_2025-09-06_d1ceac.json
+/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/physicIQ_025_Solid_Mechanics_0002_perspective-center_trimmed.json
