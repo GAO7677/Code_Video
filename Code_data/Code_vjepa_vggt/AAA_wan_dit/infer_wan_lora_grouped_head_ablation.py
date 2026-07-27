@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
+from pathlib import Path
 
 from code_vjepa_vggt.AAAinfer import wan_openvid_0613pybullet_lorav2v as base
 
@@ -24,11 +26,52 @@ def _extract_args() -> tuple[str, list[tuple[int, int]], list[str]]:
     parser.add_argument(
         "--grouped-head-category",
         choices=tuple(CATEGORY_TARGETS),
-        required=True,
     )
+    parser.add_argument("--grouped-head-targets-csv", type=Path)
+    parser.add_argument("--grouped-head-object", choices=("A", "B"))
+    parser.add_argument("--expected-target-count", type=int)
     args, remaining = parser.parse_known_args(sys.argv[1:])
-    category = str(args.grouped_head_category)
-    return category, targets_for_category(category), remaining
+    using_category = args.grouped_head_category is not None
+    using_csv = args.grouped_head_targets_csv is not None
+    if using_category == using_csv:
+        raise ValueError(
+            "Specify exactly one of --grouped-head-category or "
+            "--grouped-head-targets-csv"
+        )
+    if using_category:
+        if args.grouped_head_object is not None:
+            raise ValueError(
+                "--grouped-head-object is only valid with a targets CSV"
+            )
+        category = str(args.grouped_head_category)
+        targets = targets_for_category(category)
+    else:
+        if args.grouped_head_object is None:
+            raise ValueError(
+                "--grouped-head-object A|B is required with a targets CSV"
+            )
+        path = args.grouped_head_targets_csv.expanduser().resolve()
+        rows = list(csv.DictReader(path.open(encoding="utf-8")))
+        accepted_scopes = (
+            {"A+B", "A-only"}
+            if args.grouped_head_object == "A"
+            else {"A+B", "B-only"}
+        )
+        targets = [
+            (int(row["block"]), int(row["head"]))
+            for row in rows
+            if row["scope"] in accepted_scopes
+        ]
+        category = f"PREV_{args.grouped_head_object}"
+    if (
+        args.expected_target_count is not None
+        and len(targets) != args.expected_target_count
+    ):
+        raise ValueError(
+            f"Expected {args.expected_target_count} targets, found "
+            f"{len(targets)}"
+        )
+    return category, targets, remaining
 
 
 def main() -> None:

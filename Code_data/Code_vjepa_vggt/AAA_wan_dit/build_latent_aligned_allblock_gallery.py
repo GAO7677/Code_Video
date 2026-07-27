@@ -708,6 +708,7 @@ h1{{font-size:21px;margin:0 0 5px}} p{{margin:4px 0;line-height:1.4}} main{{padd
 .page-link{{display:inline-block;margin-top:4px;color:var(--accent);font-weight:700;text-decoration:none}} .page-link:hover{{text-decoration:underline}}
 .controls{{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding-top:9px}} label{{display:grid;gap:4px;font-weight:700}}
 select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-variant-numeric:tabular-nums}}
+.category-summary{{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px}} .summary-chip{{border:1px solid var(--line);border-radius:4px;background:#fff;padding:4px 8px;font-weight:700;cursor:pointer}} .summary-chip.active{{border-color:var(--accent);color:var(--accent);background:#e8f3ef}}
 .head-grid{{display:grid;grid-template-columns:1fr;gap:10px}} .head-card{{background:#fff;border:1px solid var(--line);border-radius:5px;padding:9px;min-width:0}}
 .head-card h2{{font-size:16px;margin:0 0 7px;display:flex;align-items:center;flex-wrap:wrap;gap:5px}}
 .head-card a{{color:var(--accent);font-size:12px;text-decoration:none}} .head-card a:hover{{text-decoration:underline}}
@@ -726,20 +727,22 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
 </head>
 <body>
 <header>
-<h1>按 Head 类别跨 Block 分组</h1>
-<p>同一协议、同一主类别的 Head 集中展示；按主类别相对最强竞争类别的分差 Δ 降序。ST 表示同时关注当前帧局部物体与相邻 latent 时刻同一物体轨迹。</p>
-<p>All-token S 对全部5824个 query等权统计；逐 query移除 exact-self并重新归一化，当平均同帧质量大于平均其他单帧质量时归入 S_all。</p>
+<h1>Head 功能分类与跨 Block 可视化</h1>
+<p>核心分类以 Fixed A、Moving A、Moving B 是否一致分层：338个一致 Head用于稳定类别分析，382个协议分歧 Head单独检查。诊断视图 S_all 与 T_prev 独立保留。</p>
 <a class="page-link" href="index.html">返回按 Block 查看</a>
+<a class="page-link" href="consistent_heads_distribution.html">查看338个一致 Head 的 Block 分布</a>
 <div class="controls">
-  <label>分类协议<select id="protocol">
+  <label>分类视图<select id="protocol">
+    <option value="consistent" selected>三协议一致 · 338</option>
+    <option value="disagreement">协议分歧 · 382</option>
     <option value="fixed_A">Fixed ball A</option>
     <option value="moving_A">Moving ball A</option>
     <option value="moving_B">Moving ball B</option>
-    <option value="all_token" selected>All-token S</option>
-    <option value="previous_trajectory">Previous trajectory</option>
+    <option value="all_token">诊断 · All-token S</option>
+    <option value="previous_trajectory">诊断 · T_prev</option>
   </select></label>
   <label>主类别<select id="category">
-    <option value="S" selected>S · 帧内空间</option><option value="ST">ST · 帧内+相邻轨迹</option><option value="TP">T_prev · 前一时刻轨迹</option><option value="T">T · 球轨迹传播</option>
+    <option value="ALL">全部类别</option><option value="S" selected>S · 帧内空间</option><option value="ST">ST · 帧内+相邻轨迹</option><option value="TP">T_prev · 前一时刻轨迹</option><option value="T">T · 球轨迹传播</option>
     <option value="P">P · 固定位置时间对齐</option><option value="C">C · 首帧/历史上下文</option>
     <option value="G">G · 全局聚合</option>
   </select></label>
@@ -747,6 +750,7 @@ select,input[type=range]{{min-width:170px}} .value{{color:var(--accent);font-var
   <label>视频帧 <span class="value" id="phaseValue"></span><input id="phase" type="range" min="0" max="3" value="3"></label>
   <strong id="count"></strong>
 </div>
+<div class="category-summary" id="categorySummary"></div>
 </header>
 <main><div class="head-grid" id="headGrid"></div></main>
 <script>
@@ -754,9 +758,18 @@ const META={payload}, FIXED_QUERY_TIME=2, FIXED_B_QUERY_TIME=3;
 const protocolEl=document.getElementById("protocol"),categoryEl=document.getElementById("category");
 const latentEl=document.getElementById("latent"),phaseEl=document.getElementById("phase"),gridEl=document.getElementById("headGrid");
 const urlParams=new URLSearchParams(window.location.search);
-if([...protocolEl.options].some(option=>option.value===urlParams.get("protocol")))protocolEl.value=urlParams.get("protocol");
-if([...categoryEl.options].some(option=>option.value===urlParams.get("category")))categoryEl.value=urlParams.get("category");
+const requestedView=urlParams.get("view")||urlParams.get("protocol"),requestedCategory=urlParams.get("category");
+if([...protocolEl.options].some(option=>option.value===requestedView))protocolEl.value=requestedView;
+if([...categoryEl.options].some(option=>option.value===requestedCategory))categoryEl.value=requestedCategory;
 const cache=new Map(),imageCache=new Map(),visibleCards=new Set();let observer,renderEpoch=0;
+const roleIndex=new Map(META.roles.map(row=>[`${{row.block}}:${{row.head}}:${{row.protocol}}`,row]));
+function role(block,head,protocol){{return roleIndex.get(`${{block}}:${{head}}:${{protocol}}`);}}
+const CONSISTENT=[],DISAGREEMENT=[];
+for(let block=0;block<30;block++)for(let head=0;head<24;head++){{
+  const entries=["fixed_A","moving_A","moving_B"].map(protocol=>role(block,head,protocol)),labels=[...new Set(entries.map(row=>row.primary))],meanMargin=entries.reduce((sum,row)=>sum+row.margin,0)/entries.length;
+  if(labels.length===1)CONSISTENT.push({{block,head,protocol:"consistent",primary:labels[0],display_primary:labels[0],margin:meanMargin,min_margin:Math.min(...entries.map(row=>row.margin))}});
+  else DISAGREEMENT.push({{block,head,protocol:"disagreement",primary:"ALL",display_primary:labels.join("/"),margin:meanMargin,label_count:labels.length}});
+}}
 async function loadBlock(block){{
   if(cache.has(block))return cache.get(block);
   const p=`data/block${{String(block).padStart(2,"0")}}`;
@@ -770,7 +783,6 @@ async function loadFrame(index){{
 }}
 function turbo(x){{x=Math.max(0,Math.min(1,x));const s=[[48,18,59],[56,89,140],[31,158,137],[159,218,58],[253,231,37]],p=x*(s.length-1),i=Math.min(s.length-2,Math.floor(p)),a=p-i;return s[i].map((v,j)=>Math.round(v*(1-a)+s[i+1][j]*a));}}
 function range(a,o,n){{let lo=Infinity,hi=-Infinity;for(let i=0;i<n;i++){{const v=a[o+i];if(!Number.isFinite(v))continue;if(v<lo)lo=v;if(v>hi)hi=v;}}return[lo,hi];}}
-function role(block,head,protocol){{return META.roles.find(x=>x.block===block&&x.head===head&&x.protocol===protocol);}}
 function frameIndex(t,p){{return t===0?0:1+4*(t-1)+p;}}
 function drawOverlay(canvas,image,array,base,lo,hi,coords,t){{
   const c=canvas.getContext("2d");c.imageSmoothingEnabled=false;c.clearRect(0,0,896,512);c.drawImage(image,0,0);
@@ -791,11 +803,14 @@ function drawStrip(canvas,array,base,lo,hi,queryTime){{
 }}
 function cardHtml(record){{
   const b=record.block,h=record.head,f=role(b,h,"fixed_A"),a=role(b,h,"moving_A"),m=role(b,h,"moving_B"),bs=String(b).padStart(2,"0"),hs=String(h).padStart(2,"0");
+  const stable=record.protocol==="consistent"?`<span class="badge role-${{record.primary}}">三协议一致: ${{record.primary}}</span><span class="badge">平均 Δ=${{record.margin.toFixed(3)}} · 最小 Δ=${{record.min_margin.toFixed(3)}}</span>`:"";
+  const disputed=record.protocol==="disagreement"?`<span class="badge">协议分歧: ${{record.display_primary}} · 平均 Δ=${{record.margin.toFixed(3)}}</span>`:"";
   const current=record.protocol==="all_token"?`<span class="badge role-S">All-token: S_all</span>`:"";
   const evidence=record.protocol==="all_token"?`<span class="badge">same=${{record.features.same_frame_nonself_mass.toFixed(3)}} · other=${{record.features.other_frame_mean_mass.toFixed(3)}} · E=${{record.features.same_frame_enrichment.toFixed(2)}}</span>`:"";
   const previous=record.protocol==="previous_trajectory"?`<span class="badge role-TP">${{record.display_primary}}</span><span class="badge">A: mass=${{record.features.A_previous_mass.toFixed(3)}} share=${{record.features.A_previous_share.toFixed(3)}} · B: mass=${{record.features.B_previous_mass.toFixed(3)}} share=${{record.features.B_previous_share.toFixed(3)}}</span>`:"";
   const detail=b===3&&h===20?`<a href="head_details/block03_head20/">查看全部Q时刻</a>`:"";
-  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} ${{current}}${{previous}}<span class="badge role-${{f.primary}}">Fixed A: ${{f.display_primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.display_primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.display_primary}}</span><span class="badge">当前协议 Δ=${{record.margin.toFixed(3)}}</span>${{evidence}}${{detail}}</h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
+  const protocolMargin=["fixed_A","moving_A","moving_B"].includes(record.protocol)?`<span class="badge">当前协议 Δ=${{record.margin.toFixed(3)}}</span>`:"";
+  return `<article class="head-card" data-block="${{b}}" data-head="${{h}}"><h2>Block ${{bs}} · Head ${{hs}} ${{stable}}${{disputed}}${{current}}${{previous}}<span class="badge role-${{f.primary}}">Fixed A: ${{f.display_primary}}</span><span class="badge role-${{a.primary}}">Moving A: ${{a.display_primary}}</span><span class="badge role-${{m.primary}}">Moving B: ${{m.display_primary}}</span>${{protocolMargin}}${{evidence}}${{detail}}</h2><div class="placeholder">滚动到此处加载可视化</div></article>`;
 }}
 function cardBody(block,head){{
   const b=String(block).padStart(2,"0"),h=String(head).padStart(2,"0");
@@ -824,20 +839,130 @@ async function renderCard(card,epoch){{
   drawStrip(card.querySelector('[data-kind="stripB"]'),data.fixedB,base,fblo,fbhi,FIXED_B_QUERY_TIME);
 }}
 function renderVisible(){{const epoch=++renderEpoch;for(const card of visibleCards)renderCard(card,epoch);}}
+const CATEGORY_DEFS={{
+  ALL:"全部类别",S:"S · 帧内空间",ST:"ST · 帧内+相邻轨迹",T:"T · 轨迹传播",
+  P:"P · 固定位置",C:"C · 历史/context",G:"G · 全局聚合",TP:"T_prev · 前一时刻轨迹"
+}};
+function allowedCategories(view){{
+  if(view==="all_token")return["S"];
+  if(view==="previous_trajectory")return["TP"];
+  if(view==="disagreement")return["ALL"];
+  return["ALL","S","ST","T","P","C","G"];
+}}
+function configureCategories(preferred){{
+  const allowed=allowedCategories(protocolEl.value),candidate=preferred&&allowed.includes(preferred)?preferred:(allowed.includes(categoryEl.value)?categoryEl.value:allowed[0]);
+  categoryEl.innerHTML=allowed.map(value=>`<option value="${{value}}">${{CATEGORY_DEFS[value]}}</option>`).join("");
+  categoryEl.value=candidate;categoryEl.disabled=allowed.length===1;
+}}
+function sourceRows(view){{
+  if(view==="consistent")return CONSISTENT;
+  if(view==="disagreement")return DISAGREEMENT;
+  return META.roles.filter(row=>row.protocol===view);
+}}
+function updateCategorySummary(rows,category){{
+  const allowed=allowedCategories(protocolEl.value),summary=document.getElementById("categorySummary");
+  summary.innerHTML=allowed.map(value=>{{const count=value==="ALL"?rows.length:rows.filter(row=>row.primary===value).length;return `<button class="summary-chip${{value===category?" active":""}}" data-category="${{value}}">${{CATEGORY_DEFS[value]}} · ${{count}}</button>`;}}).join("");
+  summary.querySelectorAll("button").forEach(button=>button.addEventListener("click",()=>{{categoryEl.value=button.dataset.category;buildGroup();}}));
+}}
 function buildGroup(){{
-  if(observer)observer.disconnect();visibleCards.clear();const protocol=protocolEl.value;
-  if(protocol==="all_token"){{categoryEl.value="S";categoryEl.disabled=true;}}else if(protocol==="previous_trajectory"){{categoryEl.value="TP";categoryEl.disabled=true;}}else{{categoryEl.disabled=false;}}
-  const category=categoryEl.value;
-  const rows=META.roles.filter(x=>x.protocol===protocol&&x.primary===category).sort((a,b)=>(protocol==="previous_trajectory"?Number(b.stable_both)-Number(a.stable_both):0)||b.margin-a.margin||a.block-b.block||a.head-b.head);
-  document.getElementById("count").textContent=`${{rows.length}} 个 Head`;gridEl.innerHTML=rows.map(cardHtml).join("");
+  if(observer)observer.disconnect();visibleCards.clear();const view=protocolEl.value,category=categoryEl.value,allRows=sourceRows(view);let rows=category==="ALL"?[...allRows]:allRows.filter(row=>row.primary===category);
+  const order={{S:0,ST:1,T:2,P:3,C:4,G:5}};
+  rows.sort((a,b)=>view==="previous_trajectory"?(Number(b.stable_both)-Number(a.stable_both)||b.margin-a.margin||a.block-b.block||a.head-b.head):view==="disagreement"?(b.label_count-a.label_count||a.margin-b.margin||a.block-b.block||a.head-b.head):category==="ALL"?((order[a.primary]??99)-(order[b.primary]??99)||b.margin-a.margin||a.block-b.block||a.head-b.head):(b.margin-a.margin||a.block-b.block||a.head-b.head));
+  updateCategorySummary(allRows,category);document.getElementById("count").textContent=`${{rows.length}} / ${{allRows.length}} 个 Head`;gridEl.innerHTML=rows.map(cardHtml).join("");
   observer=new IntersectionObserver(entries=>{{for(const entry of entries){{if(entry.isIntersecting){{visibleCards.add(entry.target);renderCard(entry.target,renderEpoch);}}else visibleCards.delete(entry.target);}}}},{{rootMargin:"800px 0px"}});
   gridEl.querySelectorAll(".head-card").forEach(card=>observer.observe(card));
 }}
 function updateLabels(){{const t=+latentEl.value;phaseEl.max=t===0?0:3;if(+phaseEl.value>+phaseEl.max)phaseEl.value=phaseEl.max;document.getElementById("latentValue").textContent=`t${{t}}`;document.getElementById("phaseValue").textContent=t===0?"frame 0":`${{+phaseEl.value+1}}/4`;}}
-protocolEl.addEventListener("change",buildGroup);categoryEl.addEventListener("change",buildGroup);phaseEl.addEventListener("input",()=>{{updateLabels();renderVisible();}});
-latentEl.addEventListener("input",()=>{{phaseEl.value=+latentEl.value===0?0:3;updateLabels();renderVisible();}});updateLabels();buildGroup();
+protocolEl.addEventListener("change",()=>{{configureCategories(null);buildGroup();}});categoryEl.addEventListener("change",buildGroup);phaseEl.addEventListener("input",()=>{{updateLabels();renderVisible();}});
+latentEl.addEventListener("input",()=>{{phaseEl.value=+latentEl.value===0?0:3;updateLabels();renderVisible();}});configureCategories(requestedCategory);updateLabels();buildGroup();
 </script>
 </body></html>"""
+
+
+def _consistent_distribution_page(metadata: dict[str, Any]) -> str:
+    protocols = ("fixed_A", "moving_A", "moving_B")
+    by_head: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for row in metadata["roles"]:
+        if row["protocol"] not in protocols:
+            continue
+        by_head.setdefault((row["block"], row["head"]), []).append(row)
+    cells = []
+    for block in range(30):
+        for head in range(24):
+            rows = by_head[(block, head)]
+            categories = {row["primary"] for row in rows}
+            consistent = len(categories) == 1
+            cells.append(
+                {
+                    "block": block,
+                    "head": head,
+                    "category": next(iter(categories)) if consistent else None,
+                    "margin": float(np.mean([row["margin"] for row in rows])),
+                    "labels": {
+                        row["protocol"]: row["primary"] for row in rows
+                    },
+                }
+            )
+    payload = json.dumps(cells, ensure_ascii=False, separators=(",", ":"))
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protocol-consistent head distribution</title>
+<style>
+:root{{--bg:#f3f4f1;--ink:#202421;--line:#c9cec9;--accent:#0d7155}}
+*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--ink);font:14px Arial,sans-serif;letter-spacing:0}}
+header{{position:sticky;top:0;z-index:3;padding:12px 18px;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 2px 8px rgba(25,35,29,.08)}}
+h1{{font-size:21px;margin:0 0 5px}} p{{margin:4px 0;line-height:1.4}} a{{color:var(--accent);font-weight:700;text-decoration:none}}
+main{{padding:14px 18px 30px}} section{{margin-bottom:20px}} h2{{font-size:17px;margin:0 0 7px}}
+.filters{{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px}} label{{display:flex;align-items:center;gap:5px;font-weight:700}}
+.swatch{{width:13px;height:13px;border:1px solid #777}} .canvas-wrap{{position:relative;overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:5px;padding:8px}}
+canvas{{display:block;min-width:900px;width:100%;height:auto}} #matrix{{max-width:1120px}} #stacked{{max-width:1120px}}
+#tooltip{{position:fixed;z-index:8;display:none;pointer-events:none;background:#202421;color:#fff;padding:7px 9px;border-radius:4px;line-height:1.45;box-shadow:0 2px 8px rgba(0,0,0,.25)}}
+.summary{{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}} .chip{{padding:4px 7px;border:1px solid var(--line);border-radius:4px;background:#fff;font-weight:700}}
+</style>
+</head>
+<body>
+<header>
+<h1>338个跨协议一致 Head 的 Block 分布</h1>
+<p>矩阵横轴是 Block 00–29，纵轴是 Head 00–23；彩色单元表示 Fixed A、Moving A、Moving B主类别一致，灰色表示不一致。</p>
+<a href="grouped_by_role.html">返回按类别分组页面</a>
+<div class="filters" id="filters"></div>
+</header>
+<main>
+<div class="summary" id="summary"></div>
+<section><h2>Block × Head 定位矩阵</h2><div class="canvas-wrap"><canvas id="matrix" width="930" height="545"></canvas></div></section>
+<section><h2>每个 Block 的一致类别数量</h2><div class="canvas-wrap"><canvas id="stacked" width="930" height="330"></canvas></div></section>
+</main>
+<div id="tooltip"></div>
+<script>
+const CELLS={payload};
+const CATEGORIES=["S","ST","T","P","C","G"];
+const COLORS={{S:"#55a873",ST:"#3e9f91",T:"#4f88b5",P:"#d3ad42",C:"#c57f75",G:"#858b88"}};
+const NAMES={{S:"帧内空间",ST:"帧内+相邻轨迹",T:"轨迹传播",P:"固定位置",C:"历史/context",G:"全局聚合"}};
+const enabled=new Set(CATEGORIES),tooltip=document.getElementById("tooltip");
+const filters=document.getElementById("filters");
+for(const category of CATEGORIES){{const label=document.createElement("label");label.innerHTML=`<input type="checkbox" checked value="${{category}}"><span class="swatch" style="background:${{COLORS[category]}}"></span>${{category}} · ${{NAMES[category]}}`;label.querySelector("input").addEventListener("change",event=>{{event.target.checked?enabled.add(category):enabled.delete(category);draw();}});filters.appendChild(label);}}
+const counts=Object.fromEntries(CATEGORIES.map(category=>[category,CELLS.filter(cell=>cell.category===category).length]));
+document.getElementById("summary").innerHTML=CATEGORIES.map(category=>`<span class="chip"><span style="color:${{COLORS[category]}}">■</span> ${{category}} ${{counts[category]}}</span>`).join("")+`<span class="chip">一致 338 / 720</span>`;
+function drawMatrix(){{
+  const canvas=document.getElementById("matrix"),c=canvas.getContext("2d"),left=48,top=31,cw=28,ch=20;c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle="#fff";c.fillRect(0,0,canvas.width,canvas.height);c.font="10px Arial";c.textAlign="center";c.fillStyle="#333";
+  for(let block=0;block<30;block++)c.fillText(String(block).padStart(2,"0"),left+block*cw+cw/2,18);
+  c.textAlign="right";for(let head=0;head<24;head++)c.fillText(String(head).padStart(2,"0"),left-7,top+head*ch+14);
+  for(const cell of CELLS){{const x=left+cell.block*cw,y=top+cell.head*ch;c.fillStyle=cell.category&&enabled.has(cell.category)?COLORS[cell.category]:"#e2e5e3";c.fillRect(x+1,y+1,cw-2,ch-2);}}
+  c.strokeStyle="#5e6661";c.strokeRect(left,top,30*cw,24*ch);canvas._layout={{left,top,cw,ch}};
+}}
+function drawStacked(){{
+  const canvas=document.getElementById("stacked"),c=canvas.getContext("2d"),left=48,top=20,bottom=42,h=canvas.height-top-bottom,bw=24,gap=4;c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle="#fff";c.fillRect(0,0,canvas.width,canvas.height);c.strokeStyle="#c9cec9";c.font="10px Arial";c.textAlign="right";
+  for(let n=0;n<=24;n+=6){{const y=top+h-h*n/24;c.beginPath();c.moveTo(left,y);c.lineTo(left+30*(bw+gap),y);c.stroke();c.fillStyle="#444";c.fillText(String(n),left-7,y+3);}}
+  c.textAlign="center";for(let block=0;block<30;block++){{let used=0;for(const category of CATEGORIES){{if(!enabled.has(category))continue;const value=CELLS.filter(cell=>cell.block===block&&cell.category===category).length;c.fillStyle=COLORS[category];const bh=h*value/24;c.fillRect(left+block*(bw+gap),top+h-used-bh,bw,bh);used+=bh;}}c.fillStyle="#333";c.fillText(String(block).padStart(2,"0"),left+block*(bw+gap)+bw/2,canvas.height-20);}}
+}}
+function draw(){{drawMatrix();drawStacked();}}
+document.getElementById("matrix").addEventListener("mousemove",event=>{{const canvas=event.currentTarget,r=canvas.getBoundingClientRect(),sx=canvas.width/r.width,sy=canvas.height/r.height,{{left,top,cw,ch}}=canvas._layout,x=(event.clientX-r.left)*sx,y=(event.clientY-r.top)*sy,block=Math.floor((x-left)/cw),head=Math.floor((y-top)/ch);if(block<0||block>=30||head<0||head>=24){{tooltip.style.display="none";return;}}const cell=CELLS.find(value=>value.block===block&&value.head===head);tooltip.innerHTML=cell.category?`Block ${{String(block).padStart(2,"0")}} · Head ${{String(head).padStart(2,"0")}}<br>一致类别：${{cell.category}} · ${{NAMES[cell.category]}}<br>三协议平均分差：${{cell.margin.toFixed(3)}}`:`Block ${{String(block).padStart(2,"0")}} · Head ${{String(head).padStart(2,"0")}}<br>协议不一致：Fixed ${{cell.labels.fixed_A}} / Moving A ${{cell.labels.moving_A}} / Moving B ${{cell.labels.moving_B}}`;tooltip.style.display="block";tooltip.style.left=`${{event.clientX+14}}px`;tooltip.style.top=`${{event.clientY+14}}px`;}});document.getElementById("matrix").addEventListener("mouseleave",()=>tooltip.style.display="none");draw();
+</script>
+</body>
+</html>"""
 
 
 def main() -> None:
@@ -1146,8 +1271,12 @@ def main() -> None:
     (output / "grouped_by_role.html").write_text(
         _grouped_page(metadata), encoding="utf-8"
     )
+    (output / "consistent_heads_distribution.html").write_text(
+        _consistent_distribution_page(metadata), encoding="utf-8"
+    )
     print(f"[gallery] wrote {output / 'index.html'}")
     print(f"[gallery] wrote {output / 'grouped_by_role.html'}")
+    print(f"[gallery] wrote {output / 'consistent_heads_distribution.html'}")
 
 
 if __name__ == "__main__":

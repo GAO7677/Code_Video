@@ -36,6 +36,13 @@ MODEL_LABELS = {
     "physrvg": "PhysRVG",
 }
 ROLE_COLORS = ("#2672B8", "#D1495B", "#2A9D6F", "#E69F3A", "#737B86")
+ROLE_DESCRIPTIONS = {
+    "S": "within-frame spatial",
+    "T": "moving-object trajectory",
+    "P": "fixed-position temporal",
+    "C": "history/context",
+    "G": "global aggregation",
+}
 BLOCK_PATTERN = re.compile(r"block(\d{2})_paired_query_features\.npz$")
 
 
@@ -184,12 +191,19 @@ def plot_model(
         f"{MODEL_LABELS[model]} paired-query head roles | "
         f"{seed_count}/50 complete seeds",
         fontsize=14,
+        y=1.035,
     )
     legend = [
-        Patch(facecolor=color, label=f"{role}: {ROLE_LABELS[role]}")
+        Patch(facecolor=color, label=f"{role}: {ROLE_DESCRIPTIONS[role]}")
         for role, color in zip(ROLES, ROLE_COLORS)
     ]
-    figure.legend(handles=legend, loc="upper center", ncol=5, fontsize=8)
+    figure.legend(
+        handles=legend,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.015),
+        ncol=5,
+        fontsize=8,
+    )
     filename = f"{model}_head_role_statistics.png"
     figure.savefig(output / filename, bbox_inches="tight")
     plt.close(figure)
@@ -330,7 +344,7 @@ def main() -> None:
         },
         "images": images,
         "classification": {
-            "roles": ROLE_LABELS,
+            "roles": ROLE_DESCRIPTIONS,
             "scope": (
                 "relative rank among 24 heads for each "
                 "model/seed/case/block"

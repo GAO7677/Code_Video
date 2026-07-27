@@ -115,6 +115,24 @@ def main() -> None:
     assert metadata["category"] == "T"
     assert metadata["num_targets"] == 2
 
+    grouped_multi = FakeDiT()
+    grouped_multi.blocks[2].self_attn = FakeHeadSelfAttention()
+    metadata = install_grouped_head_ablation(
+        grouped_multi,
+        category="PREV_A",
+        targets=[(2, 0), (2, 2)],
+    )
+    output_multi = grouped_multi.blocks[2].self_attn.o(projection_input)
+    expected_multi = projection_input.reshape(1, 2, 3, 2).clone()
+    expected_multi[..., [0, 2], :] = 0
+    assert torch.equal(
+        output_multi, expected_multi.reshape_as(projection_input)
+    )
+    assert get_dit_head_ablation_call_count(grouped_multi) == 2
+    assert metadata["category"] == "PREV_A"
+    assert metadata["num_targets"] == 2
+    assert metadata["num_target_blocks"] == 1
+
     untouched = FakeDiT()
     metadata = install_dit_ablation(untouched, DiTAblationSpec())
     assert torch.equal(run_block(untouched), baseline)

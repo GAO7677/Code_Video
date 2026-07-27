@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
 
 from configured_head_ablation import (
     load_config,
@@ -131,6 +132,16 @@ def plot_progress(
         axis.set_xticks(np.arange(0, len(heads), 2), heads[::2])
         axis.set_yticks(np.arange(0, len(blocks), 2), blocks[::2])
         axis.tick_params(labelsize=7)
+    figure.legend(
+        handles=[
+            Patch(facecolor="#e7eaee", label="Pending"),
+            Patch(facecolor="#2a9d6f", label="Complete"),
+            Patch(facecolor="#d1495b", label="Failed attempt; awaiting retry"),
+        ],
+        loc="upper center",
+        ncol=3,
+        fontsize=8,
+    )
     filename = "generation_progress.png"
     figure.savefig(output / filename, bbox_inches="tight")
     plt.close(figure)
@@ -153,13 +164,18 @@ def load_metric_data(
     models: list[str],
     blocks: list[int],
     heads: list[int],
+    expected_cases: int,
 ) -> tuple[list[str], dict[str, dict[str, list[list[float | None]]]]]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     metric_keys = [
         key
         for key in METRIC_LABELS
-        if any(row.get(key, "") not in ("", "0.0") for row in rows)
+        if any(
+            int(float(row.get(key.removesuffix("_mean") + "_count", 0) or 0))
+            == expected_cases
+            for row in rows
+        )
     ]
     data = {
         model: {
@@ -184,6 +200,13 @@ def load_metric_data(
         if block not in block_lookup or head not in head_lookup:
             continue
         for metric in metric_keys:
+            count_key = metric.removesuffix("_mean") + "_count"
+            try:
+                count = int(float(row.get(count_key, 0) or 0))
+            except (TypeError, ValueError):
+                continue
+            if count != expected_cases:
+                continue
             raw = row.get(metric, "")
             try:
                 value = float(raw)
@@ -219,7 +242,11 @@ def main() -> None:
     metric_data: dict[str, Any] = {}
     if metric_summary.is_file():
         metric_keys, metric_data = load_metric_data(
-            metric_summary, models, blocks, heads
+            metric_summary,
+            models,
+            blocks,
+            heads,
+            int(config["input"]["expected_unique_cases"]),
         )
     generated_at = datetime.now(timezone.utc).isoformat()
     payload = {
