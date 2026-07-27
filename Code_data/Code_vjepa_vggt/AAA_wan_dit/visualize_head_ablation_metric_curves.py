@@ -229,10 +229,6 @@ def main() -> None:
     completed = completed_jobs(root)
     failed = failed_jobs(root) - completed
     expected = result_config_count(config)
-    progress_image = plot_progress(
-        output, models, blocks, heads, completed, failed
-    )
-
     metric_summary = (
         args.metric_summary.expanduser().resolve()
         if args.metric_summary
@@ -329,11 +325,7 @@ border:1px solid var(--line);padding:12px}} canvas{{width:100%;height:360px;disp
 <header><h1>All-block/all-head test_5 ablation</h1>
 <p>Self-attention head output set to zero, one block/head at a time</p></header>
 <main>
-<p class="status">Generated {html.escape(generated_at)} |
-generation {len(completed)}/{expected} configurations |
-unrecovered failures {len(failed)}</p>
-<section><h2>Generation coverage</h2>
-<img src="{progress_image}" alt="generation progress by model, block and head"></section>
+<p class="status">Metrics updated {html.escape(generated_at)}</p>
 {metric_view}
 </main>
 <script>
