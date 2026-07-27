@@ -430,6 +430,32 @@ def load_case_reference(
     }
 
 
+def discover_metric_plots(root: Path) -> list[dict[str, str | int | None]]:
+    plot_dirs = (
+        root / "_metric_plots" / "current_complete_only",
+        root / "_metric_plots",
+    )
+    for plot_dir in plot_dirs:
+        plots: list[dict[str, str | int | None]] = []
+        for model in ("wan_lora", "xssc", "physrvg"):
+            png_path = plot_dir / f"dit_ablation_{model}_all_metrics.png"
+            if not png_path.is_file():
+                continue
+            pdf_path = plot_dir / f"dit_ablation_{model}_all_metrics.pdf"
+            plots.append(
+                {
+                    "model": model,
+                    "label": MODEL_LABELS[model],
+                    "png": relative(png_path, root),
+                    "pdf": relative(pdf_path, root) if pdf_path.is_file() else None,
+                    "version": png_path.stat().st_mtime_ns,
+                }
+            )
+        if plots:
+            return plots
+    return []
+
+
 def build_manifest(
     root: Path,
     output_dir: Path,
@@ -507,6 +533,7 @@ def build_manifest(
         "root": str(root),
         "num_cases": len(cases),
         "num_methods": len(methods),
+        "metric_plots": discover_metric_plots(root),
         "metrics": [
             {
                 "key": metric.key,
@@ -710,6 +737,83 @@ INDEX_HTML = """<!doctype html>
       object-fit: contain;
       background: #0b0f0d;
     }
+    .metric-plots {
+      margin-top: 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .metric-plots[hidden] { display: none; }
+    .metric-plots-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .metric-plots-head h3 { margin: 0; font-size: 15px; }
+    .metric-plots-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .metric-plot-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .metric-plot-tab {
+      min-height: 30px;
+      padding: 5px 9px;
+      color: #34463d;
+      background: #eef3f0;
+      border: 1px solid #b9c8c0;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .metric-plot-tab[aria-selected="true"] {
+      color: #fff;
+      background: var(--green);
+      border-color: var(--green);
+    }
+    .metric-plot-view {
+      margin: 0;
+      padding: 12px;
+    }
+    .metric-plot-image-link {
+      display: block;
+      background: #f8faf9;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .metric-plot-image {
+      display: block;
+      width: 100%;
+      max-height: 78vh;
+      object-fit: contain;
+      background: #fff;
+    }
+    .metric-plot-caption {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 34px;
+      padding-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .metric-plot-caption a {
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: none;
+    }
     .metric-summary {
       margin-top: 18px;
       background: var(--surface);
@@ -817,6 +921,7 @@ INDEX_HTML = """<!doctype html>
       .case-summary { grid-template-columns: 1fr; }
       .reference { grid-template-columns: 1fr; }
       .method-grid { grid-template-columns: 1fr; }
+      .metric-plots-head { align-items: flex-start; flex-direction: column; }
       .page { padding: 14px 12px 28px; }
     }
   </style>
@@ -849,12 +954,14 @@ INDEX_HTML = """<!doctype html>
     </section>
     <section class="reference" id="reference"></section>
     <div class="groups" id="groups"></div>
+    <section class="metric-plots" id="metricPlots" hidden></section>
     <section class="metric-summary" id="metricSummary"></section>
   </main>
   <script>
     const state = { manifest: null, caseIndex: 0, filteredIndices: [] };
     const select = document.getElementById("caseSelect");
     const groupsRoot = document.getElementById("groups");
+    const metricPlotsRoot = document.getElementById("metricPlots");
     const search = document.getElementById("caseSearch");
 
     function addText(parent, tag, className, value) {
@@ -879,6 +986,82 @@ INDEX_HTML = """<!doctype html>
       });
       state.caseIndex = Math.min(state.caseIndex, Math.max(0, state.filteredIndices.length - 1));
       select.value = String(state.caseIndex);
+    }
+
+    function renderMetricPlots() {
+      const plots = Array.isArray(state.manifest.metric_plots)
+        ? state.manifest.metric_plots
+        : [];
+      metricPlotsRoot.replaceChildren();
+      metricPlotsRoot.hidden = plots.length === 0;
+      if (!plots.length) return;
+
+      const head = document.createElement("div");
+      head.className = "metric-plots-head";
+      const title = document.createElement("div");
+      addText(title, "h3", "", "Aggregate metric curves");
+      addText(title, "p", "", "67-case means · only complete metric points");
+      head.appendChild(title);
+      const tabs = document.createElement("div");
+      tabs.className = "metric-plot-tabs";
+      tabs.setAttribute("role", "tablist");
+      head.appendChild(tabs);
+      metricPlotsRoot.appendChild(head);
+
+      const viewport = document.createElement("div");
+      metricPlotsRoot.appendChild(viewport);
+      const buttons = [];
+
+      function activatePlot(index) {
+        buttons.forEach((button, buttonIndex) => {
+          button.setAttribute(
+            "aria-selected",
+            buttonIndex === index ? "true" : "false"
+          );
+        });
+        viewport.replaceChildren();
+        const plot = plots[index];
+        const figure = document.createElement("figure");
+        figure.className = "metric-plot-view";
+        const imageLink = document.createElement("a");
+        imageLink.className = "metric-plot-image-link";
+        imageLink.href = `../${plot.png}?v=${plot.version}`;
+        imageLink.target = "_blank";
+        imageLink.rel = "noreferrer";
+        const image = document.createElement("img");
+        image.className = "metric-plot-image";
+        image.src = imageLink.href;
+        image.alt = `${plot.label} aggregate metric curves`;
+        image.loading = "lazy";
+        imageLink.appendChild(image);
+        figure.appendChild(imageLink);
+        const caption = document.createElement("figcaption");
+        caption.className = "metric-plot-caption";
+        addText(caption, "span", "", `${plot.label} · 67-case aggregate`);
+        if (plot.pdf) {
+          const pdfLink = document.createElement("a");
+          pdfLink.href = `../${plot.pdf}?v=${plot.version}`;
+          pdfLink.target = "_blank";
+          pdfLink.rel = "noreferrer";
+          pdfLink.textContent = "PDF";
+          caption.appendChild(pdfLink);
+        }
+        figure.appendChild(caption);
+        viewport.appendChild(figure);
+      }
+
+      plots.forEach((plot, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "metric-plot-tab";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", index === 0 ? "true" : "false");
+        button.textContent = plot.label;
+        button.addEventListener("click", () => activatePlot(index));
+        buttons.push(button);
+        tabs.appendChild(button);
+      });
+      activatePlot(0);
     }
 
     function renderCase() {
@@ -1082,6 +1265,7 @@ INDEX_HTML = """<!doctype html>
         if (hashMatch) state.caseIndex = Math.max(0, Math.min(manifest.num_cases - 1, Number(hashMatch[1]) - 1));
         document.getElementById("datasetSummary").textContent =
           `${manifest.num_cases} cases · ${manifest.num_methods} methods · grouped by shared input`;
+        renderMetricPlots();
         renderSelector();
         renderCase();
       });

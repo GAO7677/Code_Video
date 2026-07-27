@@ -240,6 +240,7 @@ def _run_task(
     model: str,
     seed: int,
     gpu: int,
+    gpu_memory_threshold_mib: int,
     input_list: Path,
     root: Path,
     expected_cases: int,
@@ -274,6 +275,7 @@ def _run_task(
 
     pass1_videos = _video_map(pass1_root / "generated" / model, cases)
     if len(pass1_videos) != expected_cases:
+        _wait_for_gpu(gpu, gpu_memory_threshold_mib)
         _run_inference_batch(
             model=model,
             seed=seed,
@@ -294,6 +296,7 @@ def _run_task(
 
     query_map_path = query_root / "query_map.json"
     if _query_case_count(query_map_path) != expected_cases:
+        _wait_for_gpu(gpu, gpu_memory_threshold_mib)
         _run_locator(
             model=model,
             gpu=gpu,
@@ -307,6 +310,7 @@ def _run_task(
 
     expected_packages = expected_cases * 30
     if _capture_count(capture_root, model) != expected_packages:
+        _wait_for_gpu(gpu, gpu_memory_threshold_mib)
         _run_inference_batch(
             model=model,
             seed=seed,
@@ -413,6 +417,7 @@ def main() -> None:
         model=worker_model,
         seed=seeds[0],
         gpu=args.gpu,
+        gpu_memory_threshold_mib=args.gpu_memory_threshold_mib,
         input_list=smoke_input,
         root=root / "preflight",
         expected_cases=1,
@@ -427,6 +432,7 @@ def main() -> None:
                 model=model,
                 seed=seed,
                 gpu=args.gpu,
+                gpu_memory_threshold_mib=args.gpu_memory_threshold_mib,
                 input_list=full_input,
                 root=root,
                 expected_cases=20,
