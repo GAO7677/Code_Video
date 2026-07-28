@@ -43,10 +43,10 @@ figure{margin:0}figcaption{padding-top:4px;color:var(--muted)}.target-count{disp
 <script>
 const SEED="851";
 const GROUPS=[
- {title:"S-all",note:"全部公共稳定空间局部 Head",variants:["baseline","S","S_steps00_10","S_steps00_15","S_steps05_10","S_steps05_15","S_steps10_20","S_steps20_30","S_steps30_40"]},
- {title:"T-all",note:"全部公共稳定运动轨迹 Head",variants:["baseline","T","T_steps00_10","T_steps00_15","T_steps05_10","T_steps05_15","T_steps10_20","T_steps20_30","T_steps30_40"]},
+ {title:"S-all",note:"全部公共稳定空间局部 Head",variants:["baseline","S","S_steps00_05","S_steps00_10","S_steps00_15","S_steps05_10","S_steps05_15","S_steps10_20","S_steps20_30","S_steps30_40"]},
+ {title:"T-all",note:"全部公共稳定运动轨迹 Head",variants:["baseline","T","T_steps00_05","T_steps00_10","T_steps00_15","T_steps05_10","T_steps05_15","T_steps10_20","T_steps20_30","T_steps30_40"]},
  {title:"P-all",note:"全部公共稳定固定位置时序 Head",variants:["baseline","P","P_steps00_10","P_steps10_20","P_steps20_30","P_steps30_40"]},
- {title:"C-all",note:"全部公共稳定上下文/历史 Head",variants:["baseline","C","C_steps00_10","C_steps00_15","C_steps05_10","C_steps05_15","C_steps10_20","C_steps20_30","C_steps30_40"]},
+ {title:"C-all",note:"全部公共稳定上下文/历史 Head",variants:["baseline","C","C_steps00_05","C_steps00_10","C_steps00_15","C_steps05_10","C_steps05_15","C_steps10_20","C_steps20_30","C_steps30_40"]},
  {title:"G-all",note:"全部公共稳定全局聚合 Head",variants:["baseline","G","G_steps00_10","G_steps10_20","G_steps20_30","G_steps30_40"]},
  {title:"S score 前10",note:"score_S 排名前 10 个公共 Head",variants:["baseline","S_top10","S_top10_steps00_10","S_top10_steps10_20","S_top10_steps20_30","S_top10_steps30_40"]},
  {title:"S score 后10",note:"score_S 排名后 10 个公共 Head",variants:["baseline","S_bottom10","S_bottom10_steps00_10","S_bottom10_steps10_20","S_bottom10_steps20_30","S_bottom10_steps30_40"]}

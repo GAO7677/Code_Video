@@ -11,6 +11,8 @@ from typing import Any
 
 MODELS = ("wan_lora", "xssc", "physrvg")
 ROLES = ("S", "T", "P", "C", "G")
+ROLE_GROUPS = {"ST": ("S", "T")}
+ROLE_CHOICES = (*ROLES, *ROLE_GROUPS)
 EXPECTED_COUNTS = {"S": 159, "T": 13, "P": 82, "C": 20, "G": 75}
 EXPECTED_BLOCKS = 30
 EXPECTED_HEADS = 24
@@ -89,7 +91,26 @@ def targets_for_role(
     role: str,
 ) -> tuple[list[tuple[int, int]], dict[str, Any]]:
     normalized = role.strip().upper()
-    if normalized not in ROLES:
-        raise ValueError(f"Unknown role {role!r}; expected one of {ROLES}")
+    if normalized not in ROLE_CHOICES:
+        raise ValueError(f"Unknown role {role!r}; expected one of {ROLE_CHOICES}")
     targets, source = load_public_head_targets(report_path)
-    return targets[normalized], source
+    selected_roles = ROLE_GROUPS.get(normalized, (normalized,))
+    selected = sorted(
+        target
+        for selected_role in selected_roles
+        for target in targets[selected_role]
+    )
+    if len(selected) != len(set(selected)):
+        raise RuntimeError(f"Role group {normalized} contains duplicate Head targets")
+    source = {
+        **source,
+        "requested_role": normalized,
+        "selected_roles": list(selected_roles),
+        "selected_role_counts": {
+            selected_role: len(targets[selected_role])
+            for selected_role in selected_roles
+        },
+        "selected_target_count": len(selected),
+        "selection_is_union": len(selected_roles) > 1,
+    }
+    return selected, source

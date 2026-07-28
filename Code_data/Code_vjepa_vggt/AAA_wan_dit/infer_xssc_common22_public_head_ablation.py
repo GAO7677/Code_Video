@@ -10,7 +10,7 @@ from pathlib import Path
 
 from code_vjepa_vggt.train_xSSC import infer_xssc_context_slots as base
 
-from common22_public_head_targets import ROLES, targets_for_role
+from common22_public_head_targets import ROLE_CHOICES, targets_for_role
 from score_extreme_head_targets import GROUPS, targets_for_score_group
 from dit_ablation import (
     annotate_result_files,
@@ -25,7 +25,7 @@ def _extract_args(
 ) -> tuple[str, list[tuple[int, int]], dict, tuple[int, int] | None, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--public-head-report", type=Path)
-    parser.add_argument("--public-head-role", choices=ROLES)
+    parser.add_argument("--public-head-role", choices=ROLE_CHOICES)
     parser.add_argument("--score-extreme-selection", type=Path)
     parser.add_argument("--score-extreme-group", choices=GROUPS)
     parser.add_argument("--ablation-step-start", type=int)

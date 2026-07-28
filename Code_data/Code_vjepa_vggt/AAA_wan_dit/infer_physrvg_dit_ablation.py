@@ -11,7 +11,7 @@ from pathlib import Path
 from accelerate.utils import set_seed
 
 from common22_public_head_targets import (
-    ROLES as PUBLIC_HEAD_ROLES,
+    ROLE_CHOICES as PUBLIC_HEAD_ROLES,
     targets_for_role as public_targets_for_role,
 )
 from score_extreme_head_targets import GROUPS, targets_for_score_group

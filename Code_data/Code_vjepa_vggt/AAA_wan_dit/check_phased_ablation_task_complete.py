@@ -11,7 +11,8 @@ from typing import Any
 
 
 VARIANT_PATTERN = re.compile(
-    r"^[STPCG](?:_(?:top|bottom)10)?_steps(?P<start>\d{2})_(?P<end>\d{2})$"
+    r"^(?:ST|[STPCG])(?:_(?:top|bottom)10)?"
+    r"_steps(?P<start>\d{2})_(?P<end>\d{2})$"
 )
 
 

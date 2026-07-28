@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the S/T/C phased all-Head comparison page for six seeds."""
+"""Build the S/T/C/S+T phased all-Head comparison page for six seeds."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ OUTPUT = GALLERY_ROOT / "stc-phased" / "index.html"
 HTML = r"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>S/T/C All-Head 分阶段消融</title>
+<title>S+T 联合与单独 Head 分阶段消融</title>
 <style>
 :root{color-scheme:dark;--bg:#121416;--line:#343a40;--muted:#a4abb3;--accent:#55b8a6}
 *{box-sizing:border-box}body{margin:0;padding-bottom:58px;background:var(--bg);color:#f3f5f7;font:14px/1.45 system-ui,sans-serif}
@@ -34,18 +34,28 @@ video{display:block;width:100%;aspect-ratio:7/4;background:#000}.missing{display
 figure{margin:0}figcaption{padding-top:4px;color:var(--muted)}.target-count{display:block;color:var(--muted);font-weight:400}
 @media(max-width:900px){.refs{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1>S/T/C All-Head 分阶段消融</h1>
-<p class="sub">每个类别单独成组；每行一个模型，每列为 Baseline 或一个去噪区间。所有区间均为半开区间。</p>
+<header><h1>S+T 联合与单独 Head 分阶段消融</h1>
+<p class="sub">每个去噪区间单独成组；每行一个模型，并列比较 Baseline、S-only、T-only 与 S+T。所有区间均为半开区间。</p>
 <div class="toolbar"><label>Seed <select id="seed"></select></label><button id="refresh" type="button">立即刷新</button><span class="status" id="status">读取中</span><span class="sub" id="updated"></span></div>
 </header><main><p class="sub" id="prompt"></p><div class="refs" id="refs"></div><div id="groups"></div></main>
 <div class="playbar"><button id="play-all" type="button">全部播放</button><button id="replay-all" type="button">从头播放</button><button id="pause-all" type="button">全部暂停</button><button id="reset-all" type="button">回到开头</button><input id="timeline" type="range" min="0" max="1000" value="0" aria-label="统一播放进度"><span class="playbar-time" id="play-time">00:00 / 00:00</span></div>
 <script>
 const SEEDS=["851","3278","11395","20379","28221","32098"];
-const GROUPS=[
- {title:"S-all",note:"全部公共稳定空间局部 Head",variants:["baseline","S_steps00_10","S_steps00_15","S_steps05_10","S_steps05_15","S_steps10_20","S_steps20_30","S_steps30_40"]},
- {title:"T-all",note:"全部公共稳定运动轨迹 Head",variants:["baseline","T_steps00_10","T_steps00_15","T_steps05_10","T_steps05_15","T_steps10_20","T_steps20_30","T_steps30_40"]},
- {title:"C-all",note:"全部公共稳定上下文/历史 Head",variants:["baseline","C_steps00_10","C_steps00_15","C_steps05_10","C_steps05_15","C_steps10_20","C_steps20_30","C_steps30_40"]}
+const PHASES=[
+ ["00_05","去噪步骤 [0,5)"],
+ ["05_10","去噪步骤 [5,10)"],
+ ["05_15","去噪步骤 [5,15)"],
+ ["00_10","去噪步骤 [0,10)"],
+ ["00_15","去噪步骤 [0,15)"],
+ ["10_20","去噪步骤 [10,20)"],
+ ["20_30","去噪步骤 [20,30)"],
+ ["30_40","去噪步骤 [30,40)"]
 ];
+const GROUPS=PHASES.map(([phase,title])=>({
+ title,
+ note:"S-only / T-only / S+T 使用同一 seed、模型与推理配置",
+ variants:["baseline",`S_steps${phase}`,`T_steps${phase}`,`ST_steps${phase}`]
+}));
 let DATA=null,seeking=false;
 const q=id=>document.getElementById(id);
 const media=src=>src?`../${src}`:null;
