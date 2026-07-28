@@ -13,6 +13,7 @@ from typing import Any
 
 import pandas as pd
 
+from common22_public_head_targets import load_public_head_targets
 from summarize_stc_bench_metrics import METRICS
 
 
@@ -170,6 +171,37 @@ def metric_score_map(
     return result
 
 
+def build_head_distribution(report_path: Path) -> dict[str, Any]:
+    targets, source = load_public_head_targets(report_path)
+    role_targets = {
+        "S": sorted(targets["S"]),
+        "T": sorted(targets["T"]),
+    }
+    role_targets["ST"] = sorted(role_targets["S"] + role_targets["T"])
+    roles = {}
+    for role, values in role_targets.items():
+        roles[role] = {
+            "total": len(values),
+            "blocks": [
+                {
+                    "block": block,
+                    "heads": [
+                        head
+                        for target_block, head in values
+                        if target_block == block
+                    ],
+                }
+                for block in range(30)
+            ],
+        }
+    return {
+        "selection": source["selection"],
+        "source_path": source["path"],
+        "source_sha256": source["sha256"],
+        "roles": roles,
+    }
+
+
 def case_page(case_id: str) -> str:
     title = html.escape(case_id)
     return f"""<!doctype html>
@@ -181,6 +213,7 @@ def case_page(case_id: str) -> str:
 *{{box-sizing:border-box}}body{{margin:0;padding-bottom:62px;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif}}
 header{{position:sticky;top:0;z-index:5;padding:12px 18px;background:#111416f2;border-bottom:1px solid var(--line)}}
 .top{{display:flex;gap:14px;align-items:center;justify-content:space-between}}.case-picker{{display:flex;gap:8px;align-items:center;min-width:0;flex:1}}.case-picker label{{font-weight:750}}select{{min-width:260px;max-width:760px;width:70%;padding:7px 9px;border:1px solid var(--line);background:#24292d;color:var(--text)}}
+.hub{{color:var(--accent);text-decoration:none;font-weight:750;white-space:nowrap}}
 h1,h2,h3,p{{margin:0}}h1{{margin-top:7px;font-size:18px;overflow-wrap:anywhere}}h2{{font-size:17px;margin:22px 0 8px}}h3{{font-size:14px}}
 .prompt{{margin-top:6px;color:var(--muted)}}.status{{white-space:nowrap;color:var(--accent);font-weight:700}}
 main{{padding:14px 18px}}.references{{display:grid;grid-template-columns:repeat(2,minmax(280px,448px));gap:10px}}
@@ -194,12 +227,19 @@ figcaption{{padding-top:4px;color:var(--muted)}}.missing{{display:grid;place-ite
 .metric-item{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 5px;padding:3px 4px;border:1px solid #2c3237;background:#14181a;font-size:10px;line-height:1.25}}
 .metric-item span{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c4cbd0}}.metric-item strong{{font-variant-numeric:tabular-nums}}
 .metric-item small{{grid-column:1/-1;color:#7f898f;font-variant-numeric:tabular-nums}}.metric-item.good strong{{color:var(--good)}}.metric-item.bad strong{{color:var(--bad)}}.metric-item.pending strong{{color:var(--pending)}}
+.head-section{{margin:20px 0 10px;padding-top:4px;border-top:1px solid var(--line)}}.head-summary{{color:var(--muted);margin-bottom:8px}}
+.head-map-wrap{{overflow:auto;border:1px solid var(--line)}}.head-map{{min-width:1120px;table-layout:fixed;font-size:10px}}
+.head-map th,.head-map td{{padding:4px 2px;text-align:center}}.head-map th:first-child{{width:92px;text-align:left;position:sticky;left:0;z-index:2;background:#20252a}}
+.head-map td{{height:34px;font-variant-numeric:tabular-nums}}.head-map .block-label{{font-size:9px;color:var(--muted)}}
+.head-details{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}}.head-detail{{min-width:0}}
+.head-blocks{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px}}.head-block{{padding:4px 6px;background:#171b1e;border:1px solid #2c3237;font-size:10px;color:#aeb7bd;overflow-wrap:anywhere}}
+.head-block b{{color:#fff}}
 .playbar{{position:fixed;z-index:8;left:0;right:0;bottom:0;display:grid;grid-template-columns:auto auto auto minmax(180px,1fr) auto;gap:8px;align-items:center;padding:9px 18px;background:#171a1df2;border-top:1px solid var(--line)}}
 button{{border:1px solid var(--line);background:#24292d;color:#fff;padding:6px 10px;cursor:pointer}}input{{width:100%;accent-color:var(--accent)}}.time{{min-width:92px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}}
-@media(max-width:900px){{.references{{grid-template-columns:1fr}}.model-section{{overflow-x:auto}}table{{min-width:980px}}}}
+@media(max-width:900px){{.references{{grid-template-columns:1fr}}.model-section{{overflow-x:auto}}table{{min-width:980px}}.head-map{{min-width:1120px}}.head-details{{grid-template-columns:1fr}}.head-blocks{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 </style></head><body>
-<header><div class="top"><div class="case-picker"><label for="case-select">Case</label><select id="case-select"><option>{title}</option></select></div><span class="status" id="status">读取中</span></div><h1 id="title">{title}</h1><p class="prompt" id="prompt"></p></header>
-<main><h2>Reference</h2><div class="references" id="references"></div><p class="metric-note">每个消融视频下方显示17项指标相对同模型、同source baseline 的变化。绿色表示改善，红色表示下降；WMReward surprise 越低越好。Baseline 卡片显示原始基准分数。</p><div id="models"></div></main>
+<header><div class="top"><div class="case-picker"><label for="case-select">Case</label><select id="case-select"><option>{title}</option></select></div><a class="hub" href="../../../visualizations/">可视化总入口</a><span class="status" id="status">读取中</span></div><h1 id="title">{title}</h1><p class="prompt" id="prompt"></p></header>
+<main><h2>Reference</h2><div class="references" id="references"></div><section class="head-section"><h2>消融 Head 的 Block 分布</h2><div id="head-distribution"></div></section><p class="metric-note">每个消融视频下方显示17项指标相对同模型、同source baseline 的变化。绿色表示改善，红色表示下降；WMReward surprise 越低越好。Baseline 卡片显示原始基准分数。</p><div id="models"></div></main>
 <div class="playbar"><button id="play" type="button">全部播放</button><button id="replay" type="button">重新播放</button><button id="pause" type="button">暂停</button><input id="timeline" type="range" min="0" max="1000" value="0"><span class="time" id="time">00:00 / 00:00</span></div>
 <script>
 let DATA=null,seeking=false;
@@ -227,10 +267,32 @@ function metricPanel(model,scores,isBaseline){{
 function resultCard(model,src,label,scores,isBaseline=false){{
  return src?`<figure><video muted playsinline preload="metadata" src="${{src}}"></video><figcaption>${{label}}</figcaption>${{metricPanel(model,scores,isBaseline)}}</figure>`:`<div class="missing">Pending</div>`;
 }}
+function headDistribution(){{
+ const colors={{S:[38,151,133],T:[213,142,42],ST:[71,126,185]}};
+ const roles=["S","T","ST"],all=roles.flatMap(role=>DATA.head_distribution.roles[role].blocks);
+ const maxCount=Math.max(...all.map(item=>item.heads.length),1);
+ const headers=Array.from({{length:30}},(_,block)=>`<th class="block-label">B${{String(block).padStart(2,"0")}}</th>`).join("");
+ const rows=roles.map(role=>{{
+  const item=DATA.head_distribution.roles[role],rgb=colors[role];
+  const cells=item.blocks.map(block=>{{
+   const count=block.heads.length,alpha=count?0.18+0.72*count/maxCount:0.04;
+   const heads=block.heads.map(head=>`H${{String(head).padStart(2,"0")}}`).join(", ")||"none";
+   return `<td style="background:rgba(${{rgb.join(",")}},${{alpha.toFixed(3)}})" title="B${{String(block.block).padStart(2,"0")}} · ${{role}} · ${{heads}}">${{count}}</td>`;
+  }}).join("");
+  return `<tr><th>${{role}} · ${{item.total}} Heads</th>${{cells}}</tr>`;
+ }}).join("");
+ const details=["S","T"].map(role=>{{
+  const item=DATA.head_distribution.roles[role];
+  const blocks=item.blocks.filter(block=>block.heads.length).map(block=>`<div class="head-block"><b>B${{String(block.block).padStart(2,"0")}}</b> ${{block.heads.map(head=>`H${{String(head).padStart(2,"0")}}`).join(", ")}}</div>`).join("");
+  return `<section class="head-detail"><h3>${{role}} 类 · ${{item.total}} Heads</h3><div class="head-blocks">${{blocks}}</div></section>`;
+ }}).join("");
+ return `<p class="head-summary">S、T是三个模型中角色一致的公共稳定Head；ST是S∪T，共${{DATA.head_distribution.roles.ST.total}}个，不是第三套独立分类。矩阵数字是每个block中的Head数量，悬停可查看Head ID。</p><div class="head-map-wrap"><table class="head-map"><thead><tr><th>类别</th>${{headers}}</tr></thead><tbody>${{rows}}</tbody></table></div><div class="head-details">${{details}}</div>`;
+}}
 function render(){{
  q("title").textContent=DATA.id;q("prompt").textContent=DATA.prompt||"";
  q("case-select").value=DATA.id;
  q("references").innerHTML=media(DATA.references.source,"Source / GT")+media(DATA.references.context,"8-frame context");
+ q("head-distribution").innerHTML=headDistribution();
  q("models").innerHTML=DATA.models.map(m=>{{
   const rows=DATA.roles.map((r,index)=>`<tr><th>${{DATA.role_names[r]}}</th>${{index===0?`<td class="baseline-cell" rowspan="${{DATA.roles.length}}">${{resultCard(m,DATA.videos.baseline[m],"Baseline · 无消融",DATA.metric_scores.baseline[m],true)}}</td>`:""}}${{DATA.stages.map(stage=>`<td>${{resultCard(m,DATA.videos.stages[stage.key][m][r],stage.label,DATA.metric_scores.stages[stage.key][m][r])}}</td>`).join("")}}</tr>`).join("");
   return `<section class="model-section"><div class="model-banner"><h2>${{DATA.model_names[m]}}</h2><span class="seed-badge">SEED 851</span></div><table><thead><tr><th>消融类型</th><th>Baseline</th>${{DATA.stages.map(stage=>`<th>${{stage.label}}</th>`).join("")}}</tr></thead><tbody>${{rows}}</tbody></table></section>`;
@@ -285,6 +347,17 @@ def main() -> None:
     config = json.loads(args.config.expanduser().resolve().read_text(encoding="utf-8"))
     output_root = Path(config["storage"]["output_root"]).expanduser().resolve()
     gallery_root = args.gallery_root.expanduser().resolve()
+    head_distribution = build_head_distribution(
+        Path(config["public_head_report"])
+    )
+    expected_report_sha256 = config.get("public_head_report_sha256")
+    if (
+        expected_report_sha256
+        and head_distribution["source_sha256"] != expected_report_sha256
+    ):
+        raise RuntimeError(
+            "Public head report SHA256 differs from the locked config"
+        )
     input_paths = [
         Path(line.strip()).expanduser().resolve()
         for line in Path(config["input_list"]).read_text(encoding="utf-8").splitlines()
@@ -422,6 +495,7 @@ def main() -> None:
             "role_names": ROLE_NAMES,
             "stages": stages,
             "references": references,
+            "head_distribution": head_distribution,
             "videos": videos,
             "metric_definitions": metric_definitions(),
             "metric_scores": metric_scores,
@@ -449,6 +523,7 @@ def main() -> None:
         "models": models,
         "roles": roles,
         "stages": stages,
+        "head_distribution": head_distribution,
         "cases": summaries,
     }
     atomic_write(

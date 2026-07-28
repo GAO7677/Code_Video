@@ -22,6 +22,14 @@ DEFAULT_BATCH_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "wan_dit_common22_test5_st_phased_seed851_bench"
 )
+DEFAULT_BASELINE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "wan_dit_common22_test5_seed851_baseline_bench"
+)
+DEFAULT_GT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "wan_dit_common22_test5_gt49f_896x512_bench"
+)
 DEFAULT_OUTPUT_DIR = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/"
     "gallery/multiseed/seed851/benchmark-metrics/metric-extreme-pairs"
@@ -63,6 +71,12 @@ METRIC_TITLES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-root", type=Path, default=DEFAULT_BATCH_ROOT)
+    parser.add_argument(
+        "--baseline-root",
+        type=Path,
+        default=DEFAULT_BASELINE_ROOT,
+    )
+    parser.add_argument("--gt-root", type=Path, default=DEFAULT_GT_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
 
@@ -177,16 +191,22 @@ def choose_pair(
 
 def build_record(
     batch_root: Path,
+    baseline_root: Path,
+    gt_root: Path,
     output_dir: Path,
     metric_name: str,
     direction: str,
     model: str,
     best: pd.Series,
     worst: pd.Series,
+    baseline: pd.Series,
+    gt: pd.Series,
     gap: float,
 ) -> dict[str, Any]:
     best_meta = read_sidecar(batch_root, str(best["entry_id"]))
     worst_meta = read_sidecar(batch_root, str(worst["entry_id"]))
+    baseline_meta = read_sidecar(baseline_root, str(baseline["entry_id"]))
+    gt_meta = read_sidecar(gt_root, str(gt["entry_id"]))
     if best["case_id"] != worst["case_id"]:
         raise RuntimeError("Extreme pair does not share a source case")
     source_best, prompt_best = resolve_source_metadata(best_meta)
@@ -197,10 +217,15 @@ def build_record(
             f"{source_best} != {source_worst}"
         )
     asset_dir = output_dir / "assets" / metric_name / model
-    source_target = asset_dir / "source.mp4"
+    gt_target = asset_dir / "gt_49f_30fps_896x512.mp4"
+    baseline_target = asset_dir / "baseline.mp4"
     best_target = asset_dir / "metric_best.mp4"
     worst_target = asset_dir / "metric_worst.mp4"
-    ensure_video_link(source_best, source_target)
+    ensure_video_link(Path(str(gt_meta["output_video"])), gt_target)
+    ensure_video_link(
+        Path(str(baseline_meta["output_video"])),
+        baseline_target,
+    )
     ensure_video_link(Path(str(best_meta["output_video"])), best_target)
     ensure_video_link(Path(str(worst_meta["output_video"])), worst_target)
     relative = lambda path: path.relative_to(output_dir).as_posix()
@@ -214,7 +239,19 @@ def build_record(
         "case_id": str(best["case_id"]),
         "prompt": prompt,
         "selection_gap": gap,
-        "source_video": relative(source_target),
+        "source_video_original": str(source_best),
+        "gt": {
+            "entry_id": str(gt["entry_id"]),
+            "method": "GT · 49f @ 30 FPS · 896×512",
+            "video": relative(gt_target),
+            "scores": score_payload(gt),
+        },
+        "baseline": {
+            "entry_id": str(baseline["entry_id"]),
+            "method": f"{MODEL_LABELS[model]} baseline",
+            "video": relative(baseline_target),
+            "scores": score_payload(baseline),
+        },
         "best": {
             "entry_id": str(best["entry_id"]),
             "variant": str(best["variant"]),
@@ -234,8 +271,12 @@ def build_record(
 
 def build_records(
     batch_root: Path,
+    baseline_root: Path,
+    gt_root: Path,
     output_dir: Path,
     frame: pd.DataFrame,
+    baseline_frame: pd.DataFrame,
+    gt_frame: pd.DataFrame,
 ) -> list[dict[str, Any]]:
     records = []
     for metric in METRICS:
@@ -246,15 +287,34 @@ def build_records(
                 metric.name,
                 metric.direction,
             )
+            case_id = str(best["case_id"])
+            baseline_matches = baseline_frame[
+                (baseline_frame["model"] == model)
+                & (baseline_frame["case_id"] == case_id)
+            ]
+            gt_matches = gt_frame[gt_frame["case_id"] == case_id]
+            if len(baseline_matches) != 1:
+                raise RuntimeError(
+                    f"Expected one baseline for {model}/{case_id}, "
+                    f"found {len(baseline_matches)}"
+                )
+            if len(gt_matches) != 1:
+                raise RuntimeError(
+                    f"Expected one GT for {case_id}, found {len(gt_matches)}"
+                )
             records.append(
                 build_record(
                     batch_root,
+                    baseline_root,
+                    gt_root,
                     output_dir,
                     metric.name,
                     metric.direction,
                     model,
                     best,
                     worst,
+                    baseline_matches.iloc[0],
+                    gt_matches.iloc[0],
                     gap,
                 )
             )
@@ -273,6 +333,8 @@ def write_selection_csv(
         "model",
         "case_id",
         "selection_gap",
+        "gt_score",
+        "baseline_score",
         "best_method",
         "best_entry_id",
         "best_score",
@@ -292,6 +354,8 @@ def write_selection_csv(
                     "model": record["model"],
                     "case_id": record["case_id"],
                     "selection_gap": record["selection_gap"],
+                    "gt_score": record["gt"]["scores"][metric],
+                    "baseline_score": record["baseline"]["scores"][metric],
                     "best_method": record["best"]["method"],
                     "best_entry_id": record["best"]["entry_id"],
                     "best_score": record["best"]["scores"][metric],
@@ -341,7 +405,8 @@ def build_html(
     note = method_note or (
         "每个模型内保持 source case 不变，在15种消融中取当前指标判定"
         "最好与最差的视频；再选择分差最大的 source case。标签“较好/较差”"
-        "只代表当前所选指标，不代表综合视觉质量。"
+        "只代表当前所选指标，不代表综合视觉质量。GT 统一为49帧、30 FPS、"
+        "896×512；表格同时列出同 case 的 GT、模型 baseline 和两种消融。"
     )
     all_metrics_link = (
         ' · <a href="index.html">查看全部17项指标</a>'
@@ -365,12 +430,12 @@ select{{min-width:320px}}button{{cursor:pointer}}button:hover{{border-color:var(
 .method-note{{margin:16px 0;padding:10px 12px;border-left:3px solid var(--accent);background:#fff}}
 .model{{padding:17px 0 24px;border-top:1px solid var(--line)}}.model-head{{display:flex;align-items:start;justify-content:space-between;gap:16px;margin-bottom:10px}}
 .identity{{color:var(--muted);overflow-wrap:anywhere}}.gap{{font-weight:700;color:var(--accent)}}
-.videos{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}
+.videos{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}
 figure{{margin:0;min-width:0;background:#fff;border:1px solid var(--line)}}figcaption{{padding:8px 10px;min-height:59px;border-bottom:1px solid var(--line)}}
 figcaption strong,figcaption span{{display:block}}figcaption span{{color:var(--muted);font-size:12px}}
 video{{display:block;width:100%;aspect-ratio:16/9;background:#111;object-fit:contain}}
 .score-table-wrap{{overflow:auto;margin-top:10px;border:1px solid var(--line);background:#fff}}
-table{{border-collapse:collapse;width:100%;min-width:920px}}th,td{{padding:6px 9px;border-bottom:1px solid #e5e9e6;text-align:right}}
+table{{border-collapse:collapse;width:100%;min-width:1100px}}th,td{{padding:6px 9px;border-bottom:1px solid #e5e9e6;text-align:right}}
 th:first-child,td:first-child{{text-align:left}}thead th{{background:#edf1ee}}tr.selected{{background:#fff5d9;font-weight:700}}
 td.winner{{color:var(--good);background:#f1faf5}}td.loser{{color:var(--bad);background:#fff6f4}}
 .direction{{color:var(--muted);font-weight:400}}.download{{margin:18px 0;color:var(--muted)}}
@@ -400,17 +465,19 @@ function render(){{
   const records=data.records.filter(item=>item.metric===metric);
   root.innerHTML=records.map((record,index)=>{{
     const rows=data.metrics.map(item=>{{
+      const gt=record.gt.scores[item.name],base=record.baseline.scores[item.name];
       const a=record.best.scores[item.name],b=record.worst.scores[item.name];
       const classes=scoreClass(a,b,item.direction);
       const raw=a===null||b===null?null:a-b;
-      return `<tr class="${{item.name===metric?'selected':''}}"><td>${{esc(item.title)}} <span class="direction">${{item.direction==='higher'?'↑':'↓'}}</span></td><td class="${{classes[0]}}">${{fmt(a)}}</td><td class="${{classes[1]}}">${{fmt(b)}}</td><td>${{raw===null?'NA':(raw>=0?'+':'')+fmt(raw)}}</td></tr>`;
+      return `<tr class="${{item.name===metric?'selected':''}}"><td>${{esc(item.title)}} <span class="direction">${{item.direction==='higher'?'↑':'↓'}}</span></td><td>${{fmt(gt)}}</td><td>${{fmt(base)}}</td><td class="${{classes[0]}}">${{fmt(a)}}</td><td class="${{classes[1]}}">${{fmt(b)}}</td><td>${{raw===null?'NA':(raw>=0?'+':'')+fmt(raw)}}</td></tr>`;
     }}).join('');
     return `<section class="model"><div class="model-head"><div><h2>${{esc(record.model_label)}}</h2><p class="identity">Source: ${{esc(record.case_id)}}<br>Prompt: ${{esc(record.prompt)}}</p></div><div><span class="gap">${{esc(meta.title)}} 分差 ${{fmt(record.selection_gap)}}</span><br><button type="button" data-play="${{index}}">同步重播本行</button></div></div>
     <div class="videos" data-row="${{index}}">
-    <figure><figcaption><strong>Source / GT</strong><span>相同输入视频</span></figcaption><video controls muted preload="metadata" src="${{esc(record.source_video)}}"></video></figure>
+    <figure><figcaption><strong>GT</strong><span>49f @ 30 FPS · 896×512 · ${{fmt(record.gt.scores[metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(record.gt.video)}}"></video></figure>
+    <figure><figcaption><strong>${{esc(record.model_label)}} baseline</strong><span>未消融 · ${{fmt(record.baseline.scores[metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(record.baseline.video)}}"></video></figure>
     <figure><figcaption><strong>当前指标判定较好</strong><span>${{esc(record.best.method)}} · ${{fmt(record.best.scores[metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(record.best.video)}}"></video></figure>
     <figure><figcaption><strong>当前指标判定较差</strong><span>${{esc(record.worst.method)}} · ${{fmt(record.worst.scores[metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(record.worst.video)}}"></video></figure>
-    </div><div class="score-table-wrap"><table><thead><tr><th>指标</th><th>${{esc(record.best.method)}}</th><th>${{esc(record.worst.method)}}</th><th>较好视频 - 较差视频</th></tr></thead><tbody>${{rows}}</tbody></table></div></section>`;
+    </div><div class="score-table-wrap"><table><thead><tr><th>指标</th><th>GT</th><th>${{esc(record.model_label)}} baseline</th><th>${{esc(record.best.method)}}</th><th>${{esc(record.worst.method)}}</th><th>较好消融 - 较差消融</th></tr></thead><tbody>${{rows}}</tbody></table></div></section>`;
   }}).join('');
   document.querySelectorAll('[data-play]').forEach(button=>button.addEventListener('click',()=>{{
     const videos=document.querySelector(`[data-row="${{button.dataset.play}}"]`).querySelectorAll('video');
@@ -425,12 +492,30 @@ select.addEventListener('change',render);render();
 def main() -> None:
     args = parse_args()
     batch_root = args.batch_root.expanduser().resolve()
+    baseline_root = args.baseline_root.expanduser().resolve()
+    gt_root = args.gt_root.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     frame = add_case_ids(
         pd.read_csv(batch_root / "analysis" / "per_video_metrics.csv")
     )
+    baseline_frame = add_case_ids(
+        pd.read_csv(
+            baseline_root / "analysis" / "per_video_metrics.csv"
+        )
+    )
+    gt_frame = add_case_ids(
+        pd.read_csv(gt_root / "analysis" / "per_video_metrics.csv")
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    records = build_records(batch_root, output_dir, frame)
+    records = build_records(
+        batch_root,
+        baseline_root,
+        gt_root,
+        output_dir,
+        frame,
+        baseline_frame,
+        gt_frame,
+    )
     atomic_text(
         output_dir / "extreme_pair_selection.json",
         json.dumps(records, ensure_ascii=False, indent=2),
@@ -457,6 +542,7 @@ def main() -> None:
                 "分别针对 Physics-IQ 与 PMF 的 with/without context 分数，"
                 "在每个模型内固定 source，选择15种消融中分差最大的最好/最差"
                 "视频。两类指标量纲不同，不直接相减；标签只代表当前所选指标。"
+                "GT 统一为49帧、30 FPS、896×512，并与模型 baseline 一起列出。"
             ),
             selection_filename="physics_iq_pmf_extreme_pair_selection.csv",
             selection_label="下载12组选择清单",
