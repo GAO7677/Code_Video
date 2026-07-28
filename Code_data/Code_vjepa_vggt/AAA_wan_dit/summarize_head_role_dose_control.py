@@ -95,18 +95,39 @@ def bootstrap_case_mean(
     *,
     samples: int,
     rng: np.random.Generator,
-) -> tuple[float, float, float, int, int]:
+) -> tuple[float, float, float, int, int, float]:
     clean = frame[["case_id", value_column]].dropna()
     if clean.empty:
-        return (float("nan"),) * 3 + (0, 0)
+        return (float("nan"),) * 3 + (0, 0, float("nan"))
     case_values = clean.groupby("case_id")[value_column].mean().to_numpy(float)
     estimate = float(case_values.mean())
     if len(case_values) == 1:
-        return estimate, estimate, estimate, len(clean), 1
+        return estimate, estimate, estimate, len(clean), 1, float("nan")
     draws = rng.choice(case_values, size=(samples, len(case_values)), replace=True)
     boot = draws.mean(axis=1)
     low, high = np.quantile(boot, [0.025, 0.975])
-    return estimate, float(low), float(high), len(clean), len(case_values)
+    lower_tail = (np.count_nonzero(boot <= 0) + 1) / (len(boot) + 1)
+    upper_tail = (np.count_nonzero(boot >= 0) + 1) / (len(boot) + 1)
+    p_value = min(1.0, 2.0 * min(lower_tail, upper_tail))
+    return (
+        estimate,
+        float(low),
+        float(high),
+        len(clean),
+        len(case_values),
+        float(p_value),
+    )
+
+
+def holm_adjust(values: pd.Series) -> pd.Series:
+    result = pd.Series(np.nan, index=values.index, dtype=float)
+    finite = values.dropna().sort_values()
+    running = 0.0
+    count = len(finite)
+    for rank, (index, value) in enumerate(finite.items()):
+        running = max(running, (count - rank) * float(value))
+        result.loc[index] = min(1.0, running)
+    return result
 
 
 def load_rows(root: Path) -> pd.DataFrame:
@@ -202,7 +223,7 @@ def summarize_roles(
         record = dict(zip(group_keys, key))
         record["n_seeds"] = int(group["seed"].nunique())
         for metric in METRICS:
-            estimate, low, high, n, n_cases = bootstrap_case_mean(
+            estimate, low, high, n, n_cases, _ = bootstrap_case_mean(
                 group,
                 f"{metric.name}_harm",
                 samples=samples,
@@ -248,9 +269,17 @@ def summarize_role_contrasts(
             )["value"].mean()
             group_keys = ["model", "matching", "k", "denoise_start", "denoise_end"]
             for key, group in collapsed.groupby(group_keys, sort=True):
-                estimate, low, high, n, n_cases = bootstrap_case_mean(
+                raw_group = contrast[
+                    (contrast.model == key[0])
+                    & (contrast.matching == key[1])
+                    & (contrast.k == key[2])
+                    & (contrast.denoise_start == key[3])
+                    & (contrast.denoise_end == key[4])
+                ]
+                estimate, low, high, n, n_cases, p_value = bootstrap_case_mean(
                     group, "value", samples=samples, rng=rng
                 )
+                value_std = float(group["value"].std(ddof=1))
                 rows.append(
                     {
                         **dict(zip(group_keys, key)),
@@ -259,12 +288,34 @@ def summarize_role_contrasts(
                         "harm_difference_mean": estimate,
                         "ci95_low": low,
                         "ci95_high": high,
+                        "bootstrap_p_two_sided": p_value,
+                        "standardized_paired_effect": (
+                            estimate / value_std
+                            if value_std > 0 and math.isfinite(value_std)
+                            else float("nan")
+                        ),
+                        "case_mean_variance": float(
+                            group.groupby("case_id")["value"].mean().var(ddof=1)
+                        ),
+                        "seed_mean_variance": float(
+                            group.groupby("seed")["value"].mean().var(ddof=1)
+                        ),
+                        "matched_subset_mean_variance": float(
+                            raw_group.groupby("replicate")["value"].mean().var(ddof=1)
+                        ),
                         "n": n,
                         "n_cases": n_cases,
                         "n_seeds": int(group["seed"].nunique()),
                     }
                 )
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    correction_keys = [
+        "model", "matching", "k", "denoise_start", "denoise_end", "metric"
+    ]
+    result["holm_p_three_role_contrasts"] = result.groupby(
+        correction_keys, group_keys=False
+    )["bootstrap_p_two_sided"].apply(holm_adjust)
+    return result
 
 
 def write_readme(

@@ -142,6 +142,7 @@ def conclusions(frame: pd.DataFrame, contrasts: pd.DataFrame) -> str:
     strong = contrasts[
         contrasts.metric.isin(PRIMARY_METRICS)
         & ((contrasts.ci95_low > 0) | (contrasts.ci95_high < 0))
+        & (contrasts.holm_p_three_role_contrasts < 0.05)
     ]
     lines.extend(
         (
@@ -160,7 +161,8 @@ def conclusions(frame: pd.DataFrame, contrasts: pd.DataFrame) -> str:
                 f"{int(row.denoise_start)}-{int(row.denoise_end)} / "
                 f"{METRIC_LABELS[row.metric]}：{row.contrast}="
                 f"{row.harm_difference_mean:.4g}，CI "
-                f"[{row.ci95_low:.4g}, {row.ci95_high:.4g}]。"
+                f"[{row.ci95_low:.4g}, {row.ci95_high:.4g}]，"
+                f"Holm p={row.holm_p_three_role_contrasts:.4g}。"
             )
     lines.extend(
         (

@@ -130,6 +130,7 @@ header{position:sticky;top:0;z-index:5;background:#101315f2;border-bottom:1px so
 h1,h2,p{margin:0}h1{font-size:20px}.controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
 label{display:grid;gap:3px;color:var(--muted);font-size:11px}select{min-width:120px;padding:6px;background:#242a2e;color:var(--text);border:1px solid var(--line)}
 .note{margin-top:8px;color:var(--muted)}main{padding:14px 16px}.model{margin:22px 0;border-top:3px solid var(--accent)}
+.links{display:flex;gap:12px;margin-top:8px}.links a{color:var(--accent)}
 .model h2{padding:9px 0;font-size:22px}.grid{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:8px}
 .card{border:1px solid var(--line);background:var(--panel);min-width:0}.card h3{margin:0;padding:6px 8px;font-size:13px;background:#242a2e}
 video{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#050606}.meta{padding:5px 8px;color:var(--muted);font-size:11px}
@@ -142,7 +143,8 @@ thead th{background:#242a2e}.bad{color:var(--bad)}.good{color:var(--good)}
 <header><h1>S/T/C 等数量、深度匹配消融</h1><div class="controls">
 <label>Case<select id="case"></select></label><label>Seed<select id="seed"></select></label>
 <label>去噪阶段<select id="stage"></select></label><label>匹配<select id="matching"></select></label>
-<label>Replicate<select id="rep"></select></label></div><p class="note" id="note"></p></header>
+<label>Replicate<select id="rep"></select></label></div><p class="note" id="note"></p>
+<nav class="links"><a href="../analysis/conclusions.md">自动结论</a><a href="../analysis/role_harm_case_bootstrap.csv">角色汇总 CSV</a><a href="../analysis/matched_role_contrasts.csv">配对对比 CSV</a><a href="../analysis/per_video_metrics.csv">逐视频指标 CSV</a></nav></header>
 <main><section><h2>聚合结果曲线</h2><p class="note">每张图均按模型单独统计；误差条为 source-case cluster bootstrap 95% CI。正值表示消融造成退化。</p>
 <div class="grid">
 <article class="card"><h3>Wan+LoRA · k=8</h3><img style="width:100%" src="../analysis/plots/wan_lora_approx_depth_primary_harm.png"></article>
