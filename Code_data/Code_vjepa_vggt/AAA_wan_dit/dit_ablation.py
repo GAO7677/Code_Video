@@ -63,6 +63,61 @@ class _ForwardCounter:
         self.count = 0
 
 
+class _DenoiseStepGate:
+    def __init__(
+        self,
+        *,
+        start: int,
+        end: int,
+        total_steps: int,
+        calls_per_step: int,
+    ) -> None:
+        if not 0 <= start < end <= total_steps:
+            raise ValueError(
+                "active denoise step range must satisfy "
+                f"0 <= start < end <= {total_steps}, got [{start}, {end})"
+            )
+        if calls_per_step <= 0:
+            raise ValueError("calls_per_step must be positive")
+        self.start = start
+        self.end = end
+        self.total_steps = total_steps
+        self.calls_per_step = calls_per_step
+        self.forward_calls = 0
+        self.active = False
+
+    @property
+    def step_index(self) -> int:
+        return (self.forward_calls // self.calls_per_step) % self.total_steps
+
+
+def _install_denoise_step_gate_on_block_entry(
+    first_block: torch.nn.Module,
+    gate: _DenoiseStepGate,
+) -> None:
+    if hasattr(first_block, "_aaa_wan_dit_step_gate_original_forward"):
+        raise RuntimeError("Denoise step gate is already installed")
+    original_forward = first_block.forward
+    first_block._aaa_wan_dit_step_gate_original_forward = original_forward
+
+    def forward_with_step_gate_entry(
+        self: torch.nn.Module,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        del self
+        gate.active = gate.start <= gate.step_index < gate.end
+        try:
+            return original_forward(*args, **kwargs)
+        finally:
+            gate.forward_calls += 1
+
+    first_block.forward = types.MethodType(
+        forward_with_step_gate_entry,
+        first_block,
+    )
+
+
 class DynamicGroupedHeadAblator:
     """Switch grouped Head-zero targets without rebuilding the Wan pipeline."""
 
@@ -283,6 +338,7 @@ def _zero_projection_input_heads(
     num_heads: int,
     head_ids: tuple[int, ...],
     counter: _ForwardCounter,
+    step_gate: _DenoiseStepGate | None = None,
 ) -> None:
     if not head_ids:
         raise ValueError("head_ids must not be empty")
@@ -307,6 +363,8 @@ def _zero_projection_input_heads(
         **kwargs: Any,
     ) -> torch.Tensor:
         del self
+        if step_gate is not None and not step_gate.active:
+            return original_forward(hidden_states, *args, **kwargs)
         if hidden_states.shape[-1] % num_heads != 0:
             raise RuntimeError(
                 f"attention width {hidden_states.shape[-1]} is not divisible "
@@ -424,6 +482,9 @@ def install_grouped_head_ablation(
     category: str,
     targets: list[tuple[int, int]],
     expected_num_blocks: int | None = 30,
+    active_step_range: tuple[int, int] | None = None,
+    total_steps: int = 40,
+    calls_per_step: int = 2,
 ) -> dict[str, object]:
     """Zero selected self-attention heads, including multiple heads per block."""
 
@@ -448,6 +509,18 @@ def install_grouped_head_ablation(
         raise ValueError("Grouped head ablation targets contain duplicates")
 
     counter = _ForwardCounter()
+    step_gate = None
+    if active_step_range is not None:
+        step_gate = _DenoiseStepGate(
+            start=int(active_step_range[0]),
+            end=int(active_step_range[1]),
+            total_steps=int(total_steps),
+            calls_per_step=int(calls_per_step),
+        )
+        # DiffSynth model_fn_wan_video() bypasses dit.forward and iterates
+        # dit.blocks directly. Block 0 is therefore the reliable model-call
+        # boundary for both conditional and unconditional CFG passes.
+        _install_denoise_step_gate_on_block_entry(blocks[0], step_gate)
     target_metadata = []
     targets_by_block: dict[int, list[int]] = {}
     for block_id, head_id in normalized_targets:
@@ -467,6 +540,7 @@ def install_grouped_head_ablation(
             num_heads=num_heads,
             head_ids=normalized_head_ids,
             counter=counter,
+            step_gate=step_gate,
         )
         for head_id in normalized_head_ids:
             target_metadata.append(
@@ -493,9 +567,22 @@ def install_grouped_head_ablation(
             "selected_self_attention_head_outputs_zero_before_output_projection"
         ),
         "installation_point": "self_attention_output_projection_input",
+        "denoise_step_gate_entry_point": (
+            None if step_gate is None else "blocks.0.forward"
+        ),
+        "active_denoise_step_range": (
+            None if step_gate is None else [step_gate.start, step_gate.end]
+        ),
+        "denoise_step_interval_semantics": (
+            None if step_gate is None else "[start,end)"
+        ),
+        "total_denoise_steps": int(total_steps),
+        "dit_forward_calls_per_denoise_step": int(calls_per_step),
     }
     dit._aaa_wan_dit_ablation = metadata
     dit._aaa_wan_dit_head_ablation_counter = counter
+    if step_gate is not None:
+        dit._aaa_wan_dit_denoise_step_gate = step_gate
     return metadata
 
 

@@ -76,6 +76,59 @@ class _ForwardCounter:
         self.count = 0
 
 
+class _DenoiseStepGate:
+    def __init__(
+        self,
+        *,
+        start: int,
+        end: int,
+        total_steps: int,
+        calls_per_step: int,
+    ) -> None:
+        if not 0 <= start < end <= total_steps:
+            raise ValueError(
+                "active denoise step range must satisfy "
+                f"0 <= start < end <= {total_steps}, got [{start}, {end})"
+            )
+        if calls_per_step <= 0:
+            raise ValueError("calls_per_step must be positive")
+        self.start = start
+        self.end = end
+        self.total_steps = total_steps
+        self.calls_per_step = calls_per_step
+        self.forward_calls = 0
+        self.active = False
+
+    @property
+    def step_index(self) -> int:
+        return (self.forward_calls // self.calls_per_step) % self.total_steps
+
+
+def _install_denoise_step_gate(
+    module: torch.nn.Module,
+    gate: _DenoiseStepGate,
+) -> None:
+    if hasattr(module, "_physrvg_step_gate_original_forward"):
+        raise RuntimeError("Denoise step gate is already installed")
+    original_forward = module.forward
+    module._physrvg_step_gate_original_forward = original_forward
+
+    def forward_with_step_gate(
+        self: torch.nn.Module,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        del self
+        gate.active = gate.start <= gate.step_index < gate.end
+        try:
+            return original_forward(*args, **kwargs)
+        finally:
+            gate.active = False
+            gate.forward_calls += 1
+
+    module.forward = types.MethodType(forward_with_step_gate, module)
+
+
 def _resolve_blocks(transformer: torch.nn.Module) -> tuple[torch.nn.ModuleList, str]:
     candidates = (
         ("transformer", transformer),
@@ -185,6 +238,7 @@ def _zero_projection_input_heads(
     num_heads: int,
     head_ids: tuple[int, ...],
     counter: _ForwardCounter,
+    step_gate: _DenoiseStepGate | None = None,
 ) -> None:
     if not head_ids:
         raise ValueError("head_ids must not be empty")
@@ -209,6 +263,8 @@ def _zero_projection_input_heads(
         **kwargs: Any,
     ) -> torch.Tensor:
         del self
+        if step_gate is not None and not step_gate.active:
+            return original_forward(hidden_states, *args, **kwargs)
         if hidden_states.shape[-1] % num_heads != 0:
             raise RuntimeError(
                 f"attention width {hidden_states.shape[-1]} is not divisible "
@@ -349,6 +405,9 @@ def install_grouped_physrvg_head_ablation(
     category: str,
     targets: list[tuple[int, int]],
     expected_num_blocks: int = 30,
+    active_step_range: tuple[int, int] | None = None,
+    total_steps: int = 40,
+    calls_per_step: int = 1,
 ) -> dict[str, object]:
     """Zero selected attn1 heads, including multiple heads per block."""
 
@@ -359,7 +418,10 @@ def install_grouped_physrvg_head_ablation(
             f"Expected {expected_num_blocks} PhysRVG blocks, found {num_blocks}"
         )
     normalized_category = category.strip().upper()
-    if normalized_category not in {"S", "T", "P", "C", "G"}:
+    if (
+        not normalized_category
+        or not normalized_category.replace("_", "").isalnum()
+    ):
         raise ValueError(f"Unsupported grouped head category {category!r}")
     if not targets:
         raise ValueError("Grouped head ablation requires at least one target")
@@ -367,6 +429,15 @@ def install_grouped_physrvg_head_ablation(
     if len(normalized_targets) != len(set(normalized_targets)):
         raise ValueError("Grouped head ablation targets contain duplicates")
     counter = _ForwardCounter()
+    step_gate = None
+    if active_step_range is not None:
+        step_gate = _DenoiseStepGate(
+            start=int(active_step_range[0]),
+            end=int(active_step_range[1]),
+            total_steps=int(total_steps),
+            calls_per_step=int(calls_per_step),
+        )
+        _install_denoise_step_gate(transformer, step_gate)
     target_metadata = []
     targets_by_block: dict[int, list[int]] = {}
     for block_id, head_id in normalized_targets:
@@ -384,6 +455,7 @@ def install_grouped_physrvg_head_ablation(
             num_heads=num_heads,
             head_ids=normalized_head_ids,
             counter=counter,
+            step_gate=step_gate,
         )
         for head_id in normalized_head_ids:
             target_metadata.append(
@@ -411,7 +483,17 @@ def install_grouped_physrvg_head_ablation(
             "selected_attn1_head_outputs_zero_before_to_out_projection"
         ),
         "installation_point": "after_full_dit_and_lora_load",
+        "active_denoise_step_range": (
+            None if step_gate is None else [step_gate.start, step_gate.end]
+        ),
+        "denoise_step_interval_semantics": (
+            None if step_gate is None else "[start,end)"
+        ),
+        "total_denoise_steps": int(total_steps),
+        "transformer_forward_calls_per_denoise_step": int(calls_per_step),
     }
     transformer._physrvg_ablation_metadata = metadata
     transformer._physrvg_ablation_counter = counter
+    if step_gate is not None:
+        transformer._physrvg_denoise_step_gate = step_gate
     return metadata

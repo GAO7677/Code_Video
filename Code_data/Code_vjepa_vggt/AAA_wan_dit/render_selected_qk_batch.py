@@ -79,9 +79,10 @@ def _render(
         fig.colorbar(raw_image, ax=axes[row, 0], fraction=0.046)
         fig.colorbar(attention_image, ax=axes[row, 1], fraction=0.046)
     fig.suptitle(
-        f"{model} | {case} | {role} | block {block:02d}, head {head:02d}\n"
+        f"{model} | {role} | block {block:02d}, head {head:02d}\n"
+        f"{case}\n"
         "all 5824 query/key tokens pooled to 512x512",
-        fontsize=12,
+        fontsize=10,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=150)

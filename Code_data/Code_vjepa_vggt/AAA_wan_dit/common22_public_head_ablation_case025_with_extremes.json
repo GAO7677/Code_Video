@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "experiment_name": "case025_common22_with_s_score_extremes",
+  "input_list": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/common22_public_head_ablation_case025.txt",
+  "expected_cases": 1,
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "roles": [
+    "S",
+    "T",
+    "P",
+    "C",
+    "G",
+    "S_steps00_10",
+    "S_steps10_20",
+    "S_steps20_30",
+    "S_steps30_40",
+    "T_steps00_10",
+    "T_steps10_20",
+    "T_steps20_30",
+    "T_steps30_40",
+    "P_steps00_10",
+    "P_steps10_20",
+    "P_steps20_30",
+    "P_steps30_40",
+    "C_steps00_10",
+    "C_steps10_20",
+    "C_steps20_30",
+    "C_steps30_40",
+    "G_steps00_10",
+    "G_steps10_20",
+    "G_steps20_30",
+    "G_steps30_40",
+    "S_top10",
+    "S_bottom10",
+    "S_top10_steps00_10",
+    "S_top10_steps10_20",
+    "S_top10_steps20_30",
+    "S_top10_steps30_40",
+    "S_bottom10_steps00_10",
+    "S_bottom10_steps10_20",
+    "S_bottom10_steps20_30",
+    "S_bottom10_steps30_40"
+  ],
+  "variant_target_counts": {
+    "S": 159,
+    "T": 13,
+    "P": 82,
+    "C": 20,
+    "G": 75,
+    "S_steps00_10": 159,
+    "S_steps10_20": 159,
+    "S_steps20_30": 159,
+    "S_steps30_40": 159,
+    "T_steps00_10": 13,
+    "T_steps10_20": 13,
+    "T_steps20_30": 13,
+    "T_steps30_40": 13,
+    "P_steps00_10": 82,
+    "P_steps10_20": 82,
+    "P_steps20_30": 82,
+    "P_steps30_40": 82,
+    "C_steps00_10": 20,
+    "C_steps10_20": 20,
+    "C_steps20_30": 20,
+    "C_steps30_40": 20,
+    "G_steps00_10": 75,
+    "G_steps10_20": 75,
+    "G_steps20_30": 75,
+    "G_steps30_40": 75,
+    "S_top10": 10,
+    "S_bottom10": 10,
+    "S_top10_steps00_10": 10,
+    "S_top10_steps10_20": 10,
+    "S_top10_steps20_30": 10,
+    "S_top10_steps30_40": 10,
+    "S_bottom10_steps00_10": 10,
+    "S_bottom10_steps10_20": 10,
+    "S_bottom10_steps20_30": 10,
+    "S_bottom10_steps30_40": 10
+  },
+  "variant_seeds": {
+    "S_steps00_10": [
+      851
+    ],
+    "S_steps10_20": [
+      851
+    ],
+    "S_steps20_30": [
+      851
+    ],
+    "S_steps30_40": [
+      851
+    ],
+    "T_steps00_10": [
+      851
+    ],
+    "T_steps10_20": [
+      851
+    ],
+    "T_steps20_30": [
+      851
+    ],
+    "T_steps30_40": [
+      851
+    ],
+    "P_steps00_10": [
+      851
+    ],
+    "P_steps10_20": [
+      851
+    ],
+    "P_steps20_30": [
+      851
+    ],
+    "P_steps30_40": [
+      851
+    ],
+    "C_steps00_10": [
+      851
+    ],
+    "C_steps10_20": [
+      851
+    ],
+    "C_steps20_30": [
+      851
+    ],
+    "C_steps30_40": [
+      851
+    ],
+    "G_steps00_10": [
+      851
+    ],
+    "G_steps10_20": [
+      851
+    ],
+    "G_steps20_30": [
+      851
+    ],
+    "G_steps30_40": [
+      851
+    ],
+    "S_top10": [
+      851
+    ],
+    "S_bottom10": [
+      851
+    ],
+    "S_top10_steps00_10": [
+      851
+    ],
+    "S_top10_steps10_20": [
+      851
+    ],
+    "S_top10_steps20_30": [
+      851
+    ],
+    "S_top10_steps30_40": [
+      851
+    ],
+    "S_bottom10_steps00_10": [
+      851
+    ],
+    "S_bottom10_steps10_20": [
+      851
+    ],
+    "S_bottom10_steps20_30": [
+      851
+    ],
+    "S_bottom10_steps30_40": [
+      851
+    ]
+  },
+  "seeds": [
+    851,
+    3278,
+    3478,
+    3905,
+    4165,
+    11395,
+    12156,
+    12280,
+    12676,
+    13396,
+    13434,
+    14592,
+    18289,
+    20379,
+    20926,
+    26062,
+    28221,
+    28657,
+    28893,
+    29256,
+    30495,
+    32098
+  ],
+  "public_head_report": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/partial_analysis/snapshot_20260728T0245Z/common22/aggregate_heads.csv",
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "cfg_scale_wan": 5.0,
+    "physrvg_guidance_scale_recorded_but_cfg_disabled": 5.0,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_common22_public_head_ablation_case025",
+    "baseline_root": "/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds/pass1",
+    "gallery_root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/multiseed"
+  }
+}

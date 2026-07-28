@@ -14,6 +14,7 @@ from common22_public_head_targets import (
     ROLES as PUBLIC_HEAD_ROLES,
     targets_for_role as public_targets_for_role,
 )
+from score_extreme_head_targets import GROUPS, targets_for_score_group
 from physrvg_ablation import (
     ABLATION_MODES,
     PhysRVGAblationSpec,
@@ -54,6 +55,7 @@ def _extract_ablation_args(
     str | None,
     list[tuple[int, int]],
     dict[str, object] | None,
+    tuple[int, int] | None,
     int,
     bool,
     Path,
@@ -77,6 +79,10 @@ def _extract_ablation_args(
         "--physrvg-public-head-role",
         choices=PUBLIC_HEAD_ROLES,
     )
+    parser.add_argument("--physrvg-score-extreme-selection", type=Path)
+    parser.add_argument("--physrvg-score-extreme-group", choices=GROUPS)
+    parser.add_argument("--physrvg-ablation-step-start", type=int)
+    parser.add_argument("--physrvg-ablation-step-end", type=int)
     parser.add_argument("--expected-context-frames", type=int, default=8)
     parser.add_argument(
         "--physrvg-root",
@@ -93,22 +99,36 @@ def _extract_ablation_args(
     grouped_category = args.physrvg_grouped_head_category
     using_public_report = args.physrvg_public_head_report is not None
     using_public_role = args.physrvg_public_head_role is not None
+    using_score_selection = args.physrvg_score_extreme_selection is not None
+    using_score_group = args.physrvg_score_extreme_group is not None
     if using_public_report != using_public_role:
         raise ValueError(
             "--physrvg-public-head-report and --physrvg-public-head-role "
             "must be specified together"
         )
-    if grouped_category is not None and using_public_report:
+    if using_score_selection != using_score_group:
         raise ValueError(
-            "Legacy grouped category and common22 public role are mutually exclusive"
+            "--physrvg-score-extreme-selection and "
+            "--physrvg-score-extreme-group must be specified together"
+        )
+    if sum(
+        (
+            grouped_category is not None,
+            using_public_report,
+            using_score_selection,
+        )
+    ) > 1:
+        raise ValueError(
+            "Legacy grouped category, common22 role, and score extreme are "
+            "mutually exclusive"
         )
     if grouped_category is not None and spec.mode != "baseline":
         raise ValueError(
             "Grouped Head category cannot be combined with a standard ablation"
         )
-    if using_public_report and spec.mode != "baseline":
+    if (using_public_report or using_score_selection) and spec.mode != "baseline":
         raise ValueError(
-            "Common22 public role cannot be combined with a standard ablation"
+            "Grouped target selection cannot be combined with a standard ablation"
         )
     target_source: dict[str, object] | None = None
     if using_public_report:
@@ -121,12 +141,34 @@ def _extract_ablation_args(
             "kind": "common22_cross_model_public_stable_role",
             **target_source,
         }
+    elif using_score_selection:
+        grouped_category, grouped_targets, target_source = targets_for_score_group(
+            args.physrvg_score_extreme_selection,
+            args.physrvg_score_extreme_group,
+        )
     else:
         grouped_targets = (
             []
             if grouped_category is None
             else targets_for_category(str(grouped_category))
         )
+    if (
+        args.physrvg_ablation_step_start is None
+    ) != (args.physrvg_ablation_step_end is None):
+        raise ValueError(
+            "--physrvg-ablation-step-start and "
+            "--physrvg-ablation-step-end must be paired"
+        )
+    step_range = (
+        None
+        if args.physrvg_ablation_step_start is None
+        else (
+            int(args.physrvg_ablation_step_start),
+            int(args.physrvg_ablation_step_end),
+        )
+    )
+    if step_range is not None and grouped_category is None:
+        raise ValueError("Denoise-step gating requires a grouped Head ablation")
     if args.expected_context_frames != MATCHED_XSSC_CONFIG["context_frames"]:
         raise ValueError(
             "--expected-context-frames must remain "
@@ -137,8 +179,9 @@ def _extract_ablation_args(
         grouped_category,
         grouped_targets,
         target_source,
+        step_range,
         int(args.expected_context_frames),
-        using_public_report,
+        using_public_report or using_score_selection,
         args.physrvg_root,
         remaining,
     )
@@ -219,6 +262,7 @@ def main() -> None:
         grouped_category,
         grouped_targets,
         target_source,
+        step_range,
         expected_context_frames,
         allow_arbitrary_seed,
         physrvg_root,
@@ -252,10 +296,28 @@ def main() -> None:
         if grouped_category is None:
             metadata = install_physrvg_ablation(pipe.transformer, spec)
         else:
+            if step_range is not None and not (
+                0 <= step_range[0] < step_range[1] <= int(args.num_inference_steps)
+            ):
+                raise ValueError(
+                    f"Invalid ablation step range {step_range} for "
+                    f"{args.num_inference_steps} steps"
+                )
+            category = (
+                str(grouped_category)
+                if step_range is None
+                else (
+                    f"{grouped_category}_STEPS"
+                    f"{step_range[0]:02d}_{step_range[1]:02d}"
+                )
+            )
             metadata = install_grouped_physrvg_head_ablation(
                 pipe.transformer,
-                category=str(grouped_category),
+                category=category,
                 targets=grouped_targets,
+                active_step_range=step_range,
+                total_steps=int(args.num_inference_steps),
+                calls_per_step=1,
             )
             if target_source is not None:
                 metadata["target_selection"] = target_source
@@ -316,7 +378,12 @@ def main() -> None:
             )
             expected_calls = (
                 (
-                    len(grouped_targets) * int(args.num_inference_steps)
+                    len(grouped_targets)
+                    * (
+                        int(args.num_inference_steps)
+                        if step_range is None
+                        else step_range[1] - step_range[0]
+                    )
                     if grouped_category is not None
                     else None
                     if spec.mode == "baseline"

@@ -24,6 +24,36 @@ ROLE_NAMES = {
     "P": "P-zero 固定位置时序",
     "C": "C-zero 上下文/历史",
     "G": "G-zero 全局聚合",
+    "S_steps00_10": "S-all · 步骤[0,10)",
+    "S_steps10_20": "S-all · 步骤[10,20)",
+    "S_steps20_30": "S-all · 步骤[20,30)",
+    "S_steps30_40": "S-all · 步骤[30,40)",
+    "T_steps00_10": "T-all · 步骤[0,10)",
+    "T_steps10_20": "T-all · 步骤[10,20)",
+    "T_steps20_30": "T-all · 步骤[20,30)",
+    "T_steps30_40": "T-all · 步骤[30,40)",
+    "P_steps00_10": "P-all · 步骤[0,10)",
+    "P_steps10_20": "P-all · 步骤[10,20)",
+    "P_steps20_30": "P-all · 步骤[20,30)",
+    "P_steps30_40": "P-all · 步骤[30,40)",
+    "C_steps00_10": "C-all · 步骤[0,10)",
+    "C_steps10_20": "C-all · 步骤[10,20)",
+    "C_steps20_30": "C-all · 步骤[20,30)",
+    "C_steps30_40": "C-all · 步骤[30,40)",
+    "G_steps00_10": "G-all · 步骤[0,10)",
+    "G_steps10_20": "G-all · 步骤[10,20)",
+    "G_steps20_30": "G-all · 步骤[20,30)",
+    "G_steps30_40": "G-all · 步骤[30,40)",
+    "S_top10": "S score 前10-zero",
+    "S_bottom10": "S score 后10-zero",
+    "S_top10_steps00_10": "S前10 · 步骤[0,10)",
+    "S_top10_steps10_20": "S前10 · 步骤[10,20)",
+    "S_top10_steps20_30": "S前10 · 步骤[20,30)",
+    "S_top10_steps30_40": "S前10 · 步骤[30,40)",
+    "S_bottom10_steps00_10": "S后10 · 步骤[0,10)",
+    "S_bottom10_steps10_20": "S后10 · 步骤[10,20)",
+    "S_bottom10_steps20_30": "S后10 · 步骤[20,30)",
+    "S_bottom10_steps30_40": "S后10 · 步骤[30,40)",
 }
 
 
@@ -107,7 +137,18 @@ def main() -> None:
     seeds = [int(value) for value in config["seeds"]]
     models = [str(value) for value in config["models"]]
     roles = [str(value) for value in config["roles"]]
-    expected_jobs = len(seeds) * len(models) * len(roles)
+    variant_seeds = {
+        str(role): {
+            int(seed) for seed in values
+        }
+        for role, values in config.get("variant_seeds", {}).items()
+    }
+    expected_jobs = sum(
+        len(models)
+        for seed in seeds
+        for role in roles
+        if role not in variant_seeds or seed in variant_seeds[role]
+    )
 
     gallery.mkdir(parents=True, exist_ok=True)
     media = gallery / "media"
@@ -127,7 +168,8 @@ def main() -> None:
 
     videos: dict[str, dict[str, dict[str, dict[str, str | None]]]] = {}
     completed_cells = 0
-    total_cells = len(cases) * len(seeds) * len(models) * (1 + len(roles))
+    total_cells = len(cases) * len(seeds) * len(models)
+    total_cells += len(cases) * expected_jobs
     for case in cases:
         case_map: dict[str, dict[str, dict[str, str | None]]] = {}
         for seed in seeds:
@@ -146,6 +188,9 @@ def main() -> None:
                 )
                 completed_cells += int(baseline is not None)
                 for role in roles:
+                    if role in variant_seeds and seed not in variant_seeds[role]:
+                        variants[role] = None
+                        continue
                     role_dir = (
                         output_root
                         / "generated"
@@ -172,8 +217,21 @@ def main() -> None:
         "models": models,
         "model_names": MODEL_NAMES,
         "roles": roles,
+        "variants": ["baseline", *roles],
+        "variant_seeds": {
+            role: sorted(allowed_seeds)
+            for role, allowed_seeds in variant_seeds.items()
+        },
         "role_names": ROLE_NAMES,
-        "target_counts": {role: len(targets[role]) for role in roles},
+        "target_counts": {
+            role: int(
+                config.get("variant_target_counts", {}).get(
+                    role,
+                    len(targets[role]) if role in targets else 0,
+                )
+            )
+            for role in roles
+        },
         "target_source": source,
         "generation": config["generation"],
         "expected_jobs": expected_jobs,
@@ -211,15 +269,17 @@ figcaption{padding-top:4px;color:var(--muted)}figure{margin:0}.note{color:var(--
 <div class="toolbar"><label>Case <select id="case"></select></label><button id="refresh" type="button">立即刷新</button><span class="status" id="status">读取中</span><span class="note" id="updated"></span></div>
 <main><div class="refs" id="refs"></div><div id="seeds"></div></main>
 <script>
-let DATA=null;const variants=["baseline","S","T","P","C","G"];
+let DATA=null,variants=[];
 const q=id=>document.getElementById(id);
 function options(node,values,label){node.innerHTML=values.map(v=>`<option value="${v}">${label(v)}</option>`).join("")}
 function refPath(item,key){if(!item[key])return null;const ext=item[key].split(".").pop();return `media/references/${item.id}__${key}.${ext}`}
-function card(src,label,reference=false){return src?`<figure><video controls loop muted preload="${reference?"metadata":"none"}" src="${src}"></video><figcaption>${label}</figcaption></figure>`:`<div class="missing">${label} · 等待生成</div>`}
-function tableHead(){return "<tr><th>模型</th>"+variants.map(v=>`<th>${DATA.role_names[v]}${v==="baseline"?"":` · ${DATA.target_counts[v]} Heads`}</th>`).join("")+"</tr>"}
+function card(src,label,reference=false){return src?`<figure><video controls muted preload="${reference?"metadata":"none"}" src="${src}"></video><figcaption>${label}</figcaption></figure>`:`<div class="missing">${label} · 等待生成</div>`}
+function variantsForSeed(s){return variants.filter(v=>v==="baseline"||!DATA.variant_seeds[v]||DATA.variant_seeds[v].includes(Number(s)))}
+function tableHead(seedVariants){return "<tr><th>模型</th>"+seedVariants.map(v=>`<th>${DATA.role_names[v]}${v==="baseline"?"":` · ${DATA.target_counts[v]} Heads`}</th>`).join("")+"</tr>"}
 function seedSection(c,s){
- const rows=DATA.models.map(m=>`<tr><td><strong>${DATA.model_names[m]}</strong></td>${variants.map(v=>`<td class="card video-cell" data-seed="${s}" data-model="${m}" data-variant="${v}">${card(DATA.videos[c][s][m][v],DATA.role_names[v])}</td>`).join("")}</tr>`).join("");
- return `<section class="seed-section" data-seed-section="${s}"><div class="seed-title"><h2>Seed ${s}</h2><button onclick="controlSeed('${s}','play')">同步播放</button><button onclick="controlSeed('${s}','pause')">暂停</button><button onclick="controlSeed('${s}','reset')">回到开头</button></div><table><thead>${tableHead()}</thead><tbody>${rows}</tbody></table></section>`;
+ const seedVariants=variantsForSeed(s);
+ const rows=DATA.models.map(m=>`<tr><td><strong>${DATA.model_names[m]}</strong></td>${seedVariants.map(v=>`<td class="card video-cell" data-seed="${s}" data-model="${m}" data-variant="${v}">${card(DATA.videos[c][s][m][v],DATA.role_names[v])}</td>`).join("")}</tr>`).join("");
+ return `<section class="seed-section" data-seed-section="${s}"><div class="seed-title"><h2>Seed ${s}</h2><button onclick="controlSeed('${s}','play')">同步播放</button><button onclick="controlSeed('${s}','pause')">暂停</button><button onclick="controlSeed('${s}','reset')">回到开头</button></div><table><thead>${tableHead(seedVariants)}</thead><tbody>${rows}</tbody></table></section>`;
 }
 function render(){
  const c=q("case").value,item=DATA.cases.find(x=>x.id===c);q("prompt").textContent=`Prompt: ${item.prompt}`;
@@ -243,9 +303,9 @@ async function load(){
   const response=await fetch(`./manifest.json?t=${Date.now()}`,{cache:"no-store"});
   if(!response.ok)throw new Error(`HTTP ${response.status}`);
   const next=await response.json(),oldCase=q("case").value,first=!DATA;
-  DATA=next;
+  DATA=next;variants=DATA.variants;
   if(first){
-   options(q("case"),DATA.cases,x=>x.id);
+   options(q("case"),DATA.cases.map(x=>x.id),x=>x);
    if(DATA.cases.some(x=>x.id===oldCase))q("case").value=oldCase;
   }
   const sc=DATA.state_counts;
