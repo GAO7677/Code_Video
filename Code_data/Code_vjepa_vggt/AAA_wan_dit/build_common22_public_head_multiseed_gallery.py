@@ -28,10 +28,16 @@ ROLE_NAMES = {
     "S_steps10_20": "S-all · 步骤[10,20)",
     "S_steps20_30": "S-all · 步骤[20,30)",
     "S_steps30_40": "S-all · 步骤[30,40)",
+    "S_steps00_15": "S-all · 步骤[0,15)",
+    "S_steps05_15": "S-all · 步骤[5,15)",
+    "S_steps05_10": "S-all · 步骤[5,10)",
     "T_steps00_10": "T-all · 步骤[0,10)",
     "T_steps10_20": "T-all · 步骤[10,20)",
     "T_steps20_30": "T-all · 步骤[20,30)",
     "T_steps30_40": "T-all · 步骤[30,40)",
+    "T_steps00_15": "T-all · 步骤[0,15)",
+    "T_steps05_15": "T-all · 步骤[5,15)",
+    "T_steps05_10": "T-all · 步骤[5,10)",
     "P_steps00_10": "P-all · 步骤[0,10)",
     "P_steps10_20": "P-all · 步骤[10,20)",
     "P_steps20_30": "P-all · 步骤[20,30)",
@@ -40,6 +46,9 @@ ROLE_NAMES = {
     "C_steps10_20": "C-all · 步骤[10,20)",
     "C_steps20_30": "C-all · 步骤[20,30)",
     "C_steps30_40": "C-all · 步骤[30,40)",
+    "C_steps00_15": "C-all · 步骤[0,15)",
+    "C_steps05_15": "C-all · 步骤[5,15)",
+    "C_steps05_10": "C-all · 步骤[5,10)",
     "G_steps00_10": "G-all · 步骤[0,10)",
     "G_steps10_20": "G-all · 步骤[10,20)",
     "G_steps20_30": "G-all · 步骤[20,30)",
@@ -272,7 +281,7 @@ figcaption{padding-top:4px;color:var(--muted)}figure{margin:0}.note{color:var(--
 let DATA=null,variants=[];
 const q=id=>document.getElementById(id);
 function options(node,values,label){node.innerHTML=values.map(v=>`<option value="${v}">${label(v)}</option>`).join("")}
-function refPath(item,key){if(!item[key])return null;const ext=item[key].split(".").pop();return `media/references/${item.id}__${key}.${ext}`}
+function refPath(item,key){if(!item[key])return null;if(key==="source_video")return `media/references/${item.id}__source_video_49f.mp4`;const ext=item[key].split(".").pop();return `media/references/${item.id}__${key}.${ext}`}
 function card(src,label,reference=false){return src?`<figure><video controls muted preload="${reference?"metadata":"none"}" src="${src}"></video><figcaption>${label}</figcaption></figure>`:`<div class="missing">${label} · 等待生成</div>`}
 function variantsForSeed(s){return variants.filter(v=>v==="baseline"||!DATA.variant_seeds[v]||DATA.variant_seeds[v].includes(Number(s)))}
 function tableHead(seedVariants){return "<tr><th>模型</th>"+seedVariants.map(v=>`<th>${DATA.role_names[v]}${v==="baseline"?"":` · ${DATA.target_counts[v]} Heads`}</th>`).join("")+"</tr>"}
