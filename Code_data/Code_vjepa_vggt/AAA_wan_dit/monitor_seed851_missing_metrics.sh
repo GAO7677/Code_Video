@@ -16,6 +16,8 @@ COSMOS_WORKERS="$6"
 SESSION="$7"
 ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
+MEMORY_STOP_GIB="${MEMORY_STOP_GIB:-64}"
+MONITOR_INTERVAL_SECONDS="${MONITOR_INTERVAL_SECONDS:-30}"
 
 count_workers() {
   find "${RUN_ROOT}/state" -maxdepth 1 -type f -name "$1" | wc -l
@@ -29,7 +31,7 @@ exec > >(tee -a "${RUN_ROOT}/logs/monitor.log") 2>&1
 
 while true; do
   available_kib="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
-  if [[ "${available_kib}" -lt $((64 * 1024 * 1024)) ]]; then
+  if [[ "${available_kib}" -lt $((MEMORY_STOP_GIB * 1024 * 1024)) ]]; then
     echo "[missing-metrics] host memory guard triggered: MemAvailable=${available_kib} KiB; stopping ${SESSION}"
     touch "${RUN_ROOT}/state/memory_guard_triggered"
     tmux kill-session -t "${SESSION}"
@@ -46,7 +48,7 @@ while true; do
     && [[ "${cosmos_done}" -ge "${COSMOS_WORKERS}" ]]; then
     break
   fi
-  sleep 30
+  sleep "${MONITOR_INTERVAL_SECONDS}"
 done
 
 "${PYTHON}" "${ROOT}/summarize_stc_bench_metrics.py" \

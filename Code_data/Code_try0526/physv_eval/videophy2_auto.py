@@ -247,12 +247,21 @@ class VideoPhy2Runner:
         )
         inputs = {key: value.to(self._torch_dtype()) if getattr(value, "dtype", None) == self._torch.float32 else value for key, value in inputs.items()}
         inputs = {key: value.to(self._model.device) for key, value in inputs.items()}
+        input_length = int(inputs["input_ids"].shape[-1])
         generate_kwargs = {
             "do_sample": False,
             "top_k": 1,
             "temperature": 0.001,
-            "max_length": 256,
         }
+        if input_length < 256:
+            generate_kwargs["max_length"] = 256
+            generation_limit = {"mode": "official_max_length", "value": 256}
+        else:
+            # Official max_length=256 cannot generate when the prompt is already
+            # longer than 256 tokens. Preserve the full prompt and bound only the
+            # short score response for this compatibility fallback.
+            generate_kwargs["max_new_tokens"] = 8
+            generation_limit = {"mode": "long_prompt_max_new_tokens", "value": 8}
         with self._torch.inference_mode():
             generated = self._model.generate(**inputs, **generate_kwargs)
         raw_output = self._tokenizer.decode(generated.tolist()[0], skip_special_tokens=True)
@@ -262,6 +271,8 @@ class VideoPhy2Runner:
             "raw_output": raw_output,
             "num_frames": self.num_frames,
             "checkpoint": str(self.checkpoint),
+            "input_token_length": input_length,
+            "generation_limit": generation_limit,
         }
 
     def score_case(

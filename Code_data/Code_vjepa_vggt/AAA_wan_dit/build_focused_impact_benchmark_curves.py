@@ -73,29 +73,8 @@ METRIC_TITLES = {
     "videophy2_pc_raw": "VideoPhy2 physical commonsense raw",
     "cosmos_reason1": "Cosmos-Reason1",
 }
-FOCUSED_METRICS = (
-    "physics_iq_with_context",
-    "physics_iq_without_context",
-    "pmf_with_context",
-    "pmf_without_context",
-    "wmreward_surprise",
-    "vbench_subject_consistency",
-    "vbench_background_consistency",
-    "vbench_temporal_flickering",
-    "vbench_motion_smoothness",
-    "vbench_dynamic_degree",
-    "videophy2_pc",
-    "videophy2_joint_rate",
-    "cosmos_reason1",
-)
-TABLE_METRICS = (
-    "physics_iq_with_context",
-    "pmf_with_context",
-    "vbench_motion_smoothness",
-    "vbench_dynamic_degree",
-    "videophy2_pc",
-    "cosmos_reason1",
-)
+FOCUSED_METRICS = tuple(metric.name for metric in METRICS)
+TABLE_METRICS = FOCUSED_METRICS
 
 
 def parse_args() -> argparse.Namespace:
