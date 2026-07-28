@@ -179,6 +179,54 @@ def _zero_projection_input_head(
     )
 
 
+def _zero_projection_input_heads(
+    projection: torch.nn.Module,
+    *,
+    num_heads: int,
+    head_ids: tuple[int, ...],
+    counter: _ForwardCounter,
+) -> None:
+    if not head_ids:
+        raise ValueError("head_ids must not be empty")
+    if len(head_ids) != len(set(head_ids)):
+        raise ValueError(f"head_ids contain duplicates: {head_ids}")
+    for head_id in head_ids:
+        if not 0 <= head_id < num_heads:
+            raise ValueError(
+                f"head id must be in [0, {num_heads - 1}], got {head_id}"
+            )
+    if hasattr(projection, "_physrvg_ablation_original_forward"):
+        raise RuntimeError(
+            f"Ablation already installed on {type(projection).__name__}"
+        )
+    original_forward = projection.forward
+    projection._physrvg_ablation_original_forward = original_forward
+
+    def forward_with_heads_zero(
+        self: torch.nn.Module,
+        hidden_states: torch.Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        del self
+        if hidden_states.shape[-1] % num_heads != 0:
+            raise RuntimeError(
+                f"attention width {hidden_states.shape[-1]} is not divisible "
+                f"by {num_heads} heads"
+            )
+        head_dim = hidden_states.shape[-1] // num_heads
+        per_head = hidden_states.reshape(
+            *hidden_states.shape[:-1], num_heads, head_dim
+        ).clone()
+        per_head[..., list(head_ids), :] = 0
+        counter.count += len(head_ids)
+        return original_forward(
+            per_head.reshape_as(hidden_states), *args, **kwargs
+        )
+
+    projection.forward = types.MethodType(forward_with_heads_zero, projection)
+
+
 def _disable_block_lora(
     block: torch.nn.Module,
     counter: _ForwardCounter,
@@ -302,7 +350,7 @@ def install_grouped_physrvg_head_ablation(
     targets: list[tuple[int, int]],
     expected_num_blocks: int = 30,
 ) -> dict[str, object]:
-    """Zero one selected attn1 head in each target PhysRVG block."""
+    """Zero selected attn1 heads, including multiple heads per block."""
 
     blocks, blocks_path = _resolve_blocks(transformer)
     num_blocks = len(blocks)
@@ -318,40 +366,37 @@ def install_grouped_physrvg_head_ablation(
     normalized_targets = [(int(block), int(head)) for block, head in targets]
     if len(normalized_targets) != len(set(normalized_targets)):
         raise ValueError("Grouped head ablation targets contain duplicates")
-    block_ids = [block for block, _ in normalized_targets]
-    if len(block_ids) != len(set(block_ids)):
-        raise ValueError("Grouped head ablation allows one head per block")
-
     counter = _ForwardCounter()
     target_metadata = []
+    targets_by_block: dict[int, list[int]] = {}
     for block_id, head_id in normalized_targets:
+        targets_by_block.setdefault(block_id, []).append(head_id)
+    for block_id, head_ids in sorted(targets_by_block.items()):
         if not 0 <= block_id < num_blocks:
             raise ValueError(
                 f"block id must be in [0, {num_blocks - 1}], got {block_id}"
             )
         block = blocks[block_id]
         num_heads = int(block.attn1.heads)
-        if not 0 <= head_id < num_heads:
-            raise ValueError(
-                f"head id must be in [0, {num_heads - 1}], got {head_id}"
-            )
-        _zero_projection_input_head(
+        normalized_head_ids = tuple(sorted(head_ids))
+        _zero_projection_input_heads(
             block.attn1.to_out[0],
             num_heads=num_heads,
-            head_id=head_id,
+            head_ids=normalized_head_ids,
             counter=counter,
         )
-        target_metadata.append(
-            {
-                "block_id": block_id,
-                "head_id": head_id,
-                "num_attention_heads": num_heads,
-                "disabled_module": (
-                    f"{blocks_path}.blocks.{block_id}.attn1."
-                    f"attention_output_head[{head_id}]"
-                ),
-            }
-        )
+        for head_id in normalized_head_ids:
+            target_metadata.append(
+                {
+                    "block_id": block_id,
+                    "head_id": head_id,
+                    "num_attention_heads": num_heads,
+                    "disabled_module": (
+                        f"{blocks_path}.blocks.{block_id}.attn1."
+                        f"attention_output_head[{head_id}]"
+                    ),
+                }
+            )
 
     metadata: dict[str, object] = {
         "mode": "self_attn_grouped_head_zero",
@@ -359,6 +404,7 @@ def install_grouped_physrvg_head_ablation(
         "tag": f"self_attn_grouped_head_zero_category_{normalized_category.lower()}",
         "targets": target_metadata,
         "num_targets": len(target_metadata),
+        "num_target_blocks": len(targets_by_block),
         "num_dit_blocks": num_blocks,
         "blocks_path": blocks_path,
         "semantics": (

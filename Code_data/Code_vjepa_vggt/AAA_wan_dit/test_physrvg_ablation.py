@@ -165,6 +165,23 @@ def test_grouped_head_zero() -> None:
     assert metadata["num_targets"] == 2
 
 
+def test_grouped_multiple_heads_in_one_block() -> None:
+    model = FakeDiT()
+    metadata = install_grouped_physrvg_head_ablation(
+        model,
+        category="S",
+        targets=[(4, 0), (4, 2)],
+    )
+    projection_input = torch.arange(12, dtype=torch.float32).reshape(1, 2, 6)
+    output = model.blocks[4].attn1.to_out[0](projection_input)
+    expected = projection_input.reshape(1, 2, 3, 2).clone()
+    expected[..., [0, 2], :] = 0
+    assert torch.allclose(output, expected.reshape_as(projection_input) + 0.01)
+    assert get_ablation_call_count(model) == 2
+    assert metadata["num_targets"] == 2
+    assert metadata["num_target_blocks"] == 1
+
+
 def test_baseline() -> None:
     model = FakeDiT()
     metadata = install_physrvg_ablation(model, PhysRVGAblationSpec())
@@ -177,6 +194,7 @@ if __name__ == "__main__":
     test_whole_block()
     test_single_head_zero()
     test_grouped_head_zero()
+    test_grouped_multiple_heads_in_one_block()
     test_lora_off_and_peft_unwrap()
     test_baseline()
     print("PhysRVG ablation tests passed")

@@ -10,6 +10,10 @@ from pathlib import Path
 
 from accelerate.utils import set_seed
 
+from common22_public_head_targets import (
+    ROLES as PUBLIC_HEAD_ROLES,
+    targets_for_role as public_targets_for_role,
+)
 from physrvg_ablation import (
     ABLATION_MODES,
     PhysRVGAblationSpec,
@@ -49,7 +53,9 @@ def _extract_ablation_args(
     PhysRVGAblationSpec,
     str | None,
     list[tuple[int, int]],
+    dict[str, object] | None,
     int,
+    bool,
     Path,
     list[str],
 ]:
@@ -66,6 +72,11 @@ def _extract_ablation_args(
         choices=tuple(CATEGORY_TARGETS),
         default=None,
     )
+    parser.add_argument("--physrvg-public-head-report", type=Path)
+    parser.add_argument(
+        "--physrvg-public-head-role",
+        choices=PUBLIC_HEAD_ROLES,
+    )
     parser.add_argument("--expected-context-frames", type=int, default=8)
     parser.add_argument(
         "--physrvg-root",
@@ -80,15 +91,42 @@ def _extract_ablation_args(
     )
     spec.validate(30)
     grouped_category = args.physrvg_grouped_head_category
+    using_public_report = args.physrvg_public_head_report is not None
+    using_public_role = args.physrvg_public_head_role is not None
+    if using_public_report != using_public_role:
+        raise ValueError(
+            "--physrvg-public-head-report and --physrvg-public-head-role "
+            "must be specified together"
+        )
+    if grouped_category is not None and using_public_report:
+        raise ValueError(
+            "Legacy grouped category and common22 public role are mutually exclusive"
+        )
     if grouped_category is not None and spec.mode != "baseline":
         raise ValueError(
             "Grouped Head category cannot be combined with a standard ablation"
         )
-    grouped_targets = (
-        []
-        if grouped_category is None
-        else targets_for_category(str(grouped_category))
-    )
+    if using_public_report and spec.mode != "baseline":
+        raise ValueError(
+            "Common22 public role cannot be combined with a standard ablation"
+        )
+    target_source: dict[str, object] | None = None
+    if using_public_report:
+        grouped_category = str(args.physrvg_public_head_role)
+        grouped_targets, target_source = public_targets_for_role(
+            args.physrvg_public_head_report,
+            grouped_category,
+        )
+        target_source = {
+            "kind": "common22_cross_model_public_stable_role",
+            **target_source,
+        }
+    else:
+        grouped_targets = (
+            []
+            if grouped_category is None
+            else targets_for_category(str(grouped_category))
+        )
     if args.expected_context_frames != MATCHED_XSSC_CONFIG["context_frames"]:
         raise ValueError(
             "--expected-context-frames must remain "
@@ -98,7 +136,9 @@ def _extract_ablation_args(
         spec,
         grouped_category,
         grouped_targets,
+        target_source,
         int(args.expected_context_frames),
+        using_public_report,
         args.physrvg_root,
         remaining,
     )
@@ -120,7 +160,9 @@ def _count_video_frames(base, video_path: Path) -> int:
 def _validate_matched_config(
     args: argparse.Namespace,
     expected_context_frames: int,
-) -> None:
+    *,
+    allow_arbitrary_seed: bool,
+) -> dict[str, object]:
     actual = {
         "height": int(args.height),
         "width": int(args.width),
@@ -133,16 +175,21 @@ def _validate_matched_config(
         "seed": int(args.seed),
         "negative_prompt": MATCHED_XSSC_NEGATIVE_PROMPT,
     }
-    if actual != MATCHED_XSSC_CONFIG:
+    expected = dict(MATCHED_XSSC_CONFIG)
+    if allow_arbitrary_seed:
+        expected["seed"] = int(args.seed)
+    if actual != expected:
         raise ValueError(
             "PhysRVG xSSC-matched inference configuration was changed: "
-            f"expected {MATCHED_XSSC_CONFIG}, got {actual}"
+            f"expected {expected}, got {actual}"
         )
+    return actual
 
 
 def _annotate_top_level_jsons(
     output_root: Path,
     metadata: dict[str, object],
+    inference_config: dict[str, object],
 ) -> None:
     for path in sorted(output_root.rglob("*.json")):
         if path.name not in {"batch_manifest.json", "summary.json", "result.json"}:
@@ -152,7 +199,7 @@ def _annotate_top_level_jsons(
         if not isinstance(payload, dict):
             continue
         payload["physrvg_ablation"] = metadata
-        payload["inference_config"] = MATCHED_XSSC_CONFIG
+        payload["inference_config"] = inference_config
         payload["config_policy"] = "matched_to_previous_xssc_except_cfg"
         _atomic_write_json(path, payload)
 
@@ -171,7 +218,9 @@ def main() -> None:
         spec,
         grouped_category,
         grouped_targets,
+        target_source,
         expected_context_frames,
+        allow_arbitrary_seed,
         physrvg_root,
         remaining,
     ) = _extract_ablation_args(sys.argv[1:])
@@ -189,7 +238,11 @@ def main() -> None:
 
     def parse_args_matched() -> argparse.Namespace:
         args = original_parse_args()
-        _validate_matched_config(args, expected_context_frames)
+        state["inference_config"] = _validate_matched_config(
+            args,
+            expected_context_frames,
+            allow_arbitrary_seed=allow_arbitrary_seed,
+        )
         state["output_root"] = args.output_root.expanduser().resolve()
         return args
 
@@ -204,6 +257,8 @@ def main() -> None:
                 category=str(grouped_category),
                 targets=grouped_targets,
             )
+            if target_source is not None:
+                metadata["target_selection"] = target_source
         state["metadata"] = metadata
         print(
             f"[physrvg_ablation] {json.dumps(metadata, sort_keys=True)}",
@@ -286,7 +341,7 @@ def main() -> None:
             result.update(
                 {
                     "physrvg_ablation": case_metadata,
-                    "inference_config": MATCHED_XSSC_CONFIG,
+                    "inference_config": state["inference_config"],
                     "config_policy": "matched_to_previous_xssc_except_cfg",
                     "context_policy": "all_8_json_input_video_frames",
                     "prompt_policy": "input_caption_from_physiciq_json",
@@ -314,8 +369,13 @@ def main() -> None:
 
     output_root = state.get("output_root")
     metadata = state.get("metadata")
-    if isinstance(output_root, Path) and isinstance(metadata, dict):
-        _annotate_top_level_jsons(output_root, metadata)
+    inference_config = state.get("inference_config")
+    if (
+        isinstance(output_root, Path)
+        and isinstance(metadata, dict)
+        and isinstance(inference_config, dict)
+    ):
+        _annotate_top_level_jsons(output_root, metadata, inference_config)
         failure_count = _completed_failure_count(output_root)
         if failure_count:
             raise SystemExit(

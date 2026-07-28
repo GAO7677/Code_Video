@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "experiment_name": "common22_public_stable_head_role_ablation",
+  "input_list": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt",
+  "expected_cases": 20,
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "roles": [
+    "S",
+    "T",
+    "P",
+    "C",
+    "G"
+  ],
+  "seeds": [
+    851,
+    3278,
+    3478,
+    3905,
+    4165,
+    11395,
+    12156,
+    12280,
+    12676,
+    13396,
+    13434,
+    14592,
+    18289,
+    20379,
+    20926,
+    26062,
+    28221,
+    28657,
+    28893,
+    29256,
+    30495,
+    32098
+  ],
+  "public_head_report": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/partial_analysis/snapshot_20260728T0245Z/common22/aggregate_heads.csv",
+  "public_head_report_sha256": "341a28faa15acbda8ed9a3c482756c92c7ef524f9956f256352a18d2b27eff69",
+  "public_head_counts": {
+    "S": 159,
+    "T": 13,
+    "P": 82,
+    "C": 20,
+    "G": 75
+  },
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "cfg_scale_wan": 5.0,
+    "physrvg_guidance_scale_recorded_but_cfg_disabled": 5.0,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_common22_public_head_ablation",
+    "baseline_root": "/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds/pass1",
+    "gallery_root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/multiseed"
+  },
+  "execution": {
+    "gpus": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "gpu_start_memory_threshold_mib": 4096,
+    "poll_seconds": 60,
+    "max_attempts_per_job": 5,
+    "tmux_session": "wan_common22_public_head_ablation"
+  }
+}

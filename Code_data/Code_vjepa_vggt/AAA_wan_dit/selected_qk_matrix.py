@@ -23,7 +23,8 @@ def pool_selected_qk_matrices(
     selected_heads: tuple[int, ...],
     output_bins: int = 512,
     query_chunk: int = 64,
-) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    temporal_bins: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, int]]:
     """Pool raw QK scores and exact-softmax attention over all Q/K tokens."""
 
     q_heads = _as_heads(q.detach(), num_heads=num_heads)
@@ -38,6 +39,11 @@ def pool_selected_qk_matrices(
     bins = min(int(output_bins), token_count)
     if bins <= 0 or query_chunk <= 0:
         raise ValueError("output_bins and query_chunk must be positive")
+    times = int(temporal_bins) if temporal_bins is not None else 1
+    if times <= 0 or token_count % times:
+        raise ValueError(
+            f"token_count={token_count} must be divisible by temporal_bins={times}"
+        )
 
     device = q_heads.device
     head_ids = torch.tensor(selected_heads, device=device, dtype=torch.long)
@@ -46,11 +52,18 @@ def pool_selected_qk_matrices(
     selected_count = len(selected_heads)
     token_ids = torch.arange(token_count, device=device, dtype=torch.long)
     token_bins = torch.div(token_ids * bins, token_count, rounding_mode="floor")
+    token_times = torch.div(
+        token_ids * times, token_count, rounding_mode="floor"
+    )
     bin_counts = torch.bincount(token_bins, minlength=bins).to(torch.float32)
+    time_counts = torch.bincount(token_times, minlength=times).to(torch.float32)
     raw_sum = torch.zeros(
         (selected_count, bins, bins), device=device, dtype=torch.float32
     )
     attention_sum = torch.zeros_like(raw_sum)
+    temporal_sum = torch.zeros(
+        (selected_count, times, times), device=device, dtype=torch.float32
+    )
     k_t = k_selected.transpose(-1, -2)
     scale = 1.0 / math.sqrt(float(head_dim))
 
@@ -68,11 +81,31 @@ def pool_selected_qk_matrices(
         attention_key_sum = torch.zeros_like(raw_key_sum)
         raw_key_sum.scatter_add_(2, key_index, scores)
         attention_key_sum.scatter_add_(2, key_index, probabilities)
+        key_time_index = token_times.view(1, 1, token_count).expand(
+            selected_count, chunk, token_count
+        )
+        temporal_key_sum = torch.zeros(
+            (selected_count, chunk, times),
+            device=device,
+            dtype=torch.float32,
+        )
+        temporal_key_sum.scatter_add_(2, key_time_index, probabilities)
         raw_sum.index_add_(1, token_bins[start:stop], raw_key_sum)
         attention_sum.index_add_(
             1, token_bins[start:stop], attention_key_sum
         )
-        del scores, probabilities, key_index, raw_key_sum, attention_key_sum
+        temporal_sum.index_add_(
+            1, token_times[start:stop], temporal_key_sum
+        )
+        del (
+            scores,
+            probabilities,
+            key_index,
+            key_time_index,
+            raw_key_sum,
+            attention_key_sum,
+            temporal_key_sum,
+        )
 
     raw_denominator = (
         bin_counts.view(1, bins, 1) * bin_counts.view(1, 1, bins)
@@ -80,17 +113,20 @@ def pool_selected_qk_matrices(
     query_denominator = bin_counts.view(1, bins, 1).clamp_min(1.0)
     raw_mean = raw_sum / raw_denominator
     attention_mass = attention_sum / query_denominator
+    temporal_matrix = temporal_sum / time_counts.view(1, times, 1).clamp_min(1.0)
     metadata = {
         "num_heads": heads,
         "selected_heads": selected_count,
         "token_count": token_count,
         "head_dim": head_dim,
         "output_bins": bins,
+        "temporal_bins": times,
         "query_chunk": int(query_chunk),
     }
     return (
         raw_mean.cpu().numpy().astype(np.float16),
         attention_mass.cpu().numpy().astype(np.float16),
+        temporal_matrix.cpu().numpy().astype(np.float32),
         metadata,
     )
 
@@ -121,7 +157,9 @@ class SelectedQKMatrixRecorder:
         self.current_step: int | None = None
         self.case_key: str | None = None
         self.case_metadata: dict[str, Any] = {}
-        self.captures: dict[int, tuple[np.ndarray, np.ndarray, dict[str, int]]] = {}
+        self.captures: dict[
+            int, tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, int]]
+        ] = {}
 
     def begin_case(self, case_key: str, *, metadata: dict[str, Any] | None = None) -> None:
         self.case_key = str(case_key)
@@ -140,6 +178,8 @@ class SelectedQKMatrixRecorder:
             raise RuntimeError(
                 f"duplicate block {self.config.block_id} capture at step {step}"
             )
+        if self.grid is None:
+            raise RuntimeError("latent grid is not configured")
         self.captures[int(step)] = pool_selected_qk_matrices(
             q,
             k,
@@ -147,6 +187,7 @@ class SelectedQKMatrixRecorder:
             selected_heads=self.selected_heads,
             output_bins=int(self.config.output_bins),
             query_chunk=int(self.config.query_chunk),
+            temporal_bins=int(self.grid[0]),
         )
 
     def finalize_case(self) -> Path:
@@ -164,7 +205,10 @@ class SelectedQKMatrixRecorder:
         attention = np.stack(
             [self.captures[step][1] for step in steps], axis=0
         )
-        metadata = self.captures[steps[0]][2]
+        temporal = np.stack(
+            [self.captures[step][2] for step in steps], axis=0
+        )
+        metadata = self.captures[steps[0]][3]
         name = f"block{self.config.block_id:02d}_selected_qk.npz"
         np.savez_compressed(
             case_dir / name,
@@ -172,6 +216,7 @@ class SelectedQKMatrixRecorder:
             selected_heads=np.asarray(self.selected_heads, dtype=np.int16),
             raw_qk_mean=raw,
             softmax_attention_mass=attention,
+            temporal_matrix=temporal,
         )
         summary = {
             "model": self.model_label,
@@ -188,6 +233,10 @@ class SelectedQKMatrixRecorder:
             "softmax_attention": (
                 "mean exact-softmax attention mass from each pooled query bin "
                 "to each pooled key bin"
+            ),
+            "temporal_matrix": (
+                "exact-softmax attention mass aggregated by latent query/key time; "
+                "every query-time row sums to one"
             ),
             "metadata": metadata,
             "case_metadata": self.case_metadata,
