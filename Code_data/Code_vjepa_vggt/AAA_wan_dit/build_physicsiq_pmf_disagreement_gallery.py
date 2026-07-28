@@ -17,6 +17,7 @@ import pandas as pd
 
 from build_metric_extreme_pair_gallery import (
     DEFAULT_BATCH_ROOT,
+    DEFAULT_GT_ROOT,
     METRIC_TITLES,
     MODEL_LABELS,
     MODEL_ORDER,
@@ -41,6 +42,13 @@ DEFAULT_BASELINE_ROOT = Path(
     "wan_dit_common22_test5_seed851_baseline_bench"
 )
 CONTEXTS = {
+    "physics_iq_ctx_vs_videophy2_pc": {
+        "label": "Physics-IQ with context vs VideoPhy2-PC",
+        "physics_iq": "physics_iq_with_context",
+        "pmf": "videophy2_pc",
+        "left_label": "Physics-IQ ctx",
+        "right_label": "VideoPhy2-PC",
+    },
     "with_context": {
         "label": "Physics-IQ vs PMF · With context",
         "physics_iq": "physics_iq_with_context",
@@ -73,6 +81,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_BASELINE_ROOT,
     )
+    parser.add_argument("--gt-root", type=Path, default=DEFAULT_GT_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     return parser.parse_args()
 
@@ -147,12 +156,15 @@ def choose_disagreement(
 
 def build_record(
     batch_root: Path,
+    baseline_root: Path,
+    gt_root: Path,
     output_dir: Path,
     context_name: str,
     model: str,
     physics_preferred: pd.Series,
     pmf_preferred: pd.Series,
     baseline: pd.Series,
+    gt: pd.Series,
     stats: dict[str, float | int],
 ) -> dict[str, Any]:
     context = CONTEXTS[context_name]
@@ -161,6 +173,11 @@ def build_record(
         str(physics_preferred["entry_id"]),
     )
     pmf_meta = read_sidecar(batch_root, str(pmf_preferred["entry_id"]))
+    baseline_meta = read_sidecar(
+        baseline_root,
+        str(baseline["entry_id"]),
+    )
+    gt_meta = read_sidecar(gt_root, str(gt["entry_id"]))
     physics_source, physics_prompt = resolve_source_metadata(physics_meta)
     pmf_source, pmf_prompt = resolve_source_metadata(pmf_meta)
     if (
@@ -169,10 +186,15 @@ def build_record(
     ):
         raise RuntimeError("Disagreement pair does not share one source")
     asset_dir = output_dir / "assets" / context_name / model
-    source_target = asset_dir / "source.mp4"
+    gt_target = asset_dir / "gt_49f_30fps_896x512.mp4"
+    baseline_target = asset_dir / "baseline.mp4"
     physics_target = asset_dir / "physics_iq_preferred.mp4"
     pmf_target = asset_dir / "pmf_preferred.mp4"
-    ensure_video_link(physics_source, source_target)
+    ensure_video_link(Path(str(gt_meta["output_video"])), gt_target)
+    ensure_video_link(
+        Path(str(baseline_meta["output_video"])),
+        baseline_target,
+    )
     ensure_video_link(
         Path(str(physics_meta["output_video"])),
         physics_target,
@@ -191,9 +213,15 @@ def build_record(
         "case_id": str(physics_preferred["case_id"]),
         "prompt": physics_prompt or pmf_prompt,
         **stats,
-        "source_video": relative(source_target),
+        "source_video_original": str(physics_source),
+        "gt": {
+            "entry_id": str(gt["entry_id"]),
+            "video": relative(gt_target),
+            "scores": score_payload(gt),
+        },
         "baseline": {
             "entry_id": str(baseline["entry_id"]),
+            "video": relative(baseline_target),
             "scores": score_payload(baseline),
         },
         "physics_preferred": {
@@ -213,9 +241,12 @@ def build_record(
 
 def build_records(
     batch_root: Path,
+    baseline_root: Path,
+    gt_root: Path,
     output_dir: Path,
     frame: pd.DataFrame,
     baseline_frame: pd.DataFrame,
+    gt_frame: pd.DataFrame,
 ) -> list[dict[str, Any]]:
     records = []
     for context_name, context in CONTEXTS.items():
@@ -240,15 +271,26 @@ def build_records(
                     f"{physics_preferred['case_id']}, got "
                     f"{len(baseline_rows)}"
                 )
+            gt_rows = gt_frame[
+                gt_frame["case_id"] == physics_preferred["case_id"]
+            ]
+            if len(gt_rows) != 1:
+                raise RuntimeError(
+                    f"Expected one GT for "
+                    f"{physics_preferred['case_id']}, got {len(gt_rows)}"
+                )
             records.append(
                 build_record(
                     batch_root,
+                    baseline_root,
+                    gt_root,
                     output_dir,
                     context_name,
                     model,
                     physics_preferred,
                     pmf_preferred,
                     baseline_rows.iloc[0],
+                    gt_rows.iloc[0],
                     stats,
                 )
             )
@@ -273,6 +315,8 @@ def write_csv(path: Path, records: list[dict[str, Any]]) -> None:
         "right_preferred_method",
         "right_preferred_left_score",
         "right_preferred_right_score",
+        "gt_left_score",
+        "gt_right_score",
         "baseline_left_score",
         "baseline_right_score",
         "discordant_pair_count",
@@ -311,6 +355,12 @@ def write_csv(path: Path, records: list[dict[str, Any]]) -> None:
                     "right_preferred_right_score": record["pmf_preferred"][
                         "scores"
                     ][record["pmf_metric"]],
+                    "gt_left_score": record["gt"]["scores"][
+                        record["physics_metric"]
+                    ],
+                    "gt_right_score": record["gt"]["scores"][
+                        record["pmf_metric"]
+                    ],
                     "baseline_left_score": record["baseline"]["scores"][
                         record["physics_metric"]
                     ],
@@ -358,7 +408,7 @@ label{{display:grid;gap:4px;color:var(--muted);font-size:12px}}select,button{{fo
 select{{min-width:210px}}button{{cursor:pointer}}.note{{margin:16px 0;padding:10px 12px;background:#fff;border-left:3px solid var(--piq)}}
 .model{{padding:17px 0 25px;border-top:1px solid var(--line)}}.model-head{{display:flex;justify-content:space-between;align-items:start;gap:18px;margin-bottom:10px}}
 .identity{{overflow-wrap:anywhere}}.strength{{font-weight:700}}.gaps{{font-size:12px;color:var(--muted);text-align:right}}
-.videos{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}figure{{margin:0;min-width:0;background:#fff;border:1px solid var(--line)}}
+.videos{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}figure{{margin:0;min-width:0;background:#fff;border:1px solid var(--line)}}
 figcaption{{min-height:72px;padding:8px 10px;border-bottom:1px solid var(--line)}}figcaption strong,figcaption span{{display:block}}figcaption span{{font-size:12px;color:var(--muted)}}
 .piq-label{{color:var(--piq)}}.pmf-label{{color:var(--pmf)}}video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#111}}
 .table-wrap{{overflow:auto;margin-top:10px;border:1px solid var(--line);background:#fff}}table{{border-collapse:collapse;width:100%;min-width:900px}}
@@ -369,9 +419,9 @@ tr.piq-row{{background:#eef7ff;font-weight:700}}tr.pmf-row{{background:#fff4e8;f
 </style></head><body><header><div class="bar"><div><h1>跨指标评价歧义</h1>
 <p class="sub">Seed 851 · test_5 · 更新 {updated}</p></div>
 <label>评价模式<select id="context">{options}</select></label></div></header>
-<main><p class="note">每组保持模型和 source 不变，左、右两段消融分别被两个待比较指标判得更好。冲突强度先按各模型内指标标准差归一化，再取两项分差中较小者；因此选中的pair不是单项极端，而是两个指标都明确反向的case。</p>
+<main><p class="note">每组保持模型和 source 不变，左、右两段消融分别被两个待比较指标判得更好。冲突强度先按各模型内指标标准差归一化，再取两项分差中较小者；因此选中的pair不是单项极端，而是两个指标都明确反向的case。GT统一为49帧、30 FPS、896×512，并与对应模型baseline共同展示。</p>
 <div id="models"></div>
-<p class="footer"><a href="metric_disagreement.csv">下载9组歧义清单</a> · <a href="../physics-iq-pmf.html">查看单指标极端对比</a> · <a href="../../">返回完整指标页</a></p></main>
+<p class="footer"><a href="metric_disagreement.csv">下载{len(records)}组歧义清单</a> · <a href="../physics-iq-pmf.html">查看单指标极端对比</a> · <a href="../../">返回完整指标页</a></p></main>
 <script id="payload" type="application/json">{payload}</script>
 <script>
 const data=JSON.parse(document.getElementById('payload').textContent);
@@ -382,18 +432,19 @@ function delta(value,baseline,direction){{if(value===null||baseline===null)retur
 function render(){{
  const records=data.records.filter(item=>item.context===select.value);
  root.innerHTML=records.map((record,index)=>{{
-  const p=record.physics_preferred,m=record.pmf_preferred,b=record.baseline;
+  const p=record.physics_preferred,m=record.pmf_preferred,b=record.baseline,g=record.gt;
   const rows=data.metrics.map(metric=>{{
-   const a=p.scores[metric.name],z=m.scores[metric.name],base=b.scores[metric.name];
+   const a=p.scores[metric.name],z=m.scores[metric.name],base=b.scores[metric.name],gt=g.scores[metric.name];
    const da=delta(a,base,metric.direction),dz=delta(z,base,metric.direction);
    const rowClass=metric.name===record.physics_metric?'piq-row':metric.name===record.pmf_metric?'pmf-row':'';
-   return `<tr class="${{rowClass}}"><td>${{esc(metric.title)}} <span class="direction">${{metric.direction==='higher'?'↑':'↓'}}</span></td><td>${{fmt(base)}}</td><td>${{fmt(a)}}</td><td class="${{da.cls}}">${{da.text}}</td><td>${{fmt(z)}}</td><td class="${{dz.cls}}">${{dz.text}}</td></tr>`;
+   return `<tr class="${{rowClass}}"><td>${{esc(metric.title)}} <span class="direction">${{metric.direction==='higher'?'↑':'↓'}}</span></td><td>${{fmt(gt)}}</td><td>${{fmt(base)}}</td><td>${{fmt(a)}}</td><td class="${{da.cls}}">${{da.text}}</td><td>${{fmt(z)}}</td><td class="${{dz.cls}}">${{dz.text}}</td></tr>`;
   }}).join('');
   return `<section class="model"><div class="model-head"><div><h2>${{esc(record.model_label)}}</h2><p class="identity">Source: ${{esc(record.case_id)}}<br>Prompt: ${{esc(record.prompt)}}</p></div><div class="gaps"><span class="strength">冲突强度 ${{fmt(record.conflict_strength)}}σ</span><br>${{esc(record.left_label)}} gap ${{fmt(record.physics_gap)}} (${{fmt(record.physics_gap_sigma)}}σ)<br>${{esc(record.right_label)}} gap ${{fmt(record.pmf_gap)}} (${{fmt(record.pmf_gap_sigma)}}σ)<br><button data-play="${{index}}" type="button">同步重播本行</button></div></div>
-  <div class="videos" data-row="${{index}}"><figure><figcaption><strong>Source / GT</strong><span>相同输入视频</span></figcaption><video controls muted preload="metadata" src="${{esc(record.source_video)}}"></video></figure>
+  <div class="videos" data-row="${{index}}"><figure><figcaption><strong>GT</strong><span>49f @ 30 FPS · 896×512 · ${{esc(record.left_label)}} ${{fmt(g.scores[record.physics_metric])}} · ${{esc(record.right_label)}} ${{fmt(g.scores[record.pmf_metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(g.video)}}"></video></figure>
+  <figure><figcaption><strong>${{esc(record.model_label)}} baseline</strong><span>${{esc(record.left_label)}} ${{fmt(b.scores[record.physics_metric])}} · ${{esc(record.right_label)}} ${{fmt(b.scores[record.pmf_metric])}}</span></figcaption><video controls muted preload="metadata" src="${{esc(b.video)}}"></video></figure>
   <figure><figcaption><strong class="piq-label">${{esc(record.left_label)}} 判定更好</strong><span>${{esc(p.method)}} · ${{esc(record.left_label)}} ${{fmt(p.scores[record.physics_metric])}}（Base ${{fmt(b.scores[record.physics_metric])}}）· ${{esc(record.right_label)}} ${{fmt(p.scores[record.pmf_metric])}}（Base ${{fmt(b.scores[record.pmf_metric])}}）</span></figcaption><video controls muted preload="metadata" src="${{esc(p.video)}}"></video></figure>
   <figure><figcaption><strong class="pmf-label">${{esc(record.right_label)}} 判定更好</strong><span>${{esc(m.method)}} · ${{esc(record.left_label)}} ${{fmt(m.scores[record.physics_metric])}}（Base ${{fmt(b.scores[record.physics_metric])}}）· ${{esc(record.right_label)}} ${{fmt(m.scores[record.pmf_metric])}}（Base ${{fmt(b.scores[record.pmf_metric])}}）</span></figcaption><video controls muted preload="metadata" src="${{esc(m.video)}}"></video></figure></div>
-  <div class="table-wrap"><table><thead><tr><th>指标</th><th>Baseline</th><th>${{esc(p.method)}}</th><th>Δ vs Base</th><th>${{esc(m.method)}}</th><th>Δ vs Base</th></tr></thead><tbody>${{rows}}</tbody></table></div></section>`;
+  <div class="table-wrap"><table><thead><tr><th>指标</th><th>GT</th><th>Baseline</th><th>${{esc(p.method)}}</th><th>Δ vs Base</th><th>${{esc(m.method)}}</th><th>Δ vs Base</th></tr></thead><tbody>${{rows}}</tbody></table></div></section>`;
  }}).join('');
  document.querySelectorAll('[data-play]').forEach(button=>button.addEventListener('click',()=>{{const videos=document.querySelector(`[data-row="${{button.dataset.play}}"]`).querySelectorAll('video');videos.forEach(v=>{{v.pause();v.currentTime=0;}});videos.forEach(v=>v.play().catch(()=>null));}}));
 }}
@@ -405,6 +456,7 @@ def main() -> None:
     args = parse_args()
     batch_root = args.batch_root.expanduser().resolve()
     baseline_root = args.baseline_root.expanduser().resolve()
+    gt_root = args.gt_root.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     frame = add_case_ids(
         pd.read_csv(batch_root / "analysis" / "per_video_metrics.csv")
@@ -414,12 +466,18 @@ def main() -> None:
             baseline_root / "analysis" / "per_video_metrics.csv"
         )
     )
+    gt_frame = add_case_ids(
+        pd.read_csv(gt_root / "analysis" / "per_video_metrics.csv")
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     records = build_records(
         batch_root,
+        baseline_root,
+        gt_root,
         output_dir,
         frame,
         baseline_frame,
+        gt_frame,
     )
     atomic_text(
         output_dir / "metric_disagreement.json",

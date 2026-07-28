@@ -446,7 +446,7 @@ a{{color:var(--accent)}}@media(max-width:900px){{.videos{{grid-template-columns:
 <label>指标<select id="metric">{options}</select></label></div></header>
 <main><p class="method-note">{html.escape(note)}</p>
 <div id="models"></div>
-<p class="download"><a href="{html.escape(selection_filename)}">{html.escape(selection_label)}</a>{all_metrics_link} · <a href="../">返回完整指标页</a></p></main>
+<p class="download"><a href="{html.escape(selection_filename)}">{html.escape(selection_label)}</a>{all_metrics_link} · <a href="physics-iq-pmf-disagreement/">跨指标歧义对比</a> · <a href="../">返回完整指标页</a></p></main>
 <script id="payload" type="application/json">{payload}</script>
 <script>
 const data=JSON.parse(document.getElementById('payload').textContent);
