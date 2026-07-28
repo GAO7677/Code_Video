@@ -24,26 +24,16 @@ count_tasks() {
 }
 
 while true; do
-  workers="$(count_state 'common_*.worker_complete')"
+  common_done="$(count_state 'common_*.worker_complete')"
+  videophy_done="$(count_state 'videophy_*.worker_complete')"
+  cosmos_done="$(count_state 'cosmos_*.worker_complete')"
   claimed="$(( $(<"${RUN_ROOT}/queues/common.cursor") - 1 ))"
-  echo "[coordinator] common workers=${workers}/${COMMON_WORKERS} claimed=${claimed}/147 completed=$(count_tasks common completed_tasks.tsv) failed=$(count_tasks common failed_tasks.tsv)"
-  [[ "${workers}" -ge "${COMMON_WORKERS}" ]] && break
-  sleep 30
-done
-touch "${RUN_ROOT}/common.ready"
-
-while true; do
-  workers="$(count_state 'videophy_*.worker_complete')"
-  echo "[coordinator] videophy workers=${workers}/${VIDEOPHY_WORKERS} completed=$(count_tasks videophy completed_tasks.tsv) failed=$(count_tasks videophy failed_tasks.tsv)"
-  [[ "${workers}" -ge "${VIDEOPHY_WORKERS}" ]] && break
-  sleep 30
-done
-touch "${RUN_ROOT}/videophy.ready"
-
-while true; do
-  workers="$(count_state 'cosmos_*.worker_complete')"
-  echo "[coordinator] cosmos workers=${workers}/${COSMOS_WORKERS} completed=$(count_tasks cosmos completed_tasks.tsv) failed=$(count_tasks cosmos failed_tasks.tsv)"
-  [[ "${workers}" -ge "${COSMOS_WORKERS}" ]] && break
+  echo "[coordinator] common=${common_done}/${COMMON_WORKERS} claimed=${claimed}/147 done=$(count_tasks common completed_tasks.tsv) failed=$(count_tasks common failed_tasks.tsv) | videophy=${videophy_done}/${VIDEOPHY_WORKERS} done=$(count_tasks videophy completed_tasks.tsv) failed=$(count_tasks videophy failed_tasks.tsv) | cosmos=${cosmos_done}/${COSMOS_WORKERS} done=$(count_tasks cosmos completed_tasks.tsv) failed=$(count_tasks cosmos failed_tasks.tsv)"
+  if [[ "${common_done}" -ge "${COMMON_WORKERS}" ]] \
+    && [[ "${videophy_done}" -ge "${VIDEOPHY_WORKERS}" ]] \
+    && [[ "${cosmos_done}" -ge "${COSMOS_WORKERS}" ]]; then
+    break
+  fi
   sleep 30
 done
 
