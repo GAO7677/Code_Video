@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--title", default="S / T / ST 分阶段消融指标")
     parser.add_argument("--companion-url")
     parser.add_argument("--companion-label")
+    parser.add_argument("--baseline-batch-root", type=Path)
     return parser.parse_args()
 
 
@@ -280,6 +281,16 @@ def main() -> None:
     output_dir = args.output_dir.expanduser().resolve()
     analysis_root = batch_root / "analysis"
     per_video = pd.read_csv(analysis_root / "per_video_metrics.csv")
+    if args.baseline_batch_root:
+        baseline_analysis = (
+            args.baseline_batch_root.expanduser().resolve()
+            / "analysis"
+            / "per_video_metrics.csv"
+        )
+        if baseline_analysis.is_file():
+            baseline = pd.read_csv(baseline_analysis)
+            baseline = baseline[baseline["variant"] == "baseline"]
+            per_video = pd.concat((per_video, baseline), ignore_index=True)
     coverage_payload = json.loads(
         (analysis_root / "coverage.json").read_text(encoding="utf-8")
     )

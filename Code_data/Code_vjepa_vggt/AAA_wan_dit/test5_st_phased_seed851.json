@@ -50,7 +50,7 @@
   },
   "execution": {
     "gpus": [0, 1, 2, 3, 4, 5],
-    "gpu_start_memory_threshold_mib": 4096,
+    "gpu_start_memory_threshold_mib": 6144,
     "poll_seconds": 30,
     "max_attempts_per_job": 5,
     "tmux_session": "wan_test5_st_phased_seed851"
