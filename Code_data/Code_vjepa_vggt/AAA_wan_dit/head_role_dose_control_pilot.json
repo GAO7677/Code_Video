@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "experiment_name": "wan_dit_head_role_dose_control_pilot",
+  "input_list": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt",
+  "expected_cases": 20,
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "seeds": [
+    851,
+    3278
+  ],
+  "step_ranges": [
+    [
+      0,
+      10
+    ],
+    [
+      10,
+      20
+    ]
+  ],
+  "matched_subset_manifest": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/configs/matched_subsets.json",
+  "subset_matching_modes": [
+    "approximate_depth_profile",
+    "exact_same_one_head_per_common_block"
+  ],
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "cfg_scale_wan": 5.0,
+    "physrvg_cfg_enabled": false
+  },
+  "execution": {
+    "gpus": [
+      0,
+      1,
+      2,
+      3,
+      5,
+      6,
+      7
+    ],
+    "workers_per_gpu": 1,
+    "gpu_start_memory_threshold_mib": 4096,
+    "poll_seconds": 60,
+    "max_attempts_per_task": 3,
+    "tmux_session": "wan_head_role_dose_control"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/pilot"
+  },
+  "metrics": {
+    "groups": {
+      "cpu": [
+        "physics_iq_with_context",
+        "physics_iq_without_context",
+        "pmf_with_context",
+        "pmf_without_context"
+      ],
+      "gpu_common": [
+        "wmreward",
+        "vbench_subject_consistency",
+        "vbench_background_consistency",
+        "vbench_temporal_flickering",
+        "vbench_motion_smoothness",
+        "vbench_dynamic_degree",
+        "vbench_aesthetic_quality",
+        "vbench_imaging_quality"
+      ],
+      "videophy2": [
+        "videophy2"
+      ],
+      "cosmos": [
+        "cosmos_reason1"
+      ]
+    },
+    "workers_per_gpu": {
+      "cpu": 2,
+      "gpu_common": 1,
+      "videophy2": 1,
+      "cosmos": 1
+    },
+    "baseline_root": "/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds/pass1"
+  }
+}

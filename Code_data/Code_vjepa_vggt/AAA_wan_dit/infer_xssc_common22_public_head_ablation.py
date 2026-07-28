@@ -11,6 +11,7 @@ from pathlib import Path
 from code_vjepa_vggt.train_xSSC import infer_xssc_context_slots as base
 
 from common22_public_head_targets import ROLE_CHOICES, targets_for_role
+from matched_head_subset_targets import load_matched_subset
 from score_extreme_head_targets import GROUPS, targets_for_score_group
 from dit_ablation import (
     annotate_result_files,
@@ -28,6 +29,8 @@ def _extract_args(
     parser.add_argument("--public-head-role", choices=ROLE_CHOICES)
     parser.add_argument("--score-extreme-selection", type=Path)
     parser.add_argument("--score-extreme-group", choices=GROUPS)
+    parser.add_argument("--matched-subset-manifest", type=Path)
+    parser.add_argument("--matched-subset-id")
     parser.add_argument("--ablation-step-start", type=int)
     parser.add_argument("--ablation-step-end", type=int)
     args, remaining = parser.parse_known_args(sys.argv[1:])
@@ -38,8 +41,15 @@ def _extract_args(
         args.score_extreme_selection is not None
         or args.score_extreme_group is not None
     )
-    if using_public == using_extreme:
-        raise ValueError("Specify exactly one complete public-role or score-extreme pair")
+    using_matched = (
+        args.matched_subset_manifest is not None
+        or args.matched_subset_id is not None
+    )
+    if sum((using_public, using_extreme, using_matched)) != 1:
+        raise ValueError(
+            "Specify exactly one complete public-role, score-extreme, or "
+            "matched-subset pair"
+        )
     if using_public:
         if args.public_head_report is None or args.public_head_role is None:
             raise ValueError("--public-head-report and --public-head-role are paired")
@@ -47,13 +57,22 @@ def _extract_args(
             args.public_head_report, args.public_head_role
         )
         role = str(args.public_head_role)
-    else:
+    elif using_extreme:
         if args.score_extreme_selection is None or args.score_extreme_group is None:
             raise ValueError(
                 "--score-extreme-selection and --score-extreme-group are paired"
             )
         role, targets, source = targets_for_score_group(
             args.score_extreme_selection, args.score_extreme_group
+        )
+    else:
+        if args.matched_subset_manifest is None or args.matched_subset_id is None:
+            raise ValueError(
+                "--matched-subset-manifest and --matched-subset-id are paired"
+            )
+        role, targets, source = load_matched_subset(
+            args.matched_subset_manifest,
+            args.matched_subset_id,
         )
     if (args.ablation_step_start is None) != (args.ablation_step_end is None):
         raise ValueError(

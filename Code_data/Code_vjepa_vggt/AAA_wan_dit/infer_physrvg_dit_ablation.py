@@ -15,6 +15,7 @@ from common22_public_head_targets import (
     targets_for_role as public_targets_for_role,
 )
 from score_extreme_head_targets import GROUPS, targets_for_score_group
+from matched_head_subset_targets import load_matched_subset
 from physrvg_ablation import (
     ABLATION_MODES,
     PhysRVGAblationSpec,
@@ -81,6 +82,8 @@ def _extract_ablation_args(
     )
     parser.add_argument("--physrvg-score-extreme-selection", type=Path)
     parser.add_argument("--physrvg-score-extreme-group", choices=GROUPS)
+    parser.add_argument("--physrvg-matched-subset-manifest", type=Path)
+    parser.add_argument("--physrvg-matched-subset-id")
     parser.add_argument("--physrvg-ablation-step-start", type=int)
     parser.add_argument("--physrvg-ablation-step-end", type=int)
     parser.add_argument("--expected-context-frames", type=int, default=8)
@@ -101,6 +104,8 @@ def _extract_ablation_args(
     using_public_role = args.physrvg_public_head_role is not None
     using_score_selection = args.physrvg_score_extreme_selection is not None
     using_score_group = args.physrvg_score_extreme_group is not None
+    using_matched_manifest = args.physrvg_matched_subset_manifest is not None
+    using_matched_id = args.physrvg_matched_subset_id is not None
     if using_public_report != using_public_role:
         raise ValueError(
             "--physrvg-public-head-report and --physrvg-public-head-role "
@@ -111,22 +116,32 @@ def _extract_ablation_args(
             "--physrvg-score-extreme-selection and "
             "--physrvg-score-extreme-group must be specified together"
         )
+    if using_matched_manifest != using_matched_id:
+        raise ValueError(
+            "--physrvg-matched-subset-manifest and "
+            "--physrvg-matched-subset-id must be specified together"
+        )
     if sum(
         (
             grouped_category is not None,
             using_public_report,
             using_score_selection,
+            using_matched_manifest,
         )
     ) > 1:
         raise ValueError(
-            "Legacy grouped category, common22 role, and score extreme are "
-            "mutually exclusive"
+            "Legacy grouped category, common22 role, score extreme, and "
+            "matched subset are mutually exclusive"
         )
     if grouped_category is not None and spec.mode != "baseline":
         raise ValueError(
             "Grouped Head category cannot be combined with a standard ablation"
         )
-    if (using_public_report or using_score_selection) and spec.mode != "baseline":
+    if (
+        using_public_report
+        or using_score_selection
+        or using_matched_manifest
+    ) and spec.mode != "baseline":
         raise ValueError(
             "Grouped target selection cannot be combined with a standard ablation"
         )
@@ -145,6 +160,11 @@ def _extract_ablation_args(
         grouped_category, grouped_targets, target_source = targets_for_score_group(
             args.physrvg_score_extreme_selection,
             args.physrvg_score_extreme_group,
+        )
+    elif using_matched_manifest:
+        grouped_category, grouped_targets, target_source = load_matched_subset(
+            args.physrvg_matched_subset_manifest,
+            args.physrvg_matched_subset_id,
         )
     else:
         grouped_targets = (
@@ -181,7 +201,7 @@ def _extract_ablation_args(
         target_source,
         step_range,
         int(args.expected_context_frames),
-        using_public_report or using_score_selection,
+        using_public_report or using_score_selection or using_matched_manifest,
         args.physrvg_root,
         remaining,
     )
