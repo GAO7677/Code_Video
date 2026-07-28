@@ -29,7 +29,13 @@ MODEL_NAMES = {
     "xssc": "Wan+xSSC",
     "physrvg": "PhysRVG",
 }
-ROLE_COLORS = {"S": "#36a692", "T": "#e5a93f", "C": "#d46c78"}
+ROLE_COLORS = {
+    "S": "#36a692",
+    "T": "#e5a93f",
+    "ST": "#4f86c6",
+    "C": "#d46c78",
+}
+ABLATION_ROLES = ("S", "T", "ST", "C")
 PLAUSIBILITY_COMPONENTS = (
     "flow_vector_rmse_gt",
     "flow_top05_curve_rmse_gt",
@@ -121,8 +127,18 @@ def interpolate_and_smooth(
 
 
 def finite_median(values: np.ndarray, axis: int) -> np.ndarray:
+    if values.shape[axis] == 0:
+        shape = list(values.shape)
+        del shape[axis]
+        return np.full(shape, np.nan, dtype=np.float64)
     with np.errstate(invalid="ignore"):
         return np.nanmedian(values, axis=axis)
+
+
+def safe_nanmean(values: np.ndarray) -> float:
+    values = np.asarray(values, dtype=np.float64)
+    finite = values[np.isfinite(values)]
+    return float(finite.mean()) if len(finite) else float("nan")
 
 
 def track_state(
@@ -149,15 +165,19 @@ def track_state(
     }
     if not object_region_ids:
         object_region_ids = {int(value) for value in np.unique(region_ids) if value >= 0}
-    object_mask = np.isin(region_ids, sorted(object_region_ids)) & valid
-    background_mask = np.isin(region_ids, sorted(background_region_ids)) & valid
-    if not background_mask.any():
-        background_mask = (~object_mask) & valid
-    if not object_mask.any() or not background_mask.any():
-        raise ValueError("Object/background CoTracker regions are required")
+    object_region_mask = np.isin(region_ids, sorted(object_region_ids))
+    background_region_mask = np.isin(region_ids, sorted(background_region_ids))
+    if not background_region_mask.any():
+        background_region_mask = ~object_region_mask
+    if not object_region_mask.any() or not background_region_mask.any():
+        raise ValueError("Object/background CoTracker region metadata are required")
+    object_mask = object_region_mask & valid
+    background_mask = background_region_mask & valid
 
     displacement = tracks - tracks[0:1]
     global_displacement = finite_median(displacement[:, background_mask], axis=1)
+    if not background_mask.any():
+        global_displacement = np.zeros((len(displacement), 2), dtype=np.float64)
     corrected = displacement - global_displacement[:, None, :]
     velocity = np.diff(corrected, axis=0)
     acceleration = np.diff(velocity, axis=0)
@@ -175,7 +195,10 @@ def track_state(
         "visibility": visibility,
         "valid_points": valid,
         "object_mask": object_mask,
+        "object_region_mask": object_region_mask,
         "background_mask": background_mask,
+        "background_region_mask": background_region_mask,
+        "tracking_failure": bool(not object_mask.any() or not background_mask.any()),
         "corrected_displacement": corrected,
         "object_displacement_curve": finite_median(object_displacement, axis=1),
         "object_speed_curve": finite_median(object_speed, axis=1),
@@ -183,7 +206,7 @@ def track_state(
         "object_jerk_curve": finite_median(object_jerk, axis=1),
         "background_drift_curve": finite_median(background_displacement, axis=1),
         "object_visibility": float(
-            arrays["track_visibility"][start_frame:, np.isin(region_ids, sorted(object_region_ids))].mean()
+            arrays["track_visibility"][start_frame:, object_region_mask].mean()
         ),
     }
 
@@ -239,8 +262,8 @@ def pair_metrics(
             reference_state["object_acceleration_curve"],
         ),
         f"background_drift_abs_error_{suffix}": abs(
-            float(np.nanmean(state["background_drift_curve"]))
-            - float(np.nanmean(reference_state["background_drift_curve"]))
+            safe_nanmean(state["background_drift_curve"])
+            - safe_nanmean(reference_state["background_drift_curve"])
         ),
         f"object_visibility_abs_error_{suffix}": abs(
             state["object_visibility"] - reference_state["object_visibility"]
@@ -275,7 +298,9 @@ def calibrated_plausibility_distance(frame: pd.DataFrame) -> pd.DataFrame:
         values = result[component].astype(float)
         scale = PLAUSIBILITY_SCALES[component]
         column = f"{component}_scaled"
-        result[column] = np.log1p(np.maximum(values, 0.0) / scale)
+        result[column] = np.log1p(np.maximum(values, 0.0) / scale).fillna(
+            np.log1p(10.0)
+        )
         normalized_columns.append(column)
     result["plausibility_distance_gt"] = result[normalized_columns].mean(axis=1)
     baseline = (
@@ -315,6 +340,7 @@ def aggregate_rows(frame: pd.DataFrame, bootstrap_samples: int) -> pd.DataFrame:
             {
                 **dict(zip(keys, key)),
                 "n_seeds": int(group["seed"].nunique()),
+                "tracking_failure_rate": float(group["tracking_failure"].mean()),
                 "impact_mean": float(np.nanmean(impact)),
                 "impact_std": float(np.nanstd(impact, ddof=1)) if len(impact) > 1 else 0.0,
                 "impact_ci_low": impact_low,
@@ -407,8 +433,8 @@ def save_heatmaps(aggregate: pd.DataFrame, path: Path, minimum_seeds: int) -> No
                 ("plausibility_gain_mean", "GT plausibility gain (higher = better)"),
             )
         ):
-            matrix = np.full((3, len(stages)), np.nan)
-            for role_index, role in enumerate(("S", "T", "C")):
+            matrix = np.full((len(ABLATION_ROLES), len(stages)), np.nan)
+            for role_index, role in enumerate(ABLATION_ROLES):
                 for stage_index, stage in enumerate(stages):
                     cells = subset[(subset["role"] == role) & (subset["stage"] == stage)]
                     if len(cells):
@@ -421,7 +447,7 @@ def save_heatmaps(aggregate: pd.DataFrame, path: Path, minimum_seeds: int) -> No
             else:
                 image = axis.imshow(matrix, cmap="viridis", aspect="auto")
             axis.set_xticks(range(len(stages)), stages, rotation=45, ha="right")
-            axis.set_yticks(range(3), ("S", "T", "C"))
+            axis.set_yticks(range(len(ABLATION_ROLES)), ABLATION_ROLES)
             axis.set_title(f"{MODEL_NAMES[model]} | {title}")
             for y in range(matrix.shape[0]):
                 for x in range(matrix.shape[1]):
@@ -530,6 +556,7 @@ def build_html(
             f"<td>{html.escape(str(row.role))}</td>"
             f"<td>[{int(row.denoise_start)},{int(row.denoise_end)})</td>"
             f"<td>{row.n_seeds}</td>"
+            f"<td>{100.0 * row.tracking_failure_rate:.1f}%</td>"
             f"<td>{row.impact_mean:.3f} ± {row.impact_std:.3f}</td>"
             f"<td>{row.plausibility_gain_mean:+.3f} ± {row.plausibility_gain_std:.3f}</td>"
             f"<td class='{label_class}'>{html.escape(row.reasonableness_label)}</td>"
@@ -560,10 +587,10 @@ header,main{{max-width:1500px;margin:auto;padding:16px 20px}}header{{border-bott
 <div class="note"><b>结论边界</b><br>RAFT/CoTracker 是运动证据，不是物理定律判定器。遮挡、形变或物体消失会降低追踪可靠性，因此高影响且置信区间跨 0 的配置标为 uncertain，需要结合视频人工核验。</div>
 </div>
 <h2>二维结论图</h2><div class="plots"><img src="impact_plausibility_scatter.png"><img src="role_stage_heatmaps.png"><img src="temporal_motion_curves.png"></div>
-<h2>配置汇总</h2><div class="table-wrap"><table><thead><tr><th>模型</th><th>Head 类</th><th>去噪区间</th><th>Seeds</th><th>Impact ↑</th><th>GT gain ↑</th><th>判断</th></tr></thead><tbody>
+<h2>配置汇总</h2><div class="table-wrap"><table><thead><tr><th>模型</th><th>Head 类</th><th>去噪区间</th><th>Seeds</th><th>追踪失败</th><th>Impact ↑</th><th>GT gain ↑</th><th>判断</th></tr></thead><tbody>
 {''.join(rows)}
 </tbody></table></div>
-<p class="muted" style="margin-top:10px">原始数据：<a href="per_video_metrics.csv">per_video_metrics.csv</a> · <a href="aggregate_metrics.csv">aggregate_metrics.csv</a> · <a href="temporal_curves.csv">temporal_curves.csv</a> · <a href="../stc-phased/">视频对照页</a></p>
+<p class="muted" style="margin-top:10px">原始数据：<a href="per_video_metrics.csv">per_video_metrics.csv</a> · <a href="aggregate_metrics.csv">aggregate_metrics.csv</a> · <a href="impact_ranking_by_model.csv">impact_ranking_by_model.csv</a> · <a href="temporal_curves.csv">temporal_curves.csv</a> · <a href="../stc-phased/">视频对照页</a></p>
 </main></body></html>"""
 
 
@@ -666,12 +693,13 @@ def main() -> None:
                 "denoise_start": denoise_range[0],
                 "denoise_end": denoise_range[1],
                 "impact_score": impact,
+                "tracking_failure": state["tracking_failure"],
                 "object_visibility": state["object_visibility"],
-                "background_drift_mean": float(np.nanmean(state["background_drift_curve"])),
-                "object_displacement_mean": float(np.nanmean(state["object_displacement_curve"])),
-                "object_speed_mean": float(np.nanmean(state["object_speed_curve"])),
-                "object_acceleration_mean": float(np.nanmean(state["object_acceleration_curve"])),
-                "object_jerk_mean": float(np.nanmean(state["object_jerk_curve"])),
+                "background_drift_mean": safe_nanmean(state["background_drift_curve"]),
+                "object_displacement_mean": safe_nanmean(state["object_displacement_curve"]),
+                "object_speed_mean": safe_nanmean(state["object_speed_curve"]),
+                "object_acceleration_mean": safe_nanmean(state["object_acceleration_curve"]),
+                "object_jerk_mean": safe_nanmean(state["object_jerk_curve"]),
                 **gt_metrics,
                 **baseline_metrics,
             }
@@ -713,6 +741,44 @@ def main() -> None:
     per_video.to_csv(results_dir / "per_video_metrics.csv", index=False)
     aggregate.to_csv(results_dir / "aggregate_metrics.csv", index=False)
     curves.to_csv(results_dir / "temporal_curves.csv", index=False)
+    ranking = aggregate[
+        (aggregate["variant"] != "baseline")
+        & (aggregate["n_seeds"] >= args.minimum_seeds)
+    ].copy()
+    ranking = ranking.sort_values(
+        ["model", "impact_mean"],
+        ascending=[True, False],
+    )
+    ranking.insert(
+        1,
+        "rank",
+        ranking.groupby("model").cumcount() + 1,
+    )
+    ranking["stage"] = [
+        f"[{int(start)},{int(end)})"
+        for start, end in zip(ranking["denoise_start"], ranking["denoise_end"])
+    ]
+    ranking_columns = [
+        "model",
+        "rank",
+        "role",
+        "stage",
+        "variant",
+        "n_seeds",
+        "impact_mean",
+        "impact_std",
+        "impact_ci_low",
+        "impact_ci_high",
+        "plausibility_gain_mean",
+        "plausibility_gain_std",
+        "plausibility_gain_ci_low",
+        "plausibility_gain_ci_high",
+        "reasonableness_label",
+    ]
+    ranking[ranking_columns].to_csv(
+        results_dir / "impact_ranking_by_model.csv",
+        index=False,
+    )
     protocol = {
         "schema_version": 1,
         "context_frames": args.context_frames,
@@ -757,6 +823,10 @@ def main() -> None:
     per_video.to_csv(args.report_dir / "per_video_metrics.csv", index=False)
     aggregate.to_csv(args.report_dir / "aggregate_metrics.csv", index=False)
     curves.to_csv(args.report_dir / "temporal_curves.csv", index=False)
+    ranking[ranking_columns].to_csv(
+        args.report_dir / "impact_ranking_by_model.csv",
+        index=False,
+    )
     atomic_write_text(
         args.report_dir / "index.html",
         build_html(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a strict video inventory for S/T/C phased motion analysis."""
+"""Build a strict video inventory for S/T/ST/C phased motion analysis."""
 
 from __future__ import annotations
 
@@ -21,7 +21,10 @@ DEFAULT_OUTPUT_ROOT = Path(
 )
 DEFAULT_SEEDS = (851, 3278, 11395, 20379, 28221, 32098)
 DEFAULT_MODELS = ("wan_lora", "xssc", "physrvg")
-PHASED_VARIANT = re.compile(r"^(?P<role>[STC])_steps(?P<start>\d{2})_(?P<end>\d{2})$")
+PHASED_VARIANT = re.compile(
+    r"^(?P<role>ST|S|T|C)_steps(?P<start>\d{2})_(?P<end>\d{2})$"
+)
+ROLE_ORDER = {"S": 0, "T": 1, "ST": 2, "C": 3}
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
-    parser.add_argument("--roles", nargs="+", choices=("S", "T", "C"), default=["S", "T", "C"])
+    parser.add_argument(
+        "--roles",
+        nargs="+",
+        choices=tuple(ROLE_ORDER),
+        default=list(ROLE_ORDER),
+    )
     parser.add_argument(
         "--require-all-seeds",
         action="store_true",
@@ -88,7 +96,7 @@ def main() -> None:
     ]
     variants.sort(
         key=lambda value: (
-            "STC".index(PHASED_VARIANT.fullmatch(value).group("role")),
+            ROLE_ORDER[PHASED_VARIANT.fullmatch(value).group("role")],
             int(PHASED_VARIANT.fullmatch(value).group("start")),
             int(PHASED_VARIANT.fullmatch(value).group("end")),
         )
@@ -175,7 +183,7 @@ def main() -> None:
         "generation": payload.get("generation", {}),
         "selected_seeds": selected_seeds,
         "selected_models": selected_models,
-        "selected_roles": sorted(selected_roles),
+        "selected_roles": sorted(selected_roles, key=ROLE_ORDER.__getitem__),
         "selected_variants": variants,
         "entries": entries,
         "missing": missing,

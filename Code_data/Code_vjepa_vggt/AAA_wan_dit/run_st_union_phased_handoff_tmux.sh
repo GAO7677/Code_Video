@@ -7,8 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION="${SESSION:-wan_st_union_phased_multiseed}"
 WAIT_SESSION="${WAIT_SESSION:-wan_stc_phased_multiseed_resume_after_00_05}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/data/gaoya/agent-data/outputs/wan_dit_common22_public_head_ablation_case025}"
-LOG_ROOT="${OUTPUT_ROOT}/worker_logs/st_union_phased_multiseed"
-mkdir -p "${LOG_ROOT}"
+LOG_ROOT="${OUTPUT_ROOT}/worker_logs/${SESSION}"
+BARRIER_ROOT="${OUTPUT_ROOT}/worker_barriers/${SESSION}"
+mkdir -p "${LOG_ROOT}" "${BARRIER_ROOT}"
 
 if tmux has-session -t "${SESSION}" 2>/dev/null; then
   echo "tmux session already exists: ${SESSION}" >&2
@@ -17,7 +18,7 @@ fi
 
 for gpu in 0 1 2 3 4 5 6; do
   name="gpu${gpu}"
-  command="cd '${SCRIPT_DIR}' && GPU='${gpu}' WAIT_SESSION='${WAIT_SESSION}' bash '${SCRIPT_DIR}/wait_then_run_st_union_phased_gpu.sh' 2>&1 | tee -a '${LOG_ROOT}/${name}.log'"
+  command="cd '${SCRIPT_DIR}' && GPU='${gpu}' WAIT_SESSION='${WAIT_SESSION}' BARRIER_ROOT='${BARRIER_ROOT}' bash '${SCRIPT_DIR}/wait_then_run_st_union_phased_gpu.sh' 2>&1 | tee -a '${LOG_ROOT}/${name}.log'"
   if (( gpu == 0 )); then
     tmux new-session -d -s "${SESSION}" -n "${name}" "${command}"
   else

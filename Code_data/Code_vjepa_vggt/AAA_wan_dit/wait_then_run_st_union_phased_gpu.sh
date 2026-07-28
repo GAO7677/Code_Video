@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GPU="${GPU:?set GPU}"
 WAIT_SESSION="${WAIT_SESSION:-wan_stc_phased_multiseed_resume_after_00_05}"
 WAIT_WINDOW="gpu${GPU}"
+BARRIER_ROOT="${BARRIER_ROOT:?set BARRIER_ROOT}"
 
 while tmux list-windows -t "${WAIT_SESSION}" -F '#{window_name}' 2>/dev/null \
   | grep -Fxq "${WAIT_WINDOW}"; do
@@ -16,4 +17,5 @@ done
 
 echo "[st-union-handoff] GPU${GPU} released; starting S+T union tasks at $(date -u +%FT%TZ)"
 GPU="${GPU}" NUM_WORKERS=7 \
+  BARRIER_ROOT="${BARRIER_ROOT}" \
   bash "${SCRIPT_DIR}/run_st_union_phased_multiseed_worker.sh"
