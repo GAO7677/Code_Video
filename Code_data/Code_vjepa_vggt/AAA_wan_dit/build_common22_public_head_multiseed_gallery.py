@@ -198,40 +198,68 @@ header{padding:14px 18px;border-bottom:1px solid var(--line)}h1,h2,p{margin:0 0 
 .toolbar{position:sticky;top:0;z-index:4;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 18px;background:#101214ee;border-bottom:1px solid var(--line)}
 select,button{height:34px;border:1px solid #59616a;background:#25292d;color:var(--text);padding:0 10px}button{cursor:pointer}.status{color:var(--accent);font-weight:700}
 main{padding:14px 18px;overflow-x:auto}.refs{display:grid;grid-template-columns:repeat(2,minmax(260px,448px));gap:10px;margin-bottom:14px}
-table{border-collapse:collapse;min-width:1540px;width:100%}th,td{border:1px solid var(--line);padding:6px;vertical-align:top}th{background:#202429;position:sticky;top:55px;z-index:2}
+.seed-section{padding:14px 0 24px;border-top:1px solid var(--line)}.seed-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+table{border-collapse:collapse;min-width:1540px;width:100%}th,td{border:1px solid var(--line);padding:6px;vertical-align:top}th{background:#202429}
 th:first-child,td:first-child{position:sticky;left:0;background:#171a1d;z-index:1;width:120px}.card{min-width:220px}
 video{display:block;width:100%;aspect-ratio:7/4;background:#000}.missing{display:grid;place-items:center;aspect-ratio:7/4;background:#24282c;color:#8f969e}
 figcaption{padding-top:4px;color:var(--muted)}figure{margin:0}.note{color:var(--muted)}
 @media(max-width:850px){.refs{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1>Common22 跨模型公共稳定 Head 分类消融</h1>
-<p>20 cases × 22 paired seeds × 3 models；每个类别同时将该类全部公共 Head 的 self-attention 输出在 output projection 前置零。</p>
+<p>同一 case 的 22 个 paired seeds 全部展示在本页；每个类别同时将该类全部公共 Head 的 self-attention 输出在 output projection 前置零。</p>
 <p class="note" id="prompt"></p></header>
-<div class="toolbar"><label>Case <select id="case"></select></label><label>Seed <select id="seed"></select></label>
-<button id="play">同步播放</button><button id="pause">暂停</button><button id="reset">回到开头</button><span class="status" id="status">读取中</span></div>
-<main><div class="refs" id="refs"></div><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></main>
+<div class="toolbar"><label>Case <select id="case"></select></label><button id="refresh" type="button">立即刷新</button><span class="status" id="status">读取中</span><span class="note" id="updated"></span></div>
+<main><div class="refs" id="refs"></div><div id="seeds"></div></main>
 <script>
 let DATA=null;const variants=["baseline","S","T","P","C","G"];
 const q=id=>document.getElementById(id);
 function options(node,values,label){node.innerHTML=values.map(v=>`<option value="${v}">${label(v)}</option>`).join("")}
 function refPath(item,key){if(!item[key])return null;const ext=item[key].split(".").pop();return `media/references/${item.id}__${key}.${ext}`}
-function card(src,label){return src?`<figure><video controls loop muted preload="metadata" src="${src}"></video><figcaption>${label}</figcaption></figure>`:`<div class="missing">${label} · 等待生成</div>`}
+function card(src,label,reference=false){return src?`<figure><video controls loop muted preload="${reference?"metadata":"none"}" src="${src}"></video><figcaption>${label}</figcaption></figure>`:`<div class="missing">${label} · 等待生成</div>`}
+function tableHead(){return "<tr><th>模型</th>"+variants.map(v=>`<th>${DATA.role_names[v]}${v==="baseline"?"":` · ${DATA.target_counts[v]} Heads`}</th>`).join("")+"</tr>"}
+function seedSection(c,s){
+ const rows=DATA.models.map(m=>`<tr><td><strong>${DATA.model_names[m]}</strong></td>${variants.map(v=>`<td class="card video-cell" data-seed="${s}" data-model="${m}" data-variant="${v}">${card(DATA.videos[c][s][m][v],DATA.role_names[v])}</td>`).join("")}</tr>`).join("");
+ return `<section class="seed-section" data-seed-section="${s}"><div class="seed-title"><h2>Seed ${s}</h2><button onclick="controlSeed('${s}','play')">同步播放</button><button onclick="controlSeed('${s}','pause')">暂停</button><button onclick="controlSeed('${s}','reset')">回到开头</button></div><table><thead>${tableHead()}</thead><tbody>${rows}</tbody></table></section>`;
+}
 function render(){
- const c=q("case").value,s=q("seed").value,item=DATA.cases.find(x=>x.id===c);q("prompt").textContent=`Prompt: ${item.prompt}`;
- q("refs").innerHTML=card(refPath(item,"source_video"),"Source / GT")+card(refPath(item,"context_video"),"8-frame context");
- q("head").innerHTML="<th>模型</th>"+variants.map(v=>`<th>${DATA.role_names[v]}${v==="baseline"?"":` · ${DATA.target_counts[v]} Heads`}</th>`).join("");
- q("body").innerHTML=DATA.models.map(m=>`<tr><td><strong>${DATA.model_names[m]}</strong></td>${variants.map(v=>`<td class="card">${card(DATA.videos[c][s][m][v],DATA.role_names[v])}</td>`).join("")}</tr>`).join("");
+ const c=q("case").value,item=DATA.cases.find(x=>x.id===c);q("prompt").textContent=`Prompt: ${item.prompt}`;
+ q("refs").innerHTML=card(refPath(item,"source_video"),"Source / GT",true)+card(refPath(item,"context_video"),"8-frame context",true);
+ q("seeds").innerHTML=DATA.seeds.map(s=>seedSection(c,String(s))).join("");
+}
+function refreshCells(){
+ const c=q("case").value;
+ document.querySelectorAll(".video-cell").forEach(cell=>{
+  if(cell.querySelector("video"))return;
+  const src=DATA.videos[c][cell.dataset.seed][cell.dataset.model][cell.dataset.variant];
+  if(src)cell.innerHTML=card(src,DATA.role_names[cell.dataset.variant]);
+ });
+}
+function controlSeed(seed,action){
+ const videos=[...document.querySelector(`[data-seed-section="${seed}"]`).querySelectorAll("video")];
+ videos.forEach(v=>{if(action==="play"){v.currentTime=0;v.play()}else if(action==="pause"){v.pause()}else{v.pause();v.currentTime=0}});
 }
 async function load(){
- DATA=await fetch("manifest.json?"+Date.now(),{cache:"no-store"}).then(r=>r.json());
- const oldCase=q("case").value,oldSeed=q("seed").value;options(q("case"),DATA.cases,x=>x.id);options(q("seed"),DATA.seeds,x=>`Seed ${x}`);
- if(DATA.cases.some(x=>x.id===oldCase))q("case").value=oldCase;if(DATA.seeds.map(String).includes(oldSeed))q("seed").value=oldSeed;
- const sc=DATA.state_counts;q("status").textContent=`视频 ${DATA.completed_video_cells}/${DATA.total_video_cells} · 任务 complete ${sc.complete}/${DATA.expected_jobs} · running ${sc.running} · failed ${sc.failed}`;
- render();
+ try{
+  const response=await fetch(`./manifest.json?t=${Date.now()}`,{cache:"no-store"});
+  if(!response.ok)throw new Error(`HTTP ${response.status}`);
+  const next=await response.json(),oldCase=q("case").value,first=!DATA;
+  DATA=next;
+  if(first){
+   options(q("case"),DATA.cases,x=>x.id);
+   if(DATA.cases.some(x=>x.id===oldCase))q("case").value=oldCase;
+  }
+  const sc=DATA.state_counts;
+  q("status").textContent=`视频 ${DATA.completed_video_cells}/${DATA.total_video_cells} · 任务 complete ${sc.complete}/${DATA.expected_jobs} · running ${sc.running} · failed ${sc.failed}`;
+  q("updated").textContent=`更新于 ${new Date().toLocaleTimeString()}`;
+  if(first)render();else refreshCells();
+ }catch(error){
+  q("status").textContent=`刷新失败：${error.message}`;
+ }
 }
-q("case").onchange=render;q("seed").onchange=render;
-const videos=()=>[...document.querySelectorAll("video")];
-q("play").onclick=()=>videos().forEach(v=>{v.currentTime=0;v.play()});q("pause").onclick=()=>videos().forEach(v=>v.pause());q("reset").onclick=()=>videos().forEach(v=>{v.pause();v.currentTime=0});
+q("case").onchange=render;
+q("refresh").onclick=load;
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+window.addEventListener("pageshow",load);
 load();setInterval(load,10000);
 </script></body></html>"""
     _atomic_text(gallery / "index.html", document)
