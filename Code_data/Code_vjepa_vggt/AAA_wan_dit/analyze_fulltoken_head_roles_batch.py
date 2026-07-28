@@ -30,6 +30,16 @@ ROLE_ORDER = (*ROLES, "M")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override the default <output_root>/analysis directory.",
+    )
+    parser.add_argument(
+        "--seed-snapshot",
+        type=Path,
+        help="JSON mapping model names to the exact completed seeds to analyze.",
+    )
     return parser.parse_args()
 
 
@@ -171,8 +181,23 @@ def main() -> None:
     prerequisite = (
         Path(config["storage"]["prerequisite_root"]).expanduser().resolve()
     )
-    output = root / "analysis"
+    output = (
+        args.output_dir.expanduser().resolve()
+        if args.output_dir
+        else root / "analysis"
+    )
     output.mkdir(parents=True, exist_ok=True)
+    if args.seed_snapshot:
+        seed_snapshot_path = args.seed_snapshot.expanduser().resolve()
+        seed_snapshot = json.loads(
+            seed_snapshot_path.read_text(encoding="utf-8")
+        )
+    else:
+        seed_snapshot_path = None
+        seed_snapshot = {
+            model: [int(value) for value in config["seeds"]]
+            for model in config["models"]
+        }
     cases = [
         Path(line.strip()).expanduser().resolve().stem
         for line in (root / "input_lists" / "test5_unique20.txt")
@@ -192,15 +217,20 @@ def main() -> None:
     selection: dict[str, dict[str, dict[str, Any]]] = {}
     report: dict[str, Any] = {
         "config": str(config_path),
+        "seed_snapshot": (
+            str(seed_snapshot_path) if seed_snapshot_path is not None else None
+        ),
         "trajectory_validity": config["trajectory_validity"],
         "models": {},
     }
     csv_rows = []
 
     for model in config["models"]:
+        model_seeds = [int(value) for value in seed_snapshot[model]]
+        if not model_seeds:
+            raise ValueError(f"seed snapshot contains no seeds for {model}")
         sample_records = []
-        for seed_value in config["seeds"]:
-            seed = int(seed_value)
+        for seed in model_seeds:
             query_path = (
                 prerequisite
                 / "query_maps"
@@ -280,8 +310,7 @@ def main() -> None:
         _render_grid(
             aggregate_labels,
             (
-                f"{MODEL_NAMES[model]} | 50 seeds x 20 cases | "
-                "aggregate head roles"
+                f"{len(model_seeds)} seeds x 20 cases | aggregate head roles"
             ),
             output / f"{model}_aggregate_roles.png",
         )
@@ -315,7 +344,17 @@ def main() -> None:
         top_count = int(config["analysis"]["selected_raw_qk_heads_per_role"])
         for role_index, role in enumerate(ROLES):
             role_scores = mean_scores[..., role_index].copy()
-            flat_indices = np.argsort(role_scores.reshape(-1))[::-1][:top_count]
+            role_scores[aggregate_labels != role] = -np.inf
+            flat_indices = np.argsort(role_scores.reshape(-1))[::-1]
+            flat_indices = [
+                int(index)
+                for index in flat_indices
+                if np.isfinite(role_scores.reshape(-1)[index])
+            ][:top_count]
+            if len(flat_indices) != top_count:
+                raise RuntimeError(
+                    f"{model}: found {len(flat_indices)}/{top_count} stable {role} heads"
+                )
             for rank, flat_index in enumerate(flat_indices, start=1):
                 block, head = np.unravel_index(flat_index, role_scores.shape)
                 candidates = [
@@ -338,6 +377,8 @@ def main() -> None:
                 }
         selection[model] = model_selection
         report["models"][model] = {
+            "seeds": model_seeds,
+            "seed_count": len(model_seeds),
             "samples": len(sample_records),
             "valid_trajectory_samples": int(valid_mask.sum()),
             "aggregate_heads": model_rows,

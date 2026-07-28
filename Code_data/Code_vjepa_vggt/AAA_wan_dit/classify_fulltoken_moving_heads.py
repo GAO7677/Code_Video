@@ -360,30 +360,22 @@ def _render_qk_evidence(
         raise ValueError(f"{path} does not contain head {head}; has {selected}")
     head_index = selected.index(head)
     steps = data["steps_one_based"].astype(int)
-    raw = data["raw_qk_mean"][:, head_index].astype(np.float32)
     attention = data["softmax_attention_mass"][:, head_index].astype(np.float32)
     log_attention = np.log10(np.maximum(attention, 1.0e-8))
-    raw_limit = max(float(np.percentile(np.abs(raw), 99.5)), 1.0e-6)
     attention_min = float(np.percentile(log_attention, 2.0))
     attention_max = float(np.percentile(log_attention, 99.5))
     if attention_max <= attention_min:
         attention_max = attention_min + 1.0
 
     fig, axes = plt.subplots(
-        len(steps), 2, figsize=(10.8, 2.9 * len(steps)), constrained_layout=True
+        len(steps), 1, figsize=(6.0, 5.4 * len(steps)), constrained_layout=True
     )
-    bins = int(raw.shape[-1])
+    axes = np.atleast_1d(axes)
+    bins = int(attention.shape[-1])
     boundaries = [time * bins / 13.0 - 0.5 for time in range(1, 13)]
     for row, step in enumerate(steps):
-        raw_image = axes[row, 0].imshow(
-            raw[row],
-            cmap="coolwarm",
-            vmin=-raw_limit,
-            vmax=raw_limit,
-            interpolation="nearest",
-            aspect="equal",
-        )
-        attention_image = axes[row, 1].imshow(
+        axis = axes[row]
+        attention_image = axis.imshow(
             log_attention[row],
             cmap="magma",
             vmin=attention_min,
@@ -391,16 +383,13 @@ def _render_qk_evidence(
             interpolation="nearest",
             aspect="equal",
         )
-        axes[row, 0].set_title(f"step {step}: raw QK / sqrt(d)")
-        axes[row, 1].set_title(f"step {step}: log10 softmax attention mass")
-        for axis in axes[row]:
-            for boundary in boundaries:
-                axis.axhline(boundary, color="white", linewidth=0.18, alpha=0.45)
-                axis.axvline(boundary, color="white", linewidth=0.18, alpha=0.45)
-            axis.set_xlabel("pooled key-token bin")
-            axis.set_ylabel("pooled query-token bin")
-        fig.colorbar(raw_image, ax=axes[row, 0], fraction=0.046)
-        fig.colorbar(attention_image, ax=axes[row, 1], fraction=0.046)
+        axis.set_title(f"step {step}: softmax attention mass (log10 color)")
+        for boundary in boundaries:
+            axis.axhline(boundary, color="white", linewidth=0.18, alpha=0.45)
+            axis.axvline(boundary, color="white", linewidth=0.18, alpha=0.45)
+        axis.set_xlabel("pooled key-token bin")
+        axis.set_ylabel("pooled query-token bin")
+        fig.colorbar(attention_image, ax=axis, fraction=0.046)
     fig.suptitle(
         f"{MODEL_NAMES[model]} | {role} | block {block:02d}, head {head:02d} | "
         "all 5824 Q/K tokens -> 512x512",
@@ -478,26 +467,16 @@ def main() -> None:
         },
         "samples": [],
     }
-    sections = []
+    case_panels: dict[str, list[str]] = {case: [] for case in cases}
     for item in classified:
         model = item["model"]
         case = item["case"]
         slug = f"{model}__{case}"
-        role_grid = output_dir / f"{slug}__roles.png"
-        _render_role_grid(item, role_grid)
         top = _top_heads(item, int(args.top_per_role))
-        evidence_rows = []
         top_payload = {}
         for role in ROLES:
             top_payload[role] = []
             for block, head in top[role]:
-                evidence = output_dir / (
-                    f"{slug}__{role}_b{block:02d}_h{head:02d}.png"
-                )
-                if not evidence.is_file():
-                    _render_head_evidence(
-                        item, block=block, head=head, output=evidence
-                    )
                 row = {
                     "role": role,
                     "block": block,
@@ -521,10 +500,8 @@ def main() -> None:
                         item, block, head, "object", "context_enrichment"
                     ),
                     "entropy": _metric(item, block, head, "full", "entropy"),
-                    "evidence_image": evidence.name,
                 }
                 top_payload[role].append(row)
-                evidence_rows.append(row)
         qk_figures = ""
         if args.qk_root is not None:
             qk_items = []
@@ -549,12 +526,12 @@ def main() -> None:
                     f"<a href='{html.escape(qk_image.name)}'>"
                     f"<img loading='lazy' src='{html.escape(qk_image.name)}'></a>"
                     f"<figcaption>{role} · B{row['block']:02d} "
-                    f"H{row['head']:02d} · all-token QK</figcaption></figure>"
+                    f"H{row['head']:02d} · softmax Q@K</figcaption></figure>"
                 )
             qk_figures = (
-                "<h3>全部 5824 个 Q/K token 的矩阵</h3>"
-                "<p>左列为 raw QK，右列为 softmax attention；白线分隔 13 个 "
-                "latent 时间段。点击查看原图。</p>"
+                "<h3>全部 5824 个 Q/K token 的 softmax Q@K 矩阵</h3>"
+                "<p>颜色为 softmax attention mass 的 log10 映射；白线分隔 "
+                "13 个 latent 时间段。点击查看原图。</p>"
                 f"<div class='evidence-row'>{''.join(qk_items)}</div>"
             )
         video, preview, query_payload = _copy_media(
@@ -578,52 +555,23 @@ def main() -> None:
                 "track_quality": query_payload.get("track_quality", {}),
             }
         )
-        table_rows = "".join(
-            "<tr>"
-            f"<td><span class='role role-{row['role']}'>{row['role']}</span></td>"
-            f"<td>B{row['block']:02d} H{row['head']:02d}</td>"
-            f"<td>{row['score']:.3f}</td><td>{row['consistency']:.2f}</td>"
-            f"<td>{row['local_enrichment']:.2f}</td>"
-            f"<td>{row['trajectory_selectivity_log2']:.2f}</td>"
-            f"<td>{row['fixed_position_enrichment']:.2f}</td>"
-            f"<td>{row['context_enrichment']:.2f}</td>"
-            f"<td>{row['entropy']:.3f}</td>"
-            f"<td><a href='{html.escape(row['evidence_image'])}'>矩阵</a></td>"
-            "</tr>"
-            for row in evidence_rows
-        )
-        count_text = " · ".join(
-            f"{role} {counts.get(role, 0)}" for role in (*ROLES, "M")
-        )
-        evidence_figures = "".join(
-            "<figure>"
-            f"<a href='{html.escape(top_payload[role][0]['evidence_image'])}'>"
-            f"<img loading='lazy' src='{html.escape(top_payload[role][0]['evidence_image'])}'></a>"
-            f"<figcaption>{role} · B{top_payload[role][0]['block']:02d} "
-            f"H{top_payload[role][0]['head']:02d}</figcaption></figure>"
-            for role in ROLES
-        )
-        sections.append(
-            f"""<section>
-<h2>{html.escape(MODEL_NAMES[model])} · {html.escape(case)}</h2>
+        case_panels[case].append(
+            f"""<div class="model-panel">
+<h3>{html.escape(MODEL_NAMES[model])}</h3>
 <p class="prompt">{html.escape(str(query_payload.get("prompt", "")))}</p>
-<div class="media-row">
-  <figure><video controls preload="metadata" src="{html.escape(video)}"></video>
-  <figcaption>seed 851 确定性 pass-1 生成视频</figcaption></figure>
-  <figure><img src="{html.escape(preview)}"><figcaption>运动目标 query 轨迹与 token</figcaption></figure>
-</div>
-<p class="counts">{html.escape(count_text)}</p>
-<a href="{html.escape(role_grid.name)}"><img class="role-grid" loading="lazy" src="{html.escape(role_grid.name)}"></a>
-<div class="evidence-row">{evidence_figures}</div>
+<figure class="video-figure"><video controls preload="metadata" src="{html.escape(video)}"></video>
+<figcaption>seed 851 确定性 pass-1 生成视频</figcaption></figure>
 {qk_figures}
-<div class="table-wrap"><table>
-<thead><tr><th>类</th><th>Head</th><th>分数</th><th>4步一致率</th>
-<th>局部富集</th><th>轨迹/null log2</th><th>固定位置富集</th>
-<th>ctx富集</th><th>熵</th><th>证据</th></tr></thead>
-<tbody>{table_rows}</tbody></table></div>
-</section>"""
+</div>"""
         )
 
+    sections = [
+        f"""<section class="case-section">
+<h2>{html.escape(case)}</h2>
+{''.join(case_panels[case])}
+</section>"""
+        for case in cases
+    ]
     report_path = output_dir / "classification.json"
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
@@ -635,21 +583,17 @@ def main() -> None:
 <title>全 token 时间矩阵与运动轨迹 Head 分类 Pilot</title>
 <style>
 body{{margin:0;background:#f7f7f5;color:#242622;font:14px Arial,sans-serif;overflow-x:hidden}}
-main{{max-width:1500px;margin:auto;padding:18px}} h1,h2{{letter-spacing:0}}
-h1{{font-size:25px;margin:0 0 10px}} h2{{font-size:18px;overflow-wrap:anywhere}}
+main{{max-width:1500px;margin:auto;padding:18px}} h1,h2,h3{{letter-spacing:0}}
+h1{{font-size:25px;margin:0 0 10px}} h2{{font-size:20px;overflow-wrap:anywhere}}
+h3{{font-size:17px;margin:0 0 8px}}
 .method{{padding:10px 0;border-top:1px solid #bbb;border-bottom:1px solid #bbb;line-height:1.65}}
-section{{padding:18px 0;border-bottom:2px solid #555}} .prompt{{max-width:1100px}}
-.media-row{{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:1200px}}
+.case-section{{padding:18px 0;border-bottom:3px solid #444}}
+.model-panel{{padding:16px 0;border-top:1px solid #bbb}} .prompt{{max-width:1100px}}
 .evidence-row{{display:grid;grid-template-columns:repeat(5,minmax(210px,1fr));gap:9px;margin:12px 0}}
 figure{{margin:0;min-width:0}} video,figure img{{display:block;width:100%;max-height:420px;object-fit:contain;background:#111}}
-figcaption{{padding-top:5px;color:#555}} .role-grid{{width:100%;height:auto;display:block;background:#fff}}
-.counts{{font-weight:700}} .table-wrap{{overflow:auto}} table{{border-collapse:collapse;width:100%;background:#fff}}
-th,td{{padding:5px 7px;border:1px solid #d1d1cc;text-align:right;white-space:nowrap}}
-th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){{text-align:left}}
-.role{{display:inline-block;color:#fff;font-weight:700;padding:2px 7px;border-radius:3px}}
-{''.join(f'.role-{role}{{background:{ROLE_COLORS[role]}}}' for role in ROLES)}
+figcaption{{padding-top:5px;color:#555}} .video-figure{{max-width:680px}}
 a{{color:#075e54}} @media(max-width:1100px){{.evidence-row{{grid-template-columns:repeat(2,minmax(210px,1fr))}}}}
-@media(max-width:800px){{.media-row,.evidence-row{{grid-template-columns:1fr}}}}
+@media(max-width:800px){{.evidence-row{{grid-template-columns:1fr}}}}
 </style></head><body><main>
 <h1>全 token 时间矩阵 + moving-object 轨迹富集 Head 分类 Pilot</h1>
 <div class="method">
