@@ -145,25 +145,43 @@ def confidence_text(mean: float, low: float, high: float) -> str:
 
 
 def interpretation(row: pd.Series) -> str:
+    impact_s = float(row["S_mean"])
+    impact_t = float(row["T_mean"])
+    impact_st = float(row["ST_mean"])
     direct = float(row["s_minus_t_mean"])
     if abs(direct) < 0.03:
-        dominant = "S 与 T 的单独影响接近"
+        dominant = "单独消融 S 与单独消融 T 的平均影响接近"
     elif direct > 0:
-        dominant = "只消融 S 的轨迹影响更大"
+        dominant = f"只消融 S 比只消融 T 多产生 {direct:.3f} Impact"
     else:
-        dominant = "只消融 T 的轨迹影响更大"
+        dominant = f"只消融 T 比只消融 S 多产生 {-direct:.3f} Impact"
     add_t = float(row["add_t_given_s_mean"])
     add_s = float(row["add_s_given_t_mean"])
     if abs(add_t) < 0.03 and abs(add_s) < 0.03:
-        interaction = "联合消融几乎没有额外变化，表现为冗余或饱和"
+        interaction = (
+            "联合消融与两种单独消融的差值都小于 0.03，"
+            "即再禁用另一类 head 几乎不改变相对 baseline 的轨迹偏移"
+        )
     elif add_t > 0 and add_s > 0:
-        interaction = "加入第二类 head 后 Impact 继续增大，表现为互补"
+        interaction = (
+            f"联合消融比只消融 S 高 {add_t:.3f}、比只消融 T 高 {add_s:.3f}，"
+            "即禁用第二类 head 会进一步放大相对 baseline 的轨迹偏移"
+        )
     elif add_t < 0 and add_s < 0:
-        interaction = "加入第二类 head 后反而更接近 baseline，表现为抵消"
+        interaction = (
+            f"联合消融比只消融 S 低 {-add_t:.3f}、比只消融 T 低 {-add_s:.3f}，"
+            "即同时禁用两类 head 后，生成轨迹反而更接近 baseline"
+        )
     elif add_t > 0 >= add_s:
-        interaction = "T 加在 S 上增加影响，但 S 加在 T 上产生抵消"
+        interaction = (
+            f"在已消融 S 的基础上再消融 T，Impact 增加 {add_t:.3f}；"
+            f"在已消融 T 的基础上再消融 S，Impact 降低 {-add_s:.3f}"
+        )
     else:
-        interaction = "S 加在 T 上增加影响，但 T 加在 S 上产生抵消"
+        interaction = (
+            f"在已消融 T 的基础上再消融 S，Impact 增加 {add_s:.3f}；"
+            f"在已消融 S 的基础上再消融 T，Impact 降低 {-add_t:.3f}"
+        )
     direct_confidence = confidence_text(
         float(row["s_minus_t_mean"]),
         float(row["s_minus_t_ci_low"]),
@@ -180,7 +198,9 @@ def interpretation(row: pd.Series) -> str:
         float(row["add_s_given_t_ci_high"]),
     )
     return (
-        f"{dominant}；{interaction}。证据：S-T {direct_confidence}，"
+        f"Impact(S)={impact_s:.3f}，Impact(T)={impact_t:.3f}，"
+        f"Impact(S+T)={impact_st:.3f}。{dominant}；{interaction}。"
+        f"证据：S-T {direct_confidence}，"
         f"消S后再消T {add_t_confidence}，消T后再消S {add_s_confidence}。"
     )
 
@@ -411,7 +431,7 @@ video{{display:block;width:100%;aspect-ratio:16/9;background:#111}}.score{{displ
 <main>
 <div class="scope"><strong>证据范围：</strong>{html.escape(str(case.get('title') or case.get('id')))}；6 个 seeds，3 个模型。统计只保留同模型、同 seed、同阶段且 S/T/S+T 轨迹均有效的配对四元组。</div>
 <div class="definition"><strong>唯一指标 Impact：</strong>同 seed 消融视频相对 baseline 的四项归一化运动误差经 log1p 后取均值。数值越大表示运动轨迹改变越强，不表示质量越好。表中括号为配对 bootstrap 95% CI；“消S后再消T”=Impact(S+T)-Impact(S)，另一列同理。</div>
-<div class="definition"><strong>总体结论：</strong>最早期 [0,5) 由 S 主导，PhysRVG 的方向最稳定；[5,10) 开始模型分化，xSSC 偏 T、PhysRVG 偏 S、Wan 接近冗余；[10,20) Wan/xSSC 中 T 单独影响更强且 S+T 出现抵消，而 PhysRVG 仍呈互补；[20,30) S 再次占主导。由此更适合把 S 理解为运动结构约束，把 T 理解为模型相关的中期动态调节，而不是把两者视为可线性相加的独立模块。</div>
+<div class="definition"><strong>总体结论：</strong>最早期 [0,5) 三个模型均是 Impact(S)&gt;Impact(T)，即移除 S-head 对轨迹的改变更大；[5,10) 中 xSSC 为 Impact(T)&gt;Impact(S)，PhysRVG 相反，而 Wan 两者几乎相等；[10,20) 中 Wan/xSSC 的 Impact(S+T) 低于影响较大的单独消融，说明同时移除两类 head 后轨迹反而更接近 baseline，PhysRVG 的 Impact(S+T) 则高于两种单独消融；[20,30) Wan 与 PhysRVG 再次表现为 Impact(S)&gt;Impact(T)。这些结果说明 S/T 的影响随去噪阶段和模型改变，不能把联合消融理解为两个单独 Impact 的简单相加。</div>
 <div class="charts"><img src="impact_by_stage.png" alt="Impact 分阶段柱状图"><img src="paired_effects.png" alt="配对条件增量图"></div>
 {''.join(stage_sections)}
 <p class="muted">原始统计：<a href="paired_impact_statistics.csv">paired_impact_statistics.csv</a> · 页面选择：<a href="manifest.json">manifest.json</a></p>
