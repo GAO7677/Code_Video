@@ -6,9 +6,14 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
+
+from summarize_stc_bench_metrics import METRICS
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -16,6 +21,16 @@ DEFAULT_CONFIG = SCRIPT_DIR / "test5_st_phased_seed851.json"
 DEFAULT_GALLERY_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/"
     "gallery/test5-st-phased-seed851"
+)
+DEFAULT_ABLATION_METRICS = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "wan_dit_common22_test5_st_phased_seed851_bench/"
+    "analysis/per_video_metrics.csv"
+)
+DEFAULT_BASELINE_METRICS = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "wan_dit_common22_test5_seed851_baseline_bench/"
+    "analysis/per_video_metrics.csv"
 )
 MODEL_NAMES = {
     "wan_lora": "Wan+LoRA",
@@ -27,12 +42,50 @@ ROLE_NAMES = {
     "T": "仅消融 T",
     "ST": "联合消融 S+T",
 }
+METRIC_NAMES = {
+    "physics_iq_with_context": ("PIQ ctx", "Physics-IQ with context"),
+    "physics_iq_without_context": ("PIQ noctx", "Physics-IQ without context"),
+    "pmf_with_context": ("PMF ctx", "PMF with context"),
+    "pmf_without_context": ("PMF noctx", "PMF without context"),
+    "wmreward_surprise": ("WMR surprise", "WMReward surprise"),
+    "vbench_subject_consistency": ("VB subject", "VBench subject consistency"),
+    "vbench_background_consistency": (
+        "VB background",
+        "VBench background consistency",
+    ),
+    "vbench_temporal_flickering": (
+        "VB flicker",
+        "VBench temporal flickering",
+    ),
+    "vbench_motion_smoothness": (
+        "VB smooth",
+        "VBench motion smoothness",
+    ),
+    "vbench_dynamic_degree": ("VB dynamic", "VBench dynamic degree"),
+    "vbench_aesthetic_quality": ("VB aesthetic", "VBench aesthetic quality"),
+    "vbench_imaging_quality": ("VB imaging", "VBench imaging quality"),
+    "videophy2_sa": ("VP2 SA", "VideoPhy2 semantic adherence"),
+    "videophy2_pc": ("VP2 PC", "VideoPhy2 physical commonsense"),
+    "videophy2_joint_rate": ("VP2 joint", "VideoPhy2 joint pass rate"),
+    "videophy2_pc_raw": ("VP2 PC raw", "VideoPhy2 physical commonsense raw"),
+    "cosmos_reason1": ("Cosmos", "Cosmos-Reason1"),
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--gallery-root", type=Path, default=DEFAULT_GALLERY_ROOT)
+    parser.add_argument(
+        "--ablation-metrics",
+        type=Path,
+        default=DEFAULT_ABLATION_METRICS,
+    )
+    parser.add_argument(
+        "--baseline-metrics",
+        type=Path,
+        default=DEFAULT_BASELINE_METRICS,
+    )
     return parser.parse_args()
 
 
@@ -69,6 +122,54 @@ def video_map(root: Path, cases: set[str]) -> dict[str, Path]:
     return result
 
 
+def add_case_ids(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    frame["case_id"] = [
+        entry_id.split(f"__{variant}__", 1)[1]
+        for entry_id, variant in zip(frame["entry_id"], frame["variant"])
+    ]
+    return frame
+
+
+def finite_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def metric_definitions() -> list[dict[str, str]]:
+    return [
+        {
+            "name": metric.name,
+            "short": METRIC_NAMES[metric.name][0],
+            "title": METRIC_NAMES[metric.name][1],
+            "direction": metric.direction,
+        }
+        for metric in METRICS
+    ]
+
+
+def metric_score_map(
+    frame: pd.DataFrame,
+) -> dict[tuple[str, str, str], dict[str, float | None]]:
+    result = {}
+    for row in frame.to_dict(orient="records"):
+        key = (
+            str(row["case_id"]),
+            str(row["model"]),
+            str(row["variant"]),
+        )
+        if key in result:
+            raise RuntimeError(f"Duplicate metric row: {key}")
+        result[key] = {
+            metric.name: finite_number(row.get(metric.name))
+            for metric in METRICS
+        }
+    return result
+
+
 def case_page(case_id: str) -> str:
     title = html.escape(case_id)
     return f"""<!doctype html>
@@ -76,7 +177,7 @@ def case_page(case_id: str) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} · S/T 分阶段消融</title>
 <style>
-:root{{--bg:#111416;--panel:#1a1e21;--line:#343a40;--text:#f2f4f5;--muted:#aab1b7;--accent:#56b9a6}}
+:root{{--bg:#111416;--panel:#1a1e21;--line:#343a40;--text:#f2f4f5;--muted:#aab1b7;--accent:#56b9a6;--good:#74d5a8;--bad:#ff948a;--pending:#d2b36c}}
 *{{box-sizing:border-box}}body{{margin:0;padding-bottom:62px;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif}}
 header{{position:sticky;top:0;z-index:5;padding:12px 18px;background:#111416f2;border-bottom:1px solid var(--line)}}
 .top{{display:flex;gap:14px;align-items:center;justify-content:space-between}}.case-picker{{display:flex;gap:8px;align-items:center;min-width:0;flex:1}}.case-picker label{{font-weight:750}}select{{min-width:260px;max-width:760px;width:70%;padding:7px 9px;border:1px solid var(--line);background:#24292d;color:var(--text)}}
@@ -88,23 +189,50 @@ table{{width:100%;border-collapse:collapse;table-layout:fixed}}th,td{{border:1px
 thead th{{background:#22272b}}th:first-child{{width:125px;text-align:left}}tbody th{{background:#181c1f}}.baseline-cell{{background:#171b1e}}
 figure{{margin:0}}video{{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#050607}}
 figcaption{{padding-top:4px;color:var(--muted)}}.missing{{display:grid;place-items:center;aspect-ratio:7/4;background:#20252a;color:#858d94}}
+.metric-note{{margin:11px 0 0;padding:8px 10px;border-left:3px solid var(--accent);background:#171b1e;color:var(--muted)}}
+.metric-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;margin-top:7px}}
+.metric-item{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 5px;padding:3px 4px;border:1px solid #2c3237;background:#14181a;font-size:10px;line-height:1.25}}
+.metric-item span{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c4cbd0}}.metric-item strong{{font-variant-numeric:tabular-nums}}
+.metric-item small{{grid-column:1/-1;color:#7f898f;font-variant-numeric:tabular-nums}}.metric-item.good strong{{color:var(--good)}}.metric-item.bad strong{{color:var(--bad)}}.metric-item.pending strong{{color:var(--pending)}}
 .playbar{{position:fixed;z-index:8;left:0;right:0;bottom:0;display:grid;grid-template-columns:auto auto auto minmax(180px,1fr) auto;gap:8px;align-items:center;padding:9px 18px;background:#171a1df2;border-top:1px solid var(--line)}}
 button{{border:1px solid var(--line);background:#24292d;color:#fff;padding:6px 10px;cursor:pointer}}input{{width:100%;accent-color:var(--accent)}}.time{{min-width:92px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}}
 @media(max-width:900px){{.references{{grid-template-columns:1fr}}.model-section{{overflow-x:auto}}table{{min-width:980px}}}}
 </style></head><body>
 <header><div class="top"><div class="case-picker"><label for="case-select">Case</label><select id="case-select"><option>{title}</option></select></div><span class="status" id="status">读取中</span></div><h1 id="title">{title}</h1><p class="prompt" id="prompt"></p></header>
-<main><h2>Reference</h2><div class="references" id="references"></div><div id="models"></div></main>
+<main><h2>Reference</h2><div class="references" id="references"></div><p class="metric-note">每个消融视频下方显示17项指标相对同模型、同source baseline 的变化。绿色表示改善，红色表示下降；WMReward surprise 越低越好。Baseline 卡片显示原始基准分数。</p><div id="models"></div></main>
 <div class="playbar"><button id="play" type="button">全部播放</button><button id="replay" type="button">重新播放</button><button id="pause" type="button">暂停</button><input id="timeline" type="range" min="0" max="1000" value="0"><span class="time" id="time">00:00 / 00:00</span></div>
 <script>
 let DATA=null,seeking=false;
 const q=id=>document.getElementById(id);
 function media(src,label){{return src?`<figure><video muted playsinline preload="metadata" src="${{src}}"></video><figcaption>${{label}}</figcaption></figure>`:`<div class="missing">Pending</div>`}}
+function score(value){{if(value===null||value===undefined||!Number.isFinite(Number(value)))return "NA";return Number(value).toPrecision(4).replace(/(?:\\.0+|(?:(\\.\\d*?[1-9]))0+)$/,"$1")}}
+function signed(value){{if(!Number.isFinite(value))return "NA";return `${{value>=0?"+":""}}${{score(value)}}`}}
+function metricPanel(model,scores,isBaseline){{
+ const baseline=DATA.metric_scores.baseline[model]||{{}};
+ return `<div class="metric-grid">${{DATA.metric_definitions.map(metric=>{{
+  const value=scores?scores[metric.name]:null,base=baseline[metric.name];
+  if(isBaseline){{
+   const state=value===null||value===undefined?"pending":"";
+   return `<div class="metric-item ${{state}}" title="${{metric.title}}"><span>${{metric.short}}</span><strong>${{score(value)}}</strong><small>baseline</small></div>`;
+  }}
+  if(value===null||value===undefined||base===null||base===undefined){{
+   return `<div class="metric-item pending" title="${{metric.title}}"><span>${{metric.short}}</span><strong>NA</strong><small>baseline unavailable</small></div>`;
+  }}
+  const delta=Number(value)-Number(base);
+  const improvement=metric.direction==="lower"?-delta:delta;
+  const state=improvement>0?"good":improvement<0?"bad":"";
+  return `<div class="metric-item ${{state}}" title="${{metric.title}}: baseline ${{score(base)}}, current ${{score(value)}}"><span>${{metric.short}}</span><strong>Δ${{signed(delta)}}</strong><small>${{score(base)}}→${{score(value)}}</small></div>`;
+ }}).join("")}}</div>`;
+}}
+function resultCard(model,src,label,scores,isBaseline=false){{
+ return src?`<figure><video muted playsinline preload="metadata" src="${{src}}"></video><figcaption>${{label}}</figcaption>${{metricPanel(model,scores,isBaseline)}}</figure>`:`<div class="missing">Pending</div>`;
+}}
 function render(){{
  q("title").textContent=DATA.id;q("prompt").textContent=DATA.prompt||"";
  q("case-select").value=DATA.id;
  q("references").innerHTML=media(DATA.references.source,"Source / GT")+media(DATA.references.context,"8-frame context");
  q("models").innerHTML=DATA.models.map(m=>{{
-  const rows=DATA.roles.map((r,index)=>`<tr><th>${{DATA.role_names[r]}}</th>${{index===0?`<td class="baseline-cell" rowspan="${{DATA.roles.length}}">${{media(DATA.videos.baseline[m],"Baseline · 无消融")}}</td>`:""}}${{DATA.stages.map(stage=>`<td>${{media(DATA.videos.stages[stage.key][m][r],stage.label)}}</td>`).join("")}}</tr>`).join("");
+  const rows=DATA.roles.map((r,index)=>`<tr><th>${{DATA.role_names[r]}}</th>${{index===0?`<td class="baseline-cell" rowspan="${{DATA.roles.length}}">${{resultCard(m,DATA.videos.baseline[m],"Baseline · 无消融",DATA.metric_scores.baseline[m],true)}}</td>`:""}}${{DATA.stages.map(stage=>`<td>${{resultCard(m,DATA.videos.stages[stage.key][m][r],stage.label,DATA.metric_scores.stages[stage.key][m][r])}}</td>`).join("")}}</tr>`).join("");
   return `<section class="model-section"><div class="model-banner"><h2>${{DATA.model_names[m]}}</h2><span class="seed-badge">SEED 851</span></div><table><thead><tr><th>消融类型</th><th>Baseline</th>${{DATA.stages.map(stage=>`<th>${{stage.label}}</th>`).join("")}}</tr></thead><tbody>${{rows}}</tbody></table></section>`;
  }}).join("");
  q("status").textContent=`结果 ${{DATA.completed_outputs}} / ${{DATA.expected_outputs}}`;
@@ -138,6 +266,20 @@ load();
 </script></body></html>"""
 
 
+def cases_index_page() -> str:
+    return """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>test_5 cases · S/T 分阶段消融</title>
+<style>
+:root{--bg:#111416;--text:#f2f4f5;--muted:#aab1b7}body{display:grid;place-items:center;min-height:100vh;margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}.status{color:var(--muted)}
+</style></head><body><div class="status">正在进入 case 页面…</div>
+<script>
+async function load(){const r=await fetch(`../manifest.json?t=${Date.now()}`,{cache:"no-store"});const d=await r.json();if(d.cases.length)window.location.replace(`${encodeURIComponent(d.cases[0].id)}/`)}
+load();
+</script></body></html>"""
+
+
 def main() -> None:
     args = parse_args()
     config = json.loads(args.config.expanduser().resolve().read_text(encoding="utf-8"))
@@ -161,6 +303,35 @@ def main() -> None:
         }
         for start, end in config["step_ranges"]
     ]
+    ablation_metrics = add_case_ids(
+        pd.read_csv(args.ablation_metrics.expanduser().resolve())
+    )
+    baseline_metrics = add_case_ids(
+        pd.read_csv(args.baseline_metrics.expanduser().resolve())
+    )
+    ablation_metrics = ablation_metrics[
+        ablation_metrics["case_id"].isin(cases)
+        & ablation_metrics["model"].isin(models)
+    ]
+    baseline_metrics = baseline_metrics[
+        baseline_metrics["case_id"].isin(cases)
+        & baseline_metrics["model"].isin(models)
+        & (baseline_metrics["variant"] == "baseline")
+    ]
+    ablation_score_map = metric_score_map(ablation_metrics)
+    baseline_score_map = metric_score_map(baseline_metrics)
+    expected_ablation_rows = len(cases) * len(models) * len(roles) * len(stages)
+    expected_baseline_rows = len(cases) * len(models)
+    if len(ablation_score_map) != expected_ablation_rows:
+        raise RuntimeError(
+            "Ablation metric rows incomplete: "
+            f"{len(ablation_score_map)}/{expected_ablation_rows}"
+        )
+    if len(baseline_score_map) != expected_baseline_rows:
+        raise RuntimeError(
+            "Baseline metric rows incomplete: "
+            f"{len(baseline_score_map)}/{expected_baseline_rows}"
+        )
     maps: dict[tuple[str, str], dict[str, Path]] = {}
     for model in models:
         baseline_root = (
@@ -199,6 +370,7 @@ def main() -> None:
                 references[key] = str(destination.relative_to(case_root))
 
         videos: dict[str, Any] = {"baseline": {}, "stages": {}}
+        metric_scores: dict[str, Any] = {"baseline": {}, "stages": {}}
         completed = 0
         for model in models:
             source = maps[(model, "baseline")].get(case_id)
@@ -209,10 +381,15 @@ def main() -> None:
                 url = str(destination.relative_to(case_root))
                 completed += 1
             videos["baseline"][model] = url
+            metric_scores["baseline"][model] = baseline_score_map[
+                (case_id, model, "baseline")
+            ]
         for stage in stages:
             videos["stages"][stage["key"]] = {}
+            metric_scores["stages"][stage["key"]] = {}
             for model in models:
                 videos["stages"][stage["key"]][model] = {}
+                metric_scores["stages"][stage["key"]][model] = {}
                 for role in roles:
                     variant = f"{role}_steps{stage['key']}"
                     source = maps[(model, variant)].get(case_id)
@@ -229,8 +406,13 @@ def main() -> None:
                         url = str(destination.relative_to(case_root))
                         completed += 1
                     videos["stages"][stage["key"]][model][role] = url
+                    metric_scores["stages"][stage["key"]][model][role] = (
+                        ablation_score_map[
+                            (case_id, model, f"role-{variant}")
+                        ]
+                    )
         case_data = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": case_id,
             "source_json": str(source_json),
             "prompt": str(payload.get("input_caption", "")),
@@ -241,6 +423,8 @@ def main() -> None:
             "stages": stages,
             "references": references,
             "videos": videos,
+            "metric_definitions": metric_definitions(),
+            "metric_scores": metric_scores,
             "completed_outputs": completed,
             "expected_outputs": expected_outputs,
         }
@@ -272,6 +456,7 @@ def main() -> None:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
     )
     atomic_write(gallery_root / "index.html", index_page())
+    atomic_write(gallery_root / "cases" / "index.html", cases_index_page())
     total = sum(case["completed_outputs"] for case in summaries)
     print(
         f"[test5-gallery] cases={len(summaries)} outputs={total}/"
