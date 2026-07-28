@@ -135,7 +135,25 @@ def main() -> None:
                 raw_delta if metric.direction == "higher" else -raw_delta
             )
         paired_rows.append(record)
-    paired = pd.DataFrame(paired_rows)
+    paired_columns = [
+        "entry_id",
+        "model",
+        "seed",
+        "variant",
+        "role",
+        "denoise_start",
+        "denoise_end",
+    ]
+    for metric in METRICS:
+        paired_columns.extend(
+            (
+                f"{metric.name}_value",
+                f"{metric.name}_baseline",
+                f"{metric.name}_delta",
+                f"{metric.name}_improvement",
+            )
+        )
+    paired = pd.DataFrame(paired_rows, columns=paired_columns)
     paired.to_csv(results_root / "paired_vs_baseline_per_seed.csv", index=False)
 
     summary_rows = []

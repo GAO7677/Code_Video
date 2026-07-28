@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render absolute and same-seed baseline-relative STC benchmark curves."""
+"""Render all absolute STC benchmark curves on one page."""
 
 from __future__ import annotations
 
@@ -78,6 +78,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-root", type=Path, default=DEFAULT_BATCH_ROOT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--title", default="S / T / ST 分阶段消融指标")
+    parser.add_argument("--companion-url")
+    parser.add_argument("--companion-label")
     return parser.parse_args()
 
 
@@ -124,18 +127,16 @@ def stage_values(
 
 def save_metric_plot(
     per_video: pd.DataFrame,
-    paired: pd.DataFrame,
     metric_name: str,
     metric_direction: str,
     path: Path,
 ) -> None:
     x = np.arange(len(STAGES))
     labels = [f"[{start},{end})" for start, end in STAGES]
-    fig, axes = plt.subplots(3, 2, figsize=(14, 12), sharex=True)
+    fig, axes = plt.subplots(3, 1, figsize=(11, 10.5), sharex=True)
     handles = []
     for row_index, model in enumerate(MODEL_NAMES):
-        absolute_axis = axes[row_index, 0]
-        improvement_axis = axes[row_index, 1]
+        absolute_axis = axes[row_index]
         baseline_values = per_video[
             (per_video["model"] == model)
             & (per_video["variant"] == "baseline")
@@ -157,8 +158,6 @@ def save_metric_plot(
                 fontsize=7,
                 color="#222222",
             )
-        improvement_axis.axhline(0.0, color="#222222", linewidth=1.5)
-
         for role in ROLE_ORDER:
             means, _, counts = stage_values(
                 per_video,
@@ -192,50 +191,14 @@ def save_metric_plot(
                     )
                 if row_index == 0:
                     handles.append(handle)
-            improvement_name = f"{metric_name}_improvement"
-            improvement, _, improvement_counts = stage_values(
-                paired,
-                model,
-                role,
-                improvement_name,
-            )
-            valid_improvement = np.isfinite(improvement)
-            if valid_improvement.any():
-                improvement_axis.plot(
-                    x[valid_improvement],
-                    improvement[valid_improvement],
-                    marker="o",
-                    linewidth=1.8,
-                    color=ROLE_COLORS[role],
-                    label=role,
-                )
-                for point_x, point_y, count in zip(
-                    x[valid_improvement],
-                    improvement[valid_improvement],
-                    improvement_counts[valid_improvement],
-                ):
-                    improvement_axis.annotate(
-                        f"n{int(count)}",
-                        (point_x, point_y),
-                        xytext=COUNT_OFFSETS[role],
-                        textcoords="offset points",
-                        ha="center",
-                        fontsize=6,
-                        color=ROLE_COLORS[role],
-                    )
 
         absolute_axis.set_title(
             f"{MODEL_NAMES[model]} | absolute ({metric_direction} is better)"
         )
-        improvement_axis.set_title(
-            f"{MODEL_NAMES[model]} | paired improvement vs baseline"
-        )
         absolute_axis.set_ylabel(METRIC_TITLES[metric_name])
-        improvement_axis.set_ylabel("Improvement (positive is better)")
-        for axis in (absolute_axis, improvement_axis):
-            axis.grid(alpha=0.2)
-            axis.set_xticks(x, labels, rotation=35, ha="right")
-            axis.tick_params(axis="x", labelbottom=True)
+        absolute_axis.grid(alpha=0.2)
+        absolute_axis.set_xticks(x, labels, rotation=35, ha="right")
+        absolute_axis.tick_params(axis="x", labelbottom=True)
     if handles:
         fig.legend(
             handles,
@@ -246,7 +209,7 @@ def save_metric_plot(
             frameon=False,
         )
     fig.suptitle(
-        f"{METRIC_TITLES[metric_name]}: absolute score and paired baseline effect",
+        f"{METRIC_TITLES[metric_name]}: absolute score",
         y=0.997,
         fontsize=15,
     )
@@ -256,20 +219,20 @@ def save_metric_plot(
     plt.close(fig)
 
 
-def build_html(coverage: dict[str, int], num_entries: int) -> str:
+def build_html(
+    coverage: dict[str, int],
+    num_entries: int,
+    report_title: str,
+    companion_url: str | None,
+    companion_label: str | None,
+) -> str:
     sections = []
-    selector = []
-    for index, metric in enumerate(METRICS):
+    for metric in METRICS:
         name = metric.name
         title = METRIC_TITLES[name]
         count = coverage.get(name, 0)
-        selector.append(
-            f"<option value='{html.escape(name)}'>{html.escape(title)} "
-            f"({count}/{num_entries})</option>"
-        )
         sections.append(
-            f"<section class='metric{' active' if index == 0 else ''}' "
-            f"data-metric='{html.escape(name)}'>"
+            f"<section class='metric' id='{html.escape(name)}'>"
             f"<h2>{html.escape(title)}</h2>"
             f"<p class='coverage'>Coverage: {count}/{num_entries}; "
             f"{html.escape(metric.direction)} is better for the absolute score.</p>"
@@ -282,37 +245,33 @@ def build_html(coverage: dict[str, int], num_entries: int) -> str:
         if any(coverage.get(metric.name, 0) < num_entries for metric in METRICS)
         else ""
     )
+    companion = ""
+    if companion_url and companion_label:
+        companion = (
+            f"<a class='companion' href='{html.escape(companion_url)}'>"
+            f"{html.escape(companion_label)}</a>"
+        )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>S/T/ST 消融指标曲线</title>
+<title>{html.escape(report_title)}</title>
 <style>
 :root{{--bg:#f4f5f2;--ink:#202423;--muted:#656d69;--line:#cdd2ce;--accent:#176f62}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}}
-header,main{{max-width:1500px;margin:auto;padding:16px 22px}}header{{border-bottom:1px solid var(--line)}}
-h1,h2,p{{margin:0}}h1{{font-size:23px}}h2{{font-size:18px;margin:16px 0 3px}}
-.muted,.coverage{{color:var(--muted)}}.toolbar{{position:sticky;top:0;z-index:3;background:var(--bg);padding:12px 0;border-bottom:1px solid var(--line)}}
-label{{font-weight:700;margin-right:8px}}select{{min-width:340px;padding:7px 9px;border:1px solid #8e9792;background:white;color:var(--ink)}}
-.metric{{display:none}}.metric.active{{display:block}}img{{display:block;width:100%;margin-top:10px;border:1px solid var(--line);background:white}}
+header,main{{max-width:1800px;margin:auto;padding:16px 22px}}header{{border-bottom:1px solid var(--line)}}
+h1,h2,p{{margin:0}}h1{{font-size:23px}}h2{{font-size:18px;margin:0 0 3px}}
+.muted,.coverage{{color:var(--muted)}}.companion{{display:inline-block;margin-top:8px;color:var(--accent);font-weight:700}}
+.metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 18px;margin-top:18px}}
+.metric{{min-width:0;border-bottom:1px solid var(--line);padding-bottom:18px}}img{{display:block;width:100%;margin-top:10px;border:1px solid var(--line);background:white}}
 .note{{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted)}}
-@media(max-width:700px){{select{{width:100%;min-width:0}}}}
+@media(max-width:900px){{.metrics{{grid-template-columns:1fr}}}}
 </style></head><body><header>
-<h1>S / T / ST 分阶段消融指标曲线</h1>
-<p class="muted">更新：{updated}。左列为绝对指标及 Baseline 横线；右列为同模型、同 seed 配对后的改善量，正值统一表示优于 Baseline；点旁 nX 是参与均值的有效样本数。</p>
-</header><main><div class="toolbar"><label for="metric">指标</label>
-<select id="metric">{''.join(selector)}</select></div>
-{''.join(sections)}
-<p class="note">曲线仅展示均值，不绘制方差或置信区间。当前只有一个输入 case、每组约 3–6 seeds；指标差异需要结合运动轨迹分析和视频人工核验。</p>
-</main><script>
-const select = document.getElementById('metric');
-function showMetric(name) {{
-  document.querySelectorAll('.metric').forEach(
-    node => node.classList.toggle('active', node.dataset.metric === name)
-  );
-}}
-select.addEventListener('change', () => showMetric(select.value));
-{auto_refresh}
-</script></body></html>"""
+<h1>{html.escape(report_title)}</h1>
+<p class="muted">更新：{updated}。本页连续展示全部 absolute 指标；每张图包含三个模型，若批次含 Baseline 则以横线表示，点旁 nX 是参与均值的有效样本数。</p>
+{companion}
+</header><main><div class="metrics">{''.join(sections)}</div>
+<p class="note">曲线仅展示均值，不绘制方差或置信区间；指标差异需要结合有效样本数、运动轨迹分析和视频人工核验。</p>
+</main><script>{auto_refresh}</script></body></html>"""
 
 
 def main() -> None:
@@ -321,7 +280,6 @@ def main() -> None:
     output_dir = args.output_dir.expanduser().resolve()
     analysis_root = batch_root / "analysis"
     per_video = pd.read_csv(analysis_root / "per_video_metrics.csv")
-    paired = pd.read_csv(analysis_root / "paired_vs_baseline_per_seed.csv")
     coverage_payload = json.loads(
         (analysis_root / "coverage.json").read_text(encoding="utf-8")
     )
@@ -329,7 +287,6 @@ def main() -> None:
     for metric in METRICS:
         save_metric_plot(
             per_video,
-            paired,
             metric.name,
             metric.direction,
             output_dir / "plots" / f"{metric.name}.png",
@@ -347,7 +304,13 @@ def main() -> None:
         target.write_bytes(source.read_bytes())
     atomic_text(
         output_dir / "index.html",
-        build_html(coverage, int(coverage_payload["num_entries"])),
+        build_html(
+            coverage,
+            int(coverage_payload["num_entries"]),
+            args.title,
+            args.companion_url,
+            args.companion_label,
+        ),
     )
     print(f"[stc-bench-report] {output_dir / 'index.html'}")
 
