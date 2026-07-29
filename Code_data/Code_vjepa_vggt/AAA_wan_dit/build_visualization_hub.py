@@ -34,6 +34,12 @@ ENTRIES = (
     ),
     (
         "消融视频",
+        "head-role-dose-control-pilot/cases/index.html",
+        "S/T/C 等数量与深度匹配 Pilot",
+        "20个case独立页面；三模型Baseline/S/T/C视频和增量指标。",
+    ),
+    (
+        "消融视频",
         "test5-st-phased-seed851/cases/index.html",
         "test_5 · Seed 851 · S/T/ST 分阶段消融",
         "20个case下拉切换；视频、Head block分布及相对baseline的17项指标。",

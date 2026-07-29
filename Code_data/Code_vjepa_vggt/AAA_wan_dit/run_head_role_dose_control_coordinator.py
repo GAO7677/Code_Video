@@ -33,6 +33,7 @@ VERIFY = Path(
 DOSE_SUMMARY = SCRIPT_DIR / "summarize_head_role_dose_control.py"
 DOSE_REPORT = SCRIPT_DIR / "render_head_role_dose_control_report.py"
 DOSE_GALLERY = SCRIPT_DIR / "build_head_role_dose_control_gallery.py"
+CASE_GALLERY = SCRIPT_DIR / "build_head_role_dose_control_case_gallery.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -200,11 +201,60 @@ def _progress(
     print(f"[dose-coordinator] {json.dumps(payload, sort_keys=True)}", flush=True)
 
 
+def _stop_incremental_metrics(root: Path, poll_seconds: int) -> None:
+    incremental = root / "incremental_metrics_live"
+    plan_path = incremental / "plan.json"
+    if not (incremental / "started").is_file() or not plan_path.is_file():
+        return
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    expected = int(plan["expected_workers"])
+    (incremental / "stop").touch()
+    deadline = time.time() + 1800
+    while time.time() < deadline:
+        complete = len(list((incremental / "state").glob("*.complete")))
+        if complete >= expected:
+            break
+        print(
+            f"[dose-coordinator] draining incremental metrics "
+            f"{complete}/{expected}",
+            flush=True,
+        )
+        time.sleep(min(poll_seconds, 20))
+    _atomic_json(
+        incremental / "drain_status.json",
+        {
+            "expected_workers": expected,
+            "workers_complete": len(
+                list((incremental / "state").glob("*.complete"))
+            ),
+            "drained_at_unix": time.time(),
+        },
+    )
+
+
+def _refresh_case_gallery(config_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            str(CASE_GALLERY),
+            "--config",
+            str(config_path),
+        ],
+        check=False,
+    )
+    if result.returncode:
+        print(
+            f"[dose-coordinator] case gallery refresh failed: {result.returncode}",
+            flush=True,
+        )
+
+
 def main() -> None:
     args = parse_args()
     config_path = args.config.expanduser().resolve()
     config, root, _, _, subset_ids = _load_config(config_path)
     expected = len(_tasks(config, subset_ids))
+    last_gallery_complete = -1
     while True:
         counts, records = _states(root)
         _progress(
@@ -213,6 +263,9 @@ def main() -> None:
             states=counts,
             expected=expected,
         )
+        if counts["complete"] != last_gallery_complete:
+            _refresh_case_gallery(config_path)
+            last_gallery_complete = counts["complete"]
         if counts["complete"] == expected:
             break
         if counts["failed"] and not counts["running"]:
@@ -228,6 +281,7 @@ def main() -> None:
                 raise RuntimeError("Generation has exhausted retry attempts")
         time.sleep(int(args.poll_seconds))
 
+    _stop_incremental_metrics(root, int(args.poll_seconds))
     ready = root / "metrics.ready"
     if not ready.is_file():
         roots, cases_per_root = _prepare_metric_inputs(
