@@ -22,6 +22,9 @@ DEFAULT_GALLERY_ROOT = Path(
     "head-role-dose-control-pilot"
 )
 DEFAULT_S_DEPTH_CONFIG = Path(__file__).with_name("s_depth_strata_experiment.json")
+DEFAULT_S_FEATURE_CONFIG = Path(__file__).with_name(
+    "head_role_s_feature_split_pilot.json"
+)
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
@@ -55,6 +58,11 @@ def parse_args() -> argparse.Namespace:
         "--s-depth-config",
         type=Path,
         default=DEFAULT_S_DEPTH_CONFIG,
+    )
+    parser.add_argument(
+        "--s-feature-config",
+        type=Path,
+        default=DEFAULT_S_FEATURE_CONFIG,
     )
     parser.add_argument("--gallery-root", type=Path, default=DEFAULT_GALLERY_ROOT)
     return parser.parse_args()
@@ -276,6 +284,75 @@ def build_s_depth_records(
     return records
 
 
+def build_s_feature_records(
+    root: Path,
+    subset_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    generation_root = root / "generation"
+    records = []
+    for state_path in sorted((root / "state").glob("*.json")):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if state.get("status") not in {"running", "complete"}:
+            continue
+        subset_id = str(state["subset_id"])
+        subset = subset_payload["subsets"][subset_id]
+        if state.get("status") == "complete":
+            videos = {
+                case_id: Path(value).resolve()
+                for case_id, value in state["videos"].items()
+            }
+        else:
+            start, end = (int(value) for value in state["step_range"])
+            variant = f"{subset_id}_steps{start:02d}_{end:02d}"
+            job_root = (
+                root
+                / "generation"
+                / str(state["model"])
+                / f"seed-{int(state['seed']):06d}"
+                / variant
+            )
+            videos = {
+                video.stem: video.resolve()
+                for video in job_root.rglob("*.mp4")
+                if video.stat().st_size > 1024
+                and video.with_suffix(".json").is_file()
+                and not video.with_suffix(".json.lock").exists()
+            }
+        for case_id, video in sorted(videos.items()):
+            payload = load_sidecar(video)
+            records.append(
+                {
+                    "kind": "s_feature_split",
+                    "model": state["model"],
+                    "seed": int(state["seed"]),
+                    "case_id": case_id,
+                    "subset_id": subset_id,
+                    "role": "S",
+                    "feature_subtype": subset["feature_subtype"],
+                    "k": int(state["k"]),
+                    "replicate": 0,
+                    "matching": "s_feature_exact_block",
+                    "start": int(state["step_range"][0]),
+                    "end": int(state["step_range"][1]),
+                    "video": media_url(
+                        video,
+                        generation_root,
+                        "s-feature-generation",
+                    ),
+                    "sidecar": media_url(
+                        video.with_suffix(".json"),
+                        generation_root,
+                        "s-feature-generation",
+                    ),
+                    "metrics": metrics(payload),
+                }
+            )
+    return records
+
+
 def case_page(case_id: str) -> str:
     escaped = html.escape(case_id)
     return PAGE_TEMPLATE.replace("__CASE_ID__", escaped)
@@ -294,9 +371,15 @@ def main() -> None:
     s_depth_config = json.loads(
         args.s_depth_config.expanduser().resolve().read_text(encoding="utf-8")
     )
+    s_feature_config = json.loads(
+        args.s_feature_config.expanduser().resolve().read_text(encoding="utf-8")
+    )
     root = Path(config["storage"]["output_root"]).expanduser().resolve()
     s_depth_root = (
         Path(s_depth_config["storage"]["output_root"]).expanduser().resolve()
+    )
+    s_feature_root = (
+        Path(s_feature_config["storage"]["output_root"]).expanduser().resolve()
     )
     gallery = args.gallery_root.expanduser().resolve()
     input_list = Path(config["input_list"]).expanduser().resolve()
@@ -335,6 +418,22 @@ def main() -> None:
         }
         for subset_id, record in s_depth_subset_payload["subsets"].items()
     }
+    s_feature_subset_payload = json.loads(
+        Path(s_feature_config["matched_subset_manifest"])
+        .expanduser()
+        .resolve()
+        .read_text(encoding="utf-8")
+    )
+    compact_s_feature_subsets = {
+        subset_id: {
+            "role": record["role"],
+            "feature_subtype": record["feature_subtype"],
+            "k": int(record["k"]),
+            "matching": record["matching"],
+            "block_histogram": record["block_histogram"],
+        }
+        for subset_id, record in s_feature_subset_payload["subsets"].items()
+    }
     ensure_link(root / "generation", gallery / "media" / "generation")
     ensure_link(root / "progress.json", gallery / "live-progress.json")
     ensure_link(
@@ -344,6 +443,14 @@ def main() -> None:
     ensure_link(
         s_depth_root / "progress.json",
         gallery / "s-depth-progress.json",
+    )
+    ensure_link(
+        s_feature_root / "generation",
+        gallery / "media" / "s-feature-generation",
+    )
+    ensure_link(
+        s_feature_root / "progress.json",
+        gallery / "s-feature-progress.json",
     )
     baseline_base = Path(config["metrics"]["baseline_root"]).expanduser().resolve()
     ensure_link(baseline_base, gallery / "media" / "baselines")
@@ -365,6 +472,18 @@ def main() -> None:
     records = build_records(config, root, cases)
     s_depth_records = build_s_depth_records(s_depth_root)
     records.extend(s_depth_records)
+    s_feature_records = build_s_feature_records(
+        s_feature_root,
+        s_feature_subset_payload,
+    )
+    records.extend(s_feature_records)
+    s_feature_complete_tasks = 0
+    for state_path in (s_feature_root / "state").glob("*.json"):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        s_feature_complete_tasks += state.get("status") == "complete"
     completed_tasks = len(
         {
             (
@@ -402,6 +521,15 @@ def main() -> None:
             * len(compact_s_depth_subsets)
         ),
         "s_depth_step_ranges": s_depth_config["step_ranges"],
+        "s_feature_generation_tasks_complete": s_feature_complete_tasks,
+        "s_feature_videos_visible": len(s_feature_records),
+        "s_feature_generation_tasks_expected": (
+            len(s_feature_config["models"])
+            * len(s_feature_config["seeds"])
+            * len(s_feature_config["step_ranges"])
+            * len(compact_s_feature_subsets)
+        ),
+        "s_feature_subsets": compact_s_feature_subsets,
         "cases": cases,
         "records": records,
         "models": list(MODEL_LABELS),
@@ -433,6 +561,9 @@ def main() -> None:
         f"complete_tasks={completed_tasks} "
         f"s_depth_tasks={data['s_depth_generation_tasks_complete']}/"
         f"{data['s_depth_generation_tasks_expected']} "
+        f"s_feature_tasks={data['s_feature_generation_tasks_complete']}/"
+        f"{data['s_feature_generation_tasks_expected']} "
+        f"s_feature_videos={data['s_feature_videos_visible']} "
         f"output={gallery / 'cases'}"
     )
 
@@ -455,6 +586,7 @@ main{padding:14px 16px}.references{display:grid;grid-template-columns:repeat(2,m
 .video-cell{border:1px solid var(--line);background:var(--band)}.video-cell h3{padding:6px 8px;background:#242a2e;font-size:13px}
 .video-cell.all-head{border-color:#8f673d}.video-cell.all-head h3{background:#3a2c20;color:#f0bd80}
 .video-cell.s-depth{border-color:#8f673d}.video-cell.s-depth h3{background:#47301f;color:#ffd19a}
+.video-cell.s-feature{border-color:#4f8f86}.video-cell.s-feature h3{background:#23413d;color:#9de0d1}.videos.feature-split{grid-template-columns:repeat(3,minmax(260px,448px))}
 video{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#050606}.meta{padding:5px 8px;color:var(--muted);font-size:10px;min-height:31px}
 .missing{display:grid;place-items:center;aspect-ratio:7/4;color:var(--pending);background:#1c2225}.metrics{margin-top:38px}.metric-model{margin-top:30px;border-top:3px solid var(--accent)}.metric-model h3{margin:9px 0;font-size:20px}.metric-setting{margin-top:18px;overflow:auto}.metric-setting h4{margin:0 0 6px;font-size:14px}
 .metrics-note{color:var(--muted);margin:5px 0 9px}table{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
@@ -489,18 +621,20 @@ function depthStages(){return(D.s_depth_step_ranges||[]).map(x=>x.map(Number)).s
 function baselineRecord(model){const s=selection();return R.find(r=>r.kind==="baseline"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed)}
 function depthRecord(model,subsetId,stage){const s=selection();return R.find(r=>r.kind==="s_depth"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.subset_id===subsetId&&r.start===stage[0]&&r.end===stage[1])}
 function depthLabel(item){const names={early:"Early",middle:"Middle",late:"Late"},end=item.block_end_exclusive-1;return`${names[item.depth_stratum]||item.depth_stratum} · B${String(item.block_start_inclusive).padStart(2,"0")}–${String(end).padStart(2,"0")} · All S (${item.k} heads)`}
-function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&record.kind==="all_head"?" all-head":record&&record.kind==="s_depth"?" s-depth":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
+function featureSubsets(){return Object.entries(D.s_feature_subsets||{}).map(([id,x])=>({id,...x})).sort((a,b)=>(a.feature_subtype==="local_enrichment"?0:1)-(b.feature_subtype==="local_enrichment"?0:1))}
+function featureRecord(model,subtype){const s=selection();return R.find(r=>r.kind==="s_feature_split"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.feature_subtype===subtype)}
+function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&record.kind==="all_head"?" all-head":record&&record.kind==="s_depth"?" s-depth":record&&record.kind==="s_feature_split"?" s-feature":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
 function renderReferences(){q("references").innerHTML=media(C.context_url?{video:C.context_url,kind:"reference"}:null,"8帧 Context")+media(C.source_url?{video:C.source_url,kind:"reference"}:null,"Source / GT");q("prompt").textContent=C.caption}
 function oldMediaUrl(src){return src?`${OLD_BASE}${src}`:null}
 function oldRecord(model,role,range){const s=selection();if(!OLD||s.seed!==851)return null;const key=`${String(range[0]).padStart(2,"0")}_${String(range[1]).padStart(2,"0")}`,stage=OLD.videos.stages[key],scores=OLD.metric_scores.stages[key];if(!stage||!stage[model]||!stage[model][role])return null;const counts={S:OLD.head_distribution.roles.S.total,T:OLD.head_distribution.roles.T.total,ST:OLD.head_distribution.roles.ST.total};return{kind:"all_head",video:oldMediaUrl(stage[model][role]),subset_id:`All-${role}`,role,k:counts[role],start:range[0],end:range[1],metrics:scores&&scores[model]?scores[model][role]:{}}}
 function oldLabel(role){return role==="ST"?"旧版 All-S+T":"旧版 All-"+role}
-function renderSettings(){const depth=depthSubsets();let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>Baseline → S-depth Early/Middle/Late → 旧版 All-S/T/ST → 当前等数量 S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row"><h3 class="stage-row-title">去噪阶段 ${stageLabel(stage)}</h3><div class="videos">`;out+=media(x.baseline,"Baseline");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth ${depthLabel(item)}`,"该 S-depth 配置仍在生成");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
+function renderSettings(){const depth=depthSubsets(),feature=featureSubsets();let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;if(feature.length){out+=`<div class="setting-row"><div class="setting-row-title"><h3>S 内部特征拆分 · 严格互斥且同 Block 匹配</h3><p>全去噪步 0–40；两组各 32 heads</p></div><div class="block-depths"><span><b>共同 Block 配额：</b>${histogramText(feature[0].block_histogram)}</span></div><div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");for(const item of feature){const label=item.feature_subtype==="local_enrichment"?"消融 Local-enrichment dominant S":"消融 Same-frame-mass dominant S";out+=media(featureRecord(model,item.feature_subtype),label,"该 S 特征拆分配置仍在生成")}out+="</div></div>"}for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>Baseline → S-depth Early/Middle/Late → 旧版 All-S/T/ST → 当前等数量 S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row"><h3 class="stage-row-title">去噪阶段 ${stageLabel(stage)}</h3><div class="videos">`;out+=media(x.baseline,"Baseline");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth ${depthLabel(item)}`,"该 S-depth 配置仍在生成");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
 function metricCell(record,baseline,metric){if(!record)return`<td class="pending">Pending</td>`;const value=record.metrics[metric.name];if(value===null||value===undefined)return`<td class="pending">Pending</td>`;if(record.kind==="baseline")return`<td><span class="value">${score(value)}</span><span class="delta">baseline</span></td>`;const base=baseline&&baseline.metrics[metric.name];if(base===null||base===undefined)return`<td><span class="value">${score(value)}</span><span class="delta">baseline Pending</span></td>`;const raw=value-base,improvement=metric.direction==="higher"?raw:-raw,state=improvement>0?"good":improvement<0?"bad":"";return`<td class="${state}"><span class="value">${score(value)}</span><span class="delta">Δ ${signed(raw)}</span></td>`}
 function renderMetrics(){const depth=depthSubsets(),head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){out+=`<section class="metric-model"><h3>${D.model_labels[model]}</h3>`;for(const setting of settings()){let body="";for(const stage of stages()){const x=selectedRecords(model,setting,stage),prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(x.baseline,x.baseline,m)).join("")+"</tr>";for(const item of depth){const r=depthRecord(model,item.id,stage);body+=`<tr><td>${prefix}S-depth ${depthLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","ST"]){const r=oldRecord(model,role,stage);body+=`<tr><td>${prefix}${oldLabel(role)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","C"]){const r=x.ablations.find(v=>v.role===role);body+=`<tr><td>${prefix}当前 ${role}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>${settingLabel(setting)} · 全部去噪阶段</h4>${blockDetails(setting)}<table><thead>${head}</thead><tbody>${body}</tbody></table></div>`}out+="</section>"}q("metric-groups").innerHTML=out}
-function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","ablation","s_depth"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
+function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","ablation","s_depth","s_feature_split"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
 function nested(payload,path){let value=payload;for(const key of path){if(!value||typeof value!=="object")return null;value=value[key]}return typeof value==="number"&&Number.isFinite(value)?value:typeof value==="boolean"?Number(value):null}
 async function refreshMetrics(){const records=activeRecords();await Promise.all(records.map(async record=>{try{const payload=await fetch(`${record.sidecar}?t=${Date.now()}`).then(x=>x.json());record.metrics=Object.fromEntries(D.metric_definitions.map(metric=>[metric.name,nested(payload,metric.path)]))}catch(error){console.warn("sidecar refresh failed",record.sidecar,error)}}));renderMetrics()}
-async function refreshProgress(){try{const [dose,depth]=await Promise.all([fetch(`/head-role-dose-control-pilot/live-progress.json?t=${Date.now()}`).then(x=>x.json()),fetch(`/head-role-dose-control-pilot/s-depth-progress.json?t=${Date.now()}`).then(x=>x.json())]);const doseComplete=(dose.generation_states||{}).complete||0,depthComplete=(depth.state_counts||{}).complete||0;q("status").textContent=`Dose ${doseComplete}/${dose.expected_generation_tasks} · S-depth ${depthComplete}/${depth.expected_tasks}`}catch(error){q("status").textContent=`Dose ${D.generation_tasks_complete}/${D.generation_tasks_expected} · S-depth ${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected} · 更新 ${D.updated_utc}`}}
+async function refreshProgress(){const get=path=>fetch(`${path}?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),[dose,depth,feature]=await Promise.all([get(`/head-role-dose-control-pilot/live-progress.json`),get(`/head-role-dose-control-pilot/s-depth-progress.json`),get(`/head-role-dose-control-pilot/s-feature-progress.json`)]),doseText=dose?`${(dose.generation_states||{}).complete||0}/${dose.expected_generation_tasks}`:`${D.generation_tasks_complete}/${D.generation_tasks_expected}`,depthText=depth?`${(depth.state_counts||{}).complete||0}/${depth.expected_tasks}`:`${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected}`,featureText=feature?`${(feature.state_counts||{}).complete||0}/${feature.expected_tasks}`:`${D.s_feature_generation_tasks_complete}/${D.s_feature_generation_tasks_expected}`;q("status").textContent=`Dose ${doseText} · S-depth ${depthText} · S-feature ${featureText}`}
 function render(){renderSettings();renderMetrics();refreshMetrics();refreshProgress();q("time").textContent=`本页 ${[...document.querySelectorAll("video")].length} 个视频`}
 function videos(){return[...document.querySelectorAll("video")]}q("play").onclick=()=>videos().forEach(v=>v.play());q("replay").onclick=()=>videos().forEach(v=>{v.currentTime=0;v.play()});q("pause").onclick=()=>videos().forEach(v=>v.pause());
 fetch("../../manifest.json").then(x=>x.json()).then(data=>{D=data;R=data.records;C=data.cases.find(x=>x.id===CASE_ID);options("case",D.cases.map(x=>x.id));q("case").value=CASE_ID;q("case").onchange=()=>location.href=`../${q("case").value}/`;options("seed",[...new Set(R.map(x=>x.seed))].sort((a,b)=>a-b));q("seed").onchange=render;renderReferences();render();fetch(`${OLD_BASE}case.json?t=${Date.now()}`,{cache:"no-store"}).then(x=>{if(!x.ok)throw new Error(`HTTP ${x.status}`);return x.json()}).then(data=>{OLD=data;render()}).catch(error=>{console.warn("旧版整类消融读取失败",error);render()});setInterval(refreshProgress,30000)}).catch(error=>{q("status").textContent=`加载失败: ${error}`});
