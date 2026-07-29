@@ -12,11 +12,14 @@ from pathlib import Path
 GALLERY_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery"
 )
-OUTPUT = GALLERY_ROOT / "visualizations" / "index.html"
+OUTPUTS = (
+    (GALLERY_ROOT / "index.html", ""),
+    (GALLERY_ROOT / "visualizations" / "index.html", "../"),
+)
 ENTRIES = (
     (
         "Head 分类与注意力",
-        "index.html",
+        "fulltoken-head-classification.html",
         "全 token 时间矩阵与运动轨迹 Head 分类 Pilot",
         "S/T/P/C/G 分类、生成视频与代表 Head 的完整 Q@K 矩阵。",
     ),
@@ -144,14 +147,14 @@ def validate_entries() -> None:
         raise FileNotFoundError("Missing visualization pages:\n" + "\n".join(missing))
 
 
-def build_html() -> str:
+def build_html(link_prefix: str) -> str:
     categories = []
     for category in dict.fromkeys(entry[0] for entry in ENTRIES):
         rows = []
         for _, relative, title, description in (
             entry for entry in ENTRIES if entry[0] == category
         ):
-            href = "../" + relative
+            href = link_prefix + relative
             rows.append(
                 "<a class='entry' "
                 f"href='{html.escape(href)}' "
@@ -191,9 +194,10 @@ input.addEventListener("input",filter);
 
 def main() -> None:
     validate_entries()
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(build_html(), encoding="utf-8")
-    print(f"[visualization-hub] entries={len(ENTRIES)} output={OUTPUT}")
+    for output, link_prefix in OUTPUTS:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(build_html(link_prefix), encoding="utf-8")
+        print(f"[visualization-hub] entries={len(ENTRIES)} output={output}")
 
 
 if __name__ == "__main__":

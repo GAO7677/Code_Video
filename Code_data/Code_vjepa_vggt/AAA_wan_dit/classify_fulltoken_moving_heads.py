@@ -605,8 +605,14 @@ a{{color:#075e54}} @media(max-width:1100px){{.evidence-row{{grid-template-column
 </div>
 {''.join(sections)}
 </main></body></html>"""
-    (output_dir / "index.html").write_text(page, encoding="utf-8")
-    print(f"[fulltoken-moving] wrote {output_dir / 'index.html'}")
+    index_name = (
+        "fulltoken-head-classification.html"
+        if output_dir.name == "gallery"
+        else "index.html"
+    )
+    index_path = output_dir / index_name
+    index_path.write_text(page, encoding="utf-8")
+    print(f"[fulltoken-moving] wrote {index_path}")
     print(f"[fulltoken-moving] wrote {report_path}")
 
 

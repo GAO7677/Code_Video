@@ -27,6 +27,8 @@ done
   2>&1 | tee "${ROOT}/logs/render.log"
 "${PYTHON}" "${SCRIPT_DIR}/build_common_stc_all_heads_qk_gallery.py" \
   --heads "${ROOT}/heads.csv" --selection "${ROOT}/selection.json" \
+  --s-feature-ranks "${ROOT}/s_feature_ranks.csv" \
+  --t-feature-ranks "${ROOT}/t_feature_ranks.csv" \
   --heatmap-root "${ROOT}/heatmaps" --output-dir "${GALLERY}" \
   2>&1 | tee "${ROOT}/logs/gallery.log"
 touch "${ROOT}/state/gallery.complete"

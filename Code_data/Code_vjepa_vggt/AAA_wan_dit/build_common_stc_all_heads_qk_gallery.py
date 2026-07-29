@@ -26,6 +26,8 @@ ROLE_NAMES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--heads", type=Path, required=True)
+    parser.add_argument("--s-feature-ranks", type=Path)
+    parser.add_argument("--t-feature-ranks", type=Path)
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--heatmap-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -55,6 +57,24 @@ def main() -> None:
 
     with args.heads.expanduser().resolve().open(encoding="utf-8", newline="") as handle:
         source_rows = list(csv.DictReader(handle))
+    s_feature_rows = {}
+    if args.s_feature_ranks:
+        feature_path = args.s_feature_ranks.expanduser().resolve()
+        if feature_path.is_file():
+            with feature_path.open(encoding="utf-8", newline="") as handle:
+                s_feature_rows = {
+                    (row["model"], int(row["block"]), int(row["head"])): row
+                    for row in csv.DictReader(handle)
+                }
+    t_feature_rows = {}
+    if args.t_feature_ranks:
+        feature_path = args.t_feature_ranks.expanduser().resolve()
+        if feature_path.is_file():
+            with feature_path.open(encoding="utf-8", newline="") as handle:
+                t_feature_rows = {
+                    (row["model"], int(row["block"]), int(row["head"])): row
+                    for row in csv.DictReader(handle)
+                }
     case = str(selection["case"])
     rows = []
     for item in source_rows:
@@ -65,6 +85,8 @@ def main() -> None:
         for model in MODELS:
             name = f"{role}_{int(item['role_index']):03d}_B{block:02d}H{head:02d}"
             path = heatmaps / model / case / f"{name}_block{block:02d}_head{head:02d}.png"
+            s_feature = s_feature_rows.get((model, block, head))
+            t_feature = t_feature_rows.get((model, block, head))
             model_data[model] = {
                 "figure": (
                     f"figures/{path.relative_to(heatmaps).as_posix()}"
@@ -74,6 +96,77 @@ def main() -> None:
                 "score": float(item[f"{model}_score"]),
                 "margin": float(item[f"{model}_margin"]),
                 "support": float(item[f"{model}_support"]),
+                "local_enrichment_raw_mean": (
+                    float(s_feature["local_enrichment_raw_mean"])
+                    if s_feature
+                    else None
+                ),
+                "local_enrichment_rank_mean": (
+                    float(s_feature["local_enrichment_rank_mean"])
+                    if s_feature
+                    else None
+                ),
+                "local_enrichment_s_rank": (
+                    int(s_feature["local_enrichment_s_rank"]) if s_feature else None
+                ),
+                "same_frame_mass_raw_mean": (
+                    float(s_feature["same_frame_mass_raw_mean"])
+                    if s_feature
+                    else None
+                ),
+                "same_frame_mass_rank_mean": (
+                    float(s_feature["same_frame_mass_rank_mean"])
+                    if s_feature
+                    else None
+                ),
+                "same_frame_mass_s_rank": (
+                    int(s_feature["same_frame_mass_s_rank"]) if s_feature else None
+                ),
+                "trajectory_selectivity_log2_raw_mean": (
+                    float(t_feature["trajectory_selectivity_log2_raw_mean"])
+                    if t_feature
+                    else None
+                ),
+                "trajectory_selectivity_log2_rank_mean": (
+                    float(t_feature["trajectory_selectivity_log2_rank_mean"])
+                    if t_feature
+                    else None
+                ),
+                "trajectory_selectivity_log2_t_rank": (
+                    int(t_feature["trajectory_selectivity_log2_t_rank"])
+                    if t_feature
+                    else None
+                ),
+                "trajectory_enrichment_raw_mean": (
+                    float(t_feature["trajectory_enrichment_raw_mean"])
+                    if t_feature
+                    else None
+                ),
+                "trajectory_enrichment_rank_mean": (
+                    float(t_feature["trajectory_enrichment_rank_mean"])
+                    if t_feature
+                    else None
+                ),
+                "trajectory_enrichment_t_rank": (
+                    int(t_feature["trajectory_enrichment_t_rank"])
+                    if t_feature
+                    else None
+                ),
+                "mean_time_distance_raw_mean": (
+                    float(t_feature["mean_time_distance_raw_mean"])
+                    if t_feature
+                    else None
+                ),
+                "mean_time_distance_rank_mean": (
+                    float(t_feature["mean_time_distance_rank_mean"])
+                    if t_feature
+                    else None
+                ),
+                "mean_time_distance_t_rank": (
+                    int(t_feature["mean_time_distance_t_rank"])
+                    if t_feature
+                    else None
+                ),
             }
         rows.append(
             {
@@ -121,7 +214,7 @@ img{{display:block;width:100%;height:auto;background:#07090a}}.missing{{display:
 <header><h1>公共稳定 S/T/C Head：all-token Q@K</h1>
 <p class="note">同一 case、seed 851；每个模型一次前向；去噪步 5/15/25/35。每张图左列为 raw QK/√d，右列为精确 softmax attention；5,824 tokens 池化到 512×512。</p>
 <p class="note">S/T/C 是 22 seeds × 20 cases 聚合后在三个模型中类别一致的公共稳定 head。筛选只改变展示，不改变捕获数据。</p>
-<div class="controls"><label>模型<select id="model"></select></label><label>类别<select id="role"></select></label><label>Block<select id="block"></select></label><label>排序<select id="sort"><option value="position">Block / Head</option><option value="score">类别分数</option></select></label><span class="count" id="count"></span></div>
+<div class="controls"><label>模型<select id="model"></select></label><label>类别<select id="role"></select></label><label>Block<select id="block"></select></label><label>排序<select id="sort"><option value="position">Block / Head</option><option value="score">类别分数</option><option value="local">S · local_enrichment</option><option value="same">S · same_frame_mass</option><option value="traj_selectivity">T · trajectory_selectivity_log2</option><option value="traj_enrichment">T · trajectory_enrichment</option><option value="time_distance">T · mean_time_distance</option></select></label><span class="count" id="count"></span></div>
 </header><main><h2 class="role-title" id="title"></h2><div class="grid" id="grid"></div></main>
 <script>
 const D={data},q=id=>document.getElementById(id);
@@ -132,10 +225,17 @@ q("block").innerHTML=`<option value="all">全部 Block</option>`+Array.from({{le
 function render(){{
   const model=q("model").value,role=q("role").value,block=q("block").value;
   let rows=D.rows.filter(x=>x.role===role&&(block==="all"||x.block===Number(block)));
-  rows.sort(q("sort").value==="score"?(a,b)=>b.models[model].score-a.models[model].score:(a,b)=>a.block-b.block||a.head-b.head);
+  const mode=q("sort").value;
+  if(mode==="score")rows.sort((a,b)=>b.models[model].score-a.models[model].score);
+  else if(mode==="local")rows.sort((a,b)=>(a.models[model].local_enrichment_s_rank??1e9)-(b.models[model].local_enrichment_s_rank??1e9));
+  else if(mode==="same")rows.sort((a,b)=>(a.models[model].same_frame_mass_s_rank??1e9)-(b.models[model].same_frame_mass_s_rank??1e9));
+  else if(mode==="traj_selectivity")rows.sort((a,b)=>(a.models[model].trajectory_selectivity_log2_t_rank??1e9)-(b.models[model].trajectory_selectivity_log2_t_rank??1e9));
+  else if(mode==="traj_enrichment")rows.sort((a,b)=>(a.models[model].trajectory_enrichment_t_rank??1e9)-(b.models[model].trajectory_enrichment_t_rank??1e9));
+  else if(mode==="time_distance")rows.sort((a,b)=>(a.models[model].mean_time_distance_t_rank??1e9)-(b.models[model].mean_time_distance_t_rank??1e9));
+  else rows.sort((a,b)=>a.block-b.block||a.head-b.head);
   q("title").textContent=`${{D.model_names[model]}} · ${{D.role_names[role]}}`;
   q("count").textContent=`显示 ${{rows.length}} / ${{D.role_counts[role]}} heads`;
-  q("grid").innerHTML=rows.map(x=>{{const m=x.models[model],media=m.figure?`<a href="${{esc(m.figure)}}"><img loading="lazy" src="${{esc(m.figure)}}" alt="B${{x.block}} H${{x.head}} QK"></a>`:`<div class="missing">等待该模型前向与渲染</div>`;return`<article><h2>${{role}} #${{x.role_index}} · Block ${{String(x.block).padStart(2,"0")}} · Head ${{String(x.head).padStart(2,"0")}}</h2>${{media}}<div class="meta"><span>score ${{m.score.toFixed(4)}}</span><span>margin ${{m.margin.toFixed(4)}}</span><span>support ${{m.support.toFixed(3)}}</span><span>三模型均值 ${{x.mean_score.toFixed(4)}}</span></div></article>`}}).join("");
+  q("grid").innerHTML=rows.map(x=>{{const m=x.models[model],media=m.figure?`<a href="${{esc(m.figure)}}"><img loading="lazy" src="${{esc(m.figure)}}" alt="B${{x.block}} H${{x.head}} QK"></a>`:`<div class="missing">等待该模型前向与渲染</div>`;let features=[];if(role==="S")features=[m.local_enrichment_s_rank===null?"local 待计算":`local #${{m.local_enrichment_s_rank}} · rank ${{m.local_enrichment_rank_mean.toFixed(4)}} · raw ${{m.local_enrichment_raw_mean.toFixed(4)}}`,m.same_frame_mass_s_rank===null?"same-frame 待计算":`same #${{m.same_frame_mass_s_rank}} · rank ${{m.same_frame_mass_rank_mean.toFixed(4)}} · raw ${{m.same_frame_mass_raw_mean.toFixed(4)}}`];else if(role==="T")features=[m.trajectory_selectivity_log2_t_rank===null?"selectivity 待计算":`selectivity #${{m.trajectory_selectivity_log2_t_rank}} · rank ${{m.trajectory_selectivity_log2_rank_mean.toFixed(4)}} · raw ${{m.trajectory_selectivity_log2_raw_mean.toFixed(4)}}`,m.trajectory_enrichment_t_rank===null?"trajectory enrichment 待计算":`traj-enrich #${{m.trajectory_enrichment_t_rank}} · rank ${{m.trajectory_enrichment_rank_mean.toFixed(4)}} · raw ${{m.trajectory_enrichment_raw_mean.toFixed(4)}}`,m.mean_time_distance_t_rank===null?"time distance 待计算":`time-dist #${{m.mean_time_distance_t_rank}} · rank ${{m.mean_time_distance_rank_mean.toFixed(4)}} · raw ${{m.mean_time_distance_raw_mean.toFixed(4)}}`];return`<article><h2>${{role}} #${{x.role_index}} · Block ${{String(x.block).padStart(2,"0")}} · Head ${{String(x.head).padStart(2,"0")}}</h2>${{media}}<div class="meta">${{features.map(v=>`<span>${{v}}</span>`).join("")}}<span>score_${{role}} ${{m.score.toFixed(4)}}</span><span>margin ${{m.margin.toFixed(4)}}</span><span>support ${{m.support.toFixed(3)}}</span></div></article>`}}).join("");
 }}
 for(const id of["model","role","block","sort"])q(id).onchange=render;render();
 </script></body></html>"""

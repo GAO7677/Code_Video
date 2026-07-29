@@ -19,6 +19,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--capture-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--models",
+        help="Optional comma-separated model allowlist; defaults to every model.",
+    )
     return parser.parse_args()
 
 
@@ -94,10 +98,20 @@ def main() -> None:
     selection = json.loads(
         args.selection.expanduser().resolve().read_text(encoding="utf-8")
     )["samples"]
+    selected_models = (
+        {item.strip() for item in args.models.split(",") if item.strip()}
+        if args.models
+        else set(selection)
+    )
+    unknown_models = selected_models - set(selection)
+    if unknown_models:
+        raise ValueError(f"unknown models: {sorted(unknown_models)}")
     capture_root = args.capture_root.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     rendered = []
     for model, cases in selection.items():
+        if model not in selected_models:
+            continue
         for case, item in cases.items():
             by_pair: dict[tuple[int, int], list[str]] = {}
             for role, pair in item["roles"].items():
