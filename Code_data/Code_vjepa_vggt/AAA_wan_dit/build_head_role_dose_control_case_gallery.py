@@ -25,6 +25,12 @@ DEFAULT_S_DEPTH_CONFIG = Path(__file__).with_name("s_depth_strata_experiment.jso
 DEFAULT_S_FEATURE_CONFIG = Path(__file__).with_name(
     "head_role_s_feature_split_pilot.json"
 )
+DEFAULT_S_FEATURE_UNION_CONFIG = Path(__file__).with_name(
+    "head_role_s_feature_union_pilot.json"
+)
+DEFAULT_S_FEATURE_PHASED_CONFIG = Path(__file__).with_name(
+    "head_role_s_feature_phased_pilot.json"
+)
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
@@ -63,6 +69,16 @@ def parse_args() -> argparse.Namespace:
         "--s-feature-config",
         type=Path,
         default=DEFAULT_S_FEATURE_CONFIG,
+    )
+    parser.add_argument(
+        "--s-feature-union-config",
+        type=Path,
+        default=DEFAULT_S_FEATURE_UNION_CONFIG,
+    )
+    parser.add_argument(
+        "--s-feature-phased-config",
+        type=Path,
+        default=DEFAULT_S_FEATURE_PHASED_CONFIG,
     )
     parser.add_argument("--gallery-root", type=Path, default=DEFAULT_GALLERY_ROOT)
     return parser.parse_args()
@@ -287,6 +303,7 @@ def build_s_depth_records(
 def build_s_feature_records(
     root: Path,
     subset_payload: dict[str, Any],
+    route: str,
 ) -> list[dict[str, Any]]:
     generation_root = root / "generation"
     records = []
@@ -340,12 +357,12 @@ def build_s_feature_records(
                     "video": media_url(
                         video,
                         generation_root,
-                        "s-feature-generation",
+                        route,
                     ),
                     "sidecar": media_url(
                         video.with_suffix(".json"),
                         generation_root,
-                        "s-feature-generation",
+                        route,
                     ),
                     "metrics": metrics(payload),
                 }
@@ -374,12 +391,24 @@ def main() -> None:
     s_feature_config = json.loads(
         args.s_feature_config.expanduser().resolve().read_text(encoding="utf-8")
     )
+    s_feature_union_config = json.loads(
+        args.s_feature_union_config.expanduser().resolve().read_text(encoding="utf-8")
+    )
+    s_feature_phased_config = json.loads(
+        args.s_feature_phased_config.expanduser().resolve().read_text(encoding="utf-8")
+    )
     root = Path(config["storage"]["output_root"]).expanduser().resolve()
     s_depth_root = (
         Path(s_depth_config["storage"]["output_root"]).expanduser().resolve()
     )
     s_feature_root = (
         Path(s_feature_config["storage"]["output_root"]).expanduser().resolve()
+    )
+    s_feature_union_root = (
+        Path(s_feature_union_config["storage"]["output_root"]).expanduser().resolve()
+    )
+    s_feature_phased_root = (
+        Path(s_feature_phased_config["storage"]["output_root"]).expanduser().resolve()
     )
     gallery = args.gallery_root.expanduser().resolve()
     input_list = Path(config["input_list"]).expanduser().resolve()
@@ -434,6 +463,29 @@ def main() -> None:
         }
         for subset_id, record in s_feature_subset_payload["subsets"].items()
     }
+    s_feature_union_subset_payload = json.loads(
+        Path(s_feature_union_config["matched_subset_manifest"])
+        .expanduser()
+        .resolve()
+        .read_text(encoding="utf-8")
+    )
+    compact_s_feature_union_subsets = {
+        subset_id: {
+            "role": record["role"],
+            "feature_subtype": record["feature_subtype"],
+            "k": int(record["k"]),
+            "matching": record["matching"],
+            "block_histogram": record["block_histogram"],
+        }
+        for subset_id, record in s_feature_union_subset_payload["subsets"].items()
+    }
+    compact_s_feature_subsets.update(compact_s_feature_union_subsets)
+    s_feature_phased_subset_payload = json.loads(
+        Path(s_feature_phased_config["matched_subset_manifest"])
+        .expanduser()
+        .resolve()
+        .read_text(encoding="utf-8")
+    )
     ensure_link(root / "generation", gallery / "media" / "generation")
     ensure_link(root / "progress.json", gallery / "live-progress.json")
     ensure_link(
@@ -451,6 +503,22 @@ def main() -> None:
     ensure_link(
         s_feature_root / "progress.json",
         gallery / "s-feature-progress.json",
+    )
+    ensure_link(
+        s_feature_union_root / "generation",
+        gallery / "media" / "s-feature-union-generation",
+    )
+    ensure_link(
+        s_feature_union_root / "progress.json",
+        gallery / "s-feature-union-progress.json",
+    )
+    ensure_link(
+        s_feature_phased_root / "generation",
+        gallery / "media" / "s-feature-phased-generation",
+    )
+    ensure_link(
+        s_feature_phased_root / "progress.json",
+        gallery / "s-feature-phased-progress.json",
     )
     baseline_base = Path(config["metrics"]["baseline_root"]).expanduser().resolve()
     ensure_link(baseline_base, gallery / "media" / "baselines")
@@ -475,10 +543,35 @@ def main() -> None:
     s_feature_records = build_s_feature_records(
         s_feature_root,
         s_feature_subset_payload,
+        "s-feature-generation",
     )
+    s_feature_union_records = build_s_feature_records(
+        s_feature_union_root,
+        s_feature_union_subset_payload,
+        "s-feature-union-generation",
+    )
+    s_feature_records.extend(s_feature_union_records)
+    s_feature_phased_records = build_s_feature_records(
+        s_feature_phased_root,
+        s_feature_phased_subset_payload,
+        "s-feature-phased-generation",
+    )
+    s_feature_records.extend(s_feature_phased_records)
     records.extend(s_feature_records)
     s_feature_complete_tasks = 0
     for state_path in (s_feature_root / "state").glob("*.json"):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        s_feature_complete_tasks += state.get("status") == "complete"
+    for state_path in (s_feature_union_root / "state").glob("*.json"):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        s_feature_complete_tasks += state.get("status") == "complete"
+    for state_path in (s_feature_phased_root / "state").glob("*.json"):
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
@@ -527,7 +620,31 @@ def main() -> None:
             len(s_feature_config["models"])
             * len(s_feature_config["seeds"])
             * len(s_feature_config["step_ranges"])
-            * len(compact_s_feature_subsets)
+            * len(s_feature_subset_payload["subsets"])
+            + len(s_feature_union_config["models"])
+            * len(s_feature_union_config["seeds"])
+            * len(s_feature_union_config["step_ranges"])
+            * len(s_feature_union_subset_payload["subsets"])
+            + len(s_feature_phased_config["models"])
+            * len(s_feature_phased_config["seeds"])
+            * len(s_feature_phased_config["step_ranges"])
+            * len(s_feature_phased_subset_payload["subsets"])
+        ),
+        "s_feature_step_ranges": sorted(
+            {
+                tuple(int(value) for value in step_range)
+                for source_config in (
+                    s_feature_config,
+                    s_feature_union_config,
+                    s_feature_phased_config,
+                )
+                for step_range in source_config["step_ranges"]
+            },
+            key=lambda step_range: (
+                step_range == (0, 40),
+                step_range[0],
+                step_range[1],
+            ),
         ),
         "s_feature_subsets": compact_s_feature_subsets,
         "cases": cases,
@@ -582,7 +699,7 @@ label{display:grid;gap:2px;color:var(--muted);font-size:10px}select{min-width:11
 #case{min-width:min(520px,80vw)}.controls{margin-top:8px}.status{color:var(--accent);font-weight:700}.prompt{margin-top:7px;color:var(--muted)}
 main{padding:14px 16px}.references{display:grid;grid-template-columns:repeat(2,minmax(260px,448px));gap:8px;margin-top:8px}
 .model-group{margin-top:34px;border-top:4px solid var(--accent)}.model-group-title{padding:11px 0;border-bottom:1px solid var(--line)}.model-group-title h2{font-size:24px}
-.setting-row{margin-top:20px}.setting-row-title{display:flex;gap:12px;align-items:baseline;padding:7px 0}.setting-row-title h3{font-size:16px}.setting-row-title p{color:var(--muted)}.setting-row-title a{color:#efb36d;font-weight:700;text-decoration:none}.stage-row{margin-top:12px}.stage-row-title{padding:5px 8px;background:#202629;border-left:3px solid var(--accent);font-size:14px}.block-depths{display:flex;flex-wrap:wrap;gap:5px 14px;margin:-2px 0 7px;color:#c4ccd0;font-size:10px}.block-depths b{color:var(--accent)}.videos{display:grid;grid-template-columns:repeat(10,minmax(210px,1fr));gap:7px;overflow-x:auto}
+.setting-row{margin-top:20px}.setting-row-title{display:flex;gap:12px;align-items:baseline;padding:7px 0}.setting-row-title h3{font-size:16px}.setting-row-title p{color:var(--muted)}.setting-row-title a{color:#efb36d;font-weight:700;text-decoration:none}.stage-row{margin-top:12px}.stage-row-title{display:flex;align-items:center;gap:10px;padding:5px 8px;background:#202629;border-left:3px solid var(--accent);font-size:14px}.stage-row-title h3{font-size:14px}.row-actions{display:flex;gap:5px;margin-left:auto}.row-actions button{padding:3px 8px;font-size:11px}.block-depths{display:flex;flex-wrap:wrap;gap:5px 14px;margin:-2px 0 7px;color:#c4ccd0;font-size:10px}.block-depths b{color:var(--accent)}.videos{display:grid;grid-template-columns:repeat(10,minmax(210px,1fr));gap:7px;overflow-x:auto}
 .video-cell{border:1px solid var(--line);background:var(--band)}.video-cell h3{padding:6px 8px;background:#242a2e;font-size:13px}
 .video-cell.all-head{border-color:#8f673d}.video-cell.all-head h3{background:#3a2c20;color:#f0bd80}
 .video-cell.s-depth{border-color:#8f673d}.video-cell.s-depth h3{background:#47301f;color:#ffd19a}
@@ -592,7 +709,7 @@ video{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#0
 .metrics-note{color:var(--muted);margin:5px 0 9px}table{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
 th,td{border:1px solid var(--line);padding:5px 6px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:#181d20}
 thead th{position:sticky;top:0;background:#242a2e}.value{display:block}.delta{display:block;color:var(--muted);font-size:9px}.good .delta{color:var(--good)}.bad .delta{color:var(--bad)}.pending{color:var(--pending)}
-.playbar{position:fixed;z-index:8;left:0;right:0;bottom:0;display:flex;gap:8px;align-items:center;padding:9px 16px;background:#171b1ef2;border-top:1px solid var(--line)}
+.playbar{position:fixed;z-index:8;left:0;right:0;bottom:0;display:flex;gap:8px;align-items:center;padding:9px 16px;background:#171b1ef2;border-top:1px solid var(--line);color:var(--muted)}
 button{padding:6px 10px;border:1px solid var(--line);background:#242a2e;color:#fff;cursor:pointer}.time{margin-left:auto;color:var(--muted)}
 @media(max-width:620px){.references{grid-template-columns:1fr}}
 </style></head><body>
@@ -600,7 +717,7 @@ button{padding:6px 10px;border:1px solid var(--line);background:#242a2e;color:#f
 <div class="controls"><label>Case<select id="case"></select></label><label>Seed<select id="seed"></select></label></div>
 <p class="prompt" id="prompt"></p></header><main><section><h2>输入与参考</h2><div class="references" id="references"></div></section><div id="settings"></div>
 <section class="metrics"><h2>当前指标</h2><p class="metrics-note">指标按与视频相同的匹配方式和replicate分组。每格第一行是原始分数，第二行是相对同模型、同seed baseline的变化；绿色表示改善，红色表示下降。</p><div id="metric-groups"></div></section></main>
-<div class="playbar"><button id="play">全部播放</button><button id="replay">从头播放</button><button id="pause">暂停</button><span class="time" id="time"></span></div>
+<div class="playbar"><span>每行独立同步播放，只加载当前行视频</span><span class="time" id="time"></span></div>
 <script>
 const CASE_ID="__CASE_ID__",OLD_BASE=`/test5-st-phased-seed851/cases/${encodeURIComponent(CASE_ID)}/`;let D,R,C,OLD=null;
 const q=id=>document.getElementById(id),roles=["baseline","S","T","C"];
@@ -621,22 +738,24 @@ function depthStages(){return(D.s_depth_step_ranges||[]).map(x=>x.map(Number)).s
 function baselineRecord(model){const s=selection();return R.find(r=>r.kind==="baseline"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed)}
 function depthRecord(model,subsetId,stage){const s=selection();return R.find(r=>r.kind==="s_depth"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.subset_id===subsetId&&r.start===stage[0]&&r.end===stage[1])}
 function depthLabel(item){const names={early:"Early",middle:"Middle",late:"Late"},end=item.block_end_exclusive-1;return`${names[item.depth_stratum]||item.depth_stratum} · B${String(item.block_start_inclusive).padStart(2,"0")}–${String(end).padStart(2,"0")} · All S (${item.k} heads)`}
-function featureSubsets(){return Object.entries(D.s_feature_subsets||{}).map(([id,x])=>({id,...x})).sort((a,b)=>(a.feature_subtype==="local_enrichment"?0:1)-(b.feature_subtype==="local_enrichment"?0:1))}
-function featureRecord(model,subtype){const s=selection();return R.find(r=>r.kind==="s_feature_split"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.feature_subtype===subtype)}
+function featureSubsets(){const order={local_enrichment:0,same_frame_mass:1,local_same_union:2};return Object.entries(D.s_feature_subsets||{}).map(([id,x])=>({id,...x})).sort((a,b)=>(order[a.feature_subtype]??99)-(order[b.feature_subtype]??99))}
+function featureStages(){return(D.s_feature_step_ranges||[]).map(x=>x.map(Number))}
+function featureRecord(model,subtype,stage){const s=selection();return R.find(r=>r.kind==="s_feature_split"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.feature_subtype===subtype&&r.start===stage[0]&&r.end===stage[1])}
 function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&record.kind==="all_head"?" all-head":record&&record.kind==="s_depth"?" s-depth":record&&record.kind==="s_feature_split"?" s-feature":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
 function renderReferences(){q("references").innerHTML=media(C.context_url?{video:C.context_url,kind:"reference"}:null,"8帧 Context")+media(C.source_url?{video:C.source_url,kind:"reference"}:null,"Source / GT");q("prompt").textContent=C.caption}
 function oldMediaUrl(src){return src?`${OLD_BASE}${src}`:null}
 function oldRecord(model,role,range){const s=selection();if(!OLD||s.seed!==851)return null;const key=`${String(range[0]).padStart(2,"0")}_${String(range[1]).padStart(2,"0")}`,stage=OLD.videos.stages[key],scores=OLD.metric_scores.stages[key];if(!stage||!stage[model]||!stage[model][role])return null;const counts={S:OLD.head_distribution.roles.S.total,T:OLD.head_distribution.roles.T.total,ST:OLD.head_distribution.roles.ST.total};return{kind:"all_head",video:oldMediaUrl(stage[model][role]),subset_id:`All-${role}`,role,k:counts[role],start:range[0],end:range[1],metrics:scores&&scores[model]?scores[model][role]:{}}}
 function oldLabel(role){return role==="ST"?"旧版 All-S+T":"旧版 All-"+role}
-function renderSettings(){const depth=depthSubsets(),feature=featureSubsets();let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;if(feature.length){out+=`<div class="setting-row"><div class="setting-row-title"><h3>S 内部特征拆分 · 严格互斥且同 Block 匹配</h3><p>全去噪步 0–40；两组各 32 heads</p></div><div class="block-depths"><span><b>共同 Block 配额：</b>${histogramText(feature[0].block_histogram)}</span></div><div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");for(const item of feature){const label=item.feature_subtype==="local_enrichment"?"消融 Local-enrichment dominant S":"消融 Same-frame-mass dominant S";out+=media(featureRecord(model,item.feature_subtype),label,"该 S 特征拆分配置仍在生成")}out+="</div></div>"}for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>Baseline → S-depth Early/Middle/Late → 旧版 All-S/T/ST → 当前等数量 S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row"><h3 class="stage-row-title">去噪阶段 ${stageLabel(stage)}</h3><div class="videos">`;out+=media(x.baseline,"Baseline");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth ${depthLabel(item)}`,"该 S-depth 配置仍在生成");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
+function rowHeader(label){return`<div class="stage-row-title"><h3>${label}</h3><div class="row-actions"><button data-row-action="play">播放本行</button><button data-row-action="replay">从头播放本行</button><button data-row-action="pause">暂停本行</button></div></div>`}
+function renderSettings(){stopRowSync();const depth=depthSubsets(),feature=featureSubsets();let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;if(feature.length){out+=`<div class="setting-row"><div class="setting-row-title"><h3>S 内部特征拆分与联合消融</h3><p>Local 32 heads、Same-frame 32 heads、两组并集 64 heads</p></div><div class="block-depths"><span><b>单组共同 Block 配额：</b>${histogramText(feature[0].block_histogram)}</span></div>`;for(const stage of featureStages()){out+=`<section class="stage-row">${rowHeader(`去噪阶段 ${stageLabel(stage)}`)}<div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");for(const item of feature){const labels={local_enrichment:"消融 Local-enrichment dominant S (32)",same_frame_mass:"消融 Same-frame-mass dominant S (32)",local_same_union:"联合消融两类 S (64)"};out+=media(featureRecord(model,item.feature_subtype,stage),labels[item.feature_subtype]||item.id,"该 S 特征消融配置仍在生成")}out+="</div></section>"}out+="</div>"}for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>Baseline → S-depth Early/Middle/Late → 旧版 All-S/T/ST → 当前等数量 S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row">${rowHeader(`去噪阶段 ${stageLabel(stage)}`)}<div class="videos">`;out+=media(x.baseline,"Baseline");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth ${depthLabel(item)}`,"该 S-depth 配置仍在生成");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
 function metricCell(record,baseline,metric){if(!record)return`<td class="pending">Pending</td>`;const value=record.metrics[metric.name];if(value===null||value===undefined)return`<td class="pending">Pending</td>`;if(record.kind==="baseline")return`<td><span class="value">${score(value)}</span><span class="delta">baseline</span></td>`;const base=baseline&&baseline.metrics[metric.name];if(base===null||base===undefined)return`<td><span class="value">${score(value)}</span><span class="delta">baseline Pending</span></td>`;const raw=value-base,improvement=metric.direction==="higher"?raw:-raw,state=improvement>0?"good":improvement<0?"bad":"";return`<td class="${state}"><span class="value">${score(value)}</span><span class="delta">Δ ${signed(raw)}</span></td>`}
 function renderMetrics(){const depth=depthSubsets(),head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){out+=`<section class="metric-model"><h3>${D.model_labels[model]}</h3>`;for(const setting of settings()){let body="";for(const stage of stages()){const x=selectedRecords(model,setting,stage),prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(x.baseline,x.baseline,m)).join("")+"</tr>";for(const item of depth){const r=depthRecord(model,item.id,stage);body+=`<tr><td>${prefix}S-depth ${depthLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","ST"]){const r=oldRecord(model,role,stage);body+=`<tr><td>${prefix}${oldLabel(role)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","C"]){const r=x.ablations.find(v=>v.role===role);body+=`<tr><td>${prefix}当前 ${role}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>${settingLabel(setting)} · 全部去噪阶段</h4>${blockDetails(setting)}<table><thead>${head}</thead><tbody>${body}</tbody></table></div>`}out+="</section>"}q("metric-groups").innerHTML=out}
 function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","ablation","s_depth","s_feature_split"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
 function nested(payload,path){let value=payload;for(const key of path){if(!value||typeof value!=="object")return null;value=value[key]}return typeof value==="number"&&Number.isFinite(value)?value:typeof value==="boolean"?Number(value):null}
 async function refreshMetrics(){const records=activeRecords();await Promise.all(records.map(async record=>{try{const payload=await fetch(`${record.sidecar}?t=${Date.now()}`).then(x=>x.json());record.metrics=Object.fromEntries(D.metric_definitions.map(metric=>[metric.name,nested(payload,metric.path)]))}catch(error){console.warn("sidecar refresh failed",record.sidecar,error)}}));renderMetrics()}
-async function refreshProgress(){const get=path=>fetch(`${path}?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),[dose,depth,feature]=await Promise.all([get(`/head-role-dose-control-pilot/live-progress.json`),get(`/head-role-dose-control-pilot/s-depth-progress.json`),get(`/head-role-dose-control-pilot/s-feature-progress.json`)]),doseText=dose?`${(dose.generation_states||{}).complete||0}/${dose.expected_generation_tasks}`:`${D.generation_tasks_complete}/${D.generation_tasks_expected}`,depthText=depth?`${(depth.state_counts||{}).complete||0}/${depth.expected_tasks}`:`${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected}`,featureText=feature?`${(feature.state_counts||{}).complete||0}/${feature.expected_tasks}`:`${D.s_feature_generation_tasks_complete}/${D.s_feature_generation_tasks_expected}`;q("status").textContent=`Dose ${doseText} · S-depth ${depthText} · S-feature ${featureText}`}
+async function refreshProgress(){const get=path=>fetch(`${path}?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),[dose,depth,feature,union,phased]=await Promise.all([get(`/head-role-dose-control-pilot/live-progress.json`),get(`/head-role-dose-control-pilot/s-depth-progress.json`),get(`/head-role-dose-control-pilot/s-feature-progress.json`),get(`/head-role-dose-control-pilot/s-feature-union-progress.json`),get(`/head-role-dose-control-pilot/s-feature-phased-progress.json`)]),doseText=dose?`${(dose.generation_states||{}).complete||0}/${dose.expected_generation_tasks}`:`${D.generation_tasks_complete}/${D.generation_tasks_expected}`,depthText=depth?`${(depth.state_counts||{}).complete||0}/${depth.expected_tasks}`:`${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected}`,featureText=feature?`${(feature.state_counts||{}).complete||0}/${feature.expected_tasks}`:"6/6",unionText=union?`${(union.state_counts||{}).complete||0}/${union.expected_tasks}`:"0/3",phasedText=phased?`${(phased.state_counts||{}).complete||0}/${phased.expected_tasks}`:"0/18";q("status").textContent=`Dose ${doseText} · S-depth ${depthText} · S-feature ${featureText} + union ${unionText} + phased ${phasedText}`}
 function render(){renderSettings();renderMetrics();refreshMetrics();refreshProgress();q("time").textContent=`本页 ${[...document.querySelectorAll("video")].length} 个视频`}
-function videos(){return[...document.querySelectorAll("video")]}q("play").onclick=()=>videos().forEach(v=>v.play());q("replay").onclick=()=>videos().forEach(v=>{v.currentTime=0;v.play()});q("pause").onclick=()=>videos().forEach(v=>v.pause());
+let syncTimer=null,activeRow=null;function stopRowSync(){if(syncTimer!==null)clearInterval(syncTimer);syncTimer=null;activeRow=null}function rowVideos(button){const row=button.closest(".stage-row");return row?[...row.querySelectorAll("video")]:[]}function playRow(button,replay=false){stopRowSync();const videos=rowVideos(button);if(!videos.length)return;if(replay)for(const video of videos)video.currentTime=0;for(const video of videos){video.playbackRate=1;video.play().catch(()=>{})}activeRow=button.closest(".stage-row");syncTimer=setInterval(()=>{const current=activeRow?[...activeRow.querySelectorAll("video")]:[];if(current.length<2)return;const leader=current[0];if(leader.readyState<2)return;for(const video of current.slice(1)){if(video.readyState>=2&&Math.abs(video.currentTime-leader.currentTime)>0.12)video.currentTime=leader.currentTime}},250)}function pauseRow(button){const row=button.closest(".stage-row");if(row===activeRow)stopRowSync();for(const video of rowVideos(button))video.pause()}document.addEventListener("click",event=>{const button=event.target.closest("[data-row-action]");if(!button)return;const action=button.dataset.rowAction;if(action==="play")playRow(button,false);else if(action==="replay")playRow(button,true);else pauseRow(button)});
 fetch("../../manifest.json").then(x=>x.json()).then(data=>{D=data;R=data.records;C=data.cases.find(x=>x.id===CASE_ID);options("case",D.cases.map(x=>x.id));q("case").value=CASE_ID;q("case").onchange=()=>location.href=`../${q("case").value}/`;options("seed",[...new Set(R.map(x=>x.seed))].sort((a,b)=>a-b));q("seed").onchange=render;renderReferences();render();fetch(`${OLD_BASE}case.json?t=${Date.now()}`,{cache:"no-store"}).then(x=>{if(!x.ok)throw new Error(`HTTP ${x.status}`);return x.json()}).then(data=>{OLD=data;render()}).catch(error=>{console.warn("旧版整类消融读取失败",error);render()});setInterval(refreshProgress,30000)}).catch(error=>{q("status").textContent=`加载失败: ${error}`});
 </script></body></html>"""
 

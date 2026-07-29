@@ -58,7 +58,16 @@
     "output_root": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/pilot"
   },
   "metrics": {
+    "gpus": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7
+    ],
     "defer_until_file": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/s_only/generation.complete",
+    "prewarm_until_file": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/metric_prewarm_current/complete",
     "groups": {
       "cpu": [
         "physics_iq_with_context",

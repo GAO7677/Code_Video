@@ -17,6 +17,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PYTHON = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
 GALLERY_BUILDER = SCRIPT_DIR / "build_head_role_dose_control_case_gallery.py"
 PRIMARY_CONFIG = SCRIPT_DIR / "head_role_dose_control_pilot.json"
+PRIMARY_S_FEATURE_CONFIG = SCRIPT_DIR / "head_role_s_feature_split_pilot.json"
+S_FEATURE_UNION_CONFIG = SCRIPT_DIR / "head_role_s_feature_union_pilot.json"
+S_FEATURE_PHASED_CONFIG = SCRIPT_DIR / "head_role_s_feature_phased_pilot.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,7 +93,11 @@ def main() -> None:
                     "--config",
                     str(PRIMARY_CONFIG),
                     "--s-feature-config",
-                    str(config_path),
+                    str(PRIMARY_S_FEATURE_CONFIG),
+                    "--s-feature-union-config",
+                    str(S_FEATURE_UNION_CONFIG),
+                    "--s-feature-phased-config",
+                    str(S_FEATURE_PHASED_CONFIG),
                 ],
                 check=True,
             )

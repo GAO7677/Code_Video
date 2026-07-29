@@ -12,7 +12,7 @@ ROOT=/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/pilot
 READY="${ROOT}/metrics.ready"
 INPUT_LIST=/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt
 WAIT_WORKER="${SCRIPT_DIR}/run_test5_ablation_metric_wait_worker.sh"
-GPUS=(0 1 2 3 5 6 7)
+GPUS=(1 2 3 5 6 7)
 
 if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
   tmux new-session -d -s "${SESSION}" -n shell

@@ -147,6 +147,41 @@ def _prepare_metric_inputs(
     return roots, len(cases)
 
 
+def _dependency_metric_inputs(
+    config: dict[str, Any],
+    root: Path,
+    cases_per_root: int,
+) -> list[Path]:
+    dependency = config.get("metrics", {}).get("defer_until_file")
+    if not dependency:
+        return []
+    dependency_root = Path(dependency).expanduser().resolve().parent
+    manifest_path = dependency_root / "generation_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(manifest_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records = payload.get("records", [])
+    roots = []
+    for record in records:
+        videos = record.get("videos", {})
+        if len(videos) != cases_per_root:
+            raise RuntimeError(
+                f"Incomplete dependency video map in {record.get('task_id')}"
+            )
+        roots.append(_common_video_parent(videos))
+    if len(roots) != int(payload.get("tasks", -1)):
+        raise RuntimeError(
+            f"Expected {payload.get('tasks')} dependency roots, got {len(roots)}"
+        )
+    if len(roots) != len(set(roots)):
+        raise RuntimeError("Dependency metric result roots are not unique")
+    (root / "s_depth_leaf_folders.txt").write_text(
+        "\n".join(str(path) for path in roots) + "\n",
+        encoding="utf-8",
+    )
+    return roots
+
+
 def _prepare_metric_queues(
     config: dict[str, Any],
     root: Path,
@@ -290,6 +325,28 @@ def _wait_for_metric_dependency(
         time.sleep(poll_seconds)
 
 
+def _wait_for_metric_prewarm(
+    config: dict[str, Any],
+    root: Path,
+    expected: int,
+    poll_seconds: int,
+) -> None:
+    value = config.get("metrics", {}).get("prewarm_until_file")
+    if not value:
+        return
+    marker = Path(value).expanduser().resolve()
+    while not marker.is_file():
+        counts, _ = _states(root)
+        _progress(
+            root=root,
+            phase="waiting_for_metric_prewarm",
+            states=counts,
+            expected=expected,
+            extra={"waiting_for_file": str(marker)},
+        )
+        time.sleep(poll_seconds)
+
+
 def main() -> None:
     args = parse_args()
     config_path = args.config.expanduser().resolve()
@@ -339,6 +396,12 @@ def main() -> None:
         expected,
         int(args.poll_seconds),
     )
+    _wait_for_metric_prewarm(
+        config,
+        root,
+        expected,
+        int(args.poll_seconds),
+    )
     ready = root / "metrics.ready"
     if not ready.is_file():
         roots, cases_per_root = _prepare_metric_inputs(
@@ -347,11 +410,21 @@ def main() -> None:
             records=records,
             expected_tasks=expected,
         )
-        metric_tasks = _prepare_metric_queues(config, root, roots)
+        dependency_roots = _dependency_metric_inputs(
+            config,
+            root,
+            cases_per_root,
+        )
+        metric_roots = roots + dependency_roots
+        if len(metric_roots) != len(set(metric_roots)):
+            raise RuntimeError("Combined metric result roots are not unique")
+        metric_tasks = _prepare_metric_queues(config, root, metric_roots)
         _atomic_json(
             root / "metric_plan.json",
             {
-                "result_roots": len(roots),
+                "result_roots": len(metric_roots),
+                "main_result_roots": len(roots),
+                "dependency_result_roots": len(dependency_roots),
                 "cases_per_root": cases_per_root,
                 "metric_tasks": metric_tasks,
                 "groups": config["metrics"]["groups"],
@@ -359,7 +432,7 @@ def main() -> None:
         )
         ready.touch()
     metric_worker_count = (
-        len(config["execution"]["gpus"])
+        len(config["metrics"].get("gpus", config["execution"]["gpus"]))
         * sum(int(value) for value in config["metrics"]["workers_per_gpu"].values())
     )
     metric_root = root / "metrics"
