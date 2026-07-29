@@ -21,6 +21,9 @@ GALLERY = Path(
 PILOT = GALLERY / "head-role-dose-control-pilot"
 MANIFEST = PILOT / "manifest.json"
 OUT = PILOT / "metrics" / "s-t-head-count-control"
+ALL_HEAD_ROOT = GALLERY / "multiseed"
+ALL_HEAD_MANIFEST = ALL_HEAD_ROOT / "manifest.json"
+PHASED_CASE_ROOT = GALLERY / "test5-st-phased-seed851" / "cases"
 
 METRICS = [
     ("physics_iq_with_context", "Physics-IQ ctx"),
@@ -29,9 +32,15 @@ METRICS = [
     ("pmf_without_context", "PMF noctx"),
 ]
 ROLES = ["S", "T", "C"]
-ROLE_COLORS = {"S": "#17806d", "T": "#d08418", "C": "#3567a8"}
+ROLE_COLORS = {
+    "S": "#17806d",
+    "T": "#d08418",
+    "C": "#3567a8",
+    "ST": "#a14e79",
+}
 MODEL_ORDER = ["wan_lora", "xssc", "physrvg"]
 STAGES = [(0, 10), (10, 20)]
+ALL_HEAD_STAGES = [(0, 5), (5, 10), (0, 10), (10, 20), (20, 30)]
 MATCHING = {
     "exact_block": ("Exact k=5", 5),
     "approx_depth": ("Depth-matched k=8", 8),
@@ -361,6 +370,261 @@ def plot_coverage(manifest: dict) -> list[dict]:
     return coverage
 
 
+def load_phased_all_head() -> tuple[list[dict], list[dict]]:
+    score_rows = []
+    browser_cases = []
+    for path in sorted(PHASED_CASE_ROOT.glob("*/case.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        case_id = payload["id"]
+        base_url = f"/test5-st-phased-seed851/cases/{case_id}/"
+        browser_case = {
+            "id": case_id,
+            "prompt": payload.get("prompt", ""),
+            "source_video": base_url + payload["references"]["source"],
+            "phased": {},
+        }
+        for model in MODEL_ORDER:
+            baseline_scores = payload["metric_scores"]["baseline"][model]
+            baseline_video = base_url + payload["videos"]["baseline"][model]
+            browser_case["phased"][model] = {
+                "baseline": {
+                    "video": baseline_video,
+                    "metrics": {
+                        metric: baseline_scores.get(metric)
+                        for metric, _ in METRICS
+                    },
+                },
+                "stages": {},
+            }
+            score_rows.append(
+                {
+                    "case_id": case_id,
+                    "model": model,
+                    "role": "baseline",
+                    "start": -1,
+                    "end": -1,
+                    "video": baseline_video,
+                    **{
+                        metric: baseline_scores.get(metric)
+                        for metric, _ in METRICS
+                    },
+                }
+            )
+            for start, end in ALL_HEAD_STAGES:
+                stage_key = f"{start:02d}_{end:02d}"
+                browser_case["phased"][model]["stages"][stage_key] = {}
+                for role in ["S", "T", "ST"]:
+                    scores = payload["metric_scores"]["stages"][stage_key][model][role]
+                    video = (
+                        base_url
+                        + payload["videos"]["stages"][stage_key][model][role]
+                    )
+                    record = {
+                        "video": video,
+                        "metrics": {
+                            metric: scores.get(metric)
+                            for metric, _ in METRICS
+                        },
+                    }
+                    browser_case["phased"][model]["stages"][stage_key][role] = record
+                    score_rows.append(
+                        {
+                            "case_id": case_id,
+                            "model": model,
+                            "role": role,
+                            "start": start,
+                            "end": end,
+                            "video": video,
+                            **{
+                                metric: scores.get(metric)
+                                for metric, _ in METRICS
+                            },
+                        }
+                    )
+        browser_cases.append(browser_case)
+    return score_rows, browser_cases
+
+
+def add_full_category_videos(browser_cases: list[dict]) -> dict:
+    manifest = json.loads(ALL_HEAD_MANIFEST.read_text(encoding="utf-8"))
+    by_id = {case["id"]: case for case in browser_cases}
+    variants = ["baseline", "S", "T", "P", "C", "G"]
+    for case in manifest["cases"]:
+        case_id = case["id"]
+        if case_id not in by_id:
+            source_name = f"{case_id}__source_video_49f.mp4"
+            item = {
+                "id": case_id,
+                "prompt": case.get("prompt", ""),
+                "source_video": f"/multiseed/media/references/{source_name}",
+                "phased": {},
+            }
+            browser_cases.append(item)
+            by_id[case_id] = item
+        item = by_id[case_id]
+        item["full_categories"] = {}
+        for seed in manifest["seeds"]:
+            seed_key = str(seed)
+            seed_videos = manifest["videos"].get(case_id, {}).get(seed_key, {})
+            if not seed_videos:
+                continue
+            item["full_categories"][seed_key] = {}
+            for model in MODEL_ORDER:
+                item["full_categories"][seed_key][model] = {}
+                for variant in variants:
+                    relative = seed_videos.get(model, {}).get(variant)
+                    if relative:
+                        item["full_categories"][seed_key][model][variant] = {
+                            "video": f"/multiseed/{relative}",
+                            "metrics": None,
+                        }
+            if seed_key == "851" and item.get("phased"):
+                for model in MODEL_ORDER:
+                    baseline = item["full_categories"][seed_key][model].get("baseline")
+                    if baseline:
+                        baseline["metrics"] = item["phased"][model]["baseline"]["metrics"]
+        source_name = f"{case_id}__source_video_49f.mp4"
+        source_url = f"/multiseed/media/references/{source_name}"
+        if (ALL_HEAD_ROOT / "media" / "references" / source_name).is_file():
+            item["source_video"] = source_url
+    seed_coverage = {}
+    for seed in manifest["seeds"]:
+        seed_key = str(seed)
+        available = 0
+        for item in browser_cases:
+            for model_rows in item.get("full_categories", {}).get(seed_key, {}).values():
+                available += len(model_rows)
+        seed_coverage[seed_key] = available
+    complete_seeds = [
+        seed for seed, count in seed_coverage.items() if count == len(MODEL_ORDER) * len(variants)
+    ]
+    return {
+        "models": MODEL_ORDER,
+        "model_labels": manifest["model_names"],
+        "role_labels": {
+            "baseline": "Baseline",
+            "S": "All-S (159)",
+            "T": "All-T (13)",
+            "ST": "All-S+T (172)",
+            "P": "All-P (82)",
+            "C": "All-C (20)",
+            "G": "All-G (75)",
+        },
+        "phased_stages": [f"{start:02d}_{end:02d}" for start, end in ALL_HEAD_STAGES],
+        "full_seeds": complete_seeds,
+        "full_seeds_all": [str(seed) for seed in manifest["seeds"]],
+        "full_seed_coverage": seed_coverage,
+        "cases": browser_cases,
+    }
+
+
+def plot_all_head_score_curves(rows: list[dict]) -> None:
+    fig, axes = plt.subplots(4, 3, figsize=(17, 15), sharex=True)
+    stage_labels = [f"{start}-{end}" for start, end in ALL_HEAD_STAGES]
+    for metric_index, (metric, label) in enumerate(METRICS):
+        for model_index, model in enumerate(MODEL_ORDER):
+            ax = axes[metric_index, model_index]
+            baseline_values = [
+                row[metric]
+                for row in rows
+                if row["model"] == model and row["role"] == "baseline"
+            ]
+            baseline_mean, baseline_low, baseline_high = mean_ci(baseline_values)
+            ax.axhline(
+                baseline_mean,
+                color="#242827",
+                linestyle="--",
+                linewidth=1.8,
+                label="Baseline",
+            )
+            ax.axhspan(baseline_low, baseline_high, color="#242827", alpha=0.07)
+            for role in ["S", "T", "ST"]:
+                means, lows, highs = [], [], []
+                for start, end in ALL_HEAD_STAGES:
+                    values = [
+                        row[metric]
+                        for row in rows
+                        if row["model"] == model
+                        and row["role"] == role
+                        and row["start"] == start
+                        and row["end"] == end
+                    ]
+                    mean, low, high = mean_ci(values)
+                    means.append(mean)
+                    lows.append(low)
+                    highs.append(high)
+                x = np.arange(len(ALL_HEAD_STAGES))
+                ax.plot(
+                    x,
+                    means,
+                    marker="o",
+                    linewidth=2,
+                    color=ROLE_COLORS[role],
+                    label=f"All-{role}",
+                )
+                ax.fill_between(
+                    x, lows, highs, color=ROLE_COLORS[role], alpha=0.12
+                )
+            ax.grid(axis="y", alpha=0.2)
+            ax.set_xticks(range(len(stage_labels)), stage_labels)
+            if metric_index == 0:
+                ax.set_title({"wan_lora": "Wan+LoRA", "xssc": "Wan+xSSC", "physrvg": "PhysRVG"}[model])
+            if model_index == 0:
+                ax.set_ylabel(label)
+    axes[0, 2].legend(frameon=False, ncol=2, fontsize=9)
+    fig.suptitle("All-head category scores with the unablated baseline", fontsize=16)
+    fig.supxlabel("Denoising step interval")
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    fig.savefig(OUT / "all_head_baseline_score_curves.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_all_head_delta_heatmap(rows: list[dict]) -> None:
+    baseline = {
+        (row["model"], row["case_id"]): row
+        for row in rows
+        if row["role"] == "baseline"
+    }
+    fig, axes = plt.subplots(2, 2, figsize=(16, 9))
+    columns = [
+        f"{role}\n{start}-{end}"
+        for role in ["S", "T", "ST"]
+        for start, end in ALL_HEAD_STAGES
+    ]
+    for ax, (metric, label) in zip(axes.flat, METRICS):
+        matrix = []
+        for model in MODEL_ORDER:
+            values = []
+            for role in ["S", "T", "ST"]:
+                for start, end in ALL_HEAD_STAGES:
+                    deltas = [
+                        row[metric] - baseline[(model, row["case_id"])][metric]
+                        for row in rows
+                        if row["model"] == model
+                        and row["role"] == role
+                        and row["start"] == start
+                        and row["end"] == end
+                    ]
+                    values.append(float(np.mean(deltas)))
+            matrix.append(values)
+        matrix = np.asarray(matrix)
+        vmax = max(float(np.max(np.abs(matrix))), 1e-8)
+        image = ax.imshow(
+            matrix, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto"
+        )
+        ax.set_xticks(range(len(columns)), columns, rotation=45, ha="right", fontsize=8)
+        ax.set_yticks(range(3), ["Wan+LoRA", "Wan+xSSC", "PhysRVG"])
+        ax.set_title(label)
+        for i in range(matrix.shape[0]):
+            for j in range(matrix.shape[1]):
+                ax.text(j, i, f"{matrix[i, j]:.2g}", ha="center", va="center", fontsize=7)
+        fig.colorbar(image, ax=ax, shrink=0.72, label="score - baseline")
+    fig.suptitle("All-head signed score change (higher is better)", fontsize=16)
+    fig.tight_layout(rect=(0, 0, 1, 0.965))
+    fig.savefig(OUT / "all_head_signed_delta_heatmap.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def aggregate_summary(st_pairs: list[dict]) -> list[dict]:
     rows = []
     for matching in MATCHING:
@@ -524,6 +788,7 @@ def build_html(
     summary: list[dict],
     representatives: list[dict],
     coverage: list[dict],
+    all_head_browser: dict,
 ) -> str:
     exact_overall = {
         row["metric"]: row
@@ -561,6 +826,12 @@ table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}th
 .plots{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:12px 0 28px}}.plot{{background:var(--paper);border:1px solid var(--line)}}
 .plot h3,.plot p{{padding:10px 12px 0}}.plot p{{color:var(--muted);font-size:12px}}.plot img{{display:block;width:100%;height:auto}}
 .plot.wide{{grid-column:1/-1}}.examples{{margin:30px 0}}.case{{border-top:2px solid var(--line);padding:16px 0 24px}}
+.all-head{{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:24px 0;margin:20px 0 30px}}
+.browser-tools{{display:flex;gap:9px;align-items:end;flex-wrap:wrap;margin:13px 0}}.browser-tools label{{display:grid;gap:3px;color:var(--muted);font-size:12px}}
+select{{min-width:170px;border:1px solid #9ba59f;background:#fff;padding:7px 9px;font:inherit}}.all-reference{{width:min(420px,100%);margin:8px 0 15px}}
+.all-model-row{{border-top:2px solid var(--line);padding:11px 0 18px}}.all-model-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}}
+.all-videos{{display:grid;grid-template-columns:repeat(6,minmax(150px,1fr));gap:7px;overflow-x:auto}}.all-videos figure{{min-width:150px}}
+.video-metrics{{color:#d8dedb;padding:5px 7px;font-size:10px;line-height:1.35}}.pending-score{{color:#d7ad70}}
 .case-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}}.case-head code{{font-size:11px;overflow-wrap:anywhere}}
 .row-controls{{display:flex;gap:7px;flex-wrap:wrap}}button{{border:1px solid #9ba59f;background:#fff;padding:7px 10px;cursor:pointer;font:inherit}}button:hover{{background:#edf2ef}}
 .videos{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:11px 0}}figure{{margin:0;background:#171918}}figcaption{{color:#fff;padding:6px 8px;font-weight:700}}
@@ -577,6 +848,17 @@ video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:
 <section class="facts"><div class="fact"><strong>5 vs 5</strong><span>S/T exact head 数</span></div>
 <div class="fact"><strong>20 × 2</strong><span>cases × seeds</span></div><div class="fact"><strong>3</strong><span>模型</span></div>
 <div class="fact"><strong>{complete}/17</strong><span>核心视频近完整指标</span></div></section>
+<section class="all-head"><h2>Baseline 与分类别 All-head 消融</h2>
+<p class="section-note">两组覆盖不同：S/T/S+T 分阶段结果为 Seed 851 × 20 cases，已有完整评分；五类全程结果为 1 个代表 case，计划 {len(all_head_browser["full_seeds_all"])} seeds，目前 {len(all_head_browser["full_seeds"])} seeds 的 Baseline/S/T/P/C/G 六组视频完整。它包含 S(159)、T(13)、P(82)、C(20)、G(75) 的全部分类 head。由于类别 head 数不相等，本节用于观察真实 all-head 效应，不能替代后面的 k=5 等数量因果对照。</p>
+<div class="plots"><article class="plot"><h3>Baseline 与 All-S/T/S+T 分数曲线</h3><p>虚线和灰色带为同模型未消融 baseline；彩色线为类别 all-head 消融。</p><img src="all_head_baseline_score_curves.png" alt="all head baseline score curves"></article>
+<article class="plot"><h3>All-head 相对 Baseline 的有符号热力图</h3><p>每个指标独立色标；红色为分数提高，蓝色为分数下降。</p><img src="all_head_signed_delta_heatmap.png" alt="all head signed delta heatmap"></article></div>
+<h3>逐 Case 浏览</h3><div class="browser-tools">
+<label>Case<select id="all-case"></select></label>
+<label>结果类型<select id="all-mode"><option value="phased">S/T/S+T 分阶段（有指标）</option><option value="full">S/T/P/C/G 全去噪过程</option></select></label>
+<label id="seed-label" hidden>Seed<select id="all-seed"></select></label>
+<label id="stage-label">去噪阶段<select id="all-stage"></select></label>
+</div><div id="all-prompt" class="section-note"></div><div id="all-source" class="all-reference"></div><div id="all-browser"></div>
+</section>
 <section class="analysis"><div class="text-panel"><h2>怎么读</h2>
 <p><b>绝对影响</b>定义为 <code>|消融分数 - 同 case baseline 分数|</code>。热力图中的 <code>|ΔS|-|ΔT|</code> 小于 0，表示 T 消融令指标变化更大；它衡量“扰动强度”，不等同于质量一定更差。</p>
 <p><b>有符号变化</b>直接使用 <code>消融分数 - baseline 分数</code>。本页 4 项指标均为越高越好，因此负值才表示质量下降。</p>
@@ -596,11 +878,20 @@ video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:
 <a href="paired_complete_metrics.csv">完整指标逐视频配对 CSV</a>
 <a href="st_exact_and_depth_pairs.csv">S/T 成对 CSV</a>
 <a href="aggregate_summary.csv">聚合与置信区间 CSV</a>
+<a href="all_head_phased_metrics.csv">All-head 分阶段指标 CSV</a>
+<a href="all_head_browser.json">All-head 视频索引 JSON</a>
 <a href="representative_cases.json">代表 Case JSON</a></p></section>
 </main>
 <script>
 function playRow(id,restart){{document.querySelectorAll(`#${{id}} video`).forEach(video=>{{if(restart)video.currentTime=0;video.play().catch(()=>{{}})}})}}
 function pauseRow(id){{document.querySelectorAll(`#${{id}} video`).forEach(video=>video.pause())}}
+let AH=null;
+const ah=id=>document.getElementById(id);
+function metricText(item){{if(!item||!item.metrics)return"<span class='pending-score'>指标尚未计算</span>";const labels={{physics_iq_with_context:"PIQ-c",physics_iq_without_context:"PIQ-n",pmf_with_context:"PMF-c",pmf_without_context:"PMF-n"}};return Object.entries(labels).map(([key,label])=>`${{label}} ${{item.metrics[key]===null||item.metrics[key]===undefined?"Pending":Number(item.metrics[key]).toFixed(3)}}`).join("<br>")}}
+function ahFigure(label,item){{return item?`<figure><figcaption>${{label}}</figcaption><video preload="none" muted playsinline src="${{item.video}}"></video><div class="video-metrics">${{metricText(item)}}</div></figure>`:`<figure><figcaption>${{label}}</figcaption><div class="video-metrics pending-score">Pending</div></figure>`}}
+function updateAllCases(){{const mode=ah("all-mode").value,current=ah("all-case").value,available=AH.cases.filter(item=>mode==="phased"?Object.keys(item.phased||{{}}).length:Object.keys(item.full_categories||{{}}).length);ah("all-case").innerHTML=available.map(item=>`<option value="${{item.id}}">${{item.id}}</option>`).join("");if(available.some(item=>item.id===current))ah("all-case").value=current}}
+function renderAllHead(){{if(!AH)return;const mode=ah("all-mode").value,selected=AH.cases.find(item=>item.id===ah("all-case").value),stage=ah("all-stage").value,seed=mode==="phased"?"851":ah("all-seed").value;ah("stage-label").hidden=mode!=="phased";ah("seed-label").hidden=mode==="phased";if(!selected)return;ah("all-prompt").textContent=selected.prompt;ah("all-source").innerHTML=`<figure><figcaption>Source / GT</figcaption><video preload="metadata" muted playsinline src="${{selected.source_video}}"></video></figure>`;const variants=mode==="phased"?["baseline","S","T","ST"]:["baseline","S","T","P","C","G"];ah("all-browser").innerHTML=AH.models.map((model,index)=>{{const values=mode==="phased"?{{baseline:selected.phased[model].baseline,...selected.phased[model].stages[stage]}}:((selected.full_categories||{{}})[seed]||{{}})[model]||{{}};const id=`all-model-${{index}}`;return`<section class="all-model-row" id="${{id}}"><div class="all-model-head"><h3>${{AH.model_labels[model]}} · Seed ${{seed}}</h3><div class="row-controls"><button onclick="playRow('${{id}}',true)">从头播放本行</button><button onclick="pauseRow('${{id}}')">暂停本行</button></div></div><div class="all-videos">${{variants.map(role=>ahFigure(AH.role_labels[role],values[role])).join("")}}</div></section>`}}).join("")}}
+fetch("all_head_browser.json").then(response=>response.json()).then(data=>{{AH=data;ah("all-stage").innerHTML=data.phased_stages.map(value=>`<option value="${{value}}">${{value.slice(0,2)}}-${{value.slice(3)}}</option>`).join("");ah("all-seed").innerHTML=data.full_seeds.map(value=>`<option value="${{value}}">${{value}}</option>`).join("");ah("all-seed").value="851";updateAllCases();["all-case","all-stage","all-seed"].forEach(id=>ah(id).addEventListener("change",renderAllHead));ah("all-mode").addEventListener("change",()=>{{updateAllCases();renderAllHead()}});renderAllHead()}})
 </script></body></html>"""
 
 
@@ -641,6 +932,8 @@ def main() -> None:
     st_pairs = build_st_pairs(paired)
     summary = aggregate_summary(st_pairs)
     representatives = select_representatives(st_pairs, manifest)
+    all_head_rows, all_head_cases = load_phased_all_head()
+    all_head_browser = add_full_category_videos(all_head_cases)
 
     plot_curves(
         paired,
@@ -655,6 +948,8 @@ def main() -> None:
         "Signed score change relative to the paired baseline",
     )
     build_heatmaps(st_pairs)
+    plot_all_head_score_curves(all_head_rows)
+    plot_all_head_delta_heatmap(all_head_rows)
     coverage = plot_coverage(manifest)
 
     paired_columns = list(paired[0].keys())
@@ -664,17 +959,27 @@ def main() -> None:
     write_csv(OUT / "paired_complete_metrics.csv", paired, paired_columns)
     write_csv(OUT / "st_exact_and_depth_pairs.csv", st_pairs, st_columns)
     write_csv(OUT / "aggregate_summary.csv", summary, list(summary[0].keys()))
+    write_csv(
+        OUT / "all_head_phased_metrics.csv",
+        all_head_rows,
+        list(all_head_rows[0].keys()),
+    )
+    (OUT / "all_head_browser.json").write_text(
+        json.dumps(all_head_browser, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (OUT / "representative_cases.json").write_text(
         json.dumps(representatives, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     (OUT / "index.html").write_text(
-        build_html(manifest, summary, representatives, coverage),
+        build_html(manifest, summary, representatives, coverage, all_head_browser),
         encoding="utf-8",
     )
     integrate_entry()
     print(f"paired rows: {len(paired)}")
     print(f"S/T pairs: {len(st_pairs)}")
+    print(f"all-head phased metric rows: {len(all_head_rows)}")
     print(f"representative cases: {len(representatives)}")
     print(f"output: {OUT}")
 

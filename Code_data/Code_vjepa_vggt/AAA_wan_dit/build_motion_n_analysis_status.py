@@ -118,23 +118,78 @@ def motion_status(root: Path) -> dict[str, Any]:
             "detail": "尚未提取 RAFT/轨迹特征，Motion Impact 与 GT gain 未计算。",
         }
     expected = 0
+    full_expected = 0
+    incremental_snapshot: Path | None = None
+    latest_snapshot = analysis / "incremental_snapshots" / "latest"
+    if latest_snapshot.is_file():
+        candidate = Path(latest_snapshot.read_text(encoding="utf-8").strip())
+        if (candidate / "inventory.json").is_file():
+            incremental_snapshot = candidate
     inventory = analysis / "inventory.json"
+    if incremental_snapshot is not None:
+        inventory = incremental_snapshot / "inventory.json"
     if inventory.is_file():
         payload = read_json(inventory)
         count_payload = payload.get("counts", {})
         expected_by_family = count_payload.get("expected", {})
-        expected = (
-            sum(int(value) for value in expected_by_family.values())
-            if expected_by_family
-            else len(payload.get("entries", payload.get("items", [])))
+        full_expected = sum(int(value) for value in expected_by_family.values())
+        entries = payload.get("entries", payload.get("items", []))
+        expected = len(entries)
+        complete = sum(
+            1
+            for entry in entries
+            if (
+                analysis
+                / "features"
+                / str(entry.get("source", {}).get("cache_key", ""))
+                / "features.npz"
+            ).is_file()
         )
-    complete = sum(1 for path in (analysis / "features").glob("*/features.npz"))
+    else:
+        complete = sum(1 for path in (analysis / "features").glob("*/features.npz"))
+    state_dir = (
+        incremental_snapshot / "state"
+        if incremental_snapshot is not None
+        else analysis / "state"
+    )
+    failed = (state_dir / "pipeline.failed").is_file()
+    if incremental_snapshot is not None:
+        failed = failed or (incremental_snapshot / "analysis.failed").is_file()
+    pipeline_complete = (state_dir / "pipeline.complete").is_file() or (
+        incremental_snapshot is not None
+        and (incremental_snapshot / "analysis.complete").is_file()
+    )
+    running_shards = len(list(state_dir.glob("*shard_*.running")))
+    complete_shards = len(list(state_dir.glob("*shard_*.complete")))
+    mode = (
+        f"增量快照 {expected}/{full_expected or expected}"
+        if incremental_snapshot is not None
+        else "严格全量"
+    )
+    if failed:
+        status, label = "failed", "执行失败"
+        stage = "Motion pipeline 已失败，请查看日志。"
+    elif expected and complete >= expected and pipeline_complete:
+        status, label = "complete", "已结束"
+        stage = f"{mode}的运动特征和汇总分析已完成。"
+    elif running_shards or complete_shards:
+        status, label = "running", "特征提取中"
+        stage = (
+            f"{mode}：特征分片 running {running_shards}，complete {complete_shards}；"
+            "全部分片结束后生成 Motion Impact/GT gain 表格。"
+        )
+    else:
+        status, label = "queued", "等待全部生成"
+        stage = (
+            f"{mode}：特征分片尚未启动；"
+            "全部消融视频就绪后才统一计算 Motion Impact/GT gain。"
+        )
     return {
-        "status": "complete" if expected and complete >= expected else "running",
-        "label": "已结束" if expected and complete >= expected else "计算中",
+        "status": status,
+        "label": label,
         "complete": complete,
         "expected": expected,
-        "detail": str(analysis),
+        "detail": f"{stage} 输出：{analysis}",
     }
 
 
@@ -159,7 +214,13 @@ def generation_status(config: dict[str, Any]) -> dict[str, Any]:
     counts = Counter(str(payload.get("status", "invalid")) for _, payload in states)
     expected = expected_tasks(config)
     expected_videos = expected * int(config["expected_cases"])
-    ready_videos = sum(
+    generated_videos = sum(
+        1
+        for video in (root / "generation").rglob("*.mp4")
+        if video.stat().st_size > 1024
+        and video.with_suffix(".json").is_file()
+    )
+    metric_ready_videos = sum(
         1
         for video in (root / "generation").rglob("*.mp4")
         if video.stat().st_size > 1024
@@ -183,7 +244,8 @@ def generation_status(config: dict[str, Any]) -> dict[str, Any]:
         "root": str(root),
         "expected_tasks": expected,
         "state_counts": dict(counts),
-        "ready_videos": ready_videos,
+        "ready_videos": generated_videos,
+        "metric_ready_videos": metric_ready_videos,
         "expected_videos": expected_videos,
         "pending": pending,
         "benchmark": metric_status(root),
@@ -268,7 +330,8 @@ def experiment_section(name: str, description: str, data: dict[str, Any]) -> str
         "expected": expected_tasks_value,
         "failed": int(counts.get("failed", 0)),
         "detail": (
-            f"视频 {data['ready_videos']}/{data['expected_videos']} · "
+            f"已生成视频 {data['ready_videos']}/{data['expected_videos']} · "
+            f"当前未被指标锁占用 {data['metric_ready_videos']} · "
             f"running {counts.get('running', 0)} · failed {counts.get('failed', 0)}"
         ),
     }
@@ -325,7 +388,7 @@ th,td{{border-bottom:1px solid var(--line);padding:8px 9px;text-align:left;verti
 </head>
 <body><main>
 <header><div><h1>S Head 消融与指标状态</h1><p>S 分类依据拆分与网络深度拆分实验的统一进度页。</p></div><p class="stamp">更新时间：{html.escape(updated)}<br>页面每 30 秒自动刷新</p></header>
-<div class="note"><b>状态口径：</b>“未启动”表示没有指标任务队列或运动特征产物，并非分数为 0。Benchmark 与 Motion 两类指标会分别统计，避免混为同一进度。</div>
+<div class="note"><b>状态口径：</b>生成数统计磁盘上已完成的视频，不会因 benchmark 的临时锁而归零。当前增量快照会先提取已有视频并写入正式缓存，全部生成完成后再执行严格全量汇总。可查看 <a href="smoke/">单 case smoke 结果</a>；本轮结束后查看 <a href="partial/">增量 Motion Impact 表格</a>。</div>
 {experiment_section("S 分类消融", "local_enrichment 主导组 vs same_frame_mass 主导组；两组 head 不重叠，并保持 block 数量匹配。", feature)}
 {experiment_section("S 分类联合消融", "将上述两个互斥的 32-head subset 取并集，同时消融全部 64 个 head。", union)}
 {experiment_section("S 分类分阶段消融", "对 Local-32、Same-frame-32、Union-64 分别应用去噪区间 0–10 与 10–20。", phased)}

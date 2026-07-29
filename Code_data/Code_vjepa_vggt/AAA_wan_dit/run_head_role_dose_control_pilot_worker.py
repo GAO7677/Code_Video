@@ -96,13 +96,26 @@ def _tasks(
     config: dict[str, Any],
     subset_ids: list[str],
 ) -> list[tuple[str, int, str, int, int]]:
-    return [
-        (str(model), int(seed), subset_id, int(start), int(end))
-        for seed in config["seeds"]
-        for start, end in config["step_ranges"]
-        for subset_id in subset_ids
-        for model in config["models"]
-    ]
+    task_specs = config.get("task_specs")
+    if task_specs is None:
+        tasks = [
+            (str(model), int(seed), subset_id, int(start), int(end))
+            for seed in config["seeds"]
+            for start, end in config["step_ranges"]
+            for subset_id in subset_ids
+            for model in config["models"]
+        ]
+    else:
+        tasks = [
+            (str(model), int(spec["seed"]), subset_id, int(start), int(end))
+            for spec in task_specs
+            for model in spec.get("models", config["models"])
+            for start, end in spec["step_ranges"]
+            for subset_id in subset_ids
+        ]
+    if len(tasks) != len(set(tasks)):
+        raise ValueError("Task matrix contains duplicate tasks")
+    return tasks
 
 
 def _task_id(

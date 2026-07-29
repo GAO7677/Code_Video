@@ -36,6 +36,12 @@ ENTRIES = (
         "公共 S 类 Head 的 score 前后极值与注意力矩阵。",
     ),
     (
+        "Head 分类与注意力",
+        "head-role-depth-distribution/index.html",
+        "Head 类别与子类别 Block 深度分布",
+        "三模型 S/T/P/C/G/M、公共稳定 Head 及互斥特征子类别的逐 Block 分布。",
+    ),
+    (
         "消融视频",
         "head-role-dose-control-pilot/cases/index.html",
         "S/T/C 等数量匹配与 S-depth 分层 Pilot",
@@ -64,6 +70,12 @@ ENTRIES = (
         "multiseed/stc-phased/index.html",
         "S/T/ST 联合与单独分阶段消融",
         "按模型、Head类别和去噪阶段组织的比较页面。",
+    ),
+    (
+        "指标分析",
+        "head-role-dose-control-pilot/metrics/s-t-head-count-control/index.html",
+        "S/T 等 Head 数量控制分析",
+        "Exact k=5 与 depth-matched k=8 的曲线、热力图、覆盖率和代表视频。",
     ),
     (
         "指标分析",
