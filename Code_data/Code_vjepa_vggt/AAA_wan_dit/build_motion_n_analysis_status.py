@@ -24,6 +24,9 @@ REPORT_DIR = Path(
     "gallery/multiseed/motion-n-analysis"
 )
 CASE_GALLERY_URL = "/s-head-ablation/"
+GLOBAL_MOTION_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/wan_dit_s_motion_analysis"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,6 +103,7 @@ def metric_status(root: Path) -> dict[str, Any]:
 
 def motion_status(root: Path) -> dict[str, Any]:
     candidates = [
+        GLOBAL_MOTION_ROOT,
         root / "motion_metrics",
         root / "motion-analysis",
         root / "motion_analysis",
@@ -117,7 +121,13 @@ def motion_status(root: Path) -> dict[str, Any]:
     inventory = analysis / "inventory.json"
     if inventory.is_file():
         payload = read_json(inventory)
-        expected = len(payload.get("entries", payload.get("items", [])))
+        count_payload = payload.get("counts", {})
+        expected_by_family = count_payload.get("expected", {})
+        expected = (
+            sum(int(value) for value in expected_by_family.values())
+            if expected_by_family
+            else len(payload.get("entries", payload.get("items", [])))
+        )
     complete = sum(1 for path in (analysis / "features").glob("*/features.npz"))
     return {
         "status": "complete" if expected and complete >= expected else "running",

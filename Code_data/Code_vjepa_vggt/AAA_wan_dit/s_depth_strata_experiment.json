@@ -20,6 +20,10 @@
     [
       10,
       20
+    ],
+    [
+      0,
+      40
     ]
   ],
   "matched_subset_manifest": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/configs/s_depth_strata.json",
@@ -49,6 +53,7 @@
     ],
     "workers_per_gpu": 1,
     "gpu_start_memory_threshold_mib": 4096,
+    "gpu_free_stability_polls": 3,
     "poll_seconds": 30,
     "max_attempts_per_task": 3,
     "tmux_session": "wan_s_depth_strata",

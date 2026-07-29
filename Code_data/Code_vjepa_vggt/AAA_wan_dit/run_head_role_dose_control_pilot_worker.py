@@ -213,13 +213,28 @@ def _gpu_memory_used(gpu: int) -> int:
     return int(result.stdout.strip().splitlines()[0])
 
 
-def _wait_for_gpu(gpu: int, threshold: int, poll_seconds: int) -> None:
-    while True:
+def _wait_for_gpu(
+    gpu: int,
+    threshold: int,
+    poll_seconds: int,
+    stable_polls: int = 1,
+) -> None:
+    free_streak = 0
+    while free_streak < stable_polls:
         used = _gpu_memory_used(gpu)
         if used <= threshold:
-            return
-        print(f"[dose-worker] GPU{gpu} busy: {used} MiB; waiting", flush=True)
-        time.sleep(poll_seconds)
+            free_streak += 1
+            if free_streak < stable_polls:
+                print(
+                    f"[dose-worker] GPU{gpu} free check "
+                    f"{free_streak}/{stable_polls}; confirming stability",
+                    flush=True,
+                )
+        else:
+            free_streak = 0
+            print(f"[dose-worker] GPU{gpu} busy: {used} MiB; waiting", flush=True)
+        if free_streak < stable_polls:
+            time.sleep(poll_seconds)
 
 
 def _attempts(path: Path) -> int:
@@ -258,6 +273,9 @@ def main() -> None:
 
     threshold = int(config["execution"]["gpu_start_memory_threshold_mib"])
     poll_seconds = int(config["execution"]["poll_seconds"])
+    stable_polls = int(config["execution"].get("gpu_free_stability_polls", 1))
+    if stable_polls < 1:
+        raise ValueError("gpu_free_stability_polls must be >= 1")
     max_attempts = int(config["execution"]["max_attempts_per_task"])
     for model, seed, subset_id, start, end in tasks:
         task_id = _task_id(model, seed, subset_id, start, end)
@@ -299,7 +317,12 @@ def main() -> None:
         started = time.time()
         job_root = _job_root(root, model, seed, subset_id, start, end)
         try:
-            _wait_for_gpu(int(args.gpu), threshold, poll_seconds)
+            _wait_for_gpu(
+                int(args.gpu),
+                threshold,
+                poll_seconds,
+                stable_polls,
+            )
             if job_root.exists():
                 shutil.rmtree(job_root)
             _atomic_json(
