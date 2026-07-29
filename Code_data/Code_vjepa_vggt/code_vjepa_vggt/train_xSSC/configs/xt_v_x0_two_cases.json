@@ -46,8 +46,41 @@
     "timestep_index": 500,
     "timestep_fraction": 0.5
   },
+  "pure_inference": {
+    "num_inference_steps": 40,
+    "cfg_scale": 5.0,
+    "cfg_merge": false,
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理",
+    "sigma_shift": 5.0,
+    "capture_target_timestep": 832.0,
+    "capture_method": "exact_interpolated_probe",
+    "context_sampling_mode": "prefix",
+    "context_resize_mode": "cover_crop",
+    "input_cover_crop_height": 512,
+    "input_cover_crop_width": 896,
+    "xssc_preprocess_mode": "center_crop",
+    "xssc_slot_temporal_mode": "full",
+    "xssc_slot_perturbation": "none",
+    "tiled_vae": true,
+    "vae_tile_size": [
+      30,
+      52
+    ],
+    "vae_tile_stride": [
+      15,
+      26
+    ]
+  },
   "output": {
     "root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/xssc-training-xt-v-x0-two-cases",
+    "fps": 30,
+    "video_quality": 8,
+    "save_latents": true,
+    "overwrite": true
+  },
+  "pure_inference_output": {
+    "root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/xssc-inference-xt-v-x0-two-cases",
+    "training_reference_root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/xssc-training-xt-v-x0-two-cases",
     "fps": 30,
     "video_quality": 8,
     "save_latents": true,

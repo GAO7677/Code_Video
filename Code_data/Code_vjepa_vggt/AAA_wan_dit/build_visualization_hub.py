@@ -24,6 +24,18 @@ ENTRIES = (
         "真实训练样本加噪、DiT速度预测、x0反推与完整49帧VAE解码对照。",
     ),
     (
+        "训练诊断",
+        "xssc-training-xt-v-x0-two-cases/index.html",
+        "xSSC训练 xt → v → x0 · 两个指定视频",
+        "Physics-IQ与0613 PyBullet指定视频的同噪声单步前向、x0反推和49帧解码。",
+    ),
+    (
+        "训练诊断",
+        "xssc-inference-xt-v-x0-two-cases/index.html",
+        "xSSC纯推理 xt → v → x0 · t=832",
+        "相同seed下沿正式40步轨迹捕获xt，以CFG速度反推x0，并与训练前向和最终视频对照。",
+    ),
+    (
         "Head 分类与注意力",
         "fulltoken-head-classification.html",
         "全 token 时间矩阵与运动轨迹 Head 分类 Pilot",

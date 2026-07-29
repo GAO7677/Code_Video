@@ -586,6 +586,14 @@ def main() -> None:
     config = load_config(cli.config)
     output_config = require_mapping(config["output"], "output")
     output_root = Path(output_config["root"]).expanduser().resolve()
+    if (
+        output_root.is_dir()
+        and any(output_root.iterdir())
+        and not bool(output_config["overwrite"])
+    ):
+        raise FileExistsError(
+            f"Output is non-empty and output.overwrite=false: {output_root}"
+        )
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "resolved_config.json").write_text(
         json.dumps(

@@ -154,6 +154,45 @@ def derive_common_rows(
     return rows
 
 
+def derive_runner_up_t_rows(
+    aggregate_rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Apply the exploratory per-model T rule based only on runner-up role."""
+
+    rows = []
+    for row in aggregate_rows:
+        scores = {role: float(row[f"score_{role}"]) for role in COMMON_ROLES}
+        ordered = sorted(
+            COMMON_ROLES,
+            key=lambda role: (-scores[role], COMMON_ROLES.index(role)),
+        )
+        if ordered[0] != "T":
+            continue
+        runner_up = ordered[1]
+        retained = runner_up != "S"
+        old_role = row["role"]
+        rows.append(
+            {
+                "model": row["model"],
+                "block": int(row["block"]),
+                "head": int(row["head"]),
+                "candidate_role": "T",
+                "runner_up_role": runner_up,
+                "score_T": scores["T"],
+                "runner_up_score": scores[runner_up],
+                "margin": float(row["margin"]),
+                "support": float(row["support"]),
+                "old_role": old_role,
+                "was_strict_t": old_role == "T",
+                "retained": retained,
+                "new_role": "T" if retained else "excluded_runner_up_S",
+                "newly_added": retained and old_role != "T",
+                "strict_t_removed": not retained and old_role == "T",
+            }
+        )
+    return rows
+
+
 def depth_counts(values: dict[str, list[int]]) -> dict[str, dict[str, int]]:
     return {
         group: {
@@ -422,6 +461,60 @@ def common_role_plot(common_counts: dict[str, list[int]], output: Path) -> None:
     plt.close(fig)
 
 
+def runner_up_t_plot(rows: list[dict[str, Any]], output: Path) -> None:
+    fig, axes = plt.subplots(
+        len(MODELS),
+        1,
+        figsize=(17.5, 8.8),
+        constrained_layout=True,
+        sharex=True,
+    )
+    blocks = np.arange(30)
+    for axis, model in zip(axes, MODELS):
+        model_rows = [row for row in rows if row["model"] == model]
+        retained = np.zeros(30, dtype=np.int64)
+        excluded = np.zeros(30, dtype=np.int64)
+        for row in model_rows:
+            target = retained if row["retained"] else excluded
+            target[int(row["block"])] += 1
+        axis.bar(
+            blocks,
+            retained,
+            width=0.82,
+            color=ROLE_COLORS["T"],
+            label=f"Retained · runner-up P/C/G · n={int(retained.sum())}",
+        )
+        axis.bar(
+            blocks,
+            excluded,
+            bottom=retained,
+            width=0.82,
+            color="#a9afac",
+            hatch="//",
+            edgecolor="#656b68",
+            linewidth=0.35,
+            label=f"Excluded · runner-up S · n={int(excluded.sum())}",
+        )
+        axis.axvspan(-0.5, 9.5, color="#3478b8", alpha=0.035)
+        axis.axvspan(9.5, 19.5, color="#e39a27", alpha=0.035)
+        axis.axvspan(19.5, 29.5, color="#2f8f67", alpha=0.035)
+        axis.axvline(9.5, color="#737b77", linewidth=0.7)
+        axis.axvline(19.5, color="#737b77", linewidth=0.7)
+        axis.set_ylabel("T candidates")
+        axis.set_title(MODEL_LABELS[model], loc="left", fontweight="bold")
+        axis.legend(loc="upper left", ncol=2, frameon=False)
+        axis.spines[["top", "right"]].set_visible(False)
+    axes[-1].set_xticks(blocks, [f"{block:02d}" for block in blocks])
+    axes[-1].set_xlabel("DiT block")
+    fig.suptitle(
+        "Exploratory per-model T rule: exclude only when runner-up is S",
+        fontsize=15,
+        fontweight="bold",
+    )
+    fig.savefig(output, dpi=170)
+    plt.close(fig)
+
+
 def depth_band_plot(
     model_depth: dict[str, dict[str, dict[str, int]]],
     common_depth: dict[str, dict[str, int]],
@@ -584,11 +677,62 @@ def subtype_sections(common_subtypes: list[dict[str, Any]]) -> str:
     return "".join(sections)
 
 
+def runner_up_t_section(rows: list[dict[str, Any]]) -> str:
+    count_rows = []
+    composition_rows = []
+    for model in MODELS:
+        model_rows = [row for row in rows if row["model"] == model]
+        retained = [row for row in model_rows if row["retained"]]
+        excluded = [row for row in model_rows if not row["retained"]]
+        strict = [row for row in model_rows if row["was_strict_t"]]
+        strict_removed = [row for row in model_rows if row["strict_t_removed"]]
+        added = [row for row in model_rows if row["newly_added"]]
+        runner_counts = Counter(row["runner_up_role"] for row in retained)
+        depth = Counter(
+            (
+                "early"
+                if int(row["block"]) < 10
+                else "middle"
+                if int(row["block"]) < 20
+                else "late"
+            )
+            for row in retained
+        )
+        count_rows.append(
+            f"<tr><th>{MODEL_LABELS[model]}</th>"
+            f"<td>{len(model_rows)}</td><td>{len(excluded)}</td>"
+            f"<td><strong>{len(retained)}</strong></td>"
+            f"<td>{100.0 * len(retained) / len(model_rows):.1f}%</td>"
+            f"<td>{len(strict)}</td><td>{len(strict_removed)}</td>"
+            f"<td>{len(added)}</td></tr>"
+        )
+        composition_rows.append(
+            f"<tr><th>{MODEL_LABELS[model]}</th>"
+            f"<td>{runner_counts['C']}</td><td>{runner_counts['P']}</td>"
+            f"<td>{runner_counts['G']}</td><td>{depth['early']}</td>"
+            f"<td>{depth['middle']}</td><td>{depth['late']}</td></tr>"
+        )
+    return f"""
+<section class="exploratory">
+  <h2>单模型探索性 T 规则：只排除第二名为 S</h2>
+  <p class="lead">先取五类聚合分数第一名为 T 的全部 head；第二名为 S 时排除，第二名为 P/C/G 时保留。这里不做跨模型交集，也不再使用原来的 aggregate margin ≥ 0.08 与 support ≥ 0.50 作为淘汰条件。</p>
+  <figure><img src="provisional_t_runner_up_rule_by_block.png" alt="provisional T runner-up rule by block"></figure>
+  <div class="summary-grid">
+    <table><thead><tr><th>模型</th><th>聚合T候选</th><th>第二名S<br>排除</th><th>新规则<br>保留T</th><th>保留率</th><th>原严格T</th><th>原严格T中<br>被新规则排除</th><th>新增T</th></tr></thead>
+    <tbody>{''.join(count_rows)}</tbody></table>
+    <table><thead><tr><th>模型</th><th>第二名C</th><th>第二名P</th><th>第二名G</th><th>Early<br>B00-09</th><th>Middle<br>B10-19</th><th>Late<br>B20-29</th></tr></thead>
+    <tbody>{''.join(composition_rows)}</tbody></table>
+  </div>
+  <p class="note warning">该规则会保留约 92%–96% 的聚合 T 候选，属于大幅放宽。它适合生成后续观察/消融候选池，但目前不能替代“稳定 T”标签，因为它不要求轨迹证据超过绝对 null，也不要求跨 case/seed 的支持率。</p>
+</section>"""
+
+
 def build_page(
     *,
     model_counts: dict[str, dict[str, list[int]]],
     common_counts: dict[str, list[int]],
     common_subtypes: list[dict[str, Any]],
+    runner_up_t_rows: list[dict[str, Any]],
     s_audit: dict[str, Any],
     manifest: dict[str, Any],
 ) -> str:
@@ -639,14 +783,16 @@ h1,h2,h3,p{{margin:0}}h1{{font-size:26px}}h2{{font-size:19px}}h3{{font-size:15px
 figure{{margin:13px 0 0;background:var(--paper);border:1px solid var(--line);padding:10px}}figcaption{{font-weight:700;margin:2px 3px 8px}}img{{display:block;width:100%;height:auto}}
 .summary-grid{{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-top:13px}}table{{border-collapse:collapse;width:100%;background:var(--paper);border:1px solid var(--line)}}
 th,td{{border-right:1px solid #e1e5e2;border-bottom:1px solid #e1e5e2;text-align:center;padding:7px 8px}}th:first-child{{text-align:left}}thead th{{background:#eef1ef}}tbody th{{background:#f7f8f7}}
-.small-table td{{text-align:left}}.note{{border-left:4px solid #e39a27;padding:8px 12px;margin-top:12px;background:#fff}}
+   .small-table td{{text-align:left}}.note{{border-left:4px solid #e39a27;padding:8px 12px;margin-top:12px;background:#fff}}
+   .exploratory{{border-top:4px solid {ROLE_COLORS['T']}}}.warning{{color:#5d4630}}
 @media(max-width:900px){{header,main{{padding:15px}}.summary-grid{{grid-template-columns:1fr}}}}
 </style></head><body>
 <header><div class="topline"><h1>Head 类别与子类别 Block 深度分布</h1>
 <a class="back" href="../index.html">返回可视化总入口</a></div>
-<p class="meta">冻结口径：22 seeds × 20 cases × 3 models · 30 blocks × 24 heads · 更新 {updated}</p></header>
-<main>
-<section><h2>主类别分布</h2>
+	<p class="meta">冻结口径：22 seeds × 20 cases × 3 models · 30 blocks × 24 heads · 更新 {updated}</p></header>
+	<main>
+	{runner_up_t_section(runner_up_t_rows)}
+	<section><h2>主类别分布</h2>
 <p class="lead">只统计三个模型中类别一致的349个公共稳定head，这也是后续公共head消融使用的集合。</p>
 <figure><img src="common_role_block_distribution.png" alt="common role block distribution"></figure>
 <div class="summary-grid"><table><thead><tr><th>类别</th><th>Early<br>B00-09</th><th>Middle<br>B10-19</th><th>Late<br>B20-29</th><th>总数</th><th>主要深度</th></tr></thead>
@@ -685,6 +831,7 @@ def main() -> None:
 
     aggregate_rows = load_csv(SNAPSHOT_ROOT / "aggregate_heads.csv")
     common_rows = derive_common_rows(aggregate_rows)
+    runner_up_t_rows = derive_runner_up_t_rows(aggregate_rows)
     if len(aggregate_rows) != len(MODELS) * 30 * 24:
         raise RuntimeError(f"Unexpected aggregate head count: {len(aggregate_rows)}")
     common_keys = [
@@ -734,6 +881,10 @@ def main() -> None:
 
     role_heatmaps(model_counts, OUTPUT / "per_model_role_block_heatmaps.png")
     common_role_plot(common_counts, OUTPUT / "common_role_block_distribution.png")
+    runner_up_t_plot(
+        runner_up_t_rows,
+        OUTPUT / "provisional_t_runner_up_rule_by_block.png",
+    )
     depth_band_plot(
         model_depth,
         common_depth,
@@ -763,6 +914,38 @@ def main() -> None:
         OUTPUT / "feature_subtype_heads.csv",
         [*model_subtypes, *common_subtypes],
     )
+    save_rows(
+        OUTPUT / "provisional_t_runner_up_rule_heads.csv",
+        runner_up_t_rows,
+    )
+    runner_up_t_counts = {
+        model: {
+            "aggregate_t_candidates": sum(
+                row["model"] == model for row in runner_up_t_rows
+            ),
+            "excluded_runner_up_s": sum(
+                row["model"] == model and not row["retained"]
+                for row in runner_up_t_rows
+            ),
+            "retained_t": sum(
+                row["model"] == model and row["retained"]
+                for row in runner_up_t_rows
+            ),
+            "old_strict_t": sum(
+                row["model"] == model and row["was_strict_t"]
+                for row in runner_up_t_rows
+            ),
+            "old_strict_t_removed": sum(
+                row["model"] == model and row["strict_t_removed"]
+                for row in runner_up_t_rows
+            ),
+            "newly_added_t": sum(
+                row["model"] == model and row["newly_added"]
+                for row in runner_up_t_rows
+            ),
+        }
+        for model in MODELS
+    }
     payload = {
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -803,6 +986,18 @@ def main() -> None:
             },
         },
         "s_partition_audit": s_audit,
+        "exploratory_runner_up_t_policy": {
+            "scope": "per-model; no cross-model intersection",
+            "candidate": "aggregate score_T is the largest of S/T/P/C/G",
+            "retained": "runner-up role is P, C, or G",
+            "excluded": "runner-up role is S",
+            "aggregate_margin_filter": "disabled",
+            "aggregate_support_filter": "disabled",
+            "counts": runner_up_t_counts,
+            "heads_csv": str(
+                OUTPUT / "provisional_t_runner_up_rule_heads.csv"
+            ),
+        },
         "per_model_role_by_block": model_counts,
         "per_model_role_depth_bands": model_depth,
         "common_role_by_block": common_counts,
@@ -819,6 +1014,7 @@ def main() -> None:
             model_counts=model_counts,
             common_counts=common_counts,
             common_subtypes=common_subtypes,
+            runner_up_t_rows=runner_up_t_rows,
             s_audit=s_audit,
             manifest=manifest,
         ),

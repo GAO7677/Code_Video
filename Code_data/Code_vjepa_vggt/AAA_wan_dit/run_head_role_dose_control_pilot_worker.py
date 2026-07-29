@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--gpu", type=int)
     parser.add_argument("--worker-id")
+    parser.add_argument("--gpu-start-memory-threshold-mib", type=int)
     parser.add_argument("--preflight", action="store_true")
     return parser.parse_args()
 
@@ -284,7 +285,11 @@ def main() -> None:
     if int(args.gpu) not in config["execution"]["gpus"]:
         raise ValueError(f"GPU{args.gpu} is not in the frozen config")
 
-    threshold = int(config["execution"]["gpu_start_memory_threshold_mib"])
+    threshold = (
+        int(args.gpu_start_memory_threshold_mib)
+        if args.gpu_start_memory_threshold_mib is not None
+        else int(config["execution"]["gpu_start_memory_threshold_mib"])
+    )
     poll_seconds = int(config["execution"]["poll_seconds"])
     stable_polls = int(config["execution"].get("gpu_free_stability_polls", 1))
     if stable_polls < 1:
