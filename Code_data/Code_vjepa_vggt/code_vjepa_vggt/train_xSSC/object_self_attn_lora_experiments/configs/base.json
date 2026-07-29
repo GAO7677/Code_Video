@@ -29,7 +29,7 @@
     "output_root": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora",
     "cache_root": "/data/gaoya/agent-data/cache/xssc_object_self_attn_lora",
     "xssc_box_cache_dir": "/data/gaoya/agent-data/cache/xssc_dinov3_context_amg_boxes_wan_train",
-    "same_frame_head_config": "same_frame_mass_heads_full59.json"
+    "head_selection_config": "same_frame_mass_heads_full59.json"
   },
   "model": {
     "height": 512,
@@ -54,8 +54,10 @@
     "self_attn_lora_rank": 32,
     "self_attn_lora_alpha": 32,
     "self_attn_lora_dropout": 0.0,
-    "same_frame_subset_id": "S_same_full59",
-    "same_frame_expected_num_heads": 59
+    "head_selection_subset_id": "S_same_full59",
+    "head_selection_expected_role": "S",
+    "head_selection_feature_subtype": "same_frame_mass",
+    "head_selection_expected_num_heads": 59
   },
   "conditioning": {
     "xssc_box_source": "amg",

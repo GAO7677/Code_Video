@@ -1,6 +1,6 @@
-"""Configuration-driven Object-only, Full-SA, and S-head xSSC training.
+"""Configuration-driven Object-only, Full-SA, S-head, and T-head xSSC training.
 
-All three variants start from the same effective Wan initialization:
+All variants start from the same effective Wan initialization:
 
 1. inject and load the OpenVid/MOVi-D/Genesis LoRA checkpoint;
 2. merge that complete LoRA into the frozen Wan weights and unload its PEFT
@@ -10,9 +10,9 @@ All three variants start from the same effective Wan initialization:
 
 ``object_only`` trains only the object branch and xSSC projection. ``full_sa``
 adds ordinary rank-r LoRA to q/k/v/o in every self-attention layer.
-``s_head`` adds compact adapters whose support is restricted to configured
-same-frame S heads. The common merged initialization makes the step-0 forward
-identical across variants.
+``s_head`` and ``t_head`` add compact adapters whose support is restricted to
+their configured heads. The common merged initialization makes the step-0
+forward identical across variants.
 """
 
 from __future__ import annotations
@@ -64,8 +64,11 @@ DEFAULT_SAM2_CHECKPOINT = (
 )
 DINOV3_XSSC_SLOT_DIM = 512
 DINOV3_XSSC_NUM_SLOTS = 11
-SELF_ATTN_ADAPTATION_MODES = ("object_only", "full_sa", "s_head")
+SELF_ATTN_ADAPTATION_MODES = ("object_only", "full_sa", "s_head", "t_head")
 SELF_ATTN_PROJECTIONS = ("q", "k", "v", "o")
+HEAD_SELECTIVE_ADAPTATION_MODES = ("s_head", "t_head")
+HEAD_SELECTION_IDENTITY_KEY = "head_selection_identity"
+HEAD_SELECTION_CONFIG_SHA256_KEY = "head_selection_config_sha256"
 
 
 def _set_child_module(root: nn.Module, qualified_name: str, child: nn.Module) -> None:
@@ -113,51 +116,79 @@ def merge_and_unload_pretrained_lora(
     return sorted(names)
 
 
-def load_same_frame_head_config(
+def load_head_selection_config(
     path: str | os.PathLike,
     *,
     expected_subset_id: str,
+    expected_role: str,
+    expected_feature_subtype: str,
     expected_num_heads: int,
     num_blocks: int,
     num_heads: int,
 ) -> tuple[dict[int, tuple[int, ...]], dict]:
     config_path = Path(path).expanduser().resolve()
     if not config_path.is_file():
-        raise FileNotFoundError(f"S-head config does not exist: {config_path}")
+        raise FileNotFoundError(f"Head-selection config does not exist: {config_path}")
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     if int(payload.get("schema_version", -1)) != 1:
-        raise ValueError(f"Unsupported S-head schema in {config_path}")
+        raise ValueError(f"Unsupported head-selection schema in {config_path}")
     if payload.get("subset_id") != expected_subset_id:
         raise ValueError(
-            "S-head subset mismatch: "
+            "Head-selection subset mismatch: "
             f"config={payload.get('subset_id')!r}, expected={expected_subset_id!r}"
         )
-    if payload.get("role") != "S" or payload.get("feature_subtype") != "same_frame_mass":
-        raise ValueError("S-head config must select role=S and feature_subtype=same_frame_mass")
+    if payload.get("role") != expected_role:
+        raise ValueError(
+            "Head-selection role mismatch: "
+            f"config={payload.get('role')!r}, expected={expected_role!r}"
+        )
+    if payload.get("feature_subtype") != expected_feature_subtype:
+        raise ValueError(
+            "Head-selection feature subtype mismatch: "
+            f"config={payload.get('feature_subtype')!r}, "
+            f"expected={expected_feature_subtype!r}"
+        )
 
     targets = payload.get("targets")
     if not isinstance(targets, list):
-        raise TypeError("S-head config targets must be a list")
+        raise TypeError("Head-selection config targets must be a list")
     pairs: list[tuple[int, int]] = []
     for item in targets:
         if not isinstance(item, dict):
-            raise TypeError(f"Invalid S-head target: {item!r}")
+            raise TypeError(f"Invalid head-selection target: {item!r}")
         block_id, head_id = int(item["block"]), int(item["head"])
         if not 0 <= block_id < int(num_blocks):
-            raise ValueError(f"S-head block out of range: {(block_id, head_id)}")
+            raise ValueError(f"Head-selection block out of range: {(block_id, head_id)}")
         if not 0 <= head_id < int(num_heads):
-            raise ValueError(f"S-head index out of range: {(block_id, head_id)}")
+            raise ValueError(f"Head-selection index out of range: {(block_id, head_id)}")
         pairs.append((block_id, head_id))
     if len(pairs) != int(expected_num_heads):
         raise ValueError(
-            f"Expected {expected_num_heads} S heads, found {len(pairs)} in {config_path}"
+            f"Expected {expected_num_heads} selected heads, "
+            f"found {len(pairs)} in {config_path}"
         )
     if len(set(pairs)) != len(pairs):
         raise ValueError(f"Duplicate block/head entries in {config_path}")
+    if int(payload.get("num_heads", -1)) != len(pairs):
+        raise ValueError(
+            f"Declared num_heads does not match targets in {config_path}"
+        )
 
     by_block: dict[int, list[int]] = {}
     for block_id, head_id in sorted(pairs):
         by_block.setdefault(block_id, []).append(head_id)
+    if int(payload.get("num_blocks", -1)) != len(by_block):
+        raise ValueError(
+            f"Declared num_blocks does not match targets in {config_path}"
+        )
+    actual_histogram = {
+        str(block_id): len(head_ids)
+        for block_id, head_ids in sorted(by_block.items())
+    }
+    if payload.get("block_histogram") != actual_histogram:
+        raise ValueError(
+            f"Declared block_histogram does not match targets in {config_path}"
+        )
     normalized = {
         block_id: tuple(sorted(head_ids))
         for block_id, head_ids in by_block.items()
@@ -166,6 +197,145 @@ def load_same_frame_head_config(
     metadata["config_path"] = str(config_path)
     metadata["config_sha256"] = hashlib.sha256(config_path.read_bytes()).hexdigest()
     return normalized, metadata
+
+
+def build_head_selection_identity(
+    heads_by_block: dict[int, tuple[int, ...]],
+    *,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    pairs = [
+        (int(block_id), int(head_id))
+        for block_id, head_ids in sorted(heads_by_block.items())
+        for head_id in sorted(head_ids)
+    ]
+    if not pairs:
+        raise ValueError("Head-selection identity cannot be empty")
+    return torch.tensor(pairs, dtype=torch.int16, device=device)
+
+
+def build_sha256_identity(
+    sha256_hex: str,
+    *,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    try:
+        digest = bytes.fromhex(str(sha256_hex))
+    except ValueError as exc:
+        raise ValueError(f"Invalid SHA256 digest: {sha256_hex!r}") from exc
+    if len(digest) != 32:
+        raise ValueError(f"SHA256 digest must contain 32 bytes, got {len(digest)}")
+    return torch.tensor(list(digest), dtype=torch.uint8, device=device)
+
+
+def _format_head_identity(identity: torch.Tensor) -> list[str]:
+    values = identity.detach().to(device="cpu", dtype=torch.int64)
+    if values.ndim != 2 or int(values.shape[1]) != 2:
+        return [f"<invalid shape {tuple(values.shape)}>"]
+    return [
+        f"B{int(block_id):02d}H{int(head_id):02d}"
+        for block_id, head_id in values.tolist()
+    ]
+
+
+def validate_head_selection_checkpoint_state(
+    state_dict: dict[str, torch.Tensor],
+    *,
+    expected_identity: torch.Tensor,
+    expected_config_sha256: torch.Tensor,
+) -> dict[str, object]:
+    normalized = {
+        tvn._normalize_checkpoint_key(key): value
+        for key, value in state_dict.items()
+    }
+    required = (
+        HEAD_SELECTION_IDENTITY_KEY,
+        HEAD_SELECTION_CONFIG_SHA256_KEY,
+    )
+    missing = [key for key in required if key not in normalized]
+    if missing:
+        raise RuntimeError(
+            "Head-selective resume checkpoint is missing bound head identity "
+            f"metadata: {missing}. Legacy S/T checkpoints cannot be resumed "
+            "safely because equal tensor shapes do not prove equal BxxHxx targets."
+        )
+
+    found_identity = normalized[HEAD_SELECTION_IDENTITY_KEY].detach().to(
+        device="cpu", dtype=torch.int16
+    )
+    expected_identity = expected_identity.detach().to(
+        device="cpu", dtype=torch.int16
+    )
+    if not torch.equal(found_identity, expected_identity):
+        raise RuntimeError(
+            "Head-selective resume checkpoint targets different heads. "
+            f"checkpoint={_format_head_identity(found_identity)}, "
+            f"current={_format_head_identity(expected_identity)}"
+        )
+
+    found_sha256 = normalized[HEAD_SELECTION_CONFIG_SHA256_KEY].detach().to(
+        device="cpu", dtype=torch.uint8
+    )
+    expected_config_sha256 = expected_config_sha256.detach().to(
+        device="cpu", dtype=torch.uint8
+    )
+    if not torch.equal(found_sha256, expected_config_sha256):
+        found_hex = bytes(found_sha256.tolist()).hex()
+        expected_hex = bytes(expected_config_sha256.tolist()).hex()
+        raise RuntimeError(
+            "Head-selective resume checkpoint was produced from a different "
+            "head-selection config: "
+            f"checkpoint_sha256={found_hex}, current_sha256={expected_hex}"
+        )
+    return {
+        "num_heads": int(expected_identity.shape[0]),
+        "config_sha256": bytes(expected_config_sha256.tolist()).hex(),
+    }
+
+
+def validate_head_selection_resume_checkpoint(
+    model: "DINOv3XSSCContextSlotsWanModule",
+    checkpoint_path: str | os.PathLike,
+) -> dict[str, object]:
+    if model.self_attn_adaptation_mode not in HEAD_SELECTIVE_ADAPTATION_MODES:
+        raise ValueError(
+            "Head-selection checkpoint validation is only valid for "
+            f"{HEAD_SELECTIVE_ADAPTATION_MODES}"
+        )
+    state_dict = tvn._load_trainable_state(checkpoint_path)
+    return validate_head_selection_checkpoint_state(
+        state_dict,
+        expected_identity=getattr(model, HEAD_SELECTION_IDENTITY_KEY),
+        expected_config_sha256=getattr(
+            model, HEAD_SELECTION_CONFIG_SHA256_KEY
+        ),
+    )
+
+
+def checkpoint_saver_only_on_sync(save_fn):
+    """Suppress checkpoint writes during non-sync gradient micro-steps."""
+
+    def wrapped(*args, **kwargs):
+        accelerator = kwargs.get("accelerator")
+        if accelerator is None:
+            raise TypeError("Checkpoint saver requires accelerator as a keyword")
+        if not bool(accelerator.sync_gradients):
+            return None
+        return save_fn(*args, **kwargs)
+
+    return wrapped
+
+
+def run_train_loop_with_synced_checkpoint_saves(*args, **kwargs):
+    """Run the shared loop while saving only at optimizer-update boundaries."""
+    original_save = tvn.save_training_checkpoint_bundle
+    tvn.save_training_checkpoint_bundle = checkpoint_saver_only_on_sync(
+        original_save
+    )
+    try:
+        return tvn.train_loop(*args, **kwargs)
+    finally:
+        tvn.save_training_checkpoint_bundle = original_save
 
 
 class HeadSelectiveLoRALinear(nn.Module):
@@ -284,7 +454,7 @@ def inject_full_self_attn_lora(
         block.self_attn = inject_adapter_in_model(config, block.self_attn)
 
 
-def inject_same_frame_head_lora(
+def inject_head_selective_lora(
     dit: nn.Module,
     *,
     heads_by_block: dict[int, tuple[int, ...]],
@@ -629,9 +799,11 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         self_attn_lora_rank: int = 32,
         self_attn_lora_alpha: float = 32.0,
         self_attn_lora_dropout: float = 0.0,
-        same_frame_head_config: str | None = None,
-        same_frame_subset_id: str = "S_same_full59",
-        same_frame_expected_num_heads: int = 59,
+        head_selection_config: str | None = None,
+        head_selection_subset_id: str = "S_same_full59",
+        head_selection_expected_role: str = "S",
+        head_selection_feature_subtype: str = "same_frame_mass",
+        head_selection_expected_num_heads: int = 59,
         object_gate_init: float = 0.1,
         lambda_main: float = 1.0,
         lambda_object_context_reg: float = 0.0,
@@ -669,11 +841,13 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         self.self_attn_lora_rank = int(self_attn_lora_rank)
         self.self_attn_lora_alpha = float(self_attn_lora_alpha)
         self.self_attn_lora_dropout = float(self_attn_lora_dropout)
-        self.same_frame_head_config = same_frame_head_config
-        self.same_frame_subset_id = str(same_frame_subset_id)
-        self.same_frame_expected_num_heads = int(same_frame_expected_num_heads)
-        self.same_frame_heads_by_block: dict[int, tuple[int, ...]] = {}
-        self.same_frame_head_metadata: dict = {}
+        self.head_selection_config = head_selection_config
+        self.head_selection_subset_id = str(head_selection_subset_id)
+        self.head_selection_expected_role = str(head_selection_expected_role)
+        self.head_selection_feature_subtype = str(head_selection_feature_subtype)
+        self.head_selection_expected_num_heads = int(head_selection_expected_num_heads)
+        self.selected_heads_by_block: dict[int, tuple[int, ...]] = {}
+        self.head_selection_metadata: dict = {}
         self.merged_pretrained_lora_modules: list[str] = []
         self.xssc_box_source = str(xssc_box_source)
         self.xssc_filter_empty_amg = bool(xssc_filter_empty_amg)
@@ -717,8 +891,12 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
                 "self_attn_lora_dropout must be in [0, 1), got "
                 f"{self.self_attn_lora_dropout}"
             )
-        if self.same_frame_expected_num_heads <= 0:
-            raise ValueError("same_frame_expected_num_heads must be positive")
+        if self.head_selection_expected_num_heads <= 0:
+            raise ValueError("head_selection_expected_num_heads must be positive")
+        if not self.head_selection_expected_role:
+            raise ValueError("head_selection_expected_role must not be empty")
+        if not self.head_selection_feature_subtype:
+            raise ValueError("head_selection_feature_subtype must not be empty")
         if not 0.0 <= self.object_lora_dropout < 1.0:
             raise ValueError(
                 f"object_lora_dropout must be in [0, 1), got {self.object_lora_dropout}"
@@ -776,24 +954,43 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
                 alpha=self.self_attn_lora_alpha,
                 dropout=self.self_attn_lora_dropout,
             )
-        elif self.self_attn_adaptation_mode == "s_head":
-            if self.same_frame_head_config is None:
+        elif self.self_attn_adaptation_mode in HEAD_SELECTIVE_ADAPTATION_MODES:
+            if self.head_selection_config is None:
                 raise ValueError(
-                    "same_frame_head_config is required for self_attn_adaptation_mode='s_head'"
+                    "head_selection_config is required for head-selective adaptation"
                 )
             (
-                self.same_frame_heads_by_block,
-                self.same_frame_head_metadata,
-            ) = load_same_frame_head_config(
-                self.same_frame_head_config,
-                expected_subset_id=self.same_frame_subset_id,
-                expected_num_heads=self.same_frame_expected_num_heads,
+                self.selected_heads_by_block,
+                self.head_selection_metadata,
+            ) = load_head_selection_config(
+                self.head_selection_config,
+                expected_subset_id=self.head_selection_subset_id,
+                expected_role=self.head_selection_expected_role,
+                expected_feature_subtype=self.head_selection_feature_subtype,
+                expected_num_heads=self.head_selection_expected_num_heads,
                 num_blocks=len(dit.blocks),
                 num_heads=self.self_attn_expected_num_heads,
             )
-            inject_same_frame_head_lora(
+            identity_device = dit.patch_embedding.weight.device
+            self.register_buffer(
+                HEAD_SELECTION_IDENTITY_KEY,
+                build_head_selection_identity(
+                    self.selected_heads_by_block,
+                    device=identity_device,
+                ),
+                persistent=True,
+            )
+            self.register_buffer(
+                HEAD_SELECTION_CONFIG_SHA256_KEY,
+                build_sha256_identity(
+                    self.head_selection_metadata["config_sha256"],
+                    device=identity_device,
+                ),
+                persistent=True,
+            )
+            inject_head_selective_lora(
                 dit,
-                heads_by_block=self.same_frame_heads_by_block,
+                heads_by_block=self.selected_heads_by_block,
                 rank=self.self_attn_lora_rank,
                 alpha=self.self_attn_lora_alpha,
                 dropout=self.self_attn_lora_dropout,
@@ -803,7 +1000,7 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             trainable = base._is_trainable_object_dit_parameter(name)
             if self.self_attn_adaptation_mode == "full_sa":
                 trainable = trainable or _is_full_self_attn_lora_parameter(name)
-            elif self.self_attn_adaptation_mode == "s_head":
+            elif self.self_attn_adaptation_mode in HEAD_SELECTIVE_ADAPTATION_MODES:
                 trainable = trainable or _is_head_selective_lora_parameter(name)
             param.requires_grad = trainable
 
@@ -832,11 +1029,11 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
                 )
         else:
             expected_head_lora_tensors = (
-                len(self.same_frame_heads_by_block) * len(SELF_ATTN_PROJECTIONS) * 2
+                len(self.selected_heads_by_block) * len(SELF_ATTN_PROJECTIONS) * 2
             )
             if head_lora_tensors != expected_head_lora_tensors or full_lora_tensors:
                 raise RuntimeError(
-                    "S-head trainable tensor mismatch: "
+                    "Head-selective trainable tensor mismatch: "
                     f"head={head_lora_tensors}/{expected_head_lora_tensors}, "
                     f"full={full_lora_tensors}"
                 )
@@ -874,6 +1071,34 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         self.slot_norm.to(device=model_device, dtype=model_dtype)
         self.slot_projector.to(device=model_device, dtype=model_dtype)
         self.time_embedding.to(device=model_device, dtype=model_dtype)
+
+    def export_trainable_state_dict(self, state_dict, remove_prefix=None):
+        exported = super().export_trainable_state_dict(
+            state_dict,
+            remove_prefix=remove_prefix,
+        )
+        if self.self_attn_adaptation_mode not in HEAD_SELECTIVE_ADAPTATION_MODES:
+            return exported
+        for source_key in (
+            HEAD_SELECTION_IDENTITY_KEY,
+            HEAD_SELECTION_CONFIG_SHA256_KEY,
+        ):
+            matches = [
+                key
+                for key in state_dict
+                if tvn._normalize_checkpoint_key(key) == source_key
+            ]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    "Model state must contain exactly one head identity buffer "
+                    f"{source_key!r}, found {matches}"
+                )
+            state_key = matches[0]
+            output_key = source_key
+            if remove_prefix is not None and output_key.startswith(remove_prefix):
+                output_key = output_key[len(remove_prefix) :]
+            exported[output_key] = state_dict[state_key]
+        return exported
 
     def set_empty_amg_resample_dataset(self, dataset) -> None:
         self.xssc_empty_amg_resample_dataset = dataset
@@ -1125,12 +1350,17 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--self_attn_lora_rank", type=int, default=32)
     group.add_argument("--self_attn_lora_alpha", type=float, default=32.0)
     group.add_argument("--self_attn_lora_dropout", type=float, default=0.0)
-    group.add_argument("--same_frame_head_config", default=None)
+    group.add_argument("--head_selection_config", default=None)
     group.add_argument(
-        "--same_frame_subset_id",
+        "--head_selection_subset_id",
         default="S_same_full59",
     )
-    group.add_argument("--same_frame_expected_num_heads", type=int, default=59)
+    group.add_argument("--head_selection_expected_role", default="S")
+    group.add_argument(
+        "--head_selection_feature_subtype",
+        default="same_frame_mass",
+    )
+    group.add_argument("--head_selection_expected_num_heads", type=int, default=59)
     group.add_argument("--expected_trainable_params", type=int, default=None)
     group.add_argument("--experiment_seed", type=int, default=42)
     return parser
@@ -1206,9 +1436,11 @@ def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlots
         self_attn_lora_rank=args.self_attn_lora_rank,
         self_attn_lora_alpha=args.self_attn_lora_alpha,
         self_attn_lora_dropout=args.self_attn_lora_dropout,
-        same_frame_head_config=args.same_frame_head_config,
-        same_frame_subset_id=args.same_frame_subset_id,
-        same_frame_expected_num_heads=args.same_frame_expected_num_heads,
+        head_selection_config=args.head_selection_config,
+        head_selection_subset_id=args.head_selection_subset_id,
+        head_selection_expected_role=args.head_selection_expected_role,
+        head_selection_feature_subtype=args.head_selection_feature_subtype,
+        head_selection_expected_num_heads=args.head_selection_expected_num_heads,
     )
 
 
@@ -1232,7 +1464,7 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         for name, param in model.pipe.dit.named_parameters()
         if param.requires_grad and _is_full_self_attn_lora_parameter(name)
     ]
-    s_head_params = [
+    selected_head_params = [
         param
         for name, param in model.pipe.dit.named_parameters()
         if param.requires_grad and _is_head_selective_lora_parameter(name)
@@ -1241,7 +1473,7 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
     projector_params += list(model.time_embedding.parameters())
     total = sum(param.numel() for param in model.trainable_modules())
     selected_head_count = sum(
-        len(heads) for heads in model.same_frame_heads_by_block.values()
+        len(heads) for heads in model.selected_heads_by_block.values()
     )
     lines = [
         "=" * 78,
@@ -1258,8 +1490,11 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         f"Self-attention LoRA: rank={model.self_attn_lora_rank}, "
         f"alpha={model.self_attn_lora_alpha:g}, "
         f"dropout={model.self_attn_lora_dropout:g}",
-        f"Selected S heads: {selected_head_count} across "
-        f"{len(model.same_frame_heads_by_block)} blocks",
+        f"Selected {model.head_selection_expected_role} heads: "
+        f"{selected_head_count} across "
+        f"{len(model.selected_heads_by_block)} blocks",
+        f"Head-selection config SHA256: "
+        f"{model.head_selection_metadata.get('config_sha256', 'not-applicable')}",
         f"xSSC box source: {model.xssc_box_source}",
         "Context policy: fixed full 8-frame context (text-only disabled)",
         f"Per-GPU training batch size: {args.train_batch_size}",
@@ -1275,8 +1510,8 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         f"Trainable object-gate params: {sum(p.numel() for p in object_gate_params):,}",
         f"Trainable full self-attention LoRA params: "
         f"{sum(p.numel() for p in full_sa_params):,}",
-        f"Trainable compact S-head LoRA params: "
-        f"{sum(p.numel() for p in s_head_params):,}",
+        f"Trainable compact selected-head LoRA params: "
+        f"{sum(p.numel() for p in selected_head_params):,}",
         f"Total trainable params: {total:,}",
         "Legacy Stage1A/Grounding/CoTracker/VGGT/JEPA modules: not constructed",
         "=" * 78,
@@ -1298,8 +1533,11 @@ def main() -> None:
             "--lora_checkpoint is required: all experiment modes must start from "
             "the same pretrained OpenVid LoRA"
         )
-    if args.self_attn_adaptation_mode == "s_head" and args.same_frame_head_config is None:
-        parser.error("--same_frame_head_config is required for s_head mode")
+    if (
+        args.self_attn_adaptation_mode in HEAD_SELECTIVE_ADAPTATION_MODES
+        and args.head_selection_config is None
+    ):
+        parser.error("--head_selection_config is required for head-selective mode")
     args.no_context_ratio = 0.0
     previous_handlers = tvn.install_interrupt_handlers()
     accelerator = tvn.build_accelerator(args)
@@ -1332,9 +1570,22 @@ def main() -> None:
         model.set_empty_amg_resample_dataset(raw_train_dataset)
 
     if args.stage2_resume_from is not None:
+        resume_checkpoint = tvn.resolve_lora_checkpoint_for_resume(
+            args.stage2_resume_from
+        )
+        if args.self_attn_adaptation_mode in HEAD_SELECTIVE_ADAPTATION_MODES:
+            identity_info = validate_head_selection_resume_checkpoint(
+                model,
+                resume_checkpoint,
+            )
+            accelerator.print(
+                "Validated resume head identity: "
+                f"num_heads={identity_info['num_heads']}, "
+                f"config_sha256={identity_info['config_sha256']}"
+            )
         resume_info = tvn._load_filtered_checkpoint_into_model(
             model,
-            tvn.resolve_lora_checkpoint_for_resume(args.stage2_resume_from),
+            resume_checkpoint,
             include_prefixes=("slot_norm.", "slot_projector.", "time_embedding."),
             include_substrings=(
                 ".object_cross_attn.",
@@ -1372,7 +1623,7 @@ def main() -> None:
         if args.task in ("sft:data_process", "direct_distill:data_process"):
             tvn.launch_data_process_task(accelerator, dataset, model, model_logger, args=args)
         else:
-            tvn.train_loop(
+            run_train_loop_with_synced_checkpoint_saves(
                 accelerator,
                 dataset,
                 model,

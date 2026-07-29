@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 import unittest
 
 import torch
 import torch.nn as nn
 from peft import LoraConfig, inject_adapter_in_model
 
+import launch_from_config as launcher
 import train_xssc_object_self_attn_lora as experiment
 
 
@@ -85,10 +89,12 @@ class ExperimentComponentTests(unittest.TestCase):
             torch.allclose(adapter(inputs), base(inputs), atol=1e-6, rtol=1e-6)
         )
 
-    def test_same_frame_configs_and_compact_parameter_counts(self) -> None:
-        matched_heads, matched_metadata = experiment.load_same_frame_head_config(
+    def test_head_configs_and_compact_parameter_counts(self) -> None:
+        matched_heads, matched_metadata = experiment.load_head_selection_config(
             experiment.EXPERIMENT_ROOT / "configs/same_frame_mass_heads.json",
             expected_subset_id="S_same_k32_r00_exactblock",
+            expected_role="S",
+            expected_feature_subtype="same_frame_mass",
             expected_num_heads=32,
             num_blocks=30,
             num_heads=24,
@@ -104,10 +110,12 @@ class ExperimentComponentTests(unittest.TestCase):
         )
         self.assertEqual(matched_params, 7_602_176)
 
-        full_heads, full_metadata = experiment.load_same_frame_head_config(
+        full_heads, full_metadata = experiment.load_head_selection_config(
             experiment.EXPERIMENT_ROOT
             / "configs/same_frame_mass_heads_full59.json",
             expected_subset_id="S_same_full59",
+            expected_role="S",
+            expected_feature_subtype="same_frame_mass",
             expected_num_heads=59,
             num_blocks=30,
             num_heads=24,
@@ -120,6 +128,24 @@ class ExperimentComponentTests(unittest.TestCase):
             for heads in full_heads.values()
         )
         self.assertEqual(full_params, 9_224_192)
+
+        t_heads, t_metadata = experiment.load_head_selection_config(
+            experiment.EXPERIMENT_ROOT / "configs/common_t_heads_full70.json",
+            expected_subset_id="T_common_full70",
+            expected_role="T",
+            expected_feature_subtype="common_t",
+            expected_num_heads=70,
+            num_blocks=30,
+            num_heads=24,
+        )
+        self.assertEqual(sum(len(value) for value in t_heads.values()), 70)
+        self.assertEqual(len(t_heads), 21)
+        self.assertEqual(t_metadata["feature_subtype"], "common_t")
+        t_params = sum(
+            4 * dim * rank + 4 * len(heads) * head_dim * rank
+            for heads in t_heads.values()
+        )
+        self.assertEqual(t_params, 9_404_416)
 
     def test_full_sa_injection_scope(self) -> None:
         dit = nn.Module()
@@ -147,6 +173,111 @@ class ExperimentComponentTests(unittest.TestCase):
             if ".lora_A." in name or ".lora_B." in name
         ]
         self.assertEqual(len(lora_tensors), 3 * 4 * 2)
+
+    def test_head_identity_rejects_same_shape_different_heads(self) -> None:
+        expected = experiment.build_head_selection_identity(
+            {4: (0, 18), 5: (9,)}
+        )
+        digest = experiment.build_sha256_identity("12" * 32)
+        state = {
+            f"module.{experiment.HEAD_SELECTION_IDENTITY_KEY}": expected.clone(),
+            f"module.{experiment.HEAD_SELECTION_CONFIG_SHA256_KEY}": digest.clone(),
+        }
+        info = experiment.validate_head_selection_checkpoint_state(
+            state,
+            expected_identity=expected,
+            expected_config_sha256=digest,
+        )
+        self.assertEqual(info["num_heads"], 3)
+        self.assertEqual(info["config_sha256"], "12" * 32)
+
+        different_same_shape = experiment.build_head_selection_identity(
+            {4: (0, 18), 5: (14,)}
+        )
+        with self.assertRaisesRegex(RuntimeError, "different heads"):
+            experiment.validate_head_selection_checkpoint_state(
+                state,
+                expected_identity=different_same_shape,
+                expected_config_sha256=digest,
+            )
+        with self.assertRaisesRegex(RuntimeError, "missing bound head identity"):
+            experiment.validate_head_selection_checkpoint_state(
+                {},
+                expected_identity=expected,
+                expected_config_sha256=digest,
+            )
+
+    def test_head_identity_is_exported_with_trainable_state(self) -> None:
+        model = experiment.DINOv3XSSCContextSlotsWanModule.__new__(
+            experiment.DINOv3XSSCContextSlotsWanModule
+        )
+        nn.Module.__init__(model)
+        model.self_attn_adaptation_mode = "s_head"
+        model.pipe = SimpleNamespace(dit=nn.Module())
+        model.trainable_probe = nn.Parameter(torch.ones(1))
+        model.register_buffer(
+            experiment.HEAD_SELECTION_IDENTITY_KEY,
+            experiment.build_head_selection_identity({4: (0, 18)}),
+        )
+        model.register_buffer(
+            experiment.HEAD_SELECTION_CONFIG_SHA256_KEY,
+            experiment.build_sha256_identity("ab" * 32),
+        )
+
+        exported = model.export_trainable_state_dict(model.state_dict())
+        self.assertIn("trainable_probe", exported)
+        self.assertTrue(
+            torch.equal(
+                exported[experiment.HEAD_SELECTION_IDENTITY_KEY],
+                model.head_selection_identity,
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                exported[experiment.HEAD_SELECTION_CONFIG_SHA256_KEY],
+                model.head_selection_config_sha256,
+            )
+        )
+
+    def test_checkpoint_saver_runs_only_on_sync_microstep(self) -> None:
+        calls = []
+
+        def save_fn(*args, **kwargs):
+            calls.append((args, kwargs))
+
+        class FakeAccelerator:
+            sync_gradients = False
+
+        accelerator = FakeAccelerator()
+        wrapped = experiment.checkpoint_saver_only_on_sync(save_fn)
+        wrapped(accelerator=accelerator, checkpoint_tag="step-000500")
+        wrapped(accelerator=accelerator, checkpoint_tag="step-000500")
+        self.assertEqual(calls, [])
+
+        accelerator.sync_gradients = True
+        wrapped(accelerator=accelerator, checkpoint_tag="step-000500")
+        self.assertEqual(len(calls), 1)
+
+    def test_launcher_snapshots_head_selection_config(self) -> None:
+        source = (
+            experiment.EXPERIMENT_ROOT
+            / "configs"
+            / "common_t_heads_full70.json"
+        )
+        config = {
+            "adaptation": {"mode": "t_head"},
+            "paths": {"head_selection_config": str(source)},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            info = launcher.snapshot_head_selection_config(
+                config,
+                Path(temp_dir),
+            )
+            snapshot = Path(config["paths"]["head_selection_config"])
+            self.assertEqual(snapshot, Path(temp_dir) / "head_selection_config.json")
+            self.assertEqual(snapshot.read_bytes(), source.read_bytes())
+            self.assertEqual(info["num_heads"], 70)
+            self.assertEqual(info["role"], "T")
 
 
 if __name__ == "__main__":

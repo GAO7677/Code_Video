@@ -91,6 +91,12 @@ ENTRIES = (
     ),
     (
         "指标分析",
+        "s-head-integrated-analysis/index.html",
+        "S Head 消融统一分析",
+        "整合全部S、S子类别、深度分层和数量控制实验，统一展示Motion、GT与Benchmark证据。",
+    ),
+    (
+        "指标分析",
         "head-role-dose-control-pilot/metrics/s-t-head-count-control/index.html",
         "S/T 等 Head 数量控制分析",
         "Exact k=5 与 depth-matched k=8 的曲线、热力图、覆盖率和代表视频。",

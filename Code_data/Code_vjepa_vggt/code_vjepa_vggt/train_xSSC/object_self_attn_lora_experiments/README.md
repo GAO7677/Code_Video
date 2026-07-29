@@ -1,7 +1,7 @@
 # Object/Self-Attention LoRA Experiments
 
 This directory is independent of the original `train_xSSC` entry points. It
-implements three experiments from one training script:
+implements four experiments from one training script:
 
 - `object_only`: object cross-attention LoRA, object gates, xSSC projection,
   and time embedding.
@@ -9,11 +9,18 @@ implements three experiments from one training script:
   self-attention layers.
 - `s_head`: `object_only` plus compact q/k/v/o LoRA supported only on all 59
   configured same-frame-mass S heads.
+- `t_head`: `object_only` plus compact q/k/v/o LoRA supported only on all 70
+  configured common T heads.
 
 All modes load the same OpenVid/MOVi-D/Genesis `step-010000` LoRA, merge it
 into the frozen Wan weights, and unload the original PEFT modules before
 constructing the experiment adapters. New self-attention adapters are
 zero-delta initialized, so all modes share the same step-0 Wan forward.
+Here, "unload" removes only the old PEFT wrapper and its A/B parameter objects
+after their delta has been added to the Wan base weights. It does not discard
+the learned OpenVid update. Consequently, the new experiment adapters learn a
+fresh delta on top of the same baked OpenVid initialization; they do not
+continue optimizing the original OpenVid A/B factors.
 
 ## Configuration
 
@@ -28,6 +35,7 @@ Validate without allocating a model:
 bash run_train_from_config.sh configs/object_only.json --validate-only
 bash run_train_from_config.sh configs/full_sa.json --validate-only
 bash run_train_from_config.sh configs/s_head.json --validate-only
+bash run_train_from_config.sh configs/t_head.json --validate-only
 ```
 
 Print the exact launch command:
@@ -45,7 +53,19 @@ bash run_train_from_config.sh configs/object_only.json
 Every run stores its fully resolved configuration and exact launch command in
 the checkpoint output directory.
 
-## S-head parameterization
+For `s_head` and `t_head`, the launcher also stores the exact input JSON as
+`head_selection_config.json`. Each model checkpoint contains both the sorted
+`[block, head]` tensor and the SHA256 of that JSON. Resume validates both
+before loading any trainable tensor, so a checkpoint cannot silently move a
+same-shaped adapter onto a different head list. Legacy S/T checkpoints without
+this identity metadata are intentionally rejected for resume.
+
+Periodic checkpoints are emitted only when `accelerator.sync_gradients` is
+true, immediately after a complete optimizer update. With gradient
+accumulation enabled, the intervening micro-steps therefore cannot repeatedly
+overwrite the same `step-xxxxxx` checkpoint.
+
+## Head-selective parameterization
 
 For q/k/v, each block-level compact adapter maps the full input through a
 shared rank-r basis and stores output rows only for selected heads. For the
@@ -64,3 +84,8 @@ causal claim.
 With rank 32, the full 59-head adapter spans 21 blocks and adds 9,224,192
 self-attention parameters. Together with the 25,458,688 object-branch
 parameters, `s_head` trains 34,682,880 parameters.
+
+The zero-based T-head list is stored in `configs/common_t_heads_full70.json`.
+For example, `B04H00` maps to `blocks[4].self_attn` head 0. Its 70 heads span
+21 blocks and add 9,404,416 rank-32 self-attention parameters; together with
+the object branch, `t_head` trains 34,863,104 parameters.

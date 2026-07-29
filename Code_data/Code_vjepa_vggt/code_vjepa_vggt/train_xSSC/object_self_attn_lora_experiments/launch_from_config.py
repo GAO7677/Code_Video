@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora.py"
-VALID_MODES = {"object_only", "full_sa", "s_head"}
+VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
+HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -76,6 +78,14 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     mode = str(require(config, "adaptation.mode"))
     if mode not in VALID_MODES:
         raise ValueError(f"adaptation.mode must be one of {sorted(VALID_MODES)}")
+    expected_role_by_mode = {"s_head": "S", "t_head": "T"}
+    if mode in HEAD_SELECTIVE_MODES:
+        configured_role = str(require(config, "adaptation.head_selection_expected_role"))
+        if configured_role != expected_role_by_mode[mode]:
+            raise ValueError(
+                f"{mode} requires role={expected_role_by_mode[mode]}, "
+                f"got {configured_role!r}"
+            )
     name = str(require(config, "experiment.name")).strip()
     if not name or name == "override_in_child_config":
         raise ValueError("experiment.name must be set by the child config")
@@ -149,21 +159,44 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     normalized["paths"]["xssc_box_cache_dir"] = resolve_config_path(
         str(require(config, "paths.xssc_box_cache_dir")), config_dir
     )
-    normalized["paths"]["same_frame_head_config"] = resolve_config_path(
-        str(require(config, "paths.same_frame_head_config")), config_dir
+    normalized["paths"]["head_selection_config"] = resolve_config_path(
+        str(require(config, "paths.head_selection_config")), config_dir
     )
-    if mode == "s_head" and not Path(
-        normalized["paths"]["same_frame_head_config"]
+    if mode in HEAD_SELECTIVE_MODES and not Path(
+        normalized["paths"]["head_selection_config"]
     ).is_file():
         raise FileNotFoundError(
-            "S-head config does not exist: "
-            f"{normalized['paths']['same_frame_head_config']}"
+            "Head-selection config does not exist: "
+            f"{normalized['paths']['head_selection_config']}"
         )
     return normalized
 
 
 def add_option(command: list[str], name: str, value) -> None:
     command.extend((name, str(value)))
+
+
+def snapshot_head_selection_config(
+    config: dict,
+    output_dir: Path,
+) -> dict[str, object] | None:
+    if config["adaptation"]["mode"] not in HEAD_SELECTIVE_MODES:
+        return None
+    source_path = Path(config["paths"]["head_selection_config"]).resolve()
+    content = source_path.read_bytes()
+    payload = json.loads(content.decode("utf-8"))
+    snapshot_path = output_dir / "head_selection_config.json"
+    snapshot_path.write_bytes(content)
+    config["paths"]["head_selection_config"] = str(snapshot_path)
+    return {
+        "source_path": str(source_path),
+        "snapshot_path": str(snapshot_path),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "subset_id": payload.get("subset_id"),
+        "role": payload.get("role"),
+        "feature_subtype": payload.get("feature_subtype"),
+        "num_heads": payload.get("num_heads"),
+    }
 
 
 def build_command(config: dict, output_dir: Path) -> list[str]:
@@ -221,10 +254,16 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--self_attn_lora_rank": adaptation["self_attn_lora_rank"],
         "--self_attn_lora_alpha": adaptation["self_attn_lora_alpha"],
         "--self_attn_lora_dropout": adaptation["self_attn_lora_dropout"],
-        "--same_frame_head_config": paths["same_frame_head_config"],
-        "--same_frame_subset_id": adaptation["same_frame_subset_id"],
-        "--same_frame_expected_num_heads": adaptation[
-            "same_frame_expected_num_heads"
+        "--head_selection_config": paths["head_selection_config"],
+        "--head_selection_subset_id": adaptation["head_selection_subset_id"],
+        "--head_selection_expected_role": adaptation[
+            "head_selection_expected_role"
+        ],
+        "--head_selection_feature_subtype": adaptation[
+            "head_selection_feature_subtype"
+        ],
+        "--head_selection_expected_num_heads": adaptation[
+            "head_selection_expected_num_heads"
         ],
         "--expected_trainable_params": config["experiment"][
             "expected_trainable_params"
@@ -338,6 +377,13 @@ def main() -> None:
         / config["experiment"]["name"]
         / run_tag
     )
+    head_selection_snapshot = None
+    if not (args.validate_only or args.dry_run):
+        output_dir.mkdir(parents=True, exist_ok=False)
+        head_selection_snapshot = snapshot_head_selection_config(
+            config,
+            output_dir,
+        )
     command = build_command(config, output_dir)
     effective_batch = (
         int(config["launch"]["num_processes"])
@@ -357,7 +403,6 @@ def main() -> None:
     if args.validate_only or args.dry_run:
         return
 
-    output_dir.mkdir(parents=True, exist_ok=False)
     cache_root = Path(config["paths"]["cache_root"])
     cache_dirs = {
         "HF_HOME": cache_root / "huggingface",
@@ -372,6 +417,7 @@ def main() -> None:
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "config_sources": sources,
         "resolved_config": config,
+        "head_selection_snapshot": head_selection_snapshot,
         "launch_summary": summary,
     }
     (output_dir / "resolved_experiment_config.json").write_text(

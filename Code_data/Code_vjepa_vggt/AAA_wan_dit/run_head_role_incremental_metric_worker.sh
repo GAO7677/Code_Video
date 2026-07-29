@@ -50,7 +50,7 @@ claim_task() {
 }
 
 wait_for_memory() {
-  [[ "${KIND}" != "gpu_common" ]] && return 0
+  [[ "${KIND}" == "cpu" ]] && return 0
   while [[ ! -f "${STOP}" ]]; do
     free="$(nvidia-smi --id="${GPU_ID}" --query-gpu=memory.free --format=csv,noheader,nounits)"
     if (( free >= MIN_FREE_MIB )); then
