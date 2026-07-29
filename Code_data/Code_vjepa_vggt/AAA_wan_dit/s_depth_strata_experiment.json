@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "experiment_name": "wan_dit_s_head_depth_strata_total_effect",
+  "input_list": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt",
+  "expected_cases": 20,
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "seeds": [
+    851,
+    3278
+  ],
+  "step_ranges": [
+    [
+      0,
+      10
+    ],
+    [
+      10,
+      20
+    ]
+  ],
+  "matched_subset_manifest": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/configs/s_depth_strata.json",
+  "subset_matching_modes": [
+    "all_role_heads_within_depth_stratum"
+  ],
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "cfg_scale_wan": 5.0,
+    "physrvg_cfg_enabled": false
+  },
+  "execution": {
+    "gpus": [
+      0,
+      1,
+      2,
+      3,
+      5,
+      6,
+      7
+    ],
+    "workers_per_gpu": 1,
+    "gpu_start_memory_threshold_mib": 4096,
+    "poll_seconds": 30,
+    "max_attempts_per_task": 3,
+    "tmux_session": "wan_s_depth_strata",
+    "start_after_file": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/pilot/generation.complete",
+    "preflight_complete_file": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/s_only/preflight.complete"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/s_only"
+  }
+}

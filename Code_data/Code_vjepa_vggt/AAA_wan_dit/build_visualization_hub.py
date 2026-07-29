@@ -64,6 +64,12 @@ ENTRIES = (
     ),
     (
         "指标分析",
+        "head-role-dose-control-pilot/metrics/index.html",
+        "S/T/C 等数量与深度匹配动态指标",
+        "仅使用完整S/T/C配对的17项指标曲线、覆盖率与harm表格。",
+    ),
+    (
+        "指标分析",
         "multiseed/benchmark-metrics/index.html",
         "503-case 分阶段消融指标",
         "第一批大规模case的全部指标曲线。",

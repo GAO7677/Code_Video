@@ -58,6 +58,7 @@
     "output_root": "/data/gaoya/agent-data/outputs/wan_dit_head_role_dose_control/pilot"
   },
   "metrics": {
+    "defer_until_file": "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/s_only/generation.complete",
     "groups": {
       "cpu": [
         "physics_iq_with_context",

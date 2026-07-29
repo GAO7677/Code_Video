@@ -249,6 +249,28 @@ def _refresh_case_gallery(config_path: Path) -> None:
         )
 
 
+def _wait_for_metric_dependency(
+    config: dict[str, Any],
+    root: Path,
+    expected: int,
+    poll_seconds: int,
+) -> None:
+    value = config.get("metrics", {}).get("defer_until_file")
+    if not value:
+        return
+    dependency = Path(value).expanduser().resolve()
+    while not dependency.is_file():
+        counts, _ = _states(root)
+        _progress(
+            root=root,
+            phase="waiting_for_priority_generation",
+            states=counts,
+            expected=expected,
+            extra={"waiting_for_file": str(dependency)},
+        )
+        time.sleep(poll_seconds)
+
+
 def main() -> None:
     args = parse_args()
     config_path = args.config.expanduser().resolve()
@@ -282,6 +304,13 @@ def main() -> None:
         time.sleep(int(args.poll_seconds))
 
     _stop_incremental_metrics(root, int(args.poll_seconds))
+    (root / "generation.complete").touch()
+    _wait_for_metric_dependency(
+        config,
+        root,
+        expected,
+        int(args.poll_seconds),
+    )
     ready = root / "metrics.ready"
     if not ready.is_file():
         roots, cases_per_root = _prepare_metric_inputs(
