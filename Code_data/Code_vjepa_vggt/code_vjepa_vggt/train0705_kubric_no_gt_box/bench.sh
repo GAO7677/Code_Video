@@ -27,10 +27,11 @@ RESULT_DIR="${BENCH_RESULT_DIR:-${SCRIPT_DIR}/AAAresults}"
 BENCH_CUDA_VISIBLE_DEVICES="${BENCH_CUDA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 BENCH_METRICS_RAW="${BENCH_METRICS:-}"
 BENCH_RUN_METRICS="${BENCH_RUN_METRICS:-0}"
+BENCH_OVERWRITE="${BENCH_OVERWRITE:-0}"
 BENCH_INPUT_JSON_ALLOWLIST="${BENCH_INPUT_JSON_ALLOWLIST:-}"
 DEFAULT_PHYSIQ_INPUT_JSON_ALLOWLIST=/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt
 
-if [[ -z "${BENCH_INPUT_JSON_ALLOWLIST}" && "$(basename "${BASELINE_LIST}")" == "AAAevalphysiq.txt" ]]; then
+if [[ -z "${BENCH_INPUT_JSON_ALLOWLIST}" && "$(basename "${BASELINE_LIST}")" == AAAevalphysiq*.txt ]]; then
   BENCH_INPUT_JSON_ALLOWLIST="${DEFAULT_PHYSIQ_INPUT_JSON_ALLOWLIST}"
 fi
 
@@ -66,6 +67,7 @@ echo "[baseline-bench] baseline_list=${BASELINE_LIST}"
 echo "[baseline-bench] cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "[baseline-bench] metrics=${METRICS[*]}"
 echo "[baseline-bench] run_metrics=${BENCH_RUN_METRICS}"
+echo "[baseline-bench] overwrite=${BENCH_OVERWRITE}"
 echo "[baseline-bench] input_json_allowlist=${BENCH_INPUT_JSON_ALLOWLIST:-<unset>}"
 mkdir -p "${RESULT_DIR}"
 
@@ -106,6 +108,9 @@ for metric in "${METRICS[@]}"; do
   fi
   if [[ -n "${BENCH_INPUT_JSON_ALLOWLIST}" ]]; then
     EXTRA_ARGS+=(--input-json-allowlist "${BENCH_INPUT_JSON_ALLOWLIST}")
+  fi
+  if [[ "${BENCH_OVERWRITE}" == "1" ]]; then
+    EXTRA_ARGS+=(--overwrite)
   fi
   "${PYTHON_BIN}" "${BENCH_PY}" \
     --metric "${metric}" \

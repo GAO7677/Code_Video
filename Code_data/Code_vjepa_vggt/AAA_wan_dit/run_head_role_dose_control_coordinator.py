@@ -34,6 +34,7 @@ DOSE_SUMMARY = SCRIPT_DIR / "summarize_head_role_dose_control.py"
 DOSE_REPORT = SCRIPT_DIR / "render_head_role_dose_control_report.py"
 DOSE_GALLERY = SCRIPT_DIR / "build_head_role_dose_control_gallery.py"
 CASE_GALLERY = SCRIPT_DIR / "build_head_role_dose_control_case_gallery.py"
+PARTIAL_METRIC_REPORT = SCRIPT_DIR / "build_head_role_partial_metric_report.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -249,6 +250,24 @@ def _refresh_case_gallery(config_path: Path) -> None:
         )
 
 
+def _refresh_partial_metric_report(config_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            str(PARTIAL_METRIC_REPORT),
+            "--config",
+            str(config_path),
+        ],
+        check=False,
+    )
+    if result.returncode:
+        print(
+            f"[dose-coordinator] partial metric report refresh failed: "
+            f"{result.returncode}",
+            flush=True,
+        )
+
+
 def _wait_for_metric_dependency(
     config: dict[str, Any],
     root: Path,
@@ -277,6 +296,7 @@ def main() -> None:
     config, root, _, _, subset_ids = _load_config(config_path)
     expected = len(_tasks(config, subset_ids))
     last_gallery_complete = -1
+    last_metric_report_complete = -1
     while True:
         counts, records = _states(root)
         _progress(
@@ -288,6 +308,13 @@ def main() -> None:
         if counts["complete"] != last_gallery_complete:
             _refresh_case_gallery(config_path)
             last_gallery_complete = counts["complete"]
+        if (
+            last_metric_report_complete < 0
+            or counts["complete"] - last_metric_report_complete >= 5
+            or counts["complete"] == expected
+        ):
+            _refresh_partial_metric_report(config_path)
+            last_metric_report_complete = counts["complete"]
         if counts["complete"] == expected:
             break
         if counts["failed"] and not counts["running"]:
@@ -304,6 +331,7 @@ def main() -> None:
         time.sleep(int(args.poll_seconds))
 
     _stop_incremental_metrics(root, int(args.poll_seconds))
+    _refresh_partial_metric_report(config_path)
     (root / "generation.complete").touch()
     _wait_for_metric_dependency(
         config,
@@ -335,6 +363,7 @@ def main() -> None:
         * sum(int(value) for value in config["metrics"]["workers_per_gpu"].values())
     )
     metric_root = root / "metrics"
+    last_metric_report_tasks = -1
     while True:
         worker_done = len(list((metric_root / "state").glob("*.complete")))
         completed = sum(
@@ -363,6 +392,13 @@ def main() -> None:
                 "metric_tasks_failed": failed,
             },
         )
+        if (
+            last_metric_report_tasks < 0
+            or completed - last_metric_report_tasks >= 20
+            or worker_done == metric_worker_count
+        ):
+            _refresh_partial_metric_report(config_path)
+            last_metric_report_tasks = completed
         if worker_done == metric_worker_count:
             break
         time.sleep(int(args.poll_seconds))

@@ -66,7 +66,7 @@ ENTRIES = (
         "指标分析",
         "head-role-dose-control-pilot/metrics/index.html",
         "S/T/C 等数量与深度匹配动态指标",
-        "仅使用完整S/T/C配对的17项指标曲线、覆盖率与harm表格。",
+        "按模型独立整合17项曲线及相对Baseline变化总表。",
     ),
     (
         "指标分析",
@@ -108,7 +108,7 @@ ENTRIES = (
         "运动与 Impact",
         "multiseed/motion-analysis/index.html",
         "运动影响与物理合理性",
-        "光流、轨迹变化、方差与合理性分析。",
+        "光流、轨迹、GT合理性及17项Benchmark改善热力图。",
     ),
     (
         "运动与 Impact",

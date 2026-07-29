@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 
+from summarize_stc_bench_metrics import METRICS as BENCHMARK_METRICS
+
 
 DEFAULT_OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_stc_motion_analysis"
@@ -23,6 +25,11 @@ DEFAULT_OUTPUT_ROOT = Path(
 DEFAULT_REPORT_DIR = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/"
     "gallery/multiseed/motion-analysis"
+)
+DEFAULT_BENCHMARK_SUMMARY = (
+    DEFAULT_REPORT_DIR.parent
+    / "benchmark-metrics"
+    / "paired_vs_baseline_summary.csv"
 )
 MODEL_NAMES = {
     "wan_lora": "Wan+LoRA",
@@ -54,6 +61,25 @@ PLAUSIBILITY_SCALES = {
     "background_drift_abs_error_gt": 0.005,
     "object_visibility_abs_error_gt": 0.250,
 }
+BENCHMARK_TITLES = {
+    "physics_iq_with_context": "Physics-IQ with context",
+    "physics_iq_without_context": "Physics-IQ without context",
+    "pmf_with_context": "PMF with context",
+    "pmf_without_context": "PMF without context",
+    "wmreward_surprise": "WMReward surprise",
+    "vbench_subject_consistency": "VBench subject consistency",
+    "vbench_background_consistency": "VBench background consistency",
+    "vbench_temporal_flickering": "VBench temporal flickering",
+    "vbench_motion_smoothness": "VBench motion smoothness",
+    "vbench_dynamic_degree": "VBench dynamic degree",
+    "vbench_aesthetic_quality": "VBench aesthetic quality",
+    "vbench_imaging_quality": "VBench imaging quality",
+    "videophy2_sa": "VideoPhy2 semantic adherence",
+    "videophy2_pc": "VideoPhy2 physical commonsense",
+    "videophy2_joint_rate": "VideoPhy2 joint pass rate",
+    "videophy2_pc_raw": "VideoPhy2 physical commonsense raw",
+    "cosmos_reason1": "Cosmos-Reason1",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +90,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-frames", type=int, default=8)
     parser.add_argument("--minimum-seeds", type=int, default=3)
     parser.add_argument("--bootstrap-samples", type=int, default=4000)
+    parser.add_argument(
+        "--benchmark-summary",
+        type=Path,
+        default=DEFAULT_BENCHMARK_SUMMARY,
+    )
     return parser.parse_args()
 
 
@@ -460,6 +491,178 @@ def save_heatmaps(aggregate: pd.DataFrame, path: Path, minimum_seeds: int) -> No
     plt.close(fig)
 
 
+def load_benchmark_summary(
+    path: Path,
+    motion_aggregate: pd.DataFrame,
+) -> pd.DataFrame:
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Benchmark summary is missing: {path}")
+    benchmark = pd.read_csv(path)
+    keys = ["model", "variant", "role", "denoise_start", "denoise_end"]
+    required = {*keys, "n_seeds"}
+    required.update(
+        f"{metric.name}_improvement_mean" for metric in BENCHMARK_METRICS
+    )
+    missing = sorted(required - set(benchmark.columns))
+    if missing:
+        raise ValueError(f"Benchmark summary is missing columns: {missing}")
+    motion = motion_aggregate[
+        motion_aggregate["variant"] != "baseline"
+    ][[*keys, "n_seeds"]].copy()
+    comparison = motion.merge(
+        benchmark[[*keys, "n_seeds"]],
+        on=keys,
+        how="outer",
+        suffixes=("_motion", "_benchmark"),
+        indicator=True,
+    )
+    seed_mismatch = (
+        comparison["n_seeds_motion"] != comparison["n_seeds_benchmark"]
+    ).fillna(True)
+    invalid = comparison[
+        (comparison["_merge"] != "both") | seed_mismatch
+    ]
+    if not invalid.empty:
+        examples = invalid.head(8).to_dict(orient="records")
+        raise RuntimeError(
+            "Benchmark and motion summaries do not describe the same "
+            f"model/variant/seed coverage: {examples}"
+        )
+    return benchmark
+
+
+def heatmap_value(value: float) -> str:
+    absolute = abs(value)
+    if absolute >= 10:
+        return f"{value:+.1f}"
+    if absolute >= 0.1:
+        return f"{value:+.2f}"
+    if absolute >= 0.001:
+        return f"{value:+.3f}"
+    return f"{value:+.1e}"
+
+
+def save_benchmark_heatmaps(
+    benchmark: pd.DataFrame,
+    output_dir: Path,
+    minimum_seeds: int,
+) -> list[dict[str, str]]:
+    data = benchmark[benchmark["n_seeds"] >= minimum_seeds].copy()
+    data["stage"] = [
+        f"[{int(start)},{int(end)})"
+        for start, end in zip(data["denoise_start"], data["denoise_end"])
+    ]
+    stages = sorted(
+        data["stage"].unique(),
+        key=lambda value: tuple(
+            int(part) for part in value.strip("[]()").split(",")
+        ),
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rendered = []
+    for metric in BENCHMARK_METRICS:
+        value_column = f"{metric.name}_improvement_mean"
+        matrices: dict[str, np.ndarray] = {}
+        for model in MODEL_NAMES:
+            subset = data[data["model"] == model]
+            matrix = np.full((len(ABLATION_ROLES), len(stages)), np.nan)
+            for role_index, role in enumerate(ABLATION_ROLES):
+                for stage_index, stage in enumerate(stages):
+                    cells = subset[
+                        (subset["role"] == role)
+                        & (subset["stage"] == stage)
+                    ]
+                    if len(cells):
+                        matrix[role_index, stage_index] = float(
+                            cells.iloc[0][value_column]
+                        )
+            matrices[model] = matrix
+        finite = np.concatenate(
+            [
+                matrix[np.isfinite(matrix)]
+                for matrix in matrices.values()
+                if np.isfinite(matrix).any()
+            ]
+        )
+        bound = (
+            max(abs(float(finite.min())), abs(float(finite.max())), 1e-6)
+            if len(finite)
+            else 1.0
+        )
+        figure, axes = plt.subplots(
+            len(MODEL_NAMES),
+            1,
+            figsize=(12, 8.8),
+            sharex=True,
+            squeeze=False,
+        )
+        cmap = plt.get_cmap("RdYlGn").copy()
+        cmap.set_bad("#e5e8e6")
+        image = None
+        for row_index, model in enumerate(MODEL_NAMES):
+            axis = axes[row_index, 0]
+            matrix = matrices[model]
+            image = axis.imshow(
+                matrix,
+                cmap=cmap,
+                vmin=-bound,
+                vmax=bound,
+                aspect="auto",
+            )
+            axis.set_yticks(range(len(ABLATION_ROLES)), ABLATION_ROLES)
+            axis.set_title(MODEL_NAMES[model])
+            for y in range(matrix.shape[0]):
+                for x in range(matrix.shape[1]):
+                    value = matrix[y, x]
+                    if not np.isfinite(value):
+                        continue
+                    color = "white" if abs(value) / bound > 0.62 else "#111111"
+                    axis.text(
+                        x,
+                        y,
+                        heatmap_value(float(value)),
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color=color,
+                    )
+        axes[-1, 0].set_xticks(
+            range(len(stages)),
+            stages,
+            rotation=35,
+            ha="right",
+        )
+        figure.suptitle(
+            f"{BENCHMARK_TITLES[metric.name]}\n"
+            "Direction-normalized improvement vs same-model, same-seed "
+            "baseline (positive = better)",
+            fontsize=13,
+            fontweight="bold",
+        )
+        figure.subplots_adjust(
+            left=0.08,
+            right=0.89,
+            top=0.89,
+            bottom=0.10,
+            hspace=0.32,
+        )
+        if image is not None:
+            color_axis = figure.add_axes((0.91, 0.16, 0.016, 0.65))
+            figure.colorbar(image, cax=color_axis, label="Improvement")
+        output = output_dir / f"{metric.name}.png"
+        figure.savefig(output, dpi=170, bbox_inches="tight")
+        plt.close(figure)
+        rendered.append(
+            {
+                "metric": metric.name,
+                "title": BENCHMARK_TITLES[metric.name],
+                "path": f"benchmark_heatmaps/{metric.name}.png",
+            }
+        )
+    return rendered
+
+
 def save_temporal_curves(
     curves: pd.DataFrame,
     aggregate: pd.DataFrame,
@@ -537,6 +740,7 @@ def build_html(
     per_video: pd.DataFrame,
     inventory: dict[str, Any],
     minimum_seeds: int,
+    benchmark_heatmaps: list[dict[str, str]],
 ) -> str:
     ranked = aggregate[
         (aggregate["variant"] != "baseline")
@@ -564,6 +768,14 @@ def build_html(
         )
     prompt = inventory["case"]["prompt"]
     completed = len(per_video)
+    benchmark_figures = "".join(
+        "<figure>"
+        f"<img loading='lazy' src='{html.escape(item['path'])}' "
+        f"alt='{html.escape(item['title'])} heatmap'>"
+        f"<figcaption>{html.escape(item['title'])}</figcaption>"
+        "</figure>"
+        for item in benchmark_heatmaps
+    )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -573,8 +785,9 @@ def build_html(
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}}
 header,main{{max-width:1500px;margin:auto;padding:16px 20px}}header{{border-bottom:1px solid var(--line)}}h1,h2,p{{margin:0}}h1{{font-size:23px}}h2{{font-size:18px;margin:22px 0 8px}}.muted{{color:var(--muted)}}.protocol{{display:grid;grid-template-columns:repeat(2,minmax(280px,1fr));gap:10px;margin-top:14px}}.note{{padding:11px;background:var(--panel);border:1px solid var(--line);border-radius:6px}}
 .plots{{display:grid;grid-template-columns:1fr;gap:14px}}.plots img{{display:block;width:100%;background:#fff;border:1px solid var(--line)}}
+.benchmark-grid{{display:grid;grid-template-columns:repeat(2,minmax(480px,1fr));gap:12px}}.benchmark-grid figure{{margin:0;background:var(--panel);border:1px solid var(--line)}}.benchmark-grid img{{display:block;width:100%;background:#fff}}.benchmark-grid figcaption{{padding:7px 9px;color:var(--muted);border-top:1px solid var(--line)}}
 .table-wrap{{overflow:auto}}table{{width:100%;border-collapse:collapse;background:var(--panel)}}th,td{{padding:7px 9px;border:1px solid var(--line);text-align:right;white-space:nowrap}}th:first-child,td:first-child{{text-align:left}}thead th{{position:sticky;top:0;background:#252a2e}}.good{{color:var(--good);font-weight:700}}.bad{{color:var(--bad);font-weight:700}}.uncertain{{color:var(--warn)}}a{{color:#72c8b7}}
-@media(max-width:800px){{.protocol{{grid-template-columns:1fr}}}}
+@media(max-width:1000px){{.protocol,.benchmark-grid{{grid-template-columns:1fr}}}}
 </style></head><body><header>
 <h1>运动影响与物理合理性</h1>
 <p class="muted">{html.escape(prompt)}</p>
@@ -587,10 +800,13 @@ header,main{{max-width:1500px;margin:auto;padding:16px 20px}}header{{border-bott
 <div class="note"><b>结论边界</b><br>RAFT/CoTracker 是运动证据，不是物理定律判定器。遮挡、形变或物体消失会降低追踪可靠性，因此高影响且置信区间跨 0 的配置标为 uncertain，需要结合视频人工核验。</div>
 </div>
 <h2>二维结论图</h2><div class="plots"><img src="impact_plausibility_scatter.png"><img src="role_stage_heatmaps.png"><img src="temporal_motion_curves.png"></div>
+<h2>17项 Benchmark 相对 Baseline 改善热力图</h2>
+<p class="muted" style="margin-bottom:9px">每个单元格是跨seed平均的方向归一化改善量；绿色/正值表示优于同模型、同seed Baseline，红色/负值表示变差。仅展示至少 {minimum_seeds} 个seed的配置。</p>
+<div class="benchmark-grid">{benchmark_figures}</div>
 <h2>配置汇总</h2><div class="table-wrap"><table><thead><tr><th>模型</th><th>Head 类</th><th>去噪区间</th><th>Seeds</th><th>追踪失败</th><th>Impact ↑</th><th>GT gain ↑</th><th>判断</th></tr></thead><tbody>
 {''.join(rows)}
 </tbody></table></div>
-<p class="muted" style="margin-top:10px">原始数据：<a href="per_video_metrics.csv">per_video_metrics.csv</a> · <a href="aggregate_metrics.csv">aggregate_metrics.csv</a> · <a href="impact_ranking_by_model.csv">impact_ranking_by_model.csv</a> · <a href="temporal_curves.csv">temporal_curves.csv</a> · <a href="../stc-phased/">视频对照页</a></p>
+<p class="muted" style="margin-top:10px">原始数据：<a href="per_video_metrics.csv">per_video_metrics.csv</a> · <a href="aggregate_metrics.csv">aggregate_metrics.csv</a> · <a href="impact_ranking_by_model.csv">impact_ranking_by_model.csv</a> · <a href="temporal_curves.csv">temporal_curves.csv</a> · <a href="../benchmark-metrics/paired_vs_baseline_summary.csv">17项Benchmark配对汇总</a> · <a href="../stc-phased/">视频对照页</a></p>
 </main></body></html>"""
 
 
@@ -735,6 +951,10 @@ def main() -> None:
     per_video = calibrated_plausibility_distance(pd.DataFrame(rows))
     aggregate = aggregate_rows(per_video, args.bootstrap_samples)
     curves = pd.DataFrame(curve_rows)
+    benchmark_summary = load_benchmark_summary(
+        args.benchmark_summary,
+        aggregate,
+    )
 
     results_dir = args.output_root / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -792,6 +1012,13 @@ def main() -> None:
         "plausibility_gain_sign": "positive means closer to GT than baseline",
         "bootstrap_samples": args.bootstrap_samples,
         "minimum_seeds_for_report": args.minimum_seeds,
+        "benchmark_summary": str(
+            args.benchmark_summary.expanduser().resolve()
+        ),
+        "benchmark_heatmap_value": (
+            "direction-normalized mean improvement versus the same-model, "
+            "same-seed baseline"
+        ),
         "limitations": [
             "RAFT and CoTracker estimates can be affected by appearance changes and occlusion.",
             "GT similarity is evidence of plausibility for this case, not a universal physics oracle.",
@@ -820,6 +1047,11 @@ def main() -> None:
         args.report_dir / "temporal_motion_curves.png",
         args.minimum_seeds,
     )
+    benchmark_heatmaps = save_benchmark_heatmaps(
+        benchmark_summary,
+        args.report_dir / "benchmark_heatmaps",
+        args.minimum_seeds,
+    )
     per_video.to_csv(args.report_dir / "per_video_metrics.csv", index=False)
     aggregate.to_csv(args.report_dir / "aggregate_metrics.csv", index=False)
     curves.to_csv(args.report_dir / "temporal_curves.csv", index=False)
@@ -834,6 +1066,7 @@ def main() -> None:
             per_video,
             inventory,
             args.minimum_seeds,
+            benchmark_heatmaps,
         ),
     )
     print(
