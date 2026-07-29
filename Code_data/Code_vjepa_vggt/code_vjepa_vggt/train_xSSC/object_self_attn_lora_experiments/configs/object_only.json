@@ -1,0 +1,11 @@
+{
+  "extends": "base.json",
+  "experiment": {
+    "name": "object_only",
+    "description": "Object cross-attention LoRA, gates, and xSSC projection only",
+    "expected_trainable_params": 25458688
+  },
+  "adaptation": {
+    "mode": "object_only"
+  }
+}

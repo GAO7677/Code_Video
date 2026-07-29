@@ -1,0 +1,11 @@
+{
+  "extends": "base.json",
+  "experiment": {
+    "name": "full_sa",
+    "description": "Object branch plus rank-32 q/k/v/o LoRA in all 30 self-attention layers",
+    "expected_trainable_params": 49051648
+  },
+  "adaptation": {
+    "mode": "full_sa"
+  }
+}

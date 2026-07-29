@@ -1,0 +1,11 @@
+{
+  "extends": "base.json",
+  "experiment": {
+    "name": "same_frame_s_head_full59",
+    "description": "Object branch plus compact rank-32 LoRA restricted to all 59 same-frame-mass S heads",
+    "expected_trainable_params": 34682880
+  },
+  "adaptation": {
+    "mode": "s_head"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "override_in_child_config",
+    "description": "Shared DINOv3 xSSC object/self-attention LoRA experiment"
+  },
+  "launch": {
+    "gpu_set": "0,1",
+    "num_processes": 2,
+    "mixed_precision": "bf16",
+    "accelerate_bin": "/home/gaoya/miniconda3/envs/wan-cu128/bin/accelerate",
+    "python_bin": "/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
+  },
+  "paths": {
+    "project_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt",
+    "diffsynth_root": "/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main",
+    "wan_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+    "pretrained_lora_checkpoint": "/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors",
+    "xssc_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256",
+    "xssc_config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256/upstream/config-randsfq/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000.py",
+    "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-026000.pth",
+    "dinov3_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256/third_party/dinov3",
+    "dinov3_checkpoint": "/data/gaoya/ckpt/facebook-dinov3-vitl16-pretrain-lvd1689m/model.safetensors",
+    "sam2_config": "/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_l.yaml",
+    "sam2_checkpoint": "/data/gaoya/ckpt/facebook-sam2.1-hiera-large/sam2.1_hiera_large.pt",
+    "pybullet_root": "/data/gaoya/AAA_test_video/Dataset_physV/0717pybullet_5000_vbenchtop5",
+    "kubric_root": "/data/gaoya/dataset/nnsriram97-phyco_kubric",
+    "openvid_root": "/data/gaoya/dataset/mvp-lab-OpenVidHD-0.4M-720p-48fps/train",
+    "output_root": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora",
+    "cache_root": "/data/gaoya/agent-data/cache/xssc_object_self_attn_lora",
+    "xssc_box_cache_dir": "/data/gaoya/agent-data/cache/xssc_dinov3_context_amg_boxes_wan_train",
+    "same_frame_head_config": "same_frame_mass_heads_full59.json"
+  },
+  "model": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "fixed_num_context_frames": 8,
+    "xssc_input_size": 256,
+    "xssc_max_time_steps": 64,
+    "pretrained_lora_target_modules": "q,k,v,o,ffn.0,ffn.2",
+    "pretrained_lora_rank": 32,
+    "pretrained_lora_alpha": 32,
+    "pretrained_lora_expected_modules": 300,
+    "self_attn_expected_num_blocks": 30,
+    "self_attn_expected_num_heads": 24
+  },
+  "adaptation": {
+    "mode": "override_in_child_config",
+    "object_lora_rank": 32,
+    "object_lora_alpha": 32,
+    "object_lora_dropout": 0.05,
+    "object_gate_init": 0.1,
+    "self_attn_lora_rank": 32,
+    "self_attn_lora_alpha": 32,
+    "self_attn_lora_dropout": 0.0,
+    "same_frame_subset_id": "S_same_full59",
+    "same_frame_expected_num_heads": 59
+  },
+  "conditioning": {
+    "xssc_box_source": "amg",
+    "filter_empty_amg": true,
+    "empty_amg_max_resample_attempts": 20,
+    "slot_track_dropout": 0.1,
+    "no_context_ratio": 0.0,
+    "lambda_main": 1.0,
+    "lambda_object_context_reg": 0.0001,
+    "amg_filters": {
+      "max_selected": 11,
+      "min_area_ratio": 0.004,
+      "max_area_ratio": 0.35,
+      "min_bbox_side": 7.0,
+      "background_area_ratio": 0.06,
+      "background_span_ratio": 0.75,
+      "border_area_ratio": 0.025,
+      "border_occupancy_ratio": 0.18,
+      "opposite_edge_area_ratio": 0.04,
+      "shadow_min_area_ratio": 0.03,
+      "shadow_max_luminance_ratio": 0.55,
+      "shadow_max_chromaticity_distance": 0.1,
+      "shadow_max_gradient_mean": 20.0,
+      "duplicate_iou": 0.7,
+      "duplicate_containment": 0.85
+    }
+  },
+  "data": {
+    "dataset_type": "xssc_replay_mix",
+    "pybullet_split": "train",
+    "pybullet_sampling_strategy": "prefix",
+    "kubric_split": "train",
+    "kubric_sampling_strategy": "prefix",
+    "kubric_cache_root": "/data/gaoya/agent-data/cache/kubric_no_gt_box_dataset",
+    "kubric_replay_index_num_frames": 69,
+    "kubric_replay_index_num_context_frames": 20,
+    "mixture_pybullet_ratio": 0.3,
+    "mixture_kubric_ratio": 0.3,
+    "mixture_openvid_ratio": 0.4,
+    "dataset_num_workers": 0
+  },
+  "optimization": {
+    "seed": 42,
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "optimizer_type": "paged_adamw8bit",
+    "max_grad_norm": 1.0,
+    "max_train_steps": 20000,
+    "num_epochs": 100,
+    "fail_on_nonfinite_train_values": true
+  },
+  "checkpointing": {
+    "save_steps": 500,
+    "max_checkpoints_keep": 10,
+    "resume_from": null,
+    "remove_prefix_in_ckpt": "pipe.dit."
+  },
+  "logging": {
+    "report_to": "wandb",
+    "wandb_project": "xssc_wan_head_sparse_training",
+    "wandb_mode": "online",
+    "debug_print_object_regularization": true
+  }
+}
