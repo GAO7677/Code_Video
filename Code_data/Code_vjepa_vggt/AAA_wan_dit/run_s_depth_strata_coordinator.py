@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import time
 from collections import Counter
 from pathlib import Path
@@ -16,6 +17,12 @@ from run_head_role_dose_control_pilot_worker import (
     _load_config,
     _tasks,
 )
+
+PYTHON = Path("/home/gaoya/miniconda3/envs/wan-cu128/bin/python")
+CASE_GALLERY = Path(__file__).with_name(
+    "build_head_role_dose_control_case_gallery.py"
+)
+DOSE_CONFIG = Path(__file__).with_name("head_role_dose_control_pilot.json")
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +51,26 @@ def _read_states(root: Path) -> tuple[Counter[str], list[dict[str, Any]]]:
     return Counter(str(record.get("status", "unknown")) for record in records), records
 
 
+def _refresh_case_gallery(config_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            str(CASE_GALLERY),
+            "--config",
+            str(DOSE_CONFIG),
+            "--s-depth-config",
+            str(config_path),
+        ],
+        check=False,
+    )
+    if result.returncode:
+        print(
+            f"[s-depth-coordinator] case gallery refresh failed: "
+            f"{result.returncode}",
+            flush=True,
+        )
+
+
 def main() -> None:
     args = parse_args()
     config_path = args.config.expanduser().resolve()
@@ -54,6 +81,7 @@ def main() -> None:
     max_attempts = int(config["execution"]["max_attempts_per_task"])
     complete_marker = root / "generation.complete"
     failed_marker = root / "generation.failed"
+    last_gallery_complete = -1
 
     while True:
         counts, records = _read_states(root)
@@ -71,6 +99,9 @@ def main() -> None:
             f"[s-depth-coordinator] {dict(counts)} / expected={expected}",
             flush=True,
         )
+        if counts["complete"] != last_gallery_complete:
+            _refresh_case_gallery(config_path)
+            last_gallery_complete = counts["complete"]
         if counts["complete"] == expected:
             break
         exhausted = [
@@ -119,6 +150,7 @@ def main() -> None:
         },
     )
     complete_marker.touch()
+    _refresh_case_gallery(config_path)
     print(
         f"[s-depth-coordinator] complete: {expected} tasks, "
         f"{expected * len(cases)} videos",

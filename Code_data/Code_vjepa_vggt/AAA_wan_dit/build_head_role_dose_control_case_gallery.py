@@ -21,6 +21,7 @@ DEFAULT_GALLERY_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/"
     "head-role-dose-control-pilot"
 )
+DEFAULT_S_DEPTH_CONFIG = Path(__file__).with_name("s_depth_strata_experiment.json")
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
@@ -50,6 +51,11 @@ METRIC_LABELS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--s-depth-config",
+        type=Path,
+        default=DEFAULT_S_DEPTH_CONFIG,
+    )
     parser.add_argument("--gallery-root", type=Path, default=DEFAULT_GALLERY_ROOT)
     return parser.parse_args()
 
@@ -225,6 +231,51 @@ def build_records(
     return records
 
 
+def build_s_depth_records(
+    root: Path,
+) -> list[dict[str, Any]]:
+    generation_root = root / "generation"
+    records = []
+    for state_path in sorted((root / "state").glob("*.json")):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if state.get("status") != "complete":
+            continue
+        subset_id = str(state["subset_id"])
+        for case_id, value in sorted(state["videos"].items()):
+            video = Path(value).resolve()
+            payload = load_sidecar(video)
+            records.append(
+                {
+                    "kind": "s_depth",
+                    "model": state["model"],
+                    "seed": int(state["seed"]),
+                    "case_id": case_id,
+                    "subset_id": subset_id,
+                    "role": "S",
+                    "k": int(state["k"]),
+                    "replicate": 0,
+                    "matching": "s_depth_stratum",
+                    "start": int(state["step_range"][0]),
+                    "end": int(state["step_range"][1]),
+                    "video": media_url(
+                        video,
+                        generation_root,
+                        "s-depth-generation",
+                    ),
+                    "sidecar": media_url(
+                        video.with_suffix(".json"),
+                        generation_root,
+                        "s-depth-generation",
+                    ),
+                    "metrics": metrics(payload),
+                }
+            )
+    return records
+
+
 def case_page(case_id: str) -> str:
     escaped = html.escape(case_id)
     return PAGE_TEMPLATE.replace("__CASE_ID__", escaped)
@@ -240,7 +291,13 @@ def index_page(first_case: str) -> str:
 def main() -> None:
     args = parse_args()
     config = json.loads(args.config.expanduser().resolve().read_text(encoding="utf-8"))
+    s_depth_config = json.loads(
+        args.s_depth_config.expanduser().resolve().read_text(encoding="utf-8")
+    )
     root = Path(config["storage"]["output_root"]).expanduser().resolve()
+    s_depth_root = (
+        Path(s_depth_config["storage"]["output_root"]).expanduser().resolve()
+    )
     gallery = args.gallery_root.expanduser().resolve()
     input_list = Path(config["input_list"]).expanduser().resolve()
     cases = source_cases(input_list)
@@ -260,8 +317,34 @@ def main() -> None:
         }
         for subset_id, record in subset_payload["subsets"].items()
     }
+    s_depth_subset_payload = json.loads(
+        Path(s_depth_config["matched_subset_manifest"])
+        .expanduser()
+        .resolve()
+        .read_text(encoding="utf-8")
+    )
+    compact_s_depth_subsets = {
+        subset_id: {
+            "role": record["role"],
+            "k": int(record["k"]),
+            "matching": record["matching"],
+            "depth_stratum": record["depth_stratum"],
+            "block_start_inclusive": int(record["block_start_inclusive"]),
+            "block_end_exclusive": int(record["block_end_exclusive"]),
+            "block_histogram": record["block_histogram"],
+        }
+        for subset_id, record in s_depth_subset_payload["subsets"].items()
+    }
     ensure_link(root / "generation", gallery / "media" / "generation")
     ensure_link(root / "progress.json", gallery / "live-progress.json")
+    ensure_link(
+        s_depth_root / "generation",
+        gallery / "media" / "s-depth-generation",
+    )
+    ensure_link(
+        s_depth_root / "progress.json",
+        gallery / "s-depth-progress.json",
+    )
     baseline_base = Path(config["metrics"]["baseline_root"]).expanduser().resolve()
     ensure_link(baseline_base, gallery / "media" / "baselines")
     for case in cases:
@@ -280,6 +363,8 @@ def main() -> None:
         else:
             case["context_url"] = None
     records = build_records(config, root, cases)
+    s_depth_records = build_s_depth_records(s_depth_root)
+    records.extend(s_depth_records)
     completed_tasks = len(
         {
             (
@@ -298,11 +383,31 @@ def main() -> None:
         "updated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "generation_tasks_complete": completed_tasks,
         "generation_tasks_expected": 252,
+        "s_depth_generation_tasks_complete": len(
+            {
+                (
+                    record["model"],
+                    record["seed"],
+                    record["subset_id"],
+                    record["start"],
+                    record["end"],
+                )
+                for record in s_depth_records
+            }
+        ),
+        "s_depth_generation_tasks_expected": (
+            len(s_depth_config["models"])
+            * len(s_depth_config["seeds"])
+            * len(s_depth_config["step_ranges"])
+            * len(compact_s_depth_subsets)
+        ),
+        "s_depth_step_ranges": s_depth_config["step_ranges"],
         "cases": cases,
         "records": records,
         "models": list(MODEL_LABELS),
         "model_labels": MODEL_LABELS,
         "subsets": compact_subsets,
+        "s_depth_subsets": compact_s_depth_subsets,
         "metric_definitions": [
             {
                 "name": metric.name,
@@ -325,7 +430,10 @@ def main() -> None:
     atomic_write(gallery / "cases" / "index.html", index_page(cases[0]["id"]))
     print(
         f"[dose-case-gallery] cases={len(cases)} records={len(records)} "
-        f"complete_tasks={completed_tasks} output={gallery / 'cases'}"
+        f"complete_tasks={completed_tasks} "
+        f"s_depth_tasks={data['s_depth_generation_tasks_complete']}/"
+        f"{data['s_depth_generation_tasks_expected']} "
+        f"output={gallery / 'cases'}"
     )
 
 
@@ -343,9 +451,10 @@ label{display:grid;gap:2px;color:var(--muted);font-size:10px}select{min-width:11
 #case{min-width:min(520px,80vw)}.controls{margin-top:8px}.status{color:var(--accent);font-weight:700}.prompt{margin-top:7px;color:var(--muted)}
 main{padding:14px 16px}.references{display:grid;grid-template-columns:repeat(2,minmax(260px,448px));gap:8px;margin-top:8px}
 .model-group{margin-top:34px;border-top:4px solid var(--accent)}.model-group-title{padding:11px 0;border-bottom:1px solid var(--line)}.model-group-title h2{font-size:24px}
-.setting-row{margin-top:20px}.setting-row-title{display:flex;gap:12px;align-items:baseline;padding:7px 0}.setting-row-title h3{font-size:16px}.setting-row-title p{color:var(--muted)}.setting-row-title a{color:#efb36d;font-weight:700;text-decoration:none}.stage-row{margin-top:12px}.stage-row-title{padding:5px 8px;background:#202629;border-left:3px solid var(--accent);font-size:14px}.block-depths{display:flex;flex-wrap:wrap;gap:5px 14px;margin:-2px 0 7px;color:#c4ccd0;font-size:10px}.block-depths b{color:var(--accent)}.videos{display:grid;grid-template-columns:repeat(7,minmax(210px,1fr));gap:7px;overflow-x:auto}
+.setting-row{margin-top:20px}.setting-row-title{display:flex;gap:12px;align-items:baseline;padding:7px 0}.setting-row-title h3{font-size:16px}.setting-row-title p{color:var(--muted)}.setting-row-title a{color:#efb36d;font-weight:700;text-decoration:none}.stage-row{margin-top:12px}.stage-row-title{padding:5px 8px;background:#202629;border-left:3px solid var(--accent);font-size:14px}.block-depths{display:flex;flex-wrap:wrap;gap:5px 14px;margin:-2px 0 7px;color:#c4ccd0;font-size:10px}.block-depths b{color:var(--accent)}.videos{display:grid;grid-template-columns:repeat(10,minmax(210px,1fr));gap:7px;overflow-x:auto}
 .video-cell{border:1px solid var(--line);background:var(--band)}.video-cell h3{padding:6px 8px;background:#242a2e;font-size:13px}
 .video-cell.all-head{border-color:#8f673d}.video-cell.all-head h3{background:#3a2c20;color:#f0bd80}
+.video-cell.s-depth{border-color:#8f673d}.video-cell.s-depth h3{background:#47301f;color:#ffd19a}
 video{display:block;width:100%;aspect-ratio:7/4;object-fit:contain;background:#050606}.meta{padding:5px 8px;color:var(--muted);font-size:10px;min-height:31px}
 .missing{display:grid;place-items:center;aspect-ratio:7/4;color:var(--pending);background:#1c2225}.metrics{margin-top:38px}.metric-model{margin-top:30px;border-top:3px solid var(--accent)}.metric-model h3{margin:9px 0;font-size:20px}.metric-setting{margin-top:18px;overflow:auto}.metric-setting h4{margin:0 0 6px;font-size:14px}
 .metrics-note{color:var(--muted);margin:5px 0 9px}table{width:100%;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
@@ -375,18 +484,23 @@ function subset(setting,role){return Object.values(D.subsets).find(x=>x.role===r
 function histogramText(histogram){return Object.entries(histogram||{}).sort((a,b)=>Number(a[0])-Number(b[0])).map(([block,count])=>`B${String(block).padStart(2,"0")}${Number(count)>1?`×${count}`:""}`).join(", ")}
 function blockDetails(setting){if(setting.matching==="exact_block"){const item=subset(setting,"S");return`<div class="block-depths"><span><b>S/T/C共享 Block：</b>${histogramText(item&&item.block_histogram)}</span></div>`}return`<div class="block-depths">${["S","T","C"].map(role=>{const item=subset(setting,role);return`<span><b>${role} Block：</b>${histogramText(item&&item.block_histogram)}</span>`}).join("")}</div>`}
 function selectedRecords(model,setting,stage){const s=selection(),rows=R.filter(r=>r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed);return{baseline:rows.find(r=>r.kind==="baseline"),ablations:rows.filter(r=>r.kind==="ablation"&&r.start===stage[0]&&r.end===stage[1]&&r.matching===setting.matching&&r.replicate===setting.replicate)}}
-function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&record.kind==="all_head"?" all-head":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
+function depthSubsets(){const order={early:0,middle:1,late:2};return Object.entries(D.s_depth_subsets||{}).map(([id,x])=>({id,...x})).sort((a,b)=>(order[a.depth_stratum]??99)-(order[b.depth_stratum]??99))}
+function depthStages(){return(D.s_depth_step_ranges||[]).map(x=>x.map(Number)).sort((a,b)=>a[0]-b[0]||a[1]-b[1])}
+function baselineRecord(model){const s=selection();return R.find(r=>r.kind==="baseline"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed)}
+function depthRecord(model,subsetId,stage){const s=selection();return R.find(r=>r.kind==="s_depth"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.subset_id===subsetId&&r.start===stage[0]&&r.end===stage[1])}
+function depthLabel(item){const names={early:"Early",middle:"Middle",late:"Late"},end=item.block_end_exclusive-1;return`${names[item.depth_stratum]||item.depth_stratum} · B${String(item.block_start_inclusive).padStart(2,"0")}–${String(end).padStart(2,"0")} · All S (${item.k} heads)`}
+function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&record.kind==="all_head"?" all-head":record&&record.kind==="s_depth"?" s-depth":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
 function renderReferences(){q("references").innerHTML=media(C.context_url?{video:C.context_url,kind:"reference"}:null,"8帧 Context")+media(C.source_url?{video:C.source_url,kind:"reference"}:null,"Source / GT");q("prompt").textContent=C.caption}
 function oldMediaUrl(src){return src?`${OLD_BASE}${src}`:null}
 function oldRecord(model,role,range){const s=selection();if(!OLD||s.seed!==851)return null;const key=`${String(range[0]).padStart(2,"0")}_${String(range[1]).padStart(2,"0")}`,stage=OLD.videos.stages[key],scores=OLD.metric_scores.stages[key];if(!stage||!stage[model]||!stage[model][role])return null;const counts={S:OLD.head_distribution.roles.S.total,T:OLD.head_distribution.roles.T.total,ST:OLD.head_distribution.roles.ST.total};return{kind:"all_head",video:oldMediaUrl(stage[model][role]),subset_id:`All-${role}`,role,k:counts[role],start:range[0],end:range[1],metrics:scores&&scores[model]?scores[model][role]:{}}}
 function oldLabel(role){return role==="ST"?"旧版 All-S+T":"旧版 All-"+role}
-function renderSettings(){let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>各去噪阶段集中展示：Baseline → 旧版整类消融 → 当前等数量S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row"><h3 class="stage-row-title">去噪阶段 ${stageLabel(stage)}</h3><div class="videos">`;out+=media(x.baseline,"Baseline");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
+function renderSettings(){const depth=depthSubsets();let out="";for(const model of D.models){out+=`<section class="model-group"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2></div>`;for(const setting of settings()){const oldMissing=selection().seed===851?(OLD?"旧版无对应阶段":"旧版数据读取中"):"旧版仅 seed 851";out+=`<div class="setting-row"><div class="setting-row-title"><h3>${settingLabel(setting)}</h3><p>Baseline → S-depth Early/Middle/Late → 旧版 All-S/T/ST → 当前等数量 S/T/C</p><a href="${OLD_BASE}" target="_blank" rel="noopener">旧版完整页</a></div>${blockDetails(setting)}`;for(const stage of stages()){const x=selectedRecords(model,setting,stage);out+=`<section class="stage-row"><h3 class="stage-row-title">去噪阶段 ${stageLabel(stage)}</h3><div class="videos">`;out+=media(x.baseline,"Baseline");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth ${depthLabel(item)}`,"该 S-depth 配置仍在生成");for(const role of["S","T","ST"])out+=media(oldRecord(model,role,stage),oldLabel(role),oldMissing);for(const role of["S","T","C"])out+=media(x.ablations.find(v=>v.role===role),`当前消融 ${role}`);out+="</div></section>"}out+="</div>"}out+="</section>"}q("settings").innerHTML=out}
 function metricCell(record,baseline,metric){if(!record)return`<td class="pending">Pending</td>`;const value=record.metrics[metric.name];if(value===null||value===undefined)return`<td class="pending">Pending</td>`;if(record.kind==="baseline")return`<td><span class="value">${score(value)}</span><span class="delta">baseline</span></td>`;const base=baseline&&baseline.metrics[metric.name];if(base===null||base===undefined)return`<td><span class="value">${score(value)}</span><span class="delta">baseline Pending</span></td>`;const raw=value-base,improvement=metric.direction==="higher"?raw:-raw,state=improvement>0?"good":improvement<0?"bad":"";return`<td class="${state}"><span class="value">${score(value)}</span><span class="delta">Δ ${signed(raw)}</span></td>`}
-function renderMetrics(){const head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){out+=`<section class="metric-model"><h3>${D.model_labels[model]}</h3>`;for(const setting of settings()){let body="";for(const stage of stages()){const x=selectedRecords(model,setting,stage),prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(x.baseline,x.baseline,m)).join("")+"</tr>";for(const role of["S","T","ST"]){const r=oldRecord(model,role,stage);body+=`<tr><td>${prefix}${oldLabel(role)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","C"]){const r=x.ablations.find(v=>v.role===role);body+=`<tr><td>${prefix}当前 ${role}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>${settingLabel(setting)} · 全部去噪阶段</h4>${blockDetails(setting)}<table><thead>${head}</thead><tbody>${body}</tbody></table></div>`}out+="</section>"}q("metric-groups").innerHTML=out}
-function activeRecords(){const map=new Map();for(const setting of settings()){for(const model of D.models){for(const stage of stages()){const x=selectedRecords(model,setting,stage);if(x.baseline)map.set(x.baseline.sidecar,x.baseline);for(const role of["S","T","C"]){const r=x.ablations.find(v=>v.role===role);if(r)map.set(r.sidecar,r)}}}}return[...map.values()]}
+function renderMetrics(){const depth=depthSubsets(),head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){out+=`<section class="metric-model"><h3>${D.model_labels[model]}</h3>`;for(const setting of settings()){let body="";for(const stage of stages()){const x=selectedRecords(model,setting,stage),prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(x.baseline,x.baseline,m)).join("")+"</tr>";for(const item of depth){const r=depthRecord(model,item.id,stage);body+=`<tr><td>${prefix}S-depth ${depthLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","ST"]){const r=oldRecord(model,role,stage);body+=`<tr><td>${prefix}${oldLabel(role)}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}for(const role of["S","T","C"]){const r=x.ablations.find(v=>v.role===role);body+=`<tr><td>${prefix}当前 ${role}</td>`+D.metric_definitions.map(m=>metricCell(r,x.baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>${settingLabel(setting)} · 全部去噪阶段</h4>${blockDetails(setting)}<table><thead>${head}</thead><tbody>${body}</tbody></table></div>`}out+="</section>"}q("metric-groups").innerHTML=out}
+function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","ablation","s_depth"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
 function nested(payload,path){let value=payload;for(const key of path){if(!value||typeof value!=="object")return null;value=value[key]}return typeof value==="number"&&Number.isFinite(value)?value:typeof value==="boolean"?Number(value):null}
 async function refreshMetrics(){const records=activeRecords();await Promise.all(records.map(async record=>{try{const payload=await fetch(`${record.sidecar}?t=${Date.now()}`).then(x=>x.json());record.metrics=Object.fromEntries(D.metric_definitions.map(metric=>[metric.name,nested(payload,metric.path)]))}catch(error){console.warn("sidecar refresh failed",record.sidecar,error)}}));renderMetrics()}
-async function refreshProgress(){try{const p=await fetch(`/head-role-dose-control-pilot/live-progress.json?t=${Date.now()}`).then(x=>x.json());const complete=(p.generation_states||{}).complete||0;q("status").textContent=`${complete}/${p.expected_generation_tasks}组 · ${p.phase}`}catch(error){q("status").textContent=`${D.generation_tasks_complete}/${D.generation_tasks_expected}组 · 更新 ${D.updated_utc}`}}
+async function refreshProgress(){try{const [dose,depth]=await Promise.all([fetch(`/head-role-dose-control-pilot/live-progress.json?t=${Date.now()}`).then(x=>x.json()),fetch(`/head-role-dose-control-pilot/s-depth-progress.json?t=${Date.now()}`).then(x=>x.json())]);const doseComplete=(dose.generation_states||{}).complete||0,depthComplete=(depth.state_counts||{}).complete||0;q("status").textContent=`Dose ${doseComplete}/${dose.expected_generation_tasks} · S-depth ${depthComplete}/${depth.expected_tasks}`}catch(error){q("status").textContent=`Dose ${D.generation_tasks_complete}/${D.generation_tasks_expected} · S-depth ${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected} · 更新 ${D.updated_utc}`}}
 function render(){renderSettings();renderMetrics();refreshMetrics();refreshProgress();q("time").textContent=`本页 ${[...document.querySelectorAll("video")].length} 个视频`}
 function videos(){return[...document.querySelectorAll("video")]}q("play").onclick=()=>videos().forEach(v=>v.play());q("replay").onclick=()=>videos().forEach(v=>{v.currentTime=0;v.play()});q("pause").onclick=()=>videos().forEach(v=>v.pause());
 fetch("../../manifest.json").then(x=>x.json()).then(data=>{D=data;R=data.records;C=data.cases.find(x=>x.id===CASE_ID);options("case",D.cases.map(x=>x.id));q("case").value=CASE_ID;q("case").onchange=()=>location.href=`../${q("case").value}/`;options("seed",[...new Set(R.map(x=>x.seed))].sort((a,b)=>a-b));q("seed").onchange=render;renderReferences();render();fetch(`${OLD_BASE}case.json?t=${Date.now()}`,{cache:"no-store"}).then(x=>{if(!x.ok)throw new Error(`HTTP ${x.status}`);return x.json()}).then(data=>{OLD=data;render()}).catch(error=>{console.warn("旧版整类消融读取失败",error);render()});setInterval(refreshProgress,30000)}).catch(error=>{q("status").textContent=`加载失败: ${error}`});

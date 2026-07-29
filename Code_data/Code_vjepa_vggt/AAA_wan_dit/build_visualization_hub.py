@@ -38,8 +38,8 @@ ENTRIES = (
     (
         "消融视频",
         "head-role-dose-control-pilot/cases/index.html",
-        "S/T/C 等数量与深度匹配 Pilot",
-        "20个case独立页面；三模型Baseline/S/T/C视频和增量指标。",
+        "S/T/C 等数量匹配与 S-depth 分层 Pilot",
+        "20个case独立页面；三模型Baseline、S/T/C匹配消融和Early/Middle/Late All-S分层消融。",
     ),
     (
         "消融视频",
