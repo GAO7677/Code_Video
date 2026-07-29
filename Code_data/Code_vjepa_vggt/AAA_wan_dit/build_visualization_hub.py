@@ -18,6 +18,12 @@ OUTPUTS = (
 )
 ENTRIES = (
     (
+        "训练诊断",
+        "xssc-training-xt-v-x0/index.html",
+        "xSSC训练单步 xt → v → x0",
+        "真实训练样本加噪、DiT速度预测、x0反推与完整49帧VAE解码对照。",
+    ),
+    (
         "Head 分类与注意力",
         "fulltoken-head-classification.html",
         "全 token 时间矩阵与运动轨迹 Head 分类 Pilot",

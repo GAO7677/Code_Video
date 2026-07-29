@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 from diffsynth.utils.data import save_video
+from diffsynth.pipelines.wan_video import ModelConfig, WanVideoPipeline
 
 from code_vjepa_vggt import context_wan_v_newtrain as context_flow
 from code_vjepa_vggt.train_xSSC import train_xssc_context_slots_dinov3 as train
@@ -140,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--diag-fps", type=int, default=30)
     group.add_argument("--diag-video-quality", type=int, default=8)
     group.add_argument("--diag-max-empty-amg-resamples", type=int, default=20)
+    group.add_argument(
+        "--diag-redecode-only",
+        action="store_true",
+        help="Skip DiT and re-decode the saved latents.pt with the full Wan VAE.",
+    )
     return parser
 
 
@@ -338,9 +344,80 @@ def decode_latents(pipe, latents: dict[str, torch.Tensor]) -> dict[str, torch.Te
     with torch.no_grad():
         for name, latent in latents.items():
             value = latent.to(device=pipe.device, dtype=vae_dtype)
-            decoded = pipe.vae.decode_framewise(value, device=pipe.device)
+            decoded = pipe.vae.decode(
+                value,
+                device=pipe.device,
+                tiled=True,
+                tile_size=(30, 52),
+                tile_stride=(15, 26),
+            )
             output[name] = decoded.clamp_(-1, 1).cpu()
     return output
+
+
+def redecode_saved_latents(args, output: Path, device: torch.device) -> None:
+    latent_path = output / "latents.pt"
+    metadata_path = output / "metadata.json"
+    if not latent_path.is_file() or not metadata_path.is_file():
+        raise FileNotFoundError(
+            f"--diag-redecode-only requires {latent_path} and {metadata_path}"
+        )
+    saved = torch.load(latent_path, map_location="cpu", weights_only=True)
+    pipe = WanVideoPipeline.from_pretrained(
+        torch_dtype=torch.bfloat16,
+        device=device,
+        model_configs=[
+            ModelConfig(str(Path(args.wan_root) / "Wan2.2_VAE.pth"))
+        ],
+        tokenizer_config=None,
+        redirect_common_files=False,
+    )
+    videos = decode_latents(
+        pipe,
+        {
+            "ground_truth": saved["input_x0"],
+            "training_xt": saved["training_xt"],
+            "predicted_x0": saved["predicted_x0_context_restored"],
+        },
+    )
+    for name, filename in (
+        ("ground_truth", "vae_ground_truth_x0.mp4"),
+        ("training_xt", "vae_training_xt.mp4"),
+        ("predicted_x0", "vae_predicted_x0.mp4"),
+    ):
+        save_tensor_video(
+            videos[name],
+            output / filename,
+            fps=args.diag_fps,
+            quality=args.diag_video_quality,
+        )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["decoder"] = {
+        "method": "WanVideoVAE38.decode",
+        "tiled": True,
+        "tile_size": [30, 52],
+        "tile_stride": [15, 26],
+        "decoded_frames": {
+            name: int(video.shape[2]) for name, video in videos.items()
+        },
+    }
+    metadata_path.write_text(
+        json.dumps(jsonable(metadata), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (output / "index.html").write_text(
+        build_page(metadata),
+        encoding="utf-8",
+    )
+    print(json.dumps(
+        {
+            "output": str(output),
+            "mode": "redecode_only",
+            "decoder": metadata["decoder"],
+        },
+        ensure_ascii=False,
+        indent=2,
+    ))
 
 
 def build_page(metadata: dict[str, Any]) -> str:
@@ -401,6 +478,9 @@ def main() -> None:
 
     output = args.diag_output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.diag_redecode_only:
+        redecode_saved_latents(args, output, device)
+        return
     dataset = train.base.build_dataset(args)
     requested_index = int(args.diag_sample_index) % len(dataset)
 

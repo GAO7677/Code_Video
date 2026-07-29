@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "experiment_name": "xssc_training_xt_v_x0_two_cases",
+  "runtime": {
+    "device": "cuda:0",
+    "forward_mode": "eval"
+  },
+  "model": {
+    "diffsynth_root": "/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main",
+    "wan_root": "/data/gaoya/ckpt/Wan-AI-Wan2.2-TI2V-5B",
+    "wan_lora_checkpoint": "/data/gaoya/AAA_test_video/0529/vjepa_vggt/train/checkpoints/raw_phys_state_wan_lora_continue_576x1024_f24/checkpoints/step-000500/checkpoint.safetensors",
+    "wan_xssc_checkpoint": "/data/gaoya/agent-data/checkpoints/train_xssc_context_slots_dinov3/formal_gpu01_20260722T143309Z/checkpoints/step-001500",
+    "xssc_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256",
+    "xssc_config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256/upstream/config-randsfq/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000.py",
+    "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-026000.pth",
+    "dinov3_root": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256/third_party/dinov3",
+    "dinov3_checkpoint": "/data/gaoya/ckpt/facebook-dinov3-vitl16-pretrain-lvd1689m/model.safetensors"
+  },
+  "architecture": {
+    "wan_lora_rank": 32,
+    "wan_lora_alpha": 32,
+    "wan_lora_target_modules": "q,k,v,o,ffn.0,ffn.2",
+    "object_lora_rank": 32,
+    "object_lora_alpha": 32.0,
+    "object_lora_dropout": 0.05,
+    "object_gate_init": 0.1,
+    "xssc_input_size": 256,
+    "xssc_max_time_steps": 64,
+    "xssc_slot_track_dropout": 0.1
+  },
+  "xssc_boxes": {
+    "source": "amg",
+    "cache_dir": "/data/gaoya/agent-data/cache/xssc_dinov3_context_amg_boxes_xt_v_x0_cases",
+    "require_nonempty_selected_masks": false
+  },
+  "video_preprocessing": {
+    "num_frames": 49,
+    "num_context_frames": 8,
+    "height": 512,
+    "width": 896,
+    "sampling_mode": "prefix",
+    "resize_mode": "stretch"
+  },
+  "flow_matching": {
+    "noise_seed": 42,
+    "timestep_index": 500,
+    "timestep_fraction": 0.5
+  },
+  "output": {
+    "root": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/xssc-training-xt-v-x0-two-cases",
+    "fps": 30,
+    "video_quality": 8,
+    "save_latents": true,
+    "overwrite": true
+  },
+  "cases": [
+    {
+      "case_id": "physicIQ_ball_block_fall",
+      "dataset_source": "Physics-IQ",
+      "video_path": "/data/gaoya/AAA_test_video/0623/testdataset/0002_full-videos_30FPS_perspective-center_take-1_trimmed-ball-and-block-fall/0002_full-videos_30FPS_perspective-center_take-1_trimmed-ball-and-block-fall_motion_to_end.mp4",
+      "caption": "Two pillows are on a table beneath two grabber tools holding a brown tennis ball and an orange block. The tools release both objects, which fall under gravity in a static camera view."
+    },
+    {
+      "case_id": "pybullet_f5_drop_support_001460",
+      "dataset_source": "0613 PyBullet",
+      "video_path": "/data/gaoya/AAA_test_video/Dataset_physV/0613pybullet/raw_v1/industrial_s1_scale2_merged_h264_batch1500/val/F5_drop_support/sample_001460/source_video.mp4",
+      "caption": "A ball, a round rigid object, falls under gravity onto a stationary block-shaped support, then rolls across and leaves the supporting surface."
+    }
+  ]
+}
