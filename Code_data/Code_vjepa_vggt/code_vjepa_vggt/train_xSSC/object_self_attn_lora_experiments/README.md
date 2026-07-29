@@ -53,6 +53,28 @@ bash run_train_from_config.sh configs/object_only.json
 Every run stores its fully resolved configuration and exact launch command in
 the checkpoint output directory.
 
+## GPU 1/2/6/7 smoke gate and formal runs
+
+The single-GPU formal configs map Object-only, Full-SA, S-head, and T-head to
+GPU 1, 2, 6, and 7 respectively. Their gradient accumulation is 8, preserving
+the original effective batch of 8. The matching smoke configs run one complete
+optimizer step with `save_steps=1` and W&B disabled.
+
+The gate script runs all four smoke trainings, performs one-case two-step
+inference from every saved checkpoint, verifies nonempty MP4/JSON outputs, and
+only then creates a four-window formal tmux session with W&B online:
+
+```bash
+tmux new-session -d -s xssc_lora_smoke_gate \
+  "bash /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_smoke_then_formal_gpu1267.sh"
+```
+
+Standalone checkpoint inference uses the run's saved resolved config:
+
+```bash
+bash run_infer_from_experiment.sh /path/to/run/checkpoints/step-000001 1
+```
+
 For `s_head` and `t_head`, the launcher also stores the exact input JSON as
 `head_selection_config.json`. Each model checkpoint contains both the sorted
 `[block, head]` tensor and the SHA256 of that JSON. Resume validates both

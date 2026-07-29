@@ -213,7 +213,10 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     command = [
         str(launch["accelerate_bin"]),
         "launch",
-        "--multi_gpu",
+    ]
+    if int(launch["num_processes"]) > 1:
+        command.append("--multi_gpu")
+    command.extend([
         "--num_processes",
         str(launch["num_processes"]),
         "--num_machines",
@@ -221,7 +224,7 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--mixed_precision",
         str(launch["mixed_precision"]),
         str(TRAIN_SCRIPT),
-    ]
+    ])
     options = {
         "--diffsynth_root": paths["diffsynth_root"],
         "--wan_root": paths["wan_root"],

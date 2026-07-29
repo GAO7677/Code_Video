@@ -1,0 +1,13 @@
+{
+  "extends": "t_head.json",
+  "experiment": {
+    "name": "common_t_head_full70_gpu7_formal"
+  },
+  "launch": {
+    "gpu_set": "7",
+    "num_processes": 1
+  },
+  "optimization": {
+    "gradient_accumulation_steps": 8
+  }
+}

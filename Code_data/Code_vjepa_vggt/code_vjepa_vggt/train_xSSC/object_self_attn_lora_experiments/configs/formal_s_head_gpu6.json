@@ -1,0 +1,13 @@
+{
+  "extends": "s_head.json",
+  "experiment": {
+    "name": "same_frame_s_head_full59_gpu6_formal"
+  },
+  "launch": {
+    "gpu_set": "6",
+    "num_processes": 1
+  },
+  "optimization": {
+    "gradient_accumulation_steps": 8
+  }
+}

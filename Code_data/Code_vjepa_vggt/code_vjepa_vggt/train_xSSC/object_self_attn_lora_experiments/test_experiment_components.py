@@ -279,6 +279,23 @@ class ExperimentComponentTests(unittest.TestCase):
             self.assertEqual(info["num_heads"], 70)
             self.assertEqual(info["role"], "T")
 
+    def test_single_gpu_launcher_omits_multi_gpu_flag(self) -> None:
+        config_path = (
+            experiment.EXPERIMENT_ROOT
+            / "configs"
+            / "formal_object_only_gpu1.json"
+        )
+        raw, _ = launcher.load_config(config_path)
+        config = launcher.validate_config(raw, config_path.parent)
+        command = launcher.build_command(config, Path("/tmp/test-single-gpu"))
+        self.assertNotIn("--multi_gpu", command)
+        self.assertEqual(config["launch"]["gpu_set"], "1")
+        self.assertEqual(config["launch"]["num_processes"], 1)
+        self.assertEqual(
+            int(config["optimization"]["gradient_accumulation_steps"]),
+            8,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
