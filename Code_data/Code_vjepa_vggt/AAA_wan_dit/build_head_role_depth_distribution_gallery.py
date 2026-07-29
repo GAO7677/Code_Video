@@ -471,55 +471,56 @@ def subtype_heatmaps(
     common_subtypes: list[dict[str, Any]],
     output: Path,
 ) -> None:
-    fig, axes = plt.subplots(
-        len(COMMON_ROLES),
-        1,
-        figsize=(17.5, 15.5),
-        constrained_layout=True,
-    )
-    image = None
-    for axis, role in zip(axes, COMMON_ROLES):
+    row_labels = []
+    rows = []
+    role_boundaries = []
+    for role in COMMON_ROLES:
         role_rows = [row for row in common_subtypes if row["role"] == role]
         labels = [label for _, label in ROLE_COMPONENTS[role]]
         keys = [key for key, _ in ROLE_COMPONENTS[role]]
         counts = block_counts(role_rows, group_key="subtype", groups=keys)
-        values = np.asarray([counts[key] for key in keys])
-        vmax = max(1, int(values.max()))
-        image = axis.imshow(
-            values,
-            aspect="auto",
-            interpolation="nearest",
-            cmap="BuPu",
-            vmin=0,
-            vmax=vmax,
+        row_labels.extend(
+            f"{role} · {label} (n={sum(counts[key])})"
+            for key, label in zip(keys, labels)
         )
-        axis.set_title(
-            f"{ROLE_PLOT_LABELS[role]} · n={len(role_rows)}",
-            loc="left",
-            fontweight="bold",
-        )
-        axis.set_yticks(range(len(labels)), labels)
-        axis.set_xticks(range(30), [f"{block:02d}" for block in range(30)])
-        axis.set_xlabel("DiT block")
-        for row in range(values.shape[0]):
-            for column in range(values.shape[1]):
-                value = int(values[row, column])
-                if value:
-                    axis.text(
-                        column,
-                        row,
-                        str(value),
-                        ha="center",
-                        va="center",
-                        fontsize=6.2,
-                        color="white" if value >= max(2, 0.65 * vmax) else "#20192b",
-                    )
-    assert image is not None
-    fig.suptitle(
-        "Cross-model common heads: mutually exclusive feature-dominance subtypes",
-        fontsize=15,
+        rows.extend(counts[key] for key in keys)
+        role_boundaries.append(len(rows))
+
+    values = np.asarray(rows)
+    vmax = max(1, int(values.max()))
+    fig, axis = plt.subplots(figsize=(17.5, 7.2), constrained_layout=True)
+    image = axis.imshow(
+        values,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="BuPu",
+        vmin=0,
+        vmax=vmax,
+    )
+    axis.set_yticks(range(len(row_labels)), row_labels)
+    axis.set_xticks(range(30), [f"{block:02d}" for block in range(30)])
+    axis.set_xlabel("DiT block")
+    axis.set_title(
+        "Mutually exclusive feature subtypes of cross-model common heads",
+        loc="left",
         fontweight="bold",
     )
+    for boundary in role_boundaries[:-1]:
+        axis.axhline(boundary - 0.5, color="#4f5652", linewidth=1.0)
+    for row in range(values.shape[0]):
+        for column in range(values.shape[1]):
+            value = int(values[row, column])
+            if value:
+                axis.text(
+                    column,
+                    row,
+                    str(value),
+                    ha="center",
+                    va="center",
+                    fontsize=6.3,
+                    color="white" if value >= max(3, 0.65 * vmax) else "#20192b",
+                )
+    fig.colorbar(image, ax=axis, label="Head count in block", shrink=0.8)
     fig.savefig(output, dpi=170)
     plt.close(fig)
 
@@ -595,13 +596,35 @@ def build_page(
     role_totals = {
         role: int(sum(common_counts[role])) for role in COMMON_ROLES
     }
-    stat_items = "".join(
-        f"<div class='stat'><span>{ROLE_LABELS[role]}</span>"
-        f"<strong>{role_totals[role]}</strong></div>"
-        for role in COMMON_ROLES
-    )
-    common_table = table_html(common_counts, ROLE_LABELS)
-    subtype_html = subtype_sections(common_subtypes)
+    common_depth = depth_counts(common_counts)
+    depth_rows = []
+    for role in COMMON_ROLES:
+        values = common_depth[role]
+        maximum = max(values.values())
+        dominant = " / ".join(
+            band.replace(" B", " B")
+            for band, value in values.items()
+            if value == maximum
+        )
+        depth_rows.append(
+            f"<tr><th>{ROLE_LABELS[role]}</th>"
+            f"<td>{values['Early B00-09']}</td>"
+            f"<td>{values['Middle B10-19']}</td>"
+            f"<td>{values['Late B20-29']}</td>"
+            f"<td>{role_totals[role]}</td>"
+            f"<td>{html.escape(dominant)}</td></tr>"
+        )
+    subtype_totals = []
+    for role in COMMON_ROLES:
+        rows = [row for row in common_subtypes if row["role"] == role]
+        counts = Counter(row["subtype_label"] for row in rows)
+        subtype_totals.append(
+            f"<tr><th>{ROLE_LABELS[role]}</th><td>"
+            + " · ".join(
+                f"{html.escape(label)} {count}" for label, count in counts.items()
+            )
+            + "</td></tr>"
+        )
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -609,52 +632,32 @@ def build_page(
 <style>
 :root{{--bg:#f5f6f4;--ink:#202523;--muted:#626c67;--line:#c9cfcb;--accent:#176f62;--paper:#fff}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif;letter-spacing:0}}
-header,main{{max-width:1500px;margin:auto;padding:18px 26px}}header{{border-bottom:1px solid var(--line)}}
+header,main{{max-width:1420px;margin:auto;padding:18px 26px}}header{{border-bottom:1px solid var(--line)}}
 h1,h2,h3,p{{margin:0}}h1{{font-size:26px}}h2{{font-size:19px}}h3{{font-size:15px}}p{{color:var(--muted)}}
 .topline{{display:flex;align-items:center;justify-content:space-between;gap:16px}}.back{{color:var(--accent);font-weight:700;text-decoration:none}}
-.meta{{margin-top:5px}}section{{padding:24px 0;border-bottom:1px solid var(--line)}}.lead{{max-width:1100px;margin-top:11px}}
-.stats{{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));border:1px solid var(--line);margin-top:18px;background:var(--paper)}}
-.stat{{padding:12px 15px;border-right:1px solid var(--line)}}.stat:last-child{{border-right:0}}.stat span{{display:block;color:var(--muted);font-size:12px}}.stat strong{{font-size:24px}}
-.plots{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}}figure{{margin:0;background:var(--paper);border:1px solid var(--line);padding:10px}}
-figure.wide{{grid-column:1/-1}}figcaption{{font-weight:700;margin:2px 3px 8px}}img{{display:block;width:100%;height:auto}}
-.section-head{{display:flex;justify-content:space-between;align-items:end;gap:18px;margin-bottom:12px}}.select-label{{display:flex;align-items:center;gap:8px;color:var(--muted)}}
-select{{padding:7px 28px 7px 9px;background:#fff;border:1px solid #9da8a2;color:var(--ink);font:inherit}}
-.table-scroll{{overflow-x:auto;background:var(--paper);border:1px solid var(--line)}}table{{border-collapse:collapse;width:100%}}
-.block-table{{min-width:1260px;font-size:11px}}th,td{{border-right:1px solid #e1e5e2;border-bottom:1px solid #e1e5e2;text-align:center;padding:5px 4px;white-space:nowrap}}
-.block-table th:first-child{{position:sticky;left:0;background:#f1f3f1;z-index:1;text-align:left;min-width:155px}}thead th{{background:#eef1ef}}td.total{{font-weight:800;background:#eef1ef}}
-.n1{{background:#edf6f3}}.n2{{background:#d8ece6}}.n3{{background:#bee1d7}}.n4{{background:#9dd3c6}}.n5{{background:#79c2b1}}.n6{{background:#55aa99}}.n7{{background:#338c7e;color:white}}.n8,.n9{{background:#176f62;color:white}}
-.subtype-group{{margin-top:16px}}.subtype-group p{{margin:3px 0 8px}}.note{{border-left:4px solid #e39a27;padding:8px 12px;margin-top:14px;background:#fff}}
-.downloads{{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}}.downloads a{{color:var(--accent);font-weight:700}}
-code{{font-size:12px;overflow-wrap:anywhere}}@media(max-width:900px){{header,main{{padding:15px}}.stats{{grid-template-columns:1fr 1fr}}.stat{{border-bottom:1px solid var(--line)}}.plots{{grid-template-columns:1fr}}figure.wide{{grid-column:auto}}.section-head{{align-items:start;flex-direction:column}}}}
+.meta{{margin-top:5px}}section{{padding:22px 0;border-bottom:1px solid var(--line)}}.lead{{max-width:1000px;margin-top:8px}}
+figure{{margin:13px 0 0;background:var(--paper);border:1px solid var(--line);padding:10px}}figcaption{{font-weight:700;margin:2px 3px 8px}}img{{display:block;width:100%;height:auto}}
+.summary-grid{{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-top:13px}}table{{border-collapse:collapse;width:100%;background:var(--paper);border:1px solid var(--line)}}
+th,td{{border-right:1px solid #e1e5e2;border-bottom:1px solid #e1e5e2;text-align:center;padding:7px 8px}}th:first-child{{text-align:left}}thead th{{background:#eef1ef}}tbody th{{background:#f7f8f7}}
+.small-table td{{text-align:left}}.note{{border-left:4px solid #e39a27;padding:8px 12px;margin-top:12px;background:#fff}}
+@media(max-width:900px){{header,main{{padding:15px}}.summary-grid{{grid-template-columns:1fr}}}}
 </style></head><body>
 <header><div class="topline"><h1>Head 类别与子类别 Block 深度分布</h1>
 <a class="back" href="../index.html">返回可视化总入口</a></div>
 <p class="meta">冻结口径：22 seeds × 20 cases × 3 models · 30 blocks × 24 heads · 更新 {updated}</p></header>
 <main>
-<section><h2>统计口径</h2><p class="lead">主类别来自现有聚合分类：S/T/P/C/G 按四个去噪步的角色分数、margin和跨样本support确定，M表示混合或不稳定。公共稳定head要求同一(block, head)在三个模型中属于同一非M类别。子类别不是新的官方角色标签，而是把每个公共稳定head按所属角色内部“跨样本、跨模型平均特征rank最高”的分数组成项做互斥归类，用来观察角色内部的深度结构。</p>
-<div class="stats">{stat_items}</div>
-<p class="note">S 子类别已与冻结分区逐head校验：{s_audit["status"]}，Local={s_audit["local_dominant"]}、Same-frame={s_audit["same_frame_dominant"]}。T/P/C/G 的子类别采用同样的唯一argmax规则，属于描述性分解，尚未替代主分类。</p></section>
-<section><h2>主类别深度分布</h2>
-<div class="plots"><figure class="wide"><figcaption>三个模型各自的主类别 × Block</figcaption><img src="per_model_role_block_heatmaps.png" alt="per model role block heatmaps"></figure>
-<figure><figcaption>三模型公共稳定类别 × Block</figcaption><img src="common_role_block_distribution.png" alt="common role block distribution"></figure>
-<figure><figcaption>Early / Middle / Late 比例</figcaption><img src="role_depth_band_composition.png" alt="role depth band composition"></figure></div></section>
-{main_table_section(model_counts)}
-<section><h2>精确 Block 计数：三模型公共稳定类别</h2>
-<p>同一个公共head只属于一个主类别；总计{sum(role_totals.values())}个公共稳定head。</p>{common_table}</section>
-<section><h2>公共稳定 Head 的互斥子类别</h2>
-<p>每个角色内部按公式组成特征的平均rank最大项唯一归类；数值代表该block中的head数量。</p>
-<figure class="wide" style="margin-top:14px"><figcaption>五类公共稳定head的子类别 × Block</figcaption><img src="common_subtype_block_heatmaps.png" alt="common subtype block heatmaps"></figure>
-{subtype_html}</section>
-<section><h2>数据文件</h2><p>页面统计可直接复算，未从图片反推数据。</p>
-<div class="downloads"><a href="distribution_data.json">完整 JSON</a><a href="per_model_role_by_block.csv">模型主类别 CSV</a><a href="common_role_by_block.csv">公共类别 CSV</a><a href="feature_subtype_heads.csv">逐 Head 子类别 CSV</a><a href="common_subtype_by_block.csv">子类别 Block CSV</a></div>
-<p style="margin-top:10px">主分类：<code>{html.escape(str(SNAPSHOT_ROOT / "aggregate_heads.csv"))}</code><br>
-公共稳定head：从上述主分类逐(block, head)求三个模型相同的非M角色<br>
-原始rank分区：<code>{html.escape(str(CLASSIFICATION_ROOT))}</code>（{len(manifest["partitions"])} partitions）</p></section>
+<section><h2>主类别分布</h2>
+<p class="lead">只统计三个模型中类别一致的349个公共稳定head，这也是后续公共head消融使用的集合。</p>
+<figure><img src="common_role_block_distribution.png" alt="common role block distribution"></figure>
+<div class="summary-grid"><table><thead><tr><th>类别</th><th>Early<br>B00-09</th><th>Middle<br>B10-19</th><th>Late<br>B20-29</th><th>总数</th><th>主要深度</th></tr></thead>
+<tbody>{''.join(depth_rows)}</tbody></table>
+<table class="small-table"><thead><tr><th>类别</th><th>互斥子类别数量</th></tr></thead><tbody>{''.join(subtype_totals)}</tbody></table></div></section>
+<section><h2>子类别逐 Block 分布</h2>
+<p class="lead">每个head只归入所属角色中平均特征rank最高的一个子类别；格内数字是对应block的head数。</p>
+<figure><img src="common_subtype_block_heatmaps.png" alt="common subtype block heatmaps"></figure>
+<p class="note">S 的 Local 100 / Same-frame 59 已与冻结分区逐head完全一致。其他子类别用于描述角色内部结构，不改变原始S/T/P/C/G分类。</p></section>
 </main>
-<script>
-const select=document.getElementById("model-select");
-select.addEventListener("change",()=>document.querySelectorAll(".model-table").forEach(table=>table.hidden=table.dataset.model!==select.value));
-</script></body></html>"""
+</body></html>"""
 
 
 def write_count_csv(

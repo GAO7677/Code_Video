@@ -7,7 +7,7 @@ PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
 OUTPUT="/data/gaoya/agent-data/outputs/wan_dit_s_motion_analysis"
 LATEST="${OUTPUT}/incremental_snapshots/latest"
 REPORT="/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/gallery/multiseed/motion-n-analysis/partial"
-GPUS=(0 1 2 3 5 6 7)
+read -r -a GPUS <<< "${GPU_LIST:-0 1 2 3 5 6 7}"
 
 SNAPSHOT_DIR="${1:-$(cat "${LATEST}")}"
 if [[ ! -f "${SNAPSHOT_DIR}/inventory.json" ]]; then

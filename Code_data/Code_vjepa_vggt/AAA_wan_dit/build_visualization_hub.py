@@ -39,7 +39,7 @@ ENTRIES = (
         "Head 分类与注意力",
         "head-role-depth-distribution/index.html",
         "Head 类别与子类别 Block 深度分布",
-        "三模型 S/T/P/C/G/M、公共稳定 Head 及互斥特征子类别的逐 Block 分布。",
+        "三模型公共稳定 S/T/P/C/G 及互斥特征子类别的逐 Block 分布。",
     ),
     (
         "消融视频",

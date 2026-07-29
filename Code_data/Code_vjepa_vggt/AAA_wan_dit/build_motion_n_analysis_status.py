@@ -27,6 +27,9 @@ CASE_GALLERY_URL = "/s-head-ablation/"
 GLOBAL_MOTION_ROOT = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_s_motion_analysis"
 )
+GLOBAL_VBENCH_LATEST = (
+    GLOBAL_MOTION_ROOT / "vbench_snapshots" / "latest"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +65,14 @@ def metric_status(root: Path) -> dict[str, Any]:
     metrics = root / "metrics"
     incremental = root / "incremental_metrics_live"
     candidate = metrics if metrics.is_dir() else incremental
+    snapshot_label = ""
+    if not candidate.is_dir() and GLOBAL_VBENCH_LATEST.is_file():
+        global_candidate = Path(
+            GLOBAL_VBENCH_LATEST.read_text(encoding="utf-8").strip()
+        )
+        if global_candidate.is_dir():
+            candidate = global_candidate
+            snapshot_label = "统一 VBench 增量快照；"
     if not candidate.is_dir():
         return {
             "status": "not_started",
@@ -94,7 +105,8 @@ def metric_status(root: Path) -> dict[str, Any]:
         "failed": failed,
         "expected": expected,
         "detail": (
-            f"worker: running {workers_running}, complete {workers_complete}"
+            f"{snapshot_label}worker: running {workers_running}, "
+            f"complete {workers_complete}；输出：{candidate}"
             if expected
             else "指标目录存在，但尚未写入任务队列。"
         ),
@@ -388,7 +400,7 @@ th,td{{border-bottom:1px solid var(--line);padding:8px 9px;text-align:left;verti
 </head>
 <body><main>
 <header><div><h1>S Head 消融与指标状态</h1><p>S 分类依据拆分与网络深度拆分实验的统一进度页。</p></div><p class="stamp">更新时间：{html.escape(updated)}<br>页面每 30 秒自动刷新</p></header>
-<div class="note"><b>状态口径：</b>生成数统计磁盘上已完成的视频，不会因 benchmark 的临时锁而归零。当前增量快照会先提取已有视频并写入正式缓存，全部生成完成后再执行严格全量汇总。可查看 <a href="smoke/">单 case smoke 结果</a>；本轮结束后查看 <a href="partial/">增量 Motion Impact 表格</a>。</div>
+<div class="note"><b>状态口径：</b>生成数统计磁盘上已完成的视频，不会因 benchmark 的临时锁而归零。当前增量快照会先提取已有视频并写入正式缓存，全部生成完成后再执行严格全量汇总。可查看 <a href="smoke/">单 case smoke 结果</a>、<a href="partial/">增量 Motion Impact 表格</a>；VBench 当前进度显示在各实验的 Benchmark 卡片中。</div>
 {experiment_section("S 分类消融", "local_enrichment 主导组 vs same_frame_mass 主导组；两组 head 不重叠，并保持 block 数量匹配。", feature)}
 {experiment_section("S 分类联合消融", "将上述两个互斥的 32-head subset 取并集，同时消融全部 64 个 head。", union)}
 {experiment_section("S 分类分阶段消融", "对 Local-32、Same-frame-32、Union-64 分别应用去噪区间 0–10 与 10–20。", phased)}
