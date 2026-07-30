@@ -475,7 +475,7 @@ def build_status(
                     default=None,
                 ),
                 "metric_done": metric_done,
-                "metric_total": len(method_manifests) * total_metrics,
+                "metric_total": len(method_discovered) * total_metrics,
             }
         )
     return rows

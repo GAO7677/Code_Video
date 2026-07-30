@@ -83,7 +83,9 @@
           "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/object_only_gpu1_formal/formal_20260729T184553Z/checkpoints/interrupted-latest"
         }
       ],
-      "watch_roots": [],
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/object_only_gpu1_formal/formal_20260729T184553Z/checkpoints"
+      ],
       "bootstrap_result_roots": {
         "529": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/object_only_step000529_steps8_512x896_ctx08_49f"
       }
