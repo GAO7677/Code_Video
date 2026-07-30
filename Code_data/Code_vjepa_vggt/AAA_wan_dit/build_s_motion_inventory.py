@@ -94,6 +94,7 @@ def main() -> None:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     cases = {str(case["id"]): case for case in payload["cases"]}
     depth_subsets = payload["s_depth_subsets"]
+    dominant_depth_subsets = payload.get("s_dominant_depth_subsets", {})
     records = payload["records"]
 
     region_by_case: dict[str, dict[str, Any]] = {}
@@ -124,6 +125,7 @@ def main() -> None:
                 "variant": "gt",
                 "subtype": None,
                 "depth_stratum": None,
+                "dominance_class": None,
                 "head_count": 0,
                 "denoise_step_range": None,
                 "source": fingerprint(gt_path),
@@ -156,6 +158,13 @@ def main() -> None:
             and record.get("subset_id") in depth_subsets
         ):
             wanted_records.append(record)
+        elif (
+            kind == "s_dominant_depth"
+            and seed == 851
+            and stage in DEPTH_STAGES
+            and record.get("subset_id") in dominant_depth_subsets
+        ):
+            wanted_records.append(record)
 
     seen: set[str] = set()
     for record in wanted_records:
@@ -170,16 +179,27 @@ def main() -> None:
             variant = "baseline"
             subtype = None
             depth_stratum = None
+            dominance_class = None
         elif kind == "s_feature_split":
             family = "s_feature"
             subtype = str(record["feature_subtype"])
             depth_stratum = None
+            dominance_class = None
             variant = f"{subtype}__steps{start:02d}_{end:02d}"
-        else:
+        elif kind == "s_depth":
             family = "s_depth"
             subtype = None
             depth_stratum = str(depth_subsets[record["subset_id"]]["depth_stratum"])
+            dominance_class = None
             variant = f"{depth_stratum}__steps{start:02d}_{end:02d}"
+        else:
+            family = "s_dominant_depth"
+            subset = dominant_depth_subsets[record["subset_id"]]
+            subtype = str(subset["feature_subtype"])
+            depth_value = subset.get("depth_stratum")
+            depth_stratum = None if depth_value is None else str(depth_value)
+            dominance_class = str(subset["dominance_class"])
+            variant = f"{record['subset_id']}__steps{start:02d}_{end:02d}"
         entry_id = f"{family}__{model}__seed-{seed:06d}__{variant}__{case_id}"
         if entry_id in seen:
             raise RuntimeError(f"Duplicate inventory entry: {entry_id}")
@@ -209,6 +229,7 @@ def main() -> None:
                 "subset_id": str(record["subset_id"]),
                 "subtype": subtype,
                 "depth_stratum": depth_stratum,
+                "dominance_class": dominance_class,
                 "head_count": int(record.get("k", 0)),
                 "denoise_step_range": None if family == "baseline" else [start, end],
                 "source": fingerprint(video_path),
@@ -228,6 +249,12 @@ def main() -> None:
             * len(depth_subsets)
             * len(DEPTH_STAGES)
             * len(DEPTH_SEEDS)
+        ),
+        "s_dominant_depth": (
+            len(cases)
+            * len(MODELS)
+            * len(dominant_depth_subsets)
+            * len(DEPTH_STAGES)
         ),
     }
     actual = {
@@ -249,6 +276,7 @@ def main() -> None:
         "depth_stages": [list(stage) for stage in DEPTH_STAGES],
         "depth_seeds": list(DEPTH_SEEDS),
         "depth_subsets": depth_subsets,
+        "dominant_depth_subsets": dominant_depth_subsets,
         "entries": entries,
         "missing": missing,
         "counts": {"actual": actual, "expected": expected, "total": len(entries)},

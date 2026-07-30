@@ -49,6 +49,16 @@ DEPTH_LABELS = {
     "middle": "Middle B10-19",
     "late": "Late B20-29",
 }
+DOMINANT_LABELS = {
+    "S_local_dominant_all": "Local dominant | all",
+    "S_local_dominant_depth_early": "Local dominant | B00-09",
+    "S_local_dominant_depth_middle": "Local dominant | B10-19",
+    "S_local_dominant_depth_late": "Local dominant | B20-29",
+    "S_same_frame_dominant_all": "Same-frame dominant | all",
+    "S_same_frame_dominant_depth_early": "Same-frame dominant | B00-09",
+    "S_same_frame_dominant_depth_middle": "Same-frame dominant | B10-19",
+    "S_same_frame_dominant_depth_late": "Same-frame dominant | B20-29",
+}
 BENCHMARK_METRICS = (
     ("physics_iq_with_context", "Physics-IQ ctx"),
     ("pmf_with_context", "PMF ctx"),
@@ -265,6 +275,33 @@ def depth_table(motion: pd.DataFrame) -> str:
     return "".join(rows)
 
 
+def dominant_table(motion: pd.DataFrame) -> str:
+    rows = []
+    data = motion[motion["family"] == "s_dominant_depth"].sort_values(
+        ["model", "denoise_start", "denoise_end", "subset_id"]
+    )
+    for row in data.itertuples():
+        gain_class = evidence_class(
+            float(row.gt_gain_ci_low), float(row.gt_gain_ci_high)
+        )
+        label = DOMINANT_LABELS.get(row.subset_id, row.subset_id)
+        rows.append(
+            f"<tr data-model='{html.escape(row.model)}'>"
+            f"<td>{html.escape(MODEL_LABELS[row.model])}</td>"
+            f"<td>{html.escape(str(label))}</td>"
+            f"<td>{stage_label(row.denoise_start, row.denoise_end)}</td>"
+            f"<td>{int(row.head_count)}</td>"
+            f"<td>{int(row.n_cases)} / {int(row.n_seeds)}</td>"
+            f"<td>{fmt(row.impact_mean)} "
+            f"<span class='ci'>[{fmt(row.impact_ci_low)}, {fmt(row.impact_ci_high)}]</span></td>"
+            f"<td>{fmt(row.impact_per_head_approx, 5)}</td>"
+            f"<td class='{gain_class}'>{fmt(row.gt_gain_mean, signed=True)} "
+            f"<span class='ci'>[{fmt(row.gt_gain_ci_low, signed=True)}, "
+            f"{fmt(row.gt_gain_ci_high, signed=True)}]</span></td></tr>"
+        )
+    return "".join(rows)
+
+
 def benchmark_table(benchmark: pd.DataFrame) -> str:
     rows = []
     data = benchmark[benchmark["role"] == "S"].sort_values(
@@ -430,6 +467,7 @@ def build_html(
         ("s_feature_union", "S union"),
         ("s_feature_phased", "S 分阶段"),
         ("s_depth", "S 深度"),
+        ("s_dominant_depth", "S 主导×深度"),
     ):
         item = status.get(key, {})
         counts = item.get("state_counts", {})
@@ -462,7 +500,7 @@ main{{max-width:1500px;margin:auto}}section{{padding:25px 28px;border-bottom:1px
 <header><div class="shell"><h1>S Head 消融统一分析</h1>
 <p class="lead">统一整理全部 S head、S 子类别、深度分层和 head 数量控制实验。所有变化均与同 case、同模型、同 seed baseline 配对；Motion Impact 表示改变大小，不代表质量方向。</p>
 <div class="toplinks"><a href="/">返回 8946 首页</a><a href="/s-head-ablation/">视频逐例比较</a><a href="/common-stc-all-heads-qk-seed851/">S head Q@K</a><a href="/head-role-depth-distribution/">Head 深度分布</a></div></div></header>
-<nav><div class="shell"><b>模型</b><button class="active" data-model-filter="all">全部</button><button data-model-filter="wan_lora">Wan+LoRA</button><button data-model-filter="xssc">Wan+xSSC</button><button data-model-filter="physrvg">PhysRVG</button><a class="navlink" href="#conclusions">结论</a><a class="navlink" href="#all-s">全部 S</a><a class="navlink" href="#subtypes">子类别</a><a class="navlink" href="#depth">深度</a><a class="navlink" href="#dose">数量控制</a></div></nav>
+<nav><div class="shell"><b>模型</b><button class="active" data-model-filter="all">全部</button><button data-model-filter="wan_lora">Wan+LoRA</button><button data-model-filter="xssc">Wan+xSSC</button><button data-model-filter="physrvg">PhysRVG</button><a class="navlink" href="#conclusions">结论</a><a class="navlink" href="#all-s">全部 S</a><a class="navlink" href="#subtypes">子类别</a><a class="navlink" href="#depth">深度</a><a class="navlink" href="#dominant">主导×深度</a><a class="navlink" href="#dose">数量控制</a></div></nav>
 <main>
 <section><div class="definitions"><div><b>Motion Impact ↑</b><br><span class="muted">RAFT 流场、强运动曲线、物体轨迹与速度相对 baseline 的归一化改变。只衡量改变大小。</span></div><div><b>GT gain ↑</b><br><span class="muted">正值表示比 baseline 更接近 49 帧 GT；必须结合按 case bootstrap 的 95% CI。</span></div><div><b>Benchmark Δ ↑</b><br><span class="muted">消融分数减 baseline 分数。不同评测器可能冲突，不合成为单一“物理正确”结论。</span></div></div></section>
 <section id="conclusions"><div class="section-head"><div><h2>当前结论</h2><p class="muted">先看结论，再沿页面向下检查证据与覆盖率。</p></div><span class="muted">更新 {updated}</span></div><div class="findings">{conclusion_html}</div></section>
@@ -476,7 +514,10 @@ main{{max-width:1500px;margin:auto}}section{{padding:25px 28px;border-bottom:1px
 <section id="depth"><div class="section-head"><div><h2>3. S head 深度分层</h2><p class="muted">Early、Middle、Late 的 head 数分别不同；总 Impact 回答“整层组合影响”，Impact/head 仅作敏感度归一化，不能当作可加的单-head因果效应。</p></div><a href="/head-role-depth-distribution/">查看 head 分布</a></div>
 <img class="figure" src="../multiseed/motion-n-analysis/partial/s_depth_motion_heatmaps.png" alt="S深度Motion热力图">
 <div class="table-wrap"><table><thead><tr><th>模型</th><th>深度</th><th>阶段</th><th>Heads</th><th>Cases / Seeds</th><th>Impact [95% CI]</th><th>Impact/head</th><th>GT gain [95% CI]</th></tr></thead><tbody>{depth_table(motion)}</tbody></table></div></section>
-<section id="dose"><div class="section-head"><div><h2>4. Head 数量与匹配策略控制</h2><p class="muted">Exact-block k=5 与 approximate-depth k=8；harm = baseline − ablation，正值表示消融使指标下降。区间跨 0 时标为不确定。</p></div><a href="/head-role-dose-control-pilot/metrics/">打开完整 17 项指标</a></div>
+<section id="dominant"><div class="section-head"><div><h2>4. S 主导特征 × 深度</h2><p class="muted">Local-dominant 与 Same-frame-dominant 是互斥全集划分；all 与深度子集 head 数不同，需同时查看 Impact 和 Impact/head。</p></div><a href="/head-role-dose-control-pilot/cases/">查看逐 case 视频</a></div>
+<img class="figure" src="../multiseed/motion-n-analysis/partial/s_dominant_depth_motion_heatmaps.png" alt="S主导特征和深度Motion热力图">
+<div class="table-wrap"><table><thead><tr><th>模型</th><th>主导类别 / 深度</th><th>阶段</th><th>Heads</th><th>Cases / Seeds</th><th>Impact [95% CI]</th><th>Impact/head</th><th>GT gain [95% CI]</th></tr></thead><tbody>{dominant_table(motion)}</tbody></table></div></section>
+<section id="dose"><div class="section-head"><div><h2>5. Head 数量与匹配策略控制</h2><p class="muted">Exact-block k=5 与 approximate-depth k=8；harm = baseline − ablation，正值表示消融使指标下降。区间跨 0 时标为不确定。</p></div><a href="/head-role-dose-control-pilot/metrics/">打开完整 17 项指标</a></div>
 <img class="figure" src="s_dose_control.png" alt="S head剂量控制">
 <div class="table-wrap"><table><thead><tr><th>模型</th><th>指标</th><th>匹配</th><th>k</th><th>阶段</th><th>Cases / Seeds</th><th>Harm [95% CI]</th></tr></thead><tbody>{dose_table(dose)}</tbody></table></div></section>
 <section><h2>证据入口</h2><div class="links-row"><a href="/s-head-ablation/">逐 case 视频</a><a href="/head-role-dose-control-pilot/cases/">数量与深度消融视频</a><a href="/common-stc-all-heads-qk-seed851/">全部 S head Q@K</a><a href="/multiseed/benchmark-metrics/paired_vs_baseline_summary.csv">Benchmark 配对 CSV</a><a href="/multiseed/motion-n-analysis/partial/aggregate_metrics.csv">Motion 汇总 CSV</a><a href="/head-role-dose-control-pilot/metrics/partial_aggregate.csv">剂量控制 CSV</a></div></section>

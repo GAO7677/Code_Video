@@ -47,6 +47,16 @@ DEPTH_LABELS = {
     "middle": "Middle B10-19",
     "late": "Late B20-29",
 }
+DOMINANT_LABELS = {
+    "S_local_dominant_all": "Local dominant | all",
+    "S_local_dominant_depth_early": "Local dominant | B00-09",
+    "S_local_dominant_depth_middle": "Local dominant | B10-19",
+    "S_local_dominant_depth_late": "Local dominant | B20-29",
+    "S_same_frame_dominant_all": "Same-frame dominant | all",
+    "S_same_frame_dominant_depth_early": "Same-frame dominant | B00-09",
+    "S_same_frame_dominant_depth_middle": "Same-frame dominant | B10-19",
+    "S_same_frame_dominant_depth_late": "Same-frame dominant | B20-29",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,8 +121,10 @@ def aggregate(frame: pd.DataFrame, bootstrap_samples: int) -> pd.DataFrame:
         "family",
         "model",
         "variant",
+        "subset_id",
         "subtype",
         "depth_stratum",
+        "dominance_class",
         "head_count",
         "denoise_start",
         "denoise_end",
@@ -136,7 +148,7 @@ def aggregate(frame: pd.DataFrame, bootstrap_samples: int) -> pd.DataFrame:
             impact, bootstrap_samples, rng
         )
         gain_low, gain_high = bootstrap_case_means(gain, bootstrap_samples, rng)
-        head_count = int(key[5])
+        head_count = int(key[7])
         rows.append(
             {
                 **dict(zip(keys, key)),
@@ -211,8 +223,15 @@ def save_family_plot(
     output: Path,
 ) -> None:
     data = aggregate_frame[aggregate_frame["family"] == family].copy()
-    label_column = "subtype" if family == "s_feature" else "depth_stratum"
-    labels = SUBTYPE_LABELS if family == "s_feature" else DEPTH_LABELS
+    if family == "s_feature":
+        label_column, labels = "subtype", SUBTYPE_LABELS
+        family_title = "S feature subtype"
+    elif family == "s_depth":
+        label_column, labels = "depth_stratum", DEPTH_LABELS
+        family_title = "S depth strata"
+    else:
+        label_column, labels = "subset_id", DOMINANT_LABELS
+        family_title = "S feature dominance x depth"
     stages = sorted(
         {
             (int(row.denoise_start), int(row.denoise_end))
@@ -266,7 +285,7 @@ def save_family_plot(
                         )
             figure.colorbar(image, ax=axis, fraction=0.04, pad=0.02)
     figure.suptitle(
-        "S feature subtype" if family == "s_feature" else "S depth strata",
+        family_title,
         fontsize=15,
         fontweight="bold",
     )
@@ -282,11 +301,12 @@ def format_table(aggregate_frame: pd.DataFrame, family: str) -> str:
     )
     rows = []
     for row in data.itertuples():
-        category = (
-            SUBTYPE_LABELS.get(row.subtype, row.subtype)
-            if family == "s_feature"
-            else DEPTH_LABELS.get(row.depth_stratum, row.depth_stratum)
-        )
+        if family == "s_feature":
+            category = SUBTYPE_LABELS.get(row.subtype, row.subtype)
+        elif family == "s_depth":
+            category = DEPTH_LABELS.get(row.depth_stratum, row.depth_stratum)
+        else:
+            category = DOMINANT_LABELS.get(row.subset_id, row.subset_id)
         gain_class = (
             "good"
             if row.gt_gain_label == "closer_to_gt"
@@ -316,6 +336,7 @@ def build_html(
 ) -> str:
     feature_rows = format_table(aggregate_frame, "s_feature")
     depth_rows = format_table(aggregate_frame, "s_depth")
+    dominant_rows = format_table(aggregate_frame, "s_dominant_depth")
     interaction_rows = "".join(
         "<tr>"
         f"<td>{html.escape(MODEL_LABELS[row.model])}</td>"
@@ -346,6 +367,8 @@ img{{display:block;width:100%;background:#fff;border:1px solid var(--line);margi
 <div class="table-wrap"><table><thead><tr><th>模型</th><th>类别</th><th>阶段</th><th>Heads</th><th>Cases / Seeds</th><th>Impact [95% CI]</th><th>Impact/head</th><th>GT gain [95% CI]</th><th>追踪失败</th></tr></thead><tbody>{feature_rows}</tbody></table></div>
 <h2>S 深度组合</h2><img src="s_depth_motion_heatmaps.png" alt="S depth motion heatmaps">
 <div class="table-wrap"><table><thead><tr><th>模型</th><th>深度</th><th>阶段</th><th>Heads</th><th>Cases / Seeds</th><th>Impact [95% CI]</th><th>Impact/head</th><th>GT gain [95% CI]</th><th>追踪失败</th></tr></thead><tbody>{depth_rows}</tbody></table></div>
+<h2>S 主导特征 × 深度</h2><img src="s_dominant_depth_motion_heatmaps.png" alt="S dominance and depth motion heatmaps">
+<div class="table-wrap"><table><thead><tr><th>模型</th><th>主导类别 / 深度</th><th>阶段</th><th>Heads</th><th>Cases / Seeds</th><th>Impact [95% CI]</th><th>Impact/head</th><th>GT gain [95% CI]</th><th>追踪失败</th></tr></thead><tbody>{dominant_rows}</tbody></table></div>
 <h2>Local + Same 联合诊断</h2><p class="muted">若 union−max(single) 为正，64-head 联合消融比任一 32-head 单类改变更大；该差值仍受 head 数影响，不解释为线性交互因果量。</p>
 <div class="table-wrap"><table><thead><tr><th>模型</th><th>阶段</th><th>Local</th><th>Same</th><th>Union</th><th>Union−mean(single)</th><th>Union−max(single)</th></tr></thead><tbody>{interaction_rows}</tbody></table></div>
 <p class="muted" style="margin-top:12px">原始结果：<a href="per_video_metrics.csv">per_video_metrics.csv</a> · <a href="aggregate_metrics.csv">aggregate_metrics.csv</a> · <a href="interaction_diagnostics.csv">interaction_diagnostics.csv</a> · <a href="ranking_by_model.csv">ranking_by_model.csv</a> · <a href="/s-head-ablation/">对应视频页</a></p>
@@ -409,8 +432,10 @@ def main() -> None:
                 "model": entry["model"],
                 "seed": int(entry["seed"]),
                 "variant": entry["variant"],
+                "subset_id": entry.get("subset_id"),
                 "subtype": entry.get("subtype"),
                 "depth_stratum": entry.get("depth_stratum"),
+                "dominance_class": entry.get("dominance_class"),
                 "head_count": int(entry["head_count"]),
                 "denoise_start": stage[0],
                 "denoise_end": stage[1],
@@ -435,7 +460,11 @@ def main() -> None:
             }
         )
     per_video = calibrated_plausibility(pd.DataFrame(rows))
-    ablations = per_video[per_video["family"].isin(("s_feature", "s_depth"))]
+    ablations = per_video[
+        per_video["family"].isin(
+            ("s_feature", "s_depth", "s_dominant_depth")
+        )
+    ]
     aggregate_frame = aggregate(ablations, args.bootstrap_samples)
     interactions = build_interaction_table(aggregate_frame)
     ranking = aggregate_frame.sort_values(
@@ -482,6 +511,11 @@ def main() -> None:
         aggregate_frame,
         "s_depth",
         args.report_dir / "s_depth_motion_heatmaps.png",
+    )
+    save_family_plot(
+        aggregate_frame,
+        "s_dominant_depth",
+        args.report_dir / "s_dominant_depth_motion_heatmaps.png",
     )
     per_video.to_csv(args.report_dir / "per_video_metrics.csv", index=False)
     aggregate_frame.to_csv(args.report_dir / "aggregate_metrics.csv", index=False)

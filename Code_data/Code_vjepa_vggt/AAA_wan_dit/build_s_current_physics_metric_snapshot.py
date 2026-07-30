@@ -41,6 +41,9 @@ EXPERIMENT_ROOTS = {
     "s_depth": Path(
         "/data/gaoya/agent-data/outputs/wan_dit_head_role_depth_strata/s_only"
     ),
+    "s_dominant_depth": Path(
+        "/data/gaoya/agent-data/outputs/wan_dit_s_dominant_depth/seed851"
+    ),
 }
 CPU_METRICS = (
     "physics_iq_with_context",
@@ -48,13 +51,27 @@ CPU_METRICS = (
     "pmf_with_context",
     "pmf_without_context",
 )
-HEAVY_METRICS = ("videophy2", "cosmos_reason1")
+HEAVY_METRICS = ("videophy2", "cosmos_reason1", "wmreward")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-base", type=Path, default=DEFAULT_OUTPUT_BASE)
     parser.add_argument("--prewarm-plan", type=Path, default=PREWARM_PLAN)
+    parser.add_argument(
+        "--only-result-root",
+        action="append",
+        type=Path,
+        default=[],
+        help="Restrict the snapshot to one or more completed result roots.",
+    )
+    parser.add_argument(
+        "--only-family",
+        action="append",
+        choices=sorted(EXPERIMENT_ROOTS),
+        default=[],
+        help="Restrict the snapshot to one or more experiment families.",
+    )
     return parser.parse_args()
 
 
@@ -117,6 +134,26 @@ def main() -> None:
         for root, family in root_to_family.items()
         if str(root) not in prior_roots
     ]
+    if args.only_family:
+        only_families = set(args.only_family)
+        selected = [
+            (family, root)
+            for family, root in selected
+            if family in only_families
+        ]
+    if args.only_result_root:
+        only_roots = {
+            path.expanduser().resolve() for path in args.only_result_root
+        }
+        unknown_roots = only_roots - set(root_to_family)
+        if unknown_roots:
+            raise RuntimeError(
+                "Requested result roots are not complete experiment roots: "
+                + ", ".join(str(path) for path in sorted(unknown_roots))
+            )
+        selected = [
+            (family, root) for family, root in selected if root in only_roots
+        ]
     cpu_rows: list[tuple[str, str, Path]] = []
     heavy_rows: list[tuple[str, str, Path]] = []
     for index, (_, root) in enumerate(selected):

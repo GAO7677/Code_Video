@@ -19,6 +19,7 @@ FEATURE_CONFIG = SCRIPT_DIR / "head_role_s_feature_split_pilot.json"
 DEPTH_CONFIG = SCRIPT_DIR / "s_depth_strata_experiment.json"
 UNION_CONFIG = SCRIPT_DIR / "head_role_s_feature_union_pilot.json"
 PHASED_CONFIG = SCRIPT_DIR / "head_role_s_feature_phased_pilot.json"
+DOMINANT_CONFIG = SCRIPT_DIR / "head_role_s_dominant_depth_experiment.json"
 REPORT_DIR = Path(
     "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_moving_pilot/"
     "gallery/multiseed/motion-n-analysis"
@@ -38,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth-config", type=Path, default=DEPTH_CONFIG)
     parser.add_argument("--union-config", type=Path, default=UNION_CONFIG)
     parser.add_argument("--phased-config", type=Path, default=PHASED_CONFIG)
+    parser.add_argument("--dominant-config", type=Path, default=DOMINANT_CONFIG)
     parser.add_argument("--report-dir", type=Path, default=REPORT_DIR)
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--poll-seconds", type=int, default=30)
@@ -369,6 +371,7 @@ def build_page(
     union: dict[str, Any],
     phased: dict[str, Any],
     depth: dict[str, Any],
+    dominant: dict[str, Any],
     updated: str,
 ) -> str:
     return f"""<!doctype html>
@@ -405,6 +408,7 @@ th,td{{border-bottom:1px solid var(--line);padding:8px 9px;text-align:left;verti
 {experiment_section("S 分类联合消融", "将上述两个互斥的 32-head subset 取并集，同时消融全部 64 个 head。", union)}
 {experiment_section("S 分类分阶段消融", "对 Local-32、Same-frame-32、Union-64 分别应用去噪区间 0–10 与 10–20。", phased)}
 {experiment_section("S 深度消融", "按 early / middle / late block 分层，比较不同去噪阶段下 S head 的深度效应。", depth)}
+{experiment_section("S 主导特征 × 深度", "将全部 S head 互斥划分为 Local-enrichment dominant 与 Same-frame-mass dominant，再分别比较 all / early / middle / late。", dominant)}
 </main></body></html>
 """
 
@@ -414,12 +418,14 @@ def update_once(
     depth_config_path: Path,
     union_config_path: Path,
     phased_config_path: Path,
+    dominant_config_path: Path,
     report_dir: Path,
 ) -> dict[str, Any]:
     feature = generation_status(read_json(feature_config_path))
     depth = generation_status(read_json(depth_config_path))
     union = generation_status(read_json(union_config_path))
     phased = generation_status(read_json(phased_config_path))
+    dominant = generation_status(read_json(dominant_config_path))
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     payload = {
         "updated_utc": updated,
@@ -427,6 +433,7 @@ def update_once(
         "s_feature_union": union,
         "s_feature_phased": phased,
         "s_depth": depth,
+        "s_dominant_depth": dominant,
     }
     atomic_write(
         report_dir / "status.json",
@@ -434,7 +441,7 @@ def update_once(
     )
     atomic_write(
         report_dir / "index.html",
-        build_page(feature, union, phased, depth, updated),
+        build_page(feature, union, phased, depth, dominant, updated),
     )
     return payload
 
@@ -447,11 +454,13 @@ def main() -> None:
     while True:
         union_config = args.union_config.expanduser().resolve()
         phased_config = args.phased_config.expanduser().resolve()
+        dominant_config = args.dominant_config.expanduser().resolve()
         payload = update_once(
             feature_config,
             depth_config,
             union_config,
             phased_config,
+            dominant_config,
             report_dir,
         )
         print(
@@ -463,7 +472,9 @@ def main() -> None:
             f"phased={payload['s_feature_phased']['ready_videos']}/"
             f"{payload['s_feature_phased']['expected_videos']} "
             f"depth={payload['s_depth']['ready_videos']}/"
-            f"{payload['s_depth']['expected_videos']}",
+            f"{payload['s_depth']['expected_videos']} "
+            f"dominant={payload['s_dominant_depth']['ready_videos']}/"
+            f"{payload['s_dominant_depth']['expected_videos']}",
             flush=True,
         )
         if not args.watch:

@@ -18,7 +18,11 @@ from common22_public_head_targets import load_public_head_targets
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUNNER = SCRIPT_DIR / "run_common22_public_head_ablation_job.sh"
-FFPROBE = Path("/data/gaoya/miniconda3/envs/vjepa2/bin/ffprobe")
+FFPROBE = Path(
+    os.environ.get("FFPROBE")
+    or shutil.which("ffprobe")
+    or "/data/gaoya/miniconda3/envs/vjepa2/bin/ffprobe"
+)
 
 
 def parse_args() -> argparse.Namespace:
