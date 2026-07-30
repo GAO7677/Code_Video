@@ -1,0 +1,23 @@
+{
+  "extends": "t_head.json",
+  "experiment": {
+    "name": "common_t_head_full70_gpu67_ddp_resume"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29532
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu7_formal/formal_20260729T184553Z/checkpoints/interrupted-latest/training_state.pt"
+  },
+  "logging": {
+    "wandb_run_id": "wx1g5jny",
+    "wandb_resume": "must",
+    "wandb_name": "common_t_head_full70_gpu7_formal_formal_20260729T184553Z"
+  }
+}

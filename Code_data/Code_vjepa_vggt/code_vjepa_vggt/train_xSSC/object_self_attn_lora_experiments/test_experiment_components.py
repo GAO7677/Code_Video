@@ -178,6 +178,7 @@ class ExperimentComponentTests(unittest.TestCase):
         expected = experiment.build_head_selection_identity(
             {4: (0, 18), 5: (9,)}
         )
+        self.assertEqual(expected.dtype, torch.int32)
         digest = experiment.build_sha256_identity("12" * 32)
         state = {
             f"module.{experiment.HEAD_SELECTION_IDENTITY_KEY}": expected.clone(),

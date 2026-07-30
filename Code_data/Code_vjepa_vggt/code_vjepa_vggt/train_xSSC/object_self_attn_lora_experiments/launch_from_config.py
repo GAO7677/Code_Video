@@ -103,6 +103,11 @@ def validate_config(config: dict, config_dir: Path) -> dict:
             "launch.num_processes must match the number of visible GPUs: "
             f"{require(config, 'launch.num_processes')} vs {gpu_ids}"
         )
+    main_process_port = config["launch"].get("main_process_port")
+    if main_process_port is not None and not 1 <= int(main_process_port) <= 65535:
+        raise ValueError(
+            f"launch.main_process_port must be in [1, 65535], got {main_process_port}"
+        )
 
     ratios = [
         float(require(config, "data.mixture_pybullet_ratio")),
@@ -162,6 +167,26 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     normalized["paths"]["head_selection_config"] = resolve_config_path(
         str(require(config, "paths.head_selection_config")), config_dir
     )
+    resume_from = normalized["checkpointing"].get("resume_from")
+    if resume_from:
+        normalized["checkpointing"]["resume_from"] = resolve_config_path(
+            str(resume_from), config_dir
+        )
+        if not Path(normalized["checkpointing"]["resume_from"]).is_file():
+            raise FileNotFoundError(
+                "Resume training state does not exist: "
+                f"{normalized['checkpointing']['resume_from']}"
+            )
+    wandb_run_id = str(normalized["logging"].get("wandb_run_id", "")).strip()
+    wandb_resume = str(normalized["logging"].get("wandb_resume", "")).strip()
+    if bool(wandb_run_id) != bool(wandb_resume):
+        raise ValueError(
+            "logging.wandb_run_id and logging.wandb_resume must be set together"
+        )
+    if wandb_resume and wandb_resume not in {"allow", "must", "never", "auto"}:
+        raise ValueError(
+            "logging.wandb_resume must be one of allow/must/never/auto"
+        )
     if mode in HEAD_SELECTIVE_MODES and not Path(
         normalized["paths"]["head_selection_config"]
     ).is_file():
@@ -216,6 +241,11 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     ]
     if int(launch["num_processes"]) > 1:
         command.append("--multi_gpu")
+    if launch.get("main_process_port") is not None:
+        command.extend([
+            "--main_process_port",
+            str(launch["main_process_port"]),
+        ])
     command.extend([
         "--num_processes",
         str(launch["num_processes"]),
@@ -317,7 +347,10 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--lambda_object_context_reg": conditioning["lambda_object_context_reg"],
         "--report_to": logging["report_to"],
         "--wandb_project": logging["wandb_project"],
-        "--wandb_name": f"{config['experiment']['name']}_{output_dir.name}",
+        "--wandb_name": logging.get(
+            "wandb_name",
+            f"{config['experiment']['name']}_{output_dir.name}",
+        ),
         "--wandb_mode": logging["wandb_mode"],
     }
     amg_option_names = {
@@ -436,6 +469,9 @@ def main() -> None:
     env.update({key: str(value) for key, value in cache_dirs.items()})
     env["CUDA_VISIBLE_DEVICES"] = str(config["launch"]["gpu_set"])
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if config["logging"].get("wandb_run_id"):
+        env["WANDB_RUN_ID"] = str(config["logging"]["wandb_run_id"])
+        env["WANDB_RESUME"] = str(config["logging"]["wandb_resume"])
     env["PYTHONPATH"] = os.pathsep.join(
         [
             config["paths"]["project_root"],

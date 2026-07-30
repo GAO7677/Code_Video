@@ -211,7 +211,8 @@ def build_head_selection_identity(
     ]
     if not pairs:
         raise ValueError("Head-selection identity cannot be empty")
-    return torch.tensor(pairs, dtype=torch.int16, device=device)
+    # NCCL does not support broadcasting torch.int16 buffers during DDP setup.
+    return torch.tensor(pairs, dtype=torch.int32, device=device)
 
 
 def build_sha256_identity(
@@ -261,10 +262,10 @@ def validate_head_selection_checkpoint_state(
         )
 
     found_identity = normalized[HEAD_SELECTION_IDENTITY_KEY].detach().to(
-        device="cpu", dtype=torch.int16
+        device="cpu", dtype=torch.int32
     )
     expected_identity = expected_identity.detach().to(
-        device="cpu", dtype=torch.int16
+        device="cpu", dtype=torch.int32
     )
     if not torch.equal(found_identity, expected_identity):
         raise RuntimeError(
