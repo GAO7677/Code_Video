@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "experiment_name": "wan_dit_exhaustive_s_feature_dominance_and_depth_ssh118",
+  "input_list": "/mnt/data/gaoya/agent-data/ssh118_s_dominant_depth/input/test5_unique20.txt",
+  "expected_cases": 20,
+  "models": [
+    "wan_lora",
+    "xssc",
+    "physrvg"
+  ],
+  "seeds": [
+    851
+  ],
+  "step_ranges": [
+    [
+      0,
+      10
+    ],
+    [
+      10,
+      20
+    ],
+    [
+      0,
+      40
+    ]
+  ],
+  "matched_subset_manifest": "/mnt/data/gaoya/agent-data/outputs/wan_dit_s_dominant_depth/configs/s_dominant_depth_subsets.json",
+  "subset_matching_modes": [
+    "exhaustive_s_feature_dominance_partition"
+  ],
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "cfg_scale_wan": 5.0,
+    "physrvg_cfg_enabled": false
+  },
+  "execution": {
+    "gpus": [
+      0,
+      2,
+      3,
+      5,
+      6,
+      7
+    ],
+    "workers_per_gpu": 1,
+    "gpu_start_memory_threshold_mib": 4096,
+    "gpu_free_stability_polls": 3,
+    "poll_seconds": 30,
+    "max_attempts_per_task": 3,
+    "tmux_session": "wan_s_dominant_depth_ssh118"
+  },
+  "storage": {
+    "output_root": "/mnt/data/gaoya/agent-data/outputs/wan_dit_s_dominant_depth/seed851"
+  },
+  "metrics": {
+    "baseline_root": "/mnt/data/gaoya/agent-data/outputs/wan_dit_paired_query_50seeds/pass1",
+    "groups": {},
+    "workers_per_gpu": {}
+  }
+}

@@ -31,6 +31,9 @@ DEFAULT_S_FEATURE_UNION_CONFIG = Path(__file__).with_name(
 DEFAULT_S_FEATURE_PHASED_CONFIG = Path(__file__).with_name(
     "head_role_s_feature_phased_pilot.json"
 )
+DEFAULT_S_DOMINANT_DEPTH_CONFIG = Path(__file__).with_name(
+    "head_role_s_dominant_depth_experiment.json"
+)
 DEFAULT_ALL_S_CONFIG = Path(__file__).with_name("all_s_missing_experiment.json")
 DEFAULT_OLD_ALL_S_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
@@ -84,6 +87,11 @@ def parse_args() -> argparse.Namespace:
         "--s-feature-phased-config",
         type=Path,
         default=DEFAULT_S_FEATURE_PHASED_CONFIG,
+    )
+    parser.add_argument(
+        "--s-dominant-depth-config",
+        type=Path,
+        default=DEFAULT_S_DOMINANT_DEPTH_CONFIG,
     )
     parser.add_argument("--all-s-config", type=Path, default=DEFAULT_ALL_S_CONFIG)
     parser.add_argument(
@@ -315,6 +323,8 @@ def build_s_feature_records(
     root: Path,
     subset_payload: dict[str, Any],
     route: str,
+    *,
+    kind: str = "s_feature_split",
 ) -> list[dict[str, Any]]:
     generation_root = root / "generation"
     records = []
@@ -353,16 +363,18 @@ def build_s_feature_records(
             payload = load_sidecar(video)
             records.append(
                 {
-                    "kind": "s_feature_split",
+                    "kind": kind,
                     "model": state["model"],
                     "seed": int(state["seed"]),
                     "case_id": case_id,
                     "subset_id": subset_id,
                     "role": "S",
                     "feature_subtype": subset["feature_subtype"],
+                    "dominance_class": subset.get("dominance_class"),
+                    "depth_stratum": subset.get("depth_stratum"),
                     "k": int(state["k"]),
                     "replicate": 0,
-                    "matching": "s_feature_exact_block",
+                    "matching": subset.get("matching", "s_feature_exact_block"),
                     "start": int(state["step_range"][0]),
                     "end": int(state["step_range"][1]),
                     "video": media_url(
@@ -511,6 +523,9 @@ def main() -> None:
     s_feature_phased_config = json.loads(
         args.s_feature_phased_config.expanduser().resolve().read_text(encoding="utf-8")
     )
+    s_dominant_depth_config = json.loads(
+        args.s_dominant_depth_config.expanduser().resolve().read_text(encoding="utf-8")
+    )
     all_s_config = json.loads(
         args.all_s_config.expanduser().resolve().read_text(encoding="utf-8")
     )
@@ -526,6 +541,11 @@ def main() -> None:
     )
     s_feature_phased_root = (
         Path(s_feature_phased_config["storage"]["output_root"]).expanduser().resolve()
+    )
+    s_dominant_depth_root = (
+        Path(s_dominant_depth_config["storage"]["output_root"])
+        .expanduser()
+        .resolve()
     )
     all_s_root = Path(all_s_config["storage"]["output_root"]).expanduser().resolve()
     old_all_s_root = args.old_all_s_root.expanduser().resolve()
@@ -605,6 +625,26 @@ def main() -> None:
         .resolve()
         .read_text(encoding="utf-8")
     )
+    s_dominant_depth_subset_payload = json.loads(
+        Path(s_dominant_depth_config["matched_subset_manifest"])
+        .expanduser()
+        .resolve()
+        .read_text(encoding="utf-8")
+    )
+    compact_s_dominant_depth_subsets = {
+        subset_id: {
+            "role": record["role"],
+            "dominance_class": record["dominance_class"],
+            "feature_subtype": record["feature_subtype"],
+            "depth_stratum": record["depth_stratum"],
+            "block_start_inclusive": int(record["block_start_inclusive"]),
+            "block_end_exclusive": int(record["block_end_exclusive"]),
+            "k": int(record["k"]),
+            "matching": record["matching"],
+            "block_histogram": record["block_histogram"],
+        }
+        for subset_id, record in s_dominant_depth_subset_payload["subsets"].items()
+    }
     ensure_link(root / "generation", gallery / "media" / "generation")
     ensure_link(root / "progress.json", gallery / "live-progress.json")
     ensure_link(
@@ -638,6 +678,14 @@ def main() -> None:
     ensure_link(
         s_feature_phased_root / "progress.json",
         gallery / "s-feature-phased-progress.json",
+    )
+    ensure_link(
+        s_dominant_depth_root / "generation",
+        gallery / "media" / "s-dominant-depth-generation",
+    )
+    ensure_link(
+        s_dominant_depth_root / "progress.json",
+        gallery / "s-dominant-depth-progress.json",
     )
     (all_s_root / "generation").mkdir(parents=True, exist_ok=True)
     ensure_link(
@@ -687,6 +735,13 @@ def main() -> None:
     )
     s_feature_records.extend(s_feature_phased_records)
     records.extend(s_feature_records)
+    s_dominant_depth_records = build_s_feature_records(
+        s_dominant_depth_root,
+        s_dominant_depth_subset_payload,
+        "s-dominant-depth-generation",
+        kind="s_dominant_depth",
+    )
+    records.extend(s_dominant_depth_records)
     all_s_records = build_all_s_records(all_s_root, old_all_s_root, cases)
     records.extend(all_s_records)
     s_feature_complete_tasks = 0
@@ -777,6 +832,27 @@ def main() -> None:
                 step_range[1],
             ),
         ),
+        "s_dominant_depth_generation_tasks_complete": len(
+            {
+                (
+                    record["model"],
+                    record["seed"],
+                    record["subset_id"],
+                    record["start"],
+                    record["end"],
+                )
+                for record in s_dominant_depth_records
+            }
+        ),
+        "s_dominant_depth_generation_tasks_expected": (
+            len(s_dominant_depth_config["models"])
+            * len(s_dominant_depth_config["seeds"])
+            * len(s_dominant_depth_config["step_ranges"])
+            * len(compact_s_dominant_depth_subsets)
+        ),
+        "s_dominant_depth_videos_visible": len(s_dominant_depth_records),
+        "s_dominant_depth_step_ranges": s_dominant_depth_config["step_ranges"],
+        "s_dominant_depth_subsets": compact_s_dominant_depth_subsets,
         "all_s_generation_tasks_complete": len(
             {
                 (
@@ -825,6 +901,10 @@ def main() -> None:
         f"s_feature_tasks={data['s_feature_generation_tasks_complete']}/"
         f"{data['s_feature_generation_tasks_expected']} "
         f"s_feature_videos={data['s_feature_videos_visible']} "
+        f"s_dominant_depth_tasks="
+        f"{data['s_dominant_depth_generation_tasks_complete']}/"
+        f"{data['s_dominant_depth_generation_tasks_expected']} "
+        f"s_dominant_depth_videos={data['s_dominant_depth_videos_visible']} "
         f"all_s_tasks={data['all_s_generation_tasks_complete']}/"
         f"{data['all_s_generation_tasks_expected']} "
         f"all_s_videos={data['all_s_videos_visible']} "
@@ -891,6 +971,10 @@ function featureStages(){return(D.s_feature_step_ranges||[]).map(x=>x.map(Number
 function combinedStages(){const seen=new Map();for(const stage of [...featureStages(),...depthStages()])seen.set(`${stage[0]}-${stage[1]}`,stage);return[...seen.values()].sort((a,b)=>a[0]-b[0]||a[1]-b[1])}
 function featureRecord(model,subtype,stage){const s=selection();return R.find(r=>r.kind==="s_feature_split"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.feature_subtype===subtype&&r.start===stage[0]&&r.end===stage[1])}
 function featureLabel(item){const labels={local_enrichment:"Local-enrichment dominant S (32)",same_frame_mass:"Same-frame-mass dominant S (32)",local_same_union:"联合两类 S (64)"};return labels[item.feature_subtype]||item.id}
+function dominantSubsets(){const dominance={local_dominant:0,same_frame_dominant:1},depth={null:0,early:1,middle:2,late:3};return Object.entries(D.s_dominant_depth_subsets||{}).map(([id,x])=>({id,...x})).sort((a,b)=>(dominance[a.dominance_class]??99)-(dominance[b.dominance_class]??99)||(depth[String(a.depth_stratum)]??99)-(depth[String(b.depth_stratum)]??99))}
+function dominantStages(){return(D.s_dominant_depth_step_ranges||[]).map(x=>x.map(Number)).sort((a,b)=>a[0]-b[0]||a[1]-b[1])}
+function dominantRecord(model,subsetId,stage){const s=selection();return R.find(r=>r.kind==="s_dominant_depth"&&r.case_id===CASE_ID&&r.model===model&&r.seed===s.seed&&r.subset_id===subsetId&&r.start===stage[0]&&r.end===stage[1])}
+function dominantLabel(item){const dominant=item.dominance_class==="local_dominant"?"Local-enrichment dominant S":"Same-frame-mass dominant S",depth={early:"Early · B00–09",middle:"Middle · B10–19",late:"Late · B20–29"};return item.depth_stratum?`${dominant} / ${depth[item.depth_stratum]} (${item.k})`:`${dominant} / 全深度 (${item.k})`}
 function media(record,label,missing="该配置仍在生成"){const meta=record&&record.kind==="reference"?"原始输入":record&&record.kind==="baseline"?"同模型、同seed未消融":record?`${record.subset_id} · k=${record.k} · steps ${record.start}-${record.end}`:"Pending";const klass=record&&["all_head","all_s"].includes(record.kind)?" all-head":record&&record.kind==="s_depth"?" s-depth":record&&record.kind==="s_feature_split"?" s-feature":"";return `<article class="video-cell${klass}"><h3>${label}</h3>${record?`<video muted playsinline preload="none" src="${record.video}"></video><div class="meta">${meta}</div>`:`<div class="missing">${missing}</div><div class="meta">Pending</div>`}</article>`}
 function renderReferences(){q("references").innerHTML=media(C.context_url?{video:C.context_url,kind:"reference"}:null,"8帧 Context")+media(C.source_url?{video:C.source_url,kind:"reference"}:null,"Source / GT");q("prompt").textContent=C.caption}
 function oldMediaUrl(src){return src?`${OLD_BASE}${src}`:null}
@@ -898,13 +982,13 @@ function oldRecord(model,role,range){const s=selection();if(!OLD||s.seed!==851)r
 function oldLabel(role){return role==="ST"?"旧版 All-S+T":"旧版 All-"+role}
 function rowHeader(label){return`<div class="stage-row-title"><h3>${label}</h3></div>`}
 function modelActions(){return`<div class="model-actions"><button data-model-action="play">播放该模型</button><button data-model-action="replay">从头播放</button><button data-model-action="pause">暂停</button></div>`}
-function renderSettings(){stopModelSync();const depth=depthSubsets(),feature=featureSubsets();let out="";for(const model of D.models){out+=`<section class="model-group" data-model="${model}"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2>${modelActions()}</div><div class="setting-row"><div class="setting-row-title"><h3>All-S、Head 子类与 S-depth 消融</h3><p>相同去噪阶段固定为同一行</p></div><div class="block-depths"><span><b>All-S：</b>159 个公共稳定 S heads</span><span><b>Head 子类：</b>Local-enrichment / Same-frame / 联合</span><span><b>S-depth：</b>Early / Middle / Late</span></div>`;for(const stage of combinedStages()){out+=`<section class="stage-row">${rowHeader(`去噪阶段 ${stageLabel(stage)}`)}<div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");out+=media(allSRecord(model,stage),"All-S · 159 heads","该 All-S 配置仍在生成");for(const item of feature)out+=media(featureRecord(model,item.feature_subtype,stage),`Head 子类 · ${featureLabel(item)}`,"该 Head 子类配置仍在生成");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth · ${depthLabel(item)}`,"该阶段尚无 S-depth 结果");out+="</div></section>"}out+="</div></section>"}q("settings").innerHTML=out}
+function renderSettings(){stopModelSync();const depth=depthSubsets(),feature=featureSubsets(),dominant=dominantSubsets();let out="";for(const model of D.models){out+=`<section class="model-group" data-model="${model}"><div class="model-group-title"><h2>${D.model_labels[model]} · seed ${selection().seed}</h2>${modelActions()}</div><div class="setting-row"><div class="setting-row-title"><h3>All-S、Head 子类与 S-depth 消融</h3><p>相同去噪阶段固定为同一行</p></div><div class="block-depths"><span><b>All-S：</b>159 个公共稳定 S heads</span><span><b>Head 子类：</b>Local-enrichment / Same-frame / 联合</span><span><b>S-depth：</b>Early / Middle / Late</span></div>`;for(const stage of combinedStages()){out+=`<section class="stage-row">${rowHeader(`去噪阶段 ${stageLabel(stage)}`)}<div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");out+=media(allSRecord(model,stage),"All-S · 159 heads","该 All-S 配置仍在生成");for(const item of feature)out+=media(featureRecord(model,item.feature_subtype,stage),`Head 子类 · ${featureLabel(item)}`,"该 Head 子类配置仍在生成");for(const item of depth)out+=media(depthRecord(model,item.id,stage),`S-depth · ${depthLabel(item)}`,"该阶段尚无 S-depth 结果");out+="</div></section>"}out+=`</div><div class="setting-row"><div class="setting-row-title"><h3>全量 S 主导类型 × 深度消融</h3><p>159 个公共稳定 S heads 被严格二分，六个深度交叉组互斥且穷尽</p></div><div class="block-depths"><span><b>Local：</b>100 = Early 34 + Middle 25 + Late 41</span><span><b>Same-frame：</b>59 = Early 24 + Middle 15 + Late 20</span></div>`;for(const stage of dominantStages()){out+=`<section class="stage-row">${rowHeader(`去噪阶段 ${stageLabel(stage)}`)}<div class="videos feature-split">`;out+=media(baselineRecord(model),"Baseline");for(const item of dominant)out+=media(dominantRecord(model,item.id,stage),dominantLabel(item),"该全量主导类型配置仍在生成");out+="</div></section>"}out+="</div></section>"}q("settings").innerHTML=out}
 function metricCell(record,baseline,metric){if(!record)return`<td class="pending">Pending</td>`;const value=record.metrics[metric.name];if(value===null||value===undefined)return`<td class="pending">Pending</td>`;if(record.kind==="baseline")return`<td><span class="value">${score(value)}</span><span class="delta">baseline</span></td>`;const base=baseline&&baseline.metrics[metric.name];if(base===null||base===undefined)return`<td><span class="value">${score(value)}</span><span class="delta">baseline Pending</span></td>`;const raw=value-base,improvement=metric.direction==="higher"?raw:-raw,state=improvement>0?"good":improvement<0?"bad":"";return`<td class="${state}"><span class="value">${score(value)}</span><span class="delta">Δ ${signed(raw)}</span></td>`}
-function renderMetrics(){const depth=depthSubsets(),feature=featureSubsets(),head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){const baseline=baselineRecord(model);let body="";out+=`<section class="metric-model"><h3>${D.model_labels[model]} · seed ${selection().seed}</h3>`;for(const stage of combinedStages()){const prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(baseline,baseline,m)).join("")+"</tr>";const allS=allSRecord(model,stage);body+=`<tr><td>${prefix}All-S · 159 heads</td>`+D.metric_definitions.map(m=>metricCell(allS,baseline,m)).join("")+"</tr>";for(const item of feature){const r=featureRecord(model,item.feature_subtype,stage);body+=`<tr><td>${prefix}Head 子类 · ${featureLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,baseline,m)).join("")+"</tr>"}for(const item of depth){const r=depthRecord(model,item.id,stage);body+=`<tr><td>${prefix}S-depth · ${depthLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>按去噪阶段对齐的 All-S、Head 子类与 S-depth 消融</h4><table><thead>${head}</thead><tbody>${body}</tbody></table></div></section>`}q("metric-groups").innerHTML=out}
-function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","all_s","s_depth","s_feature_split"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
+function renderMetrics(){const depth=depthSubsets(),feature=featureSubsets(),dominant=dominantSubsets(),head="<tr><th>阶段 / 方法</th>"+D.metric_definitions.map(m=>`<th>${m.label}<br><small>${m.direction}</small></th>`).join("")+"</tr>";let out="";for(const model of D.models){const baseline=baselineRecord(model);let body="";out+=`<section class="metric-model"><h3>${D.model_labels[model]} · seed ${selection().seed}</h3>`;for(const stage of combinedStages()){const prefix=`[${stageLabel(stage)}] `;body+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(baseline,baseline,m)).join("")+"</tr>";const allS=allSRecord(model,stage);body+=`<tr><td>${prefix}All-S · 159 heads</td>`+D.metric_definitions.map(m=>metricCell(allS,baseline,m)).join("")+"</tr>";for(const item of feature){const r=featureRecord(model,item.feature_subtype,stage);body+=`<tr><td>${prefix}Head 子类 · ${featureLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,baseline,m)).join("")+"</tr>"}for(const item of depth){const r=depthRecord(model,item.id,stage);body+=`<tr><td>${prefix}S-depth · ${depthLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>按去噪阶段对齐的 All-S、Head 子类与 S-depth 消融</h4><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;let dominantBody="";for(const stage of dominantStages()){const prefix=`[${stageLabel(stage)}] `;dominantBody+=`<tr><td>${prefix}Baseline</td>`+D.metric_definitions.map(m=>metricCell(baseline,baseline,m)).join("")+"</tr>";for(const item of dominant){const r=dominantRecord(model,item.id,stage);dominantBody+=`<tr><td>${prefix}${dominantLabel(item)}</td>`+D.metric_definitions.map(m=>metricCell(r,baseline,m)).join("")+"</tr>"}}out+=`<div class="metric-setting"><h4>全量 S 主导类型 × 深度消融</h4><table><thead>${head}</thead><tbody>${dominantBody}</tbody></table></div></section>`}q("metric-groups").innerHTML=out}
+function activeRecords(){const map=new Map();for(const record of R){if(record.case_id!==CASE_ID||record.seed!==selection().seed||!record.sidecar)continue;if(["baseline","all_s","s_depth","s_feature_split","s_dominant_depth"].includes(record.kind))map.set(record.sidecar,record)}return[...map.values()]}
 function nested(payload,path){let value=payload;for(const key of path){if(!value||typeof value!=="object")return null;value=value[key]}return typeof value==="number"&&Number.isFinite(value)?value:typeof value==="boolean"?Number(value):null}
 async function refreshMetrics(){const records=activeRecords();await Promise.all(records.map(async record=>{try{const payload=await fetch(`${record.sidecar}?t=${Date.now()}`).then(x=>x.json());record.metrics=Object.fromEntries(D.metric_definitions.map(metric=>[metric.name,nested(payload,metric.path)]))}catch(error){console.warn("sidecar refresh failed",record.sidecar,error)}}));renderMetrics()}
-async function refreshProgress(){const get=path=>fetch(`${path}?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),[dose,depth,feature,union,phased,allS]=await Promise.all([get(`/head-role-dose-control-pilot/live-progress.json`),get(`/head-role-dose-control-pilot/s-depth-progress.json`),get(`/head-role-dose-control-pilot/s-feature-progress.json`),get(`/head-role-dose-control-pilot/s-feature-union-progress.json`),get(`/head-role-dose-control-pilot/s-feature-phased-progress.json`),get(`/head-role-dose-control-pilot/all-s-progress.json`)]),doseText=dose?`${(dose.generation_states||{}).complete||0}/${dose.expected_generation_tasks}`:`${D.generation_tasks_complete}/${D.generation_tasks_expected}`,depthText=depth?`${(depth.state_counts||{}).complete||0}/${depth.expected_tasks}`:`${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected}`,featureText=feature?`${(feature.state_counts||{}).complete||0}/${feature.expected_tasks}`:"6/6",unionText=union?`${(union.state_counts||{}).complete||0}/${union.expected_tasks}`:"0/3",phasedText=phased?`${(phased.state_counts||{}).complete||0}/${phased.expected_tasks}`:"0/18",allSText=allS?`${6+((allS.state_counts||{}).complete||0)}/${D.all_s_generation_tasks_expected}`:`${D.all_s_generation_tasks_complete}/${D.all_s_generation_tasks_expected}`;q("status").textContent=`Dose ${doseText} · All-S ${allSText} · S-depth ${depthText} · S-feature ${featureText} + union ${unionText} + phased ${phasedText}`}
+async function refreshProgress(){const get=path=>fetch(`${path}?t=${Date.now()}`).then(x=>x.ok?x.json():null).catch(()=>null),[dose,depth,feature,union,phased,allS,dominant]=await Promise.all([get(`/head-role-dose-control-pilot/live-progress.json`),get(`/head-role-dose-control-pilot/s-depth-progress.json`),get(`/head-role-dose-control-pilot/s-feature-progress.json`),get(`/head-role-dose-control-pilot/s-feature-union-progress.json`),get(`/head-role-dose-control-pilot/s-feature-phased-progress.json`),get(`/head-role-dose-control-pilot/all-s-progress.json`),get(`/head-role-dose-control-pilot/s-dominant-depth-progress.json`)]),doseText=dose?`${(dose.generation_states||{}).complete||0}/${dose.expected_generation_tasks}`:`${D.generation_tasks_complete}/${D.generation_tasks_expected}`,depthText=depth?`${(depth.state_counts||{}).complete||0}/${depth.expected_tasks}`:`${D.s_depth_generation_tasks_complete}/${D.s_depth_generation_tasks_expected}`,featureText=feature?`${(feature.state_counts||{}).complete||0}/${feature.expected_tasks}`:"6/6",unionText=union?`${(union.state_counts||{}).complete||0}/${union.expected_tasks}`:"0/3",phasedText=phased?`${(phased.state_counts||{}).complete||0}/${phased.expected_tasks}`:"0/18",allSText=allS?`${6+((allS.state_counts||{}).complete||0)}/${D.all_s_generation_tasks_expected}`:`${D.all_s_generation_tasks_complete}/${D.all_s_generation_tasks_expected}`,dominantText=dominant?`${(dominant.state_counts||{}).complete||0}/${dominant.expected_tasks}`:`${D.s_dominant_depth_generation_tasks_complete}/${D.s_dominant_depth_generation_tasks_expected}`;q("status").textContent=`Dose ${doseText} · All-S ${allSText} · S-depth ${depthText} · S-feature ${featureText} + union ${unionText} + phased ${phasedText} · 全量二分×深度 ${dominantText}`}
 function render(){renderSettings();renderMetrics();refreshMetrics();refreshProgress();q("time").textContent=`本页 ${[...document.querySelectorAll("video")].length} 个视频`}
 let syncTimer=null,activeModel=null;function stopModelSync(){if(syncTimer!==null)clearInterval(syncTimer);syncTimer=null;activeModel=null}function modelVideos(button){const group=button.closest(".model-group");return group?[...group.querySelectorAll("video")]:[]}function playModel(button,replay=false){stopModelSync();const videos=modelVideos(button);if(!videos.length)return;if(replay)for(const video of videos)video.currentTime=0;for(const video of videos){video.playbackRate=1;video.play().catch(()=>{})}activeModel=button.closest(".model-group");syncTimer=setInterval(()=>{const current=activeModel?[...activeModel.querySelectorAll("video")]:[];if(current.length<2)return;const leader=current.find(video=>video.readyState>=2);if(!leader)return;for(const video of current){if(video!==leader&&video.readyState>=2&&Math.abs(video.currentTime-leader.currentTime)>0.12)video.currentTime=leader.currentTime}},250)}function pauseModel(button){const group=button.closest(".model-group");if(group===activeModel)stopModelSync();for(const video of modelVideos(button))video.pause()}document.addEventListener("click",event=>{const button=event.target.closest("[data-model-action]");if(!button)return;const action=button.dataset.modelAction;if(action==="play")playModel(button,false);else if(action==="replay")playModel(button,true);else pauseModel(button)});
 fetch("../../manifest.json").then(x=>x.json()).then(data=>{D=data;R=data.records;C=data.cases.find(x=>x.id===CASE_ID);options("case",D.cases.map(x=>x.id));q("case").value=CASE_ID;q("case").onchange=()=>location.href=`../${q("case").value}/`;options("seed",[...new Set(R.map(x=>x.seed))].sort((a,b)=>a-b));q("seed").onchange=render;renderReferences();render();setInterval(refreshProgress,30000)}).catch(error=>{q("status").textContent=`加载失败: ${error}`});

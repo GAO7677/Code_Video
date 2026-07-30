@@ -1,5 +1,9 @@
 # Object/Self-Attention LoRA Experiments
 
+The current runs, checkpoints, evaluation results, and experiment changes are
+tracked in [EXPERIMENT_RECORD.md](EXPERIMENT_RECORD.md). Keep this README for
+implementation notes and use that file as the canonical live experiment log.
+
 This directory is independent of the original `train_xSSC` entry points. It
 implements four experiments from one training script:
 

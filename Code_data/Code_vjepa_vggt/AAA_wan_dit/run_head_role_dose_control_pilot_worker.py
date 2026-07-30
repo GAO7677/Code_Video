@@ -25,6 +25,7 @@ RUNNER = SCRIPT_DIR / "run_matched_head_subset_ablation_job.sh"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--runner", type=Path, default=RUNNER)
     parser.add_argument("--gpu", type=int)
     parser.add_argument("--worker-id")
     parser.add_argument("--gpu-start-memory-threshold-mib", type=int)
@@ -263,6 +264,9 @@ def _attempts(path: Path) -> int:
 def main() -> None:
     args = parse_args()
     config_path = args.config.expanduser().resolve()
+    runner = args.runner.expanduser().resolve()
+    if not runner.is_file():
+        raise FileNotFoundError(f"Task runner does not exist: {runner}")
     config, root, manifest, cases, subset_ids = _load_config(config_path)
     tasks = _tasks(config, subset_ids)
     manifest_sha256 = _sha256(manifest)
@@ -377,7 +381,7 @@ def main() -> None:
             )
             with log.open("a", encoding="utf-8") as handle:
                 subprocess.run(
-                    ["bash", str(RUNNER)],
+                    ["bash", str(runner)],
                     check=True,
                     env=env,
                     stdout=handle,
