@@ -29,7 +29,11 @@ ssh "${HOST}" "mkdir -p \
   '/mnt/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis' \
   '/mnt/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/offcial_xSSC/train_xssc_context_slots/checkpoints/step-001500' \
   '/home/gaoya/Code_Video/Code_data/Code_train/train_0419' \
-  '/home/gaoya/Code_Video/xSSC-main'"
+  '/home/gaoya/Code_Video/xSSC-main' \
+  '/home/gaoya/code_my_utils' \
+  '/home/gaoya/Code_Video/co-tracker-main' \
+  '/home/gaoya/Code_Video/vjepa2-main' \
+  '/home/gaoya/Code_Video/DreamWorld-main/extract/VGGT'"
 
 echo "[ssh118-setup] syncing wan-cu128 environment"
 rsync -a --partial --info=progress2 \
@@ -43,10 +47,22 @@ rsync -a --partial --info=progress2 \
 echo "[ssh118-setup] syncing code and inputs"
 rsync -a --partial "${SCRIPT_DIR}/" \
   "${HOST}:${PROJECT_ROOT}/AAA_wan_dit/"
+rsync -a --partial "${PROJECT_ROOT}/code_vjepa_vggt/" \
+  "${HOST}:${PROJECT_ROOT}/code_vjepa_vggt/"
+rsync -a --partial "${PROJECT_ROOT}/code_vjepa_free/" \
+  "${HOST}:${PROJECT_ROOT}/code_vjepa_free/"
 rsync -a --partial /home/gaoya/Code_Video/Code_data/Code_train/train_0419/ \
   "${HOST}:/home/gaoya/Code_Video/Code_data/Code_train/train_0419/"
 rsync -a --partial /home/gaoya/Code_Video/xSSC-main/ \
   "${HOST}:/home/gaoya/Code_Video/xSSC-main/"
+rsync -a --partial /home/gaoya/code_my_utils/ \
+  "${HOST}:/home/gaoya/code_my_utils/"
+rsync -a --partial /home/gaoya/Code_Video/co-tracker-main/ \
+  "${HOST}:/home/gaoya/Code_Video/co-tracker-main/"
+rsync -a --partial /home/gaoya/Code_Video/vjepa2-main/ \
+  "${HOST}:/home/gaoya/Code_Video/vjepa2-main/"
+rsync -a --partial /home/gaoya/Code_Video/DreamWorld-main/extract/VGGT/ \
+  "${HOST}:/home/gaoya/Code_Video/DreamWorld-main/extract/VGGT/"
 rsync -a --partial /home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main/ \
   "${HOST}:/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main/"
 rsync -a --partial \
@@ -76,8 +92,8 @@ ssh "${HOST}" "set -euo pipefail
     --runner '${PROJECT_ROOT}/AAA_wan_dit/run_matched_head_subset_ablation_job_ssh118.sh' \
     --preflight"
 
-if tmux has-session -t wan_s_dominant_depth 2>/dev/null; then
-  tmux kill-session -t wan_s_dominant_depth
+if tmux list-sessions -F '#S' 2>/dev/null | rg -Fxq wan_s_dominant_depth; then
+  tmux kill-session -t '=wan_s_dominant_depth'
 fi
 LOCAL_ROOT="${LOCAL_ROOT}" /home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY'
 import os

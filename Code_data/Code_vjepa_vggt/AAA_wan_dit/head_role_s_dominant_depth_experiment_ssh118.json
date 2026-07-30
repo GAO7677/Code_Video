@@ -42,13 +42,12 @@
   },
   "execution": {
     "gpus": [
-      0,
-      2,
-      3,
+      4,
       5,
       6,
       7
     ],
+    "allow_gpu4": true,
     "workers_per_gpu": 1,
     "gpu_start_memory_threshold_mib": 4096,
     "gpu_free_stability_polls": 3,

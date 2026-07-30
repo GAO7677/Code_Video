@@ -8,7 +8,7 @@ PYTHON=/mnt/data/gaoya/agent-data/envs/wan-cu128/bin/python
 CONFIG="${SCRIPT_DIR}/head_role_s_dominant_depth_experiment_ssh118.json"
 RUNNER="${SCRIPT_DIR}/run_matched_head_subset_ablation_job_ssh118.sh"
 SESSION=wan_s_dominant_depth_ssh118
-GPUS=(0 2 3 5 6 7)
+GPUS=(4 5 6 7)
 
 "${PYTHON}" "${SCRIPT_DIR}/run_head_role_dose_control_pilot_worker.py" \
   --config "${CONFIG}" --runner "${RUNNER}" --preflight
@@ -18,7 +18,7 @@ if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
 fi
 for gpu in "${GPUS[@]}"; do
   name="remote_g${gpu}"
-  if tmux list-windows -t "${SESSION}" -F '#W' | rg -Fxq "${name}"; then
+  if tmux list-windows -t "${SESSION}" -F '#W' | grep -Fxq "${name}"; then
     continue
   fi
   command=(

@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt
 DIFFSYNTH_ROOT=/home/gaoya/Code_Video/WAN_2p2/DiffSynth-Studio-main
 TRAIN0419_ROOT=/home/gaoya/Code_Video/Code_data/Code_train/train_0419
+CODE_UTILS_ROOT=/home/gaoya/code_my_utils
+COTRACKER_ROOT=/home/gaoya/Code_Video/co-tracker-main
+VJEPA2_ROOT=/home/gaoya/Code_Video/vjepa2-main
+VGGT_ROOT=/home/gaoya/Code_Video/DreamWorld-main/extract/VGGT
 PHYSRVG_ROOT="${PROJECT_ROOT}/code_phys_papers_compare/PhysRVG-main"
 WAN_PYTHON=/mnt/data/gaoya/agent-data/envs/wan-cu128/bin/python
 PHYSRVG_PYTHON=/mnt/data/gaoya/agent-data/envs/vjepa2/bin/python
@@ -19,7 +23,7 @@ INPUT_LIST="${INPUT_LIST:?set INPUT_LIST}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?set OUTPUT_ROOT}"
 MANIFEST="${MANIFEST:?set MANIFEST}"
 
-if [[ "${GPU}" == "4" ]]; then
+if [[ "${GPU}" == "4" && "${ALLOW_GPU4:-0}" != "1" ]]; then
   echo "GPU4 is prohibited by workspace policy" >&2
   exit 2
 fi
@@ -51,7 +55,7 @@ mkdir -p "${JOB_ROOT}"
 
 if [[ "${MODEL}" == "wan_lora" ]]; then
   exec env PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false \
-    PYTHONPATH="${PROJECT_ROOT}:${DIFFSYNTH_ROOT}:${TRAIN0419_ROOT}:${SCRIPT_DIR}" \
+    PYTHONPATH="${CODE_UTILS_ROOT}:${PROJECT_ROOT}:${DIFFSYNTH_ROOT}:${TRAIN0419_ROOT}:${SCRIPT_DIR}" \
     CUDA_VISIBLE_DEVICES="${GPU}" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     "${WAN_PYTHON}" "${SCRIPT_DIR}/infer_wan_lora_common22_public_head_ablation.py" \
     --matched-subset-manifest "${MANIFEST}" --matched-subset-id "${SUBSET_ID}" \
@@ -67,7 +71,7 @@ fi
 
 if [[ "${MODEL}" == "xssc" ]]; then
   exec env PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false \
-    PYTHONPATH="${PROJECT_ROOT}:${DIFFSYNTH_ROOT}:${TRAIN0419_ROOT}:${SCRIPT_DIR}" \
+    PYTHONPATH="${CODE_UTILS_ROOT}:${COTRACKER_ROOT}:${VJEPA2_ROOT}:${VGGT_ROOT}:${PROJECT_ROOT}:${DIFFSYNTH_ROOT}:${TRAIN0419_ROOT}:${SCRIPT_DIR}" \
     CUDA_VISIBLE_DEVICES="${GPU}" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     XSSC_ROOT="${XSSC_ROOT}" XSSC_CONFIG="${XSSC_CONFIG}" \
     XSSC_CHECKPOINT="${XSSC_CHECKPOINT}" \

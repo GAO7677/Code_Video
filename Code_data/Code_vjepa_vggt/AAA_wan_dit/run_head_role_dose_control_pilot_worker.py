@@ -72,7 +72,7 @@ def _load_config(
     if config.get("schema_version") != 1:
         raise ValueError("Config schema_version must be 1")
     gpus = [int(value) for value in config["execution"]["gpus"]]
-    if 4 in gpus:
+    if 4 in gpus and not config["execution"].get("allow_gpu4", False):
         raise ValueError("GPU4 is prohibited by workspace policy")
     root = Path(config["storage"]["output_root"]).expanduser().resolve()
     manifest = Path(config["matched_subset_manifest"]).expanduser().resolve()
@@ -377,6 +377,9 @@ def main() -> None:
                     "INPUT_LIST": str(config["input_list"]),
                     "OUTPUT_ROOT": str(root),
                     "MANIFEST": str(manifest),
+                    "ALLOW_GPU4": (
+                        "1" if config["execution"].get("allow_gpu4", False) else "0"
+                    ),
                 }
             )
             with log.open("a", encoding="utf-8") as handle:
