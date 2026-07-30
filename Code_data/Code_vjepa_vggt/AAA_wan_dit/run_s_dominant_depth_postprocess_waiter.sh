@@ -12,6 +12,8 @@ FULL_METRIC_BASE="${ANALYSIS}/full_metric_snapshots"
 GALLERY_CONFIG="${ROOT}/head_role_dose_control_pilot.json"
 DOMINANT_CONFIG="${ROOT}/head_role_s_dominant_depth_experiment.json"
 EXPECTED_TASKS=72
+INTERIM_READY="${ANALYSIS}/interim_full_metrics.complete"
+INTERIM_FAILED="${ANALYSIS}/interim_full_metrics.failed"
 
 count_complete() {
   "${PYTHON}" - "${LOCAL_ROOT}" <<'PY'
@@ -33,6 +35,15 @@ PY
 echo "[dominant-post] waiting for validated local pull"
 while [[ "$(count_complete)" -ne "${EXPECTED_TASKS}" ]]; do
   echo "[dominant-post] local_complete=$(count_complete)/${EXPECTED_TASKS}"
+  sleep 60
+done
+
+echo "[dominant-post] waiting for interim full-metric audit"
+while [[ ! -f "${INTERIM_READY}" ]]; do
+  if [[ -f "${INTERIM_FAILED}" ]]; then
+    echo "[dominant-post] interim full-metric audit failed" >&2
+    exit 1
+  fi
   sleep 60
 done
 

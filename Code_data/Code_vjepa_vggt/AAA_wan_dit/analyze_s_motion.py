@@ -223,6 +223,21 @@ def save_family_plot(
     output: Path,
 ) -> None:
     data = aggregate_frame[aggregate_frame["family"] == family].copy()
+    if data.empty:
+        figure, axis = plt.subplots(figsize=(12, 3))
+        axis.axis("off")
+        axis.text(
+            0.5,
+            0.5,
+            f"No completed {family} motion records yet",
+            ha="center",
+            va="center",
+            fontsize=14,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(output, dpi=180, bbox_inches="tight")
+        plt.close(figure)
+        return
     if family == "s_feature":
         label_column, labels = "subtype", SUBTYPE_LABELS
         family_title = "S feature subtype"

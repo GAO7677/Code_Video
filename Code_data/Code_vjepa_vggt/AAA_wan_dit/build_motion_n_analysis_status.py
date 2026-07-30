@@ -31,6 +31,9 @@ GLOBAL_MOTION_ROOT = Path(
 GLOBAL_VBENCH_LATEST = (
     GLOBAL_MOTION_ROOT / "vbench_snapshots" / "latest"
 )
+GLOBAL_FULL_METRIC_LATEST = (
+    GLOBAL_MOTION_ROOT / "full_metric_snapshots" / "latest"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,13 +71,29 @@ def metric_status(root: Path) -> dict[str, Any]:
     incremental = root / "incremental_metrics_live"
     candidate = metrics if metrics.is_dir() else incremental
     snapshot_label = ""
-    if not candidate.is_dir() and GLOBAL_VBENCH_LATEST.is_file():
-        global_candidate = Path(
-            GLOBAL_VBENCH_LATEST.read_text(encoding="utf-8").strip()
-        )
-        if global_candidate.is_dir():
+    if not candidate.is_dir():
+        for latest, label in (
+            (GLOBAL_FULL_METRIC_LATEST, "统一 17 项缺值快照；"),
+            (GLOBAL_VBENCH_LATEST, "统一 VBench 增量快照；"),
+        ):
+            if not latest.is_file():
+                continue
+            global_candidate = Path(
+                latest.read_text(encoding="utf-8").strip()
+            )
+            plan_path = global_candidate / "plan.json"
+            if not global_candidate.is_dir() or not plan_path.is_file():
+                continue
+            plan = read_json(plan_path)
+            serialized = json.dumps(
+                plan.get("groups", plan.get("complete_groups", [])),
+                ensure_ascii=False,
+            )
+            if str(root.resolve()) not in serialized:
+                continue
             candidate = global_candidate
-            snapshot_label = "统一 VBench 增量快照；"
+            snapshot_label = label
+            break
     if not candidate.is_dir():
         return {
             "status": "not_started",
