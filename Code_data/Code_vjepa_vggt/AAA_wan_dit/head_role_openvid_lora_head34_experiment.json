@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "experiment_name": "openvid_lora_step10000_strict_head34",
+  "input_list": "/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt",
+  "expected_cases": 20,
+  "models": [
+    "openvid_lora_step10000"
+  ],
+  "seeds": [
+    851
+  ],
+  "step_ranges": [
+    [
+      0,
+      10
+    ],
+    [
+      10,
+      20
+    ],
+    [
+      0,
+      40
+    ]
+  ],
+  "matched_subset_manifest": "/data/gaoya/agent-data/outputs/wan_dit_openvid_lora_head34/configs/openvid_lora_head34_subsets.json",
+  "subset_matching_modes": [
+    "exact_block_feature_contrast",
+    "exact_block_feature_union",
+    "exhaustive_s_feature_dominance_partition"
+  ],
+  "generation": {
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "context_frames": 8,
+    "num_inference_steps": 40,
+    "fps": 30,
+    "context_resize_mode": "crop",
+    "cfg_scale_wan": 5.0
+  },
+  "execution": {
+    "gpus": [
+      6,
+      7
+    ],
+    "allow_gpu4": false,
+    "workers_per_gpu": 1,
+    "gpu_start_memory_threshold_mib": 4096,
+    "gpu_free_stability_polls": 3,
+    "poll_seconds": 30,
+    "max_attempts_per_task": 3,
+    "tmux_session": "wan_openvid_lora_head34_ssh118"
+  },
+  "storage": {
+    "output_root": "/data/gaoya/agent-data/outputs/wan_dit_openvid_lora_head34/seed851"
+  },
+  "checkpoint": {
+    "path": "/data/gaoya/AAA_test_video/Train_test/DiffSynth_wan22_ti2v5B/openvid_mixed_ctx24_384x672_lora/checkpoints/step-010000/checkpoint.safetensors",
+    "sha256": "763a1b00ad370b1af7aeb53304b79d01c53bd8588390e09f2f374dc83f2e54ae"
+  }
+}

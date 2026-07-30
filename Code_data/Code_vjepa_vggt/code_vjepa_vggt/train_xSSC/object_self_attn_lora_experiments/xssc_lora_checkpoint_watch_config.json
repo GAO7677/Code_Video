@@ -1,0 +1,155 @@
+{
+  "paths": {
+    "watch_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_checkpoint_watch",
+    "master_hub_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub",
+    "baseline_gallery_root": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/gallery",
+    "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt",
+    "run_infer_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_infer_from_experiment.sh",
+    "bench_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py",
+    "metric_summary_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/summarize_benchmark_txt_metrics.py",
+    "metric_validator_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/validate_metric_task_summary.py",
+    "dashboard_builder": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/build_xssc_lora_checkpoint_dashboard.py",
+    "python": "/home/gaoya/miniconda3/envs/wan-cu128/bin/python",
+    "ffprobe": "/home/gaoya/miniconda3/envs/wan-cu128/bin/ffprobe"
+  },
+  "runtime": {
+    "poll_seconds": 60,
+    "retry_seconds": 120,
+    "checkpoint_stability_seconds": 30,
+    "gpu_poll_seconds": 30,
+    "gpu_id": 3,
+    "gpu_ready_max_used_mib": 8000,
+    "expected_cases": 20,
+    "num_inference_steps": 8,
+    "height": 512,
+    "width": 896,
+    "num_frames": 49,
+    "fps": 30,
+    "context_frames": 8,
+    "seed": 42
+  },
+  "metrics": {
+    "cpu": [
+      "physics_iq_with_context",
+      "physics_iq_without_context",
+      "pmf_with_context",
+      "pmf_without_context"
+    ],
+    "gpu": [
+      "wmreward",
+      "vbench_subject_consistency",
+      "vbench_background_consistency",
+      "vbench_temporal_flickering",
+      "vbench_motion_smoothness",
+      "vbench_dynamic_degree",
+      "vbench_aesthetic_quality",
+      "vbench_imaging_quality",
+      "videophy2",
+      "cosmos_reason1"
+    ]
+  },
+  "plot_metrics": [
+    {"field": "wmreward_surprise_mean", "count": "wmreward_surprise_count", "label": "WMReward surprise"},
+    {"field": "physics_iq_with_context_score_mean", "count": "physics_iq_with_context_score_count", "label": "Physics-IQ with context"},
+    {"field": "physics_iq_without_context_score_mean", "count": "physics_iq_without_context_score_count", "label": "Physics-IQ without context"},
+    {"field": "pmf_with_context_score_mean", "count": "pmf_with_context_score_count", "label": "PMF with context"},
+    {"field": "pmf_without_context_score_mean", "count": "pmf_without_context_score_count", "label": "PMF without context"},
+    {"field": "videophy2_score_mean", "count": "videophy2_score_count", "label": "VideoPhy2 joint"},
+    {"field": "videophy2_sa_score_mean", "count": "videophy2_sa_score_count", "label": "VideoPhy2 semantic adherence"},
+    {"field": "videophy2_pc_score_mean", "count": "videophy2_pc_score_count", "label": "VideoPhy2 physical commonsense"},
+    {"field": "videophy2_joint_rate_mean", "count": "videophy2_joint_rate_count", "label": "VideoPhy2 joint pass rate"},
+    {"field": "videophy2_pc_raw_score_mean", "count": "videophy2_pc_raw_score_count", "label": "VideoPhy2 physical commonsense raw"},
+    {"field": "cosmos_reason1_score_mean", "count": "cosmos_reason1_score_count", "label": "Cosmos Reason"},
+    {"field": "vbench_subject_consistency_score_mean", "count": "vbench_subject_consistency_score_count", "label": "VBench subject consistency"},
+    {"field": "vbench_background_consistency_score_mean", "count": "vbench_background_consistency_score_count", "label": "VBench background consistency"},
+    {"field": "vbench_temporal_flickering_score_mean", "count": "vbench_temporal_flickering_score_count", "label": "VBench temporal flickering"},
+    {"field": "vbench_motion_smoothness_score_mean", "count": "vbench_motion_smoothness_score_count", "label": "VBench motion smoothness"},
+    {"field": "vbench_dynamic_degree_score_mean", "count": "vbench_dynamic_degree_score_count", "label": "VBench dynamic degree"},
+    {"field": "vbench_aesthetic_quality_score_mean", "count": "vbench_aesthetic_quality_score_count", "label": "VBench aesthetic quality"},
+    {"field": "vbench_imaging_quality_score_mean", "count": "vbench_imaging_quality_score_count", "label": "VBench imaging quality"}
+  ],
+  "methods": [
+    {
+      "key": "object_only",
+      "label": "Object-only",
+      "color": "#007C83",
+      "static_checkpoints": [
+        {
+          "step": 500,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/object_only_gpu1_formal/formal_20260729T184553Z/checkpoints/step-000500"
+        },
+        {
+          "step": 529,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/object_only_gpu1_formal/formal_20260729T184553Z/checkpoints/interrupted-latest"
+        }
+      ],
+      "watch_roots": [],
+      "bootstrap_result_roots": {
+        "529": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/object_only_step000529_steps8_512x896_ctx08_49f"
+      }
+    },
+    {
+      "key": "full_sa",
+      "label": "Full-SA",
+      "color": "#C4473A",
+      "static_checkpoints": [
+        {
+          "step": 500,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_gpu2_formal/formal_20260729T184553Z/checkpoints/step-000500"
+        },
+        {
+          "step": 522,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_gpu2_formal/formal_20260729T184553Z/checkpoints/interrupted-latest"
+        }
+      ],
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_gpu12_ddp_resume/ddp2_resume_20260730T055600Z/checkpoints"
+      ],
+      "bootstrap_result_roots": {
+        "1000": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/full_sa_step001000_steps8_512x896_ctx08_49f"
+      }
+    },
+    {
+      "key": "s_head59",
+      "label": "S-head59",
+      "color": "#598414",
+      "static_checkpoints": [
+        {
+          "step": 500,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu6_formal/formal_20260729T184553Z/checkpoints/step-000500"
+        },
+        {
+          "step": 529,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu6_formal/formal_20260729T184553Z/checkpoints/interrupted-latest"
+        }
+      ],
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu05_ddp_resume/ddp2_resume_int32_20260730T061200Z/checkpoints"
+      ],
+      "bootstrap_result_roots": {
+        "1000": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/s_head59_step001000_steps8_512x896_ctx08_49f"
+      }
+    },
+    {
+      "key": "t_head70",
+      "label": "T-head70",
+      "color": "#7256A8",
+      "static_checkpoints": [
+        {
+          "step": 500,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu7_formal/formal_20260729T184553Z/checkpoints/step-000500"
+        },
+        {
+          "step": 529,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu7_formal/formal_20260729T184553Z/checkpoints/interrupted-latest"
+        }
+      ],
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu67_ddp_resume/ddp2_resume_fixint32_20260730T060100Z/checkpoints"
+      ],
+      "bootstrap_result_roots": {
+        "1000": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/t_head70_step001000_steps8_512x896_ctx08_49f"
+      }
+    }
+  ]
+}

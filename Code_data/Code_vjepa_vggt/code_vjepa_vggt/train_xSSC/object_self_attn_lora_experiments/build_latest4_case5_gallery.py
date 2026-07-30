@@ -17,6 +17,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--input-list", type=Path, required=True)
     parser.add_argument(
+        "--complete-only",
+        action="store_true",
+        help="Publish only cases whose generated video exists for every method.",
+    )
+    parser.add_argument(
         "--method",
         action="append",
         required=True,
@@ -86,7 +91,11 @@ def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def build_page(cases: list[dict[str, object]], methods: list[tuple[str, str]]) -> str:
+def build_page(
+    cases: list[dict[str, object]],
+    methods: list[tuple[str, str]],
+    num_requested: int,
+) -> str:
     options = "".join(
         f'<option value="case-{index}">{index + 1:02d} · {escape(case["stem"])}</option>'
         for index, case in enumerate(cases)
@@ -134,7 +143,7 @@ def build_page(cases: list[dict[str, object]], methods: list[tuple[str, str]]) -
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>xSSC LoRA 最新权重对比</title>
+  <title>xSSC LoRA · test_5 权重对比</title>
   <style>
     :root {{
       --bg: #f4f6f7;
@@ -259,7 +268,7 @@ def build_page(cases: list[dict[str, object]], methods: list[tuple[str, str]]) -
 </head>
 <body>
   <div class="toolbar">
-    <div class="title">xSSC LoRA · 最新权重五案例对比</div>
+    <div class="title">xSSC LoRA · test_5 对比 · {len(cases)}/{num_requested} cases</div>
     <select id="case-select" aria-label="选择案例">{options}</select>
     <button id="play" title="播放当前案例全部视频" aria-label="播放">▶</button>
     <button id="pause" title="暂停当前案例全部视频" aria-label="暂停">Ⅱ</button>
@@ -314,14 +323,19 @@ def main() -> None:
     for input_path in input_paths:
         payload = json.loads(input_path.read_text(encoding="utf-8"))
         stem = input_path.stem
+        generated_sources = [
+            generation_root / method_directory / f"{stem}.mp4"
+            for _, method_directory in methods
+        ]
+        if args.complete_only and not all(path.is_file() for path in generated_sources):
+            continue
         case_media = media_root / stem
         gt_path = case_media / "gt_49f_30fps.mp4"
         render_gt_clip(Path(payload["source_video"]), gt_path)
         context_path = case_media / "context_8f.mp4"
         link_file(Path(payload["input_video"]), context_path)
         method_paths: list[str] = []
-        for method_index, (_, method_directory) in enumerate(methods):
-            source = generation_root / method_directory / f"{stem}.mp4"
+        for method_index, source in enumerate(generated_sources):
             destination = case_media / f"method_{method_index:02d}.mp4"
             link_file(source, destination)
             method_paths.append(destination.relative_to(gallery_root).as_posix())
@@ -336,11 +350,13 @@ def main() -> None:
         )
     gallery_root.mkdir(parents=True, exist_ok=True)
     (gallery_root / "index.html").write_text(
-        build_page(cases, methods),
+        build_page(cases, methods, len(input_paths)),
         encoding="utf-8",
     )
     manifest = {
+        "num_requested": len(input_paths),
         "num_cases": len(cases),
+        "num_pending": len(input_paths) - len(cases),
         "methods": [{"label": label, "directory": directory} for label, directory in methods],
         "cases": cases,
     }
