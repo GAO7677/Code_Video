@@ -48,6 +48,18 @@
       "cosmos_reason1"
     ]
   },
+  "physiciq": {
+    "enabled": true,
+    "trigger_steps": [1500],
+    "method_keys": ["full_sa", "s_head59", "t_head70"],
+    "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
+    "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
+    "leaf_folders": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/leaf_folders.txt",
+    "plot_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/run_plot_dit_ablation_metrics.sh",
+    "expected_cases": 67,
+    "num_inference_steps": 40,
+    "method_name_template": "xssc_lora_{method_key}_step-{step:06d}_steps40_512x896_ctx08_49f_customprompt"
+  },
   "plot_metrics": [
     {"field": "wmreward_surprise_mean", "count": "wmreward_surprise_count", "label": "WMReward surprise"},
     {"field": "physics_iq_with_context_score_mean", "count": "physics_iq_with_context_score_count", "label": "Physics-IQ with context"},

@@ -209,10 +209,18 @@ def probe_video(ffprobe: Path, video: Path) -> tuple[int, int, str, int]:
 def validate_result_root(
     config: dict[str, Any],
     result_root: Path,
+    input_list: Path | None = None,
+    expected_cases: int | None = None,
 ) -> dict[str, Any]:
     runtime = config["runtime"]
-    input_paths = read_inputs(Path(config["paths"]["input_list"]))
-    expected = int(runtime["expected_cases"])
+    input_paths = read_inputs(
+        input_list if input_list is not None else Path(config["paths"]["input_list"])
+    )
+    expected = (
+        int(expected_cases)
+        if expected_cases is not None
+        else int(runtime["expected_cases"])
+    )
     if len(input_paths) != expected:
         raise ValueError(f"Expected {expected} inputs, found {len(input_paths)}")
     ffprobe = Path(config["paths"]["ffprobe"])

@@ -68,6 +68,7 @@ PY
 EXPERIMENT_NAME="${CONFIG_VALUES[0]}"
 WAN_ROOT="${CONFIG_VALUES[1]}"
 PRETRAINED_LORA="${CONFIG_VALUES[2]}"
+SHARD_TAG="${SHARD_TAG:-${EXPERIMENT_NAME}}"
 STEP_TAG="$(basename "${CHECKPOINT_DIR}")"
 STEP_OUTPUT_DIR_NAME="${STEP_OUTPUT_DIR_NAME:-${EXPERIMENT_NAME}_${STEP_TAG}_steps${NUM_INFERENCE_STEPS}_512x896_ctx08_49f}"
 TRACE_ROOT="${TRACE_ROOT:-${OUTPUT_ROOT}/_numeric_traces/${STEP_OUTPUT_DIR_NAME}}"
@@ -94,7 +95,7 @@ exec env \
   --model-name "${EXPERIMENT_NAME}" \
   --output-root "${OUTPUT_ROOT}" \
   --step-output-dir-name "${STEP_OUTPUT_DIR_NAME}" \
-  --shard-tag "${EXPERIMENT_NAME}" \
+  --shard-tag "${SHARD_TAG}" \
   --wan-root "${WAN_ROOT}" \
   --lora-checkpoint "${PRETRAINED_LORA}" \
   --device cuda:0 \

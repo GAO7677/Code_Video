@@ -550,6 +550,22 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
     total_discovered = sum(row["discovered"] for row in status)
     total_metrics = sum(row["metric_done"] for row in status)
     expected_metrics = sum(row["metric_total"] for row in status)
+    physiciq_entry = ""
+    if config.get("physiciq", {}).get("enabled"):
+        leaf_path = Path(config["physiciq"]["leaf_folders"]).resolve()
+        plot_root = leaf_path.parent / "_metric_plots" / leaf_path.stem
+        if (plot_root / "index.html").is_file():
+            link_directory(plot_root, hub_root / "physiciq-step1500-metrics")
+            action = '<a href="physiciq-step1500-metrics/">进入 PhysicIQ 指标图</a>'
+            phys_status = "指标图已更新"
+        else:
+            action = ""
+            phys_status = "等待 step 1500"
+        physiciq_entry = f"""
+    <section class="entry"><div><h2>Step 1500 · PhysicIQ 67-case</h2>
+      <div class="meta">Full-SA、S-head59、T-head70 · 40 denoising steps · 完整 14 项指标</div>
+      {action}</div><div class="status">{phys_status}<strong>67 cases / method</strong></div>
+    </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -589,6 +605,7 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
       <a href="gallery/">进入固定对比</a></div>
       <div class="status">已完成<strong>20/20 cases</strong></div>
     </section>
+    {physiciq_entry}
   </div></main>
 </body>
 </html>
