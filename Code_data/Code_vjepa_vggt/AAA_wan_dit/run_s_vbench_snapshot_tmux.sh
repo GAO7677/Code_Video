@@ -8,8 +8,8 @@ WORKER="${ROOT}/run_bench_v2v_wan_queue_worker.sh"
 SUMMARY="/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train0705_kubric_no_gt_box/summarize_benchmark_txt_metrics.py"
 ALLOWLIST="/data/gaoya/agent-data/outputs/wan_dit_fulltoken_head_roles_50seeds/input_lists/test5_unique20.txt"
 LATEST="/data/gaoya/agent-data/outputs/wan_dit_s_motion_analysis/vbench_snapshots/latest"
-GPUS=(0 1 2 3 5 6 7)
-WORKERS_PER_GPU=2
+read -r -a GPUS <<< "${GPU_LIST:-0 1 2 3 5 6 7}"
+WORKERS_PER_GPU="${WORKERS_PER_GPU:-2}"
 
 SNAPSHOT_DIR="${1:-$(cat "${LATEST}")}"
 if [[ ! -s "${SNAPSHOT_DIR}/queues/gpu_common.tsv" ]]; then
