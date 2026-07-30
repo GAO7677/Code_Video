@@ -15,6 +15,7 @@ MIN_FREE_MIB="$6"
 COOLDOWN_SEC="$7"
 PYTHON_BIN=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 BENCH_PY=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/AAAinfer/bench.py
+VALIDATE_SUMMARY=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/AAA_wan_dit/validate_metric_task_summary.py
 QUEUE="${RUN_ROOT}/queues/${KIND}.tsv"
 CURSOR="${RUN_ROOT}/queues/${KIND}.cursor"
 LOCK="${RUN_ROOT}/queues/${KIND}.lock"
@@ -83,6 +84,12 @@ while [[ ! -f "${STOP}" ]]; do
     --output-summary "${summary_path}" \
     "${extra_args[@]}"
   status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    "${PYTHON_BIN}" "${VALIDATE_SUMMARY}" \
+      "${summary_path}" \
+      --expected-cases 20
+    status=$?
+  fi
   set -e
   if [[ "${status}" -eq 0 ]]; then
     num_done=$((num_done + 1))
