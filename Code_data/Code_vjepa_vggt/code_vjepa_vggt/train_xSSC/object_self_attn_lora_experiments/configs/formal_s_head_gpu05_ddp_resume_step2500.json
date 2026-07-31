@@ -1,0 +1,23 @@
+{
+  "extends": "s_head.json",
+  "experiment": {
+    "name": "same_frame_s_head_full59_gpu05_ddp_resume"
+  },
+  "launch": {
+    "gpu_set": "0,5",
+    "num_processes": 2,
+    "main_process_port": 29533
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu05_ddp_resume/ddp2_resume_int32_20260730T061200Z/checkpoints/step-002500/training_state.pt"
+  },
+  "logging": {
+    "wandb_run_id": "rtthg4ds",
+    "wandb_resume": "must",
+    "wandb_name": "same_frame_s_head_full59_gpu6_formal_formal_20260729T184553Z"
+  }
+}
