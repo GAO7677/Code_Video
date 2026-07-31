@@ -1,0 +1,9 @@
+{
+  "extends": "formal_full_sa_slot_dedup_merge_gpu67.json",
+  "experiment": {
+    "name": "full_sa_slot_dedup_merge_xssc_step039000"
+  },
+  "paths": {
+    "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-039000.pth"
+  }
+}

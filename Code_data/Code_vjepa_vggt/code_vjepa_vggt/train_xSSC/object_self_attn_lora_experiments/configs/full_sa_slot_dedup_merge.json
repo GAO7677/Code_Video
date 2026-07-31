@@ -1,0 +1,16 @@
+{
+  "extends": "full_sa.json",
+  "experiment": {
+    "name": "full_sa_slot_dedup_merge",
+    "description": "Full-SA plus object branch with post-xSSC slot-track duplicate merging before object-token projection",
+    "expected_trainable_params": 49051648
+  },
+  "conditioning": {
+    "slot_dedup": {
+      "mode": "merge",
+      "similarity_threshold": 0.94,
+      "similarity_metric": "mean_frame_cosine",
+      "min_keep": 3
+    }
+  }
+}

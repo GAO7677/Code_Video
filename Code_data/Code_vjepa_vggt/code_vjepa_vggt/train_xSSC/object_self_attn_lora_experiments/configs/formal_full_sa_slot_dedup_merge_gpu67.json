@@ -1,0 +1,21 @@
+{
+  "extends": "full_sa_slot_dedup_merge.json",
+  "experiment": {
+    "name": "full_sa_slot_dedup_merge_gpu67"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29567
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": null
+  },
+  "logging": {
+    "wandb_name": "full_sa_slot_dedup_merge_gpu67_from_scratch"
+  }
+}
