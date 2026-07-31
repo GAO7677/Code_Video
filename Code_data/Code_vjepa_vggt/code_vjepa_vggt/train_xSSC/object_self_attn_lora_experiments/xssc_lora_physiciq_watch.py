@@ -68,13 +68,18 @@ def main_checkpoint_manifests(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def discover_tasks(config: dict[str, Any]) -> list[dict[str, Any]]:
     phys = config["physiciq"]
-    trigger_steps = {int(step) for step in phys["trigger_steps"]}
+    configured_steps = phys.get("trigger_steps", "all")
+    trigger_steps = (
+        None
+        if configured_steps == "all"
+        else {int(step) for step in configured_steps}
+    )
     method_keys = set(phys["method_keys"])
     tasks = [
         manifest
         for manifest in main_checkpoint_manifests(config)
-        if int(manifest["step"]) in trigger_steps
-        and manifest["method_key"] in method_keys
+        if manifest["method_key"] in method_keys
+        and (trigger_steps is None or int(manifest["step"]) in trigger_steps)
     ]
     return sorted(tasks, key=lambda row: (int(row["step"]), row["method_key"]))
 
@@ -90,20 +95,29 @@ def load_phys_manifests(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def append_leaf_folder(config: dict[str, Any], result_root: Path) -> None:
-    leaf_path = Path(config["physiciq"]["leaf_folders"]).resolve()
-    lock_path = leaf_path.with_suffix(leaf_path.suffix + ".lock")
-    with exclusive_lock(lock_path):
-        lines = [
-            line.strip()
-            for line in leaf_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        normalized = str(result_root.resolve())
-        if normalized not in lines:
-            lines.append(normalized)
-        temporary = leaf_path.with_name(f".{leaf_path.name}.tmp.{os.getpid()}")
-        temporary.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-        os.replace(temporary, leaf_path)
+    leaf_values = [config["physiciq"]["leaf_folders"]]
+    leaf_values.extend(config["physiciq"].get("additional_leaf_folders", []))
+    for leaf_value in leaf_values:
+        leaf_path = Path(leaf_value).resolve()
+        leaf_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = leaf_path.with_suffix(leaf_path.suffix + ".lock")
+        with exclusive_lock(lock_path):
+            lines = []
+            if leaf_path.is_file():
+                lines = [
+                    line.strip()
+                    for line in leaf_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            normalized = str(result_root.resolve())
+            if normalized not in lines:
+                lines.append(normalized)
+            temporary = leaf_path.with_name(f".{leaf_path.name}.tmp.{os.getpid()}")
+            temporary.write_text(
+                "".join(f"{line}\n" for line in lines),
+                encoding="utf-8",
+            )
+            os.replace(temporary, leaf_path)
 
 
 def method_name(config: dict[str, Any], task: dict[str, Any]) -> str:
@@ -223,6 +237,15 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
                     continue
                 wait_for_gpu(config)
                 run_phys_inference(config, task)
+            subprocess.run(
+                [
+                    config["paths"]["python"],
+                    config["paths"]["dashboard_builder"],
+                    "--config",
+                    config["_config_path"],
+                ],
+                check=True,
+            )
         except Exception as exc:
             log(
                 f"PhysicIQ inference failed method={task['method_key']} "

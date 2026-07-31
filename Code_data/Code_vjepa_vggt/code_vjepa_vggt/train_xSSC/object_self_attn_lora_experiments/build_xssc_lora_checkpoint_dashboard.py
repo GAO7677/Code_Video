@@ -121,6 +121,26 @@ def load_manifests(watch_root: Path) -> list[dict[str, Any]]:
     return sorted(manifests, key=lambda row: (row["method_index"], row["step"]))
 
 
+def load_physiciq_manifests(watch_root: Path) -> list[dict[str, Any]]:
+    manifests = [
+        load_json(path)
+        for path in sorted(
+            (watch_root / "state" / "physiciq" / "inference").glob(
+                "*/step-*.json"
+            )
+        )
+        if path.is_file()
+    ]
+    method_order = {
+        manifest["method_key"]: index
+        for index, manifest in enumerate(manifests)
+    }
+    return sorted(
+        manifests,
+        key=lambda row: (method_order.get(row["method_key"], 999), int(row["step"])),
+    )
+
+
 def metric_done_count(watch_root: Path, method_key: str, step: int) -> int:
     marker_root = (
         watch_root / "state" / "metrics" / method_key / f"step-{step:06d}"
@@ -199,88 +219,104 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
     methods = {method["key"]: method for method in config["methods"]}
     pending_path = watch_root / "state" / "physiciq" / "inference.pending"
     pending = load_json(pending_path) if pending_path.is_file() else None
+    configured_steps = phys.get("trigger_steps", "all")
+    if configured_steps == "all":
+        discovered = load_manifests(watch_root)
+        task_pairs = sorted(
+            {
+                (manifest["method_key"], int(manifest["step"]))
+                for manifest in discovered
+                if manifest["method_key"] in phys["method_keys"]
+            },
+            key=lambda item: (item[1], phys["method_keys"].index(item[0])),
+        )
+    else:
+        task_pairs = [
+            (method_key, int(step))
+            for step in configured_steps
+            for method_key in phys["method_keys"]
+        ]
     rows: list[dict[str, Any]] = []
-    for step in [int(step) for step in phys["trigger_steps"]]:
-        for method_key in phys["method_keys"]:
-            method = methods.get(method_key, {"label": method_key, "color": "#657278"})
-            name = phys["method_name_template"].format(method_key=method_key, step=step)
-            result_root = output_root / name
-            generated = count_paired_result_cases(result_root)
-            manifest_path = (
-                watch_root
-                / "state"
-                / "physiciq"
-                / "inference"
-                / method_key
-                / f"step-{step:06d}.json"
+    for method_key, step in task_pairs:
+        method = methods.get(method_key, {"label": method_key, "color": "#657278"})
+        name = phys["method_name_template"].format(method_key=method_key, step=step)
+        result_root = output_root / name
+        generated = count_paired_result_cases(result_root)
+        manifest_path = (
+            watch_root
+            / "state"
+            / "physiciq"
+            / "inference"
+            / method_key
+            / f"step-{step:06d}.json"
+        )
+        formal_marker_root = (
+            watch_root
+            / "state"
+            / "physiciq"
+            / "metrics"
+            / method_key
+            / f"step-{step:06d}"
+        )
+        partial_marker_root = (
+            watch_root
+            / "state"
+            / "physiciq_partial_metrics"
+            / method_key
+            / f"step-{step:06d}"
+        )
+        partial_summary_root = (
+            watch_root
+            / "physiciq_partial_metric_task_summaries"
+            / method_key
+            / f"step-{step:06d}"
+        )
+        partial_allowlist = (
+            watch_root
+            / "state"
+            / "physiciq_partial_metrics"
+            / "allowlists"
+            / method_key
+            / f"step-{step:06d}.txt"
+        )
+        partial_cases = 0
+        if partial_allowlist.is_file():
+            partial_cases = len(
+                [
+                    line
+                    for line in partial_allowlist.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                ]
             )
-            formal_marker_root = (
-                watch_root
-                / "state"
-                / "physiciq"
-                / "metrics"
-                / method_key
-                / f"step-{step:06d}"
-            )
-            partial_marker_root = (
-                watch_root
-                / "state"
-                / "physiciq_partial_metrics"
-                / method_key
-                / f"step-{step:06d}"
-            )
-            partial_summary_root = (
-                watch_root
-                / "physiciq_partial_metric_task_summaries"
-                / method_key
-                / f"step-{step:06d}"
-            )
-            partial_allowlist = (
-                watch_root
-                / "state"
-                / "physiciq_partial_metrics"
-                / "allowlists"
-                / method_key
-                / f"step-{step:06d}.txt"
-            )
-            partial_cases = 0
-            if partial_allowlist.is_file():
-                partial_cases = len(
-                    [
-                        line
-                        for line in partial_allowlist.read_text(encoding="utf-8").splitlines()
-                        if line.strip() and not line.lstrip().startswith("#")
-                    ]
-                )
-            rows.append(
-                {
-                    "method_key": method_key,
-                    "method_label": method["label"],
-                    "color": method["color"],
-                    "step": step,
-                    "result_root": str(result_root),
-                    "generated": generated,
-                    "expected_cases": expected_cases,
-                    "manifest_done": manifest_path.is_file(),
-                    "formal_metrics_done": metric_marker_count(
-                        formal_marker_root,
-                        metrics,
-                        partial=False,
-                    ),
-                    "partial_metrics_done": metric_marker_count(
-                        partial_marker_root,
-                        metrics,
-                        partial=True,
-                    ),
-                    "partial_cases": partial_cases,
-                    "partial_active": active_summary_text(
-                        partial_summary_root,
-                        partial_marker_root,
-                        metrics,
-                    ),
-                    "metric_total": len(metrics),
-                }
-            )
+        rows.append(
+            {
+                "method_key": method_key,
+                "method_label": method["label"],
+                "color": method["color"],
+                "step": step,
+                "result_root": str(result_root),
+                "generated": generated,
+                "expected_cases": expected_cases,
+                "manifest_done": manifest_path.is_file(),
+                "formal_metrics_done": metric_marker_count(
+                    formal_marker_root,
+                    metrics,
+                    partial=False,
+                ),
+                "partial_metrics_done": metric_marker_count(
+                    partial_marker_root,
+                    metrics,
+                    partial=True,
+                ),
+                "partial_cases": partial_cases,
+                "partial_active": active_summary_text(
+                    partial_summary_root,
+                    partial_marker_root,
+                    metrics,
+                ),
+                "metric_total": len(metrics),
+            }
+        )
     return {
         "expected_cases": expected_cases,
         "metric_total": len(metrics),
@@ -358,9 +394,11 @@ def build_video_media(
     config: dict[str, Any],
     manifests: list[dict[str, Any]],
     cases: list[dict[str, Any]],
+    *,
+    site_name: str = "videos",
 ) -> list[dict[str, Any]]:
     watch_root = Path(config["paths"]["watch_root"]).resolve()
-    videos_root = watch_root / "site" / "videos"
+    videos_root = watch_root / "site" / site_name
     media_root = videos_root / "media"
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -383,7 +421,7 @@ def build_video_media(
             "method_label": manifest["method_label"],
             "step": step,
             "checkpoint_dir": manifest["checkpoint_dir"],
-            "origin": manifest["origin"],
+            "origin": manifest.get("origin", "watcher"),
             "videos": {},
         }
         for case in cases:
@@ -406,6 +444,8 @@ def build_videos_page(
     config: dict[str, Any],
     records: list[dict[str, Any]],
     cases: list[dict[str, Any]],
+    *,
+    page_title: str = "Checkpoint · test_5 全部结果",
 ) -> str:
     methods = [
         {
@@ -425,7 +465,7 @@ def build_videos_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>xSSC LoRA checkpoint 视频</title>
+  <title>{escape(page_title)}</title>
   <style>
     :root {{
       --bg:#f3f5f6; --surface:#fff; --ink:#172126; --muted:#657278;
@@ -474,7 +514,7 @@ def build_videos_page(
 <body>
   <div class="toolbar">
     <a href="../">返回监控页</a>
-    <div class="title">Checkpoint · test_5 全部结果</div>
+    <div class="title">{escape(page_title)}</div>
     <select id="case" aria-label="案例"></select>
     <select id="step-filter" aria-label="训练 step"></select>
     <button id="play" title="同步播放" aria-label="播放">▶</button>
@@ -715,6 +755,18 @@ def build_metrics_page(plots: list[dict[str, Any]]) -> str:
 """
 
 
+def build_pending_page(title: str, message: str) -> str:
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(title)}</title><style>
+body{{margin:0;background:#f3f5f6;color:#172126;font-family:Inter,"Noto Sans SC",Arial,sans-serif}}
+main{{max-width:760px;margin:15vh auto;padding:24px;background:#fff;border:1px solid #d6dde0;border-radius:6px}}
+h1{{margin:0 0 8px;font-size:20px}}p{{margin:0 0 18px;color:#657278}}a{{color:#006d77;font-weight:800;text-decoration:none}}
+</style></head><body><main><h1>{escape(title)}</h1><p>{escape(message)}</p>
+<a href="../">返回监控页</a></main></body></html>"""
+
+
 def build_status(
     config: dict[str, Any],
     manifests: list[dict[str, Any]],
@@ -813,6 +865,10 @@ def build_watch_index(
         <span>按方法、训练 step 和 case 查看生成结果</span></a>
       <a class="link" href="metrics/"><strong>指标曲线</strong>
         <span>每个指标独立子图，比较不同训练方法</span></a>
+      <a class="link" href="physiciq-videos/"><strong>PhysicIQ case</strong>
+        <span>67 个 case 的 checkpoint 视频对比</span></a>
+      <a class="link" href="../physiciq-metrics/"><strong>PhysicIQ 指标曲线</strong>
+        <span>每个新 checkpoint 的完整 Physics-IQ 评测</span></a>
     </div>
     <section class="panel"><div class="panel-head"><h2>自动任务状态</h2>
       <span class="state">{state}</span></div>
@@ -837,8 +893,14 @@ def build_master_hub(
     baseline_gallery = Path(config["paths"]["baseline_gallery_root"]).resolve()
     hub_root.mkdir(parents=True, exist_ok=True)
     link_directory(watch_root / "site" / "videos", hub_root / "gallery")
+    phys_gallery = watch_root / "site" / "physiciq-videos"
+    if phys_gallery.is_dir():
+        link_directory(phys_gallery, hub_root / "physiciq-gallery")
     link_directory(baseline_gallery, hub_root / "initial-gallery")
     link_directory(watch_root / "site", hub_root / "checkpoint-watch")
+    legacy_watch_root = config["paths"].get("legacy_watch_root")
+    if legacy_watch_root and Path(legacy_watch_root).is_dir():
+        link_directory(Path(legacy_watch_root), hub_root / "legacy-checkpoint-watch")
     total_inferred = sum(row["inferred"] for row in status)
     total_discovered = sum(row["discovered"] for row in status)
     total_metrics = sum(row["metric_done"] for row in status)
@@ -848,7 +910,7 @@ def build_master_hub(
         phys_config = config["physiciq"]
         leaf_path = Path(phys_config["leaf_folders"]).resolve()
         plot_root = leaf_path.parent / "_metric_plots" / leaf_path.stem
-        trigger_steps = [int(step) for step in phys_config["trigger_steps"]]
+        configured_steps = phys_config.get("trigger_steps", "all")
         generated_text = "生成 pending"
         metric_text = "正式指标 pending"
         partial_text = "partial 指标 pending"
@@ -866,17 +928,41 @@ def build_master_hub(
                 f"{phys_status['partial_metric_expected']}"
             )
         if (plot_root / "index.html").is_file():
-            link_directory(plot_root, hub_root / "physiciq-step1500-metrics")
+            link_directory(plot_root, hub_root / "physiciq-metrics")
             action = (
                 '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
-                '<a href="physiciq-step1500-metrics/">进入 PhysicIQ 指标图</a>'
+                '<a href="physiciq-gallery/">进入 PhysicIQ case</a>'
+                '<a href="physiciq-metrics/">进入 PhysicIQ 指标图</a>'
             )
         else:
-            action = '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
-        step_text = " / ".join(str(step) for step in trigger_steps)
+            pending_metrics = watch_root / "site" / "physiciq-metrics"
+            pending_metrics.mkdir(parents=True, exist_ok=True)
+            (pending_metrics / "index.html").write_text(
+                build_pending_page(
+                    "PhysicIQ 指标曲线",
+                    "首个 checkpoint 的完整指标尚未计算完成。",
+                ),
+                encoding="utf-8",
+            )
+            link_directory(pending_metrics, hub_root / "physiciq-metrics")
+            action = (
+                '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
+                '<a href="physiciq-gallery/">进入 PhysicIQ case</a>'
+                '<a href="physiciq-metrics/">进入 PhysicIQ 指标图</a>'
+            )
+        step_text = (
+            "每个新 checkpoint"
+            if configured_steps == "all"
+            else " / ".join(str(int(step)) for step in configured_steps)
+        )
+        method_text = "、".join(
+            method["label"]
+            for method in config["methods"]
+            if method["key"] in phys_config["method_keys"]
+        )
         physiciq_entry = f"""
     <section class="entry"><div><h2>PhysicIQ 67-case · Checkpoint 对比</h2>
-      <div class="meta">Full-SA、S-head59、T-head70 · 40 denoising steps · 完整 14 项指标</div>
+      <div class="meta">{escape(method_text)} · 40 denoising steps · 完整指标</div>
       {action}</div><div class="status">{generated_text}<strong>{metric_text}</strong><em>{partial_text}</em><small>step {step_text}</small></div>
     </section>"""
     page = f"""<!doctype html>
@@ -907,7 +993,7 @@ def build_master_hub(
 </head>
 <body>
   <header><h1>xSSC LoRA 训练可视化总览</h1>
-    <p>Object-only、Full-SA、S-head59 与 T-head70</p></header>
+    <p>{escape('、'.join(method['label'] for method in config['methods']))}</p></header>
   <main><div class="section-title">训练与推理</div><div class="entries">
     <section class="entry"><div><h2>Checkpoint 自动评测</h2>
       <div class="meta">自动发现权重、生成 test_5、计算完整指标并绘制训练 step 曲线</div>
@@ -921,6 +1007,11 @@ def build_master_hub(
       <div class="status">自动更新<strong>{total_inferred} 个结果</strong></div>
     </section>
     {physiciq_entry}
+    <section class="entry"><div><h2>历史 Checkpoint 结果</h2>
+      <div class="meta">此前 Object-only、Full-SA、S-head 与 T-head 的评测页面</div>
+      <a href="legacy-checkpoint-watch/">进入历史页面</a></div>
+      <div class="status">只读归档<strong>保留旧结果</strong></div>
+    </section>
   </div></main>
 </body>
 </html>
@@ -943,6 +1034,38 @@ def main() -> None:
         build_videos_page(config, records, cases),
         encoding="utf-8",
     )
+    phys_config = config.get("physiciq", {})
+    if phys_config.get("enabled"):
+        phys_manifests = load_physiciq_manifests(watch_root)
+        if phys_manifests:
+            phys_cases = read_inputs(Path(phys_config["input_list"]))
+            phys_records = build_video_media(
+                config,
+                phys_manifests,
+                phys_cases,
+                site_name="physiciq-videos",
+            )
+            phys_videos_root = site_root / "physiciq-videos"
+            phys_videos_root.mkdir(parents=True, exist_ok=True)
+            (phys_videos_root / "index.html").write_text(
+                build_videos_page(
+                    config,
+                    phys_records,
+                    phys_cases,
+                    page_title="Checkpoint · PhysicIQ 67-case",
+                ),
+                encoding="utf-8",
+            )
+        else:
+            phys_videos_root = site_root / "physiciq-videos"
+            phys_videos_root.mkdir(parents=True, exist_ok=True)
+            (phys_videos_root / "index.html").write_text(
+                build_pending_page(
+                    "Checkpoint · PhysicIQ 67-case",
+                    "正在等待三个训练任务落下首个 checkpoint。",
+                ),
+                encoding="utf-8",
+            )
     plots = build_metric_plots(config, manifests)
     metrics_root = site_root / "metrics"
     metrics_root.mkdir(parents=True, exist_ok=True)
