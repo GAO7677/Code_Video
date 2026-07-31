@@ -30,6 +30,10 @@ METHOD_PATTERN = re.compile(
     r"^(whole_block|self_attn_zero|object_cross_attn|"
     r"text_cross_attn_zero|ffn_zero|lora_off)_block(\d{2})$"
 )
+TRAINING_CHECKPOINT_PATTERN = re.compile(
+    r"^xssc_lora_(full_sa|s_head59|t_head70)_step-(\d+)_"
+    r"steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
+)
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
@@ -70,6 +74,20 @@ MODE_COLORS = {
     "text_cross_attn_zero": "#7B2CBF",
     "ffn_zero": "#E67E22",
     "lora_off": "#5D6D7E",
+}
+TRAINING_VARIANT_LABELS = {
+    "full_sa": "Full-SA + Object",
+    "s_head59": "S-head59 + Object",
+    "t_head70": "T-head70 + Object",
+}
+TRAINING_VARIANT_COLORS = {
+    "full_sa": "#C4473A",
+    "s_head59": "#598414",
+    "t_head70": "#7256A8",
+}
+TRAINING_VARIANT_ORDER = {
+    variant: index
+    for index, variant in enumerate(("full_sa", "s_head59", "t_head70"))
 }
 
 
@@ -234,6 +252,30 @@ class Method:
         return model_order, block_order, MODE_ORDER[self.mode]
 
 
+@dataclass(frozen=True)
+class TrainingCheckpoint:
+    variant: str
+    step: int
+    result_dir: Path
+
+    @property
+    def method_id(self) -> str:
+        return f"xssc_lora/{self.variant}/step-{self.step:06d}"
+
+    @property
+    def sort_key(self) -> tuple[int, int]:
+        return TRAINING_VARIANT_ORDER[self.variant], self.step
+
+
+@dataclass(frozen=True)
+class TrainingMetricStat:
+    checkpoint: TrainingCheckpoint
+    metric: Metric
+    count: int
+    mean: float | None
+    complete: bool
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -315,7 +357,7 @@ def infer_config(result_dir: Path) -> tuple[str, int | None, str]:
     raise ValueError(f"Cannot infer ablation config from result directory: {result_dir}")
 
 
-def discover_methods_from_txt(path: Path) -> list[Method]:
+def read_result_dirs_from_txt(path: Path) -> list[Path]:
     result_dirs = [
         Path(line.strip()).expanduser().resolve()
         for line in path.read_text(encoding="utf-8").splitlines()
@@ -325,10 +367,29 @@ def discover_methods_from_txt(path: Path) -> list[Method]:
         raise ValueError(f"No result directories found in {path}")
     if len(result_dirs) != len(set(result_dirs)):
         raise ValueError(f"Duplicate result directories found in {path}")
+    return result_dirs
+
+
+def infer_training_checkpoint(result_dir: Path) -> TrainingCheckpoint | None:
+    for candidate in (result_dir, *result_dir.parents):
+        match = TRAINING_CHECKPOINT_PATTERN.fullmatch(candidate.name)
+        if match is not None:
+            return TrainingCheckpoint(
+                variant=match.group(1),
+                step=int(match.group(2)),
+                result_dir=result_dir,
+            )
+    return None
+
+
+def discover_methods_from_txt(path: Path) -> list[Method]:
+    result_dirs = read_result_dirs_from_txt(path)
 
     methods: list[Method] = []
     method_ids: set[str] = set()
     for result_dir in result_dirs:
+        if infer_training_checkpoint(result_dir) is not None:
+            continue
         model = infer_model(result_dir)
         mode, block_id, config_name = infer_config(result_dir)
         method_id = f"{model}/{config_name}"
@@ -345,6 +406,18 @@ def discover_methods_from_txt(path: Path) -> list[Method]:
             )
         )
     return sorted(methods, key=lambda method: method.sort_key)
+
+
+def discover_training_checkpoints_from_txt(path: Path) -> list[TrainingCheckpoint]:
+    checkpoints = [
+        checkpoint
+        for result_dir in read_result_dirs_from_txt(path)
+        if (checkpoint := infer_training_checkpoint(result_dir)) is not None
+    ]
+    method_ids = [checkpoint.method_id for checkpoint in checkpoints]
+    if len(method_ids) != len(set(method_ids)):
+        raise ValueError(f"Duplicate training checkpoint inferred from {path}")
+    return sorted(checkpoints, key=lambda checkpoint: checkpoint.sort_key)
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
@@ -420,6 +493,33 @@ def compute_stats(
     return stats
 
 
+def compute_training_stats(
+    checkpoints: list[TrainingCheckpoint],
+    allowed_input_jsons: set[Path],
+    expected_cases: int,
+) -> list[TrainingMetricStat]:
+    stats: list[TrainingMetricStat] = []
+    for checkpoint in checkpoints:
+        payloads = load_allowed_payloads(checkpoint.result_dir, allowed_input_jsons)
+        for metric in METRICS:
+            values = [
+                value
+                for payload in payloads.values()
+                if (value := metric.extract(payload)) is not None
+            ]
+            count = len(values)
+            stats.append(
+                TrainingMetricStat(
+                    checkpoint=checkpoint,
+                    metric=metric,
+                    count=count,
+                    mean=float(np.mean(values)) if values else None,
+                    complete=count == expected_cases,
+                )
+            )
+    return stats
+
+
 def write_stats_csv(
     path: Path,
     stats: list[MetricStat],
@@ -464,6 +564,50 @@ def write_stats_csv(
                     "complete_67": stat.complete,
                     "mean": "" if stat.mean is None else f"{stat.mean:.8f}",
                     "result_dir": str(stat.method.result_dir),
+                }
+            )
+
+
+def write_training_stats_csv(
+    path: Path,
+    stats: list[TrainingMetricStat],
+    expected_cases: int,
+    complete_only: bool = False,
+) -> None:
+    fieldnames = (
+        "method_id",
+        "variant",
+        "variant_label",
+        "training_step",
+        "metric",
+        "direction",
+        "score_count",
+        "expected_count",
+        "complete_67",
+        "mean",
+        "result_dir",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for stat in stats:
+            if complete_only and not stat.complete:
+                continue
+            writer.writerow(
+                {
+                    "method_id": stat.checkpoint.method_id,
+                    "variant": stat.checkpoint.variant,
+                    "variant_label": TRAINING_VARIANT_LABELS[
+                        stat.checkpoint.variant
+                    ],
+                    "training_step": stat.checkpoint.step,
+                    "metric": stat.metric.key,
+                    "direction": stat.metric.direction,
+                    "score_count": stat.count,
+                    "expected_count": expected_cases,
+                    "complete_67": stat.complete,
+                    "mean": "" if stat.mean is None else f"{stat.mean:.8f}",
+                    "result_dir": str(stat.checkpoint.result_dir),
                 }
             )
 
@@ -664,6 +808,189 @@ def plot_metrics(
     return completeness
 
 
+def plot_training_metrics(
+    output_png: Path,
+    output_pdf: Path,
+    stats: list[TrainingMetricStat],
+    expected_cases: int,
+    dpi: int,
+    metrics: tuple[Metric, ...],
+) -> dict[str, dict[str, int]]:
+    indexed = {
+        (stat.checkpoint.variant, stat.checkpoint.step, stat.metric.key): stat
+        for stat in stats
+    }
+    checkpoints = {stat.checkpoint for stat in stats}
+    variants = sorted(
+        {checkpoint.variant for checkpoint in checkpoints},
+        key=TRAINING_VARIANT_ORDER.__getitem__,
+    )
+    steps = sorted({checkpoint.step for checkpoint in checkpoints})
+    num_columns = 2
+    num_rows = math.ceil(len(metrics) / num_columns)
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(19, 4.5 * num_rows),
+        constrained_layout=False,
+    )
+    axes_flat = list(np.atleast_1d(axes).flat)
+    completeness: dict[str, dict[str, int]] = {}
+
+    for axis, metric in zip(axes_flat, metrics):
+        complete_points = 0
+        expected_points = 0
+        for variant in variants:
+            variant_steps = sorted(
+                checkpoint.step
+                for checkpoint in checkpoints
+                if checkpoint.variant == variant
+            )
+            values: list[float] = []
+            plotted_steps: list[int] = []
+            for step in variant_steps:
+                expected_points += 1
+                stat = indexed.get((variant, step, metric.key))
+                if stat is not None and stat.complete and stat.mean is not None:
+                    complete_points += 1
+                    plotted_steps.append(step)
+                    values.append(stat.mean)
+            if values:
+                axis.plot(
+                    plotted_steps,
+                    values,
+                    color=TRAINING_VARIANT_COLORS[variant],
+                    linestyle="-",
+                    marker="o",
+                    markersize=7,
+                    linewidth=2,
+                    label=TRAINING_VARIANT_LABELS[variant],
+                )
+
+        completeness[metric.key] = {
+            "complete_points": complete_points,
+            "expected_points": expected_points,
+        }
+        direction_symbol = "\u2191" if metric.direction == "higher" else "\u2193"
+        axis.set_title(
+            f"{metric.title} ({direction_symbol})",
+            fontsize=14,
+            fontweight="semibold",
+            pad=10,
+        )
+        axis.set_xlabel("Training step", fontsize=11)
+        axis.set_ylabel("Mean score", fontsize=11)
+        axis.set_xticks(steps)
+        axis.grid(axis="both", color="#D9DDDF", linewidth=0.8, alpha=0.75)
+        axis.set_axisbelow(True)
+        axis.spines[["top", "right"]].set_visible(False)
+        axis.tick_params(labelsize=10)
+        if complete_points == 0:
+            axis.text(
+                0.5,
+                0.5,
+                f"No result has {expected_cases}/{expected_cases} scores",
+                transform=axis.transAxes,
+                ha="center",
+                va="center",
+                color="#6A7175",
+                fontsize=11,
+            )
+
+    for axis in axes_flat[len(metrics) :]:
+        axis.axis("off")
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=TRAINING_VARIANT_COLORS[variant],
+            marker="o",
+            linewidth=2,
+            label=TRAINING_VARIANT_LABELS[variant],
+        )
+        for variant in variants
+    ]
+    fig.suptitle(
+        "Wan+xSSC LoRA Training Checkpoint Metrics",
+        fontsize=24,
+        fontweight="bold",
+        y=0.985,
+    )
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.958),
+        ncol=max(1, len(legend_handles)),
+        frameon=False,
+        fontsize=12,
+    )
+    fig.text(
+        0.5,
+        0.014,
+        (
+            f"Only points with {expected_cases}/{expected_cases} finite case scores are "
+            "shown. WMReward uses surprise (lower is better); all other metrics are "
+            "higher is better."
+        ),
+        ha="center",
+        fontsize=11,
+        color="#4D5559",
+    )
+    fig.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        bottom=0.055,
+        top=0.91,
+        hspace=0.38,
+        wspace=0.24,
+    )
+    fig.savefig(output_png, dpi=dpi, bbox_inches="tight", facecolor="white")
+    fig.savefig(output_pdf, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return completeness
+
+
+def write_plot_index(
+    path: Path,
+    plots: dict[str, dict[str, str]],
+    training_plot: dict[str, str] | None,
+) -> None:
+    sections: list[str] = []
+    if training_plot is not None:
+        training_png = Path(training_plot["png"]).name
+        training_pdf = Path(training_plot["pdf"]).name
+        sections.append(
+            f"<section><h2>Wan+xSSC training checkpoints</h2>"
+            f"<p><a href='{training_pdf}'>PDF</a></p>"
+            f"<img src='{training_png}' alt='Wan+xSSC training checkpoint metrics'>"
+            f"</section>"
+        )
+    for model, files in plots.items():
+        png_name = Path(files["png"]).name
+        pdf_name = Path(files["pdf"]).name
+        sections.append(
+            f"<section><h2>{MODEL_LABELS[model]} block ablations</h2>"
+            f"<p><a href='{pdf_name}'>PDF</a></p>"
+            f"<img src='{png_name}' alt='{MODEL_LABELS[model]} block ablation metrics'>"
+            f"</section>"
+        )
+    path.write_text(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Wan metric plots</title><style>"
+        "body{font-family:Arial,sans-serif;margin:24px;color:#202428;background:#f4f5f6}"
+        "main{max-width:1800px;margin:auto}section{margin:0 0 28px;padding:16px;"
+        "background:#fff;border:1px solid #d8dcdf;border-radius:6px}"
+        "h1,h2{letter-spacing:0}img{display:block;width:100%;height:auto}"
+        "a{color:#155ca2}</style></head><body><main>"
+        "<h1>Wan metric plots</h1>"
+        + "".join(sections)
+        + "</main></body></html>\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     args = parse_args()
     result_root = args.result_root.expanduser().resolve()
@@ -691,15 +1018,33 @@ def main() -> None:
         if input_txt is not None
         else discover_methods(result_root)
     )
-    if not methods:
+    training_checkpoints = (
+        discover_training_checkpoints_from_txt(input_txt)
+        if input_txt is not None
+        else []
+    )
+    if not methods and not training_checkpoints:
         source = input_txt if input_txt is not None else result_root
-        raise RuntimeError(f"No ablation methods found from {source}")
+        raise RuntimeError(
+            f"No ablation methods or training checkpoints found from {source}"
+        )
 
     stats = compute_stats(methods, allowed_input_jsons, args.expected_cases)
+    training_stats = compute_training_stats(
+        training_checkpoints,
+        allowed_input_jsons,
+        args.expected_cases,
+    )
     missing_result_dirs = [
         str(method.result_dir) for method in methods if not method.result_dir.is_dir()
     ]
+    missing_training_result_dirs = [
+        str(checkpoint.result_dir)
+        for checkpoint in training_checkpoints
+        if not checkpoint.result_dir.is_dir()
+    ]
     csv_path = output_dir / "dit_ablation_metric_stats.csv"
+    training_csv_path = output_dir / "xssc_lora_training_step_metric_stats.csv"
     manifest_path = output_dir / "dit_ablation_metric_plot_manifest.json"
 
     write_stats_csv(
@@ -708,11 +1053,20 @@ def main() -> None:
         args.expected_cases,
         complete_only=args.complete_only,
     )
+    write_training_stats_csv(
+        training_csv_path,
+        training_stats,
+        args.expected_cases,
+        complete_only=args.complete_only,
+    )
     plotted_metrics = (
         tuple(
             metric
             for metric in METRICS
-            if any(stat.metric.key == metric.key and stat.complete for stat in stats)
+            if any(
+                stat.metric.key == metric.key and stat.complete
+                for stat in (*stats, *training_stats)
+            )
         )
         if args.complete_only
         else METRICS
@@ -739,6 +1093,24 @@ def main() -> None:
         )
         plots[model] = {"png": str(png_path), "pdf": str(pdf_path)}
 
+    training_plot: dict[str, str] | None = None
+    training_metric_completeness: dict[str, dict[str, int]] = {}
+    if training_checkpoints:
+        training_png_path = output_dir / "xssc_lora_training_step_all_metrics.png"
+        training_pdf_path = output_dir / "xssc_lora_training_step_all_metrics.pdf"
+        training_metric_completeness = plot_training_metrics(
+            training_png_path,
+            training_pdf_path,
+            training_stats,
+            args.expected_cases,
+            args.dpi,
+            plotted_metrics,
+        )
+        training_plot = {
+            "png": str(training_png_path),
+            "pdf": str(training_pdf_path),
+        }
+
     manifest = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "result_root": str(result_root),
@@ -746,21 +1118,32 @@ def main() -> None:
         "input_json_allowlist": str(allowlist_path),
         "expected_cases": args.expected_cases,
         "num_methods": len(methods),
+        "num_training_checkpoints": len(training_checkpoints),
         "missing_result_dirs": missing_result_dirs,
+        "missing_training_result_dirs": missing_training_result_dirs,
         "num_metrics": len(plotted_metrics),
         "complete_only": args.complete_only,
         "plotted_metrics": [metric.key for metric in plotted_metrics],
         "stats_csv": str(csv_path),
+        "training_stats_csv": str(training_csv_path),
         "plots": plots,
+        "training_plot": training_plot,
         "metric_completeness": metric_completeness,
+        "training_metric_completeness": training_metric_completeness,
     }
     manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    write_plot_index(output_dir / "index.html", plots, training_plot)
 
     print(f"Methods: {len(methods)}")
+    print(f"Training checkpoints: {len(training_checkpoints)}")
     print(f"Missing result directories: {len(missing_result_dirs)}")
+    print(
+        "Missing training result directories: "
+        f"{len(missing_training_result_dirs)}"
+    )
     print(f"Allowed cases: {len(allowed_input_jsons)}")
     for model in model_ids:
         completeness = metric_completeness[model]
@@ -773,6 +1156,10 @@ def main() -> None:
                 f"{progress['expected_ablation_points']} complete ablation points"
             )
     print(f"Stats CSV: {csv_path}")
+    if training_plot is not None:
+        print(f"Training stats CSV: {training_csv_path}")
+        print(f"Training PNG: {training_plot['png']}")
+        print(f"Training PDF: {training_plot['pdf']}")
     for model in model_ids:
         print(f"{MODEL_LABELS[model]} PNG: {plots[model]['png']}")
         print(f"{MODEL_LABELS[model]} PDF: {plots[model]['pdf']}")
