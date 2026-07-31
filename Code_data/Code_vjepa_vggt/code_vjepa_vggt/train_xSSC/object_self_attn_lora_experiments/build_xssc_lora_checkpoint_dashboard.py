@@ -214,78 +214,125 @@ def build_videos_page(
     select,button{{height:38px;border:1px solid var(--line);border-radius:6px;
       background:var(--surface);color:var(--ink);font:inherit}}
     select{{max-width:360px;padding:0 9px}} button{{width:38px;padding:0;cursor:pointer}}
-    main{{max-width:1500px;margin:auto;padding:18px}}
+    main{{max-width:1800px;margin:auto;padding:18px}}
     .case-head{{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}}
     h1{{margin:0 0 5px;font-size:19px;overflow-wrap:anywhere}}
     .prompt{{margin:0;max-width:1150px;color:var(--muted);line-height:1.5}}
-    .videos{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}
+    .source-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+    .generated-head{{display:flex;align-items:baseline;gap:10px;margin:20px 0 10px}}
+    .generated-head h2{{margin:0;font-size:16px}}.count{{color:var(--muted);font-size:12px}}
+    .matrix-wrap{{overflow-x:auto;padding-bottom:8px}}
+    .generated-matrix{{display:grid;gap:10px;min-width:1180px;align-items:stretch}}
+    .matrix-head,.step-label{{display:flex;align-items:center;justify-content:center;
+      min-height:44px;padding:8px;background:var(--surface);border:1px solid var(--line);
+      font-size:13px;font-weight:850;text-align:center}}
+    .matrix-head.method{{border-top-width:4px}}
+    .step-label{{position:sticky;left:0;z-index:2;color:var(--accent);
+      font-variant-numeric:tabular-nums}}
     .cell{{min-width:0;padding:9px;background:var(--surface);border:1px solid var(--line);
       border-radius:6px}}
     .label{{min-height:24px;padding:1px 2px 7px;color:var(--warm);
       font-size:13px;font-weight:800}}
     video{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#101416}}
-    .checkpoint{{margin-top:12px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}}
+    .checkpoint{{margin-top:7px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}}
+    .missing{{display:flex;align-items:center;justify-content:center;min-height:180px;
+      background:#eef1f2;border:1px dashed #bdc6ca;color:var(--muted);font-size:12px}}
+    .empty{{padding:26px;background:var(--surface);border:1px solid var(--line);
+      color:var(--muted);text-align:center}}
     a{{color:var(--accent);font-weight:750;text-decoration:none}}
     @media(max-width:900px){{.toolbar{{flex-wrap:wrap}}.title{{width:100%}}
-      .videos{{grid-template-columns:1fr}}select{{max-width:calc(100vw - 36px)}}}}
+      .source-grid{{grid-template-columns:1fr}}
+      select{{max-width:calc(100vw - 36px)}}}}
   </style>
 </head>
 <body>
   <div class="toolbar">
     <a href="../">返回监控页</a>
-    <div class="title">Checkpoint · test_5 视频</div>
-    <select id="method" aria-label="方法"></select>
-    <select id="step" aria-label="训练 step"></select>
+    <div class="title">Checkpoint · test_5 全部结果</div>
     <select id="case" aria-label="案例"></select>
+    <select id="step-filter" aria-label="训练 step"></select>
     <button id="play" title="同步播放" aria-label="播放">▶</button>
     <button id="pause" title="同步暂停" aria-label="暂停">Ⅱ</button>
     <button id="replay" title="从头播放" aria-label="重新播放">↺</button>
   </div>
   <main>
     <div class="case-head"><h1 id="case-title"></h1><p class="prompt" id="prompt"></p></div>
-    <div class="videos">
+    <div class="source-grid">
       <div class="cell"><div class="label">GT · 49 frames @ 30 FPS</div>
         <video id="gt" preload="metadata" playsinline muted></video></div>
       <div class="cell"><div class="label">Input context · 8 frames</div>
         <video id="context" preload="metadata" playsinline muted></video></div>
-      <div class="cell"><div class="label" id="generated-label"></div>
-        <video id="generated" preload="metadata" playsinline muted></video></div>
     </div>
-    <div class="checkpoint" id="checkpoint"></div>
+    <div class="generated-head"><h2>已完成 checkpoint</h2><span class="count" id="count"></span></div>
+    <div class="matrix-wrap"><div class="generated-matrix" id="generated-matrix"></div></div>
   </main>
   <script>
     const D={data};
-    const method=document.getElementById("method"),step=document.getElementById("step");
     const caseSelect=document.getElementById("case");
-    const videoIds=["gt","context","generated"];
-    D.methods.forEach(m=>method.add(new Option(m.label,m.key)));
+    const stepFilter=document.getElementById("step-filter");
     D.cases.forEach((c,i)=>caseSelect.add(new Option(`${{String(i+1).padStart(2,"0")}} · ${{c.stem}}`,c.stem)));
-    function records(){{return D.records.filter(r=>r.method_key===method.value).sort((a,b)=>a.step-b.step)}}
-    function fillSteps(){{
-      const prior=step.value;step.innerHTML="";
-      records().forEach(r=>step.add(new Option(`step ${{r.step}}`,String(r.step))));
-      if([...step.options].some(o=>o.value===prior))step.value=prior;
-      else if(step.options.length)step.selectedIndex=step.options.length-1;
+    stepFilter.add(new Option("全部已完成 step","all"));
+    [...new Set(D.records.map(record=>record.step))].sort((a,b)=>a-b)
+      .forEach(step=>stepFilter.add(new Option(`step ${{step}}`,String(step))));
+    function visibleSteps(){{
+      const steps=[...new Set(D.records.map(record=>record.step))].sort((a,b)=>a-b);
+      return stepFilter.value==="all"
+        ? steps
+        : steps.filter(step=>String(step)===stepFilter.value);
     }}
+    function videos(){{return [...document.querySelectorAll("main video")]}}
     function render(){{
       const c=D.cases.find(x=>x.stem===caseSelect.value);
-      const r=records().find(x=>String(x.step)===step.value);
-      if(!c||!r)return;
-      videoIds.forEach(id=>document.getElementById(id).pause());
+      if(!c)return;
+      videos().forEach(video=>video.pause());
       document.getElementById("case-title").textContent=c.stem;
       document.getElementById("prompt").textContent=c.prompt;
       document.getElementById("gt").src=c.gt;
       document.getElementById("context").src=c.context;
-      document.getElementById("generated").src=r.videos[c.stem];
-      document.getElementById("generated-label").textContent=`${{r.method_label}} · step ${{r.step}}`;
-      document.getElementById("checkpoint").textContent=r.checkpoint_dir;
+      const steps=visibleSteps();
+      const matrix=document.getElementById("generated-matrix");
+      matrix.replaceChildren();
+      matrix.style.gridTemplateColumns=`88px repeat(${{D.methods.length}},minmax(260px,1fr))`;
+      const corner=document.createElement("div");corner.className="matrix-head";
+      corner.textContent="训练 step";matrix.append(corner);
+      D.methods.forEach(method=>{{
+        const header=document.createElement("div");header.className="matrix-head method";
+        header.textContent=method.label;header.style.color=method.color;
+        header.style.borderTopColor=method.color;matrix.append(header);
+      }});
+      let count=0;
+      steps.forEach(step=>{{
+        const stepLabel=document.createElement("div");stepLabel.className="step-label";
+        stepLabel.textContent=`step ${{step}}`;matrix.append(stepLabel);
+        D.methods.forEach(method=>{{
+          const record=D.records.find(item=>
+            item.step===step&&item.method_key===method.key);
+          if(!record){{
+            const missing=document.createElement("div");missing.className="missing";
+            missing.textContent="该 step 无此方法权重";matrix.append(missing);return;
+          }}
+          count+=1;
+          const cell=document.createElement("div");cell.className="cell";
+          cell.style.borderTop=`3px solid ${{method.color}}`;
+          const label=document.createElement("div");label.className="label";
+          label.textContent=`${{record.method_label}} · step ${{record.step}}`;
+          label.style.color=method.color;
+          const video=document.createElement("video");
+          video.preload="metadata";video.playsInline=true;video.muted=true;
+          video.src=record.videos[c.stem];
+          const checkpoint=document.createElement("div");checkpoint.className="checkpoint";
+          checkpoint.textContent=record.checkpoint_dir;
+          cell.append(label,video,checkpoint);matrix.append(cell);
+        }});
+      }});
+      document.getElementById("count").textContent=
+        `${{steps.length}} 行 · ${{count}} 个结果`;
     }}
-    method.addEventListener("change",()=>{{fillSteps();render()}});
-    step.addEventListener("change",render);caseSelect.addEventListener("change",render);
-    document.getElementById("play").onclick=()=>videoIds.forEach(id=>document.getElementById(id).play().catch(()=>{{}}));
-    document.getElementById("pause").onclick=()=>videoIds.forEach(id=>document.getElementById(id).pause());
-    document.getElementById("replay").onclick=()=>videoIds.forEach(id=>{{const v=document.getElementById(id);v.currentTime=0;v.play().catch(()=>{{}})}});
-    fillSteps();render();
+    stepFilter.addEventListener("change",render);caseSelect.addEventListener("change",render);
+    document.getElementById("play").onclick=()=>videos().forEach(video=>video.play().catch(()=>{{}}));
+    document.getElementById("pause").onclick=()=>videos().forEach(video=>video.pause());
+    document.getElementById("replay").onclick=()=>videos().forEach(video=>{{video.currentTime=0;video.play().catch(()=>{{}})}});
+    render();
   </script>
 </body>
 </html>
@@ -544,7 +591,8 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     baseline_gallery = Path(config["paths"]["baseline_gallery_root"]).resolve()
     hub_root.mkdir(parents=True, exist_ok=True)
-    link_directory(baseline_gallery, hub_root / "gallery")
+    link_directory(watch_root / "site" / "videos", hub_root / "gallery")
+    link_directory(baseline_gallery, hub_root / "initial-gallery")
     link_directory(watch_root / "site", hub_root / "checkpoint-watch")
     total_inferred = sum(row["inferred"] for row in status)
     total_discovered = sum(row["discovered"] for row in status)
@@ -552,19 +600,38 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
     expected_metrics = sum(row["metric_total"] for row in status)
     physiciq_entry = ""
     if config.get("physiciq", {}).get("enabled"):
-        leaf_path = Path(config["physiciq"]["leaf_folders"]).resolve()
+        phys_config = config["physiciq"]
+        leaf_path = Path(phys_config["leaf_folders"]).resolve()
         plot_root = leaf_path.parent / "_metric_plots" / leaf_path.stem
+        trigger_steps = [int(step) for step in phys_config["trigger_steps"]]
+        method_keys = list(phys_config["method_keys"])
+        phys_inference_root = watch_root / "state" / "physiciq" / "inference"
+        completed_inference = sum(
+            (
+                phys_inference_root
+                / method_key
+                / f"step-{step:06d}.json"
+            ).is_file()
+            for step in trigger_steps
+            for method_key in method_keys
+        )
+        expected_inference = len(trigger_steps) * len(method_keys)
         if (plot_root / "index.html").is_file():
             link_directory(plot_root, hub_root / "physiciq-step1500-metrics")
             action = '<a href="physiciq-step1500-metrics/">进入 PhysicIQ 指标图</a>'
-            phys_status = "指标图已更新"
+            phys_status = (
+                "指标图已更新"
+                if completed_inference == expected_inference
+                else f"推理中 {completed_inference}/{expected_inference}"
+            )
         else:
             action = ""
-            phys_status = "等待 step 1500"
+            phys_status = f"推理中 {completed_inference}/{expected_inference}"
+        step_text = " / ".join(str(step) for step in trigger_steps)
         physiciq_entry = f"""
-    <section class="entry"><div><h2>Step 1500 · PhysicIQ 67-case</h2>
+    <section class="entry"><div><h2>PhysicIQ 67-case · Checkpoint 对比</h2>
       <div class="meta">Full-SA、S-head59、T-head70 · 40 denoising steps · 完整 14 项指标</div>
-      {action}</div><div class="status">{phys_status}<strong>67 cases / method</strong></div>
+      {action}</div><div class="status">{phys_status}<strong>step {step_text}</strong></div>
     </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -600,10 +667,10 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
       <a href="checkpoint-watch/">进入自动评测</a></div>
       <div class="status">持续监听<strong>推理 {total_inferred}/{total_discovered} · 指标 {total_metrics}/{expected_metrics}</strong></div>
     </section>
-    <section class="entry"><div><h2>初始四方案对比</h2>
-      <div class="meta">Object-only step 529 · Full-SA/S-head59/T-head70 step 1000 · 20 cases</div>
-      <a href="gallery/">进入固定对比</a></div>
-      <div class="status">已完成<strong>20/20 cases</strong></div>
+    <section class="entry"><div><h2>全部 Checkpoint case 对比</h2>
+      <div class="meta">按 case 展示 GT、context 和所有已完成方法/训练 step；支持 step 筛选</div>
+      <a href="gallery/">进入案例对比</a></div>
+      <div class="status">自动更新<strong>{total_inferred} 个结果</strong></div>
     </section>
     {physiciq_entry}
   </div></main>

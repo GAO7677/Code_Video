@@ -50,7 +50,7 @@
   },
   "physiciq": {
     "enabled": true,
-    "trigger_steps": [1500],
+    "trigger_steps": [1500, 2000, 2500],
     "method_keys": ["full_sa", "s_head59", "t_head70"],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
