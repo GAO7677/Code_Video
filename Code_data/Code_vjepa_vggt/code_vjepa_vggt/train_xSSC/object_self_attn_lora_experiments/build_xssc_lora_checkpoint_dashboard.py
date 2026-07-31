@@ -767,6 +767,61 @@ h1{{margin:0 0 8px;font-size:20px}}p{{margin:0 0 18px;color:#657278}}a{{color:#0
 <a href="../">返回监控页</a></main></body></html>"""
 
 
+def build_combined_test_page(
+    *,
+    title: str,
+    subtitle: str,
+    tabs: list[dict[str, str]],
+) -> str:
+    first_src = tabs[0]["href"] if tabs else "about:blank"
+    tab_buttons = "".join(
+        f"""<button data-src="{escape(tab['href'])}" title="{escape(tab['label'])}">
+        <strong>{escape(tab['label'])}</strong><span>{escape(tab['note'])}</span></button>"""
+        for tab in tabs
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root{{--bg:#f3f5f6;--surface:#fff;--ink:#172126;--muted:#657278;--line:#d6dde0;
+      --accent:#006d77;--warm:#9b3a31}}
+    *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);
+      font-family:Inter,"Noto Sans SC",Arial,sans-serif}}
+    header{{position:sticky;top:0;z-index:10;padding:14px 18px;background:rgba(255,255,255,.98);
+      border-bottom:1px solid var(--line)}}
+    .top{{display:flex;align-items:baseline;gap:12px;margin-bottom:11px}}
+    h1{{margin:0;font-size:20px}}.sub{{color:var(--muted);font-size:13px}}
+    a{{margin-left:auto;color:var(--accent);font-weight:800;text-decoration:none}}
+    .tabs{{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}}
+    button{{min-width:168px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;
+      background:var(--surface);color:var(--ink);text-align:left;cursor:pointer}}
+    button strong{{display:block;font-size:13px}}button span{{display:block;margin-top:2px;
+      color:var(--muted);font-size:11px;white-space:nowrap}}
+    button.active{{border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent)}}
+    iframe{{display:block;width:100%;height:calc(100vh - 105px);border:0;background:var(--surface)}}
+    @media(max-width:720px){{.top{{flex-wrap:wrap}}a{{margin-left:0}}iframe{{height:calc(100vh - 145px)}}}}
+  </style>
+</head>
+<body>
+  <header><div class="top"><h1>{escape(title)}</h1><span class="sub">{escape(subtitle)}</span>
+    <a href="../">返回总览</a></div><div class="tabs">{tab_buttons}</div></header>
+  <iframe id="frame" src="{escape(first_src)}" title="{escape(title)}"></iframe>
+  <script>
+    const frame=document.getElementById("frame");
+    const buttons=[...document.querySelectorAll("button[data-src]")];
+    function activate(button){{
+      buttons.forEach(item=>item.classList.toggle("active",item===button));
+      frame.src=button.dataset.src;
+    }}
+    buttons.forEach(button=>button.addEventListener("click",()=>activate(button)));
+    if(buttons.length) activate(buttons[0]);
+  </script>
+</body>
+</html>"""
+
+
 def build_status(
     config: dict[str, Any],
     manifests: list[dict[str, Any]],
@@ -899,8 +954,102 @@ def build_master_hub(
     link_directory(baseline_gallery, hub_root / "initial-gallery")
     link_directory(watch_root / "site", hub_root / "checkpoint-watch")
     legacy_watch_root = config["paths"].get("legacy_watch_root")
+    legacy_checkpoint_count = 0
+    legacy_physiciq_count = 0
     if legacy_watch_root and Path(legacy_watch_root).is_dir():
-        link_directory(Path(legacy_watch_root), hub_root / "legacy-checkpoint-watch")
+        legacy_site = Path(legacy_watch_root).resolve()
+        legacy_state = legacy_site.parent / "state"
+        link_directory(legacy_site, hub_root / "legacy-checkpoint-watch")
+        if (legacy_site / "videos").is_dir():
+            link_directory(legacy_site / "videos", hub_root / "history-gallery")
+        if (legacy_site / "metrics").is_dir():
+            link_directory(legacy_site / "metrics", hub_root / "history-metrics")
+        if (legacy_site / "physiciq-videos").is_dir():
+            link_directory(
+                legacy_site / "physiciq-videos",
+                hub_root / "history-physiciq-gallery",
+            )
+        legacy_checkpoint_count = len(
+            list((legacy_state / "checkpoints").glob("*/step-*.json"))
+        )
+        legacy_physiciq_count = len(
+            list((legacy_state / "physiciq" / "inference").glob("*/step-*.json"))
+        )
+    legacy_physiciq_metrics_root = config["paths"].get(
+        "legacy_physiciq_metrics_root"
+    )
+    if (
+        legacy_physiciq_metrics_root
+        and Path(legacy_physiciq_metrics_root).is_dir()
+    ):
+        link_directory(
+            Path(legacy_physiciq_metrics_root),
+            hub_root / "history-physiciq-metrics",
+        )
+    current_test5_metric_href = "checkpoint-watch/metrics/"
+    history_test5_metric_href = "history-metrics/"
+    current_phys_metric_href = "physiciq-metrics/"
+    history_phys_metric_href = "history-physiciq-metrics/"
+    (hub_root / "test5").mkdir(parents=True, exist_ok=True)
+    (hub_root / "test5" / "index.html").write_text(
+        build_combined_test_page(
+            title="test_5 合并视图",
+            subtitle="同一个 test 下合并当前训练、历史权重、指标曲线",
+            tabs=[
+                {
+                    "label": "当前 checkpoint case",
+                    "note": "watcher 自动更新",
+                    "href": "../gallery/",
+                },
+                {
+                    "label": "历史 checkpoint case",
+                    "note": f"{legacy_checkpoint_count} 组归档",
+                    "href": "../history-gallery/",
+                },
+                {
+                    "label": "当前指标曲线",
+                    "note": "随 checkpoint 更新",
+                    "href": f"../{current_test5_metric_href}",
+                },
+                {
+                    "label": "历史指标曲线",
+                    "note": "只读归档",
+                    "href": f"../{history_test5_metric_href}",
+                },
+            ],
+        ),
+        encoding="utf-8",
+    )
+    (hub_root / "physiciq").mkdir(parents=True, exist_ok=True)
+    (hub_root / "physiciq" / "index.html").write_text(
+        build_combined_test_page(
+            title="PhysicIQ 67-case 合并视图",
+            subtitle="同一个 PhysicIQ test 下合并当前训练、历史权重、指标曲线",
+            tabs=[
+                {
+                    "label": "当前 PhysicIQ case",
+                    "note": "40 steps 推理",
+                    "href": "../physiciq-gallery/",
+                },
+                {
+                    "label": "历史 PhysicIQ case",
+                    "note": f"{legacy_physiciq_count} 组归档",
+                    "href": "../history-physiciq-gallery/",
+                },
+                {
+                    "label": "当前 PhysicIQ 指标",
+                    "note": "新 checkpoint 自动更新",
+                    "href": f"../{current_phys_metric_href}",
+                },
+                {
+                    "label": "历史 PhysicIQ 指标",
+                    "note": "旧实验归档",
+                    "href": f"../{history_phys_metric_href}",
+                },
+            ],
+        ),
+        encoding="utf-8",
+    )
     total_inferred = sum(row["inferred"] for row in status)
     total_discovered = sum(row["discovered"] for row in status)
     total_metrics = sum(row["metric_done"] for row in status)
@@ -998,19 +1147,28 @@ def build_master_hub(
     <section class="entry"><div><h2>Checkpoint 自动评测</h2>
       <div class="meta">自动发现权重、生成 test_5、计算完整指标并绘制训练 step 曲线</div>
       <a href="checkpoint-watch/">进入自动评测</a>
-      <a href="checkpoint-watch/metrics/">test_5 指标曲线</a></div>
+      <a href="test5/">进入 test_5 合并视图</a></div>
       <div class="status">持续监听<strong>推理 {total_inferred}/{total_discovered} · 指标 {total_metrics}/{expected_metrics}</strong></div>
     </section>
-    <section class="entry"><div><h2>全部 Checkpoint case 对比</h2>
-      <div class="meta">按 case 展示 GT、context 和所有已完成方法/训练 step；支持 step 筛选</div>
-      <a href="gallery/">进入案例对比</a></div>
-      <div class="status">自动更新<strong>{total_inferred} 个结果</strong></div>
+    <section class="entry"><div><h2>test_5 · 当前 + 历史合并</h2>
+      <div class="meta">同一个 test_5 入口内查看当前 checkpoint、历史 checkpoint、当前指标和历史指标</div>
+      <a href="test5/">进入合并视图</a>
+      <a href="gallery/">只看当前 case</a>
+      <a href="history-gallery/">只看历史 case</a></div>
+      <div class="status">自动 + 归档<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>当前 {total_inferred} · 历史 {legacy_checkpoint_count}</small></div>
     </section>
     {physiciq_entry}
-    <section class="entry"><div><h2>历史 Checkpoint 结果</h2>
-      <div class="meta">此前 Object-only、Full-SA、S-head 与 T-head 的评测页面</div>
-      <a href="legacy-checkpoint-watch/">进入历史页面</a></div>
-      <div class="status">只读归档<strong>保留旧结果</strong></div>
+    <section class="entry"><div><h2>PhysicIQ 67-case · 当前 + 历史合并</h2>
+      <div class="meta">同一个 PhysicIQ 入口内查看当前训练评测、历史 1500/2000/2500 step 结果和对应指标</div>
+      <a href="physiciq/">进入合并视图</a>
+      <a href="physiciq-gallery/">只看当前 case</a>
+      <a href="history-physiciq-gallery/">只看历史 case</a></div>
+      <div class="status">自动 + 归档<strong>{legacy_physiciq_count} 组历史</strong><small>当前结果随 checkpoint 增量更新</small></div>
+    </section>
+    <section class="entry"><div><h2>初始四方案 case 对比</h2>
+      <div class="meta">Object-only、Full-SA、S-head59、T-head70 的早期固定 case 对照页面</div>
+      <a href="initial-gallery/">查看初始 case</a></div>
+      <div class="status">只读归档<strong>固定对照</strong></div>
     </section>
   </div></main>
 </body>

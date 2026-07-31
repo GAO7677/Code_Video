@@ -3,6 +3,7 @@
     "watch_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_three_run_watch",
     "master_hub_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub",
     "legacy_watch_root": "/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_checkpoint_watch/site",
+    "legacy_physiciq_metrics_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/_metric_plots/leaf_folders",
     "baseline_gallery_root": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/gallery",
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt",
     "run_infer_script": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_infer_from_experiment.sh",
