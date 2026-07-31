@@ -940,7 +940,7 @@ thead th{position:sticky;top:0;background:#242a2e}.value{display:block}.delta{di
 button{padding:6px 10px;border:1px solid var(--line);background:#242a2e;color:#fff;cursor:pointer}.time{margin-left:auto;color:var(--muted)}
 @media(max-width:620px){.references{grid-template-columns:1fr}}
 </style></head><body>
-<header><div class="top"><h1 id="title">__CASE_ID__</h1><span class="status" id="status">读取中</span><a class="hub" href="../../metrics/">聚合指标</a><a class="hub" href="/visualizations/">可视化总入口</a></div>
+<header><div class="top"><h1 id="title">__CASE_ID__</h1><span class="status" id="status">读取中</span><a class="hub" href="../../openvid-baseline-comparison/">四模型 Baseline</a><a class="hub" href="../../openvid-head-ablation-analysis/">OpenVid Head 消融曲线</a><a class="hub" href="../../metrics/">聚合指标</a><a class="hub" href="/visualizations/">可视化总入口</a></div>
 <div class="controls"><label>Case<select id="case"></select></label><label>Seed<select id="seed"></select></label></div>
 <p class="prompt" id="prompt"></p></header><main><section><h2>输入与参考</h2><div class="references" id="references"></div></section><div id="settings"></div>
 <section class="metrics"><h2>当前指标</h2><p class="metrics-note">指标按与视频相同的匹配方式和replicate分组。每格第一行是原始分数，第二行是相对同模型、同seed baseline的变化；绿色表示改善，红色表示下降。</p><div id="metric-groups"></div></section></main>

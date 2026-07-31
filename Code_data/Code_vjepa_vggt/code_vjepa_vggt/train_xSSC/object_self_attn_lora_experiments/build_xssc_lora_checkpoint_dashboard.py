@@ -128,6 +128,232 @@ def metric_done_count(watch_root: Path, method_key: str, step: int) -> int:
     return len(list(marker_root.glob("*.json"))) if marker_root.is_dir() else 0
 
 
+def physiciq_metric_names(config: dict[str, Any]) -> list[str]:
+    return list(config["metrics"]["cpu"]) + list(config["metrics"]["gpu"])
+
+
+def count_paired_result_cases(result_root: Path) -> int:
+    if not result_root.is_dir():
+        return 0
+    count = 0
+    for result_json in result_root.glob("*.json"):
+        if result_json.name.startswith("eval_summary_"):
+            continue
+        if result_json.name in {"summary.json", "batch_manifest.json", "eval_summary.json"}:
+            continue
+        if result_json.with_suffix(".mp4").is_file():
+            count += 1
+    return count
+
+
+def metric_marker_ok(path: Path, *, partial: bool) -> bool:
+    if not path.is_file():
+        return False
+    if not partial:
+        return True
+    try:
+        payload = load_json(path)
+    except Exception:
+        return False
+    return bool(payload.get("ok"))
+
+
+def metric_marker_count(root: Path, metrics: list[str], *, partial: bool) -> int:
+    return sum(
+        metric_marker_ok(root / f"{metric}.json", partial=partial)
+        for metric in metrics
+    )
+
+
+def active_summary_text(summary_root: Path, marker_root: Path, metrics: list[str]) -> str:
+    active: list[tuple[float, str]] = []
+    for metric in metrics:
+        summary_path = summary_root / f"{metric}.json"
+        marker_path = marker_root / f"{metric}.json"
+        if not summary_path.is_file() or metric_marker_ok(marker_path, partial=True):
+            continue
+        try:
+            payload = load_json(summary_path)
+        except Exception:
+            continue
+        status = payload.get("metric_status")
+        if not isinstance(status, dict):
+            continue
+        completed = status.get("completed", 0)
+        total = status.get("num_cases", 0)
+        active.append((summary_path.stat().st_mtime, f"{metric} {completed}/{total}"))
+    if not active:
+        return ""
+    active.sort(reverse=True)
+    return active[0][1]
+
+
+def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
+    phys = config.get("physiciq", {})
+    if not phys.get("enabled"):
+        return None
+    watch_root = Path(config["paths"]["watch_root"]).resolve()
+    output_root = Path(phys["output_root"]).resolve()
+    expected_cases = int(phys["expected_cases"])
+    metrics = physiciq_metric_names(config)
+    methods = {method["key"]: method for method in config["methods"]}
+    pending_path = watch_root / "state" / "physiciq" / "inference.pending"
+    pending = load_json(pending_path) if pending_path.is_file() else None
+    rows: list[dict[str, Any]] = []
+    for step in [int(step) for step in phys["trigger_steps"]]:
+        for method_key in phys["method_keys"]:
+            method = methods.get(method_key, {"label": method_key, "color": "#657278"})
+            name = phys["method_name_template"].format(method_key=method_key, step=step)
+            result_root = output_root / name
+            generated = count_paired_result_cases(result_root)
+            manifest_path = (
+                watch_root
+                / "state"
+                / "physiciq"
+                / "inference"
+                / method_key
+                / f"step-{step:06d}.json"
+            )
+            formal_marker_root = (
+                watch_root
+                / "state"
+                / "physiciq"
+                / "metrics"
+                / method_key
+                / f"step-{step:06d}"
+            )
+            partial_marker_root = (
+                watch_root
+                / "state"
+                / "physiciq_partial_metrics"
+                / method_key
+                / f"step-{step:06d}"
+            )
+            partial_summary_root = (
+                watch_root
+                / "physiciq_partial_metric_task_summaries"
+                / method_key
+                / f"step-{step:06d}"
+            )
+            partial_allowlist = (
+                watch_root
+                / "state"
+                / "physiciq_partial_metrics"
+                / "allowlists"
+                / method_key
+                / f"step-{step:06d}.txt"
+            )
+            partial_cases = 0
+            if partial_allowlist.is_file():
+                partial_cases = len(
+                    [
+                        line
+                        for line in partial_allowlist.read_text(encoding="utf-8").splitlines()
+                        if line.strip() and not line.lstrip().startswith("#")
+                    ]
+                )
+            rows.append(
+                {
+                    "method_key": method_key,
+                    "method_label": method["label"],
+                    "color": method["color"],
+                    "step": step,
+                    "result_root": str(result_root),
+                    "generated": generated,
+                    "expected_cases": expected_cases,
+                    "manifest_done": manifest_path.is_file(),
+                    "formal_metrics_done": metric_marker_count(
+                        formal_marker_root,
+                        metrics,
+                        partial=False,
+                    ),
+                    "partial_metrics_done": metric_marker_count(
+                        partial_marker_root,
+                        metrics,
+                        partial=True,
+                    ),
+                    "partial_cases": partial_cases,
+                    "partial_active": active_summary_text(
+                        partial_summary_root,
+                        partial_marker_root,
+                        metrics,
+                    ),
+                    "metric_total": len(metrics),
+                }
+            )
+    return {
+        "expected_cases": expected_cases,
+        "metric_total": len(metrics),
+        "rows": rows,
+        "pending": pending,
+        "generated_total": sum(row["generated"] for row in rows),
+        "generated_expected": len(rows) * expected_cases,
+        "formal_metric_total": sum(row["formal_metrics_done"] for row in rows),
+        "formal_metric_expected": len(rows) * len(metrics),
+        "partial_metric_total": sum(row["partial_metrics_done"] for row in rows),
+        "partial_metric_expected": sum(
+            len(metrics) for row in rows if row["partial_cases"] > 0
+        ),
+    }
+
+
+def progress_cell(done: int, total: int, *, label: str | None = None) -> str:
+    ratio = 0 if total <= 0 else max(0, min(1, done / total))
+    width = ratio * 100
+    text = label if label is not None else f"{done}/{total}"
+    return (
+        f"""<div class="progress"><span style="width:{width:.1f}%"></span></div>"""
+        f"""<div class="progtext">{escape(text)}</div>"""
+    )
+
+
+def build_physiciq_section(phys_status: dict[str, Any] | None) -> str:
+    if phys_status is None:
+        return ""
+    rows = []
+    for row in phys_status["rows"]:
+        partial_label = (
+            f"{row['partial_metrics_done']}/{row['metric_total']} · {row['partial_cases']} cases"
+            if row["partial_cases"] > 0
+            else f"{row['partial_metrics_done']}/{row['metric_total']}"
+        )
+        active = (
+            f"""<div class="active">进行中：{escape(row['partial_active'])}</div>"""
+            if row["partial_active"]
+            else ""
+        )
+        manifest = "yes" if row["manifest_done"] else "no"
+        rows.append(
+            f"""<tr><td><span class="swatch" style="background:{escape(row['color'])}"></span>
+            {escape(row['method_label'])}</td><td>step {row['step']}</td>
+            <td>{progress_cell(row['generated'], row['expected_cases'])}</td>
+            <td>{escape(manifest)}</td>
+            <td>{progress_cell(row['formal_metrics_done'], row['metric_total'])}</td>
+            <td>{progress_cell(row['partial_metrics_done'], row['metric_total'], label=partial_label)}{active}</td></tr>"""
+        )
+    pending = phys_status.get("pending")
+    pending_text = "无生成 pending"
+    if isinstance(pending, dict):
+        pending_text = f"生成 pending：{pending.get('num_pending', '?')}"
+        next_task = pending.get("next")
+        tasks = pending.get("tasks")
+        if isinstance(next_task, dict):
+            pending_text += f" · next {next_task.get('method_key')} step {next_task.get('step')}"
+        elif isinstance(tasks, list) and tasks:
+            pending_text += f" · queue {len(tasks)}"
+    return f"""
+    <section class="panel" id="physiciq"><div class="panel-head"><h2>PhysicIQ 67-case 监控</h2>
+      <span class="state">{escape(pending_text)}</span></div>
+      <div class="summary-grid">
+        <div><b>{phys_status['generated_total']}/{phys_status['generated_expected']}</b><span>生成 case</span></div>
+        <div><b>{phys_status['formal_metric_total']}/{phys_status['formal_metric_expected']}</b><span>正式指标</span></div>
+        <div><b>{phys_status['partial_metric_total']}/{phys_status['partial_metric_expected']}</b><span>partial 指标</span></div>
+      </div>
+      <table><thead><tr><th>方法</th><th>Step</th><th>生成</th><th>Manifest</th>
+      <th>正式 67-case 指标</th><th>已生成 case 指标</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+    </section>"""
+
+
 def build_video_media(
     config: dict[str, Any],
     manifests: list[dict[str, Any]],
@@ -528,7 +754,11 @@ def build_status(
     return rows
 
 
-def build_watch_index(status: list[dict[str, Any]], pending: bool) -> str:
+def build_watch_index(
+    status: list[dict[str, Any]],
+    pending: bool,
+    phys_status: dict[str, Any] | None,
+) -> str:
     rows = "".join(
         f"""<tr><td><span class="swatch" style="background:{escape(row['color'])}"></span>
         {escape(row['method_label'])}</td><td>{row['discovered']}</td><td>{row['inferred']}</td>
@@ -537,6 +767,7 @@ def build_watch_index(status: list[dict[str, Any]], pending: bool) -> str:
         for row in status
     )
     state = "推理排队中" if pending else "持续监听"
+    phys_section = build_physiciq_section(phys_status)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -560,8 +791,17 @@ def build_watch_index(status: list[dict[str, Any]], pending: bool) -> str:
       border-collapse:collapse;font-variant-numeric:tabular-nums}}th,td{{padding:9px 8px;
       text-align:left;border-top:1px solid var(--line);font-size:13px}}th{{color:var(--muted)}}
     .swatch{{display:inline-block;width:10px;height:10px;margin-right:7px;border-radius:2px}}
+    .progress{{position:relative;width:100%;height:7px;margin-bottom:4px;overflow:hidden;
+      background:#e7ecee;border-radius:999px}}.progress span{{display:block;height:100%;
+      background:var(--accent);border-radius:999px}}.progtext{{color:var(--muted);
+      font-size:12px}}.active{{margin-top:3px;color:var(--warm);font-size:12px;font-weight:800}}
+    .summary-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;
+      margin:0 0 12px}}.summary-grid div{{padding:10px;background:#f7fafb;
+      border:1px solid var(--line);border-radius:5px}}.summary-grid b{{display:block;
+      font-size:18px}}.summary-grid span{{color:var(--muted);font-size:12px}}
     .home{{display:inline-block;margin-top:15px;color:var(--accent);font-weight:800;text-decoration:none}}
-    @media(max-width:700px){{main{{padding:12px}}.links{{grid-template-columns:1fr}}}}
+    @media(max-width:700px){{main{{padding:12px}}.links{{grid-template-columns:1fr}}
+      .summary-grid{{grid-template-columns:1fr}}}}
   </style>
 </head>
 <body>
@@ -579,6 +819,7 @@ def build_watch_index(status: list[dict[str, Any]], pending: bool) -> str:
       <table><thead><tr><th>方法</th><th>发现权重</th><th>完成推理</th>
       <th>最新 step</th><th>指标任务</th></tr></thead><tbody>{rows}</tbody></table>
     </section>
+    {phys_section}
     <a class="home" href="../">返回训练可视化总览</a>
   </main>
 </body>
@@ -586,7 +827,11 @@ def build_watch_index(status: list[dict[str, Any]], pending: bool) -> str:
 """
 
 
-def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> None:
+def build_master_hub(
+    config: dict[str, Any],
+    status: list[dict[str, Any]],
+    phys_status: dict[str, Any] | None,
+) -> None:
     hub_root = Path(config["paths"]["master_hub_root"]).resolve()
     watch_root = Path(config["paths"]["watch_root"]).resolve()
     baseline_gallery = Path(config["paths"]["baseline_gallery_root"]).resolve()
@@ -604,34 +849,35 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
         leaf_path = Path(phys_config["leaf_folders"]).resolve()
         plot_root = leaf_path.parent / "_metric_plots" / leaf_path.stem
         trigger_steps = [int(step) for step in phys_config["trigger_steps"]]
-        method_keys = list(phys_config["method_keys"])
-        phys_inference_root = watch_root / "state" / "physiciq" / "inference"
-        completed_inference = sum(
-            (
-                phys_inference_root
-                / method_key
-                / f"step-{step:06d}.json"
-            ).is_file()
-            for step in trigger_steps
-            for method_key in method_keys
-        )
-        expected_inference = len(trigger_steps) * len(method_keys)
+        generated_text = "生成 pending"
+        metric_text = "正式指标 pending"
+        partial_text = "partial 指标 pending"
+        if phys_status is not None:
+            generated_text = (
+                f"生成 {phys_status['generated_total']}/"
+                f"{phys_status['generated_expected']}"
+            )
+            metric_text = (
+                f"正式指标 {phys_status['formal_metric_total']}/"
+                f"{phys_status['formal_metric_expected']}"
+            )
+            partial_text = (
+                f"partial {phys_status['partial_metric_total']}/"
+                f"{phys_status['partial_metric_expected']}"
+            )
         if (plot_root / "index.html").is_file():
             link_directory(plot_root, hub_root / "physiciq-step1500-metrics")
-            action = '<a href="physiciq-step1500-metrics/">进入 PhysicIQ 指标图</a>'
-            phys_status = (
-                "指标图已更新"
-                if completed_inference == expected_inference
-                else f"推理中 {completed_inference}/{expected_inference}"
+            action = (
+                '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
+                '<a href="physiciq-step1500-metrics/">进入 PhysicIQ 指标图</a>'
             )
         else:
-            action = ""
-            phys_status = f"推理中 {completed_inference}/{expected_inference}"
+            action = '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
         step_text = " / ".join(str(step) for step in trigger_steps)
         physiciq_entry = f"""
     <section class="entry"><div><h2>PhysicIQ 67-case · Checkpoint 对比</h2>
       <div class="meta">Full-SA、S-head59、T-head70 · 40 denoising steps · 完整 14 项指标</div>
-      {action}</div><div class="status">{phys_status}<strong>step {step_text}</strong></div>
+      {action}</div><div class="status">{generated_text}<strong>{metric_text}</strong><em>{partial_text}</em><small>step {step_text}</small></div>
     </section>"""
     page = f"""<!doctype html>
 <html lang="zh-CN">
@@ -650,11 +896,12 @@ def build_master_hub(config: dict[str, Any], status: list[dict[str, Any]]) -> No
     .entry{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:17px;
       background:var(--surface);border:1px solid var(--line);border-radius:6px}}
     h2{{margin:0 0 5px;font-size:18px}}.meta{{color:var(--muted);font-size:13px}}
-    a{{display:inline-block;margin-top:13px;padding:8px 12px;color:#fff;background:var(--accent);
+    a{{display:inline-block;margin:13px 8px 0 0;padding:8px 12px;color:#fff;background:var(--accent);
       border-radius:5px;text-decoration:none;font-weight:800}}.status{{align-self:start;min-width:150px;
       padding:9px 11px;border-left:3px solid var(--accent);background:#edf6f5;
       color:var(--accent);font-size:13px;font-weight:750}}.status strong{{display:block;
-      margin-top:3px;color:var(--ink);font-size:16px}}@media(max-width:650px){{
+      margin-top:3px;color:var(--ink);font-size:16px}}.status em,.status small{{display:block;
+      margin-top:3px;color:var(--muted);font-style:normal;font-size:12px}}@media(max-width:650px){{
       main{{padding:12px}}.entry{{grid-template-columns:1fr}}.status{{justify-self:stretch}}}}
   </style>
 </head>
@@ -703,9 +950,10 @@ def main() -> None:
         encoding="utf-8",
     )
     status = build_status(config, manifests)
+    phys_status = build_physiciq_status(config)
     pending = (watch_root / "state" / "inference.pending").is_file()
     (site_root / "index.html").write_text(
-        build_watch_index(status, pending),
+        build_watch_index(status, pending, phys_status),
         encoding="utf-8",
     )
     manifest = {
@@ -713,6 +961,7 @@ def main() -> None:
         "num_inference_results": len(manifests),
         "num_metric_plots": len(plots),
         "status": status,
+        "physiciq_status": phys_status,
         "records": records,
         "plots": plots,
     }
@@ -720,7 +969,7 @@ def main() -> None:
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    build_master_hub(config, status)
+    build_master_hub(config, status, phys_status)
     print(site_root / "index.html")
 
 

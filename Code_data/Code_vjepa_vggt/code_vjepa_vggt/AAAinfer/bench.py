@@ -547,6 +547,8 @@ def maybe_delegate_flux_metric(args: argparse.Namespace) -> bool:
         cmd.append("--cosmos-worker")
     if args.output_summary is not None:
         cmd.extend(["--output-summary", str(args.output_summary.expanduser().resolve())])
+    if args.input_json_allowlist is not None:
+        cmd.extend(["--input-json-allowlist", str(args.input_json_allowlist.expanduser().resolve())])
     if int(args.num_shards) > 1:
         cmd.extend(["--num-shards", str(int(args.num_shards)), "--shard-index", str(int(args.shard_index))])
     if args.overwrite:

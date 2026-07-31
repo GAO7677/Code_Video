@@ -36,6 +36,7 @@ MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
     "physrvg": "PhysRVG",
+    "openvid_lora_step10000": "Wan+OpenVid LoRA",
 }
 SUBTYPE_LABELS = {
     "local_enrichment": "Local-enrichment S",
@@ -258,7 +259,12 @@ def save_family_plot(
         ("impact_per_head_approx", "Impact / head (approx.)", "magma", False),
         ("gt_gain_mean", "GT gain", "RdYlGn", True),
     )
-    figure, axes = plt.subplots(3, 3, figsize=(15, 12), squeeze=False)
+    figure, axes = plt.subplots(
+        len(MODEL_LABELS),
+        3,
+        figsize=(15, 4 * len(MODEL_LABELS)),
+        squeeze=False,
+    )
     for model_index, model in enumerate(MODEL_LABELS):
         subset = data[data["model"] == model]
         for metric_index, (metric, title, cmap_name, diverging) in enumerate(metrics):

@@ -25,7 +25,14 @@ DEFAULT_GT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "wan_dit_common22_test5_gt49f_896x512_bench/cases"
 )
-MODELS = ("wan_lora", "xssc", "physrvg")
+MODELS = ("wan_lora", "xssc", "physrvg", "openvid_lora_step10000")
+MODEL_BASELINE_SEEDS = {
+    "wan_lora": (851, 3278),
+    "xssc": (851, 3278),
+    "physrvg": (851, 3278),
+    "openvid_lora_step10000": (851,),
+}
+DEPTH_MODELS = ("wan_lora", "xssc", "physrvg")
 FEATURE_SUBTYPES = ("local_enrichment", "same_frame_mass", "local_same_union")
 FEATURE_STAGES = ((0, 10), (10, 20), (0, 40))
 DEPTH_STAGES = ((0, 10), (10, 20), (0, 40))
@@ -142,7 +149,7 @@ def main() -> None:
         stage = (int(record.get("start", -1)), int(record.get("end", -1)))
         if case_id not in region_by_case or model not in MODELS:
             continue
-        if kind == "baseline" and seed in DEPTH_SEEDS:
+        if kind == "baseline" and seed in MODEL_BASELINE_SEEDS[model]:
             wanted_records.append(record)
         elif (
             kind == "s_feature_split"
@@ -153,6 +160,7 @@ def main() -> None:
             wanted_records.append(record)
         elif (
             kind == "s_depth"
+            and model in DEPTH_MODELS
             and seed in DEPTH_SEEDS
             and stage in DEPTH_STAGES
             and record.get("subset_id") in depth_subsets
@@ -239,13 +247,14 @@ def main() -> None:
 
     expected = {
         "gt": len(cases),
-        "baseline": len(cases) * len(MODELS) * len(DEPTH_SEEDS),
+        "baseline": len(cases)
+        * sum(len(seeds) for seeds in MODEL_BASELINE_SEEDS.values()),
         "s_feature": (
             len(cases) * len(MODELS) * len(FEATURE_SUBTYPES) * len(FEATURE_STAGES)
         ),
         "s_depth": (
             len(cases)
-            * len(MODELS)
+            * len(DEPTH_MODELS)
             * len(depth_subsets)
             * len(DEPTH_STAGES)
             * len(DEPTH_SEEDS)
@@ -275,6 +284,10 @@ def main() -> None:
         "feature_stages": [list(stage) for stage in FEATURE_STAGES],
         "depth_stages": [list(stage) for stage in DEPTH_STAGES],
         "depth_seeds": list(DEPTH_SEEDS),
+        "model_baseline_seeds": {
+            model: list(seeds) for model, seeds in MODEL_BASELINE_SEEDS.items()
+        },
+        "depth_models": list(DEPTH_MODELS),
         "depth_subsets": depth_subsets,
         "dominant_depth_subsets": dominant_depth_subsets,
         "entries": entries,

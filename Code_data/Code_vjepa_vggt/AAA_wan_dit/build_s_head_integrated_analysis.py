@@ -33,11 +33,13 @@ MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
     "physrvg": "PhysRVG",
+    "openvid_lora_step10000": "Wan+OpenVid LoRA",
 }
 MODEL_COLORS = {
     "wan_lora": "#1f77b4",
     "xssc": "#d97706",
     "physrvg": "#188263",
+    "openvid_lora_step10000": "#a33f72",
 }
 SUBTYPE_LABELS = {
     "local_enrichment": "Local-enrichment",
@@ -417,7 +419,7 @@ def conclusion_payload(
         },
         {
             "tag": "子类别",
-            "title": "固定 32 heads 后，Same-frame-mass 的全程运动影响更大",
+            "title": "固定 32 heads 后，直接比较 Local 与 Same-frame 的全程运动影响",
             "body": "；".join(subtype_lines)
             + "。该结论是同 head 数的直接比较，目前仍主要来自 seed 851。",
         },
@@ -500,7 +502,7 @@ main{{max-width:1500px;margin:auto}}section{{padding:25px 28px;border-bottom:1px
 <header><div class="shell"><h1>S Head 消融统一分析</h1>
 <p class="lead">统一整理全部 S head、S 子类别、深度分层和 head 数量控制实验。所有变化均与同 case、同模型、同 seed baseline 配对；Motion Impact 表示改变大小，不代表质量方向。</p>
 <div class="toplinks"><a href="/">返回 8946 首页</a><a href="/s-head-ablation/">视频逐例比较</a><a href="/common-stc-all-heads-qk-seed851/">S head Q@K</a><a href="/head-role-depth-distribution/">Head 深度分布</a></div></div></header>
-<nav><div class="shell"><b>模型</b><button class="active" data-model-filter="all">全部</button><button data-model-filter="wan_lora">Wan+LoRA</button><button data-model-filter="xssc">Wan+xSSC</button><button data-model-filter="physrvg">PhysRVG</button><a class="navlink" href="#conclusions">结论</a><a class="navlink" href="#all-s">全部 S</a><a class="navlink" href="#subtypes">子类别</a><a class="navlink" href="#depth">深度</a><a class="navlink" href="#dominant">主导×深度</a><a class="navlink" href="#dose">数量控制</a></div></nav>
+<nav><div class="shell"><b>模型</b><button class="active" data-model-filter="all">全部</button><button data-model-filter="wan_lora">Wan+LoRA</button><button data-model-filter="xssc">Wan+xSSC</button><button data-model-filter="physrvg">PhysRVG</button><button data-model-filter="openvid_lora_step10000">OpenVid LoRA</button><a class="navlink" href="#conclusions">结论</a><a class="navlink" href="#all-s">全部 S</a><a class="navlink" href="#subtypes">子类别</a><a class="navlink" href="#depth">深度</a><a class="navlink" href="#dominant">主导×深度</a><a class="navlink" href="#dose">数量控制</a></div></nav>
 <main>
 <section><div class="definitions"><div><b>Motion Impact ↑</b><br><span class="muted">RAFT 流场、强运动曲线、物体轨迹与速度相对 baseline 的归一化改变。只衡量改变大小。</span></div><div><b>GT gain ↑</b><br><span class="muted">正值表示比 baseline 更接近 49 帧 GT；必须结合按 case bootstrap 的 95% CI。</span></div><div><b>Benchmark Δ ↑</b><br><span class="muted">消融分数减 baseline 分数。不同评测器可能冲突，不合成为单一“物理正确”结论。</span></div></div></section>
 <section id="conclusions"><div class="section-head"><div><h2>当前结论</h2><p class="muted">先看结论，再沿页面向下检查证据与覆盖率。</p></div><span class="muted">更新 {updated}</span></div><div class="findings">{conclusion_html}</div></section>
