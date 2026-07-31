@@ -446,16 +446,24 @@ def build_videos_page(
     cases: list[dict[str, Any]],
     *,
     page_title: str = "Checkpoint · test_5 全部结果",
+    methods_override: list[dict[str, str]] | None = None,
 ) -> str:
-    methods = [
-        {
-            "key": method["key"],
-            "label": method["label"],
-            "color": method["color"],
-        }
-        for method in config["methods"]
-        if any(record["method_key"] == method["key"] for record in records)
-    ]
+    if methods_override is None:
+        methods = [
+            {
+                "key": method["key"],
+                "label": method["label"],
+                "color": method["color"],
+            }
+            for method in config["methods"]
+            if any(record["method_key"] == method["key"] for record in records)
+        ]
+    else:
+        methods = [
+            method
+            for method in methods_override
+            if any(record["method_key"] == method["key"] for record in records)
+        ]
     data = json.dumps(
         {"methods": methods, "records": records, "cases": cases},
         ensure_ascii=False,
@@ -755,6 +763,120 @@ def build_metrics_page(plots: list[dict[str, Any]]) -> str:
 """
 
 
+def build_merged_metric_plots_from_points(
+    config: dict[str, Any],
+    point_paths: list[Path],
+    output_root: Path,
+) -> list[dict[str, Any]]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    frames: list[pd.DataFrame] = []
+    for path in point_paths:
+        if path.is_file():
+            frames.append(pd.read_csv(path))
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frame.empty:
+        frame["method_key"] = frame["method_key"].map(
+            lambda value: METHOD_KEY_ALIASES.get(str(value), str(value))
+        )
+        frame["method_label"] = frame["method_key"].map(
+            lambda key: METHOD_BY_KEY.get(
+                str(key),
+                {"label": str(key)},
+            )["label"]
+        )
+    plots: list[dict[str, Any]] = []
+    points: list[dict[str, Any]] = []
+    for metric in config["plot_metrics"]:
+        field = metric["field"]
+        figure, axis = plt.subplots(figsize=(6.4, 3.6), dpi=140)
+        has_data = False
+        for method in MERGED_METHODS:
+            values: list[tuple[int, float, int]] = []
+            if not frame.empty:
+                subset = frame[
+                    (frame["metric"] == field)
+                    & (frame["method_key"] == method["key"])
+                ]
+                for _, row in subset.iterrows():
+                    value = finite_number(row.get("value"))
+                    step = finite_number(row.get("step"))
+                    count = finite_number(row.get("count"))
+                    if value is None or step is None:
+                        continue
+                    values.append((int(step), value, int(count or 0)))
+            if not values:
+                continue
+            values.sort()
+            has_data = True
+            axis.plot(
+                [value[0] for value in values],
+                [value[1] for value in values],
+                marker="o",
+                linewidth=2,
+                markersize=4,
+                color=method["color"],
+                label=method["label"],
+            )
+            for step, value, count in values:
+                points.append(
+                    {
+                        "method_key": method["key"],
+                        "method_label": method["label"],
+                        "step": step,
+                        "metric": field,
+                        "metric_label": metric["label"],
+                        "value": value,
+                        "count": count,
+                    }
+                )
+        axis.set_title(metric["label"], fontsize=11, fontweight="bold")
+        axis.set_xlabel("Training step")
+        axis.set_ylabel("Score")
+        axis.grid(True, color="#dfe4e6", linewidth=0.8)
+        if has_data:
+            axis.legend(frameon=False, fontsize=8)
+        else:
+            axis.text(
+                0.5,
+                0.5,
+                "Pending complete metric results",
+                ha="center",
+                va="center",
+                color="#718087",
+                transform=axis.transAxes,
+            )
+        figure.tight_layout()
+        filename = f"{field}.png"
+        figure.savefig(output_root / filename, bbox_inches="tight")
+        plt.close(figure)
+        plots.append(
+            {
+                "field": field,
+                "label": metric["label"],
+                "image": f"plots/{filename}",
+                "has_data": has_data,
+            }
+        )
+    with (output_root.parent / "metric_points.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "method_key",
+                "method_label",
+                "step",
+                "metric",
+                "metric_label",
+                "value",
+                "count",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(points)
+    return plots
+
+
 def build_pending_page(title: str, message: str) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -820,6 +942,151 @@ def build_combined_test_page(
   </script>
 </body>
 </html>"""
+
+
+MERGED_METHODS = [
+    {"key": "object_only", "label": "Object-only", "color": "#657278"},
+    {"key": "full_sa", "label": "Full-SA + Object", "color": "#C4473A"},
+    {"key": "s_head59", "label": "S-head59 + Object", "color": "#598414"},
+    {"key": "t_head70", "label": "T-head70 + Object", "color": "#7A4EAB"},
+    {
+        "key": "slot_dedup_merge",
+        "label": "Full-SA + Object + Slot-Dedup",
+        "color": "#007C83",
+    },
+]
+
+METHOD_KEY_ALIASES = {
+    "full_sa_resume": "full_sa",
+    "s_head59_resume": "s_head59",
+}
+
+METHOD_BY_KEY = {method["key"]: method for method in MERGED_METHODS}
+
+
+def normalized_method(record: dict[str, Any]) -> dict[str, str]:
+    key = METHOD_KEY_ALIASES.get(record["method_key"], record["method_key"])
+    method = METHOD_BY_KEY.get(key)
+    if method is not None:
+        return method
+    return {
+        "key": key,
+        "label": str(record.get("method_label", key)),
+        "color": "#006d77",
+    }
+
+
+def prefix_case_media(
+    cases: list[dict[str, Any]], media_prefix: str
+) -> list[dict[str, Any]]:
+    merged_cases: list[dict[str, Any]] = []
+    for case in cases:
+        row = dict(case)
+        row["gt"] = f"{media_prefix}/_source/{case['stem']}/gt_49f_30fps.mp4"
+        row["context"] = f"{media_prefix}/_source/{case['stem']}/context_8f.mp4"
+        merged_cases.append(row)
+    return merged_cases
+
+
+def prefix_video_records(
+    records: list[dict[str, Any]], videos_prefix: str
+) -> list[dict[str, Any]]:
+    prefixed: list[dict[str, Any]] = []
+    for record in records:
+        method = normalized_method(record)
+        row = dict(record)
+        row["method_key"] = method["key"]
+        row["method_label"] = method["label"]
+        row["videos"] = {
+            stem: f"{videos_prefix}/{path}"
+            for stem, path in record.get("videos", {}).items()
+        }
+        prefixed.append(row)
+    return prefixed
+
+
+def load_legacy_video_records(
+    legacy_watch_root: str | None, videos_prefix: str
+) -> list[dict[str, Any]]:
+    if not legacy_watch_root:
+        return []
+    manifest_path = Path(legacy_watch_root).resolve() / "manifest.json"
+    if not manifest_path.is_file():
+        return []
+    manifest = load_json(manifest_path)
+    records = manifest.get("records", [])
+    if not isinstance(records, list):
+        return []
+    return prefix_video_records(records, videos_prefix)
+
+
+def load_physiciq_video_records_from_state(
+    state_root: Path,
+    cases: list[dict[str, Any]],
+    videos_prefix: str,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted((state_root / "physiciq" / "inference").glob("*/step-*.json")):
+        if not path.is_file():
+            continue
+        manifest = load_json(path)
+        method = normalized_method(manifest)
+        step = int(manifest["step"])
+        original_method_key = manifest["method_key"]
+        records.append(
+            {
+                "method_key": method["key"],
+                "method_label": method["label"],
+                "step": step,
+                "checkpoint_dir": manifest.get("checkpoint_dir", ""),
+                "origin": manifest.get("origin", "watcher"),
+                "videos": {
+                    case["stem"]: (
+                        f"{videos_prefix}/{original_method_key}/"
+                        f"step-{step:06d}/{case['stem']}.mp4"
+                    )
+                    for case in cases
+                },
+            }
+        )
+    return records
+
+
+def write_unified_videos_page(
+    *,
+    config: dict[str, Any],
+    page_root: Path,
+    cases: list[dict[str, Any]],
+    current_records: list[dict[str, Any]],
+    legacy_records: list[dict[str, Any]],
+    current_site_prefix: str,
+    page_title: str,
+) -> None:
+    page_root.mkdir(parents=True, exist_ok=True)
+    merged_cases = prefix_case_media(cases, f"{current_site_prefix}/media")
+    merged_records = (
+        prefix_video_records(current_records, current_site_prefix)
+        + legacy_records
+    )
+    merged_records.sort(
+        key=lambda row: (
+            int(row.get("step", 0)),
+            [method["key"] for method in MERGED_METHODS].index(row["method_key"])
+            if row["method_key"] in METHOD_BY_KEY
+            else 999,
+            row["method_key"],
+        )
+    )
+    (page_root / "index.html").write_text(
+        build_videos_page(
+            config,
+            merged_records,
+            merged_cases,
+            page_title=page_title,
+            methods_override=MERGED_METHODS,
+        ),
+        encoding="utf-8",
+    )
 
 
 def build_status(
@@ -942,6 +1209,11 @@ def build_master_hub(
     config: dict[str, Any],
     status: list[dict[str, Any]],
     phys_status: dict[str, Any] | None,
+    *,
+    test_cases: list[dict[str, Any]],
+    test_records: list[dict[str, Any]],
+    phys_cases: list[dict[str, Any]],
+    phys_records: list[dict[str, Any]],
 ) -> None:
     hub_root = Path(config["paths"]["master_hub_root"]).resolve()
     watch_root = Path(config["paths"]["watch_root"]).resolve()
@@ -986,70 +1258,66 @@ def build_master_hub(
             Path(legacy_physiciq_metrics_root),
             hub_root / "history-physiciq-metrics",
         )
-    current_test5_metric_href = "checkpoint-watch/metrics/"
-    history_test5_metric_href = "history-metrics/"
-    current_phys_metric_href = "physiciq-metrics/"
-    history_phys_metric_href = "history-physiciq-metrics/"
-    (hub_root / "test5").mkdir(parents=True, exist_ok=True)
-    (hub_root / "test5" / "index.html").write_text(
-        build_combined_test_page(
-            title="test_5 合并视图",
-            subtitle="同一个 test 下合并当前训练、历史权重、指标曲线",
-            tabs=[
-                {
-                    "label": "当前 checkpoint case",
-                    "note": "watcher 自动更新",
-                    "href": "../gallery/",
-                },
-                {
-                    "label": "历史 checkpoint case",
-                    "note": f"{legacy_checkpoint_count} 组归档",
-                    "href": "../history-gallery/",
-                },
-                {
-                    "label": "当前指标曲线",
-                    "note": "随 checkpoint 更新",
-                    "href": f"../{current_test5_metric_href}",
-                },
-                {
-                    "label": "历史指标曲线",
-                    "note": "只读归档",
-                    "href": f"../{history_test5_metric_href}",
-                },
-            ],
-        ),
+    test5_metric_root = hub_root / "test5-metrics"
+    test5_plots = build_merged_metric_plots_from_points(
+        config,
+        [
+            watch_root / "site" / "metrics" / "metric_points.csv",
+            hub_root / "history-metrics" / "metric_points.csv",
+        ],
+        test5_metric_root / "plots",
+    )
+    test5_metric_root.mkdir(parents=True, exist_ok=True)
+    (test5_metric_root / "index.html").write_text(
+        build_metrics_page(test5_plots),
         encoding="utf-8",
     )
-    (hub_root / "physiciq").mkdir(parents=True, exist_ok=True)
-    (hub_root / "physiciq" / "index.html").write_text(
-        build_combined_test_page(
-            title="PhysicIQ 67-case 合并视图",
-            subtitle="同一个 PhysicIQ test 下合并当前训练、历史权重、指标曲线",
-            tabs=[
-                {
-                    "label": "当前 PhysicIQ case",
-                    "note": "40 steps 推理",
-                    "href": "../physiciq-gallery/",
-                },
-                {
-                    "label": "历史 PhysicIQ case",
-                    "note": f"{legacy_physiciq_count} 组归档",
-                    "href": "../history-physiciq-gallery/",
-                },
-                {
-                    "label": "当前 PhysicIQ 指标",
-                    "note": "新 checkpoint 自动更新",
-                    "href": f"../{current_phys_metric_href}",
-                },
-                {
-                    "label": "历史 PhysicIQ 指标",
-                    "note": "旧实验归档",
-                    "href": f"../{history_phys_metric_href}",
-                },
-            ],
-        ),
-        encoding="utf-8",
+    legacy_test_records = load_legacy_video_records(
+        legacy_watch_root,
+        "../history-gallery",
     )
+    write_unified_videos_page(
+        config=config,
+        page_root=hub_root / "test5",
+        cases=test_cases,
+        current_records=test_records,
+        legacy_records=legacy_test_records,
+        current_site_prefix="../gallery",
+        page_title="test_5 · 全 checkpoint 合并对比",
+    )
+    legacy_state_root = (
+        Path(legacy_watch_root).resolve().parent / "state"
+        if legacy_watch_root
+        else None
+    )
+    legacy_phys_records = (
+        load_physiciq_video_records_from_state(
+            legacy_state_root,
+            phys_cases,
+            "../history-physiciq-gallery/media",
+        )
+        if legacy_state_root and legacy_state_root.is_dir()
+        else []
+    )
+    if phys_cases:
+        write_unified_videos_page(
+            config=config,
+            page_root=hub_root / "physiciq",
+            cases=phys_cases,
+            current_records=phys_records,
+            legacy_records=legacy_phys_records,
+            current_site_prefix="../physiciq-gallery",
+            page_title="PhysicIQ 67-case · 全 checkpoint 合并对比",
+        )
+    else:
+        (hub_root / "physiciq").mkdir(parents=True, exist_ok=True)
+        (hub_root / "physiciq" / "index.html").write_text(
+            build_pending_page(
+                "PhysicIQ 67-case · 全 checkpoint 合并对比",
+                "正在等待 PhysicIQ case 信息生成。",
+            ),
+            encoding="utf-8",
+        )
     total_inferred = sum(row["inferred"] for row in status)
     total_discovered = sum(row["discovered"] for row in status)
     total_metrics = sum(row["metric_done"] for row in status)
@@ -1079,9 +1347,23 @@ def build_master_hub(
         if (plot_root / "index.html").is_file():
             link_directory(plot_root, hub_root / "physiciq-metrics")
             action = (
-                '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
-                '<a href="physiciq-gallery/">进入 PhysicIQ case</a>'
-                '<a href="physiciq-metrics/">进入 PhysicIQ 指标图</a>'
+                '<a href="checkpoint-watch/#physiciq">监控入口</a>'
+                '<a href="physiciq/">Case 合并对比</a>'
+                '<a href="physiciq-metrics/">指标曲线</a>'
+            )
+        elif (
+            legacy_physiciq_metrics_root
+            and Path(legacy_physiciq_metrics_root).is_dir()
+            and (Path(legacy_physiciq_metrics_root) / "index.html").is_file()
+        ):
+            link_directory(
+                Path(legacy_physiciq_metrics_root),
+                hub_root / "physiciq-metrics",
+            )
+            action = (
+                '<a href="checkpoint-watch/#physiciq">监控入口</a>'
+                '<a href="physiciq/">Case 合并对比</a>'
+                '<a href="physiciq-metrics/">指标曲线</a>'
             )
         else:
             pending_metrics = watch_root / "site" / "physiciq-metrics"
@@ -1095,9 +1377,9 @@ def build_master_hub(
             )
             link_directory(pending_metrics, hub_root / "physiciq-metrics")
             action = (
-                '<a href="checkpoint-watch/#physiciq">进入 PhysicIQ 监控</a>'
-                '<a href="physiciq-gallery/">进入 PhysicIQ case</a>'
-                '<a href="physiciq-metrics/">进入 PhysicIQ 指标图</a>'
+                '<a href="checkpoint-watch/#physiciq">监控入口</a>'
+                '<a href="physiciq/">Case 合并对比</a>'
+                '<a href="physiciq-metrics/">指标曲线</a>'
             )
         step_text = (
             "每个新 checkpoint"
@@ -1110,8 +1392,8 @@ def build_master_hub(
             if method["key"] in phys_config["method_keys"]
         )
         physiciq_entry = f"""
-    <section class="entry"><div><h2>PhysicIQ 67-case · Checkpoint 对比</h2>
-      <div class="meta">{escape(method_text)} · 40 denoising steps · 完整指标</div>
+    <section class="entry"><div><h2>PhysicIQ 67-case</h2>
+      <div class="meta">{escape(method_text)} · 同一训练方案的不同 checkpoint step 合并展示 · 40 denoising steps</div>
       {action}</div><div class="status">{generated_text}<strong>{metric_text}</strong><em>{partial_text}</em><small>step {step_text}</small></div>
     </section>"""
     page = f"""<!doctype html>
@@ -1146,25 +1428,16 @@ def build_master_hub(
   <main><div class="section-title">训练与推理</div><div class="entries">
     <section class="entry"><div><h2>Checkpoint 自动评测</h2>
       <div class="meta">自动发现权重、生成 test_5、计算完整指标并绘制训练 step 曲线</div>
-      <a href="checkpoint-watch/">进入自动评测</a>
-      <a href="test5/">进入 test_5 合并视图</a></div>
+      <a href="checkpoint-watch/">进入自动评测</a></div>
       <div class="status">持续监听<strong>推理 {total_inferred}/{total_discovered} · 指标 {total_metrics}/{expected_metrics}</strong></div>
     </section>
-    <section class="entry"><div><h2>test_5 · 当前 + 历史合并</h2>
-      <div class="meta">同一个 test_5 入口内查看当前 checkpoint、历史 checkpoint、当前指标和历史指标</div>
+    <section class="entry"><div><h2>test_5 · 全 checkpoint 合并</h2>
+      <div class="meta">同一个 test_5 入口内按方法和 step 展示所有已完成 checkpoint</div>
       <a href="test5/">进入合并视图</a>
-      <a href="gallery/">只看当前 case</a>
-      <a href="history-gallery/">只看历史 case</a></div>
-      <div class="status">自动 + 归档<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>当前 {total_inferred} · 历史 {legacy_checkpoint_count}</small></div>
+      <a href="test5-metrics/">指标曲线</a></div>
+      <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
     {physiciq_entry}
-    <section class="entry"><div><h2>PhysicIQ 67-case · 当前 + 历史合并</h2>
-      <div class="meta">同一个 PhysicIQ 入口内查看当前训练评测、历史 1500/2000/2500 step 结果和对应指标</div>
-      <a href="physiciq/">进入合并视图</a>
-      <a href="physiciq-gallery/">只看当前 case</a>
-      <a href="history-physiciq-gallery/">只看历史 case</a></div>
-      <div class="status">自动 + 归档<strong>{legacy_physiciq_count} 组历史</strong><small>当前结果随 checkpoint 增量更新</small></div>
-    </section>
     <section class="entry"><div><h2>初始四方案 case 对比</h2>
       <div class="meta">Object-only、Full-SA、S-head59、T-head70 的早期固定 case 对照页面</div>
       <a href="initial-gallery/">查看初始 case</a></div>
@@ -1193,10 +1466,12 @@ def main() -> None:
         encoding="utf-8",
     )
     phys_config = config.get("physiciq", {})
+    phys_cases: list[dict[str, Any]] = []
+    phys_records: list[dict[str, Any]] = []
     if phys_config.get("enabled"):
+        phys_cases = read_inputs(Path(phys_config["input_list"]))
         phys_manifests = load_physiciq_manifests(watch_root)
         if phys_manifests:
-            phys_cases = read_inputs(Path(phys_config["input_list"]))
             phys_records = build_video_media(
                 config,
                 phys_manifests,
@@ -1251,7 +1526,15 @@ def main() -> None:
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    build_master_hub(config, status, phys_status)
+    build_master_hub(
+        config,
+        status,
+        phys_status,
+        test_cases=cases,
+        test_records=records,
+        phys_cases=phys_cases,
+        phys_records=phys_records,
+    )
     print(site_root / "index.html")
 
 
