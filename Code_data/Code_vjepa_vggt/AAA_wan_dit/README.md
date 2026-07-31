@@ -3,6 +3,13 @@
 This directory contains runtime-only DiT ablation scripts. Existing Wan,
 DiffSynth, LoRA, xSSC training, and inference source files are not modified.
 
+## Analysis
+
+The canonical cross-model S-head analysis is
+[`S_HEAD_CROSS_MODEL_ANALYSIS.md`](S_HEAD_CROSS_MODEL_ANALYSIS.md). It compares
+Wan+LoRA, Wan+xSSC, and Wan+OpenVid with explicit evidence levels and is
+generated from the same data as the `s-head-integrated-analysis` gallery page.
+
 ## PhysRVG
 
 PhysRVG ablations use the official model-loading order: the Wan2.2 TI2V 5B
