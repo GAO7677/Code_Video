@@ -1,0 +1,11 @@
+{
+  "extends": "formal_t_head_resume2500_gpu01_ddp.json",
+  "experiment": {
+    "name": "common_t_head_full70_gpu01_ddp_resume_newwandb"
+  },
+  "logging": {
+    "wandb_name": "common_t_head_full70_gpu7_formal_newwandb_run",
+    "wandb_run_id": "",
+    "wandb_resume": ""
+  }
+}
