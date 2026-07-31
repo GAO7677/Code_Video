@@ -167,12 +167,18 @@ def save_dose_plot(dose: pd.DataFrame, output: Path) -> None:
         (dose["role"] == "S")
         & dose["metric"].isin(("physics_iq_with_context", "pmf_with_context"))
     ].copy()
-    figure, axes = plt.subplots(2, 3, figsize=(15, 8), squeeze=False)
+    models = [model for model in MODEL_LABELS if model in set(data["model"])]
+    figure, axes = plt.subplots(
+        2,
+        len(models),
+        figsize=(5 * len(models), 8),
+        squeeze=False,
+    )
     designs = [
         ("exact_block", 5, "[exact] k=5", "o"),
         ("approx_depth", 8, "[depth] k=8", "s"),
     ]
-    for column_index, model in enumerate(MODEL_LABELS):
+    for column_index, model in enumerate(models):
         subset = data[data["model"] == model]
         for row_index, metric in enumerate(
             ("physics_iq_with_context", "pmf_with_context")
@@ -383,7 +389,9 @@ def conclusion_payload(
     union_lines = []
     for row in interactions.itertuples():
         union_lines.append(
-            f"{MODEL_LABELS[row.model]} {row.union_minus_max_single:+.3f}"
+            f"{MODEL_LABELS[row.model]} "
+            f"{stage_label(row.denoise_start, row.denoise_end)} "
+            f"{row.union_minus_max_single:+.3f}"
         )
     depth = motion[
         (motion["family"] == "s_depth")
@@ -408,7 +416,7 @@ def conclusion_payload(
             | (dose["harm_ci95_high"] < 0)
         )
     ]
-    return [
+    findings = [
         {
             "tag": "阶段效应",
             "title": "S 消融改变运动，但“改变更大”不等于“物理更好”",
@@ -425,10 +433,11 @@ def conclusion_payload(
         },
         {
             "tag": "联合消融",
-            "title": "64-head union 高于单类，但没有足够证据称为协同",
+            "title": "64-head union 相对单类的结果随模型变化，不能概括为协同",
             "body": "Union−max(single)："
             + "；".join(union_lines)
-            + "。由于 union 的 head 数翻倍且 Impact/head 下降，这更符合数量累积，而不是已证实的超加性交互。",
+            + "。正值表示 union 改变更大，负值表示仍弱于最强的 32-head 单类；"
+            "由于网络非线性且 head 数翻倍，这不是可加的交互因果量。",
         },
         {
             "tag": "深度",
@@ -446,6 +455,72 @@ def conclusion_payload(
             ),
         },
     ]
+    openvid = "openvid_lora_step10000"
+    openvid_feature = feature[feature["model"] == openvid].set_index("subtype")
+    openvid_late = motion[
+        (motion["model"] == openvid)
+        & (motion["subset_id"] == "S_local_dominant_depth_late")
+        & (motion["denoise_start"] == 0)
+        & (motion["denoise_end"] == 10)
+    ]
+    if {
+        "local_enrichment",
+        "same_frame_mass",
+        "local_same_union",
+    }.issubset(openvid_feature.index) and not openvid_late.empty:
+        local = openvid_feature.loc["local_enrichment"]
+        same = openvid_feature.loc["same_frame_mass"]
+        union = openvid_feature.loc["local_same_union"]
+        late = openvid_late.iloc[0]
+        findings.insert(
+            1,
+            {
+                "tag": "OpenVid",
+                "title": "OpenVid 对 S-head 消融更敏感，但改变方向取决于 head 类别",
+                "body": (
+                    f"全程固定 32-head：Local Impact={local.impact_mean:.3f}、"
+                    f"Same-frame Impact={same.impact_mean:.3f}；"
+                    f"Same-frame GT gain={same.gt_gain_mean:+.3f}，"
+                    f"union GT gain={union.gt_gain_mean:+.3f}。"
+                    f"相反，0–10 消融 Local-dominant late 的 "
+                    f"Impact={late.impact_mean:.3f}、GT gain={late.gt_gain_mean:+.3f}，"
+                    "说明“运动改变大”既可能更接近 GT，也可能破坏原有合理运动。"
+                ),
+            },
+        )
+    dominant_depth = motion[
+        (motion["family"] == "s_dominant_depth")
+        & motion["depth_stratum"].notna()
+    ]
+    same_middle_early = dominant_depth[
+        (dominant_depth["dominance_class"] == "same_frame_dominant")
+        & (dominant_depth["depth_stratum"] == "middle")
+        & (dominant_depth["denoise_start"] == 0)
+        & (dominant_depth["denoise_end"] == 10)
+    ]
+    local_late_early = dominant_depth[
+        (dominant_depth["dominance_class"] == "local_dominant")
+        & (dominant_depth["depth_stratum"] == "late")
+        & (dominant_depth["denoise_start"] == 0)
+        & (dominant_depth["denoise_end"] == 10)
+    ]
+    if not same_middle_early.empty and not local_late_early.empty:
+        findings.insert(
+            2,
+            {
+                "tag": "主导×深度",
+                "title": "Middle 的单位-head 敏感度最高，Local-Late 的早期消融最可能损害合理运动",
+                "body": (
+                    "四模型平均：0–10 的 Same-frame-dominant Middle "
+                    f"Impact/head={same_middle_early.impact_per_head_approx.mean():.5f}；"
+                    "Local-dominant Late 的 "
+                    f"GT gain={local_late_early.gt_gain_mean.mean():+.3f}。"
+                    "前者说明少量 Middle heads 能高效改变轨迹，后者说明 Late Local heads "
+                    "更可能在早期去噪中维持正确运动；总 Impact 与单位-head 敏感度不能混为一谈。"
+                ),
+            },
+        )
+    return findings
 
 
 def build_html(

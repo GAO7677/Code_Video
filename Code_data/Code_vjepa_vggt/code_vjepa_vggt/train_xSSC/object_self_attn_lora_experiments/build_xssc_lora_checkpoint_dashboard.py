@@ -911,7 +911,8 @@ def build_master_hub(
   <main><div class="section-title">训练与推理</div><div class="entries">
     <section class="entry"><div><h2>Checkpoint 自动评测</h2>
       <div class="meta">自动发现权重、生成 test_5、计算完整指标并绘制训练 step 曲线</div>
-      <a href="checkpoint-watch/">进入自动评测</a></div>
+      <a href="checkpoint-watch/">进入自动评测</a>
+      <a href="checkpoint-watch/metrics/">test_5 指标曲线</a></div>
       <div class="status">持续监听<strong>推理 {total_inferred}/{total_discovered} · 指标 {total_metrics}/{expected_metrics}</strong></div>
     </section>
     <section class="entry"><div><h2>全部 Checkpoint case 对比</h2>
