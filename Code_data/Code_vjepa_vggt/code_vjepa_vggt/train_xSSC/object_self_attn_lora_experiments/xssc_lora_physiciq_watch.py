@@ -375,18 +375,24 @@ def refresh_plots_if_complete(
         / "logs"
         / "physiciq_plot_refresh.log"
     )
+    leaf_values = [config["physiciq"]["leaf_folders"]]
+    leaf_values.extend(config["physiciq"].get("additional_leaf_folders", []))
     with exclusive_lock(phys_state_root(config) / "plot.lock"):
         with plot_log.open("a", encoding="utf-8") as log_handle:
-            subprocess.run(
-                [
-                    "bash",
-                    config["physiciq"]["plot_script"],
-                    config["physiciq"]["leaf_folders"],
-                ],
-                check=True,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-            )
+            for leaf_value in leaf_values:
+                leaf_path = Path(leaf_value).resolve()
+                if not leaf_path.is_file():
+                    continue
+                subprocess.run(
+                    [
+                        "bash",
+                        config["physiciq"]["plot_script"],
+                        str(leaf_path),
+                    ],
+                    check=True,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                )
         subprocess.run(
             [
                 config["paths"]["python"],
@@ -398,7 +404,7 @@ def refresh_plots_if_complete(
         )
     log(
         "PhysicIQ plots refreshed with "
-        f"{config['physiciq']['leaf_folders']}"
+        + ", ".join(str(Path(leaf).resolve()) for leaf in leaf_values)
     )
 
 

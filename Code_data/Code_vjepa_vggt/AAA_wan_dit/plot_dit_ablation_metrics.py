@@ -31,9 +31,18 @@ METHOD_PATTERN = re.compile(
     r"text_cross_attn_zero|ffn_zero|lora_off)_block(\d{2})$"
 )
 TRAINING_CHECKPOINT_PATTERN = re.compile(
-    r"^xssc_lora_(full_sa|s_head59|t_head70)_step-(\d+)_"
-    r"steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
+    r"^xssc_lora_("
+    r"full_sa|full_sa_resume|"
+    r"s_head59|s_head59_resume|"
+    r"t_head70|t_head70_resume|"
+    r"slot_dedup_merge"
+    r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
 )
+TRAINING_VARIANT_ALIASES = {
+    "full_sa_resume": "full_sa",
+    "s_head59_resume": "s_head59",
+    "t_head70_resume": "t_head70",
+}
 MODEL_LABELS = {
     "wan_lora": "Wan+LoRA",
     "xssc": "Wan+xSSC",
@@ -79,15 +88,19 @@ TRAINING_VARIANT_LABELS = {
     "full_sa": "Full-SA + Object",
     "s_head59": "S-head59 + Object",
     "t_head70": "T-head70 + Object",
+    "slot_dedup_merge": "Full-SA + Object + Slot-Dedup",
 }
 TRAINING_VARIANT_COLORS = {
     "full_sa": "#C4473A",
     "s_head59": "#598414",
     "t_head70": "#7256A8",
+    "slot_dedup_merge": "#007C83",
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
-    for index, variant in enumerate(("full_sa", "s_head59", "t_head70"))
+    for index, variant in enumerate(
+        ("full_sa", "s_head59", "t_head70", "slot_dedup_merge")
+    )
 }
 
 
@@ -374,8 +387,9 @@ def infer_training_checkpoint(result_dir: Path) -> TrainingCheckpoint | None:
     for candidate in (result_dir, *result_dir.parents):
         match = TRAINING_CHECKPOINT_PATTERN.fullmatch(candidate.name)
         if match is not None:
+            variant = TRAINING_VARIANT_ALIASES.get(match.group(1), match.group(1))
             return TrainingCheckpoint(
-                variant=match.group(1),
+                variant=variant,
                 step=int(match.group(2)),
                 result_dir=result_dir,
             )

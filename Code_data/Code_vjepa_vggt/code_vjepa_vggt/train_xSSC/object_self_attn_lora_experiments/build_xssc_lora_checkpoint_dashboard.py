@@ -1327,6 +1327,20 @@ def build_master_hub(
         phys_config = config["physiciq"]
         leaf_path = Path(phys_config["leaf_folders"]).resolve()
         plot_root = leaf_path.parent / "_metric_plots" / leaf_path.stem
+        global_plot_roots: list[Path] = []
+        for leaf_value in phys_config.get("additional_leaf_folders", []):
+            additional_leaf = Path(leaf_value).resolve()
+            global_plot_roots.append(
+                additional_leaf.parent / "_metric_plots" / additional_leaf.stem
+            )
+        preferred_plot_root = next(
+            (
+                root
+                for root in global_plot_roots
+                if (root / "index.html").is_file()
+            ),
+            plot_root if (plot_root / "index.html").is_file() else None,
+        )
         configured_steps = phys_config.get("trigger_steps", "all")
         generated_text = "生成 pending"
         metric_text = "正式指标 pending"
@@ -1344,8 +1358,8 @@ def build_master_hub(
                 f"partial {phys_status['partial_metric_total']}/"
                 f"{phys_status['partial_metric_expected']}"
             )
-        if (plot_root / "index.html").is_file():
-            link_directory(plot_root, hub_root / "physiciq-metrics")
+        if preferred_plot_root is not None:
+            link_directory(preferred_plot_root, hub_root / "physiciq-metrics")
             action = (
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
