@@ -1,0 +1,11 @@
+{
+  "extends": "formal_full_sa_no_object_gpu27_resume_step6.json",
+  "experiment": {
+    "name": "full_sa_no_object_gpu67_resume_step6"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29567
+  }
+}

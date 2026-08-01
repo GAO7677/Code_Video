@@ -960,6 +960,7 @@ def build_combined_test_page(
 MERGED_METHODS = [
     {"key": "object_only", "label": "Object-only", "color": "#657278"},
     {"key": "full_sa", "label": "Full-SA + Object", "color": "#C4473A"},
+    {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#6D5A8D"},
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#598414"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#7A4EAB"},
     {

@@ -1,0 +1,15 @@
+{
+  "extends": "full_sa_no_object.json",
+  "experiment": {
+    "name": "full_sa_no_object_gpu27_formal"
+  },
+  "launch": {
+    "gpu_set": "2,7",
+    "num_processes": 2,
+    "main_process_port": 29528
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  }
+}

@@ -14,6 +14,7 @@ from typing import Any
 from xssc_lora_checkpoint_watch import (
     atomic_write_json,
     exclusive_lock,
+    try_exclusive_lock,
     load_json,
     log,
     read_inputs,
@@ -208,7 +209,7 @@ def run_phys_inference(
 
 
 def inference_loop(config: dict[str, Any], once: bool) -> None:
-    main_paths = state_paths(config)
+    paths = state_paths(config)
     phys_pending = phys_state_root(config) / "inference.pending"
     while True:
         tasks = discover_tasks(config)
@@ -225,33 +226,51 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))
             continue
-        task = pending[0]
         atomic_write_json(
             phys_pending,
             {
                 "updated_utc": timestamp(),
                 "num_pending": len(pending),
-                "next": task,
+                "next": pending[0],
             },
         )
-        try:
-            with reserve_available_gpu(config) as gpu_id:
-                run_phys_inference(config, task, gpu_id)
-            subprocess.run(
-                [
-                    config["paths"]["python"],
-                    config["paths"]["dashboard_builder"],
-                    "--config",
-                    config["_config_path"],
-                ],
-                check=True,
+        handled = False
+        for task in pending:
+            task_lock = (
+                phys_state_root(config)
+                / "inference_locks"
+                / task["method_key"]
+                / f"step-{int(task['step']):06d}.lock"
             )
-        except Exception as exc:
-            log(
-                f"PhysicIQ inference failed method={task['method_key']} "
-                f"step={task['step']}: {exc}"
-            )
-            time.sleep(int(config["runtime"]["retry_seconds"]))
+            with try_exclusive_lock(task_lock) as acquired:
+                if not acquired:
+                    continue
+                if phys_manifest_path(
+                    config, task["method_key"], int(task["step"])
+                ).is_file():
+                    continue
+                handled = True
+                try:
+                    with reserve_available_gpu(config) as gpu_id:
+                        run_phys_inference(config, task, gpu_id)
+                    subprocess.run(
+                        [
+                            config["paths"]["python"],
+                            config["paths"]["dashboard_builder"],
+                            "--config",
+                            config["_config_path"],
+                        ],
+                        check=True,
+                    )
+                except Exception as exc:
+                    log(
+                        f"PhysicIQ inference failed method={task['method_key']} "
+                        f"step={task['step']}: {exc}"
+                    )
+                    time.sleep(int(config["runtime"]["retry_seconds"]))
+                break
+        if not handled:
+            time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
         if once:
             return
 
@@ -416,7 +435,7 @@ def refresh_plots_if_complete(
 
 
 def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
-    main_paths = state_paths(config)
+    paths = state_paths(config)
     phys_pending = phys_state_root(config) / "inference.pending"
     while True:
         tasks = metric_tasks(config, kind)
@@ -425,26 +444,48 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))
             continue
-        task = tasks[0]
-        try:
-            if kind == "gpu":
-                if main_paths["pending"].is_file() or phys_pending.is_file():
-                    time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
-                    continue
-                with reserve_available_gpu(config) as gpu_id:
-                    if main_paths["pending"].is_file() or phys_pending.is_file():
-                        continue
-                    run_metric(config, kind, task, gpu_id)
-            else:
-                run_metric(config, kind, task)
-        except Exception as exc:
+        handled = False
+        for task in tasks:
             manifest = task["manifest"]
-            log(
-                f"PhysicIQ metric failed kind={kind} "
-                f"method={manifest['method_key']} step={manifest['step']} "
-                f"metric={task['metric']}: {exc}"
+            task_lock = (
+                phys_state_root(config)
+                / "metric_locks"
+                / kind
+                / manifest["method_key"]
+                / f"step-{int(manifest['step']):06d}"
+                / f"{task['metric']}.lock"
             )
-            time.sleep(int(config["runtime"]["retry_seconds"]))
+            with try_exclusive_lock(task_lock) as acquired:
+                if not acquired:
+                    continue
+                if phys_metric_marker_path(
+                    config,
+                    manifest["method_key"],
+                    int(manifest["step"]),
+                    task["metric"],
+                ).is_file():
+                    continue
+                try:
+                    if kind == "gpu":
+                        if paths["pending"].is_file() or phys_pending.is_file():
+                            continue
+                        with reserve_available_gpu(config) as gpu_id:
+                            if paths["pending"].is_file() or phys_pending.is_file():
+                                continue
+                            run_metric(config, kind, task, gpu_id)
+                    else:
+                        run_metric(config, kind, task)
+                    handled = True
+                except Exception as exc:
+                    log(
+                        f"PhysicIQ metric failed kind={kind} "
+                        f"method={manifest['method_key']} step={manifest['step']} "
+                        f"metric={task['metric']}: {exc}"
+                        )
+                    time.sleep(int(config["runtime"]["retry_seconds"]))
+                break
+        if not handled:
+            time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
         if once:
             return
 

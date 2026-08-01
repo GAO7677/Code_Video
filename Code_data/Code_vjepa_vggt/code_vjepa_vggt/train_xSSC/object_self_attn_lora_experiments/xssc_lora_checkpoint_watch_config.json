@@ -18,6 +18,7 @@
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
     "gpu_id": 3,
+    "gpu_ids": [0, 1, 2, 5, 6, 7],
     "gpu_ready_max_used_mib": 8000,
     "expected_cases": 20,
     "num_inference_steps": 8,
@@ -51,7 +52,12 @@
   "physiciq": {
     "enabled": true,
     "trigger_steps": [1500, 2000, 2500],
-    "method_keys": ["full_sa", "s_head59", "t_head70"],
+    "method_keys": [
+      "full_sa",
+      "full_sa_no_object",
+      "s_head59",
+      "t_head70"
+    ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
     "leaf_folders": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/leaf_folders.txt",
@@ -122,6 +128,21 @@
       "bootstrap_result_roots": {
         "1000": "/data/gaoya/agent-data/outputs/xssc_lora_latest_case5_compare/run_20260730T140000Z/generations/full_sa_step001000_steps8_512x896_ctx08_49f"
       }
+    },
+    {
+      "key": "full_sa_no_object",
+      "label": "Full-SA + No-Object",
+      "color": "#6D5A8D",
+      "static_checkpoints": [
+        {
+          "step": 6,
+          "path": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints/interrupted-latest"
+        }
+      ],
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints"
+      ],
+      "bootstrap_result_roots": {}
     },
     {
       "key": "s_head59",

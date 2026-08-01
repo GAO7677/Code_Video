@@ -1,0 +1,14 @@
+{
+  "extends": "formal_full_sa_no_object_gpu27.json",
+  "experiment": {
+    "name": "full_sa_no_object_gpu27_resume_step6"
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints/interrupted-latest/training_state.pt"
+  },
+  "logging": {
+    "wandb_run_id": "8v8jkxlo",
+    "wandb_resume": "must",
+    "wandb_name": "full_sa_no_object_gpu27_formal_formal_20260801T162400Z"
+  }
+}
