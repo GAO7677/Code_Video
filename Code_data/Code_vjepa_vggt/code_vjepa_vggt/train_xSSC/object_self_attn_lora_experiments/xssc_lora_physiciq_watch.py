@@ -17,6 +17,7 @@ from xssc_lora_checkpoint_watch import (
     load_json,
     log,
     read_inputs,
+    reserve_available_gpu,
     state_paths,
     timestamp,
     validate_result_root,
@@ -127,7 +128,11 @@ def method_name(config: dict[str, Any], task: dict[str, Any]) -> str:
     )
 
 
-def run_phys_inference(config: dict[str, Any], task: dict[str, Any]) -> None:
+def run_phys_inference(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    gpu_id: int,
+) -> None:
     phys = config["physiciq"]
     runtime = config["runtime"]
     output_root = Path(phys["output_root"]).resolve()
@@ -156,7 +161,7 @@ def run_phys_inference(config: dict[str, Any], task: dict[str, Any]) -> None:
     )
     log(
         f"PhysicIQ inference start method={task['method_key']} "
-        f"step={task['step']} gpu={runtime['gpu_id']}"
+        f"step={task['step']} gpu={gpu_id}"
     )
     with log_path.open("a", encoding="utf-8") as log_handle:
         subprocess.run(
@@ -164,7 +169,7 @@ def run_phys_inference(config: dict[str, Any], task: dict[str, Any]) -> None:
                 "bash",
                 config["paths"]["run_infer_script"],
                 task["checkpoint_dir"],
-                str(runtime["gpu_id"]),
+                str(gpu_id),
                 str(output_root),
             ],
             check=True,
@@ -186,6 +191,7 @@ def run_phys_inference(config: dict[str, Any], task: dict[str, Any]) -> None:
         "result_root": str(result_root),
         "input_list": str(input_list),
         "num_inference_steps": int(phys["num_inference_steps"]),
+        "gpu_id": gpu_id,
         "completed_utc": timestamp(),
         "validation": validation,
     }
@@ -229,9 +235,8 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
             },
         )
         try:
-            with exclusive_lock(main_paths["gpu_lock"]):
-                wait_for_gpu(config)
-                run_phys_inference(config, task)
+            with reserve_available_gpu(config) as gpu_id:
+                run_phys_inference(config, task, gpu_id)
             subprocess.run(
                 [
                     config["paths"]["python"],
@@ -266,7 +271,12 @@ def metric_tasks(config: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     return tasks
 
 
-def run_metric(config: dict[str, Any], kind: str, task: dict[str, Any]) -> None:
+def run_metric(
+    config: dict[str, Any],
+    kind: str,
+    task: dict[str, Any],
+    gpu_id: int | None = None,
+) -> None:
     manifest = task["manifest"]
     metric = task["metric"]
     method_key = manifest["method_key"]
@@ -310,11 +320,12 @@ def run_metric(config: dict[str, Any], kind: str, task: dict[str, Any]) -> None:
         "/home/gaoya/Code_Video/Code_data/Code_try0526"
     )
     environment["TOKENIZERS_PARALLELISM"] = "false"
-    environment["CUDA_VISIBLE_DEVICES"] = (
-        "" if kind == "cpu" else str(config["runtime"]["gpu_id"])
-    )
+    if kind == "gpu" and gpu_id is None:
+        raise ValueError("gpu_id is required for a GPU metric task")
+    environment["CUDA_VISIBLE_DEVICES"] = "" if kind == "cpu" else str(gpu_id)
+    gpu_text = "cpu" if gpu_id is None else f"gpu={gpu_id}"
     log(
-        f"PhysicIQ metric start kind={kind} method={method_key} "
+        f"PhysicIQ metric start kind={kind} {gpu_text} method={method_key} "
         f"step={step} metric={metric}"
     )
     with log_path.open("a", encoding="utf-8") as log_handle:
@@ -347,6 +358,7 @@ def run_metric(config: dict[str, Any], kind: str, task: dict[str, Any]) -> None:
             "metric": metric,
             "result_root": manifest["result_root"],
             "summary_path": str(summary_path),
+            "gpu_id": gpu_id,
         },
     )
     log(f"PhysicIQ metric complete method={method_key} step={step} metric={metric}")
@@ -419,11 +431,10 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 if main_paths["pending"].is_file() or phys_pending.is_file():
                     time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
                     continue
-                with exclusive_lock(main_paths["gpu_lock"]):
+                with reserve_available_gpu(config) as gpu_id:
                     if main_paths["pending"].is_file() or phys_pending.is_file():
                         continue
-                    wait_for_gpu(config)
-                    run_metric(config, kind, task)
+                    run_metric(config, kind, task, gpu_id)
             else:
                 run_metric(config, kind, task)
         except Exception as exc:

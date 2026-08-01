@@ -41,6 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="append", default=None)
     parser.add_argument("--restart-root", type=Path, default=DEFAULT_RESTART_ROOT)
+    parser.add_argument(
+        "--movi-checkpoint",
+        type=Path,
+        default=None,
+        help="Use this exact MOVi-C checkpoint instead of auto-selecting the latest one.",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--official-reference-dir", type=Path, default=DEFAULT_OFFICIAL_REFERENCE)
     parser.add_argument("--device", default="cuda:0")
@@ -55,6 +61,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument("--skip-raft", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--reuse-existing",
+        action="store_true",
+        help="Reuse a model directory when its metadata.json is already complete.",
+    )
+    parser.add_argument(
+        "--include-existing-models",
+        action="store_true",
+        help="Include completed model directories not selected by latest-checkpoint discovery.",
+    )
     parser.add_argument("--worker-spec", type=Path, default=None)
     return parser.parse_args()
 
@@ -69,7 +85,10 @@ def latest_checkpoint(root: Path) -> Path | None:
     return checkpoints[-1] if checkpoints else None
 
 
-def discover_dinov3_specs(restart_root: Path) -> list[dict[str, Any]]:
+def discover_dinov3_specs(
+    restart_root: Path,
+    movi_checkpoint: Path | None = None,
+) -> list[dict[str, Any]]:
     vitl_root = TRAIN_XSSC_ROOT / "xssc_rsfq2_ytvis_dinov3_vitl16_256"
     vits_root = TRAIN_XSSC_ROOT / "xssc_rsfq2_movic_dinov3_vits16_official_dims"
     specs: list[dict[str, Any]] = []
@@ -94,10 +113,19 @@ def discover_dinov3_specs(restart_root: Path) -> list[dict[str, Any]]:
             }
         )
 
-    for movic_dir in sorted(
-        restart_root.glob("movi_c_transfer*/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42")
-    ):
-        ckpt = latest_checkpoint(movic_dir)
+    if movi_checkpoint is not None:
+        explicit_movi_checkpoint = movi_checkpoint.expanduser().resolve()
+        if not explicit_movi_checkpoint.is_file():
+            raise FileNotFoundError(f"MOVi-C checkpoint does not exist: {explicit_movi_checkpoint}")
+        movic_dirs = [explicit_movi_checkpoint.parent]
+    else:
+        explicit_movi_checkpoint = None
+        movic_dirs = sorted(
+            restart_root.glob("movi_c_transfer*/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42")
+        )
+
+    for movic_dir in movic_dirs:
+        ckpt = explicit_movi_checkpoint or latest_checkpoint(movic_dir)
         if ckpt is None:
             continue
         run_name = movic_dir.parents[1].name
@@ -189,7 +217,10 @@ def run_orchestrator(args: argparse.Namespace) -> None:
     spec_dir.mkdir(parents=True, exist_ok=True)
     model_root.mkdir(parents=True, exist_ok=True)
 
-    specs = discover_dinov3_specs(args.restart_root.expanduser().resolve())
+    specs = discover_dinov3_specs(
+        args.restart_root.expanduser().resolve(),
+        args.movi_checkpoint,
+    )
     if not specs:
         raise RuntimeError(f"No DINOv3 xSSC checkpoints found under {args.restart_root}")
 
@@ -215,6 +246,11 @@ def run_orchestrator(args: argparse.Namespace) -> None:
         if model_dir.exists() and args.force:
             subprocess.run(["rm", "-rf", str(model_dir)], check=True)
         model_dir.mkdir(parents=True, exist_ok=True)
+        metadata_path = model_dir / "metadata.json"
+        if args.reuse_existing and metadata_path.is_file():
+            print(f"[reuse] {spec['short_name']} -> {model_dir}", flush=True)
+            results.append(json.loads(metadata_path.read_text(encoding="utf-8")))
+            continue
         log_path = model_dir / "worker.log"
         command = worker_command(args, spec_path, model_dir)
         print(f"[run] {spec['short_name']} -> {model_dir}", flush=True)
@@ -232,6 +268,16 @@ def run_orchestrator(args: argparse.Namespace) -> None:
             print(proc.stdout, flush=True)
             raise RuntimeError(f"worker failed for {spec['name']}; see {log_path}")
         results.append(json.loads((model_dir / "metadata.json").read_text(encoding="utf-8")))
+
+    if args.include_existing_models:
+        included_names = {result["model"]["name"] for result in results}
+        for metadata_path in sorted(model_root.glob("*/metadata.json")):
+            result = json.loads(metadata_path.read_text(encoding="utf-8"))
+            model_name = result.get("model", {}).get("name")
+            if model_name and model_name not in included_names:
+                print(f"[include-existing] {model_name} -> {metadata_path.parent}", flush=True)
+                results.append(result)
+                included_names.add(model_name)
 
     metadata = build_report(output_dir, results, args)
     build_html(output_dir, metadata)
@@ -519,7 +565,8 @@ def run_worker(args: argparse.Namespace) -> None:
         selected_boxes = 0
         if initializer == "bbox_mlp":
             boxes, selected_boxes = build_amg_boxes(normalized[None].to(device), num_slots)
-        seed = int(args.seed) + case_position * 1000 + natural_step(Path(spec["xssc_checkpoint"]))
+        # Keep every non-weight input identical across checkpoint comparisons.
+        seed = int(args.seed) + case_position * 1000
         slots, attention = extract_variant_slots(
             model,
             normalized,

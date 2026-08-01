@@ -326,6 +326,21 @@ def exclusive_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def try_exclusive_lock(path: Path) -> Iterator[bool]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def gpu_memory_used(gpu_id: int) -> int:
     process = subprocess.run(
         [
@@ -342,15 +357,85 @@ def gpu_memory_used(gpu_id: int) -> int:
     return int(process.stdout.strip())
 
 
-def wait_for_gpu(config: dict[str, Any]) -> None:
+def candidate_gpu_ids(config: dict[str, Any]) -> list[int]:
     runtime = config["runtime"]
-    gpu_id = int(runtime["gpu_id"])
+    configured = runtime.get("gpu_ids")
+    if configured is None:
+        configured = [runtime["gpu_id"]]
+    gpu_ids = [int(gpu_id) for gpu_id in configured]
+    if not gpu_ids:
+        raise ValueError("runtime.gpu_ids must contain at least one GPU")
+    if len(gpu_ids) != len(set(gpu_ids)):
+        raise ValueError(f"runtime.gpu_ids contains duplicates: {gpu_ids}")
+    return gpu_ids
+
+
+def wait_for_gpu(config: dict[str, Any]) -> int:
+    runtime = config["runtime"]
+    gpu_ids = candidate_gpu_ids(config)
     threshold = int(runtime["gpu_ready_max_used_mib"])
     while True:
-        memory_used = gpu_memory_used(gpu_id)
-        if memory_used <= threshold:
-            return
-        log(f"GPU{gpu_id} used={memory_used} MiB; waiting for <= {threshold} MiB")
+        usage = {gpu_id: gpu_memory_used(gpu_id) for gpu_id in gpu_ids}
+        ready = [gpu_id for gpu_id in gpu_ids if usage[gpu_id] <= threshold]
+        if ready:
+            gpu_id = min(ready, key=lambda item: (usage[item], item))
+            log(
+                f"selected GPU{gpu_id} used={usage[gpu_id]} MiB "
+                f"from candidates={gpu_ids}"
+            )
+            return gpu_id
+        usage_text = ", ".join(
+            f"GPU{gpu_id}={usage[gpu_id]} MiB" for gpu_id in gpu_ids
+        )
+        log(
+            f"no GPU at or below {threshold} MiB; waiting "
+            f"({usage_text})"
+        )
+        time.sleep(int(runtime["gpu_poll_seconds"]))
+
+
+@contextlib.contextmanager
+def reserve_available_gpu(config: dict[str, Any]) -> Iterator[int]:
+    """Reserve one currently idle physical GPU across watcher processes."""
+    runtime = config["runtime"]
+    gpu_ids = candidate_gpu_ids(config)
+    threshold = int(runtime["gpu_ready_max_used_mib"])
+    lock_root = state_paths(config)["state"] / "gpu_locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    while True:
+        usage = {gpu_id: gpu_memory_used(gpu_id) for gpu_id in gpu_ids}
+        ready = sorted(
+            (gpu_id for gpu_id in gpu_ids if usage[gpu_id] <= threshold),
+            key=lambda item: (usage[item], item),
+        )
+        for gpu_id in ready:
+            lock_path = lock_root / f"gpu-{gpu_id}.lock"
+            handle = lock_path.open("a+", encoding="utf-8")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                handle.close()
+                continue
+            try:
+                current_used = gpu_memory_used(gpu_id)
+                if current_used > threshold:
+                    continue
+                log(
+                    f"reserved GPU{gpu_id} used={current_used} MiB "
+                    f"from candidates={gpu_ids}"
+                )
+                yield gpu_id
+                return
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
+        usage_text = ", ".join(
+            f"GPU{gpu_id}={usage[gpu_id]} MiB" for gpu_id in gpu_ids
+        )
+        log(
+            f"no unreserved GPU at or below {threshold} MiB; waiting "
+            f"({usage_text})"
+        )
         time.sleep(int(runtime["gpu_poll_seconds"]))
 
 
@@ -409,7 +494,11 @@ def checkpoint_is_stable(config: dict[str, Any], checkpoint: Path) -> bool:
     return checkpoint_complete(checkpoint) and before == checkpoint_signature(checkpoint)
 
 
-def run_inference_task(config: dict[str, Any], task: dict[str, Any]) -> None:
+def run_inference_task(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    gpu_id: int,
+) -> None:
     paths = state_paths(config)
     runtime = config["runtime"]
     checkpoint = Path(task["checkpoint_dir"]).resolve()
@@ -436,7 +525,6 @@ def run_inference_task(config: dict[str, Any], task: dict[str, Any]) -> None:
             "TRACE_ROOT": str(trace_root),
         }
     )
-    gpu_id = int(runtime["gpu_id"])
     log(f"inference start method={method_key} step={step} gpu={gpu_id}")
     with log_path.open("a", encoding="utf-8") as log_handle:
         subprocess.run(
@@ -483,18 +571,35 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
                 + "\n",
                 encoding="utf-8",
             )
-            task = pending[0]
-            try:
-                with exclusive_lock(paths["gpu_lock"]):
-                    wait_for_gpu(config)
-                    run_inference_task(config, task)
-                refresh_site(config)
-            except Exception as exc:
-                log(
-                    f"inference failed method={task['method_key']} "
-                    f"step={task['step']}: {exc}"
+            handled = False
+            for task in pending:
+                task_lock = (
+                    paths["state"]
+                    / "inference_locks"
+                    / task["method_key"]
+                    / f"step-{int(task['step']):06d}.lock"
                 )
-                time.sleep(int(config["runtime"]["retry_seconds"]))
+                with try_exclusive_lock(task_lock) as acquired:
+                    if not acquired:
+                        continue
+                    if manifest_path(
+                        config, task["method_key"], int(task["step"])
+                    ).is_file():
+                        continue
+                    handled = True
+                    try:
+                        with reserve_available_gpu(config) as gpu_id:
+                            run_inference_task(config, task, gpu_id)
+                        refresh_site(config)
+                    except Exception as exc:
+                        log(
+                            f"inference failed method={task['method_key']} "
+                            f"step={task['step']}: {exc}"
+                        )
+                        time.sleep(int(config["runtime"]["retry_seconds"]))
+                    break
+            if not handled:
+                time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
         else:
             paths["pending"].unlink(missing_ok=True)
             refresh_site(config)
@@ -525,6 +630,7 @@ def run_metric_task(
     config: dict[str, Any],
     kind: str,
     task: dict[str, Any],
+    gpu_id: int | None = None,
 ) -> None:
     metric = task["metric"]
     manifest = task["manifest"]
@@ -567,10 +673,14 @@ def run_metric_task(
         "/home/gaoya/Code_Video/Code_data/Code_try0526"
     )
     environment["TOKENIZERS_PARALLELISM"] = "false"
-    environment["CUDA_VISIBLE_DEVICES"] = (
-        "" if kind == "cpu" else str(config["runtime"]["gpu_id"])
+    if kind == "gpu" and gpu_id is None:
+        raise ValueError("gpu_id is required for a GPU metric task")
+    environment["CUDA_VISIBLE_DEVICES"] = "" if kind == "cpu" else str(gpu_id)
+    gpu_text = "cpu" if gpu_id is None else f"gpu={gpu_id}"
+    log(
+        f"metric start kind={kind} {gpu_text} method={method_key} "
+        f"step={step} metric={metric}"
     )
-    log(f"metric start kind={kind} method={method_key} step={step} metric={metric}")
     with log_path.open("a", encoding="utf-8") as log_handle:
         subprocess.run(
             command,
@@ -599,6 +709,7 @@ def run_metric_task(
         "metric": metric,
         "result_root": manifest["result_root"],
         "summary_path": str(summary_path),
+        "gpu_id": gpu_id,
     }
     atomic_write_json(metric_marker_path(config, method_key, step, metric), marker)
     log(f"metric complete method={method_key} step={step} metric={metric}")
@@ -620,11 +731,10 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 if paths["pending"].is_file():
                     time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
                     continue
-                with exclusive_lock(paths["gpu_lock"]):
+                with reserve_available_gpu(config) as gpu_id:
                     if paths["pending"].is_file():
                         continue
-                    wait_for_gpu(config)
-                    run_metric_task(config, kind, task)
+                    run_metric_task(config, kind, task, gpu_id)
             else:
                 run_metric_task(config, kind, task)
             refresh_site(config)

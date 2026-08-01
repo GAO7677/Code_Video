@@ -22,6 +22,7 @@ fi
 
 declare -A COMMANDS=(
   [three_ckpt_watch]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode inference"
+  [three_ckpt_watch_2]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode inference"
   [three_test5_cpu]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode metrics --kind cpu"
   [three_test5_gpu]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode metrics --kind gpu"
   [three_phys_watch]="${PYTHON} ${PHYSICIQ_WATCHER} --config ${CONFIG} --mode inference"
@@ -42,7 +43,7 @@ done
 
 "${PYTHON}" "${WATCHER}" --config "${CONFIG}" --mode bootstrap
 for window_name in \
-  three_ckpt_watch three_test5_cpu three_test5_gpu \
+  three_ckpt_watch three_ckpt_watch_2 three_test5_cpu three_test5_gpu \
   three_phys_watch three_phys_cpu three_phys_gpu three_dashboard; do
   command="${COMMANDS[${window_name}]}"
   tmux new-window -t "${SESSION}" -n "${window_name}" "${command}; exec bash"
@@ -53,10 +54,12 @@ echo "config: ${CONFIG}"
 echo "overview: http://127.0.0.1:${PORT}/"
 echo "gateway root: /data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_visualizations"
 echo "dashboard refresh interval: 60s"
-echo "GPU inference/metrics device: $(/home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY'
+echo "GPU inference/metrics selection: $(/home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY'
 import json
 import os
 config_path = os.environ['CONFIG']
-print(json.load(open(config_path, 'r', encoding='utf-8'))['runtime']['gpu_id'])
+runtime = json.load(open(config_path, 'r', encoding='utf-8'))['runtime']
+gpu_ids = runtime.get('gpu_ids', [runtime.get('gpu_id')])
+print(f"automatic, candidates={gpu_ids}, max_used={runtime['gpu_ready_max_used_mib']} MiB")
 PY
 )"
