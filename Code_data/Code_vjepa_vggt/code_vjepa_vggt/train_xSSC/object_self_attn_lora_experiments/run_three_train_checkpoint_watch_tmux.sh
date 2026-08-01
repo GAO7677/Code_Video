@@ -5,6 +5,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${CONFIG:-${SCRIPT_DIR}/xssc_lora_three_train_watch_config.json}"
+if [[ "${CONFIG}" == "${SCRIPT_DIR}/xssc_lora_three_train_watch_config.json" ]]; then
+  CONFIG="${SCRIPT_DIR}/xssc_lora_three_train_watch_config_with_t_head.json"
+fi
 PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 WATCHER="${SCRIPT_DIR}/xssc_lora_checkpoint_watch.py"
 PHYSICIQ_WATCHER="${SCRIPT_DIR}/xssc_lora_physiciq_watch.py"
@@ -47,4 +50,12 @@ done
 echo "watcher session: ${SESSION}"
 echo "config: ${CONFIG}"
 echo "overview: http://127.0.0.1:8951/"
-echo "GPU inference/metrics device: 3"
+echo "gateway root: /data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_visualizations"
+echo "dashboard refresh interval: 60s"
+echo "GPU inference/metrics device: $(/home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY'
+import json
+import os
+config_path = os.environ['CONFIG']
+print(json.load(open(config_path, 'r', encoding='utf-8'))['runtime']['gpu_id'])
+PY
+)"

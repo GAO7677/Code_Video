@@ -19,7 +19,7 @@
     "retry_seconds": 120,
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
-    "gpu_id": 3,
+    "gpu_id": 5,
     "gpu_ready_max_used_mib": 8000,
     "expected_cases": 20,
     "num_inference_steps": 8,
@@ -91,7 +91,7 @@
       "label": "T-head70 + Object",
       "color": "#7256A8",
       "watch_roots": [
-        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu01_ddp_resume/t_head_resume2500_20260731T150442Z/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu01_ddp_resume_newwandb/20260731T152400Z/checkpoints"
       ],
       "bootstrap_result_roots": {}
     }

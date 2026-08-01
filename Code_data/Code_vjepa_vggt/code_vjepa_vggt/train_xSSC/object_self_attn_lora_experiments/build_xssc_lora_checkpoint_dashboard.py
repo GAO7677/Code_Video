@@ -121,6 +121,23 @@ def load_manifests(watch_root: Path) -> list[dict[str, Any]]:
     return sorted(manifests, key=lambda row: (row["method_index"], row["step"]))
 
 
+def load_discovered_checkpoints(watch_root: Path) -> list[dict[str, Any]]:
+    """Load discovered checkpoints from watcher state (including still pending checkpoints)."""
+    discovery_path = watch_root / "state" / "discovery.json"
+    if not discovery_path.is_file():
+        return []
+    payload = load_json(discovery_path)
+    discovered = payload.get("checkpoints", [])
+    records: list[dict[str, Any]] = []
+    for item in discovered:
+        if not isinstance(item, dict):
+            continue
+        if "method_key" not in item or "step" not in item:
+            continue
+        records.append(item)
+    return sorted(records, key=lambda row: (row["method_key"], int(row["step"])))
+
+
 def load_physiciq_manifests(watch_root: Path) -> list[dict[str, Any]]:
     manifests = [
         load_json(path)
@@ -221,7 +238,7 @@ def build_physiciq_status(config: dict[str, Any]) -> dict[str, Any] | None:
     pending = load_json(pending_path) if pending_path.is_file() else None
     configured_steps = phys.get("trigger_steps", "all")
     if configured_steps == "all":
-        discovered = load_manifests(watch_root)
+        discovered = load_discovered_checkpoints(watch_root)
         task_pairs = sorted(
             {
                 (manifest["method_key"], int(manifest["step"]))
@@ -449,21 +466,17 @@ def build_videos_page(
     methods_override: list[dict[str, str]] | None = None,
 ) -> str:
     if methods_override is None:
-        methods = [
-            {
-                "key": method["key"],
-                "label": method["label"],
-                "color": method["color"],
-            }
-            for method in config["methods"]
-            if any(record["method_key"] == method["key"] for record in records)
-        ]
+        method_order = config["methods"]
     else:
-        methods = [
-            method
-            for method in methods_override
-            if any(record["method_key"] == method["key"] for record in records)
-        ]
+        method_order = methods_override
+    methods = [
+        {
+            "key": method["key"],
+            "label": method["label"],
+            "color": method["color"],
+        }
+        for method in method_order
+    ]
     data = json.dumps(
         {"methods": methods, "records": records, "cases": cases},
         ensure_ascii=False,

@@ -228,13 +228,8 @@ def inference_loop(config: dict[str, Any], once: bool) -> None:
                 "next": task,
             },
         )
-        if main_paths["pending"].is_file():
-            time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
-            continue
         try:
             with exclusive_lock(main_paths["gpu_lock"]):
-                if main_paths["pending"].is_file():
-                    continue
                 wait_for_gpu(config)
                 run_phys_inference(config, task)
             subprocess.run(
