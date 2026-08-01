@@ -9,16 +9,12 @@ PYTHON=/home/gaoya/miniconda3/envs/wan-cu128/bin/python
 WATCHER="${SCRIPT_DIR}/xssc_lora_checkpoint_watch.py"
 PHYSICIQ_WATCHER="${SCRIPT_DIR}/xssc_lora_physiciq_watch.py"
 SESSION="${SESSION:-wan_train}"
-PORT="${PORT:-8951}"
+PORT="${PORT:-8844}"
 HUB_ROOT=/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_hub
 STABLE_ROOT=/data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_visualizations
 
 if [[ ! -s "${CONFIG}" ]]; then
   echo "Missing config: ${CONFIG}" >&2
-  exit 2
-fi
-if [[ "${PORT}" != "8951" ]]; then
-  echo "This launcher expects the configured overview port 8951." >&2
   exit 2
 fi
 if ss -ltn "sport = :${PORT}" | tail -n +2 | grep -q .; then

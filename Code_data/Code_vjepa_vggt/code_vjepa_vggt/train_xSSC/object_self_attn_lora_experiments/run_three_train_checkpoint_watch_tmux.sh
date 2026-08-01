@@ -13,6 +13,7 @@ WATCHER="${SCRIPT_DIR}/xssc_lora_checkpoint_watch.py"
 PHYSICIQ_WATCHER="${SCRIPT_DIR}/xssc_lora_physiciq_watch.py"
 REFRESHER="${SCRIPT_DIR}/xssc_lora_dashboard_refresh_loop.py"
 SESSION="${SESSION:-wan_train}"
+PORT="${PORT:-8844}"
 
 if [[ ! -s "${CONFIG}" ]]; then
   echo "Missing config: ${CONFIG}" >&2
@@ -49,7 +50,7 @@ done
 
 echo "watcher session: ${SESSION}"
 echo "config: ${CONFIG}"
-echo "overview: http://127.0.0.1:8951/"
+echo "overview: http://127.0.0.1:${PORT}/"
 echo "gateway root: /data/gaoya/agent-data/outputs/xssc_object_self_attn_lora_visualizations"
 echo "dashboard refresh interval: 60s"
 echo "GPU inference/metrics device: $(/home/gaoya/miniconda3/envs/wan-cu128/bin/python - <<'PY'
