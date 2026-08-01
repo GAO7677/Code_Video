@@ -1,0 +1,13 @@
+{
+  "extends": "full_sa_no_object.json",
+  "experiment": {
+    "name": "full_sa_no_object_gpu2_formal"
+  },
+  "launch": {
+    "gpu_set": "2",
+    "num_processes": 1
+  },
+  "optimization": {
+    "gradient_accumulation_steps": 8
+  }
+}

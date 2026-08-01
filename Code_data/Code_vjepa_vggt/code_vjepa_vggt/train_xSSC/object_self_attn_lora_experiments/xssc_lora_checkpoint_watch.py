@@ -725,26 +725,45 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                 return
             time.sleep(int(config["runtime"]["poll_seconds"]))
             continue
-        task = tasks[0]
-        try:
-            if kind == "gpu":
-                if paths["pending"].is_file():
-                    time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
-                    continue
-                with reserve_available_gpu(config) as gpu_id:
-                    if paths["pending"].is_file():
-                        continue
-                    run_metric_task(config, kind, task, gpu_id)
-            else:
-                run_metric_task(config, kind, task)
-            refresh_site(config)
-        except Exception as exc:
+        handled = False
+        for task in tasks:
             manifest = task["manifest"]
-            log(
-                f"metric failed kind={kind} method={manifest['method_key']} "
-                f"step={manifest['step']} metric={task['metric']}: {exc}"
+            task_lock = (
+                paths["state"]
+                / "metric_locks"
+                / kind
+                / manifest["method_key"]
+                / f"step-{int(manifest['step']):06d}"
+                / f"{task['metric']}.lock"
             )
-            time.sleep(int(config["runtime"]["retry_seconds"]))
+            with try_exclusive_lock(task_lock) as acquired:
+                if not acquired:
+                    continue
+                if metric_marker_path(
+                    config,
+                    manifest["method_key"],
+                    int(manifest["step"]),
+                    task["metric"],
+                ).is_file():
+                    continue
+                handled = True
+                try:
+                    if kind == "gpu":
+                        with reserve_available_gpu(config) as gpu_id:
+                            run_metric_task(config, kind, task, gpu_id)
+                    else:
+                        run_metric_task(config, kind, task)
+                    refresh_site(config)
+                except Exception as exc:
+                    log(
+                        f"metric failed kind={kind} "
+                        f"method={manifest['method_key']} "
+                        f"step={manifest['step']} metric={task['metric']}: {exc}"
+                    )
+                    time.sleep(int(config["runtime"]["retry_seconds"]))
+                break
+        if not handled:
+            time.sleep(int(config["runtime"]["gpu_poll_seconds"]))
         if once:
             return
 

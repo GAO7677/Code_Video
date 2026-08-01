@@ -277,10 +277,37 @@ def aggregate_results(
                 **means,
             }
         )
+    score_matrix = np.asarray(
+        [
+            [np.mean(per_model_case_scores[name][case_id]) for case_id in case_ids]
+            for name in model_names
+        ],
+        dtype=np.float64,
+    )
+    joint_rng = np.random.default_rng(args.seed + 1)
+    bootstrap_win_counts = np.zeros(len(model_names), dtype=np.int64)
+    for _ in range(args.bootstrap_samples):
+        sampled_cases = joint_rng.integers(0, len(case_ids), size=len(case_ids))
+        winner = int(score_matrix[:, sampled_cases].mean(axis=1).argmax())
+        bootstrap_win_counts[winner] += 1
+    loo_win_counts = np.zeros(len(model_names), dtype=np.int64)
+    for held_out in range(len(case_ids)):
+        keep = [index for index in range(len(case_ids)) if index != held_out]
+        winner = int(score_matrix[:, keep].mean(axis=1).argmax())
+        loo_win_counts[winner] += 1
+    item_by_name = {item["model_name"]: item for item in ranking}
+    for model_index, name in enumerate(model_names):
+        item_by_name[name]["bootstrap_win_probability"] = float(
+            bootstrap_win_counts[model_index] / args.bootstrap_samples
+        )
+        item_by_name[name]["loo_win_count"] = int(loo_win_counts[model_index])
+
     score_order = sorted(ranking, key=lambda item: (-item["score"], -item["strong"], item["step"]))
     for index, item in enumerate(score_order, start=1):
         item["score_rank"] = index
-    ranking.sort(
+        item["rank"] = index
+    verdict_order = sorted(
+        ranking,
         key=lambda item: (
             -item["strong"],
             item["merge_risk"],
@@ -288,14 +315,16 @@ def aggregate_results(
             item["step"],
         )
     )
-    for index, item in enumerate(ranking, start=1):
-        item["rank"] = index
+    for index, item in enumerate(verdict_order, start=1):
+        item["verdict_rank"] = index
+    ranking = score_order
     metadata["selection"] = {
         "best_checkpoint": ranking[0],
         "best_continuous_score": score_order[0],
+        "best_verdict_count": verdict_order[0],
         "recommendation_rule": (
-            "Maximize strong verdict count, then minimize merge-risk count, then maximize "
-            "the continuous rank-aggregation score."
+            "Recommend the highest continuous rank-aggregation score. Report the hard-verdict "
+            "leader separately because threshold crossings and top-pair changes are discontinuous."
         ),
         "score_definition": (
             "For each source case and metric, checkpoints receive a [0,1] percentile utility. "
@@ -315,7 +344,8 @@ def aggregate_results(
 
 def write_ranking_csv(path: Path, ranking: list[dict[str, Any]]) -> None:
     fields = [
-        "rank", "score_rank", "step", "score", "score_ci95_low", "score_ci95_high",
+        "rank", "verdict_rank", "step", "score", "score_ci95_low", "score_ci95_high",
+        "bootstrap_win_probability", "loo_win_count",
         "strong", "partial", "merge_risk", *METRICS.keys(), "checkpoint",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -364,8 +394,9 @@ def build_html(
     for item in ranking:
         class_name = "best" if item["rank"] == 1 else ""
         table_rows.append(
-            f"<tr class='{class_name}'><td>{item['rank']}</td><td>{item['score_rank']}</td><td>{item['step']}</td>"
+            f"<tr class='{class_name}'><td>{item['rank']}</td><td>{item['verdict_rank']}</td><td>{item['step']}</td>"
             f"<td>{item['score']:.4f}</td><td>[{item['score_ci95_low']:.4f}, {item['score_ci95_high']:.4f}]</td>"
+            f"<td>{item['bootstrap_win_probability']:.3f}</td><td>{item['loo_win_count']}/9</td>"
             f"<td>{item['strong']}</td><td>{item['partial']}</td><td>{item['merge_risk']}</td>"
             f"<td>{item['residual_track_cos']:.4f}</td><td>{item['d_adj_spearman']:.4f}</td>"
             f"<td>{item['d_pair_spearman']:.4f}</td><td>{item['centroid_distance']:.4f}</td></tr>"
@@ -424,7 +455,7 @@ table{{width:100%;border-collapse:collapse}} th,td{{padding:5px 7px;border:1px s
 <div class="summary"><div><h2>Selection</h2><p>{html.escape(metadata['selection']['score_definition'])}</p>
 <p>{html.escape(metadata['selection']['recommendation_rule'])}</p>
 <p><b>Best checkpoint:</b> <code>{html.escape(best['checkpoint'])}</code></p></div><img src="checkpoint_curves.png"></div>
-<h2>Ranking</h2><div style="overflow:auto"><table><thead><tr><th>recommended rank</th><th>score rank</th><th>step</th><th>score</th><th>case-bootstrap CI95</th><th>strong</th><th>partial</th><th>merge-risk</th><th>residual cos</th><th>D_adj</th><th>D_pair</th><th>centroid</th></tr></thead><tbody>{''.join(table_rows)}</tbody></table></div>
+<h2>Ranking</h2><div style="overflow:auto"><table><thead><tr><th>score rank</th><th>verdict rank</th><th>step</th><th>score</th><th>case-bootstrap CI95</th><th>bootstrap win</th><th>LOO wins</th><th>strong</th><th>partial</th><th>merge-risk</th><th>residual cos</th><th>D_adj</th><th>D_pair</th><th>centroid</th></tr></thead><tbody>{''.join(table_rows)}</tbody></table></div>
 <h2>Checkpoint Viewer</h2><div class="viewer-controls"><select id="step">{step_options}</select><select id="case">{case_options}</select></div>
 <div class="viewer-videos"><video id="allSlot" controls muted preload="metadata"></video><video id="perSlot" controls muted preload="metadata"></video></div>
 <div class="viewer-plots"><img id="curves"><img id="residual"><img id="dadj"><img id="dpair"><img id="centroid"><img id="matrices"></div>

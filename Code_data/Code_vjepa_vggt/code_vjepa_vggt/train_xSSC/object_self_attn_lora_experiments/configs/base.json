@@ -47,6 +47,7 @@
   },
   "adaptation": {
     "mode": "override_in_child_config",
+    "enable_object_branch": true,
     "object_lora_rank": 32,
     "object_lora_alpha": 32,
     "object_lora_dropout": 0.05,

@@ -76,6 +76,7 @@ def _apply_config_to_model_args(model_args, config: dict) -> None:
     adaptation = config["adaptation"]
     conditioning = config["conditioning"]
     filters = conditioning["amg_filters"]
+    enable_object_branch = bool(adaptation.get("enable_object_branch", True))
 
     model_args.wan_root = paths["wan_root"]
     model_args.lora_checkpoint = paths["pretrained_lora_checkpoint"]
@@ -103,6 +104,7 @@ def _apply_config_to_model_args(model_args, config: dict) -> None:
     model_args.xssc_max_time_steps = int(model["xssc_max_time_steps"])
     model_args.fixed_num_context_frames = int(model["fixed_num_context_frames"])
     model_args.no_context_ratio = 0.0
+    model_args.disable_object_branch = not enable_object_branch
 
     model_args.object_lora_rank = int(adaptation["object_lora_rank"])
     model_args.object_lora_alpha = float(adaptation["object_lora_alpha"])
@@ -212,13 +214,21 @@ def _build_runtime_model(args):
     model.to(target_device)
     model.pipe.to(device=target_device, dtype=model.pipe.torch_dtype)
     model.eval()
-    model.aux_max_objects = model.xssc_num_slots
+    if model.enable_object_branch:
+        model.aux_max_objects = model.xssc_num_slots
+    # The legacy batch driver writes one runtime-only attribute on
+    # ``object_adapter`` unconditionally.  Identity keeps that API available
+    # without constructing any learned object module or changing the forward.
     model.object_adapter = nn.Identity()
     infer_base.configure_runtime_pipe_vjepa(model.pipe, args)
     runtime_info = {
         "stage1a_info": {
             "skipped": True,
-            "reason": "DINOv3 xSSC replaces the legacy object frontend",
+            "reason": (
+                "DINOv3 xSSC replaces the legacy object frontend"
+                if model.enable_object_branch
+                else "object branch disabled by experiment config"
+            ),
         },
         "stage1b_info": load_info,
         "xssc_info": load_info,
@@ -226,6 +236,7 @@ def _build_runtime_model(args):
             "manifest": str(manifest_path),
             "name": config["experiment"]["name"],
             "adaptation_mode": config["adaptation"]["mode"],
+            "enable_object_branch": model.enable_object_branch,
             "slot_dedup_mode": slot_dedup_mode,
             "slot_dedup": config.get("conditioning", {}).get("slot_dedup"),
             "head_identity": identity_info,
@@ -247,6 +258,11 @@ def _build_object_context(
 ):
     """Build inference tokens with the same optional slot de-dup as training."""
     del prompt, video_path
+    if not model.enable_object_branch:
+        return None, {
+            "enabled": False,
+            "reason": "object branch disabled by experiment config",
+        }
     pipe = model.pipe
     context_video = context_video_single.unsqueeze(0).to(
         device=pipe.device,

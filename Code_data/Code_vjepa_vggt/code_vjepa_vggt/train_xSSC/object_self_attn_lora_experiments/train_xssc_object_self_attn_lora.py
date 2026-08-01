@@ -5,14 +5,15 @@ All variants start from the same effective Wan initialization:
 1. inject and load the OpenVid/MOVi-D/Genesis LoRA checkpoint;
 2. merge that complete LoRA into the frozen Wan weights and unload its PEFT
    modules;
-3. construct the xSSC object branch;
-4. optionally add a zero-initialized self-attention delta adapter.
+3. optionally construct the xSSC object branch;
+4. add the configured zero-initialized self-attention delta adapter.
 
 ``object_only`` trains only the object branch and xSSC projection. ``full_sa``
 adds ordinary rank-r LoRA to q/k/v/o in every self-attention layer.
 ``s_head`` and ``t_head`` add compact adapters whose support is restricted to
-their configured heads. The common merged initialization makes the step-0
-forward identical across variants.
+their configured heads. ``full_sa`` can also disable the complete object path,
+leaving only the 30-layer self-attention LoRA. The common merged initialization
+makes the step-0 forward identical across variants before their new adapters act.
 """
 
 from __future__ import annotations
@@ -805,6 +806,7 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         head_selection_expected_role: str = "S",
         head_selection_feature_subtype: str = "same_frame_mass",
         head_selection_expected_num_heads: int = 59,
+        enable_object_branch: bool = True,
         object_gate_init: float = 0.1,
         lambda_main: float = 1.0,
         lambda_object_context_reg: float = 0.0,
@@ -826,7 +828,7 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             **kwargs,
         )
 
-        self.enable_object_branch = True
+        self.enable_object_branch = bool(enable_object_branch)
         self.lambda_main = float(lambda_main)
         self.lambda_object_context_reg = float(lambda_object_context_reg)
         self.xssc_input_size = int(xssc_input_size)
@@ -870,7 +872,7 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             )
         if self.xssc_input_size != 256:
             raise ValueError(f"DINOv3 xSSC requires xssc_input_size=256, got {self.xssc_input_size}")
-        if self.object_lora_rank <= 0:
+        if self.enable_object_branch and self.object_lora_rank <= 0:
             raise ValueError(f"object_lora_rank must be positive, got {self.object_lora_rank}")
         if self.self_attn_adaptation_mode not in SELF_ATTN_ADAPTATION_MODES:
             raise ValueError(
@@ -898,16 +900,16 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             raise ValueError("head_selection_expected_role must not be empty")
         if not self.head_selection_feature_subtype:
             raise ValueError("head_selection_feature_subtype must not be empty")
-        if not 0.0 <= self.object_lora_dropout < 1.0:
+        if self.enable_object_branch and not 0.0 <= self.object_lora_dropout < 1.0:
             raise ValueError(
                 f"object_lora_dropout must be in [0, 1), got {self.object_lora_dropout}"
             )
-        if not 0.0 <= self.xssc_slot_track_dropout < 1.0:
+        if self.enable_object_branch and not 0.0 <= self.xssc_slot_track_dropout < 1.0:
             raise ValueError(
                 "xssc_slot_track_dropout must be in [0, 1), got "
                 f"{self.xssc_slot_track_dropout}"
             )
-        if self.xssc_box_source not in {"amg", "zeros"}:
+        if self.enable_object_branch and self.xssc_box_source not in {"amg", "zeros"}:
             raise ValueError(f"unsupported xssc_box_source={self.xssc_box_source!r}")
         if self.xssc_empty_amg_max_resample_attempts < 0:
             raise ValueError(
@@ -933,20 +935,33 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
                 f"expected={self.self_attn_expected_num_heads}"
             )
 
-        dit = base.enable_object_condition_branch(
-            self.pipe.dit,
-            object_gate_init=float(object_gate_init),
-            reinitialize_object_branch=True,
-        )
-        dit.object_embedding = None
-        for block in dit.blocks:
-            base._initialize_object_attention_from_text(block)
-            base._inject_object_attention_lora(
-                block,
-                rank=self.object_lora_rank,
-                alpha=self.object_lora_alpha,
-                dropout=self.object_lora_dropout,
+        if self.enable_object_branch:
+            dit = base.enable_object_condition_branch(
+                self.pipe.dit,
+                object_gate_init=float(object_gate_init),
+                reinitialize_object_branch=True,
             )
+            dit.object_embedding = None
+            for block in dit.blocks:
+                base._initialize_object_attention_from_text(block)
+                base._inject_object_attention_lora(
+                    block,
+                    rank=self.object_lora_rank,
+                    alpha=self.object_lora_alpha,
+                    dropout=self.object_lora_dropout,
+                )
+        else:
+            dit = self.pipe.dit
+            unexpected_object_modules = [
+                name
+                for name, _ in dit.named_modules()
+                if "object_cross_attn" in name or name.endswith(".norm4")
+            ]
+            if unexpected_object_modules:
+                raise RuntimeError(
+                    "Object-disabled mode unexpectedly contains object modules: "
+                    f"{unexpected_object_modules[:8]}"
+                )
 
         if self.self_attn_adaptation_mode == "full_sa":
             inject_full_self_attn_lora(
@@ -998,7 +1013,10 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
             )
 
         for name, param in dit.named_parameters():
-            trainable = base._is_trainable_object_dit_parameter(name)
+            trainable = (
+                self.enable_object_branch
+                and base._is_trainable_object_dit_parameter(name)
+            )
             if self.self_attn_adaptation_mode == "full_sa":
                 trainable = trainable or _is_full_self_attn_lora_parameter(name)
             elif self.self_attn_adaptation_mode in HEAD_SELECTIVE_ADAPTATION_MODES:
@@ -1039,39 +1057,52 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
                     f"full={full_lora_tensors}"
                 )
 
-        model_device = dit.patch_embedding.weight.device
-        model_dtype = dit.patch_embedding.weight.dtype
-        self.xssc, self.xssc_slot_dim, self.xssc_num_slots = _load_dinov3_xssc_model(
-            xssc_root=xssc_root,
-            config_path=xssc_config,
-            checkpoint_path=xssc_checkpoint,
-            dinov3_root=dinov3_root,
-            dinov3_checkpoint=dinov3_checkpoint,
-            device=model_device,
-        )
-        self._last_retained_slots_per_sample = float(self.xssc_num_slots)
-
+        self.xssc = None
+        self.xssc_slot_dim = 0
+        self.xssc_num_slots = 0
         self.xssc_box_builder = None
-        if self.xssc_box_source == "amg":
-            if xssc_amg_filter_args is None:
-                raise ValueError("xssc_amg_filter_args is required when xssc_box_source='amg'")
-            self.xssc_box_builder = AMGBoxBuilder(
-                sam2_config=xssc_sam2_config,
-                sam2_checkpoint=xssc_sam2_checkpoint,
-                cache_dir=xssc_box_cache_dir,
-                filter_args=xssc_amg_filter_args,
+        self.slot_norm = None
+        self.slot_projector = None
+        self.time_embedding = None
+        if self.enable_object_branch:
+            model_device = dit.patch_embedding.weight.device
+            model_dtype = dit.patch_embedding.weight.dtype
+            self.xssc, self.xssc_slot_dim, self.xssc_num_slots = _load_dinov3_xssc_model(
+                xssc_root=xssc_root,
+                config_path=xssc_config,
+                checkpoint_path=xssc_checkpoint,
+                dinov3_root=dinov3_root,
+                dinov3_checkpoint=dinov3_checkpoint,
+                device=model_device,
             )
+            self._last_retained_slots_per_sample = float(self.xssc_num_slots)
 
-        hidden_dim = int(dit.dim)
-        self.slot_norm = nn.LayerNorm(self.xssc_slot_dim)
-        self.slot_projector = nn.Linear(self.xssc_slot_dim, hidden_dim)
-        self.time_embedding = nn.Embedding(self.xssc_max_time_steps, hidden_dim)
-        nn.init.normal_(self.slot_projector.weight, std=0.02)
-        nn.init.zeros_(self.slot_projector.bias)
-        nn.init.normal_(self.time_embedding.weight, std=0.02)
-        self.slot_norm.to(device=model_device, dtype=model_dtype)
-        self.slot_projector.to(device=model_device, dtype=model_dtype)
-        self.time_embedding.to(device=model_device, dtype=model_dtype)
+            if self.xssc_box_source == "amg":
+                if xssc_amg_filter_args is None:
+                    raise ValueError("xssc_amg_filter_args is required when xssc_box_source='amg'")
+                self.xssc_box_builder = AMGBoxBuilder(
+                    sam2_config=xssc_sam2_config,
+                    sam2_checkpoint=xssc_sam2_checkpoint,
+                    cache_dir=xssc_box_cache_dir,
+                    filter_args=xssc_amg_filter_args,
+                )
+
+            hidden_dim = int(dit.dim)
+            self.slot_norm = nn.LayerNorm(self.xssc_slot_dim)
+            self.slot_projector = nn.Linear(self.xssc_slot_dim, hidden_dim)
+            self.time_embedding = nn.Embedding(self.xssc_max_time_steps, hidden_dim)
+            nn.init.normal_(self.slot_projector.weight, std=0.02)
+            nn.init.zeros_(self.slot_projector.bias)
+            nn.init.normal_(self.time_embedding.weight, std=0.02)
+            self.slot_norm.to(device=model_device, dtype=model_dtype)
+            self.slot_projector.to(device=model_device, dtype=model_dtype)
+            self.time_embedding.to(device=model_device, dtype=model_dtype)
+
+    def train(self, mode: bool = True):
+        nn.Module.train(self, mode)
+        if self.xssc is not None:
+            self.xssc.eval()
+        return self
 
     def export_trainable_state_dict(self, state_dict, remove_prefix=None):
         exported = super().export_trainable_state_dict(
@@ -1186,6 +1217,8 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         return slots
 
     def _build_object_context(self, context_video: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.enable_object_branch:
+            raise RuntimeError("Object context requested while object branch is disabled")
         xssc_video = self._preprocess_xssc(context_video)
         boxes = self._build_xssc_boxes(xssc_video)
         slots = self._extract_xssc_slots(xssc_video, boxes)
@@ -1219,6 +1252,16 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         return tokens.reshape(batch, time_steps * num_slots, hidden_dim), slots
 
     def _compute_object_losses(self, pipe, inputs_shared, inputs_posi):
+        if not self.enable_object_branch:
+            loss_main = base.flow_match_context_sft_loss(
+                pipe,
+                **inputs_shared,
+                **inputs_posi,
+            )
+            return loss_main, {
+                "train/loss_total": float(loss_main.detach().item()),
+                "train/loss_main": float(loss_main.detach().item()),
+            }
         total, metrics = super()._compute_object_losses(pipe, inputs_shared, inputs_posi)
         counts = self._last_xssc_amg_selected_counts
         if counts:
@@ -1257,7 +1300,8 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
 
     def forward(self, data, inputs=None):
         if (
-            self.training
+            self.enable_object_branch
+            and self.training
             and self.xssc_filter_empty_amg
             and inputs is None
             and self.xssc_box_source == "amg"
@@ -1267,9 +1311,11 @@ class DINOv3XSSCContextSlotsWanModule(base.XSSCContextSlotsWanModule):
         return super().forward(data, inputs=inputs)
 
     def trainable_modules(self) -> list[nn.Parameter]:
-        params = list(self.slot_norm.parameters())
-        params.extend(self.slot_projector.parameters())
-        params.extend(self.time_embedding.parameters())
+        params: list[nn.Parameter] = []
+        if self.enable_object_branch:
+            params.extend(self.slot_norm.parameters())
+            params.extend(self.slot_projector.parameters())
+            params.extend(self.time_embedding.parameters())
         params.extend(
             param for param in self.pipe.dit.parameters() if param.requires_grad
         )
@@ -1345,6 +1391,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SELF_ATTN_ADAPTATION_MODES,
         default="object_only",
     )
+    group.add_argument(
+        "--disable_object_branch",
+        action="store_true",
+        help="Do not construct or load SAM2, xSSC, object projection, or object cross-attention.",
+    )
     group.add_argument("--pretrained_lora_expected_modules", type=int, default=300)
     group.add_argument("--self_attn_expected_num_blocks", type=int, default=30)
     group.add_argument("--self_attn_expected_num_heads", type=int, default=24)
@@ -1368,10 +1419,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlotsWanModule:
-    xssc_checkpoint = resolve_latest_xssc_checkpoint(
-        args.xssc_checkpoint,
-        args.xssc_checkpoint_latest_dir,
-    )
+    xssc_checkpoint = args.xssc_checkpoint
+    if not args.disable_object_branch:
+        xssc_checkpoint = resolve_latest_xssc_checkpoint(
+            args.xssc_checkpoint,
+            args.xssc_checkpoint_latest_dir,
+        )
     args.xssc_checkpoint = xssc_checkpoint
     return DINOv3XSSCContextSlotsWanModule(
         model_paths=args.model_paths,
@@ -1442,6 +1495,7 @@ def build_model(args: argparse.Namespace, accelerator) -> DINOv3XSSCContextSlots
         head_selection_expected_role=args.head_selection_expected_role,
         head_selection_feature_subtype=args.head_selection_feature_subtype,
         head_selection_expected_num_heads=args.head_selection_expected_num_heads,
+        enable_object_branch=not args.disable_object_branch,
     )
 
 
@@ -1470,8 +1524,11 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         for name, param in model.pipe.dit.named_parameters()
         if param.requires_grad and _is_head_selective_lora_parameter(name)
     ]
-    projector_params = list(model.slot_norm.parameters()) + list(model.slot_projector.parameters())
-    projector_params += list(model.time_embedding.parameters())
+    projector_params = []
+    if model.enable_object_branch:
+        projector_params.extend(model.slot_norm.parameters())
+        projector_params.extend(model.slot_projector.parameters())
+        projector_params.extend(model.time_embedding.parameters())
     total = sum(param.numel() for param in model.trainable_modules())
     selected_head_count = sum(
         len(heads) for heads in model.selected_heads_by_block.values()
@@ -1484,8 +1541,11 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         f"OpenVid initialization LoRA merged into Wan: {args.lora_checkpoint}",
         f"Merged/unloaded pretrained LoRA modules: "
         f"{len(model.merged_pretrained_lora_modules)}",
-        f"Frozen DINOv3 xSSC checkpoint: {args.xssc_checkpoint}",
-        f"Frozen DINOv3 pretrained weight: {args.dinov3_checkpoint}",
+        f"Object branch enabled: {model.enable_object_branch}",
+        f"Frozen DINOv3 xSSC checkpoint: "
+        f"{args.xssc_checkpoint if model.enable_object_branch else 'not loaded'}",
+        f"Frozen DINOv3 pretrained weight: "
+        f"{args.dinov3_checkpoint if model.enable_object_branch else 'not loaded'}",
         f"Self-attention adaptation mode: {model.self_attn_adaptation_mode}",
         f"Experiment seed: {args.experiment_seed}",
         f"Self-attention LoRA: rank={model.self_attn_lora_rank}, "
@@ -1496,16 +1556,29 @@ def _log_stage_summary(accelerator, model: DINOv3XSSCContextSlotsWanModule, args
         f"{len(model.selected_heads_by_block)} blocks",
         f"Head-selection config SHA256: "
         f"{model.head_selection_metadata.get('config_sha256', 'not-applicable')}",
-        f"xSSC box source: {model.xssc_box_source}",
+        f"xSSC box source: {model.xssc_box_source if model.enable_object_branch else 'disabled'}",
         "Context policy: fixed full 8-frame context (text-only disabled)",
         f"Per-GPU training batch size: {args.train_batch_size}",
-        f"xSSC shape: [B, 8, {model.xssc_num_slots}, {model.xssc_slot_dim}]",
-        f"Object token shape: [B, {8 * model.xssc_num_slots}, {model.pipe.dit.dim}]",
-        "Object attention base: text cross-attention + physical LoRA, baked and frozen",
-        f"Object LoRA: rank={model.object_lora_rank}, alpha={model.object_lora_alpha:g}, "
-        f"dropout={model.object_lora_dropout:g}",
-        f"xSSC slot-track dropout: {model.xssc_slot_track_dropout:g} "
-        "(same slot mask across all 8 context frames)",
+        f"xSSC shape: "
+        f"{'[B, 8, ' + str(model.xssc_num_slots) + ', ' + str(model.xssc_slot_dim) + ']' if model.enable_object_branch else 'not constructed'}",
+        f"Object token shape: "
+        f"{'[B, ' + str(8 * model.xssc_num_slots) + ', ' + str(model.pipe.dit.dim) + ']' if model.enable_object_branch else 'not constructed'}",
+        "Object attention base: "
+        + ("text cross-attention + physical LoRA, baked and frozen" if model.enable_object_branch else "not constructed"),
+        "Object LoRA: "
+        + (
+            f"rank={model.object_lora_rank}, alpha={model.object_lora_alpha:g}, "
+            f"dropout={model.object_lora_dropout:g}"
+            if model.enable_object_branch
+            else "not constructed"
+        ),
+        "xSSC slot-track dropout: "
+        + (
+            f"{model.xssc_slot_track_dropout:g} "
+            "(same slot mask across all 8 context frames)"
+            if model.enable_object_branch
+            else "not applicable"
+        ),
         f"Trainable projector/time params: {sum(p.numel() for p in projector_params):,}",
         f"Trainable object-attention LoRA params: {sum(p.numel() for p in object_lora_params):,}",
         f"Trainable object-gate params: {sum(p.numel() for p in object_gate_params):,}",
@@ -1525,7 +1598,7 @@ def main() -> None:
     args = tvn.prepare_args(parser.parse_args())
     if int(args.fixed_num_context_frames) != base.XSSC_NUM_CONTEXT_FRAMES:
         parser.error(
-            f"--fixed_num_context_frames must be {base.XSSC_NUM_CONTEXT_FRAMES} for xSSC training"
+            f"--fixed_num_context_frames must be {base.XSSC_NUM_CONTEXT_FRAMES} for this experiment"
         )
     if int(args.train_batch_size) <= 0:
         parser.error("--train_batch_size must be positive")
@@ -1539,6 +1612,12 @@ def main() -> None:
         and args.head_selection_config is None
     ):
         parser.error("--head_selection_config is required for head-selective mode")
+    if args.disable_object_branch and args.self_attn_adaptation_mode != "full_sa":
+        parser.error("--disable_object_branch is supported only with full_sa mode")
+    if args.disable_object_branch and args.xssc_filter_empty_amg:
+        parser.error(
+            "--xssc_filter_empty_amg cannot be used when the object branch is disabled"
+        )
     args.no_context_ratio = 0.0
     previous_handlers = tvn.install_interrupt_handlers()
     accelerator = tvn.build_accelerator(args)
@@ -1567,7 +1646,7 @@ def main() -> None:
             f"actual={actual_trainable_params:,}, "
             f"expected={int(args.expected_trainable_params):,}"
         )
-    if args.xssc_filter_empty_amg:
+    if not args.disable_object_branch and args.xssc_filter_empty_amg:
         model.set_empty_amg_resample_dataset(raw_train_dataset)
 
     if args.stage2_resume_from is not None:

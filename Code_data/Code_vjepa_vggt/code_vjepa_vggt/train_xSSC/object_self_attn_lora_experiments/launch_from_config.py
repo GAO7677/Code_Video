@@ -78,6 +78,13 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     mode = str(require(config, "adaptation.mode"))
     if mode not in VALID_MODES:
         raise ValueError(f"adaptation.mode must be one of {sorted(VALID_MODES)}")
+    enable_object_branch = require(config, "adaptation.enable_object_branch")
+    if not isinstance(enable_object_branch, bool):
+        raise TypeError("adaptation.enable_object_branch must be a boolean")
+    if not enable_object_branch and mode != "full_sa":
+        raise ValueError(
+            "Disabling the object branch is currently supported only for full_sa"
+        )
     expected_role_by_mode = {"s_head": "S", "t_head": "T"}
     if mode in HEAD_SELECTIVE_MODES:
         configured_role = str(require(config, "adaptation.head_selection_expected_role"))
@@ -127,22 +134,27 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     if int(require(config, "adaptation.self_attn_lora_rank")) <= 0:
         raise ValueError("adaptation.self_attn_lora_rank must be positive")
 
-    path_keys = (
+    path_keys = [
         "paths.project_root",
         "paths.diffsynth_root",
         "paths.wan_root",
         "paths.pretrained_lora_checkpoint",
-        "paths.xssc_root",
-        "paths.xssc_config",
-        "paths.xssc_checkpoint",
-        "paths.dinov3_root",
-        "paths.dinov3_checkpoint",
-        "paths.sam2_config",
-        "paths.sam2_checkpoint",
         "paths.pybullet_root",
         "paths.kubric_root",
         "paths.openvid_root",
-    )
+    ]
+    if enable_object_branch:
+        path_keys.extend(
+            [
+                "paths.xssc_root",
+                "paths.xssc_config",
+                "paths.xssc_checkpoint",
+                "paths.dinov3_root",
+                "paths.dinov3_checkpoint",
+                "paths.sam2_config",
+                "paths.sam2_checkpoint",
+            ]
+        )
     normalized = copy.deepcopy(config)
     for dotted_key in path_keys:
         keys = dotted_key.split(".")
@@ -258,24 +270,6 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     options = {
         "--diffsynth_root": paths["diffsynth_root"],
         "--wan_root": paths["wan_root"],
-        "--xssc_root": paths["xssc_root"],
-        "--xssc_config": paths["xssc_config"],
-        "--xssc_checkpoint": paths["xssc_checkpoint"],
-        "--dinov3_root": paths["dinov3_root"],
-        "--dinov3_checkpoint": paths["dinov3_checkpoint"],
-        "--xssc_sam2_config": paths["sam2_config"],
-        "--xssc_sam2_checkpoint": paths["sam2_checkpoint"],
-        "--xssc_input_size": model["xssc_input_size"],
-        "--xssc_max_time_steps": model["xssc_max_time_steps"],
-        "--xssc_box_source": conditioning["xssc_box_source"],
-        "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
-        "--xssc_empty_amg_max_resample_attempts": conditioning[
-            "empty_amg_max_resample_attempts"
-        ],
-        "--object_lora_rank": adaptation["object_lora_rank"],
-        "--object_lora_alpha": adaptation["object_lora_alpha"],
-        "--object_lora_dropout": adaptation["object_lora_dropout"],
-        "--xssc_slot_track_dropout": conditioning["slot_track_dropout"],
         "--self_attn_adaptation_mode": adaptation["mode"],
         "--pretrained_lora_expected_modules": model[
             "pretrained_lora_expected_modules"
@@ -287,17 +281,6 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--self_attn_lora_rank": adaptation["self_attn_lora_rank"],
         "--self_attn_lora_alpha": adaptation["self_attn_lora_alpha"],
         "--self_attn_lora_dropout": adaptation["self_attn_lora_dropout"],
-        "--head_selection_config": paths["head_selection_config"],
-        "--head_selection_subset_id": adaptation["head_selection_subset_id"],
-        "--head_selection_expected_role": adaptation[
-            "head_selection_expected_role"
-        ],
-        "--head_selection_feature_subtype": adaptation[
-            "head_selection_feature_subtype"
-        ],
-        "--head_selection_expected_num_heads": adaptation[
-            "head_selection_expected_num_heads"
-        ],
         "--expected_trainable_params": config["experiment"][
             "expected_trainable_params"
         ],
@@ -342,9 +325,7 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "--lora_alpha": model["pretrained_lora_alpha"],
         "--lora_checkpoint": paths["pretrained_lora_checkpoint"],
         "--extra_inputs": "input_image",
-        "--object_gate_init": adaptation["object_gate_init"],
         "--lambda_main": conditioning["lambda_main"],
-        "--lambda_object_context_reg": conditioning["lambda_object_context_reg"],
         "--report_to": logging["report_to"],
         "--wandb_project": logging["wandb_project"],
         "--wandb_name": logging.get(
@@ -353,6 +334,53 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         ),
         "--wandb_mode": logging["wandb_mode"],
     }
+    if not adaptation["enable_object_branch"]:
+        options["--disable_object_branch"] = None
+    else:
+        options.update(
+            {
+                "--xssc_root": paths["xssc_root"],
+                "--xssc_config": paths["xssc_config"],
+                "--xssc_checkpoint": paths["xssc_checkpoint"],
+                "--dinov3_root": paths["dinov3_root"],
+                "--dinov3_checkpoint": paths["dinov3_checkpoint"],
+                "--xssc_sam2_config": paths["sam2_config"],
+                "--xssc_sam2_checkpoint": paths["sam2_checkpoint"],
+                "--xssc_input_size": model["xssc_input_size"],
+                "--xssc_max_time_steps": model["xssc_max_time_steps"],
+                "--xssc_box_source": conditioning["xssc_box_source"],
+                "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
+                "--xssc_empty_amg_max_resample_attempts": conditioning[
+                    "empty_amg_max_resample_attempts"
+                ],
+                "--object_lora_rank": adaptation["object_lora_rank"],
+                "--object_lora_alpha": adaptation["object_lora_alpha"],
+                "--object_lora_dropout": adaptation["object_lora_dropout"],
+                "--xssc_slot_track_dropout": conditioning["slot_track_dropout"],
+                "--object_gate_init": adaptation["object_gate_init"],
+                "--lambda_object_context_reg": conditioning[
+                    "lambda_object_context_reg"
+                ],
+            }
+        )
+    if adaptation["mode"] in HEAD_SELECTIVE_MODES:
+        options.update(
+            {
+                "--head_selection_config": paths["head_selection_config"],
+                "--head_selection_subset_id": adaptation[
+                    "head_selection_subset_id"
+                ],
+                "--head_selection_expected_role": adaptation[
+                    "head_selection_expected_role"
+                ],
+                "--head_selection_feature_subtype": adaptation[
+                    "head_selection_feature_subtype"
+                ],
+                "--head_selection_expected_num_heads": adaptation[
+                    "head_selection_expected_num_heads"
+                ],
+            }
+        )
     amg_option_names = {
         "max_selected": "--xssc_amg_max_selected",
         "min_area_ratio": "--xssc_amg_min_area_ratio",
@@ -370,20 +398,24 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "duplicate_iou": "--xssc_amg_duplicate_iou",
         "duplicate_containment": "--xssc_amg_duplicate_containment",
     }
-    amg_filters = conditioning["amg_filters"]
-    missing_amg = sorted(set(amg_option_names) - set(amg_filters))
-    if missing_amg:
-        raise KeyError(f"Missing conditioning.amg_filters values: {missing_amg}")
-    for config_name, option_name in amg_option_names.items():
-        options[option_name] = amg_filters[config_name]
+    if adaptation["enable_object_branch"]:
+        amg_filters = conditioning["amg_filters"]
+        missing_amg = sorted(set(amg_option_names) - set(amg_filters))
+        if missing_amg:
+            raise KeyError(f"Missing conditioning.amg_filters values: {missing_amg}")
+        for config_name, option_name in amg_option_names.items():
+            options[option_name] = amg_filters[config_name]
     for name, value in options.items():
-        add_option(command, name, value)
+        if value is None:
+            command.append(name)
+        else:
+            add_option(command, name, value)
 
-    if conditioning["filter_empty_amg"]:
+    if adaptation["enable_object_branch"] and conditioning["filter_empty_amg"]:
         command.append("--xssc_filter_empty_amg")
     if optim["fail_on_nonfinite_train_values"]:
         command.append("--fail_on_nonfinite_train_values")
-    if logging["debug_print_object_regularization"]:
+    if adaptation["enable_object_branch"] and logging["debug_print_object_regularization"]:
         command.append("--debug_print_object_regularization")
     if checkpointing.get("resume_from"):
         add_option(command, "--stage2_resume_from", checkpointing["resume_from"])
@@ -429,6 +461,7 @@ def main() -> None:
     summary = {
         "experiment": config["experiment"]["name"],
         "mode": config["adaptation"]["mode"],
+        "enable_object_branch": config["adaptation"]["enable_object_branch"],
         "config_sources": sources,
         "gpu_set": config["launch"]["gpu_set"],
         "effective_batch": effective_batch,
@@ -445,7 +478,10 @@ def main() -> None:
         "TORCH_HOME": cache_root / "torch",
         "XDG_CACHE_HOME": cache_root / "xdg",
     }
-    for path in (*cache_dirs.values(), Path(config["paths"]["xssc_box_cache_dir"])):
+    required_cache_dirs = list(cache_dirs.values())
+    if config["adaptation"]["enable_object_branch"]:
+        required_cache_dirs.append(Path(config["paths"]["xssc_box_cache_dir"]))
+    for path in required_cache_dirs:
         path.mkdir(parents=True, exist_ok=True)
 
     manifest = {

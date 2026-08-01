@@ -25,6 +25,7 @@ declare -A COMMANDS=(
   [three_ckpt_watch_2]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode inference"
   [three_test5_cpu]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode metrics --kind cpu"
   [three_test5_gpu]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode metrics --kind gpu"
+  [three_test5_gpu_2]="${PYTHON} ${WATCHER} --config ${CONFIG} --mode metrics --kind gpu"
   [three_phys_watch]="${PYTHON} ${PHYSICIQ_WATCHER} --config ${CONFIG} --mode inference"
   [three_phys_cpu]="${PYTHON} ${PHYSICIQ_WATCHER} --config ${CONFIG} --mode metrics --kind cpu"
   [three_phys_gpu]="${PYTHON} ${PHYSICIQ_WATCHER} --config ${CONFIG} --mode metrics --kind gpu"
@@ -43,7 +44,8 @@ done
 
 "${PYTHON}" "${WATCHER}" --config "${CONFIG}" --mode bootstrap
 for window_name in \
-  three_ckpt_watch three_ckpt_watch_2 three_test5_cpu three_test5_gpu \
+  three_ckpt_watch three_ckpt_watch_2 three_test5_cpu \
+  three_test5_gpu three_test5_gpu_2 \
   three_phys_watch three_phys_cpu three_phys_gpu three_dashboard; do
   command="${COMMANDS[${window_name}]}"
   tmux new-window -t "${SESSION}" -n "${window_name}" "${command}; exec bash"
