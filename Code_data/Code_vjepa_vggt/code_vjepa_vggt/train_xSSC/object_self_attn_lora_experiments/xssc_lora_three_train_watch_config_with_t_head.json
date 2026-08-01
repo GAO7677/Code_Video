@@ -192,7 +192,8 @@
       "label": "Full-SA + Object + Slot-Dedup",
       "color": "#007C83",
       "watch_roots": [
-        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu67/from_scratch_20260731T083348Z_full_sa_slot_dedup_merge_gpu67/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu67/from_scratch_20260731T083348Z_full_sa_slot_dedup_merge_gpu67/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/checkpoints"
       ]
     }
   ]
