@@ -1,0 +1,16 @@
+{
+  "extends": "t_head.json",
+  "experiment": {
+    "name": "common_t_head_full70_slot_dedup_merge",
+    "description": "Object branch plus rank-32 LoRA on the 70 common T heads, with duplicate xSSC slot tracks merged before object-token projection",
+    "expected_trainable_params": 34863104
+  },
+  "conditioning": {
+    "slot_dedup": {
+      "mode": "merge",
+      "similarity_threshold": 0.94,
+      "similarity_metric": "mean_frame_cosine",
+      "min_keep": 3
+    }
+  }
+}
