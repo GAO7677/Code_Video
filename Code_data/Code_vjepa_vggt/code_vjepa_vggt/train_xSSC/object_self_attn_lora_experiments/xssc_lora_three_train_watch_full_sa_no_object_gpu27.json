@@ -22,6 +22,8 @@
     "gpu_ids": [
       0,
       1,
+      2,
+      3,
       5
     ],
     "gpu_ready_max_used_mib": 8000,

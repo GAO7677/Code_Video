@@ -33,6 +33,27 @@ METHOD_PLOT_STYLES = {
 }
 DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
 
+CASE_METRIC_SPECS = [
+    {"key": "physics_iq_with_context", "label": "Physics-IQ ctx", "direction": "higher", "path": ("physics_iq_with_context", "score")},
+    {"key": "physics_iq_without_context", "label": "Physics-IQ no ctx", "direction": "higher", "path": ("physics_iq_without_context", "score")},
+    {"key": "pmf_with_context", "label": "PMF ctx", "direction": "higher", "path": ("pmf_with_context", "score")},
+    {"key": "pmf_without_context", "label": "PMF no ctx", "direction": "higher", "path": ("pmf_without_context", "score")},
+    {"key": "wmreward", "label": "WMReward surprise", "direction": "lower", "path": ("wmreward", "surprise")},
+    {"key": "vbench_subject_consistency", "label": "VBench subject", "direction": "higher", "path": ("vbench_subject_consistency", "score")},
+    {"key": "vbench_background_consistency", "label": "VBench background", "direction": "higher", "path": ("vbench_background_consistency", "score")},
+    {"key": "vbench_temporal_flickering", "label": "VBench temporal", "direction": "higher", "path": ("vbench_temporal_flickering", "score")},
+    {"key": "vbench_motion_smoothness", "label": "VBench smoothness", "direction": "higher", "path": ("vbench_motion_smoothness", "score")},
+    {"key": "vbench_dynamic_degree", "label": "VBench dynamic", "direction": "higher", "path": ("vbench_dynamic_degree", "score")},
+    {"key": "vbench_aesthetic_quality", "label": "VBench aesthetic", "direction": "higher", "path": ("vbench_aesthetic_quality", "score")},
+    {"key": "vbench_imaging_quality", "label": "VBench imaging", "direction": "higher", "path": ("vbench_imaging_quality", "score")},
+    {"key": "videophy2", "label": "VideoPhy2 joint", "direction": "higher", "path": ("videophy2", "score")},
+    {"key": "videophy2_sa", "label": "VideoPhy2 SA", "direction": "higher", "path": ("videophy2", "sa_score")},
+    {"key": "videophy2_pc", "label": "VideoPhy2 PC", "direction": "higher", "path": ("videophy2", "pc_score")},
+    {"key": "videophy2_joint_rate", "label": "VideoPhy2 pass", "direction": "higher", "path": ("videophy2", "joint_rate")},
+    {"key": "videophy2_pc_raw", "label": "VideoPhy2 PC raw", "direction": "higher", "path": ("videophy2", "pc_raw_score")},
+    {"key": "cosmos_reason1", "label": "Cosmos Reason", "direction": "higher", "path": ("cosmos_reason1", "score")},
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -45,6 +66,42 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError(f"Expected JSON object: {path}")
     return payload
+
+
+def extract_case_metrics(payload: dict[str, Any]) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for spec in CASE_METRIC_SPECS:
+        value: Any = payload
+        for key in spec["path"]:
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value)
+        if pd.notna(number):
+            metrics[str(spec["key"])] = number
+    return metrics
+
+
+def load_case_metrics(
+    result_root: Path,
+    cases: list[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    metrics: dict[str, dict[str, float]] = {}
+    for case in cases:
+        result_path = result_root / f"{case['stem']}.json"
+        if not result_path.is_file():
+            continue
+        try:
+            payload = load_json(result_path)
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        values = extract_case_metrics(payload)
+        if values:
+            metrics[str(case["stem"])] = values
+    return metrics
 
 
 def escape(value: object) -> str:
@@ -454,6 +511,7 @@ def build_video_media(
             "checkpoint_dir": manifest["checkpoint_dir"],
             "origin": manifest.get("origin", "watcher"),
             "videos": {},
+            "metrics": load_case_metrics(result_root, cases),
         }
         for case in cases:
             source = result_root / f"{case['stem']}.mp4"
@@ -492,7 +550,19 @@ def build_videos_page(
         for method in method_order
     ]
     data = json.dumps(
-        {"methods": methods, "records": records, "cases": cases},
+        {
+            "methods": methods,
+            "records": records,
+            "cases": cases,
+            "metricSpecs": [
+                {
+                    "key": spec["key"],
+                    "label": spec["label"],
+                    "direction": spec["direction"],
+                }
+                for spec in CASE_METRIC_SPECS
+            ],
+        },
         ensure_ascii=False,
     )
     return f"""<!doctype html>
@@ -540,6 +610,23 @@ def build_videos_page(
       background:#eef1f2;border:1px dashed #bdc6ca;color:var(--muted);font-size:12px}}
     .empty{{padding:26px;background:var(--surface);border:1px solid var(--line);
       color:var(--muted);text-align:center}}
+    .metrics-section{{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}}
+    .metrics-section h2{{margin:0 0 4px;font-size:16px}}.metrics-note{{margin:0 0 10px;
+      color:var(--muted);font-size:12px}}.metrics-wrap{{overflow:auto;max-height:70vh;
+      border:1px solid var(--line);background:var(--surface)}}
+    .metrics-table{{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;
+      font-size:11px;font-variant-numeric:tabular-nums}}
+    .metrics-table th,.metrics-table td{{height:30px;padding:5px 7px;border-right:1px solid #e2e7e9;
+      border-bottom:1px solid #e2e7e9;text-align:center;white-space:nowrap}}
+    .metrics-table thead th{{position:sticky;top:0;z-index:3;background:#edf1f2;color:#45545b}}
+    .metrics-table .method-col{{position:sticky;left:0;z-index:2;min-width:184px;
+      text-align:left;background:#fff;font-weight:800}}
+    .metrics-table thead .method-col{{z-index:4;background:#e5ebed}}
+    .metrics-table .step-col{{position:sticky;left:184px;z-index:2;min-width:70px;
+      background:#fff;color:var(--muted)}}
+    .metrics-table thead .step-col{{z-index:4;background:#e5ebed}}
+    .metrics-table td.best{{background:#dff3e7;color:#075d37;font-weight:900}}
+    .metrics-table td.missing-value{{color:#9aa5aa}}.direction{{color:#66757c;font-size:10px}}
     a{{color:var(--accent);font-weight:750;text-decoration:none}}
     @media(max-width:900px){{.toolbar{{flex-wrap:wrap}}.title{{width:100%}}
       .source-grid{{grid-template-columns:1fr}}
@@ -566,6 +653,14 @@ def build_videos_page(
     </div>
     <div class="generated-head"><h2>已完成 checkpoint</h2><span class="count" id="count"></span></div>
     <div class="matrix-wrap"><div class="generated-matrix" id="generated-matrix"></div></div>
+    <section class="metrics-section"><h2>当前 case 指标对比</h2>
+      <p class="metrics-note">每行一个方法 checkpoint；★ 表示当前筛选范围内该指标最佳。WMReward surprise 越低越好，其余越高越好。</p>
+      <div class="metrics-wrap"><table class="metrics-table" id="metrics-table"></table></div>
+    </section>
+    <section class="metrics-section"><h2>所有 case 平均指标</h2>
+      <p class="metrics-note">对本页全部 case 求均值；悬停数值可查看有效样本数。★ 表示当前 step 筛选范围内平均指标最佳。</p>
+      <div class="metrics-wrap"><table class="metrics-table" id="average-metrics-table"></table></div>
+    </section>
   </main>
   <script>
     const D={data};
@@ -582,6 +677,60 @@ def build_videos_page(
         : steps.filter(step=>String(step)===stepFilter.value);
     }}
     function videos(){{return [...document.querySelectorAll("main video")]}}
+    function formatMetric(value){{
+      const magnitude=Math.abs(value);
+      if(magnitude>=10)return value.toFixed(2);
+      if(magnitude>=1)return value.toFixed(3);
+      return value.toFixed(4);
+    }}
+    function renderMetrics(c,steps){{
+      const methodIndex=new Map(D.methods.map((method,index)=>[method.key,index]));
+      const rows=D.records
+        .filter(record=>steps.includes(record.step))
+        .map(record=>({{
+          record,
+          method:D.methods.find(method=>method.key===record.method_key),
+          values:record.metrics?.[c.stem]??{{}},
+        }}))
+        .sort((a,b)=>(methodIndex.get(a.record.method_key)??999)-
+          (methodIndex.get(b.record.method_key)??999)||a.record.step-b.record.step);
+      const best=new Map();
+      D.metricSpecs.forEach(spec=>{{
+        const values=rows.map(row=>Number(row.values[spec.key])).filter(Number.isFinite);
+        if(!values.length)return;
+        best.set(spec.key,spec.direction==="lower"?Math.min(...values):Math.max(...values));
+      }});
+      const table=document.getElementById("metrics-table");table.replaceChildren();
+      const thead=document.createElement("thead");const header=document.createElement("tr");
+      const methodHead=document.createElement("th");methodHead.className="method-col";
+      methodHead.textContent="方法";header.append(methodHead);
+      const stepHead=document.createElement("th");stepHead.className="step-col";
+      stepHead.textContent="Step";header.append(stepHead);
+      D.metricSpecs.forEach(spec=>{{
+        const th=document.createElement("th");
+        th.innerHTML=`${{spec.label}} <span class="direction">${{spec.direction==="lower"?"↓":"↑"}}</span>`;
+        header.append(th);
+      }});thead.append(header);table.append(thead);
+      const tbody=document.createElement("tbody");
+      rows.forEach(row=>{{
+        const tr=document.createElement("tr");
+        const methodCell=document.createElement("td");methodCell.className="method-col";
+        methodCell.textContent=row.record.method_label;
+        methodCell.style.color=row.method?.color??"#172126";tr.append(methodCell);
+        const stepCell=document.createElement("td");stepCell.className="step-col";
+        stepCell.textContent=row.record.step;tr.append(stepCell);
+        D.metricSpecs.forEach(spec=>{{
+          const td=document.createElement("td");const value=Number(row.values[spec.key]);
+          if(!Number.isFinite(value)){{td.textContent="—";td.className="missing-value";}}
+          else{{
+            const isBest=best.has(spec.key)&&Math.abs(value-best.get(spec.key))<=1e-9;
+            td.textContent=`${{isBest?"★ ":""}}${{formatMetric(value)}}`;
+            if(isBest)td.className="best";
+          }}
+          tr.append(td);
+        }});tbody.append(tr);
+      }});table.append(tbody);
+    }}
     function render(){{
       const c=D.cases.find(x=>x.stem===caseSelect.value);
       if(!c)return;
@@ -628,6 +777,7 @@ def build_videos_page(
       }});
       document.getElementById("count").textContent=
         `${{steps.length}} 行 · ${{count}} 个结果`;
+      renderMetrics(c,steps);
     }}
     stepFilter.addEventListener("change",render);caseSelect.addEventListener("change",render);
     document.getElementById("play").onclick=()=>videos().forEach(video=>video.play().catch(()=>{{}}));
@@ -1034,7 +1184,9 @@ def prefix_video_records(
 
 
 def load_legacy_video_records(
-    legacy_watch_root: str | None, videos_prefix: str
+    legacy_watch_root: str | None,
+    videos_prefix: str,
+    cases: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if not legacy_watch_root:
         return []
@@ -1045,7 +1197,30 @@ def load_legacy_video_records(
     records = manifest.get("records", [])
     if not isinstance(records, list):
         return []
-    return prefix_video_records(records, videos_prefix)
+    state_root = manifest_path.parent.parent / "state" / "checkpoints"
+    result_roots: dict[tuple[str, int], Path] = {}
+    for state_path in state_root.glob("*/step-*.json"):
+        if not state_path.is_file():
+            continue
+        state = load_json(state_path)
+        result_root = state.get("result_root")
+        if result_root:
+            result_roots[(str(state["method_key"]), int(state["step"]))] = Path(
+                str(result_root)
+            )
+    enriched_records: list[dict[str, Any]] = []
+    for record in records:
+        row = dict(record)
+        result_root = result_roots.get(
+            (str(record["method_key"]), int(record["step"]))
+        )
+        row["metrics"] = (
+            load_case_metrics(result_root, cases)
+            if result_root is not None
+            else {}
+        )
+        enriched_records.append(row)
+    return prefix_video_records(enriched_records, videos_prefix)
 
 
 def load_physiciq_video_records_from_state(
@@ -1068,6 +1243,7 @@ def load_physiciq_video_records_from_state(
                 "step": step,
                 "checkpoint_dir": manifest.get("checkpoint_dir", ""),
                 "origin": manifest.get("origin", "watcher"),
+                "metrics": load_case_metrics(Path(manifest["result_root"]), cases),
                 "videos": {
                     case["stem"]: (
                         f"{videos_prefix}/{original_method_key}/"
@@ -1078,6 +1254,136 @@ def load_physiciq_video_records_from_state(
             }
         )
     return records
+
+
+def merge_video_records(
+    current_records: list[dict[str, Any]],
+    legacy_records: list[dict[str, Any]],
+    current_site_prefix: str,
+) -> list[dict[str, Any]]:
+    deduplicated: dict[tuple[str, int], dict[str, Any]] = {}
+    for record in legacy_records + prefix_video_records(
+        current_records,
+        current_site_prefix,
+    ):
+        deduplicated[(str(record["method_key"]), int(record["step"]))] = record
+    method_keys = [method["key"] for method in MERGED_METHODS]
+    return sorted(
+        deduplicated.values(),
+        key=lambda row: (
+            method_keys.index(row["method_key"])
+            if row["method_key"] in METHOD_BY_KEY
+            else 999,
+            int(row.get("step", 0)),
+            str(row["method_key"]),
+        ),
+    )
+
+
+def format_average_metric(value: float) -> str:
+    magnitude = abs(value)
+    if magnitude >= 10:
+        return f"{value:.2f}"
+    if magnitude >= 1:
+        return f"{value:.3f}"
+    return f"{value:.4f}"
+
+
+def build_average_metrics_page(
+    records: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    *,
+    page_title: str,
+) -> str:
+    expected = len(cases)
+    summaries: list[dict[str, Any]] = []
+    for record in records:
+        summary: dict[str, Any] = {
+            "method_key": record["method_key"],
+            "method_label": record["method_label"],
+            "step": int(record["step"]),
+            "metrics": {},
+        }
+        record_metrics = record.get("metrics", {})
+        for spec in CASE_METRIC_SPECS:
+            values = [
+                float(case_metrics[spec["key"]])
+                for case in cases
+                if isinstance(
+                    (case_metrics := record_metrics.get(case["stem"])),
+                    dict,
+                )
+                and spec["key"] in case_metrics
+            ]
+            summary["metrics"][spec["key"]] = {
+                "count": len(values),
+                "mean": sum(values) / len(values) if values else None,
+            }
+        summaries.append(summary)
+    best: dict[str, float] = {}
+    for spec in CASE_METRIC_SPECS:
+        complete_values = [
+            float(row["metrics"][spec["key"]]["mean"])
+            for row in summaries
+            if row["metrics"][spec["key"]]["count"] == expected
+            and row["metrics"][spec["key"]]["mean"] is not None
+        ]
+        if complete_values:
+            best[spec["key"]] = (
+                min(complete_values)
+                if spec["direction"] == "lower"
+                else max(complete_values)
+            )
+    method_colors = {method["key"]: method["color"] for method in MERGED_METHODS}
+    header_cells = "".join(
+        f"<th>{escape(spec['label'])} <span>{'↓' if spec['direction'] == 'lower' else '↑'}</span></th>"
+        for spec in CASE_METRIC_SPECS
+    )
+    body_rows: list[str] = []
+    for row in summaries:
+        cells: list[str] = []
+        for spec in CASE_METRIC_SPECS:
+            stat = row["metrics"][spec["key"]]
+            if stat["count"] != expected or stat["mean"] is None:
+                cells.append(
+                    f'<td class="pending">pending {stat["count"]}/{expected}</td>'
+                )
+                continue
+            value = float(stat["mean"])
+            is_best = spec["key"] in best and abs(value - best[spec["key"]]) <= 1e-9
+            cells.append(
+                f'<td class="{"best" if is_best else ""}">'
+                f'{"★ " if is_best else ""}{format_average_metric(value)}</td>'
+            )
+        color = method_colors.get(str(row["method_key"]), "#172126")
+        body_rows.append(
+            f'<tr><td class="method" style="color:{escape(color)}">'
+            f'{escape(row["method_label"])}</td><td class="step">'
+            f'{row["step"]}</td>{"".join(cells)}</tr>'
+        )
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(page_title)}</title><style>
+*{{box-sizing:border-box}}body{{margin:0;background:#f3f5f6;color:#172126;
+font-family:Inter,"Noto Sans SC",Arial,sans-serif}}header{{padding:18px 22px;background:#fff;
+border-bottom:1px solid #d6dde0}}h1{{margin:0 0 5px;font-size:20px}}p{{margin:0;color:#657278;
+font-size:12px}}a{{color:#006d77;font-weight:800;text-decoration:none}}main{{padding:16px 20px}}
+.wrap{{overflow:auto;max-height:calc(100vh - 132px);border:1px solid #d6dde0;background:#fff}}
+table{{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;
+font-size:11px;font-variant-numeric:tabular-nums}}th,td{{height:31px;padding:5px 8px;
+border-right:1px solid #e2e7e9;border-bottom:1px solid #e2e7e9;text-align:center;white-space:nowrap}}
+thead th{{position:sticky;top:0;z-index:3;background:#e5ebed;color:#45545b}}thead span{{font-size:10px}}
+.method{{position:sticky;left:0;z-index:2;min-width:190px;background:#fff;text-align:left;font-weight:850}}
+thead .method{{z-index:4;background:#dce4e7}}.step{{position:sticky;left:190px;z-index:2;
+min-width:72px;background:#fff;color:#657278}}thead .step{{z-index:4;background:#dce4e7}}
+td.best{{background:#dff3e7;color:#075d37;font-weight:900}}td.pending{{color:#98a3a8;font-size:10px}}
+.back{{display:inline-block;margin-top:12px}}
+</style></head><body><header><h1>{escape(page_title)}</h1>
+<p>覆盖全部 {expected} 个 case 的均值才参与 ★ 最佳值比较；WMReward surprise 越低越好，其余越高越好。</p></header>
+<main><div class="wrap"><table><thead><tr><th class="method">方法</th><th class="step">Step</th>
+{header_cells}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>
+<a class="back" href="../">返回总览</a></main></body></html>"""
 
 
 def write_unified_videos_page(
@@ -1092,18 +1398,10 @@ def write_unified_videos_page(
 ) -> None:
     page_root.mkdir(parents=True, exist_ok=True)
     merged_cases = prefix_case_media(cases, f"{current_site_prefix}/media")
-    merged_records = (
-        prefix_video_records(current_records, current_site_prefix)
-        + legacy_records
-    )
-    merged_records.sort(
-        key=lambda row: (
-            int(row.get("step", 0)),
-            [method["key"] for method in MERGED_METHODS].index(row["method_key"])
-            if row["method_key"] in METHOD_BY_KEY
-            else 999,
-            row["method_key"],
-        )
+    merged_records = merge_video_records(
+        current_records,
+        legacy_records,
+        current_site_prefix,
     )
     (page_root / "index.html").write_text(
         build_videos_page(
@@ -1303,6 +1601,7 @@ def build_master_hub(
     legacy_test_records = load_legacy_video_records(
         legacy_watch_root,
         "../history-gallery",
+        test_cases,
     )
     write_unified_videos_page(
         config=config,
@@ -1312,6 +1611,20 @@ def build_master_hub(
         legacy_records=legacy_test_records,
         current_site_prefix="../gallery",
         page_title="test_5 · 全 checkpoint 合并对比",
+    )
+    test5_average_root = hub_root / "test5-average-metrics"
+    test5_average_root.mkdir(parents=True, exist_ok=True)
+    (test5_average_root / "index.html").write_text(
+        build_average_metrics_page(
+            merge_video_records(
+                test_records,
+                legacy_test_records,
+                "../gallery",
+            ),
+            test_cases,
+            page_title="test_5 · 全 case 平均指标",
+        ),
+        encoding="utf-8",
     )
     legacy_state_root = (
         Path(legacy_watch_root).resolve().parent / "state"
@@ -1336,6 +1649,20 @@ def build_master_hub(
             legacy_records=legacy_phys_records,
             current_site_prefix="../physiciq-gallery",
             page_title="PhysicIQ 67-case · 全 checkpoint 合并对比",
+        )
+        phys_average_root = hub_root / "physiciq-average-metrics"
+        phys_average_root.mkdir(parents=True, exist_ok=True)
+        (phys_average_root / "index.html").write_text(
+            build_average_metrics_page(
+                merge_video_records(
+                    phys_records,
+                    legacy_phys_records,
+                    "../physiciq-gallery",
+                ),
+                phys_cases,
+                page_title="PhysicIQ · 67-case 平均指标",
+            ),
+            encoding="utf-8",
         )
     else:
         (hub_root / "physiciq").mkdir(parents=True, exist_ok=True)
@@ -1392,6 +1719,7 @@ def build_master_hub(
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
             )
         elif (
             legacy_physiciq_metrics_root
@@ -1406,6 +1734,7 @@ def build_master_hub(
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
             )
         else:
             pending_metrics = watch_root / "site" / "physiciq-metrics"
@@ -1422,6 +1751,7 @@ def build_master_hub(
                 '<a href="checkpoint-watch/#physiciq">监控入口</a>'
                 '<a href="physiciq/">Case 合并对比</a>'
                 '<a href="physiciq-metrics/">指标曲线</a>'
+                '<a href="physiciq-average-metrics/">67-case 平均指标表</a>'
             )
         step_text = (
             "每个新 checkpoint"
@@ -1476,7 +1806,8 @@ def build_master_hub(
     <section class="entry"><div><h2>test_5 · 全 checkpoint 合并</h2>
       <div class="meta">同一个 test_5 入口内按方法和 step 展示所有已完成 checkpoint</div>
       <a href="test5/">进入合并视图</a>
-      <a href="test5-metrics/">指标曲线</a></div>
+      <a href="test5-metrics/">指标曲线</a>
+      <a href="test5-average-metrics/">全 case 平均指标表</a></div>
       <div class="status">全部 step<strong>{total_inferred + legacy_checkpoint_count} 组结果</strong><small>持续增量更新</small></div>
     </section>
     {physiciq_entry}
