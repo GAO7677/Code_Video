@@ -572,54 +572,209 @@ def rho_text(value: float) -> str:
     return "n/a" if not math.isfinite(value) else f"{value:+.3f}"
 
 
-def build_html(output_dir: Path, result: dict[str, Any]) -> None:
-    parameter_rows = "".join(
-        f"<tr><td>{html.escape(case['scenario'])}</td><td>{case['parameters']['restitution']}</td>"
-        f"<td>{case['parameters']['lateral_friction']}</td><td>{case['parameters']['ball_mass_kg']}</td></tr>"
-        for case in result["cases"]
+def load_selected_role_slots(
+    analysis_dir: Path,
+    model: dict[str, Any],
+    case: dict[str, Any],
+) -> np.ndarray:
+    arrays_path = (
+        analysis_dir
+        / "models"
+        / model["safe_name"]
+        / case["scenario"]
+        / "slots_attention.npz"
     )
-    rho_rows = []
-    for model_result in result["models"]:
-        values = model_result["correlations"]["all"]
-        for metric in (*PAIR_METRICS, "dynamic_composite"):
-            rho_rows.append(
-                f"<tr><td>{html.escape(model_result['model']['short_name'])}</td><td>{metric}</td>"
-                f"<td>{rho_text(values[metric]['parameter_rho'])}</td>"
-                f"<td>{rho_text(values[metric]['raft_rho'])}</td></tr>"
+    arrays = np.load(arrays_path)
+    slots = arrays["slots"].astype(np.float32)
+    return slots[:, np.asarray(case["selected_slots"], dtype=np.int64)]
+
+
+def smooth_curve(values: np.ndarray, window: int = 5) -> np.ndarray:
+    if window <= 1:
+        return values.copy()
+    left = window // 2
+    right = window - 1 - left
+    padded = np.pad(values, (left, right), mode="edge")
+    return np.convolve(padded, np.ones(window) / window, mode="valid")
+
+
+def plot_control_dynamic_curves(
+    path: Path,
+    title: str,
+    labels: list[str],
+    curves: np.ndarray,
+    fps: float = 60.0,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = ("#22d3ee", "#f59e0b", "#a78bfa", "#34d399")
+    times = np.arange(curves.shape[1], dtype=np.float32) / fps
+    figure, axes = plt.subplots(2, 1, figsize=(13, 6.5), sharex=True, constrained_layout=True)
+    for role_index, (axis_plot, role) in enumerate(zip(axes, ROLE_NAMES)):
+        for case_index, label in enumerate(labels):
+            curve = curves[case_index, :, role_index]
+            color = colors[case_index % len(colors)]
+            axis_plot.plot(times, curve, color=color, alpha=0.18, linewidth=0.8)
+            axis_plot.plot(
+                times,
+                smooth_curve(curve),
+                color=color,
+                linewidth=1.8,
+                label=label,
             )
-    sections = []
-    for model_result in result["models"]:
-        model = model_result["model"]
-        videos = "".join(
-            f"<figure><h3>{html.escape(case['scenario'])} | ball S{case['selected_slots'][0]}, block S{case['selected_slots'][1]}</h3>"
-            f"<video src='{html.escape(case['assets']['video'])}' controls muted preload='metadata'></video>"
-            f"<figcaption>ball recall={case['assignment'][0]['soft_recall']:.3f}, F1={case['assignment'][0]['soft_f1']:.3f}; "
-            f"block recall={case['assignment'][1]['soft_recall']:.3f}, F1={case['assignment'][1]['soft_f1']:.3f}"
-            f"{' | <b>unconstrained collision</b>' if case['same_unconstrained_slot'] else ''}</figcaption></figure>"
-            for case in model_result["cases"]
+        axis_plot.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
+        axis_plot.set_ylabel(f"{role} residual RMS")
+        axis_plot.grid(alpha=0.18)
+        axis_plot.legend(ncol=min(4, len(labels)), fontsize=8, loc="upper right")
+    axes[-1].set_xlabel("time (seconds)")
+    figure.suptitle(title)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=160)
+    plt.close(figure)
+
+
+def build_html(output_dir: Path, result: dict[str, Any]) -> None:
+    model_result = next(
+        item for item in result["models"]
+        if item["model"]["name"] == "dinov3_movic_step044000"
+    )
+    model = model_result["model"]
+    baseline = "e07_mu05_m1"
+    case_map = {case["scenario"]: case for case in model_result["cases"]}
+    pair_map = {
+        frozenset((pair["left"], pair["right"])): pair
+        for pair in model_result["pairs"]
+    }
+    groups = (
+        (
+            "恢复系数 restitution",
+            "只改变恢复系数 e；固定 μ=0.5、ball mass=1.0kg。",
+            ("e03_mu05_m1", "e05_mu05_m1", baseline, "e09_mu05_m1"),
+            "restitution",
+        ),
+        (
+            "摩擦系数 friction",
+            "只改变横向摩擦系数 μ；固定 e=0.7、ball mass=1.0kg。",
+            ("e07_mu01_m1", baseline, "e07_mu10_m1"),
+            "friction",
+        ),
+        (
+            "球质量 mass",
+            "只改变 ball mass；固定 e=0.7、μ=0.5。",
+            ("e07_mu05_m01", baseline, "e07_mu05_m5"),
+            "mass",
+        ),
+    )
+    analysis_dir = output_dir.parent
+    role_slots = {
+        scenario: load_selected_role_slots(analysis_dir, model, case)
+        for scenario, case in case_map.items()
+    }
+    baseline_role_slots = role_slots[baseline]
+    baseline_static = baseline_role_slots.mean(axis=0)
+    baseline_residual = baseline_role_slots - baseline_static[None]
+
+    def parameter_title(case: dict[str, Any]) -> str:
+        values = case["parameters"]
+        return (
+            f"e={values['restitution']:.1f} · μ={values['lateral_friction']:.1f} · "
+            f"m={values['ball_mass_kg']:g}kg"
         )
-        controlled_rows = "".join(
-            f"<tr><td>{pair['axis']}</td><td>{pair['left']}</td><td>{pair['right']}</td>"
-            f"<td>{pair['static_distance']:.3f}</td><td>{pair['dynamic_track_distance']:.3f}</td>"
-            f"<td>{pair['d_adj_relative_l2']:.3f}</td><td>{pair['frequency_js']:.3f}</td>"
-            f"<td>{pair['centroid_rmse']:.3f}</td><td>{pair['raft_relative_l2']:.3f}</td>"
-            f"<td>{pair['dynamic_composite']:.3f}</td></tr>"
-            for pair in model_result["pairs"] if pair["axis"] != "mixed"
+
+    group_sections = []
+    for title, description, scenarios, axis in groups:
+        videos = []
+        rows = []
+        dynamic_curves = []
+        curve_labels = []
+        for scenario in scenarios:
+            case = case_map[scenario]
+            assignment = {item["role"]: item for item in case["assignment"]}
+            current_slots = role_slots[scenario]
+            current_static = current_slots.mean(axis=0)
+            current_residual = current_slots - current_static[None]
+            curve = np.linalg.norm(
+                current_residual - baseline_residual,
+                axis=-1,
+            ) / math.sqrt(current_slots.shape[-1])
+            dynamic_curves.append(curve.astype(np.float32))
+            curve_labels.append(parameter_title(case))
+            baseline_tag = "<span class='baseline-tag'>baseline</span>" if scenario == baseline else ""
+            videos.append(
+                f"<figure><h3>{parameter_title(case)} {baseline_tag}</h3>"
+                f"<p class='scenario'>{html.escape(scenario)}</p>"
+                f"<video src='{html.escape(case['assets']['video'])}' controls muted preload='none'></video>"
+                f"<figcaption>ball=S{case['selected_slots'][0]} recall={assignment['ball']['soft_recall']:.3f}; "
+                f"block=S{case['selected_slots'][1]} recall={assignment['block']['soft_recall']:.3f}</figcaption></figure>"
+            )
+            if scenario == baseline:
+                values = {metric: 0.0 for metric in PAIR_METRICS}
+                roles = {role: {"dynamic_track_distance": 0.0} for role in ROLE_NAMES}
+                raft = 0.0
+                static_by_role = np.zeros(2, dtype=np.float32)
+            else:
+                pair = pair_map[frozenset((baseline, scenario))]
+                values = pair
+                roles = {item["role"]: item for item in pair["per_role"]}
+                raft = pair["raft_relative_l2"]
+                static_by_role = np.asarray(
+                    [
+                        cosine_distance(current_static[role_index], baseline_static[role_index])
+                        for role_index in range(2)
+                    ],
+                    dtype=np.float32,
+                )
+            rows.append(
+                f"<tr{' class=baseline-row' if scenario == baseline else ''}>"
+                f"<td>{parameter_title(case)}</td><td>{static_by_role.mean():.3f}</td>"
+                f"<td>{static_by_role[0]:.3f}</td><td>{static_by_role[1]:.3f}</td>"
+                f"<td>{values['dynamic_track_distance']:.3f}</td>"
+                f"<td>{roles['ball']['dynamic_track_distance']:.3f}</td>"
+                f"<td>{roles['block']['dynamic_track_distance']:.3f}</td>"
+                f"<td>{values['d_adj_relative_l2']:.3f}</td><td>{values['frequency_js']:.3f}</td>"
+                f"<td>{values['centroid_rmse']:.3f}</td><td>{raft:.3f}</td></tr>"
+            )
+        dynamic_curves_array = np.stack(dynamic_curves, axis=0)
+        curve_dir = output_dir / "control_curves"
+        curve_stem = f"{axis}_dynamic_residual_vs_baseline"
+        curve_npz = curve_dir / f"{curve_stem}.npz"
+        curve_png = curve_dir / f"{curve_stem}.png"
+        curve_dir.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            curve_npz,
+            scenarios=np.asarray(scenarios),
+            labels=np.asarray(curve_labels),
+            frame_times=np.arange(dynamic_curves_array.shape[1], dtype=np.float32) / 60.0,
+            role_names=np.asarray(ROLE_NAMES),
+            dynamic_residual_rms=dynamic_curves_array,
         )
-        sections.append(
-            f"<section><h2>{html.escape(model['short_name'])}</h2>"
-            f"<p class='muted'>shape={model['slot_shape']}; red=ball slot, cyan=block slot; thin contour=simulator GT.</p>"
-            f"<img class='heatmap' src='{html.escape(model_result['heatmap'])}'>"
-            f"<div class='videos'>{videos}</div><div class='scroll'><table><thead><tr><th>axis</th><th>left</th><th>right</th>"
-            f"<th>static</th><th>dynamic</th><th>D_adj</th><th>frequency</th><th>centroid</th><th>RAFT</th><th>composite</th>"
-            f"</tr></thead><tbody>{controlled_rows}</tbody></table></div></section>"
+        plot_control_dynamic_curves(
+            curve_png,
+            f"DINOv3 xSSC controlled {axis}: dynamic residual vs baseline",
+            curve_labels,
+            dynamic_curves_array,
         )
-    page = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>xSSC ball-block object-aligned analysis</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:#101316;color:#edf2f7;font:13px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:5;background:#171c21;border-bottom:1px solid #38424c;padding:12px 18px}}main{{max-width:1900px;margin:auto;padding:16px}}h1{{font-size:21px;margin:0 0 5px}}h2{{font-size:18px;margin:26px 0 7px}}h3{{font-size:12px;margin:0 0 5px}}.muted{{color:#b5c0ca}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #37414a;padding:5px 7px;text-align:right}}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3){{text-align:left}}th{{background:#1d242b}}td{{background:#13181d}}video,img{{display:block;width:100%;background:#000}}.videos{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}}figure{{margin:0;min-width:0}}figcaption{{font-size:11px;padding:4px 0;color:#c6d0da}}.heatmap{{max-width:1500px;margin:8px 0 14px}}.scroll{{overflow:auto}}.note{{border-left:3px solid #22d3ee;padding:8px 11px;background:#162027}}@media(max-width:1000px){{.videos{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}</style></head><body><header><h1>ball-block 全视频 xSSC object-slot 对比</h1><div class="muted">150 frames @ 60 FPS | DINOv3 xSSC + 3 个官方 DINOv2 xSSC 权重</div></header><main>
-<p class="note">GT mask 只用于将匿名 slot 绑定为 ball/block，并评估绑定质量；没有输入 xSSC，也没有改变已完成的模型前向。跨视频严格比较 ball-to-ball、block-to-block。</p>
-<h2>受控参数</h2><table><thead><tr><th>scenario</th><th>restitution</th><th>friction</th><th>ball mass kg</th></tr></thead><tbody>{parameter_rows}</tbody></table>
-<h2>全 28 对相关性</h2><p class="muted">parameter rho 越大，表示参数差越大时该特征差通常越大；RAFT rho 越大，表示该 xSSC 特征差与实际像素运动差越一致。</p><table><thead><tr><th>model</th><th>feature</th><th>parameter rho</th><th>RAFT rho</th></tr></thead><tbody>{''.join(rho_rows)}</tbody></table>
-{''.join(sections)}</main></body></html>"""
+        group_sections.append(
+            f"<section class='control-group'><h2>{title}</h2><p class='muted'>{description} "
+            f"所有指标均相对同一 baseline：e=0.7、μ=0.5、m=1kg。</p>"
+            f"<div class='control-videos cols-{len(scenarios)}'>{''.join(videos)}</div>"
+            f"<figure class='curve'><img src='{html.escape(str(curve_png.relative_to(output_dir)))}'>"
+            f"<figcaption>细线=原始逐帧值，粗线=5帧平滑；原始数组："
+            f"<a href='{html.escape(str(curve_npz.relative_to(output_dir)))}'>{curve_npz.name}</a></figcaption></figure>"
+            f"<div class='scroll'><table><thead><tr><th>变量取值</th><th>static all</th>"
+            f"<th>static ball</th><th>static block</th><th>dynamic all</th>"
+            f"<th>ball dynamic</th><th>block dynamic</th><th>D_adj</th><th>frequency</th>"
+            f"<th>centroid</th><th>RAFT</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+        )
+
+    page = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DINOv3 xSSC controlled-variable analysis</title><style>
+*{{box-sizing:border-box}}body{{margin:0;background:#101316;color:#edf2f7;font:13px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:5;background:#171c21;border-bottom:1px solid #38424c;padding:12px 18px}}main{{max-width:1800px;margin:auto;padding:16px}}h1{{font-size:21px;margin:0 0 5px}}h2{{font-size:18px;margin:25px 0 5px}}h3{{font-size:13px;margin:0 0 2px}}a{{color:#7dd3fc}}.muted,.scenario,figcaption{{color:#b5c0ca}}.scenario{{font-size:11px;margin:0 0 5px}}.note{{border-left:3px solid #22d3ee;padding:8px 11px;background:#162027}}.control-group{{padding-bottom:18px;border-bottom:1px solid #34404a}}.control-videos{{display:grid;gap:10px;margin:10px 0 12px}}.cols-4{{grid-template-columns:repeat(4,minmax(0,1fr))}}.cols-3{{grid-template-columns:repeat(3,minmax(0,1fr))}}figure{{margin:0;min-width:0}}video{{display:block;width:100%;aspect-ratio:1/1;object-fit:contain;max-height:340px;background:#000}}figcaption{{font-size:11px;padding-top:4px}}.curve{{margin:10px 0 12px}}.curve img{{display:block;width:100%;max-width:1500px;background:#fff}}.baseline-tag{{display:inline-block;padding:1px 5px;margin-left:4px;background:#075985;color:#e0f2fe;font-size:10px}}.scroll{{overflow:auto}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #37414a;padding:5px 7px;text-align:right}}th:first-child,td:first-child{{text-align:left}}th{{background:#1d242b}}td{{background:#13181d}}.baseline-row td{{background:#13242c;color:#d8f6ff}}@media(max-width:900px){{.cols-4,.cols-3{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:560px){{.cols-4,.cols-3{{grid-template-columns:1fr}}}}</style></head><body><header><h1>DINOv3 MOVi-C step-044000 · 控制变量分析</h1><div class="muted">150 frames @ 60 FPS · slots [150,11,512]</div></header><main>
+<p class="note">只分析 <b>{html.escape(model['short_name'])}</b>。红色 overlay=ball slot，青色 overlay=block slot，细轮廓=仿真 GT；GT 仅用于绑定匿名 slot 身份。</p>
+{''.join(group_sections)}</main></body></html>"""
     (output_dir / "index.html").write_text(page, encoding="utf-8")
 
 
