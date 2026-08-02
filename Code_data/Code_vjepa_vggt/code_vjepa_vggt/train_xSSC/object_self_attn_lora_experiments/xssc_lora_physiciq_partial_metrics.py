@@ -15,6 +15,8 @@ import subprocess
 import time
 from typing import Any
 
+from xssc_lora_physiciq_watch import refresh_dashboard
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -226,11 +228,13 @@ def run_metric(
     if not ok:
         raise RuntimeError(f"Metric summary did not cleanly cover partial set: {summary}")
     print(f"[partial-metric:done] {method} step={step} metric={metric} cases={num_cases}")
+    refresh_dashboard(config)
 
 
 def main() -> None:
     args = parse_args()
     config = load_json(args.config.expanduser().resolve())
+    config["_config_path"] = str(args.config.expanduser().resolve())
     config["_partial_gpu"] = str(args.gpu)
     steps = [int(step) for step in split_csv(args.steps)]
     methods = split_csv(args.methods)

@@ -23,6 +23,7 @@ from xssc_lora_physiciq_watch import (
     load_phys_manifests,
     phys_metric_marker_path,
     phys_state_root,
+    refresh_dashboard,
     refresh_plots_if_complete,
 )
 
@@ -186,6 +187,7 @@ def run_metric_unlocked(
         f"PhysicIQ parallel metric complete worker={worker_label} "
         f"method={method_key} step={step} metric={metric}"
     )
+    refresh_dashboard(config)
     refresh_plots_if_complete(config, manifest)
 
 

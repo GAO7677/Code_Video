@@ -411,6 +411,17 @@ def refresh_plots(
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                 )
+    refresh_dashboard(config)
+    log(
+        "PhysicIQ plots refreshed with "
+        + ", ".join(str(Path(leaf).resolve()) for leaf in leaf_values)
+    )
+
+
+def refresh_dashboard(config: dict[str, Any]) -> None:
+    """Rebuild the dashboard after one PhysicIQ metric is committed."""
+    lock_path = phys_state_root(config) / "dashboard_refresh.lock"
+    with exclusive_lock(lock_path):
         subprocess.run(
             [
                 config["paths"]["python"],
@@ -420,10 +431,7 @@ def refresh_plots(
             ],
             check=True,
         )
-    log(
-        "PhysicIQ plots refreshed with "
-        + ", ".join(str(Path(leaf).resolve()) for leaf in leaf_values)
-    )
+    log("PhysicIQ dashboard refreshed after metric completion")
 
 
 def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
