@@ -166,7 +166,7 @@
     {
       "key": "full_sa_resume",
       "label": "Full-SA + Object",
-      "color": "#C4473A",
+      "color": "#D62728",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_gpu12_ddp_resume/resume_step2500_20260731T073800Z_full_sa/checkpoints"
       ]
@@ -174,7 +174,7 @@
     {
       "key": "s_head59_resume",
       "label": "S-head59 + Object",
-      "color": "#598414",
+      "color": "#2CA02C",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/same_frame_s_head_full59_gpu05_ddp_resume/resume_step2500_20260731T073800Z_s_head59/checkpoints"
       ]
@@ -182,7 +182,7 @@
     {
       "key": "t_head70",
       "label": "T-head70 + Object",
-      "color": "#7A4EAB",
+      "color": "#9467BD",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu01_ddp_resume_newwandb/20260731T152400Z/checkpoints"
       ]
@@ -190,7 +190,7 @@
     {
       "key": "slot_dedup_merge",
       "label": "Full-SA + Object + Slot-Dedup",
-      "color": "#007C83",
+      "color": "#1F77B4",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu67/from_scratch_20260731T083348Z_full_sa_slot_dedup_merge_gpu67/checkpoints"
       ]

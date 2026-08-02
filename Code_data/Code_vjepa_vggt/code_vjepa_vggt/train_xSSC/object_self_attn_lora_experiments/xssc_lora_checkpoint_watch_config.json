@@ -90,7 +90,7 @@
     {
       "key": "object_only",
       "label": "Object-only",
-      "color": "#007C83",
+      "color": "#1F77B4",
       "static_checkpoints": [
         {
           "step": 500,
@@ -111,7 +111,7 @@
     {
       "key": "full_sa",
       "label": "Full-SA",
-      "color": "#C4473A",
+      "color": "#D62728",
       "static_checkpoints": [
         {
           "step": 500,
@@ -132,7 +132,7 @@
     {
       "key": "full_sa_no_object",
       "label": "Full-SA + No-Object",
-      "color": "#6D5A8D",
+      "color": "#FF7F0E",
       "static_checkpoints": [
         {
           "step": 6,
@@ -147,7 +147,7 @@
     {
       "key": "s_head59",
       "label": "S-head59",
-      "color": "#598414",
+      "color": "#2CA02C",
       "static_checkpoints": [
         {
           "step": 500,
@@ -168,7 +168,7 @@
     {
       "key": "t_head70",
       "label": "T-head70",
-      "color": "#7256A8",
+      "color": "#9467BD",
       "static_checkpoints": [
         {
           "step": 500,

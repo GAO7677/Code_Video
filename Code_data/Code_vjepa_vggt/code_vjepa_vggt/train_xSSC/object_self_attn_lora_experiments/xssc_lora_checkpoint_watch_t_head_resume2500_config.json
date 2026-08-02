@@ -89,7 +89,7 @@
     {
       "key": "t_head70",
       "label": "T-head70 + Object",
-      "color": "#7256A8",
+      "color": "#9467BD",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_gpu01_ddp_resume_newwandb/20260731T152400Z/checkpoints"
       ],

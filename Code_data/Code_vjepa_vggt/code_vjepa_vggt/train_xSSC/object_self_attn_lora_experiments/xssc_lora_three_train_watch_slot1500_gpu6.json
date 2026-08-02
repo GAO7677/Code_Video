@@ -166,7 +166,7 @@
     {
       "key": "slot_dedup_merge",
       "label": "Full-SA + Object + Slot-Dedup",
-      "color": "#007C83",
+      "color": "#1F77B4",
       "watch_roots": []
     }
   ]

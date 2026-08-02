@@ -93,11 +93,25 @@ TRAINING_VARIANT_LABELS = {
     "full_sa_no_object": "Full-SA + No-Object",
 }
 TRAINING_VARIANT_COLORS = {
-    "full_sa": "#C4473A",
-    "s_head59": "#598414",
-    "t_head70": "#7256A8",
-    "slot_dedup_merge": "#007C83",
-    "full_sa_no_object": "#6D5A8D",
+    "full_sa": "#D62728",
+    "s_head59": "#2CA02C",
+    "t_head70": "#9467BD",
+    "slot_dedup_merge": "#1F77B4",
+    "full_sa_no_object": "#FF7F0E",
+}
+TRAINING_VARIANT_MARKERS = {
+    "full_sa": "o",
+    "s_head59": "s",
+    "t_head70": "^",
+    "slot_dedup_merge": "D",
+    "full_sa_no_object": "X",
+}
+TRAINING_VARIANT_LINESTYLES = {
+    "full_sa": "-",
+    "s_head59": "--",
+    "t_head70": "-.",
+    "slot_dedup_merge": ":",
+    "full_sa_no_object": (0, (5, 1)),
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
@@ -883,8 +897,8 @@ def plot_training_metrics(
                     plotted_steps,
                     values,
                     color=TRAINING_VARIANT_COLORS[variant],
-                    linestyle="-",
-                    marker="o",
+                    linestyle=TRAINING_VARIANT_LINESTYLES[variant],
+                    marker=TRAINING_VARIANT_MARKERS[variant],
                     markersize=7,
                     linewidth=2,
                     label=TRAINING_VARIANT_LABELS[variant],
@@ -928,7 +942,8 @@ def plot_training_metrics(
             [0],
             [0],
             color=TRAINING_VARIANT_COLORS[variant],
-            marker="o",
+            marker=TRAINING_VARIANT_MARKERS[variant],
+            linestyle=TRAINING_VARIANT_LINESTYLES[variant],
             linewidth=2,
             label=TRAINING_VARIANT_LABELS[variant],
         )

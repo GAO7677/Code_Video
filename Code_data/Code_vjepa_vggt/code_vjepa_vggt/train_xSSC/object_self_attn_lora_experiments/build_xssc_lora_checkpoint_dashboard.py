@@ -20,6 +20,20 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+METHOD_PLOT_STYLES = {
+    "object_only": {"marker": "P", "linestyle": "--"},
+    "full_sa": {"marker": "o", "linestyle": "-"},
+    "full_sa_resume": {"marker": "o", "linestyle": "-"},
+    "full_sa_no_object": {"marker": "X", "linestyle": (0, (5, 1))},
+    "s_head59": {"marker": "s", "linestyle": "--"},
+    "s_head59_resume": {"marker": "s", "linestyle": "--"},
+    "t_head70": {"marker": "^", "linestyle": "-."},
+    "t_head70_resume": {"marker": "^", "linestyle": "-."},
+    "slot_dedup_merge": {"marker": "D", "linestyle": ":"},
+}
+DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
@@ -677,9 +691,9 @@ def build_metric_plots(
             axis.plot(
                 [value[0] for value in values],
                 [value[1] for value in values],
-                marker="o",
-                linewidth=2,
-                markersize=4,
+                **METHOD_PLOT_STYLES.get(method["key"], DEFAULT_PLOT_STYLE),
+                linewidth=2.4,
+                markersize=5,
                 color=method["color"],
                 label=method["label"],
             )
@@ -824,9 +838,9 @@ def build_merged_metric_plots_from_points(
             axis.plot(
                 [value[0] for value in values],
                 [value[1] for value in values],
-                marker="o",
-                linewidth=2,
-                markersize=4,
+                **METHOD_PLOT_STYLES.get(method["key"], DEFAULT_PLOT_STYLE),
+                linewidth=2.4,
+                markersize=5,
                 color=method["color"],
                 label=method["label"],
             )
@@ -958,15 +972,15 @@ def build_combined_test_page(
 
 
 MERGED_METHODS = [
-    {"key": "object_only", "label": "Object-only", "color": "#657278"},
-    {"key": "full_sa", "label": "Full-SA + Object", "color": "#C4473A"},
-    {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#6D5A8D"},
-    {"key": "s_head59", "label": "S-head59 + Object", "color": "#598414"},
-    {"key": "t_head70", "label": "T-head70 + Object", "color": "#7A4EAB"},
+    {"key": "object_only", "label": "Object-only", "color": "#4D4D4D"},
+    {"key": "full_sa", "label": "Full-SA + Object", "color": "#D62728"},
+    {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
+    {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
+    {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},
     {
         "key": "slot_dedup_merge",
         "label": "Full-SA + Object + Slot-Dedup",
-        "color": "#007C83",
+        "color": "#1F77B4",
     },
 ]
 

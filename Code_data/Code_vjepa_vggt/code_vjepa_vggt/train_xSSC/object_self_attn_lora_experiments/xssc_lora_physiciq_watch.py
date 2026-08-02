@@ -427,8 +427,6 @@ def refresh_plots(
 
 
 def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
-    paths = state_paths(config)
-    phys_pending = phys_state_root(config) / "inference.pending"
     while True:
         tasks = metric_tasks(config, kind)
         if not tasks:
@@ -459,11 +457,7 @@ def metrics_loop(config: dict[str, Any], kind: str, once: bool) -> None:
                     continue
                 try:
                     if kind == "gpu":
-                        if paths["pending"].is_file() or phys_pending.is_file():
-                            continue
                         with reserve_available_gpu(config) as gpu_id:
-                            if paths["pending"].is_file() or phys_pending.is_file():
-                                continue
                             run_metric(config, kind, task, gpu_id)
                     else:
                         run_metric(config, kind, task)
