@@ -1,0 +1,72 @@
+{
+  "experiment_name": "xssc_physics_representation",
+  "primary_model": {
+    "name": "dinov3_movic_step044000",
+    "checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-044000.pth",
+    "config": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_rsfq2_ytvis_dinov3_vitl16_256/upstream/config-randsfq/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000.py"
+  },
+  "comparison_models": [
+    {
+      "name": "official_dinov2_movic_42-0035",
+      "checkpoint": "/data/gaoya/agent-data/weights/xssc_official_archive_rsfq2/rsfq2_c-movi_c/42-0035.pth",
+      "role": "primary_architecture_control"
+    },
+    {
+      "name": "official_dinov2_42-0130",
+      "checkpoint": "/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth",
+      "role": "secondary_cross_domain_control"
+    }
+  ],
+  "phase1": {
+    "physics_video_root": "/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block",
+    "appearance_video_root": "/data/gaoya/AAA_test_video/Dataset_physV/0526dp/videos/ball_block_appearance",
+    "baseline_scenario": "e07_mu05_m1",
+    "full_video": true,
+    "xssc_input_size": 256,
+    "bbox_source": "frame0_gt",
+    "gt_usage": [
+      "movic_frame0_slot_initialization",
+      "slot_identity_binding",
+      "slot_quality_audit",
+      "evaluation_only"
+    ]
+  },
+  "interventions": {
+    "scene_family": "ball_block",
+    "parameter_names": [
+      "mass",
+      "friction",
+      "restitution"
+    ],
+    "target_objects": [
+      "ball",
+      "block"
+    ],
+    "one_factor_at_a_time": true
+  },
+  "dynamics_proxy": {
+    "analytic_candidates": true,
+    "xssc_internal_candidates": true,
+    "low_capacity_supervised_candidates": true,
+    "supervision_targets": [
+      "gt_kinematics",
+      "raft"
+    ],
+    "group_split_key": "base_simulation_seed"
+  },
+  "compute": {
+    "gpu_devices": [
+      3
+    ],
+    "forbidden_gpu_devices": [
+      4
+    ],
+    "wait_for_gpu_if_busy": true,
+    "cpu_for_non_gpu_tasks": true
+  },
+  "paths": {
+    "output_root": "/data/gaoya/agent-data/outputs/xssc_physics_representation",
+    "dataset_root": "/data/gaoya/agent-data/datasets/xssc_physics_counterfactual",
+    "cache_root": "/data/gaoya/agent-data/cache/xssc_physics_representation"
+  }
+}

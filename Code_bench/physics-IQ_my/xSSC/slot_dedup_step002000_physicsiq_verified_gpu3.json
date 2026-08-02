@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "benchmark": "Physics-IQ-Verified",
+  "prompt_setting": "bpp",
+  "input_mode": "v2v",
+  "dataset_root": "/data/gaoya/dataset/Anates-Labs-Research-Physics-IQ-Verified",
+  "workspace": "/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified",
+  "input_list": "/data/gaoya/AAA_test_video/0623/test/physicsiq/physicsiq_verified/inputs/bpp/verified_v2v_bpp_198.txt",
+  "target_model_launcher": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/run_infer_slot_dedup_checkpoint.sh",
+  "model_inference_entry": "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/object_self_attn_lora_experiments/infer_xssc_object_self_attn_lora.py",
+  "checkpoint_dir": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/checkpoints/step-002000",
+  "checkpoint_sha256": "b110c1ed7a64f754c892b4d42d544fb72221cceda1f76e4d71409de64021bd3a",
+  "resolved_experiment_config": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/resolved_experiment_config.json",
+  "model_name": "full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2",
+  "run_name": "full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2-step-002000-b110c1ed7a64-bpp-run_01",
+  "run_index": 1,
+  "gpu_id": 3,
+  "inference": {
+    "height": 512,
+    "width": 896,
+    "fps": 24,
+    "conditioning_frames": 72,
+    "conditioning_seconds": 3.0,
+    "num_frames": 189,
+    "sampling_mode": "prefix",
+    "num_inference_steps": 40,
+    "guidance_scale": 5.0,
+    "seed": 42,
+    "negative_prompt": "模糊，低质量，变形，伪影，文字，水印，过曝，欠曝，颜色异常，几何扭曲，物体融化，物理不合理",
+    "input_resize_mode": "cover_crop",
+    "xssc_preprocess_mode": "center_crop",
+    "xssc_slot_temporal_mode": "last_time7",
+    "xssc_temporal_note": "Wan receives all 72 official condition frames; xSSC keeps the final extracted slot timestep and uses time embedding id 7."
+  },
+  "postprocess": {
+    "clean_prefix_frames": 69,
+    "final_frames": 120,
+    "final_fps": 24,
+    "final_seconds": 5.0
+  },
+  "case_count": 198,
+  "run_official_scoring": true
+}
