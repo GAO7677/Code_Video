@@ -56,12 +56,13 @@
   },
   "compute": {
     "gpu_devices": [
-      3
+      2
     ],
     "forbidden_gpu_devices": [
       4
     ],
-    "wait_for_gpu_if_busy": true,
+    "wait_for_gpu_if_busy": false,
+    "allow_gpu_overlap": true,
     "cpu_for_non_gpu_tasks": true
   },
   "paths": {
