@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -592,10 +593,12 @@ def load_selected_role_slots(
 def smooth_curve(values: np.ndarray, window: int = 5) -> np.ndarray:
     if window <= 1:
         return values.copy()
-    left = window // 2
-    right = window - 1 - left
-    padded = np.pad(values, (left, right), mode="edge")
-    return np.convolve(padded, np.ones(window) / window, mode="valid")
+    cumulative = np.concatenate(([0.0], np.cumsum(values, dtype=np.float64)))
+    result = np.empty_like(values, dtype=np.float64)
+    for index in range(len(values)):
+        start = max(0, index - window + 1)
+        result[index] = (cumulative[index + 1] - cumulative[start]) / (index - start + 1)
+    return result.astype(values.dtype, copy=False)
 
 
 def plot_control_dynamic_curves(
@@ -626,10 +629,159 @@ def plot_control_dynamic_curves(
                 label=label,
             )
         axis_plot.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
-        axis_plot.set_ylabel(f"{role} residual RMS")
+        axis_plot.set_ylabel(f"{role} dynamic deviation RMS")
         axis_plot.grid(alpha=0.18)
         axis_plot.legend(ncol=min(4, len(labels)), fontsize=8, loc="upper right")
     axes[-1].set_xlabel("time (seconds)")
+    figure.suptitle(title)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=160)
+    plt.close(figure)
+
+
+def checkpoint_tensor_by_suffix(state: dict[str, Any], suffix: str):
+    matches = [(key, value) for key, value in state.items() if str(key).endswith(suffix)]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one checkpoint tensor ending in {suffix}, found {[key for key, _ in matches]}")
+    return matches[0][1]
+
+
+def decoder_dynamic_ratio(config_path: Path) -> float:
+    text = config_path.read_text(encoding="utf-8")
+    match = re.search(r"^decoder_dynamic_ratio\s*=\s*([0-9.]+)", text, flags=re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f"decoder_dynamic_ratio not found in {config_path}")
+    ratio = float(match.group(1))
+    if not 0.0 < ratio < 1.0:
+        raise ValueError(f"Invalid decoder_dynamic_ratio={ratio}")
+    return ratio
+
+
+def prepare_decoder_partition_features(
+    output_dir: Path,
+    model: dict[str, Any],
+    role_slots: dict[str, np.ndarray],
+) -> tuple[dict[str, dict[str, np.ndarray]], dict[str, Any]]:
+    import torch
+    import torch.nn.functional as F
+
+    checkpoint = Path(model["xssc_checkpoint"]).expanduser().resolve()
+    config = Path(model["xssc_config"]).expanduser().resolve()
+    feature_dir = output_dir / "decoder_features"
+    metadata_path = feature_dir / "metadata.json"
+    ratio = decoder_dynamic_ratio(config)
+    expected_metadata = {
+        "checkpoint": str(checkpoint),
+        "checkpoint_size": checkpoint.stat().st_size,
+        "config": str(config),
+        "dynamic_ratio": ratio,
+        "projection": "decode.project2 Linear(no bias) + LayerNorm",
+    }
+    cached_metadata = None
+    if metadata_path.is_file():
+        cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    cache_valid = cached_metadata is not None and all(
+        cached_metadata.get(key) == value for key, value in expected_metadata.items()
+    )
+    cached_paths = {scenario: feature_dir / f"{scenario}.npz" for scenario in role_slots}
+    if cache_valid and all(path.is_file() for path in cached_paths.values()):
+        features = {}
+        for scenario, path in cached_paths.items():
+            with np.load(path) as item:
+                features[scenario] = {
+                    "static": item["static"].astype(np.float32),
+                    "dynamic": item["dynamic"].astype(np.float32),
+                }
+        return features, cached_metadata
+
+    print(f"[decoder-project2] loading {checkpoint}", flush=True)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if isinstance(state, dict) and isinstance(state.get("state_dict"), dict):
+        state = state["state_dict"]
+    linear_weight = checkpoint_tensor_by_suffix(state, "decode.project2.0.weight").float()
+    norm_weight = checkpoint_tensor_by_suffix(state, "decode.project2.1.weight").float()
+    norm_bias = checkpoint_tensor_by_suffix(state, "decode.project2.1.bias").float()
+    decoder_dim = int(linear_weight.shape[0])
+    slot_dim = int(linear_weight.shape[1])
+    dynamic_dim = int(decoder_dim * ratio)
+    static_dim = decoder_dim - dynamic_dim
+    if norm_weight.shape != (decoder_dim,) or norm_bias.shape != (decoder_dim,):
+        raise RuntimeError("Decoder project2 LayerNorm shape mismatch")
+    features = {}
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    with torch.inference_mode():
+        for scenario, slots in role_slots.items():
+            if slots.shape[-1] != slot_dim:
+                raise RuntimeError(f"Slot dim mismatch for {scenario}: {slots.shape[-1]} != {slot_dim}")
+            tensor = torch.from_numpy(slots.astype(np.float32, copy=False))
+            projected = F.linear(tensor, linear_weight)
+            projected = F.layer_norm(
+                projected,
+                (decoder_dim,),
+                weight=norm_weight,
+                bias=norm_bias,
+                eps=1.0e-5,
+            ).numpy()
+            item = {
+                "static": projected[..., :static_dim].astype(np.float32),
+                "dynamic": projected[..., static_dim:].astype(np.float32),
+            }
+            features[scenario] = item
+            np.savez_compressed(cached_paths[scenario], **item)
+    del state
+    metadata = {
+        **expected_metadata,
+        "slot_dim": slot_dim,
+        "decoder_dim": decoder_dim,
+        "static_dim": static_dim,
+        "dynamic_dim": dynamic_dim,
+        "role_order": list(ROLE_NAMES),
+        "feature_shape": {
+            "static": [150, 2, static_dim],
+            "dynamic": [150, 2, dynamic_dim],
+        },
+    }
+    write_json(metadata_path, metadata)
+    return features, metadata
+
+
+def plot_decoder_partition_curves(
+    path: Path,
+    title: str,
+    labels: list[str],
+    curves: np.ndarray,
+    fps: float = 60.0,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = ("#22d3ee", "#f59e0b", "#a78bfa", "#34d399")
+    partitions = ("decoder-static", "decoder-dynamic")
+    times = np.arange(curves.shape[1], dtype=np.float32) / fps
+    figure, axes = plt.subplots(2, 2, figsize=(15, 8), sharex=True, constrained_layout=True)
+    for partition_index, partition in enumerate(partitions):
+        for role_index, role in enumerate(ROLE_NAMES):
+            axis_plot = axes[partition_index, role_index]
+            for case_index, label in enumerate(labels):
+                curve = curves[case_index, :, partition_index, role_index]
+                color = colors[case_index % len(colors)]
+                axis_plot.plot(times, curve, color=color, alpha=0.18, linewidth=0.8)
+                axis_plot.plot(
+                    times,
+                    smooth_curve(curve),
+                    color=color,
+                    linewidth=1.8,
+                    label=label,
+                )
+            axis_plot.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
+            axis_plot.set_title(f"{partition} · {role}")
+            axis_plot.set_ylabel("initial-aligned RMS / channel")
+            axis_plot.grid(alpha=0.18)
+            axis_plot.legend(ncol=1, fontsize=7, loc="upper right")
+    for axis_plot in axes[-1]:
+        axis_plot.set_xlabel("time (seconds)")
     figure.suptitle(title)
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=160)
@@ -676,6 +828,17 @@ def build_html(output_dir: Path, result: dict[str, Any]) -> None:
     baseline_role_slots = role_slots[baseline]
     baseline_static = baseline_role_slots.mean(axis=0)
     baseline_residual = baseline_role_slots - baseline_static[None]
+    baseline_initial_aligned = baseline_role_slots - baseline_role_slots[:1]
+    decoder_features, decoder_metadata = prepare_decoder_partition_features(
+        output_dir,
+        model,
+        role_slots,
+    )
+    decoder_partitions = ("static", "dynamic")
+    baseline_decoder_initial = {
+        partition: decoder_features[baseline][partition] - decoder_features[baseline][partition][:1]
+        for partition in decoder_partitions
+    }
 
     def parameter_title(case: dict[str, Any]) -> str:
         values = case["parameters"]
@@ -689,6 +852,8 @@ def build_html(output_dir: Path, result: dict[str, Any]) -> None:
         videos = []
         rows = []
         dynamic_curves = []
+        mean_centered_curves = []
+        decoder_curves = []
         curve_labels = []
         for scenario in scenarios:
             case = case_map[scenario]
@@ -696,11 +861,31 @@ def build_html(output_dir: Path, result: dict[str, Any]) -> None:
             current_slots = role_slots[scenario]
             current_static = current_slots.mean(axis=0)
             current_residual = current_slots - current_static[None]
-            curve = np.linalg.norm(
+            mean_centered_curve = np.linalg.norm(
                 current_residual - baseline_residual,
                 axis=-1,
             ) / math.sqrt(current_slots.shape[-1])
+            current_initial_aligned = current_slots - current_slots[:1]
+            curve = np.linalg.norm(
+                current_initial_aligned - baseline_initial_aligned,
+                axis=-1,
+            ) / math.sqrt(current_slots.shape[-1])
             dynamic_curves.append(curve.astype(np.float32))
+            mean_centered_curves.append(mean_centered_curve.astype(np.float32))
+            decoder_case_curves = []
+            for partition in decoder_partitions:
+                current_decoder = decoder_features[scenario][partition]
+                current_decoder_initial = current_decoder - current_decoder[:1]
+                decoder_case_curves.append(
+                    (
+                        np.linalg.norm(
+                            current_decoder_initial - baseline_decoder_initial[partition],
+                            axis=-1,
+                        )
+                        / math.sqrt(current_decoder.shape[-1])
+                    ).astype(np.float32)
+                )
+            decoder_curves.append(np.stack(decoder_case_curves, axis=1))
             curve_labels.append(parameter_title(case))
             baseline_tag = "<span class='baseline-tag'>baseline</span>" if scenario == baseline else ""
             videos.append(
@@ -738,8 +923,10 @@ def build_html(output_dir: Path, result: dict[str, Any]) -> None:
                 f"<td>{values['centroid_rmse']:.3f}</td><td>{raft:.3f}</td></tr>"
             )
         dynamic_curves_array = np.stack(dynamic_curves, axis=0)
+        mean_centered_curves_array = np.stack(mean_centered_curves, axis=0)
+        decoder_curves_array = np.stack(decoder_curves, axis=0)
         curve_dir = output_dir / "control_curves"
-        curve_stem = f"{axis}_dynamic_residual_vs_baseline"
+        curve_stem = f"{axis}_dynamic_initial_aligned_vs_baseline"
         curve_npz = curve_dir / f"{curve_stem}.npz"
         curve_png = curve_dir / f"{curve_stem}.png"
         curve_dir.mkdir(parents=True, exist_ok=True)
@@ -749,30 +936,72 @@ def build_html(output_dir: Path, result: dict[str, Any]) -> None:
             labels=np.asarray(curve_labels),
             frame_times=np.arange(dynamic_curves_array.shape[1], dtype=np.float32) / 60.0,
             role_names=np.asarray(ROLE_NAMES),
-            dynamic_residual_rms=dynamic_curves_array,
+            dynamic_initial_aligned_rms=dynamic_curves_array,
+            dynamic_mean_centered_rms=mean_centered_curves_array,
         )
         plot_control_dynamic_curves(
             curve_png,
-            f"DINOv3 xSSC controlled {axis}: dynamic residual vs baseline",
+            f"DINOv3 xSSC controlled {axis}: initial-aligned dynamic vs baseline",
             curve_labels,
             dynamic_curves_array,
         )
+        decoder_curve_stem = f"{axis}_decoder_native_partitions_vs_baseline"
+        decoder_curve_npz = curve_dir / f"{decoder_curve_stem}.npz"
+        decoder_curve_png = curve_dir / f"{decoder_curve_stem}.png"
+        np.savez_compressed(
+            decoder_curve_npz,
+            scenarios=np.asarray(scenarios),
+            labels=np.asarray(curve_labels),
+            frame_times=np.arange(decoder_curves_array.shape[1], dtype=np.float32) / 60.0,
+            partition_names=np.asarray(decoder_partitions),
+            role_names=np.asarray(ROLE_NAMES),
+            decoder_initial_aligned_rms=decoder_curves_array,
+        )
+        plot_decoder_partition_curves(
+            decoder_curve_png,
+            f"DINOv3 xSSC controlled {axis}: native decoder partitions vs baseline",
+            curve_labels,
+            decoder_curves_array,
+        )
+        decoder_rows = []
+        for case_index, label in enumerate(curve_labels):
+            mean_values = decoder_curves_array[case_index].mean(axis=0)
+            peak_values = decoder_curves_array[case_index].max(axis=0)
+            decoder_rows.append(
+                f"<tr{' class=baseline-row' if scenarios[case_index] == baseline else ''}>"
+                f"<td>{html.escape(label)}</td>"
+                f"<td>{mean_values[0, 0]:.4f}</td><td>{mean_values[0, 1]:.4f}</td>"
+                f"<td>{mean_values[1, 0]:.4f}</td><td>{mean_values[1, 1]:.4f}</td>"
+                f"<td>{peak_values[0, 0]:.4f}</td><td>{peak_values[0, 1]:.4f}</td>"
+                f"<td>{peak_values[1, 0]:.4f}</td><td>{peak_values[1, 1]:.4f}</td></tr>"
+            )
         group_sections.append(
             f"<section class='control-group'><h2>{title}</h2><p class='muted'>{description} "
             f"所有指标均相对同一 baseline：e=0.7、μ=0.5、m=1kg。</p>"
             f"<div class='control-videos cols-{len(scenarios)}'>{''.join(videos)}</div>"
             f"<figure class='curve'><img src='{html.escape(str(curve_png.relative_to(output_dir)))}'>"
-            f"<figcaption>细线=原始逐帧值，粗线=5帧平滑；原始数组："
+            f"<figcaption>首帧对齐的动态分歧：细线=原始逐帧值，粗线=5帧平滑；原始数组："
             f"<a href='{html.escape(str(curve_npz.relative_to(output_dir)))}'>{curve_npz.name}</a></figcaption></figure>"
             f"<div class='scroll'><table><thead><tr><th>变量取值</th><th>static all</th>"
             f"<th>static ball</th><th>static block</th><th>dynamic all</th>"
             f"<th>ball dynamic</th><th>block dynamic</th><th>D_adj</th><th>frequency</th>"
             f"<th>centroid</th><th>RAFT</th></tr></thead>"
-            f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+            f"<tbody>{''.join(rows)}</tbody></table></div>"
+            f"<h3 class='subhead'>Decoder 原生 static/dynamic 通道</h3>"
+            f"<p class='muted'>decode.project2 后按前 {decoder_metadata['static_dim']} 维 static / 后 "
+            f"{decoder_metadata['dynamic_dim']} 维 dynamic 切分；曲线均按各自通道数归一化。</p>"
+            f"<figure class='curve'><img src='{html.escape(str(decoder_curve_png.relative_to(output_dir)))}'>"
+            f"<figcaption>四个面板分别为 decoder-static/dynamic × ball/block；原始曲线："
+            f"<a href='{html.escape(str(decoder_curve_npz.relative_to(output_dir)))}'>{decoder_curve_npz.name}</a>；"
+            f"逐 case 投影特征与维度说明：<a href='decoder_features/metadata.json'>decoder metadata</a></figcaption></figure>"
+            f"<div class='scroll'><table><thead><tr><th>变量取值</th>"
+            f"<th>S-ball mean</th><th>S-block mean</th><th>D-ball mean</th><th>D-block mean</th>"
+            f"<th>S-ball peak</th><th>S-block peak</th><th>D-ball peak</th><th>D-block peak</th>"
+            f"</tr></thead><tbody>{''.join(decoder_rows)}</tbody></table></div></section>"
         )
 
     page = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DINOv3 xSSC controlled-variable analysis</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:#101316;color:#edf2f7;font:13px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:5;background:#171c21;border-bottom:1px solid #38424c;padding:12px 18px}}main{{max-width:1800px;margin:auto;padding:16px}}h1{{font-size:21px;margin:0 0 5px}}h2{{font-size:18px;margin:25px 0 5px}}h3{{font-size:13px;margin:0 0 2px}}a{{color:#7dd3fc}}.muted,.scenario,figcaption{{color:#b5c0ca}}.scenario{{font-size:11px;margin:0 0 5px}}.note{{border-left:3px solid #22d3ee;padding:8px 11px;background:#162027}}.control-group{{padding-bottom:18px;border-bottom:1px solid #34404a}}.control-videos{{display:grid;gap:10px;margin:10px 0 12px}}.cols-4{{grid-template-columns:repeat(4,minmax(0,1fr))}}.cols-3{{grid-template-columns:repeat(3,minmax(0,1fr))}}figure{{margin:0;min-width:0}}video{{display:block;width:100%;aspect-ratio:1/1;object-fit:contain;max-height:340px;background:#000}}figcaption{{font-size:11px;padding-top:4px}}.curve{{margin:10px 0 12px}}.curve img{{display:block;width:100%;max-width:1500px;background:#fff}}.baseline-tag{{display:inline-block;padding:1px 5px;margin-left:4px;background:#075985;color:#e0f2fe;font-size:10px}}.scroll{{overflow:auto}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #37414a;padding:5px 7px;text-align:right}}th:first-child,td:first-child{{text-align:left}}th{{background:#1d242b}}td{{background:#13181d}}.baseline-row td{{background:#13242c;color:#d8f6ff}}@media(max-width:900px){{.cols-4,.cols-3{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:560px){{.cols-4,.cols-3{{grid-template-columns:1fr}}}}</style></head><body><header><h1>DINOv3 MOVi-C step-044000 · 控制变量分析</h1><div class="muted">150 frames @ 60 FPS · slots [150,11,512]</div></header><main>
+*{{box-sizing:border-box}}body{{margin:0;background:#101316;color:#edf2f7;font:13px system-ui,sans-serif;letter-spacing:0}}header{{position:sticky;top:0;z-index:5;background:#171c21;border-bottom:1px solid #38424c;padding:12px 18px}}main{{max-width:1800px;margin:auto;padding:16px}}h1{{font-size:21px;margin:0 0 5px}}h2{{font-size:18px;margin:25px 0 5px}}h3{{font-size:13px;margin:0 0 2px}}.subhead{{font-size:16px;margin:20px 0 4px;color:#d8f6ff}}a{{color:#7dd3fc}}.muted,.scenario,figcaption{{color:#b5c0ca}}.scenario{{font-size:11px;margin:0 0 5px}}.note{{border-left:3px solid #22d3ee;padding:8px 11px;background:#162027}}.control-group{{padding-bottom:18px;border-bottom:1px solid #34404a}}.control-videos{{display:grid;gap:10px;margin:10px 0 12px}}.cols-4{{grid-template-columns:repeat(4,minmax(0,1fr))}}.cols-3{{grid-template-columns:repeat(3,minmax(0,1fr))}}figure{{margin:0;min-width:0}}video{{display:block;width:100%;aspect-ratio:1/1;object-fit:contain;max-height:340px;background:#000}}figcaption{{font-size:11px;padding-top:4px}}.curve{{margin:10px 0 12px}}.curve img{{display:block;width:100%;max-width:1500px;background:#fff}}.baseline-tag{{display:inline-block;padding:1px 5px;margin-left:4px;background:#075985;color:#e0f2fe;font-size:10px}}.scroll{{overflow:auto}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #37414a;padding:5px 7px;text-align:right}}th:first-child,td:first-child{{text-align:left}}th{{background:#1d242b}}td{{background:#13181d}}.baseline-row td{{background:#13242c;color:#d8f6ff}}@media(max-width:900px){{.cols-4,.cols-3{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:560px){{.cols-4,.cols-3{{grid-template-columns:1fr}}}}</style></head><body><header><h1>DINOv3 MOVi-C step-044000 · 控制变量分析</h1><div class="muted">150 frames @ 60 FPS · slots [150,11,512]</div></header><main>
 <p class="note">只分析 <b>{html.escape(model['short_name'])}</b>。红色 overlay=ball slot，青色 overlay=block slot，细轮廓=仿真 GT；GT 仅用于绑定匿名 slot 身份。</p>
 {''.join(group_sections)}</main></body></html>"""
     (output_dir / "index.html").write_text(page, encoding="utf-8")
