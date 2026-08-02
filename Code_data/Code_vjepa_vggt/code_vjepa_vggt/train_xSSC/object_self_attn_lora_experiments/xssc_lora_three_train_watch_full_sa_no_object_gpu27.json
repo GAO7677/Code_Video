@@ -20,13 +20,7 @@
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
     "gpu_ids": [
-      0,
-      1,
-      2,
-      3,
-      5,
-      6,
-      7
+      5
     ],
     "gpu_ready_max_used_mib": 8000,
     "expected_cases": 20,
@@ -202,7 +196,8 @@
       "color": "#007C83",
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu67/from_scratch_20260731T083348Z_full_sa_slot_dedup_merge_gpu67/checkpoints",
-        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu23_resume_step2391/resume_step002391_20260802T010000Z/checkpoints"
       ]
     },
     {
@@ -216,7 +211,8 @@
         }
       ],
       "watch_roots": [
-        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints"
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu67_resume_step6/resume_step000006_20260801T165700Z/checkpoints"
       ]
     }
   ]

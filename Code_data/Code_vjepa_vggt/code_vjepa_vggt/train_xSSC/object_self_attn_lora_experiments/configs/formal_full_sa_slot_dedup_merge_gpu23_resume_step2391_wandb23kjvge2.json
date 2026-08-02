@@ -1,0 +1,14 @@
+{
+  "extends": "formal_full_sa_slot_dedup_merge_gpu56_resume_step1500_wandb23kjvge2.json",
+  "experiment": {
+    "name": "full_sa_slot_dedup_merge_gpu23_resume_step2391"
+  },
+  "launch": {
+    "gpu_set": "2,3",
+    "num_processes": 2,
+    "main_process_port": 29523
+  },
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_slot_dedup_merge_gpu56_resume_wandb23kjvge2/resume_step1500_20260801T070000Z/checkpoints/interrupted-latest/training_state.pt"
+  }
+}
