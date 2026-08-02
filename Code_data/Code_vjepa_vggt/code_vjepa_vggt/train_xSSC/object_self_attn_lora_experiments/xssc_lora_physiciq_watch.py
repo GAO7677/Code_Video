@@ -381,21 +381,13 @@ def run_metric(
         },
     )
     log(f"PhysicIQ metric complete method={method_key} step={step} metric={metric}")
-    refresh_plots_if_complete(config, manifest)
+    refresh_plots(config, manifest)
 
 
-def refresh_plots_if_complete(
+def refresh_plots(
     config: dict[str, Any],
     manifest: dict[str, Any],
 ) -> None:
-    method_key = manifest["method_key"]
-    step = int(manifest["step"])
-    expected_metrics = config["metrics"]["cpu"] + config["metrics"]["gpu"]
-    if not all(
-        phys_metric_marker_path(config, method_key, step, metric).is_file()
-        for metric in expected_metrics
-    ):
-        return
     plot_log = (
         Path(config["paths"]["watch_root"]).resolve()
         / "logs"

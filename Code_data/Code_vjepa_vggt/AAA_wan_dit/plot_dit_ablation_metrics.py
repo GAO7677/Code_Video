@@ -35,7 +35,8 @@ TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"full_sa|full_sa_resume|"
     r"s_head59|s_head59_resume|"
     r"t_head70|t_head70_resume|"
-    r"slot_dedup_merge"
+    r"slot_dedup_merge|"
+    r"full_sa_no_object"
     r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
 )
 TRAINING_VARIANT_ALIASES = {
@@ -89,17 +90,25 @@ TRAINING_VARIANT_LABELS = {
     "s_head59": "S-head59 + Object",
     "t_head70": "T-head70 + Object",
     "slot_dedup_merge": "Full-SA + Object + Slot-Dedup",
+    "full_sa_no_object": "Full-SA + No-Object",
 }
 TRAINING_VARIANT_COLORS = {
     "full_sa": "#C4473A",
     "s_head59": "#598414",
     "t_head70": "#7256A8",
     "slot_dedup_merge": "#007C83",
+    "full_sa_no_object": "#6D5A8D",
 }
 TRAINING_VARIANT_ORDER = {
     variant: index
     for index, variant in enumerate(
-        ("full_sa", "s_head59", "t_head70", "slot_dedup_merge")
+        (
+            "full_sa",
+            "s_head59",
+            "t_head70",
+            "slot_dedup_merge",
+            "full_sa_no_object",
+        )
     )
 }
 
