@@ -23,6 +23,9 @@ from AAA_my_test import serve_latent_block_head_viewer as base
 ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_rank_extremes_alltoken_qk_5case"
 )
+ALL720_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/three_model_all720_uniform_diagonal_5case"
+)
 SOURCE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case"
 )
@@ -72,6 +75,11 @@ PAGE_S039 = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><m
 </style></head><body><main><div class="top"><div><div class="eyebrow">5 CASES · S039 ONLY · 30 + 30 COMBINATIONS</div><h1>PCK@32 extremes<br>at the final step</h1></div><a class="back" href="/">Back to atlas</a></div><p class="note">每张卡固定展示 S039，内部从左到右依次为 GT teacher-forced、LoRA、Wan2.2 Baseline。Top 30 放在第一行，Bottom 30 放在第二行，均按 PCK@32 排名横向排列。</p><section class="controls"><label>Case<select id="case"></select></label><label>Matrix type<select id="kind"><option value="attention">log10 Softmax attention</option><option value="raw">Raw QK / sqrt(d)</option><option value="temporal">7×7 temporal attention</option></select></label></section><p class="status" id="status"></p><section><div class="section-title"><h2>Top PCK@32 30</h2><span>RANK #1 TO #30</span></div><div class="rank-row" id="topRow"></div></section><section><div class="section-title"><h2>Bottom PCK@32 30</h2><span>LOWEST TO 30TH-LOWEST</span></div><div class="rank-row" id="bottomRow"></div></section></main><script>
 const q=id=>document.getElementById(id);let DATA;function esc(x){return String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function init(){DATA=await fetch('/api/all-token/catalog').then(r=>r.json());q('case').innerHTML=DATA.cases.map(c=>`<option>${esc(c)}</option>`).join('');q('case').addEventListener('change',render);q('kind').addEventListener('change',render);render()}function cards(group){const c=q('case').value,k=q('kind').value;return DATA.combinations.filter(x=>x.group===group).map((x,i)=>{const b=String(x.block).padStart(2,'0'),h=String(x.head).padStart(2,'0'),score=`#${i+1} · mean PCK@32 ${Number(x.pck32).toFixed(3)}`,src=`/api/all-token/s039-strip?case=${encodeURIComponent(c)}&block=${x.block}&head=${x.head}&kind=${k}&v=2`;return`<article class="card"><h3>L${b} / H${h}<span>${score}</span></h3><img loading="lazy" src="${src}" alt="L${b} H${h} S039 three-model QK"></article>`}).join('')}function render(){q('status').textContent=`${q('case').value} · S039 · incomplete models are marked PENDING.`;q('topRow').innerHTML=cards('Top stable');q('bottomRow').innerHTML=cards('Bottom PCK@32')}init();
 </script></body></html>'''
+
+
+CURVE_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>All 720 uniform-diagonal curves</title><style>
+:root{--paper:#ece7da;--ink:#18221e;--card:#fffdf7;--rust:#c65738;--line:#aaa392}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 5% 0,#d28b6335,transparent 34rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1700px,calc(100% - 24px));margin:auto;padding:28px 0 60px}h1{font:700 clamp(40px,6vw,78px)/.92 Georgia,serif;letter-spacing:-.04em;margin:8px 0}.eyebrow{color:var(--rust);font-size:11px;font-weight:900;letter-spacing:.15em}.lead{max-width:1050px;line-height:1.6;color:#59635e}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0}.stats span{padding:14px;background:var(--card);border:1px solid var(--line)}.stats b{display:block;font:700 28px Georgia,serif}.plot{display:block;width:100%;background:white;border:1px solid var(--line)}.links{display:flex;gap:16px;margin:14px 0}.links a{color:var(--ink);font-weight:900}.back{float:right}@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}}
+</style></head><body><main><a class="back" href="/">Back to atlas</a><div class="eyebrow">S039 · 30 BLOCKS × 24 HEADS · 3 MODELS × 5 CASES</div><h1>Uniform-diagonal<br>distribution</h1><p class="lead">Joint score = 帧内同空间对角带质量 × 对角质量在7帧间的归一化熵。第一幅曲线按 Joint 排序，第二幅沿 PCK@32 排名观察指标变化，第三幅直接显示 720 个组合的 Joint–PCK 关系。</p><section class="stats"><span><b>720</b>combinations</span><span><b>10,800</b>case-model rows</span><span><b>0.581</b>Pearson r</span><span><b>0.614</b>Spearman rho</span></section><img class="plot" src="/api/all720/curve?v=1" alt="All 720 uniform diagonal curves"><div class="links"><a href="/downloads/all720-uniform-diagonal.csv">Download 720-row CSV</a><a href="/all-token-qk?v=6">Top30 / Bottom30 heatmaps</a></div></main></body></html>'''
 
 
 def catalog() -> dict:
@@ -299,6 +307,8 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(PORTAL.encode(), "text/html; charset=utf-8")
             if parsed.path == "/all-token-qk":
                 return self.send_payload(PAGE_S039.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/uniform-diagonal-curves":
+                return self.send_payload(CURVE_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/api/all-token/catalog":
                 payload = json.dumps(catalog(), ensure_ascii=False).encode()
                 return self.send_payload(payload, "application/json; charset=utf-8")
@@ -308,6 +318,16 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(contact_sheet_png(parse_qs(parsed.query)), "image/png")
             if parsed.path == "/api/all-token/s039-strip":
                 return self.send_payload(s039_strip_png(parse_qs(parsed.query)), "image/png")
+            if parsed.path == "/api/all720/curve":
+                return self.send_payload(
+                    (ALL720_ROOT / "all720_uniform_diagonal_curves.png").read_bytes(),
+                    "image/png",
+                )
+            if parsed.path == "/downloads/all720-uniform-diagonal.csv":
+                return self.send_payload(
+                    (ALL720_ROOT / "all720_uniform_diagonal_summary.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
             return super().do_GET()
         except (FileNotFoundError, ValueError) as error:
             return self.send_payload(str(error).encode(), "text/plain; charset=utf-8", 404)

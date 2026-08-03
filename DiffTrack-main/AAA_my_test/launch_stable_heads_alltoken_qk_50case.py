@@ -16,7 +16,7 @@ DEFAULT_OUTPUT = Path(
     "/data/gaoya/agent-data/outputs/three_model_stable_heads_alltoken_qk_50case"
 )
 PYTHON = "/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
-STEPS = tuple(range(40))
+STEPS = (39,)
 
 
 def parse_args() -> argparse.Namespace:

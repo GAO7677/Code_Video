@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -39,6 +41,38 @@ def selected_heads_from_environment() -> dict[int, tuple[int, ...]]:
 SELECTED_HEADS = selected_heads_from_environment()
 OUTPUT_BINS = 512
 QUERY_CHUNK = 64
+METRICS_ONLY = os.environ.get("ALLTOKEN_METRICS_ONLY", "0") == "1"
+
+
+def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
+    """Summarize same-spatial-position attention without retaining the matrix."""
+    count = int(attention.shape[-1])
+    frame = np.floor(np.arange(count) * 7 / count).astype(np.int64)
+    frame_ids = [np.flatnonzero(frame == index) for index in range(7)]
+    query_mask = frame == 1
+    diagonal = np.empty((count, 7), dtype=np.float32)
+    for query in range(count):
+        source = frame_ids[int(frame[query])]
+        position = np.searchsorted(source, query) / max(len(source) - 1, 1)
+        for target_time, keys in enumerate(frame_ids):
+            center = int(round(position * (len(keys) - 1)))
+            selected = keys[max(0, center - 1) : min(len(keys), center + 2)]
+            diagonal[query, target_time] = attention[query, selected].sum()
+    total = diagonal.sum(axis=1)
+    distribution = diagonal / np.maximum(total[:, None], 1e-12)
+    entropy = -(
+        distribution * np.log(np.maximum(distribution, 1e-12))
+    ).sum(axis=1) / math.log(7)
+    return {
+        "queryframe_diagonal_mass": float(total[query_mask].mean()),
+        "queryframe_diagonal_frame_entropy": float(entropy[query_mask].mean()),
+        "queryframe_joint": float((total * entropy)[query_mask].mean()),
+        "queryframe_balanced_diagonal": float((7 * diagonal.min(axis=1))[query_mask].mean()),
+        "alltoken_diagonal_mass": float(total.mean()),
+        "alltoken_diagonal_frame_entropy": float(entropy.mean()),
+        "alltoken_joint": float((total * entropy).mean()),
+        "alltoken_balanced_diagonal": float((7 * diagonal.min(axis=1)).mean()),
+    }
 
 
 OriginalCapture = probe.GenerationCapture
@@ -53,6 +87,7 @@ class StableAllTokenCapture(OriginalCapture):
         global active_capture
         super().__init__(*args, **kwargs)
         self.all_token_captures: dict[tuple[int, int], tuple] = {}
+        self.diagonal_metric_rows: list[dict[str, float | int]] = []
         active_capture = self
 
     def _consume_qk(self, layer, q, k):
@@ -66,7 +101,7 @@ class StableAllTokenCapture(OriginalCapture):
                 raise RuntimeError("all-token Q/K capture has no latent grid")
             q_flat = q.reshape(batch, sequence, heads * head_dim)
             k_flat = k.reshape(batch, sequence, heads * head_dim)
-            self.all_token_captures[key] = pool_selected_qk_matrices(
+            captured = pool_selected_qk_matrices(
                 q_flat,
                 k_flat,
                 num_heads=int(heads),
@@ -75,11 +110,48 @@ class StableAllTokenCapture(OriginalCapture):
                 query_chunk=QUERY_CHUNK,
                 temporal_bins=int(self.current_grid[0]),
             )
+            if METRICS_ONLY:
+                attention = captured[1].astype(np.float32)
+                for index, head in enumerate(selected):
+                    self.diagonal_metric_rows.append(
+                        {
+                            "block": int(layer),
+                            "head": int(head),
+                            "step": int(self.current_step),
+                            **uniform_diagonal_metrics(attention[index]),
+                        }
+                    )
+            else:
+                self.all_token_captures[key] = captured
         super()._consume_qk(layer, q, k)
 
     def save_all_token(self, case_dir: Path) -> None:
         output = case_dir / "all_token_qk"
         output.mkdir(parents=True, exist_ok=True)
+        if METRICS_ONLY:
+            metrics_path = output / "uniform_diagonal_metrics.csv"
+            with metrics_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=list(self.diagonal_metric_rows[0])
+                )
+                writer.writeheader()
+                writer.writerows(self.diagonal_metric_rows)
+            (output / "complete.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "uniform_diagonal_metrics_only",
+                        "rows": len(self.diagonal_metric_rows),
+                        "blocks": sorted(SELECTED_HEADS),
+                        "steps": sorted({row["step"] for row in self.diagonal_metric_rows}),
+                        "output_bins": OUTPUT_BINS,
+                        "query_chunk": QUERY_CHUNK,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return
         for block, selected_heads in SELECTED_HEADS.items():
             steps = sorted(
                 step for captured_block, step in self.all_token_captures

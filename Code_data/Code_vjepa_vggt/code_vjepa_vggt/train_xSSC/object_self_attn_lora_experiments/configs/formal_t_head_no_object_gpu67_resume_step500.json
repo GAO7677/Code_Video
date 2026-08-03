@@ -1,0 +1,11 @@
+{
+  "extends": "formal_t_head_no_object_gpu67.json",
+  "checkpointing": {
+    "resume_from": "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/from_scratch_20260803T062822Z/checkpoints/step-000500/training_state.pt"
+  },
+  "logging": {
+    "wandb_run_id": "wfjzhcpr",
+    "wandb_resume": "must",
+    "wandb_name": "common_t_head_full70_no_object_gpu67_from_scratch"
+  }
+}
