@@ -156,10 +156,10 @@ def role_boxes_from_masks(mask_path: Path, num_slots: int, num_frames: int) -> n
         rows, cols = np.where(mask > 1.0e-4)
         if len(rows) == 0:
             raise RuntimeError(f"Empty frame-0 role {role_id}: {mask_path}")
-        # Official MOVi preprocessing converts source xyxy boxes to yxyx before
-        # passing them to RandSFQ2.initializ (dataset_movi.py:231).
+        # RandSFQ2 receives normalized LTRB (xyxy). The legacy MOVi loader's
+        # [1, 0, 3, 2] permutation converts source TFDS yxyx annotations to LTRB.
         boxes[0, :, role_id] = np.asarray(
-            [rows.min() / 16.0, cols.min() / 16.0, (rows.max() + 1) / 16.0, (cols.max() + 1) / 16.0],
+            [cols.min() / 16.0, rows.min() / 16.0, (cols.max() + 1) / 16.0, (rows.max() + 1) / 16.0],
             dtype=np.float32,
         )
     return boxes
@@ -186,7 +186,7 @@ def prepare(args: argparse.Namespace, config: dict[str, Any]) -> tuple[list[dict
         "protocol": {
             "frames": 150,
             "preprocess": "preserve aspect ratio, resize to fit 256x256, ImageNet-mean padding",
-            "movic_initialization": "frame-0 simulator-GT ball/block boxes in normalized yxyx order, repeated on the condition tensor; only t=0 is consumed by initializ",
+            "movic_initialization": "frame-0 simulator-GT ball/block boxes in normalized LTRB (xyxy) order, repeated on the condition tensor; only t=0 is consumed by initializ",
             "ytvis_initialization": "official NormalShared; no bbox input",
             "role_binding": "Hungarian assignment on full-video mean soft recall against simulator GT masks",
             "gt_limit": "GT is used only for MOVi-C frame-0 initialization, slot quality audit, and evaluation",

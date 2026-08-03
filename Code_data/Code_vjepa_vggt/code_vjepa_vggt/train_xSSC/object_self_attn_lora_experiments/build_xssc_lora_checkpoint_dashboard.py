@@ -30,6 +30,10 @@ METHOD_PLOT_STYLES = {
     "s_head59_resume": {"marker": "s", "linestyle": "--"},
     "t_head70": {"marker": "^", "linestyle": "-."},
     "t_head70_resume": {"marker": "^", "linestyle": "-."},
+    "t_head70_slot_dedup_merge": {
+        "marker": "v",
+        "linestyle": (0, (3, 1, 1, 1)),
+    },
     "slot_dedup_merge": {"marker": "D", "linestyle": ":"},
 }
 DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
@@ -1130,6 +1134,11 @@ MERGED_METHODS = [
     {"key": "full_sa_no_object", "label": "Full-SA + No-Object", "color": "#FF7F0E"},
     {"key": "s_head59", "label": "S-head59 + Object", "color": "#2CA02C"},
     {"key": "t_head70", "label": "T-head70 + Object", "color": "#9467BD"},
+    {
+        "key": "t_head70_slot_dedup_merge",
+        "label": "T-head70 + Object + Slot-Dedup",
+        "color": "#17BECF",
+    },
     {
         "key": "slot_dedup_merge",
         "label": "Full-SA + Object + Slot-Dedup",

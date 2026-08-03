@@ -4,8 +4,8 @@ set -euo pipefail
 cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_physics_representation
 
 GPU=2
-SMOKE_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_v2_yxyx_smoke
-FORMAL_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_v2_yxyx
+SMOKE_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_protocol_smoke
+FORMAL_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1
 
 echo "[smoke] physical_gpu=${GPU}"
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python extract_phase1_features.py \
