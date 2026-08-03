@@ -16,7 +16,7 @@ import math
 import sys
 from pathlib import Path
 
-import cv2
+import imageio.v2 as imageio
 import numpy as np
 import torch
 import torchvision
@@ -82,18 +82,11 @@ def crop_and_resize(image: Image.Image, height: int, width: int) -> Image.Image:
 
 
 def load_condition(path: Path, fps: int, frame_count: int, height: int, width: int) -> list[Image.Image]:
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        raise RuntimeError(f"cannot open condition video: {path}")
-    actual_fps = float(capture.get(cv2.CAP_PROP_FPS))
     frames: list[Image.Image] = []
-    while True:
-        ok, bgr = capture.read()
-        if not ok:
-            break
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        frames.append(crop_and_resize(Image.fromarray(rgb), height, width))
-    capture.release()
+    with imageio.get_reader(str(path), format="FFMPEG") as reader:
+        actual_fps = float(reader.get_meta_data()["fps"])
+        for rgb in reader:
+            frames.append(crop_and_resize(Image.fromarray(rgb).convert("RGB"), height, width))
     if not math.isclose(actual_fps, fps, abs_tol=0.01):
         raise ValueError(f"condition FPS mismatch for {path}: expected {fps}, got {actual_fps}")
     if len(frames) != frame_count:
@@ -170,10 +163,9 @@ def generate_future(pipe, prompt: str, condition: list[Image.Image], args: argpa
 
 
 def probe_submission(path: Path, fps: int, frames: int) -> None:
-    capture = cv2.VideoCapture(str(path))
-    actual_fps = float(capture.get(cv2.CAP_PROP_FPS))
-    actual_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    capture.release()
+    with imageio.get_reader(str(path), format="FFMPEG") as reader:
+        actual_fps = float(reader.get_meta_data()["fps"])
+        actual_frames = int(reader.count_frames())
     if not math.isclose(actual_fps, fps, abs_tol=0.01) or actual_frames != frames:
         raise RuntimeError(
             f"invalid submission {path}: expected {frames}@{fps}, got {actual_frames}@{actual_fps}"

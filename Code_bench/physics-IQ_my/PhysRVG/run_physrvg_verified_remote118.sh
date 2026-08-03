@@ -63,7 +63,7 @@ if [[ "${ACTION}" != "score" ]]; then
   [[ "${FORCE}" == "1" ]] && generate_cmd+=(--force)
   printf -v remote_generate '%q ' "${generate_cmd[@]}"
   echo "[generate] host=${REMOTE_HOST} physical_gpu=${GPU} run=${RUN_NAME}"
-  ssh -t "${REMOTE_HOST}" "cd '${REMOTE_PHYSRVG_ROOT}' && CUDA_VISIBLE_DEVICES='${GPU}' PYTHONNOUSERSITE=1 ${remote_generate}"
+  ssh -t "${REMOTE_HOST}" "cd '${REMOTE_PHYSRVG_ROOT}' && CUDA_VISIBLE_DEVICES='${GPU}' ${remote_generate}"
 fi
 
 if [[ "${ACTION}" != "generate" ]]; then
