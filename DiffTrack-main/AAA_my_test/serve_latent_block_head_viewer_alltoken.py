@@ -26,16 +26,14 @@ ROOT = Path(
 SOURCE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case"
 )
-TOP_COMBINATIONS = ((20, 9), (20, 17), (26, 7), (18, 11), (24, 6), (19, 0))
-BOTTOM_COMBINATIONS = ((0, 9), (1, 17), (1, 23), (8, 13), (1, 22), (2, 9))
+RANKING = json.loads((ROOT / "ranking_top_bottom30.json").read_text(encoding="utf-8"))
+TOP_COMBINATIONS = tuple((item["block"], item["head"]) for item in RANKING["top"])
+BOTTOM_COMBINATIONS = tuple((item["block"], item["head"]) for item in RANKING["bottom"])
 COMBINATIONS = TOP_COMBINATIONS + BOTTOM_COMBINATIONS
-BOTTOM_PCK32 = {
-    (0, 9): 0.187529,
-    (1, 17): 0.779056,
-    (1, 23): 1.199664,
-    (8, 13): 2.475224,
-    (1, 22): 3.007380,
-    (2, 9): 3.478668,
+PCK32 = {
+    (item["block"], item["head"]): item["pck32"]
+    for group in (RANKING["top"], RANKING["bottom"])
+    for item in group
 }
 CASE_KEYS = tuple(f"case_{index:03d}" for index in range(1, 6))
 MODELS = (("gt", "GT teacher-forced"), ("lora", "LoRA step-000500"), ("baseline", "Wan2.2 Baseline"))
@@ -52,7 +50,7 @@ BASE_HANDLER = next(
 
 PORTAL = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DiffTrack atlas</title><style>
 :root{--paper:#eee9dc;--ink:#17211e;--card:#fffdf8;--line:#b8b09f;--rust:#b64a31;--teal:#176654}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 5% 0,#d7764b35,transparent 36rem),radial-gradient(circle at 95% 5%,#4b9a8035,transparent 34rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1400px,calc(100% - 28px));margin:auto;padding:35px 0 70px}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}h1{font-size:clamp(42px,7vw,90px);line-height:.9;margin:8px 0 18px;letter-spacing:-.05em}.eyebrow{color:var(--rust);font-weight:900;letter-spacing:.16em;font-size:12px}.lead{max-width:900px;line-height:1.6}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:28px}.card{display:flex;min-height:260px;flex-direction:column;justify-content:space-between;padding:22px;background:var(--card);border:1px solid var(--line);color:inherit;text-decoration:none;border-radius:3px 28px 3px 3px}.card.new{background:#13251f;color:white;border-color:#13251f}.card h2{font-size:30px;margin:8px 0}.card p{line-height:1.55;opacity:.76}.go{font-size:12px;font-weight:900;letter-spacing:.08em;color:var(--rust)}.new .go{color:#e39a78}@media(max-width:900px){.grid{grid-template-columns:1fr}}
-</style></head><body><main><div class="eyebrow">DIFFTRACK · THREE-MODEL ATTENTION ATLAS</div><h1>Motion lives<br>inside attention.</h1><p class="lead">50-case 指标排名，以及 5 个代表 case 上 Top stable 6 与 Bottom PCK@32 6 的 all-token Q@K 精确 softmax 热力图。</p><section class="grid"><a class="card new" href="/all-token-qk?v=3"><div><span>01 / RANK EXTREMES</span><h2>Top vs Bottom Q@K</h2><p>三模型并排；12 个组合、40 个时间步，包含 Raw QK、Softmax attention 和 7×7 temporal matrix。</p></div><span class="go">OPEN ALL-TOKEN MATRICES</span></a><a class="card" href="/all-steps/overlays?v=2"><div><span>02 / TRAJECTORIES</span><h2>All-step overlays</h2><p>按三模型 combined global ranking 浏览 GT 与 Q@K 轨迹。</p></div><span class="go">OPEN OVERLAYS</span></a><a class="card" href="/all-steps/rankings?v=3"><div><span>03 / METRICS</span><h2>Global rankings</h2><p>完整 Step × Block × Head 指标、profile 与跨模型综合排名。</p></div><span class="go">OPEN RANKINGS</span></a></section></main></body></html>'''
+</style></head><body><main><div class="eyebrow">DIFFTRACK · THREE-MODEL ATTENTION ATLAS</div><h1>Motion lives<br>inside attention.</h1><p class="lead">50-case 指标排名，以及 5 个代表 case 上 Top 30 与 Bottom 30 的 S039 all-token Q@K 热力图。</p><section class="grid"><a class="card new" href="/all-token-qk?v=5"><div><span>01 / RANK EXTREMES</span><h2>Top30 vs Bottom30</h2><p>每个组合固定 S039，GT、LoRA、Baseline 三模型并排；Top 与 Bottom 各占一行。</p></div><span class="go">OPEN ALL-TOKEN MATRICES</span></a><a class="card" href="/all-steps/overlays?v=2"><div><span>02 / TRAJECTORIES</span><h2>All-step overlays</h2><p>按三模型 combined global ranking 浏览 GT 与 Q@K 轨迹。</p></div><span class="go">OPEN OVERLAYS</span></a><a class="card" href="/all-steps/rankings?v=3"><div><span>03 / METRICS</span><h2>Global rankings</h2><p>完整 Step × Block × Head 指标、profile 与跨模型综合排名。</p></div><span class="go">OPEN RANKINGS</span></a></section></main></body></html>'''
 
 
 PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stable-head all-token Q@K</title><style>
@@ -70,9 +68,9 @@ const q=id=>document.getElementById(id);let DATA;function esc(x){return String(x
 
 
 PAGE_S039 = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>S039 top and bottom Q@K</title><style>
-:root{--paper:#ece7da;--ink:#18221e;--panel:#101714;--cream:#fffdf7;--rust:#c65738;--teal:#287a67;--line:#aaa392}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#d28b6330,transparent 34rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2200px,calc(100% - 24px));margin:auto;padding:24px 0 60px}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}.top{display:flex;justify-content:space-between;gap:25px;align-items:end}.eyebrow{color:var(--rust);font-weight:900;letter-spacing:.14em;font-size:11px}h1{font-size:clamp(38px,5vw,72px);line-height:.92;margin:7px 0}.note{max-width:1000px;line-height:1.55;color:#59635e}.back{color:var(--ink);font-weight:900}.controls{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin:20px 0;padding:14px;background:var(--cream);border:1px solid var(--line)}label{font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}select{display:block;width:100%;margin-top:5px;padding:9px;background:white;border:1px solid #5f665f;font-weight:800}.section-title{display:flex;align-items:baseline;justify-content:space-between;margin:28px 0 9px;border-bottom:2px solid var(--ink)}.section-title h2{font-size:30px;margin:0 0 5px}.section-title span{font-size:11px;font-weight:900;color:#68726d}.rank-row{display:grid;grid-template-columns:repeat(6,minmax(235px,1fr));gap:8px;overflow-x:auto;padding-bottom:8px}.card{background:var(--panel);color:white;padding:8px;border-radius:3px 18px 3px 3px;min-width:235px}.card h3{margin:2px 2px 7px;font:700 18px Georgia,serif}.card h3 span{display:block;margin-top:3px;color:#a9b8b0;font:700 10px "Trebuchet MS",sans-serif}.card img{display:block;width:100%;aspect-ratio:3/1;background:#050806;object-fit:contain}.status{font-size:12px;font-weight:900;color:var(--teal)}@media(max-width:650px){.controls{grid-template-columns:1fr}.top{display:block}.rank-row{grid-template-columns:repeat(6,270px)}}
-</style></head><body><main><div class="top"><div><div class="eyebrow">5 CASES · S039 ONLY · THREE MODELS PER CARD</div><h1>PCK@32 extremes<br>at the final step</h1></div><a class="back" href="/">Back to atlas</a></div><p class="note">每张卡固定展示 S039，内部从左到右依次为 GT teacher-forced、LoRA、Wan2.2 Baseline。Top stable 6 放在第一行，Bottom PCK@32 6 放在第二行。</p><section class="controls"><label>Case<select id="case"></select></label><label>Matrix type<select id="kind"><option value="attention">log10 Softmax attention</option><option value="raw">Raw QK / sqrt(d)</option><option value="temporal">7×7 temporal attention</option></select></label></section><p class="status" id="status"></p><section><div class="section-title"><h2>Top stable 6</h2><span>CROSS-MODEL · MULTI-STEP STABILITY</span></div><div class="rank-row" id="topRow"></div></section><section><div class="section-title"><h2>Bottom PCK@32 6</h2><span>THREE-MODEL MEAN · S010-S039 OBJECT PCK@32</span></div><div class="rank-row" id="bottomRow"></div></section></main><script>
-const q=id=>document.getElementById(id);let DATA;function esc(x){return String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function init(){DATA=await fetch('/api/all-token/catalog').then(r=>r.json());q('case').innerHTML=DATA.cases.map(c=>`<option>${esc(c)}</option>`).join('');q('case').addEventListener('change',render);q('kind').addEventListener('change',render);render()}function cards(group){const c=q('case').value,k=q('kind').value;return DATA.combinations.filter(x=>x.group===group).map(x=>{const b=String(x.block).padStart(2,'0'),h=String(x.head).padStart(2,'0'),score=x.pck32==null?'stable across models/steps':`mean PCK@32 ${Number(x.pck32).toFixed(3)}`,src=`/api/all-token/s039-strip?case=${encodeURIComponent(c)}&block=${x.block}&head=${x.head}&kind=${k}&v=1`;return`<article class="card"><h3>L${b} / H${h}<span>${score}</span></h3><img loading="lazy" src="${src}" alt="L${b} H${h} S039 three-model QK"></article>`}).join('')}function render(){q('status').textContent=`${q('case').value} · S039 · incomplete models are marked PENDING.`;q('topRow').innerHTML=cards('Top stable');q('bottomRow').innerHTML=cards('Bottom PCK@32')}init();
+:root{--paper:#ece7da;--ink:#18221e;--panel:#101714;--cream:#fffdf7;--rust:#c65738;--teal:#287a67;--line:#aaa392}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#d28b6330,transparent 34rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2200px,calc(100% - 24px));margin:auto;padding:24px 0 60px}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}.top{display:flex;justify-content:space-between;gap:25px;align-items:end}.eyebrow{color:var(--rust);font-weight:900;letter-spacing:.14em;font-size:11px}h1{font-size:clamp(38px,5vw,72px);line-height:.92;margin:7px 0}.note{max-width:1000px;line-height:1.55;color:#59635e}.back{color:var(--ink);font-weight:900}.controls{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin:20px 0;padding:14px;background:var(--cream);border:1px solid var(--line)}label{font-size:10px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}select{display:block;width:100%;margin-top:5px;padding:9px;background:white;border:1px solid #5f665f;font-weight:800}.section-title{display:flex;align-items:baseline;justify-content:space-between;margin:28px 0 9px;border-bottom:2px solid var(--ink)}.section-title h2{font-size:30px;margin:0 0 5px}.section-title span{font-size:11px;font-weight:900;color:#68726d}.rank-row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;padding-bottom:12px}.card{background:var(--panel);color:white;padding:8px;border-radius:3px 18px 3px 3px;min-width:0}.card h3{margin:2px 2px 7px;font:700 18px Georgia,serif}.card h3 span{display:block;margin-top:3px;color:#a9b8b0;font:700 10px "Trebuchet MS",sans-serif}.card img{display:block;width:100%;aspect-ratio:3/1;background:#050806;object-fit:contain}.status{font-size:12px;font-weight:900;color:var(--teal)}@media(max-width:1000px){.rank-row{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.controls{grid-template-columns:1fr}.top{display:block}.rank-row{grid-template-columns:1fr}}
+</style></head><body><main><div class="top"><div><div class="eyebrow">5 CASES · S039 ONLY · 30 + 30 COMBINATIONS</div><h1>PCK@32 extremes<br>at the final step</h1></div><a class="back" href="/">Back to atlas</a></div><p class="note">每张卡固定展示 S039，内部从左到右依次为 GT teacher-forced、LoRA、Wan2.2 Baseline。Top 30 放在第一行，Bottom 30 放在第二行，均按 PCK@32 排名横向排列。</p><section class="controls"><label>Case<select id="case"></select></label><label>Matrix type<select id="kind"><option value="attention">log10 Softmax attention</option><option value="raw">Raw QK / sqrt(d)</option><option value="temporal">7×7 temporal attention</option></select></label></section><p class="status" id="status"></p><section><div class="section-title"><h2>Top PCK@32 30</h2><span>RANK #1 TO #30</span></div><div class="rank-row" id="topRow"></div></section><section><div class="section-title"><h2>Bottom PCK@32 30</h2><span>LOWEST TO 30TH-LOWEST</span></div><div class="rank-row" id="bottomRow"></div></section></main><script>
+const q=id=>document.getElementById(id);let DATA;function esc(x){return String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}async function init(){DATA=await fetch('/api/all-token/catalog').then(r=>r.json());q('case').innerHTML=DATA.cases.map(c=>`<option>${esc(c)}</option>`).join('');q('case').addEventListener('change',render);q('kind').addEventListener('change',render);render()}function cards(group){const c=q('case').value,k=q('kind').value;return DATA.combinations.filter(x=>x.group===group).map((x,i)=>{const b=String(x.block).padStart(2,'0'),h=String(x.head).padStart(2,'0'),score=`#${i+1} · mean PCK@32 ${Number(x.pck32).toFixed(3)}`,src=`/api/all-token/s039-strip?case=${encodeURIComponent(c)}&block=${x.block}&head=${x.head}&kind=${k}&v=2`;return`<article class="card"><h3>L${b} / H${h}<span>${score}</span></h3><img loading="lazy" src="${src}" alt="L${b} H${h} S039 three-model QK"></article>`}).join('')}function render(){q('status').textContent=`${q('case').value} · S039 · incomplete models are marked PENDING.`;q('topRow').innerHTML=cards('Top stable');q('bottomRow').innerHTML=cards('Bottom PCK@32')}init();
 </script></body></html>'''
 
 
@@ -87,7 +85,7 @@ def catalog() -> dict:
         for case in cases:
             blocks = []
             for block, head in COMBINATIONS:
-                group = "bottom" if (block, head) in BOTTOM_COMBINATIONS else "top"
+                group = "bottom30" if (block, head) in BOTTOM_COMBINATIONS else "top30"
                 path = ROOT / group / model / "cases" / case / "all_token_qk" / f"block{block:02d}_selected_qk.npz"
                 if path.is_file():
                     blocks.append(block)
@@ -102,7 +100,7 @@ def catalog() -> dict:
                 "block": block,
                 "head": head,
                 "group": "Bottom PCK@32" if (block, head) in BOTTOM_COMBINATIONS else "Top stable",
-                "pck32": BOTTOM_PCK32.get((block, head)),
+                "pck32": PCK32[(block, head)],
             }
             for block, head in COMBINATIONS
         ],
@@ -120,7 +118,7 @@ def matrix_png(params: dict[str, list[str]]) -> bytes:
     kind = params.get("kind", ["attention"])[0]
     if model not in dict(MODELS) or (block, head) not in COMBINATIONS:
         raise ValueError("invalid model or combination")
-    group = "bottom" if (block, head) in BOTTOM_COMBINATIONS else "top"
+    group = "bottom30" if (block, head) in BOTTOM_COMBINATIONS else "top30"
     path = ROOT / group / model / "cases" / case / "all_token_qk" / f"block{block:02d}_selected_qk.npz"
     with np.load(path, allow_pickle=False) as data:
         heads = data["selected_heads"].astype(int).tolist()
@@ -180,7 +178,7 @@ def contact_sheet_png(params: dict[str, list[str]]) -> bytes:
     for model_index, (model, label) in enumerate(MODELS):
         top = 10 + model_index * group_height
         draw.text((12, top + 10), label, fill=(235, 239, 236), font=font)
-        group = "bottom" if (block, head) in BOTTOM_COMBINATIONS else "top"
+        group = "bottom30" if (block, head) in BOTTOM_COMBINATIONS else "top30"
         path = ROOT / group / model / "cases" / case / "all_token_qk" / f"block{block:02d}_selected_qk.npz"
         if not path.is_file():
             draw.text((label_width, top + 10), "PENDING COMPUTE", fill=(218, 153, 117), font=font)
@@ -245,7 +243,7 @@ def s039_strip_png(params: dict[str, list[str]]) -> bytes:
     canvas = Image.new("RGB", (3 * tile + 2 * gap, tile + header), (8, 12, 10))
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default()
-    group = "bottom" if (block, head) in BOTTOM_COMBINATIONS else "top"
+    group = "bottom30" if (block, head) in BOTTOM_COMBINATIONS else "top30"
     for model_index, (model, label) in enumerate(MODELS):
         x = model_index * (tile + gap)
         draw.text((x + 7, 11), label, fill=(235, 239, 236), font=font)

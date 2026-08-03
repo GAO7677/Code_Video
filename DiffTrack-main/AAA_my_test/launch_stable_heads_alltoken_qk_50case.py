@@ -142,4 +142,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    layers = sorted({int(item.split(":")[0]) for item in args.combinations.split(",")})
