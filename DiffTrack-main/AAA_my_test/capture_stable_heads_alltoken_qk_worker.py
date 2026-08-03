@@ -63,15 +63,45 @@ def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
     entropy = -(
         distribution * np.log(np.maximum(distribution, 1e-12))
     ).sum(axis=1) / math.log(7)
+    self_diagonal = diagonal[np.arange(count), frame]
+    cross_diagonal_mean = (total - self_diagonal) / 6
+    cross_self_log_ratio = np.log(
+        (cross_diagonal_mean + 1e-12) / (self_diagonal + 1e-12)
+    )
+    cross_dominant = cross_diagonal_mean > self_diagonal
     return {
         "queryframe_diagonal_mass": float(total[query_mask].mean()),
         "queryframe_diagonal_frame_entropy": float(entropy[query_mask].mean()),
         "queryframe_joint": float((total * entropy)[query_mask].mean()),
         "queryframe_balanced_diagonal": float((7 * diagonal.min(axis=1))[query_mask].mean()),
+        "queryframe_diagonal_cross_self_log_mean": float(
+            cross_self_log_ratio[query_mask].mean()
+        ),
+        "queryframe_diagonal_cross_self_log_median": float(
+            np.median(cross_self_log_ratio[query_mask])
+        ),
+        "queryframe_diagonal_cross_self_log_std": float(
+            cross_self_log_ratio[query_mask].std()
+        ),
+        "queryframe_diagonal_cross_dominant_fraction": float(
+            cross_dominant[query_mask].mean()
+        ),
         "alltoken_diagonal_mass": float(total.mean()),
         "alltoken_diagonal_frame_entropy": float(entropy.mean()),
         "alltoken_joint": float((total * entropy).mean()),
         "alltoken_balanced_diagonal": float((7 * diagonal.min(axis=1)).mean()),
+        "alltoken_diagonal_cross_self_log_mean": float(
+            cross_self_log_ratio.mean()
+        ),
+        "alltoken_diagonal_cross_self_log_median": float(
+            np.median(cross_self_log_ratio)
+        ),
+        "alltoken_diagonal_cross_self_log_std": float(
+            cross_self_log_ratio.std()
+        ),
+        "alltoken_diagonal_cross_dominant_fraction": float(
+            cross_dominant.mean()
+        ),
     }
 
 

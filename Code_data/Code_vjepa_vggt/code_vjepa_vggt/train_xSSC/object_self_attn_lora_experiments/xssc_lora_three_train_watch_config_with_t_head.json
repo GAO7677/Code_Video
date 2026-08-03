@@ -20,13 +20,7 @@
     "checkpoint_stability_seconds": 30,
     "gpu_poll_seconds": 30,
     "gpu_ids": [
-      0,
-      1,
-      2,
-      3,
-      5,
-      6,
-      7
+      5
     ],
     "gpu_ready_max_used_mib": 8000,
     "expected_cases": 20,
@@ -66,7 +60,8 @@
       "s_head59_resume",
       "slot_dedup_merge",
       "t_head70",
-      "full_sa_no_object"
+      "full_sa_no_object",
+      "t_head70_no_object"
     ],
     "input_list": "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons_physicIQ.txt",
     "output_root": "/data/gaoya/AAA_test_video/0623/test/v2v_wan/xssc",
@@ -217,6 +212,15 @@
       ],
       "watch_roots": [
         "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/full_sa_no_object_gpu27_formal/formal_20260801T162400Z/checkpoints"
+      ]
+    },
+    {
+      "key": "t_head70_no_object",
+      "label": "T-head70 + No-Object",
+      "color": "#17BECF",
+      "watch_roots": [
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/from_scratch_20260803T062822Z/checkpoints",
+        "/data/gaoya/agent-data/checkpoints/xssc_object_self_attn_lora/common_t_head_full70_no_object_gpu67_formal/resume_step500_20260803T_resume/checkpoints"
       ]
     }
   ]
