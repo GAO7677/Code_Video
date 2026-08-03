@@ -153,6 +153,7 @@ def run_phys_inference(
     environment = os.environ.copy()
     environment.update(
         {
+            "PYTHONNOUSERSITE": "1",
             "TEST_LIST": str(shard_file),
             "NUM_INFERENCE_STEPS": str(phys["num_inference_steps"]),
             "STEP_OUTPUT_DIR_NAME": name,
@@ -334,6 +335,7 @@ def run_metric(
     if metric == "wmreward":
         command.extend(["--wmreward-reset-interval", "1000000"])
     environment = os.environ.copy()
+    environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONPATH"] = (
         "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:"
         "/home/gaoya/Code_Video/Code_data/Code_try0526"

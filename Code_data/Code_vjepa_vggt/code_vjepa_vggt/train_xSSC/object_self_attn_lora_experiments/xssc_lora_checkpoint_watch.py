@@ -519,6 +519,7 @@ def run_inference_task(
     environment = os.environ.copy()
     environment.update(
         {
+            "PYTHONNOUSERSITE": "1",
             "TEST_LIST": config["paths"]["input_list"],
             "NUM_INFERENCE_STEPS": str(runtime["num_inference_steps"]),
             "STEP_OUTPUT_DIR_NAME": output_name,
@@ -668,6 +669,7 @@ def run_metric_task(
     if metric == "wmreward":
         command.extend(["--wmreward-reset-interval", "1000000"])
     environment = os.environ.copy()
+    environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONPATH"] = (
         "/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:"
         "/home/gaoya/Code_Video/Code_data/Code_try0526"

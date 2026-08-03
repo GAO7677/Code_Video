@@ -7,6 +7,7 @@ import argparse
 import csv
 import html
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -112,20 +113,22 @@ def link_file(source: Path, destination: Path) -> None:
     if not source.is_file():
         raise FileNotFoundError(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_symlink() or destination.exists():
-        destination.unlink()
-    destination.symlink_to(source.resolve())
+    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(source.resolve())
+    os.replace(temporary, destination)
 
 
 def link_directory(source: Path, destination: Path) -> None:
     if not source.is_dir():
         raise FileNotFoundError(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_symlink() or destination.is_file():
-        destination.unlink()
-    elif destination.exists():
+    if destination.exists() and not (destination.is_symlink() or destination.is_file()):
         raise RuntimeError(f"Refusing to replace directory: {destination}")
-    destination.symlink_to(source.resolve(), target_is_directory=True)
+    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(source.resolve(), target_is_directory=True)
+    os.replace(temporary, destination)
 
 
 def render_gt_clip(ffmpeg: str, source: Path, destination: Path) -> None:

@@ -4,8 +4,8 @@ set -euo pipefail
 cd /home/gaoya/Code_Video/Code_data/Code_vjepa_vggt/code_vjepa_vggt/train_xSSC/xssc_physics_representation
 
 GPU=2
-SMOKE_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_smoke
-FORMAL_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1
+SMOKE_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_v2_yxyx_smoke
+FORMAL_ROOT=/data/gaoya/agent-data/outputs/xssc_physics_representation/phase1_v2_yxyx
 
 echo "[smoke] physical_gpu=${GPU}"
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python extract_phase1_features.py \
@@ -15,6 +15,10 @@ echo "[smoke] physical_gpu=${GPU}"
   --case-limit 1 \
   --model-names dinov3_movic_step044000 \
   --output-dir "${SMOKE_ROOT}"
+
+/home/gaoya/miniconda3/envs/wan-cu128/bin/python validate_phase1_smoke.py \
+  --root "${SMOKE_ROOT}" \
+  --min-recall 0.8
 
 echo "[formal] physical_gpu=${GPU}"
 /home/gaoya/miniconda3/envs/wan-cu128/bin/python extract_phase1_features.py \
