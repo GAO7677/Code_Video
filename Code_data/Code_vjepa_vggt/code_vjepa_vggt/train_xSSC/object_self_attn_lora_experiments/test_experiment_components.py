@@ -297,6 +297,24 @@ class ExperimentComponentTests(unittest.TestCase):
             8,
         )
 
+    def test_official_xssc_object_only_launcher(self) -> None:
+        config_path = (
+            experiment.EXPERIMENT_ROOT
+            / "configs"
+            / "formal_official_xssc_object_only_gpu01.json"
+        )
+        raw, _ = launcher.load_config(config_path)
+        config = launcher.validate_config(raw, config_path.parent)
+        command = launcher.build_command(config, Path("/tmp/test-official-xssc"))
+        self.assertIn(str(launcher.OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT), command)
+        self.assertIn("--multi_gpu", command)
+        self.assertNotIn("--dinov3_checkpoint", command)
+        self.assertNotIn("--xssc_box_source", command)
+        self.assertNotIn("--self_attn_adaptation_mode", command)
+        self.assertEqual(config["model"]["xssc_backend"], "official_dinov2")
+        self.assertEqual(config["launch"]["gpu_set"], "0,1")
+        self.assertEqual(config["optimization"]["max_train_steps"], 1500)
+
 
 if __name__ == "__main__":
     unittest.main()

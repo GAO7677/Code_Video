@@ -1,0 +1,23 @@
+{
+  "extends": "base.json",
+  "experiment": {
+    "name": "official_xssc_object_only",
+    "description": "Object-only Wan training with frozen official DINOv2 xSSC",
+    "expected_trainable_params": 24671744
+  },
+  "paths": {
+    "xssc_root": "/home/gaoya/Code_Video/xSSC-main",
+    "xssc_config": "/home/gaoya/Code_Video/xSSC-main/config-randsfq/rsfq2_r-ytvis.py",
+    "xssc_checkpoint": "/data/gaoya/ckpt/xSSC/rsfq2_r-ytvis/42-0130.pth"
+  },
+  "model": {
+    "xssc_backend": "official_dinov2"
+  },
+  "adaptation": {
+    "mode": "object_only",
+    "enable_object_branch": true
+  },
+  "conditioning": {
+    "filter_empty_amg": false
+  }
+}

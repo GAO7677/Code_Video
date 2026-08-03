@@ -32,6 +32,7 @@
     "head_selection_config": "same_frame_mass_heads_full59.json"
   },
   "model": {
+    "xssc_backend": "dinov3_movic",
     "height": 512,
     "width": 896,
     "num_frames": 49,

@@ -16,8 +16,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 TRAIN_SCRIPT = ROOT / "train_xssc_object_self_attn_lora.py"
+OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT = ROOT / "train_official_xssc_object_only.py"
 VALID_MODES = {"object_only", "full_sa", "s_head", "t_head"}
 HEAD_SELECTIVE_MODES = {"s_head", "t_head"}
+VALID_XSSC_BACKENDS = {"dinov3_movic", "official_dinov2"}
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -85,6 +87,18 @@ def validate_config(config: dict, config_dir: Path) -> dict:
         raise ValueError(
             "Disabling the object branch requires a self-attention adaptation mode"
         )
+    xssc_backend = str(require(config, "model.xssc_backend"))
+    if xssc_backend not in VALID_XSSC_BACKENDS:
+        raise ValueError(
+            f"model.xssc_backend must be one of {sorted(VALID_XSSC_BACKENDS)}"
+        )
+    if xssc_backend == "official_dinov2" and (
+        mode != "object_only" or not enable_object_branch
+    ):
+        raise ValueError(
+            "official_dinov2 currently supports only object_only with the object "
+            "branch enabled"
+        )
     expected_role_by_mode = {"s_head": "S", "t_head": "T"}
     if mode in HEAD_SELECTIVE_MODES:
         configured_role = str(require(config, "adaptation.head_selection_expected_role"))
@@ -124,7 +138,7 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     if any(value < 0.0 for value in ratios) or abs(sum(ratios) - 1.0) > 1e-8:
         raise ValueError(f"Dataset mixture ratios must be nonnegative and sum to 1: {ratios}")
     if int(require(config, "model.fixed_num_context_frames")) != 8:
-        raise ValueError("DINOv3 xSSC experiments require exactly 8 context frames")
+        raise ValueError("xSSC experiments require exactly 8 context frames")
     if int(require(config, "model.num_frames")) <= 8:
         raise ValueError("model.num_frames must be greater than the context length")
     if int(require(config, "optimization.train_batch_size_per_gpu")) <= 0:
@@ -149,12 +163,17 @@ def validate_config(config: dict, config_dir: Path) -> dict:
                 "paths.xssc_root",
                 "paths.xssc_config",
                 "paths.xssc_checkpoint",
-                "paths.dinov3_root",
-                "paths.dinov3_checkpoint",
-                "paths.sam2_config",
-                "paths.sam2_checkpoint",
             ]
         )
+        if xssc_backend == "dinov3_movic":
+            path_keys.extend(
+                [
+                    "paths.dinov3_root",
+                    "paths.dinov3_checkpoint",
+                    "paths.sam2_config",
+                    "paths.sam2_checkpoint",
+                ]
+            )
     normalized = copy.deepcopy(config)
     for dotted_key in path_keys:
         keys = dotted_key.split(".")
@@ -247,6 +266,12 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
     checkpointing = config["checkpointing"]
     logging = config["logging"]
 
+    xssc_backend = str(model["xssc_backend"])
+    train_script = (
+        OFFICIAL_XSSC_OBJECT_ONLY_TRAIN_SCRIPT
+        if xssc_backend == "official_dinov2"
+        else TRAIN_SCRIPT
+    )
     command = [
         str(launch["accelerate_bin"]),
         "launch",
@@ -265,26 +290,14 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "1",
         "--mixed_precision",
         str(launch["mixed_precision"]),
-        str(TRAIN_SCRIPT),
+        str(train_script),
     ])
     options = {
         "--diffsynth_root": paths["diffsynth_root"],
         "--wan_root": paths["wan_root"],
-        "--self_attn_adaptation_mode": adaptation["mode"],
-        "--pretrained_lora_expected_modules": model[
-            "pretrained_lora_expected_modules"
-        ],
-        "--self_attn_expected_num_blocks": model[
-            "self_attn_expected_num_blocks"
-        ],
-        "--self_attn_expected_num_heads": model["self_attn_expected_num_heads"],
-        "--self_attn_lora_rank": adaptation["self_attn_lora_rank"],
-        "--self_attn_lora_alpha": adaptation["self_attn_lora_alpha"],
-        "--self_attn_lora_dropout": adaptation["self_attn_lora_dropout"],
         "--expected_trainable_params": config["experiment"][
             "expected_trainable_params"
         ],
-        "--experiment_seed": optim["seed"],
         "--dataset_type": data["dataset_type"],
         "--pybullet0713_root": paths["pybullet_root"],
         "--pybullet0713_split": data["pybullet_split"],
@@ -334,6 +347,27 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         ),
         "--wandb_mode": logging["wandb_mode"],
     }
+    if xssc_backend == "dinov3_movic":
+        options.update(
+            {
+                "--self_attn_adaptation_mode": adaptation["mode"],
+                "--pretrained_lora_expected_modules": model[
+                    "pretrained_lora_expected_modules"
+                ],
+                "--self_attn_expected_num_blocks": model[
+                    "self_attn_expected_num_blocks"
+                ],
+                "--self_attn_expected_num_heads": model[
+                    "self_attn_expected_num_heads"
+                ],
+                "--self_attn_lora_rank": adaptation["self_attn_lora_rank"],
+                "--self_attn_lora_alpha": adaptation["self_attn_lora_alpha"],
+                "--self_attn_lora_dropout": adaptation[
+                    "self_attn_lora_dropout"
+                ],
+                "--experiment_seed": optim["seed"],
+            }
+        )
     if not adaptation["enable_object_branch"]:
         options["--disable_object_branch"] = None
     else:
@@ -342,17 +376,8 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 "--xssc_root": paths["xssc_root"],
                 "--xssc_config": paths["xssc_config"],
                 "--xssc_checkpoint": paths["xssc_checkpoint"],
-                "--dinov3_root": paths["dinov3_root"],
-                "--dinov3_checkpoint": paths["dinov3_checkpoint"],
-                "--xssc_sam2_config": paths["sam2_config"],
-                "--xssc_sam2_checkpoint": paths["sam2_checkpoint"],
                 "--xssc_input_size": model["xssc_input_size"],
                 "--xssc_max_time_steps": model["xssc_max_time_steps"],
-                "--xssc_box_source": conditioning["xssc_box_source"],
-                "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
-                "--xssc_empty_amg_max_resample_attempts": conditioning[
-                    "empty_amg_max_resample_attempts"
-                ],
                 "--object_lora_rank": adaptation["object_lora_rank"],
                 "--object_lora_alpha": adaptation["object_lora_alpha"],
                 "--object_lora_dropout": adaptation["object_lora_dropout"],
@@ -363,6 +388,20 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
                 ],
             }
         )
+        if xssc_backend == "dinov3_movic":
+            options.update(
+                {
+                "--dinov3_root": paths["dinov3_root"],
+                "--dinov3_checkpoint": paths["dinov3_checkpoint"],
+                "--xssc_sam2_config": paths["sam2_config"],
+                "--xssc_sam2_checkpoint": paths["sam2_checkpoint"],
+                "--xssc_box_source": conditioning["xssc_box_source"],
+                "--xssc_box_cache_dir": paths["xssc_box_cache_dir"],
+                "--xssc_empty_amg_max_resample_attempts": conditioning[
+                    "empty_amg_max_resample_attempts"
+                ],
+                }
+            )
     if adaptation["mode"] in HEAD_SELECTIVE_MODES:
         options.update(
             {
@@ -398,7 +437,7 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         "duplicate_iou": "--xssc_amg_duplicate_iou",
         "duplicate_containment": "--xssc_amg_duplicate_containment",
     }
-    if adaptation["enable_object_branch"]:
+    if adaptation["enable_object_branch"] and xssc_backend == "dinov3_movic":
         amg_filters = conditioning["amg_filters"]
         missing_amg = sorted(set(amg_option_names) - set(amg_filters))
         if missing_amg:
@@ -411,7 +450,11 @@ def build_command(config: dict, output_dir: Path) -> list[str]:
         else:
             add_option(command, name, value)
 
-    if adaptation["enable_object_branch"] and conditioning["filter_empty_amg"]:
+    if (
+        adaptation["enable_object_branch"]
+        and xssc_backend == "dinov3_movic"
+        and conditioning["filter_empty_amg"]
+    ):
         command.append("--xssc_filter_empty_amg")
     if optim["fail_on_nonfinite_train_values"]:
         command.append("--fail_on_nonfinite_train_values")
@@ -461,6 +504,7 @@ def main() -> None:
     summary = {
         "experiment": config["experiment"]["name"],
         "mode": config["adaptation"]["mode"],
+        "xssc_backend": config["model"]["xssc_backend"],
         "enable_object_branch": config["adaptation"]["enable_object_branch"],
         "config_sources": sources,
         "gpu_set": config["launch"]["gpu_set"],
