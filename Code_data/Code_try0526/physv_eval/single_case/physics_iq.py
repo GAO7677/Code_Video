@@ -30,6 +30,7 @@ _CONTEXT_FRAME_KEYS = (
     "model_args.context_frames",
 )
 _CONTEXT_MODE_CHOICES = ("with_context", "without_context")
+_OPENCV_NUM_THREADS = 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -415,6 +416,8 @@ def score_case(
     context_frames: int | None = None,
     aligned_video_dir: Path | str | None = None,
 ) -> dict[str, Any]:
+    # Binary masks near the motion threshold can vary across OpenCV worker threads.
+    cv2.setNumThreads(_OPENCV_NUM_THREADS)
     if downsample_factor < 1:
         raise ValueError("downsample_factor must be >= 1")
     if context_mode not in _CONTEXT_MODE_CHOICES:
@@ -534,6 +537,7 @@ def score_case(
         "target_size": [int(target_w), int(target_h)],
         "downsample_factor": int(downsample_factor),
         "threshold_value": int(threshold_value),
+        "opencv_threads": int(_OPENCV_NUM_THREADS),
         "frame_alignment": "timestamp_resample_to_shorter_duration_after_optional_context_clip",
         "spatial_alignment": "resize_source_to_output_before_downsample",
         "score_formula": "100 * clip(((spatiotemporal_iou_mean + spatial_iou + weighted_spatial_iou) / 3) - mse_mean, 0, 1)",
