@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-json-allowlist", type=Path, default=DEFAULT_ALLOWLIST)
     parser.add_argument("--sample-size", type=int, default=100)
     parser.add_argument("--seed", type=int, default=20260803)
+    parser.add_argument("--opencv-threads", type=int, default=1)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
 
@@ -97,8 +98,10 @@ def main() -> None:
             sys.path.insert(0, str(path))
 
     bench = load_bench_module()
+    import cv2
     from physv_eval.single_case import physics_iq
 
+    cv2.setNumThreads(int(args.opencv_threads))
     # Writing aligned videos is presentation-only and does not enter the score.
     physics_iq._write_video = lambda *unused_args, **unused_kwargs: None
 
@@ -187,6 +190,7 @@ def main() -> None:
             "sampling": "stratified_random_covering_every_result_root",
             "threshold_value": 10,
             "downsample_factor": 4,
+            "opencv_threads": int(args.opencv_threads),
             "score_implementation": str(
                 TRY0526_ROOT / "physv_eval/single_case/physics_iq.py"
             ),

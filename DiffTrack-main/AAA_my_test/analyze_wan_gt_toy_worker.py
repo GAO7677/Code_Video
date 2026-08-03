@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-region-cache-root", type=Path, default=DEFAULT_CACHE_ROOT)
     parser.add_argument(
         "--analysis-matching-mode",
-        choices=("difftrack", "q_to_k", "symmetric"),
+        choices=("difftrack", "q_to_k", "symmetric", "headwise"),
         default="difftrack",
     )
     parser.add_argument("--analysis-hidden-temperature", type=float, default=0.07)
@@ -400,7 +400,11 @@ def process_case(args, pipe, cotracker, case: dict, output_dir: Path) -> None:
         capture.remove()
 
     records = sorted(capture.records.values(), key=lambda item: (item.method, item.layer, item.step_index))
-    expected = len(layers) * len(steps) * (1 if args.analysis_no_hidden else 2)
+    expected = (
+        len(records)
+        if str(args.analysis_matching_mode) == "headwise"
+        else len(layers) * len(steps) * (1 if args.analysis_no_hidden else 2)
+    )
     if len(records) != expected:
         raise RuntimeError(f"captured {len(records)}/{expected} records")
     reference = records[0]

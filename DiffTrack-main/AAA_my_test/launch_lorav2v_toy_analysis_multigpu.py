@@ -24,6 +24,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sampling-steps", type=int, default=40)
     parser.add_argument("--case-keys", nargs="*", default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--headwise", action="store_true")
+    parser.add_argument("--analysis-layer", type=int, default=5)
+    parser.add_argument("--analysis-step", type=int, default=39)
     return parser.parse_args()
 
 
@@ -47,7 +50,15 @@ def main() -> None:
             command.extend(["--case-keys", *args.case_keys])
         if args.overwrite:
             command.append("--overwrite")
+        if args.headwise:
+            command.extend([
+                "--analysis-matching-mode", "headwise",
+                "--analysis-layers", str(args.analysis_layer),
+                "--analysis-step-indices", str(args.analysis_step),
+                "--analysis-no-hidden", "--analysis-no-video",
+            ])
         environment = os.environ.copy()
+        environment["PYTHONNOUSERSITE"] = "1"
         environment["CUDA_VISIBLE_DEVICES"] = str(gpu)
         environment["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         environment["PYTHONPATH"] = ":".join(

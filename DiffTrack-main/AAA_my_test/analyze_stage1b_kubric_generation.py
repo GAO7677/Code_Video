@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--analysis-matching-mode",
-        choices=("difftrack", "q_to_k", "symmetric"),
+        choices=("difftrack", "q_to_k", "symmetric", "headwise"),
         default="difftrack",
         help="Default reproduces DiffTrack's symmetric dense map and grid sampling.",
     )
@@ -438,7 +438,7 @@ class GenerationCapture:
 
     def _consume_qk(self, layer: int, q: torch.Tensor, k: torch.Tensor) -> None:
         key = ("qk", layer, self.current_step)
-        if key in self.records:
+        if key in self.records or ("qk_head00", layer, self.current_step) in self.records:
             return
         if q.shape[0] != 1 or q.shape != k.shape:
             raise RuntimeError(f"Q/K capture expects equal batch-one tensors, got {q.shape} and {k.shape}")
@@ -456,6 +456,18 @@ class GenerationCapture:
         predictions = np.full((time, len(source_indices), 2), np.nan, dtype=np.float32)
         probabilities = np.full((time, len(source_indices), spatial), np.nan, dtype=np.float32)
         predictions[query_time] = self.query_points.numpy()
+        if self.matching_mode == "headwise":
+            head_predictions = np.full(
+                (source_q.shape[1], time, len(source_indices), 2),
+                np.nan,
+                dtype=np.float32,
+            )
+            head_probabilities = np.full(
+                (source_q.shape[1], time, len(source_indices), spatial),
+                np.nan,
+                dtype=np.float32,
+            )
+            head_predictions[:, query_time] = self.query_points.numpy()[None]
         scale = math.sqrt(q.shape[-1])
         for target_time in range(self.current_prefix, time):
             target_q = q_frames[target_time].float()
@@ -474,7 +486,20 @@ class GenerationCapture:
                 probabilities[target_time] = probability.cpu().numpy()
                 continue
             scores = torch.einsum("phd,shd->hps", source_q, target_k) / scale
-            probability = scores.softmax(dim=-1).mean(dim=0)
+            per_head_probability = scores.softmax(dim=-1)
+            if self.matching_mode == "headwise":
+                best_index = per_head_probability.argmax(dim=-1)
+                best_y = torch.div(best_index, width, rounding_mode="floor")
+                best_x = best_index % width
+                head_predictions[:, target_time, :, 0] = (
+                    (best_x.float() + 0.5) * self.pixel_width / width
+                ).cpu().numpy()
+                head_predictions[:, target_time, :, 1] = (
+                    (best_y.float() + 0.5) * self.pixel_height / height
+                ).cpu().numpy()
+                head_probabilities[:, target_time] = per_head_probability.cpu().numpy()
+                continue
+            probability = per_head_probability.mean(dim=0)
             if self.matching_mode == "symmetric":
                 reverse = torch.einsum("phd,shd->hps", source_k, target_q) / scale
                 probability = 0.5 * (probability + reverse.softmax(dim=-1).mean(dim=0))
@@ -488,6 +513,22 @@ class GenerationCapture:
                 (best_y.float() + 0.5) * self.pixel_height / height
             ).cpu().numpy()
             probabilities[target_time] = probability.cpu().numpy()
+        if self.matching_mode == "headwise":
+            for head in range(source_q.shape[1]):
+                method = f"qk_head{head:02d}"
+                self.records[(method, layer, self.current_step)] = MatchRecord(
+                    method=method,
+                    layer=layer,
+                    step_index=self.current_step,
+                    timestep=self.current_timestep,
+                    sigma=self.current_sigma,
+                    grid=(time, height, width),
+                    clean_prefix_latents=self.current_prefix,
+                    query_latent_index=query_time,
+                    predictions=head_predictions[head],
+                    probabilities=head_probabilities[head],
+                )
+            return
         self.records[key] = MatchRecord(
             method="qk",
             layer=layer,

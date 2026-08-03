@@ -140,7 +140,11 @@ def process_case(
     records = sorted(
         capture.records.values(), key=lambda item: (item.method, item.layer, item.step_index)
     )
-    expected = len(layers) * len(step_indices) * (1 if args.analysis_no_hidden else 2)
+    expected = (
+        len(records)
+        if str(args.analysis_matching_mode) == "headwise"
+        else len(layers) * len(step_indices) * (1 if args.analysis_no_hidden else 2)
+    )
     if len(records) != expected:
         observed = [(record.method, record.layer, record.step_index) for record in records]
         raise RuntimeError(f"captured {len(records)}/{expected} records: {observed}")
