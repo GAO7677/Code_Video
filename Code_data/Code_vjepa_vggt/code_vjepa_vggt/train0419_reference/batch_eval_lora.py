@@ -329,11 +329,13 @@ def build_model_configs(wan_root: Path) -> list[ModelConfig]:
 
 
 def build_pipeline(wan_root: Path, device: str, lora_path: Path | None) -> ContextAwareWanVideoPipeline:
+    vram_limit_value = __import__("os").environ.get("WAN_VRAM_LIMIT")
     pipe = ContextAwareWanVideoPipeline.from_pretrained(
         torch_dtype=torch.bfloat16,
         device=device,
         model_configs=build_model_configs(wan_root),
         tokenizer_config=ModelConfig(path=str(find_tokenizer_path(wan_root))),
+        vram_limit=float(vram_limit_value) if vram_limit_value else None,
     )
     if lora_path is not None:
         pipe.load_lora(pipe.dit, str(lora_path), alpha=1.0)

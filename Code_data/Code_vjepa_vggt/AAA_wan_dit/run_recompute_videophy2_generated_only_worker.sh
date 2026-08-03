@@ -97,6 +97,7 @@ while true; do
 
   set +e
   TOKENIZERS_PARALLELISM=false \
+  PYTHONNOUSERSITE=1 \
   CUDA_VISIBLE_DEVICES="${GPU_ID}" \
   PYTHONPATH=/home/gaoya/Code_Video/Code_data/Code_vjepa_vggt:/home/gaoya/Code_Video/Code_data/Code_try0526 \
   "${PYTHON_BIN}" "${BENCH_PY}" \

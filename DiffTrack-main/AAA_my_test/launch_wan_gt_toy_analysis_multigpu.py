@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-weights-root", type=Path, default=None)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--headwise", action="store_true")
+    parser.add_argument("--all-blocks", action="store_true")
+    parser.add_argument("--all-steps", action="store_true")
     parser.add_argument("--analysis-layer", type=int, default=5)
     parser.add_argument("--analysis-step", type=int, default=29)
     return parser.parse_args()
@@ -33,6 +35,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    analysis_layers = list(range(30)) if args.all_blocks else [args.analysis_layer]
+    analysis_steps = list(range(args.sampling_steps)) if args.all_steps else [args.analysis_step]
     output_dir = args.output_dir.resolve()
     log_dir = output_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -56,8 +60,8 @@ def main() -> None:
         if args.headwise:
             command.extend([
                 "--analysis-matching-mode", "headwise",
-                "--analysis-layers", str(args.analysis_layer),
-                "--analysis-step-indices", str(args.analysis_step),
+                "--analysis-layers", *[str(layer) for layer in analysis_layers],
+                "--analysis-step-indices", *[str(step) for step in analysis_steps],
                 "--analysis-no-hidden", "--analysis-no-video",
             ])
         environment = os.environ.copy()
