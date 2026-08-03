@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage-wise joint ablation of PCK Top30 and Bottom30 common-T heads."""
+"""Stage-wise joint ablation of PCK Top30 and Bottom30 attention heads."""
 
 from __future__ import annotations
 
@@ -36,14 +36,16 @@ STAGE_RANGES = (
 )
 
 
-def select_heads() -> dict[str, list[dict]]:
-    with HEAD_CONFIG.open(encoding="utf-8") as stream:
-        allowed = {(int(x["block"]), int(x["head"])) for x in json.load(stream)["targets"]}
+def select_heads(ranking_pool: str) -> dict[str, list[dict]]:
+    allowed = None
+    if ranking_pool == "common70":
+        with HEAD_CONFIG.open(encoding="utf-8") as stream:
+            allowed = {(int(x["block"]), int(x["head"])) for x in json.load(stream)["targets"]}
     best: dict[tuple[int, int], dict] = {}
     with PCK_TABLE.open(newline="", encoding="utf-8") as stream:
         for row in csv.DictReader(stream):
             key = (int(row["block"]), int(row["head"]))
-            if row["scope"] != "objects" or key not in allowed:
+            if row["scope"] != "objects" or (allowed is not None and key not in allowed):
                 continue
             record = {
                 "global_rank": int(row["rank_macro_pck32"]),
@@ -56,8 +58,9 @@ def select_heads() -> dict[str, list[dict]]:
             if key not in best or record["global_rank"] < best[key]["global_rank"]:
                 best[key] = record
     ranked = sorted(best.values(), key=lambda x: x["global_rank"])
-    if len(ranked) != 70:
-        raise RuntimeError(f"expected 70 ranked heads, got {len(ranked)}")
+    expected = 70 if ranking_pool == "common70" else 720
+    if len(ranked) != expected:
+        raise RuntimeError(f"expected {expected} ranked heads, got {len(ranked)}")
     return {"top30": ranked[:30], "bottom30": ranked[-30:]}
 
 
@@ -130,6 +133,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-index", type=int, required=True)
     parser.add_argument("--num-shards", type=int, required=True)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--ranking-pool", choices=("common70", "all720"), default="common70")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -149,7 +153,7 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.shard_index < args.num_shards:
         raise ValueError("invalid shard index")
-    groups = select_heads()
+    groups = select_heads(args.ranking_pool)
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     selection_path = output_root / "selection.json"
@@ -206,7 +210,7 @@ def main() -> None:
                 "case_key": case["case_key"], "model": args.model,
                 "input_json": case["input_json"], "context_video": case["video"],
                 "prompt": case["caption"], "seed": 42, "sampling_steps": 40,
-                "selection": str(selection_path), "files": files,
+                "ranking_pool": args.ranking_pool, "selection": str(selection_path), "files": files,
             }
             (case_root / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

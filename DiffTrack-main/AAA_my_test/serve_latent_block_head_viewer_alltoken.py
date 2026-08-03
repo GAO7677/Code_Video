@@ -29,6 +29,9 @@ ALL720_ROOT = Path(
 HEAD_ZERO_ROOT = Path(
     "/data/gaoya/agent-data/outputs/top5_pck_head_zero_ablation_5case"
 )
+EXTREME30_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme30_all720_head_zero_ablation_test5"
+)
 EXTREME_ZERO_ROOT = Path(
     "/data/gaoya/agent-data/outputs/pck_top30_bottom30_head_zero_ablation_test5"
 )
@@ -90,6 +93,7 @@ PORTAL = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta
 <a class="card" href="/all-steps/overlays?v=3"><div><span>05 / 全时间步轨迹</span><h2>轨迹 Overlay 图谱</h2><p>按照三模型综合全局排名，浏览 GT 与 Q@K 预测轨迹的逐帧叠加结果。</p></div><span class="go">打开轨迹叠加页面</span></a>
 <a class="card" href="/all-steps/rankings?v=4"><div><span>06 / 全时间步指标</span><h2>Step × Block × Head 排名</h2><p>覆盖 28,800 个组合的三模型综合排名、单模型排名和性能热力图。</p></div><span class="go">打开全时间步排名</span></a>
 <a class="card new" href="/pck-extreme-head-zero-ablation?v=1"><div><span>07 / 分阶段消融</span><h2>PCK Top30 / Bottom30 输出置零</h2><p>对比 Wan2.2 Baseline 与 Wan+LoRA 的高低 PCK Head 在四个十步阶段及全程置零后的生成视频。</p></div><span class="go">打开极值 Head 消融页面</span></a>
+<a class="card new" href="/pck-extreme30-head-zero-ablation?v=1"><div><span>08 / ALL 720 消融</span><h2>全组合 PCK Top30 / Bottom30</h2><p>从全部 720 个 Block-Head 选择排名两端，各 30 个 Head 分阶段同时置零。</p></div><span class="go">打开 ALL-720 极值消融</span></a>
 <a class="card" href="/rankings?v=2"><div><span>07 / 固定时间步指标</span><h2>Block × Head 排名</h2><p>比较固定时间步下三个模型各自的 720 个 Block-Head 组合。</p></div><span class="go">打开固定步排名</span></a>
 <a class="card" href="/single?v=2"><div><span>08 / 单组合检查</span><h2>轨迹显微镜</h2><p>选择模型、案例、Block 和 Head，逐潜空间帧检查 GT 与 Q@K 轨迹。</p></div><span class="go">打开单组合检查器</span></a>
 </section></main></body></html>'''
@@ -114,10 +118,18 @@ const MODELS=[['baseline','Wan2.2 Baseline'],['lora','Wan + LoRA']];const STAGES
 </script></body></html>'''
 
 EXTREME_ZERO_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PCK Top30 / Bottom30 分阶段消融</title><style>
-:root{--paper:#e7dfd0;--ink:#17211d;--card:#fffdf7;--hot:#b74328;--cold:#206d7a;--line:#999184}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 5% 0,#cf684035,transparent 34rem),linear-gradient(125deg,#e7dfd0,#f4eee2);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2380px,calc(100% - 24px));margin:auto;padding:26px 0 70px}h1{font:700 clamp(38px,5vw,74px)/.94 Georgia,serif;letter-spacing:-.045em;margin:8px 0}.eyebrow{color:var(--hot);font-size:11px;font-weight:900;letter-spacing:.14em}.lead{max-width:1300px;line-height:1.6;color:#5d655f}.status{position:sticky;top:8px;z-index:5;background:#fffdf7e8;border:1px solid var(--line);padding:10px 14px;backdrop-filter:blur(8px)}.case{margin-top:34px;border-top:3px solid var(--ink);padding-top:14px}.case-head{display:flex;justify-content:space-between;gap:12px}.case h2{font:700 27px Georgia,serif;margin:0;overflow-wrap:anywhere}.replay{border:0;background:var(--ink);color:#fff;padding:9px 13px;font-weight:900;cursor:pointer}.model{margin:18px 0 28px}.model>h3{font-size:17px;margin:0 0 9px}.band{margin:10px 0}.band-title{font-size:11px;font-weight:900;letter-spacing:.12em;margin:0 0 6px}.band-title.top{color:var(--hot)}.band-title.bottom{color:var(--cold)}.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.original-grid{display:grid;grid-template-columns:minmax(220px,1fr) repeat(4,minmax(0,1fr));gap:8px}.card{background:var(--card);border:1px solid var(--line);padding:8px}.card strong{display:block;margin-bottom:6px;font-size:12px}.card small{display:block;color:#69716c;margin-top:5px}video,.pending{display:block;width:100%;aspect-ratio:896/512;background:#111}.pending{display:grid;place-items:center;color:#c9c3b7;font-weight:900}.selection{margin:12px 0}.selection summary{cursor:pointer;font-weight:900}.back{float:right;color:var(--ink);font-weight:900}@media(max-width:1450px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.grid,.original-grid{grid-template-columns:1fr}.case-head{align-items:flex-start}.back{float:none;display:block;margin-bottom:12px}}
-</style></head><body><main><a class="back" href="/">返回可视化总览</a><div class="eyebrow">20 UNIQUE TEST_5 CASES · WAN2.2 BASELINE × WAN+LORA</div><h1>PCK 极值 Head<br>分阶段输出置零</h1><p class="lead">从 70 个 common T-head 中，按每个 Head 在三模型、50-case、所有时间步中的最佳 PCK@32 排序。Top30 与 Bottom30 分别同时置零，阶段为 S00–09、S10–19、S20–29、S30–39、S00–39；每个 case 共用一个 Original。视频不循环，按钮可将整组已完成视频从头同步播放。</p><details class="selection"><summary>查看 Top30 / Bottom30 Head 列表</summary><div id="selection"></div></details><div class="status" id="status">正在读取结果...</div><div id="cases"></div></main><script>
-const MODELS=[['baseline','Wan2.2 Baseline'],['lora','Wan + LoRA']];const STAGES=[['steps_00_10','S00–09'],['steps_10_20','S10–19'],['steps_20_30','S20–29'],['steps_30_40','S30–39'],['steps_00_40','S00–39']];let signature='';const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function replay(button){const videos=button.closest('.case').querySelectorAll('video');videos.forEach(v=>{v.pause();v.currentTime=0});videos.forEach(v=>v.play().catch(()=>{}))}function media(c,m,v,title,note){const ready=(c.available[m]||[]).includes(v),src=`/api/pck-extreme-head-zero/video?model=${m}&case=${encodeURIComponent(c.case_key)}&variant=${v}`;return`<article class="card"><strong>${title}</strong>${ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">生成中</div>`}<small>${note}</small></article>`}function render(data){document.getElementById('status').textContent=`${data.ready_videos}/${data.expected_videos} 个视频已就绪 · ${data.complete_cases}/${data.cases.length} 个 case 双模型完整`;if(data.selection){document.getElementById('selection').innerHTML=['top30','bottom30'].map(g=>`<p><b>${g.toUpperCase()}</b> · ${data.selection[g].map(x=>`L${String(x.block).padStart(2,'0')}/H${String(x.head).padStart(2,'0')} (${Number(x.macro_pck32).toFixed(2)})`).join(' · ')}</p>`).join('')}const next=JSON.stringify(data.cases.map(c=>[c.case_key,c.available]));if(next===signature)return;signature=next;document.getElementById('cases').innerHTML=data.cases.map(c=>`<section class="case"><div class="case-head"><h2>${esc(c.case_key)}</h2><button class="replay" onclick="replay(this)">本组全部从头播放</button></div>${MODELS.map(([m,label])=>`<div class="model"><h3>${label}</h3><div class="original-grid">${media(c,m,'original','Original','无消融')}</div><div class="band"><div class="band-title top">TOP30 同时置零</div><div class="grid">${STAGES.map(([v,t])=>media(c,m,'top30_'+v,t,'Top30')).join('')}</div></div><div class="band"><div class="band-title bottom">BOTTOM30 同时置零</div><div class="grid">${STAGES.map(([v,t])=>media(c,m,'bottom30_'+v,t,'Bottom30')).join('')}</div></div></div>`).join('')}</section>`).join('')}async function refresh(){try{render(await fetch('/api/pck-extreme-head-zero/catalog?v='+Date.now()).then(r=>r.json()))}catch(e){document.getElementById('status').textContent='读取失败，将自动重试'}}refresh();setInterval(refresh,10000);
+:root{--paper:#e7dfd0;--ink:#17211d;--card:#fffdf7;--hot:#b74328;--cold:#206d7a;--line:#999184}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 5% 0,#cf684035,transparent 34rem),linear-gradient(125deg,#e7dfd0,#f4eee2);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2380px,calc(100% - 24px));margin:auto;padding:26px 0 90px}h1{font:700 clamp(38px,5vw,74px)/.94 Georgia,serif;letter-spacing:-.045em;margin:8px 0}.eyebrow{color:var(--hot);font-size:11px;font-weight:900;letter-spacing:.14em}.lead{max-width:1300px;line-height:1.6;color:#5d655f}.toolbar{position:sticky;top:8px;z-index:5;display:flex;align-items:center;gap:12px;background:#fffdf7eb;border:1px solid var(--line);padding:10px 14px;backdrop-filter:blur(8px)}.toolbar select{min-width:min(720px,65vw);padding:8px;background:white;border:1px solid var(--line);font-weight:800}.status{margin-left:auto;font-size:12px;font-weight:800}.case{margin-top:34px;border-top:3px solid var(--ink);padding-top:14px}.case h2{font:700 27px Georgia,serif;margin:0;overflow-wrap:anywhere}.replay-fixed{position:fixed;right:24px;bottom:22px;z-index:20;border:0;background:var(--hot);color:#fff;padding:13px 18px;font-weight:900;cursor:pointer;box-shadow:0 8px 30px #37211855}.model{margin:18px 0 28px}.model>h3{font-size:17px;margin:0 0 9px}.band{margin:10px 0}.band-title{font-size:11px;font-weight:900;letter-spacing:.12em;margin:0 0 6px}.band-title.top{color:var(--hot)}.band-title.bottom{color:var(--cold)}.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.original-grid{display:grid;grid-template-columns:minmax(220px,1fr) repeat(4,minmax(0,1fr));gap:8px}.card{background:var(--card);border:1px solid var(--line);padding:8px}.card strong{display:block;margin-bottom:6px;font-size:12px}.card small{display:block;color:#69716c;margin-top:5px}video,.pending{display:block;width:100%;aspect-ratio:896/512;background:#111}.pending{display:grid;place-items:center;color:#c9c3b7;font-weight:900}.selection{margin:12px 0}.selection summary{cursor:pointer;font-weight:900}.back{float:right;color:var(--ink);font-weight:900}@media(max-width:1450px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.grid,.original-grid{grid-template-columns:1fr}.toolbar{align-items:stretch;flex-direction:column}.toolbar select{min-width:100%;width:100%}.status{margin-left:0}.back{float:none;display:block;margin-bottom:12px}.replay-fixed{right:12px;bottom:12px}}
+</style></head><body><main><a class="back" href="/">返回可视化总览</a><div class="eyebrow">20 UNIQUE TEST_5 CASES · WAN2.2 BASELINE × WAN+LORA</div><h1>PCK 极值 Head<br>分阶段输出置零</h1><p class="lead">从 70 个 common T-head 中，按每个 Head 在三模型、50-case、所有时间步中的最佳 PCK@32 排序。每次只显示一个 case；下拉框切换后 URL 会记录 case，可直接分享或刷新。视频不循环，右下角按钮固定显示并同步重播当前 case。</p><details class="selection"><summary>查看 Top30 / Bottom30 Head 列表</summary><div id="selection"></div></details><div class="toolbar"><label>Case <select id="caseSelect"></select></label><span class="status" id="status">正在读取结果...</span></div><div id="cases"></div></main><button class="replay-fixed" onclick="replayCurrent()">当前 Case 全部从头播放</button><script>
+const MODELS=[['baseline','Wan2.2 Baseline'],['lora','Wan + LoRA']];const STAGES=[['steps_00_10','S00–09'],['steps_10_20','S10–19'],['steps_20_30','S20–29'],['steps_30_40','S30–39'],['steps_00_40','S00–39']];let signature='',selected=new URLSearchParams(location.search).get('case')||'';const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function replayCurrent(){const videos=document.querySelectorAll('#cases video');videos.forEach(v=>{v.pause();v.currentTime=0});videos.forEach(v=>v.play().catch(()=>{}))}function media(c,m,v,title,note){const ready=(c.available[m]||[]).includes(v),src=`/api/pck-extreme-head-zero/video?model=${m}&case=${encodeURIComponent(c.case_key)}&variant=${v}`;return`<article class="card"><strong>${title}</strong>${ready?`<video controls muted playsinline preload="metadata" src="${src}"></video>`:`<div class="pending">生成中</div>`}<small>${note}</small></article>`}function caseHtml(c){return`<section class="case"><h2>${esc(c.case_key)}</h2>${MODELS.map(([m,label])=>`<div class="model"><h3>${label}</h3><div class="original-grid">${media(c,m,'original','Original','无消融')}</div><div class="band"><div class="band-title top">TOP30 同时置零</div><div class="grid">${STAGES.map(([v,t])=>media(c,m,'top30_'+v,t,'Top30')).join('')}</div></div><div class="band"><div class="band-title bottom">BOTTOM30 同时置零</div><div class="grid">${STAGES.map(([v,t])=>media(c,m,'bottom30_'+v,t,'Bottom30')).join('')}</div></div></div>`).join('')}</section>`}function render(data){if(!data.cases.some(c=>c.case_key===selected))selected=data.cases[0]?.case_key||'';const select=document.getElementById('caseSelect');if(select.options.length!==data.cases.length){select.innerHTML=data.cases.map(c=>`<option value="${esc(c.case_key)}">${esc(c.case_key)}</option>`).join('');select.onchange=()=>{selected=select.value;history.replaceState(null,'','?case='+encodeURIComponent(selected));signature='';render(data)}}select.value=selected;document.getElementById('status').textContent=`${data.ready_videos}/${data.expected_videos} 已就绪 · ${data.complete_cases}/${data.cases.length} case 完整`;if(data.selection){document.getElementById('selection').innerHTML=['top30','bottom30'].map(g=>`<p><b>${g.toUpperCase()}</b> · ${data.selection[g].map(x=>`L${String(x.block).padStart(2,'0')}/H${String(x.head).padStart(2,'0')} (${Number(x.macro_pck32).toFixed(2)})`).join(' · ')}</p>`).join('')}const c=data.cases.find(x=>x.case_key===selected),next=JSON.stringify([selected,c?.available]);if(next===signature)return;signature=next;document.getElementById('cases').innerHTML=c?caseHtml(c):''}async function refresh(){try{render(await fetch('/api/pck-extreme-head-zero/catalog?v='+Date.now()).then(r=>r.json()))}catch(e){document.getElementById('status').textContent='读取失败，将自动重试'}}refresh();setInterval(refresh,10000);
 </script></body></html>'''
+
+EXTREME30_PAGE = (
+    EXTREME_ZERO_PAGE
+    .replace("<title>PCK Top30 / Bottom30 分阶段消融</title>", "<title>All-720 PCK Top30 / Bottom30 分阶段消融</title>")
+    .replace("从 70 个 common T-head 中", "从全部 720 个 block-head 中")
+    .replace("/api/pck-extreme-head-zero/", "/api/pck-extreme30-head-zero/")
+    .replace("PCK 极值 Head<br>分阶段输出置零", "All-720 PCK 极值 Head<br>分阶段输出置零")
+)
 
 INTERVAL_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Joint 分区间 Head 热力图</title><style>
 :root{--paper:#e8e1d2;--ink:#17201c;--card:#fffdf7;--rust:#bb4d30;--line:#9d9687;--muted:#69716c}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 4% 0,#ca755a3b,transparent 35rem),linear-gradient(120deg,#e8e1d2,#f3efe5);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2280px,calc(100% - 24px));margin:auto;padding:26px 0 70px}h1{font:700 clamp(38px,5vw,72px)/.94 Georgia,serif;letter-spacing:-.04em;margin:8px 0}.eyebrow{color:var(--rust);font-size:11px;font-weight:900;letter-spacing:.15em}.lead{max-width:1100px;color:var(--muted);line-height:1.6}.back{float:right;color:var(--ink);font-weight:900}.section{margin-top:34px}.section-title{display:flex;align-items:end;justify-content:space-between;border-bottom:2px solid var(--ink);margin-bottom:10px}.section-title h2{font:700 30px Georgia,serif;margin:0 0 6px}.section-title span{font-size:11px;font-weight:900;letter-spacing:.12em;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.card{background:var(--card);border:1px solid var(--line);padding:10px;box-shadow:0 5px 18px #2b241711}.card h3{font:700 21px Georgia,serif;margin:0}.sample{float:right;color:var(--rust);font:900 10px "Trebuchet MS",sans-serif;letter-spacing:.1em}.score{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin:7px 0;color:var(--muted);font-size:10px}.score b{color:var(--ink)}.card img{display:block;width:100%;border:1px solid #c9c1b2;background:#111}.links{display:flex;gap:18px;margin-top:20px}.links a{color:var(--ink);font-weight:900}@media(max-width:1500px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.grid{grid-template-columns:1fr}.back{float:none;display:block;margin-bottom:12px}}
@@ -400,6 +412,34 @@ def send_file_with_range(handler, path: Path, content_type: str) -> None:
             remaining -= len(chunk)
 
 
+def extreme30_catalog() -> dict:
+    list_path = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
+    cases, seen = [], set()
+    variants = ["original"] + [
+        f"{group}_{stage}"
+        for group in ("top30", "bottom30")
+        for stage in ("steps_00_10", "steps_10_20", "steps_20_30", "steps_30_40", "steps_00_40")
+    ]
+    ready = complete = 0
+    for line in list_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        case_key = Path(line).stem if line else ""
+        if not case_key or case_key in seen:
+            continue
+        seen.add(case_key)
+        available = {}
+        for model in ("baseline", "lora"):
+            case_root = EXTREME30_ROOT / model / "cases" / case_key
+            available[model] = [variant for variant in variants if (case_root / f"{variant}.mp4").is_file()]
+            ready += len(available[model])
+        if all(len(available[model]) == len(variants) for model in ("baseline", "lora")):
+            complete += 1
+        cases.append({"case_key": case_key, "available": available})
+    selection_path = EXTREME30_ROOT / "selection.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8")) if selection_path.is_file() else None
+    return {"cases": cases, "selection": selection, "ready_videos": ready, "expected_videos": len(cases) * 22, "complete_cases": complete}
+
+
 def head_zero_catalog() -> dict:
     initial = [
         "case_001_ball_roll", "case_002_puck_slide", "case_003_capsule_slide",
@@ -520,6 +560,8 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(HEAD_ZERO_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/pck-extreme-head-zero-ablation":
                 return self.send_payload(EXTREME_ZERO_PAGE.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/pck-extreme30-head-zero-ablation":
+                return self.send_payload(EXTREME30_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/joint-interval-heatmaps":
                 return self.send_payload(INTERVAL_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/balanced-interval-heatmaps":
@@ -607,6 +649,20 @@ class Handler(BASE_HANDLER):
             if parsed.path == "/api/pck-extreme-head-zero/catalog":
                 return self.send_payload(
                     json.dumps(extreme_zero_catalog(), ensure_ascii=False).encode(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path == "/api/pck-extreme30-head-zero/video":
+                query = parse_qs(parsed.query)
+                model = query.get("model", [""])[0]
+                case = query.get("case", [""])[0]
+                variant = query.get("variant", [""])[0]
+                allowed = {"original"} | {f"{group}_{stage}" for group in ("top30", "bottom30") for stage in ("steps_00_10", "steps_10_20", "steps_20_30", "steps_30_40", "steps_00_40")}
+                if model not in {"baseline", "lora"} or not case or case != Path(case).name or case in {".", ".."} or variant not in allowed:
+                    raise ValueError("invalid all720 PCK extreme head-zero video request")
+                return send_file_with_range(self, EXTREME30_ROOT / model / "cases" / case / f"{variant}.mp4", "video/mp4")
+            if parsed.path == "/api/pck-extreme30-head-zero/catalog":
+                return self.send_payload(
+                    json.dumps(extreme30_catalog(), ensure_ascii=False).encode(),
                     "application/json; charset=utf-8",
                 )
             if parsed.path == "/downloads/all720-uniform-diagonal.csv":
