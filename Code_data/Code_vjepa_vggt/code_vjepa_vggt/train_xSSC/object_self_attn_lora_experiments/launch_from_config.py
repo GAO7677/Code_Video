@@ -81,9 +81,9 @@ def validate_config(config: dict, config_dir: Path) -> dict:
     enable_object_branch = require(config, "adaptation.enable_object_branch")
     if not isinstance(enable_object_branch, bool):
         raise TypeError("adaptation.enable_object_branch must be a boolean")
-    if not enable_object_branch and mode != "full_sa":
+    if not enable_object_branch and mode not in {"full_sa", *HEAD_SELECTIVE_MODES}:
         raise ValueError(
-            "Disabling the object branch is currently supported only for full_sa"
+            "Disabling the object branch requires a self-attention adaptation mode"
         )
     expected_role_by_mode = {"s_head": "S", "t_head": "T"}
     if mode in HEAD_SELECTIVE_MODES:

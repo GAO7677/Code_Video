@@ -1,0 +1,19 @@
+{
+  "extends": "t_head.json",
+  "experiment": {
+    "name": "common_t_head_full70_no_object",
+    "description": "OpenVid-initialized rank-32 LoRA restricted to the 70 common T heads; no SAM2, xSSC, slots, projector, or object cross-attention",
+    "expected_trainable_params": 9404416
+  },
+  "adaptation": {
+    "enable_object_branch": false
+  },
+  "conditioning": {
+    "filter_empty_amg": false,
+    "slot_track_dropout": 0.0,
+    "lambda_object_context_reg": 0.0
+  },
+  "logging": {
+    "debug_print_object_regularization": false
+  }
+}

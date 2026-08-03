@@ -1,0 +1,21 @@
+{
+  "extends": "t_head_no_object.json",
+  "experiment": {
+    "name": "common_t_head_full70_no_object_gpu67_formal"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29572
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": null
+  },
+  "logging": {
+    "wandb_name": "common_t_head_full70_no_object_gpu67_from_scratch"
+  }
+}

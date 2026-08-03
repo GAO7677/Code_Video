@@ -35,6 +35,7 @@ TRAINING_CHECKPOINT_PATTERN = re.compile(
     r"full_sa|full_sa_resume|"
     r"s_head59|s_head59_resume|"
     r"t_head70|t_head70_resume|"
+    r"t_head70_slot_dedup_merge|"
     r"slot_dedup_merge|"
     r"full_sa_no_object"
     r")_step-(\d+)_steps\d+_\d+x\d+_ctx\d+_\d+f(?:_.+)?$"
@@ -89,6 +90,7 @@ TRAINING_VARIANT_LABELS = {
     "full_sa": "Full-SA + Object",
     "s_head59": "S-head59 + Object",
     "t_head70": "T-head70 + Object",
+    "t_head70_slot_dedup_merge": "T-head70 + Object + Slot-Dedup",
     "slot_dedup_merge": "Full-SA + Object + Slot-Dedup",
     "full_sa_no_object": "Full-SA + No-Object",
 }
@@ -96,6 +98,7 @@ TRAINING_VARIANT_COLORS = {
     "full_sa": "#D62728",
     "s_head59": "#2CA02C",
     "t_head70": "#9467BD",
+    "t_head70_slot_dedup_merge": "#17BECF",
     "slot_dedup_merge": "#1F77B4",
     "full_sa_no_object": "#FF7F0E",
 }
@@ -103,6 +106,7 @@ TRAINING_VARIANT_MARKERS = {
     "full_sa": "o",
     "s_head59": "s",
     "t_head70": "^",
+    "t_head70_slot_dedup_merge": "v",
     "slot_dedup_merge": "D",
     "full_sa_no_object": "X",
 }
@@ -110,6 +114,7 @@ TRAINING_VARIANT_LINESTYLES = {
     "full_sa": "-",
     "s_head59": "--",
     "t_head70": "-.",
+    "t_head70_slot_dedup_merge": (0, (3, 1, 1, 1)),
     "slot_dedup_merge": ":",
     "full_sa_no_object": (0, (5, 1)),
 }
@@ -120,6 +125,7 @@ TRAINING_VARIANT_ORDER = {
             "full_sa",
             "s_head59",
             "t_head70",
+            "t_head70_slot_dedup_merge",
             "slot_dedup_merge",
             "full_sa_no_object",
         )
@@ -996,21 +1002,27 @@ def write_plot_index(
 ) -> None:
     sections: list[str] = []
     if training_plot is not None:
-        training_png = Path(training_plot["png"]).name
+        training_png_path = Path(training_plot["png"])
+        training_png = training_png_path.name
+        training_png_version = training_png_path.stat().st_mtime_ns
         training_pdf = Path(training_plot["pdf"]).name
         sections.append(
             f"<section><h2>Wan+xSSC training checkpoints</h2>"
             f"<p><a href='{training_pdf}'>PDF</a></p>"
-            f"<img src='{training_png}' alt='Wan+xSSC training checkpoint metrics'>"
+            f"<img src='{training_png}?v={training_png_version}' "
+            f"alt='Wan+xSSC training checkpoint metrics'>"
             f"</section>"
         )
     for model, files in plots.items():
-        png_name = Path(files["png"]).name
+        png_path = Path(files["png"])
+        png_name = png_path.name
+        png_version = png_path.stat().st_mtime_ns
         pdf_name = Path(files["pdf"]).name
         sections.append(
             f"<section><h2>{MODEL_LABELS[model]} block ablations</h2>"
             f"<p><a href='{pdf_name}'>PDF</a></p>"
-            f"<img src='{png_name}' alt='{MODEL_LABELS[model]} block ablation metrics'>"
+            f"<img src='{png_name}?v={png_version}' "
+            f"alt='{MODEL_LABELS[model]} block ablation metrics'>"
             f"</section>"
         )
     path.write_text(

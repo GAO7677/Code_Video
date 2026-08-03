@@ -1612,8 +1612,14 @@ def main() -> None:
         and args.head_selection_config is None
     ):
         parser.error("--head_selection_config is required for head-selective mode")
-    if args.disable_object_branch and args.self_attn_adaptation_mode != "full_sa":
-        parser.error("--disable_object_branch is supported only with full_sa mode")
+    if (
+        args.disable_object_branch
+        and args.self_attn_adaptation_mode
+        not in ("full_sa", *HEAD_SELECTIVE_ADAPTATION_MODES)
+    ):
+        parser.error(
+            "--disable_object_branch requires a self-attention adaptation mode"
+        )
     if args.disable_object_branch and args.xssc_filter_empty_amg:
         parser.error(
             "--xssc_filter_empty_amg cannot be used when the object branch is disabled"
