@@ -34,6 +34,21 @@ BALANCED_INTERVAL_ROOT = Path(
     "/data/gaoya/agent-data/outputs/"
     "three_model_balanced_interval_samples_alltoken_qk_case001"
 )
+BALANCED_VIDEO_PATHS = {
+    "gt": Path(
+        "/data/gaoya/agent-data/outputs/wan22_ti2v_5b_gt_real_sam2_regions_steps40/"
+        "cases/case_001_ball_roll/gt.mp4"
+    ),
+    "lora": Path(
+        "/data/gaoya/agent-data/outputs/"
+        "wan_openvid_0613pybullet_lora_step000500_sam2_regions_steps40/"
+        "cases/case_001_ball_roll/generated.mp4"
+    ),
+    "baseline": Path(
+        "/data/gaoya/agent-data/outputs/wan22_ti2v_5b_baseline_sam2_regions_steps40/"
+        "cases/case_001_ball_roll/generated.mp4"
+    ),
+}
 SOURCE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case"
 )
@@ -108,6 +123,10 @@ BALANCED_INTERVAL_PAGE = (
     .replace(
         "每个非空 0.1 Joint 区间按 PCK@32 从低到高等分抽取 6 个 block-head。",
         "Balanced Diagonal 按 0.05 分箱，每个区间按 PCK@32 从低到高等分抽取最多 6 个 block-head；样本不足 6 个时全部展示。",
+    )
+    .replace(
+        '<div id="sections"></div>',
+        '''<section style="margin:28px 0 42px"><div class="section-title"><h2>Three-model videos</h2><span>CASE 001 · 40 STEPS · SEED 42</span></div><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px"><article class="card"><h3>GT teacher-forced</h3><p style="font-size:11px;color:var(--muted)">Real target video used by teacher forcing</p><video controls muted loop playsinline preload="metadata" style="display:block;width:100%;background:#111" src="/api/balanced-interval/video?model=gt"></video></article><article class="card"><h3>LoRA</h3><p style="font-size:11px;color:var(--muted)">step-000500 · 40-step generation</p><video controls muted loop playsinline preload="metadata" style="display:block;width:100%;background:#111" src="/api/balanced-interval/video?model=lora"></video></article><article class="card"><h3>Wan2.2 Baseline</h3><p style="font-size:11px;color:var(--muted)">Base model · 40-step generation</p><video controls muted loop playsinline preload="metadata" style="display:block;width:100%;background:#111" src="/api/balanced-interval/video?model=baseline"></video></article></div></section><div id="sections"></div>''',
     )
     .replace("Joint ${esc(interval)}", "Balanced ${esc(interval)}")
     .replace("${x.sample_index}/6", "${x.sample_index}/${rows.length}")
@@ -329,6 +348,8 @@ def s039_strip_png(params: dict[str, list[str]]) -> bytes:
 
 
 class Handler(BASE_HANDLER):
+    protocol_version = "HTTP/1.1"
+
     def send_payload(self, payload: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -336,6 +357,47 @@ class Handler(BASE_HANDLER):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
+
+    def send_video_file(self, path: Path) -> None:
+        size = path.stat().st_size
+        start, end, status = 0, size - 1, 200
+        range_header = self.headers.get("Range")
+        if range_header:
+            if not range_header.startswith("bytes=") or "," in range_header:
+                self.send_error(416, "unsupported byte range")
+                return
+            bounds = range_header[6:].split("-", 1)
+            if bounds[0]:
+                start = int(bounds[0])
+                end = min(int(bounds[1]) if bounds[1] else size - 1, size - 1)
+            else:
+                length = min(int(bounds[1]), size)
+                start, end = size - length, size - 1
+            if start < 0 or start >= size or end < start:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            status = 206
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "public, max-age=3600")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with path.open("rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -362,6 +424,11 @@ class Handler(BASE_HANDLER):
                     (BALANCED_INTERVAL_ROOT / "selected_heads.json").read_bytes(),
                     "application/json; charset=utf-8",
                 )
+            if parsed.path == "/api/balanced-interval/video":
+                model = parse_qs(parsed.query).get("model", [""])[0]
+                if model not in BALANCED_VIDEO_PATHS:
+                    raise ValueError(f"unknown video model: {model}")
+                return self.send_video_file(BALANCED_VIDEO_PATHS[model])
             if parsed.path == "/api/joint-interval/strip":
                 query = parse_qs(parsed.query)
                 block = int(query["block"][0])
