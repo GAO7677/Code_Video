@@ -26,6 +26,14 @@ ROOT = Path(
 ALL720_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_all720_uniform_diagonal_5case"
 )
+INTERVAL_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "three_model_joint_interval_samples_alltoken_qk_case001"
+)
+BALANCED_INTERVAL_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "three_model_balanced_interval_samples_alltoken_qk_case001"
+)
 SOURCE_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case"
 )
@@ -79,7 +87,36 @@ const q=id=>document.getElementById(id);let DATA;function esc(x){return String(x
 
 CURVE_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>All 720 uniform-diagonal curves</title><style>
 :root{--paper:#ece7da;--ink:#18221e;--card:#fffdf7;--rust:#c65738;--line:#aaa392}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 5% 0,#d28b6335,transparent 34rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1700px,calc(100% - 24px));margin:auto;padding:28px 0 60px}h1{font:700 clamp(40px,6vw,78px)/.92 Georgia,serif;letter-spacing:-.04em;margin:8px 0}.eyebrow{color:var(--rust);font-size:11px;font-weight:900;letter-spacing:.15em}.lead{max-width:1050px;line-height:1.6;color:#59635e}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:18px 0}.stats span{padding:14px;background:var(--card);border:1px solid var(--line)}.stats b{display:block;font:700 28px Georgia,serif}.plot{display:block;width:100%;background:white;border:1px solid var(--line)}.links{display:flex;gap:16px;margin:14px 0}.links a{color:var(--ink);font-weight:900}.back{float:right}@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}}
-</style></head><body><main><a class="back" href="/">Back to atlas</a><div class="eyebrow">S039 · 30 BLOCKS × 24 HEADS · 3 MODELS × 5 CASES</div><h1>Uniform-diagonal<br>distribution</h1><p class="lead">Joint score = 帧内同空间对角带质量 × 对角质量在7帧间的归一化熵。第一幅曲线按 Joint 排序，第二幅沿 PCK@32 排名观察指标变化，第三幅直接显示 720 个组合的 Joint–PCK 关系。</p><section class="stats"><span><b>720</b>combinations</span><span><b>10,800</b>case-model rows</span><span><b>0.581</b>Pearson r</span><span><b>0.614</b>Spearman rho</span></section><img class="plot" src="/api/all720/curve?v=1" alt="All 720 uniform diagonal curves"><div class="links"><a href="/downloads/all720-uniform-diagonal.csv">Download 720-row CSV</a><a href="/all-token-qk?v=6">Top30 / Bottom30 heatmaps</a></div></main></body></html>'''
+</style></head><body><main><a class="back" href="/">Back to atlas</a><div class="eyebrow">S039 · 30 BLOCKS × 24 HEADS · 3 MODELS × 5 CASES</div><h1>Uniform-diagonal<br>distribution</h1><p class="lead">Joint score = 帧内同空间对角带质量 × 对角质量在7帧间的归一化熵。上图展示排序曲线与 Joint–PCK 关系；下图统计 720 个 block-head 组合落入各指标区间的数量。</p><section class="stats"><span><b>720</b>combinations</span><span><b>10,800</b>case-model rows</span><span><b>0.581</b>Pearson r</span><span><b>0.614</b>Spearman rho</span></section><img class="plot" src="/api/all720/curve?v=2" alt="All 720 uniform diagonal curves"><img class="plot" style="margin-top:18px" src="/api/all720/count-distribution?v=1" alt="All 720 metric count distributions"><div class="links"><a href="/downloads/all720-uniform-diagonal.csv">Download 720-row CSV</a><a href="/downloads/all720-count-distribution.csv">Download count bins CSV</a><a href="/joint-interval-heatmaps?v=1">Joint-bin sampled heatmaps</a><a href="/balanced-interval-heatmaps?v=1">Balanced-bin sampled heatmaps</a><a href="/all-token-qk?v=6">Top30 / Bottom30 heatmaps</a></div></main></body></html>'''
+
+
+INTERVAL_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Joint-bin head heatmaps</title><style>
+:root{--paper:#e8e1d2;--ink:#17201c;--card:#fffdf7;--rust:#bb4d30;--line:#9d9687;--muted:#69716c}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 4% 0,#ca755a3b,transparent 35rem),linear-gradient(120deg,#e8e1d2,#f3efe5);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(2280px,calc(100% - 24px));margin:auto;padding:26px 0 70px}h1{font:700 clamp(38px,5vw,72px)/.94 Georgia,serif;letter-spacing:-.04em;margin:8px 0}.eyebrow{color:var(--rust);font-size:11px;font-weight:900;letter-spacing:.15em}.lead{max-width:1100px;color:var(--muted);line-height:1.6}.back{float:right;color:var(--ink);font-weight:900}.section{margin-top:34px}.section-title{display:flex;align-items:end;justify-content:space-between;border-bottom:2px solid var(--ink);margin-bottom:10px}.section-title h2{font:700 30px Georgia,serif;margin:0 0 6px}.section-title span{font-size:11px;font-weight:900;letter-spacing:.12em;margin-bottom:8px}.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.card{background:var(--card);border:1px solid var(--line);padding:10px;box-shadow:0 5px 18px #2b241711}.card h3{font:700 21px Georgia,serif;margin:0}.sample{float:right;color:var(--rust);font:900 10px "Trebuchet MS",sans-serif;letter-spacing:.1em}.score{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin:7px 0;color:var(--muted);font-size:10px}.score b{color:var(--ink)}.card img{display:block;width:100%;border:1px solid #c9c1b2;background:#111}.links{display:flex;gap:18px;margin-top:20px}.links a{color:var(--ink);font-weight:900}@media(max-width:1500px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.grid{grid-template-columns:1fr}.back{float:none;display:block;margin-bottom:12px}}
+</style></head><body><main><a class="back" href="/uniform-diagonal-curves?v=2">Back to distributions</a><div class="eyebrow">CASE 001 · S039 · 9 JOINT BINS · 6 PCK-STRATIFIED HEADS PER BIN</div><h1>Inside each<br>Joint interval</h1><p class="lead">每个非空 0.1 Joint 区间按 PCK@32 从低到高等分抽取 6 个 block-head。每张图从左到右为 GT teacher-forced、LoRA、Wan2.2 Baseline；白线标出 7 个潜空间帧边界，颜色为 log10 softmax attention mass。</p><div id="sections"></div><div class="links"><a href="/downloads/joint-interval-selection.csv">Download selection CSV</a><a href="/uniform-diagonal-curves?v=2">Distribution curves</a></div></main><script>
+const esc=x=>String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const f=x=>Number(x).toFixed(3);async function init(){const data=await fetch('/api/joint-interval/catalog').then(r=>r.json()),groups=Object.groupBy(data.combinations,x=>x.interval);document.getElementById('sections').innerHTML=Object.entries(groups).map(([interval,rows])=>`<section class="section"><div class="section-title"><h2>Joint ${esc(interval)}</h2><span>${rows[0].interval_count} TOTAL COMBINATIONS</span></div><div class="grid">${rows.map(x=>{const b=String(x.block).padStart(2,'0'),h=String(x.head).padStart(2,'0'),src=`/api/joint-interval/strip?block=${x.block}&head=${x.head}&v=1`;return`<article class="card"><h3>L${b} / H${h}<span class="sample">SAMPLE ${x.sample_index}/6</span></h3><div class="score"><span>PCK@32 <b>${f(x.pck32)}</b></span><span>Joint <b>${f(x.joint)}</b></span><span>Diag mass <b>${f(x.diagonal_mass)}</b></span><span>Frame entropy <b>${f(x.diagonal_frame_entropy)}</b></span><span>Balanced <b>${f(x.balanced_diagonal)}</b></span></div><a href="${src}" target="_blank"><img loading="lazy" src="${src}" alt="L${b} H${h} three-model attention"></a></article>`}).join('')}</div></section>`).join('')}init();
+</script></body></html>'''
+
+
+BALANCED_INTERVAL_PAGE = (
+    INTERVAL_PAGE
+    .replace("<title>Joint-bin head heatmaps</title>", "<title>Balanced-bin head heatmaps</title>")
+    .replace(
+        "9 JOINT BINS · 6 PCK-STRATIFIED HEADS PER BIN",
+        "9 BALANCED BINS · UP TO 6 PCK-STRATIFIED HEADS PER BIN",
+    )
+    .replace("Inside each<br>Joint interval", "Inside each<br>Balanced interval")
+    .replace(
+        "每个非空 0.1 Joint 区间按 PCK@32 从低到高等分抽取 6 个 block-head。",
+        "Balanced Diagonal 按 0.05 分箱，每个区间按 PCK@32 从低到高等分抽取最多 6 个 block-head；样本不足 6 个时全部展示。",
+    )
+    .replace("Joint ${esc(interval)}", "Balanced ${esc(interval)}")
+    .replace("${x.sample_index}/6", "${x.sample_index}/${rows.length}")
+    .replace("/api/joint-interval", "/api/balanced-interval")
+    .replace(
+        "/downloads/joint-interval-selection.csv",
+        "/downloads/balanced-interval-selection.csv",
+    )
+)
 
 
 def catalog() -> dict:
@@ -309,6 +346,38 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(PAGE_S039.encode(), "text/html; charset=utf-8")
             if parsed.path == "/uniform-diagonal-curves":
                 return self.send_payload(CURVE_PAGE.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/joint-interval-heatmaps":
+                return self.send_payload(INTERVAL_PAGE.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/balanced-interval-heatmaps":
+                return self.send_payload(
+                    BALANCED_INTERVAL_PAGE.encode(), "text/html; charset=utf-8"
+                )
+            if parsed.path == "/api/joint-interval/catalog":
+                return self.send_payload(
+                    (INTERVAL_ROOT / "selected_heads.json").read_bytes(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path == "/api/balanced-interval/catalog":
+                return self.send_payload(
+                    (BALANCED_INTERVAL_ROOT / "selected_heads.json").read_bytes(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path == "/api/joint-interval/strip":
+                query = parse_qs(parsed.query)
+                block = int(query["block"][0])
+                head = int(query["head"][0])
+                return self.send_payload(
+                    (INTERVAL_ROOT / "web" / f"block{block:02d}_head{head:02d}.png").read_bytes(),
+                    "image/png",
+                )
+            if parsed.path == "/api/balanced-interval/strip":
+                query = parse_qs(parsed.query)
+                block = int(query["block"][0])
+                head = int(query["head"][0])
+                return self.send_payload(
+                    (BALANCED_INTERVAL_ROOT / "web" / f"block{block:02d}_head{head:02d}.png").read_bytes(),
+                    "image/png",
+                )
             if parsed.path == "/api/all-token/catalog":
                 payload = json.dumps(catalog(), ensure_ascii=False).encode()
                 return self.send_payload(payload, "application/json; charset=utf-8")
@@ -323,9 +392,29 @@ class Handler(BASE_HANDLER):
                     (ALL720_ROOT / "all720_uniform_diagonal_curves.png").read_bytes(),
                     "image/png",
                 )
+            if parsed.path == "/api/all720/count-distribution":
+                return self.send_payload(
+                    (ALL720_ROOT / "all720_metric_count_distribution.png").read_bytes(),
+                    "image/png",
+                )
             if parsed.path == "/downloads/all720-uniform-diagonal.csv":
                 return self.send_payload(
                     (ALL720_ROOT / "all720_uniform_diagonal_summary.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
+            if parsed.path == "/downloads/all720-count-distribution.csv":
+                return self.send_payload(
+                    (ALL720_ROOT / "all720_metric_count_distribution.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
+            if parsed.path == "/downloads/joint-interval-selection.csv":
+                return self.send_payload(
+                    (INTERVAL_ROOT / "selected_heads.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
+            if parsed.path == "/downloads/balanced-interval-selection.csv":
+                return self.send_payload(
+                    (BALANCED_INTERVAL_ROOT / "selected_heads.csv").read_bytes(),
                     "text/csv; charset=utf-8",
                 )
             return super().do_GET()
