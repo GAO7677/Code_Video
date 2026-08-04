@@ -547,6 +547,8 @@ def main() -> None:
 
     env = os.environ.copy()
     env.update({key: str(value) for key, value in cache_dirs.items()})
+    # Keep the training environment isolated from incompatible packages in ~/.local.
+    env["PYTHONNOUSERSITE"] = "1"
     env["CUDA_VISIBLE_DEVICES"] = str(config["launch"]["gpu_set"])
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     if config["logging"].get("wandb_run_id"):

@@ -14,6 +14,51 @@ BASE_SERVER = Path(__file__).with_name("serve_latent_block_head_viewer_alltoken.
 BENCH_ROOT = Path(
     "/data/gaoya/agent-data/outputs/pck_extreme_benchmark_test5_ready"
 )
+STATIC30_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme30_all720_head_zero_ablation_test5"
+)
+STATIC100_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme100_all720_head_zero_ablation_test5"
+)
+ADAPTIVE30_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "pck_step_adaptive_top30_bottom30_all720_head_zero_ablation_test5"
+)
+QK_NOISE30_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/"
+    "pck_step_adaptive_qk_logit_noise_sigma030_all720_test5"
+)
+QK_ATTENTION_COMPARE_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/qk_attention_before_after_sigma030_pilot"
+)
+
+VIDEO_CONDITIONS = (
+    ("original", "Original", STATIC30_ROOT, "original.mp4"),
+    ("static_top30_s00_09", "Static Top30 · S00-09", STATIC30_ROOT, "top30_steps_00_10.mp4"),
+    ("static_top30_s10_19", "Static Top30 · S10-19", STATIC30_ROOT, "top30_steps_10_20.mp4"),
+    ("static_top30_s20_29", "Static Top30 · S20-29", STATIC30_ROOT, "top30_steps_20_30.mp4"),
+    ("static_top30_s30_39", "Static Top30 · S30-39", STATIC30_ROOT, "top30_steps_30_40.mp4"),
+    ("static_top30", "Static Top30 · S00-39", STATIC30_ROOT, "top30_steps_00_40.mp4"),
+    ("static_bottom30_s00_09", "Static Bottom30 · S00-09", STATIC30_ROOT, "bottom30_steps_00_10.mp4"),
+    ("static_bottom30_s10_19", "Static Bottom30 · S10-19", STATIC30_ROOT, "bottom30_steps_10_20.mp4"),
+    ("static_bottom30_s20_29", "Static Bottom30 · S20-29", STATIC30_ROOT, "bottom30_steps_20_30.mp4"),
+    ("static_bottom30_s30_39", "Static Bottom30 · S30-39", STATIC30_ROOT, "bottom30_steps_30_40.mp4"),
+    ("static_bottom30", "Static Bottom30 · S00-39", STATIC30_ROOT, "bottom30_steps_00_40.mp4"),
+    ("static_top100_s00_09", "Static Top100 · S00-09", STATIC100_ROOT, "top100_steps_00_10.mp4"),
+    ("static_top100_s10_19", "Static Top100 · S10-19", STATIC100_ROOT, "top100_steps_10_20.mp4"),
+    ("static_top100_s20_29", "Static Top100 · S20-29", STATIC100_ROOT, "top100_steps_20_30.mp4"),
+    ("static_top100_s30_39", "Static Top100 · S30-39", STATIC100_ROOT, "top100_steps_30_40.mp4"),
+    ("static_top100", "Static Top100 · S00-39", STATIC100_ROOT, "top100_steps_00_40.mp4"),
+    ("static_bottom100_s00_09", "Static Bottom100 · S00-09", STATIC100_ROOT, "bottom100_steps_00_10.mp4"),
+    ("static_bottom100_s10_19", "Static Bottom100 · S10-19", STATIC100_ROOT, "bottom100_steps_10_20.mp4"),
+    ("static_bottom100_s20_29", "Static Bottom100 · S20-29", STATIC100_ROOT, "bottom100_steps_20_30.mp4"),
+    ("static_bottom100_s30_39", "Static Bottom100 · S30-39", STATIC100_ROOT, "bottom100_steps_30_40.mp4"),
+    ("static_bottom100", "Static Bottom100 · S00-39", STATIC100_ROOT, "bottom100_steps_00_40.mp4"),
+    ("adaptive_top30", "Step-adaptive Top30", ADAPTIVE30_ROOT, "top30_steps_00_40.mp4"),
+    ("adaptive_bottom30", "Step-adaptive Bottom30", ADAPTIVE30_ROOT, "bottom30_steps_00_40.mp4"),
+    ("qk_noise_top30_sigma030", "Q@K Noise σ0.30 · Adaptive Top30", QK_NOISE30_ROOT, "top30_steps_00_40.mp4"),
+    ("qk_noise_bottom30_sigma030", "Q@K Noise σ0.30 · Adaptive Bottom30", QK_NOISE30_ROOT, "bottom30_steps_00_40.mp4"),
+)
 
 spec = importlib.util.spec_from_file_location("difftrack_base_viewer", BASE_SERVER)
 if spec is None or spec.loader is None:
@@ -41,18 +86,54 @@ METRICS = (
 
 METHOD_ORDER = (
     "original",
+    "top30_steps_00_10",
+    "top30_steps_10_20",
+    "top30_steps_20_30",
+    "top30_steps_30_40",
     "top30_steps_00_40",
+    "bottom30_steps_00_10",
+    "bottom30_steps_10_20",
+    "bottom30_steps_20_30",
+    "bottom30_steps_30_40",
     "bottom30_steps_00_40",
+    "top100_steps_00_10",
+    "top100_steps_10_20",
+    "top100_steps_20_30",
+    "top100_steps_30_40",
     "top100_steps_00_40",
+    "bottom100_steps_00_10",
+    "bottom100_steps_10_20",
+    "bottom100_steps_20_30",
+    "bottom100_steps_30_40",
     "bottom100_steps_00_40",
+    "adaptive_top30_steps_00_40",
+    "adaptive_bottom30_steps_00_40",
 )
 
 METHOD_LABELS = {
     "original": "Baseline / Original",
-    "top30_steps_00_40": "Top30 zero, S00-39",
-    "bottom30_steps_00_40": "Bottom30 zero, S00-39",
-    "top100_steps_00_40": "Top100 zero, S00-39",
-    "bottom100_steps_00_40": "Bottom100 zero, S00-39",
+    "top30_steps_00_10": "Static Top30 · S00-09",
+    "top30_steps_10_20": "Static Top30 · S10-19",
+    "top30_steps_20_30": "Static Top30 · S20-29",
+    "top30_steps_30_40": "Static Top30 · S30-39",
+    "top30_steps_00_40": "Static Top30 · S00-39",
+    "bottom30_steps_00_10": "Static Bottom30 · S00-09",
+    "bottom30_steps_10_20": "Static Bottom30 · S10-19",
+    "bottom30_steps_20_30": "Static Bottom30 · S20-29",
+    "bottom30_steps_30_40": "Static Bottom30 · S30-39",
+    "bottom30_steps_00_40": "Static Bottom30 · S00-39",
+    "top100_steps_00_10": "Static Top100 · S00-09",
+    "top100_steps_10_20": "Static Top100 · S10-19",
+    "top100_steps_20_30": "Static Top100 · S20-29",
+    "top100_steps_30_40": "Static Top100 · S30-39",
+    "top100_steps_00_40": "Static Top100 · S00-39",
+    "bottom100_steps_00_10": "Static Bottom100 · S00-09",
+    "bottom100_steps_10_20": "Static Bottom100 · S10-19",
+    "bottom100_steps_20_30": "Static Bottom100 · S20-29",
+    "bottom100_steps_30_40": "Static Bottom100 · S30-39",
+    "bottom100_steps_00_40": "Static Bottom100 · S00-39",
+    "adaptive_top30_steps_00_40": "Step-adaptive Top30 · S00-39",
+    "adaptive_bottom30_steps_00_40": "Step-adaptive Bottom30 · S00-39",
 }
 
 
@@ -141,9 +222,47 @@ def benchmark_summary() -> dict[str, Any]:
     }
 
 
+def ablation_video_path(model: str, case_key: str, condition: str) -> Path | None:
+    if model not in {"baseline", "lora"}:
+        return None
+    for key, _label, root, filename in VIDEO_CONDITIONS:
+        if key == condition:
+            return root / model / "cases" / case_key / filename
+    return None
+
+
+def ablation_video_catalog() -> dict[str, Any]:
+    case_keys: set[str] = set()
+    for root in (STATIC30_ROOT, STATIC100_ROOT, ADAPTIVE30_ROOT, QK_NOISE30_ROOT):
+        for model in ("baseline", "lora"):
+            cases_root = root / model / "cases"
+            if cases_root.is_dir():
+                case_keys.update(path.name for path in cases_root.iterdir() if path.is_dir())
+    cases = []
+    ready_videos = 0
+    for case_key in sorted(case_keys):
+        model_rows = []
+        for model, model_label in (("baseline", "Wan2.2 Baseline"), ("lora", "Wan + LoRA")):
+            videos = []
+            for key, label, _root, _filename in VIDEO_CONDITIONS:
+                path = ablation_video_path(model, case_key, key)
+                ready = bool(path and path.is_file() and path.stat().st_size > 0)
+                ready_videos += int(ready)
+                videos.append({"condition": key, "label": label, "ready": ready})
+            model_rows.append({"model": model, "label": model_label, "videos": videos})
+        cases.append({"case": case_key, "models": model_rows})
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "ready_videos": ready_videos,
+        "expected_videos": len(cases) * 2 * len(VIDEO_CONDITIONS),
+        "num_cases": len(cases),
+        "cases": cases,
+    }
+
+
 METRICS_PAGE = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PCK Head 消融指标</title><style>
+<title>PCK Head 全条件消融指标</title><style>
 :root{--paper:#f1ecdf;--ink:#17211e;--card:#fffdf8;--line:#b8b09f;--rust:#b64a31;--green:#176654;--pale:#e8f2ea;--wait:#eee7d8}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 0 0,#d7764b2b,transparent 34rem),radial-gradient(circle at 100% 5%,#4b9a8030,transparent 36rem),var(--paper);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1900px,calc(100% - 24px));margin:auto;padding:26px 0 70px}a{color:var(--green)}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}h1{font-size:clamp(38px,6vw,78px);line-height:.94;letter-spacing:-.045em;margin:12px 0}.eyebrow{color:var(--rust);font-size:12px;font-weight:900;letter-spacing:.16em}.lead{max-width:1100px;line-height:1.65}.status{display:flex;gap:9px;flex-wrap:wrap;margin:20px 0}.pill{background:var(--card);border:1px solid var(--line);padding:8px 12px;border-radius:99px;font-size:13px}.model{margin:28px 0 45px}.model-head{display:flex;align-items:end;justify-content:space-between;gap:15px}.model h2{font-size:30px;margin:0 0 10px}.scroll{overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:4px 26px 4px 4px;box-shadow:0 15px 45px #53472f12}table{border-collapse:separate;border-spacing:0;width:100%;min-width:1750px;font-variant-numeric:tabular-nums}th,td{padding:11px 10px;border-right:1px solid #d7d0c0;border-bottom:1px solid #d7d0c0;text-align:center;font-size:12px}thead th{position:sticky;top:0;background:#20342d;color:white;z-index:2;white-space:nowrap}th:first-child,td:first-child{position:sticky;left:0;text-align:left;min-width:205px;z-index:1}thead th:first-child{z-index:3}tbody td:first-child{background:var(--card);font-weight:900}.value{font-size:15px;font-weight:900}.count{display:block;color:#746f64;font-size:10px;margin-top:3px}.best{background:var(--pale)}.best .value{color:var(--green)}.badge{display:inline-block;margin-left:5px;padding:2px 5px;border-radius:99px;background:var(--green);color:white;font-size:8px;vertical-align:2px}.pending{background:var(--wait);color:#877d69}.legend{font-size:12px;color:#665f52}.error{padding:25px;background:#fff2ec;border:1px solid #d68b72}.footer-note{line-height:1.6;font-size:12px;color:#665f52;margin-top:14px}@media(max-width:700px){main{width:min(100% - 12px,1900px)}h1{font-size:39px}.model-head{display:block}}
 </style></head><body><main><a href="/">返回可视化总览</a><div class="eyebrow">PCK EXTREME HEAD ZERO · BENCHMARK</div><h1>消融指标<br>实时对照表</h1><p class="lead">比较 Original、PCK Top/Bottom 30 和 Top/Bottom 100 Head 在全部 40 个去噪步置零后的生成质量。BEST 仅在同一模型的五个条件全部完成该指标后标注。</p><div class="status" id="status"><span class="pill">正在读取结果...</span></div><div id="tables"></div><p class="footer-note">比较原则：Baseline 与 LoRA 当前使用不同的已完成 case 分片，因此最佳值按模型内部计算。WMReward Surprise 越低越好，其余指标越高越好。页面每 10 秒自动刷新。</p></main><script>
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -169,10 +288,32 @@ refresh();setInterval(refresh,10000);
 </script></body></html>'''
 
 
+ABLATION_VIDEOS_PAGE = r'''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PCK Head 消融视频矩阵</title><style>
+:root{--sand:#ebe5d6;--ink:#18221f;--card:#fffdf8;--line:#b9af9a;--rust:#b64a31;--green:#176654;--dark:#142820}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 3% 0,#d7764b30,transparent 34rem),radial-gradient(circle at 97% 4%,#4b9a8035,transparent 36rem),var(--sand);color:var(--ink);font-family:"Trebuchet MS","Noto Sans CJK SC",sans-serif}main{width:min(1900px,calc(100% - 22px));margin:auto;padding:24px 0 90px}a{color:var(--green)}h1,h2{font-family:Georgia,"Noto Serif CJK SC",serif}.eyebrow{margin-top:16px;color:var(--rust);font-size:12px;font-weight:900;letter-spacing:.16em}h1{font-size:clamp(38px,6vw,76px);line-height:.94;letter-spacing:-.045em;margin:10px 0}.lead{max-width:1050px;line-height:1.6}.toolbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:20px 0;padding:12px;background:#f8f3e8e8;border:1px solid var(--line);backdrop-filter:blur(12px);box-shadow:0 9px 30px #5448331a}.toolbar select{min-width:min(650px,100%);flex:1;padding:10px 12px;background:white;border:1px solid var(--line);font-weight:800}.status{font-size:12px;color:#6d6557}.model{margin:32px 0}.model h2{font-size:30px;margin:0 0 10px}.grid{display:grid;grid-template-columns:repeat(4,minmax(230px,1fr));gap:10px}.card{background:var(--card);border:1px solid var(--line);padding:10px;border-radius:3px 20px 3px 3px}.card h3{margin:2px 0 9px;font-size:13px}.card.adaptive{border-color:#4c8e78;background:#f5fbf7}.card video{display:block;width:100%;aspect-ratio:16/9;background:#161b19;object-fit:contain}.pending{display:grid;place-items:center;width:100%;aspect-ratio:16/9;background:repeating-linear-gradient(135deg,#e8e1d3,#e8e1d3 10px,#f5f0e6 10px,#f5f0e6 20px);color:#756d5f;font-size:12px}.replay{position:fixed;right:18px;bottom:18px;z-index:30;border:0;border-radius:99px;padding:14px 20px;background:var(--dark);color:white;font-weight:900;box-shadow:0 12px 35px #10251d55;cursor:pointer}.empty{padding:35px;background:var(--card);border:1px solid var(--line)}@media(max-width:1250px){.grid{grid-template-columns:repeat(3,minmax(220px,1fr))}}@media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(190px,1fr))}}@media(max-width:560px){main{width:calc(100% - 10px)}.grid{grid-template-columns:1fr}.toolbar select{min-width:100%}.replay{right:10px;bottom:10px}}
+</style></head><body><main><a href="/">返回可视化总览</a><div class="eyebrow">CASE-CENTRIC ABLATION ATLAS</div><h1>一个 Case<br>看完所有消融</h1><p class="lead">按 case 聚合两个模型的 Original、静态 PCK Top/Bottom30、静态 Top/Bottom100，以及每个去噪 step 动态选择 Head 的 Top/Bottom30。视频不循环播放。</p><div class="toolbar"><select id="caseSelect"></select><span class="status" id="status">正在读取...</span></div><div id="content"></div></main><button class="replay" id="replay">重新全部播放</button><script>
+let catalog=null,currentCase='';const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function videoUrl(model,caseKey,condition){const q=new URLSearchParams({model,case:caseKey,condition});return `/api/pck-ablation-case-videos/video?${q}`}
+function render(){const item=catalog.cases.find(x=>x.case===currentCase);if(!item){document.getElementById('content').innerHTML='<div class="empty">暂无 case</div>';return}document.getElementById('content').innerHTML=item.models.map(row=>`<section class="model"><h2>${esc(row.label)}</h2><div class="grid">${row.videos.map(v=>`<article class="card ${v.condition.startsWith('adaptive_')?'adaptive':''}"><h3>${esc(v.label)}</h3>${v.ready?`<video controls preload="metadata" playsinline src="${videoUrl(row.model,item.case,v.condition)}"></video>`:'<div class="pending">生成中 / 暂不可用</div>'}</article>`).join('')}</div></section>`).join('');document.title=`${item.case} · PCK 消融视频`}
+function setCase(key){currentCase=key;document.getElementById('caseSelect').value=key;const u=new URL(location.href);u.searchParams.set('case',key);history.replaceState(null,'',u);render()}
+async function refresh(){const r=await fetch('/api/pck-ablation-case-videos/catalog',{cache:'no-store'});catalog=await r.json();const select=document.getElementById('caseSelect');const wanted=new URL(location.href).searchParams.get('case');const previous=currentCase;if(!select.options.length||select.options.length!==catalog.cases.length){select.innerHTML=catalog.cases.map(x=>`<option value="${esc(x.case)}">${esc(x.case)}</option>`).join('')}const keys=new Set(catalog.cases.map(x=>x.case));currentCase=keys.has(previous)?previous:keys.has(wanted)?wanted:(catalog.cases[0]?.case||'');document.getElementById('status').textContent=`${catalog.ready_videos}/${catalog.expected_videos} videos · ${catalog.num_cases} cases · 自动刷新`;if(currentCase){select.value=currentCase;render()}}
+document.getElementById('caseSelect').addEventListener('change',e=>setCase(e.target.value));document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.currentTime=0;v.play().catch(()=>{})}));refresh();setInterval(refresh,10000);
+</script></body></html>'''
+
+
 PORTAL_CARD = r'''
 <a class="card new" href="/pck-extreme-benchmark?v=1"><div><span>10 / 消融指标</span><h2>Top / Bottom Head 指标表</h2><p>汇总 Baseline 与 LoRA 的 Original、Top/Bottom 30 和 Top/Bottom 100 全步置零结果，实时标注模型内最佳值。</p></div><span class="go">打开消融指标表</span></a>
 '''
-viewer.PORTAL = viewer.PORTAL.replace("</section>", PORTAL_CARD + "</section>", 1)
+VIDEOS_PORTAL_CARD = r'''
+<a class="card new" href="/pck-ablation-case-videos?v=1"><div><span>11 / CASE 视频矩阵</span><h2>每个 Case 的全部消融</h2><p>按 case 汇总两个模型的 Original、静态 Top/Bottom30、Top/Bottom100 和 step-adaptive Top/Bottom30。</p></div><span class="go">打开 CASE 消融视频矩阵</span></a>
+'''
+QK_ATTENTION_PORTAL_CARD = r'''
+<a class="card new" href="/qk-noise-attention-compare?v=1"><div><span>12 / Q@K 扰动对比</span><h2>Attention Before / After</h2><p>对比 σ0.30 扰动前后的全 token 与潜变量帧注意力，Q/K/V 保持不变。</p></div><span class="go">打开注意力对比</span></a>
+'''
+viewer.PORTAL = viewer.PORTAL.replace(
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + "</section>", 1
+)
 
 
 class MetricsHandler(viewer.Handler):
@@ -185,10 +326,92 @@ class MetricsHandler(viewer.Handler):
             payload = json.dumps(benchmark_summary(), ensure_ascii=False).encode("utf-8")
             self.send_payload(payload, "application/json; charset=utf-8")
             return
+        if path == "/pck-ablation-case-videos":
+            self.send_payload(ABLATION_VIDEOS_PAGE.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        if path == "/api/pck-ablation-case-videos/catalog":
+            payload = json.dumps(ablation_video_catalog(), ensure_ascii=False).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/pck-ablation-case-videos/video":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            model = params.get("model", [""])[0]
+            case_key = params.get("case", [""])[0]
+            condition = params.get("condition", [""])[0]
+            video_path = ablation_video_path(model, case_key, condition)
+            if video_path is None or not video_path.is_file():
+                raise FileNotFoundError("unknown ablation video")
+            viewer.send_file_with_range(self, video_path, "video/mp4")
+            return
+        if path == "/qk-noise-attention-compare":
+            self.send_payload(
+                qk_noise_attention_compare_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/qk-noise-attention-compare/catalog":
+            payload = json.dumps(
+                qk_noise_attention_compare_catalog(), ensure_ascii=False
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path == "/api/qk-noise-attention-compare/file":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            image_path = qk_noise_attention_compare_file(
+                params.get("name", [""])[0]
+            )
+            if image_path is None:
+                raise FileNotFoundError("unknown Q@K attention image")
+            viewer.send_file_with_range(self, image_path, "image/png")
+            return
         super().do_GET()
 
 
 viewer.Handler = MetricsHandler
+
+
+def qk_noise_attention_compare_catalog():
+    records = []
+    if QK_ATTENTION_COMPARE_ROOT.exists():
+        for path in sorted(QK_ATTENTION_COMPARE_ROOT.glob("*.json")):
+            try:
+                records.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError):
+                continue
+    return {"records": records}
+
+
+def qk_noise_attention_compare_file(requested_name: str):
+    name = Path(requested_name).name
+    path = QK_ATTENTION_COMPARE_ROOT / name
+    if not name or not path.is_file():
+        return None
+    return path
+
+
+def qk_noise_attention_compare_page():
+    return r'''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Q@K Noise Attention Compare</title>
+<style>
+:root{--ink:#17221d;--muted:#607068;--paper:#f3efe3;--card:#fffdf7;--line:#c9c1ae;--top:#b83f2f;--bottom:#146b64}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 12% 8%,#f8d9ad 0,transparent 28%),linear-gradient(135deg,#ece5d4,#dce9df);font-family:"Noto Serif SC","Source Han Serif SC",serif}
+header{position:sticky;top:0;z-index:3;padding:18px 26px;background:rgba(243,239,227,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(9px)}
+h1{margin:0;font-size:clamp(22px,3vw,38px);letter-spacing:.02em}header p{margin:6px 0 0;color:var(--muted)}main{padding:22px;max-width:1700px;margin:auto}.status{padding:18px;border:1px dashed var(--line);background:var(--card)}
+.row{margin:22px 0;padding:20px;border:1px solid var(--line);border-radius:18px;background:rgba(255,253,247,.92);box-shadow:0 12px 34px rgba(45,52,43,.09)}.row.top{border-left:8px solid var(--top)}.row.bottom{border-left:8px solid var(--bottom)}
+.title{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.title h2{margin:0;font-size:25px}.meta{color:var(--muted);font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px}
+.images{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:14px}.images figure{margin:0}.images img{width:100%;display:block;border:1px solid var(--line);background:#fff}.images figcaption{margin-top:7px;color:var(--muted)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.pill{padding:7px 10px;border-radius:999px;background:#ebe5d6;font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px}@media(max-width:900px){.images{grid-template-columns:1fr}header{position:static}main{padding:12px}}
+</style></head><body><header><h1>Q@K Noise σ0.30: Attention Before / After</h1><p>Q/K/V 不变，仅对所选 head 的 QK logits 加噪；S039，Baseline pilot case。</p></header><main id="main"><div class="status">正在等待注意力捕获结果，页面会自动刷新。</div></main>
+<script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const fmt=x=>Number(x).toExponential(4);
+async function load(){const data=await fetch('/api/qk-noise-attention-compare/catalog',{cache:'no-store'}).then(r=>r.json());const root=document.getElementById('main');if(!data.records.length)return;data.records.sort((a,b)=>a.group==='top30'?-1:b.group==='top30'?1:0);root.innerHTML=data.records.map(r=>`<section class="row ${r.group==='top30'?'top':'bottom'}"><div class="title"><h2>${esc(r.group.toUpperCase())}</h2><span class="meta">${esc(r.case)} · S${String(r.step).padStart(3,'0')} · ${r.unique_block_heads} block-heads</span></div><div class="images"><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.all_token_image)}"><figcaption>全 token 注意力：Before / After / 差值</figcaption></figure><figure><img src="/api/qk-noise-attention-compare/file?name=${encodeURIComponent(r.frame_image)}"><figcaption>7×7 潜变量帧注意力质量：Before / After / 差值</figcaption></figure></div><div class="stats"><span class="pill">mean |ΔA| ${fmt(r.mean_abs_attention_delta)}</span><span class="pill">max |ΔA| ${fmt(r.max_abs_attention_delta)}</span><span class="pill">entropy ${r.before_mean_row_entropy.toFixed(4)} → ${r.after_mean_row_entropy.toFixed(4)}</span><span class="pill">Q/K/V modified: ${r.qkv_modified}</span></div></section>`).join('');}
+load().catch(e=>document.getElementById('main').textContent=e);setInterval(load,5000);
+</script></body></html>'''
 
 
 if __name__ == "__main__":

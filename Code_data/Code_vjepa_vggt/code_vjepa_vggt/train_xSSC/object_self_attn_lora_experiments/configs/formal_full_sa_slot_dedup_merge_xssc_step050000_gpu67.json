@@ -1,0 +1,25 @@
+{
+  "extends": "full_sa_slot_dedup_merge.json",
+  "experiment": {
+    "name": "full_sa_slot_dedup_merge_xssc_step050000_gpu67",
+    "description": "Full-SA plus object branch and slot-track deduplication, using frozen DINOv3 MOVi-C xSSC step-050000"
+  },
+  "launch": {
+    "gpu_set": "6,7",
+    "num_processes": 2,
+    "main_process_port": 29568
+  },
+  "paths": {
+    "xssc_checkpoint": "/data/gaoya/AAA_test_video/0623/train/train0624/train_xSSC/dinov3_xSSC/restart_save1000_20260720T140029Z/movi_c_transfer15000_b64_acc3_20260721T134713Z/rsfq2_c-movi_c-dinov3_vitl16_256-slot512-transfer15000/42/step-050000.pth"
+  },
+  "optimization": {
+    "train_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 4
+  },
+  "checkpointing": {
+    "resume_from": null
+  },
+  "logging": {
+    "wandb_name": "full_sa_slot_dedup_merge_xssc_step050000_gpu67_from_scratch"
+  }
+}
