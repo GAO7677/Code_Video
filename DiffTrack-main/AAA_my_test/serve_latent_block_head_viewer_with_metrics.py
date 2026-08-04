@@ -43,6 +43,9 @@ ATTENTION_LORA_CASE_ROOT = Path(
 ATTENTION_LORA_STEPS00_09_ROOT = Path(
     "/data/gaoya/agent-data/outputs/attention_wan_lora_steps00_09_case001460/lora"
 )
+ATTENTION_LORA_SEED_SWEEP_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
+)
 ATTENTION_LORA_CASE = "0613pybullet_sample_001460_w002"
 ATTENTION_TEST_LIST = Path(
     "/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt"
@@ -349,8 +352,11 @@ MONO_SCALE_HEAD_PORTAL_CARD = r'''
 MONO_SCALE_LORA_VIDEO_PORTAL_CARD = r'''
 <a class="card new" href="/qk-mono-scale-lora-videos?case=0613pybullet_sample_001460_w002"><div><span>15 / MONO-SCALE LORA 视频</span><h2>Top/Bottom100 × α&lt;0.9</h2><p>统一对比 Wan2.2 Original、Wan+LoRA Original 与 α=0.3/0.6 的 Top100、Bottom100 生成视频。</p></div><span class="go">打开视频对比</span></a>
 '''
+ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD = r'''
+<a class="card new" href="/attention-additive-lora-seed-sweep?v=1"><div><span>16 / LORA 50-SEED SWEEP</span><h2>001460 · 50 Seeds × 全实验</h2><p>查看 Wan+LoRA Top/Bottom100 在全时间步与 S000-S009 的六类干预结果，seed 可下拉选择。</p></div><span class="go">打开 50-Seed 对比</span></a>
+'''
 viewer.PORTAL = viewer.PORTAL.replace(
-    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + "</section>", 1
+    "</section>", PORTAL_CARD + VIDEOS_PORTAL_CARD + QK_ATTENTION_PORTAL_CARD + ATTENTION_LORA_PORTAL_CARD + MONO_SCALE_HEAD_PORTAL_CARD + MONO_SCALE_LORA_VIDEO_PORTAL_CARD + ATTENTION_LORA_SEED_SWEEP_PORTAL_CARD + "</section>", 1
 )
 
 
@@ -507,6 +513,41 @@ class MetricsHandler(viewer.Handler):
             )
             if asset is None or not asset.is_file():
                 raise FileNotFoundError("unknown LoRA attention asset")
+            content_type = "video/mp4" if path.endswith("/video") else "image/png"
+            viewer.send_file_with_range(self, asset, content_type)
+            return
+        if path == "/attention-additive-lora-seed-sweep":
+            self.send_payload(
+                attention_lora_seed_sweep_page().encode("utf-8"),
+                "text/html; charset=utf-8",
+            )
+            return
+        if path == "/api/attention-additive-lora-seed-sweep/catalog":
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            payload = json.dumps(
+                attention_lora_seed_sweep_catalog(params.get("seed", [""])[0]),
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_payload(payload, "application/json; charset=utf-8")
+            return
+        if path in {
+            "/api/attention-additive-lora-seed-sweep/video",
+            "/api/attention-additive-lora-seed-sweep/image",
+        }:
+            from urllib.parse import parse_qs
+
+            params = parse_qs(urlparse(self.path).query)
+            asset = attention_lora_seed_sweep_asset(
+                params.get("seed", [""])[0],
+                params.get("stage", [""])[0],
+                params.get("profile", [""])[0],
+                params.get("group", [""])[0],
+                params.get("name", [""])[0],
+            )
+            if asset is None or not asset.is_file():
+                raise FileNotFoundError("unknown seed-sweep asset")
             content_type = "video/mp4" if path.endswith("/video") else "image/png"
             viewer.send_file_with_range(self, asset, content_type)
             return
@@ -1444,6 +1485,165 @@ function collectRows(records){const rows=new Map();for(const r of records){const
 function renderRows(records,columns,headId,gridId,controlsById,cleanByGroup,stageRecords=[]){document.getElementById(headId).innerHTML=`<div class="row-head"><div class="title">模型 × Head 组</div><div class="sub">横向滑动浏览</div></div><div class="alpha-title family-baseline"><small>Control</small>Baseline</div>`+columns.map(c=>`<div class="alpha-title family-${c.family}"><small>${e(c.familyLabel)}</small>${e(c.label)}</div>`).join('');const rows=collectRows(records),stageRows=collectRows(stageRecords),ordered=Array.from(rows.values()).sort((a,b)=>a.model.localeCompare(b.model)||Number(a.count)-Number(b.count)||b.direction.localeCompare(a.direction));const rowHtml=(row,staged=false)=>`<article class="row${staged?' steps00-09':''}"><div class="row-head"><div class="title">${e(makeRowMeta(row).name)}${staged?' · steps00_09':''}</div><div class="sub">${staged?'仅 S000-S009 干预 · S010-S039 clean · 热力图 S009':e(makeRowMeta(row).sub)}</div></div><div class="cell family-baseline">${renderBaselineCell(row,controlsById,cleanByGroup)}</div>`+columns.map(c=>{const unavailable=staged?c.family==='mono':c.key.startsWith('mono_')&&!(row.model.startsWith('Wan+LoRA')&&Number(row.count)===100);return `<div class="cell family-${c.family}">${unavailable?'<div class="not-applicable">本阶段未运行</div>':renderCell(row.items[c.key],`${row.direction}${row.count}`)}</div>`}).join('')+`</article>`;document.getElementById(gridId).innerHTML=ordered.map(row=>{const key=`${row.model}::${row.direction}::${row.count}`,stageRow=stageRows.get(key);return rowHtml(row)+(stageRow?rowHtml(stageRow,true):'')}).join('')}
 async function load(){const d=await fetch(`/api/attention-additive-lora-case/catalog?case=${encodeURIComponent(currentCase)}`,{cache:'no-store'}).then(r=>r.json());currentCase=d.case;const select=document.getElementById('caseSelect');if(select.options.length!==d.cases.length){select.innerHTML=d.cases.map(x=>`<option value="${e(x)}">${e(x)}</option>`).join('')}select.value=currentCase;document.getElementById('case').textContent=`Case: ${d.case} · additive noise、normalized replacement、temporal causal mask 与 probability mono-scale`;const controlsById=Object.fromEntries(d.controls.map(x=>[x.id,x])),cleanHeatmaps=d.baseline_clean_heatmaps||[],cleanByGroup=Object.fromEntries(cleanHeatmaps.map(x=>[`${x.model}:${x.group}`,x])),alphaKeys=new Set(['0.9','1.5']),additive=d.records.filter(r=>!r.experiment&&alphaKeys.has(Number(r.alpha).toFixed(1))),replacement=d.records.filter(r=>r.experiment==='replacement'),mono=d.records.filter(r=>r.experiment==='mono_scale'),visible=[...additive,...replacement,...mono],stageRecords=d.steps00_09_records||[],columns=[{key:'additive_0.9',label:'α = 0.9',family:'additive',familyLabel:'Additive Noise'},{key:'additive_1.5',label:'α = 1.5',family:'additive',familyLabel:'Additive Noise'},{key:'zero',label:'A = 0',family:'replacement',familyLabel:'Replacement'},{key:'uniform',label:'A = 1/N_K',family:'replacement',familyLabel:'Replacement'},{key:'temporal_causal',label:'Temporal Causal',family:'replacement',familyLabel:'Mask'},{key:'mono_0.3',label:'α = 0.3',family:'mono',familyLabel:'Mono-scale'},{key:'mono_0.6',label:'α = 0.6',family:'mono',familyLabel:'Mono-scale'},{key:'mono_0.9',label:'α = 0.9',family:'mono',familyLabel:'Mono-scale'}];document.getElementById('status').textContent=`${visible.filter(r=>r.video_ready).length}/${visible.length} visible videos ready · ${stageRecords.filter(r=>r.video_ready&&r.heatmap_ready).length}/${stageRecords.length} steps00_09 ready · ${cleanHeatmaps.filter(x=>x.ready).length}/${cleanHeatmaps.length} clean Baseline heatmaps · ${mono.reduce((n,r)=>n+(r.heatmaps||[]).length,0)} mono-scale heatmaps · 点击按钮手动刷新`;document.getElementById('controls').innerHTML=d.controls.map(x=>`<article class="control"><h2>${e(x.label)}</h2>${x.ready?`<video controls preload="metadata" playsinline src="${v(x.id)}"></video>`:'<div class="pending">等待 Original 视频</div>'}</article>`).join('');renderRows(visible,columns,'matrix-head','grid',controlsById,cleanByGroup,stageRecords)}
 document.getElementById('caseSelect').addEventListener('change',event=>{currentCase=event.target.value;const url=new URL(location.href);url.searchParams.set('case',currentCase);history.replaceState(null,'',url);load()});document.getElementById('manualRefresh').addEventListener('click',()=>load());document.getElementById('replayAll').addEventListener('click',()=>{document.querySelectorAll('video').forEach(video=>{video.pause();video.currentTime=0;video.loop=false;video.play().catch(()=>{})})});load();
+</script></body></html>'''
+
+
+SEED_SWEEP_PROFILES = (
+    ("alpha090", "α = 0.9"),
+    ("alpha150", "α = 1.5"),
+    ("zero", "A = 0"),
+    ("uniform", "A = 1/N_K"),
+    ("temporal_causal", "Temporal Causal"),
+    ("head_output_zero", "Head Output Zero"),
+)
+
+
+def _attention_lora_seed_sweep_seeds():
+    path = ATTENTION_LORA_SEED_SWEEP_ROOT / "seeds.txt"
+    if not path.is_file():
+        return []
+    seeds = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            seed = int(line.strip())
+        except ValueError:
+            continue
+        if 0 <= seed <= 100000 and seed not in seeds:
+            seeds.append(seed)
+    return seeds
+
+
+def attention_lora_seed_sweep_asset(
+    seed_text: str, stage: str, profile: str, group: str, name: str
+):
+    try:
+        seed = int(seed_text)
+    except ValueError:
+        return None
+    if seed not in _attention_lora_seed_sweep_seeds():
+        return None
+    seed_root = ATTENTION_LORA_SEED_SWEEP_ROOT / "seeds" / f"seed_{seed:06d}"
+    if profile == "original" and stage == "original" and group == "original":
+        return seed_root / "original.mp4"
+    allowed_profiles = {item[0] for item in SEED_SWEEP_PROFILES}
+    if (
+        stage not in {"all_steps", "steps00_09"}
+        or profile not in allowed_profiles
+        or group not in {"top100", "bottom100"}
+    ):
+        return None
+    run_root = seed_root / stage / profile
+    if name:
+        if Path(name).name != name or not name.endswith(".png"):
+            return None
+        return run_root / "heatmaps" / name
+    suffix = "steps_00_40" if stage == "all_steps" else "steps_00_10"
+    return (
+        run_root
+        / "videos"
+        / "lora"
+        / "cases"
+        / ATTENTION_LORA_CASE
+        / f"{group}_{suffix}.mp4"
+    )
+
+
+def attention_lora_seed_sweep_catalog(requested_seed: str = ""):
+    seeds = _attention_lora_seed_sweep_seeds()
+    try:
+        selected = int(requested_seed)
+    except ValueError:
+        selected = seeds[0] if seeds else 0
+    if selected not in seeds and seeds:
+        selected = seeds[0]
+    original = attention_lora_seed_sweep_asset(
+        str(selected), "original", "original", "original", ""
+    )
+    records = []
+    for stage in ("all_steps", "steps00_09"):
+        capture_step = 39 if stage == "all_steps" else 9
+        for profile, label in SEED_SWEEP_PROFILES:
+            run_root = (
+                ATTENTION_LORA_SEED_SWEEP_ROOT
+                / "seeds"
+                / f"seed_{selected:06d}"
+                / stage
+                / profile
+            )
+            for group in ("top100", "bottom100"):
+                video = attention_lora_seed_sweep_asset(
+                    str(selected), stage, profile, group, ""
+                )
+                metadata_path = next(
+                    iter(
+                        sorted(
+                            (run_root / "heatmaps").glob(
+                                f"*__{ATTENTION_LORA_CASE}__{group}__*step{capture_step:02d}.json"
+                            )
+                        )
+                    ),
+                    None,
+                )
+                metadata = {}
+                if metadata_path is not None:
+                    try:
+                        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        metadata = {}
+                all_token = str(metadata.get("all_token_image", ""))
+                frame = str(metadata.get("frame_image", ""))
+                all_token_path = attention_lora_seed_sweep_asset(
+                    str(selected), stage, profile, group, all_token
+                ) if all_token else None
+                frame_path = attention_lora_seed_sweep_asset(
+                    str(selected), stage, profile, group, frame
+                ) if frame else None
+                records.append(
+                    {
+                        "stage": stage,
+                        "profile": profile,
+                        "label": label,
+                        "group": group,
+                        "video_ready": bool(video and video.is_file()),
+                        "all_token": all_token,
+                        "frame": frame,
+                        "heatmap_ready": bool(
+                            all_token_path
+                            and frame_path
+                            and all_token_path.is_file()
+                            and frame_path.is_file()
+                        ),
+                        "heatmap_expected": profile != "head_output_zero",
+                        "metrics": metadata,
+                    }
+                )
+    completed_seeds = 0
+    for seed in seeds:
+        seed_root = ATTENTION_LORA_SEED_SWEEP_ROOT / "seeds" / f"seed_{seed:06d}"
+        if sum(1 for _ in seed_root.glob("*/*/complete")) == 12:
+            completed_seeds += 1
+    return {
+        "case": ATTENTION_LORA_CASE,
+        "seeds": seeds,
+        "selected_seed": selected,
+        "completed_seeds": completed_seeds,
+        "total_seeds": len(seeds),
+        "original_ready": bool(original and original.is_file()),
+        "ready_records": sum(record["video_ready"] for record in records),
+        "expected_records": len(records),
+        "records": records,
+    }
+
+
+def attention_lora_seed_sweep_page():
+    return r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wan+LoRA 50-Seed Sweep</title><style>
+:root{--ink:#1a2822;--paper:#eee8dc;--card:#fffdf8;--line:#bdb3a0;--red:#ae432f;--green:#17695d;--dark:#19362d;--gold:#bb7b28}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 8% 0,#eaa76755,transparent 34rem),radial-gradient(circle at 96% 3%,#52977c55,transparent 38rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:20;padding:17px 24px;background:#eee8dced;border-bottom:1px solid var(--line);backdrop-filter:blur(11px)}h1{margin:3px 0;font-size:clamp(28px,4vw,48px)}header p{margin:5px 0}.tools{display:flex;gap:9px;align-items:center;flex-wrap:wrap}select,button{padding:9px 13px;border:1px solid var(--line);background:#fff;font-weight:900}.status{font:12px ui-monospace,monospace;color:#53635b}main{width:min(2300px,calc(100% - 20px));margin:auto;padding:20px 0 80px}.original{max-width:700px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:13px}.original video,.card video,.card img{display:block;width:100%;background:#151916;border:1px solid var(--line);border-radius:7px}.matrix-shell{overflow:auto;margin-top:20px;border:1px solid var(--line);border-radius:16px;padding:9px;background:#d8d0c1}.matrix{display:grid;grid-template-columns:230px repeat(6,330px);gap:8px;width:max-content}.head,.row-head,.cell{border:1px solid var(--line);border-radius:10px}.head{padding:12px;text-align:center;background:#f9f4e9;font-weight:900;border-top:5px solid var(--gold)}.row-head{position:sticky;left:9px;z-index:4;padding:15px;background:var(--dark);color:#fff}.row-head.top{border-left:7px solid var(--red)}.row-head.bottom{border-left:7px solid var(--green)}.row-head small{display:block;color:#cbd8d1;margin-top:8px}.cell{padding:8px;background:#f6f1e7}.card{height:100%;padding:10px;background:var(--card);border-radius:10px}.card.top{border-left:5px solid var(--red)}.card.bottom{border-left:5px solid var(--green)}.card h3{margin:0 0 7px;font-size:16px}.pill{display:inline-block;margin:3px;padding:4px 7px;border-radius:99px;background:#e9e2d4;font:10px ui-monospace,monospace}.pending{min-height:170px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:#746e62}.maps{display:grid;gap:7px;margin-top:8px}.note{font-size:11px;color:#665f55}.replay{position:fixed;right:20px;bottom:20px;z-index:30;border:0;border-radius:99px;background:var(--dark);color:#fff;padding:13px 19px}@media(max-width:800px){header{position:static}.matrix{grid-template-columns:170px repeat(6,280px)}main{width:calc(100% - 10px)}}
+</style></head><body><button class="replay" id="replay">重新播放全部</button><header><a href="/">返回总览</a><h1>Wan+LoRA · 50-Seed Sweep</h1><p>0613pybullet_sample_001460_w002 · 40步 · 49帧 · 仅 seed 改变</p><div class="tools"><label>Seed <select id="seed"></select></label><button id="refresh">手动刷新</button><span class="status" id="status">读取中</span></div></header><main><h2>Original</h2><section id="original" class="original"></section><div class="matrix-shell"><section id="matrix" class="matrix"></section></div></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),q=new URL(location.href).searchParams;let current=q.get('seed')||'';const profiles=[['alpha090','α = 0.9'],['alpha150','α = 1.5'],['zero','A = 0'],['uniform','A = 1/N_K'],['temporal_causal','Temporal Causal'],['head_output_zero','Head Output Zero']];
+const video=(stage,profile,group)=>`/api/attention-additive-lora-seed-sweep/video?seed=${encodeURIComponent(current)}&stage=${stage}&profile=${profile}&group=${group}`;const image=(r,name)=>`/api/attention-additive-lora-seed-sweep/image?seed=${encodeURIComponent(current)}&stage=${r.stage}&profile=${r.profile}&group=${r.group}&name=${encodeURIComponent(name)}`;
+function card(r){const maps=r.heatmap_ready?`<div class="maps"><img loading="lazy" src="${image(r,r.all_token)}"><img loading="lazy" src="${image(r,r.frame)}"></div>`:r.heatmap_expected?'<div class="note">热力图等待生成</div>':'<div class="note">Attention 不变，仅 Head 输出置零</div>';return `<article class="card ${r.group.startsWith('top')?'top':'bottom'}"><h3>${e(r.label)}</h3><span class="pill">${e(r.group.toUpperCase())}</span><span class="pill">${r.stage==='all_steps'?'S000-S039':'S000-S009'}</span>${r.video_ready?`<video controls preload="metadata" playsinline src="${video(r.stage,r.profile,r.group)}"></video>`:'<div class="pending">视频生成中</div>'}${maps}</article>`}
+function render(d){current=String(d.selected_seed);const select=document.getElementById('seed');if(select.options.length!==d.seeds.length)select.innerHTML=d.seeds.map(x=>`<option value="${x}">${x}</option>`).join('');select.value=current;document.getElementById('status').textContent=`${d.completed_seeds}/${d.total_seeds} seeds complete · 当前 ${d.ready_records}/${d.expected_records} experiments ready`;document.getElementById('original').innerHTML=d.original_ready?`<video controls preload="metadata" playsinline src="${video('original','original','original')}"></video>`:'<div class="pending">Original 生成中</div>';let html='<div class="head">Head组 × 阶段</div>'+profiles.map(x=>`<div class="head">${e(x[1])}</div>`).join('');for(const stage of ['all_steps','steps00_09'])for(const group of ['top100','bottom100']){html+=`<div class="row-head ${group.startsWith('top')?'top':'bottom'}"><strong>${group.toUpperCase()}</strong><small>${stage==='all_steps'?'全时间步 S000-S039':'仅前10步 S000-S009'}</small></div>`;for(const [profile] of profiles){const r=d.records.find(x=>x.stage===stage&&x.group===group&&x.profile===profile);html+=`<div class="cell">${card(r)}</div>`}}document.getElementById('matrix').innerHTML=html}
+async function load(){const d=await fetch(`/api/attention-additive-lora-seed-sweep/catalog?seed=${encodeURIComponent(current)}`,{cache:'no-store'}).then(r=>r.json());render(d)}document.getElementById('seed').addEventListener('change',ev=>{current=ev.target.value;const u=new URL(location.href);u.searchParams.set('seed',current);history.replaceState(null,'',u);load()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('replay').addEventListener('click',()=>document.querySelectorAll('video').forEach(v=>{v.pause();v.currentTime=0;v.loop=false;v.play().catch(()=>{})}));load();
 </script></body></html>'''
 
 
