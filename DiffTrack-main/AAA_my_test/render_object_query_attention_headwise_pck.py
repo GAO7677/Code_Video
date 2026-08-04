@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render per-point Head-wise PCK query attention over generated RGB frames."""
+"""Render eight Head-wise PCK query attention maps over generated RGB frames."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def overlay(frame, values, vmax, delta=False):
     return np.uint8(np.clip(mixed, 0, 255))
 
 
-def query_tile(context_frame, mask, points, point_index, label, stripe_color):
+def query_tile(context_frame, mask, points, label, stripe_color):
     tile = cv2.resize(context_frame, (TILE_WIDTH, TILE_HEIGHT), interpolation=cv2.INTER_AREA)
     resized_mask = cv2.resize(mask.astype(np.uint8), (TILE_WIDTH, TILE_HEIGHT), interpolation=cv2.INTER_NEAREST) > 0
     tint = np.zeros_like(tile)
@@ -59,11 +59,9 @@ def query_tile(context_frame, mask, points, point_index, label, stripe_color):
     tile[resized_mask] = (0.72 * tile[resized_mask] + 0.28 * tint[resized_mask]).astype(np.uint8)
     scale_x = TILE_WIDTH / context_frame.shape[1]
     scale_y = TILE_HEIGHT / context_frame.shape[0]
-    for index, (x, y) in enumerate(points):
+    for x, y in points:
         center = (int(round(float(x) * scale_x)), int(round(float(y) * scale_y)))
-        color = (20, 20, 235) if index == point_index else (230, 230, 230)
-        radius = 4 if index == point_index else 2
-        cv2.circle(tile, center, radius, color, -1, cv2.LINE_AA)
+        cv2.circle(tile, center, 3, (20, 20, 235), -1, cv2.LINE_AA)
     cv2.rectangle(tile, (0, 0), (TILE_WIDTH - 1, 19), (24, 31, 28), -1)
     cv2.rectangle(tile, (0, 0), (5, TILE_HEIGHT - 1), stripe_color, -1)
     cv2.putText(tile, label, (9, 14), cv2.FONT_HERSHEY_SIMPLEX, .34, (255, 255, 255), 1)
@@ -86,36 +84,32 @@ def header(canvas, title):
 
 
 def matrix_image(frames, values, context_frame, mask, points, vmax, title, delta=False):
-    point_count = values.shape[0]
     canvas = np.full(
-        (HEADER_HEIGHT + point_count * TILE_HEIGHT, (LATENT_FRAMES + 1) * TILE_WIDTH, 3),
+        (HEADER_HEIGHT + TILE_HEIGHT, (LATENT_FRAMES + 1) * TILE_WIDTH, 3),
         245,
         dtype=np.uint8,
     )
     header(canvas, title)
-    for point_index in range(point_count):
-        y = HEADER_HEIGHT + point_index * TILE_HEIGHT
-        canvas[y:y + TILE_HEIGHT, :TILE_WIDTH] = query_tile(
-            context_frame,
-            mask,
-            points,
-            point_index,
-            f"P{point_index:02d} Q=F04",
-            (92, 130, 35),
+    y = HEADER_HEIGHT
+    canvas[y:y + TILE_HEIGHT, :TILE_WIDTH] = query_tile(
+        context_frame,
+        mask,
+        points,
+        "SUM P00-P07 Q=F04",
+        (92, 130, 35),
+    )
+    for key_frame in range(LATENT_FRAMES):
+        x = (key_frame + 1) * TILE_WIDTH
+        canvas[y:y + TILE_HEIGHT, x:x + TILE_WIDTH] = overlay(
+            frames[key_frame], values[key_frame], vmax, delta
         )
-        for key_frame in range(LATENT_FRAMES):
-            x = (key_frame + 1) * TILE_WIDTH
-            canvas[y:y + TILE_HEIGHT, x:x + TILE_WIDTH] = overlay(
-                frames[key_frame], values[point_index, key_frame], vmax, delta
-            )
     return canvas
 
 
 def paired_image(frames, before, after, context_frame, mask, points, vmax, title):
-    point_count = before.shape[0]
     canvas = np.full(
         (
-            HEADER_HEIGHT + point_count * 2 * TILE_HEIGHT,
+            HEADER_HEIGHT + 2 * TILE_HEIGHT,
             (LATENT_FRAMES + 1) * TILE_WIDTH,
             3,
         ),
@@ -123,25 +117,22 @@ def paired_image(frames, before, after, context_frame, mask, points, vmax, title
         dtype=np.uint8,
     )
     header(canvas, title)
-    for point_index in range(point_count):
-        for comparison_index, (label, values, stripe_color) in enumerate(
-            (("BEFORE", before, (46, 105, 178)), ("AFTER", after, (92, 130, 35)))
-        ):
-            row_index = point_index * 2 + comparison_index
-            y = HEADER_HEIGHT + row_index * TILE_HEIGHT
-            canvas[y:y + TILE_HEIGHT, :TILE_WIDTH] = query_tile(
-                context_frame,
-                mask,
-                points,
-                point_index,
-                f"P{point_index:02d} {label} Q=F04",
-                stripe_color,
+    for row_index, (label, values, stripe_color) in enumerate(
+        (("BEFORE", before, (46, 105, 178)), ("AFTER", after, (92, 130, 35)))
+    ):
+        y = HEADER_HEIGHT + row_index * TILE_HEIGHT
+        canvas[y:y + TILE_HEIGHT, :TILE_WIDTH] = query_tile(
+            context_frame,
+            mask,
+            points,
+            f"SUM P00-P07 {label}",
+            stripe_color,
+        )
+        for key_frame in range(LATENT_FRAMES):
+            x = (key_frame + 1) * TILE_WIDTH
+            canvas[y:y + TILE_HEIGHT, x:x + TILE_WIDTH] = overlay(
+                frames[key_frame], values[key_frame], vmax
             )
-            for key_frame in range(LATENT_FRAMES):
-                x = (key_frame + 1) * TILE_WIDTH
-                canvas[y:y + TILE_HEIGHT, x:x + TILE_WIDTH] = overlay(
-                    frames[key_frame], values[point_index, key_frame], vmax
-                )
     return canvas
 
 
@@ -164,21 +155,23 @@ def main():
             frames = video_frames(video_path)
             before = payload["before"]
             after = payload["after"]
-            delta = np.abs(payload["delta"])
+            before_sum = before.sum(axis=0)
+            after_sum = after.sum(axis=0)
+            delta_sum = np.abs(payload["delta"]).sum(axis=0)
             context_frame = payload["query_context_frame"]
             mask = payload["query_mask"]
             points = payload["query_points"]
             probability_vmax = float(
-                np.percentile(np.concatenate([before.ravel(), after.ravel()]), 99.5)
+                np.percentile(np.concatenate([before_sum.ravel(), after_sum.ravel()]), 99.5)
             )
-            delta_vmax = float(np.percentile(delta, 99.5))
+            delta_vmax = float(np.percentile(delta_sum, 99.5))
             region_name = str(scalar(payload, "region_name"))
             region_phrase = str(scalar(payload, "region_phrase"))
             outputs = {}
             for kind, values, vmax, is_delta in (
-                ("before", before, probability_vmax, False),
-                ("after", after, probability_vmax, False),
-                ("abs_delta", delta, delta_vmax, True),
+                ("before", before_sum, probability_vmax, False),
+                ("after", after_sum, probability_vmax, False),
+                ("abs_delta", delta_sum, delta_vmax, True),
             ):
                 filename = f"{name}__{kind}.jpg"
                 image = matrix_image(
@@ -196,13 +189,13 @@ def main():
             paired_filename = f"{name}__before_after.jpg"
             paired = paired_image(
                 frames,
-                before,
-                after,
+                before_sum,
+                after_sum,
                 context_frame,
                 mask,
                 points,
                 probability_vmax,
-                f"{name} | Head-wise PCK queries | vmax={probability_vmax:.3e}",
+                f"{name} | SUM of 8 Head-wise PCK queries | vmax={probability_vmax:.3e}",
             )
             cv2.imwrite(
                 str(args.output_root / paired_filename),
@@ -218,6 +211,7 @@ def main():
                     "region_name": region_name,
                     "region_phrase": region_phrase,
                     "query_count": int(len(points)),
+                    "query_aggregation": "sum",
                     "query_latent_frame": int(scalar(payload, "query_latent_frame")),
                     "query_pixel_frame": int(scalar(payload, "query_pixel_frame")),
                     "block": int(scalar(payload, "block")),
@@ -240,4 +234,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

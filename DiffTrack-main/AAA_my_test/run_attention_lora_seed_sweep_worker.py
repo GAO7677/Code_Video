@@ -16,6 +16,20 @@ RANKING_CSV = Path(
     "/data/gaoya/agent-data/outputs/three_model_allblocks_allsteps_headwise_50case/"
     "three_model_combined_summary.csv"
 )
+NEIGHBOR_RANKING_CSV = Path(
+    "/data/gaoya/agent-data/outputs/neighbor_diagonal_ranking_snapshot/"
+    "all720-neighbor-diagonal.csv"
+)
+NEIGHBOR_RANKING_COLUMNS = {
+    "strict_score": "neighbor3_allblock_diagonal_score",
+    "allblock_purity": "allblock_diagonal_purity",
+    "allblock_min_purity": "allblock_min_diagonal_purity",
+    "balanced": "neighbor3_balanced_diagonal",
+    "uniformity": "neighbor3_diagonal_uniformity",
+    "joint": "neighbor3_joint",
+    "mass": "neighbor3_diagonal_mass",
+    "pck32": "lora_pck32",
+}
 NUM_STEPS = 40
 
 
@@ -46,6 +60,10 @@ def parse_args() -> argparse.Namespace:
         required=True,
     )
     parser.add_argument("--stage", choices=("all_steps", "steps00_09"), required=True)
+    parser.add_argument(
+        "--ranking-criterion",
+        choices=tuple(NEIGHBOR_RANKING_COLUMNS),
+    )
     parser.add_argument("--input-json-list", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     return parser.parse_args()
@@ -115,6 +133,10 @@ def run_attention(args: argparse.Namespace) -> None:
         )
     stage = import_path("seed_sweep_attention_stage", HERE / filename)
     worker = stage.worker
+    if args.ranking_criterion:
+        worker.base.select_heads = lambda ranking_pool, extreme_count: neighbor_heads(
+            args.ranking_criterion, ranking_pool, extreme_count
+        )
     if os.environ.get("OBJECT_QUERY_CAPTURE_ROOT", "").strip():
         if os.environ.get("OBJECT_QUERY_CAPTURE_PROTOCOL") == "headwise_pck":
             from AAA_my_test.object_query_attention_capture_headwise_pck import install_qk_capture
@@ -162,6 +184,47 @@ def adaptive_heads(_ranking_pool: str, extreme_count: int) -> dict[str, list[dic
     return groups
 
 
+def neighbor_heads(
+    criterion: str, ranking_pool: str, extreme_count: int
+) -> dict[str, list[dict]]:
+    if ranking_pool != "all720" or extreme_count != 100:
+        raise ValueError("Neighbor ranking experiments require all720 and 100 heads")
+    score_column = NEIGHBOR_RANKING_COLUMNS[criterion]
+    rows = []
+    with NEIGHBOR_RANKING_CSV.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            score = float(row[score_column])
+            rows.append(
+                {
+                    "block": int(row["block"]),
+                    "head": int(row["head"]),
+                    "macro_pck32": score,
+                    "ranking_criterion": criterion,
+                    "ranking_score": score,
+                }
+            )
+    if len(rows) != 720 or len({(row["block"], row["head"]) for row in rows}) != 720:
+        raise RuntimeError(f"Expected 720 unique heads in {NEIGHBOR_RANKING_CSV}")
+    ordered = sorted(
+        rows,
+        key=lambda row: (-row["ranking_score"], row["block"], row["head"]),
+    )
+    top = ordered[:extreme_count]
+    bottom = sorted(
+        ordered[-extreme_count:],
+        key=lambda row: (row["ranking_score"], row["block"], row["head"]),
+    )
+    groups = {}
+    for step in range(NUM_STEPS):
+        groups[f"top{extreme_count}_step_{step:02d}"] = [
+            dict(row, step=step) for row in top
+        ]
+        groups[f"bottom{extreme_count}_step_{step:02d}"] = [
+            dict(row, step=step) for row in bottom
+        ]
+    return groups
+
+
 def run_head_output_zero(args: argparse.Namespace) -> None:
     adaptive = import_path(
         "seed_sweep_head_zero",
@@ -180,7 +243,12 @@ def run_head_output_zero(args: argparse.Namespace) -> None:
         parent_zeroer.set_variant(self, group, steps)
 
     adaptive.StepAdaptiveExtremeHeadZeroer.set_variant = set_variant
-    base.select_heads = adaptive_heads
+    if args.ranking_criterion:
+        base.select_heads = lambda ranking_pool, extreme_count: neighbor_heads(
+            args.ranking_criterion, ranking_pool, extreme_count
+        )
+    else:
+        base.select_heads = adaptive_heads
     base.ExtremeHeadZeroer = adaptive.StepAdaptiveExtremeHeadZeroer
     if args.stage == "all_steps":
         base.STAGE_RANGES = (("steps_00_40", tuple(range(NUM_STEPS))),)

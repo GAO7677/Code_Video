@@ -8,17 +8,19 @@ import os
 from pathlib import Path
 
 
-SOURCE_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460"
-)
-BENCH_ROOT = Path(
-    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_metrics_case001460"
-)
-CASE_KEY = "0613pybullet_sample_001460_w002"
-INPUT_JSON = Path(
-    "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/"
-    "0613pybullet_sample_001460_w002.json"
-)
+SOURCE_ROOT = Path(os.environ.get(
+    "ATTENTION_SEED_SWEEP_SOURCE_ROOT",
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_case001460",
+))
+BENCH_ROOT = Path(os.environ.get(
+    "ATTENTION_SEED_SWEEP_BENCH_ROOT",
+    "/data/gaoya/agent-data/outputs/attention_lora_seed_sweep_metrics_case001460",
+))
+INPUT_JSON = Path(os.environ.get(
+    "ATTENTION_SEED_SWEEP_INPUT_JSON",
+    "/data/gaoya/AAA_test_video/0623/testjsons/v2v_jsons/0613pybullet_sample_001460_w002.json",
+))
+CASE_KEY = os.environ.get("ATTENTION_SEED_SWEEP_CASE_KEY", INPUT_JSON.stem)
 PROFILES = (
     "alpha090",
     "alpha150",

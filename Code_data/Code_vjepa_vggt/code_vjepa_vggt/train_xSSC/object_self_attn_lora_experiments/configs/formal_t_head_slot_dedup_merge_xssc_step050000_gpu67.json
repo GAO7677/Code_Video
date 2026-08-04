@@ -1,0 +1,24 @@
+{
+  "extends": "formal_full_sa_slot_dedup_merge_xssc_step050000_gpu67.json",
+  "experiment": {
+    "name": "common_t_head_full70_slot_dedup_merge_xssc_step050000_gpu67",
+    "description": "T-head70 plus object branch and slot-track deduplication, using frozen DINOv3 MOVi-C xSSC step-050000",
+    "expected_trainable_params": 34863104
+  },
+  "launch": {
+    "main_process_port": 29569
+  },
+  "paths": {
+    "head_selection_config": "common_t_heads_full70.json"
+  },
+  "adaptation": {
+    "mode": "t_head",
+    "head_selection_subset_id": "T_common_full70",
+    "head_selection_expected_role": "T",
+    "head_selection_feature_subtype": "common_t",
+    "head_selection_expected_num_heads": 70
+  },
+  "logging": {
+    "wandb_name": "common_t_head_full70_slot_dedup_merge_xssc_step050000_gpu67_from_scratch"
+  }
+}

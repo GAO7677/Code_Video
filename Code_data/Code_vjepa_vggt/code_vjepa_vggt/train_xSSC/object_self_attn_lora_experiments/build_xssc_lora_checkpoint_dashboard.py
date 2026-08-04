@@ -38,6 +38,10 @@ METHOD_PLOT_STYLES = {
         "marker": "v",
         "linestyle": (0, (3, 1, 1, 1)),
     },
+    "t_head70_slot_dedup_merge_xssc_step050000": {
+        "marker": "<",
+        "linestyle": (0, (5, 1, 1, 1)),
+    },
     "slot_dedup_merge": {"marker": "D", "linestyle": ":"},
 }
 DEFAULT_PLOT_STYLE = {"marker": "o", "linestyle": "-"}
@@ -1317,6 +1321,11 @@ MERGED_METHODS = [
         "key": "slot_dedup_merge_xssc_step050000",
         "label": "Full-SA + Object + Slot-Dedup (xSSC-50k)",
         "color": "#8C564B",
+    },
+    {
+        "key": "t_head70_slot_dedup_merge_xssc_step050000",
+        "label": "T-head70 + Object + Slot-Dedup (xSSC-50k)",
+        "color": "#00B894",
     },
 ]
 
