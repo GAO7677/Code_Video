@@ -83,6 +83,9 @@ def main() -> None:
             row[f"{metric}_std"] = float(np.std(metric_values))
         for model in MODELS:
             model_values = [value for value in values if value["model"] == model]
+            row[f"{model}_pck32"] = float(
+                np.mean([value["pck32_50case"] for value in model_values])
+            )
             for metric in (
                 "neighbor3_diagonal_uniformity",
                 "neighbor3_balanced_diagonal",
