@@ -28,6 +28,33 @@ ATTENTION_ALPHA = float(os.environ.get("ATTENTION_NOISE_ALPHA", "0.30"))
 if NOISE_MODE not in {"logit", "probability_additive"}:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
+_CAPTURE_PROMPT_CASES: dict[str, list[str]] = {}
+_CAPTURE_PROMPT_POSITIONS: dict[str, int] = {}
+
+
+def load_capture_prompt_cases() -> None:
+    if "--input-json-list" not in sys.argv:
+        return
+    input_list = Path(sys.argv[sys.argv.index("--input-json-list") + 1])
+    seen_cases = set()
+    for line in input_list.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        case_path = Path(line)
+        case_key = case_path.stem
+        if case_key in seen_cases:
+            continue
+        seen_cases.add(case_key)
+        payload = json.loads(case_path.read_text(encoding="utf-8"))
+        prompt = payload.get("caption", payload.get("input_caption"))
+        if not prompt:
+            raise KeyError(
+                f"Neither caption nor input_caption exists in test case: {case_path}"
+            )
+        prompt = str(prompt)
+        _CAPTURE_PROMPT_CASES.setdefault(prompt, []).append(case_key)
+
 spec = importlib.util.spec_from_file_location("pck_qk_base_worker", BASE_WORKER)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Cannot load base worker: {BASE_WORKER}")
@@ -394,6 +421,12 @@ original_generate = base.generate
 
 
 def generate_with_context(pipe, zeroer, context, prompt, group, steps):
+    if group is None or group == "original":
+        cases = _CAPTURE_PROMPT_CASES.get(prompt, ())
+        position = _CAPTURE_PROMPT_POSITIONS.get(prompt, 0)
+        if cases:
+            zeroer.capture_case = cases[min(position, len(cases) - 1)]
+            _CAPTURE_PROMPT_POSITIONS[prompt] = position + 1
     zeroer.set_noise_context(prompt, group)
     result = original_generate(pipe, zeroer, context, prompt, group, steps)
     zeroer.flush_capture(group)
@@ -449,5 +482,6 @@ def write_experiment_metadata() -> None:
 
 
 if __name__ == "__main__":
+    load_capture_prompt_cases()
     write_experiment_metadata()
     base.main()
