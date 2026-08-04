@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 GPU_ID {mono0|mono1|mono2|mono3|replacement_baseline|replacement_lora}" >&2
+  echo "Usage: $0 GPU_ID {clean30|clean100|clean_lora30|clean_lora100|mono0|mono1|mono2|mono3|replacement_baseline|replacement_lora}" >&2
   exit 2
 fi
 
@@ -11,7 +11,7 @@ PROFILE="$2"
 CASE_KEY="0613pybullet_sample_001460_w002"
 DIFFTRACK="/home/gaoya/Code_Video/DiffTrack-main"
 PYTHON="/home/gaoya/miniconda3/envs/wan-cu128/bin/python"
-MONO_RUNNER="${DIFFTRACK}/AAA_my_test/run_attention_qk_mono_scale_unified40_49f_gpu_queue.sh"
+MONO_WORKER="${DIFFTRACK}/AAA_my_test/run_pck_step_adaptive_qk_probability_noise_49f_worker.py"
 REPLACEMENT_WORKER="${DIFFTRACK}/AAA_my_test/run_pck_step_adaptive_attention_replacement_49f_worker.py"
 MONO_ROOT="/data/gaoya/agent-data/outputs/attention_probability_mono_scale_steps40_frames49_case001460"
 REPLACEMENT_ROOT="/data/gaoya/agent-data/outputs/attention_probability_replacement_steps40_frames49_test5"
@@ -31,14 +31,56 @@ fi
 
 export CUDA_VISIBLE_DEVICES="${GPU}"
 
+run_mono() {
+  local model="$1"
+  local alpha="$2"
+  local alpha_tag="$3"
+  local count="$4"
+  local run_root="${MONO_ROOT}/${model}/alpha${alpha_tag}_count${count}"
+  local capture_video_root="${run_root}/_heatmap_backfill_videos"
+  mkdir -p "${run_root}" "${capture_video_root}"
+  cd "${DIFFTRACK}"
+  ATTENTION_NOISE_MODE=probability_mono_scale \
+  ATTENTION_NOISE_ALPHA="${alpha}" \
+  ATTENTION_NOISE_SEED=851 \
+  QK_ATTENTION_NOISE_SEED=851 \
+  QK_ATTENTION_CAPTURE_ROOT="${run_root}" \
+  QK_ATTENTION_CAPTURE_STEP=39 \
+  QK_ATTENTION_CAPTURE_MODEL="${model}" \
+  QK_ATTENTION_CAPTURE_CASE="${CASE_KEY}" \
+  QK_ATTENTION_CAPTURE_PER_HEAD=0 \
+  QK_ATTENTION_CAPTURE_SMALL_SIZE=416 \
+  QK_ATTENTION_CAPTURE_LATENT_FRAMES=13 \
+  "${PYTHON}" "${MONO_WORKER}" \
+    --model "${model}" \
+    --input-json-list "${CASE_LIST}" \
+    --output-root "${capture_video_root}" \
+    --shard-index 0 \
+    --num-shards 1 \
+    --ranking-pool all720 \
+    --extreme-count "${count}"
+}
+
 run_mono_profile() {
   local queue_profile="$1"
-  ATTENTION_MONO_TEST_LIST="${CASE_LIST}" \
-  ATTENTION_MONO_OUTPUT_ROOT="${MONO_ROOT}" \
-  ATTENTION_MONO_CAPTURE_CASE="${CASE_KEY}" \
-  ATTENTION_MONO_CAPTURE_PER_HEAD=0 \
-  MONO_SCALE_PROFILE="${queue_profile}" \
-  bash "${MONO_RUNNER}" "${GPU}"
+  case "${queue_profile}" in
+    0)
+      run_mono baseline 0.9 090 30
+      run_mono lora 0.9 090 30
+      ;;
+    1)
+      run_mono baseline 0.9 090 100
+      run_mono lora 0.9 090 100
+      ;;
+    2)
+      run_mono baseline 1.5 150 30
+      run_mono lora 1.5 150 30
+      ;;
+    3)
+      run_mono baseline 1.5 150 100
+      run_mono lora 1.5 150 100
+      ;;
+  esac
 }
 
 run_replacement() {
@@ -68,6 +110,10 @@ run_replacement() {
 }
 
 case "${PROFILE}" in
+  clean30) run_mono baseline 0.0 000 30 ;;
+  clean100) run_mono baseline 0.0 000 100 ;;
+  clean_lora30) run_mono lora 0.0 000 30 ;;
+  clean_lora100) run_mono lora 0.0 000 100 ;;
   mono0) run_mono_profile 0 ;;
   mono1) run_mono_profile 1 ;;
   mono2) run_mono_profile 2 ;;

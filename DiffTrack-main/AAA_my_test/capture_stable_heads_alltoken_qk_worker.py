@@ -51,6 +51,7 @@ def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
     frame_ids = [np.flatnonzero(frame == index) for index in range(7)]
     query_mask = frame == 1
     diagonal = np.empty((count, 7), dtype=np.float32)
+    block_mass = np.empty((count, 7), dtype=np.float32)
     for query in range(count):
         source = frame_ids[int(frame[query])]
         position = np.searchsorted(source, query) / max(len(source) - 1, 1)
@@ -58,6 +59,8 @@ def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
             center = int(round(position * (len(keys) - 1)))
             selected = keys[max(0, center - 1) : min(len(keys), center + 2)]
             diagonal[query, target_time] = attention[query, selected].sum()
+            block_mass[query, target_time] = attention[query, keys].sum()
+    spatial_purity = diagonal / np.maximum(block_mass, 1e-12)
     total = diagonal.sum(axis=1)
     distribution = diagonal / np.maximum(total[:, None], 1e-12)
     entropy = -(
@@ -69,6 +72,29 @@ def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
         (cross_diagonal_mean + 1e-12) / (self_diagonal + 1e-12)
     )
     cross_dominant = cross_diagonal_mean > self_diagonal
+    interior_queries = np.flatnonzero((frame > 0) & (frame < 6))
+    interior_frames = frame[interior_queries]
+    neighbor3 = np.stack(
+        (
+            diagonal[interior_queries, interior_frames - 1],
+            diagonal[interior_queries, interior_frames],
+            diagonal[interior_queries, interior_frames + 1],
+        ),
+        axis=1,
+    )
+    neighbor3_mass = neighbor3.sum(axis=1)
+    neighbor3_distribution = neighbor3 / np.maximum(
+        neighbor3_mass[:, None], 1e-12
+    )
+    neighbor3_uniformity = -(
+        neighbor3_distribution
+        * np.log(np.maximum(neighbor3_distribution, 1e-12))
+    ).sum(axis=1) / math.log(3)
+    neighbor3_balanced = 3 * neighbor3.min(axis=1)
+    interior_min_purity = spatial_purity[interior_queries].min(axis=1)
+    neighbor3_allblock_diagonal_score = (
+        neighbor3_balanced * interior_min_purity
+    )
     return {
         "queryframe_diagonal_mass": float(total[query_mask].mean()),
         "queryframe_diagonal_frame_entropy": float(entropy[query_mask].mean()),
@@ -101,6 +127,29 @@ def uniform_diagonal_metrics(attention: np.ndarray) -> dict[str, float]:
         ),
         "alltoken_diagonal_cross_dominant_fraction": float(
             cross_dominant.mean()
+        ),
+        "neighbor3_diagonal_mass": float(neighbor3_mass.mean()),
+        "neighbor3_diagonal_uniformity": float(neighbor3_uniformity.mean()),
+        "neighbor3_joint": float(
+            (neighbor3_mass * neighbor3_uniformity).mean()
+        ),
+        "neighbor3_balanced_diagonal": float(neighbor3_balanced.mean()),
+        "allblock_diagonal_purity": float(spatial_purity.mean()),
+        "allblock_min_diagonal_purity": float(
+            spatial_purity.min(axis=1).mean()
+        ),
+        "allblock_p10_diagonal_purity": float(
+            np.quantile(spatial_purity, 0.10)
+        ),
+        "allblock_offdiagonal_fraction": float(1.0 - spatial_purity.mean()),
+        "neighbor3_allblock_diagonal_score": float(
+            neighbor3_allblock_diagonal_score.mean()
+        ),
+        "neighbor3_self_fraction": float(
+            (
+                neighbor3[:, 1]
+                / np.maximum(neighbor3_mass, 1e-12)
+            ).mean()
         ),
     }
 

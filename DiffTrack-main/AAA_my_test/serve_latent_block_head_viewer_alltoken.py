@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,12 @@ ROOT = Path(
 )
 ALL720_ROOT = Path(
     "/data/gaoya/agent-data/outputs/three_model_all720_uniform_diagonal_5case"
+)
+NEIGHBOR_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/three_model_all720_neighbor_diagonal_5case"
+)
+NEIGHBOR_HEAT_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/three_model_all720_neighbor_diagonal_heatmaps_case001"
 )
 HEAD_ZERO_ROOT = Path(
     "/data/gaoya/agent-data/outputs/top5_pck_head_zero_ablation_5case"
@@ -546,6 +553,66 @@ def extreme_zero_catalog() -> dict:
     return {"cases": cases, "ready_videos": ready, "expected_videos": len(cases) * 22, "complete_cases": complete, "selection": selection}
 
 
+def neighbor_diagonal_catalog():
+    summary = NEIGHBOR_ROOT / "all720_neighbor_diagonal_summary.csv"
+    records = []
+    if summary.is_file():
+        with summary.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                records.append(
+                    {
+                        "block": int(row["block"]),
+                        "head": int(row["head"]),
+                        "strict_rank": int(row["strict_rank"]),
+                        "pck32": float(row["pck32"]),
+                        "mass": float(row["neighbor3_diagonal_mass"]),
+                        "uniformity": float(row["neighbor3_diagonal_uniformity"]),
+                        "joint": float(row["neighbor3_joint"]),
+                        "balanced": float(row["neighbor3_balanced_diagonal"]),
+                        "strict_score": float(
+                            row["neighbor3_allblock_diagonal_score"]
+                        ),
+                        "allblock_purity": float(row["allblock_diagonal_purity"]),
+                        "allblock_min_purity": float(
+                            row["allblock_min_diagonal_purity"]
+                        ),
+                        "balanced_std": float(row["neighbor3_balanced_diagonal_std"]),
+                        "gt_balanced": float(row["gt_neighbor3_balanced_diagonal"]),
+                        "lora_balanced": float(row["lora_neighbor3_balanced_diagonal"]),
+                        "baseline_balanced": float(row["baseline_neighbor3_balanced_diagonal"]),
+                        "gt_strict": float(
+                            row["gt_neighbor3_allblock_diagonal_score"]
+                        ),
+                        "lora_strict": float(
+                            row["lora_neighbor3_allblock_diagonal_score"]
+                        ),
+                        "baseline_strict": float(
+                            row["baseline_neighbor3_allblock_diagonal_score"]
+                        ),
+                    }
+                )
+    status = {
+        model: (NEIGHBOR_ROOT / "status" / f"{model}.complete").is_file()
+        for model in ("gt", "lora", "baseline")
+    }
+    return {
+        "records": records,
+        "model_complete": status,
+        "rendered_heatmaps": len(list((NEIGHBOR_HEAT_ROOT / "web").glob("*.png"))),
+        "pipeline_complete": (NEIGHBOR_ROOT / "status/pipeline.complete").is_file(),
+        "ranking_metric": (
+            "neighbor-3 balanced diagonal × weakest all-frame block diagonal purity"
+        ),
+    }
+
+
+NEIGHBOR_DIAGONAL_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>720 Head Strict All-Block Diagonal Ranking</title><style>
+:root{--ink:#17231e;--paper:#eee8d9;--card:#fffdf7;--line:#c7bca6;--red:#b64c34;--green:#176b61}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 7% 0,#efb87b55,transparent 30rem),radial-gradient(circle at 96% 5%,#6fa38c55,transparent 36rem),var(--paper);font-family:"Noto Serif SC","Source Han Serif SC",serif}header{position:sticky;top:0;z-index:5;padding:16px 22px;background:#eee8d9ee;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}h1{margin:0;font-size:clamp(25px,4vw,45px)}header p{margin:6px 0;max-width:1100px}.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}select,button,a.download{padding:8px 12px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:800;text-decoration:none}.status{font:12px ui-monospace,monospace}main{max-width:1800px;margin:auto;padding:18px}.curve{display:block;width:100%;max-height:850px;object-fit:contain;background:#fff;border:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:5px 18px 5px 5px;padding:12px;box-shadow:0 10px 28px #4e47391c}.card h2{margin:0 0 8px;font:900 19px "Trebuchet MS",sans-serif}.rank{color:var(--red)}.metrics{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}.pill{padding:5px 7px;border-radius:99px;background:#e9e1d1;font:11px ui-monospace,monospace}.card img{display:block;width:100%;background:#171a18;border:1px solid var(--line)}.pending{padding:60px 20px;text-align:center;border:1px dashed var(--line);background:var(--card)}.pager{display:flex;justify-content:center;gap:12px;align-items:center;margin:22px 0}@media(max-width:1000px){.grid{grid-template-columns:1fr}header{position:static}main{padding:10px}}
+</style></head><body><header><h1>720 Head · 全帧块空间对角线严格排序</h1><p>严格主分数 = 相邻三帧对角线均衡 × 全部 7 个目标帧块中的最弱空间对角线纯度，并在内部 query 帧、3 模型 × 5 case 上取均值。高分要求本帧和相邻帧对角线均衡，同时所有 49 个帧块内部都只沿空间对角线亮；金线标出每个帧块的空间对角线，青框标出相邻三帧区域。</p><div class="tools"><label>排序 <select id="sort"><option value="strict_score">Strict Combined</option><option value="allblock_purity">全帧块对角纯度</option><option value="allblock_min_purity">最弱帧块纯度</option><option value="balanced">Neighbor Balanced</option><option value="uniformity">纯均匀度</option><option value="joint">质量 × 均匀度</option><option value="mass">三帧总质量</option><option value="pck32">PCK@32</option></select></label><button id="refresh">手动刷新</button><a class="download" href="/downloads/all720-neighbor-diagonal.csv">下载 720 行 CSV</a><span id="status" class="status">等待结果</span></div></header><main><img id="curve" class="curve" src="/api/neighbor-diagonal/curve" onerror="this.style.display='none'"><section id="grid" class="grid"><div class="pending">计算中</div></section><div class="pager"><button id="prev">上一页</button><b id="page"></b><button id="next">下一页</button></div></main><script>
+const f=(x,n=4)=>Number(x).toFixed(n),pageSize=24;let records=[],page=0,state={};function ordered(){const key=document.getElementById('sort').value;return [...records].sort((a,b)=>b[key]-a[key])}function render(){const rows=ordered(),pages=Math.max(1,Math.ceil(rows.length/pageSize));page=Math.min(page,pages-1);const shown=rows.slice(page*pageSize,(page+1)*pageSize);document.getElementById('page').textContent=`${page+1} / ${pages}`;document.getElementById('grid').innerHTML=shown.length?shown.map((r,i)=>`<article class="card"><h2><span class="rank">#${page*pageSize+i+1}</span> · L${String(r.block).padStart(2,'0')} / H${String(r.head).padStart(2,'0')}</h2><div class="metrics"><span class="pill">Strict ${f(r.strict_score)}</span><span class="pill">All-block purity ${f(r.allblock_purity)}</span><span class="pill">Min purity ${f(r.allblock_min_purity)}</span><span class="pill">Neighbor balanced ${f(r.balanced)}</span><span class="pill">Uniformity ${f(r.uniformity)}</span><span class="pill">Mass ${f(r.mass)}</span><span class="pill">Joint ${f(r.joint)}</span><span class="pill">PCK@32 ${f(r.pck32,2)}</span><span class="pill">Strict GT/L/BL ${f(r.gt_strict)}/${f(r.lora_strict)}/${f(r.baseline_strict)}</span></div><img loading="lazy" src="/api/neighbor-diagonal/strip?block=${r.block}&head=${r.head}" alt="L${r.block} H${r.head} attention"></article>`).join(''):`<div class="pending">三模型 720-head 指标与热力图正在生成。点击手动刷新查看进度。</div>`}async function load(){state=await fetch('/api/neighbor-diagonal/catalog',{cache:'no-store'}).then(r=>r.json());records=state.records;document.getElementById('status').textContent=`排名 ${records.length}/720 · 热力图 ${state.rendered_heatmaps}/720 · GT ${state.model_complete.gt?'完成':'运行中'} · LoRA ${state.model_complete.lora?'完成':'运行中'} · Baseline ${state.model_complete.baseline?'完成':'运行中'}`;render()}document.getElementById('sort').addEventListener('change',()=>{page=0;render()});document.getElementById('refresh').addEventListener('click',load);document.getElementById('prev').addEventListener('click',()=>{page=Math.max(0,page-1);render();scrollTo(0,0)});document.getElementById('next').addEventListener('click',()=>{page++;render();scrollTo(0,0)});load().catch(e=>document.getElementById('status').textContent=e);
+</script></body></html>'''
+
+
 class Handler(BASE_HANDLER):
     protocol_version = "HTTP/1.1"
 
@@ -607,6 +674,10 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(PAGE_S039.encode(), "text/html; charset=utf-8")
             if parsed.path == "/uniform-diagonal-curves":
                 return self.send_payload(CURVE_PAGE.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/neighbor-diagonal-ranking":
+                return self.send_payload(
+                    NEIGHBOR_DIAGONAL_PAGE.encode(), "text/html; charset=utf-8"
+                )
             if parsed.path == "/top5-head-zero-ablation":
                 return self.send_payload(HEAD_ZERO_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/pck-extreme-head-zero-ablation":
@@ -694,6 +765,26 @@ class Handler(BASE_HANDLER):
                     (ALL720_ROOT / "all720_metric_count_distribution.png").read_bytes(),
                     "image/png",
                 )
+            if parsed.path == "/api/neighbor-diagonal/catalog":
+                return self.send_payload(
+                    json.dumps(neighbor_diagonal_catalog(), ensure_ascii=False).encode(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path == "/api/neighbor-diagonal/curve":
+                return self.send_payload(
+                    (NEIGHBOR_ROOT / "all720_neighbor_diagonal_curves.png").read_bytes(),
+                    "image/png",
+                )
+            if parsed.path == "/api/neighbor-diagonal/strip":
+                query = parse_qs(parsed.query)
+                block = int(query["block"][0])
+                head = int(query["head"][0])
+                if not 0 <= block < 30 or not 0 <= head < 24:
+                    raise ValueError("invalid neighbor diagonal block/head")
+                return self.send_payload(
+                    (NEIGHBOR_HEAT_ROOT / "web" / f"block{block:02d}_head{head:02d}.png").read_bytes(),
+                    "image/png",
+                )
             if parsed.path == "/api/top5-head-zero/video":
                 query = parse_qs(parsed.query)
                 model = query.get("model", [""])[0]
@@ -763,6 +854,11 @@ class Handler(BASE_HANDLER):
             if parsed.path == "/downloads/all720-count-distribution.csv":
                 return self.send_payload(
                     (ALL720_ROOT / "all720_metric_count_distribution.csv").read_bytes(),
+                    "text/csv; charset=utf-8",
+                )
+            if parsed.path == "/downloads/all720-neighbor-diagonal.csv":
+                return self.send_payload(
+                    (NEIGHBOR_ROOT / "all720_neighbor_diagonal_summary.csv").read_bytes(),
                     "text/csv; charset=utf-8",
                 )
             if parsed.path == "/downloads/joint-interval-selection.csv":
