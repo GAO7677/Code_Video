@@ -30,6 +30,7 @@ if NOISE_MODE not in {
     "probability_additive",
     "probability_zero",
     "probability_uniform",
+    "probability_temporal_causal",
 }:
     raise ValueError(f"Unsupported ATTENTION_NOISE_MODE: {NOISE_MODE}")
 
@@ -233,7 +234,30 @@ class AdaptiveQKLogitNoise:
                 device=logits.device,
                 dtype=torch.float32,
             )
-            if self.noise_mode == "probability_zero":
+            if self.noise_mode == "probability_temporal_causal":
+                latent_frames = int(os.environ.get("ATTENTION_MASK_LATENT_FRAMES", "7"))
+                if sequence % latent_frames != 0:
+                    raise RuntimeError(
+                        f"Sequence {sequence} is not divisible by {latent_frames} latent frames"
+                    )
+                spatial_tokens = sequence // latent_frames
+                query_frames = (
+                    torch.arange(start, end, device=logits.device) // spatial_tokens
+                )
+                key_frames = (
+                    torch.arange(sequence, device=logits.device) // spatial_tokens
+                )
+                allowed = key_frames.unsqueeze(0) <= query_frames.unsqueeze(1)
+                probabilities = torch.softmax(
+                    logits.masked_fill(~allowed.unsqueeze(0).unsqueeze(0), -torch.inf),
+                    dim=-1,
+                )
+                if capture_entry is not None:
+                    capture_entry["max_row_sum_error"] = max(
+                        capture_entry["max_row_sum_error"],
+                        float((probabilities.sum(dim=-1) - 1.0).abs().max().item()),
+                    )
+            elif self.noise_mode == "probability_zero":
                 probabilities = torch.zeros_like(before_probabilities)
                 if capture_entry is not None:
                     capture_entry["max_row_sum_error"] = 1.0
@@ -347,7 +371,9 @@ class AdaptiveQKLogitNoise:
             axis.set_xlabel("Key token index (downsampled)")
             axis.set_ylabel("Query token index (downsampled)")
             fig.colorbar(image, ax=axis, fraction=0.046, pad=0.03)
-        if self.noise_mode == "probability_zero":
+        if self.noise_mode == "probability_temporal_causal":
+            strength_label = "temporal causal mask"
+        elif self.noise_mode == "probability_zero":
             strength_label = "A'=0"
         elif self.noise_mode == "probability_uniform":
             strength_label = "A'=1/N_K"
@@ -469,6 +495,7 @@ def write_experiment_metadata() -> None:
                 "intervention": {
                     "probability_zero": "direct_attention_probability_zero",
                     "probability_uniform": "direct_attention_probability_uniform",
+                    "probability_temporal_causal": "temporal_causal_attention_mask",
                     "probability_additive": "direct_attention_probability_additive_noise",
                     "logit": "direct_qk_logit_noise",
                 }[NOISE_MODE],
