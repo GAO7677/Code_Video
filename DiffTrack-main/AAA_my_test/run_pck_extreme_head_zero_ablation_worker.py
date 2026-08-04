@@ -26,7 +26,10 @@ PCK_TABLE = Path(
 OUTPUT_ROOT = Path(
     "/data/gaoya/agent-data/outputs/pck_top30_bottom30_head_zero_ablation_test5"
 )
-LEGACY_ROOT = top5.OUTPUT_ROOT
+LEGACY_ROOTS = (
+    Path("/data/gaoya/agent-data/outputs/pck_extreme30_all720_head_zero_ablation_test5"),
+    top5.OUTPUT_ROOT,
+)
 STAGE_RANGES = (
     ("steps_00_10", tuple(range(0, 10))),
     ("steps_10_20", tuple(range(10, 20))),
@@ -36,7 +39,7 @@ STAGE_RANGES = (
 )
 
 
-def select_heads(ranking_pool: str) -> dict[str, list[dict]]:
+def select_heads(ranking_pool: str, extreme_count: int) -> dict[str, list[dict]]:
     allowed = None
     if ranking_pool == "common70":
         with HEAD_CONFIG.open(encoding="utf-8") as stream:
@@ -61,7 +64,12 @@ def select_heads(ranking_pool: str) -> dict[str, list[dict]]:
     expected = 70 if ranking_pool == "common70" else 720
     if len(ranked) != expected:
         raise RuntimeError(f"expected {expected} ranked heads, got {len(ranked)}")
-    return {"top30": ranked[:30], "bottom30": ranked[-30:]}
+    if extreme_count <= 0 or extreme_count * 2 > len(ranked):
+        raise ValueError(f"extreme-count {extreme_count} is invalid for {len(ranked)} heads")
+    return {
+        f"top{extreme_count}": ranked[:extreme_count],
+        f"bottom{extreme_count}": ranked[-extreme_count:],
+    }
 
 
 class ExtremeHeadZeroer:
@@ -134,6 +142,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-shards", type=int, required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--ranking-pool", choices=("common70", "all720"), default="common70")
+    parser.add_argument("--extreme-count", type=int, default=30)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -153,7 +162,7 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.shard_index < args.num_shards:
         raise ValueError("invalid shard index")
-    groups = select_heads(args.ranking_pool)
+    groups = select_heads(args.ranking_pool, args.extreme_count)
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     selection_path = output_root / "selection.json"
@@ -167,8 +176,10 @@ def main() -> None:
     pipe = top5.source.target.core.build_pipeline(top5.WAN_ROOT, str(args.device), lora_path)
     zeroer = ExtremeHeadZeroer(pipe, groups)
     variants = [("original", None, ())]
-    variants += [(f"top30_{name}", "top30", steps) for name, steps in STAGE_RANGES]
-    variants += [(f"bottom30_{name}", "bottom30", steps) for name, steps in STAGE_RANGES]
+    top_group = f"top{args.extreme_count}"
+    bottom_group = f"bottom{args.extreme_count}"
+    variants += [(f"{top_group}_{name}", top_group, steps) for name, steps in STAGE_RANGES]
+    variants += [(f"{bottom_group}_{name}", bottom_group, steps) for name, steps in STAGE_RANGES]
     completed = []
     try:
         for case_index, case in enumerate(assigned, start=1):
@@ -182,9 +193,11 @@ def main() -> None:
             for variant, group, steps in variants:
                 video_path = case_root / f"{variant}.mp4"
                 if variant == "original" and not video_path.exists():
-                    legacy = LEGACY_ROOT / args.model / "cases" / case["case_key"] / "original.mp4"
-                    if legacy.is_file() and legacy.stat().st_size:
-                        os.link(legacy, video_path)
+                    for legacy_root in LEGACY_ROOTS:
+                        legacy = legacy_root / args.model / "cases" / case["case_key"] / "original.mp4"
+                        if legacy.is_file() and legacy.stat().st_size:
+                            os.link(legacy, video_path)
+                            break
                 if video_path.is_file() and video_path.stat().st_size and not args.overwrite:
                     print(f"[{case_index}/{len(assigned)}] skip {args.model} {case['case_key']} {variant}", flush=True)
                 else:

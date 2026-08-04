@@ -32,6 +32,9 @@ HEAD_ZERO_ROOT = Path(
 EXTREME30_ROOT = Path(
     "/data/gaoya/agent-data/outputs/pck_extreme30_all720_head_zero_ablation_test5"
 )
+EXTREME100_ROOT = Path(
+    "/data/gaoya/agent-data/outputs/pck_extreme100_all720_head_zero_ablation_test5"
+)
 EXTREME_ZERO_ROOT = Path(
     "/data/gaoya/agent-data/outputs/pck_top30_bottom30_head_zero_ablation_test5"
 )
@@ -94,6 +97,7 @@ PORTAL = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta
 <a class="card" href="/all-steps/rankings?v=4"><div><span>06 / 全时间步指标</span><h2>Step × Block × Head 排名</h2><p>覆盖 28,800 个组合的三模型综合排名、单模型排名和性能热力图。</p></div><span class="go">打开全时间步排名</span></a>
 <a class="card new" href="/pck-extreme-head-zero-ablation?v=1"><div><span>07 / 分阶段消融</span><h2>PCK Top30 / Bottom30 输出置零</h2><p>对比 Wan2.2 Baseline 与 Wan+LoRA 的高低 PCK Head 在四个十步阶段及全程置零后的生成视频。</p></div><span class="go">打开极值 Head 消融页面</span></a>
 <a class="card new" href="/pck-extreme30-head-zero-ablation?v=1"><div><span>08 / ALL 720 消融</span><h2>全组合 PCK Top30 / Bottom30</h2><p>从全部 720 个 Block-Head 选择排名两端，各 30 个 Head 分阶段同时置零。</p></div><span class="go">打开 ALL-720 极值消融</span></a>
+<a class="card new" href="/pck-extreme100-head-zero-ablation?v=1"><div><span>09 / ALL 720 扩大消融</span><h2>全组合 PCK Top100 / Bottom100</h2><p>从全部 720 个 Block-Head 选择排名两端，各 100 个 Head 分阶段同时置零。</p></div><span class="go">打开 TOP100 / BOTTOM100 消融</span></a>
 <a class="card" href="/rankings?v=2"><div><span>07 / 固定时间步指标</span><h2>Block × Head 排名</h2><p>比较固定时间步下三个模型各自的 720 个 Block-Head 组合。</p></div><span class="go">打开固定步排名</span></a>
 <a class="card" href="/single?v=2"><div><span>08 / 单组合检查</span><h2>轨迹显微镜</h2><p>选择模型、案例、Block 和 Head，逐潜空间帧检查 GT 与 Q@K 轨迹。</p></div><span class="go">打开单组合检查器</span></a>
 </section></main></body></html>'''
@@ -129,6 +133,19 @@ EXTREME30_PAGE = (
     .replace("从 70 个 common T-head 中", "从全部 720 个 block-head 中")
     .replace("/api/pck-extreme-head-zero/", "/api/pck-extreme30-head-zero/")
     .replace("PCK 极值 Head<br>分阶段输出置零", "All-720 PCK 极值 Head<br>分阶段输出置零")
+)
+
+EXTREME100_PAGE = (
+    EXTREME30_PAGE
+    .replace("Top30 / Bottom30", "Top100 / Bottom100")
+    .replace("TOP30", "TOP100")
+    .replace("BOTTOM30", "BOTTOM100")
+    .replace("Top30", "Top100")
+    .replace("Bottom30", "Bottom100")
+    .replace("top30_", "top100_")
+    .replace("bottom30_", "bottom100_")
+    .replace("['top30','bottom30']", "['top100','bottom100']")
+    .replace("/api/pck-extreme30-head-zero/", "/api/pck-extreme100-head-zero/")
 )
 
 INTERVAL_PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Joint 分区间 Head 热力图</title><style>
@@ -440,6 +457,29 @@ def extreme30_catalog() -> dict:
     return {"cases": cases, "selection": selection, "ready_videos": ready, "expected_videos": len(cases) * 22, "complete_cases": complete}
 
 
+def extreme100_catalog() -> dict:
+    list_path = Path("/data/gaoya/AAA_test_video/0623/testjsons/test_5.txt")
+    variants = ["original"] + [f"{group}_{stage}" for group in ("top100", "bottom100") for stage in ("steps_00_10", "steps_10_20", "steps_20_30", "steps_30_40", "steps_00_40")]
+    cases, seen = [], set()
+    ready = complete = 0
+    for line in list_path.read_text(encoding="utf-8").splitlines():
+        case_key = Path(line.strip()).stem
+        if not case_key or case_key in seen:
+            continue
+        seen.add(case_key)
+        available = {}
+        for model in ("baseline", "lora"):
+            case_root = EXTREME100_ROOT / model / "cases" / case_key
+            available[model] = [variant for variant in variants if (case_root / f"{variant}.mp4").is_file()]
+            ready += len(available[model])
+        if all(len(available[model]) == len(variants) for model in ("baseline", "lora")):
+            complete += 1
+        cases.append({"case_key": case_key, "available": available})
+    selection_path = EXTREME100_ROOT / "selection.json"
+    selection = json.loads(selection_path.read_text(encoding="utf-8")) if selection_path.is_file() else None
+    return {"cases": cases, "selection": selection, "ready_videos": ready, "expected_videos": len(cases) * 22, "complete_cases": complete}
+
+
 def head_zero_catalog() -> dict:
     initial = [
         "case_001_ball_roll", "case_002_puck_slide", "case_003_capsule_slide",
@@ -562,6 +602,8 @@ class Handler(BASE_HANDLER):
                 return self.send_payload(EXTREME_ZERO_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/pck-extreme30-head-zero-ablation":
                 return self.send_payload(EXTREME30_PAGE.encode(), "text/html; charset=utf-8")
+            if parsed.path == "/pck-extreme100-head-zero-ablation":
+                return self.send_payload(EXTREME100_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/joint-interval-heatmaps":
                 return self.send_payload(INTERVAL_PAGE.encode(), "text/html; charset=utf-8")
             if parsed.path == "/balanced-interval-heatmaps":
@@ -663,6 +705,20 @@ class Handler(BASE_HANDLER):
             if parsed.path == "/api/pck-extreme30-head-zero/catalog":
                 return self.send_payload(
                     json.dumps(extreme30_catalog(), ensure_ascii=False).encode(),
+                    "application/json; charset=utf-8",
+                )
+            if parsed.path == "/api/pck-extreme100-head-zero/video":
+                query = parse_qs(parsed.query)
+                model = query.get("model", [""])[0]
+                case = query.get("case", [""])[0]
+                variant = query.get("variant", [""])[0]
+                allowed = {"original"} | {f"{group}_{stage}" for group in ("top100", "bottom100") for stage in ("steps_00_10", "steps_10_20", "steps_20_30", "steps_30_40", "steps_00_40")}
+                if model not in {"baseline", "lora"} or not case or case != Path(case).name or case in {".", ".."} or variant not in allowed:
+                    raise ValueError("invalid all720 PCK extreme100 head-zero video request")
+                return send_file_with_range(self, EXTREME100_ROOT / model / "cases" / case / f"{variant}.mp4", "video/mp4")
+            if parsed.path == "/api/pck-extreme100-head-zero/catalog":
+                return self.send_payload(
+                    json.dumps(extreme100_catalog(), ensure_ascii=False).encode(),
                     "application/json; charset=utf-8",
                 )
             if parsed.path == "/downloads/all720-uniform-diagonal.csv":
